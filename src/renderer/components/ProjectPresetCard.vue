@@ -3,7 +3,7 @@ import type { ModelCatalogItem } from '../../shared/api.js'
 import { includedPresetSections } from '../../shared/presets/preset-application.js'
 import type { PresetRecord, PresetSectionKey } from '../../shared/presets/preset-schema.js'
 
-import { Refresh, Settings } from '@vicons/tabler'
+import { FilePlus, Refresh, Settings } from '@vicons/tabler'
 import { NButton, NCard, NEmpty, NInput, NPopover, NSpin, NTag } from 'naive-ui'
 import { computed, ref, watch } from 'vue'
 
@@ -17,8 +17,9 @@ const props = defineProps<{
   error: string | null
   loading: boolean
   presets: PresetRecord[]
+  saveDisabledReason?: string | null
 }>()
-const emit = defineEmits<{ choose: [id: string]; manage: []; refresh: [] }>()
+const emit = defineEmits<{ choose: [id: string]; manage: []; refresh: []; save: [] }>()
 const open = ref(false)
 const search = ref('')
 const presets = computed(() => {
@@ -147,6 +148,14 @@ function badgeLabel(section: PresetSectionKey) {
         label="Manage Presets"
         @click="emit('manage')"
       />
+      <IconButton
+        compact
+        :disabled="disabled || Boolean(saveDisabledReason)"
+        :icon="FilePlus"
+        label="Save Current as Preset"
+        :tooltip="saveDisabledReason ?? undefined"
+        @click="emit('save')"
+      />
     </div>
   </NCard>
 </template>
@@ -154,7 +163,7 @@ function badgeLabel(section: PresetSectionKey) {
 <style scoped>
 .preset-actions {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 4px;
 }

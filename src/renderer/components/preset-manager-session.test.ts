@@ -1,5 +1,6 @@
 import type { PresetApi, PresetApiResult } from '../../shared/api.js'
 import type { PresetDefinition } from '../../shared/presets/preset-schema.js'
+import { createEmptyProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 
 import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -12,6 +13,7 @@ import type { AppDatabase } from '../../main/db/database.js'
 import { openAppDatabase } from '../../main/db/database.js'
 import { PresetRepository, PresetRepositoryError } from '../../main/presets/preset-repository.js'
 import { PresetManagerSession } from './preset-manager-session.js'
+import { createProjectPresetIntent } from './project-preset-draft.js'
 
 const migrations = path.resolve('src/main/db/migrations')
 const startedAt = Date.parse('2026-10-13T10:00:00.000Z')
@@ -112,6 +114,200 @@ function held<T>() {
   })
   return { promise, release }
 }
+
+function projectIntent() {
+  const document = createEmptyProjectDocumentV1({
+    primaryBbox: { height: 832, width: 1536, x: 120, y: -45 },
+    title: 'Project source',
+  })
+  document.generationDraft.positivePrompt.text = 'Visible Project prompt'
+  document.generationDraft.sampling.steps = 30
+  document.generationDraft.sampling.cfgScale = 6
+  document.generationDraft.seed = { policy: 'fixed', value: 0 }
+  return createProjectPresetIntent({
+    mode: 'txt2img',
+    project: {
+      generationDraft: document.generationDraft,
+      layers: [],
+      primaryBbox: document.primaryBbox,
+      title: document.title,
+    },
+  })
+}
+
+test('project create captures its source before catalog await and Cancel returns without a preset identity or write', async () => {
+  await withFixture(async ({ api, repository }) => {
+    const entered = held<void>()
+    const deliver = held<void>()
+    let closed = 0
+    const session = new PresetManagerSession(
+      {
+        ...api,
+        list: async (options) => {
+          const result = await api.list(options)
+          entered.release()
+          await deliver.promise
+          return result
+        },
+      },
+      {
+        onClose: () => {
+          closed += 1
+        },
+      },
+    )
+    const intent = projectIntent()
+    const source = structuredClone(intent)
+    const opening = session.openCreate(intent)
+    intent.projectName = 'Caller replaced source'
+    intent.definition.payload.prompt!.text = 'Caller edited source'
+    await entered.promise
+    assert.deepEqual(session.state.createIntent, source)
+    assert.equal(session.state.draft?.payload.prompt?.text, 'Visible Project prompt')
+    assert.equal(session.state.selectedId, null)
+    assert.equal(session.state.creating, true)
+    assert.equal(session.dirty, true)
+    assert.equal(Object.hasOwn(session.state.draft.payload, 'seed'), false)
+    assert.deepEqual(await repository().list(), [])
+    session.state.draft.name = 'Detached editor name'
+    session.state.draft.payload.prompt.text = 'Detached editor prompt'
+    assert.deepEqual(session.state.createIntent, source)
+    session.cancelCreate()
+    assert.equal(closed, 1)
+    assert.equal(session.isOpen, false)
+    assert.equal(session.state.createIntent, null)
+    assert.equal(session.state.draft, null)
+    assert.equal(session.state.selectedId, null)
+    deliver.release()
+    await opening
+    assert.equal(session.state.createIntent, null)
+    assert.deepEqual(await repository().list(), [])
+  })
+})
+
+test('project create failure keeps the source and draft retryable; workflow requires choice before persistence', async () => {
+  await withFixture(async ({ api, repository }) => {
+    let refuse = true
+    const session = new PresetManagerSession({
+      ...api,
+      create: (definition) =>
+        refuse
+          ? Promise.resolve({
+              error: { code: 'PRESET_STORAGE_FAILED' as const, message: 'Controlled refusal' },
+              ok: false as const,
+            })
+          : api.create(definition),
+    })
+    const intent = projectIntent()
+    intent.definition.workflow = null
+    intent.workflowUnknown = true
+    await session.openCreate(intent)
+    assert.equal(session.valid, false)
+    await session.save()
+    assert.equal(session.state.error, null, 'invalid authoring does not issue a backend command')
+    assert.deepEqual(await repository().list(), [])
+    session.state.draft!.workflow = 'textToImage'
+    const source = structuredClone(session.state.createIntent)
+    const draft = structuredClone(session.state.draft)
+    session.requestClose()
+    await session.save()
+    assert.deepEqual(session.state.createIntent, source)
+    assert.deepEqual(session.state.draft, draft)
+    assert.equal(session.state.pending?.kind, 'close')
+    assert.equal(session.dirty, true)
+    assert.deepEqual(await repository().list(), [])
+    session.cancelPending()
+    assert.deepEqual(session.state.createIntent, source)
+    refuse = false
+    await session.save()
+    assert.equal(session.state.creating, false)
+    assert.equal(session.state.createIntent, null)
+    assert.equal(session.dirty, false)
+    const stored = await repository().get(session.state.selectedId!)
+    assert.equal(stored?.name, 'Project source Baseline')
+    assert.equal(Object.hasOwn(stored.payload, 'seed'), false)
+    assert.deepEqual(stored?.payload.size, { height: 832, width: 1536 })
+    assert.equal(session.state.records.length, 1)
+    session.requestNew()
+    assert.equal(session.state.createIntent, null)
+    assert.equal(session.state.draft?.name, '')
+    session.cancelCreate()
+    assert.equal(
+      session.state.selectedId,
+      stored?.id,
+      'manual create still returns to the previous saved selection',
+    )
+  })
+})
+
+test('project draft navigation clears source only after explicit transition; manual New is separately guarded', async () => {
+  await withFixture(async ({ api, repository }) => {
+    const record = await repository().create(definition())
+    const session = new PresetManagerSession(api)
+    await session.openCreate(projectIntent())
+    const source = structuredClone(session.state.createIntent)
+    session.requestSelect(record.id)
+    assert.deepEqual(session.state.pending, { id: record.id, kind: 'select' })
+    session.cancelPending()
+    assert.deepEqual(session.state.createIntent, source)
+    session.requestSelect(record.id)
+    await session.discardPending()
+    assert.equal(session.state.createIntent, null)
+    assert.equal(session.state.selectedId, record.id)
+    await session.openCreate(projectIntent())
+    session.requestNew()
+    assert.deepEqual(session.state.pending, { kind: 'new' })
+    assert.ok(session.state.createIntent)
+    await session.discardPending()
+    assert.equal(session.state.createIntent, null)
+    assert.equal(session.state.creating, true)
+    assert.equal(session.state.draft?.name, '')
+    assert.deepEqual(session.state.draft?.payload, { prompt: { embeddingRefs: [], text: '' } })
+    assert.equal((await repository().list()).length, 1)
+    await session.openCreate(projectIntent())
+    session.requestView('deleted')
+    await session.discardPending()
+    assert.equal(session.state.createIntent, null)
+    assert.equal(session.state.view, 'deleted')
+    assert.equal(session.state.draft, null)
+  })
+})
+
+test('a late ordinary catalog open cannot replace a newer Project source draft or its catalog', async () => {
+  await withFixture(async ({ api, repository }) => {
+    await repository().create(definition('First'))
+    let delayed = true
+    const entered = held<void>()
+    const deliver = held<void>()
+    const session = new PresetManagerSession({
+      ...api,
+      list: async (options) => {
+        const result = await api.list(options)
+        if (delayed) {
+          entered.release()
+          await deliver.promise
+        }
+        return result
+      },
+    })
+    const oldOpen = session.open()
+    await entered.promise
+    delayed = false
+    await repository().create(definition('Second'))
+    const intent = projectIntent()
+    await session.openCreate(intent)
+    const draft = structuredClone(session.state.draft)
+    deliver.release()
+    await oldOpen
+    assert.deepEqual(session.state.draft, draft)
+    assert.deepEqual(session.state.createIntent, intent)
+    assert.equal(session.state.selectedId, null)
+    assert.equal(session.state.creating, true)
+    assert.equal(session.state.records.length, 2)
+    assert.equal(session.state.loading, false)
+    assert.equal(session.dirty, true)
+  })
+})
 
 test('manager creates and edits detached values through SQLite and survives reopening', async () => {
   await withFixture(async (fixture) => {

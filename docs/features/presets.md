@@ -15,8 +15,13 @@ That checkpoint covers storage/API independently of the UI and Project reuse flo
 now connects the approved three-column manual create/edit editor, Included
 sections, duplicate, Deleted/Restore and unsaved-change guards to the native API.
 Its execution evidence and limitations are recorded in that checkpoint.
-Project Apply, New Project customization, Save Current, result-to-preset and
-Models handoff remain pending. Existing prototype flows are not production
+[Project Apply](../engineering/phase-3-preset-apply-research.md) connects the detached
+preview, selected-section diagnostics and one Main history mutation.
+[Save Current](../engineering/phase-3-preset-save-current-research.md) now connects
+Project settings to a detached source draft in the same manager; its actual
+qualification results and limits are recorded in that checkpoint.
+New Project customization, result-to-preset, Models handoff and Smart Patch
+source/target routing remain pending. Existing prototype flows are not production
 persistence evidence, and PP-006 remains unavailable as a complete user flow.
 
 ## Feature
@@ -162,6 +167,48 @@ The customization differs from Apply where project creation needs an initial gen
 The full manager editor is available before creation, including name, optional description, tags/favorite, workflow, Included controls and every generation value. A source banner keeps the originating project name and summary visible. Cancelling returns to the project without persisting anything.
 
 Default included fields in a project-derived definition contain the main reusable generation settings, but seed remains absent until explicitly included. Accidentally preserving a fixed seed can make future generations feel repetitive.
+
+The production [Save Current checkpoint](../engineering/phase-3-preset-save-current-research.md)
+connects the compact Project sibling action to this manager lifecycle. The source
+name and summary are captured once and remain unchanged while the detached
+definition is edited. Successful Create converts the pinned draft into a normal
+record and removes its source banner; cancelling a project-derived draft closes
+the manager and returns to the Project. Manual New Preset retains its normal
+cancel/selection behavior. Failed Create keeps the same draft and source for retry.
+
+Save Current captures only the acknowledged current Project tab. While any
+generation-draft synchronization overlay is pending, the action is disabled
+with an explanatory tooltip and the App command guard also refuses capture.
+This includes an explicit embedding selection: updated prompt text must not be
+copied before Main has returned its chosen exact sidecar binding. The action
+does not flush draft changes or seal prompt history to make itself available.
+After synchronization settles, the source is captured once before the manager's
+asynchronous opening/catalog reads, so later Project changes cannot rewrite it.
+
+The source uses the current verified generation target mode: `txt2img` maps to
+Text to Image, while `img2img` and `outpaint` map to Image to Image. An empty Canvas,
+or a Project without visible layers of nonzero opacity, can default to Text to
+Image without an ML worker. If a nonempty Canvas has no current verified mode,
+Workflow remains unselected; the user must choose it explicitly before Create.
+Layer count or denoising strength cannot determine a nonempty source's workflow.
+
+Copied incomplete numeric settings remain editable. The source banner explains
+that the user must complete them or turn off Included for the affected section;
+Create remains disabled until the definition is valid. Invalid raw Project
+input in reusable fields or unapplied bbox edits disable Save Current with a
+reason so the action cannot copy a hidden previous value. Seed and dynamic batch
+settings are excluded from this copy; invalid raw input in those excluded fields
+does not block Save Current after any pending synchronization has settled.
+
+Save Current copies authored prompt text (including brace templates), exact
+embedding sidecars, exact model/LoRA/VAE references, signed/enabled LoRAs and
+explicit reusable settings. It never expands a template into a historical
+result prompt. Seed and dynamic batch settings are omitted; Size copies only
+bbox width/height, without position or source/mask/layer context. This action
+does not mutate the Project document, its history or seed cursor, or the model
+library's prediction/noise policy. Missing references warn but remain saveable.
+New Project initialization, accepted-result projection and Smart Patch sources
+require their own remaining integrations and qualifications.
 
 The same boundary applies when a draft is created from an accepted Raster Layer
 or Smart Patch variant. `Save Preset from Result` copies only portable generation
@@ -460,5 +507,5 @@ rehashes selected exact resources, rejects changed destinations and copies
 selected values in one Project history step. Library prediction/noise policy and
 saved preset definitions stay unchanged. Missing resources can be deselected;
 unsupported selected Anima values are explained. Smart Patch target routing,
-New Project customization, Save Current/result-to-preset and Open in Models
+New Project customization, result-to-preset and Open in Models
 remain separate pending slices; PP-006 is not complete.

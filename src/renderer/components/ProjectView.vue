@@ -185,6 +185,7 @@ const emit = defineEmits<{
   resultFocusHandled: [revision: number]
   save: []
   saveCandidateImage: [candidateId: string]
+  savePreset: [target: ProjectGenerationTargetState | null]
   sealPromptHistory: [historyGroupId: string]
   selectModel: [selection: { resourceId: string; versionId: string } | null]
   selectVae: [selection: { resourceId: string; versionId: string } | null]
@@ -1157,6 +1158,30 @@ const validBbox = computed(
 const bboxChanged = computed(() =>
   (['x', 'y', 'width', 'height'] as const).some((key) => draft[key] !== props.tab.primaryBbox[key]),
 )
+const savePresetDisabledReason = computed(() => {
+  if (props.draftPending) {
+    return 'Wait for the current settings to finish updating before saving them as a preset.'
+  }
+  // Seed and batch controls are excluded from a project-derived preset.
+  if (
+    !lorasValid.value ||
+    !advancedOptionsValid.value ||
+    !denoisingValid.value ||
+    samplingStepsInvalid.value ||
+    samplingCfgScaleInvalid.value
+  ) {
+    return 'Correct invalid generation settings before saving them as a preset.'
+  }
+  if (rawBboxInvalid.height || rawBboxInvalid.width || !validBbox.value || bboxChanged.value) {
+    return 'Enter a valid generation area size and press Enter before saving it as a preset.'
+  }
+  return null
+})
+function saveCurrentPreset() {
+  if (!props.busy && !props.reloadRequired && !savePresetDisabledReason.value) {
+    emit('savePreset', targetState.value)
+  }
+}
 
 function applyBbox() {
   if (!validBbox.value || !bboxChanged.value || props.busy || props.reloadRequired) {
@@ -1470,7 +1495,11 @@ function applyFitBbox() {
             class="generation-footer-progress"
             :progress="currentProgress"
           />
-          <p v-if="generationBlockingReason" class="generation-blocking-reason" role="status">
+          <p
+            :aria-hidden="!generationBlockingReason || undefined"
+            class="generation-blocking-reason"
+            role="status"
+          >
             {{ generationBlockingReason }}
           </p>
         </footer>
@@ -1482,9 +1511,11 @@ function applyFitBbox() {
             :error="presetsError"
             :loading="presetsLoading"
             :presets
+            :saveDisabledReason="savePresetDisabledReason"
             @choose="emit('choosePreset', $event)"
             @manage="emit('managePresets')"
             @refresh="emit('refreshPresets')"
+            @save="saveCurrentPreset"
           />
           <div class="document-actions">
             <span
@@ -2183,6 +2214,8 @@ function applyFitBbox() {
 
 .project-settings .generation-blocking-reason {
   grid-column: 1 / -1;
+  /* Keep nearby actions still when blur replaces a two-line validation message. */
+  min-block-size: 2lh;
   margin: 0;
   font-size: 11px;
 }

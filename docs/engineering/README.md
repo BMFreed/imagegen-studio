@@ -1,7 +1,8 @@
 # Engineering Workflow
 
-Latest implementation checkpoint: [Project preset Apply](./phase-3-preset-apply-research.md)
-over [production Preset Manager](./phase-3-preset-manager-research.md) and
+Latest implementation checkpoint: [Project Save Current as Preset](./phase-3-preset-save-current-research.md)
+over [Project Apply](./phase-3-preset-apply-research.md),
+[production Preset Manager](./phase-3-preset-manager-research.md) and
 [preset storage/API](./phase-3-preset-storage-research.md).
 Shared strict payload → native IPC/preload → Main lifetime owner → SQLite now
 supports CRUD/duplicate, soft delete/restore and automatic 30-day expiry. Actual
@@ -10,8 +11,19 @@ The production manual manager/editor now connects create/edit/duplicate,
 Included sections, Deleted/Restore and unsaved-change guards; its actual UI
 verification and limits are recorded in its checkpoint. Project now has a
 detached Apply preview, selected-section diagnostics and one Main Undo mutation.
-Save Current is the next slice. New Project customization, result-to-preset and
-Models handoff remain open. PP-006 remains «Пока не обещать».
+Save Current connects the Project launcher to a detached source draft in that
+manager, preserving authored prompts/sidecars and omitting seed/batch settings.
+Capture waits for every generation-draft synchronization overlay: the launcher
+tooltip and App command guard require the acknowledged tab, including Main's
+explicit embedding binding. Save Current does not flush or seal prompt history;
+the source is captured before asynchronous manager opening. Once settled,
+invalid excluded seed/batch inputs do not prevent this copy.
+Verified current mode is used; empty Canvas may default to Text to Image, while
+unknown nonempty mode requires an explicit Workflow choice. Incomplete copied
+settings must be repaired or excluded. Project/history/library ownership remains
+unchanged; verification results and limits belong to the new checkpoint.
+New Project customization is next. Result-to-preset, Models handoff and Smart Patch
+source/target routing remain open. PP-006 remains «Пока не обещать».
 [Current Phase2C exit ledger](./phase-2c-exit-ledger.md) assigns the remaining
 Preset/Canvas/release owners and records the named missing-version handoff.
 Previous ML checkpoint: [NoobAI Karras numerical refusal](./phase-2c-noobai-karras-failure-research.md).

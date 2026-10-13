@@ -1,6 +1,8 @@
 import type { PresetApi, PresetApiResult } from '../../shared/api.js'
 import type { PresetRecord } from '../../shared/presets/preset-schema.js'
 
+import type { PresetProjectCreateIntent } from './project-preset-draft.js'
+
 import {
   type EditablePresetDefinition,
   emptyPresetDefinition,
@@ -18,6 +20,7 @@ export type PresetManagerNavigation =
 
 export interface PresetManagerState {
   busy: boolean
+  createIntent: PresetProjectCreateIntent | null
   creating: boolean
   draft: EditablePresetDefinition | null
   editorRevision: number
@@ -39,6 +42,7 @@ interface SessionOptions {
 export class PresetManagerSession {
   readonly state: PresetManagerState = {
     busy: false,
+    createIntent: null,
     creating: false,
     draft: null,
     editorRevision: 0,
@@ -88,6 +92,12 @@ export class PresetManagerSession {
     if (!this.state.creating || this.state.busy) {
       return
     }
+    if (this.state.createIntent) {
+      this.clearSelection()
+      void this.complete({ kind: 'close' })
+      this.changed()
+      return
+    }
     this.state.pending = null
     this.state.view = this.previousView
     this.clearSelection()
@@ -114,6 +124,7 @@ export class PresetManagerSession {
     }
     const pending = this.state.pending
     this.state.pending = null
+    this.state.createIntent = null
     this.replaceDraft(this.baseline ? structuredClone(this.baseline) : null)
     this.state.creating = false
     await this.complete(pending)
@@ -126,6 +137,7 @@ export class PresetManagerSession {
     this.epoch += 1
     this.read += 1
     this.state.loading = false
+    this.state.createIntent = null
   }
 
   async duplicate(): Promise<void> {
@@ -170,6 +182,25 @@ export class PresetManagerSession {
         this.select(record.id)
       }
     }
+  }
+
+  /** Capture the visible Project synchronously; catalog responses cannot replace this draft. */
+  async openCreate(intent: PresetProjectCreateIntent): Promise<void> {
+    if (this.state.busy) {
+      return
+    }
+    const captured = JSON.parse(JSON.stringify(intent)) as PresetProjectCreateIntent
+    this.opened = true
+    this.epoch += 1
+    this.state.view = 'active'
+    this.state.error = null
+    this.state.pending = null
+    this.clearSelection()
+    this.state.createIntent = captured
+    this.state.creating = true
+    this.replaceDraft(JSON.parse(JSON.stringify(captured.definition)) as EditablePresetDefinition)
+    this.changed()
+    await this.reload()
   }
 
   async reload(): Promise<void> {
@@ -217,7 +248,7 @@ export class PresetManagerSession {
   }
 
   requestNew(): void {
-    if (this.state.creating) {
+    if (this.state.creating && !this.state.createIntent) {
       return
     }
     this.navigate({ kind: 'new' })
@@ -323,6 +354,7 @@ export class PresetManagerSession {
   private clearSelection(): void {
     this.state.selectedId = null
     this.state.creating = false
+    this.state.createIntent = null
     this.replaceDraft(null)
     this.baseline = null
   }
@@ -422,6 +454,7 @@ export class PresetManagerSession {
     }
     this.state.selectedId = record.id
     this.state.creating = false
+    this.state.createIntent = null
     this.baseline = presetDefinitionFromRecord(record)
     this.replaceDraft(
       record.deletedAt === null ? presetDefinitionFromRecord(record) : null,

@@ -26,8 +26,9 @@ export type EditablePresetPayload = Omit<
   size?: { height: number | null; width: number | null }
 }
 
-export type EditablePresetDefinition = Omit<PresetDefinition, 'payload'> & {
+export type EditablePresetDefinition = Omit<PresetDefinition, 'payload' | 'workflow'> & {
   payload: EditablePresetPayload
+  workflow: PresetWorkflow | null
 }
 
 export const workflowLabels: Record<PresetWorkflow, string> = {

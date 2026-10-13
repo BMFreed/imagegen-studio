@@ -36,6 +36,8 @@ import {
 } from 'naive-ui'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
+import type { PresetProjectCreateIntent } from './project-preset-draft.js'
+
 import IconButton from '../../../docs/prototype-app/src/components/IconButton.vue'
 import { AppLayer } from '../../../docs/prototype-app/src/theme/app-layers.js'
 import {
@@ -50,6 +52,7 @@ const props = defineProps<{
   catalog: ModelCatalogItem[]
   catalogReady: boolean
   initialPresetId?: string | null
+  projectCreateIntent?: PresetProjectCreateIntent | null
 }>()
 const show = defineModel<boolean>('show', { required: true })
 let closingWindow: {
@@ -210,6 +213,12 @@ const needsAttention = computed(
     state.value.draft !== null &&
     presetNeedsAttention(state.value.draft, props.catalog, props.catalogReady),
 )
+const projectSource = computed(() => (state.value.creating ? state.value.createIntent : null))
+const workflowProblem = computed(() =>
+  state.value.draft?.workflow === null
+    ? 'Choose a workflow before creating this preset.'
+    : undefined,
+)
 const canRestore = computed(
   () =>
     selected.value?.expiresAt !== null &&
@@ -224,6 +233,16 @@ const nameProblem = computed(() => {
   return new TextEncoder().encode(name).length > IGS_SAFETY_CEILINGS.titleBytes
     ? 'Name is too long.'
     : undefined
+})
+const copiedSettingsProblem = computed(() => {
+  if (!projectSource.value || valid.value || nameProblem.value || workflowProblem.value) {
+    return null
+  }
+  const guidance = state.value.draft?.payload.guidance
+  if (guidance && (guidance.steps === null || guidance.cfgScale === null)) {
+    return 'Steps & CFG are incomplete. Complete them or turn off Included for that section.'
+  }
+  return 'Some copied settings are incomplete or invalid. Complete them or turn off Included for those sections.'
 })
 const workflowOptions = Object.entries(workflowLabels).map(([value, label]) => ({ label, value }))
 const sortOptions = [
@@ -259,7 +278,7 @@ function resetFilters() {
   attentionOnly.value = false
 }
 function updateWorkflow(value: PresetWorkflow) {
-  if (!state.value.draft || !Object.hasOwn(workflowLabels, value)) {
+  if (state.value.busy || !state.value.draft || !Object.hasOwn(workflowLabels, value)) {
     return
   }
   state.value.draft.workflow = value
@@ -324,6 +343,11 @@ watch(
     if (open) {
       resetFilters()
       globalThis.window.addEventListener('keydown', onKeydown, true)
+      const createIntent = props.projectCreateIntent
+      if (createIntent) {
+        void session.openCreate(createIntent)
+        return
+      }
       const initialId = props.initialPresetId
       void session.open().then(() => {
         if (show.value && initialId && props.initialPresetId === initialId) {
@@ -564,6 +588,22 @@ onBeforeUnmount(() => {
                 <section aria-label="Preset editor" class="preset-editor">
                   <NScrollbar class="editor-scroll">
                     <div v-if="state.draft" class="editor-content">
+                      <NAlert
+                        v-if="projectSource"
+                        aria-label="Source project"
+                        class="source-banner"
+                        title="Source project"
+                        type="info"
+                      >
+                        <strong>{{ projectSource.projectName }}</strong>
+                        <span>· {{ projectSource.projectSummary }}</span>
+                        <p>
+                          Seed is not included by default to avoid accidentally repeating
+                          generations.
+                        </p>
+                        <p v-if="workflowProblem">{{ workflowProblem }}</p>
+                        <p v-if="copiedSettingsProblem">{{ copiedSettingsProblem }}</p>
+                      </NAlert>
                       <NCard size="small">
                         <NForm :disabled="state.busy" labelPlacement="top" size="small">
                           <NFormItem
@@ -584,10 +624,15 @@ onBeforeUnmount(() => {
                               type="textarea"
                             />
                           </NFormItem>
-                          <NFormItem label="Workflow">
+                          <NFormItem
+                            :feedback="workflowProblem"
+                            label="Workflow"
+                            :validationStatus="workflowProblem ? 'error' : undefined"
+                          >
                             <NSelect
                               aria-label="Preset workflow"
                               :options="workflowOptions"
+                              placeholder="Choose a workflow"
                               :value="state.draft.workflow"
                               @update:value="updateWorkflow"
                             />
@@ -622,7 +667,7 @@ onBeforeUnmount(() => {
                         :catalog
                         :catalogReady
                         :disabled="state.busy"
-                        :workflow="state.draft.workflow"
+                        :workflow="state.draft.workflow ?? 'imageToImage'"
                         @validity="session.setEditorValidity($event)"
                       />
                       <NText v-if="!valid && !nameProblem" depth="3">
@@ -644,7 +689,7 @@ onBeforeUnmount(() => {
                         :catalogReady
                         disabled
                         :modelValue="deletedDefinition.payload"
-                        :workflow="deletedDefinition.workflow"
+                        :workflow="deletedDefinition.workflow ?? 'imageToImage'"
                       />
                     </div>
                     <NEmpty
@@ -981,6 +1026,9 @@ h2 {
   display: grid;
   gap: 12px;
   padding: 14px;
+}
+.source-banner p {
+  margin: 4px 0 0;
 }
 .editor-actions {
   display: flex;

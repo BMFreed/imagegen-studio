@@ -24,6 +24,11 @@ import type {
   AcceptedResultHistoryReference,
 } from '../shared/projects/accepted-result-history.js'
 import type { GenerationProgressSnapshot } from '../shared/projects/generation-progress.js'
+import {
+  generationTargetSignature,
+  hashGenerationTargetSignature,
+  type ProjectGenerationTargetState,
+} from '../shared/projects/project-generation-target-state.js'
 import type { IgsRectV1 } from '../shared/projects/project-schema.js'
 import { IGS_SAFETY_CEILINGS } from '../shared/projects/project-schema.js'
 import { WINDOW_CLOSE_CANCELED_MESSAGE } from '../shared/window-close.js'
@@ -70,6 +75,10 @@ import HomeView from './components/HomeView.vue'
 import ModelManager from './components/ModelManager.vue'
 import PresetManager from './components/PresetManager.vue'
 import { ProjectDraftSync } from './components/project-draft-sync.js'
+import {
+  createProjectPresetIntent,
+  type PresetProjectCreateIntent,
+} from './components/project-preset-draft.js'
 import ProjectView from './components/ProjectView.vue'
 import ResolutionControl from './components/ResolutionControl.vue'
 import RuntimeNotice from './components/RuntimeNotice.vue'
@@ -121,6 +130,8 @@ const activeDocument = ref<string | null>('home')
 const modelManagerOpen = ref(false)
 const presetManagerOpen = ref(false)
 const presetManagerInitialId = ref<string | null>(null)
+const presetManagerCreateIntent = ref<PresetProjectCreateIntent | null>(null)
+let presetCreateEpoch = 0
 const presetCatalog = ref<PresetRecord[]>([])
 const presetCatalogLoading = ref(false)
 const presetCatalogError = ref<string | null>(null)
@@ -292,9 +303,63 @@ function openModelManager(focus: ModelManagerFocus | null = null) {
 }
 
 function openPresetManager() {
+  ++presetCreateEpoch
+  presetManagerCreateIntent.value = null
   presetManagerInitialId.value = null
   presetManagerOpen.value = true
   void refreshModelCatalog()
+}
+async function saveCurrentAsPreset(tabId: string, target: ProjectGenerationTargetState | null) {
+  if (
+    pendingProjectAction.value ||
+    windowClosePending.value ||
+    presetManagerOpen.value ||
+    generationDraftOverlays.value[tabId] ||
+    reloadRequiredIds.value.has(tabId)
+  ) {
+    return
+  }
+  const tab = projectTabs.value.find((candidate) => candidate.id === tabId)
+  if (!tab || activeTab.value?.id !== tabId) {
+    return
+  }
+  const epoch = ++presetCreateEpoch
+  const snapshot: ProjectTab = JSON.parse(JSON.stringify(tab))
+  const capturedTarget = target ? { ...target } : null
+  try {
+    const signature = generationTargetSignature(snapshot)
+    const mode =
+      capturedTarget?.documentId === snapshot.documentId &&
+      signature &&
+      capturedTarget.targetKey === (await hashGenerationTargetSignature(signature))
+        ? capturedTarget.mode
+        : null
+    if (
+      epoch !== presetCreateEpoch ||
+      windowClosePending.value ||
+      pendingProjectAction.value ||
+      activeTab.value?.id !== tabId ||
+      activeTab.value.documentId !== snapshot.documentId ||
+      presetManagerOpen.value
+    ) {
+      return
+    }
+    presetManagerCreateIntent.value = createProjectPresetIntent({
+      catalog:
+        modelCatalogLoaded.value && !modelCatalogLoading.value && !modelCatalogError.value
+          ? modelCatalog.value
+          : null,
+      mode,
+      project: snapshot,
+    })
+    presetManagerInitialId.value = null
+    presetManagerOpen.value = true
+    void refreshModelCatalog()
+  } catch (cause) {
+    if (epoch === presetCreateEpoch) {
+      setTabError(tabId, errorMessage(cause))
+    }
+  }
 }
 async function refreshPresetCatalog() {
   const epoch = ++presetCatalogEpoch
@@ -392,18 +457,22 @@ async function applyProjectPreset(
   }
 }
 function editPresetOriginal(id: string) {
+  ++presetCreateEpoch
+  presetManagerCreateIntent.value = null
   presetManagerInitialId.value = id
   presetManagerOpen.value = true
   void refreshModelCatalog()
 }
 watch(presetManagerOpen, (open) => {
   if (!open) {
+    presetManagerCreateIntent.value = null
     void refreshPresetCatalog()
   }
 })
 watch(
   () => activeTab.value?.id,
   () => {
+    ++presetCreateEpoch
     ++presetOpeningEpoch
     if (!presetApplyBusy.value) {
       presetApplyOpen.value = false
@@ -2485,6 +2554,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  ++presetCreateEpoch
   ++presetCatalogEpoch
   ++presetOpeningEpoch
   rendererDisposed = true
@@ -2686,6 +2756,7 @@ onBeforeUnmount(() => {
           @resultFocusHandled="clearResultFocus(activeTab.id, $event)"
           @save="saveProject(activeTab.id)"
           @saveCandidateImage="saveCandidateImage(activeTab.id, $event)"
+          @savePreset="saveCurrentAsPreset(activeTab.id, $event)"
           @sealPromptHistory="sealPromptHistory(activeTab.id, $event)"
           @selectModel="setGenerationModel(activeTab.id, $event)"
           @selectVae="setGenerationVae(activeTab.id, $event)"
@@ -2708,6 +2779,7 @@ onBeforeUnmount(() => {
         :catalog="modelCatalog"
         :catalogReady="modelCatalogLoaded && !modelCatalogLoading && modelCatalogError === null"
         :initialPresetId="presetManagerInitialId"
+        :projectCreateIntent="presetManagerCreateIntent"
       />
       <ApplyPresetModal
         v-if="presetApplication && presetApplyTab && presetApplyCurrent"
