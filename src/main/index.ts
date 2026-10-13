@@ -1174,6 +1174,20 @@ if (!gotInstanceLock) {
         },
       )
       registerProjectHandler(
+        ipcChannels.projects.getRasterPresetData,
+        (args) =>
+          args.length === 3 &&
+          isProjectId(args[0]) &&
+          isProjectDocumentId(args[1]) &&
+          isProjectDocumentId(args[2]),
+        (tabId, documentId, layerId) =>
+          projectService.getRasterGenerationData(
+            tabId as string,
+            documentId as string,
+            layerId as string,
+          ),
+      )
+      registerProjectHandler(
         ipcChannels.projects.reviewAcceptedResult,
         (args) => args.length === 1 && isAcceptedResultHistoryReference(args[0]),
         (reference) =>

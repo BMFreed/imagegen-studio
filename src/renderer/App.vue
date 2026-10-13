@@ -55,6 +55,7 @@ import type {
   QueueResultReference,
 } from './components/generation-queue-result.js'
 import type { ModelManagerFocus } from './components/model-manager-focus.js'
+import type { PresetCreateIntent } from './components/preset-create-intent.js'
 
 import {
   type AcceptedHistoryFocusRequest,
@@ -73,11 +74,9 @@ import ModelManager from './components/ModelManager.vue'
 import NewProjectModal from './components/NewProjectModal.vue'
 import PresetManager from './components/PresetManager.vue'
 import { ProjectDraftSync } from './components/project-draft-sync.js'
-import {
-  createProjectPresetIntent,
-  type PresetProjectCreateIntent,
-} from './components/project-preset-draft.js'
+import { createProjectPresetIntent } from './components/project-preset-draft.js'
 import ProjectView from './components/ProjectView.vue'
+import { createResultPresetIntent } from './components/result-preset-draft.js'
 import RuntimeNotice from './components/RuntimeNotice.vue'
 import { imageGenNaiveTheme } from './theme/naive-theme.js'
 
@@ -127,7 +126,7 @@ const activeDocument = ref<string | null>('home')
 const modelManagerOpen = ref(false)
 const presetManagerOpen = ref(false)
 const presetManagerInitialId = ref<string | null>(null)
-const presetManagerCreateIntent = ref<PresetProjectCreateIntent | null>(null)
+const presetManagerCreateIntent = ref<PresetCreateIntent | null>(null)
 let presetCreateEpoch = 0
 const presetCatalog = ref<PresetRecord[]>([])
 const presetCatalogLoading = ref(false)
@@ -351,6 +350,68 @@ async function saveCurrentAsPreset(tabId: string, target: ProjectGenerationTarge
     void refreshModelCatalog()
   } catch (cause) {
     if (epoch === presetCreateEpoch) {
+      setTabError(tabId, errorMessage(cause))
+    }
+  }
+}
+async function saveResultAsPreset(tabId: string, layerId: string) {
+  if (
+    pendingProjectAction.value ||
+    windowClosePending.value ||
+    presetManagerOpen.value ||
+    reloadRequiredIds.value.has(tabId)
+  ) {
+    return
+  }
+  const tab = projectTabs.value.find((candidate) => candidate.id === tabId)
+  const layer = tab?.layers.find((candidate) => candidate.id === layerId)
+  const accepted = tab?.acceptedResults.find((candidate) => candidate.layerId === layerId)
+  if (!tab || !layer || !accepted || activeTab.value?.id !== tabId) {
+    return
+  }
+  const epoch = ++presetCreateEpoch
+  const documentId = tab.documentId
+  const layerIdentity = JSON.stringify(layer)
+  const acceptedIdentity = JSON.stringify(accepted)
+  const layerName = layer.name
+  const projectName = tab.title
+  const current = () => {
+    const owner = projectTabs.value.find((candidate) => candidate.id === tabId)
+    return (
+      epoch === presetCreateEpoch &&
+      !windowClosePending.value &&
+      !pendingProjectAction.value &&
+      !presetManagerOpen.value &&
+      !reloadRequiredIds.value.has(tabId) &&
+      activeTab.value?.id === tabId &&
+      owner?.documentId === documentId &&
+      JSON.stringify(owner.layers.find((candidate) => candidate.id === layerId)) ===
+        layerIdentity &&
+      JSON.stringify(owner.acceptedResults.find((candidate) => candidate.layerId === layerId)) ===
+        acceptedIdentity
+    )
+  }
+  try {
+    const result = await projectApi().getRasterPresetData(tabId, documentId, layerId)
+    if (!current()) {
+      return
+    }
+    if (!result.ok) {
+      throw new Error(result.error.message)
+    }
+    if (result.value.documentId !== documentId || result.value.layerId !== layerId) {
+      throw new Error('The saved generation settings belong to another result.')
+    }
+    presetManagerCreateIntent.value = createResultPresetIntent({
+      data: result.value,
+      layerName,
+      projectName,
+    })
+    presetManagerInitialId.value = null
+    presetManagerOpen.value = true
+    void refreshModelCatalog()
+  } catch (cause) {
+    if (current()) {
       setTabError(tabId, errorMessage(cause))
     }
   }
@@ -2728,6 +2789,7 @@ onBeforeUnmount(() => {
           @save="saveProject(activeTab.id)"
           @saveCandidateImage="saveCandidateImage(activeTab.id, $event)"
           @savePreset="saveCurrentAsPreset(activeTab.id, $event)"
+          @saveResultPreset="saveResultAsPreset(activeTab.id, $event)"
           @sealPromptHistory="sealPromptHistory(activeTab.id, $event)"
           @selectModel="setGenerationModel(activeTab.id, $event)"
           @selectVae="setGenerationVae(activeTab.id, $event)"
@@ -2749,8 +2811,8 @@ onBeforeUnmount(() => {
         v-model:show="presetManagerOpen"
         :catalog="modelCatalog"
         :catalogReady="modelCatalogLoaded && !modelCatalogLoading && modelCatalogError === null"
+        :createIntent="presetManagerCreateIntent"
         :initialPresetId="presetManagerInitialId"
-        :projectCreateIntent="presetManagerCreateIntent"
       />
       <ApplyPresetModal
         v-if="presetApplication && presetApplyTab && presetApplyCurrent"

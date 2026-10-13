@@ -100,6 +100,7 @@ export const ipcChannels = {
     getGenerationState: 'projects:get-generation-state',
     getGenerationTargetState: 'projects:get-generation-target-state',
     getRasterGenerationData: 'projects:get-raster-generation-data',
+    getRasterPresetData: 'projects:get-raster-preset-data',
     importRasterImage: 'projects:import-raster-image',
     list: 'projects:list',
     listGenerationResults: 'projects:list-generation-results',
@@ -406,6 +407,12 @@ export interface ProjectApi {
     targetKey: string,
   ) => Promise<ApiResult<ProjectGenerationTargetState>>
   getRasterGenerationData: (
+    tabId: string,
+    documentId: string,
+    layerId: string,
+  ) => Promise<ApiResult<RasterGenerationData>>
+  /** Immutable accepted settings only; never inspects the current Canvas through a worker. */
+  getRasterPresetData: (
     tabId: string,
     documentId: string,
     layerId: string,

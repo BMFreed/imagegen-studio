@@ -9,6 +9,7 @@ import path from 'node:path'
 import test from 'node:test'
 
 import type { AppDatabase } from '../../main/db/database.js'
+import type { PresetResultCreateIntent } from './preset-create-intent.js'
 
 import { openAppDatabase } from '../../main/db/database.js'
 import { PresetRepository, PresetRepositoryError } from '../../main/presets/preset-repository.js'
@@ -134,6 +135,137 @@ function projectIntent() {
     },
   })
 }
+
+/** A detached result source is input; this suite verifies the real authoring/storage owner. */
+function resultIntent(): PresetResultCreateIntent {
+  const resultDefinition = definition('Accepted portrait Preset')
+  resultDefinition.payload.prompt = { embeddingRefs: [], text: 'expanded portrait in soft light' }
+  resultDefinition.payload.negativePrompt = { embeddingRefs: [], text: 'expanded unwanted detail' }
+  resultDefinition.payload.size = { height: 1024, width: 768 }
+  delete resultDefinition.payload.seed
+  return {
+    definition: resultDefinition,
+    kind: 'result',
+    layerName: 'Accepted portrait',
+    projectName: 'Result source project',
+    projectSummary: '768 × 1024 · Copied checkpoint',
+    unavailableSections: ['cfgRescale', 'vaePrecision'],
+    workflowUnknown: false,
+  }
+}
+
+test('result create captures its source before catalog await and Cancel never allocates or persists a preset', async () => {
+  await withFixture(async ({ api, repository }) => {
+    const neighboring = await repository().create(definition('Unrelated saved preset'))
+    const entered = held<void>()
+    const deliver = held<void>()
+    let closed = 0
+    const session = new PresetManagerSession(
+      {
+        ...api,
+        list: async (options) => {
+          const result = await api.list(options)
+          entered.release()
+          await deliver.promise
+          return result
+        },
+      },
+      {
+        onClose: () => {
+          closed += 1
+        },
+      },
+    )
+    const intent = resultIntent()
+    const captured = structuredClone(intent)
+    const opening = session.openCreate(intent)
+    intent.layerName = 'Caller renamed layer'
+    intent.definition.payload.prompt!.text = 'Caller changed current prompt'
+    intent.unavailableSections.length = 0
+    await entered.promise
+    assert.deepEqual(session.state.createIntent, captured)
+    assert.equal(session.state.selectedId, null)
+    assert.equal(session.state.creating, true)
+    assert.equal(session.state.draft?.payload.prompt?.text, 'expanded portrait in soft light')
+    assert.equal(Object.hasOwn(session.state.draft.payload, 'seed'), false)
+    session.state.draft.name = 'Edited reusable name'
+    session.state.draft.payload.prompt.text = 'Explicit preset edit'
+    assert.deepEqual(
+      session.state.createIntent,
+      captured,
+      'authoring never edits the source banner',
+    )
+    session.cancelCreate()
+    assert.equal(closed, 1)
+    assert.equal(session.isOpen, false)
+    assert.equal(session.state.createIntent, null)
+    assert.equal(session.state.draft, null)
+    deliver.release()
+    await opening
+    assert.equal(
+      session.state.createIntent,
+      null,
+      'a late catalog cannot resurrect a canceled result',
+    )
+    assert.deepEqual(await repository().list(), [neighboring])
+  })
+})
+
+test('result Create refusal retains the detached source and retry persists only edited portable settings across reopen', async () => {
+  await withFixture(async (fixture) => {
+    const neighboring = await fixture.repository().create(definition('Neighbor'))
+    let refuse = true
+    const session = new PresetManagerSession({
+      ...fixture.api,
+      create: (input) =>
+        refuse
+          ? Promise.resolve({
+              error: {
+                code: 'PRESET_STORAGE_FAILED' as const,
+                message: 'Controlled result refusal',
+              },
+              ok: false as const,
+            })
+          : fixture.api.create(input),
+    })
+    const intent = resultIntent()
+    await session.openCreate(intent)
+    session.state.draft!.name = 'Reusable expanded portrait'
+    session.state.draft!.description = 'Edited only in the authoring dialog'
+    const draft = structuredClone(session.state.draft)
+    session.requestClose()
+    await session.save()
+    assert.deepEqual(session.state.createIntent, intent)
+    assert.deepEqual(session.state.draft, draft)
+    assert.equal(session.state.selectedId, null)
+    assert.equal(session.state.pending?.kind, 'close')
+    assert.match(session.state.error!, /Controlled result refusal/)
+    assert.deepEqual(await fixture.repository().list(), [neighboring])
+    session.cancelPending()
+    refuse = false
+    await session.save()
+    const createdId = session.state.selectedId!
+    assert.notEqual(createdId, neighboring.id)
+    assert.equal(session.state.createIntent, null)
+    assert.equal(session.state.creating, false)
+    assert.equal(session.dirty, false)
+    const stored = await fixture.repository().get(createdId)
+    assert.equal(stored?.name, 'Reusable expanded portrait')
+    assert.equal(stored?.description, 'Edited only in the authoring dialog')
+    assert.equal(stored?.payload.prompt?.text, 'expanded portrait in soft light')
+    assert.equal(stored?.payload.negativePrompt?.text, 'expanded unwanted detail')
+    assert.deepEqual(stored?.payload.size, { height: 1024, width: 768 })
+    assert.equal(Object.hasOwn(stored.payload, 'seed'), false)
+    assert.equal(Object.hasOwn(stored, 'layerName'), false)
+    assert.deepEqual(await fixture.repository().get(neighboring.id), neighboring)
+    assert.equal(session.requestClose(), true)
+    await fixture.reopen()
+    await session.open(createdId)
+    assert.deepEqual(session.state.draft, draft)
+    assert.equal(session.state.createIntent, null)
+    assert.equal(session.state.records.length, 2)
+  })
+})
 
 test('project create captures its source before catalog await and Cancel returns without a preset identity or write', async () => {
   await withFixture(async ({ api, repository }) => {

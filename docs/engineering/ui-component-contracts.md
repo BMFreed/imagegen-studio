@@ -1,5 +1,15 @@
 # Общие UI-компоненты
 
+Production Preset Manager принимает detached `PresetCreateIntent` от текущего
+Project или принятого Raster результата. Общий session/editor владеет transient
+draft, Cancel/guards/Create/retry; source mapper владеет содержимым копии.
+`createIntent` не является сохранённым preset ID и не связывает новый preset с
+исходником. Source result показывает frozen layer/project label отдельно от
+редактируемого имени; отсутствующие reusable settings обозначаются без defaults.
+Результат читается через `getRasterPresetData` без текущей Canvas composition.
+Точные типы: `preset-create-intent.ts`, `result-preset-draft.ts`; executable
+границы — [result checkpoint](./phase-3-result-preset-research.md).
+
 Это публичный контракт повторяемых элементов Electron renderer и `docs/prototype-app`. Перед правкой
 откройте сам компонент и его потребителей: сигнатура в коде остаётся источником
 точных типов. Компоненты решают задачи представления; состояние Project и команды

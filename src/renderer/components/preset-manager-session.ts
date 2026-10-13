@@ -1,7 +1,7 @@
 import type { PresetApi, PresetApiResult } from '../../shared/api.js'
 import type { PresetRecord } from '../../shared/presets/preset-schema.js'
 
-import type { PresetProjectCreateIntent } from './project-preset-draft.js'
+import type { PresetCreateIntent } from './preset-create-intent.js'
 
 import {
   type EditablePresetDefinition,
@@ -20,7 +20,7 @@ export type PresetManagerNavigation =
 
 export interface PresetManagerState {
   busy: boolean
-  createIntent: PresetProjectCreateIntent | null
+  createIntent: PresetCreateIntent | null
   creating: boolean
   draft: EditablePresetDefinition | null
   editorRevision: number
@@ -184,12 +184,12 @@ export class PresetManagerSession {
     }
   }
 
-  /** Capture the visible Project synchronously; catalog responses cannot replace this draft. */
-  async openCreate(intent: PresetProjectCreateIntent): Promise<void> {
+  /** Capture a detached source synchronously; catalog responses cannot replace this draft. */
+  async openCreate(intent: PresetCreateIntent): Promise<void> {
     if (this.state.busy) {
       return
     }
-    const captured = JSON.parse(JSON.stringify(intent)) as PresetProjectCreateIntent
+    const captured = JSON.parse(JSON.stringify(intent)) as PresetCreateIntent
     this.opened = true
     this.epoch += 1
     this.state.view = 'active'

@@ -1,7 +1,8 @@
 # Engineering Workflow
 
-Latest implementation checkpoint: [New Project preset customization](./phase-3-new-project-preset-research.md)
-over [Save Current](./phase-3-preset-save-current-research.md),
+Latest implementation checkpoint: [Accepted Raster result preset](./phase-3-result-preset-research.md)
+over [New Project preset customization](./phase-3-new-project-preset-research.md),
+[Save Current](./phase-3-preset-save-current-research.md),
 [Project Apply](./phase-3-preset-apply-research.md),
 [production Preset Manager](./phase-3-preset-manager-research.md) and
 [preset storage/API](./phase-3-preset-storage-research.md).
@@ -33,8 +34,12 @@ refused. Source presets and model policy remain unchanged. Qualification has
 passed 221 focused tests and nine built Electron scenarios, including first-package
 data, index failure/rediscovery and restart. Typecheck, lint, build and standard/narrow
 visual checks pass; exact boundaries are recorded in the latest checkpoint.
-Result-to-preset is next. Models handoff and Smart Patch
-source/target routing remain open. PP-006 remains «Пока не обещать».
+Accepted Raster result creation now copies saved concrete prompts and recorded
+portable settings through a separate worker-independent read, ignoring current
+Project draft/bbox. Its detached Manager source, explicit Create/retry and stale
+reply handling preserve Project/provenance/library ownership; execution evidence
+and limits belong to its checkpoint. Models handoff is next; Smart Patch
+source/target routing remains open. PP-006 remains «Пока не обещать».
 [Current Phase2C exit ledger](./phase-2c-exit-ledger.md) assigns the remaining
 Preset/Canvas/release owners and records the named missing-version handoff.
 Previous ML checkpoint: [NoobAI Karras numerical refusal](./phase-2c-noobai-karras-failure-research.md).

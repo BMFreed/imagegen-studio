@@ -17,6 +17,7 @@ const props = defineProps<{
 const comparisonLayerId = defineModel<string | null>('comparisonLayerId', { required: true })
 const emit = defineEmits<{
   move: [layerId: string, targetIndex: number]
+  saveResultPreset: [layerId: string]
   select: [layerId: string]
   update: [layerId: string, change: Parameters<ProjectApi['updateRasterLayer']>[2]]
 }>()
@@ -52,6 +53,7 @@ const placementClass = computed(() => ({
       :layerCount="layers.length"
       :selected
       @move="(layerId, targetIndex) => emit('move', layerId, targetIndex)"
+      @saveResultPreset="emit('saveResultPreset', $event)"
       @select="emit('select', $event)"
       @update="(layerId, change) => emit('update', layerId, change)"
     >

@@ -36,13 +36,14 @@ import {
 } from 'naive-ui'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
-import type { PresetProjectCreateIntent } from './project-preset-draft.js'
+import type { PresetCreateIntent } from './preset-create-intent.js'
 
 import IconButton from '../../../docs/prototype-app/src/components/IconButton.vue'
 import { AppLayer } from '../../../docs/prototype-app/src/theme/app-layers.js'
 import {
   presetDefinitionFromRecord,
   presetNeedsAttention,
+  sectionLabels,
   workflowLabels,
 } from './preset-editor.js'
 import { PresetManagerSession, type PresetManagerState } from './preset-manager-session.js'
@@ -51,8 +52,8 @@ import PresetPayloadEditor from './PresetPayloadEditor.vue'
 const props = defineProps<{
   catalog: ModelCatalogItem[]
   catalogReady: boolean
+  createIntent?: PresetCreateIntent | null
   initialPresetId?: string | null
-  projectCreateIntent?: PresetProjectCreateIntent | null
 }>()
 const show = defineModel<boolean>('show', { required: true })
 let closingWindow: {
@@ -213,7 +214,15 @@ const needsAttention = computed(
     state.value.draft !== null &&
     presetNeedsAttention(state.value.draft, props.catalog, props.catalogReady),
 )
-const projectSource = computed(() => (state.value.creating ? state.value.createIntent : null))
+const createSource = computed(() => (state.value.creating ? state.value.createIntent : null))
+const sourceTitle = computed(() =>
+  createSource.value?.kind === 'result' ? 'Source result' : 'Source project',
+)
+const unavailableResultSections = computed(() =>
+  createSource.value?.kind === 'result'
+    ? createSource.value.unavailableSections.map((section) => sectionLabels[section]).join(', ')
+    : '',
+)
 const workflowProblem = computed(() =>
   state.value.draft?.workflow === null
     ? 'Choose a workflow before creating this preset.'
@@ -235,7 +244,7 @@ const nameProblem = computed(() => {
     : undefined
 })
 const copiedSettingsProblem = computed(() => {
-  if (!projectSource.value || valid.value || nameProblem.value || workflowProblem.value) {
+  if (!createSource.value || valid.value || nameProblem.value || workflowProblem.value) {
     return null
   }
   const guidance = state.value.draft?.payload.guidance
@@ -343,7 +352,7 @@ watch(
     if (open) {
       resetFilters()
       globalThis.window.addEventListener('keydown', onKeydown, true)
-      const createIntent = props.projectCreateIntent
+      const createIntent = props.createIntent
       if (createIntent) {
         void session.openCreate(createIntent)
         return
@@ -589,14 +598,29 @@ onBeforeUnmount(() => {
                   <NScrollbar class="editor-scroll">
                     <div v-if="state.draft" class="editor-content">
                       <NAlert
-                        v-if="projectSource"
-                        aria-label="Source project"
+                        v-if="createSource"
+                        :aria-label="sourceTitle"
                         class="source-banner"
-                        title="Source project"
+                        :title="sourceTitle"
                         type="info"
                       >
-                        <strong>{{ projectSource.projectName }}</strong>
-                        <span>· {{ projectSource.projectSummary }}</span>
+                        <template v-if="createSource.kind === 'result'">
+                          <strong>{{ createSource.layerName }}</strong>
+                          <span>· {{ createSource.projectName }}</span>
+                          <p>{{ createSource.projectSummary }}</p>
+                          <p>
+                            Uses this result's expanded prompts and portable generation settings.
+                          </p>
+                          <p v-if="unavailableResultSections">
+                            Not recorded as reusable preset settings:
+                            {{ unavailableResultSections }}. No values were copied for these
+                            sections.
+                          </p>
+                        </template>
+                        <template v-else>
+                          <strong>{{ createSource.projectName }}</strong>
+                          <span>· {{ createSource.projectSummary }}</span>
+                        </template>
                         <p>
                           Seed is not included by default to avoid accidentally repeating
                           generations.

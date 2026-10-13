@@ -234,8 +234,9 @@ result prompt. Seed and dynamic batch settings are omitted; Size copies only
 bbox width/height, without position or source/mask/layer context. This action
 does not mutate the Project document, its history or seed cursor, or the model
 library's prediction/noise policy. Missing references warn but remain saveable.
-New Project initialization, accepted-result projection and Smart Patch sources
-require their own remaining integrations and qualifications.
+[New Project initialization](../engineering/phase-3-new-project-preset-research.md)
+and [accepted Raster result projection](../engineering/phase-3-result-preset-research.md)
+have separate production checkpoints. Smart Patch sources remain a later integration.
 
 The same boundary applies when a draft is created from an accepted Raster Layer
 or Smart Patch variant. `Save Preset from Result` copies only portable generation
@@ -301,10 +302,12 @@ Open entry points:
 Raster and Smart Patch Layer context menus expose a separate read-only `Compare
 generation settings` popover. It compares `Generated with` provenance to
 `Current Canvas`, contains no Apply/Recall/preset action and does not mutate the
-Project. `Save Preset from Result` remains a separate action. The current
-prototype implements accepted-result comparison and the separate save-from-result
-origin on in-memory records; production persistence remains part of the provenance
-prototype pass.
+Project. `Save Preset from Result` remains a separate action. The prototype
+implements these origins on in-memory records. Production Raster comparison
+reads saved provenance; `Save Preset from Result` now reads that portable
+configuration through a worker-independent native endpoint and opens the same
+detached Manager used by Save Current. Imported/legacy images without generation
+data have a disabled result action; they can use Save Current instead.
 
 `New Preset` in the manager creates a minimal manual draft with `Text to Image`, an empty name and only an empty Prompt section. A pinned `Draft` row remains visible above saved results regardless of active filters. `Cancel` discards the manual draft and returns to the previously selected preset.
 
@@ -536,5 +539,12 @@ saved preset definitions stay unchanged. Missing resources can be deselected;
 unsupported selected Anima values are explained. The separate
 [New Project checkpoint](../engineering/phase-3-new-project-preset-research.md)
 initializes selected settings before the first saved document without an Apply
-history step. Smart Patch source/target routing, result-to-preset and Open in Models
-remain separate pending slices; PP-006 is not complete.
+history step. [Accepted Raster result checkpoint](../engineering/phase-3-result-preset-research.md)
+adds an immutable result source, one concrete expanded prompt pair and only
+recorded portable settings to detached creation. Unrecorded optional settings
+are explained rather than replaced with defaults; Anima bundle components do not
+become an external preset VAE. Seed is excluded initially and can be included
+explicitly in the editor. Cancel creates no record, storage failures preserve
+the draft for retry, and source/project/library ownership remains unchanged.
+Smart Patch source/target routing and Open in Models remain pending; PP-006 is
+not complete. Actual qualification counts and limitations belong to each checkpoint.

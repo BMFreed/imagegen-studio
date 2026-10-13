@@ -827,6 +827,15 @@ const api: StudioApi = {
           value.documentId === documentId &&
           value.layerId === layerId,
       ),
+    getRasterPresetData: (tabId, documentId, layerId) =>
+      invokeProject(
+        ipcChannels.projects.getRasterPresetData,
+        [tabId, documentId, layerId],
+        (value): value is RasterGenerationData =>
+          isRasterGenerationData(value) &&
+          value.documentId === documentId &&
+          value.layerId === layerId,
+      ),
     importRasterImage: (tabId) =>
       invokeProject(
         ipcChannels.projects.importRasterImage,

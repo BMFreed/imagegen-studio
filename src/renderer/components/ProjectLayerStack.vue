@@ -19,6 +19,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   importImage: []
   move: [layerId: string, targetIndex: number]
+  saveResultPreset: [layerId: string]
   update: [layerId: string, change: RasterLayerChange]
 }>()
 const selectedLayerId = defineModel<string | null>('selectedLayerId', { required: true })
@@ -213,6 +214,7 @@ makeDroppable(
         :layers
         :selected="selectedLayerId === layer.id"
         @move="(layerId, targetIndex) => emit('move', layerId, targetIndex)"
+        @saveResultPreset="emit('saveResultPreset', $event)"
         @select="selectedLayerId = $event"
         @update="(layerId, change) => emit('update', layerId, change)"
       >

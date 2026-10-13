@@ -28,6 +28,7 @@ const comparisonOpen = computed({
 
 const emit = defineEmits<{
   move: [layerId: string, targetIndex: number]
+  saveResultPreset: [layerId: string]
   select: [layerId: string]
   update: [layerId: string, change: Parameters<ProjectApi['updateRasterLayer']>[2]]
 }>()
@@ -42,6 +43,12 @@ const menu = computed<ProjectEntityRowAction[]>(() => [
     run: () => {
       comparisonOpen.value = true
     },
+  },
+  {
+    disabled: props.disabled || !props.hasGenerationData,
+    key: 'save-result-preset',
+    label: 'Save Preset from Result',
+    run: () => emit('saveResultPreset', props.layer.id),
   },
   {
     disabled: props.disabled || props.layer.locked || props.index === 0,

@@ -186,6 +186,7 @@ const emit = defineEmits<{
   save: []
   saveCandidateImage: [candidateId: string]
   savePreset: [target: ProjectGenerationTargetState | null]
+  saveResultPreset: [layerId: string]
   sealPromptHistory: [historyGroupId: string]
   selectModel: [selection: { resourceId: string; versionId: string } | null]
   selectVae: [selection: { resourceId: string; versionId: string } | null]
@@ -1183,6 +1184,17 @@ function saveCurrentPreset() {
   }
 }
 
+function saveResultPreset(layerId: string) {
+  if (
+    !props.busy &&
+    !props.reloadRequired &&
+    props.tab.layers.some((layer) => layer.id === layerId) &&
+    props.tab.acceptedResults.some((result) => result.layerId === layerId)
+  ) {
+    emit('saveResultPreset', layerId)
+  }
+}
+
 function applyBbox() {
   if (!validBbox.value || !bboxChanged.value || props.busy || props.reloadRequired) {
     return
@@ -2068,6 +2080,7 @@ function applyFitBbox() {
           :layers="tab.layers"
           @importImage="emit('importImage')"
           @move="(layerId, targetIndex) => emit('moveLayer', layerId, targetIndex)"
+          @saveResultPreset="saveResultPreset"
           @update="(layerId, change) => emit('updateLayer', layerId, change)"
         >
           <template v-slot:comparison="{ layer }">

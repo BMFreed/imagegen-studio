@@ -26,8 +26,9 @@ actual configuration без Regional Guidance; shared `generation-settings-compa
 
 Открытые обязательные owners:
 
-- Фаза 3: editable full/partial Project Apply, Save Current/create from result,
-  selected-resource diagnostics, handoff и New Project customization.
+- Фаза 3: remaining `Open in Models` preset handoff. Project Apply, Save Current,
+  New Project customization и [accepted Raster result creation](./phase-3-result-preset-research.md)
+  подключены к production owners с отдельными qualification checkpoints.
   [Ручной production Preset Manager](./phase-3-preset-manager-research.md)
   уже подключает create/edit/duplicate, Deleted/Restore и guards к native API;
   его собственное evidence не закрывает оставшиеся reuse flows.
