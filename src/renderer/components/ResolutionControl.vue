@@ -16,12 +16,14 @@ import {
 const props = withDefaults(
   defineProps<{
     disabled?: boolean
+    heightFormat?: (value: number | null) => string
     heightLabel?: string
     layout?: 'expanded-preview' | 'regular'
     max: number
     min?: number
     step?: number
     swapLabel?: string
+    widthFormat?: (value: number | null) => string
     widthLabel?: string
   }>(),
   {
@@ -158,6 +160,7 @@ function swap() {
           <label :for="`${id}-width`">Width</label>
           <NInputNumber
             :disabled
+            :format="widthFormat"
             :inputProps="{ 'aria-label': widthLabel, id: `${id}-width` }"
             :max
             :min
@@ -189,6 +192,7 @@ function swap() {
           <label :for="`${id}-height`">Height</label>
           <NInputNumber
             :disabled
+            :format="heightFormat"
             :inputProps="{ 'aria-label': heightLabel, id: `${id}-height` }"
             :max
             :min

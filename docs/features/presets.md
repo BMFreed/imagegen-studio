@@ -10,8 +10,13 @@ edit, apply, validation, resource-diagnostic, prototype and acceptance rules.
 [Storage/API checkpoint](../engineering/phase-3-preset-storage-research.md) implements
 strict portable definitions, SQLite CRUD/duplicate, deleted records, restore before
 30 elapsed UTC days, automatic startup/hourly expiry and typed native IPC.
-The production UI manager/editor, Project Apply, New Project customization and
-result-to-preset are still pending. Existing prototype flows are not production
+That checkpoint covers storage/API independently of the UI and Project reuse flows.
+[Production Manager checkpoint](../engineering/phase-3-preset-manager-research.md)
+now connects the approved three-column manual create/edit editor, Included
+sections, duplicate, Deleted/Restore and unsaved-change guards to the native API.
+Its execution evidence and limitations are recorded in that checkpoint.
+Project Apply, New Project customization, Save Current, result-to-preset and
+Models handoff remain pending. Existing prototype flows are not production
 persistence evidence, and PP-006 remains unavailable as a complete user flow.
 
 ## Feature

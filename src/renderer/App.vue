@@ -24,6 +24,7 @@ import type {
 import type { GenerationProgressSnapshot } from '../shared/projects/generation-progress.js'
 import type { IgsRectV1 } from '../shared/projects/project-schema.js'
 import { IGS_SAFETY_CEILINGS } from '../shared/projects/project-schema.js'
+import { WINDOW_CLOSE_CANCELED_MESSAGE } from '../shared/window-close.js'
 
 import { Home as HomeIcon, X as XIcon } from '@vicons/tabler'
 import {
@@ -64,6 +65,7 @@ import {
 import GenerationQueueManager from './components/GenerationQueueManager.vue'
 import HomeView from './components/HomeView.vue'
 import ModelManager from './components/ModelManager.vue'
+import PresetManager from './components/PresetManager.vue'
 import { ProjectDraftSync } from './components/project-draft-sync.js'
 import ProjectView from './components/ProjectView.vue'
 import ResolutionControl from './components/ResolutionControl.vue'
@@ -113,6 +115,8 @@ type PendingProjectAction =
 const homeOpen = ref(true)
 const activeDocument = ref<string | null>('home')
 const modelManagerOpen = ref(false)
+const presetManagerOpen = ref(false)
+const presetManager = ref<InstanceType<typeof PresetManager> | null>(null)
 const generationQueueOpen = ref(false)
 const generationQueueEpoch = ref(0)
 const queueResultOpeningId = ref<string | null>(null)
@@ -252,6 +256,11 @@ function hasGenerationCloseImpact(impact: ProjectCloseImpact | null): boolean {
 function openModelManager(focus: ModelManagerFocus | null = null) {
   modelManagerFocus.value = focus
   modelManagerOpen.value = true
+}
+
+function openPresetManager() {
+  presetManagerOpen.value = true
+  void refreshModelCatalog()
 }
 const pendingHomeAction = computed(() => {
   const action = pendingProjectAction.value
@@ -2187,6 +2196,7 @@ function onAppKeydown(event: KeyboardEvent) {
   if (
     !tab ||
     modelManagerOpen.value ||
+    presetManagerOpen.value ||
     showNewProject.value ||
     importDialogVisible.value ||
     recoveryDecision.value ||
@@ -2278,7 +2288,7 @@ onMounted(() => {
   }
   try {
     unsubscribeBeforeWindowClose = globalThis.window.api?.projects.onBeforeWindowClose(
-      async () => {
+      async (setDecisionPending) => {
         windowClosePending.value = true
         queueResultNavigator.cancel()
         if (pendingAcceptance.value && !acceptanceCommitting.value) {
@@ -2293,6 +2303,7 @@ onMounted(() => {
           }
         }
         try {
+          await presetManager.value?.prepareWindowClose(setDecisionPending)
           if (Object.values(draftValidity.value).includes(false)) {
             throw new Error('Correct invalid generation settings before closing the app.')
           }
@@ -2303,7 +2314,9 @@ onMounted(() => {
           }
         } catch (cause) {
           windowClosePending.value = false
-          globalNotice.value = `Window close was canceled because a Project draft could not be updated. ${errorMessage(cause)}`
+          if (errorMessage(cause) !== WINDOW_CLOSE_CANCELED_MESSAGE) {
+            globalNotice.value = `Window close was canceled. ${errorMessage(cause)}`
+          }
           throw cause
         }
       },
@@ -2358,6 +2371,7 @@ onBeforeUnmount(() => {
         :projectActive="Boolean(activeTab)"
         @acceptedResults="openSavedAcceptedResults"
         @home="openHome"
+        @presets="openPresetManager"
         @queue="openGenerationQueue"
         @redo="runActiveProjectHistoryAction('redo')"
         @undo="runActiveProjectHistoryAction('undo')"
@@ -2445,6 +2459,7 @@ onBeforeUnmount(() => {
           @createProject="beginNewProject"
           @importProject="selectImport"
           @manageModels="openModelManager()"
+          @managePresets="openPresetManager"
           @openProject="openProject"
           @rebuildPreview="rebuildProjectPreview"
           @refresh="refreshProjects"
@@ -2498,6 +2513,7 @@ onBeforeUnmount(() => {
           @generate="generateProject(activeTab.id, $event)"
           @importImage="importActiveRasterImage"
           @manageModels="openModelManager($event)"
+          @managePresets="openPresetManager"
           @moveLayer="moveActiveRasterLayer"
           @redo="runProjectHistoryAction(activeTab.id, 'redo')"
           @refreshGenerationResults="refreshGenerationResults(activeTab.id)"
@@ -2527,6 +2543,12 @@ onBeforeUnmount(() => {
       </main>
 
       <ModelManager v-model:show="modelManagerOpen" :focus="modelManagerFocus" />
+      <PresetManager
+        ref="presetManager"
+        v-model:show="presetManagerOpen"
+        :catalog="modelCatalog"
+        :catalogReady="modelCatalogLoaded && !modelCatalogLoading && modelCatalogError === null"
+      />
 
       <AcceptedResultsBrowser
         v-model:show="savedAcceptedResultsOpen"

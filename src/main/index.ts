@@ -45,6 +45,7 @@ import { isGenerationTargetKey } from '../shared/projects/project-generation-tar
 import { IGS_SAFETY_CEILINGS, IgsSchemaError } from '../shared/projects/project-schema.js'
 import type { IgsRectV1 } from '../shared/projects/project-schema.js'
 import { reconcilePromptEmbeddings } from '../shared/projects/prompt-embeddings.js'
+import { WINDOW_CLOSE_CANCELED_MESSAGE, WindowCloseCanceledError } from '../shared/window-close.js'
 
 import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, safeStorage, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
@@ -639,17 +640,47 @@ if (!gotInstanceLock) {
       // This also covers Alt+F4 and app.quit(), which do not go through renderer controls.
       let closingAfterResolution = false
       let resolvingClose = false
+      let rendererCloseHandlerReady = false
+      const onCloseEditorReady = (event: Electron.IpcMainEvent, ...args: unknown[]): void => {
+        if (
+          event.sender === window.webContents &&
+          event.senderFrame === window.webContents.mainFrame &&
+          args.length === 0
+        ) {
+          rendererCloseHandlerReady = true
+        }
+      }
+      ipcMain.on(ipcChannels.projects.windowCloseEditorReady, onCloseEditorReady)
+      window.webContents.on('did-start-loading', () => {
+        rendererCloseHandlerReady = false
+      })
+      window.webContents.on('render-process-gone', () => {
+        rendererCloseHandlerReady = false
+      })
+      window.on('closed', () =>
+        ipcMain.removeListener(ipcChannels.projects.windowCloseEditorReady, onCloseEditorReady),
+      )
       function flushRendererDraftsBeforeClose(): Promise<void> {
         return new Promise((resolve, reject) => {
           const requestId = randomUUID()
           let settled = false
+          let timeout: ReturnType<typeof setTimeout> | null = null
           const finish = (error: Error | null): void => {
             if (settled) {
               return
             }
             settled = true
-            clearTimeout(timeout)
+            if (timeout !== null) {
+              clearTimeout(timeout)
+            }
             ipcMain.removeListener(ipcChannels.projects.windowCloseReady, onReady)
+            ipcMain.removeListener(
+              ipcChannels.projects.windowCloseDecisionPending,
+              onDecisionPending,
+            )
+            window.webContents.removeListener('render-process-gone', onRendererUnavailable)
+            window.webContents.removeListener('did-start-loading', onRendererUnavailable)
+            window.webContents.removeListener('destroyed', onRendererUnavailable)
             if (error) {
               reject(error)
             } else {
@@ -661,24 +692,69 @@ if (!gotInstanceLock) {
             responseId: unknown,
             errorMessage: unknown,
           ): void => {
-            if (event.sender !== window.webContents || responseId !== requestId) {
+            if (
+              event.sender !== window.webContents ||
+              event.senderFrame !== window.webContents.mainFrame ||
+              responseId !== requestId
+            ) {
               return
             }
             finish(
               errorMessage === null
                 ? null
-                : new Error(
-                    typeof errorMessage === 'string'
-                      ? errorMessage
-                      : 'The Project draft could not be flushed.',
-                  ),
+                : errorMessage === WINDOW_CLOSE_CANCELED_MESSAGE
+                  ? new WindowCloseCanceledError()
+                  : new Error(
+                      typeof errorMessage === 'string'
+                        ? errorMessage
+                        : 'The Project draft could not be flushed.',
+                    ),
             )
           }
-          const timeout = setTimeout(
-            () => finish(new Error('The Project editor did not respond before closing.')),
-            10_000,
-          )
+          const armTimeout = (): void => {
+            if (timeout !== null) {
+              clearTimeout(timeout)
+            }
+            timeout = setTimeout(
+              () => finish(new Error('The Project editor did not respond before closing.')),
+              10_000,
+            )
+          }
+          const onDecisionPending = (
+            event: Electron.IpcMainEvent,
+            responseId: unknown,
+            pending: unknown,
+            ...extra: unknown[]
+          ): void => {
+            if (
+              settled ||
+              event.sender !== window.webContents ||
+              event.senderFrame !== window.webContents.mainFrame ||
+              responseId !== requestId ||
+              typeof pending !== 'boolean' ||
+              extra.length !== 0
+            ) {
+              return
+            }
+            // Human Save/Discard/Cancel decisions have no deadline. Writes retain the watchdog.
+            if (pending) {
+              if (timeout !== null) {
+                clearTimeout(timeout)
+              }
+              timeout = null
+            } else {
+              armTimeout()
+            }
+          }
+          const onRendererUnavailable = (): void => {
+            finish(new Error('The editor became unavailable before closing.'))
+          }
+          armTimeout()
           ipcMain.on(ipcChannels.projects.windowCloseReady, onReady)
+          ipcMain.on(ipcChannels.projects.windowCloseDecisionPending, onDecisionPending)
+          window.webContents.once('render-process-gone', onRendererUnavailable)
+          window.webContents.once('did-start-loading', onRendererUnavailable)
+          window.webContents.once('destroyed', onRendererUnavailable)
           try {
             window.webContents.send(ipcChannels.projects.prepareWindowClose, requestId)
           } catch (cause) {
@@ -701,7 +777,7 @@ if (!gotInstanceLock) {
           try {
             // The renderer can still have an unacknowledged prompt/seed edit. Flush it before
             // main decides whether anything is dirty or starts an explicit Save.
-            if (projectService.getOpenTabs().length > 0) {
+            if (projectService.getOpenTabs().length > 0 || rendererCloseHandlerReady) {
               await flushRendererDraftsBeforeClose()
             }
             const tabs = projectService.getOpenTabs()
@@ -818,10 +894,12 @@ if (!gotInstanceLock) {
                 projectService.getOpenTabs(),
               )
             }
-            dialog.showErrorBox(
-              'Project close failed',
-              error instanceof Error ? error.message : 'The Project could not be closed.',
-            )
+            if (!(error instanceof WindowCloseCanceledError)) {
+              dialog.showErrorBox(
+                'Project close failed',
+                error instanceof Error ? error.message : 'The Project could not be closed.',
+              )
+            }
           } finally {
             if (!closeCommitted) {
               releaseCanceledWindowCloseFences(

@@ -23,7 +23,7 @@ test('locked width and height edits preserve the ratio, including at the opposit
   })
   const capped = resizeDimension(original, 'width', limits.max, aspect, limits)
   assert.equal(capped.height, limits.max)
-  assert.ok(Math.abs(capped.width! / capped.height! - 4 / 5) < 0.0001)
+  assert.ok(Math.abs(capped.width! / capped.height - 4 / 5) < 0.0001)
   assert.deepEqual(resizeDimension(original, 'height', 800, aspect, limits), {
     height: 800,
     width: 640,

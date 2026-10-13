@@ -855,7 +855,11 @@ const api: StudioApi = {
           return
         }
         void Promise.resolve()
-          .then(listener)
+          .then(() =>
+            listener((pending) => {
+              ipcRenderer.send(ipcChannels.projects.windowCloseDecisionPending, requestId, pending)
+            }),
+          )
           .then(
             () => ipcRenderer.send(ipcChannels.projects.windowCloseReady, requestId, null),
             (cause: unknown) =>
@@ -869,6 +873,7 @@ const api: StudioApi = {
       const releaseHandler = (): void => onCanceled()
       ipcRenderer.on(ipcChannels.projects.prepareWindowClose, handler)
       ipcRenderer.on(ipcChannels.projects.windowCloseReleased, releaseHandler)
+      ipcRenderer.send(ipcChannels.projects.windowCloseEditorReady)
       return () => {
         ipcRenderer.removeListener(ipcChannels.projects.prepareWindowClose, handler)
         ipcRenderer.removeListener(ipcChannels.projects.windowCloseReleased, releaseHandler)

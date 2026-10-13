@@ -15,6 +15,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   acceptedResults: []
   home: []
+  presets: []
   queue: []
   redo: []
   undo: []
@@ -40,6 +41,13 @@ function selectEditAction(key: number | string) {
       <img alt="ImageGen Studio" class="brand-logo" :src="logoUrl" />
     </NButton>
     <span class="chrome-context">{{ homeOpen ? 'Projects' : 'No document' }}</span>
+    <NDropdown
+      :options="[{ key: 'presets', label: 'Presets' }]"
+      trigger="click"
+      @select="$emit('presets')"
+    >
+      <NButton aria-label="Project menu" class="chrome-menu" text>Project</NButton>
+    </NDropdown>
     <NDropdown :options="editOptions" trigger="click" @select="selectEditAction">
       <NButton aria-label="Edit menu" class="chrome-menu" :disabled="!projectActive" text>
         Edit

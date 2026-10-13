@@ -747,7 +747,10 @@ Production Main выполняет cleanup при запуске и каждый
 Повреждённая deleted запись вызывает атомарный отказ purge с сохранением всех
 строк; Main логирует отказ и сохраняет доступность остальных возможностей.
 Эта граница квалифицирована в [preset storage research](../engineering/phase-3-preset-storage-research.md);
-production Manager/Apply остаются следующими срезами.
+[production Manager](../engineering/phase-3-preset-manager-research.md) подключает
+ручной create/edit/duplicate, Deleted/Restore и защиту transient drafts к этому
+API. Project Apply, New Project customization и Save Current/result-to-preset
+остаются следующими срезами.
 
 `workflow_type` — категория применимости пресета, а не параметр генерации.
 

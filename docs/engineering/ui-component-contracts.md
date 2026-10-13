@@ -37,7 +37,10 @@ Vue-прототипа, а не готовность production UI.
 
 - **Размер и пропорции:** `v-model: ResolutionSize` (`width`/`height`: `number | null`)
   и `v-model:aspectRatio: AspectRatioState`; обязательный `max`, опциональные
-  `min` (1), `step` (8), `disabled`, `widthLabel`, `heightLabel`, `swapLabel`.
+  `min` (1), `step` (8), `disabled`, `widthLabel`, `heightLabel`, `swapLabel`,
+  `widthFormat` / `heightFormat` (public Naive number formatting callbacks).
+  Preset authoring uses the optional formatters to retain rejected raw input
+  until correction and block persistence; existing consumers omit them.
   В обычном layout, используемом New Project, поля стоят слева, SVG preview —
   справа; `layout="expanded-preview"` в узкой панели Project центрирует preview
   над полями. В обоих вариантах внешняя рамка preview имеет один фиксированный
@@ -310,3 +313,13 @@ Project. CSS marks/tooltips используют общий `prompt-editor.css` 
 `--prompt-syntax-error` / `--prompt-syntax-warning`; Naive button severity задаётся
 публичным `type`. Нельзя превращать syntax report в resource validation error.
 [Проверки и ограничения](./project-prompt-diagnostics-research.md).
+
+### Custom Naive modal root
+
+`NModal` with a custom default slot uses a `div` as its direct rendered body
+(or a Naive component such as `NCard` whose root is `div`). In the installed
+`vueuc@0.4.65` focus trap, `getMainEl()` scans sibling elements for the first
+`DIV`; a direct `section` is skipped and the trap redirects input focus to its
+sentinel. Keep semantic dialog attributes (`role="dialog"`, `aria-modal`, name)
+on the `div` and use semantic sections inside it. Do not disable focus trapping
+to compensate. Qualify actual typing and Tab/focus as well as mouse clicks.

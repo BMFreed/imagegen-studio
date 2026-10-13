@@ -123,6 +123,8 @@ export const ipcChannels = {
     undo: 'projects:undo',
     updateGenerationDraft: 'projects:update-generation-draft',
     updateRasterLayer: 'projects:update-raster-layer',
+    windowCloseDecisionPending: 'projects:window-close-decision-pending',
+    windowCloseEditorReady: 'projects:window-close-editor-ready',
     windowCloseReady: 'projects:window-close-ready',
     windowCloseReleased: 'projects:window-close-released',
   },
@@ -414,7 +416,10 @@ export interface ProjectApi {
     layerId: string,
     targetIndex: number,
   ) => Promise<ApiResult<ProjectTab>>
-  onBeforeWindowClose: (listener: () => Promise<void>, onCanceled: () => void) => () => void
+  onBeforeWindowClose: (
+    listener: (setDecisionPending: (pending: boolean) => void) => Promise<void>,
+    onCanceled: () => void,
+  ) => () => void
   onGenerationChanged: (listener: () => void) => () => void
   onGenerationProgress: (listener: (snapshot: GenerationProgressSnapshot) => void) => () => void
   onTabsChanged: (listener: (tabs: ProjectTab[]) => void) => () => void

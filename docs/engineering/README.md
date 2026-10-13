@@ -1,10 +1,15 @@
 # Engineering Workflow
 
-Latest finite checkpoint: [Production preset storage/API](./phase-3-preset-storage-research.md).
+Latest implementation checkpoint: [Production Preset Manager](./phase-3-preset-manager-research.md)
+over [preset storage/API](./phase-3-preset-storage-research.md).
 Shared strict payload → native IPC/preload → Main lifetime owner → SQLite now
 supports CRUD/duplicate, soft delete/restore and automatic 30-day expiry. Actual
-Electron restart and startup purge are qualified; production manager/editor,
-Apply and result-to-preset are the next slice. PP-006 remains «Пока не обещать».
+Electron API restart and startup purge are qualified by the storage checkpoint.
+The production manual manager/editor now connects create/edit/duplicate,
+Included sections, Deleted/Restore and unsaved-change guards; its actual UI
+verification and limits are recorded in the new checkpoint. Project Apply is
+the next slice. New Project customization, Save Current/result-to-preset and
+Models handoff remain open. PP-006 remains «Пока не обещать».
 [Current Phase2C exit ledger](./phase-2c-exit-ledger.md) assigns the remaining
 Preset/Canvas/release owners and records the named missing-version handoff.
 Previous ML checkpoint: [NoobAI Karras numerical refusal](./phase-2c-noobai-karras-failure-research.md).

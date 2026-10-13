@@ -6,6 +6,7 @@ import {
   Upload as ImportIcon,
   Stack2 as ModelsIcon,
   Plus as PlusIcon,
+  Bookmark as PresetsIcon,
   Refresh as RefreshIcon,
 } from '@vicons/tabler'
 import { NAlert, NButton, NEmpty, NIcon, NInput, NSpin, NTag } from 'naive-ui'
@@ -23,6 +24,7 @@ defineEmits<{
   createProject: []
   importProject: []
   manageModels: []
+  managePresets: []
   openProject: [projectId: string]
   rebuildPreview: [projectId: string]
   refresh: []
@@ -150,6 +152,10 @@ function recoveryLabel(project: ProjectSummary): string | null {
       <NButton class="sidebar-action" quaternary @click="$emit('manageModels')">
         <template v-slot:icon><NIcon :component="ModelsIcon" /></template>
         Manage Models
+      </NButton>
+      <NButton class="sidebar-action" :disabled="busy" quaternary @click="$emit('managePresets')">
+        <template v-slot:icon><NIcon :component="PresetsIcon" /></template>
+        Manage Presets
       </NButton>
     </aside>
 

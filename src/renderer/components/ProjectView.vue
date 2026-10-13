@@ -164,6 +164,7 @@ const emit = defineEmits<{
   generate: [iterations: number]
   importImage: []
   manageModels: [focus: ModelManagerFocus | null]
+  managePresets: []
   moveLayer: [layerId: string, targetIndex: number]
   redo: []
   refreshGenerationResults: []
@@ -1467,6 +1468,9 @@ function applyFitBbox() {
           </p>
         </footer>
         <div class="settings-scroll">
+          <NButton :disabled="busy" size="small" tertiary @click="emit('managePresets')">
+            Manage Presets
+          </NButton>
           <div class="document-actions">
             <span
               class="document-state"
