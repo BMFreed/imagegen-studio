@@ -2292,7 +2292,8 @@ NoobAI MVP или release gate.
 
 ## Фаза 3. Presets
 
-**Текущий checkpoint:** [Project Apply Models handoff](../engineering/phase-3-preset-model-handoff-research.md)
+**Текущий checkpoint:** [Installed Project presets EPS/V](../engineering/phase-3-installed-presets-research.md)
+поверх [Project Apply Models handoff](../engineering/phase-3-preset-model-handoff-research.md)
 поверх [Accepted Raster result](../engineering/phase-3-result-preset-research.md),
 [New Project preset customization](../engineering/phase-3-new-project-preset-research.md)
 поверх [Save Current](../engineering/phase-3-preset-save-current-research.md),
@@ -2333,14 +2334,23 @@ no-worker read, transient guards, explicit Create и source ownership описа
 checkpoint. Project Apply Models handoff теперь сохраняет edited/selected copy,
 raw fields и focus при exact-resource browsing/return; expected SHA mismatch и
 failed/stale catalog сохраняют явные diagnostics. Qualification и PP-006 pilot
-описаны в новом checkpoint. Smart Patch source/target, other-context handoff и
-installed checkpoint Apply→inference остаются открытыми.
+описаны в новом checkpoint. Installed NoobAI EPS/V full/partial Apply → inference
+проверен через native picker: 8 actual admissions/completions, 4 manual wholeRGBA
+контроля, 4 accepted Save/reopen/Compare/result-preset цепочки. Source policy hints
+остаются advisory, current exact-file policy владеет worker input и provenance.
+Independent raw readback: 646 checks; два production source mutants дают 4 targeted
+RED и 4 neighbor GREEN, оба восстановлены. Только Euler/Normal256/N3/CFG4/Fixed0,
+Digital Art−0.5/native VAE FP32; Anima Apply и другие recipes этим не доказаны.
+Smart Patch source/target и other-context handoff остаются открытыми.
 PP-006 остаётся «Пока не обещать».
 
-**Следующий срез:** qualified installed checkpoint → native Project picker →
-full/partial Apply → inference; NoobAI EPS/V и recorded sampler/noise-profile
-snapshot должны сохранять current exact-file library policy. Smart Patch —
-owner фазы 4, handoffs остальных контекстов — фазы 5.
+**Следующий срез — фаза 4:** production Smart Patch document foundation:
+`+ Patch` → owned empty mask/bbox/internal resolution/generation draft → layer
+selection → Undo/Redo → Save/reopen/recovery. Variants/generation, painting и
+regional masks идут последующими срезами. Other-context Models handoffs остаются
+owner фазы 5. Каждая непроверенная комбинация уже проверенных осей не становится
+автоматическим дополнительным ML gate; ограничения текущего installed среза
+остаются явными.
 
 **Зависимости:** первый generation slice 2C, production resources и `.igs`.
 

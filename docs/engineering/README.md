@@ -1,12 +1,22 @@
 # Engineering Workflow
 
-Latest implementation checkpoint: [Project Apply Models handoff](./phase-3-preset-model-handoff-research.md)
+Latest implementation checkpoint: [Installed Project presets EPS/V](./phase-3-installed-presets-research.md)
+over [Project Apply Models handoff](./phase-3-preset-model-handoff-research.md)
 over [Accepted Raster result preset](./phase-3-result-preset-research.md),
 [New Project preset customization](./phase-3-new-project-preset-research.md),
 [Save Current](./phase-3-preset-save-current-research.md),
 [Project Apply](./phase-3-preset-apply-research.md),
 [production Preset Manager](./phase-3-preset-manager-research.md) and
 [preset storage/API](./phase-3-preset-storage-research.md).
+Installed qualification connects native Project full/partial Apply to real EPS/V
+inference: 8 completions, 4 exact manual RGBA controls, 4 accepted Save/reopen,
+Compare and result-preset chains. Source/library policy stays unchanged; effective
+worker/provenance uses current exact-file policy. Independent raw readback passes
+646 checks; targeted source mutations are restored. Declared Euler256/N3 recipe
+only, with all payload/source/bounds/cleanup limits in the new checkpoint.
+Next roadmap owner is Phase 4 Smart Patch document foundation; PP-006 stays open
+for its Smart Patch and other-context handoffs.
+
 Shared strict payload → native IPC/preload → Main lifetime owner → SQLite now
 supports CRUD/duplicate, soft delete/restore and automatic 30-day expiry. Actual
 Electron API restart and startup purge are qualified by the storage checkpoint.
