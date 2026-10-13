@@ -6,7 +6,7 @@
  */
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readdir, readFile, readlink, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -140,8 +140,14 @@ export function resource(reference, key) {
 
 function finiteRecipe(value, stage) {
   if (value === undefined) return null
-  assert.deepEqual(Object.keys(value).sort(), ['iterations', 'seedBehavior'])
+  assert.deepEqual(
+    Object.keys(value).sort(),
+    value.maxPrompts === undefined
+      ? ['iterations', 'seedBehavior']
+      : ['iterations', 'maxPrompts', 'seedBehavior'],
+  )
   if (stage === 'prefix') {
+    assert.equal(value.maxPrompts, undefined)
     assert.ok(
       [1, 2, 3].includes(value.iterations) && value.seedBehavior === 'per-prompt',
       'Only declared one-pair uint32 controls/wrap or three-admission crash preconditions use an optional prefix recipe.',
@@ -153,6 +159,20 @@ function finiteRecipe(value, stage) {
     'baseline',
     'Optional numeric-control/per-prompt recipes retain all four pairs.',
   )
+  if (value.maxPrompts !== undefined) {
+    assert.ok(
+      (value.maxPrompts === 3 && value.iterations === 2 && value.seedBehavior === 'per-prompt') ||
+        (value.maxPrompts === 1 &&
+          [31, 33].includes(value.iterations) &&
+          value.seedBehavior === 'per-iteration'),
+      'Only the declared three-pair PP6 and one-pair PI31/refusal33 admission recipes supply a prefix override.',
+    )
+    return {
+      iterations: value.iterations,
+      maxPrompts: value.maxPrompts,
+      seedBehavior: value.seedBehavior,
+    }
+  }
   assert.ok(
     (value.iterations === 8 && value.seedBehavior === 'per-iteration') ||
       (value.iterations === 2 && value.seedBehavior === 'per-prompt'),
@@ -176,6 +196,8 @@ export function authoring(reference, stage, mode, options = {}) {
   assert.ok(['baseline', 'prefix'].includes(stage))
   assert.ok(['img2img', 'outpaint'].includes(mode))
   const recipe = finiteRecipe(options.recipe, stage)
+  const concretePair = options.concretePair === true
+  assert.ok(!concretePair || (stage === 'baseline' && recipe?.maxPrompts === 1))
   return {
     model: resource(reference, 'anima'),
     vae: null,
@@ -183,21 +205,21 @@ export function authoring(reference, stage, mode, options = {}) {
     cfgRescale: 0,
     positivePrompt: {
       text:
-        stage === 'prefix' && recipe
+        concretePair || (stage === 'prefix' && recipe)
           ? 'a (red:1.3) ceramic cup on a wooden table, studio photograph'
           : 'a {(red:1.3)|(blue:1.3)} ceramic cup on a wooden table, studio photograph',
       embeddingRefs: [],
     },
     negativePrompt: {
       text:
-        stage === 'prefix' && recipe
+        concretePair || (stage === 'prefix' && recipe)
           ? '(blurry:0.7), low quality'
           : '{(blurry:0.7)|(noisy:0.7)}, low quality',
       embeddingRefs: [],
     },
     seed: capturedSeed(options.seed),
     dynamicPrompt: {
-      maxPrompts: stage === 'baseline' ? 4 : 1,
+      maxPrompts: recipe?.maxPrompts ?? (stage === 'baseline' ? 4 : 1),
       seedBehavior: recipe?.seedBehavior ?? 'per-iteration',
     },
     sampling: {
@@ -289,6 +311,8 @@ export async function produced(reference, stage, mode, options = {}) {
   // Snapshot finite caller inputs before PNG construction, qualification or any other await.
   const selectedSeed = capturedSeed(options.seed)
   const controlledRandomSeed = options.randomSeed
+  const concretePair = options.concretePair === true
+  const observeRefusal = options.observeRefusal === true
   // Optional supplied cursor/saved-snapshot preconditions. This direct producer does not read
   // an operational cursor; scoped SQLite reads and actual restart recovery have separate owners.
   const lastActualSeed = options.lastActualSeed
@@ -304,9 +328,11 @@ export async function produced(reference, stage, mode, options = {}) {
   const document = createEmptyProjectDocumentV1({ title: 'Anima image Main boundary' })
   document.primaryBbox = { x: mode === 'outpaint' ? 64 : 0, y: 0, width: 256, height: 256 }
   const recipe = finiteRecipe(options.recipe, stage)
+  assert.ok(!observeRefusal || (concretePair && recipe?.iterations === 33))
   document.generationDraft = authoring(reference, stage, mode, {
     recipe: options.recipe,
     seed: selectedSeed,
+    concretePair,
   })
   const iterations = options.plain === true ? 1 : (recipe?.iterations ?? 2)
   const lateDynamic = recipe
@@ -365,10 +391,7 @@ export async function produced(reference, stage, mode, options = {}) {
   const originalPrepared = structuredClone(prepared.context)
   // IMG's real producer returns immutable output. This mutable retained-caller copy lets the test
   // prove orchestrator capture rather than merely benefiting from the producer's Object.freeze.
-  const preparedBatch =
-    mode === 'img2img'
-      ? structuredClone(prepareAnimaGenerationBatch({ prepared, iterations }))
-      : undefined
+  let preparedBatch
   const batchOptions = {
     iterations,
     maxPrompts: authoredDraft.dynamicPrompt.maxPrompts,
@@ -470,20 +493,106 @@ export async function produced(reference, stage, mode, options = {}) {
       batchOptions.maxPrompts = 1
       batchOptions.seedBehavior = lateDynamic.seedBehavior
     }
-    const admitted = await (mode === 'outpaint'
-      ? orchestrator.enqueuePreparedOutpaintBatch(
-          tabId,
-          prepared,
-          batchOptions,
-          { ready: callerReady },
-          editRetainedCaller,
-        )
-      : orchestrator.enqueuePreparedAnimaBatch(
-          tabId,
-          preparedBatch,
-          { ready: callerReady },
-          editRetainedCaller,
-        ))
+    const admissionState = async () => {
+      const tables = {}
+      for (const name of [
+        'generation_queue_item',
+        'generation_candidate_receipt',
+        'generation_seed_cursor',
+        'generation_staging_discarded_session',
+        'generation_acceptance_journal',
+        'project_accepted_result_index',
+      ])
+        tables[name] = await database.db.selectFrom(name).selectAll().execute()
+      const privateFiles = {}
+      const inspect = async (filename, relative) => {
+        let metadata
+        try {
+          metadata = await lstat(filename)
+        } catch (error) {
+          if (error.code === 'ENOENT') {
+            privateFiles[relative] = { kind: 'absent' }
+            return
+          }
+          throw error
+        }
+        if (metadata.isSymbolicLink()) {
+          privateFiles[relative] = { kind: 'symlink', target: await readlink(filename) }
+          return
+        }
+        if (metadata.isDirectory()) {
+          privateFiles[relative] = { kind: 'directory' }
+          for (const name of (await readdir(filename)).sort())
+            await inspect(path.join(filename, name), `${relative}/${name}`)
+          return
+        }
+        assert.ok(metadata.isFile(), 'Admission effects require an observable regular file kind.')
+        privateFiles[relative] = {
+          kind: 'file',
+          byteSize: metadata.size,
+          sha256: digest(await readFile(filename)),
+        }
+      }
+      for (const relative of ['scratch', 'generation-inputs', 'recovery/generation-staging'])
+        await inspect(path.join(temporary, relative), relative)
+      return {
+        tables,
+        privateFiles,
+        projectIdentitySha256: digest(await readFile(projectPath)),
+        document: structuredClone(document),
+      }
+    }
+    const admissionStateBefore = observeRefusal ? await admissionState() : undefined
+    let admitted
+    try {
+      // Creating the real IMG batch inside this fixture's DB lifetime makes cap refusal observable.
+      // Production preparation and planning remain actual; defaults follow the same owner sequence.
+      preparedBatch =
+        mode === 'img2img'
+          ? structuredClone(prepareAnimaGenerationBatch({ prepared, iterations }))
+          : undefined
+      admitted = await (mode === 'outpaint'
+        ? orchestrator.enqueuePreparedOutpaintBatch(
+            tabId,
+            prepared,
+            batchOptions,
+            { ready: callerReady },
+            editRetainedCaller,
+          )
+        : orchestrator.enqueuePreparedAnimaBatch(
+            tabId,
+            preparedBatch,
+            { ready: callerReady },
+            editRetainedCaller,
+          ))
+    } catch (error) {
+      if (!observeRefusal) throw error
+      return {
+        refusal: { name: error.name, code: error.code, message: error.message },
+        admissionStateBefore,
+        admissionStateAfter: await admissionState(),
+        preparedSeed: originalPrepared.sampling.seed,
+        authoredDraft,
+        originalPrepared,
+        picks,
+        edits,
+        capacityPreflights: capacityChecks.length,
+      }
+    }
+    if (observeRefusal)
+      return {
+        // A cap bypass must expose successful admission and changed durable inputs to the test.
+        // It cannot be turned into a fixture error or hidden by publishing supplied output pixels.
+        refusal: null,
+        admissionStateBefore,
+        admissionStateAfter: await admissionState(),
+        preparedSeed: originalPrepared.sampling.seed,
+        authoredDraft,
+        originalPrepared,
+        picks,
+        edits,
+        capacityPreflights: capacityChecks.length,
+      }
     const rows = []
     const configs = []
     const provenance = []

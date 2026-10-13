@@ -572,6 +572,10 @@ separates real `.igs`/SQLite/Electron from the shared-component mock scenario
 `?prototype=accepted-results`. Comparison, result-derived presets, Smart Patch
 history and worker-produced per-result thumbnail optimization remain open.
 
+## Installed Anima image cap32 acceptance evidence
+
+[Anima image cap32/prefix](../../../engineering/phase-2c-anima-image-batch-cap-research.md) verifies32/6 temporary candidates before explicit Add. Two confirmed33 refusals retain32 candidates and the imported source without new queue/receipt/seed/Project effects. Explicit multi-Add and Save/reopen preserve76 accepted layers across four packages with source-plus-accepted stacks33/7 and immutable provenance/owning comparisons. Two OUT previews preserve111104 source pixels. Interrupted32/11/21 remains a separate recovery observation. Smart Patch/masks/regions, quality/fullMVP/release and PP-008 public readiness remain open.
+
 ## Vue Prototype Coverage
 
 The `staging` scenario contains three completed candidates, one running job and two selected completed candidates. Focus and acceptance selection are separate. The floating strip supports focus, checkbox selection, Select all completed/Clear selection in a menu, previous/next, preview visibility, Discard All and context-specific multi-accept labels. Preview navigation scrolls the thumbnail strip to keep the focused candidate in view; it does not change acceptance selection.

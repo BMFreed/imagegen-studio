@@ -91,7 +91,9 @@ fixture after passed standalone controls physically exit. Stop on failures; pres
 original reports/owners/counts. After all six stages, independent stdlib/Pillow raw
 readback checks SQLite, staging/source/native DTOs, configurations, complete ZIP/
 assets/previews and pixel controls without importing app/planners/oracles/ML code.
-Next finite gate after this one: Anima image cap32 and retained-prefix refusal.
+At this checkpoint the next finite gate was Anima image cap32 and retained-prefix
+refusal; its separate [76/4/12/2 qualification](./phase-2c-anima-image-batch-cap-research.md)
+is now recorded.
 
 ## Actual execution and independent readback
 
@@ -175,7 +177,11 @@ refusal no longer depends on them. No second runtime or model copy was created.
 Every started bounded actor has a real registration and physical closure; the
 sole missing ACK is the proved pre-command root refusal.
 
-Next: Anima image cap32 and retained-prefix refusal using these current controls.
+The subsequent [Anima image cap32/prefix gate](./phase-2c-anima-image-batch-cap-research.md)
+is complete. Current next: NoobAI V / DPM++ 2M Karras wrong-EPS observable
+failure/diagnostics, preserving the original missing-trace limitation.
 The finite MAX-to-zero result makes no cross-pair wrap, new installed high-bit
 mutation, wider sampler/geometry, quality, Invoke trained-pixel parity, full-MVP or
 release claim.
+
+The subsequent [Anima image cap32/prefix](./phase-2c-anima-image-batch-cap-research.md) qualifies its own76 outputs/4 packages/12 prefix matches/2 preserving confirmed33 refusals. Wrap counts remain historical and separate. The current next gate is NoobAI V / DPM++ 2M Karras wrong-EPS observable failure/diagnostics; fresh evidence cannot reconstruct the lost original trace. Retained helper/control dependencies remain referenced by cap evidence; inspect active references before pruning.
