@@ -175,6 +175,29 @@ export interface SmartPatchPreparationResult {
   worldMask: VerifiedWorkerMask
 }
 
+export type SmartPatchFadeMode = 'img2img' | 'inpaint' | 'outpaint' | 'txt2img'
+
+export interface SmartPatchFadeInput {
+  contributionMaskPngPath: string
+  effectiveMask: VerifiedWorkerMask
+  maskBlur: number
+  mode: SmartPatchFadeMode
+  source: SmartPatchPreparationSource
+  stagingRoot: string
+}
+
+export type SmartPatchFadePayload = {
+  effectiveMask: VerifiedWorkerMask
+  maskBlur: number
+  mode: SmartPatchFadeMode
+  output: { contributionMaskPngPath: string; stagingRoot: string }
+  source: SmartPatchPreparationSource
+}
+
+export interface SmartPatchFadeResult {
+  contributionMask: VerifiedWorkerMask
+}
+
 export type ComposePreviewResult =
   | { merged: null; rect: null; status: 'empty'; thumbnail: null }
   | {
@@ -238,6 +261,7 @@ type PendingRequest = {
     | 'preview-done'
     | 'resource-preview-done'
     | 'self-test-result'
+    | 'smart-patch-faded'
     | 'smart-patch-prepared'
     | 'target-done'
 }
@@ -654,6 +678,20 @@ export class ProjectWorkerClient {
     })
   }
 
+  async fadeSmartPatch(input: SmartPatchFadeInput): Promise<SmartPatchFadeResult> {
+    return this.exclusive(async () => {
+      if (!this.ready.capabilities.includes('smart-patch-fade')) {
+        throw new ProjectWorkerError(
+          'WORKER_VERSION_MISMATCH',
+          'The image worker cannot prepare Smart Patch contribution fade.',
+        )
+      }
+      return fadeSmartPatchWithTransport(input, this.stagingBasePath, (payload) =>
+        this.request('fade-smart-patch', 'smart-patch-faded', payload),
+      )
+    })
+  }
+
   async normalizeImport(input: NormalizeImportInput): Promise<VerifiedImportResult> {
     return this.exclusive(async () => {
       const { paths, stagingRoot } = await this.validateOutputPaths(input.stagingRoot, [
@@ -925,6 +963,7 @@ export class ProjectWorkerClient {
       | 'compose-target'
       | 'create-resource-preview'
       | 'derive-image'
+      | 'fade-smart-patch'
       | 'normalize-import'
       | 'prepare-smart-patch'
       | 'self-test',
@@ -1119,6 +1158,68 @@ export async function prepareSmartPatchWithTransport(
   }
   await verifyTargetAlphaMode(processingSource)
   return { processingMask, processingSource, worldMask }
+}
+
+/** World-space output geometry; conditioning and original masks remain separate. */
+export async function fadeSmartPatchWithTransport(
+  requestInput: SmartPatchFadeInput,
+  stagingBasePath: string,
+  request: (payload: SmartPatchFadePayload) => Promise<Record<string, unknown>>,
+): Promise<SmartPatchFadeResult> {
+  const input = structuredClone(requestInput)
+  if (!Number.isInteger(input.maskBlur) || input.maskBlur < 0 || input.maskBlur > 512) {
+    throw new ProjectWorkerError('INVALID_REQUEST', 'Smart Patch blur is invalid.')
+  }
+  if (!['img2img', 'inpaint', 'outpaint', 'txt2img'].includes(input.mode)) {
+    throw new ProjectWorkerError('INVALID_REQUEST', 'Smart Patch fade mode is invalid.')
+  }
+  assertSmartPatchProcessingSize(input.source)
+  if (
+    input.effectiveMask.width !== input.source.width ||
+    input.effectiveMask.height !== input.source.height
+  ) {
+    throw new ProjectWorkerError('INVALID_REQUEST', 'Smart Patch fade planes differ in size.')
+  }
+  const { paths, stagingRoot } = await validateOutputPathsWithinBase(
+    stagingBasePath,
+    input.stagingRoot,
+    [[input.contributionMaskPngPath, '.png']],
+  )
+  await validateInputPath(input.source.path, input.source.sha256, paths)
+  await validateInputPath(input.effectiveMask.path, input.effectiveMask.sha256, paths)
+  const source = await verifyImageOutput(
+    input.source.path,
+    { ...input.source, colorSpace: 'srgb' },
+    MAX_TARGET_BYTES,
+    'png',
+  )
+  const sourceMode = await verifyTargetAlphaMode(source)
+  const maskBytes = await readSmartPatchPreparationOutput(
+    input.effectiveMask.path,
+    input.effectiveMask,
+    'mask',
+  )
+  const coverage = decodeDerivedProjectMaskPng(maskBytes, input.effectiveMask)
+  const actualMode =
+    sourceMode === 'img2img' && coverage.some((value) => value > 0) ? 'inpaint' : sourceMode
+  if (input.mode !== actualMode) {
+    throw new ProjectWorkerError(
+      'INVALID_REQUEST',
+      'Smart Patch fade mode differs from its inputs.',
+    )
+  }
+  const response = structuredClone(
+    await request({
+      effectiveMask: input.effectiveMask,
+      maskBlur: input.maskBlur,
+      mode: input.mode,
+      output: { contributionMaskPngPath: paths[0], stagingRoot },
+      source: input.source,
+    }),
+  )
+  return {
+    contributionMask: await verifyCoverageOutput(paths[0], response.contributionMask, input.source),
+  }
 }
 
 /** Existing finite CPU target limits, separate from portable/model size validity. */

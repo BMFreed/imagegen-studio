@@ -2413,7 +2413,23 @@ Result` переносит фактический expanded prompt и portable ge
 
 ## Фаза 4. Полный Canvas и Smart Patch Layer
 
-**Текущий private Main/CPU checkpoint:**
+**Текущий qualified private Main/CPU contribution checkpoint:**
+[Smart Patch world contribution core/external fade](../engineering/phase-4-smart-patch-contribution-fade-research.md)
+добавляет private `prepareContribution`:existing prepare chain в одном admitted/
+drained lease,четвёртый numeric world `contributionMask`. Soft authored alpha
+остаётся conditioning input,output core full/binary. TXT/IMG core — whole bbox;
+INP — clipped authored alpha>0;OUT — authored alpha>0 OR source alpha<255.
+Owned blur0..512/default16 задаёт external Invoke distance/curve fade в project
+pixels,padding исключён,internal dimensions не задают fade radius. Affected1888
+TS/203 Python PASS,50 fade cases/21 pinned Invoke numerical comparisons,three
+semantic RED/single-condition neighbor GREEN pairs и typecheck/lint/build/global
+Python checks PASS;physical exit/temporary-copy cleanup confirmed. Только
+pre-coherence geometry:edge/latent/infill expansion,
+inference/queue/candidates/accepted variants и public Generate остаются позже.
+Pillow-only prepare сохраняется;native NumPy/OpenCV lazy для nontrivial fade,
+missing dependencies дают явный отказ без download/approximation. Status прежний.
+
+**Предыдущий qualified private Main/CPU checkpoint:**
 [Smart Patch effective mask/internal-size preparation](../engineering/phase-4-smart-patch-mask-preparation-research.md)
 расширяет callback lease: exact integer world clipped numeric coverage,
 internal sRGB source/numeric mask, BICUBIC resize и four-mode по исходному
@@ -2425,8 +2441,10 @@ typecheck/lint/build PASS, physical exit/temporary-copy cleanup confirmed.
 Finite internal/source2048side/4M limits не сужают document schema и не
 подтверждают latent-grid/ML admission. Original mask/document/history/seed/Save
 owners сохраняются. Strict all255 source и any-nonzero mask — явные adaptations
-от Invoke; full pixel/mode parity не заявлена. Следующий owner — numerical
-blur/fade/coherence/masked conditioning, затем queue/inference/accepted variants.
+от Invoke; full pixel/mode parity не заявлена. На preparation checkpoint следующим
+owner был numerical blur/fade/coherence/masked conditioning;contribution checkpoint
+выше берёт world geometry,затем остаются coherence/masked conditioning,
+queue/inference/accepted variants.
 Public Generate и `.igs` variant schema этим private срезом не включаются.
 
 **Предыдущий qualified private Main/CPU checkpoint:**

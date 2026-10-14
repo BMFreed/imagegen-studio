@@ -120,7 +120,32 @@ Variant lifecycle, staleness/compositing/comparison and Patch presets remain
 subsequent owners; existing authoring evidence and public promise statuses stay
 unchanged.
 
-## Current private preparation checkpoint: effective mask and internal size
+## Current qualified private contribution checkpoint: full core and external fade
+
+[Contribution research](../../../engineering/phase-4-smart-patch-contribution-fade-research.md)
+qualifies the private Main/CPU slice:affected1888 TS/203 Python PASS,including50
+fade cases/21 pinned Invoke comparisons,and three semantic RED/single-condition
+neighbor GREEN pairs;typecheck/lint/build/global Python checks PASS,physical
+exit/temporary-copy cleanup confirmed.
+`prepareContribution` chains existing preparation within one admitted/drained
+lease and adds world-bbox numeric `contributionMask`,without replacing original
+mask/document or enabling public Generate.
+
+The settled output rule differs from conditioning coverage:authored soft alpha
+is retained in the world/internal generation inputs,but every nonzero authored
+pixel seeds full contribution core. TXT/IMG core fills the whole bbox;INP core
+uses clipped authored coverage;OUT core is the union of authored coverage and
+source alpha<255. Owned blur adds external distance-transform/cubic fade in
+project pixels,padding is excluded,and internal resolution does not set the
+fade distance. Clip first:outside original paint cannot leak into bbox from
+beyond its edges. Blur0 keeps the exact binary core.
+
+This is pre-coherence geometry,not the final inference/compositing pipeline.
+Future edge coherence/latent/infill processing may expand the base edit area.
+Full Invoke scaled-pixel parity,ML execution,queue/candidates/accepted variants
+and public promise readiness remain unclaimed.
+
+## Previous qualified private preparation checkpoint: effective mask and internal size
 
 [Preparation research](../../../engineering/phase-4-smart-patch-mask-preparation-research.md)
 qualifies the private Main/CPU slice with final focused33 TS/Python24 PASS and

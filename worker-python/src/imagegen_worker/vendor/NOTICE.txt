@@ -37,6 +37,14 @@ All from InvokeAI commit 9e1540962bcca7f8fa668d7d8e02cf79d75fda3b,
 https://github.com/invoke-ai/InvokeAI/tree/9e1540962bcca7f8fa668d7d8e02cf79d75fda3b
 Attribution: InvokeAI contributors, Apache License 2.0 (LICENSE-InvokeAI.txt).
 
+ImageGen Studio's ../smart_patch_fade.py also reuses the exact external fade
+through ../outpaint_conditioning.py's validated binary keep-mask helper.
+It adapts source/owned-mask union to a copied binary contribution core, computes
+the fade in project pixels before internal scaling, and publishes only a private
+numeric contribution plane. Authored soft mask coverage is retained independently.
+This pre-coherence geometry is not complete Invoke inpaint/outpaint graph parity,
+latent conditioning, generation, accepted pixels or a new inference backend.
+
 Modifications: explicit caller-owned policy, copied RGBA source, CPU NumPy
 weighted maximum filter, bounded grid/output guards, descriptor-backed exact
 local TorchScript capture, finite output validation, and no remote service,

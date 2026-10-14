@@ -9,6 +9,8 @@ import type {
 } from './project-smart-patch-generation-input.js'
 import type {
   ProjectWorkerClient,
+  SmartPatchFadeInput,
+  SmartPatchFadeMode,
   SmartPatchPreparationInput,
   VerifiedWorkerMask,
 } from './worker-client.js'
@@ -16,7 +18,7 @@ import type {
 import { decodeDerivedProjectMaskPng } from './project-mask.js'
 import { readSmartPatchPreparationOutput } from './worker-client.js'
 
-export type SmartPatchGenerationMode = 'img2img' | 'inpaint' | 'outpaint' | 'txt2img'
+export type SmartPatchGenerationMode = SmartPatchFadeMode
 
 export interface PreparedSmartPatchGenerationInput extends FrozenSmartPatchGenerationInput {
   effectiveMask: PreparedMaskPlane
@@ -32,6 +34,45 @@ export interface PreparedMaskPlane {
   height: number
   sha256: string
   width: number
+}
+
+/** Pre-coherence world contribution geometry, not final masked inference conditioning. */
+export interface PreparedSmartPatchContributionInput extends PreparedSmartPatchGenerationInput {
+  contributionMask: PreparedMaskPlane
+}
+
+export async function prepareFrozenSmartPatchContribution(
+  input: PreparedSmartPatchGenerationInput,
+  stagingRoot: string,
+  worker: Pick<ProjectWorkerClient, 'fadeSmartPatch'>,
+): Promise<PreparedSmartPatchContributionInput> {
+  const request: SmartPatchFadeInput = {
+    contributionMaskPngPath: path.join(stagingRoot, 'world-contribution-mask.png'),
+    effectiveMask: {
+      byteSize: input.effectiveMask.bytes.length,
+      height: input.effectiveMask.height,
+      path: path.join(stagingRoot, 'world-mask.png'),
+      sha256: input.effectiveMask.sha256,
+      width: input.effectiveMask.width,
+    },
+    maskBlur: input.context.maskSettings.blur,
+    mode: input.mode,
+    source: {
+      byteSize: input.source.bytes.length,
+      height: input.source.height,
+      path: path.join(stagingRoot, 'target.png'),
+      sha256: input.source.sha256,
+      width: input.source.width,
+    },
+    stagingRoot,
+  }
+  const result = structuredClone(await worker.fadeSmartPatch(structuredClone(request)))
+  const contributionMask = await readMask(
+    request.contributionMaskPngPath,
+    result.contributionMask,
+    input.context.bbox,
+  )
+  return { ...input, contributionMask }
 }
 
 /** Private processing files are detached caller outputs, never document mask replacements. */

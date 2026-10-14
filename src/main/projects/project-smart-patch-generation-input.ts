@@ -22,7 +22,9 @@ import { readProjectMaskSource } from './project-mask.js'
 import { withProjectPathLock } from './project-path-lock.js'
 import { compositionRasterLayers, withFrozenRasterComposition } from './project-raster-snapshot.js'
 import {
+  type PreparedSmartPatchContributionInput,
   type PreparedSmartPatchGenerationInput,
+  prepareFrozenSmartPatchContribution,
   prepareFrozenSmartPatchInput,
 } from './project-smart-patch-preparation.js'
 import { classifyTargetPngAlpha } from './target-png-mode.js'
@@ -66,6 +68,9 @@ export interface CapturedSmartPatchGenerationInput {
   maskPngBytes: Buffer | null
   /** Main-only leased material; never a portable path or renderer capability. */
   maskPngPath: string | null
+  prepareContribution: (
+    worker: Pick<ProjectWorkerClient, 'composeTarget' | 'fadeSmartPatch' | 'prepareSmartPatch'>,
+  ) => Promise<PreparedSmartPatchContributionInput>
   prepareInput: (
     worker: Pick<ProjectWorkerClient, 'composeTarget' | 'prepareSmartPatch'>,
   ) => Promise<PreparedSmartPatchGenerationInput>
@@ -182,22 +187,37 @@ export async function withFrozenSmartPatchGenerationInput<T>(
             const stagingRoot = await mkdtemp(path.join(composition.stagingRoot, 'source-'))
             return composeAt(worker, stagingRoot)
           })
+        const prepareAt = async (
+          worker: Pick<ProjectWorkerClient, 'composeTarget' | 'prepareSmartPatch'>,
+          stagingRoot: string,
+        ): Promise<PreparedSmartPatchGenerationInput> => {
+          const composed = await composeAt(worker, stagingRoot)
+          return prepareFrozenSmartPatchInput(
+            {
+              context,
+              maskPngBytes,
+              maskPngPath,
+              source: composed.source,
+              sourceAlpha: composed.sourceAlpha,
+              stagingRoot,
+            },
+            worker,
+          )
+        }
         const prepareInput: CapturedSmartPatchGenerationInput['prepareInput'] = (worker) =>
           startOperation(async () => {
             assertSmartPatchProcessingSize(context.internalResolution)
             const stagingRoot = await mkdtemp(path.join(composition.stagingRoot, 'prepared-'))
-            const composed = await composeAt(worker, stagingRoot)
-            return prepareFrozenSmartPatchInput(
-              {
-                context,
-                maskPngBytes,
-                maskPngPath,
-                source: composed.source,
-                sourceAlpha: composed.sourceAlpha,
-                stagingRoot,
-              },
-              worker,
-            )
+            return prepareAt(worker, stagingRoot)
+          })
+        const prepareContribution: CapturedSmartPatchGenerationInput['prepareContribution'] = (
+          worker,
+        ) =>
+          startOperation(async () => {
+            assertSmartPatchProcessingSize(context.internalResolution)
+            const stagingRoot = await mkdtemp(path.join(composition.stagingRoot, 'contribution-'))
+            const prepared = await prepareAt(worker, stagingRoot)
+            return prepareFrozenSmartPatchContribution(prepared, stagingRoot, worker)
           })
         try {
           return await use({
@@ -206,6 +226,7 @@ export async function withFrozenSmartPatchGenerationInput<T>(
             document: structuredClone(document),
             maskPngBytes: maskPngBytes ? Buffer.from(maskPngBytes) : null,
             maskPngPath,
+            prepareContribution,
             prepareInput,
           })
         } finally {

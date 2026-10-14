@@ -53,8 +53,17 @@ Smart Patch Layer owns:
 If a setting affects an already generated Smart Patch Layer, changing it marks the layer as `outdated`.
 
 Owned `maskSettings.blur` is an integer project-pixel value0..512, default16.
-The painted mask remains immutable; the future generation/compositing snapshot
-must freeze and consume blur, and a changed blur can stale an accepted variant.
+The painted mask remains immutable; the generation/compositing snapshot must
+freeze and consume blur,and a changed blur can stale an accepted variant.
+The [private contribution scope](../../../engineering/phase-4-smart-patch-contribution-fade-research.md)
+qualifies its private CPU consumer:affected1888 TS/203 Python PASS,including50
+fade cases/21 pinned Invoke comparisons,and three semantic RED/neighbor GREEN
+pairs;typecheck/lint/build/global Python checks PASS,exit/cleanup confirmed. Soft authored
+alpha stays in conditioning inputs,but nonzero pixels seed full/binary output
+core. TXT/IMG use whole-bbox core,INP uses authored clipped coverage,and OUT uses
+its union with source alpha<255. Blur0 gives binary core;positive blur gives
+external Invoke distance/curve fade in world project pixels. It does not blur
+painted coverage or attenuate contribution within a soft painted core.
 Owned `maskSettings.padding` is an integer Fit margin0..512, default8. Padding
 does not process pixels or stale a result by itself; a later Fit that changes
 bbox changes the generation input. Overlay visibility/color/opacity are viewer
@@ -65,7 +74,7 @@ The existing production settings UI/persistence and Fit are qualified by the
 The [private Main/CPU input capture](../../../engineering/phase-4-smart-patch-generation-capture-research.md)
 is qualified by focused14/affected1852 tests and actual CPU composition;
 it records whole owned mask and source RGBA/source alpha without applying blur or
-implementing inpaint. The current [effective-mask/internal-size preparation](../../../engineering/phase-4-smart-patch-mask-preparation-research.md)
+implementing inpaint. The previous [effective-mask/internal-size preparation](../../../engineering/phase-4-smart-patch-mask-preparation-research.md)
 checkpoint derives zero-padded bbox-local numeric generate coverage, resizes numeric
 coverage and sRGB source independently with BICUBIC, and retains world-derived
 mode with `processingMaskHasCoverage` reporting. Final focused33 TS/Python24 and
@@ -74,12 +83,15 @@ pass; required typecheck/lint/build pass, physical exit and temporary-copy
 cleanup are confirmed in the checkpoint.
 It does not apply blur/fade/coherence or prepare latent conditioning.
 
-Internal resolution may differ from world-space bbox size. The upcoming worker
-pipeline must explicitly adapt project-pixel blur through that scale, including
-nonuniform scaling. Invoke's scaled `addInpaint` graph expands/fades at processing
-size and then resizes the mask back; directly copying that numeric radius does
-not prove the same project-space edge width. The choice and actual pixel oracle
-belong to the later processing slice. Scaled Invoke blur parity is not claimed.
+Internal resolution may differ from world-space bbox size. The current
+contribution scope computes project-pixel fade directly from world planes,
+independently of the existing internal-size preparation outputs;nonuniform
+internal scaling therefore does
+not change this geometric fade distance. Invoke's scaled `addInpaint` graph
+expands/fades at processing size and then resizes the mask back,so full scaled
+pixel parity is not claimed. This helper is pre-coherence geometry:later edge
+coherence,latent/infill processing may expand the base edit area and still needs
+an explicit numerical contract/oracle before final inference/compositing.
 
 Current-operation compositing settings can be used before a Smart Patch Layer exists. Once a Smart Patch Layer is created, the relevant settings are copied into the layer-owned state.
 

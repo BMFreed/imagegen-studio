@@ -18,36 +18,40 @@ from PIL import __version__ as pillow_version
 source_root = Path(sys.argv[1]).resolve(strict=True)
 sys.path.insert(0, str(source_root))
 
-from imagegen_worker import compositor, smart_patch_preparation
+from imagegen_worker import compositor, smart_patch_fade, smart_patch_preparation
 from imagegen_worker.protocol import process_request
 
 envelope = json.loads(sys.stdin.read())
 request = envelope["request"]
 response = process_request(request)
-expected_type = (
-    "target-done" if request["type"] == "compose-target" else "smart-patch-prepared"
-)
+expected_type = {
+    "compose-target": "target-done",
+    "prepare-smart-patch": "smart-patch-prepared",
+    "fade-smart-patch": "smart-patch-faded",
+}[request["type"]]
 if response.get("type") != expected_type:
     raise RuntimeError(f"Actual CPU protocol route failed: {response!r}")
 
-for module in (compositor, smart_patch_preparation):
+for module in (compositor, smart_patch_preparation, smart_patch_fade):
     if not Path(module.__file__).resolve(strict=True).is_relative_to(source_root):
         raise RuntimeError("The requested checkout's production CPU module was not loaded.")
 
-paths = (
-    {"source": request["output"]["targetPngPath"]}
-    if request["type"] == "compose-target"
-    else {
+if request["type"] == "compose-target":
+    paths = {"source": request["output"]["targetPngPath"]}
+elif request["type"] == "fade-smart-patch":
+    paths = {"contributionMask": request["output"]["contributionMaskPngPath"]}
+else:
+    paths = {
         "effectiveMask": request["output"]["worldMaskPngPath"],
         "processingSource": request["output"]["processingSourcePngPath"],
         "processingMask": request["output"]["processingMaskPngPath"],
     }
-)
 
-if envelope.get("corrupt") == "processing-mask-rgb":
+if envelope.get("corrupt") in ("processing-mask-rgb", "contribution-mask-rgb"):
     # Mutate an actual output after the real algorithm has completed. Update the
     # response hash so integrity alone cannot hide missing numeric-RGB validation.
-    target = Path(paths["processingMask"])
+    plane = "processingMask" if envelope["corrupt"] == "processing-mask-rgb" else "contributionMask"
+    target = Path(paths[plane])
     with Image.open(target) as original:
         original.load()
         damaged = original.copy()
@@ -55,8 +59,8 @@ if envelope.get("corrupt") == "processing-mask-rgb":
     damaged.putpixel((0, 0), (254, green, blue, alpha))
     damaged.save(target, "PNG")
     damaged_bytes = target.read_bytes()
-    response["processingMask"]["byteSize"] = len(damaged_bytes)
-    response["processingMask"]["sha256"] = hashlib.sha256(damaged_bytes).hexdigest()
+    response[plane]["byteSize"] = len(damaged_bytes)
+    response[plane]["sha256"] = hashlib.sha256(damaged_bytes).hexdigest()
 
 decoded = {}
 for name, output_path in paths.items():
@@ -95,6 +99,7 @@ print(
             "decoded": decoded,
             "compositorPath": str(Path(compositor.__file__).resolve(strict=True)),
             "preparationPath": str(Path(smart_patch_preparation.__file__).resolve(strict=True)),
+            "fadePath": str(Path(smart_patch_fade.__file__).resolve(strict=True)),
             "pillowVersion": pillow_version,
             "loadedMlModules": loaded_ml,
         }

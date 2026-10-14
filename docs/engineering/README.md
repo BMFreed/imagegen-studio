@@ -1,6 +1,20 @@
 # Engineering Workflow
 
-Current private Main/CPU preparation checkpoint:
+Current qualified private Main/CPU contribution checkpoint:
+[Smart Patch world contribution core/external fade](./phase-4-smart-patch-contribution-fade-research.md).
+The qualified `prepareContribution` path chains existing preparation inside one
+drained lease and adds a world-bbox numeric contribution mask. Authored soft
+coverage remains in conditioning inputs;contribution core is full/binary,OUT uses
+authored coverage plus source alpha holes,and owned blur applies an exact Invoke
+distance/curve in project pixels. Native modules load lazily for nontrivial fade;
+existing Pillow-only preparation stays independent. Final affected1888 TS/203
+Python PASS,including50 fade cases/21 pinned Invoke numerical comparisons;three
+isolated semantic RED/single-condition neighbor GREEN pairs,typecheck/lint/build
+and global Python checks PASS. Physical exit/temporary-copy cleanup confirmed.
+This is pre-coherence geometry only;no public Generate/inference/variant
+capability or public promise readiness is added.
+
+Previous qualified private Main/CPU preparation checkpoint:
 [Smart Patch effective mask/internal-size preparation](./phase-4-smart-patch-mask-preparation-research.md).
 The slice derives numeric world-bbox mask coverage, internal-size
 sRGB source and numeric mask, with world-derived four-mode classification and
@@ -10,8 +24,10 @@ affected1871 TS/125 Python PASS. Required typecheck/lint/build and global Python
 Ruff/basedpyright pass; physical exit and temporary-copy cleanup are confirmed.
 BICUBIC resizing follows Invoke's resize default; strict all255 source alpha and
 any-nonzero soft-mask policy remain explicit ImageGen Studio adaptations.
-Blur/fade/coherence, GPU inference, public Generate, queue/staging and accepted
-variants are later owners. Public promise statuses stay unchanged.
+At that checkpoint blur/fade/coherence were later owners;the current
+contribution scope above addresses world contribution geometry only. Coherence,
+GPU inference,public Generate,queue/staging and accepted variants remain later
+owners. Public promise statuses stay unchanged.
 
 Previous qualified private Main/CPU checkpoint:
 [Smart Patch generation input capture](./phase-4-smart-patch-generation-capture-research.md).

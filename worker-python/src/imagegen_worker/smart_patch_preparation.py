@@ -219,7 +219,11 @@ def _verify_png_stream(snapshot: bytes, width: int, height: int, *, numeric_mask
         raise DerivativeError("INVALID_IMAGE", "Preparation PNG pixel stream differs.")
 
 
-def _decode(image: PreparationImage, *, numeric_mask: bool) -> Image.Image:
+def decode_preparation_image(
+    image: PreparationImage, *, numeric_mask: bool, require_tight_mask: bool = True
+) -> Image.Image:
+    """Capture exact source/numeric pixels; owned-mask tightness remains the default."""
+    _dimensions(image.width, image.height, owned_mask=numeric_mask)
     snapshot = _snapshot(image)
     _verify_png_stream(snapshot, image.width, image.height, numeric_mask=numeric_mask)
     if not numeric_mask:
@@ -251,7 +255,12 @@ def _decode(image: PreparationImage, *, numeric_mask: bool) -> Image.Image:
     if numeric_mask:
         if any(captured.getchannel(channel).getextrema() != (255, 255) for channel in "RGB"):
             raise DerivativeError("INVALID_IMAGE", "Owned mask RGB must be white.")
-        if captured.getchannel("A").getbbox() != (0, 0, image.width, image.height):
+        if require_tight_mask and captured.getchannel("A").getbbox() != (
+            0,
+            0,
+            image.width,
+            image.height,
+        ):
             raise DerivativeError("INVALID_IMAGE", "Owned mask must have nonempty tight coverage.")
     return captured
 
@@ -377,9 +386,13 @@ def prepare_smart_patch(request: SmartPatchPreparationRequest) -> SmartPatchPrep
         ):
             raise DerivativeError("INVALID_REQUEST", "Owned mask dimensions must match bounds.")
     destinations = _paths(request)
-    source = _decode(request.source, numeric_mask=False)
+    source = decode_preparation_image(request.source, numeric_mask=False)
     # Verify the whole original mask before clipping, including a fully disjoint mask.
-    mask = _decode(request.mask, numeric_mask=True) if request.mask is not None else None
+    mask = (
+        decode_preparation_image(request.mask, numeric_mask=True)
+        if request.mask is not None
+        else None
+    )
     world = _world_coverage(mask, request)
     processing_size = (size["width"], size["height"])
     processing_source = (

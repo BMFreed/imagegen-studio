@@ -28,7 +28,11 @@ import { encodeProjectMaskPng } from './project-mask.js'
 import { readProjectPlaceholders } from './project-placeholders.js'
 import { ProjectService } from './project-service.js'
 import { ProjectShadowStore } from './project-shadow.js'
-import { composeTargetWithTransport, prepareSmartPatchWithTransport } from './worker-client.js'
+import {
+  composeTargetWithTransport,
+  fadeSmartPatchWithTransport,
+  prepareSmartPatchWithTransport,
+} from './worker-client.js'
 
 const REPOSITORY_ROOT = path.resolve(import.meta.dirname, '../../..')
 const WORKER_SOURCE = path.join(REPOSITORY_ROOT, 'worker-python/src')
@@ -50,6 +54,7 @@ type CpuObservation = {
       width: number
     }
   >
+  fadePath: string
   loadedMlModules: string[]
   pillowVersion: string
   preparationPath: string
@@ -60,6 +65,7 @@ type FixtureOptions = {
   bbox: IgsRectV1
   internal?: { height: number; width: number }
   mask: { alpha: readonly number[]; bounds: IgsRectV1 } | null
+  maskSettings?: { blur: number; padding: number }
   sourceAlpha?: number
   sourceRgba?: readonly number[]
 }
@@ -190,7 +196,7 @@ async function fixture(
               revision: 3,
             }
           : { asset: null, id: maskId, revision: 0 },
-      maskSettings: { blur: 31, padding: 5 },
+      maskSettings: { ...(options.maskSettings ?? { blur: 31, padding: 5 }) },
       name: 'Owned B preparation',
       opacity: 1,
       rasterSubLayers: [],
@@ -262,10 +268,10 @@ async function fixture(
 }
 
 async function actualCpu(
-  type: 'compose-target' | 'prepare-smart-patch',
+  type: 'compose-target' | 'fade-smart-patch' | 'prepare-smart-patch',
   payload: object,
   observed: CpuObservation[],
-  corrupt?: 'processing-mask-rgb',
+  corrupt?: 'contribution-mask-rgb' | 'processing-mask-rgb',
 ): Promise<Record<string, unknown>> {
   assert.ok(existsSync(PYTHON), 'The existing checkout CPU Python environment is required')
   const execution = execFileAsync(PYTHON, ['-I', '-B', ORACLE, WORKER_SOURCE], {
@@ -293,6 +299,7 @@ async function actualCpu(
     result.preparationPath,
     path.join(WORKER_SOURCE, 'imagegen_worker/smart_patch_preparation.py'),
   )
+  assert.equal(result.fadePath, path.join(WORKER_SOURCE, 'imagegen_worker/smart_patch_fade.py'))
   assert.equal(result.pillowVersion, '12.2.0')
   assert.deepEqual(result.loadedMlModules, [])
   observed.push(result)
@@ -303,18 +310,35 @@ function cpuWorker(
   f: Fixture,
   observed: CpuObservation[],
   options: {
-    corrupt?: 'processing-mask-rgb'
+    corrupt?: 'contribution-mask-rgb' | 'processing-mask-rgb'
+    transformFadeReply?: (response: Record<string, unknown>) => void
     transformReply?: (response: Record<string, unknown>) => void
   } = {},
-): Pick<ProjectWorkerClient, 'composeTarget' | 'prepareSmartPatch'> {
+): Pick<ProjectWorkerClient, 'composeTarget' | 'fadeSmartPatch' | 'prepareSmartPatch'> {
   return {
     composeTarget: (input) =>
       composeTargetWithTransport(input, f.scratch, (payload) =>
         actualCpu('compose-target', payload, observed),
       ),
+    fadeSmartPatch: (input) =>
+      fadeSmartPatchWithTransport(input, f.scratch, async (payload) => {
+        const response = await actualCpu(
+          'fade-smart-patch',
+          payload,
+          observed,
+          options.corrupt === 'contribution-mask-rgb' ? options.corrupt : undefined,
+        )
+        options.transformFadeReply?.(response)
+        return response
+      }),
     prepareSmartPatch: (input) =>
       prepareSmartPatchWithTransport(input, f.scratch, async (payload) => {
-        const response = await actualCpu('prepare-smart-patch', payload, observed, options.corrupt)
+        const response = await actualCpu(
+          'prepare-smart-patch',
+          payload,
+          observed,
+          options.corrupt === 'processing-mask-rgb' ? options.corrupt : undefined,
+        )
         options.transformReply?.(response)
         return response
       }),
@@ -335,17 +359,18 @@ function actualRgba(
 
 function expectNumericMask(
   observed: CpuObservation[],
-  plane: 'effectiveMask' | 'processingMask',
+  plane: 'contributionMask' | 'effectiveMask' | 'processingMask',
   alpha: readonly number[],
+  index = observed.length - 1,
 ) {
-  const observation = observed.at(-1)
+  const observation = observed[index]
   assert.ok(observation, 'Numeric mask requires an actual CPU response')
   const decoded = observation.decoded[plane]
   assert.ok(decoded, 'The actual CPU response must contain its numeric plane')
   assert.equal(decoded.iccSha256, null, 'Numeric generate coverage has no image ICC metadata')
   const expected = Buffer.from(alpha.flatMap((value) => [255, 255, 255, value]))
   assert.ok(
-    actualRgba(observed, plane).equals(expected),
+    actualRgba(observed, plane, index).equals(expected),
     `Actual ${plane} pixels differ from the literal alpha oracle`,
   )
 }
@@ -628,7 +653,7 @@ test('mutating returned preparation/context buffers cannot poison a repeated act
     const observed: CpuObservation[] = []
     const worker = cpuWorker(f, observed)
     const mutatingAdapter: typeof worker = {
-      composeTarget: worker.composeTarget,
+      ...worker,
       async prepareSmartPatch(input) {
         const result = await worker.prepareSmartPatch(input)
         input.bbox.x = 700
@@ -964,6 +989,517 @@ test('new prepare capability drains a running worker after callback failure and 
             lateDispatched = true
             throw new Error('Late dispatch forbidden')
           },
+        }),
+        /closed|lease/i,
+      )
+      assert.equal(lateDispatched, false)
+      await unchanged(f, before)
+    } finally {
+      release()
+      await Promise.allSettled([capturing, pending.operation ?? Promise.resolve()])
+    }
+  })
+})
+
+// Independent axial samples from the pinned cubic least-squares control points.
+// These literals are not derived by the production fade, a test-local distance transform,
+// or the preparation bridge. Source support occupies the first two columns of each row.
+const FADE4_ROW = [255, 255, 225, 137, 44, 0, 0, 0]
+const FADE16_ROW = [
+  255, 255, 247, 230, 212, 193, 172, 151, 130, 109, 89, 70, 52, 36, 23, 12, 5, 0, 0, 0,
+]
+
+function stripeFixture(
+  blur: number,
+  width = 8,
+  internal?: { height: number; width: number },
+): FixtureOptions {
+  return {
+    bbox: { height: 3, width, x: -11, y: -7 },
+    internal,
+    mask: {
+      alpha: [1, 64, 128, 255, 64, 1],
+      bounds: { height: 3, width: 2, x: -11, y: -7 },
+    },
+    maskSettings: { blur, padding: 5 },
+  }
+}
+
+async function prepareActualContribution(
+  f: Fixture,
+  observed: CpuObservation[],
+  worker = cpuWorker(f, observed),
+) {
+  return await f.service.withCapturedSmartPatchGenerationInput(f.tabId, f.patch.id, (capture) =>
+    capture.prepareContribution(worker),
+  )
+}
+
+for (const scenario of [
+  { blur: 4, row: FADE4_ROW },
+  { blur: 16, row: FADE16_ROW },
+]) {
+  test(`actual world contribution fade${scenario.blur} has exact full core, external profile and zero cutoff`, async () => {
+    await fixture(stripeFixture(scenario.blur, scenario.row.length), async (f) => {
+      const before = await state(f)
+      const observed: CpuObservation[] = []
+      const result = await prepareActualContribution(f, observed)
+      assert.equal(result.mode, 'inpaint')
+      assert.equal(result.context.maskSettings.blur, scenario.blur)
+      assert.deepEqual(
+        [result.contributionMask.width, result.contributionMask.height],
+        [scenario.row.length, 3],
+      )
+      assert.equal(result.contributionMask.sha256, digest(result.contributionMask.bytes))
+      expectNumericMask(observed, 'contributionMask', [
+        ...scenario.row,
+        ...scenario.row,
+        ...scenario.row,
+      ])
+      assert.ok(
+        result.maskPngBytes!.equals(f.maskBytes!),
+        'Contribution cannot bake blur into the original owned PNG',
+      )
+      await unchanged(f, before)
+    })
+  })
+}
+
+for (const blur of [0, 1]) {
+  test(`actual blur${blur} contribution uses a binary core while preserving authored and processing soft alpha`, async () => {
+    await fixture(stripeFixture(blur), async (f) => {
+      const before = await state(f)
+      const observed: CpuObservation[] = []
+      const result = await prepareActualContribution(f, observed)
+      const soft = [1, 64, 0, 0, 0, 0, 0, 0, 128, 255, 0, 0, 0, 0, 0, 0, 64, 1, 0, 0, 0, 0, 0, 0]
+      const preparedIndex = observed.findLastIndex(
+        (entry) => entry.response.type === 'smart-patch-prepared',
+      )
+      assert.ok(preparedIndex >= 0)
+      expectNumericMask(observed, 'effectiveMask', soft, preparedIndex)
+      expectNumericMask(observed, 'processingMask', soft, preparedIndex)
+      expectNumericMask(
+        observed,
+        'contributionMask',
+        [255, 255, 0, 0, 0, 0, 0, 0, 255, 255, 0, 0, 0, 0, 0, 0, 255, 255, 0, 0, 0, 0, 0, 0],
+      )
+      assert.equal(result.mode, 'inpaint')
+      assert.equal(result.processingMaskHasCoverage, true)
+      assert.ok(result.maskPngBytes!.equals(f.maskBytes!))
+      await unchanged(f, before)
+    })
+  })
+}
+
+for (const blur of [0, 4]) {
+  test(`actual transparent stripe neighbor blur${blur} contributes the whole bbox with identical authored inputs`, async () => {
+    await fixture({ ...stripeFixture(blur), sourceAlpha: 0 }, async (f) => {
+      const before = await state(f)
+      const observed: CpuObservation[] = []
+      const result = await prepareActualContribution(f, observed)
+      assert.equal(result.mode, 'txt2img')
+      assert.equal(result.sourceAlpha, 'transparent')
+      assert.equal(result.context.maskSettings.blur, blur)
+      expectNumericMask(
+        observed,
+        'contributionMask',
+        Array.from({ length: 24 }, () => 255),
+      )
+      const preparedIndex = observed.findLastIndex(
+        (entry) => entry.response.type === 'smart-patch-prepared',
+      )
+      expectNumericMask(
+        observed,
+        'effectiveMask',
+        [1, 64, 0, 0, 0, 0, 0, 0, 128, 255, 0, 0, 0, 0, 0, 0, 64, 1, 0, 0, 0, 0, 0, 0],
+        preparedIndex,
+      )
+      assert.ok(result.maskPngBytes!.equals(f.maskBytes!))
+      await unchanged(f, before)
+    })
+  })
+}
+
+for (const mask of [null, { alpha: [255], bounds: { height: 1, width: 1, x: 0, y: -7 } }]) {
+  test(`actual ${mask ? 'outside' : 'null'} mask keeps source-only img2img with whole-bbox contribution`, async () => {
+    await fixture(
+      { bbox: { height: 2, width: 3, x: -3, y: -7 }, mask, maskSettings: { blur: 16, padding: 5 } },
+      async (f) => {
+        const before = await state(f)
+        const observed: CpuObservation[] = []
+        const result = await prepareActualContribution(f, observed)
+        assert.equal(result.mode, 'img2img')
+        expectNumericMask(observed, 'contributionMask', [255, 255, 255, 255, 255, 255])
+        const preparedIndex = observed.findLastIndex(
+          (entry) => entry.response.type === 'smart-patch-prepared',
+        )
+        expectNumericMask(observed, 'effectiveMask', [0, 0, 0, 0, 0, 0], preparedIndex)
+        await unchanged(f, before)
+      },
+    )
+  })
+}
+
+test('actual transparent source contributes the entire bbox despite weak partial authored coverage', async () => {
+  const bbox = { height: 2, width: 3, x: -3, y: -7 }
+  await fixture(
+    {
+      bbox,
+      mask: { alpha: [1], bounds: { height: 1, width: 1, x: bbox.x, y: bbox.y } },
+      maskSettings: { blur: 16, padding: 5 },
+      sourceAlpha: 0,
+    },
+    async (f) => {
+      const before = await state(f)
+      const observed: CpuObservation[] = []
+      const result = await prepareActualContribution(f, observed)
+      assert.equal(result.mode, 'txt2img')
+      expectNumericMask(observed, 'contributionMask', [255, 255, 255, 255, 255, 255])
+      await unchanged(f, before)
+    },
+  )
+})
+
+test('actual uniform alpha128 outpaint contributes the entire bbox with no authored mask', async () => {
+  await fixture(
+    {
+      bbox: { height: 2, width: 3, x: -3, y: -7 },
+      mask: null,
+      maskSettings: { blur: 16, padding: 5 },
+      sourceAlpha: 128,
+    },
+    async (f) => {
+      const before = await state(f)
+      const observed: CpuObservation[] = []
+      const result = await prepareActualContribution(f, observed)
+      assert.equal(result.mode, 'outpaint')
+      assert.equal(result.sourceAlpha, 'mixed')
+      expectNumericMask(observed, 'contributionMask', [255, 255, 255, 255, 255, 255])
+      await unchanged(f, before)
+    },
+  )
+})
+
+test('actual outpaint contribution unions every nonopaque source pixel with authored support without replacing either soft plane', async () => {
+  const bbox = { height: 2, width: 6, x: -3, y: -7 }
+  const sourceRow = [255, 0, 1, 128, 254, 255]
+  await fixture(
+    {
+      bbox,
+      mask: { alpha: [1, 64], bounds: { height: 2, width: 1, x: bbox.x + 5, y: bbox.y } },
+      maskSettings: { blur: 0, padding: 5 },
+      sourceRgba: [...sourceRow, ...sourceRow].flatMap((alpha) => [0, 255, 0, alpha]),
+    },
+    async (f) => {
+      const before = await state(f)
+      const observed: CpuObservation[] = []
+      const result = await prepareActualContribution(f, observed)
+      assert.equal(result.mode, 'outpaint')
+      expectNumericMask(
+        observed,
+        'contributionMask',
+        [0, 255, 255, 255, 255, 255, 0, 255, 255, 255, 255, 255],
+      )
+      const preparedIndex = observed.findLastIndex(
+        (entry) => entry.response.type === 'smart-patch-prepared',
+      )
+      expectNumericMask(
+        observed,
+        'effectiveMask',
+        [0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 64],
+        preparedIndex,
+      )
+      assert.ok(result.maskPngBytes!.equals(f.maskBytes!))
+      await unchanged(f, before)
+    },
+  )
+})
+
+test('actual source-only outpaint neighbor preserves identical source support without authored coverage', async () => {
+  const bbox = { height: 2, width: 6, x: -3, y: -7 }
+  const sourceRow = [255, 0, 1, 128, 254, 255]
+  await fixture(
+    {
+      bbox,
+      mask: null,
+      maskSettings: { blur: 0, padding: 5 },
+      sourceRgba: [...sourceRow, ...sourceRow].flatMap((alpha) => [0, 255, 0, alpha]),
+    },
+    async (f) => {
+      const before = await state(f)
+      const observed: CpuObservation[] = []
+      const result = await prepareActualContribution(f, observed)
+      assert.equal(result.mode, 'outpaint')
+      assert.equal(result.sourceAlpha, 'mixed')
+      assert.equal(result.maskPngBytes, null)
+      expectNumericMask(
+        observed,
+        'contributionMask',
+        [0, 255, 255, 255, 255, 0, 0, 255, 255, 255, 255, 0],
+      )
+      const preparedIndex = observed.findLastIndex(
+        (entry) => entry.response.type === 'smart-patch-prepared',
+      )
+      expectNumericMask(
+        observed,
+        'effectiveMask',
+        Array.from({ length: 12 }, () => 0),
+        preparedIndex,
+      )
+      await unchanged(f, before)
+    },
+  )
+})
+
+test('actual fully covered soft inpaint core has no invented fade at image edges', async () => {
+  const bbox = { height: 2, width: 3, x: -3, y: -7 }
+  await fixture(
+    {
+      bbox,
+      mask: { alpha: [1, 64, 128, 255, 64, 1], bounds: bbox },
+      maskSettings: { blur: 512, padding: 0 },
+    },
+    async (f) => {
+      const before = await state(f)
+      const observed: CpuObservation[] = []
+      const result = await prepareActualContribution(f, observed)
+      assert.equal(result.mode, 'inpaint')
+      expectNumericMask(observed, 'contributionMask', [255, 255, 255, 255, 255, 255])
+      const preparedIndex = observed.findLastIndex(
+        (entry) => entry.response.type === 'smart-patch-prepared',
+      )
+      expectNumericMask(observed, 'effectiveMask', [1, 64, 128, 255, 64, 1], preparedIndex)
+      await unchanged(f, before)
+    },
+  )
+})
+
+test('actual world fade is identical across anisotropic internal sizes and Fit-only padding changes', async () => {
+  await fixture(stripeFixture(4), async (f) => {
+    const firstBefore = await state(f)
+    const observed: CpuObservation[] = []
+    const first = await prepareActualContribution(f, observed)
+    await unchanged(f, firstBefore)
+    for (const size of [
+      { height: 3, width: 16 },
+      { height: 6, width: 4 },
+    ]) {
+      await f.service.updateSmartPatchLayer(f.tabId, f.patch.id, {
+        kind: 'internal-resolution',
+        size,
+      })
+      const tab = f.service.getOpenTabs()[0]
+      await f.service.updateSmartPatchLayer(f.tabId, f.patch.id, {
+        documentId: tab.documentId,
+        documentRevision: tab.documentRevision,
+        kind: 'bbox-padding',
+        value: 512,
+      })
+      await f.service.flushAutosave(f.tabId)
+      const before = await state(f)
+      const next = await prepareActualContribution(f, observed)
+      assert.deepEqual(next.context.internalResolution, size)
+      assert.deepEqual(next.context.maskSettings, { blur: 4, padding: 512 })
+      assert.deepEqual(
+        [next.processingSource.width, next.processingSource.height],
+        [size.width, size.height],
+      )
+      assert.deepEqual([next.contributionMask.width, next.contributionMask.height], [8, 3])
+      assert.ok(
+        next.contributionMask.bytes.equals(first.contributionMask.bytes),
+        'Internal resizing and padding cannot change project-space fade pixels',
+      )
+      expectNumericMask(observed, 'contributionMask', [...FADE4_ROW, ...FADE4_ROW, ...FADE4_ROW])
+      await unchanged(f, before)
+    }
+  })
+})
+
+test('captured contribution uses its original blur despite later setting edits and exposed input/adapter mutations', async () => {
+  await fixture(stripeFixture(4), async (f) => {
+    const observed: CpuObservation[] = []
+    const actual = cpuWorker(f, observed)
+    let replyMutationDone!: () => void
+    const replyMutated = new Promise<void>((resolve) => {
+      replyMutationDone = resolve
+    })
+    let entered!: () => void
+    const enteredCapture = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    let release!: () => void
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let before!: Awaited<ReturnType<typeof state>>
+    const capturing = f.service.withCapturedSmartPatchGenerationInput(
+      f.tabId,
+      f.patch.id,
+      async (capture) => {
+        capture.context.maskSettings.blur = 512
+        entered()
+        await released
+        const first = await capture.prepareContribution({
+          ...actual,
+          async fadeSmartPatch(input) {
+            const result = await actual.fadeSmartPatch(input)
+            input.maskBlur = 0
+            input.mode = 'txt2img'
+            input.source.width = 700
+            setImmediate(() => {
+              result.contributionMask.width = 77
+              result.contributionMask.sha256 = '0'.repeat(64)
+              replyMutationDone()
+            })
+            return result
+          },
+        })
+        await replyMutated
+        assert.equal(first.context.maskSettings.blur, 4)
+        assert.equal(first.contributionMask.width, 8)
+        assert.equal(first.contributionMask.sha256, digest(first.contributionMask.bytes))
+        expectNumericMask(observed, 'contributionMask', [...FADE4_ROW, ...FADE4_ROW, ...FADE4_ROW])
+        first.context.maskSettings.blur = 0
+        first.contributionMask.bytes.fill(0)
+        const second = await capture.prepareContribution(actual)
+        assert.equal(second.context.maskSettings.blur, 4)
+        assert.equal(second.contributionMask.sha256, digest(second.contributionMask.bytes))
+        expectNumericMask(observed, 'contributionMask', [...FADE4_ROW, ...FADE4_ROW, ...FADE4_ROW])
+        return second
+      },
+    )
+    void capturing.catch(() => undefined)
+    try {
+      await enteredCapture
+      const tab = f.service.getOpenTabs()[0]
+      await f.service.updateSmartPatchLayer(f.tabId, f.patch.id, {
+        documentId: tab.documentId,
+        documentRevision: tab.documentRevision,
+        kind: 'mask-blur',
+        value: 16,
+      })
+      await f.service.flushAutosave(f.tabId)
+      before = await state(f)
+      release()
+      const result = await capturing
+      assert.equal(result.context.maskSettings.blur, 4)
+      await unchanged(f, before)
+    } finally {
+      release()
+      await Promise.allSettled([capturing])
+    }
+  })
+})
+
+test('actual contribution output with nonwhite RGB refuses after real fade and cleans its entire private operation', async () => {
+  await fixture(stripeFixture(4), async (f) => {
+    const before = await state(f)
+    const observed: CpuObservation[] = []
+    await assert.rejects(
+      prepareActualContribution(
+        f,
+        observed,
+        cpuWorker(f, observed, { corrupt: 'contribution-mask-rgb' }),
+      ),
+      /mask|coverage|image|white|output/i,
+    )
+    assert.deepEqual(
+      observed.map((entry) => entry.response.type),
+      ['target-done', 'smart-patch-prepared', 'smart-patch-faded'],
+    )
+    await unchanged(f, before)
+    const clean: CpuObservation[] = []
+    await prepareActualContribution(f, clean)
+    expectNumericMask(clean, 'contributionMask', [...FADE4_ROW, ...FADE4_ROW, ...FADE4_ROW])
+    await unchanged(f, before)
+  })
+})
+
+test('an admitted contribution chain reaches fade after callback closure and drains before cleanup', async () => {
+  await fixture(stripeFixture(4), async (f) => {
+    const before = await state(f)
+    const observed: CpuObservation[] = []
+    const actual = cpuWorker(f, observed)
+    let entered!: () => void
+    const prepareEntered = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    let release!: () => void
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const pending: {
+      operation: ReturnType<CapturedSmartPatchGenerationInput['prepareContribution']> | null
+    } = { operation: null }
+    let held!: CapturedSmartPatchGenerationInput
+    let settled = false
+    let stage = ''
+    let fadeDispatched = false
+    const capturing = f.service.withCapturedSmartPatchGenerationInput(
+      f.tabId,
+      f.patch.id,
+      async (capture) => {
+        held = capture
+        pending.operation = capture.prepareContribution({
+          ...actual,
+          async fadeSmartPatch(input) {
+            fadeDispatched = true
+            assert.ok(
+              existsSync(stage),
+              'An admitted preparation-to-fade chain still owns its files',
+            )
+            return await actual.fadeSmartPatch(input)
+          },
+          async prepareSmartPatch(input) {
+            stage = input.stagingRoot
+            const prepared = await actual.prepareSmartPatch(input)
+            entered()
+            await released
+            return prepared
+          },
+        })
+        void pending.operation.catch(() => undefined)
+        await prepareEntered
+        throw new Error('Intentional callback failure between preparation and fade')
+      },
+    )
+    void capturing.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      },
+    )
+    try {
+      await prepareEntered
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve)
+      })
+      assert.equal(settled, false)
+      assert.equal(fadeDispatched, false)
+      assert.ok(existsSync(stage))
+      release()
+      await assert.rejects(capturing, /Intentional callback failure between preparation and fade/)
+      assert.ok(pending.operation)
+      await pending.operation
+      assert.equal(
+        fadeDispatched,
+        true,
+        'Closure cannot stop the second stage of an already admitted operation',
+      )
+      expectNumericMask(observed, 'contributionMask', [...FADE4_ROW, ...FADE4_ROW, ...FADE4_ROW])
+      assert.equal(existsSync(stage), false)
+      let lateDispatched = false
+      const late = () => {
+        lateDispatched = true
+        throw new Error('Late contribution dispatch forbidden')
+      }
+      await assert.rejects(
+        held.prepareContribution({
+          composeTarget: async () => late(),
+          fadeSmartPatch: async () => late(),
+          prepareSmartPatch: async () => late(),
         }),
         /closed|lease/i,
       )

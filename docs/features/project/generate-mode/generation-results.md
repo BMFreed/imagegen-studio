@@ -240,7 +240,7 @@ qualifies private Main/CPU source preparation (focused14/affected1852 PASS),
 without candidate publication; this Smart Patch acceptance lifecycle is not yet
 implemented or enabled by it.
 
-The current [effective-mask/internal-size preparation](../../../engineering/phase-4-smart-patch-mask-preparation-research.md)
+The previous [effective-mask/internal-size preparation](../../../engineering/phase-4-smart-patch-mask-preparation-research.md)
 checkpoint adds private derived coverage/source inputs and mode classification
 only. Final focused33 TS/Python24 and three isolated semantic RED/neighbor GREEN
 pairs and affected1871 TS/125 Python pass; required typecheck/lint/build pass,
@@ -248,6 +248,14 @@ physical exit and temporary-copy cleanup are confirmed. It leaves staging, immut
 provenance, target routing and `Add N as Variants` unavailable. Internal coverage
 loss is an explicit later inference concern, not a reason to silently replace
 the frozen world mask or acceptance context.
+
+The current [private contribution checkpoint](../../../engineering/phase-4-smart-patch-contribution-fade-research.md)
+adds binary/full output core and world-space external fade only;affected1888
+TS/203 Python PASS,three semantic RED/neighbor GREEN pairs and required checks
+qualify this private path;physical exit/temporary-copy cleanup confirmed. It
+preserves soft conditioning inputs and frozen mode/blur,without
+candidate publication or changing this acceptance lifecycle. Pre-coherence
+geometry is not final inference output or accepted variant compositing.
 
 ## Auto-Switch
 

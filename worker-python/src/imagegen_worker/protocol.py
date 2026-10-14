@@ -36,6 +36,10 @@ from imagegen_worker.derivatives import (
 )
 from imagegen_worker.imports import NormalizeImportRequest, normalize_import
 from imagegen_worker.resource_previews import ResourcePreviewRequest, create_resource_preview
+from imagegen_worker.smart_patch_fade import (
+    SmartPatchFadeRequest,
+    fade_smart_patch,
+)
 from imagegen_worker.smart_patch_preparation import (
     PreparationImage,
     PreparationMask,
@@ -100,6 +104,12 @@ class ComposeTargetCommand:
 class PrepareSmartPatchCommand:
     request_id: str
     preparation: SmartPatchPreparationRequest
+
+
+@dataclass(frozen=True)
+class FadeSmartPatchCommand:
+    request_id: str
+    fade: SmartPatchFadeRequest
 
 
 @dataclass(frozen=True)
@@ -264,6 +274,7 @@ def ready_message() -> dict[str, object]:
             "self-test",
             "target-composition",
             "smart-patch-preparation",
+            "smart-patch-fade",
         ],
     }
 
@@ -355,6 +366,17 @@ def _target_bbox(value: object) -> PreviewRect:
         "width": _positive_integer(fields["width"], "Target width"),
         "height": _positive_integer(fields["height"], "Target height"),
     }
+
+
+def _preparation_image(value: object, label: str) -> PreparationImage:
+    fields = _object(value, label, {"path", "sha256", "byteSize", "width", "height"})
+    return PreparationImage(
+        path=_path(fields["path"], f"{label} path"),
+        sha256=_sha256(fields["sha256"], f"{label} hash"),
+        byte_size=_positive_integer(fields["byteSize"], f"{label} byte size"),
+        width=_positive_integer(fields["width"], f"{label} width"),
+        height=_positive_integer(fields["height"], f"{label} height"),
+    )
 
 
 def _illustrious_noise_profile(value: object) -> IllustriousNoiseProfile:
@@ -909,6 +931,7 @@ def parse_request(
     | ComposePreviewCommand
     | ComposeTargetCommand
     | PrepareSmartPatchCommand
+    | FadeSmartPatchCommand
     | GenerateIllustriousTxt2ImgCommand
     | GenerateAnimaTxt2ImgCommand
 ):
@@ -1141,6 +1164,49 @@ def parse_request(
                 ),
             ),
         )
+    if fields.get("type") == "fade-smart-patch":
+        _object(
+            fields,
+            "Smart Patch contribution request",
+            {
+                "type",
+                "requestId",
+                "protocolVersion",
+                "source",
+                "effectiveMask",
+                "mode",
+                "maskBlur",
+                "output",
+            },
+        )
+        mode = fields["mode"]
+        if not isinstance(mode, str) or mode not in ("txt2img", "img2img", "inpaint", "outpaint"):
+            raise DerivativeError("INVALID_REQUEST", "Smart Patch mode is unsupported.")
+        mask_blur = fields["maskBlur"]
+        if type(mask_blur) is not int or not 0 <= mask_blur <= 512:
+            raise DerivativeError(
+                "INVALID_REQUEST", "Smart Patch blur must be an integer 0 to 512."
+            )
+        output = _object(
+            fields["output"],
+            "Smart Patch contribution output",
+            {"stagingRoot", "contributionMaskPngPath"},
+        )
+        return FadeSmartPatchCommand(
+            request_id=request_id,
+            fade=SmartPatchFadeRequest(
+                source=_preparation_image(fields["source"], "Smart Patch source"),
+                effective_mask=_preparation_image(
+                    fields["effectiveMask"], "Smart Patch effective mask"
+                ),
+                mode=mode,
+                mask_blur=mask_blur,
+                staging_root=_path(output["stagingRoot"], "Smart Patch staging root"),
+                contribution_mask_png_path=_path(
+                    output["contributionMaskPngPath"], "Smart Patch contribution output path"
+                ),
+            ),
+        )
     if fields.get("type") != "derive-image":
         raise DerivativeError("INVALID_REQUEST", "Request type is unsupported.")
 
@@ -1267,6 +1333,14 @@ def process_request(value: object) -> dict[str, object]:
                 "protocolVersion": PROTOCOL_VERSION,
                 "requestId": command.request_id,
                 **preparation_result,
+            }
+        if isinstance(command, FadeSmartPatchCommand):
+            contribution_result = fade_smart_patch(command.fade)
+            return {
+                "type": "smart-patch-faded",
+                "protocolVersion": PROTOCOL_VERSION,
+                "requestId": command.request_id,
+                **contribution_result,
             }
         result = normalize_import(command.imported)
         return {

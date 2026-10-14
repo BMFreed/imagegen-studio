@@ -130,6 +130,31 @@ def _fade_mask(mask: Image.Image, *, fade_radius: int, np: Any, cv2: Any) -> Ima
     return Image.fromarray(faded)
 
 
+def fade_binary_keep_mask(mask: object, *, fade_radius: int) -> Image.Image:
+    """Apply the exact pinned external fade to a bounded copied binary keep plane.
+
+    This geometry helper does not perform OUT coherence or require a latent grid.
+    Zero/full/empty work stays Pillow-only; a mixed positive-radius fade lazily
+    loads the existing NumPy/OpenCV dependencies without importing Torch.
+    """
+    radius = _radius(fade_radius)
+    if (
+        not isinstance(mask, Image.Image)
+        or mask.mode != "L"
+        or not 1 <= mask.width <= MAX_TARGET_SIDE
+        or not 1 <= mask.height <= MAX_TARGET_SIDE
+        or mask.width * mask.height > MAX_TARGET_PIXELS
+    ):
+        raise DerivativeError("INVALID_REQUEST", "Fade requires a bounded binary keep mask.")
+    captured = mask.copy()
+    if any(captured.histogram()[1:255]):
+        raise DerivativeError("INVALID_REQUEST", "Fade keep mask must contain only 0 or 255.")
+    if not radius or captured.getextrema() in ((0, 0), (255, 255)):
+        return captured
+    np, cv2 = _native_modules()
+    return _fade_mask(captured, fade_radius=radius, np=np, cv2=cv2)
+
+
 def prepare_outpaint_conditioning(
     source: object,
     *,
