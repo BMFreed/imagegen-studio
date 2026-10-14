@@ -2413,7 +2413,22 @@ Result` переносит фактический expanded prompt и portable ge
 
 ## Фаза 4. Полный Canvas и Smart Patch Layer
 
-**Текущий qualified private Main/CPU contribution checkpoint:**
+**Текущий private Main/CPU conditioning scope:**
+[Smart Patch processing-space coherence/world contribution](../engineering/phase-4-smart-patch-coherence-research.md)
+добавляет private `prepareConditioning` с frozen caller profile:Gaussian Blur/
+Box Blur/Staged,processing edge0..1024/default16,minDenoise0..1/default0.
+WORLD keep собирается до BICUBIC resize:INP255-authored,OUT numerical Pillow
+multiply с source alpha,TXT/IMG0. Latent BILINEAR и exact pinned F32 weighted
+MAX/threshold дают six grouped numeric outputs;expanded processing keep→world
+NEAREST плюс original binary world edit core,затем owned WORLD blur.
+`latentMaskHasCoverage` не меняет frozen world mode и не доказывает ML admission.
+Affected1905 TS/268 Python PASS,36 pinned Invoke comparisons,four semantic
+RED/GREEN pairs. Только private CPU policy;no coherence UI/schema/
+persistence,public Generate,infill/VAE/denoising/queue/candidates/variants.
+Internal8-grid только для этого method,old one-pixel prep/schema32768 прежние.
+Normal OUT fixed Gaussian не меняется. Public statuses прежние.
+
+**Предыдущий qualified private Main/CPU contribution checkpoint:**
 [Smart Patch world contribution core/external fade](../engineering/phase-4-smart-patch-contribution-fade-research.md)
 добавляет private `prepareContribution`:existing prepare chain в одном admitted/
 drained lease,четвёртый numeric world `contributionMask`. Soft authored alpha

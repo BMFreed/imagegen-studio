@@ -28,8 +28,9 @@ prepared input owns detached `contributionMask` bytes/identity.
 
 The user selected the Invoke-style distinction: authored soft alpha stays in
 the generation-conditioning input,while output contribution has a binary/full
-core and external fade. Soft alpha1/64/128/255 remain unchanged in the existing
-world effective and internal processing planes. They all seed the same binary
+core and external fade. Soft alpha1/64/128/255 remain exact in the clipped world
+effective plane;internal BICUBIC resampling retains numeric soft-coverage semantics
+but can change values or erase tiny coverage. Nonzero world pixels seed the same binary
 contribution core when nonzero; a soft painted core does not directly attenuate
 the eventual generated output. This slice does not yet execute conditioning or
 blend any generated image into the Project.
@@ -150,8 +151,9 @@ Do not launch the public UI or trained ML merely to test the private helper.
   masks;TXT/IMG output all255 independent of authored soft mask.
 - Exhaust the four-mode core table,including source alpha1/128/254/255 and
   authored alpha1/64/128/255. OUT uses the union,INP soft values seed full core;
-  existing effective/internal planes and original owned PNG remain soft and
-  unchanged. Null/disjoint/hole-only authored coverage does not invent inpaint
+  original owned PNG/world effective alpha stay exact,and this fade operation
+  does not alter already prepared internal numeric planes. Internal resize may
+  have changed numeric values independently. Null/disjoint/hole-only authored coverage does not invent inpaint
   or leak outside original pixels into the bbox edge.
 - Compare equal world inputs at different/anisotropic internal sizes:contribution
   bytes stay identical,and same world blur keeps project-pixel distance. Current

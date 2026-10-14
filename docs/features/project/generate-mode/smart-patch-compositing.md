@@ -52,6 +52,24 @@ Smart Patch Layer owns:
 
 If a setting affects an already generated Smart Patch Layer, changing it marks the layer as `outdated`.
 
+The settled coordinate rule is:coherence edge size is in **processing pixels**,
+owned mask blur is in **world project pixels**. The two radii do not share units.
+The [private coherence scope](../../../engineering/phase-4-smart-patch-coherence-research.md)
+is qualified by1905 affected TS/268 Python PASS,36 pinned Invoke comparisons
+and four isolated semantic RED/GREEN pairs. Its frozen
+caller-owned profile has Gaussian Blur/Box Blur/Staged,edge0..1024/default16 and
+minimum denoise0..1/default0. These are private operation parameters,not new
+persisted `.igs` settings,rendered controls or additions to reusable presets.
+
+Conditioning combines numeric WORLD keep before resizing:INP255-authored,
+OUT Pillow multiply of that keep with source alpha,TXT/IMG0. Processing BICUBIC
+and latent BILINEAR reduction precede the pinned F32 weighted MAX/threshold.
+Expanded processing keep projects NEAREST to world,then restores the original
+binary edit core before WORLD blur. `latentMaskHasCoverage` reports lost latent
+edit coverage separately;world output restoration does not prove inference
+support. Six grouped numeric outputs stay private;existing normal OUT remains
+fixed Gaussian and unchanged. No coherence UI/persistence is added by this slice.
+
 Owned `maskSettings.blur` is an integer project-pixel value0..512, default16.
 The painted mask remains immutable; the generation/compositing snapshot must
 freeze and consume blur,and a changed blur can stale an accepted variant.
@@ -89,9 +107,11 @@ independently of the existing internal-size preparation outputs;nonuniform
 internal scaling therefore does
 not change this geometric fade distance. Invoke's scaled `addInpaint` graph
 expands/fades at processing size and then resizes the mask back,so full scaled
-pixel parity is not claimed. This helper is pre-coherence geometry:later edge
-coherence,latent/infill processing may expand the base edit area and still needs
-an explicit numerical contract/oracle before final inference/compositing.
+pixel parity is not claimed. That contribution helper is pre-coherence geometry.
+The qualified private coherence scope above adds processing-space edge expansion
+and projected world contribution. VAE/infill/latent
+denoising and final inference/compositing remain subsequent owners;full scaled
+Invoke pixel parity is not claimed.
 
 Current-operation compositing settings can be used before a Smart Patch Layer exists. Once a Smart Patch Layer is created, the relevant settings are copied into the layer-owned state.
 

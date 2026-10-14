@@ -9,6 +9,8 @@ import type {
 } from './project-smart-patch-generation-input.js'
 import type {
   ProjectWorkerClient,
+  SmartPatchCoherenceParameters,
+  SmartPatchConditioningInput,
   SmartPatchFadeInput,
   SmartPatchFadeMode,
   SmartPatchPreparationInput,
@@ -39,6 +41,104 @@ export interface PreparedMaskPlane {
 /** Pre-coherence world contribution geometry, not final masked inference conditioning. */
 export interface PreparedSmartPatchContributionInput extends PreparedSmartPatchGenerationInput {
   contributionMask: PreparedMaskPlane
+}
+
+export interface PreparedSmartPatchConditioningInput extends PreparedSmartPatchGenerationInput {
+  coherence: SmartPatchCoherenceParameters
+  conditioning: {
+    expandedProcessingKeepMask: PreparedMaskPlane & { polarity: 'keep' }
+    expandedWorldKeepMask: PreparedMaskPlane & { polarity: 'keep' }
+    finalContributionMask: PreparedMaskPlane & { polarity: 'generate' }
+    latentKeepMask: PreparedMaskPlane & { polarity: 'keep' }
+    latentMaskHasCoverage: boolean
+    processingKeepMask: PreparedMaskPlane & { polarity: 'keep' }
+    worldKeepMask: PreparedMaskPlane & { polarity: 'keep' }
+  }
+}
+
+/** Six detached numerical planes; original authored/source planes remain independently owned. */
+export async function prepareFrozenSmartPatchConditioning(
+  input: PreparedSmartPatchGenerationInput,
+  stagingRoot: string,
+  coherence: SmartPatchCoherenceParameters,
+  worker: Pick<ProjectWorkerClient, 'conditionSmartPatch'>,
+): Promise<PreparedSmartPatchConditioningInput> {
+  const request: SmartPatchConditioningInput = {
+    coherence: structuredClone(coherence),
+    effectiveMask: {
+      byteSize: input.effectiveMask.bytes.length,
+      height: input.effectiveMask.height,
+      path: path.join(stagingRoot, 'world-mask.png'),
+      sha256: input.effectiveMask.sha256,
+      width: input.effectiveMask.width,
+    },
+    expandedProcessingKeepMaskPngPath: path.join(stagingRoot, 'expanded-processing-keep-mask.png'),
+    expandedWorldKeepMaskPngPath: path.join(stagingRoot, 'expanded-world-keep-mask.png'),
+    finalContributionMaskPngPath: path.join(stagingRoot, 'conditioned-world-contribution-mask.png'),
+    internalResolution: { ...input.context.internalResolution },
+    latentKeepMaskPngPath: path.join(stagingRoot, 'latent-keep-mask.png'),
+    maskBlur: input.context.maskSettings.blur,
+    mode: input.mode,
+    processingKeepMaskPngPath: path.join(stagingRoot, 'processing-keep-mask.png'),
+    source: {
+      byteSize: input.source.bytes.length,
+      height: input.source.height,
+      path: path.join(stagingRoot, 'target.png'),
+      sha256: input.source.sha256,
+      width: input.source.width,
+    },
+    stagingRoot,
+    worldKeepMaskPngPath: path.join(stagingRoot, 'world-keep-mask.png'),
+  }
+  const result = structuredClone(await worker.conditionSmartPatch(structuredClone(request)))
+  const worldKeepMask = await readMask(
+    request.worldKeepMaskPngPath,
+    result.worldKeepMask,
+    input.context.bbox,
+  )
+  const processingKeepMask = await readMask(
+    request.processingKeepMaskPngPath,
+    result.processingKeepMask,
+    input.context.internalResolution,
+  )
+  const latentDimensions = {
+    height: input.context.internalResolution.height / 8,
+    width: input.context.internalResolution.width / 8,
+  }
+  const latentKeepMask = await readMask(
+    request.latentKeepMaskPngPath,
+    result.latentKeepMask,
+    latentDimensions,
+  )
+  const expandedProcessingKeepMask = await readMask(
+    request.expandedProcessingKeepMaskPngPath,
+    result.expandedProcessingKeepMask,
+    input.context.internalResolution,
+  )
+  const expandedWorldKeepMask = await readMask(
+    request.expandedWorldKeepMaskPngPath,
+    result.expandedWorldKeepMask,
+    input.context.bbox,
+  )
+  const finalContributionMask = await readMask(
+    request.finalContributionMaskPngPath,
+    result.finalContributionMask,
+    input.context.bbox,
+  )
+  const latentAlpha = decodeDerivedProjectMaskPng(latentKeepMask.bytes, latentDimensions)
+  return {
+    ...input,
+    coherence: structuredClone(request.coherence),
+    conditioning: {
+      expandedProcessingKeepMask: { ...expandedProcessingKeepMask, polarity: 'keep' },
+      expandedWorldKeepMask: { ...expandedWorldKeepMask, polarity: 'keep' },
+      finalContributionMask: { ...finalContributionMask, polarity: 'generate' },
+      latentKeepMask: { ...latentKeepMask, polarity: 'keep' },
+      latentMaskHasCoverage: latentAlpha.some((value) => value < 255),
+      processingKeepMask: { ...processingKeepMask, polarity: 'keep' },
+      worldKeepMask: { ...worldKeepMask, polarity: 'keep' },
+    },
+  }
 }
 
 export async function prepareFrozenSmartPatchContribution(

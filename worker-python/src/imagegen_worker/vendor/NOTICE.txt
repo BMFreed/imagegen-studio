@@ -45,6 +45,17 @@ numeric contribution plane. Authored soft mask coverage is retained independentl
 This pre-coherence geometry is not complete Invoke inpaint/outpaint graph parity,
 latent conditioning, generation, accepted pixels or a new inference backend.
 
+ImageGen Studio's ../smart_patch_conditioning.py additionally adapts the three
+CreateGradientMaskInvocation coherence modes through the shared copied numeric
+keep-mask helper in ../outpaint_conditioning.py. Processing-pixel radius /8,
+BILINEAR reduction, F32 weighted MAX, Staged/minimum-denoise selection and uint8
+truncation retain the pinned algorithm. The world input combines source/authored
+keep before BICUBIC scaling; binary projected world coverage retains the original
+edit core and WORLD-pixel fade. These coordinate/core adaptations are explicit,
+not full scaled graph parity. No Torch, VAE, infill, model or inference is added
+to this private six-plane CPU preparation. Existing normal OUT defaults remain
+Gaussian16/minimum0 with their unchanged source-only policy.
+
 Modifications: explicit caller-owned policy, copied RGBA source, CPU NumPy
 weighted maximum filter, bounded grid/output guards, descriptor-backed exact
 local TorchScript capture, finite output validation, and no remote service,

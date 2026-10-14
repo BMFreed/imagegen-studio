@@ -120,7 +120,31 @@ Variant lifecycle, staleness/compositing/comparison and Patch presets remain
 subsequent owners; existing authoring evidence and public promise statuses stay
 unchanged.
 
-## Current qualified private contribution checkpoint: full core and external fade
+## Current private conditioning scope: processing edge and world blur
+
+[Coherence research](../../../engineering/phase-4-smart-patch-coherence-research.md)
+qualifies the private Main/CPU slice:1905 affected TS/268 Python PASS,
+36 pinned Invoke comparisons and four isolated semantic RED/GREEN pairs.
+`prepareConditioning` freezes caller policy before await and runs preparation/
+conditioning inside one admitted/drained lease. Its private profile has exactly
+Gaussian Blur/Box Blur/Staged,integer processing-pixel edge0..1024/default16 and
+minimum denoise0..1/default0. This does not add persisted Patch settings or UI.
+
+WORLD numeric keep is255-authored coverage for INP,and Pillow multiply of that
+keep with actual source alpha for OUT;TXT/IMG use0. Combine before BICUBIC
+internal resize and BILINEAR latent reduction. Six grouped outputs retain numeric
+keep,exact upstream processing-space coherence and binary expanded projection;
+the original world edit core is restored before owned WORLD-pixel contribution
+fade. Internal8-grid limits apply to this method only;old one-pixel preparation
+and portable document limits remain valid.
+
+`latentMaskHasCoverage` reports loss separately without silently changing the
+frozen world mode. Preserving world output core does not prove a viable latent
+mask or ML admission. VAE/infill/denoising,queue/candidates/variants/provenance,
+public Generate and new coherence controls remain later owners. Existing normal
+OUT conditioning stays unchanged;full scaled Invoke pixel parity is not claimed.
+
+## Previous qualified private contribution checkpoint: full core and external fade
 
 [Contribution research](../../../engineering/phase-4-smart-patch-contribution-fade-research.md)
 qualifies the private Main/CPU slice:affected1888 TS/203 Python PASS,including50

@@ -257,6 +257,14 @@ preserves soft conditioning inputs and frozen mode/blur,without
 candidate publication or changing this acceptance lifecycle. Pre-coherence
 geometry is not final inference output or accepted variant compositing.
 
+The qualified [private coherence scope](../../../engineering/phase-4-smart-patch-coherence-research.md)
+adds processing-space coherence/six numeric outputs with frozen private caller
+policy and projected WORLD contribution;1905 affected TS/268 Python PASS,
+36 pinned Invoke comparisons and four isolated semantic RED/GREEN pairs. This
+does not publish generated images,candidates,provenance or accepted variants and
+does not add coherence controls/schema. Explicit latent coverage loss remains a
+later inference-admission concern.
+
 ## Auto-Switch
 
 Supported focus modes may follow Invoke:

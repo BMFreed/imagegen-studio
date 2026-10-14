@@ -36,6 +36,11 @@ from imagegen_worker.derivatives import (
 )
 from imagegen_worker.imports import NormalizeImportRequest, normalize_import
 from imagegen_worker.resource_previews import ResourcePreviewRequest, create_resource_preview
+from imagegen_worker.smart_patch_conditioning import (
+    SmartPatchCoherence,
+    SmartPatchConditioningRequest,
+    condition_smart_patch,
+)
 from imagegen_worker.smart_patch_fade import (
     SmartPatchFadeRequest,
     fade_smart_patch,
@@ -110,6 +115,12 @@ class PrepareSmartPatchCommand:
 class FadeSmartPatchCommand:
     request_id: str
     fade: SmartPatchFadeRequest
+
+
+@dataclass(frozen=True)
+class ConditionSmartPatchCommand:
+    request_id: str
+    conditioning: SmartPatchConditioningRequest
 
 
 @dataclass(frozen=True)
@@ -275,6 +286,7 @@ def ready_message() -> dict[str, object]:
             "target-composition",
             "smart-patch-preparation",
             "smart-patch-fade",
+            "smart-patch-conditioning",
         ],
     }
 
@@ -932,6 +944,7 @@ def parse_request(
     | ComposeTargetCommand
     | PrepareSmartPatchCommand
     | FadeSmartPatchCommand
+    | ConditionSmartPatchCommand
     | GenerateIllustriousTxt2ImgCommand
     | GenerateAnimaTxt2ImgCommand
 ):
@@ -1207,6 +1220,96 @@ def parse_request(
                 ),
             ),
         )
+    if fields.get("type") == "condition-smart-patch":
+        _object(
+            fields,
+            "Smart Patch conditioning request",
+            {
+                "type",
+                "requestId",
+                "protocolVersion",
+                "source",
+                "effectiveMask",
+                "internalResolution",
+                "mode",
+                "maskBlur",
+                "coherence",
+                "output",
+            },
+        )
+        mode = fields["mode"]
+        if not isinstance(mode, str) or mode not in ("txt2img", "img2img", "inpaint", "outpaint"):
+            raise DerivativeError("INVALID_REQUEST", "Smart Patch mode is unsupported.")
+        mask_blur = fields["maskBlur"]
+        if type(mask_blur) is not int or not 0 <= mask_blur <= 512:
+            raise DerivativeError(
+                "INVALID_REQUEST", "Smart Patch blur must be an integer 0 to 512."
+            )
+        raw_coherence = _object(
+            fields["coherence"], "Smart Patch coherence", {"mode", "edgeSize", "minimumDenoise"}
+        )
+        coherence_mode = raw_coherence["mode"]
+        if not isinstance(coherence_mode, str) or coherence_mode not in (
+            "Gaussian Blur",
+            "Box Blur",
+            "Staged",
+        ):
+            raise DerivativeError("INVALID_REQUEST", "Smart Patch coherence mode is unsupported.")
+        edge_size = raw_coherence["edgeSize"]
+        if type(edge_size) is not int or not 0 <= edge_size <= 1024:
+            raise DerivativeError("INVALID_REQUEST", "Coherence edge must be an integer 0 to 1024.")
+        minimum = _number(raw_coherence["minimumDenoise"], "Coherence minimum denoise")
+        if not 0 <= minimum <= 1:
+            raise DerivativeError("INVALID_REQUEST", "Coherence minimum denoise must be 0 to 1.")
+        internal = _object(
+            fields["internalResolution"], "Smart Patch processing size", {"width", "height"}
+        )
+        output = _object(
+            fields["output"],
+            "Smart Patch conditioning output",
+            {
+                "stagingRoot",
+                "worldKeepMaskPngPath",
+                "processingKeepMaskPngPath",
+                "latentKeepMaskPngPath",
+                "expandedProcessingKeepMaskPngPath",
+                "expandedWorldKeepMaskPngPath",
+                "finalContributionMaskPngPath",
+            },
+        )
+        return ConditionSmartPatchCommand(
+            request_id=request_id,
+            conditioning=SmartPatchConditioningRequest(
+                source=_preparation_image(fields["source"], "Smart Patch world source"),
+                effective_mask=_preparation_image(
+                    fields["effectiveMask"], "Smart Patch effective mask"
+                ),
+                internal_resolution={
+                    "width": _positive_integer(internal["width"], "Processing width"),
+                    "height": _positive_integer(internal["height"], "Processing height"),
+                },
+                mode=mode,
+                mask_blur=mask_blur,
+                coherence=SmartPatchCoherence(coherence_mode, edge_size, minimum),
+                staging_root=_path(output["stagingRoot"], "Conditioning staging root"),
+                world_keep_mask_png_path=_path(output["worldKeepMaskPngPath"], "World keep output"),
+                processing_keep_mask_png_path=_path(
+                    output["processingKeepMaskPngPath"], "Processing keep output"
+                ),
+                latent_keep_mask_png_path=_path(
+                    output["latentKeepMaskPngPath"], "Latent keep output"
+                ),
+                expanded_processing_keep_mask_png_path=_path(
+                    output["expandedProcessingKeepMaskPngPath"], "Expanded processing keep output"
+                ),
+                expanded_world_keep_mask_png_path=_path(
+                    output["expandedWorldKeepMaskPngPath"], "Expanded world keep output"
+                ),
+                final_contribution_mask_png_path=_path(
+                    output["finalContributionMaskPngPath"], "Final contribution output"
+                ),
+            ),
+        )
     if fields.get("type") != "derive-image":
         raise DerivativeError("INVALID_REQUEST", "Request type is unsupported.")
 
@@ -1341,6 +1444,14 @@ def process_request(value: object) -> dict[str, object]:
                 "protocolVersion": PROTOCOL_VERSION,
                 "requestId": command.request_id,
                 **contribution_result,
+            }
+        if isinstance(command, ConditionSmartPatchCommand):
+            conditioning_result = condition_smart_patch(command.conditioning)
+            return {
+                "type": "smart-patch-conditioned",
+                "protocolVersion": PROTOCOL_VERSION,
+                "requestId": command.request_id,
+                **conditioning_result,
             }
         result = normalize_import(command.imported)
         return {

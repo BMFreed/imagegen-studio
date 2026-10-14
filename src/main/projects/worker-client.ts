@@ -198,6 +198,60 @@ export interface SmartPatchFadeResult {
   contributionMask: VerifiedWorkerMask
 }
 
+export interface SmartPatchCoherenceParameters {
+  edgeSize: number
+  minimumDenoise: number
+  mode: 'Box Blur' | 'Gaussian Blur' | 'Staged'
+}
+
+/** Private operation defaults from Invoke; no new persisted Patch settings. */
+export const DEFAULT_SMART_PATCH_COHERENCE: Readonly<SmartPatchCoherenceParameters> = Object.freeze(
+  { edgeSize: 16, minimumDenoise: 0, mode: 'Gaussian Blur' },
+)
+
+export interface SmartPatchConditioningInput {
+  coherence: SmartPatchCoherenceParameters
+  effectiveMask: VerifiedWorkerMask
+  expandedProcessingKeepMaskPngPath: string
+  expandedWorldKeepMaskPngPath: string
+  finalContributionMaskPngPath: string
+  internalResolution: { height: number; width: number }
+  latentKeepMaskPngPath: string
+  maskBlur: number
+  mode: SmartPatchFadeMode
+  processingKeepMaskPngPath: string
+  source: SmartPatchPreparationSource
+  stagingRoot: string
+  worldKeepMaskPngPath: string
+}
+
+export type SmartPatchConditioningPayload = {
+  coherence: SmartPatchCoherenceParameters
+  effectiveMask: VerifiedWorkerMask
+  internalResolution: { height: number; width: number }
+  maskBlur: number
+  mode: SmartPatchFadeMode
+  output: {
+    expandedProcessingKeepMaskPngPath: string
+    expandedWorldKeepMaskPngPath: string
+    finalContributionMaskPngPath: string
+    latentKeepMaskPngPath: string
+    processingKeepMaskPngPath: string
+    stagingRoot: string
+    worldKeepMaskPngPath: string
+  }
+  source: SmartPatchPreparationSource
+}
+
+export interface SmartPatchConditioningResult {
+  expandedProcessingKeepMask: VerifiedWorkerMask
+  expandedWorldKeepMask: VerifiedWorkerMask
+  finalContributionMask: VerifiedWorkerMask
+  latentKeepMask: VerifiedWorkerMask
+  processingKeepMask: VerifiedWorkerMask
+  worldKeepMask: VerifiedWorkerMask
+}
+
 export type ComposePreviewResult =
   | { merged: null; rect: null; status: 'empty'; thumbnail: null }
   | {
@@ -261,6 +315,7 @@ type PendingRequest = {
     | 'preview-done'
     | 'resource-preview-done'
     | 'self-test-result'
+    | 'smart-patch-conditioned'
     | 'smart-patch-faded'
     | 'smart-patch-prepared'
     | 'target-done'
@@ -571,6 +626,22 @@ export class ProjectWorkerClient {
       }
       return composeTargetWithTransport(input, this.stagingBasePath, (payload) =>
         this.request('compose-target', 'target-done', payload),
+      )
+    })
+  }
+
+  async conditionSmartPatch(
+    input: SmartPatchConditioningInput,
+  ): Promise<SmartPatchConditioningResult> {
+    return this.exclusive(async () => {
+      if (!this.ready.capabilities.includes('smart-patch-conditioning')) {
+        throw new ProjectWorkerError(
+          'WORKER_VERSION_MISMATCH',
+          'The image worker cannot prepare Smart Patch coherence.',
+        )
+      }
+      return conditionSmartPatchWithTransport(input, this.stagingBasePath, (payload) =>
+        this.request('condition-smart-patch', 'smart-patch-conditioned', payload),
       )
     })
   }
@@ -961,6 +1032,7 @@ export class ProjectWorkerClient {
     type:
       | 'compose-preview'
       | 'compose-target'
+      | 'condition-smart-patch'
       | 'create-resource-preview'
       | 'derive-image'
       | 'fade-smart-patch'
@@ -1219,6 +1291,140 @@ export async function fadeSmartPatchWithTransport(
   )
   return {
     contributionMask: await verifyCoverageOutput(paths[0], response.contributionMask, input.source),
+  }
+}
+
+/** Snapshot caller policy before any filesystem or worker await. */
+export function captureSmartPatchCoherenceParameters(
+  profile: SmartPatchCoherenceParameters,
+): SmartPatchCoherenceParameters {
+  if (
+    !profile ||
+    Object.keys(profile).some((key) => !['edgeSize', 'minimumDenoise', 'mode'].includes(key)) ||
+    !Number.isInteger(profile.edgeSize) ||
+    profile.edgeSize < 0 ||
+    profile.edgeSize > 1024 ||
+    !Number.isFinite(profile.minimumDenoise) ||
+    profile.minimumDenoise < 0 ||
+    profile.minimumDenoise > 1 ||
+    !['Box Blur', 'Gaussian Blur', 'Staged'].includes(profile.mode)
+  ) {
+    throw new ProjectWorkerError('INVALID_REQUEST', 'Smart Patch coherence profile is invalid.')
+  }
+  return { edgeSize: profile.edgeSize, minimumDenoise: profile.minimumDenoise, mode: profile.mode }
+}
+
+/** Private numeric conditioning; it does not mutate authored masks or enter inference. */
+export async function conditionSmartPatchWithTransport(
+  requestInput: SmartPatchConditioningInput,
+  stagingBasePath: string,
+  request: (payload: SmartPatchConditioningPayload) => Promise<Record<string, unknown>>,
+): Promise<SmartPatchConditioningResult> {
+  const input = structuredClone(requestInput)
+  input.coherence = captureSmartPatchCoherenceParameters(input.coherence)
+  assertSmartPatchConditioningSize(input.internalResolution)
+  assertSmartPatchProcessingSize(input.source)
+  if (
+    !Number.isInteger(input.maskBlur) ||
+    input.maskBlur < 0 ||
+    input.maskBlur > 512 ||
+    !['img2img', 'inpaint', 'outpaint', 'txt2img'].includes(input.mode) ||
+    input.effectiveMask.width !== input.source.width ||
+    input.effectiveMask.height !== input.source.height
+  ) {
+    throw new ProjectWorkerError('INVALID_REQUEST', 'Smart Patch conditioning inputs are invalid.')
+  }
+  const { paths, stagingRoot } = await validateOutputPathsWithinBase(
+    stagingBasePath,
+    input.stagingRoot,
+    [
+      [input.worldKeepMaskPngPath, '.png'],
+      [input.processingKeepMaskPngPath, '.png'],
+      [input.latentKeepMaskPngPath, '.png'],
+      [input.expandedProcessingKeepMaskPngPath, '.png'],
+      [input.expandedWorldKeepMaskPngPath, '.png'],
+      [input.finalContributionMaskPngPath, '.png'],
+    ],
+  )
+  await validateInputPath(input.source.path, input.source.sha256, paths)
+  await validateInputPath(input.effectiveMask.path, input.effectiveMask.sha256, paths)
+  const source = await verifyImageOutput(
+    input.source.path,
+    { ...input.source, colorSpace: 'srgb' },
+    MAX_TARGET_BYTES,
+    'png',
+  )
+  const sourceMode = await verifyTargetAlphaMode(source)
+  const maskBytes = await readSmartPatchPreparationOutput(
+    input.effectiveMask.path,
+    input.effectiveMask,
+    'mask',
+  )
+  const coverage = decodeDerivedProjectMaskPng(maskBytes, input.effectiveMask)
+  const actualMode =
+    sourceMode === 'img2img' && coverage.some((value) => value > 0) ? 'inpaint' : sourceMode
+  if (input.mode !== actualMode) {
+    throw new ProjectWorkerError(
+      'INVALID_REQUEST',
+      'Smart Patch conditioning mode differs from its inputs.',
+    )
+  }
+  const response = structuredClone(
+    await request({
+      coherence: input.coherence,
+      effectiveMask: input.effectiveMask,
+      internalResolution: input.internalResolution,
+      maskBlur: input.maskBlur,
+      mode: input.mode,
+      output: {
+        expandedProcessingKeepMaskPngPath: paths[3],
+        expandedWorldKeepMaskPngPath: paths[4],
+        finalContributionMaskPngPath: paths[5],
+        latentKeepMaskPngPath: paths[2],
+        processingKeepMaskPngPath: paths[1],
+        stagingRoot,
+        worldKeepMaskPngPath: paths[0],
+      },
+      source: input.source,
+    }),
+  )
+  return {
+    expandedProcessingKeepMask: await verifyCoverageOutput(
+      paths[3],
+      response.expandedProcessingKeepMask,
+      input.internalResolution,
+    ),
+    expandedWorldKeepMask: await verifyCoverageOutput(
+      paths[4],
+      response.expandedWorldKeepMask,
+      input.source,
+    ),
+    finalContributionMask: await verifyCoverageOutput(
+      paths[5],
+      response.finalContributionMask,
+      input.source,
+    ),
+    latentKeepMask: await verifyCoverageOutput(paths[2], response.latentKeepMask, {
+      height: input.internalResolution.height / 8,
+      width: input.internalResolution.width / 8,
+    }),
+    processingKeepMask: await verifyCoverageOutput(
+      paths[1],
+      response.processingKeepMask,
+      input.internalResolution,
+    ),
+    worldKeepMask: await verifyCoverageOutput(paths[0], response.worldKeepMask, input.source),
+  }
+}
+
+/** Only latent conditioning requires an eight-pixel grid; ordinary prep still accepts one pixel. */
+export function assertSmartPatchConditioningSize(size: { height: number; width: number }): void {
+  assertSmartPatchProcessingSize(size)
+  if (size.width < 8 || size.height < 8 || size.width % 8 !== 0 || size.height % 8 !== 0) {
+    throw new ProjectWorkerError(
+      'INVALID_REQUEST',
+      'Smart Patch conditioning requires an eight-pixel internal grid.',
+    )
   }
 }
 

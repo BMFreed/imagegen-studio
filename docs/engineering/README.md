@@ -1,6 +1,18 @@
 # Engineering Workflow
 
-Current qualified private Main/CPU contribution checkpoint:
+Current private Main/CPU conditioning scope:
+[Smart Patch processing-space coherence/world contribution](./phase-4-smart-patch-coherence-research.md).
+The qualified private `prepareConditioning` path adds a frozen caller-owned profile
+for Gaussian Blur/Box Blur/Staged,processing-pixel edge16 and minDenoise0 by
+default. WORLD keep combines authored coverage/source alpha before resize;
+actual upstream F32 weighted MAX/threshold creates latent keep and six grouped
+numeric planes. NEAREST world projection restores original binary edit core,
+then applies owned WORLD blur. Affected1905 TS/268 Python PASS,including36
+pinned Invoke comparisons;four isolated semantic RED/GREEN pairs pass. No coherence
+UI/schema,persistent control,ML execution or public Generate capability is added;
+latent coverage loss stays explicit for a later admission owner.
+
+Previous qualified private Main/CPU contribution checkpoint:
 [Smart Patch world contribution core/external fade](./phase-4-smart-patch-contribution-fade-research.md).
 The qualified `prepareContribution` path chains existing preparation inside one
 drained lease and adds a world-bbox numeric contribution mask. Authored soft

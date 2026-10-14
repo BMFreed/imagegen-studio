@@ -18,7 +18,7 @@ import { promisify } from 'node:util'
 import { crc32, deflateSync } from 'node:zlib'
 
 import type { CapturedSmartPatchGenerationInput } from './project-smart-patch-generation-input.js'
-import type { ProjectWorkerClient } from './worker-client.js'
+import type { ProjectWorkerClient, SmartPatchCoherenceParameters } from './worker-client.js'
 
 import { openAppDatabase } from '../db/database.js'
 import { readIgsPackage, saveIgsPackage } from './igs-package.js'
@@ -30,6 +30,7 @@ import { ProjectService } from './project-service.js'
 import { ProjectShadowStore } from './project-shadow.js'
 import {
   composeTargetWithTransport,
+  conditionSmartPatchWithTransport,
   fadeSmartPatchWithTransport,
   prepareSmartPatchWithTransport,
 } from './worker-client.js'
@@ -43,6 +44,7 @@ const digest = (bytes: Buffer): string => createHash('sha256').update(bytes).dig
 
 type CpuObservation = {
   compositorPath: string
+  conditioningPath: string
   decoded: Record<
     string,
     {
@@ -268,10 +270,10 @@ async function fixture(
 }
 
 async function actualCpu(
-  type: 'compose-target' | 'fade-smart-patch' | 'prepare-smart-patch',
+  type: 'compose-target' | 'condition-smart-patch' | 'fade-smart-patch' | 'prepare-smart-patch',
   payload: object,
   observed: CpuObservation[],
-  corrupt?: 'contribution-mask-rgb' | 'processing-mask-rgb',
+  corrupt?: 'conditioning-mask-rgb' | 'contribution-mask-rgb' | 'processing-mask-rgb',
 ): Promise<Record<string, unknown>> {
   assert.ok(existsSync(PYTHON), 'The existing checkout CPU Python environment is required')
   const execution = execFileAsync(PYTHON, ['-I', '-B', ORACLE, WORKER_SOURCE], {
@@ -296,6 +298,10 @@ async function actualCpu(
   const result = JSON.parse(stdout) as CpuObservation
   assert.equal(result.compositorPath, path.join(WORKER_SOURCE, 'imagegen_worker/compositor.py'))
   assert.equal(
+    result.conditioningPath,
+    path.join(WORKER_SOURCE, 'imagegen_worker/smart_patch_conditioning.py'),
+  )
+  assert.equal(
     result.preparationPath,
     path.join(WORKER_SOURCE, 'imagegen_worker/smart_patch_preparation.py'),
   )
@@ -310,15 +316,27 @@ function cpuWorker(
   f: Fixture,
   observed: CpuObservation[],
   options: {
-    corrupt?: 'contribution-mask-rgb' | 'processing-mask-rgb'
+    corrupt?: 'conditioning-mask-rgb' | 'contribution-mask-rgb' | 'processing-mask-rgb'
     transformFadeReply?: (response: Record<string, unknown>) => void
     transformReply?: (response: Record<string, unknown>) => void
   } = {},
-): Pick<ProjectWorkerClient, 'composeTarget' | 'fadeSmartPatch' | 'prepareSmartPatch'> {
+): Pick<
+  ProjectWorkerClient,
+  'composeTarget' | 'conditionSmartPatch' | 'fadeSmartPatch' | 'prepareSmartPatch'
+> {
   return {
     composeTarget: (input) =>
       composeTargetWithTransport(input, f.scratch, (payload) =>
         actualCpu('compose-target', payload, observed),
+      ),
+    conditionSmartPatch: (input) =>
+      conditionSmartPatchWithTransport(input, f.scratch, async (payload) =>
+        actualCpu(
+          'condition-smart-patch',
+          payload,
+          observed,
+          options.corrupt === 'conditioning-mask-rgb' ? options.corrupt : undefined,
+        ),
       ),
     fadeSmartPatch: (input) =>
       fadeSmartPatchWithTransport(input, f.scratch, async (payload) => {
@@ -359,7 +377,16 @@ function actualRgba(
 
 function expectNumericMask(
   observed: CpuObservation[],
-  plane: 'contributionMask' | 'effectiveMask' | 'processingMask',
+  plane:
+    | 'contributionMask'
+    | 'effectiveMask'
+    | 'expandedProcessingKeepMask'
+    | 'expandedWorldKeepMask'
+    | 'finalContributionMask'
+    | 'latentKeepMask'
+    | 'processingKeepMask'
+    | 'processingMask'
+    | 'worldKeepMask',
   alpha: readonly number[],
   index = observed.length - 1,
 ) {
@@ -1499,6 +1526,555 @@ test('an admitted contribution chain reaches fade after callback closure and dra
         held.prepareContribution({
           composeTarget: async () => late(),
           fadeSmartPatch: async () => late(),
+          prepareSmartPatch: async () => late(),
+        }),
+        /closed|lease/i,
+      )
+      assert.equal(lateDispatched, false)
+      await unchanged(f, before)
+    } finally {
+      release()
+      await Promise.allSettled([capturing, pending.operation ?? Promise.resolve()])
+    }
+  })
+})
+
+async function prepareActualConditioning(
+  f: Fixture,
+  observed: CpuObservation[],
+  coherence?: SmartPatchCoherenceParameters,
+  worker = cpuWorker(f, observed),
+) {
+  return await f.service.withCapturedSmartPatchGenerationInput(f.tabId, f.patch.id, (capture) =>
+    capture.prepareConditioning(worker, coherence),
+  )
+}
+
+function observedAlpha(observed: CpuObservation[], plane: string): number[] {
+  const rgba = actualRgba(observed, plane)
+  return Array.from({ length: rgba.length / 4 }, (_, index) => rgba[index * 4 + 3])
+}
+
+const GAUSSIAN_WEAK_CIRCLE = [
+  255, 255, 254, 255, 255, 255, 254, 254, 254, 255, 254, 254, 254, 254, 254, 255, 254, 254, 254,
+  255, 255, 255, 254, 255, 255,
+]
+const BOX_WEAK_CIRCLE = [
+  255, 255, 255, 255, 255, 255, 254, 254, 254, 255, 255, 254, 254, 254, 255, 255, 254, 254, 254,
+  255, 255, 255, 255, 255, 255,
+]
+const STAGED_WEAK_CIRCLE = [
+  255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 254, 255, 255, 255, 255, 255, 255,
+  255, 255, 255, 255, 255, 255,
+]
+
+function coherentCircleFixture(internal = { height: 40, width: 40 }): FixtureOptions {
+  return {
+    bbox: { height: 40, width: 40, x: -11, y: -7 },
+    internal,
+    mask: {
+      alpha: Array.from({ length: 64 }, () => 1),
+      bounds: { height: 8, width: 8, x: 5, y: 9 },
+    },
+    maskSettings: { blur: 0, padding: 5 },
+  }
+}
+
+// Actual Service -> actual protocol/Pillow/NumPy. The OUT literals are independently
+// normalized cubic samples of world keep [95,255], not separately resized operands.
+for (const authored of [true, false]) {
+  test(`actual ${authored ? 'authored OUT multiplication precedes' : 'source-only OUT neighbor retains source before'} BICUBIC processing resize`, async () => {
+    const bbox = { height: 1, width: 2, x: -11, y: -7 }
+    await fixture(
+      {
+        bbox,
+        internal: { height: 8, width: 8 },
+        mask: authored ? { alpha: [64], bounds: { ...bbox, width: 1 } } : null,
+        maskSettings: { blur: 0, padding: 5 },
+        sourceRgba: [0, 255, 0, 128, 0, 255, 0, 255],
+      },
+      async (f) => {
+        const before = await state(f)
+        const observed: CpuObservation[] = []
+        const result = await prepareActualConditioning(f, observed, {
+          edgeSize: 0,
+          minimumDenoise: 0,
+          mode: 'Gaussian Blur',
+        })
+        const row = authored
+          ? [77, 87, 109, 151, 199, 241, 255, 255]
+          : [114, 121, 139, 172, 211, 244, 255, 255]
+        assert.equal(result.mode, 'outpaint')
+        expectNumericMask(observed, 'worldKeepMask', authored ? [95, 255] : [128, 255])
+        expectNumericMask(
+          observed,
+          'processingKeepMask',
+          Array.from({ length: 8 }, () => row).flat(),
+        )
+        expectNumericMask(observed, 'latentKeepMask', [authored ? 172 : 189])
+        expectNumericMask(
+          observed,
+          'expandedProcessingKeepMask',
+          Array.from({ length: 64 }, () => 0),
+        )
+        expectNumericMask(observed, 'expandedWorldKeepMask', [0, 0])
+        expectNumericMask(observed, 'finalContributionMask', [255, 255])
+        assert.equal(result.conditioning.latentMaskHasCoverage, true)
+        for (const plane of [
+          'worldKeepMask',
+          'processingKeepMask',
+          'latentKeepMask',
+          'expandedProcessingKeepMask',
+          'expandedWorldKeepMask',
+        ] as const) {
+          assert.equal(result.conditioning[plane].polarity, 'keep')
+          assert.equal(result.conditioning[plane].sha256, digest(result.conditioning[plane].bytes))
+        }
+        assert.equal(result.conditioning.finalContributionMask.polarity, 'generate')
+        await unchanged(f, before)
+      },
+    )
+  })
+}
+
+for (const profile of [
+  { expected: GAUSSIAN_WEAK_CIRCLE, mode: 'Gaussian Blur' },
+  { expected: BOX_WEAK_CIRCLE, mode: 'Box Blur' },
+  { expected: STAGED_WEAK_CIRCLE, mode: 'Staged' },
+] as const) {
+  test(`actual ${profile.mode} coherence preserves weak numeric alpha with its literal latent footprint`, async () => {
+    await fixture(coherentCircleFixture(), async (f) => {
+      const before = await state(f)
+      const observed: CpuObservation[] = []
+      const result = await prepareActualConditioning(f, observed, {
+        edgeSize: 16,
+        minimumDenoise: 0,
+        mode: profile.mode,
+      })
+      assert.equal(result.mode, 'inpaint')
+      assert.deepEqual(result.coherence, { edgeSize: 16, minimumDenoise: 0, mode: profile.mode })
+      assert.deepEqual(
+        [result.conditioning.latentKeepMask.width, result.conditioning.latentKeepMask.height],
+        [5, 5],
+      )
+      expectNumericMask(observed, 'latentKeepMask', profile.expected)
+      const worldKeep = observedAlpha(observed, 'worldKeepMask')
+      assert.equal(worldKeep.filter((alpha) => alpha === 254).length, 64)
+      assert.equal(worldKeep.filter((alpha) => alpha === 255).length, 1536)
+      assert.equal(worldKeep[16 * 40 + 16], 254)
+      assert.equal(worldKeep[15 * 40 + 16], 255)
+      assert.ok(
+        result.conditioning.processingKeepMask.bytes.equals(
+          result.conditioning.worldKeepMask.bytes,
+        ),
+      )
+      const expanded = observedAlpha(observed, 'expandedProcessingKeepMask')
+      assert.equal(
+        expanded.every((alpha) => alpha === 0 || alpha === 255),
+        true,
+      )
+      assert.equal(
+        expanded.filter((alpha) => alpha === 0).length,
+        profile.expected.filter((alpha) => alpha < 255).length * 64,
+      )
+      assert.equal(expanded[20 * 40 + 20], 0)
+      assert.equal(expanded[4 * 40 + 4], 255)
+      assert.ok(
+        result.conditioning.expandedWorldKeepMask.bytes.equals(
+          result.conditioning.expandedProcessingKeepMask.bytes,
+        ),
+      )
+      const final = observedAlpha(observed, 'finalContributionMask')
+      assert.equal(
+        final.every((alpha, index) => alpha + expanded[index] === 255),
+        true,
+      )
+      assert.equal(result.conditioning.latentMaskHasCoverage, true)
+      assert.ok(result.maskPngBytes!.equals(f.maskBytes!))
+      await unchanged(f, before)
+    })
+  })
+}
+
+for (const edgeSize of [0, 7, 8]) {
+  test(`actual processing edge${edgeSize} floors the latent radius and ${edgeSize < 8 ? 'ignores' : 'applies'} minimum denoise`, async () => {
+    const bbox = { height: 8, width: 16, x: -11, y: -7 }
+    await fixture(
+      {
+        bbox,
+        mask: { alpha: Array.from({ length: 128 }, () => 64), bounds: bbox },
+        maskSettings: { blur: 0, padding: 5 },
+      },
+      async (f) => {
+        const before = await state(f)
+        const observed: CpuObservation[] = []
+        const result = await prepareActualConditioning(f, observed, {
+          edgeSize,
+          minimumDenoise: 0.5,
+          mode: 'Gaussian Blur',
+        })
+        expectNumericMask(observed, 'latentKeepMask', edgeSize < 8 ? [191, 191] : [127, 127])
+        assert.equal(result.conditioning.latentMaskHasCoverage, true)
+        assert.equal(result.mode, 'inpaint')
+        await unchanged(f, before)
+      },
+    )
+  })
+}
+
+for (const sourceAlpha of [0, 255]) {
+  test(`actual ${sourceAlpha === 0 ? 'txt2img' : 'img2img'} conditioning neighbor retains all-zero keep and whole-frame contribution`, async () => {
+    await fixture(
+      {
+        bbox: { height: 8, width: 8, x: -11, y: -7 },
+        mask: null,
+        maskSettings: { blur: 16, padding: 5 },
+        sourceAlpha,
+      },
+      async (f) => {
+        const before = await state(f)
+        const observed: CpuObservation[] = []
+        const result = await prepareActualConditioning(f, observed)
+        assert.equal(result.mode, sourceAlpha === 0 ? 'txt2img' : 'img2img')
+        assert.deepEqual(result.coherence, {
+          edgeSize: 16,
+          minimumDenoise: 0,
+          mode: 'Gaussian Blur',
+        })
+        expectNumericMask(
+          observed,
+          'worldKeepMask',
+          Array.from({ length: 64 }, () => 0),
+        )
+        expectNumericMask(observed, 'latentKeepMask', [0])
+        expectNumericMask(
+          observed,
+          'finalContributionMask',
+          Array.from({ length: 64 }, () => 255),
+        )
+        await unchanged(f, before)
+      },
+    )
+  })
+}
+
+test('the new latent-grid preflight refuses one-pixel internal processing while its old preparation neighbor remains valid', async () => {
+  const bbox = { height: 2, width: 2, x: -11, y: -7 }
+  await fixture(
+    { bbox, internal: { height: 1, width: 1 }, mask: { alpha: [1, 64, 128, 255], bounds: bbox } },
+    async (f) => {
+      const before = await state(f)
+      const observed: CpuObservation[] = []
+      await assert.rejects(
+        prepareActualConditioning(f, observed),
+        /grid|multiple|eight|8|conditioning|latent/i,
+      )
+      assert.equal(
+        observed.some((entry) => entry.response.type === 'smart-patch-conditioned'),
+        false,
+      )
+      const ordinary = await f.service.withCapturedSmartPatchGenerationInput(
+        f.tabId,
+        f.patch.id,
+        (capture) => capture.prepareInput(cpuWorker(f, observed)),
+      )
+      assert.deepEqual([ordinary.processingMask.width, ordinary.processingMask.height], [1, 1])
+      assert.equal(ordinary.mode, 'inpaint')
+      await unchanged(f, before)
+    },
+  )
+})
+
+for (const alpha of [1, 64]) {
+  test(`actual single alpha${alpha} pixel ${alpha === 1 ? 'reports latent loss' : 'survives as its latent neighbor'} while retaining original world edit core`, async () => {
+    const bbox = { height: 64, width: 64, x: -11, y: -7 }
+    await fixture(
+      {
+        bbox,
+        mask: { alpha: [alpha], bounds: { height: 1, width: 1, x: bbox.x + 27, y: bbox.y + 27 } },
+        maskSettings: { blur: 0, padding: 5 },
+      },
+      async (f) => {
+        const before = await state(f)
+        const observed: CpuObservation[] = []
+        const result = await prepareActualConditioning(f, observed)
+        assert.equal(result.processingMaskHasCoverage, true)
+        assert.equal(result.mode, 'inpaint')
+        assert.equal(result.conditioning.latentMaskHasCoverage, alpha === 64)
+        const latent = observedAlpha(observed, 'latentKeepMask')
+        assert.equal(latent.filter((value) => value < 255).length, alpha === 1 ? 0 : 13)
+        const expanded = observedAlpha(observed, 'expandedWorldKeepMask')
+        const contribution = observedAlpha(observed, 'finalContributionMask')
+        assert.equal(expanded[27 * 64 + 27], 0)
+        assert.equal(contribution[27 * 64 + 27], 255)
+        if (alpha === 1) {
+          assert.equal(expanded.filter((value) => value === 0).length, 1)
+          assert.equal(contribution.filter((value) => value > 0).length, 1)
+        }
+        assert.ok(result.maskPngBytes!.equals(f.maskBytes!))
+        await unchanged(f, before)
+      },
+    )
+  })
+}
+
+test('processing coherence and latent dimensions follow anisotropic internal axes while final fade and padding stay in world space', async () => {
+  const bbox = { height: 8, width: 40, x: -11, y: -7 }
+  await fixture(
+    {
+      bbox,
+      internal: { height: 8, width: 40 },
+      mask: { alpha: Array.from({ length: 16 }, () => 255), bounds: { ...bbox, width: 2 } },
+      maskSettings: { blur: 4, padding: 5 },
+    },
+    async (f) => {
+      const before = await state(f)
+      const observed: CpuObservation[] = []
+      const profile: SmartPatchCoherenceParameters = {
+        edgeSize: 16,
+        minimumDenoise: 0,
+        mode: 'Gaussian Blur',
+      }
+      const first = await prepareActualConditioning(f, observed, profile)
+      assert.deepEqual(
+        [first.conditioning.processingKeepMask.width, first.conditioning.processingKeepMask.height],
+        [40, 8],
+      )
+      assert.deepEqual(
+        [first.conditioning.latentKeepMask.width, first.conditioning.latentKeepMask.height],
+        [5, 1],
+      )
+      assert.deepEqual(
+        [
+          first.conditioning.expandedWorldKeepMask.width,
+          first.conditioning.expandedWorldKeepMask.height,
+        ],
+        [40, 8],
+      )
+      assert.deepEqual(
+        [
+          first.conditioning.finalContributionMask.width,
+          first.conditioning.finalContributionMask.height,
+        ],
+        [40, 8],
+      )
+      const expanded = observedAlpha(observed, 'expandedWorldKeepMask')
+      const final = observedAlpha(observed, 'finalContributionMask')
+      assert.equal(expanded.slice(0, 40).indexOf(255), 24)
+      assert.deepEqual([expanded[11], expanded[12], expanded[23], expanded[24]], [0, 0, 0, 255])
+      assert.deepEqual(
+        final.slice(24, 27),
+        [225, 137, 44],
+        'Owned blur4 uses three literal project-pixel fade samples after the projected core',
+      )
+      await unchanged(f, before)
+      await f.service.updateSmartPatchLayer(f.tabId, f.patch.id, {
+        kind: 'internal-resolution',
+        size: { height: 8, width: 80 },
+      })
+      await f.service.flushAutosave(f.tabId)
+      const doubledBefore = await state(f)
+      const doubled = await prepareActualConditioning(f, observed, profile)
+      assert.deepEqual(
+        [doubled.conditioning.latentKeepMask.width, doubled.conditioning.latentKeepMask.height],
+        [10, 1],
+      )
+      const doubledExpanded = observedAlpha(observed, 'expandedWorldKeepMask')
+      const doubledFinal = observedAlpha(observed, 'finalContributionMask')
+      assert.equal(doubledExpanded.slice(0, 40).indexOf(255), 12)
+      assert.deepEqual(
+        [doubledExpanded[11], doubledExpanded[12], doubledExpanded[23], doubledExpanded[24]],
+        [0, 255, 255, 255],
+      )
+      assert.deepEqual(doubledFinal.slice(12, 15), [225, 137, 44])
+      assert.equal(doubled.coherence.edgeSize, 16)
+      assert.equal(doubled.context.maskSettings.blur, 4)
+      await unchanged(f, doubledBefore)
+      const tab = f.service.getOpenTabs()[0]
+      await f.service.updateSmartPatchLayer(f.tabId, f.patch.id, {
+        documentId: tab.documentId,
+        documentRevision: tab.documentRevision,
+        kind: 'bbox-padding',
+        value: 512,
+      })
+      await f.service.flushAutosave(f.tabId)
+      const afterEdit = await state(f)
+      const next = await prepareActualConditioning(f, observed, profile)
+      assert.ok(
+        next.conditioning.finalContributionMask.bytes.equals(
+          doubled.conditioning.finalContributionMask.bytes,
+        ),
+      )
+      assert.ok(
+        next.conditioning.latentKeepMask.bytes.equals(doubled.conditioning.latentKeepMask.bytes),
+      )
+      await unchanged(f, afterEdit)
+    },
+  )
+})
+
+test('caller profile and adapter mutations cannot replace a conditioning operation frozen before its first await', async () => {
+  await fixture(coherentCircleFixture(), async (f) => {
+    const before = await state(f)
+    const observed: CpuObservation[] = []
+    const actual = cpuWorker(f, observed)
+    const profile: SmartPatchCoherenceParameters = {
+      edgeSize: 16,
+      minimumDenoise: 0,
+      mode: 'Gaussian Blur',
+    }
+    let mutationDone!: () => void
+    const mutated = new Promise<void>((resolve) => {
+      mutationDone = resolve
+    })
+    await f.service.withCapturedSmartPatchGenerationInput(f.tabId, f.patch.id, async (capture) => {
+      const preparing = capture.prepareConditioning(
+        {
+          ...actual,
+          async conditionSmartPatch(input) {
+            const result = await actual.conditionSmartPatch(input)
+            input.coherence.edgeSize = 0
+            input.coherence.mode = 'Staged'
+            input.maskBlur = 512
+            setImmediate(() => {
+              result.latentKeepMask.width = 999
+              result.finalContributionMask.sha256 = '0'.repeat(64)
+              mutationDone()
+            })
+            return result
+          },
+        },
+        profile,
+      )
+      profile.edgeSize = 0
+      profile.minimumDenoise = 1
+      profile.mode = 'Box Blur'
+      const first = await preparing
+      await mutated
+      assert.deepEqual(first.coherence, { edgeSize: 16, minimumDenoise: 0, mode: 'Gaussian Blur' })
+      assert.equal(first.conditioning.latentKeepMask.width, 5)
+      assert.equal(
+        first.conditioning.finalContributionMask.sha256,
+        digest(first.conditioning.finalContributionMask.bytes),
+      )
+      expectNumericMask(observed, 'latentKeepMask', GAUSSIAN_WEAK_CIRCLE)
+      first.coherence.edgeSize = 0
+      first.conditioning.latentKeepMask.bytes.fill(0)
+      first.conditioning.finalContributionMask.bytes.fill(0)
+      const second = await capture.prepareConditioning(actual)
+      assert.deepEqual(second.coherence, { edgeSize: 16, minimumDenoise: 0, mode: 'Gaussian Blur' })
+      expectNumericMask(observed, 'latentKeepMask', GAUSSIAN_WEAK_CIRCLE)
+    })
+    await unchanged(f, before)
+  })
+})
+
+test('a malformed real sixth conditioning output refuses the whole result and leaves the old preparation/control intact', async () => {
+  await fixture(coherentCircleFixture(), async (f) => {
+    const before = await state(f)
+    const observed: CpuObservation[] = []
+    await assert.rejects(
+      prepareActualConditioning(
+        f,
+        observed,
+        undefined,
+        cpuWorker(f, observed, { corrupt: 'conditioning-mask-rgb' }),
+      ),
+      /mask|white|coverage|image|output/i,
+    )
+    assert.equal(observed.at(-1)?.response.type, 'smart-patch-conditioned')
+    await unchanged(f, before)
+    const control: CpuObservation[] = []
+    const valid = await prepareActualConditioning(f, control)
+    assert.equal(valid.conditioning.latentMaskHasCoverage, true)
+    expectNumericMask(control, 'latentKeepMask', GAUSSIAN_WEAK_CIRCLE)
+    await unchanged(f, before)
+  })
+})
+
+test('an admitted conditioning chain survives callback closure between preparation and coherence and refuses late capabilities', async () => {
+  await fixture(coherentCircleFixture(), async (f) => {
+    const before = await state(f)
+    const observed: CpuObservation[] = []
+    const actual = cpuWorker(f, observed)
+    let entered!: () => void
+    const prepareEntered = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    let release!: () => void
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const pending: {
+      operation: ReturnType<CapturedSmartPatchGenerationInput['prepareConditioning']> | null
+    } = { operation: null }
+    let held!: CapturedSmartPatchGenerationInput
+    let stage = ''
+    let dispatched = false
+    let settled = false
+    const capturing = f.service.withCapturedSmartPatchGenerationInput(
+      f.tabId,
+      f.patch.id,
+      async (capture) => {
+        held = capture
+        pending.operation = capture.prepareConditioning({
+          ...actual,
+          async conditionSmartPatch(input) {
+            dispatched = true
+            assert.ok(existsSync(stage))
+            return await actual.conditionSmartPatch(input)
+          },
+          async prepareSmartPatch(input) {
+            stage = input.stagingRoot
+            const result = await actual.prepareSmartPatch(input)
+            entered()
+            await released
+            return result
+          },
+        })
+        void pending.operation.catch(() => undefined)
+        await prepareEntered
+        throw new Error('Intentional callback failure between preparation and coherence')
+      },
+    )
+    void capturing.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      },
+    )
+    try {
+      await Promise.race([
+        prepareEntered,
+        capturing.then(() => assert.fail('Capture settled before its preparation witness')),
+      ])
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve)
+      })
+      assert.equal(settled, false)
+      assert.equal(dispatched, false)
+      assert.ok(existsSync(stage))
+      release()
+      await assert.rejects(
+        capturing,
+        /Intentional callback failure between preparation and coherence/,
+      )
+      assert.ok(pending.operation)
+      await pending.operation
+      assert.equal(dispatched, true)
+      assert.equal(existsSync(stage), false)
+      expectNumericMask(observed, 'latentKeepMask', GAUSSIAN_WEAK_CIRCLE)
+      let lateDispatched = false
+      const late = () => {
+        lateDispatched = true
+        throw new Error('Late conditioning dispatch forbidden')
+      }
+      await assert.rejects(
+        held.prepareConditioning({
+          composeTarget: async () => late(),
+          conditionSmartPatch: async () => late(),
           prepareSmartPatch: async () => late(),
         }),
         /closed|lease/i,

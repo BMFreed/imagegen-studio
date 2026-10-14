@@ -84,7 +84,10 @@ def _validate_geometry(request: SmartPatchFadeRequest) -> None:
         raise DerivativeError("INVALID_REQUEST", "Contribution source and mask dimensions differ.")
 
 
-def _core(source: Image.Image, effective: Image.Image, mode: SmartPatchFadeMode) -> Image.Image:
+def smart_patch_edit_core(
+    source: Image.Image, effective: Image.Image, mode: SmartPatchFadeMode
+) -> Image.Image:
+    """Validate frozen world mode and return its binary/full numeric edit core."""
     source_alpha = source.getchannel("A")
     coverage = effective.getchannel("A")
     minimum, maximum = cast(tuple[int, int], source_alpha.getextrema())
@@ -161,7 +164,7 @@ def fade_smart_patch(request: SmartPatchFadeRequest) -> SmartPatchFadeResult:
     effective = decode_preparation_image(
         request.effective_mask, numeric_mask=True, require_tight_mask=False
     )
-    core = _core(source, effective, request.mode)
+    core = smart_patch_edit_core(source, effective, request.mode)
     keep = ImageOps.invert(core)
     faded = fade_binary_keep_mask(keep, fade_radius=request.mask_blur)
     return _publish(destination, ImageOps.invert(faded))

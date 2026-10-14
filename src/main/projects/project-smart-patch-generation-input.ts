@@ -14,7 +14,7 @@ import path from 'node:path'
 
 import type { IgsAssetSource } from './igs-package.js'
 import type { FrozenGenerationTarget } from './project-generation-target.js'
-import type { ProjectWorkerClient } from './worker-client.js'
+import type { ProjectWorkerClient, SmartPatchCoherenceParameters } from './worker-client.js'
 
 import { readIgsPackage } from './igs-package.js'
 import { composeFrozenGenerationTarget } from './project-generation-target.js'
@@ -22,13 +22,20 @@ import { readProjectMaskSource } from './project-mask.js'
 import { withProjectPathLock } from './project-path-lock.js'
 import { compositionRasterLayers, withFrozenRasterComposition } from './project-raster-snapshot.js'
 import {
+  type PreparedSmartPatchConditioningInput,
   type PreparedSmartPatchContributionInput,
   type PreparedSmartPatchGenerationInput,
+  prepareFrozenSmartPatchConditioning,
   prepareFrozenSmartPatchContribution,
   prepareFrozenSmartPatchInput,
 } from './project-smart-patch-preparation.js'
 import { classifyTargetPngAlpha } from './target-png-mode.js'
-import { assertSmartPatchProcessingSize } from './worker-client.js'
+import {
+  assertSmartPatchConditioningSize,
+  assertSmartPatchProcessingSize,
+  captureSmartPatchCoherenceParameters,
+  DEFAULT_SMART_PATCH_COHERENCE,
+} from './worker-client.js'
 
 /** Matches the existing CPU compositor/target verifier; not a model capacity or document ceiling. */
 const MAX_SOURCE_SIDE = 2048
@@ -68,6 +75,13 @@ export interface CapturedSmartPatchGenerationInput {
   maskPngBytes: Buffer | null
   /** Main-only leased material; never a portable path or renderer capability. */
   maskPngPath: string | null
+  prepareConditioning: (
+    worker: Pick<
+      ProjectWorkerClient,
+      'composeTarget' | 'conditionSmartPatch' | 'prepareSmartPatch'
+    >,
+    coherence?: SmartPatchCoherenceParameters,
+  ) => Promise<PreparedSmartPatchConditioningInput>
   prepareContribution: (
     worker: Pick<ProjectWorkerClient, 'composeTarget' | 'fadeSmartPatch' | 'prepareSmartPatch'>,
   ) => Promise<PreparedSmartPatchContributionInput>
@@ -219,6 +233,17 @@ export async function withFrozenSmartPatchGenerationInput<T>(
             const prepared = await prepareAt(worker, stagingRoot)
             return prepareFrozenSmartPatchContribution(prepared, stagingRoot, worker)
           })
+        const prepareConditioning: CapturedSmartPatchGenerationInput['prepareConditioning'] = (
+          worker,
+          coherence = DEFAULT_SMART_PATCH_COHERENCE,
+        ) =>
+          startOperation(async () => {
+            const profile = captureSmartPatchCoherenceParameters(coherence)
+            assertSmartPatchConditioningSize(context.internalResolution)
+            const stagingRoot = await mkdtemp(path.join(composition.stagingRoot, 'conditioned-'))
+            const prepared = await prepareAt(worker, stagingRoot)
+            return prepareFrozenSmartPatchConditioning(prepared, stagingRoot, profile, worker)
+          })
         try {
           return await use({
             composeSource,
@@ -226,6 +251,7 @@ export async function withFrozenSmartPatchGenerationInput<T>(
             document: structuredClone(document),
             maskPngBytes: maskPngBytes ? Buffer.from(maskPngBytes) : null,
             maskPngPath,
+            prepareConditioning,
             prepareContribution,
             prepareInput,
           })

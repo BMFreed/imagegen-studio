@@ -18,7 +18,12 @@ from PIL import __version__ as pillow_version
 source_root = Path(sys.argv[1]).resolve(strict=True)
 sys.path.insert(0, str(source_root))
 
-from imagegen_worker import compositor, smart_patch_fade, smart_patch_preparation
+from imagegen_worker import (
+    compositor,
+    smart_patch_conditioning,
+    smart_patch_fade,
+    smart_patch_preparation,
+)
 from imagegen_worker.protocol import process_request
 
 envelope = json.loads(sys.stdin.read())
@@ -26,13 +31,14 @@ request = envelope["request"]
 response = process_request(request)
 expected_type = {
     "compose-target": "target-done",
+    "condition-smart-patch": "smart-patch-conditioned",
     "prepare-smart-patch": "smart-patch-prepared",
     "fade-smart-patch": "smart-patch-faded",
 }[request["type"]]
 if response.get("type") != expected_type:
     raise RuntimeError(f"Actual CPU protocol route failed: {response!r}")
 
-for module in (compositor, smart_patch_preparation, smart_patch_fade):
+for module in (compositor, smart_patch_preparation, smart_patch_fade, smart_patch_conditioning):
     if not Path(module.__file__).resolve(strict=True).is_relative_to(source_root):
         raise RuntimeError("The requested checkout's production CPU module was not loaded.")
 
@@ -40,6 +46,18 @@ if request["type"] == "compose-target":
     paths = {"source": request["output"]["targetPngPath"]}
 elif request["type"] == "fade-smart-patch":
     paths = {"contributionMask": request["output"]["contributionMaskPngPath"]}
+elif request["type"] == "condition-smart-patch":
+    paths = {
+        key: request["output"][key + "PngPath"]
+        for key in (
+            "worldKeepMask",
+            "processingKeepMask",
+            "latentKeepMask",
+            "expandedProcessingKeepMask",
+            "expandedWorldKeepMask",
+            "finalContributionMask",
+        )
+    }
 else:
     paths = {
         "effectiveMask": request["output"]["worldMaskPngPath"],
@@ -47,10 +65,18 @@ else:
         "processingMask": request["output"]["processingMaskPngPath"],
     }
 
-if envelope.get("corrupt") in ("processing-mask-rgb", "contribution-mask-rgb"):
+if envelope.get("corrupt") in (
+    "processing-mask-rgb",
+    "contribution-mask-rgb",
+    "conditioning-mask-rgb",
+):
     # Mutate an actual output after the real algorithm has completed. Update the
     # response hash so integrity alone cannot hide missing numeric-RGB validation.
-    plane = "processingMask" if envelope["corrupt"] == "processing-mask-rgb" else "contributionMask"
+    plane = {
+        "processing-mask-rgb": "processingMask",
+        "contribution-mask-rgb": "contributionMask",
+        "conditioning-mask-rgb": "finalContributionMask",
+    }[envelope["corrupt"]]
     target = Path(paths[plane])
     with Image.open(target) as original:
         original.load()
@@ -98,6 +124,7 @@ print(
             "response": response,
             "decoded": decoded,
             "compositorPath": str(Path(compositor.__file__).resolve(strict=True)),
+            "conditioningPath": str(Path(smart_patch_conditioning.__file__).resolve(strict=True)),
             "preparationPath": str(Path(smart_patch_preparation.__file__).resolve(strict=True)),
             "fadePath": str(Path(smart_patch_fade.__file__).resolve(strict=True)),
             "pillowVersion": pillow_version,

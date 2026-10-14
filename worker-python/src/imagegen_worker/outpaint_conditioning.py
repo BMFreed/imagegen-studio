@@ -10,7 +10,7 @@ from __future__ import annotations
 import importlib
 import math
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from PIL import Image, ImageOps
 
@@ -22,6 +22,7 @@ from imagegen_worker.derivatives import (
 
 CONDITIONING_VERSION = "invoke-normal-outpaint-conditioning-v1"
 LATENT_SCALE = 8
+CoherenceMode = Literal["Gaussian Blur", "Box Blur", "Staged"]
 
 
 @dataclass(frozen=True)
@@ -79,7 +80,13 @@ def _native_modules() -> tuple[Any, Any]:
 
 
 def _gradient_masks(
-    keep_mask: Image.Image, *, edge_radius: int, minimum_denoise: float, np: Any, cv2: Any
+    keep_mask: Image.Image,
+    *,
+    edge_radius: int,
+    minimum_denoise: float,
+    np: Any,
+    cv2: Any,
+    coherence_mode: CoherenceMode = "Gaussian Blur",
 ) -> tuple[Image.Image, Image.Image]:
     latent_size = (keep_mask.width // LATENT_SCALE, keep_mask.height // LATENT_SCALE)
     reduced = keep_mask.resize(latent_size, resample=Image.Resampling.BILINEAR)
@@ -88,14 +95,24 @@ def _gradient_masks(
     if radius:
         holes = 255 - original
         kernel_size = radius * 2 + 1
-        kernel = cv2.getGaussianKernel(kernel_size, radius / 2.5)
-        kernel = kernel * kernel.T
-        kernel = kernel / np.max(kernel)
+        if coherence_mode == "Box Blur":
+            kernel = np.zeros((kernel_size, kernel_size), dtype=np.float32)
+            for row in range(kernel_size):
+                for column in range(kernel_size):
+                    distance = np.sqrt((row - radius) ** 2 + (column - radius) ** 2)
+                    if distance <= radius:
+                        kernel[row, column] = 1.0 - distance / radius
+        else:
+            kernel = cv2.getGaussianKernel(kernel_size, radius / 2.5)
+            kernel = kernel * kernel.T
+            kernel = kernel / np.max(kernel)
         padded = np.pad(holes, ((radius, radius), (radius, radius)), constant_values=0)
         maximum = np.zeros_like(holes)
         for row in range(kernel_size):
             for column in range(kernel_size):
                 if math.sqrt((row - radius) ** 2 + (column - radius) ** 2) > radius:
+                    continue
+                if kernel[row, column] <= 0:
                     continue
                 # Torch's upstream scalar multiplication retains the image's F32 dtype.
                 weight = np.float32(kernel[row, column])
@@ -103,6 +120,9 @@ def _gradient_masks(
                 np.maximum(maximum, region * weight, out=maximum)
         gradient = 255 - maximum
         threshold = (1 - minimum_denoise) * 255
+        if coherence_mode == "Staged":
+            staged = (gradient < original) & (original > threshold)
+            gradient = np.where(staged, threshold, original)
         gradient = np.where((gradient > threshold) & (gradient < 255), threshold, gradient)
     else:
         gradient = original.copy()
@@ -110,6 +130,56 @@ def _gradient_masks(
     latent_mask = Image.fromarray(quantized)
     expanded = Image.fromarray(np.where(quantized < 255, 0, 255).astype(np.uint8))
     return latent_mask, expanded.resize(keep_mask.size, resample=Image.Resampling.NEAREST)
+
+
+def prepare_keep_mask_coherence(
+    mask: object,
+    *,
+    coherence_mode: CoherenceMode,
+    edge_radius: int,
+    minimum_denoise: float,
+) -> tuple[Image.Image, Image.Image]:
+    """Capture processing keep pixels and return quantized latent/expanded keep.
+
+    Coherence edge units are processing pixels, including the pinned floor /8.
+    This helper accepts soft keep coverage and does not load Torch or ML models.
+    The Gaussian default of the existing normal OUT path remains unchanged.
+    """
+    if (
+        coherence_mode not in ("Gaussian Blur", "Box Blur", "Staged")
+        or type(edge_radius) is not int
+        or not 0 <= edge_radius <= 1024
+        or type(minimum_denoise) not in (int, float)
+        or not 0 <= minimum_denoise <= 1
+        or not math.isfinite(minimum_denoise)
+        or not isinstance(mask, Image.Image)
+        or mask.mode != "L"
+        or not LATENT_SCALE <= mask.width <= MAX_TARGET_SIDE
+        or not LATENT_SCALE <= mask.height <= MAX_TARGET_SIDE
+        or mask.width % LATENT_SCALE
+        or mask.height % LATENT_SCALE
+        or mask.width * mask.height > MAX_TARGET_PIXELS
+    ):
+        raise DerivativeError("INVALID_REQUEST", "Processing keep mask or coherence is invalid.")
+    captured = mask.copy()
+    if edge_radius < LATENT_SCALE or captured.getextrema() in ((0, 0), (255, 255)):
+        latent = captured.resize(
+            (captured.width // LATENT_SCALE, captured.height // LATENT_SCALE),
+            resample=Image.Resampling.BILINEAR,
+        )
+        expanded = latent.point([0] * 255 + [255]).resize(
+            captured.size, resample=Image.Resampling.NEAREST
+        )
+        return latent, expanded
+    np, cv2 = _native_modules()
+    return _gradient_masks(
+        captured,
+        edge_radius=edge_radius,
+        minimum_denoise=minimum_denoise,
+        np=np,
+        cv2=cv2,
+        coherence_mode=coherence_mode,
+    )
 
 
 def _fade_mask(mask: Image.Image, *, fade_radius: int, np: Any, cv2: Any) -> Image.Image:
