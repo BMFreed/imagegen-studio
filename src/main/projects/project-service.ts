@@ -144,12 +144,16 @@ import {
 } from './project-mask.js'
 import { projectThumbnailImageUrl } from './project-preview-resource.js'
 import { buildProjectPreview } from './project-preview.js'
-import { withFrozenRasterComposition } from './project-raster-snapshot.js'
+import { compositionRasterLayers, withFrozenRasterComposition } from './project-raster-snapshot.js'
 import {
   type ProjectRebuildPreviewInput,
   ProjectSession,
   type ProjectSessionRoots,
 } from './project-session.js'
+import {
+  type CapturedSmartPatchGenerationInput,
+  withFrozenSmartPatchGenerationInput,
+} from './project-smart-patch-generation-input.js'
 import { unavailableTemporaryRecovery } from './project-temporary-recovery.js'
 import { importRasterLayer } from './raster-import.js'
 
@@ -2148,6 +2152,40 @@ export class ProjectService {
           // The callback can own this value without changing the private composition snapshot.
           document: structuredClone(composition.document),
         }),
+    )
+  }
+
+  /** Read-only owned-input capture; generation permission and publication are separate boundaries. */
+  async withCapturedSmartPatchGenerationInput<T>(
+    tabId: string,
+    layerId: string,
+    use: (capture: CapturedSmartPatchGenerationInput) => Promise<T>,
+  ): Promise<T> {
+    const coordinator = this.requireTab(tabId)
+    const document = coordinator.document
+    const patch = requireSmartPatch(document, layerId)
+    const copySource = (source: IgsAssetSource | null): IgsAssetSource | null =>
+      source && ('bytes' in source ? { bytes: Buffer.from(source.bytes) } : { ...source })
+    const sources = new Map(
+      compositionRasterLayers(document, { beneathLayerId: layerId }).map((layer) => [
+        `${layer.asset.path}:${layer.asset.sha256}`,
+        copySource(coordinator.getCurrentAssetSource(layer.asset)),
+      ]),
+    )
+    const maskSource = patch.mask.asset
+      ? copySource(coordinator.getCurrentAssetSource(patch.mask.asset))
+      : null
+    return await withFrozenSmartPatchGenerationInput(
+      {
+        document,
+        layerId,
+        maskSource,
+        packagePath: coordinator.filePath,
+        pendingSource: (asset) => sources.get(`${asset.path}:${asset.sha256}`) ?? null,
+        projectKey: tabId,
+        scratchBasePath: this.options.roots.scratchDir,
+      },
+      use,
     )
   }
 

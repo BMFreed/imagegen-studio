@@ -224,6 +224,22 @@ Rules:
 
 This preserves Smart Patch Layer as a self-contained generative entity.
 
+A still-existing target can receive explicitly accepted candidates after its
+inputs have changed since enqueue. Acceptance preserves the frozen output and
+generation/source context; the newly active variant is `outdated` when those
+inputs differ from the current target. It does not substitute current mask,
+bbox, internal resolution, blur or draft into the candidate's provenance.
+Only genuinely generation-relevant differences contribute to staleness;
+padding alone is Fit policy, while a resulting bbox change is an input change.
+
+This does not weaken the missing-target recovery rule: a candidate whose exact
+target is absent remains orphaned, with Add as Variant disabled and only the
+explicitly qualified Raster conversion/export/discard paths available. The
+[input capture slice](../../../engineering/phase-4-smart-patch-generation-capture-research.md)
+qualifies private Main/CPU source preparation (focused14/affected1852 PASS),
+without candidate publication; this Smart Patch acceptance lifecycle is not yet
+implemented or enabled by it.
+
 ## Auto-Switch
 
 Supported focus modes may follow Invoke:

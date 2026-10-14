@@ -64,14 +64,19 @@ export async function buildFrozenGenerationTarget(input: {
 export async function composeFrozenGenerationTarget(
   composition: FrozenRasterComposition,
   worker: TargetWorker,
+  target?: {
+    bbox: IgsRectV1
+    generationDraft: IgsProjectDocumentV1['generationDraft']
+  },
 ): Promise<FrozenGenerationTarget> {
   const { document, layers, stagingRoot } = composition
-  const bbox = { ...document.primaryBbox }
+  const bbox = { ...(target?.bbox ?? document.primaryBbox) }
+  const generationDraft = structuredClone(target?.generationDraft ?? document.generationDraft)
   const targetPngPath = path.join(stagingRoot, 'target.png')
   const result = await worker.composeTarget({
     // Do not let an adapter mutate the bbox we use to verify and return this snapshot.
     bbox: { ...bbox },
-    layers,
+    layers: structuredClone(layers),
     stagingRoot,
     targetPngPath,
   })
@@ -105,7 +110,7 @@ export async function composeFrozenGenerationTarget(
     },
     documentId: document.documentId,
     documentRevision: document.documentRevision,
-    generationDraft: document.generationDraft,
+    generationDraft,
     lastActualSeedSnapshot: document.lastActualSeedSnapshot,
     mode: result.mode,
   }

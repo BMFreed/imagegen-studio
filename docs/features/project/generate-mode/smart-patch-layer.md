@@ -96,6 +96,29 @@ and viewed screenshots are in the checkpoint. Prototype lacks these production
 settings controls; its mock history is not persistence evidence. Public statuses
 remain unchanged.
 
+## Production checkpoint: private generation input capture
+
+[Capture checkpoint](../../../engineering/phase-4-smart-patch-generation-capture-research.md)
+qualifies the finite read-only Main preparation slice. It captures an existing
+Patch's bbox, internal resolution, draft, blur/padding, original verified mask
+descriptor/bytes and visible source layers beneath the target. The target and
+layers above it are excluded. This first capture preserves whole original mask
+bytes and source RGBA/source alpha; effective mask clipping, four-mode
+classification and internal-scale conditioning are later preparation owners.
+Null/disjoint masks remain valid for the future source-only mode contract.
+Locked/hidden existing targets remain readable; future generation/acceptance
+permissions are separate.
+
+Final focused14/affected1852 PASS, four actual CPU tests/nine production
+`compose-target` calls and three isolated semantic RED/neighbor GREEN probes
+qualify this private boundary; required typecheck/lint/build pass. Physical exit
+and temporary-copy cleanup are confirmed in the checkpoint. No Electron/browser/ML run is
+claimed. This preparation does not enable Generate,
+enqueue work, run inference, publish candidates or persist accepted variants.
+Variant lifecycle, staleness/compositing/comparison and Patch presets remain
+subsequent owners; existing authoring evidence and public promise statuses stay
+unchanged.
+
 ## Previous production checkpoint: Transform Mask and Fit
 
 [Transform/Fit implementation](../../../engineering/phase-4-smart-patch-mask-transform-research.md)
@@ -272,6 +295,21 @@ Add Smart Patch Layer
 
 Regeneration freezes a source composite from compositing layers beneath the target Smart Patch Layer inside its bbox. The target layer's current active variant is excluded from its own generation input, preventing cumulative self-regeneration artifacts. Layers above remain visible in final Project preview but are not part of the patch source input.
 
+Automatic mode is derived from actual frozen source alpha and mask coverage
+inside that bbox, following Invoke:
+
+| Frozen source     | Effective mask coverage inside bbox | Mode       |
+| ----------------- | ----------------------------------- | ---------- |
+| Fully transparent | Any, including none                 | `txt2img`  |
+| Mixed alpha       | Any, including none                 | `outpaint` |
+| Fully opaque      | None                                | `img2img`  |
+| Fully opaque      | Nonzero, including soft coverage    | `inpaint`  |
+
+A null mask or a verified mask fully outside the bbox uses the source-only
+mode; it is not rejected solely for lacking effective coverage. The original
+owned mask is retained unchanged. No workflow selector is added, and rectangle
+intersection alone is not evidence of nonzero pixels.
+
 ## Layer-Owned Bounding Box
 
 Smart Patch Layer Bounding Box is not the same thing as the project-owned primary generation bbox or Raster Layer transform. Both bboxes live in the unbounded Project Canvas coordinate space.
@@ -375,6 +413,12 @@ Rules:
 - accepted variants can be managed later through Smart Patch variant controls;
 - each accepted raster sub-layer stores immutable generation provenance.
 
+If the target still exists but its editable inputs changed while the job ran,
+explicit Add keeps the candidate's frozen result and provenance. The accepted
+active variant is `outdated` when that frozen baseline differs from current
+inputs; acceptance does not rewrite the candidate to the latest mask/bbox/draft.
+A missing target remains the separate orphaned-candidate recovery flow.
+
 See [GenerationResults](./generation-results.md).
 
 ## Status Model
@@ -395,6 +439,11 @@ Inputs that mark a layer `outdated`:
 - compositing settings that affect regeneration;
 - layer-owned prompt/settings/model resources used by regeneration;
 - source composite revision/hash beneath the Smart Patch Layer.
+
+Owned blur is included when it affects generation/compositing. BBox padding is
+Fit-only: changing padding alone does not stale a variant, but subsequently
+fitting to a changed bbox does. Derived staleness must compare the frozen inputs,
+not any unrelated Project document revision.
 
 ## Vue Prototype Coverage
 
@@ -418,5 +467,7 @@ mock and does not substitute for `Generated with` / `Current Canvas` comparison.
 - Only one raster sub-layer inside one Smart Patch Layer can be active/visible at a time.
 - Smart Patch regeneration can generate several temporary candidates and explicitly persist one or more selected candidates as variants.
 - Changing layer-owned editable inputs marks existing generated output `outdated`.
+- Null/disjoint masks use the actual frozen source-only mode without changing the owned mask.
+- Explicit acceptance into a still-existing changed target retains frozen context and derives `outdated`; it never retargets a missing target.
 - Smart Patch comparison uses active-variant provenance against current Canvas
   state and never compares two variant provenance records.

@@ -155,6 +155,31 @@ RED/neighbor GREEN pairs; typecheck/lint/build PASS. Chronology, source/exit pro
 и границы находятся в linked checkpoint. Nonempty variants и Regional Guidance
 всё ещё отклоняются.
 
+[Private Main/CPU Smart Patch input capture](../engineering/phase-4-smart-patch-generation-capture-research.md)
+не расширяет `.igs` и не сериализует отдельный generation snapshot. Read-only
+Main capture удерживает copied document/draft/bbox/internal/settings, verified
+whole mask descriptor/bytes и visible source layers только ниже exact target.
+Null mask и целая маска вне bbox валидны; этот первый capture возвращает только
+original mask metadata/bytes и source RGBA/source alpha. Effective clipping,
+four-mode classification и internal-scale conditioning — следующие owners.
+Future empty/outside coverage даёт source-only mode. Locked/hidden targets
+доступны для чтения; будущие admission permissions отдельны. После materialization
+и входа в callback private leases защищают snapshot при concurrent edit/Undo/Clear/
+Save/close. Завершение callback закрывает admission новых composition calls;
+cleanup ждёт settlement уже начатых calls, включая sibling после раннего
+Promise.all refusal, и не изменяет document,
+history, seed, saved package или recovery shadow. Final focused14/affected1852
+PASS, четыре actual CPU tests/nine production calls и три isolated semantic
+RED/neighbor GREEN probes квалифицируют этот private slice. Typecheck PASS;
+lint/build PASS, lifecycle/cleanup подтверждены в checkpoint. Electron/browser/ML proof не заявлен.
+
+Будущий Add в still-existing target после изменения inputs сохраняет frozen
+candidate/provenance и вычисляет `outdated` против current inputs; текущие mask,
+bbox/internal/blur/draft не подменяют исторический record. Missing target остаётся
+orphaned и не ретаргетируется автоматически. BBox padding — Fit-only: сам по себе
+не входит в generation staleness, но вызванное Fit изменение bbox входит.
+Accepted variants и их persistence не реализуются этим capture checkpoint.
+
 Owned mask members имеют путь `assets/masks/<mask-id>/<sha256>.png`: владелец и
 hash в пути должны совпадать с descriptor. Это immutable canonical RGBA8 PNG с
 white RGB и linear alpha8 coverage, без color metadata. Alpha `0` означает

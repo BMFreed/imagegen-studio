@@ -1,6 +1,20 @@
 # Engineering Workflow
 
-Latest implementation checkpoint: [Owned mask settings](./phase-4-smart-patch-mask-settings-research.md)
+Latest private Main/CPU checkpoint:
+[Smart Patch generation input capture](./phase-4-smart-patch-generation-capture-research.md).
+Read-only Main preparation freezes owned inputs and source beneath the selected
+Patch, including valid null/disjoint masks, and source RGBA/source alpha;
+focused14/affected1852 tests PASS, four actual CPU tests/nine production
+`compose-target` calls and three isolated semantic RED/neighbor GREEN probes.
+Typecheck/lint/build PASS; physical exit and temporary-copy cleanup are confirmed. No Electron,
+browser or ML inference qualification is claimed. Effective clipped mask,
+four-mode classification and internal-scale conditioning are the next finite slice.
+It does not enable public Generate, jobs/inference or accepted variant persistence.
+User decisions for source-only mode and acceptance of frozen results into changed
+existing targets are recorded in the supporting contracts; public statuses stay
+unchanged. The prior UI/settings evidence remains separated below.
+
+Previous implementation checkpoint: [Owned mask settings](./phase-4-smart-patch-mask-settings-research.md)
 (qualified settings/Fit slice)
 over [Transform Mask and Fit](./phase-4-smart-patch-mask-transform-research.md)
 (qualified authoring slice)

@@ -52,6 +52,28 @@ Smart Patch Layer owns:
 
 If a setting affects an already generated Smart Patch Layer, changing it marks the layer as `outdated`.
 
+Owned `maskSettings.blur` is an integer project-pixel value0..512, default16.
+The painted mask remains immutable; the future generation/compositing snapshot
+must freeze and consume blur, and a changed blur can stale an accepted variant.
+Owned `maskSettings.padding` is an integer Fit margin0..512, default8. Padding
+does not process pixels or stale a result by itself; a later Fit that changes
+bbox changes the generation input. Overlay visibility/color/opacity are viewer
+state and do not change accepted pixels or generation staleness.
+
+The existing production settings UI/persistence and Fit are qualified by the
+[settings checkpoint](../../../engineering/phase-4-smart-patch-mask-settings-research.md).
+The [private Main/CPU input capture](../../../engineering/phase-4-smart-patch-generation-capture-research.md)
+is qualified by focused14/affected1852 tests and actual CPU composition;
+it records whole owned mask and source RGBA/source alpha without applying blur or
+implementing inpaint. Cropped-mask/internal-scale conditioning is the next finite owner.
+
+Internal resolution may differ from world-space bbox size. The upcoming worker
+pipeline must explicitly adapt project-pixel blur through that scale, including
+nonuniform scaling. Invoke's scaled `addInpaint` graph expands/fades at processing
+size and then resizes the mask back; directly copying that numeric radius does
+not prove the same project-space edge width. The choice and actual pixel oracle
+belong to the later processing slice. Scaled Invoke blur parity is not claimed.
+
 Current-operation compositing settings can be used before a Smart Patch Layer exists. Once a Smart Patch Layer is created, the relevant settings are copied into the layer-owned state.
 
 `Denoising strength` is intentionally not placed here. It is a Generation setting and should appear in the Generation card, not above the layer stack or inside selected-layer controls.

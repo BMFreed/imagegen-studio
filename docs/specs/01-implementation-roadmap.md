@@ -2363,8 +2363,14 @@ Fit менял только owned bbox с фиксированным 24px margin
 нынешние owned defaults16/8 дают тот же запас. Qualification: regression1820 до terminal snapping, final affected59/native57,
 three semantic RED/GREEN и required checks PASS; chronology/limits — в checkpoint.
 
-**Следующий срез — фаза 4:** Smart Patch inpaint/generation и accepted variants,
-затем staleness/compositing/comparison, Regional Guidance и Patch presets.
+**Последний private Main/CPU срез фазы 4:**
+[Smart Patch generation input capture](../engineering/phase-4-smart-patch-generation-capture-research.md),
+read-only Main preparation source beneath target +owned mask/bbox/internal/draft/settings.
+Focused14/affected1852 PASS, actual CPU четыре tests/nine calls и три semantic
+RED/neighbor GREEN probes; typecheck PASS, lint/build PASS; lifecycle/cleanup подтверждены.
+Generate/jobs/inference/variants не включаются. Следующий finite owner — effective
+mask clipping/mode/internal-scale conditioning, затем queue/inference и variants,
+staleness/compositing/comparison, Regional Guidance и Patch presets.
 Other-context Models handoffs остаются owner фазы 5. Каждая непроверенная
 комбинация уже проверенных осей не становится автоматическим дополнительным
 ML gate; ограничения текущего installed среза остаются явными.
@@ -2407,7 +2413,26 @@ Result` переносит фактический expanded prompt и portable ge
 
 ## Фаза 4. Полный Canvas и Smart Patch Layer
 
-**Текущий checkpoint:** [Owned mask settings](../engineering/phase-4-smart-patch-mask-settings-research.md)
+**Текущий private Main/CPU checkpoint:**
+[Smart Patch generation input capture](../engineering/phase-4-smart-patch-generation-capture-research.md)
+freeze/read-only Main callback boundary для exact target, ниже-лежащих visible
+source layers и original verified mask bytes, owned bbox/internal/draft/blur/padding.
+Null или fully outside mask используют source-only mode как Invoke; nonzero
+effective mask при opaque source даёт inpaint. Locked/hidden existing target
+читается, future admission permissions отдельны. Эти four-mode rules — future
+masked preparation: первый capture сохраняет только original whole mask и
+source RGBA/source alpha, не вычисляет effective clipped mask/mode и не делает
+internal-scale conditioning. Public Generate, очередь,
+worker inference, candidate/variant Add и `.igs` schema не включаются этим срезом.
+Focused14/affected1852 PASS, actual CPU четыре tests/nine production calls,
+три semantic RED/neighbor GREEN и typecheck PASS; lint/build PASS; lifecycle/cleanup подтверждены.
+Следующий finite owner — effective mask clipping/mode/internal-scale conditioning,
+затем queue/inference/accepted variants. Future acceptance в changed-existing target сохраняет
+frozen output/context и маркирует active variant `outdated`; missing target
+остаётся orphaned. Blur требует дальнейшей project-space scale adaptation;
+padding Fit-only и не stale-ит результат до изменения bbox. Public statuses прежние.
+
+**Предыдущий UI/settings checkpoint:** [Owned mask settings](../engineering/phase-4-smart-patch-mask-settings-research.md)
 добавляет compact Mask blur16px/BBox padding8px, owned optional metadata с
 integer0..512, legacy no-injection defaults и scalar Undo/Save/recovery. Fit читает
 owned sum только при вызове; painted PNG/revision и bbox при edit не меняются.

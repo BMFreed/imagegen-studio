@@ -23,10 +23,28 @@ export interface FrozenRasterComposition {
   layers: ComposePreviewInput['layers']
   stagingRoot: string
 }
+export type RasterCompositionScope = { beneathLayerId: string }
 type RasterLayer = IgsRasterLayerV1
+
 type RasterAsset = RasterLayer['asset']
 
 type FrozenSource = IgsAssetSource | null
+
+/** Project stack order is top first. Empty Smart Patches currently contribute no pixels. */
+export function compositionRasterLayers(
+  document: IgsProjectDocumentV1,
+  scope?: RasterCompositionScope,
+): IgsRasterLayerV1[] {
+  let scoped = document
+  if (scope) {
+    const index = document.layers.findIndex((layer) => layer.id === scope.beneathLayerId)
+    if (index < 0) {
+      throw new Error('The captured composition owner no longer exists.')
+    }
+    scoped = { ...document, layers: document.layers.slice(index + 1) }
+  }
+  return projectRasterLayers(scoped).filter((layer) => layer.visible && layer.opacity > 0)
+}
 
 /**
  * Freeze all visible raster inputs before invoking a worker. Saved members are extracted under the
@@ -38,6 +56,7 @@ export async function withFrozenRasterComposition<T>(
     document: IgsProjectDocumentV1
     packagePath: string
     pendingSource: (asset: RasterAsset) => IgsAssetSource | null
+    scope?: RasterCompositionScope
     scratchBasePath: string
     stagePrefix: string
   },
@@ -46,9 +65,7 @@ export async function withFrozenRasterComposition<T>(
   // Do this before any await: a concurrent Project edit cannot alter the settings or asset refs
   // being frozen. Copy pending byte sources too, because the original Buffer may be reused.
   const document = parseProjectDocumentV1(structuredClone(input.document))
-  const visible = projectRasterLayers(document).filter(
-    (layer) => layer.visible && layer.opacity > 0,
-  )
+  const visible = compositionRasterLayers(document, input.scope)
   const sources = new Map<string, { asset: RasterAsset; source: FrozenSource }>()
   for (const layer of visible) {
     const key = assetKey(layer.asset)
