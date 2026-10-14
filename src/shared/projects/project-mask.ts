@@ -11,6 +11,8 @@ export const PROJECT_MASK_MAX_IDAT_CHUNKS = 256
 export const PROJECT_MASK_MAX_EDIT_PIXEL_VISITS = 32_000_000
 export const PROJECT_MASK_MAX_POINTS = 8192
 export const PROJECT_MASK_DEFAULT_DIAMETER = 50
+/** Input scale ceiling; transformed bounds and CPU work are checked independently in Main. */
+export const PROJECT_MASK_MAX_TRANSFORM_SCALE = 10_000
 
 const CoordinateSchema = v.pipe(
   v.number(),
@@ -21,6 +23,21 @@ const CoordinateSchema = v.pipe(
 const PointSchema = v.strictObject({ x: CoordinateSchema, y: CoordinateSchema })
 const OperationSchema = v.picklist(['add', 'subtract'])
 const PointsSchema = v.pipe(v.array(PointSchema), v.maxLength(PROJECT_MASK_MAX_POINTS))
+const TransformScaleSchema = v.pipe(
+  v.number(),
+  v.finite(),
+  v.minValue(Number.MIN_VALUE),
+  v.maxValue(PROJECT_MASK_MAX_TRANSFORM_SCALE),
+)
+export const ProjectMaskTransformSchema = v.strictObject({
+  rotationDegrees: v.pipe(v.number(), v.finite(), v.minValue(-360), v.maxValue(360)),
+  scaleX: TransformScaleSchema,
+  scaleY: TransformScaleSchema,
+  x: CoordinateSchema,
+  y: CoordinateSchema,
+})
+
+export type ProjectMaskTransform = v.InferOutput<typeof ProjectMaskTransformSchema>
 
 export const ProjectMaskEditSchema = v.variant('kind', [
   v.strictObject({
@@ -35,6 +52,8 @@ export const ProjectMaskEditSchema = v.variant('kind', [
     points: v.pipe(PointsSchema, v.minLength(3)),
   }),
   v.strictObject({ kind: v.literal('clear') }),
+  v.strictObject({ kind: v.literal('transform'), transform: ProjectMaskTransformSchema }),
+  v.strictObject({ kind: v.literal('fit-bbox') }),
 ])
 
 export type ProjectMaskEdit = v.InferOutput<typeof ProjectMaskEditSchema>

@@ -6,6 +6,7 @@ import {
   assertProjectMaskDimensions,
   parseProjectMaskEdit,
   PROJECT_MASK_MAX_POINTS,
+  PROJECT_MASK_MAX_TRANSFORM_SCALE,
 } from './project-mask.js'
 
 test('mask edit validation admits float world points and rejects malformed/foreign tool settings', () => {
@@ -36,6 +37,43 @@ test('mask edit validation admits float world points and rejects malformed/forei
         { x: 2, y: 0 },
       ],
     },
+  ]) {
+    assert.throws(() => parseProjectMaskEdit(invalid), { code: 'MASK_INPUT_INVALID' })
+  }
+})
+
+test('mask transform and fit shapes are strict, finite and separate from authoring options', () => {
+  const transform = { rotationDegrees: -90, scaleX: 1.25, scaleY: 2, x: -8.5, y: 12.25 }
+  assert.deepEqual(parseProjectMaskEdit({ kind: 'transform', transform }), {
+    kind: 'transform',
+    transform,
+  })
+  assert.deepEqual(parseProjectMaskEdit({ kind: 'fit-bbox' }), { kind: 'fit-bbox' })
+  assert.equal(
+    parseProjectMaskEdit({
+      kind: 'transform',
+      transform: { ...transform, scaleX: PROJECT_MASK_MAX_TRANSFORM_SCALE },
+    }).kind,
+    'transform',
+  )
+  for (const invalid of [
+    { kind: 'fit-bbox', transform },
+    { kind: 'fit-bbox', padding: 24 },
+    { kind: 'transform', operation: 'add', transform },
+    { kind: 'transform', transform: { ...transform, skew: 0 } },
+    { kind: 'transform', transform: { ...transform, scaleX: 0 } },
+    { kind: 'transform', transform: { ...transform, scaleY: -1 } },
+    {
+      kind: 'transform',
+      transform: { ...transform, scaleX: PROJECT_MASK_MAX_TRANSFORM_SCALE + 1 },
+    },
+    { kind: 'transform', transform: { ...transform, scaleX: Infinity } },
+    { kind: 'transform', transform: { ...transform, scaleY: NaN } },
+    { kind: 'transform', transform: { ...transform, rotationDegrees: 361 } },
+    { kind: 'transform', transform: { ...transform, rotationDegrees: -361 } },
+    { kind: 'transform', transform: { ...transform, rotationDegrees: Infinity } },
+    { kind: 'transform', transform: { ...transform, x: 2_147_483_648 } },
+    { kind: 'transform', transform: { ...transform, y: NaN } },
   ]) {
     assert.throws(() => parseProjectMaskEdit(invalid), { code: 'MASK_INPUT_INVALID' })
   }

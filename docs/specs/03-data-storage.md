@@ -133,9 +133,26 @@ integer `revision >= 0`, сохраняя прежний `{ id, revision: 0, ass
 Painted mask требует `revision > 0`, `asset: { path, sha256, bytes, width, height }`
 и `bounds: { x, y, width, height }`. Integer world origin и один pixel на один
 Project pixel не зависят от bbox/internal resolution; размеры bounds и asset
-совпадают. Bbox edits не двигают и не обрезают mask coverage. Affine metadata пока
-не добавляется: Transform Mask и Fit Patch BBox to Mask — следующий обязательный
-MVP срез. Nonempty variants и Regional Guidance всё ещё отклоняются.
+совпадают. Bbox edits не двигают и не обрезают mask coverage.
+[Transform/Fit implementation](../engineering/phase-4-smart-patch-mask-transform-research.md)
+использует тот же формат: Main запекает move/scale/rotation в новый PNG и tight
+world bounds, без affine metadata. UI округляет anchor и displayed dimensions
+до whole project pixels после отпускания ручки (minimum1px); Main API сохраняет
+fractional geometry. Unit integer translation и quarter turns
+сохраняют alpha точно; при совпадении output dimensions и alpha сохраняются
+исходные проверенные PNG bytes/hash, включая допустимую упаковку импортированного
+PNG. Остальные transforms используют 2×2 inverse bilinear sampling с clamped
+interpolation внутри source pixel-area rectangle и transparent exterior.
+All-zero minification отклоняется, а не очищает mask. Один изменившийся Apply —
+один Undo; no-op/cancel не меняют revision/history. Fit читает verified pixels,
+добавляет фиксированные 24px per side (blur16 + padding8), округляет rect наружу
+по grid8 и меняет только owned bbox, сохраняя mask identity/revision/bytes и
+internal resolution. Наличие этой fit policy не означает готовую configurable
+blur UI или inference blur step. Qualification: impacted regression1820 PASS
+до terminal snapping, final affected59 PASS, built native57 checks и три semantic
+RED/neighbor GREEN pairs; typecheck/lint/build PASS. Chronology, source/exit proof
+и границы находятся в linked checkpoint. Nonempty variants и Regional Guidance
+всё ещё отклоняются.
 
 Owned mask members имеют путь `assets/masks/<mask-id>/<sha256>.png`: владелец и
 hash в пути должны совпадать с descriptor. Это immutable canonical RGBA8 PNG с
@@ -164,7 +181,10 @@ UI thumbnail — масштабированный вид того же PNG, бе
 
 Защитный CPU профиль authoring: 4 000 000 pixels, 4096 по каждой оси, 32 MiB PNG,
 256 IDAT chunks, 8192 points и 32 000 000 candidate pixel visits на edit; coordinates ограничены
-существующим Project range. Отказ происходит до document/history publication,
+существующим Project range. Transform scale finite/positive <=10000, rotation
+finite [-360,360]. General resampling preflight считает 19×output +2×source visits,
+точные integer/quarter paths — 2×source, сохраняя прежний 4M pixel ceiling.
+Отказ происходит до document/history publication,
 без bbox clipping или downsampling. Это engineering ceilings, не обещание
 измеренной capacity. Восемь real Service scenarios, full app regression 3751
 PASS/affected 176 PASS и native 33 checks подтвердили PNG/manifest readback,

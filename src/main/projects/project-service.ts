@@ -54,6 +54,7 @@ import {
   type ProjectGenerationTargetState,
 } from '../../shared/projects/project-generation-target-state.js'
 import type { ProjectMaskBitmap } from '../../shared/projects/project-mask.js'
+import { ProjectMaskError } from '../../shared/projects/project-mask.js'
 import {
   createEmptyProjectDocumentV1,
   IGS_SAFETY_CEILINGS,
@@ -128,6 +129,7 @@ import {
   type ProjectLayerResourceRequest,
   resolveProjectLayerAsset,
 } from './project-layer-resource.js'
+import { fitProjectMaskBbox } from './project-mask-fit.js'
 import {
   projectMaskImageUrl,
   type ProjectMaskResourceRequest,
@@ -498,11 +500,13 @@ export class ProjectService {
       )
     }
     let current: ProjectMaskBitmap | null = null
+    let currentBytes: Buffer | null = null
     if (patch.mask.asset !== null) {
       if (!('bounds' in patch.mask)) {
         throw new ProjectServiceError('PROJECT_MASK_UNAVAILABLE', 'The mask has no valid bounds.')
       }
       const bytes = await readMaskAssetBytes(coordinator, patch.mask.asset)
+      currentBytes = bytes
       current = {
         alpha: decodeProjectMaskPng(bytes, patch.mask.asset),
         bounds: structuredClone(patch.mask.bounds),
@@ -517,6 +521,34 @@ export class ProjectService {
         'EDIT_CONFLICT',
         'The Project changed. Start a new mask gesture.',
       )
+    }
+    if (request.edit.kind === 'fit-bbox') {
+      if (!current) {
+        throw new ProjectMaskError(
+          'MASK_INPUT_INVALID',
+          'Paint this Smart Patch mask before fitting its bbox.',
+        )
+      }
+      const rect = fitProjectMaskBbox(current.bounds)
+      if (
+        patch.boundingBox.x === rect.x &&
+        patch.boundingBox.y === rect.y &&
+        patch.boundingBox.width === rect.width &&
+        patch.boundingBox.height === rect.height
+      ) {
+        return toTab(tabId, coordinator)
+      }
+      await coordinator.applyDocument(
+        {
+          ...document,
+          layers: document.layers.map((layer) =>
+            layer.id === layerId ? { ...patch, boundingBox: rect } : layer,
+          ),
+        },
+        {},
+        { expectedDocumentEpoch: epoch, expectedDocumentRevision: document.documentRevision },
+      )
+      return toTab(tabId, coordinator)
     }
     const rendered = applyProjectMaskEdit(current, request.edit)
     if (
@@ -538,11 +570,16 @@ export class ProjectService {
     let mask: IgsSmartPatchLayerV1['mask'] = { asset: null, id: patch.mask.id, revision }
     const sources: Record<string, IgsAssetSource> = {}
     if (rendered) {
-      const bytes = encodeProjectMaskPng(
-        rendered.alpha,
-        rendered.bounds.width,
-        rendered.bounds.height,
-      )
+      // Valid imported PNGs may have different filters/chunking. A pixel-preserving move keeps
+      // their exact immutable bytes; changed coverage alone needs a new encoding.
+      const bytes =
+        current &&
+        currentBytes &&
+        rendered.bounds.width === current.bounds.width &&
+        rendered.bounds.height === current.bounds.height &&
+        Buffer.from(rendered.alpha).equals(Buffer.from(current.alpha))
+          ? currentBytes
+          : encodeProjectMaskPng(rendered.alpha, rendered.bounds.width, rendered.bounds.height)
       const sha256 = createHash('sha256').update(bytes).digest('hex')
       const memberPath = `assets/masks/${patch.mask.id}/${sha256}.png`
       mask = {

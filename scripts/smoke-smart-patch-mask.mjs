@@ -25,14 +25,23 @@ import { IGS_SRGB_ICC_SHA256 } from '../src/shared/projects/color-profile.ts'
 import { IGS_MIMETYPE } from '../src/shared/projects/project-schema.ts'
 import { isolateNativeSmokeWindow } from './native-smoke-window.mjs'
 import {
+  runMaskTransformBeforeSave,
+  runMaskTransformRecovery,
+} from './smoke-smart-patch-transform-scenario.mjs'
+import {
   boundQualificationProcess,
   confirmQualificationProcessExit,
   stopExpiredQualificationProcess,
 } from './qualification-resource-limits.mjs'
 
-assert.equal(process.argv.length, 4, 'Use --report-file ABSOLUTE_NEW_OWNED_REPORT')
-assert.equal(process.argv[2], '--report-file')
-const reportFile = process.argv[3]
+const arguments_ = process.argv.slice(2)
+assert.ok(
+  arguments_.length === 2 || (arguments_.length === 3 && arguments_[2] === '--with-transform'),
+  'Use --report-file ABSOLUTE_NEW_OWNED_REPORT [--with-transform]',
+)
+assert.equal(arguments_[0], '--report-file')
+const reportFile = arguments_[1]
+const withTransform = arguments_.length === 3
 const artifactRoot = path.join(os.homedir(), '.codex/artifacts/imagegen-studio')
 assert.ok(path.isAbsolute(reportFile) && path.resolve(reportFile) === reportFile)
 assert.equal(existsSync(reportFile), false)
@@ -49,6 +58,7 @@ const hashFiles = (files) =>
   Object.fromEntries(files.map((file) => [file, digest(readFileSync(file))]))
 const sourceFiles = [
   'scripts/smoke-smart-patch-mask.mjs',
+  'scripts/smoke-smart-patch-transform-scenario.mjs',
   'scripts/native-smoke-window.mjs',
   'scripts/qualification-resource-limits.mjs',
   'src/renderer/index.html',
@@ -83,6 +93,7 @@ const sourceFiles = [
 ]
 const report = {
   outcome: 'running',
+  mode: withTransform ? 'mask-transform-fit' : 'mask-authoring',
   startedAt: new Date().toISOString(),
   fixtureRoot,
   payloads: [fixtureRoot],
@@ -104,16 +115,18 @@ const report = {
   pageErrors: [],
   layouts: [],
   boundary: {
-    actual:
-      'Built native UI pointer mask tools; real preload/Main authoritative PNG authoring, owner/refusal/history, genuine Save/ZIP read/reopen and local dirty-shadow crash recovery.',
+    actual: withTransform
+      ? 'Built native UI pointer mask tools plus actual Konva move/scale/rotation previews and explicit Transform Apply/Cancel, Fit24px outward8-grid; real preload/Main authoritative pixels and one-entry history, actual Save/ZIP read/reopen and dirty-shadow crash recovery.'
+      : 'Built native UI pointer mask tools; real preload/Main authoritative PNG authoring, owner/refusal/history, genuine Save/ZIP read/reopen and local dirty-shadow crash recovery.',
     fixtures:
       'One tiny ICC Raster is added by the production package writer only while a genuinely UI-created Project is closed. Main handler observation returns identical original replies. A native chooser supplies only an owned corrupted package path. No fabricated Project/pixel replies, runtime, models, workers or inference.',
     oracle:
       'Literal world-coordinate alpha expectations; independent PNG row reconstruction and Chromium decoder, whole alpha/PNG comparisons for history/reopen/recovery. No production mask rasterizer or codec imports.',
     limits:
       'Sequential native actors and scopes: 2GiB/zero swap/300s; physical PID/start exits before restart or disposal. Test masks remain small; large refusal commands allocate no large images.',
-    excluded:
-      'Mask Transform/Fit, generation/inpaint/outpaint, variants/staleness, Regional Guidance, cross-computer transfer and release readiness.',
+    excluded: withTransform
+      ? 'Generation/inpaint/outpaint, variants/staleness, Regional Guidance, cross-computer transfer and release readiness.'
+      : 'Mask Transform/Fit, generation/inpaint/outpaint, variants/staleness, Regional Guidance, cross-computer transfer and release readiness.',
     cleanup:
       'Root owns cleanup after physical exit, compact evidence pinning and mutation restoration. This runner never touches shared runtime/model data or ordinary app data.',
   },
@@ -509,6 +522,20 @@ async function overlayControl() {
     'Real overlay toggle hides/restores rendered coverage outside raster/bbox without changing mask/Project/history or issuing a Main edit',
   )
 }
+async function resizeNative(width, height) {
+  const native = await application.evaluate(
+    ({ BrowserWindow }, [width, height]) => {
+      const main = BrowserWindow.getAllWindows()[0]
+      main.setSize(width, height)
+      return { outer: main.getSize(), content: main.getContentSize() }
+    },
+    [width, height],
+  )
+  assert.deepEqual(native.outer, [width, height])
+  await expect.poll(() => window.evaluate(() => [innerWidth, innerHeight])).toEqual(native.content)
+  await nativeFrames()
+  return native
+}
 async function nativeLayouts() {
   const baseline = exactState(await current())
   const commandCount = (await commands()).length
@@ -647,6 +674,37 @@ async function nativeLayouts() {
       .poll(() => window.evaluate(() => [innerWidth, innerHeight]))
       .toEqual(report.layoutRestoredWindow.content)
     checkpoint()
+  }
+}
+
+// Narrow operations shared with transform qualification; Main/pixel replies remain genuine.
+function transformContext() {
+  return {
+    at,
+    assertNormal,
+    barrier,
+    canvas,
+    check,
+    commands,
+    content,
+    current,
+    editRequest,
+    exactState,
+    history,
+    maskPixels,
+    nativeFrames,
+    patch,
+    patchAId,
+    patchBId,
+    projectId,
+    rawApi,
+    refusal,
+    resizeNative,
+    screenshot,
+    select,
+    tool,
+    window: () => window,
+    worldPoint,
   }
 }
 
@@ -1036,12 +1094,21 @@ try {
   await select(patchBId)
   state = await gesture(
     'Polygon Lasso tool',
-    [
-      { x: 40, y: 40 },
-      { x: 100, y: 40 },
-      { x: 100, y: 100 },
-      { x: 40, y: 100 },
-    ],
+    withTransform
+      ? [
+          { x: 40, y: 40 },
+          { x: 100, y: 40 },
+          { x: 100, y: 80 },
+          { x: 80, y: 80 },
+          { x: 80, y: 100 },
+          { x: 40, y: 100 },
+        ]
+      : [
+          { x: 40, y: 40 },
+          { x: 100, y: 40 },
+          { x: 100, y: 100 },
+          { x: 40, y: 100 },
+        ],
     true,
   )
   const bPolygon = await maskPixels(patch(state, patchBId), 'b-polygon')
@@ -1314,6 +1381,7 @@ try {
   ])
   await aCard.getByRole('button', { name: `Show ${aName}`, exact: true }).click()
   await expect.poll(async () => patch(await current(), patchAId).visible).toBe(true)
+  if (withTransform) bLasso = await runMaskTransformBeforeSave(transformContext())
   await nativeLayouts()
   const firstSave = await saveProject('painted-masks-saved')
   const savedContent = content(await current())
@@ -1336,9 +1404,13 @@ try {
   await select(patchAId)
   await diameter(20)
   state = await gesture('Brush tool', [{ x: 10, y: 100 }])
-  const dirtyContent = content(state)
-  const dirtyPixels = await maskPixels(patch(state, patchAId), 'a-unsaved-recovery')
+  let dirtyPixels = await maskPixels(patch(state, patchAId), 'a-unsaved-recovery')
   assert.equal(at(dirtyPixels, 10, 100), 255)
+  if (withTransform) {
+    dirtyPixels = await runMaskTransformRecovery(transformContext())
+    state = await current()
+  }
+  const dirtyContent = content(state)
   assert.ok(readFileSync(packagePath).equals(savedBytes))
   const shadowFile = path.join(appDataRoot, 'autosave', projectId, 'manifest.json')
   await expect

@@ -12,6 +12,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { crc32 } from 'node:zlib'
 
 import { openAppDatabase } from '../db/database.js'
 import { readIgsPackage, saveIgsPackage } from './igs-package.js'
@@ -478,5 +479,287 @@ test('actual local shadow includes painted PNGs and preserves saved bytes until 
       (await readFile(savedPath)).equals(savedBytes),
       'Shadow publication must not become implicit Save.',
     )
+  })
+})
+
+const smallL: ProjectMaskEdit = {
+  kind: 'polygon',
+  operation: 'add',
+  points: [
+    { x: 10, y: 20 },
+    { x: 16, y: 20 },
+    { x: 16, y: 22 },
+    { x: 12, y: 22 },
+    { x: 12, y: 24 },
+    { x: 10, y: 24 },
+  ],
+}
+
+test('actual Transform targets B, preserves A/bbox/normal/Raster and saves exact rotated alpha with one Undo', async () => {
+  await fixture(async ({ first, normal, raster, savedPath, second, service }) => {
+    let tab = service.getOpenTabs()[0]
+    tab = await service.editSmartPatchMask(tab.id, second.id, request(tab, second.id, smallL))
+    const before = layer(tab, second.id)
+    const initial = await pixels(service, before)
+    tab = await service.editSmartPatchMask(
+      tab.id,
+      second.id,
+      request(tab, second.id, {
+        kind: 'transform',
+        transform: { rotationDegrees: 90, scaleX: 1, scaleY: 1, x: -12, y: 20 },
+      }),
+    )
+    const moved = layer(tab, second.id)
+    assert.equal(moved.mask.revision, before.mask.revision + 1)
+    assert.equal(moved.mask.id, before.mask.id)
+    assert.deepEqual(moved.boundingBox, before.boundingBox)
+    assert.deepEqual(moved.internalResolution, before.internalResolution)
+    assert.deepEqual(moved.generationDraft, before.generationDraft)
+    assert.deepEqual(editablePatch(layer(tab, first.id)), editablePatch(first))
+    assert.deepEqual(tab.primaryBbox, normal.primaryBbox)
+    assert.deepEqual(tab.generationDraft, normal.generationDraft)
+    const rotated = await pixels(service, moved)
+    assert.deepEqual(rotated.bounds, { height: 6, width: 4, x: -16, y: 20 })
+    assert.deepEqual(
+      [...rotated.alpha],
+      [
+        255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0,
+        0, 255, 255,
+      ],
+    )
+    const undone = await service.undo(tab.id)
+    assert.deepEqual(layer(undone, second.id).mask, before.mask)
+    assert.ok((await pixels(service, layer(undone, second.id))).bytes.equals(initial.bytes))
+    tab = await service.redo(tab.id)
+    assert.deepEqual(layer(tab, second.id).mask, moved.mask)
+    assert.ok((await pixels(service, layer(tab, second.id))).bytes.equals(rotated.bytes))
+    await service.save(tab.id)
+    const saved = await readIgsPackage(savedPath)
+    assert.ok((await saved.readMember(raster.asset.path)).equals(rasterPng))
+    assert.deepEqual(saved.project.layers.find(({ id }) => id === second.id)?.kind, 'smart-patch')
+    await service.close(tab.id)
+    const reopened = await service.open(tab.id)
+    assert.equal(reopened.kind, 'opened')
+    if (reopened.kind !== 'opened') {
+      throw new Error('Saved transform must reopen.')
+    }
+    assert.deepEqual(layer(reopened.tab, second.id).mask, moved.mask)
+    assert.ok((await pixels(service, layer(reopened.tab, second.id))).bytes.equals(rotated.bytes))
+  })
+})
+
+test('actual Fit writes only B bbox with full padding/grid and leaves mask pixels/revision exact through Undo and Save', async () => {
+  await fixture(async ({ first, normal, second, service }) => {
+    let tab = service.getOpenTabs()[0]
+    tab = await service.editSmartPatchMask(tab.id, second.id, request(tab, second.id, smallL))
+    const before = layer(tab, second.id)
+    const initial = await pixels(service, before)
+    tab = await service.editSmartPatchMask(
+      tab.id,
+      second.id,
+      request(tab, second.id, { kind: 'fit-bbox' }),
+    )
+    const fitted = layer(tab, second.id)
+    assert.deepEqual(fitted.boundingBox, { height: 56, width: 56, x: -16, y: -8 })
+    assert.deepEqual(fitted.mask, before.mask)
+    assert.deepEqual(fitted.internalResolution, before.internalResolution)
+    assert.deepEqual(fitted.generationDraft, before.generationDraft)
+    assert.deepEqual(tab.primaryBbox, normal.primaryBbox)
+    assert.deepEqual(tab.generationDraft, normal.generationDraft)
+    assert.deepEqual(editablePatch(layer(tab, first.id)), editablePatch(first))
+    assert.ok((await pixels(service, fitted)).bytes.equals(initial.bytes))
+    const repeated = await service.editSmartPatchMask(
+      tab.id,
+      second.id,
+      request(tab, second.id, { kind: 'fit-bbox' }),
+    )
+    assert.equal(repeated.documentRevision, tab.documentRevision)
+    assert.equal(repeated.canUndo, tab.canUndo)
+    tab = await service.undo(tab.id)
+    assert.deepEqual(layer(tab, second.id).boundingBox, before.boundingBox)
+    assert.deepEqual(layer(tab, second.id).mask, before.mask)
+    tab = await service.redo(tab.id)
+    await service.save(tab.id)
+    assert.deepEqual(layer(tab, second.id).boundingBox, fitted.boundingBox)
+    assert.ok((await pixels(service, layer(tab, second.id))).bytes.equals(initial.bytes))
+  })
+})
+
+test('Transform and Fit refuse empty/stale/locked/hidden targets or oversize output without document/history/file effects', async () => {
+  await fixture(async ({ savedPath, second, service }) => {
+    let tab = service.getOpenTabs()[0]
+    const identity: ProjectMaskEdit = {
+      kind: 'transform',
+      transform: { rotationDegrees: 0, scaleX: 1, scaleY: 1, x: 10, y: 20 },
+    }
+    for (const edit of [identity, { kind: 'fit-bbox' } as const]) {
+      const before = structuredClone(tab)
+      await assert.rejects(
+        service.editSmartPatchMask(tab.id, second.id, request(tab, second.id, edit)),
+        { code: 'MASK_INPUT_INVALID' },
+      )
+      assert.deepEqual(service.getOpenTabs()[0], before)
+    }
+    tab = await service.editSmartPatchMask(tab.id, second.id, request(tab, second.id, smallL))
+    await service.save(tab.id)
+    const saved = await readFile(savedPath)
+    const noOp = await service.editSmartPatchMask(
+      tab.id,
+      second.id,
+      request(tab, second.id, identity),
+    )
+    assert.equal(noOp.documentRevision, tab.documentRevision)
+    assert.deepEqual(layer(noOp, second.id).mask, layer(tab, second.id).mask)
+    const stale = request(tab, second.id, { kind: 'fit-bbox' })
+    tab = await service.updateSmartPatchLayer(tab.id, second.id, {
+      kind: 'opacity',
+      opacity: 0.6,
+    })
+    const before = structuredClone(tab)
+    await assert.rejects(service.editSmartPatchMask(tab.id, second.id, stale), {
+      code: 'EDIT_CONFLICT',
+    })
+    await assert.rejects(
+      service.editSmartPatchMask(
+        tab.id,
+        second.id,
+        request(tab, second.id, {
+          kind: 'transform',
+          transform: { rotationDegrees: 0, scaleX: 10_000, scaleY: 1, x: 0, y: 0 },
+        }),
+      ),
+      { code: 'MASK_LIMIT' },
+    )
+    assert.deepEqual(service.getOpenTabs()[0], before)
+    assert.ok((await readFile(savedPath)).equals(saved))
+    for (const [change, code] of [
+      [{ kind: 'lock', locked: true }, 'PROJECT_LAYER_LOCKED'],
+      [{ kind: 'visibility', visible: false }, 'PROJECT_LAYER_HIDDEN'],
+    ] as const) {
+      tab = await service.updateSmartPatchLayer(tab.id, second.id, change)
+      const blocked = structuredClone(tab)
+      for (const edit of [identity, { kind: 'fit-bbox' } as const]) {
+        await assert.rejects(
+          service.editSmartPatchMask(tab.id, second.id, request(tab, second.id, edit)),
+          { code },
+        )
+        assert.deepEqual(service.getOpenTabs()[0], blocked)
+      }
+      tab = await service.updateSmartPatchLayer(
+        tab.id,
+        second.id,
+        change.kind === 'lock'
+          ? { kind: 'lock', locked: false }
+          : { kind: 'visibility', visible: true },
+      )
+    }
+    assert.ok((await readFile(savedPath)).equals(saved))
+  })
+})
+
+test('actual integer translation retains a valid imported split-IDAT PNG byte-for-byte across Save/reopen', async () => {
+  await fixture(async ({ savedPath, second, service }) => {
+    let tab = service.getOpenTabs()[0]
+    tab = await service.editSmartPatchMask(tab.id, second.id, request(tab, second.id, smallL))
+    await service.save(tab.id)
+    const original = await pixels(service, layer(tab, second.id))
+    await service.close(tab.id)
+    const seed = await readIgsPackage(savedPath)
+    const compressedLength = original.bytes.readUInt32BE(33)
+    assert.equal(original.bytes.toString('ascii', 37, 41), 'IDAT')
+    const compressed = original.bytes.subarray(41, 41 + compressedLength)
+    const makeChunk = (payload: Buffer) => {
+      const chunk = Buffer.alloc(payload.length + 12)
+      chunk.writeUInt32BE(payload.length, 0)
+      chunk.write('IDAT', 4, 'ascii')
+      payload.copy(chunk, 8)
+      chunk.writeUInt32BE(crc32(chunk.subarray(4, -4)), chunk.length - 4)
+      return chunk
+    }
+    const divided = Buffer.concat([
+      original.bytes.subarray(0, 33),
+      makeChunk(compressed.subarray(0, Math.floor(compressed.length / 2))),
+      makeChunk(compressed.subarray(Math.floor(compressed.length / 2))),
+      original.bytes.subarray(41 + compressedLength + 4),
+    ])
+    assert.ok(!divided.equals(original.bytes))
+    const hash = digest(divided)
+    const oldPatch = seed.project.layers.find(({ id }) => id === second.id)
+    assert.ok(oldPatch?.kind === 'smart-patch' && oldPatch.mask.asset)
+    const maskBounds = oldPatch.mask.bounds
+    const maskAsset = {
+      ...oldPatch.mask.asset,
+      bytes: divided.length,
+      path: `assets/masks/${oldPatch.mask.id}/${hash}.png`,
+      sha256: hash,
+    }
+    const assets: Record<string, { bytes: Buffer }> = {}
+    for (const member of seed.manifest.members) {
+      if (member.path.startsWith('assets/') && member.path !== oldPatch.mask.asset.path) {
+        assets[member.path] = { bytes: await seed.readMember(member.path) }
+      }
+    }
+    assets[maskAsset.path] = { bytes: divided }
+    await saveIgsPackage(savedPath, {
+      assets,
+      preview: {
+        merged: await seed.readMember('preview/merged.png'),
+        rect: seed.manifest.preview.rect,
+        status: 'unavailable',
+        thumbnail: await seed.readMember('preview/thumbnail.webp'),
+      },
+      project: {
+        ...seed.project,
+        documentRevision: randomUUID(),
+        layers: seed.project.layers.map((value) =>
+          value.id === second.id
+            ? {
+                ...oldPatch,
+                mask: {
+                  asset: maskAsset,
+                  bounds: maskBounds,
+                  id: oldPatch.mask.id,
+                  revision: oldPatch.mask.revision,
+                },
+              }
+            : value,
+        ),
+      },
+    })
+    const opened = await service.open(tab.id)
+    assert.equal(opened.kind, 'opened')
+    if (opened.kind !== 'opened') {
+      throw new Error('Declared valid imported mask must open.')
+    }
+    tab = opened.tab
+    assert.ok((await pixels(service, layer(tab, second.id))).bytes.equals(divided))
+    tab = await service.editSmartPatchMask(
+      tab.id,
+      second.id,
+      request(tab, second.id, {
+        kind: 'transform',
+        transform: { rotationDegrees: 0, scaleX: 1, scaleY: 1, x: -16, y: 22 },
+      }),
+    )
+    const translated = layer(tab, second.id)
+    assert.deepEqual(translated.mask.asset, maskAsset)
+    assert.deepEqual((await pixels(service, translated)).bounds, {
+      height: 4,
+      width: 6,
+      x: -16,
+      y: 22,
+    })
+    assert.ok(
+      (await pixels(service, translated)).bytes.equals(divided),
+      'Valid source compression/chunking must remain exact during translation.',
+    )
+    await service.save(tab.id)
+    await service.close(tab.id)
+    const reopened = await service.open(tab.id)
+    assert.equal(reopened.kind, 'opened')
+    if (reopened.kind !== 'opened') {
+      throw new Error('Moved imported PNG must reopen.')
+    }
+    assert.ok((await pixels(service, layer(reopened.tab, second.id))).bytes.equals(divided))
   })
 })

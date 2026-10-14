@@ -69,10 +69,43 @@ Five semantic RED/neighbor GREEN pairs have byte-exact restoration. Bounded
 typecheck/lint/build pass; counts, actual boundary and excluded attempts are
 recorded in the authoring checkpoint. This qualifies the declared authoring slice.
 
-`Transform Mask` and `Fit Patch BBox to Mask` remain required MVP work in the next
-slice. Smart Patch inpaint/generation, accepted variants, staleness, compositing,
-Regional Guidance and Patch preset application remain pending. Public promise
-statuses are unchanged.
+## Production checkpoint: Transform Mask and Fit
+
+[Transform/Fit implementation](../../../engineering/phase-4-smart-patch-mask-transform-research.md)
+adds selected-mask move/scale/rotation through a local Konva preview and explicit
+Apply/Enter or Cancel/Escape. Captured document/layer/mask identities and revisions
+are retained through the session. Owner/revision, camera, busy or external focus
+changes cancel; hidden/locked/empty targets cannot transform. One changed Apply
+creates one Undo step. Interactive release snaps anchors and displayed dimensions
+to whole project pixels (minimum 1px); the command API retains fractional geometry.
+Main reads verified owned pixels and bakes a new tight
+world-grid PNG, with no persisted affine metadata. Transform leaves bbox,
+internal resolution, layer draft, other layers and Raster pixels unchanged.
+
+Integer unit translations and quarter turns preserve exact alpha. General
+transforms use fixed 2×2 inverse bilinear samples with clamped interpolation inside
+the source pixel-area rectangle and transparent exterior. Original verified PNG
+bytes are reused when output dimensions and alpha remain identical, including
+valid imported PNG chunk packaging. An identity/no-op changes no document/history;
+all-zero minification refuses instead of clearing a nonempty mask. Scale is
+positive and capped at 10000, angle is finite within [-360,360], and actual
+geometry/work must satisfy existing mask limits. CPU interpolation does not
+promise Invoke pixel parity.
+
+Fit reads the verified mask bounds and changes only this Patch's bbox. Its fixed
+policy adds **24 project pixels per side** (blur16 + padding8), then rounds
+left/top down and right/bottom up on grid8 for Illustrious and Anima. There is no
+64px world-bbox minimum. Mask identity/revision/bytes, internal resolution and
+draft are unchanged; repeated Fit is a no-op. This is a fitting policy, not
+configurable blur UI or an implemented inference/compositing blur step.
+
+Qualification: impacted regression1820 PASS before terminal snapping, final
+affected59 PASS, built native57 checks and three semantic RED/neighbor GREEN
+pairs. Required typecheck/lint/build pass; source/exit proof, attempt chronology
+and limits are recorded in the linked checkpoint. Smart Patch
+inpaint/generation, accepted variants, staleness, compositing, comparison,
+Regional Guidance and Patch preset source/target flows remain pending. Public
+promise statuses are unchanged.
 
 ## Reference
 

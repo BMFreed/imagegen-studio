@@ -52,10 +52,43 @@ The current encoder emits one IDAT chunk; the parser refuses a 257th chunk befor
 accumulating its data view, bounding allocation even for a tiny bitmap split into
 many compressed chunks.
 
-`Transform Mask` and `Fit Patch BBox to Mask` are still required MVP tools for the
-next slice. Smart Patch generation/variants/staleness, Regional Guidance tools and
-Patch preset application are not completed by this authoring checkpoint. The
-scope below includes these remaining product requirements.
+## Production checkpoint: Transform Mask and Fit
+
+[Transform/Fit implementation](../../../engineering/phase-4-smart-patch-mask-transform-research.md)
+adds a captured local Transform session for the selected nonempty, visible,
+unlocked Smart Patch mask. Konva handles move, scale and rotate a provisional
+mask preview. Apply/Enter submits one command; Cancel/Escape or owner/revision,
+camera, busy or external focus changes discard the preview. Handles do not
+publish per-drag document edits. On release, interactive anchors and displayed
+dimensions snap to whole project pixels (minimum 1px); Main still accepts fractional
+transforms. Main verifies the existing owned PNG and bakes
+coverage onto the world pixel grid; one changed Apply is one Undo step and
+identity/no-op leaves document/history unchanged. Bbox, internal resolution,
+other layers and Raster pixels remain independent.
+
+Unit integer translations and quarter turns preserve alpha samples exactly.
+Other transforms use fixed 2×2 inverse bilinear samples, clamped interpolation
+inside the source pixel-area rectangle, transparent exterior and tight cropping.
+When output dimensions and alpha are unchanged, Main retains the verified PNG
+bytes even for imported files with alternate valid chunk packaging. This is an
+explicit CPU policy, without a claim of browser/Invoke pixel parity. Empty or
+all-zero minification and limits refuse without a commit; scale is positive and
+at most 10000, angle is finite within [-360,360], and existing output/work limits
+remain enforced before allocation.
+
+Fit reads the verified selected mask and changes only its owned bbox. The current
+fixed policy adds **24 project pixels per side** (blur16 + padding8), then rounds
+left/top down and right/bottom up to grid8 for both supported families. No 64px
+minimum is invented. Fit preserves mask identity/revision/pixels and internal
+resolution; repeated Fit is a no-op. This policy does not imply configurable blur
+controls or an implemented inpaint blur pipeline.
+
+Qualification: impacted regression1820 PASS before terminal snapping, final
+affected59 PASS, built native57 checks and three semantic RED/neighbor GREEN
+pairs. Required typecheck/lint/build pass; exact timing, source/physical-exit
+proof, corrected attempts and limits are in the linked checkpoint. Smart Patch inpaint/generation, accepted variants/staleness,
+Regional Guidance tools and Patch presets remain open; the scope below includes
+these remaining product requirements.
 
 ## Scope
 
@@ -135,8 +168,8 @@ Side toolbars/tool rails:
 `Fit Patch BBox to Mask` for Smart Patch Layer:
 
 - reads the selected Smart Patch Layer's owned mask bounds;
-- expands the rect by required mask blur/padding;
-- fits the rect to the model/bbox grid size;
+- expands the rect by the current fixed 24px margin per side (blur16 + padding8);
+- rounds left/top outward down and right/bottom outward up to grid8 for both supported model families;
 - writes the result to the selected Smart Patch Layer's owned Bounding Box;
 - is not available when no Smart Patch Layer is selected.
 

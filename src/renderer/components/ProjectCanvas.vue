@@ -11,13 +11,17 @@ import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
 import {
   ArrowsMaximize,
   Box,
+  BoxMargin,
   Brush,
+  Check,
   Eraser,
   HandMove,
   Lasso,
   Polygon,
   ArrowForwardUp as RedoIcon,
+  Shape,
   ArrowBackUp as UndoIcon,
+  X,
   ZoomIn,
   ZoomOut,
 } from '@vicons/tabler'
@@ -47,6 +51,11 @@ import {
   ProjectMaskGesture,
   sameMaskGestureOwner,
 } from './project-mask-gesture.js'
+import {
+  projectMaskFitRequest,
+  ProjectMaskTransformGesture,
+  snapProjectMaskTransformToPixelGrid,
+} from './project-mask-transform-gesture.js'
 import ProjectGenerationResultsTray from './ProjectGenerationResultsTray.vue'
 
 const props = defineProps<{
@@ -64,6 +73,7 @@ const props = defineProps<{
   historyPending: 'redo' | 'undo' | null
   layers: ProjectRasterLayerView[]
   maskEditingDisabled: boolean
+  maskGeometryEditingDisabled: boolean
   maskTarget: ProjectSmartPatchLayerView | null
   projectKey: string
   resultFocus: GenerationResultFocusRequest | null
@@ -88,11 +98,26 @@ const maskOverlayVisible = defineModel<boolean>('maskOverlayVisible', { required
 
 const host = ref<HTMLDivElement | null>(null)
 const stageContainer = ref<HTMLDivElement | null>(null)
-const tool = ref<'bbox' | 'pan' | MaskTool>('pan')
+const tool = ref<'bbox' | 'pan' | 'transform-mask' | MaskTool>('pan')
 const sceneReady = ref(false)
 const maskImageReady = ref(false)
 const maskDisplayError = ref<string | null>(null)
 const maskGestureError = ref<string | null>(null)
+const maskTransformActive = ref(false)
+const maskTransformNode = ref<string | null>(null)
+const maskTransformHandles = ref<string | null>(null)
+const maskGeometryDisabled = computed(
+  () =>
+    !nativeSceneReady.value ||
+    props.disabled ||
+    props.maskGeometryEditingDisabled ||
+    !props.maskTarget ||
+    props.maskTarget.locked ||
+    !props.maskTarget.visible ||
+    props.maskTarget.mask.asset === null ||
+    !maskImageReady.value,
+)
+const fitMaskDisabled = computed(() => maskGeometryDisabled.value || maskTransformActive.value)
 const maskDisabled = computed(
   () =>
     !nativeSceneReady.value ||
@@ -163,6 +188,11 @@ let maskScene: Konva.Layer | null = null
 let maskOverlay: Konva.Image | null = null
 let maskCursor: Konva.Circle | null = null
 let maskContour: Konva.Line | null = null
+let maskTransformWorld: Konva.Group | null = null
+let maskTransformShape: Konva.Rect | null = null
+let maskTransformer: Konva.Transformer | null = null
+let maskTransformGesture: ProjectMaskTransformGesture | null = null
+let maskTransformPointerId: number | null = null
 let maskBuffer: HTMLCanvasElement | null = null
 let maskImage: HTMLImageElement | null = null
 let maskImageRequest = 0
@@ -212,6 +242,185 @@ function cancelMaskGesture() {
   maskGesture = null
   releaseMaskPointer()
   renderMaskOverlay()
+}
+
+function updateMaskTransformDiagnostics() {
+  if (!maskTransformGesture || !maskTransformShape || !maskTransformer) {
+    maskTransformNode.value = null
+    maskTransformHandles.value = null
+    return
+  }
+  const shape = maskTransformShape
+  maskTransformNode.value = JSON.stringify({
+    height: shape.height(),
+    rotationDegrees: shape.rotation(),
+    scaleX: shape.scaleX(),
+    scaleY: shape.scaleY(),
+    width: shape.width(),
+    x: shape.x(),
+    y: shape.y(),
+  })
+  maskTransformHandles.value = JSON.stringify(
+    Object.fromEntries(
+      [...maskTransformer.enabledAnchors(), 'rotater'].map((name) => {
+        const anchor = maskTransformer?.findOne<Konva.Rect>(`.${name}`)
+        return [name, anchor?.getAbsolutePosition() ?? null]
+      }),
+    ),
+  )
+}
+
+function hideMaskTransformControls() {
+  maskTransformShape?.stopDrag()
+  maskTransformer?.stopDrag()
+  maskTransformer?.findOne<Konva.Shape>('.back')?.stopDrag()
+  maskTransformer?.stopTransform()
+  maskTransformShape?.draggable(false)
+  maskTransformShape?.listening(false)
+  maskTransformShape?.visible(false)
+  maskTransformer?.nodes([])
+  maskTransformer?.visible(false)
+  updateMaskTransformDiagnostics()
+  maskScene?.batchDraw()
+}
+
+function cancelMaskTransform() {
+  const session = maskTransformGesture
+  maskTransformGesture = null
+  maskTransformActive.value = false
+  maskTransformPointerId = null
+  session?.cancel()
+  hideMaskTransformControls()
+  if (tool.value === 'transform-mask') {
+    tool.value = 'pan'
+  }
+  renderMaskOverlay()
+}
+
+function startMaskTransform() {
+  const owner = currentMaskOwner()
+  const target = props.maskTarget
+  if (
+    maskGeometryDisabled.value ||
+    !owner ||
+    !target?.mask.asset ||
+    !maskTransformShape ||
+    !maskTransformer
+  ) {
+    return
+  }
+  maskGestureError.value = null
+  maskTransformGesture = new ProjectMaskTransformGesture(owner, target.mask.bounds)
+  maskTransformActive.value = true
+  maskTransformShape.setAttrs({
+    draggable: true,
+    height: target.mask.bounds.height,
+    listening: true,
+    rotation: 0,
+    scaleX: 1,
+    scaleY: 1,
+    visible: true,
+    width: target.mask.bounds.width,
+    x: target.mask.bounds.x,
+    y: target.mask.bounds.y,
+  })
+  maskTransformer.nodes([maskTransformShape])
+  maskTransformer.visible(true)
+  maskTransformer.forceUpdate()
+  updateMaskTransformDiagnostics()
+  renderMaskOverlay()
+}
+
+function updateMaskTransformPreview() {
+  const session = maskTransformGesture
+  const shape = maskTransformShape
+  if (!session || !shape) {
+    return
+  }
+  if (maskGeometryDisabled.value || !sameMaskGestureOwner(session.owner, currentMaskOwner())) {
+    cancelMaskTransform()
+    return
+  }
+  try {
+    session.update({
+      rotationDegrees: shape.rotation(),
+      scaleX: shape.scaleX(),
+      scaleY: shape.scaleY(),
+      x: shape.x(),
+      y: shape.y(),
+    })
+    maskGestureError.value = null
+  } catch (cause) {
+    maskGestureError.value =
+      cause instanceof Error ? cause.message : 'The mask transform is invalid.'
+    const previous = session.transform
+    shape.setAttrs({
+      rotation: previous.rotationDegrees,
+      scaleX: previous.scaleX,
+      scaleY: previous.scaleY,
+      x: previous.x,
+      y: previous.y,
+    })
+    maskTransformer?.forceUpdate()
+  }
+  maskTransformer?.forceUpdate()
+  updateMaskTransformDiagnostics()
+  renderMaskOverlay()
+}
+
+function finishMaskTransformInteraction() {
+  updateMaskTransformPreview()
+  const session = maskTransformGesture
+  const shape = maskTransformShape
+  if (!session || !shape) {
+    return
+  }
+  const snapped = snapProjectMaskTransformToPixelGrid(session.transform, session.bounds)
+  shape.setAttrs({
+    rotation: snapped.rotationDegrees,
+    scaleX: snapped.scaleX,
+    scaleY: snapped.scaleY,
+    x: snapped.x,
+    y: snapped.y,
+  })
+  updateMaskTransformPreview()
+}
+
+function applyMaskTransform() {
+  const session = maskTransformGesture
+  if (!session || maskGeometryDisabled.value) {
+    cancelMaskTransform()
+    return
+  }
+  updateMaskTransformPreview()
+  if (session !== maskTransformGesture) {
+    return
+  }
+  const request = session.finish(currentMaskOwner())
+  maskTransformGesture = null
+  maskTransformActive.value = false
+  maskTransformPointerId = null
+  hideMaskTransformControls()
+  tool.value = 'pan'
+  renderMaskOverlay()
+  host.value?.focus({ preventScroll: true })
+  if (request) {
+    emit('editMask', session.owner.layerId, request)
+  }
+}
+
+function cancelMaskTransformAction() {
+  cancelMaskTransform()
+  host.value?.focus({ preventScroll: true })
+}
+
+function fitPatchBboxToMask() {
+  const owner = currentMaskOwner()
+  if (fitMaskDisabled.value || !owner) {
+    return
+  }
+  cancelMaskGesture()
+  emit('editMask', owner.layerId, projectMaskFitRequest(owner))
 }
 
 function pointFromPointer(event: PointerEvent): MaskPoint | null {
@@ -336,11 +545,16 @@ function handleCanvasPointerUp(event: PointerEvent) {
     appendMaskSamples(event)
     finishMaskGesture()
   }
+  if (maskTransformPointerId === event.pointerId) {
+    maskTransformPointerId = null
+    updateMaskTransformPreview()
+  }
   stopPan()
 }
 
 function handleCanvasPointerCancel() {
   cancelMaskGesture()
+  cancelMaskTransform()
   stopPan()
 }
 
@@ -353,13 +567,33 @@ function handleLostPointerCapture(event: PointerEvent) {
   if (panPointerId === event.pointerId) {
     stopPan()
   }
+  if (maskTransformPointerId === event.pointerId) {
+    cancelMaskTransform()
+  }
 }
 
-function handleCanvasBlur() {
+function handleCanvasBlur(event: FocusEvent) {
   finishKeyboardBbox()
   cancelMaskGesture()
+  if (!(
+    event.relatedTarget instanceof Element && event.relatedTarget.closest('.mask-transform-actions')
+  )) {
+    cancelMaskTransform()
+  }
   cursorPoint = null
   renderMaskOverlay()
+}
+
+function handleTransformActionFocusout(event: FocusEvent) {
+  if (
+    event.relatedTarget !== host.value &&
+    !(
+      event.relatedTarget instanceof Element &&
+      event.relatedTarget.closest('.mask-transform-actions')
+    )
+  ) {
+    cancelMaskTransform()
+  }
 }
 
 function leaveMaskCanvas() {
@@ -371,12 +605,20 @@ function chooseTool(value: typeof tool.value) {
   if (isMaskTool(value) && maskDisabled.value) {
     return
   }
+  if (value === 'transform-mask' && maskGeometryDisabled.value) {
+    return
+  }
   if (tool.value !== value) {
     cancelMaskGesture()
+    cancelMaskTransform()
   }
   finishKeyboardBbox()
   tool.value = value
   cursorPoint = null
+  if (value === 'transform-mask' && !maskTransformGesture) {
+    startMaskTransform()
+    host.value?.focus({ preventScroll: true })
+  }
   renderMaskOverlay()
 }
 
@@ -452,7 +694,17 @@ function renderMaskOverlay() {
   const target = props.maskTarget
   if (target?.mask.asset && maskImageReady.value && maskImage) {
     const bounds = target.mask.bounds
-    context.drawImage(maskImage, bounds.x, bounds.y, bounds.width, bounds.height)
+    const transform = maskTransformGesture?.transform
+    if (transform && sameMaskGestureOwner(maskTransformGesture!.owner, currentMaskOwner())) {
+      context.save()
+      context.translate(transform.x, transform.y)
+      context.rotate((transform.rotationDegrees * Math.PI) / 180)
+      context.scale(transform.scaleX, transform.scaleY)
+      context.drawImage(maskImage, 0, 0, bounds.width, bounds.height)
+      context.restore()
+    } else {
+      context.drawImage(maskImage, bounds.x, bounds.y, bounds.width, bounds.height)
+    }
   }
   const gesture = maskGesture
   if (gesture && sameMaskGestureOwner(gesture.owner, currentMaskOwner())) {
@@ -528,15 +780,15 @@ function token(name: string): string {
 }
 
 function applyCamera(next: CanvasCamera) {
-  if (
-    maskGesture &&
-    (next.x !== camera.value.x || next.y !== camera.value.y || next.scale !== camera.value.scale)
-  ) {
+  if (next.x !== camera.value.x || next.y !== camera.value.y || next.scale !== camera.value.scale) {
     cancelMaskGesture()
+    cancelMaskTransform()
   }
   camera.value = next
   world?.position({ x: next.x, y: next.y })
   world?.scale({ x: next.scale, y: next.scale })
+  maskTransformWorld?.position({ x: next.x, y: next.y })
+  maskTransformWorld?.scale({ x: next.scale, y: next.scale })
   if (bboxShape) {
     bboxShape.strokeWidth(1 / next.scale)
   }
@@ -546,6 +798,13 @@ function applyCamera(next: CanvasCamera) {
   if (bboxTransformer) {
     bboxTransformer.anchorSize(8 / next.scale)
     bboxTransformer.borderStrokeWidth(1 / next.scale)
+  }
+  if (maskTransformer) {
+    maskTransformer.anchorSize(8 / next.scale)
+    maskTransformer.anchorStrokeWidth(1 / next.scale)
+    maskTransformer.borderStrokeWidth(1 / next.scale)
+    maskTransformer.rotateAnchorOffset(24 / next.scale)
+    maskTransformer.forceUpdate()
   }
   sceneLayer?.batchDraw()
   renderMaskOverlay()
@@ -706,6 +965,14 @@ function handleCanvasPointerDown(event: PointerEvent) {
     if (startMaskGesture(event)) {
       return
     }
+    if (
+      tool.value === 'transform-mask' &&
+      maskTransformGesture &&
+      event.isPrimary &&
+      event.button === 0
+    ) {
+      maskTransformPointerId = event.pointerId
+    }
   }
   startPan(event)
 }
@@ -737,6 +1004,15 @@ function handleKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape' && maskGesture) {
     event.preventDefault()
     cancelMaskGesture()
+    return
+  }
+  if (maskTransformGesture && (event.key === 'Enter' || event.key === 'Escape')) {
+    event.preventDefault()
+    if (event.key === 'Enter') {
+      applyMaskTransform()
+    } else {
+      cancelMaskTransform()
+    }
     return
   }
   if (isMaskTool(tool.value) && !event.altKey && !event.ctrlKey && !event.metaKey) {
@@ -1126,7 +1402,7 @@ function createStage() {
   sceneLayer.add(world)
   stage.add(sceneLayer)
   maskBuffer = document.createElement('canvas')
-  maskScene = new Konva.Layer({ listening: false })
+  maskScene = new Konva.Layer()
   maskOverlay = new Konva.Image({ image: maskBuffer, listening: false, opacity: 0.32 })
   maskCursor = new Konva.Circle({
     listening: false,
@@ -1141,7 +1417,49 @@ function createStage() {
     strokeWidth: 1,
     visible: false,
   })
-  maskScene.add(maskOverlay, maskCursor, maskContour)
+  maskTransformWorld = new Konva.Group({ name: 'mask-transform-world' })
+  maskTransformShape = new Konva.Rect({
+    fill: 'transparent',
+    listening: false,
+    name: 'mask-transform-target',
+    visible: false,
+  })
+  maskTransformer = new Konva.Transformer({
+    anchorFill: token('--app-text'),
+    anchorStroke: token('--app-chrome'),
+    borderStroke: token('--app-tab-active-text'),
+    boundBoxFunc: (oldBox, newBox) => {
+      const scale = camera.value.scale
+      return newBox.width / scale >= 1 &&
+        newBox.height / scale >= 1 &&
+        newBox.width / scale <= IGS_SAFETY_CEILINGS.rasterDimension &&
+        newBox.height / scale <= IGS_SAFETY_CEILINGS.rasterDimension
+        ? newBox
+        : oldBox
+    },
+    enabledAnchors: [
+      'top-left',
+      'top-center',
+      'top-right',
+      'middle-right',
+      'bottom-right',
+      'bottom-center',
+      'bottom-left',
+      'middle-left',
+    ],
+    flipEnabled: false,
+    keepRatio: false,
+    name: 'mask-transform-controls',
+    rotateAnchorOffset: 24,
+    rotationSnaps: [0, 90, 180, 270],
+    rotationSnapTolerance: 5,
+    shouldOverdrawWholeArea: true,
+    visible: false,
+  })
+  maskTransformShape.on('dragmove transform', updateMaskTransformPreview)
+  maskTransformShape.on('dragend transformend', finishMaskTransformInteraction)
+  maskTransformWorld.add(maskTransformShape, maskTransformer)
+  maskScene.add(maskOverlay, maskCursor, maskContour, maskTransformWorld)
   stage.add(maskScene)
   restoreBbox()
   renderRasters()
@@ -1184,6 +1502,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   sceneReady.value = false
   cancelMaskGesture()
+  cancelMaskTransform()
   ++maskImageRequest
   if (maskImage) {
     maskImage.onload = null
@@ -1318,6 +1637,7 @@ watch(
   ],
   () => {
     cancelMaskGesture()
+    cancelMaskTransform()
     cursorPoint = null
     maskGestureError.value = null
     if (!props.maskTarget && isMaskTool(tool.value)) {
@@ -1332,6 +1652,11 @@ watch(maskDisabled, (disabled) => {
     cancelMaskGesture()
   }
   renderMaskOverlay()
+})
+watch(maskGeometryDisabled, (disabled) => {
+  if (disabled) {
+    cancelMaskTransform()
+  }
 })
 watch([maskDiameter, maskOverlayVisible], renderMaskOverlay)
 watch(tool, () => {
@@ -1365,7 +1690,9 @@ watch(bboxDisabled, (disabled) => {
           ? 'Infinite project canvas. Bounding Box tool. Arrow keys move the generation area by 1 pixel; Shift and arrow keys move it by 10 pixels. Drag to move or use handles to resize.'
           : isMaskTool(tool)
             ? `Infinite project canvas. ${maskTools.find((item) => item.tool === tool)?.name}. Escape cancels the current mask gesture.`
-            : 'Infinite project canvas. Use the Pan or Bounding Box tool. Zoom with the wheel.'
+            : tool === 'transform-mask'
+              ? 'Infinite project canvas. Transform Mask tool. Drag to move, use handles to scale or rotate. Enter applies the transform; Escape cancels.'
+              : 'Infinite project canvas. Use the Pan or Bounding Box tool. Zoom with the wheel.'
       "
       class="canvas-area"
       :class="{ 'canvas-area--pan': tool === 'pan', 'canvas-area--panning': panning }"
@@ -1373,6 +1700,9 @@ watch(bboxDisabled, (disabled) => {
       :data-camera-x="camera.x"
       :data-camera-y="camera.y"
       :data-mask-ready="nativeSceneReady && !maskDisabled"
+      :data-mask-transform-active="maskTransformActive"
+      :data-mask-transform-handles="maskTransformHandles"
+      :data-mask-transform-node="maskTransformNode"
       :data-scene-ready="nativeSceneReady"
       role="group"
       tabindex="0"
@@ -1389,9 +1719,57 @@ watch(bboxDisabled, (disabled) => {
     >
       <div ref="stageContainer" aria-hidden="true" class="konva-stage" />
       <slot name="queue" />
-      <div class="bbox-readout">
-        {{ bboxLabel ?? 'Generation area' }} · {{ bbox.width }} × {{ bbox.height }} · X
-        {{ localBboxPosition?.x ?? bbox.x }} · Y {{ localBboxPosition?.y ?? bbox.y }}
+      <div class="canvas-top-overlays">
+        <div class="canvas-context-bar">
+          <div class="bbox-readout">
+            {{ bboxLabel ?? 'Generation area' }} · {{ bbox.width }} × {{ bbox.height }} · X
+            {{ localBboxPosition?.x ?? bbox.x }} · Y {{ localBboxPosition?.y ?? bbox.y }}
+          </div>
+          <div
+            v-if="maskTransformActive"
+            aria-label="Mask transform actions"
+            class="mask-transform-actions"
+            role="toolbar"
+            @focusout="handleTransformActionFocusout"
+            @keydown.esc.prevent="cancelMaskTransformAction"
+          >
+            <NButton
+              aria-label="Apply mask transform"
+              :disabled="maskGeometryDisabled"
+              secondary
+              size="small"
+              @click="applyMaskTransform"
+            >
+              <template v-slot:icon><NIcon :component="Check" :size="18" /></template>
+              Apply
+            </NButton>
+            <NButton
+              aria-label="Cancel mask transform"
+              secondary
+              size="small"
+              @click="cancelMaskTransformAction"
+            >
+              <template v-slot:icon><NIcon :component="X" :size="18" /></template>
+              Cancel
+            </NButton>
+          </div>
+        </div>
+        <div v-if="maskDisplayError || maskGestureError" class="mask-warning" role="alert">
+          {{ maskDisplayError ?? maskGestureError }}
+        </div>
+        <div v-if="failedLayerCount" class="image-warning" role="status">
+          {{ failedLayerCount }} layer {{ failedLayerCount === 1 ? 'image' : 'images' }} could not
+          be displayed
+        </div>
+        <div
+          v-if="
+            previewVisible && focusedCandidate && failedCandidateUrls.has(focusedCandidate.imageUrl)
+          "
+          class="candidate-warning"
+          role="status"
+        >
+          The result preview could not be displayed. Refresh results to try again.
+        </div>
       </div>
       <div aria-label="Canvas tools" class="tool-rail" role="toolbar">
         <NButton
@@ -1417,6 +1795,23 @@ watch(bboxDisabled, (disabled) => {
           <template v-slot:icon><NIcon :component="Box" :size="18" /></template>
         </NButton>
         <template v-if="maskTarget">
+          <NTooltip>
+            <template v-slot:trigger>
+              <NButton
+                aria-label="Transform Mask"
+                :aria-pressed="tool === 'transform-mask'"
+                circle
+                :disabled="maskGeometryDisabled"
+                quaternary
+                size="small"
+                :themeOverrides="tool === 'transform-mask' ? activeControlTheme : controlTheme"
+                @click="chooseTool('transform-mask')"
+              >
+                <template v-slot:icon><NIcon :component="Shape" :size="18" /></template>
+              </NButton>
+            </template>
+            Transform Mask
+          </NTooltip>
           <NTooltip v-for="item of maskTools" :key="item.tool">
             <template v-slot:trigger>
               <NButton
@@ -1434,23 +1829,23 @@ watch(bboxDisabled, (disabled) => {
             </template>
             {{ item.name }}
           </NTooltip>
+          <NTooltip>
+            <template v-slot:trigger>
+              <NButton
+                aria-label="Fit Patch BBox to Mask"
+                circle
+                :disabled="fitMaskDisabled"
+                quaternary
+                size="small"
+                :themeOverrides="controlTheme"
+                @click="fitPatchBboxToMask"
+              >
+                <template v-slot:icon><NIcon :component="BoxMargin" :size="18" /></template>
+              </NButton>
+            </template>
+            Fit Patch BBox to Mask
+          </NTooltip>
         </template>
-      </div>
-      <div v-if="maskDisplayError || maskGestureError" class="mask-warning" role="alert">
-        {{ maskDisplayError ?? maskGestureError }}
-      </div>
-      <div v-if="failedLayerCount" class="image-warning" role="status">
-        {{ failedLayerCount }} layer {{ failedLayerCount === 1 ? 'image' : 'images' }} could not be
-        displayed
-      </div>
-      <div
-        v-if="
-          previewVisible && focusedCandidate && failedCandidateUrls.has(focusedCandidate.imageUrl)
-        "
-        class="candidate-warning"
-        role="status"
-      >
-        The result preview could not be displayed. Refresh results to try again.
       </div>
       <ProjectGenerationResultsTray
         v-if="generationResults.length > 0"
@@ -1538,11 +1933,13 @@ watch(bboxDisabled, (disabled) => {
             ? 'Drag to pan · Wheel to zoom'
             : tool === 'bbox'
               ? 'Drag to move · Arrows: 1 px · Shift+Arrows: 10 px · Handles to resize'
-              : tool === 'polygon-lasso'
-                ? 'Click points · Enter closes · Escape cancels'
-                : tool === 'lasso'
-                  ? 'Draw and release to close · Escape cancels'
-                  : 'Drag to edit mask · [ ] changes size · Escape cancels'
+              : tool === 'transform-mask'
+                ? 'Drag to move · Handles to scale/rotate · Enter applies · Escape cancels'
+                : tool === 'polygon-lasso'
+                  ? 'Click points · Enter closes · Escape cancels'
+                  : tool === 'lasso'
+                    ? 'Draw and release to close · Escape cancels'
+                    : 'Drag to edit mask · [ ] changes size · Escape cancels'
         }}
       </span>
     </div>
@@ -1598,10 +1995,8 @@ watch(bboxDisabled, (disabled) => {
 .image-warning,
 .candidate-warning,
 .mask-warning {
-  position: absolute;
-  z-index: 2;
-  left: 48px;
-  max-width: calc(100% - 96px);
+  max-width: 100%;
+  min-width: 0;
   padding: 4px 7px;
   overflow: hidden;
   border: 1px solid var(--app-border);
@@ -1614,18 +2009,25 @@ watch(bboxDisabled, (disabled) => {
   pointer-events: none;
 }
 
-.bbox-readout {
+.canvas-top-overlays {
+  position: absolute;
+  z-index: 2;
   top: 10px;
+  right: 10px;
+  left: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  pointer-events: none;
 }
-.image-warning {
-  top: 42px;
-}
-
-.candidate-warning {
-  top: 74px;
-}
-.mask-warning {
-  top: 42px;
+.canvas-context-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
 }
 
 .tool-rail {
@@ -1637,6 +2039,19 @@ watch(bboxDisabled, (disabled) => {
   flex-direction: column;
   gap: 4px;
   transform: translateY(-50%);
+}
+
+.mask-transform-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding: 5px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius);
+  background: var(--app-surface);
+  pointer-events: auto;
 }
 
 .canvas-empty {

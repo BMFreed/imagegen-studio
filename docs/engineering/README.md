@@ -1,6 +1,8 @@
 # Engineering Workflow
 
-Latest implementation checkpoint: [Owned mask authoring](./phase-4-smart-patch-mask-authoring-research.md)
+Latest implementation checkpoint: [Transform Mask and Fit](./phase-4-smart-patch-mask-transform-research.md)
+(qualified authoring slice)
+over [Owned mask authoring](./phase-4-smart-patch-mask-authoring-research.md)
 over [Smart Patch document foundation](./phase-4-smart-patch-foundation-research.md)
 over [Installed Project presets EPS/V](./phase-3-installed-presets-research.md)
 over [Project Apply Models handoff](./phase-3-preset-model-handoff-research.md)
@@ -23,9 +25,18 @@ qualify painting, inpaint or variants. The newer owned mask checkpoint implement
 Main-owned world-grid PNG coverage and Brush/Eraser/Lasso/Polygon tools with one
 Undo per gesture, Overlay/Clear and the existing Save/shadow/retention owner.
 Mask source/binary/refusal/native evidence and limits live in that checkpoint.
-Next roadmap owner is Phase 4 Transform Mask and Fit Patch BBox to Mask;
-Smart Patch inference/variants remain separate. PP-006 stays open for its Smart
-Patch and other-context handoffs.
+The current Transform/Fit implementation adds captured local preview and explicit
+Apply/cancel, terminal pixel-grid snapping and Main-baked world-grid pixels with
+one Apply Undo. The command API still accepts fractions. Fit changes only
+owned bbox with the fixed 24px margin and outward grid8; mask revision/bytes and
+internal resolution remain unchanged. Original verified PNG packaging is reused
+when dimensions/alpha are unchanged. Impacted regression1820 PASS before final
+terminal snapping, final affected59 PASS, native57 and three semantic RED/GREEN
+pairs qualify the declared slice; typecheck/lint/build pass. Source/exit proof,
+corrected attempts, screenshot review and limits are in its checkpoint.
+Next roadmap owner is Phase 4 Smart Patch inpaint/generation and accepted variants,
+followed by staleness/compositing/comparison, Regional Guidance and Patch presets.
+PP-006 stays open for its Smart Patch and other-context handoffs.
 
 Shared strict payload → native IPC/preload → Main lifetime owner → SQLite now
 supports CRUD/duplicate, soft delete/restore and automatic 30-day expiry. Actual

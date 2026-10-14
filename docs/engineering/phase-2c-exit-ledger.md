@@ -42,9 +42,14 @@ actual configuration без Regional Guidance; shared `generation-settings-compa
   independent owned draft/bbox/internal resolution/mask, Undo/Redo, native
   Save/reopen и local crash recovery. [Owned mask authoring](./phase-4-smart-patch-mask-authoring-research.md)
   подключает четыре pixel-editing tools и PNG asset/history/recovery owner;
-  qualification limits описаны в checkpoint. Следующие owners — Transform Mask,
-  Fit Patch BBox to Mask, затем inpaint, Smart Patch generation/variants,
-  Regional Guidance, model hard removal и остальные interaction gaps.
+  qualification limits описаны в checkpoint. [Transform/Fit implementation](./phase-4-smart-patch-mask-transform-research.md)
+  добавляет explicit preview/Apply/cancel, baked mask PNG и Fit только owned bbox
+  с фиксированным 24px margin/outward grid8; regression1820 до final UI snapping,
+  affected59/native57/three semantic RED-GREEN и typecheck/lint/build PASS.
+  Chronology/limits и source/physical-exit proof находятся в linked checkpoint.
+  Следующие owners — inpaint, Smart Patch generation/accepted variants,
+  staleness/compositing/comparison, Regional Guidance, Patch presets, model hard
+  removal и остальные interaction gaps.
 - Фаза 5: application updater, runtime install/repair, clean-install/upgrade,
   packaging и release qualification Linux/NVIDIA.
 

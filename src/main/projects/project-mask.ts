@@ -19,6 +19,8 @@ import { crc32, deflateSync, inflateSync } from 'node:zlib'
 
 import type { IgsAssetSource } from './igs-package.js'
 
+import { applyProjectMaskTransform } from './project-mask-transform.js'
+
 type Point = { x: number; y: number }
 const pngSignature = Buffer.from('89504e470d0a1a0a', 'hex')
 
@@ -32,6 +34,12 @@ export function applyProjectMaskEdit(
   input: ProjectMaskEdit,
 ): ProjectMaskBitmap | null {
   const edit = parseProjectMaskEdit(input)
+  if (edit.kind === 'transform') {
+    return applyProjectMaskTransform(current, edit)
+  }
+  if (edit.kind === 'fit-bbox') {
+    throw new ProjectMaskError('MASK_INPUT_INVALID', 'Fit requires the owned document bbox.')
+  }
   if (current) {
     assertProjectMaskBounds(current.bounds)
     assertCoverage(current.alpha, current.bounds.width, current.bounds.height)

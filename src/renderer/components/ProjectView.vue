@@ -237,12 +237,12 @@ const maskOperationOptions = [
   { label: 'Add to mask', value: 'add' },
   { label: 'Subtract from mask', value: 'subtract' },
 ]
-const maskEditingReason = computed(() => {
+const maskGeometryEditingReason = computed(() => {
   if (props.busy || props.reloadRequired) {
     return 'Wait for the Project to finish updating.'
   }
   if (props.draftPending) {
-    return 'Wait for generation settings to finish updating before drawing.'
+    return 'Wait for generation settings to finish updating before editing the mask.'
   }
   if (activePatch.value?.locked) {
     return 'Unlock this Smart Patch before editing its mask.'
@@ -250,11 +250,13 @@ const maskEditingReason = computed(() => {
   if (!activePatch.value?.visible) {
     return 'Show this Smart Patch before editing its mask.'
   }
-  if (maskDiameterInvalid.value) {
-    return 'Choose a mask brush size from 1 to 512 pixels.'
-  }
   return null
 })
+const maskEditingReason = computed(
+  () =>
+    maskGeometryEditingReason.value ??
+    (maskDiameterInvalid.value ? 'Choose a mask brush size from 1 to 512 pixels.' : null),
+)
 function clearMask() {
   const patch = activePatch.value
   if (!patch || maskEditingReason.value || patch.mask.asset === null) {
@@ -2303,6 +2305,7 @@ function applyFitBbox() {
         :historyPending="pending === 'undo' || pending === 'redo' ? pending : null"
         :layers="rasterLayers"
         :maskEditingDisabled="Boolean(maskEditingReason)"
+        :maskGeometryEditingDisabled="Boolean(maskGeometryEditingReason)"
         :maskTarget="activePatch"
         :projectKey="tab.id"
         :resultFocus="generationResultFocus"
