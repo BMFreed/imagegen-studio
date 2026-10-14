@@ -52,7 +52,25 @@ The current encoder emits one IDAT chunk; the parser refuses a 257th chunk befor
 accumulating its data view, bounding allocation even for a tiny bitmap split into
 many compressed chunks.
 
-## Production checkpoint: Transform Mask and Fit
+## Production checkpoint: configurable owned mask settings
+
+[Mask settings](../../../engineering/phase-4-smart-patch-mask-settings-research.md)
+adds compact Mask blur/BBox padding rows to the selected Patch's Mask section.
+Defaults16/8 remain the old24px margin; both parameters allow integer0..512.
+Fit consumes owned values only when invoked and still rounds outward on grid8.
+Changing settings does not alter bbox automatically or rewrite painted mask PNG,
+mask revision, internal resolution or other layers. Values are portable layer
+metadata with Undo/Redo and recovery; absent legacy fields resolve defaults
+without rewriting. Inpaint blur integration remains the next pipeline owner;
+this is not a currently blurred overlay or generation result.
+
+Qualification: impacted regression1835 PASS before final UI refinement, final
+affected104 PASS, built native109 checks and three semantic RED/neighbor GREEN
+pairs; typecheck/lint/build PASS. Screenshots at1440×900 and900×620 were viewed.
+Chronology, source/exit proof and limits are in the linked checkpoint. The Vue
+prototype still lacks these fields and does not qualify production storage.
+
+## Previous production checkpoint: Transform Mask and Fit
 
 [Transform/Fit implementation](../../../engineering/phase-4-smart-patch-mask-transform-research.md)
 adds a captured local Transform session for the selected nonempty, visible,
@@ -76,12 +94,13 @@ all-zero minification and limits refuse without a commit; scale is positive and
 at most 10000, angle is finite within [-360,360], and existing output/work limits
 remain enforced before allocation.
 
-Fit reads the verified selected mask and changes only its owned bbox. The current
-fixed policy adds **24 project pixels per side** (blur16 + padding8), then rounds
+Fit reads the verified selected mask and changes only its owned bbox. At that
+checkpoint the fixed policy added **24 project pixels per side** (blur16 + padding8),
+equivalent to the current owned defaults, then rounded
 left/top down and right/bottom up to grid8 for both supported families. No 64px
 minimum is invented. Fit preserves mask identity/revision/pixels and internal
-resolution; repeated Fit is a no-op. This policy does not imply configurable blur
-controls or an implemented inpaint blur pipeline.
+resolution; repeated Fit is a no-op. Configurable blur controls were added by
+the newer settings checkpoint; the inpaint blur pipeline remains pending.
 
 Qualification: impacted regression1820 PASS before terminal snapping, final
 affected59 PASS, built native57 checks and three semantic RED/neighbor GREEN
@@ -168,7 +187,7 @@ Side toolbars/tool rails:
 `Fit Patch BBox to Mask` for Smart Patch Layer:
 
 - reads the selected Smart Patch Layer's owned mask bounds;
-- expands the rect by the current fixed 24px margin per side (blur16 + padding8);
+- expands the rect by the selected Patch's owned blur+padding per side (defaults16+8=24px);
 - rounds left/top outward down and right/bottom outward up to grid8 for both supported model families;
 - writes the result to the selected Smart Patch Layer's owned Bounding Box;
 - is not available when no Smart Patch Layer is selected.

@@ -1839,6 +1839,7 @@ watch(bboxDisabled, (disabled) => {
                 size="small"
                 :themeOverrides="controlTheme"
                 @click="fitPatchBboxToMask"
+                @pointerdown.prevent
               >
                 <template v-slot:icon><NIcon :component="BoxMargin" :size="18" /></template>
               </NButton>

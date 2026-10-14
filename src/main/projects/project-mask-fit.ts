@@ -1,17 +1,30 @@
 import {
+  PROJECT_MASK_DEFAULT_SETTINGS,
+  type ProjectMaskSettings,
+  ProjectMaskSettingsSchema,
+  resolveProjectMaskSettings,
+} from '../../shared/projects/project-mask-settings.js'
+import {
   assertProjectMaskBounds,
   PROJECT_MASK_MAX_COORDINATE,
   ProjectMaskError,
 } from '../../shared/projects/project-mask.js'
 import { IGS_SAFETY_CEILINGS, type IgsRectV1 } from '../../shared/projects/project-schema.js'
 
-/** Current fixed fit policy: Invoke defaults blur16 + padding8, both supported families use8. */
-export const PROJECT_MASK_FIT_POLICY = Object.freeze({ blur: 16, grid: 8, padding: 8 })
+import * as v from 'valibot'
+
+/** Legacy default policy remains available; the owned settings supply the actual Fit margin. */
+export const PROJECT_MASK_FIT_POLICY = Object.freeze({ ...PROJECT_MASK_DEFAULT_SETTINGS, grid: 8 })
 
 /** Preserve the full requested margin; inward grid rounding would shrink it. No bitmap allocation. */
-export function fitProjectMaskBbox(bounds: IgsRectV1): IgsRectV1 {
+export function fitProjectMaskBbox(bounds: IgsRectV1, settings?: ProjectMaskSettings): IgsRectV1 {
   assertProjectMaskBounds(bounds)
-  const { blur, grid, padding } = PROJECT_MASK_FIT_POLICY
+  if (settings !== undefined && !v.is(ProjectMaskSettingsSchema, settings)) {
+    throw new ProjectMaskError('MASK_INPUT_INVALID', 'The mask Fit settings are invalid.')
+  }
+  const resolved = resolveProjectMaskSettings(settings)
+  const { blur, padding } = resolved
+  const { grid } = PROJECT_MASK_FIT_POLICY
   const margin = blur + padding
   const x = Math.floor((bounds.x - margin) / grid) * grid
   const y = Math.floor((bounds.y - margin) / grid) * grid

@@ -134,7 +134,7 @@ Painted mask требует `revision > 0`, `asset: { path, sha256, bytes, width
 и `bounds: { x, y, width, height }`. Integer world origin и один pixel на один
 Project pixel не зависят от bbox/internal resolution; размеры bounds и asset
 совпадают. Bbox edits не двигают и не обрезают mask coverage.
-[Transform/Fit implementation](../engineering/phase-4-smart-patch-mask-transform-research.md)
+Предыдущий [Transform/Fit implementation](../engineering/phase-4-smart-patch-mask-transform-research.md)
 использует тот же формат: Main запекает move/scale/rotation в новый PNG и tight
 world bounds, без affine metadata. UI округляет anchor и displayed dimensions
 до whole project pixels после отпускания ручки (minimum1px); Main API сохраняет
@@ -144,11 +144,12 @@ fractional geometry. Unit integer translation и quarter turns
 PNG. Остальные transforms используют 2×2 inverse bilinear sampling с clamped
 interpolation внутри source pixel-area rectangle и transparent exterior.
 All-zero minification отклоняется, а не очищает mask. Один изменившийся Apply —
-один Undo; no-op/cancel не меняют revision/history. Fit читает verified pixels,
-добавляет фиксированные 24px per side (blur16 + padding8), округляет rect наружу
-по grid8 и меняет только owned bbox, сохраняя mask identity/revision/bytes и
-internal resolution. Наличие этой fit policy не означает готовую configurable
-blur UI или inference blur step. Qualification: impacted regression1820 PASS
+один Undo; no-op/cancel не меняют revision/history. На том checkpoint Fit читал
+verified pixels, добавлял фиксированные 24px per side (blur16 + padding8),
+округлял rect наружу по grid8 и менял только owned bbox, сохраняя mask
+identity/revision/bytes и internal resolution. Нынешние owned defaults16/8
+дают тот же запас; configurable blur UI добавлен новым settings checkpoint,
+а inference blur step остаётся открытым. Qualification: impacted regression1820 PASS
 до terminal snapping, final affected59 PASS, built native57 checks и три semantic
 RED/neighbor GREEN pairs; typecheck/lint/build PASS. Chronology, source/exit proof
 и границы находятся в linked checkpoint. Nonempty variants и Regional Guidance
@@ -288,6 +289,26 @@ the portable saved project remains authoritative independently of derived indexe
 The acceptance boundary is defined by
 [PP-008](../product-promises.md#pp-008-генерация-меняет-проект-только-по-явному-решению)
 and the [staging contract](../features/project/generate-mode/generation-results.md).
+
+### Smart Patch mask settings
+
+The [owned settings checkpoint](../engineering/phase-4-smart-patch-mask-settings-research.md)
+adds optional layer-level `maskSettings: { blur, padding }` to the strict Smart
+Patch schema, separate from the immutable mask asset. Both are integer project
+pixels0..512. New Patch stores16/8; legacy absence means effective16/8 while
+parse/open retain absence, member hashes and clean state. Default no-op edits do
+not materialize the optional field. New readers accept both forms; compatibility
+of new files with older strict readers is not claimed. Raster rejects this field.
+
+Scalar Main changes capture documentId/documentRevision and targeted layerId;
+malformed/stale/locked/missing/Raster targets refuse. One changed scalar is one
+Undo. PNG/hash/mask revision/bounds and bbox/internal/draft/other owners remain
+unchanged. Fit reads current owned settings and applies blur+padding outward8-grid
+only on invocation. Save/shadow serialize actual optional values with existing
+package and retention owners; no new worker or persistence backend is introduced.
+The future inpaint/compositing snapshot must freeze and use the same blur without
+baking it into authored mask pixels; padding affects Fit only. Qualification is
+in progress in the checkpoint, and public readiness is unchanged.
 
 ### Generation draft dynamic settings
 

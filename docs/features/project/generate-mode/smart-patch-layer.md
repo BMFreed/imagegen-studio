@@ -69,7 +69,34 @@ Five semantic RED/neighbor GREEN pairs have byte-exact restoration. Bounded
 typecheck/lint/build pass; counts, actual boundary and excluded attempts are
 recorded in the authoring checkpoint. This qualifies the declared authoring slice.
 
-## Production checkpoint: Transform Mask and Fit
+## Production checkpoint: owned mask settings
+
+[Mask settings checkpoint](../../../engineering/phase-4-smart-patch-mask-settings-research.md)
+adds two always-visible compact rows after Hide overlay/Clear mask in the selected
+Patch's left Mask section: `Mask blur` (16px) and `BBox padding` (8px). Values are
+independent integer project pixels0..512, including zero. Enter or blur commits
+one captured scalar change; Escape/owner changes cancel and invalid raw text is
+not clamped or rounded into a saved setting.
+
+Each Patch owns optional `maskSettings: { blur, padding }`. New patches store16/8;
+older documents resolve16/8 without injecting fields, dirtying the document or
+creating history. Real settings edits use normal Undo/Redo, explicit Save and
+local recovery. They retain painted PNG/id/revision/bounds, owned bbox, internal
+resolution, draft and neighboring layers. Settings do not automatically fit bbox.
+Fit uses the selected Patch's `blur + padding` margin and outward grid8. Padding
+is Fit policy; blur must also be frozen and consumed by the upcoming inpaint edge
+processing, and changing blur must stale future variants. This slice does not
+implement that pipeline or a blurred mask preview.
+
+Qualification: impacted regression1835 PASS before final UI refinement, final
+affected104 PASS, built native109 checks and three semantic RED/neighbor GREEN
+pairs; typecheck/lint/build PASS. Real mouse Fit, keyboard Fit, invalid raw,
+field focus and document navigation are verified. Chronology/source/exit proof
+and viewed screenshots are in the checkpoint. Prototype lacks these production
+settings controls; its mock history is not persistence evidence. Public statuses
+remain unchanged.
+
+## Previous production checkpoint: Transform Mask and Fit
 
 [Transform/Fit implementation](../../../engineering/phase-4-smart-patch-mask-transform-research.md)
 adds selected-mask move/scale/rotation through a local Konva preview and explicit
@@ -92,12 +119,13 @@ positive and capped at 10000, angle is finite within [-360,360], and actual
 geometry/work must satisfy existing mask limits. CPU interpolation does not
 promise Invoke pixel parity.
 
-Fit reads the verified mask bounds and changes only this Patch's bbox. Its fixed
-policy adds **24 project pixels per side** (blur16 + padding8), then rounds
+Fit reads the verified mask bounds and changes only this Patch's bbox. At that
+checkpoint the fixed policy added **24 project pixels per side** (blur16 + padding8),
+equivalent to the current owned defaults, then rounded
 left/top down and right/bottom up on grid8 for Illustrious and Anima. There is no
 64px world-bbox minimum. Mask identity/revision/bytes, internal resolution and
-draft are unchanged; repeated Fit is a no-op. This is a fitting policy, not
-configurable blur UI or an implemented inference/compositing blur step.
+draft are unchanged; repeated Fit is a no-op. The newer settings checkpoint adds
+configurable blur UI; the inference/compositing blur step remains pending.
 
 Qualification: impacted regression1820 PASS before terminal snapping, final
 affected59 PASS, built native57 checks and three semantic RED/neighbor GREEN
@@ -274,7 +302,9 @@ Rules:
 - mask is not a top-level layer;
 - mask is not shared by other Smart Patch Layers;
 - mask visibility/overlay can be changed without changing generated raster pixels;
-- editing mask marks existing generated result `outdated`.
+- editing mask marks existing generated result `outdated`;
+- owned blur affects future edge processing and staleness, without modifying painted PNG;
+- owned bbox padding affects explicit Fit and does not automatically move bbox.
 
 Canvas tools for the selected Smart Patch Layer:
 

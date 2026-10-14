@@ -56,6 +56,41 @@ function emptyPatch(): IgsSmartPatchLayerV1 {
   }
 }
 
+test('optional mask settings remain absent in legacy documents and preserve explicit independent policy values', () => {
+  const patch = emptyPatch()
+  const legacy = { ...emptyDocument(), layers: [patch] }
+  const parsed = parseProjectDocumentV1(legacy)
+  assert.deepEqual(parsed, legacy)
+  assert.equal(Object.hasOwn(parsed.layers[0], 'maskSettings'), false)
+  for (const maskSettings of [
+    { blur: 0, padding: 0 },
+    { blur: 16, padding: 8 },
+    { blur: 512, padding: 37 },
+    { blur: 5, padding: 512 },
+  ]) {
+    const document = { ...legacy, layers: [{ ...patch, maskSettings }] }
+    assert.deepEqual(parseProjectDocumentV1(document), document)
+  }
+  for (const maskSettings of [
+    null,
+    { blur: 16 },
+    { blur: -1, padding: 8 },
+    { blur: 16, padding: 513 },
+    { blur: 0.5, padding: 8 },
+    { blur: 16, padding: Infinity },
+    { blur: '16', padding: 8 },
+    { blur: 16, extra: true, padding: 8 },
+  ]) {
+    assert.throws(
+      () => parseProjectDocumentV1({ ...legacy, layers: [{ ...patch, maskSettings }] }),
+      assertSchemaCode('INVALID_PROJECT'),
+    )
+  }
+  const rasterDocument = generatedDocument()
+  Object.assign(rasterDocument.layers[0], { maskSettings: { blur: 16, padding: 8 } })
+  assert.throws(() => parseProjectDocumentV1(rasterDocument), assertSchemaCode('INVALID_PROJECT'))
+})
+
 test('empty Smart Patch owns detached geometry and draft with no image assets or accepted variants', () => {
   const document = emptyDocument()
   const patch = emptyPatch()

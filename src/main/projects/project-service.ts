@@ -53,6 +53,7 @@ import {
   isGenerationTargetKey,
   type ProjectGenerationTargetState,
 } from '../../shared/projects/project-generation-target-state.js'
+import { resolveProjectMaskSettings } from '../../shared/projects/project-mask-settings.js'
 import type { ProjectMaskBitmap } from '../../shared/projects/project-mask.js'
 import { ProjectMaskError } from '../../shared/projects/project-mask.js'
 import {
@@ -305,6 +306,7 @@ export class ProjectService {
       kind: 'smart-patch',
       locked: false,
       mask: { asset: null, id: randomUUID(), revision: 0 },
+      maskSettings: resolveProjectMaskSettings(undefined),
       name: 'New Smart Patch',
       opacity: 1,
       rasterSubLayers: [],
@@ -529,7 +531,7 @@ export class ProjectService {
           'Paint this Smart Patch mask before fitting its bbox.',
         )
       }
-      const rect = fitProjectMaskBbox(current.bounds)
+      const rect = fitProjectMaskBbox(current.bounds, patch.maskSettings)
       if (
         patch.boundingBox.x === rect.x &&
         patch.boundingBox.y === rect.y &&
@@ -2042,6 +2044,16 @@ export class ProjectService {
     const coordinator = this.requireTab(tabId)
     const document = coordinator.document
     const patch = requireSmartPatch(document, layerId)
+    if (
+      (change.kind === 'mask-blur' || change.kind === 'bbox-padding') &&
+      (change.documentId !== document.documentId ||
+        change.documentRevision !== document.documentRevision)
+    ) {
+      throw new ProjectAutosaveError(
+        'EDIT_CONFLICT',
+        'The Project changed. Edit the mask setting again.',
+      )
+    }
     if (patch.locked && change.kind !== 'lock' && change.kind !== 'visibility') {
       throw new ProjectServiceError(
         'PROJECT_INVALID_INPUT',
@@ -2050,6 +2062,16 @@ export class ProjectService {
     }
     const next = { ...patch }
     switch (change.kind) {
+      case 'bbox-padding':
+      case 'mask-blur': {
+        const settings = resolveProjectMaskSettings(patch.maskSettings)
+        const key = change.kind === 'mask-blur' ? 'blur' : 'padding'
+        if (settings[key] === change.value) {
+          return toTab(tabId, coordinator)
+        }
+        next.maskSettings = { ...settings, [key]: change.value }
+        break
+      }
       case 'blend-mode': {
         next.blendMode = change.blendMode
         break
@@ -2665,6 +2687,7 @@ function toTab(id: string, coordinator: ProjectAutosaveCoordinator): ProjectTab 
                     maskRevision: layer.mask.revision,
                     tabId: id,
                   }),
+            maskSettings: resolveProjectMaskSettings(layer.maskSettings),
             status: 'empty' as const,
           }
         : {

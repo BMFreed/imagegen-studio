@@ -23,6 +23,7 @@ import type {
   ProjectGenerationActionState,
 } from './projects/project-generation-actions.js'
 import type { ProjectGenerationTargetState } from './projects/project-generation-target-state.js'
+import type { ProjectMaskSettings } from './projects/project-mask-settings.js'
 import type { ProjectMaskEdit } from './projects/project-mask.js'
 import type {
   IgsProjectDocumentV1,
@@ -34,6 +35,7 @@ import type { PromptEmbeddingSelection } from './projects/prompt-embeddings.js'
 import { isAnimaSamplingMethod } from './projects/anima-sampling-method.js'
 import { isGenerationDynamicPromptSettings } from './projects/generation-dynamic-settings.js'
 import { isIllustriousSamplingDraftPair } from './projects/illustrious-scheduler.js'
+import { PROJECT_MASK_SETTINGS_MAX } from './projects/project-mask-settings.js'
 import { parseProjectMaskEdit } from './projects/project-mask.js'
 import { IGS_SAFETY_CEILINGS } from './projects/project-schema.js'
 
@@ -277,6 +279,7 @@ export interface ProjectSmartPatchLayerView {
   locked: boolean
   mask: IgsSmartPatchLayerV1['mask']
   maskImageUrl: string | null
+  maskSettings?: ProjectMaskSettings
   name: string
   opacity: number
   rasterSubLayers: []
@@ -297,6 +300,12 @@ export interface ProjectSmartPatchMaskEditRequest {
 
 export type ProjectSmartPatchLayerChange =
   | ProjectRasterLayerChange
+  | {
+      documentId: string
+      documentRevision: string
+      kind: 'bbox-padding' | 'mask-blur'
+      value: number
+    }
   | { kind: 'bounding-box'; rect: IgsRectV1 }
   | { kind: 'internal-resolution'; size: { height: number; width: number } }
 
@@ -955,6 +964,20 @@ export function isProjectSmartPatchLayerChange(
     return false
   }
   const value = input as Record<string, unknown>
+  if (value['kind'] === 'mask-blur' || value['kind'] === 'bbox-padding') {
+    return (
+      Object.keys(value).length === 4 &&
+      ['documentId', 'documentRevision'].every(
+        (key) =>
+          typeof value[key] === 'string' &&
+          /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value[key]),
+      ) &&
+      typeof value['value'] === 'number' &&
+      Number.isSafeInteger(value['value']) &&
+      value['value'] >= 0 &&
+      value['value'] <= PROJECT_MASK_SETTINGS_MAX
+    )
+  }
   const size = value['kind'] === 'bounding-box' ? value['rect'] : value['size']
   if (!size || typeof size !== 'object' || Array.isArray(size)) {
     return false

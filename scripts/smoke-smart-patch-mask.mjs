@@ -29,6 +29,12 @@ import {
   runMaskTransformRecovery,
 } from './smoke-smart-patch-transform-scenario.mjs'
 import {
+  assertMaskSettingsReopened,
+  assertMaskSettingsStored,
+  runMaskSettingsBeforeSave,
+  runMaskSettingsRecovery,
+} from './smoke-smart-patch-mask-settings-scenario.mjs'
+import {
   boundQualificationProcess,
   confirmQualificationProcessExit,
   stopExpiredQualificationProcess,
@@ -36,12 +42,14 @@ import {
 
 const arguments_ = process.argv.slice(2)
 assert.ok(
-  arguments_.length === 2 || (arguments_.length === 3 && arguments_[2] === '--with-transform'),
-  'Use --report-file ABSOLUTE_NEW_OWNED_REPORT [--with-transform]',
+  arguments_.length === 2 ||
+    (arguments_.length === 3 && ['--with-transform', '--with-settings'].includes(arguments_[2])),
+  'Use --report-file ABSOLUTE_NEW_OWNED_REPORT [--with-transform | --with-settings]',
 )
 assert.equal(arguments_[0], '--report-file')
 const reportFile = arguments_[1]
-const withTransform = arguments_.length === 3
+const withSettings = arguments_[2] === '--with-settings'
+const withTransform = withSettings || arguments_[2] === '--with-transform'
 const artifactRoot = path.join(os.homedir(), '.codex/artifacts/imagegen-studio')
 assert.ok(path.isAbsolute(reportFile) && path.resolve(reportFile) === reportFile)
 assert.equal(existsSync(reportFile), false)
@@ -59,6 +67,7 @@ const hashFiles = (files) =>
 const sourceFiles = [
   'scripts/smoke-smart-patch-mask.mjs',
   'scripts/smoke-smart-patch-transform-scenario.mjs',
+  'scripts/smoke-smart-patch-mask-settings-scenario.mjs',
   'scripts/native-smoke-window.mjs',
   'scripts/qualification-resource-limits.mjs',
   'src/renderer/index.html',
@@ -74,6 +83,7 @@ const sourceFiles = [
   'src/renderer/components/project-draft-sync.ts',
   'src/shared/projects/project-schema.ts',
   'src/shared/projects/project-mask.ts',
+  ...(withSettings ? ['src/shared/projects/project-mask-settings.ts'] : []),
   'src/main/index.ts',
   'src/preload/index.ts',
   'src/main/projects/project-service.ts',
@@ -93,7 +103,11 @@ const sourceFiles = [
 ]
 const report = {
   outcome: 'running',
-  mode: withTransform ? 'mask-transform-fit' : 'mask-authoring',
+  mode: withSettings
+    ? 'mask-settings-transform-fit'
+    : withTransform
+      ? 'mask-transform-fit'
+      : 'mask-authoring',
   startedAt: new Date().toISOString(),
   fixtureRoot,
   payloads: [fixtureRoot],
@@ -110,14 +124,19 @@ const report = {
   screenshots: [],
   masks: [],
   commands: [],
+  settingsCommands: [],
+  settingsDiagnostics: [],
   resourceLimits: [],
   nativeClosures: [],
+  nativeLaunchStates: [],
   pageErrors: [],
   layouts: [],
   boundary: {
-    actual: withTransform
-      ? 'Built native UI pointer mask tools plus actual Konva move/scale/rotation previews and explicit Transform Apply/Cancel, Fit24px outward8-grid; real preload/Main authoritative pixels and one-entry history, actual Save/ZIP read/reopen and dirty-shadow crash recovery.'
-      : 'Built native UI pointer mask tools; real preload/Main authoritative PNG authoring, owner/refusal/history, genuine Save/ZIP read/reopen and local dirty-shadow crash recovery.',
+    actual: withSettings
+      ? 'Built native UI owned blur/padding defaults, captured field commits, strict draft cancellation, configurable outward8-grid Fit; existing actual pointer authoring/Transform, real preload/Main metadata and pixels, one-entry history, actual Save/ZIP read/reopen and dirty-shadow crash recovery.'
+      : withTransform
+        ? 'Built native UI pointer mask tools plus actual Konva move/scale/rotation previews and explicit Transform Apply/Cancel, Fit24px outward8-grid; real preload/Main authoritative pixels and one-entry history, actual Save/ZIP read/reopen and dirty-shadow crash recovery.'
+        : 'Built native UI pointer mask tools; real preload/Main authoritative PNG authoring, owner/refusal/history, genuine Save/ZIP read/reopen and local dirty-shadow crash recovery.',
     fixtures:
       'One tiny ICC Raster is added by the production package writer only while a genuinely UI-created Project is closed. Main handler observation returns identical original replies. A native chooser supplies only an owned corrupted package path. No fabricated Project/pixel replies, runtime, models, workers or inference.',
     oracle:
@@ -167,6 +186,11 @@ function check(name, evidence = {}) {
   report.checks.push({ name, ...evidence })
   checkpoint()
   console.log(`PASS ${name}`)
+}
+function settingsDiagnostic(stage, evidence) {
+  report.settingsDiagnostics.push({ stage, ...evidence })
+  checkpoint()
+  console.log(`OBSERVED settings ${stage}`)
 }
 async function rawApi(scope, method, ...args) {
   return await window.evaluate(({ scope, method, args }) => window.api[scope][method](...args), {
@@ -255,7 +279,7 @@ async function bounds(label) {
   checkpoint()
 }
 async function observeCommands() {
-  await application.evaluate(({ ipcMain }) => {
+  await application.evaluate(({ ipcMain }, withSettings) => {
     const channel = 'projects:edit-smart-patch-mask'
     const original = ipcMain._invokeHandlers.get(channel)
     if (typeof original !== 'function' || globalThis.igsNativeMaskObserver)
@@ -273,11 +297,38 @@ async function observeCommands() {
       if (result.ok) row.documentRevision = result.value.documentRevision
       return result
     })
-  })
+    if (withSettings) {
+      const settingsChannel = 'projects:update-smart-patch-layer'
+      const settingsOriginal = ipcMain._invokeHandlers.get(settingsChannel)
+      if (typeof settingsOriginal !== 'function' || globalThis.igsNativeMaskSettingsObserver)
+        throw new Error('Settings observer requires the original Main handler.')
+      const settings = { original: settingsOriginal, rows: [] }
+      globalThis.igsNativeMaskSettingsObserver = settings
+      ipcMain.removeHandler(settingsChannel)
+      ipcMain.handle(settingsChannel, async (event, ...args) => {
+        const row = { args: structuredClone(args), completed: false }
+        settings.rows.push(row)
+        const result = await settingsOriginal(event, ...args)
+        row.completed = true
+        row.ok = result.ok
+        row.error = result.ok ? null : structuredClone(result.error)
+        if (result.ok) row.documentRevision = result.value.documentRevision
+        return result
+      })
+    }
+  }, withSettings)
   observerInstalled = true
 }
 async function commands() {
   return await application.evaluate(() => structuredClone(globalThis.igsNativeMaskObserver.rows))
+}
+async function settingsCommands() {
+  assert.equal(withSettings, true)
+  return await application.evaluate(() =>
+    structuredClone(globalThis.igsNativeMaskSettingsObserver.rows).filter(({ args }) =>
+      ['mask-blur', 'bbox-padding'].includes(args[2]?.kind),
+    ),
+  )
 }
 async function restoreObserver(label) {
   if (!observerInstalled || !application) return
@@ -292,10 +343,31 @@ async function restoreObserver(label) {
       rows: structuredClone(probe.rows),
       originalSource: probe.original.toString(),
     }
+    const settings = globalThis.igsNativeMaskSettingsObserver
+    if (settings) {
+      ipcMain.removeHandler('projects:update-smart-patch-layer')
+      ipcMain.handle('projects:update-smart-patch-layer', settings.original)
+      result.settings = {
+        restored:
+          ipcMain._invokeHandlers.get('projects:update-smart-patch-layer') === settings.original,
+        rows: structuredClone(settings.rows),
+        originalSource: settings.original.toString(),
+      }
+      delete globalThis.igsNativeMaskSettingsObserver
+    }
     delete globalThis.igsNativeMaskObserver
     return result
   })
   assert.equal(value.restored, true)
+  if (withSettings) {
+    assert.equal(value.settings?.restored, true)
+    report.settingsCommands.push({
+      label,
+      originalReferenceRestored: value.settings.restored,
+      originalHandlerSha256: digest(value.settings.originalSource),
+      rows: value.settings.rows,
+    })
+  }
   report.commands.push({
     label,
     originalReferenceRestored: value.restored,
@@ -328,6 +400,9 @@ async function launch(label) {
       '--ozone-platform=x11',
       '--disable-backgrounding-occluded-windows',
       '--disable-renderer-backgrounding',
+      // Owned qualification only: decouple compositor cadence from an idle/DPMS-off desktop.
+      '--disable-frame-rate-limit',
+      '--disable-gpu-vsync',
       '.',
     ],
     cwd: process.cwd(),
@@ -338,6 +413,68 @@ async function launch(label) {
   window = await isolateNativeSmokeWindow(application)
   window.setDefaultTimeout(15_000)
   window.on('pageerror', (error) => report.pageErrors.push(String(error)))
+  const nativeFocus = await application.evaluate(({ BrowserWindow }) => {
+    const main = BrowserWindow.getAllWindows()[0]
+    const before = {
+      visible: main.isVisible(),
+      minimized: main.isMinimized(),
+      focused: main.isFocused(),
+    }
+    if (main.isMinimized()) main.restore()
+    main.show()
+    main.focus()
+    main.webContents.focus()
+    return {
+      before,
+      after: {
+        visible: main.isVisible(),
+        minimized: main.isMinimized(),
+        focused: main.isFocused(),
+      },
+    }
+  })
+  await expect
+    .poll(() =>
+      window.evaluate(() => ({
+        focused: document.hasFocus(),
+        visibility: document.visibilityState,
+      })),
+    )
+    .toEqual({ focused: true, visibility: 'visible' })
+  const rendererFocus = await window.evaluate(() => ({
+    focused: document.hasFocus(),
+    visibility: document.visibilityState,
+  }))
+  const compositorCadence = await window.evaluate(async () => {
+    const begin = performance.now()
+    const frames = []
+    const timers = []
+    let finished = false
+    return await new Promise((resolve) => {
+      const frame = (timestamp) => {
+        if (finished) return
+        frames.push({ elapsed: performance.now() - begin, timestamp })
+        if (frames.length < 12) requestAnimationFrame(frame)
+      }
+      requestAnimationFrame(frame)
+      setTimeout(() => timers.push({ requested: 100, elapsed: performance.now() - begin }), 100)
+      setTimeout(() => {
+        finished = true
+        resolve({
+          elapsed: performance.now() - begin,
+          frames,
+          timers,
+          visibility: document.visibilityState,
+          focused: document.hasFocus(),
+        })
+      }, 350)
+    })
+  })
+  report.nativeLaunchStates.push({ label, nativeFocus, rendererFocus, compositorCadence })
+  check(
+    `${label}: real native window restored/shown/focused; renderer has focus and visible compositor`,
+    { nativeFocus, rendererFocus },
+  )
   await expect(window.getByRole('tab', { name: 'Home', exact: true })).toBeVisible()
   await window.waitForFunction(() => typeof window.api?.projects?.editSmartPatchMask === 'function')
   assert.equal((await api('runtime', 'getStatus')).kind, 'not-installed')
@@ -699,6 +836,9 @@ function transformContext() {
     projectId,
     rawApi,
     refusal,
+    settingsCommands,
+    settingsDiagnostic,
+    settingsRefusal,
     resizeNative,
     screenshot,
     select,
@@ -877,6 +1017,7 @@ async function saveProject(label) {
     assert.equal(manifestRef.sha256, digest(bytes))
     assert.equal(manifestRef.bytes, bytes.length)
   }
+  if (withSettings) await assertMaskSettingsStored(transformContext(), saved.project, label)
   const file = path.join(evidenceRoot, `${label}.igs`)
   writeFileSync(file, readFileSync(packagePath), { flag: 'wx', mode: 0o600 })
   check(
@@ -905,6 +1046,19 @@ async function refusal(label, id, request, codes) {
   assert.deepEqual(exactState(await current()), exactState(before))
   assert.ok(readFileSync(packagePath).equals(savedBytes))
   check(`Main mask refusal: ${label}; Project/history/saved package unchanged`, {
+    code: result.error.code,
+  })
+}
+async function settingsRefusal(label, id, request, code) {
+  const before = await current()
+  const savedBytes = readFileSync(packagePath)
+  const result = await rawApi('projects', 'updateSmartPatchLayer', projectId, id, request)
+  assert.equal(result.ok, false, label)
+  assert.equal(result.error.code, code, JSON.stringify(result))
+  await barrier()
+  assert.deepEqual(exactState(await current()), exactState(before))
+  assert.ok(readFileSync(packagePath).equals(savedBytes))
+  check(`Main settings refusal: ${label}; Project/history/saved package unchanged`, {
     code: result.error.code,
   })
 }
@@ -1382,6 +1536,7 @@ try {
   await aCard.getByRole('button', { name: `Show ${aName}`, exact: true }).click()
   await expect.poll(async () => patch(await current(), patchAId).visible).toBe(true)
   if (withTransform) bLasso = await runMaskTransformBeforeSave(transformContext())
+  if (withSettings) await runMaskSettingsBeforeSave(transformContext())
   await nativeLayouts()
   const firstSave = await saveProject('painted-masks-saved')
   const savedContent = content(await current())
@@ -1400,6 +1555,7 @@ try {
   check(
     'Real clean close/reopen resolves both saved masks through exact current signed image capabilities',
   )
+  if (withSettings) await assertMaskSettingsReopened(transformContext(), false)
   await corruptImport(firstSave.saved, patch(state, patchAId))
   await select(patchAId)
   await diameter(20)
@@ -1408,6 +1564,10 @@ try {
   assert.equal(at(dirtyPixels, 10, 100), 255)
   if (withTransform) {
     dirtyPixels = await runMaskTransformRecovery(transformContext())
+    state = await current()
+  }
+  if (withSettings) {
+    await runMaskSettingsRecovery(transformContext())
     state = await current()
   }
   const dirtyContent = content(state)
@@ -1426,6 +1586,13 @@ try {
       const doc = JSON.parse(bytes)
       if (doc.documentRevision !== manifest.documentRevision) return null
       const owned = doc.layers.find(({ id }) => id === patchAId)
+      if (withSettings)
+        for (const id of [patchAId, patchBId])
+          if (
+            JSON.stringify(doc.layers.find((layer) => layer.id === id).maskSettings) !==
+            JSON.stringify(patch(state, id).maskSettings)
+          )
+            return null
       const image = path.join(snapshot, owned.mask.asset.path)
       if (!existsSync(image)) return null
       return digest(readFileSync(image)) === patch(state, patchAId).mask.asset.sha256
@@ -1483,6 +1650,7 @@ try {
   check(
     'Actual dirty shadow asset→owned process death→Home Recover retains both masks while saved package stays exact',
   )
+  if (withSettings) await assertMaskSettingsReopened(transformContext(), true)
   await select(patchAId)
   const finalSave = await saveProject('painted-masks-recovered')
   await closeProject()
@@ -1496,6 +1664,7 @@ try {
       finalSave.masks[id],
       'Recovered explicit Save must publish reopenable exact mask bytes',
     )
+  if (withSettings) await assertMaskSettingsReopened(transformContext(), true)
   assert.deepEqual(await api('models', 'getCatalog'), [])
   assert.equal((await api('runtime', 'getStatus')).kind, 'not-installed')
   assert.equal(

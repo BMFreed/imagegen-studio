@@ -1,4 +1,5 @@
 import type {
+  ProjectSmartPatchLayerChange,
   ProjectSmartPatchLayerView,
   ProjectSmartPatchMaskEditRequest,
   ProjectTab,
@@ -174,6 +175,335 @@ function editablePatch(patch: ProjectSmartPatchLayerView) {
   const { maskImageUrl: _capability, ...owned } = patch
   return owned
 }
+
+function settingChange(
+  tab: ProjectTab,
+  kind: 'bbox-padding' | 'mask-blur',
+  value: number,
+): Extract<ProjectSmartPatchLayerChange, { kind: 'bbox-padding' | 'mask-blur' }> {
+  return { documentId: tab.documentId, documentRevision: tab.documentRevision, kind, value }
+}
+
+test('actual mask settings target B without changing pixels or geometry and survive one Undo/Redo, shadow and Save/reopen', async () => {
+  await fixture(async ({ first, normal, raster, savedPath, second, service, shadow }) => {
+    assert.deepEqual(first.maskSettings, { blur: 16, padding: 8 })
+    assert.deepEqual(second.maskSettings, { blur: 16, padding: 8 })
+    let tab = service.getOpenTabs()[0]
+    tab = await service.editSmartPatchMask(tab.id, second.id, request(tab, second.id, smallL))
+    await service.save(tab.id)
+    tab = service.getOpenTabs()[0]
+    const savedBytes = await readFile(savedPath)
+    const before = layer(tab, second.id)
+    const beforeRaster = tab.layers.find(({ id }) => id === raster.id)
+    assert.ok(beforeRaster && beforeRaster.kind !== 'smart-patch')
+    const { imageUrl: _beforeRasterCapability, ...beforeRasterState } = beforeRaster
+    const initial = await pixels(service, before)
+    tab = await service.updateSmartPatchLayer(
+      tab.id,
+      second.id,
+      settingChange(tab, 'mask-blur', 32),
+    )
+    assert.deepEqual(editablePatch(layer(tab, second.id)), {
+      ...editablePatch(before),
+      maskSettings: { blur: 32, padding: 8 },
+    })
+    assert.deepEqual(editablePatch(layer(tab, first.id)), editablePatch(first))
+    assert.deepEqual(tab.primaryBbox, normal.primaryBbox)
+    assert.deepEqual(tab.generationDraft, normal.generationDraft)
+    const afterRaster = tab.layers.find(({ id }) => id === raster.id)
+    assert.ok(afterRaster && afterRaster.kind !== 'smart-patch')
+    const { imageUrl: _afterRasterCapability, ...afterRasterState } = afterRaster
+    assert.deepEqual(afterRasterState, beforeRasterState)
+    assert.ok((await pixels(service, layer(tab, second.id))).bytes.equals(initial.bytes))
+    tab = await service.undo(tab.id)
+    assert.deepEqual(editablePatch(layer(tab, second.id)), editablePatch(before))
+    tab = await service.redo(tab.id)
+    assert.deepEqual(layer(tab, second.id).maskSettings, { blur: 32, padding: 8 })
+    tab = await service.updateSmartPatchLayer(
+      tab.id,
+      second.id,
+      settingChange(tab, 'bbox-padding', 5),
+    )
+    assert.deepEqual(editablePatch(layer(tab, second.id)), {
+      ...editablePatch(before),
+      maskSettings: { blur: 32, padding: 5 },
+    })
+    tab = await service.undo(tab.id)
+    assert.deepEqual(layer(tab, second.id).maskSettings, { blur: 32, padding: 8 })
+    tab = await service.redo(tab.id)
+    assert.deepEqual(layer(tab, second.id).maskSettings, { blur: 32, padding: 5 })
+
+    await service.flushAutosave(tab.id)
+    const savedPackage = await readIgsPackage(savedPath)
+    const inspection = await shadow.inspect({ projectPath: savedPath, savedPackage })
+    assert.equal(inspection.status, 'recoverable')
+    if (inspection.status !== 'recoverable') {
+      throw new Error('Settings must enter genuine local recovery.')
+    }
+    const recovered = inspection.document.layers.find(({ id }) => id === second.id)
+    assert.ok(recovered?.kind === 'smart-patch')
+    assert.deepEqual(recovered.maskSettings, { blur: 32, padding: 5 })
+    assert.deepEqual(recovered.mask, before.mask)
+    assert.deepEqual(Object.keys(inspection.dirtyAssets), [])
+    assert.ok((await readFile(savedPath)).equals(savedBytes), 'Recovery is not an implicit Save.')
+
+    await service.save(tab.id)
+    const saved = await readIgsPackage(savedPath)
+    const stored = saved.project.layers.find(({ id }) => id === second.id)
+    assert.ok(stored?.kind === 'smart-patch')
+    assert.deepEqual(stored.maskSettings, { blur: 32, padding: 5 })
+    assert.deepEqual(stored.mask, before.mask)
+    assert.deepEqual(stored.boundingBox, before.boundingBox)
+    assert.deepEqual(stored.internalResolution, before.internalResolution)
+    assert.deepEqual(stored.generationDraft, before.generationDraft)
+    assert.deepEqual(
+      saved.project.layers.find(({ id }) => id === raster.id),
+      raster,
+    )
+    assert.ok((await saved.readMember(raster.asset.path)).equals(rasterPng))
+    assert.ok(stored.mask.asset)
+    assert.ok((await saved.readMember(stored.mask.asset.path)).equals(initial.bytes))
+    const raw = JSON.parse((await saved.readMember('project.json')).toString('utf8'))
+    assert.deepEqual(raw.layers.find(({ id }: { id: string }) => id === second.id).maskSettings, {
+      blur: 32,
+      padding: 5,
+    })
+    await service.close(tab.id)
+    const reopened = await service.open(tab.id)
+    assert.equal(reopened.kind, 'opened')
+    if (reopened.kind !== 'opened') {
+      throw new Error('Saved settings must reopen.')
+    }
+    assert.deepEqual(editablePatch(layer(reopened.tab, second.id)), {
+      ...editablePatch(before),
+      maskSettings: { blur: 32, padding: 5 },
+    })
+    assert.ok((await pixels(service, layer(reopened.tab, second.id))).bytes.equals(initial.bytes))
+    assert.equal(reopened.tab.dirty, false)
+  })
+})
+
+test('actual legacy package resolves defaults without rewriting, dirtying or adding history on same-value edits', async () => {
+  await fixture(async ({ first, savedPath, second, service, shadow }) => {
+    let tab = service.getOpenTabs()[0]
+    tab = await service.editSmartPatchMask(tab.id, second.id, request(tab, second.id, smallL))
+    await service.save(tab.id)
+    await service.close(tab.id)
+    const seed = await readIgsPackage(savedPath)
+    const assets: Record<string, { bytes: Buffer }> = {}
+    for (const member of seed.manifest.members) {
+      if (member.path.startsWith('assets/')) {
+        assets[member.path] = { bytes: await seed.readMember(member.path) }
+      }
+    }
+    // Legacy absence is a declared input precondition published by the genuine writer while closed.
+    await saveIgsPackage(savedPath, {
+      assets,
+      preview: {
+        merged: await seed.readMember('preview/merged.png'),
+        rect: seed.manifest.preview.rect,
+        status: 'unavailable',
+        thumbnail: await seed.readMember('preview/thumbnail.webp'),
+      },
+      project: {
+        ...seed.project,
+        documentRevision: randomUUID(),
+        layers: seed.project.layers.map((value) => {
+          if (value.kind !== 'smart-patch') {
+            return value
+          }
+          const { maskSettings: _settings, ...legacy } = value
+          return legacy
+        }),
+      },
+    })
+    const legacy = await readIgsPackage(savedPath)
+    for (const patch of legacy.project.layers.filter(({ kind }) => kind === 'smart-patch')) {
+      assert.equal(Object.hasOwn(patch, 'maskSettings'), false)
+    }
+    const originalBytes = await readFile(savedPath)
+    const opened = await service.open(tab.id)
+    assert.equal(opened.kind, 'opened')
+    if (opened.kind !== 'opened') {
+      throw new Error('Legacy Smart Patch package must open.')
+    }
+    tab = opened.tab
+    assert.deepEqual(layer(tab, first.id).maskSettings, { blur: 16, padding: 8 })
+    assert.deepEqual(layer(tab, second.id).maskSettings, { blur: 16, padding: 8 })
+    assert.equal(tab.dirty, false)
+    assert.equal(tab.canUndo, false)
+    const baseline = structuredClone(tab)
+    const oldMask = await pixels(service, layer(tab, second.id))
+    for (const [kind, value] of [
+      ['mask-blur', 16],
+      ['bbox-padding', 8],
+    ] as const) {
+      tab = await service.updateSmartPatchLayer(tab.id, second.id, settingChange(tab, kind, value))
+      assert.deepEqual(tab, baseline)
+    }
+    await service.flushAutosave(tab.id)
+    const inspection = await shadow.inspect({ projectPath: savedPath, savedPackage: legacy })
+    assert.ok(inspection.status === 'clean' || inspection.status === 'absent')
+    assert.ok((await readFile(savedPath)).equals(originalBytes))
+    assert.equal(
+      (await readIgsPackage(savedPath)).project.layers.some((patch) =>
+        Object.hasOwn(patch, 'maskSettings'),
+      ),
+      false,
+    )
+
+    tab = await service.updateSmartPatchLayer(tab.id, second.id, settingChange(tab, 'mask-blur', 0))
+    assert.deepEqual(layer(tab, second.id).maskSettings, { blur: 0, padding: 8 })
+    assert.deepEqual(layer(tab, second.id).mask, layer(baseline, second.id).mask)
+    assert.ok((await pixels(service, layer(tab, second.id))).bytes.equals(oldMask.bytes))
+    tab = await service.undo(tab.id)
+    assert.equal(tab.dirty, false)
+    assert.equal(tab.canUndo, false)
+    tab = await service.redo(tab.id)
+    await service.save(tab.id)
+    const edited = await readIgsPackage(savedPath)
+    const storedA = edited.project.layers.find(({ id }) => id === first.id)
+    const storedB = edited.project.layers.find(({ id }) => id === second.id)
+    assert.ok(storedA?.kind === 'smart-patch')
+    assert.equal(Object.hasOwn(storedA, 'maskSettings'), false)
+    assert.ok(storedB?.kind === 'smart-patch')
+    assert.deepEqual(storedB.maskSettings, { blur: 0, padding: 8 })
+    await service.close(tab.id)
+    const reopened = await service.open(tab.id)
+    assert.equal(reopened.kind, 'opened')
+    if (reopened.kind !== 'opened') {
+      throw new Error('Edited legacy settings must reopen.')
+    }
+    assert.deepEqual(layer(reopened.tab, first.id).maskSettings, { blur: 16, padding: 8 })
+    assert.deepEqual(layer(reopened.tab, second.id).maskSettings, { blur: 0, padding: 8 })
+  })
+})
+
+test('actual setting entry rejects malformed, stale, locked and wrong-owner requests without publishing history or files', async () => {
+  await fixture(async ({ first, raster, savedPath, second, service }) => {
+    await service.save(service.getOpenTabs()[0].id)
+    let tab = service.getOpenTabs()[0]
+    const baseline = structuredClone(tab)
+    const savedBytes = await readFile(savedPath)
+    for (const kind of ['mask-blur', 'bbox-padding'] as const) {
+      const valid = settingChange(tab, kind, 0)
+      for (const invalid of [
+        { ...valid, value: -1 },
+        { ...valid, value: 0.5 },
+        { ...valid, value: 513 },
+        { ...valid, value: NaN },
+        { ...valid, value: Infinity },
+        { ...valid, value: '0' },
+        { ...valid, documentId: 'invalid' },
+        { ...valid, documentRevision: undefined },
+        { ...valid, extra: true },
+        { kind, value: 0 },
+      ]) {
+        await assert.rejects(
+          service.updateSmartPatchLayer(tab.id, second.id, invalid as ProjectSmartPatchLayerChange),
+          { code: 'PROJECT_INVALID_INPUT' },
+        )
+        assert.deepEqual(service.getOpenTabs()[0], baseline)
+      }
+      for (const identity of [{ documentId: randomUUID() }, { documentRevision: randomUUID() }]) {
+        await assert.rejects(
+          service.updateSmartPatchLayer(tab.id, second.id, { ...valid, ...identity }),
+          { code: 'EDIT_CONFLICT' },
+        )
+        assert.deepEqual(service.getOpenTabs()[0], baseline)
+      }
+      for (const id of [raster.id, randomUUID()]) {
+        await assert.rejects(service.updateSmartPatchLayer(tab.id, id, valid), {
+          code: 'PROJECT_LAYER_NOT_FOUND',
+        })
+        assert.deepEqual(service.getOpenTabs()[0], baseline)
+      }
+    }
+    assert.ok((await readFile(savedPath)).equals(savedBytes))
+    const stale = settingChange(tab, 'mask-blur', 0)
+    tab = await service.updateSmartPatchLayer(tab.id, second.id, { kind: 'opacity', opacity: 0.6 })
+    const changed = structuredClone(tab)
+    await assert.rejects(service.updateSmartPatchLayer(tab.id, second.id, stale), {
+      code: 'EDIT_CONFLICT',
+    })
+    assert.deepEqual(service.getOpenTabs()[0], changed)
+    tab = await service.updateSmartPatchLayer(tab.id, second.id, { kind: 'lock', locked: true })
+    const locked = structuredClone(tab)
+    for (const kind of ['mask-blur', 'bbox-padding'] as const) {
+      await assert.rejects(
+        service.updateSmartPatchLayer(tab.id, second.id, settingChange(tab, kind, 0)),
+        { code: 'PROJECT_INVALID_INPUT' },
+      )
+      assert.deepEqual(service.getOpenTabs()[0], locked)
+    }
+    tab = await service.updateSmartPatchLayer(tab.id, second.id, { kind: 'lock', locked: false })
+    tab = await service.updateSmartPatchLayer(tab.id, second.id, {
+      kind: 'visibility',
+      visible: false,
+    })
+    tab = await service.updateSmartPatchLayer(
+      tab.id,
+      second.id,
+      settingChange(tab, 'mask-blur', 512),
+    )
+    tab = await service.updateSmartPatchLayer(
+      tab.id,
+      second.id,
+      settingChange(tab, 'bbox-padding', 0),
+    )
+    assert.deepEqual(layer(tab, second.id).maskSettings, { blur: 512, padding: 0 })
+    assert.equal(layer(tab, second.id).mask.asset, null)
+    assert.equal(layer(tab, second.id).mask.revision, 0)
+    assert.deepEqual(layer(tab, first.id).maskSettings, { blur: 16, padding: 8 })
+  })
+})
+
+test('actual Fit consumes B unequal or zero mask settings only on invocation and never blurs mask pixels', async () => {
+  await fixture(async ({ first, normal, second, service }) => {
+    let tab = service.getOpenTabs()[0]
+    tab = await service.editSmartPatchMask(tab.id, second.id, request(tab, second.id, smallL))
+    const before = layer(tab, second.id)
+    const initial = await pixels(service, before)
+    tab = await service.updateSmartPatchLayer(tab.id, second.id, settingChange(tab, 'mask-blur', 7))
+    tab = await service.updateSmartPatchLayer(
+      tab.id,
+      second.id,
+      settingChange(tab, 'bbox-padding', 18),
+    )
+    assert.deepEqual(layer(tab, second.id).boundingBox, before.boundingBox)
+    tab = await service.editSmartPatchMask(
+      tab.id,
+      second.id,
+      request(tab, second.id, { kind: 'fit-bbox' }),
+    )
+    assert.deepEqual(layer(tab, second.id).boundingBox, { height: 64, width: 64, x: -16, y: -8 })
+    assert.deepEqual(layer(tab, second.id).maskSettings, { blur: 7, padding: 18 })
+    assert.deepEqual(layer(tab, second.id).mask, before.mask)
+    assert.ok((await pixels(service, layer(tab, second.id))).bytes.equals(initial.bytes))
+    const unequalBbox = layer(tab, second.id).boundingBox
+    tab = await service.updateSmartPatchLayer(tab.id, second.id, settingChange(tab, 'mask-blur', 0))
+    tab = await service.updateSmartPatchLayer(
+      tab.id,
+      second.id,
+      settingChange(tab, 'bbox-padding', 0),
+    )
+    assert.deepEqual(layer(tab, second.id).boundingBox, unequalBbox)
+    tab = await service.editSmartPatchMask(
+      tab.id,
+      second.id,
+      request(tab, second.id, { kind: 'fit-bbox' }),
+    )
+    assert.deepEqual(layer(tab, second.id).boundingBox, { height: 8, width: 8, x: 8, y: 16 })
+    assert.deepEqual(layer(tab, second.id).maskSettings, { blur: 0, padding: 0 })
+    assert.deepEqual(layer(tab, second.id).mask, before.mask)
+    assert.ok((await pixels(service, layer(tab, second.id))).bytes.equals(initial.bytes))
+    assert.deepEqual(layer(tab, second.id).internalResolution, before.internalResolution)
+    assert.deepEqual(layer(tab, second.id).generationDraft, before.generationDraft)
+    assert.deepEqual(editablePatch(layer(tab, first.id)), editablePatch(first))
+    assert.deepEqual(tab.primaryBbox, normal.primaryBbox)
+    assert.deepEqual(tab.generationDraft, normal.generationDraft)
+  })
+})
 
 for (const ownerIndex of [0, 1]) {
   test(`actual mask gesture targets Patch ${ownerIndex + 1} and preserves its neighbor through Save/reopen`, async () => {

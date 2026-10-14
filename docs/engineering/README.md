@@ -1,6 +1,8 @@
 # Engineering Workflow
 
-Latest implementation checkpoint: [Transform Mask and Fit](./phase-4-smart-patch-mask-transform-research.md)
+Latest implementation checkpoint: [Owned mask settings](./phase-4-smart-patch-mask-settings-research.md)
+(qualified settings/Fit slice)
+over [Transform Mask and Fit](./phase-4-smart-patch-mask-transform-research.md)
 (qualified authoring slice)
 over [Owned mask authoring](./phase-4-smart-patch-mask-authoring-research.md)
 over [Smart Patch document foundation](./phase-4-smart-patch-foundation-research.md)
@@ -25,15 +27,24 @@ qualify painting, inpaint or variants. The newer owned mask checkpoint implement
 Main-owned world-grid PNG coverage and Brush/Eraser/Lasso/Polygon tools with one
 Undo per gesture, Overlay/Clear and the existing Save/shadow/retention owner.
 Mask source/binary/refusal/native evidence and limits live in that checkpoint.
-The current Transform/Fit implementation adds captured local preview and explicit
+The previous Transform/Fit checkpoint adds captured local preview and explicit
 Apply/cancel, terminal pixel-grid snapping and Main-baked world-grid pixels with
-one Apply Undo. The command API still accepts fractions. Fit changes only
-owned bbox with the fixed 24px margin and outward grid8; mask revision/bytes and
+one Apply Undo. The command API still accepts fractions. At that checkpoint Fit
+changed only owned bbox with the fixed 24px margin and outward grid8; current
+owned defaults16/8 give the same margin. Mask revision/bytes and
 internal resolution remain unchanged. Original verified PNG packaging is reused
 when dimensions/alpha are unchanged. Impacted regression1820 PASS before final
 terminal snapping, final affected59 PASS, native57 and three semantic RED/GREEN
 pairs qualify the declared slice; typecheck/lint/build pass. Source/exit proof,
 corrected attempts, screenshot review and limits are in its checkpoint.
+Owned mask settings adds optional per-Patch blur/padding16/8, compact controls,
+captured scalar edits and configurable Fit. Legacy parsing/default no-op does
+not materialize fields. Painted PNG/revision and bbox stay independent; real
+Save/recovery/Undo, field focus and document navigation pass in built Electron.
+Impacted regression1835 before final UI refinement, final affected104/native109,
+three semantic RED/GREEN and typecheck/lint/build PASS qualify this slice;
+chronology and excluded compositor attempts live in the newer checkpoint.
+
 Next roadmap owner is Phase 4 Smart Patch inpaint/generation and accepted variants,
 followed by staleness/compositing/comparison, Regional Guidance and Patch presets.
 PP-006 stays open for its Smart Patch and other-context handoffs.

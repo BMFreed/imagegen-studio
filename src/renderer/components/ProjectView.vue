@@ -30,6 +30,10 @@ import {
   generationTargetSignature,
   type ProjectGenerationTargetState,
 } from '../../shared/projects/project-generation-target-state.js'
+import {
+  PROJECT_MASK_SETTINGS_MAX,
+  resolveProjectMaskSettings,
+} from '../../shared/projects/project-mask-settings.js'
 import { PROJECT_MASK_DEFAULT_DIAMETER } from '../../shared/projects/project-mask.js'
 import type { IgsRectV1 } from '../../shared/projects/project-schema.js'
 import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
@@ -68,11 +72,22 @@ import {
   NTooltip,
   type SelectOption,
 } from 'naive-ui'
-import { computed, h, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import {
+  computed,
+  h,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  reactive,
+  ref,
+  shallowRef,
+  useId,
+  watch,
+} from 'vue'
 
 import type { CandidateExportFeedback } from './candidate-export-feedback.js'
 import type { GenerationResultFocusRequest } from './generation-queue-result.js'
-import type { MaskOperation } from './project-mask-gesture.js'
+import type { MaskGestureOwner, MaskOperation } from './project-mask-gesture.js'
 import type { ResolutionSize } from './resolution-control'
 
 import {
@@ -93,6 +108,13 @@ import { type ModelManagerFocus, modelManagerFocusFor } from './model-manager-fo
 import PlainPromptEditor from './PlainPromptEditor.vue'
 import { fitTargetBounds } from './project-canvas-geometry.js'
 import { rasterLayerViews, selectedSmartPatchLayer } from './project-layer-context.js'
+import {
+  parseProjectMaskSettingInput,
+  type ProjectMaskSettingField,
+  ProjectMaskSettingsEditor,
+  type ProjectMaskSettingsOwner,
+} from './project-mask-settings-editor.js'
+import { ProjectMaskSettingsFit } from './project-mask-settings-fit.js'
 import {
   checkpointCatalog,
   planModelResourceSelection,
@@ -269,6 +291,380 @@ function clearMask() {
     maskId: patch.mask.id,
     maskRevision: patch.mask.revision,
   })
+}
+
+const maskSettingsControlId = useId()
+const maskSettingFields = [
+  {
+    ariaLabel: 'Smart Patch mask blur',
+    field: 'blur',
+    label: 'Mask blur',
+    tooltip:
+      'Soft edge width in project pixels. Fit adds this width to bbox padding. The painted mask stays unchanged.',
+  },
+  {
+    ariaLabel: 'Smart Patch bbox padding',
+    field: 'padding',
+    label: 'BBox padding',
+    tooltip:
+      'Extra project pixels around the mask when fitting patch bounds, in addition to mask blur.',
+  },
+] as const
+const maskSettings = computed(() => resolveProjectMaskSettings(activePatch.value?.maskSettings))
+const maskSettingsRaw = reactive<Record<ProjectMaskSettingField, string>>({
+  blur: String(maskSettings.value.blur),
+  padding: String(maskSettings.value.padding),
+})
+const maskSettingsEditors: Record<ProjectMaskSettingField, ProjectMaskSettingsEditor | null> = {
+  blur: null,
+  padding: null,
+}
+const maskSettingsTransitions = ref<Record<string, unknown>[]>([])
+const pendingMaskSettingsFit = shallowRef<ProjectMaskSettingsFit | null>(null)
+let maskSettingsFitErrorBaseline: string | null = null
+const maskSettingsFocusIntent = shallowRef<{
+  field: ProjectMaskSettingField
+  owner: ProjectMaskSettingsOwner
+} | null>(null)
+const maskSettingsOwner = computed<ProjectMaskSettingsOwner | null>(() =>
+  activePatch.value
+    ? {
+        documentId: props.tab.documentId,
+        documentRevision: props.tab.documentRevision,
+        layerId: activePatch.value.id,
+        projectKey: props.tab.id,
+      }
+    : null,
+)
+const maskSettingsDiagnosticState = computed(() =>
+  JSON.stringify({
+    disabled: activeGeometryDisabled.value,
+    focusIntent: maskSettingsFocusIntent.value?.field ?? null,
+    owner: maskSettingsOwner.value,
+    raw: { ...maskSettingsRaw },
+    transitions: maskSettingsTransitions.value,
+  }),
+)
+
+function recordMaskSettingsTransition(
+  kind: string,
+  field: ProjectMaskSettingField | null = null,
+  event?: Event,
+) {
+  maskSettingsTransitions.value = [
+    ...maskSettingsTransitions.value.slice(-7),
+    {
+      disabled: activeGeometryDisabled.value,
+      editors: {
+        blur: maskSettingsEditors.blur?.owner ?? null,
+        padding: maskSettingsEditors.padding?.owner ?? null,
+      },
+      field,
+      kind,
+      owner: maskSettingsOwner.value,
+      raw: { ...maskSettingsRaw },
+      target:
+        event?.target instanceof HTMLInputElement
+          ? { id: event.target.id, value: event.target.value }
+          : null,
+    },
+  ]
+}
+
+function cancelMaskSettingsFocusRestore(event: Event) {
+  const intent = maskSettingsFocusIntent.value
+  if (!intent) {
+    return
+  }
+  const expectedId = `${maskSettingsControlId}-${intent.field}`
+  if (
+    event.type !== 'focusin' ||
+    !(event.target instanceof HTMLInputElement) ||
+    event.target.id !== expectedId
+  ) {
+    maskSettingsFocusIntent.value = null
+  }
+}
+
+function restoreMaskSettingsFocus() {
+  const intent = maskSettingsFocusIntent.value
+  if (!intent || activeGeometryDisabled.value) {
+    return
+  }
+  void nextTick(() => {
+    const owner = maskSettingsOwner.value
+    if (
+      maskSettingsFocusIntent.value !== intent ||
+      !owner ||
+      owner.projectKey !== intent.owner.projectKey ||
+      owner.documentId !== intent.owner.documentId ||
+      owner.layerId !== intent.owner.layerId ||
+      activeGeometryDisabled.value
+    ) {
+      return
+    }
+    const input = document.getElementById(`${maskSettingsControlId}-${intent.field}`)
+    maskSettingsFocusIntent.value = null
+    if (
+      input instanceof HTMLInputElement &&
+      !input.disabled &&
+      document.hasFocus() &&
+      (document.activeElement === document.body || document.activeElement === input)
+    ) {
+      input.focus({ preventScroll: true })
+      recordMaskSettingsTransition('restore-settings-focus', intent.field)
+    }
+  })
+}
+
+onMounted(() => {
+  document.addEventListener('pointerdown', cancelMaskSettingsFocusRestore, true)
+  document.addEventListener('keydown', cancelMaskSettingsFocusRestore, true)
+  document.addEventListener('focusin', cancelMaskSettingsFocusRestore, true)
+})
+onBeforeUnmount(() => {
+  maskSettingsFocusIntent.value = null
+  document.removeEventListener('pointerdown', cancelMaskSettingsFocusRestore, true)
+  document.removeEventListener('keydown', cancelMaskSettingsFocusRestore, true)
+  document.removeEventListener('focusin', cancelMaskSettingsFocusRestore, true)
+})
+
+function cancelMaskSettingEdit(field: ProjectMaskSettingField) {
+  maskSettingsEditors[field]?.cancel()
+  maskSettingsEditors[field] = null
+  maskSettingsRaw[field] = String(maskSettings.value[field])
+  recordMaskSettingsTransition('cancel', field)
+}
+
+function cancelMaskSettingsEdits() {
+  cancelMaskSettingEdit('blur')
+  cancelMaskSettingEdit('padding')
+}
+
+function cancelMaskSettingsBeforeSelection(event: PointerEvent) {
+  const row =
+    event.target instanceof Element ? event.target.closest<HTMLElement>('[data-layer-id]') : null
+  if (row && row.dataset.layerId !== activePatch.value?.id) {
+    // Pointer focus blurs the input before the row's click selects its owner.
+    cancelMaskSettingsEdits()
+    cancelPendingMaskSettingsFit()
+  }
+}
+
+watch(
+  [
+    () => props.tab.id,
+    () => props.tab.documentId,
+    () => props.tab.documentRevision,
+    () => activePatch.value?.id,
+    () => maskSettings.value.blur,
+    () => maskSettings.value.padding,
+    () => activeGeometryDisabled.value,
+  ],
+  () => {
+    recordMaskSettingsTransition('owner-or-state-reset')
+    cancelMaskSettingsEdits()
+    restoreMaskSettingsFocus()
+  },
+  { flush: 'sync' },
+)
+onBeforeUnmount(cancelMaskSettingsEdits)
+onBeforeUnmount(cancelPendingMaskSettingsFit)
+
+function currentMaskSettingsFitOwner(): MaskGestureOwner | null {
+  const owner = maskSettingsOwner.value
+  const patch = activePatch.value
+  return owner && patch
+    ? { ...owner, maskId: patch.mask.id, maskRevision: patch.mask.revision }
+    : null
+}
+
+function cancelPendingMaskSettingsFit() {
+  pendingMaskSettingsFit.value?.cancel()
+  pendingMaskSettingsFit.value = null
+}
+
+function settlePendingMaskSettingsFit() {
+  const continuation = pendingMaskSettingsFit.value
+  const patch = activePatch.value
+  if (!continuation) {
+    return
+  }
+  if (!patch) {
+    cancelPendingMaskSettingsFit()
+    return
+  }
+  const decision = continuation.advance({
+    available:
+      !props.reloadRequired &&
+      !props.draftPending &&
+      !patch.locked &&
+      patch.visible &&
+      patch.mask.asset !== null,
+    busy: props.busy,
+    failed: props.error !== null && props.error !== maskSettingsFitErrorBaseline,
+    geometry: patch,
+    owner: currentMaskSettingsFitOwner(),
+    settings: maskSettings.value,
+  })
+  if (decision.kind === 'waiting') {
+    return
+  }
+  pendingMaskSettingsFit.value = null
+  recordMaskSettingsTransition(`fit-${decision.kind}`)
+  if (decision.kind === 'ready') {
+    emit('editMask', decision.layerId, decision.request)
+  }
+}
+
+watch(
+  [
+    () => props.busy,
+    () => props.reloadRequired,
+    () => props.draftPending,
+    () => props.error,
+    () => props.tab.documentRevision,
+    () => currentMaskSettingsFitOwner(),
+    () => activePatch.value,
+  ],
+  () => void nextTick(settlePendingMaskSettingsFit),
+  { flush: 'sync' },
+)
+
+function editCanvasMask(layerId: string, request: ProjectSmartPatchMaskEditRequest) {
+  if (request.edit.kind !== 'fit-bbox') {
+    emit('editMask', layerId, request)
+    return
+  }
+  const owner = currentMaskSettingsFitOwner()
+  const patch = activePatch.value
+  if (
+    !owner ||
+    !patch ||
+    maskGeometryEditingReason.value ||
+    pendingMaskSettingsFit.value ||
+    layerId !== owner.layerId ||
+    request.documentId !== owner.documentId ||
+    request.documentRevision !== owner.documentRevision ||
+    request.maskId !== owner.maskId ||
+    request.maskRevision !== owner.maskRevision
+  ) {
+    return
+  }
+  const blur = parseProjectMaskSettingInput(maskSettingsRaw.blur)
+  const padding = parseProjectMaskSettingInput(maskSettingsRaw.padding)
+  if (blur === null || padding === null) {
+    recordMaskSettingsTransition('fit-invalid-draft')
+    return
+  }
+  const changed = (['blur', 'padding'] as const).filter(
+    (field) => (field === 'blur' ? blur : padding) !== maskSettings.value[field],
+  )
+  if (changed.length === 0) {
+    emit('editMask', layerId, request)
+    return
+  }
+  if (changed.length !== 1) {
+    return
+  }
+  const field = changed[0]!
+  beginMaskSettingEdit(field)
+  pendingMaskSettingsFit.value = new ProjectMaskSettingsFit(owner, { blur, padding }, patch)
+  maskSettingsFitErrorBaseline = props.error
+  if (!finishMaskSettingEdit(field)) {
+    cancelPendingMaskSettingsFit()
+    return
+  }
+  void nextTick(settlePendingMaskSettingsFit)
+}
+
+function beginMaskSettingEdit(field: ProjectMaskSettingField) {
+  const owner = maskSettingsOwner.value
+  if (!owner || activeGeometryDisabled.value || maskSettingsEditors[field]) {
+    return
+  }
+  const editor = new ProjectMaskSettingsEditor(owner, field, maskSettings.value[field])
+  editor.update(maskSettingsRaw[field])
+  maskSettingsEditors[field] = editor
+  recordMaskSettingsTransition('begin', field)
+}
+
+function captureMaskSettingInput(field: ProjectMaskSettingField, event: Event) {
+  if (!(event.target instanceof HTMLInputElement) || activeGeometryDisabled.value) {
+    return
+  }
+  beginMaskSettingEdit(field)
+  maskSettingsRaw[field] = event.target.value
+  maskSettingsEditors[field]?.update(event.target.value)
+  recordMaskSettingsTransition('input', field, event)
+}
+
+function finishMaskSettingEdit(
+  field: ProjectMaskSettingField,
+  focusTarget: ProjectMaskSettingField | null = null,
+): boolean {
+  const editor = maskSettingsEditors[field]
+  if (!editor) {
+    recordMaskSettingsTransition('finish-without-editor', field)
+    return false
+  }
+  maskSettingsEditors[field] = null
+  const command = editor.finish(maskSettingsOwner.value)
+  if (command && !activeGeometryDisabled.value) {
+    if (focusTarget) {
+      maskSettingsFocusIntent.value = { field: focusTarget, owner: { ...editor.owner } }
+    }
+    maskSettingsRaw[field] = String(command.change.value)
+    recordMaskSettingsTransition('publish', field)
+    emit('updatePatch', command.layerId, command.change)
+    return true
+  } else if (parseProjectMaskSettingInput(maskSettingsRaw[field]) !== null) {
+    maskSettingsRaw[field] = String(maskSettings.value[field])
+    recordMaskSettingsTransition('finish-valid-no-command', field)
+  } else {
+    recordMaskSettingsTransition('finish-invalid', field)
+  }
+  return false
+}
+
+function captureMaskSettingBlur(field: ProjectMaskSettingField, event: FocusEvent) {
+  recordMaskSettingsTransition('blur', field, event)
+  const target = event.relatedTarget instanceof Element ? event.relatedTarget : null
+  const tab = target?.closest('[role="tab"]')
+  if (
+    tab?.getAttribute('aria-selected') === 'false' &&
+    tab.closest('[role="tablist"][aria-label="Open documents"]')
+  ) {
+    maskSettingsFocusIntent.value = null
+    cancelPendingMaskSettingsFit()
+    cancelMaskSettingsEdits()
+    recordMaskSettingsTransition('document-navigation-cancel', field)
+    return
+  }
+  if (event.target instanceof HTMLInputElement) {
+    const focusTarget =
+      target instanceof HTMLInputElement
+        ? (maskSettingFields.find(
+            (setting) => target.id === `${maskSettingsControlId}-${setting.field}`,
+          )?.field ?? null)
+        : null
+    finishMaskSettingEdit(field, focusTarget)
+  }
+}
+
+function captureMaskSettingKey(field: ProjectMaskSettingField, event: KeyboardEvent) {
+  if (event.isComposing || !(event.target instanceof HTMLInputElement)) {
+    return
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    event.stopPropagation()
+    cancelMaskSettingEdit(field)
+  } else if (event.key === 'Enter') {
+    recordMaskSettingsTransition('enter', field, event)
+    captureMaskSettingInput(field, event)
+    finishMaskSettingEdit(field, field)
+  }
 }
 
 const imagesPerClick = defineModel<number | null>('imagesPerClick', { default: 4 })
@@ -1555,7 +1951,11 @@ function applyFitBbox() {
 </script>
 
 <template>
-  <section :aria-label="`Project ${tab.title}`" class="project-view">
+  <section
+    :aria-label="`Project ${tab.title}`"
+    class="project-view"
+    @pointerdown.capture="cancelMaskSettingsBeforeSelection"
+  >
     <NAlert
       v-if="exportFeedback"
       key="export-feedback"
@@ -2204,6 +2604,7 @@ function applyFitBbox() {
             v-if="activePatch"
             aria-label="Smart Patch mask"
             class="settings-section mask-settings"
+            :data-mask-settings-state="maskSettingsDiagnosticState"
           >
             <h2>Mask</h2>
             <div class="mask-size-row">
@@ -2253,6 +2654,43 @@ function applyFitBbox() {
                 <template v-slot:icon><NIcon :component="ClearHistoryIcon" :size="18" /></template>
                 Clear mask
               </NButton>
+            </div>
+            <div
+              v-for="setting of maskSettingFields"
+              :key="setting.field"
+              class="mask-size-row"
+              @blur.capture="captureMaskSettingBlur(setting.field, $event)"
+              @input.capture="captureMaskSettingInput(setting.field, $event)"
+              @keydown.capture="captureMaskSettingKey(setting.field, $event)"
+            >
+              <NTooltip>
+                <template v-slot:trigger>
+                  <label :for="`${maskSettingsControlId}-${setting.field}`">
+                    {{ setting.label }}
+                  </label>
+                </template>
+                {{ setting.tooltip }}
+                Use whole pixels from 0 to {{ PROJECT_MASK_SETTINGS_MAX }}.
+              </NTooltip>
+              <NInput
+                v-model:value="maskSettingsRaw[setting.field]"
+                class="mask-size-input"
+                :disabled="activeGeometryDisabled"
+                :inputProps="{
+                  'aria-label': setting.ariaLabel,
+                  id: `${maskSettingsControlId}-${setting.field}`,
+                  inputmode: 'numeric',
+                }"
+                size="small"
+                :status="
+                  parseProjectMaskSettingInput(maskSettingsRaw[setting.field]) === null
+                    ? 'error'
+                    : undefined
+                "
+                @focus="beginMaskSettingEdit(setting.field)"
+              >
+                <template v-slot:suffix>px</template>
+              </NInput>
             </div>
             <p v-if="maskEditingReason" class="model-message" role="status">
               {{ maskEditingReason }}
@@ -2312,7 +2750,7 @@ function applyFitBbox() {
         :selectedLayerId
         @acceptCandidates="emit('acceptCandidates', $event)"
         @changeBbox="changeActiveBbox"
-        @editMask="(layerId, request) => emit('editMask', layerId, request)"
+        @editMask="editCanvasMask"
         @redo="emit('redo')"
         @refreshGenerationResults="emit('refreshGenerationResults')"
         @resultFocusHandled="emit('resultFocusHandled', $event)"

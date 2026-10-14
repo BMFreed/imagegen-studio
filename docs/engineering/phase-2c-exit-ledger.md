@@ -43,8 +43,9 @@ actual configuration без Regional Guidance; shared `generation-settings-compa
   Save/reopen и local crash recovery. [Owned mask authoring](./phase-4-smart-patch-mask-authoring-research.md)
   подключает четыре pixel-editing tools и PNG asset/history/recovery owner;
   qualification limits описаны в checkpoint. [Transform/Fit implementation](./phase-4-smart-patch-mask-transform-research.md)
-  добавляет explicit preview/Apply/cancel, baked mask PNG и Fit только owned bbox
-  с фиксированным 24px margin/outward grid8; regression1820 до final UI snapping,
+  добавляет explicit preview/Apply/cancel и baked mask PNG. На том checkpoint
+  Fit менял только owned bbox с фиксированным 24px margin/outward grid8;
+  нынешние owned defaults16/8 дают тот же запас. Regression1820 до final UI snapping,
   affected59/native57/three semantic RED-GREEN и typecheck/lint/build PASS.
   Chronology/limits и source/physical-exit proof находятся в linked checkpoint.
   Следующие owners — inpaint, Smart Patch generation/accepted variants,
@@ -56,6 +57,12 @@ actual configuration без Regional Guidance; shared `generation-settings-compa
 PP-004/005/007/008 сохраняют «Пока не обещать». Finite generation evidence
 позволило пройти finite Presets checkpoint и начать фазу 4, но не доказывает
 полную готовность NoobAI, всех семейств или релиза.
+
+[Owned mask settings](./phase-4-smart-patch-mask-settings-research.md) extends
+Phase4 with portable blur/padding16/8 and configurable Fit. Impacted regression1835
+before final UI refinement, final affected104/native109, three semantic RED/GREEN
+and typecheck/lint/build PASS qualify this settings slice. Upcoming Smart Patch inpaint must freeze/use the same blur,
+without treating it as painted PNG or conflating padding with inference.
 
 ## Named missing-version qualification
 

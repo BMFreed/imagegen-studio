@@ -12,6 +12,7 @@ import {
 } from './generation-dynamic-settings.js'
 import { IGS_GENERATION_PNG_MAX_BYTES } from './generation-image-limits.js'
 import { IllustriousNoiseProfileV1Schema } from './illustrious-noise-profile.js'
+import { ProjectMaskSettingsSchema } from './project-mask-settings.js'
 import {
   PROJECT_MASK_MAX_COORDINATE,
   PROJECT_MASK_MAX_DIMENSION,
@@ -562,6 +563,7 @@ const SmartPatchLayerSchema = v.strictObject({
   kind: v.literal('smart-patch'),
   locked: v.boolean(),
   mask: SmartPatchMaskSchema,
+  maskSettings: v.optional(ProjectMaskSettingsSchema),
   name: NonemptyTextSchema,
   opacity: UnitIntervalSchema,
   rasterSubLayers: v.strictTuple([]),
