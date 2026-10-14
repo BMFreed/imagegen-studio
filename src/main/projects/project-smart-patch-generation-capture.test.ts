@@ -487,6 +487,7 @@ test('callback and returned Smart Patch metadata/mask buffers cannot poison a la
   await withProject(async (fixture) => {
     const { opaquePng, second, service, tabId } = fixture
     await paint(fixture)
+    await service.flushAutosave(tabId)
     const before = await state(fixture)
     const expectedMask = await maskBytes(service, tabId, second.id)
     await service.withCapturedSmartPatchGenerationInput(tabId, second.id, async (capture) => {

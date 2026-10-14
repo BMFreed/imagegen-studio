@@ -65,7 +65,14 @@ The existing production settings UI/persistence and Fit are qualified by the
 The [private Main/CPU input capture](../../../engineering/phase-4-smart-patch-generation-capture-research.md)
 is qualified by focused14/affected1852 tests and actual CPU composition;
 it records whole owned mask and source RGBA/source alpha without applying blur or
-implementing inpaint. Cropped-mask/internal-scale conditioning is the next finite owner.
+implementing inpaint. The current [effective-mask/internal-size preparation](../../../engineering/phase-4-smart-patch-mask-preparation-research.md)
+checkpoint derives zero-padded bbox-local numeric generate coverage, resizes numeric
+coverage and sRGB source independently with BICUBIC, and retains world-derived
+mode with `processingMaskHasCoverage` reporting. Final focused33 TS/Python24 and
+three isolated semantic RED/neighbor GREEN pairs and affected1871 TS/125 Python
+pass; required typecheck/lint/build pass, physical exit and temporary-copy
+cleanup are confirmed in the checkpoint.
+It does not apply blur/fade/coherence or prepare latent conditioning.
 
 Internal resolution may differ from world-space bbox size. The upcoming worker
 pipeline must explicitly adapt project-pixel blur through that scale, including

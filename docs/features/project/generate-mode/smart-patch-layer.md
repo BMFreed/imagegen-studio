@@ -96,7 +96,7 @@ and viewed screenshots are in the checkpoint. Prototype lacks these production
 settings controls; its mock history is not persistence evidence. Public statuses
 remain unchanged.
 
-## Production checkpoint: private generation input capture
+## Previous production checkpoint: private generation input capture
 
 [Capture checkpoint](../../../engineering/phase-4-smart-patch-generation-capture-research.md)
 qualifies the finite read-only Main preparation slice. It captures an existing
@@ -104,7 +104,8 @@ Patch's bbox, internal resolution, draft, blur/padding, original verified mask
 descriptor/bytes and visible source layers beneath the target. The target and
 layers above it are excluded. This first capture preserves whole original mask
 bytes and source RGBA/source alpha; effective mask clipping, four-mode
-classification and internal-scale conditioning are later preparation owners.
+classification and internal-size preparation were later owners, qualified by the
+current preparation checkpoint below.
 Null/disjoint masks remain valid for the future source-only mode contract.
 Locked/hidden existing targets remain readable; future generation/acceptance
 permissions are separate.
@@ -118,6 +119,35 @@ enqueue work, run inference, publish candidates or persist accepted variants.
 Variant lifecycle, staleness/compositing/comparison and Patch presets remain
 subsequent owners; existing authoring evidence and public promise statuses stay
 unchanged.
+
+## Current private preparation checkpoint: effective mask and internal size
+
+[Preparation research](../../../engineering/phase-4-smart-patch-mask-preparation-research.md)
+qualifies the private Main/CPU slice with final focused33 TS/Python24 PASS and
+three isolated semantic RED/neighbor GREEN pairs. Global Python Ruff/basedpyright
+and affected1871 TS/125 Python pass; required typecheck/lint/build pass, physical
+exit and temporary-copy cleanup are confirmed. It derives
+an exact integer bbox-local numeric alpha plane from the verified original owned
+mask, with zero coverage outside the original bounds. Null/disjoint masks are
+valid all-zero outputs; corrupt originals still refuse even when disjoint.
+Derived masks may have transparent padding or no coverage without weakening the
+portable owned-mask codec's tight/nonempty default.
+
+The original world source alpha and any nonzero world coverage determine the
+private mode. Source RGBA and numeric coverage are independently resized with
+BICUBIC to the frozen internal size. Loss of tiny coverage during resize is
+reported separately and does not silently change the world-derived mode.
+Each internal side is capped at2048 and total pixels at4,000,000 for this finite
+CPU operation; structurally valid larger document settings remain unchanged and
+can refuse preparation. No latent-grid or ML capability is implied.
+
+These are explicit adaptations: ImageGen Studio's opaque source requires all
+alpha255, while Invoke considers any all-nonzero source opaque; our numeric soft
+mask remains meaningful below Invoke's worker-mask threshold128. This slice
+does not claim full mode/pixel parity, apply owned blur, run inference, enable
+public Generate or accept variants. Three operation-owned derived outputs and
+already-started asynchronous readers remain inside the existing drained capture
+lease; original mask/document/history/seed/Save owners are preserved.
 
 ## Previous production checkpoint: Transform Mask and Fit
 
@@ -296,7 +326,7 @@ Add Smart Patch Layer
 Regeneration freezes a source composite from compositing layers beneath the target Smart Patch Layer inside its bbox. The target layer's current active variant is excluded from its own generation input, preventing cumulative self-regeneration artifacts. Layers above remain visible in final Project preview but are not part of the patch source input.
 
 Automatic mode is derived from actual frozen source alpha and mask coverage
-inside that bbox, following Invoke:
+inside that bbox, adapting Invoke's mode table:
 
 | Frozen source     | Effective mask coverage inside bbox | Mode       |
 | ----------------- | ----------------------------------- | ---------- |
@@ -309,6 +339,14 @@ A null mask or a verified mask fully outside the bbox uses the source-only
 mode; it is not rejected solely for lacking effective coverage. The original
 owned mask is retained unchanged. No workflow selector is added, and rectangle
 intersection alone is not evidence of nonzero pixels.
+
+Here fully opaque means every source alpha is255, and mixed means neither all0
+nor all255. Invoke's transparency helper instead considers every alpha>0 opaque.
+Effective authored coverage means any world alpha>0 without thresholding soft
+pixels; Invoke's uploaded worker mask thresholds alpha at128. These boundaries
+are deliberate ImageGen Studio adaptations. The private mode is computed before
+internal resizing; internal coverage loss is reported for a later inference
+decision rather than changing that mode silently.
 
 ## Layer-Owned Bounding Box
 

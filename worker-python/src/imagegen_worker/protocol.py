@@ -36,6 +36,12 @@ from imagegen_worker.derivatives import (
 )
 from imagegen_worker.imports import NormalizeImportRequest, normalize_import
 from imagegen_worker.resource_previews import ResourcePreviewRequest, create_resource_preview
+from imagegen_worker.smart_patch_preparation import (
+    PreparationImage,
+    PreparationMask,
+    SmartPatchPreparationRequest,
+    prepare_smart_patch,
+)
 
 if TYPE_CHECKING:
     from imagegen_worker.anima_conditioning import CompiledAnimaPrompt
@@ -88,6 +94,12 @@ class ComposePreviewCommand:
 class ComposeTargetCommand:
     request_id: str
     target: ComposeTargetRequest
+
+
+@dataclass(frozen=True)
+class PrepareSmartPatchCommand:
+    request_id: str
+    preparation: SmartPatchPreparationRequest
 
 
 @dataclass(frozen=True)
@@ -251,6 +263,7 @@ def ready_message() -> dict[str, object]:
             "resource-preview",
             "self-test",
             "target-composition",
+            "smart-patch-preparation",
         ],
     }
 
@@ -895,6 +908,7 @@ def parse_request(
     | ResourcePreviewCommand
     | ComposePreviewCommand
     | ComposeTargetCommand
+    | PrepareSmartPatchCommand
     | GenerateIllustriousTxt2ImgCommand
     | GenerateAnimaTxt2ImgCommand
 ):
@@ -1052,6 +1066,81 @@ def parse_request(
                 target_png_path=_path(output_fields["targetPngPath"], "Target PNG output"),
             ),
         )
+    if fields.get("type") == "prepare-smart-patch":
+        _object(
+            fields,
+            "Smart Patch preparation request",
+            {
+                "type",
+                "requestId",
+                "protocolVersion",
+                "bbox",
+                "internalResolution",
+                "source",
+                "mask",
+                "output",
+            },
+        )
+        source_fields = _object(
+            fields["source"],
+            "Smart Patch source",
+            {"path", "sha256", "byteSize", "width", "height"},
+        )
+        source = PreparationImage(
+            path=_path(source_fields["path"], "Smart Patch source path"),
+            sha256=_sha256(source_fields["sha256"], "Smart Patch source hash"),
+            byte_size=_positive_integer(source_fields["byteSize"], "Smart Patch source bytes"),
+            width=_positive_integer(source_fields["width"], "Smart Patch source width"),
+            height=_positive_integer(source_fields["height"], "Smart Patch source height"),
+        )
+        mask = None
+        if fields["mask"] is not None:
+            mask_fields = _object(
+                fields["mask"],
+                "Smart Patch mask",
+                {"path", "sha256", "byteSize", "width", "height", "bounds"},
+            )
+            mask = PreparationMask(
+                path=_path(mask_fields["path"], "Smart Patch mask path"),
+                sha256=_sha256(mask_fields["sha256"], "Smart Patch mask hash"),
+                byte_size=_positive_integer(mask_fields["byteSize"], "Smart Patch mask bytes"),
+                width=_positive_integer(mask_fields["width"], "Smart Patch mask width"),
+                height=_positive_integer(mask_fields["height"], "Smart Patch mask height"),
+                bounds=_target_bbox(mask_fields["bounds"]),
+            )
+        internal = _object(
+            fields["internalResolution"], "Smart Patch internal resolution", {"width", "height"}
+        )
+        output = _object(
+            fields["output"],
+            "Smart Patch preparation output",
+            {
+                "stagingRoot",
+                "worldMaskPngPath",
+                "processingSourcePngPath",
+                "processingMaskPngPath",
+            },
+        )
+        return PrepareSmartPatchCommand(
+            request_id=request_id,
+            preparation=SmartPatchPreparationRequest(
+                bbox=_target_bbox(fields["bbox"]),
+                internal_resolution={
+                    "width": _positive_integer(internal["width"], "Smart Patch internal width"),
+                    "height": _positive_integer(internal["height"], "Smart Patch internal height"),
+                },
+                source=source,
+                mask=mask,
+                staging_root=_path(output["stagingRoot"], "Smart Patch staging root"),
+                world_mask_png_path=_path(output["worldMaskPngPath"], "World mask output path"),
+                processing_source_png_path=_path(
+                    output["processingSourcePngPath"], "Processing source output path"
+                ),
+                processing_mask_png_path=_path(
+                    output["processingMaskPngPath"], "Processing mask output path"
+                ),
+            ),
+        )
     if fields.get("type") != "derive-image":
         raise DerivativeError("INVALID_REQUEST", "Request type is unsupported.")
 
@@ -1170,6 +1259,14 @@ def process_request(value: object) -> dict[str, object]:
                 "protocolVersion": PROTOCOL_VERSION,
                 "requestId": command.request_id,
                 **result,
+            }
+        if isinstance(command, PrepareSmartPatchCommand):
+            preparation_result = prepare_smart_patch(command.preparation)
+            return {
+                "type": "smart-patch-prepared",
+                "protocolVersion": PROTOCOL_VERSION,
+                "requestId": command.request_id,
+                **preparation_result,
             }
         result = normalize_import(command.imported)
         return {

@@ -3,6 +3,7 @@ import {
   isSrgbCompatiblePngColorChunk,
   pngColorChunkLength,
 } from '../../shared/projects/color-profile.js'
+import { assertProjectMaskBounds } from '../../shared/projects/project-mask.js'
 import { IGS_SAFETY_CEILINGS, type IgsPreviewRectV1 } from '../../shared/projects/project-schema.js'
 
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
@@ -13,6 +14,7 @@ import path from 'node:path'
 import { inflateSync } from 'node:zlib'
 
 import { validateSrgbPngStream, validateSrgbWebpStream } from './igs-package.js'
+import { decodeDerivedProjectMaskPng, readProjectMaskSource } from './project-mask.js'
 import { classifyTargetPngAlpha } from './target-png-mode.js'
 
 const PROTOCOL_VERSION = '1'
@@ -132,6 +134,47 @@ export interface ComposeTargetResult {
   rect: IgsPreviewRectV1
 }
 
+/** Main-nominated private files; masks are numeric generate coverage, not image color. */
+export interface SmartPatchPreparationInput {
+  bbox: IgsPreviewRectV1
+  internalResolution: { height: number; width: number }
+  mask: (SmartPatchPreparationSource & { bounds: IgsPreviewRectV1 }) | null
+  processingMaskPngPath: string
+  processingSourcePngPath: string
+  source: SmartPatchPreparationSource
+  stagingRoot: string
+  worldMaskPngPath: string
+}
+
+export interface SmartPatchPreparationSource {
+  byteSize: number
+  height: number
+  path: string
+  sha256: string
+  width: number
+}
+
+export type SmartPatchPreparationPayload = {
+  bbox: IgsPreviewRectV1
+  internalResolution: { height: number; width: number }
+  mask: SmartPatchPreparationInput['mask']
+  output: {
+    processingMaskPngPath: string
+    processingSourcePngPath: string
+    stagingRoot: string
+    worldMaskPngPath: string
+  }
+  source: SmartPatchPreparationSource
+}
+
+export type VerifiedWorkerMask = SmartPatchPreparationSource
+
+export interface SmartPatchPreparationResult {
+  processingMask: VerifiedWorkerMask
+  processingSource: VerifiedWorkerImage
+  worldMask: VerifiedWorkerMask
+}
+
 export type ComposePreviewResult =
   | { merged: null; rect: null; status: 'empty'; thumbnail: null }
   | {
@@ -195,6 +238,7 @@ type PendingRequest = {
     | 'preview-done'
     | 'resource-preview-done'
     | 'self-test-result'
+    | 'smart-patch-prepared'
     | 'target-done'
 }
 
@@ -653,6 +697,20 @@ export class ProjectWorkerClient {
     })
   }
 
+  async prepareSmartPatch(input: SmartPatchPreparationInput): Promise<SmartPatchPreparationResult> {
+    return this.exclusive(async () => {
+      if (!this.ready.capabilities.includes('smart-patch-preparation')) {
+        throw new ProjectWorkerError(
+          'WORKER_VERSION_MISMATCH',
+          'The image worker cannot prepare Smart Patch masks.',
+        )
+      }
+      return prepareSmartPatchWithTransport(input, this.stagingBasePath, (payload) =>
+        this.request('prepare-smart-patch', 'smart-patch-prepared', payload),
+      )
+    })
+  }
+
   async selfTest(): Promise<WorkerSelfTestResult> {
     return this.exclusive(async () => {
       const response = await this.request('self-test', 'self-test-result', {})
@@ -868,6 +926,7 @@ export class ProjectWorkerClient {
       | 'create-resource-preview'
       | 'derive-image'
       | 'normalize-import'
+      | 'prepare-smart-patch'
       | 'self-test',
     resultType: PendingRequest['type'],
     fields: Record<string, unknown>,
@@ -966,6 +1025,199 @@ export async function composeTargetWithTransport(
     )
   }
   return { composite, mode: actualMode, rect: bbox }
+}
+
+/** Typed private CPU operation; caller transport supplies no substitute pixels. */
+export async function prepareSmartPatchWithTransport(
+  requestInput: SmartPatchPreparationInput,
+  stagingBasePath: string,
+  request: (payload: SmartPatchPreparationPayload) => Promise<Record<string, unknown>>,
+): Promise<SmartPatchPreparationResult> {
+  const input = structuredClone(requestInput)
+  validateTargetBbox(input.bbox)
+  assertSmartPatchProcessingSize(input.internalResolution)
+  if (input.source.width !== input.bbox.width || input.source.height !== input.bbox.height) {
+    throw new ProjectWorkerError(
+      'INVALID_REQUEST',
+      'Smart Patch source dimensions differ from bbox.',
+    )
+  }
+  if (input.mask) {
+    assertProjectMaskBounds(input.mask.bounds)
+    if (
+      input.mask.width !== input.mask.bounds.width ||
+      input.mask.height !== input.mask.bounds.height
+    ) {
+      throw new ProjectWorkerError(
+        'INVALID_REQUEST',
+        'Smart Patch mask dimensions differ from bounds.',
+      )
+    }
+  }
+  const { paths, stagingRoot } = await validateOutputPathsWithinBase(
+    stagingBasePath,
+    input.stagingRoot,
+    [
+      [input.worldMaskPngPath, '.png'],
+      [input.processingSourcePngPath, '.png'],
+      [input.processingMaskPngPath, '.png'],
+    ],
+  )
+  await validateInputPath(input.source.path, input.source.sha256, paths)
+  const source = await verifyImageOutput(
+    input.source.path,
+    { ...input.source, colorSpace: 'srgb' },
+    MAX_TARGET_BYTES,
+    'png',
+  )
+  await verifyTargetAlphaMode(source)
+  if (input.mask) {
+    await validateInputPath(input.mask.path, input.mask.sha256, paths)
+    await readProjectMaskSource(
+      { sourcePath: input.mask.path },
+      {
+        bytes: input.mask.byteSize,
+        height: input.mask.height,
+        path: input.mask.path,
+        sha256: input.mask.sha256,
+        width: input.mask.width,
+      },
+    )
+  }
+  const response = await request({
+    bbox: input.bbox,
+    internalResolution: input.internalResolution,
+    mask: input.mask,
+    output: {
+      processingMaskPngPath: paths[2],
+      processingSourcePngPath: paths[1],
+      stagingRoot,
+      worldMaskPngPath: paths[0],
+    },
+    source: input.source,
+  })
+  const worldMask = await verifyCoverageOutput(paths[0], response.worldMask, input.bbox)
+  const processingMask = await verifyCoverageOutput(
+    paths[2],
+    response.processingMask,
+    input.internalResolution,
+  )
+  const processingSource = await verifyImageOutput(
+    paths[1],
+    response.processingSource,
+    MAX_TARGET_BYTES,
+    'png',
+  )
+  if (
+    processingSource.width !== input.internalResolution.width ||
+    processingSource.height !== input.internalResolution.height
+  ) {
+    throw new ProjectWorkerError(
+      'OUTPUT_MISMATCH',
+      'Smart Patch processing source has wrong dimensions.',
+    )
+  }
+  await verifyTargetAlphaMode(processingSource)
+  return { processingMask, processingSource, worldMask }
+}
+
+/** Existing finite CPU target limits, separate from portable/model size validity. */
+export function assertSmartPatchProcessingSize(size: { height: number; width: number }): void {
+  validateTargetBbox({ ...size, x: 0, y: 0 })
+}
+
+/** Recheck nominated files before Main consumes bytes, including adapters outside this client. */
+export async function readSmartPatchPreparationOutput(
+  expectedPath: string,
+  artifactInput: VerifiedWorkerImage | VerifiedWorkerMask,
+  kind: 'mask' | 'source',
+): Promise<Buffer> {
+  const artifact = { ...artifactInput }
+  if (artifact.path !== expectedPath) {
+    throw new ProjectWorkerError(
+      'OUTPUT_MISMATCH',
+      'Smart Patch output path differs from its nomination.',
+    )
+  }
+  validateTargetBbox({ height: artifact.height, width: artifact.width, x: 0, y: 0 })
+  if (kind === 'mask') {
+    if (
+      Object.keys(artifact).some(
+        (key) => !['byteSize', 'height', 'path', 'sha256', 'width'].includes(key),
+      )
+    ) {
+      throw new ProjectWorkerError(
+        'OUTPUT_MISMATCH',
+        'Numeric mask must not contain color metadata.',
+      )
+    }
+    await verifyCoverageOutput(
+      expectedPath,
+      {
+        byteSize: artifact.byteSize,
+        height: artifact.height,
+        sha256: artifact.sha256,
+        width: artifact.width,
+      },
+      artifact,
+    )
+  } else {
+    const verified = await verifyImageOutput(expectedPath, artifact, MAX_TARGET_BYTES, 'png')
+    if (!('iccSha256' in artifact) || artifact.iccSha256 !== verified.iccSha256) {
+      throw new ProjectWorkerError(
+        'OUTPUT_MISMATCH',
+        'Smart Patch source ICC differs from its pixels.',
+      )
+    }
+  }
+  const actual = await inspectVerifiedFile(expectedPath, MAX_TARGET_BYTES, async (file, size) => ({
+    bytes: await readAt(file, 0, size),
+  }))
+  if (actual.byteSize !== artifact.byteSize || actual.sha256 !== artifact.sha256) {
+    throw new ProjectWorkerError(
+      'OUTPUT_MISMATCH',
+      'Smart Patch output changed before consumption.',
+    )
+  }
+  if (kind === 'mask') {
+    decodeDerivedProjectMaskPng(actual.bytes, artifact)
+  } else {
+    classifyTargetPngAlpha(actual.bytes, artifact.width, artifact.height)
+  }
+  return actual.bytes
+}
+
+async function verifyCoverageOutput(
+  filePath: string,
+  rawMetadata: unknown,
+  dimensions: { height: number; width: number },
+): Promise<VerifiedWorkerMask> {
+  const metadata = object(rawMetadata, 'Worker numeric mask metadata')
+  if (
+    Object.keys(metadata).some((key) => !['byteSize', 'height', 'sha256', 'width'].includes(key)) ||
+    !Number.isSafeInteger(metadata.byteSize) ||
+    (metadata.byteSize as number) < 1 ||
+    (metadata.byteSize as number) > MAX_TARGET_BYTES ||
+    metadata.width !== dimensions.width ||
+    metadata.height !== dimensions.height ||
+    typeof metadata.sha256 !== 'string' ||
+    !SHA256_PATTERN.test(metadata.sha256)
+  ) {
+    throw new ProjectWorkerError('OUTPUT_MISMATCH', 'The worker numeric mask metadata is invalid.')
+  }
+  const actual = await inspectVerifiedFile(filePath, MAX_TARGET_BYTES, async (file, size) => {
+    decodeDerivedProjectMaskPng(await readAt(file, 0, size), dimensions)
+    return {}
+  })
+  if (actual.byteSize !== metadata.byteSize || actual.sha256 !== metadata.sha256) {
+    throw new ProjectWorkerError('OUTPUT_MISMATCH', 'The numeric mask differs from its metadata.')
+  }
+  return {
+    ...actual,
+    height: dimensions.height,
+    path: filePath,
+    width: dimensions.width,
+  }
 }
 
 async function validateOutputPathsWithinBase(

@@ -21,7 +21,12 @@ import { composeFrozenGenerationTarget } from './project-generation-target.js'
 import { readProjectMaskSource } from './project-mask.js'
 import { withProjectPathLock } from './project-path-lock.js'
 import { compositionRasterLayers, withFrozenRasterComposition } from './project-raster-snapshot.js'
+import {
+  type PreparedSmartPatchGenerationInput,
+  prepareFrozenSmartPatchInput,
+} from './project-smart-patch-preparation.js'
 import { classifyTargetPngAlpha } from './target-png-mode.js'
+import { assertSmartPatchProcessingSize } from './worker-client.js'
 
 /** Matches the existing CPU compositor/target verifier; not a model capacity or document ceiling. */
 const MAX_SOURCE_SIDE = 2048
@@ -61,6 +66,9 @@ export interface CapturedSmartPatchGenerationInput {
   maskPngBytes: Buffer | null
   /** Main-only leased material; never a portable path or renderer capability. */
   maskPngPath: string | null
+  prepareInput: (
+    worker: Pick<ProjectWorkerClient, 'composeTarget' | 'prepareSmartPatch'>,
+  ) => Promise<PreparedSmartPatchGenerationInput>
 }
 
 /** Existing immutable members and pending byte buffers are captured before filesystem awaits. */
@@ -126,39 +134,13 @@ export async function withFrozenSmartPatchGenerationInput<T>(
         if (maskPngPath && maskPngBytes) {
           await writeFile(maskPngPath, maskPngBytes, { flag: 'wx', mode: 0o600 })
         }
-        const operations = new Set<Promise<FrozenSmartPatchGenerationInput>>()
+        const operations = new Set<Promise<unknown>>()
         let open = true
-        const composeSource: CapturedSmartPatchGenerationInput['composeSource'] = (worker) => {
+        const startOperation = <T>(run: () => Promise<T>): Promise<T> => {
           if (!open) {
             return Promise.reject(new Error('The Smart Patch capture lease is closed.'))
           }
-          const operation = (async (): Promise<FrozenSmartPatchGenerationInput> => {
-            const stagingRoot = await mkdtemp(path.join(composition.stagingRoot, 'source-'))
-            const sourceTarget = await composeFrozenGenerationTarget(
-              { ...composition, stagingRoot },
-              worker,
-              { bbox: context.bbox, generationDraft: context.generationDraft },
-            )
-            const sourceMode = classifyTargetPngAlpha(
-              sourceTarget.composite.bytes,
-              sourceTarget.composite.width,
-              sourceTarget.composite.height,
-            )
-            if (sourceMode !== sourceTarget.mode) {
-              throw new Error('The Smart Patch source alpha differs from the composed pixels.')
-            }
-            return {
-              context: structuredClone(context),
-              maskPngBytes: maskPngBytes ? Buffer.from(maskPngBytes) : null,
-              source: sourceTarget.composite,
-              sourceAlpha:
-                sourceMode === 'txt2img'
-                  ? 'transparent'
-                  : sourceMode === 'img2img'
-                    ? 'opaque'
-                    : 'mixed',
-            }
-          })()
+          const operation = run()
           operations.add(operation)
           const settled = () => {
             operations.delete(operation)
@@ -166,6 +148,57 @@ export async function withFrozenSmartPatchGenerationInput<T>(
           void operation.then(settled, settled)
           return operation
         }
+        const composeAt = async (
+          worker: Pick<ProjectWorkerClient, 'composeTarget'>,
+          stagingRoot: string,
+        ): Promise<FrozenSmartPatchGenerationInput> => {
+          const sourceTarget = await composeFrozenGenerationTarget(
+            { ...composition, stagingRoot },
+            worker,
+            { bbox: context.bbox, generationDraft: context.generationDraft },
+          )
+          const sourceMode = classifyTargetPngAlpha(
+            sourceTarget.composite.bytes,
+            sourceTarget.composite.width,
+            sourceTarget.composite.height,
+          )
+          if (sourceMode !== sourceTarget.mode) {
+            throw new Error('The Smart Patch source alpha differs from the composed pixels.')
+          }
+          return {
+            context: structuredClone(context),
+            maskPngBytes: maskPngBytes ? Buffer.from(maskPngBytes) : null,
+            source: sourceTarget.composite,
+            sourceAlpha:
+              sourceMode === 'txt2img'
+                ? 'transparent'
+                : sourceMode === 'img2img'
+                  ? 'opaque'
+                  : 'mixed',
+          }
+        }
+        const composeSource: CapturedSmartPatchGenerationInput['composeSource'] = (worker) =>
+          startOperation(async () => {
+            const stagingRoot = await mkdtemp(path.join(composition.stagingRoot, 'source-'))
+            return composeAt(worker, stagingRoot)
+          })
+        const prepareInput: CapturedSmartPatchGenerationInput['prepareInput'] = (worker) =>
+          startOperation(async () => {
+            assertSmartPatchProcessingSize(context.internalResolution)
+            const stagingRoot = await mkdtemp(path.join(composition.stagingRoot, 'prepared-'))
+            const composed = await composeAt(worker, stagingRoot)
+            return prepareFrozenSmartPatchInput(
+              {
+                context,
+                maskPngBytes,
+                maskPngPath,
+                source: composed.source,
+                sourceAlpha: composed.sourceAlpha,
+                stagingRoot,
+              },
+              worker,
+            )
+          })
         try {
           return await use({
             composeSource,
@@ -173,6 +206,7 @@ export async function withFrozenSmartPatchGenerationInput<T>(
             document: structuredClone(document),
             maskPngBytes: maskPngBytes ? Buffer.from(maskPngBytes) : null,
             maskPngPath,
+            prepareInput,
           })
         } finally {
           open = false

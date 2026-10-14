@@ -2414,6 +2414,22 @@ Result` переносит фактический expanded prompt и portable ge
 ## Фаза 4. Полный Canvas и Smart Patch Layer
 
 **Текущий private Main/CPU checkpoint:**
+[Smart Patch effective mask/internal-size preparation](../engineering/phase-4-smart-patch-mask-preparation-research.md)
+расширяет callback lease: exact integer world clipped numeric coverage,
+internal sRGB source/numeric mask, BICUBIC resize и four-mode по исходному
+verified world source alpha/actual world coverage. Internal coverage loss
+фиксируется отдельно через `processingMaskHasCoverage` без silent modechange.
+Final focused33 TS/Python24 PASS,три isolated semantic RED/neighbor GREEN pairs и
+global Python Ruff/basedpyright и affected1871 TS/125 Python PASS; required
+typecheck/lint/build PASS, physical exit/temporary-copy cleanup confirmed.
+Finite internal/source2048side/4M limits не сужают document schema и не
+подтверждают latent-grid/ML admission. Original mask/document/history/seed/Save
+owners сохраняются. Strict all255 source и any-nonzero mask — явные adaptations
+от Invoke; full pixel/mode parity не заявлена. Следующий owner — numerical
+blur/fade/coherence/masked conditioning, затем queue/inference/accepted variants.
+Public Generate и `.igs` variant schema этим private срезом не включаются.
+
+**Предыдущий qualified private Main/CPU checkpoint:**
 [Smart Patch generation input capture](../engineering/phase-4-smart-patch-generation-capture-research.md)
 freeze/read-only Main callback boundary для exact target, ниже-лежащих visible
 source layers и original verified mask bytes, owned bbox/internal/draft/blur/padding.
@@ -2426,8 +2442,9 @@ internal-scale conditioning. Public Generate, очередь,
 worker inference, candidate/variant Add и `.igs` schema не включаются этим срезом.
 Focused14/affected1852 PASS, actual CPU четыре tests/nine production calls,
 три semantic RED/neighbor GREEN и typecheck PASS; lint/build PASS; lifecycle/cleanup подтверждены.
-Следующий finite owner — effective mask clipping/mode/internal-scale conditioning,
-затем queue/inference/accepted variants. Future acceptance в changed-existing target сохраняет
+На capture checkpoint следующим finite owner был effective mask
+clipping/mode/internal-scale preparation, описанный выше; затем
+queue/inference/accepted variants. Future acceptance в changed-existing target сохраняет
 frozen output/context и маркирует active variant `outdated`; missing target
 остаётся orphaned. Blur требует дальнейшей project-space scale adaptation;
 padding Fit-only и не stale-ит результат до изменения bbox. Public statuses прежние.

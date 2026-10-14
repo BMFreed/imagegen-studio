@@ -168,6 +168,95 @@ export function decodeProjectMaskPng(
   input: Uint8Array,
   dimensions: { height: number; width: number },
 ): Uint8Array {
+  return decodeMaskCoveragePng(input, dimensions, true)
+}
+
+/** Derived numeric coverage can contain zero padding or be empty; it is not a portable mask asset. */
+export function decodeDerivedProjectMaskPng(
+  input: Uint8Array,
+  dimensions: { height: number; width: number },
+): Uint8Array {
+  return decodeMaskCoveragePng(input, dimensions, false)
+}
+
+/** Read only an exact bounded Main-owned source, then verify its full portable mask semantics. */
+export async function readProjectMaskSource(
+  source: IgsAssetSource,
+  asset: IgsSmartPatchMaskAssetV1,
+): Promise<Buffer> {
+  assertProjectMaskDimensions(asset.width, asset.height)
+  if (
+    !Number.isSafeInteger(asset.bytes) ||
+    asset.bytes < 1 ||
+    asset.bytes > PROJECT_MASK_MAX_PNG_BYTES
+  ) {
+    throw new ProjectMaskError('MASK_LIMIT', 'The mask source exceeds its byte limit.')
+  }
+  let bytes: Buffer
+  if ('bytes' in source) {
+    if (!Buffer.isBuffer(source.bytes) || source.bytes.length !== asset.bytes) {
+      throw new ProjectMaskError(
+        'MASK_IMAGE_INVALID',
+        'The mask source differs from its reference.',
+      )
+    }
+    bytes = Buffer.from(source.bytes)
+  } else {
+    if (!path.isAbsolute(source.sourcePath)) {
+      throw new ProjectMaskError('MASK_IMAGE_INVALID', 'A mask source path must be absolute.')
+    }
+    const file = await open(
+      source.sourcePath,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    )
+    try {
+      const before = await file.stat({ bigint: true })
+      if (!before.isFile() || before.size !== BigInt(asset.bytes)) {
+        throw new ProjectMaskError(
+          'MASK_IMAGE_INVALID',
+          'The mask source differs from its reference.',
+        )
+      }
+      bytes = Buffer.alloc(asset.bytes)
+      let offset = 0
+      while (offset < bytes.length) {
+        const result = await file.read(bytes, offset, bytes.length - offset, null)
+        if (result.bytesRead === 0) {
+          break
+        }
+        offset += result.bytesRead
+      }
+      const after = await file.stat({ bigint: true })
+      if (
+        offset !== bytes.length ||
+        after.size !== before.size ||
+        after.mtimeNs !== before.mtimeNs ||
+        after.ctimeNs !== before.ctimeNs
+      ) {
+        throw new ProjectMaskError('MASK_IMAGE_INVALID', 'The mask source changed while reading.')
+      }
+    } finally {
+      await file.close()
+    }
+  }
+  if (
+    bytes.length !== asset.bytes ||
+    createHash('sha256').update(bytes).digest('hex') !== asset.sha256
+  ) {
+    throw new ProjectMaskError(
+      'MASK_IMAGE_INVALID',
+      'The mask source failed integrity verification.',
+    )
+  }
+  decodeProjectMaskPng(bytes, asset)
+  return bytes
+}
+
+function decodeMaskCoveragePng(
+  input: Uint8Array,
+  dimensions: { height: number; width: number },
+  requireTightCoverage: boolean,
+): Uint8Array {
   assertProjectMaskDimensions(dimensions.width, dimensions.height)
   if (!(input instanceof Uint8Array)) {
     throw new ProjectMaskError('MASK_IMAGE_INVALID', 'The owned mask PNG must be bytes.')
@@ -295,81 +384,10 @@ export function decodeProjectMaskPng(
     previous = current
     current = swap
   }
-  assertCoverage(alpha, dimensions.width, dimensions.height)
+  if (requireTightCoverage) {
+    assertCoverage(alpha, dimensions.width, dimensions.height)
+  }
   return alpha
-}
-
-/** Read only an exact bounded Main-owned source, then verify its full portable mask semantics. */
-export async function readProjectMaskSource(
-  source: IgsAssetSource,
-  asset: IgsSmartPatchMaskAssetV1,
-): Promise<Buffer> {
-  assertProjectMaskDimensions(asset.width, asset.height)
-  if (
-    !Number.isSafeInteger(asset.bytes) ||
-    asset.bytes < 1 ||
-    asset.bytes > PROJECT_MASK_MAX_PNG_BYTES
-  ) {
-    throw new ProjectMaskError('MASK_LIMIT', 'The mask source exceeds its byte limit.')
-  }
-  let bytes: Buffer
-  if ('bytes' in source) {
-    if (!Buffer.isBuffer(source.bytes) || source.bytes.length !== asset.bytes) {
-      throw new ProjectMaskError(
-        'MASK_IMAGE_INVALID',
-        'The mask source differs from its reference.',
-      )
-    }
-    bytes = Buffer.from(source.bytes)
-  } else {
-    if (!path.isAbsolute(source.sourcePath)) {
-      throw new ProjectMaskError('MASK_IMAGE_INVALID', 'A mask source path must be absolute.')
-    }
-    const file = await open(
-      source.sourcePath,
-      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-    )
-    try {
-      const before = await file.stat({ bigint: true })
-      if (!before.isFile() || before.size !== BigInt(asset.bytes)) {
-        throw new ProjectMaskError(
-          'MASK_IMAGE_INVALID',
-          'The mask source differs from its reference.',
-        )
-      }
-      bytes = Buffer.alloc(asset.bytes)
-      let offset = 0
-      while (offset < bytes.length) {
-        const result = await file.read(bytes, offset, bytes.length - offset, null)
-        if (result.bytesRead === 0) {
-          break
-        }
-        offset += result.bytesRead
-      }
-      const after = await file.stat({ bigint: true })
-      if (
-        offset !== bytes.length ||
-        after.size !== before.size ||
-        after.mtimeNs !== before.mtimeNs ||
-        after.ctimeNs !== before.ctimeNs
-      ) {
-        throw new ProjectMaskError('MASK_IMAGE_INVALID', 'The mask source changed while reading.')
-      }
-    } finally {
-      await file.close()
-    }
-  }
-  if (
-    bytes.length !== asset.bytes ||
-    createHash('sha256').update(bytes).digest('hex') !== asset.sha256
-  ) {
-    throw new ProjectMaskError(
-      'MASK_IMAGE_INVALID',
-      'The mask source failed integrity verification.',
-    )
-  }
-  decodeProjectMaskPng(bytes, asset)
-  return bytes
 }
 
 function assertCoverage(alpha: Uint8Array, width: number, height: number): void {

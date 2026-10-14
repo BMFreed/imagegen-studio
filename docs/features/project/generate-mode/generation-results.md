@@ -240,6 +240,15 @@ qualifies private Main/CPU source preparation (focused14/affected1852 PASS),
 without candidate publication; this Smart Patch acceptance lifecycle is not yet
 implemented or enabled by it.
 
+The current [effective-mask/internal-size preparation](../../../engineering/phase-4-smart-patch-mask-preparation-research.md)
+checkpoint adds private derived coverage/source inputs and mode classification
+only. Final focused33 TS/Python24 and three isolated semantic RED/neighbor GREEN
+pairs and affected1871 TS/125 Python pass; required typecheck/lint/build pass,
+physical exit and temporary-copy cleanup are confirmed. It leaves staging, immutable accepted
+provenance, target routing and `Add N as Variants` unavailable. Internal coverage
+loss is an explicit later inference concern, not a reason to silently replace
+the frozen world mask or acceptance context.
+
 ## Auto-Switch
 
 Supported focus modes may follow Invoke:

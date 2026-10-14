@@ -1,14 +1,28 @@
 # Engineering Workflow
 
-Latest private Main/CPU checkpoint:
+Current private Main/CPU preparation checkpoint:
+[Smart Patch effective mask/internal-size preparation](./phase-4-smart-patch-mask-preparation-research.md).
+The slice derives numeric world-bbox mask coverage, internal-size
+sRGB source and numeric mask, with world-derived four-mode classification and
+separately reported coverage loss. Final focused33 TS/Python24 PASS and three
+isolated semantic RED/neighbor GREEN pairs qualify the private preparation path;
+affected1871 TS/125 Python PASS. Required typecheck/lint/build and global Python
+Ruff/basedpyright pass; physical exit and temporary-copy cleanup are confirmed.
+BICUBIC resizing follows Invoke's resize default; strict all255 source alpha and
+any-nonzero soft-mask policy remain explicit ImageGen Studio adaptations.
+Blur/fade/coherence, GPU inference, public Generate, queue/staging and accepted
+variants are later owners. Public promise statuses stay unchanged.
+
+Previous qualified private Main/CPU checkpoint:
 [Smart Patch generation input capture](./phase-4-smart-patch-generation-capture-research.md).
 Read-only Main preparation freezes owned inputs and source beneath the selected
 Patch, including valid null/disjoint masks, and source RGBA/source alpha;
 focused14/affected1852 tests PASS, four actual CPU tests/nine production
 `compose-target` calls and three isolated semantic RED/neighbor GREEN probes.
 Typecheck/lint/build PASS; physical exit and temporary-copy cleanup are confirmed. No Electron,
-browser or ML inference qualification is claimed. Effective clipped mask,
-four-mode classification and internal-scale conditioning are the next finite slice.
+browser or ML inference qualification is claimed. At that checkpoint, effective
+clipped mask, four-mode classification and internal-size preparation were next;
+the current preparation checkpoint above qualifies those private CPU outputs.
 It does not enable public Generate, jobs/inference or accepted variant persistence.
 User decisions for source-only mode and acceptance of frozen results into changed
 existing targets are recorded in the supporting contracts; public statuses stay
