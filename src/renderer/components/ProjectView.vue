@@ -7,6 +7,7 @@ import type {
   ProjectGenerationDraftChange,
   ProjectGenerationResultsSnapshot,
   ProjectLoraIdentity,
+  ProjectSmartPatchMaskEditRequest,
   ProjectTab,
 } from '../../shared/api.js'
 import type { PresetRecord } from '../../shared/presets/preset-schema.js'
@@ -29,6 +30,7 @@ import {
   generationTargetSignature,
   type ProjectGenerationTargetState,
 } from '../../shared/projects/project-generation-target-state.js'
+import { PROJECT_MASK_DEFAULT_DIAMETER } from '../../shared/projects/project-mask.js'
 import type { IgsRectV1 } from '../../shared/projects/project-schema.js'
 import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
 import {
@@ -41,6 +43,8 @@ import {
 import {
   X as CancelIcon,
   Trash as ClearHistoryIcon,
+  Eye,
+  EyeOff,
   AspectRatio as FitIcon,
   Wand as GenerateIcon,
   ListCheck as QueueIcon,
@@ -68,6 +72,7 @@ import { computed, h, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vu
 
 import type { CandidateExportFeedback } from './candidate-export-feedback.js'
 import type { GenerationResultFocusRequest } from './generation-queue-result.js'
+import type { MaskOperation } from './project-mask-gesture.js'
 import type { ResolutionSize } from './resolution-control'
 
 import {
@@ -170,6 +175,7 @@ const emit = defineEmits<{
   choosePreset: [id: string]
   clearExportFeedback: []
   clearHistory: []
+  editMask: [layerId: string, request: ProjectSmartPatchMaskEditRequest]
   generate: [iterations: number]
   importImage: []
   manageModels: [focus: ModelManagerFocus | null]
@@ -211,6 +217,57 @@ const activeGeometryDisabled = computed(
   () => props.busy || props.reloadRequired || Boolean(activePatch.value?.locked),
 )
 const draftEditingDisabled = activeGeometryDisabled
+const maskDiameterInput = ref<number | null>(PROJECT_MASK_DEFAULT_DIAMETER)
+const maskDiameterInvalid = computed(
+  () =>
+    maskDiameterInput.value === null ||
+    !Number.isFinite(maskDiameterInput.value) ||
+    maskDiameterInput.value < 1 ||
+    maskDiameterInput.value > 512,
+)
+const maskDiameter = computed({
+  get: () => (maskDiameterInvalid.value ? PROJECT_MASK_DEFAULT_DIAMETER : maskDiameterInput.value!),
+  set: (value: number) => {
+    maskDiameterInput.value = value
+  },
+})
+const maskOperation = ref<MaskOperation>('add')
+const maskOverlayVisible = ref(true)
+const maskOperationOptions = [
+  { label: 'Add to mask', value: 'add' },
+  { label: 'Subtract from mask', value: 'subtract' },
+]
+const maskEditingReason = computed(() => {
+  if (props.busy || props.reloadRequired) {
+    return 'Wait for the Project to finish updating.'
+  }
+  if (props.draftPending) {
+    return 'Wait for generation settings to finish updating before drawing.'
+  }
+  if (activePatch.value?.locked) {
+    return 'Unlock this Smart Patch before editing its mask.'
+  }
+  if (!activePatch.value?.visible) {
+    return 'Show this Smart Patch before editing its mask.'
+  }
+  if (maskDiameterInvalid.value) {
+    return 'Choose a mask brush size from 1 to 512 pixels.'
+  }
+  return null
+})
+function clearMask() {
+  const patch = activePatch.value
+  if (!patch || maskEditingReason.value || patch.mask.asset === null) {
+    return
+  }
+  emit('editMask', patch.id, {
+    documentId: props.tab.documentId,
+    documentRevision: props.tab.documentRevision,
+    edit: { kind: 'clear' },
+    maskId: patch.mask.id,
+    maskRevision: patch.mask.revision,
+  })
+}
 
 const imagesPerClick = defineModel<number | null>('imagesPerClick', { default: 4 })
 const countInputTheme = { peers: { Input: { paddingMedium: '0 4px' } } }
@@ -2143,6 +2200,64 @@ function applyFitBbox() {
           </section>
           <section
             v-if="activePatch"
+            aria-label="Smart Patch mask"
+            class="settings-section mask-settings"
+          >
+            <h2>Mask</h2>
+            <div class="mask-size-row">
+              <span>Brush size</span>
+              <NInputNumber
+                v-model:value="maskDiameterInput"
+                class="mask-size-input"
+                :disabled="busy || reloadRequired"
+                :inputProps="{ 'aria-label': 'Mask brush size' }"
+                :max="512"
+                :min="1"
+                :precision="0"
+                :showButton="false"
+                size="small"
+              >
+                <template v-slot:suffix>px</template>
+              </NInputNumber>
+            </div>
+            <span class="field-label">Lasso operation</span>
+            <NSelect
+              v-model:value="maskOperation"
+              aria-label="Mask lasso operation"
+              :disabled="busy || reloadRequired"
+              :options="maskOperationOptions"
+              size="small"
+            />
+            <div class="mask-view-actions">
+              <NButton
+                :aria-label="maskOverlayVisible ? 'Hide mask overlay' : 'Show mask overlay'"
+                :aria-pressed="maskOverlayVisible"
+                secondary
+                size="small"
+                @click="maskOverlayVisible = !maskOverlayVisible"
+              >
+                <template v-slot:icon>
+                  <NIcon :component="maskOverlayVisible ? Eye : EyeOff" :size="18" />
+                </template>
+                {{ maskOverlayVisible ? 'Hide overlay' : 'Show overlay' }}
+              </NButton>
+              <NButton
+                aria-label="Clear mask"
+                :disabled="Boolean(maskEditingReason) || activePatch.mask.asset === null"
+                secondary
+                size="small"
+                @click="clearMask"
+              >
+                <template v-slot:icon><NIcon :component="ClearHistoryIcon" :size="18" /></template>
+                Clear mask
+              </NButton>
+            </div>
+            <p v-if="maskEditingReason" class="model-message" role="status">
+              {{ maskEditingReason }}
+            </p>
+          </section>
+          <section
+            v-if="activePatch"
             aria-label="Smart Patch internal resolution"
             class="settings-section"
             @input.capture="captureInternalInput"
@@ -2171,6 +2286,9 @@ function applyFitBbox() {
 
       <ProjectCanvas
         :key="tab.id"
+        v-model:maskDiameter="maskDiameter"
+        v-model:maskOperation="maskOperation"
+        v-model:maskOverlayVisible="maskOverlayVisible"
         :bbox="activeBbox"
         :bboxEditingDisabled="activeGeometryDisabled"
         :bboxLabel="activeBboxLabel"
@@ -2179,15 +2297,19 @@ function applyFitBbox() {
         :candidateActionsDisabled="busy"
         :disabled="busy || reloadRequired"
         :documentId="tab.documentId"
+        :documentRevision="tab.documentRevision"
         :generationResults="generationResults?.candidates ?? []"
         :generationResultsLoading
         :historyPending="pending === 'undo' || pending === 'redo' ? pending : null"
         :layers="rasterLayers"
+        :maskEditingDisabled="Boolean(maskEditingReason)"
+        :maskTarget="activePatch"
         :projectKey="tab.id"
         :resultFocus="generationResultFocus"
         :selectedLayerId
         @acceptCandidates="emit('acceptCandidates', $event)"
         @changeBbox="changeActiveBbox"
+        @editMask="(layerId, request) => emit('editMask', layerId, request)"
         @redo="emit('redo')"
         @refreshGenerationResults="emit('refreshGenerationResults')"
         @resultFocusHandled="emit('resultFocusHandled', $event)"
@@ -2273,6 +2395,24 @@ function applyFitBbox() {
 </template>
 
 <style scoped>
+.mask-settings {
+  display: grid;
+  gap: 8px;
+}
+.mask-size-row,
+.mask-view-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.mask-size-input {
+  width: 92px;
+}
+.mask-view-actions {
+  flex-wrap: wrap;
+  justify-content: start;
+}
 .project-view {
   position: relative;
   display: flex;

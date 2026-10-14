@@ -23,12 +23,18 @@ import type {
   ProjectGenerationActionState,
 } from './projects/project-generation-actions.js'
 import type { ProjectGenerationTargetState } from './projects/project-generation-target-state.js'
-import type { IgsProjectDocumentV1, IgsRectV1 } from './projects/project-schema.js'
+import type { ProjectMaskEdit } from './projects/project-mask.js'
+import type {
+  IgsProjectDocumentV1,
+  IgsRectV1,
+  IgsSmartPatchLayerV1,
+} from './projects/project-schema.js'
 import type { PromptEmbeddingSelection } from './projects/prompt-embeddings.js'
 
 import { isAnimaSamplingMethod } from './projects/anima-sampling-method.js'
 import { isGenerationDynamicPromptSettings } from './projects/generation-dynamic-settings.js'
 import { isIllustriousSamplingDraftPair } from './projects/illustrious-scheduler.js'
+import { parseProjectMaskEdit } from './projects/project-mask.js'
 import { IGS_SAFETY_CEILINGS } from './projects/project-schema.js'
 
 export type {
@@ -90,6 +96,7 @@ export const ipcChannels = {
     create: 'projects:create',
     deleteGenerationJob: 'projects:delete-generation-job',
     discardAndClose: 'projects:discard-and-close',
+    editSmartPatchMask: 'projects:edit-smart-patch-mask',
     finishImport: 'projects:finish-import',
     generate: 'projects:generate',
     generationChanged: 'projects:generation-changed',
@@ -214,6 +221,7 @@ export interface ProjectTab {
   canUndo: boolean
   dirty: boolean
   documentId: string
+  documentRevision: string
   generationDraft: IgsProjectDocumentV1['generationDraft']
   id: string
   lastActualSeedSnapshot: IgsProjectDocumentV1['lastActualSeedSnapshot']
@@ -257,7 +265,7 @@ export interface ProjectRasterLayerView {
   width: number
 }
 
-/** Empty, owned document entity. Painting and accepted variants have separate later owners. */
+/** Owned document entity; accepted variants have a separate later implementation owner. */
 export interface ProjectSmartPatchLayerView {
   activeRasterSubLayerId: null
   blendMode: ProjectRasterLayerView['blendMode']
@@ -267,7 +275,8 @@ export interface ProjectSmartPatchLayerView {
   internalResolution: { height: number; width: number }
   kind: 'smart-patch'
   locked: boolean
-  mask: { asset: null; id: string; revision: 0 }
+  mask: IgsSmartPatchLayerV1['mask']
+  maskImageUrl: string | null
   name: string
   opacity: number
   rasterSubLayers: []
@@ -276,6 +285,15 @@ export interface ProjectSmartPatchLayerView {
 }
 
 export type ProjectLayerView = ProjectRasterLayerView | ProjectSmartPatchLayerView
+
+/** Captured gesture owner and baseline. Renderer never supplies pixels or an asset path. */
+export interface ProjectSmartPatchMaskEditRequest {
+  documentId: string
+  documentRevision: string
+  edit: ProjectMaskEdit
+  maskId: string
+  maskRevision: number
+}
 
 export type ProjectSmartPatchLayerChange =
   | ProjectRasterLayerChange
@@ -414,6 +432,11 @@ export interface ProjectApi {
   create: (options: ProjectCreateInput) => Promise<ApiResult<ProjectTab>>
   deleteGenerationJob: (review: GenerationQueueReview) => Promise<ApiResult<void>>
   discardAndClose: (tabId: string, confirmCloseImpact?: boolean) => Promise<ApiResult<void>>
+  editSmartPatchMask: (
+    tabId: string,
+    layerId: string,
+    request: ProjectSmartPatchMaskEditRequest,
+  ) => Promise<ApiResult<ProjectTab>>
   finishImport: (
     importId: string,
     choice: 'copy' | 'move',
@@ -961,6 +984,38 @@ export function isProjectSmartPatchLayerChange(
         Math.abs(dimensions[key]) <= IGS_SAFETY_CEILINGS.coordinateMagnitude,
     )
   )
+}
+
+export function isProjectSmartPatchMaskEditRequest(
+  input: unknown,
+): input is ProjectSmartPatchMaskEditRequest {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return false
+  }
+  const value = input as Record<string, unknown>
+  const keys = Object.keys(value)
+  if (
+    keys.length !== 5 ||
+    !['documentId', 'documentRevision', 'edit', 'maskId', 'maskRevision'].every((key) =>
+      keys.includes(key),
+    ) ||
+    !['documentId', 'documentRevision', 'maskId'].every(
+      (key) =>
+        typeof value[key] === 'string' &&
+        /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value[key]),
+    ) ||
+    typeof value['maskRevision'] !== 'number' ||
+    !Number.isSafeInteger(value['maskRevision']) ||
+    value['maskRevision'] < 0
+  ) {
+    return false
+  }
+  try {
+    parseProjectMaskEdit(value['edit'])
+    return true
+  } catch {
+    return false
+  }
 }
 
 function isBoundedEmbeddingToken(input: unknown): input is string {

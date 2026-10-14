@@ -12,6 +12,12 @@ import {
 } from './generation-dynamic-settings.js'
 import { IGS_GENERATION_PNG_MAX_BYTES } from './generation-image-limits.js'
 import { IllustriousNoiseProfileV1Schema } from './illustrious-noise-profile.js'
+import {
+  PROJECT_MASK_MAX_COORDINATE,
+  PROJECT_MASK_MAX_DIMENSION,
+  PROJECT_MASK_MAX_PIXELS,
+  PROJECT_MASK_MAX_PNG_BYTES,
+} from './project-mask.js'
 
 export { IGS_GENERATION_PNG_MAX_BYTES } from './generation-image-limits.js'
 
@@ -27,7 +33,7 @@ export const IGS_SCHEMA_VERSION = 1
 export const IGS_SAFETY_CEILINGS = {
   archiveEntries: 10_000,
   archiveUncompressedBytes: 32 * 1024 * 1024 * 1024,
-  coordinateMagnitude: 2_147_483_647,
+  coordinateMagnitude: PROJECT_MASK_MAX_COORDINATE,
   iccProfileBytes: 4 * 1024 * 1024,
   manifestJsonBytes: 4 * 1024 * 1024,
   memberBytes: 8 * 1024 * 1024 * 1024,
@@ -52,6 +58,8 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const LAYER_ASSET_PATH_PATTERN =
   /^assets\/layers\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(?:png|webp)$/
 const ICC_PROFILE_PATH_PATTERN = /^assets\/profiles\/([a-f0-9]{64})\.icc$/
+const MASK_ASSET_PATH_PATTERN =
+  /^assets\/masks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[a-f0-9]{64}\.png$/
 
 const UuidSchema = v.pipe(v.string(), v.uuid())
 const Sha256Schema = v.pipe(v.string(), v.regex(SHA256_PATTERN))
@@ -512,7 +520,35 @@ const RasterLayerSchema = v.strictObject({
   visible: v.boolean(),
 })
 
-/** Empty document-owned patch only. Painted masks and accepted variants need later schemas. */
+const SmartPatchMaskSchema = v.union([
+  v.strictObject({ asset: v.null(), id: UuidSchema, revision: SafeUIntSchema }),
+  v.pipe(
+    v.strictObject({
+      asset: v.strictObject({
+        bytes: v.pipe(PositiveIntegerSchema, v.maxValue(PROJECT_MASK_MAX_PNG_BYTES)),
+        height: v.pipe(PositiveIntegerSchema, v.maxValue(PROJECT_MASK_MAX_DIMENSION)),
+        path: v.pipe(v.string(), v.regex(MASK_ASSET_PATH_PATTERN)),
+        sha256: Sha256Schema,
+        width: v.pipe(PositiveIntegerSchema, v.maxValue(PROJECT_MASK_MAX_DIMENSION)),
+      }),
+      bounds: RectSchema,
+      id: UuidSchema,
+      revision: PositiveIntegerSchema,
+    }),
+    v.check(
+      (mask) =>
+        mask.asset.path === `assets/masks/${mask.id}/${mask.asset.sha256}.png` &&
+        mask.asset.width === mask.bounds.width &&
+        mask.asset.height === mask.bounds.height &&
+        mask.asset.width * mask.asset.height <= PROJECT_MASK_MAX_PIXELS &&
+        Math.abs(mask.bounds.x + mask.bounds.width) <= PROJECT_MASK_MAX_COORDINATE &&
+        Math.abs(mask.bounds.y + mask.bounds.height) <= PROJECT_MASK_MAX_COORDINATE,
+      'The owned mask geometry or asset reference is invalid.',
+    ),
+  ),
+])
+
+/** Owned mask authoring; accepted variants still need a later schema. */
 const SmartPatchLayerSchema = v.strictObject({
   activeRasterSubLayerId: v.null(),
   blendMode: v.picklist(['normal', 'multiply', 'screen', 'overlay']),
@@ -525,11 +561,7 @@ const SmartPatchLayerSchema = v.strictObject({
   }),
   kind: v.literal('smart-patch'),
   locked: v.boolean(),
-  mask: v.strictObject({
-    asset: v.null(),
-    id: UuidSchema,
-    revision: v.literal(0),
-  }),
+  mask: SmartPatchMaskSchema,
   name: NonemptyTextSchema,
   opacity: UnitIntervalSchema,
   rasterSubLayers: v.strictTuple([]),
@@ -571,6 +603,7 @@ export type IgsPreviewRectV1 = v.InferOutput<typeof PreviewRectSchema>
 export type IgsMemberRefV1 = v.InferOutput<typeof MemberRefSchema>
 export type IgsRasterLayerV1 = v.InferOutput<typeof RasterLayerSchema>
 export type IgsSmartPatchLayerV1 = v.InferOutput<typeof SmartPatchLayerSchema>
+export type IgsSmartPatchMaskAssetV1 = NonNullable<IgsSmartPatchLayerV1['mask']['asset']>
 export type IgsProjectLayerV1 = v.InferOutput<typeof ProjectLayerSchema>
 export type IgsProjectAssetRefV1 = IgsMemberRefV1 & {
   height?: number
@@ -610,6 +643,7 @@ export function isIgsMemberPathV1(path: string): boolean {
   return (
     REQUIRED_MEMBER_PATH_SET.has(path) ||
     LAYER_ASSET_PATH_PATTERN.test(path) ||
+    MASK_ASSET_PATH_PATTERN.test(path) ||
     ICC_PROFILE_PATH_PATTERN.test(path)
   )
 }
@@ -698,14 +732,30 @@ export function projectRasterLayers(
   return document.layers.filter((layer): layer is IgsRasterLayerV1 => layer.kind === 'raster')
 }
 
-/** Actual archive assets only. An owned empty mask is data, never a fabricated image member. */
+/** Reuse the exact portable mask guard in IPC DTOs without a fake enclosing document. */
+export function isProjectSmartPatchMaskV1(input: unknown): input is IgsSmartPatchLayerV1['mask'] {
+  return v.safeParse(SmartPatchMaskSchema, input).success
+}
+
+/** Actual archive assets only. A null owned mask contributes no image member. */
 export function projectAssetReferences(
   document: Pick<IgsProjectDocumentV1, 'layers'>,
 ): IgsProjectAssetRefV1[] {
-  return projectRasterLayers(document).flatMap((layer) => [
-    layer.asset,
-    ...(layer.sourceIccProfile ? [layer.sourceIccProfile] : []),
-  ])
+  return document.layers.flatMap((layer) =>
+    layer.kind === 'smart-patch'
+      ? layer.mask.asset
+        ? [layer.mask.asset]
+        : []
+      : [layer.asset, ...(layer.sourceIccProfile ? [layer.sourceIccProfile] : [])],
+  )
+}
+
+export function projectMaskAssets(
+  document: Pick<IgsProjectDocumentV1, 'layers'>,
+): IgsSmartPatchMaskAssetV1[] {
+  return document.layers.flatMap((layer) =>
+    layer.kind === 'smart-patch' && layer.mask.asset ? [layer.mask.asset] : [],
+  )
 }
 
 /** Validate the portable comparison payload without accepting private provenance groups. */
@@ -778,6 +828,11 @@ export function validateIgsPackageMetadataV1(
   }
   const members = new Map(manifest.members.map((member) => [member.path, member]))
   const assetPaths = new Set(rasterLayers.map((layer) => layer.asset.path))
+  const maskPaths = new Set(
+    document.layers.flatMap((layer) =>
+      layer.kind === 'smart-patch' && layer.mask.asset ? [layer.mask.asset.path] : [],
+    ),
+  )
   const profilePaths = new Set(
     rasterLayers.flatMap((layer) => (layer.sourceIccProfile ? [layer.sourceIccProfile.path] : [])),
   )
@@ -796,6 +851,15 @@ export function validateIgsPackageMetadataV1(
       }
     }
   }
+  for (const layer of document.layers) {
+    if (layer.kind !== 'smart-patch' || !layer.mask.asset) {
+      continue
+    }
+    const member = members.get(layer.mask.asset.path)
+    if (member?.bytes !== layer.mask.asset.bytes || member.sha256 !== layer.mask.asset.sha256) {
+      throw new IgsSchemaError('PACKAGE_MISMATCH', 'A Project mask asset is missing or differs.')
+    }
+  }
   for (const member of manifest.members) {
     if (member.path.startsWith('assets/layers/') && !assetPaths.has(member.path)) {
       throw new IgsSchemaError(
@@ -805,6 +869,9 @@ export function validateIgsPackageMetadataV1(
     }
     if (member.path.startsWith('assets/profiles/') && !profilePaths.has(member.path)) {
       throw new IgsSchemaError('PACKAGE_MISMATCH', 'The package has an unreferenced ICC profile.')
+    }
+    if (member.path.startsWith('assets/masks/') && !maskPaths.has(member.path)) {
+      throw new IgsSchemaError('PACKAGE_MISMATCH', 'The package has an unreferenced mask asset.')
     }
   }
   return { document, manifest }

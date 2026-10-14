@@ -7,6 +7,7 @@ import {
   isProjectLoraIdentity,
   isProjectRasterLayerChange,
   isProjectSmartPatchLayerChange,
+  isProjectSmartPatchMaskEditRequest,
 } from '../shared/api.js'
 import type {
   ApiResult,
@@ -19,6 +20,7 @@ import type {
   ProjectOpenResult,
   ProjectRasterLayerChange,
   ProjectSmartPatchLayerChange,
+  ProjectSmartPatchMaskEditRequest,
   ProjectTab,
   RuntimeStatus,
   SetCheckpointNoiseProfileChange,
@@ -47,6 +49,7 @@ import {
   isProjectGenerateOptions,
 } from '../shared/projects/project-generation-actions.js'
 import { isGenerationTargetKey } from '../shared/projects/project-generation-target-state.js'
+import { ProjectMaskError } from '../shared/projects/project-mask.js'
 import { IGS_SAFETY_CEILINGS, IgsSchemaError } from '../shared/projects/project-schema.js'
 import type { IgsRectV1 } from '../shared/projects/project-schema.js'
 import { reconcilePromptEmbeddings } from '../shared/projects/prompt-embeddings.js'
@@ -130,6 +133,11 @@ import {
   streamStagedProjectLayer,
 } from './projects/project-layer-resource.js'
 import {
+  parseProjectMaskImageUrl,
+  streamSavedProjectMask,
+  streamStagedProjectMask,
+} from './projects/project-mask-resource.js'
+import {
   parseProjectThumbnailImageUrl,
   readProjectThumbnail,
 } from './projects/project-preview-resource.js'
@@ -159,6 +167,16 @@ protocol.registerSchemesAsPrivileged([
   {
     privileges: { corsEnabled: true, secure: true, standard: true, stream: true },
     scheme: 'igs-layer',
+  },
+  {
+    privileges: {
+      corsEnabled: true,
+      secure: true,
+      standard: true,
+      stream: true,
+      supportFetchAPI: true,
+    },
+    scheme: 'igs-mask',
   },
   {
     privileges: { corsEnabled: true, secure: true, standard: true, stream: true },
@@ -375,6 +393,26 @@ if (!gotInstanceLock) {
             : await streamSavedProjectLayer(asset.filePath, asset.member, layerScratchRoot)
         } catch {
           return new Response('Layer unavailable.', { status: 503 })
+        }
+      })
+      protocol.handle('igs-mask', async (request) => {
+        if (request.method !== 'GET') {
+          return new Response('Method not allowed.', { status: 405 })
+        }
+        const resource = parseProjectMaskImageUrl(request.url)
+        if (!resource) {
+          return new Response('Mask not found.', { status: 404 })
+        }
+        try {
+          const asset = projectService.getMaskAsset(resource)
+          if (!asset) {
+            return new Response('Mask not found.', { status: 404 })
+          }
+          return asset.kind === 'staged'
+            ? await streamStagedProjectMask(asset.source, asset.member)
+            : await streamSavedProjectMask(asset.filePath, asset.member)
+        } catch {
+          return new Response('Mask unavailable.', { status: 503 })
         }
       })
       const thumbnailCacheRoot = path.join(
@@ -1074,6 +1112,7 @@ if (!gotInstanceLock) {
             }
             if (
               error instanceof ProjectServiceError ||
+              error instanceof ProjectMaskError ||
               error instanceof ProjectCandidateImageExportError ||
               error instanceof ProjectGenerationCloseError ||
               error instanceof ProjectGenerationRecoveryError ||
@@ -1493,6 +1532,22 @@ if (!gotInstanceLock) {
         runProjectDocumentAction(tabId as string, () =>
           projectService.addSmartPatchLayer(tabId as string),
         ),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.editSmartPatchMask,
+        (args) =>
+          args.length === 3 &&
+          isProjectId(args[0]) &&
+          isProjectDocumentId(args[1]) &&
+          isProjectSmartPatchMaskEditRequest(args[2]),
+        (tabId, layerId, request) =>
+          runProjectDocumentAction(tabId as string, () =>
+            projectService.editSmartPatchMask(
+              tabId as string,
+              layerId as string,
+              request as ProjectSmartPatchMaskEditRequest,
+            ),
+          ),
       )
       registerProjectHandler(
         ipcChannels.projects.updateSmartPatchLayer,

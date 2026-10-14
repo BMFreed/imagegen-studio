@@ -45,7 +45,10 @@ import {
   isProjectGenerationTargetState,
   type ProjectGenerationTargetState,
 } from '../shared/projects/project-generation-target-state.js'
-import { IGS_SAFETY_CEILINGS } from '../shared/projects/project-schema.js'
+import {
+  IGS_SAFETY_CEILINGS,
+  isProjectSmartPatchMaskV1,
+} from '../shared/projects/project-schema.js'
 import type { IgsProjectDocumentV1, IgsRectV1 } from '../shared/projects/project-schema.js'
 
 import { contextBridge, ipcRenderer } from 'electron'
@@ -334,6 +337,7 @@ function isProjectTab(value: unknown): value is ProjectTab {
     isRecord(value) &&
     isProjectId(value.id) &&
     isProjectDocumentId(value.documentId) &&
+    isProjectDocumentId(value.documentRevision) &&
     typeof value.title === 'string' &&
     typeof value.canUndo === 'boolean' &&
     typeof value.canRedo === 'boolean' &&
@@ -520,9 +524,11 @@ function isProjectSmartPatchLayerView(value: unknown): value is ProjectSmartPatc
     isProjectRect(value.boundingBox) &&
     isProjectDimensions(value.internalResolution) &&
     isGenerationDraft(value.generationDraft) &&
-    isProjectDocumentId(value.mask.id) &&
-    value.mask.asset === null &&
-    value.mask.revision === 0 &&
+    isProjectSmartPatchMaskV1(value.mask) &&
+    (value.mask.asset === null
+      ? value.maskImageUrl === null
+      : typeof value.maskImageUrl === 'string' &&
+        value.maskImageUrl.startsWith('igs-mask://asset/')) &&
     Array.isArray(value.rasterSubLayers) &&
     value.rasterSubLayers.length === 0 &&
     value.activeRasterSubLayerId === null &&
@@ -826,6 +832,12 @@ const api: StudioApi = {
       invokeProject(ipcChannels.projects.deleteGenerationJob, [review], isVoid),
     discardAndClose: (tabId, confirmCloseImpact = false) =>
       invokeProject(ipcChannels.projects.discardAndClose, [tabId, confirmCloseImpact], isVoid),
+    editSmartPatchMask: (tabId, layerId, request) =>
+      invokeProject(
+        ipcChannels.projects.editSmartPatchMask,
+        [tabId, layerId, request],
+        isProjectTab,
+      ),
     finishImport: (importId, choice) =>
       invokeProject(
         ipcChannels.projects.finishImport,

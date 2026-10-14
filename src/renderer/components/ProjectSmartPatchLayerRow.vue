@@ -67,7 +67,20 @@ provideProjectEntityRow({
 <template>
   <ProjectEntitySurface data-testid="smart-patch-layer-card">
     <template v-slot:preview>
-      <span aria-label="Empty Smart Patch mask" class="empty-mask" role="img">
+      <img
+        v-if="layer.maskImageUrl"
+        alt="Smart Patch mask"
+        class="mask-thumbnail"
+        :src="layer.maskImageUrl"
+      />
+      <span
+        v-else
+        :aria-label="
+          layer.mask.asset ? 'Smart Patch mask preview unavailable' : 'Empty Smart Patch mask'
+        "
+        class="empty-mask"
+        role="img"
+      >
         <NIcon :component="Brush" :size="18" />
       </span>
     </template>
@@ -91,6 +104,11 @@ provideProjectEntityRow({
 </template>
 
 <style scoped>
+.mask-thumbnail {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
 .empty-mask {
   display: grid;
   width: 100%;

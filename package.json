@@ -59,7 +59,8 @@
     "app:qualify:anima-image-batch-cap": "pnpm run app:build && tsx scripts/qualify-installed-anima-image-batch-cap.mjs",
     "app:qualify:noobai-karras-failure": "pnpm exec tsx scripts/qualify-installed-noobai-karras-failure.mjs",
     "app:qualify:presets": "pnpm run app:build && pnpm exec tsx scripts/qualify-installed-presets.mjs",
-    "app:smoke:smart-patch": "pnpm run app:build && tsx scripts/smoke-smart-patch.mjs"
+    "app:smoke:smart-patch": "pnpm run app:build && tsx scripts/smoke-smart-patch.mjs",
+    "app:smoke:smart-patch-mask": "pnpm run app:build && tsx scripts/smoke-smart-patch-mask.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "6.20.3",

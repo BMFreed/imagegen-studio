@@ -40,8 +40,10 @@ actual configuration без Regional Guidance; shared `generation-settings-compa
   его собственное evidence не закрывает оставшиеся reuse flows.
 - Фаза 4: empty Smart Patch document foundation закрыта отдельным checkpoint:
   independent owned draft/bbox/internal resolution/mask, Undo/Redo, native
-  Save/reopen и local crash recovery. Следующие owners — painted mask storage/
-  authoring и Canvas tools, затем inpaint, Smart Patch generation/variants,
+  Save/reopen и local crash recovery. [Owned mask authoring](./phase-4-smart-patch-mask-authoring-research.md)
+  подключает четыре pixel-editing tools и PNG asset/history/recovery owner;
+  qualification limits описаны в checkpoint. Следующие owners — Transform Mask,
+  Fit Patch BBox to Mask, затем inpaint, Smart Patch generation/variants,
   Regional Guidance, model hard removal и остальные interaction gaps.
 - Фаза 5: application updater, runtime install/repair, clean-install/upgrade,
   packaging и release qualification Linux/NVIDIA.

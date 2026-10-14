@@ -6,7 +6,7 @@ Generate canvas tools provide direct manipulation for the primary generation bbo
 
 ## Reference
 
-Reference: InvokeAI canvas interaction patterns, adapted to ImageGen Studio's document-owned canvas entities. The current Vue prototype uses DOM/CSS; the production renderer remains a separate implementation decision.
+Reference: InvokeAI canvas interaction patterns, adapted to ImageGen Studio's document-owned canvas entities. The current Vue prototype uses DOM/CSS; the production Project Canvas uses Konva, with app-owned document mutations and mask pixels.
 
 ## ImageGen Studio Decision
 
@@ -15,6 +15,47 @@ Canvas is the central working surface inside `Project` / `Generate`.
 For the product, panels and popovers provide precision editing while direct canvas manipulation remains the primary interaction path. The Vue prototype currently validates tool availability, selection and deterministic state transitions rather than production pixel manipulation.
 
 MVP canvas tools are scoped to generative editing primitives. ImageGen Studio does not try to become a raster editor in MVP.
+
+## Production checkpoint: Smart Patch mask authoring
+
+[Owned-mask authoring](../../../engineering/phase-4-smart-patch-mask-authoring-research.md)
+connects Brush, Eraser, Lasso and Polygon Lasso to captured Project/layer/mask
+identities and document/mask revisions. Brush diameter is 1–512 project pixels,
+default 50, with a fixed antialias edge; pressure and advanced brush engines are
+outside this slice. Brush adds coverage and Eraser subtracts it; the labeled
+Lasso operation selector supplies the Add/Subtract choice captured at gesture
+start for Lasso/Polygon. Lasso closes on release; Polygon Lasso closes on Enter
+or its first vertex and uses even-odd fill. Escape, loss of the gesture's owned
+pointer capture or owner/revision changes cancel the local gesture. Polygon
+keeps its session between clicks without capture; unrelated capture loss leaves
+that session intact.
+Hidden/locked Patch targets are not editable. Clear is an explicit mask action;
+overlay visibility changes only viewing state, not document pixels or history.
+
+The renderer's preview is provisional. Main rasterizes authoritative world-grid
+coverage and publishes one completed gesture as one Undo step; exact no-op leaves
+history and mask revision unchanged. Mask bounds are independent of bbox/internal
+resolution. Eraser cannot expand them; empty coverage becomes a null asset.
+Save/recovery reuse the existing document asset owner. Mask thumbnails scale the
+stored PNG and do not invoke a worker or add Project compositing pixels.
+
+The finite CPU profile is 4,000,000 mask pixels, at most 4096 per dimension, 32 MiB
+per PNG, 256 IDAT chunks, 8192 points and 32,000,000 candidate pixel visits per edit.
+Main rejects prospective allocation/work before publishing; it never silently clips a gesture
+to the generation bbox or downsamples it. These are engineering ceilings, not
+qualified model limits. The authoring checkpoint records full app regression 3751 PASS and affected 176
+PASS after IDAT hardening; native 33 checks cover actual tools, exact PNG history,
+Save/reopen and crash recovery. Five semantic RED/neighbor GREEN pairs with
+byte-exact restoration and bounded typecheck/lint/build pass. Scope limits remain
+those of the checkpoint; this does not qualify Patch inference or variants.
+The current encoder emits one IDAT chunk; the parser refuses a 257th chunk before
+accumulating its data view, bounding allocation even for a tiny bitmap split into
+many compressed chunks.
+
+`Transform Mask` and `Fit Patch BBox to Mask` are still required MVP tools for the
+next slice. Smart Patch generation/variants/staleness, Regional Guidance tools and
+Patch preset application are not completed by this authoring checkpoint. The
+scope below includes these remaining product requirements.
 
 ## Scope
 

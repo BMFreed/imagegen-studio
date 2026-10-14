@@ -1,3 +1,4 @@
+import { PROJECT_MASK_MAX_PNG_BYTES } from '../../shared/projects/project-mask.js'
 import {
   IGS_SAFETY_CEILINGS,
   type IgsMemberRefV1,
@@ -5,6 +6,7 @@ import {
   isIgsMemberPathV1,
   parseProjectDocumentV1,
   projectAssetReferences,
+  projectMaskAssets,
 } from '../../shared/projects/project-schema.js'
 
 import { createHash, randomUUID } from 'node:crypto'
@@ -15,6 +17,7 @@ import * as v from 'valibot'
 
 import { type IgsAssetSource, type IgsPackageReadResult, readIgsPackage } from './igs-package.js'
 import { canonicalProjectPath, localProjectRecoveryKey } from './project-identity.js'
+import { readProjectMaskSource } from './project-mask.js'
 
 const SHADOW_VERSION = 1
 const MANIFEST_NAME = 'manifest.json'
@@ -279,6 +282,7 @@ export class ProjectShadowStore {
         return { reason: 'MANIFEST_INVALID', status: 'invalid' }
       }
       const dirtyAssets: Record<string, IgsAssetSource> = {}
+      const masks = new Map(projectMaskAssets(document).map((asset) => [asset.path, asset]))
       for (const member of expected) {
         const staged = manifest.dirtyAssets.find((candidate) => candidate.path === member.path)
         if (!staged || !sameAssetRef(staged, member)) {
@@ -290,6 +294,14 @@ export class ProjectShadowStore {
           return {
             reason: state === 'missing' ? 'ASSET_MISSING' : 'ASSET_MISMATCH',
             status: 'invalid',
+          }
+        }
+        const mask = masks.get(member.path)
+        if (mask) {
+          try {
+            await readProjectMaskSource({ sourcePath: assetPath }, mask)
+          } catch {
+            return { reason: 'ASSET_MISMATCH', status: 'invalid' }
           }
         }
         dirtyAssets[member.path] = { sourcePath: assetPath }
@@ -380,11 +392,28 @@ export class ProjectShadowStore {
       const published = path.join(snapshots, snapshotId)
       let manifestCommitted = false
       try {
+        const masks = new Map(
+          [
+            ...projectMaskAssets(document),
+            ...(committingDocument ? projectMaskAssets(committingDocument) : []),
+          ].map((asset) => [asset.path, asset]),
+        )
         await writeSynced(path.join(pending, 'project.json'), serialized)
         for (const member of changed) {
           const destination = path.join(pending, member.path)
           await ensureDirectory(path.dirname(destination))
           await copyVerifiedAsset(input.dirtyAssets![member.path], member, destination)
+          const mask = masks.get(member.path)
+          if (mask) {
+            try {
+              await readProjectMaskSource({ sourcePath: destination }, mask)
+            } catch {
+              throw new ProjectShadowError(
+                'SHADOW_ASSET_MISMATCH',
+                'The owned mask PNG is invalid.',
+              )
+            }
+          }
         }
         const directories = new Set<string>([pending])
         for (const member of changed) {
@@ -723,6 +752,9 @@ async function writeSynced(pathname: string, bytes: Buffer): Promise<void> {
 }
 
 function memberCeiling(memberPath: string): number {
+  if (memberPath.startsWith('assets/masks/')) {
+    return PROJECT_MASK_MAX_PNG_BYTES
+  }
   return memberPath.startsWith('assets/profiles/')
     ? IGS_SAFETY_CEILINGS.iccProfileBytes
     : IGS_SAFETY_CEILINGS.memberBytes

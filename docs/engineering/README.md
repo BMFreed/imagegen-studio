@@ -1,6 +1,7 @@
 # Engineering Workflow
 
-Latest implementation checkpoint: [Smart Patch document foundation](./phase-4-smart-patch-foundation-research.md)
+Latest implementation checkpoint: [Owned mask authoring](./phase-4-smart-patch-mask-authoring-research.md)
+over [Smart Patch document foundation](./phase-4-smart-patch-foundation-research.md)
 over [Installed Project presets EPS/V](./phase-3-installed-presets-research.md)
 over [Project Apply Models handoff](./phase-3-preset-model-handoff-research.md)
 over [Accepted Raster result preset](./phase-3-result-preset-research.md),
@@ -18,9 +19,13 @@ only, with all payload/source/bounds/cleanup limits in the new checkpoint.
 Smart Patch foundation adds independent empty owned mask/bbox/internal resolution/
 draft, selection and targeted edits to the real document. Undo/Redo, Save/reopen
 and local crash recovery pass in built Electron with no runtime; this does not
-qualify painting, inpaint or variants. Next roadmap owner is Phase 4 owned mask
-authoring and Canvas tools; PP-006 stays open for its Smart Patch and other-context
-handoffs.
+qualify painting, inpaint or variants. The newer owned mask checkpoint implements
+Main-owned world-grid PNG coverage and Brush/Eraser/Lasso/Polygon tools with one
+Undo per gesture, Overlay/Clear and the existing Save/shadow/retention owner.
+Mask source/binary/refusal/native evidence and limits live in that checkpoint.
+Next roadmap owner is Phase 4 Transform Mask and Fit Patch BBox to Mask;
+Smart Patch inference/variants remain separate. PP-006 stays open for its Smart
+Patch and other-context handoffs.
 
 Shared strict payload → native IPC/preload → Main lifetime owner → SQLite now
 supports CRUD/duplicate, soft delete/restore and automatic 30-day expiry. Actual

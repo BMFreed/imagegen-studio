@@ -28,18 +28,62 @@ The empty mask is an explicit document descriptor
 Production uses `kind: 'smart-patch'`; the suggested full-MVP shape below is a
 product model, not the current persistence schema.
 
-Empty Patches contribute no raster pixels, asset references or accepted-history
-records. Painted masks, nonempty raster sub-layers and active variants remain
-unsupported and are rejected by the strict foundation schema. Patch Generate,
-Apply Preset and Save Current as Preset show explicit unavailable reasons;
-Manage Presets stays available. Mask painting/tools, generation/variants,
-staleness, comparison and preset projection remain subsequent phase-4 slices.
+Empty masks contribute no asset references. Patches without accepted variants
+contribute no compositing pixels or accepted-history records. The later owned-mask
+authoring extension below admits painted masks; nonempty raster sub-layers and
+active variants remain unsupported. Patch Generate, Apply Preset and Save Current
+as Preset show explicit unavailable reasons; Manage Presets stays available.
+Generation/variants, staleness, comparison and preset projection remain subsequent
+phase-4 slices.
+
+## Production checkpoint: owned mask authoring
+
+[Owned-mask authoring](../../../engineering/phase-4-smart-patch-mask-authoring-research.md)
+implements Brush, Eraser, Lasso, Polygon Lasso, Add/Subtract, overlay visibility
+and Clear through captured renderer gestures and an authoritative Main CPU
+rasterizer. It does not require an ML runtime or model. A completed gesture creates
+one Project Undo step; a cancelled or unchanged gesture creates no mask revision.
+The original empty descriptor remains valid. Clear retains the mask identity and
+increments its revision, with `asset: null` and no `bounds`; cleared revisions may
+be greater than zero.
+
+A painted mask stores `asset: { path, sha256, bytes, width, height }` and integer
+world-space `bounds: { x, y, width, height }`. One mask pixel is one project pixel;
+bounds are independent of the Patch bbox and internal resolution. Assets use
+`assets/masks/<mask-id>/<sha256>.png`, canonical white RGBA8 with linear alpha8
+coverage. Transparent means outside the mask, opaque means fully covered; soft
+coverage is preserved. Main creates pixels/paths and validates ownership, hashes,
+dimensions, PNG structure and tight nonempty coverage before publishing. The PNG
+reader accepts at most 256 IDAT chunks and refuses the 257th before adding another
+data view; the current Main encoder writes one IDAT chunk. This bounds chunk-object
+allocation in addition to encoded byte and decoded pixel limits. The renderer
+shows a provisional gesture and scales the stored PNG for its mask
+thumbnail; this is not a new preview worker or generated Raster output.
+
+Main refuses stale identities/revisions, locked or hidden targets, invalid pixels
+and edits beyond the finite CPU limits without a document/history commit. Existing
+asset ownership retains prior mask bytes for Undo/Redo, explicit Save and local
+recovery. Eight real Service cases, full app regression (3751 PASS), affected
+checks after IDAT hardening (176 PASS), and 33 native UI/recovery checks pass.
+Five semantic RED/neighbor GREEN pairs have byte-exact restoration. Bounded
+typecheck/lint/build pass; counts, actual boundary and excluded attempts are
+recorded in the authoring checkpoint. This qualifies the declared authoring slice.
+
+`Transform Mask` and `Fit Patch BBox to Mask` remain required MVP work in the next
+slice. Smart Patch inpaint/generation, accepted variants, staleness, compositing,
+Regional Guidance and Patch preset application remain pending. Public promise
+statuses are unchanged.
 
 ## Reference
 
 Reference: InvokeAI inpaint mask, canvas entity list, bbox controls and compositing settings.
 
 ImageGen Studio adapts these ideas, but does not copy Invoke's standalone inpaint mask layer model.
+
+The selected mask overlay remains a viewer inspection state even when its layer
+is hidden or locked; editing is disabled in those states and Pan/overlay toggle
+remain available. The selector is labeled `Lasso operation`: Brush always adds,
+Eraser subtracts, and Lasso/Polygon use its captured Add/Subtract choice.
 
 ## ImageGen Studio Decision
 

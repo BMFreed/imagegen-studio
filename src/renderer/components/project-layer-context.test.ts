@@ -36,6 +36,7 @@ function patch(): ProjectSmartPatchLayerView {
     kind: 'smart-patch',
     locked: false,
     mask: { asset: null, id: '027bfaaa-ff12-4d21-a0a5-8d48e88dd8f2', revision: 0 },
+    maskImageUrl: null,
     name: 'Empty patch',
     opacity: 1,
     rasterSubLayers: [],

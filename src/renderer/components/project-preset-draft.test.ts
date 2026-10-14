@@ -287,6 +287,7 @@ test('pending prompt binding overlays lack the chosen sidecar; acknowledged capt
       canUndo: false,
       dirty: false,
       documentId: '5817b89a-a0f1-47ee-8bf8-619a932866f7',
+      documentRevision: '9c12a261-4923-4d31-bef7-8786f8540bde',
       id: `project-v1-${'a'.repeat(64)}`,
       lastActualSeedSnapshot: 0,
     }

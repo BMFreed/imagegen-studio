@@ -19,6 +19,7 @@ import {
   IGS_REQUIRED_MEMBER_PATHS,
   IgsSchemaError,
   isIgsMemberPathV1,
+  isProjectSmartPatchMaskV1,
   isRasterGenerationConfigurationV1,
   parseIgsManifestV1,
   parseProjectDocumentV1,
@@ -111,9 +112,9 @@ test('Smart Patch masks have distinct identities from every other mask and layer
   assert.throws(() => parseProjectDocumentV1(rasterCollision), assertSchemaCode('INVALID_PROJECT'))
 })
 
-test('empty Smart Patch schema rejects future painted masks, variants, fake statuses and malformed owned drafts', () => {
+test('Smart Patch schema rejects malformed masks, future variants, fake statuses and malformed owned drafts', () => {
   for (const [caseIndex, change] of [
-    (patch: IgsSmartPatchLayerV1) => Object.assign(patch.mask, { revision: 1 }),
+    (patch: IgsSmartPatchLayerV1) => Object.assign(patch.mask, { revision: -1 }),
     (patch: IgsSmartPatchLayerV1) =>
       Object.assign(patch.mask, {
         asset: { bytes: 68, path: 'assets/masks/mask.png', sha256: SHA256 },
@@ -148,6 +149,54 @@ test('empty Smart Patch schema rejects future painted masks, variants, fake stat
     () => validateIgsPackageMetadataV1(manifest, { ...emptyDocument(), layers: [emptyPatch()] }),
     assertSchemaCode('PACKAGE_MISMATCH'),
   )
+})
+
+test('owned painted mask schema binds immutable member path/hash/dimensions and admits cleared revisions', () => {
+  const patch = emptyPatch()
+  const mask = {
+    asset: {
+      bytes: 77,
+      height: 2,
+      path: `assets/masks/${patch.mask.id}/${SHA256}.png`,
+      sha256: SHA256,
+      width: 2,
+    },
+    bounds: { height: 2, width: 2, x: -9, y: 13 },
+    id: patch.mask.id,
+    revision: 1,
+  }
+  assert.equal(isProjectSmartPatchMaskV1(mask), true)
+  assert.equal(isIgsMemberPathV1(mask.asset.path), true)
+  const document = parseProjectDocumentV1({ ...emptyDocument(), layers: [{ ...patch, mask }] })
+  assert.deepEqual(projectAssetReferences(document), [mask.asset])
+  const cleared = { asset: null, id: patch.mask.id, revision: 2 }
+  assert.equal(isProjectSmartPatchMaskV1(cleared), true)
+  assert.deepEqual(
+    projectAssetReferences(
+      parseProjectDocumentV1({ ...emptyDocument(), layers: [{ ...patch, mask: cleared }] }),
+    ),
+    [],
+  )
+  for (const invalid of [
+    { ...mask, revision: 0 },
+    { ...mask, bounds: undefined },
+    { ...mask, asset: { ...mask.asset, path: `assets/masks/${LAYER_ID}/${SHA256}.png` } },
+    { ...mask, asset: { ...mask.asset, sha256: SECOND_SHA256 } },
+    { ...mask, bounds: { ...mask.bounds, width: 3 } },
+    {
+      ...mask,
+      asset: { ...mask.asset, height: 977, width: 4096 },
+      bounds: { ...mask.bounds, height: 977, width: 4096 },
+    },
+    { ...cleared, bounds: mask.bounds },
+    { ...mask, transform: { x: 0, y: 0 } },
+  ]) {
+    assert.equal(isProjectSmartPatchMaskV1(invalid), false)
+    assert.throws(
+      () => parseProjectDocumentV1({ ...emptyDocument(), layers: [{ ...patch, mask: invalid }] }),
+      assertSchemaCode('INVALID_PROJECT'),
+    )
+  }
 })
 
 test('optional native method is portable draft data without defaults or rewriting Illustrious accepted results', () => {

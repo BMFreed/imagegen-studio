@@ -125,9 +125,54 @@ generation draft, пустой `rasterSubLayers` и `activeRasterSubLayerId: nul
 Уникальность layer/mask identities проверяется в одном document namespace.
 Mask pixels не подменяются искусственным PNG; empty Patch не добавляет package
 assets или preview content. Такой слой проходит Save/reopen и local recovery;
-старые Raster-only v1 файлы сохраняют прежний смысл. Painted masks, nonempty
-variants и Regional Guidance требуют следующих явных schema extensions и пока
-отклоняются. Для первого Illustrious
+старые Raster-only v1 файлы сохраняют прежний смысл.
+[Owned mask authoring](../engineering/phase-4-smart-patch-mask-authoring-research.md)
+добавляет следующее pre-release v1 расширение. Null mask допускает любой safe
+integer `revision >= 0`, сохраняя прежний `{ id, revision: 0, asset: null }`;
+после Clear identity остаётся прежней, revision увеличивается, `bounds` отсутствует.
+Painted mask требует `revision > 0`, `asset: { path, sha256, bytes, width, height }`
+и `bounds: { x, y, width, height }`. Integer world origin и один pixel на один
+Project pixel не зависят от bbox/internal resolution; размеры bounds и asset
+совпадают. Bbox edits не двигают и не обрезают mask coverage. Affine metadata пока
+не добавляется: Transform Mask и Fit Patch BBox to Mask — следующий обязательный
+MVP срез. Nonempty variants и Regional Guidance всё ещё отклоняются.
+
+Owned mask members имеют путь `assets/masks/<mask-id>/<sha256>.png`: владелец и
+hash в пути должны совпадать с descriptor. Это immutable canonical RGBA8 PNG с
+white RGB и linear alpha8 coverage, без color metadata. Alpha `0` означает
+отсутствие coverage, `255` — полное покрытие, промежуточные значения сохраняются.
+Bounds плотно охватывают nonzero coverage; полностью пустые pixels должны быть
+представлены null asset. Package и shadow loaders проверяют CRC/chunks,
+декомпрессию, точные размеры/длину, white RGB, nonempty tight coverage и SHA-256,
+включая отказ для hash-consistent pixels неправильного формата.
+PNG допускает не более 256 IDAT chunks: 257-й отклоняется до накопления очередного
+data view, ограничивая overhead объектов независимо от числа decoded pixels.
+Текущий Main encoder создаёт один IDAT chunk. Непривязанные mask
+members в `.igs` отклоняются. Source capability `igs-mask` привязана к Project,
+document revision, layer/mask identity, mask revision и asset hash; renderer не
+передаёт файловые пути.
+
+Main создаёт mask pixels по валидной gesture-команде; renderer preview не является
+storage authority. Одна завершённая gesture — один Undo step; no-op не меняет
+revision/history. Маски включены в общий asset inventory, и текущий документ,
+saved baseline, pending Save и retained Undo/Redo states удерживают нужные bytes.
+Clear/Save удаляет неиспользуемый mask member из нового `.igs`, но Undo ещё может
+восстановить его из session-owned retained assets. Shadow защищает текущий
+document и mask bytes локально; `.igs` меняется только через explicit Save.
+Маска не становится composite/preview pixels, accepted result или provenance;
+UI thumbnail — масштабированный вид того же PNG, без нового worker.
+
+Защитный CPU профиль authoring: 4 000 000 pixels, 4096 по каждой оси, 32 MiB PNG,
+256 IDAT chunks, 8192 points и 32 000 000 candidate pixel visits на edit; coordinates ограничены
+существующим Project range. Отказ происходит до document/history publication,
+без bbox clipping или downsampling. Это engineering ceilings, не обещание
+измеренной capacity. Восемь real Service scenarios, full app regression 3751
+PASS/affected 176 PASS и native 33 checks подтвердили PNG/manifest readback,
+Save/reopen и actual crash→Recover. Five semantic RED/neighbor GREEN pairs
+с exact restoration и bounded typecheck/lint/build прошли; полный suite до
+дополнительного IDAT guard, affected run после него. Smart Patch
+generation/inpaint, variants/staleness, Regional Guidance и Patch presets остаются
+следующими срезами. Для первого Illustrious
 `txt2img` Raster Layer уже определена опциональная, строго валидируемая запись
 `generationProvenance` прямо в `project.json`; старые v1 файлы без неё читаются.
 Это pre-release расширение v1. Main создаёт запись при явном пользовательском

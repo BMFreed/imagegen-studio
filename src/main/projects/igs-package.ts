@@ -3,6 +3,7 @@ import {
   isSrgbCompatiblePngColorChunk,
   pngColorChunkLength,
 } from '../../shared/projects/color-profile.js'
+import { PROJECT_MASK_MAX_PNG_BYTES } from '../../shared/projects/project-mask.js'
 import {
   IGS_MIMETYPE,
   IGS_REQUIRED_MEMBER_PATHS,
@@ -30,6 +31,7 @@ import { crc32, createInflate, type Inflate, inflateSync } from 'node:zlib'
 import * as yauzl from 'yauzl'
 import * as yazl from 'yazl'
 
+import { decodeProjectMaskPng } from './project-mask.js'
 import { decodeTargetPngAlpha } from './target-png-mode.js'
 
 export type IgsAssetSource = { bytes: Buffer } | { sourcePath: string }
@@ -759,6 +761,22 @@ export async function readIgsPackage(
       throw new IgsPackageError('MEMBER_MISMATCH', `Layer dimensions differ: ${layer.asset.path}`)
     }
   }
+  for (const layer of document.layers) {
+    if (layer.kind !== 'smart-patch' || !layer.mask.asset) {
+      continue
+    }
+    const dimensions = imageDimensions(
+      layer.mask.asset.path,
+      scanned.get(layer.mask.asset.path)!.header,
+      limits,
+    )
+    if (
+      dimensions.width !== layer.mask.asset.width ||
+      dimensions.height !== layer.mask.asset.height
+    ) {
+      throw new IgsPackageError('MEMBER_MISMATCH', 'The mask dimensions differ from its reference.')
+    }
+  }
   // The rect is in infinite-canvas coordinates; the PNG may be downsampled.
   // Both preview images were already checked against their encoded format and limits.
   if (fingerprint(await lstat(filePath, { bigint: true })) !== fingerprint(initialStat)) {
@@ -937,6 +955,16 @@ export async function readIgsPackage(
         'MEMBER_MISMATCH',
         'The accepted outpaint contribution alpha differs from its provenance.',
       )
+    }
+  }
+  for (const layer of document.layers) {
+    if (layer.kind !== 'smart-patch' || !layer.mask.asset) {
+      continue
+    }
+    try {
+      decodeProjectMaskPng(await result.readMember(layer.mask.asset.path), layer.mask.asset)
+    } catch {
+      throw new IgsPackageError('INVALID_IMAGE', 'The owned mask PNG coverage is invalid.')
     }
   }
   return result
@@ -1200,6 +1228,9 @@ function resolveLimits(overrides: Partial<IgsPackageLimits> | undefined): IgsPac
 }
 
 function memberLimit(memberPath: string, limits: IgsPackageLimits): number {
+  if (memberPath.startsWith('assets/masks/')) {
+    return Math.min(limits.memberBytes, PROJECT_MASK_MAX_PNG_BYTES)
+  }
   if (memberPath.startsWith('assets/profiles/')) {
     return Math.min(limits.memberBytes, IGS_SAFETY_CEILINGS.iccProfileBytes)
   }

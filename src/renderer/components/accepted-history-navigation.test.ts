@@ -118,6 +118,7 @@ test('accepted history navigation never treats an empty Smart Patch as an accept
     kind: 'smart-patch',
     locked: false,
     mask: { asset: null, id: randomUUID(), revision: 0 },
+    maskImageUrl: null,
     name: 'Empty patch',
     opacity: 1,
     rasterSubLayers: [],

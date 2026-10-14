@@ -2,7 +2,7 @@ import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.
 import {
   parseProjectDocumentV1,
   projectAssetReferences,
-  projectRasterLayers,
+  projectMaskAssets,
 } from '../../shared/projects/project-schema.js'
 
 import { createHash } from 'node:crypto'
@@ -14,6 +14,7 @@ import type { ProjectShadowStore } from './project-shadow.js'
 import type { ProjectShadowCommit, ProjectShadowInspection } from './project-shadow.js'
 
 import { type IgsAssetSource, readIgsPackage } from './igs-package.js'
+import { readProjectMaskSource } from './project-mask.js'
 import {
   type ProjectRebuildPreviewInput,
   type ProjectSaveOutcome,
@@ -516,7 +517,7 @@ export class ProjectAutosaveCoordinator {
   }
 
   /**
-   * Resolve only an exact Raster Layer asset in the current unsaved document. The returned source
+   * Resolve only an exact referenced asset in the current unsaved document. The returned source
    * belongs to this coordinator, not the import caller; main must still verify its bytes when
    * copying it for display. Saved assets are read from the `.igs` package instead.
    */
@@ -526,12 +527,12 @@ export class ProjectAutosaveCoordinator {
     sha256: string
   }): IgsAssetSource | null {
     this.assertOpen()
-    const ref = projectRasterLayers(this.session.document).find(
-      (layer) =>
-        layer.asset.path === member.path &&
-        layer.asset.sha256 === member.sha256 &&
-        layer.asset.bytes === member.bytes,
-    )?.asset
+    const ref = projectAssetReferences(this.session.document).find(
+      (asset) =>
+        asset.path === member.path &&
+        asset.sha256 === member.sha256 &&
+        asset.bytes === member.bytes,
+    )
     if (!ref || sameRef(ref, referencedMembers(this.baseDocument).get(ref.path))) {
       return null
     }
@@ -539,7 +540,7 @@ export class ProjectAutosaveCoordinator {
     if (!pending) {
       throw new ProjectAutosaveError(
         'ASSET_SOURCE_MISSING',
-        'The current Raster Layer has no verified asset source.',
+        'The current Project asset has no verified source.',
       )
     }
     return 'sourcePath' in pending.source
@@ -1193,6 +1194,7 @@ export class ProjectAutosaveCoordinator {
     input: Readonly<Record<string, IgsAssetSource>>,
   ): Promise<Map<string, PendingSource>> {
     const references = referencedMembers(document)
+    const maskAssets = new Map(projectMaskAssets(document).map((asset) => [asset.path, asset]))
     const entries = Object.entries(input)
     for (const [memberPath] of entries) {
       if (!references.has(memberPath)) {
@@ -1207,6 +1209,10 @@ export class ProjectAutosaveCoordinator {
     try {
       for (const [memberPath, source] of entries) {
         const ref = references.get(memberPath)!
+        const mask = maskAssets.get(memberPath)
+        if (mask) {
+          await readProjectMaskSource(source, mask)
+        }
         if ('bytes' in source) {
           const bytes = Buffer.from(source.bytes)
           assertBytes(bytes, ref)

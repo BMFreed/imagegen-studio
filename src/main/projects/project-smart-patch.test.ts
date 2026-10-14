@@ -131,7 +131,7 @@ for (const ownerIndex of [0, 1]) {
       const saved = await readIgsPackage(row.canonicalPath)
       assert.deepEqual(
         saved.project.layers,
-        patches(updated).map(({ status: _status, ...layer }) => layer),
+        patches(updated).map(({ maskImageUrl: _url, status: _status, ...layer }) => layer),
       )
       assert.equal(saved.manifest.preview.status, 'empty')
       await service.close(pair.id)

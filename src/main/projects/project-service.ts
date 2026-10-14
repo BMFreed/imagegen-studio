@@ -10,6 +10,7 @@ import type {
   ProjectRebuildResult,
   ProjectSaveResult,
   ProjectSmartPatchLayerChange,
+  ProjectSmartPatchMaskEditRequest,
   ProjectSummary,
   ProjectTab,
 } from '../../shared/api.js'
@@ -18,6 +19,7 @@ import {
   isProjectGenerationDraftChange,
   isProjectRasterLayerChange,
   isProjectSmartPatchLayerChange,
+  isProjectSmartPatchMaskEditRequest,
 } from '../../shared/api.js'
 import {
   applyPresetSections,
@@ -51,6 +53,7 @@ import {
   isGenerationTargetKey,
   type ProjectGenerationTargetState,
 } from '../../shared/projects/project-generation-target-state.js'
+import type { ProjectMaskBitmap } from '../../shared/projects/project-mask.js'
 import {
   createEmptyProjectDocumentV1,
   IGS_SAFETY_CEILINGS,
@@ -125,6 +128,17 @@ import {
   type ProjectLayerResourceRequest,
   resolveProjectLayerAsset,
 } from './project-layer-resource.js'
+import {
+  projectMaskImageUrl,
+  type ProjectMaskResourceRequest,
+  resolveProjectMaskAsset,
+} from './project-mask-resource.js'
+import {
+  applyProjectMaskEdit,
+  decodeProjectMaskPng,
+  encodeProjectMaskPng,
+  readProjectMaskSource,
+} from './project-mask.js'
 import { projectThumbnailImageUrl } from './project-preview-resource.js'
 import { buildProjectPreview } from './project-preview.js'
 import { withFrozenRasterComposition } from './project-raster-snapshot.js'
@@ -200,9 +214,11 @@ export class ProjectServiceError extends Error {
       | 'PROJECT_IMPORTED_NOT_INDEXED'
       | 'PROJECT_IMPORTED_NOT_OPENED'
       | 'PROJECT_INVALID_INPUT'
+      | 'PROJECT_LAYER_HIDDEN'
       | 'PROJECT_LAYER_LOCKED'
       | 'PROJECT_LAYER_NOT_FOUND'
       | 'PROJECT_LORA_RELINK_MISMATCH'
+      | 'PROJECT_MASK_UNAVAILABLE'
       | 'PROJECT_MODEL_NOT_SELECTED'
       | 'PROJECT_MODEL_RELINK_MISMATCH'
       | 'PROJECT_NOT_FOUND'
@@ -445,6 +461,113 @@ export class ProjectService {
     this.openTabs.set(tabId, clean)
     await clean.close()
     this.openTabs.delete(tabId)
+  }
+
+  /** Publish one captured gesture. Pixels and paths are created only by Main. */
+  async editSmartPatchMask(
+    tabId: string,
+    layerId: string,
+    input: ProjectSmartPatchMaskEditRequest,
+  ): Promise<ProjectTab> {
+    if (!isProjectSmartPatchMaskEditRequest(input)) {
+      throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'The mask gesture is invalid.')
+    }
+    const request = structuredClone(input)
+    const coordinator = this.requireTab(tabId)
+    const document = coordinator.document
+    const epoch = coordinator.documentEpoch
+    const patch = requireSmartPatch(document, layerId)
+    if (
+      request.documentId !== document.documentId ||
+      request.documentRevision !== document.documentRevision ||
+      request.maskId !== patch.mask.id ||
+      request.maskRevision !== patch.mask.revision
+    ) {
+      throw new ProjectAutosaveError('EDIT_CONFLICT', 'The mask changed. Start a new gesture.')
+    }
+    if (patch.locked) {
+      throw new ProjectServiceError(
+        'PROJECT_LAYER_LOCKED',
+        'Unlock this Smart Patch to edit its mask.',
+      )
+    }
+    if (!patch.visible) {
+      throw new ProjectServiceError(
+        'PROJECT_LAYER_HIDDEN',
+        'Show this Smart Patch to edit its mask.',
+      )
+    }
+    let current: ProjectMaskBitmap | null = null
+    if (patch.mask.asset !== null) {
+      if (!('bounds' in patch.mask)) {
+        throw new ProjectServiceError('PROJECT_MASK_UNAVAILABLE', 'The mask has no valid bounds.')
+      }
+      const bytes = await readMaskAssetBytes(coordinator, patch.mask.asset)
+      current = {
+        alpha: decodeProjectMaskPng(bytes, patch.mask.asset),
+        bounds: structuredClone(patch.mask.bounds),
+      }
+    }
+    if (
+      this.openTabs.get(tabId) !== coordinator ||
+      coordinator.documentEpoch !== epoch ||
+      coordinator.document.documentRevision !== document.documentRevision
+    ) {
+      throw new ProjectAutosaveError(
+        'EDIT_CONFLICT',
+        'The Project changed. Start a new mask gesture.',
+      )
+    }
+    const rendered = applyProjectMaskEdit(current, request.edit)
+    if (
+      (!rendered && !current) ||
+      (rendered &&
+        current &&
+        JSON.stringify(rendered.bounds) === JSON.stringify(current.bounds) &&
+        Buffer.from(rendered.alpha).equals(Buffer.from(current.alpha)))
+    ) {
+      return toTab(tabId, coordinator)
+    }
+    const revision = patch.mask.revision + 1
+    if (!Number.isSafeInteger(revision)) {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'The mask revision limit has been reached.',
+      )
+    }
+    let mask: IgsSmartPatchLayerV1['mask'] = { asset: null, id: patch.mask.id, revision }
+    const sources: Record<string, IgsAssetSource> = {}
+    if (rendered) {
+      const bytes = encodeProjectMaskPng(
+        rendered.alpha,
+        rendered.bounds.width,
+        rendered.bounds.height,
+      )
+      const sha256 = createHash('sha256').update(bytes).digest('hex')
+      const memberPath = `assets/masks/${patch.mask.id}/${sha256}.png`
+      mask = {
+        asset: {
+          bytes: bytes.length,
+          height: rendered.bounds.height,
+          path: memberPath,
+          sha256,
+          width: rendered.bounds.width,
+        },
+        bounds: rendered.bounds,
+        id: patch.mask.id,
+        revision,
+      }
+      sources[memberPath] = { bytes }
+    }
+    await coordinator.applyDocument(
+      {
+        ...document,
+        layers: document.layers.map((layer) => (layer.id === layerId ? { ...patch, mask } : layer)),
+      },
+      sources,
+      { expectedDocumentEpoch: epoch, expectedDocumentRevision: document.documentRevision },
+    )
+    return toTab(tabId, coordinator)
   }
 
   /** Publish a validated copy before considering removal of the external source. */
@@ -691,6 +814,36 @@ export class ProjectService {
       return null
     }
     const member = resolveProjectLayerAsset(coordinator.document, resource)
+    if (!member) {
+      return null
+    }
+    const source = coordinator.getCurrentAssetSource(member)
+    return source
+      ? { kind: 'staged', member, source }
+      : { filePath: coordinator.filePath, kind: 'saved', member }
+  }
+
+  /** Mask capabilities cannot resolve Raster assets or a different owner/revision. */
+  getMaskAsset(resource: ProjectMaskResourceRequest):
+    | {
+        filePath: string
+        kind: 'saved'
+        member: NonNullable<IgsSmartPatchLayerV1['mask']['asset']>
+      }
+    | {
+        kind: 'staged'
+        member: NonNullable<IgsSmartPatchLayerV1['mask']['asset']>
+        source: IgsAssetSource
+      }
+    | null {
+    if (!PROJECT_ID_PATTERN.test(resource.tabId)) {
+      return null
+    }
+    const coordinator = this.openTabs.get(resource.tabId)
+    if (!coordinator) {
+      return null
+    }
+    const member = resolveProjectMaskAsset(coordinator.document, resource)
     if (!member) {
       return null
     }
@@ -2435,6 +2588,18 @@ function parseCreateInput(input: unknown): {
   }
 }
 
+async function readMaskAssetBytes(
+  coordinator: ProjectAutosaveCoordinator,
+  member: NonNullable<IgsSmartPatchLayerV1['mask']['asset']>,
+): Promise<Buffer> {
+  const source = coordinator.getCurrentAssetSource(member)
+  if (source) {
+    return readProjectMaskSource(source, member)
+  }
+  const saved = await readIgsPackage(coordinator.filePath)
+  return readProjectMaskSource({ bytes: await saved.readMember(member.path) }, member)
+}
+
 function toTab(id: string, coordinator: ProjectAutosaveCoordinator): ProjectTab {
   const document = coordinator.document
   return {
@@ -2444,6 +2609,7 @@ function toTab(id: string, coordinator: ProjectAutosaveCoordinator): ProjectTab 
     canUndo: coordinator.canUndo,
     dirty: coordinator.dirty,
     documentId: document.documentId,
+    documentRevision: document.documentRevision,
     generationDraft: document.generationDraft,
     id,
     lastActualSeedSnapshot: document.lastActualSeedSnapshot,
@@ -2451,6 +2617,17 @@ function toTab(id: string, coordinator: ProjectAutosaveCoordinator): ProjectTab 
       layer.kind === 'smart-patch'
         ? {
             ...layer,
+            maskImageUrl:
+              layer.mask.asset === null
+                ? null
+                : projectMaskImageUrl({
+                    assetSha256: layer.mask.asset.sha256,
+                    documentRevision: document.documentRevision,
+                    layerId: layer.id,
+                    maskId: layer.mask.id,
+                    maskRevision: layer.mask.revision,
+                    tabId: id,
+                  }),
             status: 'empty' as const,
           }
         : {

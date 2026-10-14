@@ -15,6 +15,7 @@ import type {
   ProjectOpenResult,
   ProjectSaveResult,
   ProjectSmartPatchLayerChange,
+  ProjectSmartPatchMaskEditRequest,
   ProjectSummary,
   ProjectTab,
   RuntimeStatus,
@@ -1582,6 +1583,35 @@ async function addSmartPatchLayer(tabId: string) {
   }
 }
 
+async function editActiveSmartPatchMask(
+  layerId: string,
+  request: ProjectSmartPatchMaskEditRequest,
+) {
+  const tab = activeTab.value
+  if (
+    !tab ||
+    patchTargetId(tab.id) !== layerId ||
+    tab.documentId !== request.documentId ||
+    tab.documentRevision !== request.documentRevision ||
+    pendingProjectAction.value ||
+    windowClosePending.value ||
+    reloadRequiredIds.value.has(tab.id)
+  ) {
+    return
+  }
+  const tabId = tab.id
+  pendingProjectAction.value = { kind: 'layer', tabId }
+  try {
+    await flushProjectDraft(tabId)
+    replaceTab(await apiValue(() => projectApi().editSmartPatchMask(tabId, layerId, request)))
+    saveNotices.value = { ...saveNotices.value, [tabId]: null }
+  } catch (cause) {
+    setTabError(tabId, errorMessage(cause))
+  } finally {
+    pendingProjectAction.value = null
+  }
+}
+
 function updateActiveSmartPatchLayer(layerId: string, change: ProjectSmartPatchLayerChange) {
   if (activeTab.value) {
     void updateSmartPatchLayer(activeTab.value.id, layerId, change)
@@ -3044,6 +3074,7 @@ onBeforeUnmount(() => {
           @choosePreset="chooseProjectPreset(activeTab.id, $event)"
           @clearExportFeedback="clearExportFeedback(activeTab.id)"
           @clearHistory="runProjectHistoryAction(activeTab.id, 'clear-history')"
+          @editMask="editActiveSmartPatchMask"
           @generate="generateProject(activeTab.id, $event)"
           @importImage="importActiveRasterImage"
           @manageModels="openModelManager($event)"
