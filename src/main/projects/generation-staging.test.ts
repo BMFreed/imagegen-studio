@@ -49,6 +49,7 @@ import { localProjectRecoveryKey } from './project-identity.js'
 import { ProjectSession } from './project-session.js'
 import { ProjectShadowStore } from './project-shadow.js'
 import { capturedEmbeddingFieldsFixture } from './test-fixtures/generation-embeddings.js'
+import { requireRasterLayer } from './test-fixtures/require-raster-layer.js'
 
 const migrations = path.resolve('src/main/db/migrations')
 const placeholders = path.resolve('src/main/projects/placeholders')
@@ -1543,7 +1544,8 @@ test('interrupted Add journal consumes its captured sessions and preserves newer
     assert.equal(await restartedJournal.read(key, project.prepared.context.documentId), null)
     assert.equal(owner.document.layers.length, 1)
     assert.equal(
-      owner.document.layers[0]?.generationProvenance?.executionResultContext.candidateId,
+      requireRasterLayer(owner.document.layers[0])?.generationProvenance?.executionResultContext
+        .candidateId,
       published.candidateId,
     )
     assert.equal((await owner.save()).committed, true)

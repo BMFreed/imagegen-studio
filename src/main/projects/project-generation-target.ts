@@ -1,5 +1,9 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
-import type { IgsProjectDocumentV1, IgsRectV1 } from '../../shared/projects/project-schema.js'
+import type {
+  IgsProjectDocumentV1,
+  IgsRasterLayerV1,
+  IgsRectV1,
+} from '../../shared/projects/project-schema.js'
 
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
@@ -34,7 +38,7 @@ export interface FrozenGenerationTarget {
   lastActualSeedSnapshot: IgsProjectDocumentV1['lastActualSeedSnapshot']
   mode: ComposeTargetMode
 }
-type RasterAsset = IgsProjectDocumentV1['layers'][number]['asset']
+type RasterAsset = IgsRasterLayerV1['asset']
 
 type TargetWorker = Pick<ProjectWorkerClient, 'composeTarget'>
 

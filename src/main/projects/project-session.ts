@@ -8,6 +8,8 @@ import type {
 import {
   createEmptyProjectDocumentV1,
   parseProjectDocumentV1,
+  projectAssetReferences,
+  projectRasterLayers,
 } from '../../shared/projects/project-schema.js'
 
 import { randomUUID } from 'node:crypto'
@@ -246,12 +248,7 @@ export class ProjectSession {
         try {
           const projectJson = await this.savedPackage.readMember('project.json')
           const assets: Record<string, IgsAssetSource> = {}
-          const memberPaths = new Set(
-            project.layers.flatMap((layer) => [
-              layer.asset.path,
-              ...(layer.sourceIccProfile ? [layer.sourceIccProfile.path] : []),
-            ]),
-          )
+          const memberPaths = new Set(projectAssetReferences(project).map((member) => member.path))
           let index = 0
           for (const memberPath of memberPaths) {
             const destination = path.join(scratch, `${index++}.member`)
@@ -365,12 +362,7 @@ export class ProjectSession {
       throw new ProjectSessionError('PROJECT_RELOAD_REQUIRED', 'Reopen the saved Project first.')
     }
     const supplied = input.assets ?? {}
-    const memberPaths = new Set(
-      project.layers.flatMap((layer) => [
-        layer.asset.path,
-        ...(layer.sourceIccProfile ? [layer.sourceIccProfile.path] : []),
-      ]),
-    )
+    const memberPaths = new Set(projectAssetReferences(project).map((member) => member.path))
     for (const suppliedPath of Object.keys(supplied)) {
       if (!memberPaths.has(suppliedPath)) {
         throw new ProjectSessionError('PROJECT_INVALID_EDIT', 'An asset is not in the Project.')
@@ -533,7 +525,7 @@ function containsRect(outer: IgsPreviewRectV1, inner: IgsPreviewRectV1): boolean
 
 /** World-space visible raster bounds, separate from the finite preview bitmap resolution. */
 function visibleRasterBounds(document: IgsProjectDocumentV1): IgsPreviewRectV1 | null {
-  const layers = document.layers.filter((layer) => layer.visible && layer.opacity > 0)
+  const layers = projectRasterLayers(document).filter((layer) => layer.visible && layer.opacity > 0)
   if (layers.length === 0) {
     return null
   }

@@ -14,6 +14,7 @@ import type {
   ProjectLoraIdentity,
   ProjectOpenResult,
   ProjectSaveResult,
+  ProjectSmartPatchLayerChange,
   ProjectSummary,
   ProjectTab,
   RuntimeStatus,
@@ -73,7 +74,7 @@ import HomeView from './components/HomeView.vue'
 import ModelManager from './components/ModelManager.vue'
 import NewProjectModal from './components/NewProjectModal.vue'
 import PresetManager from './components/PresetManager.vue'
-import { ProjectDraftSync } from './components/project-draft-sync.js'
+import { draftOwnerKey, ProjectDraftSync } from './components/project-draft-sync.js'
 import { createProjectPresetIntent } from './components/project-preset-draft.js'
 import ProjectView from './components/ProjectView.vue'
 import { createResultPresetIntent } from './components/result-preset-draft.js'
@@ -177,6 +178,7 @@ const modelCatalogError = ref<string | null>(null)
 const modelCatalogLoaded = ref(false)
 const modelCatalogLoading = ref(false)
 const generationDraftOverlays = ref<Record<string, ProjectTab['generationDraft']>>({})
+const selectedProjectLayerIds = ref<Record<string, string | null>>({})
 const promptHistoryEpochs = ref<Record<string, number>>({})
 const generationResultsByTab = ref<Record<string, ProjectGenerationResultsSnapshot>>({})
 const generationResultsErrors = ref<Record<string, string | null>>({})
@@ -313,6 +315,7 @@ function currentPresetModelHandoff(request: NonNullable<typeof presetModelHandof
     !modelManagerOpen.value &&
     activeTab.value?.id === request.application.tabId &&
     activeTab.value.documentId === request.application.documentId &&
+    !patchTargetId(request.application.tabId) &&
     presetApplyTab.value !== null &&
     !pendingProjectAction.value &&
     !windowClosePending.value &&
@@ -331,6 +334,7 @@ function openPresetResourceModels(focus: ModelManagerFocus) {
     windowClosePending.value ||
     activeTab.value?.id !== application.tabId ||
     activeTab.value.documentId !== application.documentId ||
+    patchTargetId(application.tabId) ||
     reloadRequiredIds.value.has(application.tabId)
   ) {
     return
@@ -387,6 +391,9 @@ function openPresetManager() {
   void refreshModelCatalog()
 }
 async function saveCurrentAsPreset(tabId: string, target: ProjectGenerationTargetState | null) {
+  if (patchTargetId(tabId)) {
+    return
+  }
   if (
     pendingProjectAction.value ||
     windowClosePending.value ||
@@ -417,6 +424,7 @@ async function saveCurrentAsPreset(tabId: string, target: ProjectGenerationTarge
       pendingProjectAction.value ||
       activeTab.value?.id !== tabId ||
       activeTab.value.documentId !== snapshot.documentId ||
+      patchTargetId(tabId) ||
       presetManagerOpen.value
     ) {
       return
@@ -525,6 +533,9 @@ async function refreshPresetCatalog() {
   }
 }
 async function chooseProjectPreset(tabId: string, id: string) {
+  if (patchTargetId(tabId)) {
+    return
+  }
   const tab = projectTabs.value.find((item) => item.id === tabId)
   if (
     !tab ||
@@ -545,7 +556,11 @@ async function chooseProjectPreset(tabId: string, id: string) {
     if (
       epoch !== presetOpeningEpoch ||
       activeTab.value?.id !== tabId ||
-      activeTab.value.documentId !== tab.documentId
+      activeTab.value.documentId !== tab.documentId ||
+      patchTargetId(tabId) ||
+      pendingProjectAction.value ||
+      windowClosePending.value ||
+      reloadRequiredIds.value.has(tabId)
     ) {
       return
     }
@@ -568,6 +583,7 @@ async function applyProjectPreset(
   if (
     !application ||
     !presetApplyTab.value ||
+    patchTargetId(application.tabId) ||
     presetApplyBusy.value ||
     presetModelHandoff.value ||
     pendingProjectAction.value ||
@@ -609,17 +625,24 @@ watch(presetManagerOpen, (open) => {
     void refreshPresetCatalog()
   }
 })
-watch([() => activeTab.value?.id, () => activeTab.value?.documentId], () => {
-  ++presetCreateEpoch
-  ++presetOpeningEpoch
-  if (!presetApplyBusy.value) {
-    presetApplyOpen.value = false
-    presetModelHandoff.value = null
-  }
-  if (activeTab.value) {
-    void refreshPresetCatalog()
-  }
-})
+watch(
+  [
+    () => activeTab.value?.id,
+    () => activeTab.value?.documentId,
+    () => (activeTab.value ? patchTargetId(activeTab.value.id) : undefined),
+  ],
+  () => {
+    ++presetCreateEpoch
+    ++presetOpeningEpoch
+    if (!presetApplyBusy.value) {
+      presetApplyOpen.value = false
+      presetModelHandoff.value = null
+    }
+    if (activeTab.value) {
+      void refreshPresetCatalog()
+    }
+  },
+)
 const pendingHomeAction = computed(() => {
   const action = pendingProjectAction.value
   return action?.kind === 'open' || action?.kind === 'rebuild' ? action : null
@@ -1118,19 +1141,22 @@ const draftSync = new ProjectDraftSync({
   onError(tabId, error) {
     setTabError(tabId, error.message)
   },
-  onOverlay(tabId, draft) {
+  onOverlay(tabId, draft, targetLayerId) {
+    const ownerKey = draftOwnerKey(tabId, targetLayerId)
     const next = { ...generationDraftOverlays.value }
     if (draft) {
-      next[tabId] = draft
+      next[ownerKey] = draft
     } else {
-      delete next[tabId]
+      delete next[ownerKey]
     }
     generationDraftOverlays.value = next
   },
   seal: (tabId, historyGroupId) =>
     apiValue(() => projectApi().sealPromptHistory(tabId, historyGroupId)),
-  send: (tabId, change, historyGroupId) =>
-    apiValue(() => projectApi().updateGenerationDraft(tabId, change, historyGroupId)),
+  send: (tabId, change, historyGroupId, targetLayerId) =>
+    apiValue(() =>
+      projectApi().updateGenerationDraft(tabId, change, historyGroupId, targetLayerId),
+    ),
 })
 
 function updateGenerationDraft(
@@ -1149,7 +1175,7 @@ function updateGenerationDraft(
   if (!tab) {
     return
   }
-  draftSync.change({ ...tab, generationDraft: toRaw(tab.generationDraft) }, change, historyGroupId)
+  draftSync.change(editorTab(tab), change, historyGroupId, patchTargetId(tabId))
 }
 
 function updateActiveGenerationDraft(
@@ -1164,7 +1190,7 @@ function updateActiveGenerationDraft(
 function sealPromptHistory(tabId: string, historyGroupId: string) {
   const tab = projectTabs.value.find((candidate) => candidate.id === tabId)
   if (tab) {
-    draftSync.sealPromptHistory(tab, historyGroupId)
+    draftSync.sealPromptHistory(editorTab(tab), historyGroupId, patchTargetId(tabId))
   }
 }
 
@@ -1182,6 +1208,10 @@ async function flushProjectDraft(tabId: string) {
 }
 
 async function generateProject(tabId: string, iterations: number) {
+  if (patchTargetId(tabId)) {
+    setTabError(tabId, 'Smart Patch generation is not available yet.')
+    return
+  }
   const tab = projectTabs.value.find((candidate) => candidate.id === tabId)
   const state = generationStatesByTab.value[tabId]
   if (
@@ -1397,42 +1427,64 @@ async function runGenerationModelAction(
 }
 
 function addGenerationLora(tabId: string, identity: ProjectLoraIdentity) {
-  return runGenerationModelAction(tabId, () => projectApi().addGenerationLora(tabId, identity))
+  const targetLayerId = patchTargetId(tabId)
+  return runGenerationModelAction(tabId, () =>
+    projectApi().addGenerationLora(tabId, identity, targetLayerId),
+  )
 }
 
 function removeGenerationLora(tabId: string, identity: ProjectLoraIdentity) {
-  return runGenerationModelAction(tabId, () => projectApi().removeGenerationLora(tabId, identity))
+  const targetLayerId = patchTargetId(tabId)
+  return runGenerationModelAction(tabId, () =>
+    projectApi().removeGenerationLora(tabId, identity, targetLayerId),
+  )
 }
 
 function setGenerationModel(
   tabId: string,
   selection: { resourceId: string; versionId: string } | null,
 ) {
-  return runGenerationModelAction(tabId, () => projectApi().setGenerationModel(tabId, selection))
+  const targetLayerId = patchTargetId(tabId)
+  return runGenerationModelAction(tabId, () =>
+    projectApi().setGenerationModel(tabId, selection, targetLayerId),
+  )
 }
 
 function relinkGenerationLora(tabId: string, identity: ProjectLoraIdentity) {
-  return runGenerationModelAction(tabId, () => projectApi().relinkGenerationLora(tabId, identity))
+  const targetLayerId = patchTargetId(tabId)
+  return runGenerationModelAction(tabId, () =>
+    projectApi().relinkGenerationLora(tabId, identity, targetLayerId),
+  )
 }
 
 function relinkGenerationModel(tabId: string) {
-  return runGenerationModelAction(tabId, () => projectApi().relinkGenerationModel(tabId))
+  const targetLayerId = patchTargetId(tabId)
+  return runGenerationModelAction(tabId, () =>
+    projectApi().relinkGenerationModel(tabId, targetLayerId),
+  )
 }
 
 function setGenerationVae(
   tabId: string,
   selection: { resourceId: string; versionId: string } | null,
 ) {
-  return runGenerationModelAction(tabId, () => projectApi().setGenerationVae(tabId, selection))
+  const targetLayerId = patchTargetId(tabId)
+  return runGenerationModelAction(tabId, () =>
+    projectApi().setGenerationVae(tabId, selection, targetLayerId),
+  )
 }
 
 function relinkGenerationVae(tabId: string) {
-  return runGenerationModelAction(tabId, () => projectApi().relinkGenerationVae(tabId))
+  const targetLayerId = patchTargetId(tabId)
+  return runGenerationModelAction(tabId, () =>
+    projectApi().relinkGenerationVae(tabId, targetLayerId),
+  )
 }
 
 function relinkGenerationEmbedding(tabId: string, identity: ProjectEmbeddingIdentity) {
+  const targetLayerId = patchTargetId(tabId)
   return runGenerationModelAction(tabId, () =>
-    projectApi().relinkGenerationEmbedding(tabId, identity),
+    projectApi().relinkGenerationEmbedding(tabId, identity, targetLayerId),
   )
 }
 
@@ -1440,7 +1492,131 @@ function setDraftValidity(tabId: string, valid: boolean) {
   draftValidity.value = { ...draftValidity.value, [tabId]: valid }
 }
 
+function patchTargetId(tabId: string): string | undefined {
+  const tab = projectTabs.value.find((candidate) => candidate.id === tabId)
+  const selected = tab?.layers.find((layer) => layer.id === selectedProjectLayerIds.value[tabId])
+  return selected?.kind === 'smart-patch' ? selected.id : undefined
+}
+
+function editorTab(tab: ProjectTab): ProjectTab {
+  const layerId = patchTargetId(tab.id)
+  const layer = layerId && tab.layers.find((candidate) => candidate.id === layerId)
+  return layer && layer.kind === 'smart-patch'
+    ? { ...tab, generationDraft: toRaw(layer.generationDraft) }
+    : { ...tab, generationDraft: toRaw(tab.generationDraft) }
+}
+
+const activeSelectedLayerId = computed({
+  get: () => (activeTab.value ? (selectedProjectLayerIds.value[activeTab.value.id] ?? null) : null),
+  set: (layerId: string | null) => {
+    if (activeTab.value) {
+      void selectProjectLayer(activeTab.value.id, layerId)
+    }
+  },
+})
+const activeDraftOwnerKey = computed(() =>
+  activeTab.value ? draftOwnerKey(activeTab.value.id, patchTargetId(activeTab.value.id)) : '',
+)
+const activeGenerationDraft = computed(() =>
+  activeTab.value
+    ? (generationDraftOverlays.value[activeDraftOwnerKey.value] ??
+      editorTab(activeTab.value).generationDraft)
+    : null,
+)
+
+async function selectProjectLayer(tabId: string, layerId: string | null) {
+  if (
+    selectedProjectLayerIds.value[tabId] === layerId ||
+    pendingProjectAction.value ||
+    windowClosePending.value
+  ) {
+    return
+  }
+  const tab = projectTabs.value.find((candidate) => candidate.id === tabId)
+  if (!tab || (layerId !== null && !tab.layers.some((layer) => layer.id === layerId))) {
+    return
+  }
+  pendingProjectAction.value = { kind: 'layer', tabId }
+  try {
+    await flushProjectDraft(tabId)
+    const current = projectTabs.value.find((candidate) => candidate.id === tabId)
+    if (!current || (layerId !== null && !current.layers.some((layer) => layer.id === layerId))) {
+      return
+    }
+    selectedProjectLayerIds.value = { ...selectedProjectLayerIds.value, [tabId]: layerId }
+    rotatePromptHistoryGroup(tabId)
+  } catch (cause) {
+    setTabError(tabId, errorMessage(cause))
+  } finally {
+    pendingProjectAction.value = null
+  }
+}
+
+async function addSmartPatchLayer(tabId: string) {
+  if (
+    pendingProjectAction.value ||
+    windowClosePending.value ||
+    reloadRequiredIds.value.has(tabId)
+  ) {
+    return
+  }
+  pendingProjectAction.value = { kind: 'layer', tabId }
+  try {
+    await flushProjectDraft(tabId)
+    const previousIds = new Set(
+      projectTabs.value.find((tab) => tab.id === tabId)?.layers.map((layer) => layer.id),
+    )
+    const result = await apiValue(() => projectApi().addSmartPatchLayer(tabId))
+    replaceTab(result)
+    const added = result.layers.find(
+      (layer) => layer.kind === 'smart-patch' && !previousIds.has(layer.id),
+    )
+    if (added) {
+      selectedProjectLayerIds.value = { ...selectedProjectLayerIds.value, [tabId]: added.id }
+    }
+    rotatePromptHistoryGroup(tabId)
+  } catch (cause) {
+    setTabError(tabId, errorMessage(cause))
+  } finally {
+    pendingProjectAction.value = null
+  }
+}
+
+function updateActiveSmartPatchLayer(layerId: string, change: ProjectSmartPatchLayerChange) {
+  if (activeTab.value) {
+    void updateSmartPatchLayer(activeTab.value.id, layerId, change)
+  }
+}
+
+async function updateSmartPatchLayer(
+  tabId: string,
+  layerId: string,
+  change: ProjectSmartPatchLayerChange,
+) {
+  if (
+    pendingProjectAction.value ||
+    windowClosePending.value ||
+    reloadRequiredIds.value.has(tabId)
+  ) {
+    return
+  }
+  pendingProjectAction.value = { kind: 'layer', tabId }
+  try {
+    await flushProjectDraft(tabId)
+    replaceTab(await apiValue(() => projectApi().updateSmartPatchLayer(tabId, layerId, change)))
+    saveNotices.value = { ...saveNotices.value, [tabId]: null }
+  } catch (cause) {
+    setTabError(tabId, errorMessage(cause))
+  } finally {
+    pendingProjectAction.value = null
+  }
+}
+
 function replaceTab(tab: ProjectTab) {
+  const selected = selectedProjectLayerIds.value[tab.id]
+  if (selected && !tab.layers.some((layer) => layer.id === selected)) {
+    selectedProjectLayerIds.value = { ...selectedProjectLayerIds.value, [tab.id]: null }
+  }
   const index = projectTabs.value.findIndex((candidate) => candidate.id === tab.id)
   if (index >= 0) {
     projectTabs.value.splice(index, 1, tab)
@@ -1674,7 +1850,7 @@ function beginNewProject() {
 }
 
 async function createProject(input: ProjectCreateInput) {
-  if (pendingProjectAction.value !== null || windowClosePending.value) {
+  if (!showNewProject.value || pendingProjectAction.value !== null || windowClosePending.value) {
     return
   }
   const captured: ProjectCreateInput = JSON.parse(JSON.stringify(input))
@@ -2817,15 +2993,16 @@ onBeforeUnmount(() => {
           v-else-if="activeTab"
           :key="activeTab.id"
           v-model:imagesPerClick="activeImagesPerClick"
+          v-model:selectedLayerId="activeSelectedLayerId"
           :acceptedHistoryFocus="
             acceptedHistoryFocus?.projectKey === activeTab.id ? acceptedHistoryFocus : null
           "
           :busy="pendingProjectAction !== null || windowClosePending"
-          :draftPending="Boolean(generationDraftOverlays[activeTab.id])"
+          :draftPending="Boolean(generationDraftOverlays[activeDraftOwnerKey])"
           :error="tabErrors[activeTab.id] ?? null"
           :exportFeedback="exportFeedbackByTab[activeTab.id] ?? null"
           :generationCanceling="generationCanceling[activeTab.id] ?? false"
-          :generationDraft="generationDraftOverlays[activeTab.id] ?? activeTab.generationDraft"
+          :generationDraft="activeGenerationDraft ?? activeTab.generationDraft"
           :generationError="generationStateErrors[activeTab.id] ?? null"
           :generationNotice="generationNotices[activeTab.id] ?? null"
           :generationProgress
@@ -2848,6 +3025,9 @@ onBeforeUnmount(() => {
           :presets="presetCatalog"
           :presetsError="presetCatalogError"
           :presetsLoading="presetCatalogLoading"
+          :projectGenerationDraft="
+            generationDraftOverlays[activeTab.id] ?? activeTab.generationDraft
+          "
           :promptHistoryEpoch="promptHistoryEpochs[activeTab.id] ?? 0"
           :reloadRequired="reloadRequiredIds.has(activeTab.id)"
           :runtimeUnavailableReason
@@ -2858,6 +3038,7 @@ onBeforeUnmount(() => {
             acceptedHistoryFocus?.requestId === $event && (acceptedHistoryFocus = null)
           "
           @addLora="addGenerationLora(activeTab.id, $event)"
+          @addPatch="addSmartPatchLayer(activeTab.id)"
           @applyBbox="applyBbox(activeTab.id, $event)"
           @cancelGeneration="cancelCurrentGeneration(activeTab.id)"
           @choosePreset="chooseProjectPreset(activeTab.id, $event)"
@@ -2889,6 +3070,7 @@ onBeforeUnmount(() => {
           @undo="runProjectHistoryAction(activeTab.id, 'undo')"
           @updateDraft="updateActiveGenerationDraft"
           @updateLayer="updateActiveRasterLayer"
+          @updatePatch="updateActiveSmartPatchLayer"
           @validateDraft="setDraftValidity"
         />
         <NEmpty v-else class="empty-document" description="No document open">

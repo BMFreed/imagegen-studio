@@ -115,16 +115,23 @@ project.igs
 `manifest.json`. Manifest хранит portable `documentId`, `documentRevision`,
 `preview.status` (`rendered`, `empty`, `unavailable`), preview rect и перечень
 member paths с uncompressed byte size и SHA-256. `project.json` хранит тот же
-document ID/revision, title, primary bbox, generation draft, ordered Raster
-Layers с точными asset references и saved last-actual-seed snapshot. ZIP member
-names и ссылки валидируются строго; неизвестное или более новое schema version
-не переписывается молча. В этом первом срезе Smart Patch, Regional Guidance,
-masks и Smart Patch ещё не сериализуются: их добавление требует явной schema
-extension/migration до поддержки production Project. Для первого Illustrious
+document ID/revision, title, primary bbox, generation draft, ordered layers
+с точными asset references и saved last-actual-seed snapshot. ZIP member names
+и ссылки валидируются строго; неизвестное или более новое schema version
+не переписывается молча. [Smart Patch foundation](../engineering/phase-4-smart-patch-foundation-research.md)
+расширяет pre-release v1 строгой веткой `kind: 'smart-patch'`: common layer fields,
+owned `mask: { id, revision: 0, asset: null }`, bbox, internal resolution,
+generation draft, пустой `rasterSubLayers` и `activeRasterSubLayerId: null`.
+Уникальность layer/mask identities проверяется в одном document namespace.
+Mask pixels не подменяются искусственным PNG; empty Patch не добавляет package
+assets или preview content. Такой слой проходит Save/reopen и local recovery;
+старые Raster-only v1 файлы сохраняют прежний смысл. Painted masks, nonempty
+variants и Regional Guidance требуют следующих явных schema extensions и пока
+отклоняются. Для первого Illustrious
 `txt2img` Raster Layer уже определена опциональная, строго валидируемая запись
 `generationProvenance` прямо в `project.json`; старые v1 файлы без неё читаются.
-Это pre-release расширение v1, а не подключённый пользовательский Add: запись
-пока создаёт только проверяемый mapper из кандидата staging. Project и рабочие
+Это pre-release расширение v1. Main создаёт запись при явном пользовательском
+Add из кандидата staging; она сохраняется через Save/reopen. Project и рабочие
 raster assets используют sRGB. При импорте worker приводит pixels с исходным
 ICC к sRGB, а оригинальные ICC bytes сохраняются в
 `assets/profiles/{sha256}.icc` и ссылаются из metadata слоя; одинаковые profiles

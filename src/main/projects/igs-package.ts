@@ -14,6 +14,8 @@ import {
   isIgsMemberPathV1,
   parseIgsManifestV1,
   parseProjectDocumentV1,
+  projectAssetReferences,
+  projectRasterLayers,
   validateIgsPackageMetadataV1,
 } from '../../shared/projects/project-schema.js'
 
@@ -747,7 +749,7 @@ export async function readIgsPackage(
       throw new IgsPackageError('MISSING_ENTRY', `Missing package member: ${required}`)
     }
   }
-  for (const layer of document.layers) {
+  for (const layer of projectRasterLayers(document)) {
     const dimensions = imageDimensions(
       layer.asset.path,
       scanned.get(layer.asset.path)!.header,
@@ -911,7 +913,7 @@ export async function readIgsPackage(
   // The source conditioning image is local recovery data and deliberately absent from .igs.
   // Portable validation still verifies that the retained contribution identity describes the
   // actual RGBA asset. Save also enters this reader before publishing its staged archive.
-  for (const layer of document.layers) {
+  for (const layer of projectRasterLayers(document)) {
     const provenance = layer.generationProvenance
     if (provenance?.kind !== 'illustrious-outpaint' && provenance?.kind !== 'anima-outpaint') {
       continue
@@ -948,11 +950,7 @@ export async function saveIgsPackage(
   const limits = resolveLimits(options.limits)
   const project = parseProjectDocumentV1(input.project)
   const assets = input.assets ?? {}
-  const assetPaths = new Set(
-    project.layers.flatMap((layer) =>
-      layer.sourceIccProfile ? [layer.asset.path, layer.sourceIccProfile.path] : [layer.asset.path],
-    ),
-  )
+  const assetPaths = new Set(projectAssetReferences(project).map((member) => member.path))
   if (
     Object.keys(assets).length !== assetPaths.size ||
     Object.keys(assets).some((assetPath) => !assetPaths.has(assetPath))

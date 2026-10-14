@@ -17,6 +17,7 @@ import type { ProjectWorkerClient } from './worker-client.js'
 import { saveIgsPackage } from './igs-package.js'
 import { buildFrozenGenerationTarget } from './project-generation-target.js'
 import { readProjectPlaceholders } from './project-placeholders.js'
+import { requireRasterLayer } from './test-fixtures/require-raster-layer.js'
 
 const placeholdersDir = path.resolve('src/main/projects/placeholders')
 // Real 2x2 RGBA PNGs with the worker's pinned sRGB ICC, prepared from Pillow once for this test.
@@ -130,7 +131,7 @@ test('real package raster, bbox, draft and saved seed snapshot are frozen before
         document.primaryBbox.x = 100
         document.generationDraft.positivePrompt.text = 'edited while worker ran'
         document.lastActualSeedSnapshot = 99
-        document.layers[0].transform.x = 100
+        requireRasterLayer(document.layers[0]).transform.x = 100
       })
       const target = await buildFrozenGenerationTarget({
         document,
@@ -175,7 +176,7 @@ test('empty Project still materializes a transparent finite txt2img input', asyn
 
 test('a changed saved asset is refused before worker execution', async () => {
   await withPackage(async ({ document, packagePath, scratchBasePath }) => {
-    document.layers[0].asset.sha256 = '0'.repeat(64)
+    requireRasterLayer(document.layers[0]).asset.sha256 = '0'.repeat(64)
     let called = false
     await assert.rejects(
       buildFrozenGenerationTarget({

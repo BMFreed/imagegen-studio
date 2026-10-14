@@ -512,13 +512,39 @@ const RasterLayerSchema = v.strictObject({
   visible: v.boolean(),
 })
 
+/** Empty document-owned patch only. Painted masks and accepted variants need later schemas. */
+const SmartPatchLayerSchema = v.strictObject({
+  activeRasterSubLayerId: v.null(),
+  blendMode: v.picklist(['normal', 'multiply', 'screen', 'overlay']),
+  boundingBox: RectSchema,
+  generationDraft: GenerationDraftSchema,
+  id: UuidSchema,
+  internalResolution: v.strictObject({
+    height: BoundedDimensionSchema,
+    width: BoundedDimensionSchema,
+  }),
+  kind: v.literal('smart-patch'),
+  locked: v.boolean(),
+  mask: v.strictObject({
+    asset: v.null(),
+    id: UuidSchema,
+    revision: v.literal(0),
+  }),
+  name: NonemptyTextSchema,
+  opacity: UnitIntervalSchema,
+  rasterSubLayers: v.strictTuple([]),
+  visible: v.boolean(),
+})
+
+const ProjectLayerSchema = v.variant('kind', [RasterLayerSchema, SmartPatchLayerSchema])
+
 const ProjectDocumentV1Schema = v.strictObject({
   colorSpace: v.literal('srgb'),
   documentId: UuidSchema,
   documentRevision: UuidSchema,
   generationDraft: GenerationDraftSchema,
   lastActualSeedSnapshot: v.nullable(UInt32Schema),
-  layers: v.pipe(v.array(RasterLayerSchema), v.maxLength(IGS_SAFETY_CEILINGS.archiveEntries)),
+  layers: v.pipe(v.array(ProjectLayerSchema), v.maxLength(IGS_SAFETY_CEILINGS.archiveEntries)),
   primaryBbox: RectSchema,
   title: NonemptyTextSchema,
 })
@@ -543,6 +569,13 @@ export {
 export type IgsRectV1 = v.InferOutput<typeof RectSchema>
 export type IgsPreviewRectV1 = v.InferOutput<typeof PreviewRectSchema>
 export type IgsMemberRefV1 = v.InferOutput<typeof MemberRefSchema>
+export type IgsRasterLayerV1 = v.InferOutput<typeof RasterLayerSchema>
+export type IgsSmartPatchLayerV1 = v.InferOutput<typeof SmartPatchLayerSchema>
+export type IgsProjectLayerV1 = v.InferOutput<typeof ProjectLayerSchema>
+export type IgsProjectAssetRefV1 = IgsMemberRefV1 & {
+  height?: number
+  width?: number
+}
 export type IgsRasterGenerationProvenanceV1 = v.InferOutput<
   typeof RasterGenerationProvenanceV1Schema
 >
@@ -587,9 +620,23 @@ export function parseProjectDocumentV1(input: unknown): IgsProjectDocumentV1 {
     throw new IgsSchemaError('INVALID_PROJECT', 'The Project document is invalid.')
   }
   const document = parsed.output
-  const layerIds = new Set<string>()
+  const ownedIds = new Set<string>()
   for (const layer of document.layers) {
-    if (layerIds.has(layer.id) || !LAYER_ASSET_PATH_PATTERN.test(layer.asset.path)) {
+    if (ownedIds.has(layer.id)) {
+      throw new IgsSchemaError('INVALID_PROJECT', 'The Project layer references are invalid.')
+    }
+    ownedIds.add(layer.id)
+    if (layer.kind === 'smart-patch') {
+      if (ownedIds.has(layer.mask.id)) {
+        throw new IgsSchemaError(
+          'INVALID_PROJECT',
+          'A Smart Patch mask must have its own identity.',
+        )
+      }
+      ownedIds.add(layer.mask.id)
+      continue
+    }
+    if (!LAYER_ASSET_PATH_PATTERN.test(layer.asset.path)) {
       throw new IgsSchemaError('INVALID_PROJECT', 'The Project layer references are invalid.')
     }
     const provenance = layer.generationProvenance
@@ -616,34 +663,49 @@ export function parseProjectDocumentV1(input: unknown): IgsProjectDocumentV1 {
     ) {
       throw new IgsSchemaError('INVALID_PROJECT', 'The source ICC profile reference is invalid.')
     }
-    layerIds.add(layer.id)
   }
-  if (
-    document.generationDraft.model?.kind !== undefined &&
-    document.generationDraft.model.kind !== 'checkpoint'
-  ) {
-    throw new IgsSchemaError('INVALID_PROJECT', 'The selected model reference is invalid.')
-  }
-  if (
-    document.generationDraft.vae?.kind !== undefined &&
-    document.generationDraft.vae.kind !== 'vae'
-  ) {
-    throw new IgsSchemaError('INVALID_PROJECT', 'The selected VAE reference is invalid.')
-  }
-  for (const lora of document.generationDraft.loras) {
-    if (lora.resource.kind !== 'lora') {
-      throw new IgsSchemaError('INVALID_PROJECT', 'A selected LoRA reference is invalid.')
+  const generationDrafts = [
+    document.generationDraft,
+    ...document.layers.flatMap((layer) =>
+      layer.kind === 'smart-patch' ? [layer.generationDraft] : [],
+    ),
+  ]
+  for (const draft of generationDrafts) {
+    if (draft.model?.kind !== undefined && draft.model.kind !== 'checkpoint') {
+      throw new IgsSchemaError('INVALID_PROJECT', 'The selected model reference is invalid.')
     }
-  }
-  for (const prompt of [
-    document.generationDraft.positivePrompt,
-    document.generationDraft.negativePrompt,
-  ]) {
-    if (prompt.embeddingRefs.some((embedding) => embedding.resource.kind !== 'embedding')) {
-      throw new IgsSchemaError('INVALID_PROJECT', 'A prompt embedding reference is invalid.')
+    if (draft.vae?.kind !== undefined && draft.vae.kind !== 'vae') {
+      throw new IgsSchemaError('INVALID_PROJECT', 'The selected VAE reference is invalid.')
+    }
+    for (const lora of draft.loras) {
+      if (lora.resource.kind !== 'lora') {
+        throw new IgsSchemaError('INVALID_PROJECT', 'A selected LoRA reference is invalid.')
+      }
+    }
+    for (const prompt of [draft.positivePrompt, draft.negativePrompt]) {
+      if (prompt.embeddingRefs.some((embedding) => embedding.resource.kind !== 'embedding')) {
+        throw new IgsSchemaError('INVALID_PROJECT', 'A prompt embedding reference is invalid.')
+      }
     }
   }
   return document
+}
+
+/** Empty Smart Patches contribute no pixels; use this at Raster-only material consumers. */
+export function projectRasterLayers(
+  document: Pick<IgsProjectDocumentV1, 'layers'>,
+): IgsRasterLayerV1[] {
+  return document.layers.filter((layer): layer is IgsRasterLayerV1 => layer.kind === 'raster')
+}
+
+/** Actual archive assets only. An owned empty mask is data, never a fabricated image member. */
+export function projectAssetReferences(
+  document: Pick<IgsProjectDocumentV1, 'layers'>,
+): IgsProjectAssetRefV1[] {
+  return projectRasterLayers(document).flatMap((layer) => [
+    layer.asset,
+    ...(layer.sourceIccProfile ? [layer.sourceIccProfile] : []),
+  ])
 }
 
 /** Validate the portable comparison payload without accepting private provenance groups. */
@@ -710,17 +772,16 @@ export function validateIgsPackageMetadataV1(
   ) {
     throw new IgsSchemaError('PACKAGE_MISMATCH', 'The Project package revision does not match.')
   }
-  if (document.layers.length === 0 && manifest.preview.status !== 'empty') {
+  const rasterLayers = projectRasterLayers(document)
+  if (rasterLayers.length === 0 && manifest.preview.status !== 'empty') {
     throw new IgsSchemaError('PACKAGE_MISMATCH', 'An empty Project cannot have a raster preview.')
   }
   const members = new Map(manifest.members.map((member) => [member.path, member]))
-  const assetPaths = new Set(document.layers.map((layer) => layer.asset.path))
+  const assetPaths = new Set(rasterLayers.map((layer) => layer.asset.path))
   const profilePaths = new Set(
-    document.layers.flatMap((layer) =>
-      layer.sourceIccProfile ? [layer.sourceIccProfile.path] : [],
-    ),
+    rasterLayers.flatMap((layer) => (layer.sourceIccProfile ? [layer.sourceIccProfile.path] : [])),
   )
-  for (const layer of document.layers) {
+  for (const layer of rasterLayers) {
     const member = members.get(layer.asset.path)
     if (member?.bytes !== layer.asset.bytes || member.sha256 !== layer.asset.sha256) {
       throw new IgsSchemaError('PACKAGE_MISMATCH', 'A Project layer asset is missing or differs.')

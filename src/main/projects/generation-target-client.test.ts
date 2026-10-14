@@ -26,6 +26,7 @@ import { ProjectIndexRepository } from './project-index.js'
 import { readProjectPlaceholders } from './project-placeholders.js'
 import { ProjectService } from './project-service.js'
 import { ProjectShadowStore } from './project-shadow.js'
+import { requireRasterLayer } from './test-fixtures/require-raster-layer.js'
 
 const REPOSITORY_ROOT = path.resolve(import.meta.dirname, '../../..')
 const sha256 = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
@@ -713,7 +714,7 @@ test('real Project preparation retains frozen bbox, draft and target bytes witho
       assert.deepEqual(witnessed.bbox, frozenDocument.primaryBbox)
       const layers = witnessed.layers as ComposeTargetInput['layers']
       assert.equal(layers.length, 1)
-      assert.deepEqual(layers[0].transform, frozenDocument.layers[0].transform)
+      assert.deepEqual(layers[0].transform, requireRasterLayer(frozenDocument.layers[0]).transform)
       assert.equal(layers[0].sha256, sha256(layerBytes))
       assert.deepEqual(await readFile(layers[0].path), layerBytes)
 

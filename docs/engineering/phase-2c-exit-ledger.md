@@ -1,6 +1,8 @@
 # Текущая граница выхода из фазы 2C
 
-Ревизия перед этим проходом: `87d6d7dfb1442d3eecfeb764f363ddad82a10111`.
+Исходная ревизия ledger: `87d6d7dfb1442d3eecfeb764f363ddad82a10111`.
+Текущие owners обновлены после installed EPS/V Presets (`c9d8884`) и
+[Smart Patch foundation](./phase-4-smart-patch-foundation-research.md).
 Это конечный ledger первого generation slice, а не закрытие всего MVP.
 Historical checkpoints сохраняют свои limits/counts; слово «следующий» в них
 описывает состояние на момент записи. Новая комбинация двух уже проверенных
@@ -26,22 +28,27 @@ actual configuration без Regional Guidance; shared `generation-settings-compa
 
 Открытые обязательные owners:
 
-- Фаза 3: remaining installed checkpoint → picker → Apply → inference qualification,
-  включая NoobAI sampler/noise snapshots. [Project Apply Models handoff](./phase-3-preset-model-handoff-research.md),
+- Presets: [installed EPS/V Apply→inference](./phase-3-installed-presets-research.md)
+  закрыт для объявленного finite recipe, включая exact noise-policy snapshots.
+  Smart Patch source/target остаётся в фазе 4, other-context handoffs — в фазе 5.
+  [Project Apply Models handoff](./phase-3-preset-model-handoff-research.md),
   Project Apply, Save Current,
   New Project customization и [accepted Raster result creation](./phase-3-result-preset-research.md)
   подключены к production owners с отдельными qualification checkpoints.
   [Ручной production Preset Manager](./phase-3-preset-manager-research.md)
   уже подключает create/edit/duplicate, Deleted/Restore и guards к native API;
   его собственное evidence не закрывает оставшиеся reuse flows.
-- Фаза 4: полноценные Canvas tools, masks/inpaint, Regional Guidance,
-  Smart Patch/variants, model hard removal и остальные interaction gaps.
+- Фаза 4: empty Smart Patch document foundation закрыта отдельным checkpoint:
+  independent owned draft/bbox/internal resolution/mask, Undo/Redo, native
+  Save/reopen и local crash recovery. Следующие owners — painted mask storage/
+  authoring и Canvas tools, затем inpaint, Smart Patch generation/variants,
+  Regional Guidance, model hard removal и остальные interaction gaps.
 - Фаза 5: application updater, runtime install/repair, clean-install/upgrade,
   packaging и release qualification Linux/NVIDIA.
 
 PP-004/005/007/008 сохраняют «Пока не обещать». Finite generation evidence
-достаточно для начала следующего владельца Presets, но не для заявления полной
-готовности NoobAI, всех семейств или релиза.
+позволило пройти finite Presets checkpoint и начать фазу 4, но не доказывает
+полную готовность NoobAI, всех семейств или релиза.
 
 ## Named missing-version qualification
 

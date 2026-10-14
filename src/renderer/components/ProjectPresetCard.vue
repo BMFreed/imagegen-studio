@@ -4,13 +4,14 @@ import { includedPresetSections } from '../../shared/presets/preset-application.
 import type { PresetRecord, PresetSectionKey } from '../../shared/presets/preset-schema.js'
 
 import { FilePlus, Refresh, Settings } from '@vicons/tabler'
-import { NButton, NCard, NEmpty, NInput, NPopover, NSpin, NTag } from 'naive-ui'
+import { NButton, NCard, NEmpty, NInput, NPopover, NSpin, NTag, NTooltip } from 'naive-ui'
 import { computed, ref, watch } from 'vue'
 
 import IconButton from '../../../docs/prototype-app/src/components/IconButton.vue'
 import { presetNeedsAttention, sectionLabels, workflowLabels } from './preset-editor.js'
 
 const props = defineProps<{
+  applyDisabledReason?: string | null
   catalog: ModelCatalogItem[]
   catalogReady: boolean
   disabled: boolean
@@ -20,6 +21,7 @@ const props = defineProps<{
   saveDisabledReason?: string | null
 }>()
 const emit = defineEmits<{ choose: [id: string]; manage: []; refresh: []; save: [] }>()
+const applyDisabled = computed(() => props.disabled || Boolean(props.applyDisabledReason))
 const open = ref(false)
 const search = ref('')
 const presets = computed(() => {
@@ -31,16 +33,13 @@ const presets = computed(() => {
         [preset.name, preset.description].some((text) => text.toLocaleLowerCase().includes(query))),
   )
 })
-watch(
-  () => props.disabled,
-  (disabled) => {
-    if (disabled) {
-      open.value = false
-    }
-  },
-)
+watch(applyDisabled, (disabled) => {
+  if (disabled) {
+    open.value = false
+  }
+})
 function choose(id: string) {
-  if (props.disabled || props.loading || !presets.value.some((preset) => preset.id === id)) {
+  if (applyDisabled.value || props.loading || !presets.value.some((preset) => preset.id === id)) {
     return
   }
   open.value = false
@@ -63,15 +62,28 @@ function badgeLabel(section: PresetSectionKey) {
     <div class="preset-actions">
       <NPopover
         v-model:show="open"
-        :disabled
+        :disabled="applyDisabled"
         placement="bottom-start"
         :showArrow="false"
         trigger="click"
       >
         <template v-slot:trigger>
-          <NButton aria-label="Apply preset" class="apply-button" :disabled secondary size="small">
-            Apply preset...
-          </NButton>
+          <NTooltip :disabled="!applyDisabledReason">
+            <template v-slot:trigger>
+              <span class="apply-trigger">
+                <NButton
+                  aria-label="Apply preset"
+                  class="apply-button"
+                  :disabled="applyDisabled"
+                  secondary
+                  size="small"
+                >
+                  Apply preset...
+                </NButton>
+              </span>
+            </template>
+            {{ applyDisabledReason }}
+          </NTooltip>
         </template>
         <div aria-label="Choose preset to apply" class="preset-picker" role="dialog">
           <div class="picker-search">
@@ -170,6 +182,10 @@ function badgeLabel(section: PresetSectionKey) {
 .apply-button {
   width: 100%;
   justify-content: start;
+}
+.apply-trigger {
+  display: block;
+  min-width: 0;
 }
 .preset-picker {
   display: grid;

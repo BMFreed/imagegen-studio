@@ -5,6 +5,7 @@ import {
 import {
   IGS_GENERATION_PNG_MAX_BYTES,
   IgsSchemaError,
+  projectRasterLayers,
 } from '../../shared/projects/project-schema.js'
 
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
@@ -178,7 +179,7 @@ async function reviewSavedAcceptedResultLocked(
     }
     const archive = await readIgsPackage(lockedPath)
     const document = archive.project
-    const layer = document.layers.find((item) => item.id === reference.layerId)
+    const layer = projectRasterLayers(document).find((item) => item.id === reference.layerId)
     const provenance = layer?.generationProvenance
     if (
       document.documentId !== reference.documentId ||

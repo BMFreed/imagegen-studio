@@ -21,6 +21,7 @@ import {
   acceptedOutputPngFixture,
   acceptedRasterProvenanceFixture,
 } from './test-fixtures/accepted-provenance.js'
+import { requireRasterLayer } from './test-fixtures/require-raster-layer.js'
 
 const placeholdersDir = path.resolve('src/main/projects/placeholders')
 const raster = Buffer.from(
@@ -444,7 +445,7 @@ test('pending imported raster survives caller staging disposal, shadow publicati
       [edit.assetPath]: { sourcePath },
     })
     await rm(sourcePath)
-    const importedRef = coordinator.document.layers[0]?.asset
+    const importedRef = requireRasterLayer(coordinator.document.layers[0])?.asset
     assert.ok(importedRef)
     const activeSource = coordinator.getCurrentAssetSource(importedRef)
     assert.ok(activeSource && 'sourcePath' in activeSource)
@@ -487,9 +488,11 @@ test('accepted raster provenance survives dirty shadow recovery and portable Sav
       x: 64,
       y: -32,
     })
-    accepted.document.layers[0].generationProvenance = provenance
-    accepted.document.layers[0].transform.x = provenance.layerSourceContext.bbox.x
-    accepted.document.layers[0].transform.y = provenance.layerSourceContext.bbox.y
+    requireRasterLayer(accepted.document.layers[0]).generationProvenance = provenance
+    requireRasterLayer(accepted.document.layers[0]).transform.x =
+      provenance.layerSourceContext.bbox.x
+    requireRasterLayer(accepted.document.layers[0]).transform.y =
+      provenance.layerSourceContext.bbox.y
     const candidatePath = path.join(directory, 'accepted-output.png')
     await writeFile(candidatePath, output)
 
@@ -505,7 +508,10 @@ test('accepted raster provenance survives dirty shadow recovery and portable Sav
     if (inspection.status !== 'recoverable') {
       return
     }
-    assert.deepEqual(inspection.document.layers[0].generationProvenance, provenance)
+    assert.deepEqual(
+      requireRasterLayer(inspection.document.layers[0]).generationProvenance,
+      provenance,
+    )
     const shadowAsset = inspection.dirtyAssets[accepted.assetPath]
     assert.ok(shadowAsset && 'sourcePath' in shadowAsset)
     assert.deepEqual(await readFile(shadowAsset.sourcePath), output)
@@ -513,20 +519,29 @@ test('accepted raster provenance survives dirty shadow recovery and portable Sav
     const recovered = await ProjectAutosaveCoordinator.recover(projectPath, roots, shadow, {
       leaseRegistry: new ProjectAutosaveLeaseRegistry(),
     })
-    assert.deepEqual(recovered.document.layers[0].generationProvenance, provenance)
+    assert.deepEqual(
+      requireRasterLayer(recovered.document.layers[0]).generationProvenance,
+      provenance,
+    )
     assert.equal(recovered.dirty, true)
     assert.deepEqual(await readFile(projectPath), oldBytes)
 
     const saved = await recovered.save()
     assert.equal(saved.committed, true)
     const persisted = await readIgsPackage(projectPath)
-    assert.deepEqual(persisted.project.layers[0].generationProvenance, provenance)
+    assert.deepEqual(
+      requireRasterLayer(persisted.project.layers[0]).generationProvenance,
+      provenance,
+    )
     assert.deepEqual(await persisted.readMember(accepted.assetPath), output)
 
     const portablePath = path.join(directory, 'portable.igs')
     await copyFile(projectPath, portablePath)
     const portable = await ProjectSession.open(portablePath, roots)
-    assert.deepEqual(portable.document.layers[0].generationProvenance, provenance)
+    assert.deepEqual(
+      requireRasterLayer(portable.document.layers[0]).generationProvenance,
+      provenance,
+    )
     assert.deepEqual(
       await (await readIgsPackage(portablePath)).readMember(accepted.assetPath),
       output,
@@ -551,7 +566,7 @@ test('an attached import session transfers caller-held asset sources before stag
     )
     assert.equal((await coordinator.save()).recovery.status, 'clean')
     assert.deepEqual(
-      (await readIgsPackage(projectPath)).project.layers[0]?.asset.path,
+      requireRasterLayer((await readIgsPackage(projectPath)).project.layers[0])?.asset.path,
       imported.assetPath,
     )
   })
@@ -819,7 +834,7 @@ test('undo after a completed Save can restore an asset removed from the package'
     await rm(sourcePath)
     await coordinator.save()
     const savedWithRaster = coordinator.document
-    const importedRef = savedWithRaster.layers[0]?.asset
+    const importedRef = requireRasterLayer(savedWithRaster.layers[0])?.asset
     assert.ok(importedRef)
     assert.equal(coordinator.getCurrentAssetSource(importedRef), null)
     await coordinator.applyDocument({ ...savedWithRaster, layers: [], title: 'Removed' })
@@ -836,7 +851,7 @@ test('undo after a completed Save can restore an asset removed from the package'
     )
     assert.equal((await coordinator.save()).recovery.status, 'clean')
     assert.deepEqual(
-      (await readIgsPackage(projectPath)).project.layers[0]?.asset.path,
+      requireRasterLayer((await readIgsPackage(projectPath)).project.layers[0])?.asset.path,
       imported.assetPath,
     )
     assert.equal(coordinator.getCurrentAssetSource(importedRef), null)
@@ -948,16 +963,10 @@ test('one grouped Raster edit undoes and redoes both layers and their provenance
     const output = await acceptedOutputPngFixture()
     const first = withRaster(before, output, { height: 8, width: 8 })
     const second = withRaster(before, output, { height: 8, width: 8 })
-    first.document.layers[0].generationProvenance = acceptedRasterProvenanceFixture(
-      before,
-      output,
-      { height: 8, width: 8, x: 0, y: 0 },
-    )
-    second.document.layers[0].generationProvenance = acceptedRasterProvenanceFixture(
-      before,
-      output,
-      { height: 8, width: 8, x: 0, y: 0 },
-    )
+    requireRasterLayer(first.document.layers[0]).generationProvenance =
+      acceptedRasterProvenanceFixture(before, output, { height: 8, width: 8, x: 0, y: 0 })
+    requireRasterLayer(second.document.layers[0]).generationProvenance =
+      acceptedRasterProvenanceFixture(before, output, { height: 8, width: 8, x: 0, y: 0 })
     await coordinator.applyDocument(
       { ...before, layers: [first.document.layers[0], second.document.layers[0]] },
       { [first.assetPath]: { bytes: output }, [second.assetPath]: { bytes: output } },
@@ -979,10 +988,10 @@ test('one grouped Raster edit undoes and redoes both layers and their provenance
       [first.document.layers[0].id, second.document.layers[0].id],
     )
     assert.deepEqual(
-      coordinator.document.layers.map((layer) => layer.generationProvenance),
+      coordinator.document.layers.map((layer) => requireRasterLayer(layer).generationProvenance),
       [
-        first.document.layers[0].generationProvenance,
-        second.document.layers[0].generationProvenance,
+        requireRasterLayer(first.document.layers[0]).generationProvenance,
+        requireRasterLayer(second.document.layers[0]).generationProvenance,
       ],
     )
     assert.equal(coordinator.canUndo, true)
@@ -1250,7 +1259,9 @@ test('Clear History keeps the current document but frees unneeded staged raster 
     const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow)
     const first = withRaster(coordinator.document)
     await coordinator.applyDocument(first.document, { [first.assetPath]: { sourcePath } })
-    const firstSource = coordinator.getCurrentAssetSource(first.document.layers[0].asset)
+    const firstSource = coordinator.getCurrentAssetSource(
+      requireRasterLayer(first.document.layers[0]).asset,
+    )
     assert.ok(firstSource && 'sourcePath' in firstSource)
     const firstStagedPath = firstSource.sourcePath
     const second = withRaster(coordinator.document)
@@ -1261,7 +1272,9 @@ test('Clear History keeps the current document but frees unneeded staged raster 
     assert.equal(coordinator.canRedo, false)
     assert.equal(coordinator.document.layers[0].id, second.document.layers[0].id)
     await assert.rejects(readFile(firstStagedPath), { code: 'ENOENT' })
-    const currentSource = coordinator.getCurrentAssetSource(second.document.layers[0].asset)
+    const currentSource = coordinator.getCurrentAssetSource(
+      requireRasterLayer(second.document.layers[0]).asset,
+    )
     assert.ok(currentSource && 'sourcePath' in currentSource)
     assert.deepEqual(await readFile(currentSource.sourcePath), raster)
     await coordinator.flush()
@@ -1282,14 +1295,16 @@ test('oldest of 64 retained raster snapshots releases its staged source on overf
       const next = withRaster(coordinator.document)
       await coordinator.applyDocument(next.document, { [next.assetPath]: { sourcePath } })
       if (index === 0) {
-        const source = coordinator.getCurrentAssetSource(next.document.layers[0].asset)
+        const source = coordinator.getCurrentAssetSource(
+          requireRasterLayer(next.document.layers[0]).asset,
+        )
         assert.ok(source && 'sourcePath' in source)
         firstStagedPath = source.sourcePath
       }
     }
     await assert.rejects(readFile(firstStagedPath), { code: 'ENOENT' })
     const currentLayer = coordinator.document.layers[0]
-    const currentSource = coordinator.getCurrentAssetSource(currentLayer.asset)
+    const currentSource = coordinator.getCurrentAssetSource(requireRasterLayer(currentLayer).asset)
     assert.ok(currentSource && 'sourcePath' in currentSource)
     assert.deepEqual(await readFile(currentSource.sourcePath), raster)
     for (let index = 0; index < 64; index += 1) {

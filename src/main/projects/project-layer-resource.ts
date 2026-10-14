@@ -1,4 +1,8 @@
-import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
+import type {
+  IgsProjectDocumentV1,
+  IgsRasterLayerV1,
+} from '../../shared/projects/project-schema.js'
+import { projectRasterLayers } from '../../shared/projects/project-schema.js'
 
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { constants, createReadStream } from 'node:fs'
@@ -67,21 +71,21 @@ export function parseProjectLayerImageUrl(input: string): ProjectLayerResourceRe
 export function resolveProjectLayerAsset(
   document: IgsProjectDocumentV1,
   request: ProjectLayerResourceRequest,
-): IgsProjectDocumentV1['layers'][number]['asset'] | null {
+): IgsRasterLayerV1['asset'] | null {
   if (document.documentRevision !== request.documentRevision) {
     return null
   }
-  const layer = document.layers.find((item) => item.id === request.layerId)
+  const layer = projectRasterLayers(document).find((item) => item.id === request.layerId)
   return layer?.asset.sha256 === request.assetSha256 ? layer.asset : null
 }
 
 export async function streamSavedProjectLayer(
   packagePath: string,
-  member: IgsProjectDocumentV1['layers'][number]['asset'],
+  member: IgsRasterLayerV1['asset'],
   scratchRoot: string,
 ): Promise<Response> {
   const archive = await readIgsPackage(packagePath)
-  const saved = archive.project.layers.find(
+  const saved = projectRasterLayers(archive.project).find(
     (layer) =>
       layer.asset.path === member.path &&
       layer.asset.sha256 === member.sha256 &&
@@ -106,7 +110,7 @@ export async function streamSavedProjectLayer(
 /** A current unsaved import is served only from coordinator-owned, reverified staging bytes. */
 export async function streamStagedProjectLayer(
   source: IgsAssetSource,
-  member: IgsProjectDocumentV1['layers'][number]['asset'],
+  member: IgsRasterLayerV1['asset'],
   scratchRoot: string,
 ): Promise<Response> {
   await mkdir(scratchRoot, { recursive: true })
@@ -179,7 +183,7 @@ export async function streamStagedProjectLayer(
 function streamedResponse(
   directory: string,
   destination: string,
-  member: IgsProjectDocumentV1['layers'][number]['asset'],
+  member: IgsRasterLayerV1['asset'],
 ): Response {
   const source = createReadStream(destination)
   source.once('close', () => {

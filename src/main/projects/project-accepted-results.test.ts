@@ -1,6 +1,7 @@
 import {
   createEmptyProjectDocumentV1,
   type IgsProjectDocumentV1,
+  type IgsRasterLayerV1,
   parseProjectDocumentV1,
 } from '../../shared/projects/project-schema.js'
 
@@ -27,7 +28,7 @@ async function documentFixture(): Promise<IgsProjectDocumentV1> {
   const provenance = acceptedRasterProvenanceFixture(empty, png, bbox)
   provenance.executionResultContext.acceptedAt = '2026-10-01T10:00:00.000Z'
   provenance.generationConfiguration.sampling.actualSeed = 0
-  const layer = (id: string): IgsProjectDocumentV1['layers'][number] => ({
+  const layer = (id: string): IgsRasterLayerV1 => ({
     asset: {
       bytes: png.length,
       height: 16,

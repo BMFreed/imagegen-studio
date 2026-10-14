@@ -1,8 +1,13 @@
-import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
+import type {
+  IgsProjectDocumentV1,
+  IgsRasterLayerV1,
+} from '../../shared/projects/project-schema.js'
 import {
   IGS_MIMETYPE,
   IGS_SAFETY_CEILINGS,
   IGS_SCHEMA_VERSION,
+  projectAssetReferences,
+  projectRasterLayers,
 } from '../../shared/projects/project-schema.js'
 
 import { randomUUID } from 'node:crypto'
@@ -81,7 +86,7 @@ export type ProjectGenerationAcceptanceResult = {
   layerIds: string[]
 }
 
-type RasterLayer = IgsProjectDocumentV1['layers'][number]
+type RasterLayer = IgsRasterLayerV1
 
 type PendingCancellation = {
   documentId: string
@@ -115,7 +120,7 @@ export class ProjectGenerationAcceptanceError extends Error {
 
 function acceptedLayers(document: IgsProjectDocumentV1): Map<string, RasterLayer> {
   const accepted = new Map<string, RasterLayer>()
-  for (const layer of document.layers) {
+  for (const layer of projectRasterLayers(document)) {
     const candidateId = layer.generationProvenance?.executionResultContext.candidateId
     if (!candidateId) {
       continue
@@ -838,7 +843,9 @@ function candidateKey(candidateIds: readonly string[]): string {
 function uniqueLayerId(document: IgsProjectDocumentV1, prepared: readonly RasterLayer[]): string {
   let id = randomUUID()
   while (
-    document.layers.some((layer) => layer.id === id) ||
+    document.layers.some(
+      (layer) => layer.id === id || (layer.kind === 'smart-patch' && layer.mask.id === id),
+    ) ||
     prepared.some((layer) => layer.id === id)
   ) {
     id = randomUUID()
@@ -887,7 +894,7 @@ function sameAcceptedLayers(
     const current = document.layers.find((candidate) => candidate.id === layer.id)
     return (
       current !== undefined &&
-      current.kind === layer.kind &&
+      current.kind === 'raster' &&
       isDeepStrictEqual(current.asset, layer.asset) &&
       isDeepStrictEqual(current.sourceIccProfile, layer.sourceIccProfile) &&
       isDeepStrictEqual(current.generationProvenance, layer.generationProvenance)
@@ -910,8 +917,9 @@ function handoffProof(
     document.layers.some(
       (current) =>
         current.id === expected.id ||
-        current.generationProvenance?.executionResultContext.candidateId ===
-          candidateIdFromLayer(expected),
+        (current.kind === 'raster' &&
+          current.generationProvenance?.executionResultContext.candidateId ===
+            candidateIdFromLayer(expected)),
     ),
   )
   return represented ? 'changed' : 'absent'
@@ -936,21 +944,19 @@ function preflightProjectedDocument(document: IgsProjectDocumentV1): void {
   }
 
   const assets = new Map<string, { bytes: number; path: string; raw: unknown; sha256: string }>()
-  for (const layer of document.layers) {
-    for (const asset of [layer.asset, layer.sourceIccProfile]) {
-      if (!asset) {
-        continue
-      }
-      const member = { bytes: asset.bytes, path: asset.path, raw: asset, sha256: asset.sha256 }
-      const existing = assets.get(asset.path)
-      if (existing && !isDeepStrictEqual(existing.raw, asset)) {
-        throw new ProjectGenerationAcceptanceError(
-          'ACCEPTANCE_CONFLICT',
-          'The Project contains conflicting asset references.',
-        )
-      }
-      assets.set(asset.path, member)
+  for (const asset of projectAssetReferences(document)) {
+    if (!asset) {
+      continue
     }
+    const member = { bytes: asset.bytes, path: asset.path, raw: asset, sha256: asset.sha256 }
+    const existing = assets.get(asset.path)
+    if (existing && !isDeepStrictEqual(existing.raw, asset)) {
+      throw new ProjectGenerationAcceptanceError(
+        'ACCEPTANCE_CONFLICT',
+        'The Project contains conflicting asset references.',
+      )
+    }
+    assets.set(asset.path, member)
   }
   // The writer adds mimetype, manifest.json, project.json and two preview members.
   if (assets.size + 5 > DEFAULT_IGS_PACKAGE_LIMITS.archiveEntries) {

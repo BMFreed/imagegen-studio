@@ -43,7 +43,7 @@ export function generationTargetSignature(
 ): string | null {
   const layers = []
   for (const layer of tab.layers) {
-    if (!layer.visible || layer.opacity === 0) {
+    if (layer.kind === 'smart-patch' || !layer.visible || layer.opacity === 0) {
       continue
     }
     const digest = layerAssetDigest(layer)

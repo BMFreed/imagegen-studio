@@ -1,4 +1,9 @@
-import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
+import type {
+  IgsProjectDocumentV1,
+  IgsRasterLayerV1,
+  IgsSmartPatchLayerV1,
+} from '../../shared/projects/project-schema.js'
+import { projectRasterLayers } from '../../shared/projects/project-schema.js'
 
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
@@ -58,7 +63,7 @@ function edit(savedDocument: IgsProjectDocumentV1, title: string): IgsProjectDoc
   }
 }
 
-function rasterLayer(id: string): IgsProjectDocumentV1['layers'][number] {
+function rasterLayer(id: string): IgsRasterLayerV1 {
   return {
     asset: {
       bytes: raster.length,
@@ -77,6 +82,53 @@ function rasterLayer(id: string): IgsProjectDocumentV1['layers'][number] {
     visible: true,
   }
 }
+
+function emptyPatch(document: IgsProjectDocumentV1): IgsSmartPatchLayerV1 {
+  return {
+    activeRasterSubLayerId: null,
+    blendMode: 'normal',
+    boundingBox: { height: 256, width: 384, x: -80, y: 28 },
+    generationDraft: structuredClone(document.generationDraft),
+    id: randomUUID(),
+    internalResolution: { height: 512, width: 768 },
+    kind: 'smart-patch',
+    locked: false,
+    mask: { asset: null, id: randomUUID(), revision: 0 },
+    name: 'Recoverable empty patch',
+    opacity: 1,
+    rasterSubLayers: [],
+    visible: true,
+  }
+}
+
+test('empty Smart Patch shadow recovery retains owned draft and geometry without new assets or saved-package mutation', async () => {
+  await withProject(async ({ autosaveRoot, projectPath, savedDocument, session, store }) => {
+    const original = await readFile(projectPath)
+    const document = edit(savedDocument, 'Pending patch')
+    const patch = emptyPatch(document)
+    patch.generationDraft.positivePrompt.text = 'recover this patch prompt'
+    document.layers = [...document.layers, patch]
+    await store.write({ document, projectPath, savedDocument })
+    const inspected = await new ProjectShadowStore(autosaveRoot).inspect({
+      projectPath,
+      savedPackage: await readIgsPackage(projectPath),
+    })
+    assert.equal(inspected.status, 'recoverable')
+    assert.ok(inspected.status === 'recoverable')
+    assert.deepEqual(inspected.document, document)
+    assert.deepEqual(inspected.dirtyAssets, {})
+    assert.deepEqual(await readFile(projectPath), original)
+    session.applyDocument(inspected.document)
+    await session.save()
+    const reopened = await readIgsPackage(projectPath)
+    assert.deepEqual(reopened.project.layers, document.layers)
+    assert.equal(reopened.manifest.preview.status, 'empty')
+    assert.equal(
+      reopened.manifest.members.some(({ path: member }) => member.startsWith('assets/')),
+      false,
+    )
+  })
+})
 
 test('a new shadow-store instance recovers dirty data from disk without changing the saved package', async () => {
   await withProject(async ({ autosaveRoot, projectPath, savedDocument, session, store }) => {
@@ -332,7 +384,7 @@ test('an unchanged saved raster is not duplicated in a document-only shadow', as
     assert.equal(result.status, 'recoverable')
     if (result.status === 'recoverable') {
       assert.deepEqual(result.dirtyAssets, {})
-      assert.equal(result.document.layers[0]?.asset.path, assetPath)
+      assert.equal(projectRasterLayers(result.document)[0]?.asset.path, assetPath)
     }
   })
 })

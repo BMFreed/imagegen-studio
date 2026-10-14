@@ -4,6 +4,7 @@ import {
   type IgsProjectDocumentV1,
   isIgsMemberPathV1,
   parseProjectDocumentV1,
+  projectAssetReferences,
 } from '../../shared/projects/project-schema.js'
 
 import { createHash, randomUUID } from 'node:crypto'
@@ -511,11 +512,8 @@ function referencedMembers(document: IgsProjectDocumentV1): Map<string, MemberRe
     }
     members.set(member.path, member)
   }
-  for (const layer of document.layers) {
-    add(layer.asset)
-    if (layer.sourceIccProfile) {
-      add(layer.sourceIccProfile)
-    }
+  for (const member of projectAssetReferences(document)) {
+    add(member)
   }
   return members
 }

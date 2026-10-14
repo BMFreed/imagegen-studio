@@ -33,6 +33,8 @@ import ProjectGenerationResultsTray from './ProjectGenerationResultsTray.vue'
 
 const props = defineProps<{
   bbox: IgsRectV1
+  bboxEditingDisabled?: boolean
+  bboxLabel?: string
   candidateActionsDisabled: boolean
   canRedo: boolean
   canUndo: boolean
@@ -57,6 +59,7 @@ const emit = defineEmits<{
   selectLayer: [layerId: string]
   undo: []
 }>()
+const bboxDisabled = computed(() => props.disabled || props.bboxEditingDisabled)
 
 const host = ref<HTMLDivElement | null>(null)
 const stageContainer = ref<HTMLDivElement | null>(null)
@@ -329,7 +332,7 @@ function handleKeydown(event: KeyboardEvent) {
       event.key === 'ArrowDown')
   ) {
     event.preventDefault()
-    if (props.disabled || !bboxShape) {
+    if (bboxDisabled.value || !bboxShape) {
       return
     }
     const step = event.shiftKey ? 10 : 1
@@ -435,7 +438,7 @@ function commitBbox() {
     x: Math.round(bboxShape.x()),
     y: Math.round(bboxShape.y()),
   }
-  if (props.disabled || !validBbox(rect)) {
+  if (bboxDisabled.value || !validBbox(rect)) {
     restoreBbox()
     return
   }
@@ -623,7 +626,7 @@ function updateBboxTool() {
   if (!bboxShape || !bboxTransformer) {
     return
   }
-  const editing = tool.value === 'bbox' && !props.disabled
+  const editing = tool.value === 'bbox' && !bboxDisabled.value
   bboxShape.draggable(editing)
   bboxShape.listening(editing)
   bboxShape.stroke(editing ? token('--app-tab-active-text') : token('--app-text'))
@@ -846,22 +849,19 @@ watch(tool, () => {
   restoreBbox()
   updateBboxTool()
 })
-watch(
-  () => props.disabled,
-  (disabled) => {
-    panMoved = false
-    if (keyboardBboxDirty) {
-      heldArrowKeys.clear()
-      keyboardBboxDirty = false
-      restoreBbox()
-    } else if (!disabled) {
-      // Keep the local drag/nudge position visible until the IPC result arrives.
-      // A failed mutation has no bbox prop update, so leaving busy restores it.
-      restoreBbox()
-    }
-    updateBboxTool()
-  },
-)
+watch(bboxDisabled, (disabled) => {
+  panMoved = false
+  if (keyboardBboxDirty) {
+    heldArrowKeys.clear()
+    keyboardBboxDirty = false
+    restoreBbox()
+  } else if (!disabled) {
+    // Keep the local drag/nudge position visible until the IPC result arrives.
+    // A failed mutation has no bbox prop update, so leaving busy restores it.
+    restoreBbox()
+  }
+  updateBboxTool()
+})
 </script>
 
 <template>
@@ -889,7 +889,7 @@ watch(
       <div ref="stageContainer" aria-hidden="true" class="konva-stage" />
       <slot name="queue" />
       <div class="bbox-readout">
-        Generation area · {{ bbox.width }} × {{ bbox.height }} · X
+        {{ bboxLabel ?? 'Generation area' }} · {{ bbox.width }} × {{ bbox.height }} · X
         {{ localBboxPosition?.x ?? bbox.x }} · Y {{ localBboxPosition?.y ?? bbox.y }}
       </div>
       <div aria-label="Canvas tools" class="tool-rail" role="toolbar">

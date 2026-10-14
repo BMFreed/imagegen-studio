@@ -1,5 +1,9 @@
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
-import { parseProjectDocumentV1 } from '../../shared/projects/project-schema.js'
+import {
+  parseProjectDocumentV1,
+  projectAssetReferences,
+  projectRasterLayers,
+} from '../../shared/projects/project-schema.js'
 
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
@@ -522,7 +526,7 @@ export class ProjectAutosaveCoordinator {
     sha256: string
   }): IgsAssetSource | null {
     this.assertOpen()
-    const ref = this.session.document.layers.find(
+    const ref = projectRasterLayers(this.session.document).find(
       (layer) =>
         layer.asset.path === member.path &&
         layer.asset.sha256 === member.sha256 &&
@@ -1308,11 +1312,8 @@ function referencedMembers(document: IgsProjectDocumentV1): Map<string, AssetRef
     }
     members.set(ref.path, ref)
   }
-  for (const layer of document.layers) {
-    add(layer.asset)
-    if (layer.sourceIccProfile) {
-      add(layer.sourceIccProfile)
-    }
+  for (const member of projectAssetReferences(document)) {
+    add(member)
   }
   return members
 }

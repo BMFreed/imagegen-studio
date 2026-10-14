@@ -18,6 +18,7 @@ import type {
   ProjectRasterLayerView,
   ProjectRebuildResult,
   ProjectSaveResult,
+  ProjectSmartPatchLayerView,
   ProjectSummary,
   ProjectTab,
   RuntimeStatus,
@@ -340,8 +341,13 @@ function isProjectTab(value: unknown): value is ProjectTab {
     isUInt32OrNull(value.lastActualSeedSnapshot) &&
     isProjectRect(value.primaryBbox) &&
     Array.isArray(value.layers) &&
-    value.layers.every(isProjectRasterLayerView) &&
-    isProjectAcceptedResults(value.acceptedResults, value.layers) &&
+    value.layers.every(
+      (layer) => isProjectRasterLayerView(layer) || isProjectSmartPatchLayerView(layer),
+    ) &&
+    isProjectAcceptedResults(
+      value.acceptedResults,
+      value.layers.filter(isProjectRasterLayerView),
+    ) &&
     typeof value.dirty === 'boolean' &&
     (value.autosaveError === null || typeof value.autosaveError === 'string') &&
     (value.storageWarning === undefined || typeof value.storageWarning === 'string')
@@ -468,7 +474,11 @@ function isNullableString(value: unknown): boolean {
 }
 
 function isProjectRasterLayerView(value: unknown): value is ProjectRasterLayerView {
-  if (!isRecord(value) || !isRecord(value.transform)) {
+  if (
+    !isRecord(value) ||
+    !isRecord(value.transform) ||
+    (value.kind !== undefined && value.kind !== 'raster')
+  ) {
     return false
   }
   const transform = value.transform
@@ -490,6 +500,33 @@ function isProjectRasterLayerView(value: unknown): value is ProjectRasterLayerVi
     ['x', 'y', 'scaleX', 'scaleY', 'rotationDegrees'].every(
       (key) => typeof transform[key] === 'number' && Number.isFinite(transform[key]),
     )
+  )
+}
+
+function isProjectSmartPatchLayerView(value: unknown): value is ProjectSmartPatchLayerView {
+  if (!isRecord(value) || !isRecord(value.mask) || value.kind !== 'smart-patch') {
+    return false
+  }
+  return (
+    isProjectDocumentId(value.id) &&
+    typeof value.name === 'string' &&
+    typeof value.visible === 'boolean' &&
+    typeof value.locked === 'boolean' &&
+    typeof value.opacity === 'number' &&
+    Number.isFinite(value.opacity) &&
+    value.opacity >= 0 &&
+    value.opacity <= 1 &&
+    ['multiply', 'normal', 'overlay', 'screen'].includes(String(value.blendMode)) &&
+    isProjectRect(value.boundingBox) &&
+    isProjectDimensions(value.internalResolution) &&
+    isGenerationDraft(value.generationDraft) &&
+    isProjectDocumentId(value.mask.id) &&
+    value.mask.asset === null &&
+    value.mask.revision === 0 &&
+    Array.isArray(value.rasterSubLayers) &&
+    value.rasterSubLayers.length === 0 &&
+    value.activeRasterSubLayerId === null &&
+    value.status === 'empty'
   )
 }
 
@@ -760,8 +797,14 @@ const api: StudioApi = {
         [tabId, candidateIds, focusedCandidateId, expectedAvailableIds, expectedUnfinishedJobIds],
         isProjectTab,
       ),
-    addGenerationLora: (tabId, selection) =>
-      invokeProject(ipcChannels.projects.addGenerationLora, [tabId, selection], isProjectTab),
+    addGenerationLora: (tabId, selection, targetLayerId) =>
+      invokeProject(
+        ipcChannels.projects.addGenerationLora,
+        [tabId, selection, targetLayerId ?? null],
+        isProjectTab,
+      ),
+    addSmartPatchLayer: (tabId) =>
+      invokeProject(ipcChannels.projects.addSmartPatchLayer, [tabId], isProjectTab),
     applyPreset: (tabId, request) =>
       invokeProject(ipcChannels.projects.applyPreset, [tabId, request], isProjectTab),
     cancelCurrentGeneration: (tabId, documentId, expectedJobId) =>
@@ -924,20 +967,36 @@ const api: StudioApi = {
     rebuildPreview: (projectId) =>
       invokeProject(ipcChannels.projects.rebuildPreview, [projectId], isProjectRebuildResult),
     redo: (tabId) => invokeProject(ipcChannels.projects.redo, [tabId], isProjectTab),
-    relinkGenerationEmbedding: (tabId, identity) =>
+    relinkGenerationEmbedding: (tabId, identity, targetLayerId) =>
       invokeProject(
         ipcChannels.projects.relinkGenerationEmbedding,
-        [tabId, identity],
+        [tabId, identity, targetLayerId ?? null],
         isProjectTab,
       ),
-    relinkGenerationLora: (tabId, identity) =>
-      invokeProject(ipcChannels.projects.relinkGenerationLora, [tabId, identity], isProjectTab),
-    relinkGenerationModel: (tabId) =>
-      invokeProject(ipcChannels.projects.relinkGenerationModel, [tabId], isProjectTab),
-    relinkGenerationVae: (tabId) =>
-      invokeProject(ipcChannels.projects.relinkGenerationVae, [tabId], isProjectTab),
-    removeGenerationLora: (tabId, identity) =>
-      invokeProject(ipcChannels.projects.removeGenerationLora, [tabId, identity], isProjectTab),
+    relinkGenerationLora: (tabId, identity, targetLayerId) =>
+      invokeProject(
+        ipcChannels.projects.relinkGenerationLora,
+        [tabId, identity, targetLayerId ?? null],
+        isProjectTab,
+      ),
+    relinkGenerationModel: (tabId, targetLayerId) =>
+      invokeProject(
+        ipcChannels.projects.relinkGenerationModel,
+        [tabId, targetLayerId ?? null],
+        isProjectTab,
+      ),
+    relinkGenerationVae: (tabId, targetLayerId) =>
+      invokeProject(
+        ipcChannels.projects.relinkGenerationVae,
+        [tabId, targetLayerId ?? null],
+        isProjectTab,
+      ),
+    removeGenerationLora: (tabId, identity, targetLayerId) =>
+      invokeProject(
+        ipcChannels.projects.removeGenerationLora,
+        [tabId, identity, targetLayerId ?? null],
+        isProjectTab,
+      ),
     resolveRecovery: (projectId, decision) =>
       invokeProject(ipcChannels.projects.resolveRecovery, [projectId, decision], isProjectTab),
     retryGenerationJob: (review) =>
@@ -963,21 +1022,35 @@ const api: StudioApi = {
       ),
     selectImport: () =>
       invokeProject(ipcChannels.projects.selectImport, [], isProjectImportSelection),
-    setGenerationModel: (tabId, selection) =>
-      invokeProject(ipcChannels.projects.setGenerationModel, [tabId, selection], isProjectTab),
-    setGenerationVae: (tabId, selection) =>
-      invokeProject(ipcChannels.projects.setGenerationVae, [tabId, selection], isProjectTab),
+    setGenerationModel: (tabId, selection, targetLayerId) =>
+      invokeProject(
+        ipcChannels.projects.setGenerationModel,
+        [tabId, selection, targetLayerId ?? null],
+        isProjectTab,
+      ),
+    setGenerationVae: (tabId, selection, targetLayerId) =>
+      invokeProject(
+        ipcChannels.projects.setGenerationVae,
+        [tabId, selection, targetLayerId ?? null],
+        isProjectTab,
+      ),
     setPrimaryBbox: (tabId, rect) =>
       invokeProject(ipcChannels.projects.setPrimaryBbox, [tabId, rect], isProjectTab),
     undo: (tabId) => invokeProject(ipcChannels.projects.undo, [tabId], isProjectTab),
-    updateGenerationDraft: (tabId, change, historyGroupId) =>
+    updateGenerationDraft: (tabId, change, historyGroupId, targetLayerId) =>
       invokeProject(
         ipcChannels.projects.updateGenerationDraft,
-        [tabId, change, historyGroupId ?? null],
+        [tabId, change, historyGroupId ?? null, targetLayerId ?? null],
         isProjectTab,
       ),
     updateRasterLayer: (tabId, layerId, change) =>
       invokeProject(ipcChannels.projects.updateRasterLayer, [tabId, layerId, change], isProjectTab),
+    updateSmartPatchLayer: (tabId, layerId, change) =>
+      invokeProject(
+        ipcChannels.projects.updateSmartPatchLayer,
+        [tabId, layerId, change],
+        isProjectTab,
+      ),
   },
   runtime: {
     getStatus: () => invokeRuntime(ipcChannels.runtime.getStatus),

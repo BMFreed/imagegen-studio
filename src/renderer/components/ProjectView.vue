@@ -87,6 +87,7 @@ import GenerationSettingsComparison from './GenerationSettingsComparison.vue'
 import { type ModelManagerFocus, modelManagerFocusFor } from './model-manager-focus.js'
 import PlainPromptEditor from './PlainPromptEditor.vue'
 import { fitTargetBounds } from './project-canvas-geometry.js'
+import { rasterLayerViews, selectedSmartPatchLayer } from './project-layer-context.js'
 import {
   checkpointCatalog,
   planModelResourceSelection,
@@ -137,6 +138,7 @@ const props = defineProps<{
   presets: PresetRecord[]
   presetsError: string | null
   presetsLoading: boolean
+  projectGenerationDraft: ProjectTab['generationDraft']
   promptHistoryEpoch: number
   reloadRequired: boolean
   runtimeUnavailableReason: string | null
@@ -162,6 +164,7 @@ const emit = defineEmits<{
   acceptCandidates: [selection: { candidateIds: string[]; focusedCandidateId: string | null }]
   acceptedHistoryFocusHandled: [requestId: number]
   addLora: [identity: ProjectLoraIdentity]
+  addPatch: []
   applyBbox: [rect: IgsRectV1]
   cancelGeneration: []
   choosePreset: [id: string]
@@ -193,8 +196,21 @@ const emit = defineEmits<{
   undo: []
   updateDraft: [change: ProjectGenerationDraftChange, historyGroupId?: string]
   updateLayer: [layerId: string, change: Parameters<ProjectApi['updateRasterLayer']>[2]]
+  updatePatch: [layerId: string, change: Parameters<ProjectApi['updateSmartPatchLayer']>[2]]
   validateDraft: [tabId: string, valid: boolean]
 }>()
+
+const selectedLayerId = defineModel<string | null>('selectedLayerId', { required: true })
+const rasterLayers = computed(() => rasterLayerViews(props.tab.layers))
+const activePatch = computed(() => selectedSmartPatchLayer(props.tab.layers, selectedLayerId.value))
+const activeBbox = computed(() => activePatch.value?.boundingBox ?? props.tab.primaryBbox)
+const activeBboxLabel = computed(() =>
+  activePatch.value ? 'Smart Patch bounds' : 'Generation area',
+)
+const activeGeometryDisabled = computed(
+  () => props.busy || props.reloadRequired || Boolean(activePatch.value?.locked),
+)
+const draftEditingDisabled = activeGeometryDisabled
 
 const imagesPerClick = defineModel<number | null>('imagesPerClick', { default: 4 })
 const countInputTheme = { peers: { Input: { paddingMedium: '0 4px' } } }
@@ -241,10 +257,13 @@ function closeQueue() {
 }
 const promptGroups = new Map<PromptPolarity, string>()
 const dynamicPreviewOpen = ref(false)
+watch([() => props.tab.id, () => props.tab.documentId, () => activePatch.value?.id], () => {
+  dynamicPreviewOpen.value = false
+})
 const dynamicSettings = computed({
   get: () => getEffectiveDynamicPromptSettings(props.generationDraft.dynamicPrompt),
   set: (value) => {
-    if (!props.busy && !props.reloadRequired) {
+    if (!draftEditingDisabled.value) {
       emit('updateDraft', { kind: 'dynamic-prompt', value })
     }
   },
@@ -264,6 +283,9 @@ function updatePrompt(
   text: string,
   embeddingSelection?: PromptEmbeddingSelection,
 ) {
+  if (draftEditingDisabled.value) {
+    return
+  }
   emit(
     'updateDraft',
     { kind: `${polarity}-prompt`, text, ...(embeddingSelection ? { embeddingSelection } : {}) },
@@ -351,6 +373,8 @@ const versionValue = computed(() =>
 watch(
   [
     () => props.tab.id,
+    () => props.tab.documentId,
+    () => activePatch.value?.id,
     () => props.generationDraft.model?.localModelId,
     () => props.generationDraft.model?.localVersionId,
     () => props.generationDraft.model?.fileSha256,
@@ -378,8 +402,7 @@ const relinkCandidate = computed(() =>
 )
 const modelPickerDisabled = computed(
   () =>
-    props.busy ||
-    props.reloadRequired ||
+    draftEditingDisabled.value ||
     props.modelCatalogLoading ||
     !props.modelCatalogLoaded ||
     props.modelCatalogError !== null,
@@ -562,8 +585,7 @@ const samplingPairDiagnostic = computed(() => {
 
 function updateAnimaMethod(value: string | null) {
   if (
-    props.busy ||
-    props.reloadRequired ||
+    draftEditingDisabled.value ||
     selectedModel.value?.baseModelFamily !== 'anima' ||
     (value !== null && !isAnimaSamplingMethod(value)) ||
     (props.generationDraft.sampling.animaMethod ?? null) === value
@@ -574,7 +596,7 @@ function updateAnimaMethod(value: string | null) {
 }
 
 function updateSampler(sampler: string | null) {
-  if (props.busy || props.reloadRequired || illustriousSamplingUnavailable.value) {
+  if (draftEditingDisabled.value || illustriousSamplingUnavailable.value) {
     return
   }
   const scheduler =
@@ -595,8 +617,7 @@ function updateSampler(sampler: string | null) {
 function updateScheduler(scheduler: string | null) {
   const sampler = props.generationDraft.sampling.sampler
   if (
-    props.busy ||
-    props.reloadRequired ||
+    draftEditingDisabled.value ||
     illustriousSamplingUnavailable.value ||
     !isIllustriousSamplingDraftPair(sampler, scheduler) ||
     scheduler === props.generationDraft.sampling.scheduler
@@ -659,7 +680,11 @@ const targetReader = new GenerationTargetReader({
     return result.value
   },
 })
-const targetSignature = computed(() => generationTargetSignature(props.tab))
+const targetSignature = computed(() =>
+  activePatch.value
+    ? null
+    : generationTargetSignature({ ...props.tab, layers: rasterLayers.value }),
+)
 watch(
   [() => props.tab.id, () => props.tab.documentId, targetSignature],
   () => {
@@ -741,7 +766,7 @@ function updateSamplingSteps(value: number | null) {
     return
   }
   samplingStepsInput.value = value
-  if (props.busy || props.reloadRequired || props.generationDraft.sampling.steps === value) {
+  if (draftEditingDisabled.value || props.generationDraft.sampling.steps === value) {
     return
   }
   emit('updateDraft', { kind: 'sampling-steps', value })
@@ -773,7 +798,7 @@ function parseCfgScale(raw: string): { kind: 'invalid' } | { kind: 'valid'; valu
 function updateSamplingCfgScaleText(text: string) {
   samplingCfgScaleText.value = text
   const parsed = parseCfgScale(text)
-  if (parsed.kind === 'invalid' || props.busy || props.reloadRequired) {
+  if (parsed.kind === 'invalid' || draftEditingDisabled.value) {
     return
   }
   emit('updateDraft', { kind: 'sampling-cfg-scale', value: parsed.value })
@@ -789,7 +814,7 @@ function normalizeSamplingCfgScaleOnBlur() {
 }
 
 function updateSeedPolicy(policy: ProjectTab['generationDraft']['seed']['policy']) {
-  if (props.busy || props.reloadRequired || policy === props.generationDraft.seed.policy) {
+  if (draftEditingDisabled.value || policy === props.generationDraft.seed.policy) {
     return
   }
   rawFixedSeedInvalid.value = false
@@ -803,7 +828,7 @@ function updateSeedPolicy(policy: ProjectTab['generationDraft']['seed']['policy'
 }
 
 function shuffleSeed() {
-  if (props.busy || props.reloadRequired || props.generationDraft.seed.policy === 'random') {
+  if (draftEditingDisabled.value || props.generationDraft.seed.policy === 'random') {
     return
   }
   const random = crypto.getRandomValues(new Uint32Array(1))[0]!
@@ -830,8 +855,7 @@ function reuseLastSeed() {
 function updateFixedSeed(value: number | null) {
   fixedSeedInput.value = value
   if (
-    props.busy ||
-    props.reloadRequired ||
+    draftEditingDisabled.value ||
     value === null ||
     !Number.isSafeInteger(value) ||
     value < 0 ||
@@ -874,7 +898,6 @@ function restoreInvalidFixedSeed() {
   }
 }
 
-const selectedLayerId = ref<string | null>(null)
 const layersPanel = ref<InstanceType<typeof ProjectLayerStack> | null>(null)
 const comparisonLayerId = ref<string | null>(null)
 const comparisonData = ref<RasterGenerationData | null>(null)
@@ -885,7 +908,7 @@ const comparisonSections = computed(() =>
   comparisonData.value
     ? compareRasterGenerationSettings(comparisonData.value, {
         bbox: props.tab.primaryBbox,
-        generationDraft: props.generationDraft,
+        generationDraft: props.projectGenerationDraft,
         modelCatalog:
           props.modelCatalogLoaded && !props.modelCatalogLoading ? props.modelCatalog : null,
         modelCatalogError: props.modelCatalogError,
@@ -897,7 +920,7 @@ const comparisonSections = computed(() =>
 const comparisonSourceKey = computed(() =>
   JSON.stringify({
     bbox: props.tab.primaryBbox,
-    layers: props.tab.layers.map(({ imageUrl, locked: _locked, name: _name, ...layer }) => ({
+    layers: rasterLayers.value.map(({ imageUrl, locked: _locked, name: _name, ...layer }) => ({
       ...layer,
       asset: /\/([a-f0-9]{64})\/[a-f0-9]{64}\.img$/.exec(imageUrl)?.[1] ?? imageUrl,
     })),
@@ -1105,9 +1128,9 @@ function captureBboxInput(event: Event) {
   }
   const label = event.target.getAttribute('aria-label')
   const key =
-    label === 'Generation area width'
+    label === 'Generation area width' || label === 'Smart Patch width'
       ? 'width'
-      : label === 'Generation area height'
+      : label === 'Generation area height' || label === 'Smart Patch height'
         ? 'height'
         : null
   if (key) {
@@ -1125,13 +1148,14 @@ watch(
   [
     () => props.tab.id,
     () => props.tab.documentId,
-    () => props.tab.primaryBbox.height,
-    () => props.tab.primaryBbox.width,
-    () => props.tab.primaryBbox.x,
-    () => props.tab.primaryBbox.y,
+    () => activePatch.value?.id,
+    () => activeBbox.value.height,
+    () => activeBbox.value.width,
+    () => activeBbox.value.x,
+    () => activeBbox.value.y,
   ],
   () => {
-    Object.assign(draft, props.tab.primaryBbox)
+    Object.assign(draft, activeBbox.value)
     rawBboxInvalid.height = false
     rawBboxInvalid.width = false
   },
@@ -1157,9 +1181,12 @@ const validBbox = computed(
 )
 
 const bboxChanged = computed(() =>
-  (['x', 'y', 'width', 'height'] as const).some((key) => draft[key] !== props.tab.primaryBbox[key]),
+  (['x', 'y', 'width', 'height'] as const).some((key) => draft[key] !== activeBbox.value[key]),
 )
 const savePresetDisabledReason = computed(() => {
+  if (activePatch.value) {
+    return 'Smart Patch presets are not available yet.'
+  }
   if (props.draftPending) {
     return 'Wait for the current settings to finish updating before saving them as a preset.'
   }
@@ -1196,14 +1223,25 @@ function saveResultPreset(layerId: string) {
 }
 
 function applyBbox() {
-  if (!validBbox.value || !bboxChanged.value || props.busy || props.reloadRequired) {
+  if (!validBbox.value || !bboxChanged.value || activeGeometryDisabled.value) {
     return
   }
   const { height, width, x, y } = draft
   if (x === null || y === null || width === null || height === null) {
     return
   }
-  emit('applyBbox', { height, width, x, y })
+  changeActiveBbox({ height, width, x, y })
+}
+
+function changeActiveBbox(rect: IgsRectV1) {
+  if (activeGeometryDisabled.value) {
+    return
+  }
+  if (activePatch.value) {
+    emit('updatePatch', activePatch.value.id, { kind: 'bounding-box', rect })
+  } else {
+    emit('applyBbox', rect)
+  }
 }
 
 function applyBboxOnEnter(event: KeyboardEvent) {
@@ -1223,7 +1261,76 @@ function commitBboxAfterUpdate() {
   void nextTick(applyBbox)
 }
 
+const internalSize = ref<ResolutionSize>({ height: null, width: null })
+const rawInternalInvalid = reactive({ height: false, width: false })
+watch(
+  [
+    () => activePatch.value?.id,
+    () => activePatch.value?.internalResolution.width,
+    () => activePatch.value?.internalResolution.height,
+  ],
+  () => {
+    internalSize.value = activePatch.value
+      ? { ...activePatch.value.internalResolution }
+      : { height: null, width: null }
+    rawInternalInvalid.height = false
+    rawInternalInvalid.width = false
+  },
+  { immediate: true },
+)
+function captureInternalInput(event: Event) {
+  if (!(event.target instanceof HTMLInputElement)) {
+    return
+  }
+  const label = event.target.getAttribute('aria-label')
+  const dimension =
+    label === 'Smart Patch internal width'
+      ? 'width'
+      : label === 'Smart Patch internal height'
+        ? 'height'
+        : null
+  if (!dimension) {
+    return
+  }
+  const raw = event.target.value.trim()
+  const value = Number(raw)
+  rawInternalInvalid[dimension] =
+    !/^\d+$/.test(raw) ||
+    !Number.isSafeInteger(value) ||
+    value < 1 ||
+    value > IGS_SAFETY_CEILINGS.rasterDimension
+}
+function commitInternalSize() {
+  const patch = activePatch.value
+  const { height, width } = internalSize.value
+  if (
+    !patch ||
+    activeGeometryDisabled.value ||
+    rawInternalInvalid.width ||
+    rawInternalInvalid.height ||
+    width === null ||
+    height === null ||
+    !Number.isSafeInteger(width) ||
+    !Number.isSafeInteger(height) ||
+    width < 1 ||
+    height < 1 ||
+    width > IGS_SAFETY_CEILINGS.rasterDimension ||
+    height > IGS_SAFETY_CEILINGS.rasterDimension
+  ) {
+    return
+  }
+  if (width !== patch.internalResolution.width || height !== patch.internalResolution.height) {
+    emit('updatePatch', patch.id, { kind: 'internal-resolution', size: { height, width } })
+  }
+}
+function commitInternalAfterUpdate() {
+  void nextTick(commitInternalSize)
+}
+
 const generationBlockingReason = computed(() => {
+  if (activePatch.value) {
+    return 'Smart Patch generation is not available yet.'
+  }
   if (rawBboxInvalid.height || rawBboxInvalid.width || !validBbox.value) {
     return 'Enter a valid generation area size and press Enter before generating.'
   }
@@ -1341,11 +1448,14 @@ function generate() {
 
 const activeFitLayer = computed(
   () =>
-    props.tab.layers.find(
+    rasterLayers.value.find(
       (layer) => layer.id === selectedLayerId.value && layer.visible && layer.opacity > 0,
     ) ?? null,
 )
 const fitBbox = computed<IgsRectV1 | null>(() => {
+  if (activePatch.value) {
+    return props.tab.primaryBbox
+  }
   if (!activeFitLayer.value) {
     return null
   }
@@ -1374,13 +1484,13 @@ const canFitBbox = computed(
   () =>
     fitBbox.value !== null &&
     (['x', 'y', 'width', 'height'] as const).some(
-      (key) => fitBbox.value?.[key] !== props.tab.primaryBbox[key],
+      (key) => fitBbox.value?.[key] !== activeBbox.value[key],
     ),
 )
 
 function applyFitBbox() {
-  if (fitBbox.value && canFitBbox.value && !props.busy && !props.reloadRequired) {
-    emit('applyBbox', fitBbox.value)
+  if (fitBbox.value && canFitBbox.value && !activeGeometryDisabled.value) {
+    changeActiveBbox(fitBbox.value)
   }
 }
 </script>
@@ -1517,6 +1627,9 @@ function applyFitBbox() {
         </footer>
         <div class="settings-scroll">
           <ProjectPresetCard
+            :applyDisabledReason="
+              activePatch ? 'Smart Patch preset Apply is not available yet.' : null
+            "
             :catalog="modelCatalog"
             :catalogReady="modelCatalogLoaded && !modelCatalogLoading && modelCatalogError === null"
             :disabled="busy || reloadRequired"
@@ -1720,7 +1833,7 @@ function applyFitBbox() {
             <div class="prompt-field">
               <PlainPromptEditor
                 ariaLabel="Positive prompt"
-                :disabled="busy || reloadRequired"
+                :disabled="draftEditingDisabled"
                 dynamicPreviewAvailable
                 :embeddingCatalogReady
                 :embeddingRefs="generationDraft.positivePrompt.embeddingRefs"
@@ -1739,7 +1852,7 @@ function applyFitBbox() {
                 @update:modelValue="updatePrompt('positive', $event)"
               />
               <PromptEmbeddingDiagnostics
-                :disabled="busy || reloadRequired"
+                :disabled="draftEditingDisabled"
                 :matches="positiveEmbeddingMatches"
                 title="Positive prompt"
                 @manage="openEmbeddingManager"
@@ -1749,7 +1862,7 @@ function applyFitBbox() {
             <div class="prompt-field">
               <PlainPromptEditor
                 ariaLabel="Negative prompt"
-                :disabled="busy || reloadRequired"
+                :disabled="draftEditingDisabled"
                 dynamicPreviewAvailable
                 :embeddingCatalogReady
                 :embeddingRefs="generationDraft.negativePrompt.embeddingRefs"
@@ -1768,7 +1881,7 @@ function applyFitBbox() {
                 @update:modelValue="updatePrompt('negative', $event)"
               />
               <PromptEmbeddingDiagnostics
-                :disabled="busy || reloadRequired"
+                :disabled="draftEditingDisabled"
                 :matches="negativeEmbeddingMatches"
                 title="Negative prompt"
                 @manage="openEmbeddingManager"
@@ -1778,7 +1891,7 @@ function applyFitBbox() {
             <ProjectLoraStack
               :catalog="modelCatalog"
               :catalogReady="modelCatalogLoaded && !modelCatalogError"
-              :disabled="busy || reloadRequired"
+              :disabled="draftEditingDisabled"
               :draft="generationDraft"
               :loading="modelCatalogLoading"
               @add="emit('addLora', $event)"
@@ -1796,7 +1909,7 @@ function applyFitBbox() {
               <NSelect
                 aria-label="Anima method"
                 clearable
-                :disabled="busy || reloadRequired"
+                :disabled="draftEditingDisabled"
                 :options="ANIMA_SAMPLING_METHOD_OPTIONS"
                 placeholder="Choose method"
                 size="small"
@@ -1809,7 +1922,7 @@ function applyFitBbox() {
                 <NSelect
                   aria-label="Sampler"
                   clearable
-                  :disabled="busy || reloadRequired || illustriousSamplingUnavailable"
+                  :disabled="draftEditingDisabled || illustriousSamplingUnavailable"
                   :options="samplerOptions"
                   placeholder="Choose sampler"
                   size="small"
@@ -1822,8 +1935,7 @@ function applyFitBbox() {
                   aria-label="Scheduler"
                   clearable
                   :disabled="
-                    busy ||
-                    reloadRequired ||
+                    draftEditingDisabled ||
                     illustriousSamplingUnavailable ||
                     generationDraft.sampling.sampler === null
                   "
@@ -1845,7 +1957,7 @@ function applyFitBbox() {
               <NFormItem label="Steps" :showFeedback="false">
                 <div class="sampling-input" @input.capture="captureSamplingStepsInput">
                   <NInputNumber
-                    :disabled="busy || reloadRequired"
+                    :disabled="draftEditingDisabled"
                     :inputProps="{ 'aria-label': 'Steps' }"
                     :min="1"
                     :showButton="false"
@@ -1858,7 +1970,7 @@ function applyFitBbox() {
               </NFormItem>
               <NFormItem label="CFG scale" :showFeedback="false">
                 <NInput
-                  :disabled="busy || reloadRequired"
+                  :disabled="draftEditingDisabled"
                   :inputProps="{ 'aria-label': 'CFG scale', inputmode: 'decimal' }"
                   size="small"
                   :value="samplingCfgScaleText"
@@ -1875,7 +1987,7 @@ function applyFitBbox() {
               Enter a CFG scale of zero or greater, or leave it unset.
             </p>
             <ProjectDenoisingStrength
-              :editingDisabled="busy || reloadRequired"
+              :editingDisabled="draftEditingDisabled"
               :modelFamily="selectedModel?.baseModelFamily ?? null"
               :modelValue="generationDraft.sampling.denoisingStrength"
               :runtimeUnavailableReason
@@ -1891,7 +2003,7 @@ function applyFitBbox() {
               <NFormItem label="Seed" :showFeedback="false">
                 <div class="fixed-seed-input" @input.capture="captureFixedSeedInput">
                   <NInputNumber
-                    :disabled="busy || reloadRequired || generationDraft.seed.policy === 'random'"
+                    :disabled="draftEditingDisabled || generationDraft.seed.policy === 'random'"
                     :inputProps="{ 'aria-label': 'Generation seed' }"
                     :max="0xff_ff_ff_ff"
                     :min="0"
@@ -1906,7 +2018,7 @@ function applyFitBbox() {
               <NFormItem label="Random" :showFeedback="false">
                 <NSwitch
                   aria-label="Random seed switch"
-                  :disabled="busy || reloadRequired"
+                  :disabled="draftEditingDisabled"
                   size="small"
                   :value="generationDraft.seed.policy === 'random'"
                   @update:value="updateSeedPolicy($event ? 'random' : 'fixed')"
@@ -1914,7 +2026,7 @@ function applyFitBbox() {
               </NFormItem>
               <div class="seed-actions">
                 <NButton
-                  :disabled="busy || reloadRequired || generationDraft.seed.policy === 'random'"
+                  :disabled="draftEditingDisabled || generationDraft.seed.policy === 'random'"
                   secondary
                   size="small"
                   @click="shuffleSeed"
@@ -1925,8 +2037,7 @@ function applyFitBbox() {
                 <NButton
                   :aria-pressed="generationDraft.seed.policy === 'reuse'"
                   :disabled="
-                    busy ||
-                    reloadRequired ||
+                    draftEditingDisabled ||
                     (lastActualSeed === null && generationDraft.seed.policy !== 'reuse')
                   "
                   secondary
@@ -1953,7 +2064,7 @@ function applyFitBbox() {
               Last completed seed: {{ lastActualSeed }}
             </p>
             <ProjectGenerationAdvancedOptions
-              :editingDisabled="busy || reloadRequired"
+              :editingDisabled="draftEditingDisabled"
               :modelFamily="selectedModel?.baseModelFamily ?? null"
               :modelValue="generationDraft.cfgRescale ?? null"
               :runtimeSupported="generationState?.cfgRescaleSupported ?? null"
@@ -1968,7 +2079,7 @@ function applyFitBbox() {
                 <ProjectVaePicker
                   :catalog="modelCatalog"
                   :catalogReady="modelCatalogLoaded && !modelCatalogError"
-                  :disabled="busy || reloadRequired"
+                  :disabled="draftEditingDisabled"
                   :loading="modelCatalogLoading"
                   :modelFamily="selectedModel?.baseModelFamily ?? null"
                   :runtimeSupported="generationState?.externalVaeSupported ?? null"
@@ -1981,20 +2092,22 @@ function applyFitBbox() {
             </ProjectGenerationAdvancedOptions>
           </section>
           <section
-            aria-label="Generation area"
+            :aria-label="activeBboxLabel"
             class="settings-section"
             @input.capture="captureBboxInput"
             @keydown.enter="applyBboxOnEnter"
           >
             <div class="generation-area-heading">
-              <h2>Generation area</h2>
+              <h2>{{ activeBboxLabel }}</h2>
               <NTooltip>
                 <template v-slot:trigger>
                   <span class="fit-bbox-trigger">
                     <NButton
-                      aria-label="Fit to active layer"
+                      :aria-label="
+                        activePatch ? 'Fit patch to generation area' : 'Fit to active layer'
+                      "
                       circle
-                      :disabled="!canFitBbox || busy || reloadRequired"
+                      :disabled="!canFitBbox || activeGeometryDisabled"
                       :loading="pending === 'bbox'"
                       quaternary
                       size="tiny"
@@ -2005,31 +2118,62 @@ function applyFitBbox() {
                   </span>
                 </template>
                 {{
-                  !activeFitLayer
-                    ? 'Select a visible layer to fit'
-                    : canFitBbox
-                      ? 'Fit to active layer'
-                      : 'Generation area already fits the active layer'
+                  activePatch
+                    ? canFitBbox
+                      ? 'Fit patch to generation area'
+                      : 'Patch bounds already match the generation area'
+                    : !activeFitLayer
+                      ? 'Select a visible layer to fit'
+                      : canFitBbox
+                        ? 'Fit to active layer'
+                        : 'Generation area already fits the active layer'
                 }}
               </NTooltip>
             </div>
             <ResolutionControl
               v-model="draftSize"
               class="bbox-size"
-              :disabled="busy || reloadRequired"
-              heightLabel="Generation area height"
+              :disabled="activeGeometryDisabled"
+              :heightLabel="activePatch ? 'Smart Patch height' : 'Generation area height'"
               layout="expanded-preview"
               :max="IGS_SAFETY_CEILINGS.rasterDimension"
-              widthLabel="Generation area width"
+              :widthLabel="activePatch ? 'Smart Patch width' : 'Generation area width'"
               @commit="commitBboxAfterUpdate"
             />
+          </section>
+          <section
+            v-if="activePatch"
+            aria-label="Smart Patch internal resolution"
+            class="settings-section"
+            @input.capture="captureInternalInput"
+            @keydown.enter="commitInternalAfterUpdate"
+          >
+            <h2>Internal resolution</h2>
+            <ResolutionControl
+              v-model="internalSize"
+              :disabled="activeGeometryDisabled"
+              heightLabel="Smart Patch internal height"
+              layout="expanded-preview"
+              :max="IGS_SAFETY_CEILINGS.rasterDimension"
+              widthLabel="Smart Patch internal width"
+              @commit="commitInternalAfterUpdate"
+            />
+            <p
+              v-if="rawInternalInvalid.width || rawInternalInvalid.height"
+              class="sampling-validation"
+              role="alert"
+            >
+              Enter a valid internal resolution and press Enter.
+            </p>
           </section>
         </div>
       </aside>
 
       <ProjectCanvas
         :key="tab.id"
-        :bbox="tab.primaryBbox"
+        :bbox="activeBbox"
+        :bboxEditingDisabled="activeGeometryDisabled"
+        :bboxLabel="activeBboxLabel"
         :canRedo="tab.canRedo"
         :canUndo="tab.canUndo"
         :candidateActionsDisabled="busy"
@@ -2038,12 +2182,12 @@ function applyFitBbox() {
         :generationResults="generationResults?.candidates ?? []"
         :generationResultsLoading
         :historyPending="pending === 'undo' || pending === 'redo' ? pending : null"
-        :layers="tab.layers"
+        :layers="rasterLayers"
         :projectKey="tab.id"
         :resultFocus="generationResultFocus"
         :selectedLayerId
         @acceptCandidates="emit('acceptCandidates', $event)"
-        @changeBbox="emit('applyBbox', $event)"
+        @changeBbox="changeActiveBbox"
         @redo="emit('redo')"
         @refreshGenerationResults="emit('refreshGenerationResults')"
         @resultFocusHandled="emit('resultFocusHandled', $event)"
@@ -2078,10 +2222,12 @@ function applyFitBbox() {
           :generatedLayerIds="tab.acceptedResults.map((result) => result.layerId)"
           :importing="pending === 'import-image'"
           :layers="tab.layers"
+          @addPatch="emit('addPatch')"
           @importImage="emit('importImage')"
           @move="(layerId, targetIndex) => emit('moveLayer', layerId, targetIndex)"
           @saveResultPreset="saveResultPreset"
           @update="(layerId, change) => emit('updateLayer', layerId, change)"
+          @updatePatch="(layerId, change) => emit('updatePatch', layerId, change)"
         >
           <template v-slot:comparison="{ layer }">
             <GenerationSettingsComparison
@@ -2111,7 +2257,7 @@ function applyFitBbox() {
       :key="`${tab.id}:${tab.documentId}`"
       v-model:show="acceptedResultsOpen"
       :disabled="busy || reloadRequired"
-      :layers="tab.layers"
+      :layers="rasterLayers"
       :results="tab.acceptedResults"
       @closed="revealAcceptedResultLayer"
       @selectLayer="selectAcceptedResultLayer"
@@ -2119,7 +2265,7 @@ function applyFitBbox() {
     <DynamicPromptPreview
       v-model:settings="dynamicSettings"
       v-model:show="dynamicPreviewOpen"
-      :disabled="busy || reloadRequired"
+      :disabled="draftEditingDisabled"
       :negativePrompt="generationDraft.negativePrompt.text"
       :positivePrompt="generationDraft.positivePrompt.text"
     />

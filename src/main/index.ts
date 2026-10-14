@@ -6,6 +6,7 @@ import {
   isProjectGenerationModelSelection,
   isProjectLoraIdentity,
   isProjectRasterLayerChange,
+  isProjectSmartPatchLayerChange,
 } from '../shared/api.js'
 import type {
   ApiResult,
@@ -17,6 +18,7 @@ import type {
   ProjectLoraIdentity,
   ProjectOpenResult,
   ProjectRasterLayerChange,
+  ProjectSmartPatchLayerChange,
   ProjectTab,
   RuntimeStatus,
   SetCheckpointNoiseProfileChange,
@@ -1013,6 +1015,8 @@ if (!gotInstanceLock) {
       const isHistoryGroupId = (value: unknown): value is string =>
         typeof value === 'string' &&
         /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(value)
+      const isOptionalPatchTarget = (value: unknown): boolean =>
+        value === null || isProjectDocumentId(value)
       const oneProjectId = (args: unknown[]): boolean => args.length === 1 && isProjectId(args[0])
       const closeProjectArgs = (args: unknown[]): boolean =>
         args.length === 2 && isProjectId(args[0]) && typeof args[1] === 'boolean'
@@ -1358,11 +1362,14 @@ if (!gotInstanceLock) {
       registerProjectHandler(
         ipcChannels.projects.addGenerationLora,
         (args) =>
-          args.length === 2 &&
-          isProjectId(args[0]) &&
-          args[1] !== null &&
-          isProjectGenerationModelSelection(args[1]),
-        async (tabId, selection) => {
+          args.length === 3 &&
+          isOptionalPatchTarget(args[2]) &&
+          ((args) =>
+            args.length === 2 &&
+            isProjectId(args[0]) &&
+            args[1] !== null &&
+            isProjectGenerationModelSelection(args[1]))(args.slice(0, 2)),
+        async (tabId, selection, targetLayerId) => {
           if (!modelStorageAvailable) {
             throw new ModelServiceError(
               'MODEL_STORAGE_UNAVAILABLE',
@@ -1374,23 +1381,45 @@ if (!gotInstanceLock) {
             chosen.resourceId,
             chosen.versionId,
           )
-          return projectService.addGenerationLora(tabId as string, resource)
+          return projectService.addGenerationLora(
+            tabId as string,
+            resource,
+            (targetLayerId as string | null) ?? undefined,
+          )
         },
       )
       registerProjectHandler(
         ipcChannels.projects.removeGenerationLora,
-        (args) => args.length === 2 && isProjectId(args[0]) && isProjectLoraIdentity(args[1]),
-        (tabId, identity) =>
-          projectService.removeGenerationLora(tabId as string, identity as ProjectLoraIdentity),
+        (args) =>
+          args.length === 3 &&
+          isOptionalPatchTarget(args[2]) &&
+          ((args) => args.length === 2 && isProjectId(args[0]) && isProjectLoraIdentity(args[1]))(
+            args.slice(0, 2),
+          ),
+        (tabId, identity, targetLayerId) =>
+          projectService.removeGenerationLora(
+            tabId as string,
+            identity as ProjectLoraIdentity,
+            (targetLayerId as string | null) ?? undefined,
+          ),
       )
       registerProjectHandler(
         ipcChannels.projects.setGenerationModel,
         (args) =>
-          args.length === 2 && isProjectId(args[0]) && isProjectGenerationModelSelection(args[1]),
-        async (tabId, selection) => {
+          args.length === 3 &&
+          isOptionalPatchTarget(args[2]) &&
+          ((args) =>
+            args.length === 2 &&
+            isProjectId(args[0]) &&
+            isProjectGenerationModelSelection(args[1]))(args.slice(0, 2)),
+        async (tabId, selection, targetLayerId) => {
           const chosen = selection as ProjectGenerationModelSelection
           if (chosen === null) {
-            return await projectService.setGenerationModel(tabId as string, null)
+            return await projectService.setGenerationModel(
+              tabId as string,
+              null,
+              (targetLayerId as string | null) ?? undefined,
+            )
           }
           if (!modelStorageAvailable) {
             throw new ModelServiceError(
@@ -1402,13 +1431,22 @@ if (!gotInstanceLock) {
             chosen.resourceId,
             chosen.versionId,
           )
-          return await projectService.setGenerationModel(tabId as string, model)
+          return await projectService.setGenerationModel(
+            tabId as string,
+            model,
+            (targetLayerId as string | null) ?? undefined,
+          )
         },
       )
       registerProjectHandler(
         ipcChannels.projects.relinkGenerationLora,
-        (args) => args.length === 2 && isProjectId(args[0]) && isProjectLoraIdentity(args[1]),
-        async (tabId, identity) => {
+        (args) =>
+          args.length === 3 &&
+          isOptionalPatchTarget(args[2]) &&
+          ((args) => args.length === 2 && isProjectId(args[0]) && isProjectLoraIdentity(args[1]))(
+            args.slice(0, 2),
+          ),
+        async (tabId, identity, targetLayerId) => {
           if (!modelStorageAvailable) {
             throw new ModelServiceError(
               'MODEL_STORAGE_UNAVAILABLE',
@@ -1419,21 +1457,25 @@ if (!gotInstanceLock) {
             tabId as string,
             identity as ProjectLoraIdentity,
             (saved) => modelService.resolvePortableGenerationLora(saved),
+            (targetLayerId as string | null) ?? undefined,
           )
         },
       )
       registerProjectHandler(
         ipcChannels.projects.relinkGenerationModel,
-        oneProjectId,
-        async (tabId) => {
+        (args) =>
+          args.length === 2 && isOptionalPatchTarget(args[1]) && oneProjectId(args.slice(0, 1)),
+        async (tabId, targetLayerId) => {
           if (!modelStorageAvailable) {
             throw new ModelServiceError(
               'MODEL_STORAGE_UNAVAILABLE',
               'Managed model storage needs repair.',
             )
           }
-          return await projectService.relinkGenerationModel(tabId as string, (saved) =>
-            modelService.resolvePortableGenerationCheckpoint(saved),
+          return await projectService.relinkGenerationModel(
+            tabId as string,
+            (saved) => modelService.resolvePortableGenerationCheckpoint(saved),
+            (targetLayerId as string | null) ?? undefined,
           )
         },
       )
@@ -1447,6 +1489,27 @@ if (!gotInstanceLock) {
           }
           return await action()
         })
+      registerProjectHandler(ipcChannels.projects.addSmartPatchLayer, oneProjectId, (tabId) =>
+        runProjectDocumentAction(tabId as string, () =>
+          projectService.addSmartPatchLayer(tabId as string),
+        ),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.updateSmartPatchLayer,
+        (args) =>
+          args.length === 3 &&
+          isProjectId(args[0]) &&
+          isProjectDocumentId(args[1]) &&
+          isProjectSmartPatchLayerChange(args[2]),
+        (tabId, layerId, change) =>
+          runProjectDocumentAction(tabId as string, () =>
+            projectService.updateSmartPatchLayer(
+              tabId as string,
+              layerId as string,
+              change as ProjectSmartPatchLayerChange,
+            ),
+          ),
+      )
       registerProjectHandler(
         ipcChannels.projects.applyPreset,
         (args) => {
@@ -1480,12 +1543,21 @@ if (!gotInstanceLock) {
       registerProjectHandler(
         ipcChannels.projects.setGenerationVae,
         (args) =>
-          args.length === 2 && isProjectId(args[0]) && isProjectGenerationModelSelection(args[1]),
-        (tabId, selection) =>
+          args.length === 3 &&
+          isOptionalPatchTarget(args[2]) &&
+          ((args) =>
+            args.length === 2 &&
+            isProjectId(args[0]) &&
+            isProjectGenerationModelSelection(args[1]))(args.slice(0, 2)),
+        (tabId, selection, targetLayerId) =>
           runProjectDocumentAction(tabId as string, async () => {
             const chosen = selection as ProjectGenerationModelSelection
             if (chosen === null) {
-              return projectService.setGenerationVae(tabId as string, null)
+              return projectService.setGenerationVae(
+                tabId as string,
+                null,
+                (targetLayerId as string | null) ?? undefined,
+              )
             }
             if (!modelStorageAvailable) {
               throw new ModelServiceError(
@@ -1493,28 +1565,42 @@ if (!gotInstanceLock) {
                 'Managed model storage needs repair.',
               )
             }
-            return projectService.setGenerationVae(tabId as string, () =>
-              modelService.resolveGenerationVae(chosen.resourceId, chosen.versionId),
+            return projectService.setGenerationVae(
+              tabId as string,
+              () => modelService.resolveGenerationVae(chosen.resourceId, chosen.versionId),
+              (targetLayerId as string | null) ?? undefined,
             )
           }),
       )
-      registerProjectHandler(ipcChannels.projects.relinkGenerationVae, oneProjectId, (tabId) =>
-        runProjectDocumentAction(tabId as string, async () => {
-          if (!modelStorageAvailable) {
-            throw new ModelServiceError(
-              'MODEL_STORAGE_UNAVAILABLE',
-              'Managed model storage needs repair.',
+      registerProjectHandler(
+        ipcChannels.projects.relinkGenerationVae,
+        (args) =>
+          args.length === 2 && isOptionalPatchTarget(args[1]) && oneProjectId(args.slice(0, 1)),
+        (tabId, targetLayerId) =>
+          runProjectDocumentAction(tabId as string, async () => {
+            if (!modelStorageAvailable) {
+              throw new ModelServiceError(
+                'MODEL_STORAGE_UNAVAILABLE',
+                'Managed model storage needs repair.',
+              )
+            }
+            return projectService.relinkGenerationVae(
+              tabId as string,
+              (saved) => modelService.resolvePortableGenerationVae(saved),
+              (targetLayerId as string | null) ?? undefined,
             )
-          }
-          return projectService.relinkGenerationVae(tabId as string, (saved) =>
-            modelService.resolvePortableGenerationVae(saved),
-          )
-        }),
+          }),
       )
       registerProjectHandler(
         ipcChannels.projects.relinkGenerationEmbedding,
-        (args) => args.length === 2 && isProjectId(args[0]) && isProjectEmbeddingIdentity(args[1]),
-        (tabId, identity) =>
+        (args) =>
+          args.length === 3 &&
+          isOptionalPatchTarget(args[2]) &&
+          ((args) =>
+            args.length === 2 && isProjectId(args[0]) && isProjectEmbeddingIdentity(args[1]))(
+            args.slice(0, 2),
+          ),
+        (tabId, identity, targetLayerId) =>
           runProjectDocumentAction(tabId as string, async () => {
             if (!modelStorageAvailable) {
               throw new ModelServiceError(
@@ -1526,6 +1612,7 @@ if (!gotInstanceLock) {
               tabId as string,
               identity as ProjectEmbeddingIdentity,
               (saved) => modelService.resolvePortableGenerationEmbedding(saved),
+              (targetLayerId as string | null) ?? undefined,
             )
           }),
       )
@@ -1536,22 +1623,26 @@ if (!gotInstanceLock) {
       )
       registerProjectHandler(
         ipcChannels.projects.updateGenerationDraft,
-        (args) => {
-          const change = args[1]
-          return (
-            args.length === 3 &&
-            isProjectId(args[0]) &&
-            isProjectGenerationDraftChange(change) &&
-            (args[2] === null ||
-              (isHistoryGroupId(args[2]) &&
-                (change.kind === 'positive-prompt' || change.kind === 'negative-prompt')))
-          )
-        },
-        (tabId, change, historyGroupId) =>
+        (args) =>
+          args.length === 4 &&
+          isOptionalPatchTarget(args[3]) &&
+          ((args) => {
+            const change = args[1]
+            return (
+              args.length === 3 &&
+              isProjectId(args[0]) &&
+              isProjectGenerationDraftChange(change) &&
+              (args[2] === null ||
+                (isHistoryGroupId(args[2]) &&
+                  (change.kind === 'positive-prompt' || change.kind === 'negative-prompt')))
+            )
+          })(args.slice(0, 3)),
+        (tabId, change, historyGroupId, targetLayerId) =>
           projectService.updateGenerationDraft(
             tabId as string,
             change as ProjectGenerationDraftChange,
             (historyGroupId as string | null) ?? undefined,
+            (targetLayerId as string | null) ?? undefined,
           ),
       )
       registerProjectHandler(

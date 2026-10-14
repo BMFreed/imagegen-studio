@@ -1,7 +1,11 @@
 import {
   createEmptyProjectDocumentV1,
   type IgsProjectDocumentV1,
+  type IgsRasterLayerV1,
   IgsSchemaError,
+  type IgsSmartPatchLayerV1,
+  projectAssetReferences,
+  projectRasterLayers,
 } from '../../shared/projects/project-schema.js'
 
 import assert from 'node:assert/strict'
@@ -31,6 +35,7 @@ import {
   saveIgsPackage,
   validateSrgbPngStream,
 } from './igs-package.js'
+import { requireRasterLayer } from './test-fixtures/require-raster-layer.js'
 
 // Real encoded 2x2 images. Preview production is injected by the caller, never faked by the ZIP layer.
 const PNG = Buffer.from(
@@ -138,7 +143,9 @@ function emptyInput(title = 'First Project') {
   }
 }
 
-function rasterProject(title = 'Raster Project'): IgsProjectDocumentV1 {
+function rasterProject(
+  title = 'Raster Project',
+): Omit<IgsProjectDocumentV1, 'layers'> & { layers: IgsRasterLayerV1[] } {
   const base = createEmptyProjectDocumentV1({ title })
   const id = randomUUID()
   return {
@@ -164,6 +171,125 @@ function rasterProject(title = 'Raster Project'): IgsProjectDocumentV1 {
     ],
   }
 }
+
+function emptyPatch(document: IgsProjectDocumentV1): IgsSmartPatchLayerV1 {
+  return {
+    activeRasterSubLayerId: null,
+    blendMode: 'normal',
+    boundingBox: { height: 256, width: 384, x: -21, y: 34 },
+    generationDraft: structuredClone(document.generationDraft),
+    id: randomUUID(),
+    internalResolution: { height: 512, width: 768 },
+    kind: 'smart-patch',
+    locked: false,
+    mask: { asset: null, id: randomUUID(), revision: 0 },
+    name: 'Owned empty patch',
+    opacity: 1,
+    rasterSubLayers: [],
+    visible: true,
+  }
+}
+
+test('empty Smart Patch Save and portable reopen retain owned data with only the required archive members', async () => {
+  await inTemporaryDirectory(async (directory) => {
+    const target = path.join(directory, 'patch.igs')
+    const input = emptyInput()
+    const patch = emptyPatch(input.project)
+    patch.generationDraft.positivePrompt.text = 'owned patch prompt'
+    input.project.layers.push(patch)
+    await saveIgsPackage(target, input)
+    const opened = await readIgsPackage(target)
+    assert.deepEqual(opened.project, input.project)
+    assert.deepEqual(projectRasterLayers(opened.project), [])
+    assert.deepEqual(projectAssetReferences(opened.project), [])
+    assert.deepEqual((await rawEntries(target)).map(([name]) => name).sort(), [
+      'manifest.json',
+      'mimetype',
+      'preview/merged.png',
+      'preview/thumbnail.webp',
+      'project.json',
+    ])
+    assert.equal(opened.manifest.preview.status, 'empty')
+    const copied = path.join(directory, 'elsewhere.igs')
+    await copyFile(target, copied)
+    assert.deepEqual((await readIgsPackage(copied)).project, input.project)
+    assert.deepEqual(await opened.readMember('preview/merged.png'), PNG)
+    const second = emptyPatch(input.project)
+    assert.notEqual(second.mask.id, patch.mask.id)
+    input.project.layers.push(second)
+    input.project.documentRevision = randomUUID()
+    await saveIgsPackage(target, input)
+    assert.deepEqual((await readIgsPackage(target)).project, input.project)
+    assert.equal((await readIgsPackage(copied)).project.layers.length, 1)
+  })
+})
+
+test('adding an empty Smart Patch preserves a legacy Raster image and preview bounds through Save/reopen', async () => {
+  await inTemporaryDirectory(async (directory) => {
+    const target = path.join(directory, 'mixed.igs')
+    const legacy = rasterProject()
+    const raster = legacy.layers[0]
+    const preview = {
+      merged: PNG,
+      rect: { height: 2, width: 2, x: 0, y: 0 },
+      status: 'rendered' as const,
+      thumbnail: WEBP,
+    }
+    await saveIgsPackage(target, {
+      assets: { [raster.asset.path]: { bytes: PNG } },
+      preview,
+      project: legacy,
+    })
+    const old = await readIgsPackage(target)
+    assert.deepEqual(old.project, legacy)
+    const mixed: IgsProjectDocumentV1 = structuredClone(old.project)
+    const patch = emptyPatch(mixed)
+    mixed.layers.unshift(patch)
+    mixed.documentRevision = randomUUID()
+    await saveIgsPackage(target, {
+      assets: { [raster.asset.path]: { bytes: await old.readMember(raster.asset.path) } },
+      preview,
+      project: mixed,
+    })
+    const reopened = await readIgsPackage(target)
+    assert.deepEqual(reopened.project, mixed)
+    assert.deepEqual(projectRasterLayers(reopened.project), [raster])
+    assert.deepEqual(await reopened.readMember(raster.asset.path), PNG)
+    assert.deepEqual(reopened.manifest.preview, { rect: preview.rect, status: 'rendered' })
+    assert.equal(
+      reopened.manifest.members.filter(({ path: member }) => member.startsWith('assets/')).length,
+      1,
+    )
+    assert.equal(reopened.project.layers[0]?.kind, 'smart-patch')
+  })
+})
+
+test('an interrupted empty Smart Patch Save leaves the previous package byte-exact and readable', async () => {
+  await inTemporaryDirectory(async (directory) => {
+    const target = path.join(directory, 'old.igs')
+    const initial = emptyInput()
+    await saveIgsPackage(target, initial)
+    const original = await readFile(target)
+    const changed = structuredClone(initial.project)
+    changed.documentRevision = randomUUID()
+    changed.layers.push(emptyPatch(changed))
+    await assert.rejects(
+      saveIgsPackage(
+        target,
+        { preview: initial.preview, project: changed },
+        {
+          beforeRename: async () => {
+            throw new Error('finite interrupted save')
+          },
+        },
+      ),
+      /finite interrupted save/,
+    )
+    assert.deepEqual(await readFile(target), original)
+    assert.deepEqual((await readIgsPackage(target)).project, initial.project)
+    assert.deepEqual(await readdir(directory), ['old.igs'])
+  })
+})
 
 async function rawEntries(filePath: string): Promise<[string, Buffer][]> {
   const archive = await yauzl.openPromise(filePath, { autoClose: false, lazyEntries: true })
@@ -308,7 +434,7 @@ test('rendered preview pixels may be downsampled from a much larger world-space 
     const worldRect = { height: 2, width: 1_000_002, x: -500_000, y: 0 }
     await saveIgsPackage(target, {
       assets: {
-        [project.layers[0].asset.path]: { bytes: PNG },
+        [projectRasterLayers(project)[0].asset.path]: { bytes: PNG },
         [secondPath]: { bytes: PNG },
       },
       preview: { merged: PNG, rect: worldRect, status: 'rendered', thumbnail: WEBP },
@@ -342,7 +468,7 @@ test('referenced ICC bytes survive Save, reopen and streaming extraction; missin
     await saveIgsPackage(target, {
       assets: {
         [profilePath]: { bytes: profileBytes },
-        [project.layers[0].asset.path]: { bytes: PNG },
+        [projectRasterLayers(project)[0].asset.path]: { bytes: PNG },
       },
       preview: {
         merged: PNG,
@@ -428,8 +554,12 @@ test('Save and Open reject raster PNG and WebP with an embedded AdobeRGB profile
             ...project,
             layers: [
               {
-                ...project.layers[0],
-                asset: { ...project.layers[0].asset, bytes: wrong.length, sha256: sha256(wrong) },
+                ...requireRasterLayer(project.layers[0]),
+                asset: {
+                  ...requireRasterLayer(project.layers[0]).asset,
+                  bytes: wrong.length,
+                  sha256: sha256(wrong),
+                },
               },
             ],
           },
@@ -449,8 +579,8 @@ test('Save and Open reject raster PNG and WebP with an embedded AdobeRGB profile
       const member = manifest.members.find((entry) => entry.path === assetPath)!
       member.bytes = wrong.length
       member.sha256 = sha256(wrong)
-      document.layers[0].asset.bytes = wrong.length
-      document.layers[0].asset.sha256 = sha256(wrong)
+      projectRasterLayers(document)[0].asset.bytes = wrong.length
+      projectRasterLayers(document)[0].asset.sha256 = sha256(wrong)
       const forgedPath = path.join(directory, `forged-${extension}.igs`)
       await writeRawZip(
         forgedPath,

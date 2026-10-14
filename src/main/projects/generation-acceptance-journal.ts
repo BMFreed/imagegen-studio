@@ -1,8 +1,9 @@
-import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
+import type { IgsRasterLayerV1 } from '../../shared/projects/project-schema.js'
 import {
   createEmptyProjectDocumentV1,
   IGS_SAFETY_CEILINGS,
   parseProjectDocumentV1,
+  projectRasterLayers,
 } from '../../shared/projects/project-schema.js'
 
 import type { Kysely, Selectable, Transaction } from 'kysely'
@@ -29,7 +30,7 @@ const handoffKeys = [
 ]
 
 export interface GenerationAcceptanceHandoff {
-  acceptedLayers: IgsProjectDocumentV1['layers']
+  acceptedLayers: IgsRasterLayerV1[]
   documentId: string
   localProjectKey: string
   operationId: string
@@ -263,8 +264,12 @@ function parseHandoff(input: unknown): GenerationAcceptanceHandoff {
       }),
       layers: raw.acceptedLayers,
     })
+    const acceptedLayers = projectRasterLayers(document)
+    if (acceptedLayers.length !== document.layers.length) {
+      throw new Error('Only accepted Raster outputs can enter this journal.')
+    }
     const candidateIds = new Set<string>()
-    for (const layer of document.layers) {
+    for (const layer of acceptedLayers) {
       const provenance = layer.generationProvenance
       const output = provenance?.executionResultContext.output
       const candidateId = provenance?.executionResultContext.candidateId
@@ -286,7 +291,7 @@ function parseHandoff(input: unknown): GenerationAcceptanceHandoff {
       candidateIds.add(candidateId)
     }
     return {
-      acceptedLayers: document.layers,
+      acceptedLayers,
       documentId: raw.documentId,
       localProjectKey: raw.localProjectKey,
       operationId: raw.operationId,

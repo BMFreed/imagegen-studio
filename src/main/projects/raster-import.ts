@@ -1,4 +1,7 @@
-import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
+import type {
+  IgsProjectDocumentV1,
+  IgsRasterLayerV1,
+} from '../../shared/projects/project-schema.js'
 
 import { createHash, randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
@@ -41,7 +44,7 @@ export interface PreparedRasterImport {
   stagingRoot: string
 }
 
-type RasterLayer = IgsProjectDocumentV1['layers'][number]
+type RasterLayer = IgsRasterLayerV1
 
 type ImportWorker = Pick<ProjectWorkerClient, 'normalizeImport'>
 

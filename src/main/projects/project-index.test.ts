@@ -38,6 +38,7 @@ import {
   acceptedOutputPngFixture,
   acceptedRasterProvenanceFixture,
 } from './test-fixtures/accepted-provenance.js'
+import { requireRasterLayer } from './test-fixtures/require-raster-layer.js'
 
 const migrations = path.resolve('src/main/db/migrations')
 const placeholdersDir = path.resolve('src/main/projects/placeholders')
@@ -122,14 +123,14 @@ test('saved result index copies generation metadata and keeps current assets sep
     )
     for (const row of rows) {
       const layer = session.document.layers.find((item) => item.id === row.layerId)!
-      const provenance = layer.generationProvenance!
+      const provenance = requireRasterLayer(layer).generationProvenance!
       assert.deepEqual(row, {
         acceptedAt: provenance.executionResultContext.acceptedAt,
         actualSeed: provenance.generationConfiguration.sampling.actualSeed,
-        assetBytes: layer.asset.bytes,
+        assetBytes: requireRasterLayer(layer).asset.bytes,
         assetHeight: 16,
-        assetPath: layer.asset.path,
-        assetSha256: layer.asset.sha256,
+        assetPath: requireRasterLayer(layer).asset.path,
+        assetSha256: requireRasterLayer(layer).asset.sha256,
         assetWidth: 16,
         canonicalPath: session.filePath,
         documentId: session.document.documentId,
@@ -270,9 +271,9 @@ test('catalog keyset survives a deleted anchor and excludes newer inserts until 
     const newLayer = {
       ...baseLayer,
       generationProvenance: {
-        ...baseLayer.generationProvenance!,
+        ...requireRasterLayer(baseLayer).generationProvenance!,
         executionResultContext: {
-          ...baseLayer.generationProvenance!.executionResultContext,
+          ...requireRasterLayer(baseLayer).generationProvenance!.executionResultContext,
           acceptedAt: '2026-10-02T15:00:00.000Z',
         },
       },

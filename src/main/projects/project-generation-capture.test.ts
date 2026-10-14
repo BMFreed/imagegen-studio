@@ -23,6 +23,7 @@ import { readProjectPlaceholders } from './project-placeholders.js'
 import { ProjectService } from './project-service.js'
 import { ProjectShadowStore } from './project-shadow.js'
 import { acceptedOutputPngFixture } from './test-fixtures/accepted-provenance.js'
+import { requireRasterLayer } from './test-fixtures/require-raster-layer.js'
 
 const sha256 = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
 const REPOSITORY_ROOT = path.resolve(import.meta.dirname, '../../..')
@@ -84,7 +85,10 @@ async function withProject(run: (fixture: Fixture) => Promise<void>): Promise<vo
     const externalPath = path.join(root, 'source.igs')
     await saveIgsPackage(externalPath, {
       assets: Object.fromEntries(
-        document.layers.map((layer, index) => [layer.asset.path, { bytes: sourceBytes[index] }]),
+        document.layers.map((layer, index) => [
+          requireRasterLayer(layer).asset.path,
+          { bytes: sourceBytes[index] },
+        ]),
       ),
       preview: {
         ...(await readProjectPlaceholders(placeholdersDir, 'unavailable')),
@@ -193,7 +197,7 @@ test('captured Project input reaches actual target verification without document
           assert.deepEqual(input.bbox, before.primaryBbox)
           assert.deepEqual(
             input.layers.map((layer) => layer.sha256),
-            before.layers.map((layer) => layer.asset.sha256),
+            before.layers.map((layer) => requireRasterLayer(layer).asset.sha256),
           )
           for (const [index, layer] of input.layers.entries()) {
             assert.deepEqual(await readFile(layer.path), sourceBytes[index])
@@ -246,14 +250,14 @@ test('capture survives later bbox, draft and layer edits while files stay leased
           assert.deepEqual(input.bbox, before.primaryBbox)
           assert.deepEqual(
             input.layers.map((layer) => layer.sha256),
-            before.layers.map((layer) => layer.asset.sha256),
+            before.layers.map((layer) => requireRasterLayer(layer).asset.sha256),
           )
           assert.deepEqual(
             input.layers.map((layer) => layer.opacity),
             [1, 1],
           )
           for (const [index, layer] of input.layers.entries()) {
-            assert.deepEqual(layer.transform, before.layers[index].transform)
+            assert.deepEqual(layer.transform, requireRasterLayer(before.layers[index]).transform)
             assert.deepEqual(await readFile(layer.path), sourceBytes[index])
           }
         }),
@@ -326,12 +330,15 @@ test('callback-owned metadata cannot rewrite the private frozen composition snap
       capture.document.primaryBbox.x = 500
       capture.document.generationDraft.positivePrompt.text = 'caller-owned mutation'
       capture.document.layers[0].opacity = 0
-      capture.document.layers[0].transform.x = 900
+      requireRasterLayer(capture.document.layers[0]).transform.x = 900
       return await capture.composeTarget(
         controlledWorker(sourceBytes[0], async (input) => {
           assert.deepEqual(input.bbox, before.primaryBbox)
           assert.equal(input.layers[0].opacity, 1)
-          assert.deepEqual(input.layers[0].transform, before.layers[0].transform)
+          assert.deepEqual(
+            input.layers[0].transform,
+            requireRasterLayer(before.layers[0]).transform,
+          )
         }),
       )
     })
@@ -420,7 +427,7 @@ test('a newly imported unsaved Raster remains captured until its callback settle
           assert.equal(input.layers.length, 3)
           assert.deepEqual(
             input.layers.map((layer) => layer.sha256),
-            beforeCapture.layers.map((layer) => layer.asset.sha256),
+            beforeCapture.layers.map((layer) => requireRasterLayer(layer).asset.sha256),
           )
           assert.deepEqual(await readFile(input.layers[0].path), importedBytes)
         }),

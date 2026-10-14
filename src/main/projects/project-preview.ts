@@ -1,4 +1,8 @@
-import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
+import type {
+  IgsProjectDocumentV1,
+  IgsRasterLayerV1,
+} from '../../shared/projects/project-schema.js'
+import { projectRasterLayers } from '../../shared/projects/project-schema.js'
 
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
@@ -15,7 +19,7 @@ const THUMBNAIL_MAX_SIDE = 256
 export type ProjectPreviewResult =
   | { documentRevision: string; kind: 'empty' }
   | { kind: 'rendered'; preview: RenderedProjectPreview }
-type RasterLayer = IgsProjectDocumentV1['layers'][number]
+type RasterLayer = IgsRasterLayerV1
 
 type PreviewWorker = Pick<ProjectWorkerClient, 'composePreview'>
 
@@ -30,7 +34,7 @@ export async function buildProjectPreview(input: {
   scratchBasePath: string
   worker: PreviewWorker
 }): Promise<ProjectPreviewResult> {
-  if (!input.document.layers.some((layer) => layer.visible && layer.opacity > 0)) {
+  if (!projectRasterLayers(input.document).some((layer) => layer.visible && layer.opacity > 0)) {
     return { documentRevision: input.document.documentRevision, kind: 'empty' }
   }
   return await withFrozenRasterComposition(

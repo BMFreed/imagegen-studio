@@ -1,6 +1,7 @@
 # Engineering Workflow
 
-Latest implementation checkpoint: [Installed Project presets EPS/V](./phase-3-installed-presets-research.md)
+Latest implementation checkpoint: [Smart Patch document foundation](./phase-4-smart-patch-foundation-research.md)
+over [Installed Project presets EPS/V](./phase-3-installed-presets-research.md)
 over [Project Apply Models handoff](./phase-3-preset-model-handoff-research.md)
 over [Accepted Raster result preset](./phase-3-result-preset-research.md),
 [New Project preset customization](./phase-3-new-project-preset-research.md),
@@ -14,8 +15,12 @@ Compare and result-preset chains. Source/library policy stays unchanged; effecti
 worker/provenance uses current exact-file policy. Independent raw readback passes
 646 checks; targeted source mutations are restored. Declared Euler256/N3 recipe
 only, with all payload/source/bounds/cleanup limits in the new checkpoint.
-Next roadmap owner is Phase 4 Smart Patch document foundation; PP-006 stays open
-for its Smart Patch and other-context handoffs.
+Smart Patch foundation adds independent empty owned mask/bbox/internal resolution/
+draft, selection and targeted edits to the real document. Undo/Redo, Save/reopen
+and local crash recovery pass in built Electron with no runtime; this does not
+qualify painting, inpaint or variants. Next roadmap owner is Phase 4 owned mask
+authoring and Canvas tools; PP-006 stays open for its Smart Patch and other-context
+handoffs.
 
 Shared strict payload → native IPC/preload → Main lifetime owner → SQLite now
 supports CRUD/duplicate, soft delete/restore and automatic 30-day expiry. Actual
@@ -54,8 +59,9 @@ references from selected edited diagnostics, preserves the mounted authoring DOM
 and returns after Model Manager dismissal/catalog settlement. Missing nominal
 versions and SHA mismatches remain visible; late/cancelled refresh cannot reopen
 an obsolete Apply. Its finite qualification and PP-006 review pilot belong to
-the newest checkpoint. Installed checkpoint Apply→inference is next; Smart Patch
-and other-context handoffs remain open. PP-006 remains «Пока не обещать».
+its checkpoint. Installed EPS/V Apply→inference is now qualified in the declared
+finite recipe above; Smart Patch and other-context handoffs remain open.
+PP-006 remains «Пока не обещать».
 [Current Phase2C exit ledger](./phase-2c-exit-ledger.md) assigns the remaining
 Preset/Canvas/release owners and records the named missing-version handoff.
 Previous ML checkpoint: [NoobAI Karras numerical refusal](./phase-2c-noobai-karras-failure-research.md).

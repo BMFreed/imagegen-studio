@@ -15,6 +15,7 @@ import {
 } from './test-fixtures/accepted-provenance.js'
 import { animaFixturePng } from './test-fixtures/anima-batch.js'
 import { acceptedOutpaintProvenanceFixture } from './test-fixtures/outpaint-provenance.js'
+import { requireRasterLayer } from './test-fixtures/require-raster-layer.js'
 
 for (const mode of ['txt2img', 'img2img', 'outpaint'] as const) {
   test(`exact accepted ${mode} noise profile survives real Save, reopen and portable copy without model files`, async () => {
@@ -81,13 +82,16 @@ for (const mode of ['txt2img', 'img2img', 'outpaint'] as const) {
         project,
       })
       assert.deepEqual(
-        (await readIgsPackage(filePath)).project.layers[0].generationProvenance,
+        requireRasterLayer((await readIgsPackage(filePath)).project.layers[0]).generationProvenance,
         provenance,
       )
       const copied = path.join(root, 'portable.igs')
       await copyFile(filePath, copied)
       const portable = await readIgsPackage(copied)
-      assert.deepEqual(portable.project.layers[0].generationProvenance, provenance)
+      assert.deepEqual(
+        requireRasterLayer(portable.project.layers[0]).generationProvenance,
+        provenance,
+      )
       assert.deepEqual(await portable.readMember(assetPath), image)
       assert.equal(Object.hasOwn(portable.project.generationDraft.sampling, 'noiseProfile'), false)
     } finally {

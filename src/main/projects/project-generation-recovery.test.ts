@@ -43,6 +43,7 @@ import {
   acceptedRasterProvenanceFixture,
   transparentTargetPngFixture,
 } from './test-fixtures/accepted-provenance.js'
+import { requireRasterLayer } from './test-fixtures/require-raster-layer.js'
 
 const migrations = path.resolve('src/main/db/migrations')
 const placeholdersDir = path.resolve('src/main/projects/placeholders')
@@ -459,7 +460,9 @@ test('saved pending acceptance reconciles after staging-only Recover without dup
     const generatedLayer = f.service
       .getOpenDocumentForAcceptance(f.a.id)!
       .document.layers.find(
-        (layer) => layer.generationProvenance?.executionResultContext.candidateId === f.currentA.id,
+        (layer) =>
+          requireRasterLayer(layer).generationProvenance?.executionResultContext.candidateId ===
+          f.currentA.id,
       )!
     assert.equal(
       afterAdd.acceptedResults.find((result) => result.layerId === generatedLayer.id)!.seed,

@@ -36,6 +36,7 @@ import { ProjectGenerationResultResource } from './project-generation-result-res
 import { ProjectIndexRepository } from './project-index.js'
 import { ProjectService } from './project-service.js'
 import { ProjectShadowStore } from './project-shadow.js'
+import { requireRasterLayer } from './test-fixtures/require-raster-layer.js'
 import { ProjectWorkerClient } from './worker-client.js'
 
 const migrations = path.resolve('src/main/db/migrations')
@@ -410,9 +411,18 @@ test(
       const saved = await readIgsPackage(indexed.canonicalPath)
       assert.equal(saved.project.layers.length, 1)
       const layer = saved.project.layers[0]
-      assert.equal(layer.generationProvenance?.generationConfiguration.sampling.actualSeed, 42)
-      assert.equal(layer.generationProvenance?.executionResultContext.candidateId, selected)
-      assert.deepEqual(await saved.readMember(layer.asset.path), fixture.outputBytes)
+      assert.equal(
+        requireRasterLayer(layer).generationProvenance?.generationConfiguration.sampling.actualSeed,
+        42,
+      )
+      assert.equal(
+        requireRasterLayer(layer).generationProvenance?.executionResultContext.candidateId,
+        selected,
+      )
+      assert.deepEqual(
+        await saved.readMember(requireRasterLayer(layer).asset.path),
+        fixture.outputBytes,
+      )
       await fixture.projects.setPrimaryBbox(fixture.tabId, {
         height: 64,
         width: 64,
@@ -1509,7 +1519,7 @@ test(
       assert.deepEqual(await readFile(indexed.canonicalPath), before)
       assert.equal((await fixture.projects.save(fixture.tabId, fixture.worker)).committed, true)
       const saved = await readIgsPackage(indexed.canonicalPath)
-      const provenance = saved.project.layers[0].generationProvenance
+      const provenance = requireRasterLayer(saved.project.layers[0]).generationProvenance
       assert.ok(provenance)
       assert.equal(provenance.generationConfiguration.sampling.seedBehavior, 'per-prompt')
       assert.equal(provenance.generationConfiguration.sampling.actualSeed, 0xff_ff_ff_fe)
@@ -1517,7 +1527,7 @@ test(
       assert.equal(provenance.generationConfiguration.negativePrompt.text, 'blur')
       assert.equal(saved.project.generationDraft.positivePrompt.text, '{red|blue} lantern')
       assert.deepEqual(
-        await saved.readMember(saved.project.layers[0].asset.path),
+        await saved.readMember(requireRasterLayer(saved.project.layers[0]).asset.path),
         fixture.outputBytes,
       )
     })

@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import type { ProjectApi, ProjectRasterLayerView } from '../../shared/api.js'
+import type { ProjectApi, ProjectLayerView, ProjectRasterLayerView } from '../../shared/api.js'
 
 import { Plus } from '@vicons/tabler'
 import { type IDragEvent, makeAutoScroll, makeDroppable, useDnDProvider } from '@vue-dnd-kit/core'
 import { NButton, NEmpty, NIcon, NInputNumber, NSelect, NTooltip } from 'naive-ui'
 import { computed, ref, watch } from 'vue'
 
-import ProjectSortableRasterLayerRow from './ProjectSortableRasterLayerRow.vue'
+import { isSmartPatchLayerView } from './project-layer-context.js'
+import ProjectSortableLayerRow from './ProjectSortableLayerRow.vue'
 
 type RasterLayerChange = Parameters<ProjectApi['updateRasterLayer']>[2]
 
@@ -14,13 +15,15 @@ const props = defineProps<{
   disabled: boolean
   generatedLayerIds: readonly string[]
   importing: boolean
-  layers: ProjectRasterLayerView[]
+  layers: ProjectLayerView[]
 }>()
 const emit = defineEmits<{
+  addPatch: []
   importImage: []
   move: [layerId: string, targetIndex: number]
   saveResultPreset: [layerId: string]
   update: [layerId: string, change: RasterLayerChange]
+  updatePatch: [layerId: string, change: Parameters<ProjectApi['updateSmartPatchLayer']>[2]]
 }>()
 const selectedLayerId = defineModel<string | null>('selectedLayerId', { required: true })
 const comparisonLayerId = defineModel<string | null>('comparisonLayerId', { required: true })
@@ -55,10 +58,15 @@ function updateBlend(value: number | string | null) {
   ) {
     return
   }
-  emit('update', layer.id, {
+  const change: RasterLayerChange = {
     blendMode: value as ProjectRasterLayerView['blendMode'],
     kind: 'blend-mode',
-  })
+  }
+  if (isSmartPatchLayerView(layer)) {
+    emit('updatePatch', layer.id, change)
+  } else {
+    emit('update', layer.id, change)
+  }
 }
 
 function commitOpacity() {
@@ -73,7 +81,11 @@ function commitOpacity() {
   }
   const opacity = Math.round(value * 100) / 10_000
   if (opacity !== layer.opacity) {
-    emit('update', layer.id, { kind: 'opacity', opacity })
+    if (isSmartPatchLayerView(layer)) {
+      emit('updatePatch', layer.id, { kind: 'opacity', opacity })
+    } else {
+      emit('update', layer.id, { kind: 'opacity', opacity })
+    }
   }
 }
 
@@ -113,11 +125,11 @@ makeDroppable(
         if (!result || !result.sameList) {
           return false
         }
-        const moved = event.draggedItems[0]?.item as ProjectRasterLayerView | undefined
+        const moved = event.draggedItems[0]?.item as ProjectLayerView | undefined
         if (!moved || !props.layers.some((layer) => layer.id === moved.id && !layer.locked)) {
           return false
         }
-        const target = result.targetItems as ProjectRasterLayerView[]
+        const target = result.targetItems as ProjectLayerView[]
         const targetIndex = target.findIndex((layer) => layer.id === moved.id)
         const sourceIndex = props.layers.findIndex((layer) => layer.id === moved.id)
         if (targetIndex < 0 || sourceIndex < 0) {
@@ -171,6 +183,15 @@ makeDroppable(
       <h2>Layers ({{ layers.length }})</h2>
       <div class="layer-header-actions">
         <slot name="header-actions" />
+        <NButton
+          aria-label="Add Smart Patch Layer"
+          :disabled
+          size="tiny"
+          tertiary
+          @click="emit('addPatch')"
+        >
+          + Patch
+        </NButton>
         <NTooltip trigger="hover">
           <template v-slot:trigger>
             <NButton
@@ -193,7 +214,7 @@ makeDroppable(
       <NEmpty
         v-if="layers.length === 0"
         class="layer-empty"
-        description="No Raster Layers yet"
+        description="No Layers yet"
         size="small"
       >
         <template v-slot:extra>
@@ -202,7 +223,7 @@ makeDroppable(
           </NButton>
         </template>
       </NEmpty>
-      <ProjectSortableRasterLayerRow
+      <ProjectSortableLayerRow
         v-for="(layer, index) of layers"
         :key="layer.id"
         v-model:comparisonLayerId="comparisonLayerId"
@@ -217,11 +238,12 @@ makeDroppable(
         @saveResultPreset="emit('saveResultPreset', $event)"
         @select="selectedLayerId = $event"
         @update="(layerId, change) => emit('update', layerId, change)"
+        @updatePatch="(layerId, change) => emit('updatePatch', layerId, change)"
       >
         <template v-slot:comparison="slotProps">
           <slot name="comparison" v-bind="slotProps" />
         </template>
-      </ProjectSortableRasterLayerRow>
+      </ProjectSortableLayerRow>
     </div>
   </aside>
 </template>
@@ -271,6 +293,7 @@ makeDroppable(
 
 .layer-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -279,13 +302,16 @@ makeDroppable(
 }
 
 .layer-header h2 {
+  flex: 0 0 auto;
   margin: 0;
   font-size: var(--app-font-size);
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .layer-header-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
 }

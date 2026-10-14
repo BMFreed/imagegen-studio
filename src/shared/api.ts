@@ -80,6 +80,7 @@ export const ipcChannels = {
   projects: {
     acceptGenerationCandidates: 'projects:accept-generation-candidates',
     addGenerationLora: 'projects:add-generation-lora',
+    addSmartPatchLayer: 'projects:add-smart-patch-layer',
     applyPreset: 'projects:apply-preset',
     cancelCurrentGeneration: 'projects:cancel-current-generation',
     cancelGenerationJob: 'projects:cancel-generation-job',
@@ -129,6 +130,7 @@ export const ipcChannels = {
     undo: 'projects:undo',
     updateGenerationDraft: 'projects:update-generation-draft',
     updateRasterLayer: 'projects:update-raster-layer',
+    updateSmartPatchLayer: 'projects:update-smart-patch-layer',
     windowCloseDecisionPending: 'projects:window-close-decision-pending',
     windowCloseEditorReady: 'projects:window-close-editor-ready',
     windowCloseReady: 'projects:window-close-ready',
@@ -215,7 +217,7 @@ export interface ProjectTab {
   generationDraft: IgsProjectDocumentV1['generationDraft']
   id: string
   lastActualSeedSnapshot: IgsProjectDocumentV1['lastActualSeedSnapshot']
-  layers: ProjectRasterLayerView[]
+  layers: ProjectLayerView[]
   primaryBbox: IgsRectV1
   storageWarning?: string
   title: string
@@ -240,6 +242,7 @@ export interface ProjectRasterLayerView {
   height: number
   id: string
   imageUrl: string
+  kind?: 'raster'
   locked: boolean
   name: string
   opacity: number
@@ -253,6 +256,31 @@ export interface ProjectRasterLayerView {
   visible: boolean
   width: number
 }
+
+/** Empty, owned document entity. Painting and accepted variants have separate later owners. */
+export interface ProjectSmartPatchLayerView {
+  activeRasterSubLayerId: null
+  blendMode: ProjectRasterLayerView['blendMode']
+  boundingBox: IgsRectV1
+  generationDraft: ProjectTab['generationDraft']
+  id: string
+  internalResolution: { height: number; width: number }
+  kind: 'smart-patch'
+  locked: boolean
+  mask: { asset: null; id: string; revision: 0 }
+  name: string
+  opacity: number
+  rasterSubLayers: []
+  status: 'empty'
+  visible: boolean
+}
+
+export type ProjectLayerView = ProjectRasterLayerView | ProjectSmartPatchLayerView
+
+export type ProjectSmartPatchLayerChange =
+  | ProjectRasterLayerChange
+  | { kind: 'bounding-box'; rect: IgsRectV1 }
+  | { kind: 'internal-resolution'; size: { height: number; width: number } }
 
 export type ProjectRasterLayerChange =
   | { blendMode: ProjectRasterLayerView['blendMode']; kind: 'blend-mode' }
@@ -370,7 +398,9 @@ export interface ProjectApi {
   addGenerationLora: (
     tabId: string,
     selection: NonNullable<ProjectGenerationModelSelection>,
+    targetLayerId?: string,
   ) => Promise<ApiResult<ProjectTab>>
+  addSmartPatchLayer: (tabId: string) => Promise<ApiResult<ProjectTab>>
   applyPreset: (tabId: string, request: PresetApplicationRequest) => Promise<ApiResult<ProjectTab>>
   cancelCurrentGeneration: (
     tabId: string,
@@ -439,16 +469,19 @@ export interface ProjectApi {
   relinkGenerationEmbedding: (
     tabId: string,
     identity: ProjectEmbeddingIdentity,
+    targetLayerId?: string,
   ) => Promise<ApiResult<ProjectTab>>
   relinkGenerationLora: (
     tabId: string,
     identity: ProjectLoraIdentity,
+    targetLayerId?: string,
   ) => Promise<ApiResult<ProjectTab>>
-  relinkGenerationModel: (tabId: string) => Promise<ApiResult<ProjectTab>>
-  relinkGenerationVae: (tabId: string) => Promise<ApiResult<ProjectTab>>
+  relinkGenerationModel: (tabId: string, targetLayerId?: string) => Promise<ApiResult<ProjectTab>>
+  relinkGenerationVae: (tabId: string, targetLayerId?: string) => Promise<ApiResult<ProjectTab>>
   removeGenerationLora: (
     tabId: string,
     identity: ProjectLoraIdentity,
+    targetLayerId?: string,
   ) => Promise<ApiResult<ProjectTab>>
   resolveRecovery: (
     projectId: string,
@@ -466,10 +499,12 @@ export interface ProjectApi {
   setGenerationModel: (
     tabId: string,
     selection: ProjectGenerationModelSelection,
+    targetLayerId?: string,
   ) => Promise<ApiResult<ProjectTab>>
   setGenerationVae: (
     tabId: string,
     selection: ProjectGenerationModelSelection,
+    targetLayerId?: string,
   ) => Promise<ApiResult<ProjectTab>>
   setPrimaryBbox: (tabId: string, rect: IgsRectV1) => Promise<ApiResult<ProjectTab>>
   undo: (tabId: string) => Promise<ApiResult<ProjectTab>>
@@ -477,11 +512,17 @@ export interface ProjectApi {
     tabId: string,
     change: ProjectGenerationDraftChange,
     historyGroupId?: string,
+    targetLayerId?: string,
   ) => Promise<ApiResult<ProjectTab>>
   updateRasterLayer: (
     tabId: string,
     layerId: string,
     change: ProjectRasterLayerChange,
+  ) => Promise<ApiResult<ProjectTab>>
+  updateSmartPatchLayer: (
+    tabId: string,
+    layerId: string,
+    change: ProjectSmartPatchLayerChange,
   ) => Promise<ApiResult<ProjectTab>>
 }
 
@@ -878,6 +919,47 @@ export function isProjectRasterLayerChange(input: unknown): input is ProjectRast
       keys.includes('blendMode') &&
       typeof value['blendMode'] === 'string' &&
       ['multiply', 'normal', 'overlay', 'screen'].includes(value['blendMode']))
+  )
+}
+
+export function isProjectSmartPatchLayerChange(
+  input: unknown,
+): input is ProjectSmartPatchLayerChange {
+  if (isProjectRasterLayerChange(input)) {
+    return true
+  }
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return false
+  }
+  const value = input as Record<string, unknown>
+  const size = value['kind'] === 'bounding-box' ? value['rect'] : value['size']
+  if (!size || typeof size !== 'object' || Array.isArray(size)) {
+    return false
+  }
+  const dimensions = size as Record<string, unknown>
+  const validDimension = (number: unknown) =>
+    typeof number === 'number' &&
+    Number.isSafeInteger(number) &&
+    number >= 1 &&
+    number <= IGS_SAFETY_CEILINGS.rasterDimension
+  if (!validDimension(dimensions['width']) || !validDimension(dimensions['height'])) {
+    return false
+  }
+  if (value['kind'] === 'internal-resolution') {
+    return Object.keys(value).length === 2 && Object.keys(dimensions).length === 2
+  }
+  if (value['kind'] !== 'bounding-box') {
+    return false
+  }
+  return (
+    Object.keys(value).length === 2 &&
+    Object.keys(dimensions).length === 4 &&
+    ['x', 'y'].every(
+      (key) =>
+        typeof dimensions[key] === 'number' &&
+        Number.isSafeInteger(dimensions[key]) &&
+        Math.abs(dimensions[key]) <= IGS_SAFETY_CEILINGS.coordinateMagnitude,
+    )
   )
 }
 

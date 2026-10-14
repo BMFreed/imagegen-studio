@@ -5,12 +5,13 @@ import { reconcilePromptEmbeddings } from '../../shared/projects/prompt-embeddin
 export interface ProjectDraftSyncOptions {
   onAcknowledged: (tab: ProjectTab) => void
   onError: (tabId: string, error: Error) => void
-  onOverlay: (tabId: string, draft: GenerationDraft | null) => void
-  seal?: (tabId: string, historyGroupId?: string) => Promise<ProjectTab>
+  onOverlay: (tabId: string, draft: GenerationDraft | null, targetLayerId?: string) => void
+  seal?: (tabId: string, historyGroupId?: string, targetLayerId?: string) => Promise<ProjectTab>
   send: (
     tabId: string,
     change: ProjectGenerationDraftChange,
     historyGroupId?: string,
+    targetLayerId?: string,
   ) => Promise<ProjectTab>
 }
 type GenerationDraft = ProjectTab['generationDraft']
@@ -23,9 +24,11 @@ interface DraftState {
   desired: GenerationDraft
   disposed: boolean
   error: Error | null
+  ownerKey: string
   pending: DraftOperation[]
   running: Promise<void> | null
   tabId: string
+  targetLayerId?: string
 }
 
 /** Keeps local typing visible while serializing incremental draft IPC for one Project. */
@@ -34,27 +37,35 @@ export class ProjectDraftSync {
 
   constructor(private readonly options: ProjectDraftSyncOptions) {}
 
-  change(tab: ProjectTab, change: ProjectGenerationDraftChange, historyGroupId?: string): void {
+  change(
+    tab: ProjectTab,
+    change: ProjectGenerationDraftChange,
+    historyGroupId?: string,
+    targetLayerId?: string,
+  ): void {
+    const ownerKey = draftOwnerKey(tab.id, targetLayerId)
     if (change.kind === 'dynamic-prompt') {
       change = { kind: change.kind, value: { ...change.value } }
     } else if (isEmbeddingChoice(change)) {
       change = { ...change, embeddingSelection: { ...change.embeddingSelection } }
     }
-    let state = this.states.get(tab.id)
+    let state = this.states.get(ownerKey)
     if (!state) {
       state = {
         desired: structuredClone(tab.generationDraft),
         disposed: false,
         error: null,
+        ownerKey,
         pending: [],
         running: null,
         tabId: tab.id,
+        targetLayerId,
       }
-      this.states.set(tab.id, state)
+      this.states.set(ownerKey, state)
     }
     if (!applyChange(state.desired, change)) {
       if (state.pending.length === 0 && !state.running) {
-        this.states.delete(tab.id)
+        this.states.delete(ownerKey)
       }
       return
     }
@@ -74,13 +85,73 @@ export class ProjectDraftSync {
     } else {
       state.pending.push({ change, historyGroupId, key, kind: 'change' })
     }
-    this.options.onOverlay(tab.id, structuredClone(state.desired))
+    this.options.onOverlay(tab.id, structuredClone(state.desired), state.targetLayerId)
     this.start(state)
   }
 
   async flush(tabId: string): Promise<void> {
+    const keys = [...this.states.values()]
+      .filter((state) => state.tabId === tabId)
+      .map((state) => state.ownerKey)
+    const results = await Promise.allSettled(keys.map((key) => this.flushOwner(key)))
+    const failure = results.find((result) => result.status === 'rejected')
+    if (failure?.status === 'rejected') {
+      throw failure.reason
+    }
+  }
+
+  async flushAll(): Promise<void> {
+    const results = await Promise.allSettled(
+      [...new Set([...this.states.values()].map((state) => state.tabId))].map((tabId) =>
+        this.flush(tabId),
+      ),
+    )
+    const failure = results.find((result) => result.status === 'rejected')
+    if (failure?.status === 'rejected') {
+      throw failure.reason
+    }
+  }
+
+  forget(tabId: string): void {
+    for (const [ownerKey, state] of this.states) {
+      if (state.tabId !== tabId) {
+        continue
+      }
+      state.disposed = true
+      this.states.delete(ownerKey)
+      this.options.onOverlay(tabId, null, state.targetLayerId)
+    }
+    this.options.onOverlay(tabId, null)
+  }
+
+  /** Serializes blur's history boundary after all preceding incremental edits. */
+  sealPromptHistory(tab: ProjectTab, historyGroupId?: string, targetLayerId?: string): void {
+    const ownerKey = draftOwnerKey(tab.id, targetLayerId)
+    if (!this.options.seal) {
+      return
+    }
+    let state = this.states.get(ownerKey)
+    if (!state) {
+      state = {
+        desired: structuredClone(tab.generationDraft),
+        disposed: false,
+        error: null,
+        ownerKey,
+        pending: [],
+        running: null,
+        tabId: tab.id,
+        targetLayerId,
+      }
+      this.states.set(ownerKey, state)
+    }
+    state.error = null
+    state.pending.push({ historyGroupId, kind: 'seal' })
+    this.start(state)
+  }
+
+  private async flushOwner(ownerKey: string): Promise<void> {
     while (true) {
-      const state = this.states.get(tabId)
+      const state = this.states.get(ownerKey)
       if (!state || state.disposed) {
         return
       }
@@ -96,54 +167,13 @@ export class ProjectDraftSync {
       if (state.error) {
         throw state.error
       }
-      if (this.states.get(tabId) !== state) {
+      if (this.states.get(ownerKey) !== state) {
         continue
       }
       if (state.pending.length === 0) {
         return
       }
     }
-  }
-
-  async flushAll(): Promise<void> {
-    const results = await Promise.allSettled(
-      [...this.states.keys()].map((tabId) => this.flush(tabId)),
-    )
-    const failure = results.find((result) => result.status === 'rejected')
-    if (failure?.status === 'rejected') {
-      throw failure.reason
-    }
-  }
-
-  forget(tabId: string): void {
-    const state = this.states.get(tabId)
-    if (state) {
-      state.disposed = true
-      this.states.delete(tabId)
-    }
-    this.options.onOverlay(tabId, null)
-  }
-
-  /** Serializes blur's history boundary after all preceding incremental edits. */
-  sealPromptHistory(tab: ProjectTab, historyGroupId?: string): void {
-    if (!this.options.seal) {
-      return
-    }
-    let state = this.states.get(tab.id)
-    if (!state) {
-      state = {
-        desired: structuredClone(tab.generationDraft),
-        disposed: false,
-        error: null,
-        pending: [],
-        running: null,
-        tabId: tab.id,
-      }
-      this.states.set(tab.id, state)
-    }
-    state.error = null
-    state.pending.push({ historyGroupId, kind: 'seal' })
-    this.start(state)
   }
 
   private async run(state: DraftState): Promise<void> {
@@ -155,8 +185,13 @@ export class ProjectDraftSync {
       try {
         const tab =
           operation.kind === 'change'
-            ? await this.options.send(state.tabId, operation.change, operation.historyGroupId)
-            : await this.options.seal?.(state.tabId, operation.historyGroupId)
+            ? await this.options.send(
+                state.tabId,
+                operation.change,
+                operation.historyGroupId,
+                state.targetLayerId,
+              )
+            : await this.options.seal?.(state.tabId, operation.historyGroupId, state.targetLayerId)
         if (state.disposed) {
           return
         }
@@ -174,8 +209,8 @@ export class ProjectDraftSync {
       }
     }
     if (!state.disposed && state.pending.length === 0) {
-      this.states.delete(state.tabId)
-      this.options.onOverlay(state.tabId, null)
+      this.states.delete(state.ownerKey)
+      this.options.onOverlay(state.tabId, null, state.targetLayerId)
     }
   }
 
@@ -194,6 +229,10 @@ export class ProjectDraftSync {
       }
     })
   }
+}
+
+export function draftOwnerKey(tabId: string, targetLayerId?: string): string {
+  return targetLayerId === undefined ? tabId : `${tabId}:patch:${targetLayerId}`
 }
 
 function applyChange(draft: GenerationDraft, change: ProjectGenerationDraftChange): boolean {

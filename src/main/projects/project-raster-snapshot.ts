@@ -1,6 +1,8 @@
 import {
   type IgsProjectDocumentV1,
+  type IgsRasterLayerV1,
   parseProjectDocumentV1,
+  projectRasterLayers,
 } from '../../shared/projects/project-schema.js'
 
 import { createHash } from 'node:crypto'
@@ -21,7 +23,7 @@ export interface FrozenRasterComposition {
   layers: ComposePreviewInput['layers']
   stagingRoot: string
 }
-type RasterLayer = IgsProjectDocumentV1['layers'][number]
+type RasterLayer = IgsRasterLayerV1
 type RasterAsset = RasterLayer['asset']
 
 type FrozenSource = IgsAssetSource | null
@@ -44,7 +46,9 @@ export async function withFrozenRasterComposition<T>(
   // Do this before any await: a concurrent Project edit cannot alter the settings or asset refs
   // being frozen. Copy pending byte sources too, because the original Buffer may be reused.
   const document = parseProjectDocumentV1(structuredClone(input.document))
-  const visible = document.layers.filter((layer) => layer.visible && layer.opacity > 0)
+  const visible = projectRasterLayers(document).filter(
+    (layer) => layer.visible && layer.opacity > 0,
+  )
   const sources = new Map<string, { asset: RasterAsset; source: FrozenSource }>()
   for (const layer of visible) {
     const key = assetKey(layer.asset)

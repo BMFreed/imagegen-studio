@@ -15,6 +15,7 @@ import { readIgsPackage, saveIgsPackage } from './igs-package.js'
 import { projectAcceptedResults } from './project-accepted-results.js'
 import { animaFixturePng } from './test-fixtures/anima-batch.js'
 import { acceptedOutpaintProvenanceFixture } from './test-fixtures/outpaint-provenance.js'
+import { requireRasterLayer } from './test-fixtures/require-raster-layer.js'
 
 const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
 
@@ -123,7 +124,10 @@ for (const family of ['illustrious', 'anima'] as const) {
       const copied = path.join(root, 'portable.igs')
       await copyFile(filePath, copied)
       const portable = await readIgsPackage(copied)
-      assert.deepEqual(portable.project.layers[0].generationProvenance, f.provenance)
+      assert.deepEqual(
+        requireRasterLayer(portable.project.layers[0]).generationProvenance,
+        f.provenance,
+      )
       assert.equal(projectAcceptedResults('portable-project', portable.project)[0]?.width, 64)
       assert.equal(
         projectAcceptedResults('portable-project', portable.project)[0]?.seed,
@@ -147,7 +151,7 @@ for (const family of ['illustrious', 'anima'] as const) {
       await saveIgsPackage(filePath, input)
       const original = await readFile(filePath)
       const bad = structuredClone(f.project)
-      const provenance = bad.layers[0].generationProvenance!
+      const provenance = requireRasterLayer(bad.layers[0]).generationProvenance!
       assert.ok(provenance.kind === 'anima-outpaint' || provenance.kind === 'illustrious-outpaint')
       provenance.executionResultContext.output.contributionAlpha8.sha256 = sha(
         Buffer.alloc(64 * 64),

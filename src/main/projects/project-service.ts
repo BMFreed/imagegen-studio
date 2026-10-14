@@ -9,6 +9,7 @@ import type {
   ProjectRasterLayerChange,
   ProjectRebuildResult,
   ProjectSaveResult,
+  ProjectSmartPatchLayerChange,
   ProjectSummary,
   ProjectTab,
 } from '../../shared/api.js'
@@ -16,6 +17,7 @@ import {
   isProjectEmbeddingIdentity,
   isProjectGenerationDraftChange,
   isProjectRasterLayerChange,
+  isProjectSmartPatchLayerChange,
 } from '../../shared/api.js'
 import {
   applyPresetSections,
@@ -53,8 +55,11 @@ import {
   createEmptyProjectDocumentV1,
   IGS_SAFETY_CEILINGS,
   type IgsProjectDocumentV1,
+  type IgsRasterLayerV1,
   type IgsRectV1,
   IgsSchemaError,
+  type IgsSmartPatchLayerV1,
+  projectRasterLayers,
 } from '../../shared/projects/project-schema.js'
 import {
   type GenerationPrompt,
@@ -240,26 +245,55 @@ export class ProjectService {
   async addGenerationLora(
     tabId: string,
     resource: NonNullable<IgsProjectDocumentV1['generationDraft']['model']>,
+    targetLayerId?: string,
   ): Promise<ProjectTab> {
     if (resource.kind !== 'lora') {
       throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'Expected a LoRA resource.')
     }
     const coordinator = this.requireTab(tabId)
     const document = coordinator.document
-    if (document.generationDraft.loras.some((lora) => sameResourceModel(lora.resource, resource))) {
+    const scope = generationDraftScope(document, targetLayerId)
+    const draft = scope.draft
+    if (draft.loras.some((lora) => sameResourceModel(lora.resource, resource))) {
       throw new ProjectServiceError(
         'PROJECT_INVALID_INPUT',
         'This LoRA is already in the stack. Remove it before choosing another version.',
       )
     }
     await coordinator.applyDocument(
-      {
-        ...document,
-        generationDraft: {
-          ...document.generationDraft,
-          loras: [...document.generationDraft.loras, { enabled: true, resource, weight: 0.7 }],
-        },
+      scope.replace({
+        ...draft,
+        loras: [...draft.loras, { enabled: true, resource, weight: 0.7 }],
+      }),
+      {},
+      { expectedDocumentRevision: document.documentRevision },
+    )
+    return toTab(tabId, coordinator)
+  }
+
+  async addSmartPatchLayer(tabId: string): Promise<ProjectTab> {
+    const coordinator = this.requireTab(tabId)
+    const document = coordinator.document
+    const patch: IgsSmartPatchLayerV1 = {
+      activeRasterSubLayerId: null,
+      blendMode: 'normal',
+      boundingBox: structuredClone(document.primaryBbox),
+      generationDraft: structuredClone(document.generationDraft),
+      id: randomUUID(),
+      internalResolution: {
+        height: document.primaryBbox.height,
+        width: document.primaryBbox.width,
       },
+      kind: 'smart-patch',
+      locked: false,
+      mask: { asset: null, id: randomUUID(), revision: 0 },
+      name: 'New Smart Patch',
+      opacity: 1,
+      rasterSubLayers: [],
+      visible: true,
+    }
+    await coordinator.applyDocument(
+      { ...document, layers: [patch, ...document.layers] },
       {},
       { expectedDocumentRevision: document.documentRevision },
     )
@@ -642,10 +676,10 @@ export class ProjectService {
 
   /** Resolve a process-issued image capability only against a currently open document revision. */
   getLayerAsset(resource: ProjectLayerResourceRequest):
-    | { filePath: string; kind: 'saved'; member: IgsProjectDocumentV1['layers'][number]['asset'] }
+    | { filePath: string; kind: 'saved'; member: IgsRasterLayerV1['asset'] }
     | {
         kind: 'staged'
-        member: IgsProjectDocumentV1['layers'][number]['asset']
+        member: IgsRasterLayerV1['asset']
         source: IgsAssetSource
       }
     | null {
@@ -705,7 +739,7 @@ export class ProjectService {
       )
     }
     const layer = document.layers.find((candidate) => candidate.id === layerId)
-    if (!layer) {
+    if (!layer || layer.kind !== 'raster') {
       throw new ProjectServiceError(
         'PROJECT_LAYER_NOT_FOUND',
         'This Raster Layer is not available.',
@@ -981,15 +1015,18 @@ export class ProjectService {
     resolve: (
       saved: GenerationPrompt['embeddingRefs'][number]['resource'],
     ) => Promise<GenerationPrompt['embeddingRefs'][number]['resource']>,
+    targetLayerId?: string,
   ): Promise<ProjectTab> {
     if (!isProjectEmbeddingIdentity(identity)) {
       throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'The embedding identity is invalid.')
     }
     const coordinator = this.requireTab(tabId)
     const document = coordinator.document
+    const scope = generationDraftScope(document, targetLayerId)
+    const draft = scope.draft
     const documentEpoch = coordinator.documentEpoch
     const field = identity.polarity === 'positive' ? 'positivePrompt' : 'negativePrompt'
-    const prompt = document.generationDraft[field]
+    const prompt = draft[field]
     const index = prompt.embeddingRefs.findIndex(
       (ref) =>
         ref.resource.localModelId === identity.resourceId &&
@@ -1051,18 +1088,15 @@ export class ProjectService {
       return toTab(tabId, coordinator)
     }
     await coordinator.applyDocument(
-      {
-        ...document,
-        generationDraft: {
-          ...document.generationDraft,
-          [field]: {
-            ...prompt,
-            embeddingRefs: prompt.embeddingRefs.map((entry, current) =>
-              current === index ? { ...entry, resource: linked } : entry,
-            ),
-          },
+      scope.replace({
+        ...draft,
+        [field]: {
+          ...prompt,
+          embeddingRefs: prompt.embeddingRefs.map((entry, current) =>
+            current === index ? { ...entry, resource: linked } : entry,
+          ),
         },
-      },
+      }),
       {},
       {
         expectedDocumentEpoch: documentEpoch,
@@ -1079,11 +1113,14 @@ export class ProjectService {
     resolve: (
       saved: IgsProjectDocumentV1['generationDraft']['loras'][number]['resource'],
     ) => Promise<IgsProjectDocumentV1['generationDraft']['loras'][number]['resource']>,
+    targetLayerId?: string,
   ): Promise<ProjectTab> {
     const coordinator = this.requireTab(tabId)
     const document = coordinator.document
-    const index = this.loraIndex(document, identity)
-    const lora = document.generationDraft.loras[index]
+    const scope = generationDraftScope(document, targetLayerId)
+    const draft = scope.draft
+    const index = this.loraIndex({ ...document, generationDraft: draft }, identity)
+    const lora = draft.loras[index]
     const saved = lora.resource
     const resolved = await resolve(structuredClone(saved))
     if (
@@ -1106,7 +1143,7 @@ export class ProjectService {
       throw new ProjectAutosaveError('EDIT_CONFLICT', 'The Project changed while linking its LoRA.')
     }
     if (
-      document.generationDraft.loras.some(
+      draft.loras.some(
         (entry, current) => current !== index && sameResourceModel(entry.resource, resolved),
       )
     ) {
@@ -1127,15 +1164,12 @@ export class ProjectService {
       return toTab(tabId, coordinator)
     }
     await coordinator.applyDocument(
-      {
-        ...document,
-        generationDraft: {
-          ...document.generationDraft,
-          loras: document.generationDraft.loras.map((entry, current) =>
-            current === index ? { ...entry, resource: linked } : entry,
-          ),
-        },
-      },
+      scope.replace({
+        ...draft,
+        loras: draft.loras.map((entry, current) =>
+          current === index ? { ...entry, resource: linked } : entry,
+        ),
+      }),
       {},
       { expectedDocumentRevision: document.documentRevision },
     )
@@ -1151,10 +1185,13 @@ export class ProjectService {
     resolve: (
       saved: NonNullable<IgsProjectDocumentV1['generationDraft']['model']>,
     ) => Promise<NonNullable<IgsProjectDocumentV1['generationDraft']['model']>>,
+    targetLayerId?: string,
   ): Promise<ProjectTab> {
     const coordinator = this.requireTab(tabId)
     const document = coordinator.document
-    const saved = document.generationDraft.model
+    const scope = generationDraftScope(document, targetLayerId)
+    const draft = scope.draft
+    const saved = draft.model
     if (!saved) {
       throw new ProjectServiceError(
         'PROJECT_MODEL_NOT_SELECTED',
@@ -1197,10 +1234,7 @@ export class ProjectService {
       return toTab(tabId, coordinator)
     }
     await coordinator.applyDocument(
-      {
-        ...document,
-        generationDraft: { ...document.generationDraft, model: linked },
-      },
+      scope.replace({ ...draft, model: linked }),
       {},
       { expectedDocumentRevision: document.documentRevision },
     )
@@ -1213,11 +1247,14 @@ export class ProjectService {
     resolve: (
       saved: NonNullable<IgsProjectDocumentV1['generationDraft']['vae']>,
     ) => Promise<NonNullable<IgsProjectDocumentV1['generationDraft']['vae']>>,
+    targetLayerId?: string,
   ): Promise<ProjectTab> {
     const coordinator = this.requireTab(tabId)
     const document = coordinator.document
+    const scope = generationDraftScope(document, targetLayerId)
+    const draft = scope.draft
     const documentEpoch = coordinator.documentEpoch
-    const saved = document.generationDraft.vae
+    const saved = draft.vae
     if (!saved) {
       throw new ProjectServiceError(
         'PROJECT_VAE_NOT_SELECTED',
@@ -1263,28 +1300,28 @@ export class ProjectService {
       return toTab(tabId, coordinator)
     }
     await coordinator.applyDocument(
-      {
-        ...document,
-        generationDraft: { ...document.generationDraft, vae: linked },
-      },
+      scope.replace({ ...draft, vae: linked }),
       {},
       { expectedDocumentRevision: document.documentRevision },
     )
     return toTab(tabId, coordinator)
   }
 
-  async removeGenerationLora(tabId: string, identity: ProjectLoraIdentity): Promise<ProjectTab> {
+  async removeGenerationLora(
+    tabId: string,
+    identity: ProjectLoraIdentity,
+    targetLayerId?: string,
+  ): Promise<ProjectTab> {
     const coordinator = this.requireTab(tabId)
     const document = coordinator.document
-    const index = this.loraIndex(document, identity)
+    const scope = generationDraftScope(document, targetLayerId)
+    const draft = scope.draft
+    const index = this.loraIndex({ ...document, generationDraft: draft }, identity)
     await coordinator.applyDocument(
-      {
-        ...document,
-        generationDraft: {
-          ...document.generationDraft,
-          loras: document.generationDraft.loras.filter((_, current) => current !== index),
-        },
-      },
+      scope.replace({
+        ...draft,
+        loras: draft.loras.filter((_, current) => current !== index),
+      }),
       {},
       { expectedDocumentRevision: document.documentRevision },
     )
@@ -1453,10 +1490,13 @@ export class ProjectService {
   async setGenerationModel(
     tabId: string,
     model: IgsProjectDocumentV1['generationDraft']['model'],
+    targetLayerId?: string,
   ): Promise<ProjectTab> {
     const coordinator = this.requireTab(tabId)
     const document = coordinator.document
-    const previous = document.generationDraft.model
+    const scope = generationDraftScope(document, targetLayerId)
+    const draft = scope.draft
+    const previous = draft.model
     if (
       (previous === null && model === null) ||
       (previous !== null &&
@@ -1468,10 +1508,7 @@ export class ProjectService {
       return toTab(tabId, coordinator)
     }
     await coordinator.applyDocument(
-      {
-        ...document,
-        generationDraft: { ...document.generationDraft, model },
-      },
+      scope.replace({ ...draft, model }),
       {},
       { expectedDocumentRevision: document.documentRevision },
     )
@@ -1482,11 +1519,14 @@ export class ProjectService {
   async setGenerationVae(
     tabId: string,
     resolve: (() => Promise<NonNullable<IgsProjectDocumentV1['generationDraft']['vae']>>) | null,
+    targetLayerId?: string,
   ): Promise<ProjectTab> {
     const coordinator = this.requireTab(tabId)
     const document = coordinator.document
+    const scope = generationDraftScope(document, targetLayerId)
+    const draft = scope.draft
     const documentEpoch = coordinator.documentEpoch
-    const previous = document.generationDraft.vae
+    const previous = draft.vae
     const vae = resolve === null ? null : await resolve()
     if (vae !== null && (vae.kind !== 'vae' || vae.baseModelFamily !== 'illustrious')) {
       throw new ProjectServiceError(
@@ -1515,10 +1555,7 @@ export class ProjectService {
       return toTab(tabId, coordinator)
     }
     await coordinator.applyDocument(
-      {
-        ...document,
-        generationDraft: { ...document.generationDraft, vae },
-      },
+      scope.replace({ ...draft, vae }),
       {},
       { expectedDocumentRevision: document.documentRevision },
     )
@@ -1548,6 +1585,7 @@ export class ProjectService {
     tabId: string,
     change: ProjectGenerationDraftChange,
     historyGroupId?: string,
+    targetLayerId?: string,
   ): Promise<ProjectTab> {
     if (!isProjectGenerationDraftChange(change)) {
       throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'The generation setting is invalid.')
@@ -1564,8 +1602,9 @@ export class ProjectService {
     }
     const coordinator = this.requireTab(tabId)
     const document = coordinator.document
+    const scope = generationDraftScope(document, targetLayerId)
+    const draft = scope.draft
     const documentEpoch = coordinator.documentEpoch
-    const draft = document.generationDraft
     let nextDraft = draft
     switch (change.kind) {
       case 'anima-method': {
@@ -1612,7 +1651,7 @@ export class ProjectService {
       }
       case 'lora-enabled':
       case 'lora-weight': {
-        const index = this.loraIndex(document, change)
+        const index = this.loraIndex({ ...document, generationDraft: draft }, change)
         const lora = draft.loras[index]
         const field = change.kind === 'lora-enabled' ? 'enabled' : 'weight'
         if (lora[field] === change.value) {
@@ -1724,7 +1763,7 @@ export class ProjectService {
       }
     }
     await coordinator.applyDocument(
-      { ...document, generationDraft: nextDraft },
+      scope.replace(nextDraft),
       {},
       {
         expectedDocumentEpoch: documentEpoch,
@@ -1753,6 +1792,12 @@ export class ProjectService {
       )
     }
     const layer = document.layers[index]
+    if (layer.kind !== 'raster') {
+      throw new ProjectServiceError(
+        'PROJECT_LAYER_NOT_FOUND',
+        'This Raster Layer is not available.',
+      )
+    }
     if (layer.locked && (change.kind === 'opacity' || change.kind === 'blend-mode')) {
       throw new ProjectServiceError(
         'PROJECT_LAYER_LOCKED',
@@ -1796,6 +1841,64 @@ export class ProjectService {
     return toTab(tabId, coordinator)
   }
 
+  async updateSmartPatchLayer(
+    tabId: string,
+    layerId: string,
+    change: ProjectSmartPatchLayerChange,
+  ): Promise<ProjectTab> {
+    if (!isProjectSmartPatchLayerChange(change)) {
+      throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'The Smart Patch setting is invalid.')
+    }
+    const coordinator = this.requireTab(tabId)
+    const document = coordinator.document
+    const patch = requireSmartPatch(document, layerId)
+    if (patch.locked && change.kind !== 'lock' && change.kind !== 'visibility') {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'Unlock this Smart Patch before editing it.',
+      )
+    }
+    const next = { ...patch }
+    switch (change.kind) {
+      case 'blend-mode': {
+        next.blendMode = change.blendMode
+        break
+      }
+      case 'bounding-box': {
+        next.boundingBox = { ...change.rect }
+        break
+      }
+      case 'internal-resolution': {
+        next.internalResolution = { ...change.size }
+        break
+      }
+      case 'lock': {
+        next.locked = change.locked
+        break
+      }
+      case 'opacity': {
+        next.opacity = change.opacity
+        break
+      }
+      case 'visibility': {
+        next.visible = change.visible
+        break
+      }
+    }
+    if (JSON.stringify(next) === JSON.stringify(patch)) {
+      return toTab(tabId, coordinator)
+    }
+    await coordinator.applyDocument(
+      {
+        ...document,
+        layers: document.layers.map((layer) => (layer.id === layerId ? next : layer)),
+      },
+      {},
+      { expectedDocumentRevision: document.documentRevision },
+    )
+    return toTab(tabId, coordinator)
+  }
+
   /** Capture before runtime awaits and retain frozen raster files through callback admission. */
   async withCapturedNormalGenerationInput<T>(
     tabId: string,
@@ -1809,7 +1912,7 @@ export class ProjectService {
     const coordinator = this.requireTab(tabId)
     const document = coordinator.document
     const pendingSources = new Map(
-      document.layers
+      projectRasterLayers(document)
         .filter((layer) => layer.visible && layer.opacity > 0)
         .map(
           (layer) =>
@@ -2251,6 +2354,46 @@ function assertProjectId(value: unknown): asserts value is string {
   }
 }
 
+function requireSmartPatch(document: IgsProjectDocumentV1, layerId: string): IgsSmartPatchLayerV1 {
+  const layer = document.layers.find((candidate) => candidate.id === layerId)
+  if (!isProjectDocumentId(layerId) || layer?.kind !== 'smart-patch') {
+    throw new ProjectServiceError(
+      'PROJECT_LAYER_NOT_FOUND',
+      'This Smart Patch is no longer available.',
+    )
+  }
+  return layer
+}
+
+/** A captured owner: replacement never consults renderer selection or changes the normal draft. */
+function generationDraftScope(document: IgsProjectDocumentV1, targetLayerId?: string) {
+  if (targetLayerId === undefined) {
+    return {
+      draft: document.generationDraft,
+      replace: (draft: IgsProjectDocumentV1['generationDraft']): IgsProjectDocumentV1 => ({
+        ...document,
+        generationDraft: draft,
+      }),
+    }
+  }
+  const patch = requireSmartPatch(document, targetLayerId)
+  if (patch.locked) {
+    throw new ProjectServiceError(
+      'PROJECT_LAYER_LOCKED',
+      'Unlock this Smart Patch before editing it.',
+    )
+  }
+  return {
+    draft: patch.generationDraft,
+    replace: (draft: IgsProjectDocumentV1['generationDraft']): IgsProjectDocumentV1 => ({
+      ...document,
+      layers: document.layers.map((layer) =>
+        layer.id === targetLayerId ? { ...patch, generationDraft: draft } : layer,
+      ),
+    }),
+  }
+}
+
 function rasterImportName(sourcePath: string): string {
   const stem = path.parse(sourcePath).name
   const normalized = stem
@@ -2304,18 +2447,30 @@ function toTab(id: string, coordinator: ProjectAutosaveCoordinator): ProjectTab 
     generationDraft: document.generationDraft,
     id,
     lastActualSeedSnapshot: document.lastActualSeedSnapshot,
-    layers: document.layers.map((layer) => ({
-      blendMode: layer.blendMode,
-      height: layer.asset.height,
-      id: layer.id,
-      imageUrl: projectLayerImageUrl(id, document.documentRevision, layer.id, layer.asset.sha256),
-      locked: layer.locked,
-      name: layer.name,
-      opacity: layer.opacity,
-      transform: layer.transform,
-      visible: layer.visible,
-      width: layer.asset.width,
-    })),
+    layers: document.layers.map((layer) =>
+      layer.kind === 'smart-patch'
+        ? {
+            ...layer,
+            status: 'empty' as const,
+          }
+        : {
+            blendMode: layer.blendMode,
+            height: layer.asset.height,
+            id: layer.id,
+            imageUrl: projectLayerImageUrl(
+              id,
+              document.documentRevision,
+              layer.id,
+              layer.asset.sha256,
+            ),
+            locked: layer.locked,
+            name: layer.name,
+            opacity: layer.opacity,
+            transform: layer.transform,
+            visible: layer.visible,
+            width: layer.asset.width,
+          },
+    ),
     primaryBbox: document.primaryBbox,
     title: document.title,
   }

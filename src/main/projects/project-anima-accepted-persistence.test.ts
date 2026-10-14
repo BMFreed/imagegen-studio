@@ -23,6 +23,7 @@ import {
   enqueueAnimaStagingBatch,
   withAnimaStagingFixture,
 } from './test-fixtures/anima-staging.js'
+import { requireRasterLayer } from './test-fixtures/require-raster-layer.js'
 
 const rootsFor = (fixture: AnimaStagingFixture) => ({
   placeholdersDir: path.resolve('src/main/projects/placeholders'),
@@ -209,7 +210,10 @@ for (const opaque of [false, true]) {
             unfinished,
           )
           assert.equal(accepted.kind, 'accepted')
-          assert.deepEqual(state.owner.document.layers[0].generationProvenance, expected)
+          assert.deepEqual(
+            requireRasterLayer(state.owner.document.layers[0]).generationProvenance,
+            expected,
+          )
           assert.equal(
             state.owner.document.generationDraft.positivePrompt.text,
             'later Project prompt',
@@ -229,7 +233,10 @@ for (const opaque of [false, true]) {
             'later Project prompt',
           )
           await state.owner.redo()
-          assert.deepEqual(state.owner.document.layers[0].generationProvenance, expected)
+          assert.deepEqual(
+            requireRasterLayer(state.owner.document.layers[0]).generationProvenance,
+            expected,
+          )
           assert.deepEqual(
             await fixture.staging.listVerifiedCandidates(state.key),
             [],
@@ -242,16 +249,28 @@ for (const opaque of [false, true]) {
           )
           assert.equal(recovery.status, 'recoverable')
           if (recovery.status === 'recoverable') {
-            assert.deepEqual(recovery.document.layers[0].generationProvenance, expected)
+            assert.deepEqual(
+              requireRasterLayer(recovery.document.layers[0]).generationProvenance,
+              expected,
+            )
           }
           await state.recover()
-          assert.deepEqual(state.owner.document.layers[0].generationProvenance, expected)
+          assert.deepEqual(
+            requireRasterLayer(state.owner.document.layers[0]).generationProvenance,
+            expected,
+          )
           assert.equal((await state.owner.save()).committed, true)
           const saved = await readIgsPackage(fixture.projectPath)
-          assert.deepEqual(saved.project.layers[0].generationProvenance, expected)
+          assert.deepEqual(
+            requireRasterLayer(saved.project.layers[0]).generationProvenance,
+            expected,
+          )
           assert.equal(saved.project.generationDraft.sampling.animaMethod, 'lcm')
           const reopened = await ProjectSession.open(fixture.projectPath, state.roots)
-          assert.deepEqual(reopened.document.layers[0].generationProvenance, expected)
+          assert.deepEqual(
+            requireRasterLayer(reopened.document.layers[0]).generationProvenance,
+            expected,
+          )
           await index.indexSaved(fixture.projectPath, workspaceId)
           const rows = await index.listSavedAcceptedResults(state.key)
           assert.equal(rows.length, 1)
@@ -266,7 +285,7 @@ for (const opaque of [false, true]) {
           await copyFile(fixture.projectPath, copyPath)
           const copy = await ProjectSession.open(copyPath, state.roots)
           assert.deepEqual(
-            copy.document.layers[0].generationProvenance,
+            requireRasterLayer(copy.document.layers[0]).generationProvenance,
             expected,
             'portable copies preserve recorded component registry bindings as advisory data',
           )
@@ -313,16 +332,22 @@ test('an interrupted real Anima Add after durable shadow recovers the same nativ
       assert.deepEqual(await fixture.staging.listVerifiedCandidates(state.key), [candidate])
       assert.deepEqual(await readFile(fixture.projectPath), fixture.originalProjectBytes)
       await state.recover()
-      assert.deepEqual(state.owner.document.layers[0].generationProvenance, expected)
+      assert.deepEqual(
+        requireRasterLayer(state.owner.document.layers[0]).generationProvenance,
+        expected,
+      )
       const restarted = new ProjectGenerationAcceptance(state.options)
       assert.equal(await restarted.reconcile(state.key), 'cleaned')
       assert.equal(await restarted.reconcile(state.key), 'none')
       assert.deepEqual(await fixture.staging.listVerifiedCandidates(state.key), [])
-      assert.deepEqual(state.owner.document.layers[0].generationProvenance, expected)
+      assert.deepEqual(
+        requireRasterLayer(state.owner.document.layers[0]).generationProvenance,
+        expected,
+      )
       assert.equal(state.owner.document.layers.length, 1)
       assert.equal((await state.owner.save()).committed, true)
       const saved = await readIgsPackage(fixture.projectPath)
-      assert.deepEqual(saved.project.layers[0].generationProvenance, expected)
+      assert.deepEqual(requireRasterLayer(saved.project.layers[0]).generationProvenance, expected)
     } finally {
       await state.close()
     }

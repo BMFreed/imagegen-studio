@@ -4,6 +4,7 @@ import { test } from 'node:test'
 
 import { animaFixturePng } from '../../main/projects/test-fixtures/anima-batch.js'
 import { acceptedOutpaintProvenanceFixture } from '../../main/projects/test-fixtures/outpaint-provenance.js'
+import { requireRasterLayer } from '../../main/projects/test-fixtures/require-raster-layer.js'
 import {
   compareRasterGenerationSettings,
   isRasterGenerationData,
@@ -108,7 +109,7 @@ for (const family of ['illustrious', 'anima'] as const) {
       ['path', `assets/layers/${document.layers[0].id}.webp`],
     ] as const) {
       const changed = structuredClone(document)
-      Reflect.set(changed.layers[0].asset, key, wrong)
+      Reflect.set(requireRasterLayer(changed.layers[0]).asset, key, wrong)
       assert.throws(() => parseProjectDocumentV1(changed), { code: 'INVALID_PROJECT' })
     }
   })

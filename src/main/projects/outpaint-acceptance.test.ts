@@ -21,6 +21,7 @@ import {
   type OutpaintConsumerFixture,
   withOutpaintConsumerFixture,
 } from './test-fixtures/outpaint-consumers.js'
+import { requireRasterLayer } from './test-fixtures/require-raster-layer.js'
 
 async function publish(
   fixture: OutpaintConsumerFixture,
@@ -101,7 +102,7 @@ for (const family of ['illustrious', 'anima'] as const) {
         assert.equal(result.kind, 'accepted')
         assert.equal(owner.document.layers.length, 1)
         const layer = owner.document.layers[0]
-        const provenance = structuredClone(layer.generationProvenance!)
+        const provenance = structuredClone(requireRasterLayer(layer).generationProvenance!)
         assert.equal(provenance.kind, `${family}-outpaint`)
         assert.ok(
           provenance.kind === 'anima-outpaint' || provenance.kind === 'illustrious-outpaint',
@@ -117,15 +118,18 @@ for (const family of ['illustrious', 'anima'] as const) {
         assert.equal(JSON.stringify(provenance).includes(fixture.root), false)
         assert.equal(JSON.stringify(provenance).includes('nativePlan'), false)
         assert.deepEqual(owner.document.primaryBbox, current.primaryBbox)
-        assert.equal(layer.transform.x, candidate.bbox.x)
-        assert.equal(layer.transform.y, candidate.bbox.y)
+        assert.equal(requireRasterLayer(layer).transform.x, candidate.bbox.x)
+        assert.equal(requireRasterLayer(layer).transform.y, candidate.bbox.y)
         assert.equal(owner.document.generationDraft.positivePrompt.text, '{later|edited} draft')
         assert.deepEqual(await readFile(fixture.projectPath), fixture.originalProjectBytes)
         await owner.undo()
         assert.equal(owner.document.layers.length, 0)
         assert.equal(owner.document.generationDraft.positivePrompt.text, '{later|edited} draft')
         await owner.redo()
-        assert.deepEqual(owner.document.layers[0].generationProvenance, provenance)
+        assert.deepEqual(
+          requireRasterLayer(owner.document.layers[0]).generationProvenance,
+          provenance,
+        )
         await owner.flush()
         const recovery = await ProjectAutosaveCoordinator.inspectRecovery(
           fixture.projectPath,
@@ -133,21 +137,34 @@ for (const family of ['illustrious', 'anima'] as const) {
         )
         assert.equal(recovery.status, 'recoverable')
         if (recovery.status === 'recoverable') {
-          assert.deepEqual(recovery.document.layers[0].generationProvenance, provenance)
+          assert.deepEqual(
+            requireRasterLayer(recovery.document.layers[0]).generationProvenance,
+            provenance,
+          )
         }
         // A fresh lease registry explicitly simulates a new Main process after a crash.
         recovered = await ProjectAutosaveCoordinator.recover(fixture.projectPath, roots, shadow, {
           debounceMs: 60_000,
           leaseRegistry: new ProjectAutosaveLeaseRegistry(),
         })
-        assert.deepEqual(recovered.document.layers[0].generationProvenance, provenance)
+        assert.deepEqual(
+          requireRasterLayer(recovered.document.layers[0]).generationProvenance,
+          provenance,
+        )
         assert.equal((await recovered.save()).committed, true)
         const saved = await readIgsPackage(fixture.projectPath)
-        assert.deepEqual(saved.project.layers[0].generationProvenance, provenance)
-        assert.deepEqual(await saved.readMember(layer.asset.path), fixture.outputBytes)
         assert.deepEqual(
-          (await ProjectSession.open(fixture.projectPath, roots)).document.layers[0]
-            .generationProvenance,
+          requireRasterLayer(saved.project.layers[0]).generationProvenance,
+          provenance,
+        )
+        assert.deepEqual(
+          await saved.readMember(requireRasterLayer(layer).asset.path),
+          fixture.outputBytes,
+        )
+        assert.deepEqual(
+          requireRasterLayer(
+            (await ProjectSession.open(fixture.projectPath, roots)).document.layers[0],
+          ).generationProvenance,
           provenance,
         )
         assert.deepEqual(await staging.listVerifiedCandidates(candidate.localProjectKey), [])
@@ -285,7 +302,7 @@ test('mixed-family outpaint candidates from independent batches Add as one group
         'accepted',
       )
       assert.deepEqual(
-        owner.document.layers.map((layer) => layer.generationProvenance?.kind),
+        owner.document.layers.map((layer) => requireRasterLayer(layer).generationProvenance?.kind),
         ['anima-outpaint', 'illustrious-outpaint'],
       )
       assert.deepEqual(

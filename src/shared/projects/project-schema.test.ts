@@ -5,8 +5,11 @@ import type {
   IgsIllustriousRasterGenerationProvenanceV1,
   IgsManifestV1,
   IgsProjectDocumentV1,
+  IgsRasterLayerV1,
+  IgsSmartPatchLayerV1,
 } from './project-schema.js'
 
+import { requireRasterLayer } from '../../main/projects/test-fixtures/require-raster-layer.js'
 import { IGS_SRGB_ICC_SHA256 } from './color-profile.js'
 import { defaultIllustriousNoiseProfile } from './illustrious-noise-profile.js'
 import {
@@ -20,6 +23,8 @@ import {
   parseIgsManifestV1,
   parseProjectDocumentV1,
   parseRasterGenerationProvenanceV1,
+  projectAssetReferences,
+  projectRasterLayers,
   validateIgsPackageMetadataV1,
 } from './project-schema.js'
 
@@ -31,6 +36,119 @@ const VERSION_ID = 'd89496a9-c30f-42c9-bfcb-1d82c68963c1'
 const SHA256 = 'a'.repeat(64)
 const SECOND_SHA256 = 'b'.repeat(64)
 const ASSET_PATH = `assets/layers/${LAYER_ID}.png`
+
+function emptyPatch(): IgsSmartPatchLayerV1 {
+  return {
+    activeRasterSubLayerId: null,
+    blendMode: 'normal',
+    boundingBox: { height: 256, width: 384, x: -18, y: 31 },
+    generationDraft: structuredClone(emptyDocument().generationDraft),
+    id: '8ef6efdb-fdd1-4fce-87f0-d889866f199d',
+    internalResolution: { height: 512, width: 768 },
+    kind: 'smart-patch',
+    locked: false,
+    mask: { asset: null, id: 'e09c69aa-dee3-4bf8-87d1-84ed1d0c4e60', revision: 0 },
+    name: 'Empty Smart Patch',
+    opacity: 1,
+    rasterSubLayers: [],
+    visible: true,
+  }
+}
+
+test('empty Smart Patch owns detached geometry and draft with no image assets or accepted variants', () => {
+  const document = emptyDocument()
+  const patch = emptyPatch()
+  patch.generationDraft.positivePrompt.text = 'patch authored prompt'
+  patch.generationDraft.seed = { policy: 'fixed', value: 0 }
+  document.layers.push(patch)
+  const parsed = parseProjectDocumentV1(document)
+  assert.deepEqual(parsed, document)
+  assert.deepEqual(projectRasterLayers(parsed), [])
+  assert.deepEqual(projectAssetReferences(parsed), [])
+  assert.deepEqual(parsed.primaryBbox, document.primaryBbox)
+  assert.equal(parsed.generationDraft.positivePrompt.text, '')
+  assert.equal(parsed.layers[0]?.kind, 'smart-patch')
+  assert.deepEqual(validateIgsPackageMetadataV1(emptyManifest(), parsed).document, parsed)
+
+  const mixed: IgsProjectDocumentV1 = generatedDocument()
+  const raster = structuredClone(mixed.layers[0])
+  mixed.layers.unshift(patch)
+  const mixedParsed = parseProjectDocumentV1(mixed)
+  assert.deepEqual(projectRasterLayers(mixedParsed), [raster])
+  assert.deepEqual(projectAssetReferences(mixedParsed), [projectRasterLayers(mixedParsed)[0].asset])
+  assert.deepEqual(parseProjectDocumentV1(generatedDocument()), generatedDocument())
+})
+
+test('Smart Patch masks have distinct identities from every other mask and layer in either order', () => {
+  for (const collide of ['own-layer', 'other-layer', 'other-mask'] as const) {
+    const first = emptyPatch()
+    const second = emptyPatch()
+    second.id = '3b425173-7a9c-41ed-a728-08e30dbb970c'
+    second.mask.id = 'ad6bc7f8-7a42-41bf-adfa-a65a40ac0271'
+    if (collide === 'own-layer') {
+      first.mask.id = first.id
+    }
+    if (collide === 'other-layer') {
+      first.mask.id = second.id
+    }
+    if (collide === 'other-mask') {
+      first.mask.id = second.mask.id
+    }
+    for (const layers of [
+      [first, second],
+      [second, first],
+    ]) {
+      assert.throws(
+        () => parseProjectDocumentV1({ ...emptyDocument(), layers }),
+        assertSchemaCode('INVALID_PROJECT'),
+      )
+    }
+  }
+  const rasterCollision: IgsProjectDocumentV1 = generatedDocument()
+  const patch = emptyPatch()
+  patch.mask.id = LAYER_ID
+  rasterCollision.layers.unshift(patch)
+  assert.throws(() => parseProjectDocumentV1(rasterCollision), assertSchemaCode('INVALID_PROJECT'))
+})
+
+test('empty Smart Patch schema rejects future painted masks, variants, fake statuses and malformed owned drafts', () => {
+  for (const [caseIndex, change] of [
+    (patch: IgsSmartPatchLayerV1) => Object.assign(patch.mask, { revision: 1 }),
+    (patch: IgsSmartPatchLayerV1) =>
+      Object.assign(patch.mask, {
+        asset: { bytes: 68, path: 'assets/masks/mask.png', sha256: SHA256 },
+      }),
+    (patch: IgsSmartPatchLayerV1) => Object.assign(patch, { activeRasterSubLayerId: LAYER_ID }),
+    (patch: IgsSmartPatchLayerV1) =>
+      Object.assign(patch, { rasterSubLayers: generatedDocument().layers }),
+    (patch: IgsSmartPatchLayerV1) => Object.assign(patch, { status: 'ready' }),
+    (patch: IgsSmartPatchLayerV1) => Object.assign(patch, { transform: { x: 0, y: 0 } }),
+    (patch: IgsSmartPatchLayerV1) => Object.assign(patch.internalResolution, { width: 0 }),
+    (patch: IgsSmartPatchLayerV1) => Object.assign(patch.boundingBox, { x: Infinity }),
+    (patch: IgsSmartPatchLayerV1) =>
+      Object.assign(patch.generationDraft.seed, { policy: 'fixed', value: -1 }),
+    (patch: IgsSmartPatchLayerV1) => {
+      patch.generationDraft.model = exactResource('lora')
+    },
+    (patch: IgsSmartPatchLayerV1) => {
+      patch.generationDraft.vae = exactResource('checkpoint')
+    },
+  ].entries()) {
+    const patch = emptyPatch()
+    change(patch)
+    assert.throws(
+      () => parseProjectDocumentV1({ ...emptyDocument(), layers: [patch] }),
+      assertSchemaCode('INVALID_PROJECT'),
+      `Unsupported owned patch case ${caseIndex}`,
+    )
+  }
+  const manifest = emptyManifest()
+  manifest.preview = { rect: { height: 2, width: 2, x: 0, y: 0 }, status: 'rendered' }
+  assert.throws(
+    () => validateIgsPackageMetadataV1(manifest, { ...emptyDocument(), layers: [emptyPatch()] }),
+    assertSchemaCode('PACKAGE_MISMATCH'),
+  )
+})
 
 test('optional native method is portable draft data without defaults or rewriting Illustrious accepted results', () => {
   const legacy = emptyDocument()
@@ -149,8 +267,13 @@ function rasterGenerationProvenance(): IgsIllustriousRasterGenerationProvenanceV
   }
 }
 
-function generatedDocument(): IgsProjectDocumentV1 {
-  const document = emptyDocument()
+function generatedDocument(): Omit<IgsProjectDocumentV1, 'layers'> & {
+  layers: IgsRasterLayerV1[]
+} {
+  const document: Omit<IgsProjectDocumentV1, 'layers'> & { layers: IgsRasterLayerV1[] } = {
+    ...emptyDocument(),
+    layers: [],
+  }
   document.layers.push({
     asset: { bytes: 1024, height: 128, path: ASSET_PATH, sha256: SECOND_SHA256, width: 64 },
     blendMode: 'normal',
@@ -235,7 +358,7 @@ test('ordinary Euler and ancestral accepted configuration keys survive portable 
     })
     assert.deepEqual(parseRasterGenerationProvenanceV1(provenance), provenance)
     const document = generatedDocument()
-    document.layers[0].generationProvenance = provenance
+    projectRasterLayers(document)[0].generationProvenance = provenance
     Object.assign(document.generationDraft.sampling, { sampler, scheduler: 'Normal' })
     assert.deepEqual(parseProjectDocumentV1(document), document)
     for (const mode of ['txt2img', 'img2img', 'outpaint'] as const) {
@@ -263,37 +386,52 @@ test('accepted provenance rejects unportable fields, invalid model/geometry and 
   assert.equal(IGS_GENERATION_PNG_MAX_BYTES, 32 * 1024 * 1024)
   const invalidCases: ((document: IgsProjectDocumentV1) => void)[] = [
     (document) => {
-      Object.assign(document.layers[0].generationProvenance!, { regionalGuidance: [] })
-    },
-    (document) => {
-      Object.assign(document.layers[0].generationProvenance!.executionResultContext.output, {
-        localPath: '/tmp/result.png',
+      Object.assign(projectRasterLayers(document)[0].generationProvenance!, {
+        regionalGuidance: [],
       })
     },
     (document) => {
-      document.layers[0].generationProvenance!.generationConfiguration.model.predictionType = null
+      Object.assign(
+        projectRasterLayers(document)[0].generationProvenance!.executionResultContext.output,
+        {
+          localPath: '/tmp/result.png',
+        },
+      )
     },
     (document) => {
-      document.layers[0].generationProvenance!.generationConfiguration.model.localModelId =
+      projectRasterLayers(
+        document,
+      )[0].generationProvenance!.generationConfiguration.model.predictionType = null
+    },
+    (document) => {
+      projectRasterLayers(
+        document,
+      )[0].generationProvenance!.generationConfiguration.model.localModelId =
         '/home/user/models/checkpoint'
     },
     (document) => {
-      document.layers[0].generationProvenance!.generationConfiguration.size.width = 72
+      projectRasterLayers(document)[0].generationProvenance!.generationConfiguration.size.width = 72
     },
     (document) => {
-      document.layers[0].generationProvenance!.executionResultContext.output.sha256 = 'not-a-hash'
+      projectRasterLayers(document)[0].generationProvenance!.executionResultContext.output.sha256 =
+        'not-a-hash'
     },
     (document) => {
-      document.layers[0].generationProvenance!.executionResultContext.output.byteSize =
+      projectRasterLayers(
+        document,
+      )[0].generationProvenance!.executionResultContext.output.byteSize =
         IGS_GENERATION_PNG_MAX_BYTES + 1
     },
     (document) => {
-      document.layers[0].generationProvenance!.executionResultContext.acceptedAt =
+      projectRasterLayers(document)[0].generationProvenance!.executionResultContext.acceptedAt =
         '2026-02-30T12:01:00.000Z'
     },
     (document) => {
-      document.layers[0].generationProvenance!.generationConfiguration.positivePrompt.embeddingRefs =
-        [{ resource: exactResource('lora'), token: '<style>' }] as never
+      projectRasterLayers(
+        document,
+      )[0].generationProvenance!.generationConfiguration.positivePrompt.embeddingRefs = [
+        { resource: exactResource('lora'), token: '<style>' },
+      ] as never
     },
   ]
   for (const mutate of invalidCases) {
@@ -438,15 +576,15 @@ test('manifest and document must agree on IDs, revision, and every raster asset'
   )
 
   const invalidTransform = structuredClone(document)
-  invalidTransform.layers[0].transform.scaleX = 0
+  requireRasterLayer(invalidTransform.layers[0]).transform.scaleX = 0
   assert.throws(() => parseProjectDocumentV1(invalidTransform), assertSchemaCode('INVALID_PROJECT'))
-  invalidTransform.layers[0].transform.scaleX = 1
-  invalidTransform.layers[0].transform.rotationDegrees = 361
+  requireRasterLayer(invalidTransform.layers[0]).transform.scaleX = 1
+  requireRasterLayer(invalidTransform.layers[0]).transform.rotationDegrees = 361
   assert.throws(() => parseProjectDocumentV1(invalidTransform), assertSchemaCode('INVALID_PROJECT'))
 
   const profileSha = 'c'.repeat(64)
   const profilePath = `assets/profiles/${profileSha}.icc`
-  document.layers[0].sourceIccProfile = {
+  projectRasterLayers(document)[0].sourceIccProfile = {
     bytes: 128,
     path: profilePath,
     sha256: profileSha,
@@ -459,13 +597,13 @@ test('manifest and document must agree on IDs, revision, and every raster asset'
     assertSchemaCode('PACKAGE_MISMATCH'),
   )
   manifest.members.push({ bytes: 128, path: profilePath, sha256: profileSha })
-  document.layers[0].sourceIccProfile = {
+  projectRasterLayers(document)[0].sourceIccProfile = {
     bytes: 128,
     path: profilePath,
     sha256: SECOND_SHA256,
   }
   assert.throws(() => parseProjectDocumentV1(document), assertSchemaCode('INVALID_PROJECT'))
-  delete document.layers[0].sourceIccProfile
+  delete projectRasterLayers(document)[0].sourceIccProfile
   assert.throws(
     () => validateIgsPackageMetadataV1(manifest, document),
     assertSchemaCode('PACKAGE_MISMATCH'),

@@ -56,6 +56,7 @@ import {
   acceptedOutputPngFixture,
   acceptedRasterProvenanceFixture,
 } from './test-fixtures/accepted-provenance.js'
+import { requireRasterLayer } from './test-fixtures/require-raster-layer.js'
 import { ProjectWorkerClient, ProjectWorkerError } from './worker-client.js'
 
 function newProjectResource<K extends 'checkpoint' | 'embedding' | 'lora' | 'vae'>(kind: K) {
@@ -2057,7 +2058,7 @@ test(
       const sourcePath = path.join(dataRoot, 'frozen foreground.png')
       await writeFile(sourcePath, rasterPng)
       const imported = await service.importRasterImage(tabId, sourcePath, rasterImportWorker())
-      assert.equal(imported.layers[0].transform.x, bbox.x)
+      assert.equal(requireRasterLayer(imported.layers[0]).transform.x, bbox.x)
       const savedRevision = (await readIgsPackage(filePath)).project.documentRevision
 
       const stagingBasePath = path.join(dataRoot, 'scratch')
@@ -3584,7 +3585,7 @@ test('Raster Layer commands persist top-first order and properties through shado
     assert.equal(saved.project.layers[1].visible, false)
     assert.equal(saved.manifest.preview.status, 'unavailable')
     for (const layer of saved.project.layers) {
-      assert.deepEqual(await saved.readMember(layer.asset.path), rasterPng)
+      assert.deepEqual(await saved.readMember(requireRasterLayer(layer).asset.path), rasterPng)
     }
     await service.close(tabId)
     const reopened = await service.open(tabId)
@@ -3676,7 +3677,7 @@ test('editing an accepted Euler Raster Layer preserves immutable noise profile a
       {
         acceptedAt: provenance.executionResultContext.acceptedAt,
         height: 8,
-        imageUrl: imported.result.tab.layers[0].imageUrl,
+        imageUrl: requireRasterLayer(imported.result.tab.layers[0]).imageUrl,
         layerId,
         layerName: 'Accepted image',
         modelFileSha256: provenance.generationConfiguration.model.fileSha256,
@@ -3688,12 +3689,15 @@ test('editing an accepted Euler Raster Layer preserves immutable noise profile a
     ]
     assert.deepEqual(imported.result.tab.acceptedResults, expectedHistory)
     assert.ok(imported.result.tab.acceptedResults.every(isProjectAcceptedResultView))
-    assert.equal(imported.result.tab.layers[0].width, 16)
-    assert.equal(imported.result.tab.layers[0].height, 16)
+    assert.equal(requireRasterLayer(imported.result.tab.layers[0]).width, 16)
+    assert.equal(requireRasterLayer(imported.result.tab.layers[0]).height, 16)
     const [indexed] = await repository.listProjects()
     assert.ok(indexed)
     const savedBeforeEdit = await readIgsPackage(indexed.canonicalPath)
-    assert.deepEqual(savedBeforeEdit.project.layers[0].generationProvenance, provenance)
+    assert.deepEqual(
+      requireRasterLayer(savedBeforeEdit.project.layers[0]).generationProvenance,
+      provenance,
+    )
     const durableBeforeEdit = await repository.listSavedAcceptedResults(tabId)
     assert.equal(durableBeforeEdit.length, 1)
     assert.equal(durableBeforeEdit[0].actualSeed, 0)
@@ -3745,7 +3749,7 @@ test('editing an accepted Euler Raster Layer preserves immutable noise profile a
       'dirty revision with unchanged accepted pixels remains navigable',
     )
     assert.deepEqual(changed.acceptedResults, [
-      { ...expectedHistory[0], imageUrl: changed.layers[0].imageUrl },
+      { ...expectedHistory[0], imageUrl: requireRasterLayer(changed.layers[0]).imageUrl },
     ])
     await service.flushAutosave(tabId)
     const recovery = await shadow.inspect({
@@ -3754,7 +3758,10 @@ test('editing an accepted Euler Raster Layer preserves immutable noise profile a
     })
     assert.equal(recovery.status, 'recoverable')
     if (recovery.status === 'recoverable') {
-      assert.deepEqual(recovery.document.layers[0].generationProvenance, provenance)
+      assert.deepEqual(
+        requireRasterLayer(recovery.document.layers[0]).generationProvenance,
+        provenance,
+      )
       assert.equal(recovery.document.layers[0].opacity, 0.4)
     }
     assert.equal((await readIgsPackage(indexed.canonicalPath)).project.layers[0].opacity, 1)
@@ -3793,12 +3800,15 @@ test('editing an accepted Euler Raster Layer preserves immutable noise profile a
     const refreshedPage = await service.getAcceptedResultHistory()
     assert.ok(isAcceptedResultHistoryPage(refreshedPage))
     assert.notEqual(refreshedPage.items[0].documentRevision, exactReference.documentRevision)
-    assert.equal(repairedFromRefresh[0].assetSha256, savedBeforeEdit.project.layers[0].asset.sha256)
+    assert.equal(
+      repairedFromRefresh[0].assetSha256,
+      requireRasterLayer(savedBeforeEdit.project.layers[0]).asset.sha256,
+    )
 
     assert.equal((await service.save(tabId)).committed, true)
     const saved = await readIgsPackage(indexed.canonicalPath)
     assert.equal(saved.project.layers[0].opacity, 0.4)
-    assert.deepEqual(saved.project.layers[0].generationProvenance, provenance)
+    assert.deepEqual(requireRasterLayer(saved.project.layers[0]).generationProvenance, provenance)
     assert.deepEqual(await saved.readMember(assetPath), output)
     const durableSaved = await repository.listSavedAcceptedResults(tabId)
     assert.equal(durableSaved.length, 1)
@@ -3824,11 +3834,12 @@ test('editing an accepted Euler Raster Layer preserves immutable noise profile a
     assert.equal(reopened.kind, 'opened')
     if (reopened.kind === 'opened') {
       assert.deepEqual(reopened.tab.acceptedResults, [
-        { ...expectedHistory[0], imageUrl: reopened.tab.layers[0].imageUrl },
+        { ...expectedHistory[0], imageUrl: requireRasterLayer(reopened.tab.layers[0]).imageUrl },
       ])
     }
     assert.deepEqual(
-      (await readIgsPackage(indexed.canonicalPath)).project.layers[0].generationProvenance,
+      requireRasterLayer((await readIgsPackage(indexed.canonicalPath)).project.layers[0])
+        .generationProvenance,
       provenance,
     )
   })
@@ -3933,7 +3944,7 @@ test('Save marks an all-hidden or zero-opacity raster Project empty without drop
     assert.equal(empty.manifest.preview.rect, null)
     assert.equal(empty.project.layers.length, 2)
     for (const layer of empty.project.layers) {
-      assert.deepEqual(await empty.readMember(layer.asset.path), rasterPng)
+      assert.deepEqual(await empty.readMember(requireRasterLayer(layer).asset.path), rasterPng)
     }
 
     // One visible nonzero-opacity layer changes only the preview classification; pixels are still
@@ -3944,7 +3955,10 @@ test('Save marks an all-hidden or zero-opacity raster Project empty without drop
     assert.equal(visible.manifest.preview.status, 'unavailable')
     assert.ok((await service.list())[0]?.thumbnailUrl?.startsWith('igs-preview://thumbnail/'))
     assert.deepEqual(visible.manifest.preview.rect, { height: 2, width: 2, x: 4, y: 0 })
-    assert.deepEqual(await visible.readMember(visible.project.layers[1].asset.path), rasterPng)
+    assert.deepEqual(
+      await visible.readMember(requireRasterLayer(visible.project.layers[1]).asset.path),
+      rasterPng,
+    )
   })
 })
 
@@ -3967,7 +3981,10 @@ test('Save commits the current Project with placeholder previews when compositio
     assert.equal(packageAfterFailure.manifest.preview.status, 'unavailable')
     assert.equal(packageAfterFailure.project.layers[0].opacity, 0.5)
     for (const layer of packageAfterFailure.project.layers) {
-      assert.deepEqual(await packageAfterFailure.readMember(layer.asset.path), rasterPng)
+      assert.deepEqual(
+        await packageAfterFailure.readMember(requireRasterLayer(layer).asset.path),
+        rasterPng,
+      )
     }
     assert.equal(
       (await readdir(path.join(dataRoot, 'scratch'))).some((entry) =>
@@ -3994,7 +4011,10 @@ test('Save cannot classify a newer Raster Layer edit from an older empty worker 
     const reopened = await readIgsPackage(filePath)
     assert.equal(reopened.project.layers[0].opacity, 0.5)
     assert.equal(reopened.manifest.preview.status, 'unavailable')
-    assert.deepEqual(await reopened.readMember(reopened.project.layers[0].asset.path), rasterPng)
+    assert.deepEqual(
+      await reopened.readMember(requireRasterLayer(reopened.project.layers[0]).asset.path),
+      rasterPng,
+    )
   })
 })
 
@@ -4005,7 +4025,7 @@ test('Rebuild Preview repairs a closed Project through the real package and inde
     const before = await readIgsPackage(filePath)
     const documentBytes = await before.readMember('project.json')
     const assetBytes = await Promise.all(
-      before.project.layers.map((layer) => before.readMember(layer.asset.path)),
+      before.project.layers.map((layer) => before.readMember(requireRasterLayer(layer).asset.path)),
     )
     const beforeIndex = (await repository.listProjects())[0]
     assert.equal(before.manifest.preview.status, 'unavailable')
@@ -4021,7 +4041,10 @@ test('Rebuild Preview repairs a closed Project through the real package and inde
     assert.deepEqual(after.project, before.project)
     assert.deepEqual(await after.readMember('project.json'), documentBytes)
     for (const [index, layer] of after.project.layers.entries()) {
-      assert.deepEqual(await after.readMember(layer.asset.path), assetBytes[index])
+      assert.deepEqual(
+        await after.readMember(requireRasterLayer(layer).asset.path),
+        assetBytes[index],
+      )
     }
     const indexed = (await repository.listProjects())[0]
     assert.equal(indexed.previewStatus, 'rendered')
@@ -4052,7 +4075,10 @@ test('Rebuild Preview keeps a clean open tab usable for a later edit and Save', 
     assert.equal(saved.tab.dirty, false)
     const after = await readIgsPackage(filePath)
     assert.equal(after.project.layers[0].opacity, 0.4)
-    assert.deepEqual(await after.readMember(after.project.layers[0].asset.path), rasterPng)
+    assert.deepEqual(
+      await after.readMember(requireRasterLayer(after.project.layers[0]).asset.path),
+      rasterPng,
+    )
     assert.equal((await repository.listProjects())[0].previewStatus, 'unavailable')
   })
 })
@@ -4242,7 +4268,7 @@ test('Project image import adds a top layer at the bbox origin, exposes staged p
     )
     const top = imported.layers[0]
     assert.equal(top.name, 'Foreground pass')
-    assert.deepEqual(top.transform, {
+    assert.deepEqual(requireRasterLayer(top).transform, {
       rotationDegrees: 0,
       scaleX: 1,
       scaleY: 1,
@@ -4250,7 +4276,7 @@ test('Project image import adds a top layer at the bbox origin, exposes staged p
       y: bbox.y,
     })
     assert.deepEqual(await readFile(filePath), before, 'import must not replace the saved package')
-    const imageRequest = parseProjectLayerImageUrl(top.imageUrl)
+    const imageRequest = parseProjectLayerImageUrl(requireRasterLayer(top).imageUrl)
     assert.ok(imageRequest)
     const staged = service.getLayerAsset(imageRequest)
     assert.equal(staged?.kind, 'staged')

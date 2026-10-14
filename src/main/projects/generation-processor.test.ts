@@ -61,6 +61,7 @@ import { localProjectRecoveryKey } from './project-identity.js'
 import { ProjectSession } from './project-session.js'
 import { ProjectShadowStore } from './project-shadow.js'
 import { ANIMA_BATCH_READY, withAnimaBatchFixture } from './test-fixtures/anima-batch.js'
+import { requireRasterLayer } from './test-fixtures/require-raster-layer.js'
 
 const migrations = path.resolve('src/main/db/migrations')
 const placeholders = path.resolve('src/main/projects/placeholders')
@@ -409,22 +410,29 @@ test('completed candidates keep the actual worker seed through Add and portable 
           assert.equal(owner.document.layers.length, 1)
           const layer = owner.document.layers[0]
           assert.equal(
-            layer.generationProvenance?.generationConfiguration.sampling.actualSeed,
+            requireRasterLayer(layer).generationProvenance?.generationConfiguration.sampling
+              .actualSeed,
             actualSeed,
           )
-          assert.equal(layer.generationProvenance?.executionResultContext.candidateId, id)
+          assert.equal(
+            requireRasterLayer(layer).generationProvenance?.executionResultContext.candidateId,
+            id,
+          )
           assert.equal(owner.dirty, true)
           assert.deepEqual(await readFile(candidate.projectPath), originalPackage)
           assert.deepEqual(await fixture.staging.listVerifiedCandidates(item.localProjectKey), [])
           await owner.save({ lastActualSeedSnapshot: actualSeed })
           const saved = await readIgsPackage(candidate.projectPath)
           assert.equal(
-            saved.project.layers[0]?.generationProvenance?.generationConfiguration.sampling
-              .actualSeed,
+            requireRasterLayer(saved.project.layers[0])?.generationProvenance
+              ?.generationConfiguration.sampling.actualSeed,
             actualSeed,
           )
           assert.equal(saved.project.lastActualSeedSnapshot, actualSeed)
-          assert.deepEqual(await saved.readMember(layer.asset.path), fixture.outputBytes)
+          assert.deepEqual(
+            await saved.readMember(requireRasterLayer(layer).asset.path),
+            fixture.outputBytes,
+          )
         })
       })
     })
@@ -502,7 +510,7 @@ test('native JSONL VAE and UNet refusals reach safe stage diagnostics without ch
           const documentBefore = structuredClone(owner.document)
           const historyBefore = [owner.canUndo, owner.canRedo, owner.dirty]
           const packageBefore = await readFile(candidate.projectPath)
-          const acceptedAsset = owner.document.layers[0].asset.path
+          const acceptedAsset = requireRasterLayer(owner.document.layers[0]).asset.path
           const receiptsBefore = await fixture.database.db
             .selectFrom('generation_candidate_receipt')
             .selectAll()
@@ -1880,7 +1888,7 @@ test('opaque img2img keeps frozen strength through Retry, restart, Add and porta
           )
           await owner.save({ lastActualSeedSnapshot: 0 })
           const saved = await readIgsPackage(path.join(fixture.root, 'Project.igs'))
-          const provenance = saved.project.layers[0]?.generationProvenance
+          const provenance = requireRasterLayer(saved.project.layers[0])?.generationProvenance
           assert.equal(provenance?.kind, 'illustrious-img2img')
           if (provenance?.kind !== 'illustrious-img2img') {
             assert.fail('wrong portable operation')
@@ -1894,7 +1902,7 @@ test('opaque img2img keeps frozen strength through Retry, restart, Add and porta
             frozen.payload.context.target.sha256,
           )
           assert.deepEqual(
-            await saved.readMember(saved.project.layers[0].asset.path),
+            await saved.readMember(requireRasterLayer(saved.project.layers[0]).asset.path),
             fixture.outputBytes,
           )
         })
@@ -2184,7 +2192,7 @@ test('external, Embedded and unrecorded VAE choices survive both normal modes, R
             )
             await owner.save()
             const saved = await readIgsPackage(path.join(fixture.root, 'Project.igs'))
-            const provenance = saved.project.layers[0]?.generationProvenance
+            const provenance = requireRasterLayer(saved.project.layers[0])?.generationProvenance
             assert.ok(
               provenance?.kind === 'illustrious-txt2img' ||
                 provenance?.kind === 'illustrious-img2img',
@@ -2544,8 +2552,8 @@ test('VAE Precision policies survive both modes, Retry, recovery, Add and explic
             )
             await owner.save()
             const saved = await readIgsPackage(path.join(fixture.root, 'Project.igs'))
-            const configuration =
-              saved.project.layers[0]?.generationProvenance?.generationConfiguration
+            const configuration = requireRasterLayer(saved.project.layers[0])?.generationProvenance
+              ?.generationConfiguration
             assert.equal(configuration?.vaePrecision, precision)
             assert.equal(Object.hasOwn(configuration!, 'vaePrecision'), precision !== undefined)
             assert.equal(saved.project.generationDraft.vaePrecision, 'FP16')
@@ -2782,7 +2790,7 @@ test('LoRA signed/zero/tiny stack survives Retry, restart, dispatch, staging rec
           )
           await owner.save({ lastActualSeedSnapshot: 0 })
           const saved = await readIgsPackage(path.join(fixture.root, 'Project.igs'))
-          const provenance = saved.project.layers[0]?.generationProvenance
+          const provenance = requireRasterLayer(saved.project.layers[0])?.generationProvenance
           assert.deepEqual(provenance?.generationConfiguration.loras, stack)
           assert.equal(provenance?.generationConfiguration.sampling.actualSeed, 0)
           assert.equal(JSON.stringify(provenance).includes(fixture.root), false)

@@ -1,5 +1,8 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
-import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
+import {
+  IGS_SAFETY_CEILINGS,
+  type IgsSmartPatchLayerV1,
+} from '../../shared/projects/project-schema.js'
 
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
@@ -23,6 +26,7 @@ import { ProjectSession } from './project-session.js'
 import { ProjectShadowStore } from './project-shadow.js'
 import { acceptedOutputPngFixture } from './test-fixtures/accepted-provenance.js'
 import { capturedEmbeddingFieldsFixture } from './test-fixtures/generation-embeddings.js'
+import { requireRasterLayer } from './test-fixtures/require-raster-layer.js'
 
 const migrationsDir = path.resolve('src/main/db/migrations')
 const placeholdersDir = path.resolve('src/main/projects/placeholders')
@@ -314,7 +318,10 @@ test('multi-session Add durably stores ordered Raster Layers before targeted sta
     const layers = fixture.owner.document.layers
     assert.equal(layers.length, 2)
     assert.deepEqual(
-      layers.map((layer) => layer.generationProvenance?.executionResultContext.candidateId),
+      layers.map(
+        (layer) =>
+          requireRasterLayer(layer).generationProvenance?.executionResultContext.candidateId,
+      ),
       [fixture.first.candidateId, fixture.second.candidateId],
     )
     assert.deepEqual(
@@ -322,13 +329,20 @@ test('multi-session Add durably stores ordered Raster Layers before targeted sta
       [false, true],
     )
     assert.deepEqual(
-      layers.map((layer) => [layer.transform.x, layer.transform.y]),
+      layers.map((layer) => [
+        requireRasterLayer(layer).transform.x,
+        requireRasterLayer(layer).transform.y,
+      ]),
       [
         [-24, 48],
         [-24, 48],
       ],
     )
-    assert.equal(layers[0]?.generationProvenance?.generationConfiguration.sampling.actualSeed, 42)
+    assert.equal(
+      requireRasterLayer(layers[0])?.generationProvenance?.generationConfiguration.sampling
+        .actualSeed,
+      42,
+    )
     assert.equal(
       (await ProjectAutosaveCoordinator.inspectRecovery(fixture.projectPath, fixture.shadow))
         .status,
@@ -339,8 +353,14 @@ test('multi-session Add durably stores ordered Raster Layers before targeted sta
     assert.equal(saved.committed, true)
     const packageContent = await readIgsPackage(fixture.projectPath)
     assert.equal(packageContent.project.layers.length, 2)
-    assert.deepEqual(await packageContent.readMember(layers[0].asset.path), fixture.output)
-    assert.deepEqual(await packageContent.readMember(layers[1].asset.path), fixture.output)
+    assert.deepEqual(
+      await packageContent.readMember(requireRasterLayer(layers[0]).asset.path),
+      fixture.output,
+    )
+    assert.deepEqual(
+      await packageContent.readMember(requireRasterLayer(layers[1]).asset.path),
+      fixture.output,
+    )
     assert.deepEqual(
       await acceptance.accept(
         fixture.tabId,
@@ -355,6 +375,85 @@ test('multi-session Add durably stores ordered Raster Layers before targeted sta
       },
     )
     assert.equal(fixture.owner.document.layers.length, 2)
+  })
+})
+
+test('ordinary Add preserves an empty Smart Patch and normal inputs through explicit Save/reopen', async () => {
+  await withFixture(async (fixture) => {
+    const owner = fixture.owner
+    assert.ok(owner)
+    const savedBefore = await readFile(fixture.projectPath)
+    const normalDraft = structuredClone(owner.document.generationDraft)
+    const normalBbox = structuredClone(owner.document.primaryBbox)
+    const patch: IgsSmartPatchLayerV1 = {
+      activeRasterSubLayerId: null,
+      blendMode: 'normal',
+      boundingBox: { height: 512, width: 768, x: -50_000, y: 45_000 },
+      generationDraft: {
+        ...structuredClone(normalDraft),
+        negativePrompt: { embeddingRefs: [], text: 'patch-only negative' },
+        positivePrompt: { embeddingRefs: [], text: 'patch-only lantern' },
+        seed: { policy: 'fixed', value: 37 },
+      },
+      id: randomUUID(),
+      internalResolution: { height: 256, width: 384 },
+      kind: 'smart-patch',
+      locked: false,
+      mask: { asset: null, id: randomUUID(), revision: 0 },
+      name: 'Unrelated empty Patch',
+      opacity: 1,
+      rasterSubLayers: [],
+      visible: true,
+    }
+    await owner.applyDocument({ ...owner.document, layers: [patch] })
+    const ownedPatch = structuredClone(owner.document.layers[0])
+    const frozenNormalRequest = fixture.first.frozenPayloadJson
+    const acceptance = new ProjectGenerationAcceptance(fixture.options)
+    const accepted = await acceptance.accept(
+      fixture.tabId,
+      [fixture.first.candidateId],
+      fixture.first.candidateId,
+      fixture.availableIds,
+    )
+    assert.equal(accepted.kind, 'accepted')
+    assert.equal(owner.document.layers.length, 2)
+    const raster = structuredClone(requireRasterLayer(owner.document.layers[0]))
+    assert.deepEqual(accepted.layerIds, [raster.id])
+    assert.deepEqual(owner.document.layers[1], ownedPatch)
+    assert.deepEqual(owner.document.generationDraft, normalDraft)
+    assert.deepEqual(owner.document.primaryBbox, normalBbox)
+    assert.equal(new Set([patch.id, patch.mask.id, raster.id]).size, 3)
+    assert.equal(fixture.first.frozenPayloadJson, frozenNormalRequest)
+    assert.equal(raster.transform.x, bbox.x)
+    assert.equal(raster.transform.y, bbox.y)
+    assert.equal(raster.asset.width, bbox.width)
+    assert.equal(raster.asset.height, bbox.height)
+    assert.equal(
+      raster.generationProvenance?.executionResultContext.candidateId,
+      fixture.first.candidateId,
+    )
+    assert.deepEqual(raster.generationProvenance?.generationConfiguration.positivePrompt, {
+      embeddingRefs: [],
+      text: 'a red lantern',
+    })
+    assert.equal(raster.generationProvenance?.generationConfiguration.sampling.actualSeed, 42)
+    assert.deepEqual(await readFile(fixture.projectPath), savedBefore)
+    assert.deepEqual(fixture.candidates, [])
+
+    assert.equal((await owner.save()).committed, true)
+    const saved = await readIgsPackage(fixture.projectPath)
+    assert.deepEqual(saved.project.layers, [raster, ownedPatch])
+    assert.deepEqual(saved.project.generationDraft, normalDraft)
+    assert.deepEqual(saved.project.primaryBbox, normalBbox)
+    assert.deepEqual(await saved.readMember(raster.asset.path), fixture.output)
+    assert.equal(
+      saved.manifest.members.filter(({ path: member }) => member.startsWith('assets/')).length,
+      1,
+    )
+    const reopened = await ProjectSession.open(fixture.projectPath, fixture.roots)
+    assert.deepEqual(reopened.document.layers, [raster, ownedPatch])
+    assert.deepEqual(reopened.document.generationDraft, normalDraft)
+    assert.deepEqual(reopened.document.primaryBbox, normalBbox)
   })
 })
 
@@ -390,7 +489,9 @@ test('embedding acceptance keeps frozen concrete literals and exact refs through
       ).kind,
       'accepted',
     )
-    const provenance = structuredClone(owner.document.layers[0].generationProvenance!)
+    const provenance = structuredClone(
+      requireRasterLayer(owner.document.layers[0]).generationProvenance!,
+    )
     assert.deepEqual(provenance.generationConfiguration.positivePrompt, {
       embeddingRefs: captured.embeddings.positive.map(({ reference, token }) => ({
         resource: reference,
@@ -412,7 +513,7 @@ test('embedding acceptance keeps frozen concrete literals and exact refs through
     await owner.undo()
     assert.equal(owner.document.layers.length, 0)
     await owner.redo()
-    assert.deepEqual(owner.document.layers[0].generationProvenance, provenance)
+    assert.deepEqual(requireRasterLayer(owner.document.layers[0]).generationProvenance, provenance)
     await owner.flush()
     const recovery = await ProjectAutosaveCoordinator.inspectRecovery(
       fixture.projectPath,
@@ -420,7 +521,10 @@ test('embedding acceptance keeps frozen concrete literals and exact refs through
     )
     assert.equal(recovery.status, 'recoverable')
     if (recovery.status === 'recoverable') {
-      assert.deepEqual(recovery.document.layers[0].generationProvenance, provenance)
+      assert.deepEqual(
+        requireRasterLayer(recovery.document.layers[0]).generationProvenance,
+        provenance,
+      )
     }
     const recovered = await ProjectAutosaveCoordinator.recover(
       fixture.projectPath,
@@ -429,12 +533,18 @@ test('embedding acceptance keeps frozen concrete literals and exact refs through
       { debounceMs: 60_000, leaseRegistry: new ProjectAutosaveLeaseRegistry() },
     )
     fixture.setOwner(recovered)
-    assert.deepEqual(recovered.document.layers[0].generationProvenance, provenance)
+    assert.deepEqual(
+      requireRasterLayer(recovered.document.layers[0]).generationProvenance,
+      provenance,
+    )
     assert.equal((await recovered.save()).committed, true)
     const saved = await readIgsPackage(fixture.projectPath)
-    assert.deepEqual(saved.project.layers[0].generationProvenance, provenance)
+    assert.deepEqual(requireRasterLayer(saved.project.layers[0]).generationProvenance, provenance)
     const reopened = await ProjectSession.open(fixture.projectPath, fixture.roots)
-    assert.deepEqual(reopened.document.layers[0].generationProvenance, provenance)
+    assert.deepEqual(
+      requireRasterLayer(reopened.document.layers[0]).generationProvenance,
+      provenance,
+    )
     assert.equal(reopened.document.generationDraft.positivePrompt.text, '{later|different} draft')
   })
 })
@@ -470,10 +580,14 @@ test('confirmed early Add cancels only reviewed sibling jobs before one durable 
     await fixture.owner!.save()
     const saved = await readIgsPackage(fixture.projectPath)
     assert.equal(
-      saved.project.layers[0]?.generationProvenance?.executionResultContext.candidateId,
+      requireRasterLayer(saved.project.layers[0])?.generationProvenance?.executionResultContext
+        .candidateId,
       fixture.first.candidateId,
     )
-    assert.deepEqual(await saved.readMember(saved.project.layers[0].asset.path), fixture.output)
+    assert.deepEqual(
+      await saved.readMember(requireRasterLayer(saved.project.layers[0]).asset.path),
+      fixture.output,
+    )
   })
 })
 
@@ -973,14 +1087,13 @@ test('Add preflights a valid document near the JSON ceiling before editing, then
     const largeLayers = Array.from({ length: 8 }, (_, index) => {
       const layer = structuredClone(template)
       layer.id = randomUUID()
-      layer.generationProvenance!.executionResultContext.candidateId = randomUUID()
+      requireRasterLayer(layer).generationProvenance!.executionResultContext.candidateId =
+        randomUUID()
       layer.name = `Large accepted layer ${index}`
-      layer.generationProvenance!.generationConfiguration.positivePrompt.text = 'p'.repeat(
-        1_040_000,
-      )
-      layer.generationProvenance!.generationConfiguration.negativePrompt.text = 'n'.repeat(
-        1_040_000,
-      )
+      requireRasterLayer(layer).generationProvenance!.generationConfiguration.positivePrompt.text =
+        'p'.repeat(1_040_000)
+      requireRasterLayer(layer).generationProvenance!.generationConfiguration.negativePrompt.text =
+        'n'.repeat(1_040_000)
       return layer
     })
     const projected = { ...base, layers: largeLayers }
@@ -990,8 +1103,8 @@ test('Add preflights a valid document near the JSON ceiling before editing, then
     let remaining = extra
     for (const layer of largeLayers) {
       for (const prompt of [
-        layer.generationProvenance!.generationConfiguration.positivePrompt,
-        layer.generationProvenance!.generationConfiguration.negativePrompt,
+        requireRasterLayer(layer).generationProvenance!.generationConfiguration.positivePrompt,
+        requireRasterLayer(layer).generationProvenance!.generationConfiguration.negativePrompt,
       ]) {
         const add = Math.min(remaining, 8576)
         prompt.text += 'x'.repeat(add)
@@ -1035,11 +1148,11 @@ test('Add preflights a valid document near the JSON ceiling before editing, then
 
     // A few kilobytes below the ceiling, the same result is still accepted through a real shadow.
     const smaller = structuredClone(fixture.owner!.document)
-    smaller.layers[0].generationProvenance!.generationConfiguration.positivePrompt.text =
-      smaller.layers[0].generationProvenance!.generationConfiguration.positivePrompt.text.slice(
-        0,
-        -8000,
-      )
+    requireRasterLayer(
+      smaller.layers[0],
+    ).generationProvenance!.generationConfiguration.positivePrompt.text = requireRasterLayer(
+      smaller.layers[0],
+    ).generationProvenance!.generationConfiguration.positivePrompt.text.slice(0, -8000)
     await fixture.owner!.applyDocument(
       smaller,
       {},
@@ -1227,7 +1340,8 @@ test('a pre-apply failure permits a different explicit Add without reopening Pro
     )
     assert.equal(owner.document.layers.length, 1)
     assert.equal(
-      owner.document.layers[0].generationProvenance!.executionResultContext.candidateId,
+      requireRasterLayer(owner.document.layers[0]).generationProvenance!.executionResultContext
+        .candidateId,
       fixture.second.candidateId,
     )
     assert.equal(fixture.fenced, false)
@@ -1320,11 +1434,12 @@ test('changed immutable provenance cannot prove Add even with the same candidate
       /interrupted Add/,
     )
     const changed = structuredClone(fixture.owner!.document)
-    const originalCandidateId =
-      changed.layers[0].generationProvenance!.executionResultContext.candidateId
-    const originalHash = changed.layers[0].asset.sha256
-    changed.layers[0].generationProvenance!.generationConfiguration.positivePrompt.text =
-      'Changed lineage'
+    const originalCandidateId = requireRasterLayer(changed.layers[0]).generationProvenance!
+      .executionResultContext.candidateId
+    const originalHash = requireRasterLayer(changed.layers[0]).asset.sha256
+    requireRasterLayer(
+      changed.layers[0],
+    ).generationProvenance!.generationConfiguration.positivePrompt.text = 'Changed lineage'
     await fixture.owner!.applyDocument(
       changed,
       {},
@@ -1333,10 +1448,11 @@ test('changed immutable provenance cannot prove Add even with the same candidate
       },
     )
     assert.equal(
-      changed.layers[0].generationProvenance!.executionResultContext.candidateId,
+      requireRasterLayer(changed.layers[0]).generationProvenance!.executionResultContext
+        .candidateId,
       originalCandidateId,
     )
-    assert.equal(changed.layers[0].asset.sha256, originalHash)
+    assert.equal(requireRasterLayer(changed.layers[0]).asset.sha256, originalHash)
     await fixture.restartJournal()
     const recovered = new ProjectGenerationAcceptance(fixture.options)
     await assert.rejects(recovered.reconcile(fixture.tabId), {
@@ -1365,7 +1481,7 @@ test('ordinary name, visibility and transform edits preserve proof of interrupte
     changed.layers[0].name = 'Moved accepted result'
     changed.layers[0].visible = false
     changed.layers[0].opacity = 0.4
-    changed.layers[0].transform.x = 200
+    requireRasterLayer(changed.layers[0]).transform.x = 200
     await fixture.owner!.applyDocument(
       changed,
       {},
@@ -1377,7 +1493,7 @@ test('ordinary name, visibility and transform edits preserve proof of interrupte
     const recovered = new ProjectGenerationAcceptance(fixture.options)
     assert.equal(await recovered.reconcile(fixture.tabId), 'cleaned')
     assert.equal(fixture.owner!.document.layers[0].name, 'Moved accepted result')
-    assert.equal(fixture.owner!.document.layers[0].transform.x, 200)
+    assert.equal(requireRasterLayer(fixture.owner!.document.layers[0]).transform.x, 200)
     assert.equal(fixture.owner!.document.layers[0].visible, false)
     assert.equal(fixture.candidates.length, 0)
     assert.equal(await fixture.journal.read(fixture.tabId, changed.documentId), null)

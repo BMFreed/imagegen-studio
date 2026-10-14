@@ -17,6 +17,24 @@ It replaces standalone inpaint masks with a layer-owned model:
 = immutable provenance per accepted raster sub-layer
 ```
 
+## Production checkpoint: empty document foundation
+
+[Foundation evidence](../../../engineering/phase-4-smart-patch-foundation-research.md)
+qualifies the real `+ Patch` command, top-of-stack creation, independently owned
+bbox/internal resolution/generation draft, selection, targeted editing,
+Undo/Redo, `.igs` Save/reopen and local crash recovery without an ML runtime.
+The empty mask is an explicit document descriptor
+`{ id: UUID, revision: 0, asset: null }`, not fabricated pixels or a shared layer.
+Production uses `kind: 'smart-patch'`; the suggested full-MVP shape below is a
+product model, not the current persistence schema.
+
+Empty Patches contribute no raster pixels, asset references or accepted-history
+records. Painted masks, nonempty raster sub-layers and active variants remain
+unsupported and are rejected by the strict foundation schema. Patch Generate,
+Apply Preset and Save Current as Preset show explicit unavailable reasons;
+Manage Presets stays available. Mask painting/tools, generation/variants,
+staleness, comparison and preset projection remain subsequent phase-4 slices.
+
 ## Reference
 
 Reference: InvokeAI inpaint mask, canvas entity list, bbox controls and compositing settings.
@@ -90,46 +108,46 @@ Suggested shape:
 
 ```ts
 type SmartPatchLayer = {
-  id: string;
-  type: 'smart-patch';
+  id: string
+  type: 'smart-patch'
 
-  name: string;
-  visible: boolean;
-  opacity: number;
-  blendMode?: string;
+  name: string
+  visible: boolean
+  opacity: number
+  blendMode?: string
 
-  maskAssetId: string;
+  maskAssetId: string
 
   boundingBox: {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  };
+    x: number
+    y: number
+    width: number
+    height: number
+  }
 
   internalResolution: {
-    width: number;
-    height: number;
-  };
+    width: number
+    height: number
+  }
 
-  generationDraft: PresetPayload;
+  generationDraft: PresetPayload
 
   rasterSubLayers: Array<{
-    id: string;
-    name: string;
-    rasterAssetId: string;
-    provenance: GenerationProvenance;
-    sourceRevisionHash: string;
-    createdAt: string;
-  }>;
+    id: string
+    name: string
+    rasterAssetId: string
+    provenance: GenerationProvenance
+    sourceRevisionHash: string
+    createdAt: string
+  }>
 
-  activeRasterSubLayerId: string | null;
+  activeRasterSubLayerId: string | null
 
-  status: 'empty' | 'ready' | 'outdated' | 'generating' | 'failed';
+  status: 'empty' | 'ready' | 'outdated' | 'generating' | 'failed'
 
-  createdAt: string;
-  updatedAt: string;
-};
+  createdAt: string
+  updatedAt: string
+}
 ```
 
 Selecting a Smart Patch Layer binds the left generation editor to `generationDraft`. Editing normal Project generation settings must not make unrelated Smart Patch Layers outdated.

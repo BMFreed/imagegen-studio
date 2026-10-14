@@ -20,6 +20,7 @@ import {
   enqueueAnimaStagingBatch,
   withAnimaStagingFixture,
 } from './test-fixtures/anima-staging.js'
+import { requireRasterLayer } from './test-fixtures/require-raster-layer.js'
 
 /** Real legacy request + queue + staging, with the same declared tiny exact-file resolver seam. */
 async function publishIllustriousNeighbor(fixture: AnimaStagingFixture) {
@@ -217,12 +218,19 @@ test('real mixed Anima and Illustrious Add validates every selected candidate be
       )
       assert.equal(accepted.kind, 'accepted')
       assert.equal(owner.document.layers.length, 2)
-      assert.equal(owner.document.layers[0].generationProvenance?.kind, 'illustrious-txt2img')
       assert.equal(
-        owner.document.layers[0].generationProvenance?.executionResultContext.candidateId,
+        requireRasterLayer(owner.document.layers[0]).generationProvenance?.kind,
+        'illustrious-txt2img',
+      )
+      assert.equal(
+        requireRasterLayer(owner.document.layers[0]).generationProvenance?.executionResultContext
+          .candidateId,
         illustrious.candidateId,
       )
-      assert.deepEqual(owner.document.layers[1].generationProvenance, frozenAnima)
+      assert.deepEqual(
+        requireRasterLayer(owner.document.layers[1]).generationProvenance,
+        frozenAnima,
+      )
       assert.equal(owner.dirty, true)
       assert.equal(cancellations, 1)
       assert.equal(discards, 1)
@@ -230,7 +238,10 @@ test('real mixed Anima and Illustrious Add validates every selected candidate be
       await owner.undo()
       assert.equal(owner.document.layers.length, 0, 'mixed Add owns one grouped Undo step')
       await owner.redo()
-      assert.deepEqual(owner.document.layers[1].generationProvenance, frozenAnima)
+      assert.deepEqual(
+        requireRasterLayer(owner.document.layers[1]).generationProvenance,
+        frozenAnima,
+      )
       assert.deepEqual(
         (await fixture.queue.listUnfinishedByIds(unrelatedJobIds)).map((item) => item.id).sort(),
         unrelatedJobIds.sort(),

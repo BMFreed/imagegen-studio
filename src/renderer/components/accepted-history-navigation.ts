@@ -1,6 +1,8 @@
 import type { ProjectTab } from '../../shared/api.js'
 import type { AcceptedResultHistoryReference } from '../../shared/projects/accepted-result-history.js'
 
+import { isSmartPatchLayerView } from './project-layer-context.js'
+
 export interface AcceptedHistoryFocusRequest extends AcceptedResultHistoryReference {
   requestId: number
 }
@@ -15,7 +17,7 @@ export function acceptedHistoryLayerAvailable(
   }
   const layer = tab.layers.find((item) => item.id === reference.layerId)
   const result = tab.acceptedResults.find((item) => item.layerId === reference.layerId)
-  if (!layer || !result || layer.imageUrl !== result.imageUrl) {
+  if (!layer || isSmartPatchLayerView(layer) || !result || layer.imageUrl !== result.imageUrl) {
     return false
   }
   const match =
