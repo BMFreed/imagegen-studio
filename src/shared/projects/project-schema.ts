@@ -550,6 +550,216 @@ const SmartPatchMaskSchema = v.union([
   ),
 ])
 
+const SmartPatchWorldDimensionSchema = v.pipe(PositiveIntegerSchema, v.maxValue(2048))
+const SmartPatchWorldSizeEntries = {
+  height: SmartPatchWorldDimensionSchema,
+  width: SmartPatchWorldDimensionSchema,
+}
+const SmartPatchWorldRectSchema = v.pipe(
+  v.strictObject({
+    ...SmartPatchWorldSizeEntries,
+    x: v.pipe(BoundedCoordinateSchema, v.safeInteger()),
+    y: v.pipe(BoundedCoordinateSchema, v.safeInteger()),
+  }),
+  v.check(({ height, width }) => height * width <= 4_000_000),
+)
+const SmartPatchInternalResolutionSchema = v.pipe(
+  v.strictObject({ height: GenerationDimensionSchema, width: GenerationDimensionSchema }),
+  v.check(({ height, width }) => height * width <= 4_000_000),
+)
+const SmartPatchPreparedImageIdentityV1Schema = v.strictObject({
+  ...SmartPatchWorldSizeEntries,
+  byteSize: v.pipe(PositiveIntegerSchema, v.maxValue(IGS_GENERATION_PNG_MAX_BYTES)),
+  sha256: Sha256Schema,
+})
+const SmartPatchContributionAlpha8V1Schema = v.pipe(
+  v.strictObject({
+    ...SmartPatchWorldSizeEntries,
+    byteSize: v.pipe(PositiveIntegerSchema, v.maxValue(4_000_000)),
+    sha256: Sha256Schema,
+  }),
+  v.check(({ byteSize, height, width }) => byteSize === height * width),
+)
+
+/** Reusable settings omit both world bbox and internal resolution; neither is preset Size. */
+const SmartPatchIllustriousTxt2ImgConfigurationV1Schema = v.omit(
+  Txt2ImgRasterGenerationConfigurationV1Schema,
+  ['size'],
+)
+const SmartPatchIllustriousImg2ImgConfigurationV1Schema = v.omit(
+  Img2ImgRasterGenerationConfigurationV1Schema,
+  ['size'],
+)
+const SmartPatchIllustriousConfigurationV1Schema = v.variant('mode', [
+  SmartPatchIllustriousTxt2ImgConfigurationV1Schema,
+  SmartPatchIllustriousImg2ImgConfigurationV1Schema,
+  v.strictObject({
+    ...SmartPatchIllustriousImg2ImgConfigurationV1Schema.entries,
+    mode: v.literal('inpaint'),
+  }),
+  v.strictObject({
+    ...SmartPatchIllustriousImg2ImgConfigurationV1Schema.entries,
+    mode: v.literal('outpaint'),
+  }),
+])
+const SmartPatchAnimaComponentV1Schema = v.strictObject({
+  byteSize: PositiveIntegerSchema,
+  sha256: Sha256Schema,
+})
+const SmartPatchAnimaTxt2ImgConfigurationV1Schema = v.strictObject({
+  ...v.omit(Txt2ImgAnimaRasterGenerationConfigurationV1Schema, ['size']).entries,
+  anima: v.strictObject({
+    architecture: v.literal('anima-base-1.0'),
+    checkpointByteSize: PositiveIntegerSchema,
+    qwen3Encoder: SmartPatchAnimaComponentV1Schema,
+    vae: SmartPatchAnimaComponentV1Schema,
+  }),
+  sampling: v.strictObject({
+    ...Txt2ImgAnimaRasterGenerationConfigurationV1Schema.entries.sampling.entries,
+    // A concrete private queue item does not yet record the planner's actual seed behavior.
+    seedBehavior: v.optional(v.picklist(['per-iteration', 'per-prompt'])),
+  }),
+})
+const SmartPatchAnimaImg2ImgConfigurationV1Schema = v.strictObject({
+  ...SmartPatchAnimaTxt2ImgConfigurationV1Schema.entries,
+  mode: v.literal('img2img'),
+  sampling: v.strictObject({
+    ...SmartPatchAnimaTxt2ImgConfigurationV1Schema.entries.sampling.entries,
+    denoisingStrength: UnitIntervalSchema,
+  }),
+})
+const SmartPatchAnimaConfigurationV1Schema = v.variant('mode', [
+  SmartPatchAnimaTxt2ImgConfigurationV1Schema,
+  SmartPatchAnimaImg2ImgConfigurationV1Schema,
+  v.strictObject({
+    ...SmartPatchAnimaImg2ImgConfigurationV1Schema.entries,
+    mode: v.literal('inpaint'),
+  }),
+  v.strictObject({
+    ...SmartPatchAnimaImg2ImgConfigurationV1Schema.entries,
+    mode: v.literal('outpaint'),
+  }),
+])
+const SmartPatchProvenanceCommonEntries = {
+  executionResultContext: v.strictObject({
+    acceptedAt: IsoUtcTimestampSchema,
+    candidateId: UuidSchema,
+    completedAt: IsoUtcTimestampSchema,
+    output: v.strictObject({
+      ...SmartPatchWorldSizeEntries,
+      byteSize: v.pipe(PositiveIntegerSchema, v.maxValue(IGS_GENERATION_PNG_MAX_BYTES)),
+      colorSpace: v.literal('srgb'),
+      contributionAlpha8: SmartPatchContributionAlpha8V1Schema,
+      format: v.literal('png'),
+      iccSha256: v.literal(IGS_SRGB_ICC_SHA256),
+      outputMode: v.literal('contribution'),
+      sha256: Sha256Schema,
+    }),
+    queueItemId: UuidSchema,
+  }),
+  layerSourceContext: v.strictObject({
+    bbox: SmartPatchWorldRectSchema,
+    coherenceSettings: SmartPatchCoherenceSettingsSchema,
+    generationDraft: GenerationDraftSchema,
+    internalResolution: SmartPatchInternalResolutionSchema,
+    layerId: UuidSchema,
+    mask: SmartPatchMaskSchema,
+    maskBlur: ProjectMaskSettingsSchema.entries.blur,
+    preparedInputs: v.strictObject({
+      finalContributionMask: SmartPatchPreparedImageIdentityV1Schema,
+      latentKeepMask: SmartPatchPreparedImageIdentityV1Schema,
+      modelSource: v.nullable(SmartPatchPreparedImageIdentityV1Schema),
+    }),
+    sourceDocumentId: UuidSchema,
+    sourceDocumentRevision: UuidSchema,
+    sourceLayerIds: v.pipe(
+      v.array(UuidSchema),
+      v.maxLength(IGS_SAFETY_CEILINGS.archiveEntries),
+      v.check((ids) => new Set(ids).size === ids.length),
+    ),
+    sourceTarget: SmartPatchPreparedImageIdentityV1Schema,
+  }),
+  schemaVersion: v.literal(1),
+}
+
+/** Standalone prerequisite only: Project documents still reject accepted Smart Patch variants. */
+export const SmartPatchGenerationProvenanceV1Schema = v.pipe(
+  v.variant('kind', [
+    v.strictObject({
+      ...SmartPatchProvenanceCommonEntries,
+      generationConfiguration: SmartPatchIllustriousConfigurationV1Schema,
+      kind: v.literal('illustrious-smart-patch'),
+    }),
+    v.strictObject({
+      ...SmartPatchProvenanceCommonEntries,
+      generationConfiguration: SmartPatchAnimaConfigurationV1Schema,
+      kind: v.literal('anima-smart-patch'),
+    }),
+  ]),
+  v.check((value) => {
+    const source = value.layerSourceContext
+    const execution = value.executionResultContext
+    const output = execution.output
+    const prepared = source.preparedInputs
+    const internal = source.internalResolution
+    const family = value.kind === 'anima-smart-patch' ? 'anima' : 'illustrious'
+    const model = source.generationDraft.model
+    return (
+      source.bbox.width === source.sourceTarget.width &&
+      source.bbox.height === source.sourceTarget.height &&
+      source.bbox.width === output.width &&
+      source.bbox.height === output.height &&
+      source.bbox.width === output.contributionAlpha8.width &&
+      source.bbox.height === output.contributionAlpha8.height &&
+      source.bbox.width === prepared.finalContributionMask.width &&
+      source.bbox.height === prepared.finalContributionMask.height &&
+      internal.width === prepared.latentKeepMask.width * 8 &&
+      internal.height === prepared.latentKeepMask.height * 8 &&
+      (value.generationConfiguration.mode === 'txt2img') === (prepared.modelSource === null) &&
+      (prepared.modelSource === null ||
+        (internal.width === prepared.modelSource.width &&
+          internal.height === prepared.modelSource.height)) &&
+      execution.candidateId === execution.queueItemId &&
+      source.layerId !== source.mask.id &&
+      !source.sourceLayerIds.includes(source.layerId) &&
+      !source.sourceLayerIds.includes(source.mask.id) &&
+      isProjectGenerationDraftV1(source.generationDraft) &&
+      model?.baseModelFamily === family &&
+      model.fileSha256 === value.generationConfiguration.model.fileSha256 &&
+      (family !== 'anima' ||
+        (source.internalResolution.width >= 64 && source.internalResolution.height >= 64))
+    )
+  }, 'The Smart Patch provenance differs from its frozen source, family or output.'),
+)
+
+export const SmartPatchVariantV1Schema = v.pipe(
+  v.strictObject({
+    asset: v.strictObject({
+      ...MemberRefSchema.entries,
+      ...SmartPatchWorldSizeEntries,
+    }),
+    bbox: SmartPatchWorldRectSchema,
+    generationProvenance: SmartPatchGenerationProvenanceV1Schema,
+    id: UuidSchema,
+    name: NonemptyTextSchema,
+  }),
+  v.check(({ asset, bbox, generationProvenance, id }) => {
+    const sourceBbox = generationProvenance.layerSourceContext.bbox
+    const output = generationProvenance.executionResultContext.output
+    return (
+      asset.path === `assets/layers/${id}.png` &&
+      asset.bytes === output.byteSize &&
+      asset.sha256 === output.sha256 &&
+      asset.width === output.width &&
+      asset.height === output.height &&
+      bbox.x === sourceBbox.x &&
+      bbox.y === sourceBbox.y &&
+      bbox.width === sourceBbox.width &&
+      bbox.height === sourceBbox.height
+    )
+  }, 'The Smart Patch variant asset or placement differs from its immutable provenance.'),
+)
+
 /** Owned mask authoring; accepted variants still need a later schema. */
 const SmartPatchLayerSchema = v.strictObject({
   activeRasterSubLayerId: v.null(),
@@ -628,6 +838,18 @@ export type IgsOutpaintRasterGenerationProvenanceV1 = Extract<
   IgsRasterGenerationProvenanceV1,
   { kind: 'anima-outpaint' | 'illustrious-outpaint' }
 >
+export type IgsSmartPatchGenerationProvenanceV1 = v.InferOutput<
+  typeof SmartPatchGenerationProvenanceV1Schema
+>
+export type IgsIllustriousSmartPatchGenerationProvenanceV1 = Extract<
+  IgsSmartPatchGenerationProvenanceV1,
+  { kind: 'illustrious-smart-patch' }
+>
+export type IgsAnimaSmartPatchGenerationProvenanceV1 = Extract<
+  IgsSmartPatchGenerationProvenanceV1,
+  { kind: 'anima-smart-patch' }
+>
+export type IgsSmartPatchVariantV1 = v.InferOutput<typeof SmartPatchVariantV1Schema>
 export type IgsProjectDocumentV1 = v.InferOutput<typeof ProjectDocumentV1Schema>
 export type IgsManifestV1 = v.InferOutput<typeof IgsManifestV1Schema>
 
@@ -793,6 +1015,26 @@ export function parseRasterGenerationProvenanceV1(input: unknown): IgsRasterGene
   const parsed = v.safeParse(RasterGenerationProvenanceV1Schema, input)
   if (!parsed.success) {
     throw new IgsSchemaError('INVALID_PROJECT', 'The generated Raster Layer provenance is invalid.')
+  }
+  return parsed.output
+}
+
+/** Validate proposed immutable metadata without admitting it to the current Project schema. */
+export function parseSmartPatchGenerationProvenanceV1(
+  input: unknown,
+): IgsSmartPatchGenerationProvenanceV1 {
+  const parsed = v.safeParse(SmartPatchGenerationProvenanceV1Schema, input)
+  if (!parsed.success) {
+    throw new IgsSchemaError('INVALID_PROJECT', 'The Smart Patch provenance is invalid.')
+  }
+  return parsed.output
+}
+
+/** A standalone future variant record; this does not create accepted Project ownership. */
+export function parseSmartPatchVariantV1(input: unknown): IgsSmartPatchVariantV1 {
+  const parsed = v.safeParse(SmartPatchVariantV1Schema, input)
+  if (!parsed.success) {
+    throw new IgsSchemaError('INVALID_PROJECT', 'The Smart Patch variant is invalid.')
   }
   return parsed.output
 }

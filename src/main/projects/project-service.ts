@@ -86,6 +86,10 @@ import type { buildFrozenGenerationTarget } from './project-generation-target.js
 import type { ProjectIndexRepository } from './project-index.js'
 import type { ProjectShadowStore } from './project-shadow.js'
 import type { ProjectShadowInspection } from './project-shadow.js'
+import type {
+  SmartPatchAcceptancePlan,
+  SmartPatchAcceptancePlanInput,
+} from './project-smart-patch-acceptance-plan.js'
 import type { ProjectTemporaryRecoveryInspection } from './project-temporary-recovery.js'
 import type { ProjectWorkerClient } from './worker-client.js'
 
@@ -151,6 +155,7 @@ import {
   ProjectSession,
   type ProjectSessionRoots,
 } from './project-session.js'
+import { prepareSmartPatchAcceptancePlan } from './project-smart-patch-acceptance-plan.js'
 import {
   type CapturedSmartPatchGenerationInput,
   withFrozenSmartPatchGenerationInput,
@@ -1195,6 +1200,14 @@ export class ProjectService {
       const target = await capture.composeTarget(worker)
       return await prepareNormalTxt2Img({ lastActualSeed, modelService, randomUint32, target })
     })
+  }
+
+  /** Private read-only proposal; document schema and durable variant Add remain closed. */
+  async prepareSmartPatchVariantAcceptance(
+    tabId: string,
+    input: SmartPatchAcceptancePlanInput,
+  ): Promise<SmartPatchAcceptancePlan> {
+    return await prepareSmartPatchAcceptancePlan(this, tabId, input)
   }
 
   /** Rebuild a saved derivative without silently saving document edits or touching recovery. */

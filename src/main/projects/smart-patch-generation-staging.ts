@@ -95,6 +95,20 @@ export interface SmartPatchGenerationCandidatePublicationInput {
   provisionalOutputPath: string
   queueItemId: string
 }
+/** Main nominates the exact result it reviewed; caller-owned paths are never consumed. */
+export interface SmartPatchCandidateReadIdentity {
+  candidateId: string
+  documentId: string
+  frozenPayloadSha256: string
+  imageSha256: string
+  localProjectKey: string
+  stagingSessionId: string
+}
+export interface VerifiedSmartPatchCandidateRead {
+  candidate: VerifiedSmartPatchWorldCandidate
+  finalMaskPngBytes: Buffer
+  imagePngBytes: Buffer
+}
 export interface SmartPatchGenerationStagingTestHooks {
   afterCompletionCommit?: () => Promise<void>
   afterDiscardTombstone?: () => Promise<void>
@@ -117,6 +131,10 @@ type QualifiedCandidate = {
   directory: Pick<BigIntStats, 'dev' | 'ino'>
   entry: Manifest
   files: QualifiedFile[]
+}
+type QualifiedCandidateBytes = QualifiedCandidate & {
+  finalMaskPngBytes: Buffer
+  imagePngBytes: Buffer
 }
 
 export class SmartPatchGenerationStagingError extends Error {
@@ -413,6 +431,93 @@ export class SmartPatchGenerationStagingRepository {
     })
   }
 
+  /** Copy the exact world contribution and its final mask, serialized with publication/discard. */
+  async readVerifiedCandidate(
+    input: SmartPatchCandidateReadIdentity,
+  ): Promise<VerifiedSmartPatchCandidateRead | null> {
+    // Snapshot before serialize's first await; a later caller mutation cannot retarget this read.
+    const captured = {
+      candidateId: input.candidateId,
+      documentId: input.documentId,
+      frozenPayloadSha256: input.frozenPayloadSha256,
+      imageSha256: input.imageSha256,
+      localProjectKey: input.localProjectKey,
+      stagingSessionId: input.stagingSessionId,
+    }
+    validateProject(captured.localProjectKey)
+    for (const id of [captured.candidateId, captured.documentId, captured.stagingSessionId]) {
+      validateId(id)
+    }
+    if (!SHA.test(captured.imageSha256) || !SHA.test(captured.frozenPayloadSha256)) {
+      throw invalid('The nominated Smart Patch candidate hashes are invalid.')
+    }
+    return await this.serialize(async () => {
+      this.assertReadyForPublication()
+      await this.storageRoot()
+      if (await this.discarded(captured.localProjectKey, captured.stagingSessionId)) {
+        return null
+      }
+      let directory = this.root
+      for (const component of [
+        captured.localProjectKey,
+        captured.stagingSessionId,
+        captured.candidateId,
+      ]) {
+        directory = path.join(directory, component)
+        if (!(await exists(directory))) {
+          return null
+        }
+        await ownedDirectory(directory)
+      }
+      let qualified: QualifiedCandidateBytes
+      try {
+        qualified = await this.readCandidate(directory, true)
+      } catch (error) {
+        if (
+          error instanceof SmartPatchGenerationStagingError &&
+          error.code === 'STAGING_STORAGE_UNSAFE'
+        ) {
+          throw error
+        }
+        return null
+      }
+      const { candidate, entry } = qualified
+      if (
+        candidate.candidateId !== captured.candidateId ||
+        candidate.documentId !== captured.documentId ||
+        candidate.frozenPayloadSha256 !== captured.frozenPayloadSha256 ||
+        candidate.image.sha256 !== captured.imageSha256 ||
+        candidate.localProjectKey !== captured.localProjectKey ||
+        candidate.stagingSessionId !== captured.stagingSessionId
+      ) {
+        return null
+      }
+      const row = await this.queueRow(candidate.queueItemId)
+      const receipt = await this.receipt(candidate.candidateId)
+      if (
+        !receipt ||
+        receipt.status !== 'completed' ||
+        !receiptMatches(receipt, entry) ||
+        (row && (row.status !== 'completed' || !rowMatches(row, entry))) ||
+        (await this.discarded(captured.localProjectKey, captured.stagingSessionId))
+      ) {
+        return null
+      }
+      for (const file of qualified.files) {
+        await assertWitness(file)
+      }
+      if (!sameIdentity(qualified.directory, await ownedDirectory(directory))) {
+        throw unsafe('The nominated Smart Patch candidate directory changed.')
+      }
+      await exactNames(directory, [MANIFEST, IMAGE, MASK])
+      return {
+        candidate,
+        finalMaskPngBytes: Buffer.from(qualified.finalMaskPngBytes),
+        imagePngBytes: Buffer.from(qualified.imagePngBytes),
+      }
+    })
+  }
+
   async recoverAfterRestart(): Promise<{ invalidCount: number; reconciledCount: number }> {
     return await this.serialize(async () => {
       this.reconciled = false
@@ -688,7 +793,15 @@ export class SmartPatchGenerationStagingRepository {
       .executeTakeFirst()
   }
 
-  private async readCandidate(candidatePath: string): Promise<QualifiedCandidate> {
+  private async readCandidate(
+    candidatePath: string,
+    includeBytes: true,
+  ): Promise<QualifiedCandidateBytes>
+  private async readCandidate(candidatePath: string): Promise<QualifiedCandidate>
+  private async readCandidate(
+    candidatePath: string,
+    includeBytes = false,
+  ): Promise<QualifiedCandidate | QualifiedCandidateBytes> {
     const directory = await ownedDirectory(candidatePath)
     await exactNames(candidatePath, [MANIFEST, IMAGE, MASK])
     const manifest = await boundedRead(
@@ -789,6 +902,7 @@ export class SmartPatchGenerationStagingRepository {
       directory,
       entry,
       files,
+      ...(includeBytes ? { finalMaskPngBytes: maskBytes, imagePngBytes: imageBytes } : {}),
     }
   }
 

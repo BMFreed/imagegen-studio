@@ -127,7 +127,32 @@ Variant lifecycle, staleness/compositing/comparison and Patch presets remain
 subsequent owners; existing authoring evidence and public promise statuses stay
 unchanged.
 
-## Current private queued execution scope
+## Current private acceptance-plan scope
+
+[Smart Patch acceptance plan](../../../engineering/phase-4-smart-patch-acceptance-plan-research.md)
+adds strict standalone variant/provenance contracts and a read-only proposal;
+the Project schema still accepts only empty Smart Patches. Identity-bound staging
+reads verify actual world RGBA and final-mask bytes. The projector checks frozen
+context, worker-confirmed seed, exact contribution alpha and inference prediction
+type before proposing portable metadata without managed paths or reusable `Size`.
+Owned authoring and independently composed current source pixels determine
+ready/outdated; unrelated Project revisions and Fit-only padding do not.
+This comparison does not qualify current model-registry or runtime availability.
+
+Private `ProjectService.prepareSmartPatchVariantAcceptance` rechecks the exact
+Project owner, document/revision, target and reviewed selection around byte reads
+and current-source composition. Locked or hidden targets block the proposal;
+missing targets remain orphaned. A changed eligible target keeps frozen proposal
+metadata and reports outdated inputs. The returned plan is not an accepted result
+or a capability to commit later without revalidation.
+
+No Project/history/`.igs` mutation, sibling cancellation, acceptance journal,
+staging discard or public UI is connected. Next owners are all-variant asset
+storage/validation and active-variant composition, then durable Add/reconciliation,
+variant lifecycle and public Generate/Results integration. PP-007/008 remain
+«Пока не обещать»; executed evidence and limits belong to the linked research.
+
+## Previous private queued execution scope
 
 [Private queued Smart Patch execution](../../../engineering/phase-4-smart-patch-queued-execution-research.md)
 connects dedicated SQL claim, exact frozen inference, worker-confirmed uint32 seed,
@@ -149,10 +174,10 @@ USER_CANCELED cannot resurrect a candidate. Shared tombstones hide discarded
 sessions across both stores. Normal Results never discovers these candidates,
 and the Smart DTO cannot be assigned to the normal Raster DTO.
 
-This is a private executable/recoverable path. Public Generate/Retry/Results,
-immutable variant acceptance/outdated/orphan handling, portable provenance and
-installed GPU/release qualification remain subsequent owners. There are no
-Project/document/`.igs`/history/preset/Compare edits. PP-007/008 public readiness
+That checkpoint established a private executable/recoverable path. Public
+Generate/Retry/Results, immutable variant acceptance/outdated/orphan handling,
+portable provenance and installed GPU/release qualification were subsequent
+owners. It introduced no Project/document/`.igs`/history/preset/Compare edits. PP-007/008 public readiness
 remains «Пока не обещать»; actual checks and limits belong to the linked research.
 
 ## Previous private SQL admission scope

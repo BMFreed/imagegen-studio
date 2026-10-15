@@ -2264,6 +2264,40 @@ for (const family of ['illustrious', 'anima'] as const) {
         await fresh.recoverAfterRestart()
         const [candidate] = await fresh.listVerifiedCandidates(f.tabId)
         assert.equal(candidate.image.sha256, result.candidate.image.sha256)
+        const sourceWorker = await owner.start(new AbortController().signal)
+        try {
+          const plan = await f.service.prepareSmartPatchVariantAcceptance(f.tabId, {
+            acceptedAt: '2026-10-15T12:00:00.000Z',
+            candidateIds: [candidate.candidateId],
+            expectedAvailableIds: [candidate.candidateId],
+            focusedCandidateId: candidate.candidateId,
+            staging: fresh,
+            worker: sourceWorker,
+          })
+          assert.equal(plan.kind, 'smart-patch-acceptance-plan')
+          assert.equal(plan.layerId, f.patch.id)
+          assert.equal(plan.proposedVariants.length, 1)
+          const proposed = plan.proposedVariants[0]
+          assert.equal(proposed.state.status, 'ready')
+          assert.deepEqual(proposed.variant.bbox, candidate.bbox)
+          assert.equal(proposed.variant.generationProvenance.kind, `${family}-smart-patch`)
+          assert.equal(
+            proposed.variant.generationProvenance.generationConfiguration.sampling.actualSeed,
+            0,
+          )
+          assert.equal(
+            'size' in proposed.variant.generationProvenance.generationConfiguration,
+            false,
+          )
+          assert.equal(plan.activeVariantId, proposed.variant.id)
+          assert.equal(
+            (await fresh.listVerifiedCandidates(f.tabId)).length,
+            1,
+            'Plan preserves temporary candidate',
+          )
+        } finally {
+          await sourceWorker.close()
+        }
         const after = await state(f)
         assert.ok(after.file.equals(before.file))
         assert.deepEqual(after.document, before.document)
