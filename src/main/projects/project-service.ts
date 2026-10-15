@@ -72,6 +72,7 @@ import {
   reconcilePromptEmbeddings,
 } from '../../shared/projects/prompt-embeddings.js'
 import { sameResourceModel } from '../../shared/projects/resource-identity.js'
+import { resolveSmartPatchCoherenceSettings } from '../../shared/projects/smart-patch-coherence-settings.js'
 
 import { createHash, randomUUID } from 'node:crypto'
 import { type BigIntStats, constants } from 'node:fs'
@@ -301,6 +302,7 @@ export class ProjectService {
       activeRasterSubLayerId: null,
       blendMode: 'normal',
       boundingBox: structuredClone(document.primaryBbox),
+      coherenceSettings: resolveSmartPatchCoherenceSettings(undefined),
       generationDraft: structuredClone(document.generationDraft),
       id: randomUUID(),
       internalResolution: {
@@ -2049,7 +2051,9 @@ export class ProjectService {
     const document = coordinator.document
     const patch = requireSmartPatch(document, layerId)
     if (
-      (change.kind === 'mask-blur' || change.kind === 'bbox-padding') &&
+      (change.kind === 'mask-blur' ||
+        change.kind === 'bbox-padding' ||
+        change.kind === 'coherence-settings') &&
       (change.documentId !== document.documentId ||
         change.documentRevision !== document.documentRevision)
     ) {
@@ -2082,6 +2086,18 @@ export class ProjectService {
       }
       case 'bounding-box': {
         next.boundingBox = { ...change.rect }
+        break
+      }
+      case 'coherence-settings': {
+        const settings = resolveSmartPatchCoherenceSettings(patch.coherenceSettings)
+        if (
+          settings.mode === change.value.mode &&
+          settings.edgeSize === change.value.edgeSize &&
+          settings.minimumDenoise === change.value.minimumDenoise
+        ) {
+          return toTab(tabId, coordinator)
+        }
+        next.coherenceSettings = { ...change.value }
         break
       }
       case 'internal-resolution': {
@@ -2714,6 +2730,7 @@ function toTab(id: string, coordinator: ProjectAutosaveCoordinator): ProjectTab 
       layer.kind === 'smart-patch'
         ? {
             ...layer,
+            coherenceSettings: resolveSmartPatchCoherenceSettings(layer.coherenceSettings),
             maskImageUrl:
               layer.mask.asset === null
                 ? null

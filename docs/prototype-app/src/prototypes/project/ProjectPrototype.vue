@@ -278,6 +278,7 @@ onBeforeUnmount(() => {
           <ProjectSettingsPanel
             v-if="!session.ui.leftCollapsed"
             v-model:imagesPerClick="imagesPerClick"
+            :active="props.active"
             :session
             @applyPreset="openPreset"
             @cancelGeneration="cancelCurrent"

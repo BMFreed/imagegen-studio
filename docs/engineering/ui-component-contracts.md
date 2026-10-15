@@ -143,6 +143,44 @@ Vue-прототипа, а не готовность production UI.
   `value` находится вне label. Клик по подписи фокусирует поле, не меняя его
   значение; несколько экземпляров получают разные id.
 
+## Production Smart Patch owned coherence controls
+
+The [owned coherence scope](./phase-4-smart-patch-coherence-settings-research.md)
+extends the selected Patch's existing Mask section in
+[`ProjectView`](../../src/renderer/components/ProjectView.vue) and the prototype
+with one shared component. Native14/prototype180 and required checks qualify
+the scoped controls;native Save/recovery is separate from prototype mock history.
+Render Coherence,Edge size and Minimum denoise as compact
+labeled controls using the approved section spacing/theme. Mode exposes only
+Gaussian Blur/Box Blur/Staged through public Naive `NSelect` options,value,size,
+disabled,inputProps and keyboard APIs. Numeric fields use public `NInput` raw
+string values/status/inputProps to retain invalid text without clamping.
+
+Associate generated IDs with the real inputs,including a selector's public
+`inputProps`;inspect installed Naive's actual focusable/accessibility target
+instead of assuming its root has role=combobox. Closed mode text and all open
+options remain readable;numeric fields stay compact like existing mask/Brush
+controls. Edge has processing-pixel units;Minimum denoise is coherence minimum,
+distinct from Generation's denoising strength. Do not add another primary Apply
+action,new palette or a selection/hover-driven details layout shift.
+
+The Project owner captures documentId/documentRevision/layerId and the complete
+profile. Numeric Enter/blur or discrete mode selection emits a command intent;
+the acknowledged Main view supplies stored values. One changed profile is one
+Undo,not three independent overwritten commands. Invalid raw text does not
+publish;Escape/owner/document/navigation change cancels. Stale/locked/busy state
+must not commit an old draft or duplicate a blur/selection edit. Controls can
+edit document state without an ML runtime;they do not claim Patch Generate is
+available. Ordinary local v-model bindings use `defineModel` if composed into a
+reusable wrapper;document metadata remains a read-only command-adapter input.
+
+Defaults displayed for absent legacy `coherenceSettings` never issue a setter or
+dirty the document. Compact controls,popup/focus,invalid/error and disabled states
+require actual screenshots/interactions at standard/narrow windows;typecheck or
+prototype mocks alone do not prove production Save/recovery. The later private
+CPU capture reads the resolved frozen owned profile;this UI does not run
+conditioning or create provenance/variants/preset fields.
+
 ## Production New Project preset customization
 
 Production [`NewProjectModal`](../../src/renderer/components/NewProjectModal.vue)

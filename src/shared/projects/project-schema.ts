@@ -19,6 +19,7 @@ import {
   PROJECT_MASK_MAX_PIXELS,
   PROJECT_MASK_MAX_PNG_BYTES,
 } from './project-mask.js'
+import { SmartPatchCoherenceSettingsSchema } from './smart-patch-coherence-settings.js'
 
 export { IGS_GENERATION_PNG_MAX_BYTES } from './generation-image-limits.js'
 
@@ -554,6 +555,7 @@ const SmartPatchLayerSchema = v.strictObject({
   activeRasterSubLayerId: v.null(),
   blendMode: v.picklist(['normal', 'multiply', 'screen', 'overlay']),
   boundingBox: RectSchema,
+  coherenceSettings: v.optional(SmartPatchCoherenceSettingsSchema),
   generationDraft: GenerationDraftSchema,
   id: UuidSchema,
   internalResolution: v.strictObject({

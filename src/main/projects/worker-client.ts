@@ -5,6 +5,10 @@ import {
 } from '../../shared/projects/color-profile.js'
 import { assertProjectMaskBounds } from '../../shared/projects/project-mask.js'
 import { IGS_SAFETY_CEILINGS, type IgsPreviewRectV1 } from '../../shared/projects/project-schema.js'
+import {
+  isSmartPatchCoherenceSettings,
+  type SmartPatchCoherenceSettings,
+} from '../../shared/projects/smart-patch-coherence-settings.js'
 
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
@@ -198,16 +202,7 @@ export interface SmartPatchFadeResult {
   contributionMask: VerifiedWorkerMask
 }
 
-export interface SmartPatchCoherenceParameters {
-  edgeSize: number
-  minimumDenoise: number
-  mode: 'Box Blur' | 'Gaussian Blur' | 'Staged'
-}
-
-/** Private operation defaults from Invoke; no new persisted Patch settings. */
-export const DEFAULT_SMART_PATCH_COHERENCE: Readonly<SmartPatchCoherenceParameters> = Object.freeze(
-  { edgeSize: 16, minimumDenoise: 0, mode: 'Gaussian Blur' },
-)
+export type SmartPatchCoherenceParameters = SmartPatchCoherenceSettings
 
 export interface SmartPatchConditioningInput {
   coherence: SmartPatchCoherenceParameters
@@ -1298,17 +1293,7 @@ export async function fadeSmartPatchWithTransport(
 export function captureSmartPatchCoherenceParameters(
   profile: SmartPatchCoherenceParameters,
 ): SmartPatchCoherenceParameters {
-  if (
-    !profile ||
-    Object.keys(profile).some((key) => !['edgeSize', 'minimumDenoise', 'mode'].includes(key)) ||
-    !Number.isInteger(profile.edgeSize) ||
-    profile.edgeSize < 0 ||
-    profile.edgeSize > 1024 ||
-    !Number.isFinite(profile.minimumDenoise) ||
-    profile.minimumDenoise < 0 ||
-    profile.minimumDenoise > 1 ||
-    !['Box Blur', 'Gaussian Blur', 'Staged'].includes(profile.mode)
-  ) {
+  if (!isSmartPatchCoherenceSettings(profile)) {
     throw new ProjectWorkerError('INVALID_REQUEST', 'Smart Patch coherence profile is invalid.')
   }
   return { edgeSize: profile.edgeSize, minimumDenoise: profile.minimumDenoise, mode: profile.mode }
@@ -2289,3 +2274,6 @@ function validateIcc(profile: Buffer, requireRgb: boolean): void {
     throw new ProjectWorkerError('OUTPUT_MISMATCH', 'The worker ICC profile is invalid.')
   }
 }
+
+/** Transport and portable Patch profiles share the same frozen defaults. */
+export { SMART_PATCH_DEFAULT_COHERENCE_SETTINGS as DEFAULT_SMART_PATCH_COHERENCE } from '../../shared/projects/smart-patch-coherence-settings.js'

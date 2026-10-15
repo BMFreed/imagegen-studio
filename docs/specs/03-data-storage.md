@@ -332,8 +332,32 @@ unchanged. Fit reads current owned settings and applies blur+padding outward8-gr
 only on invocation. Save/shadow serialize actual optional values with existing
 package and retention owners; no new worker or persistence backend is introduced.
 The future inpaint/compositing snapshot must freeze and use the same blur without
-baking it into authored mask pixels; padding affects Fit only. Qualification is
-in progress in the checkpoint, and public readiness is unchanged.
+baking it into authored mask pixels; padding affects Fit only. The checkpoint
+is qualified:impacted1835/final104/native109 PASS,three isolated semantic
+RED/GREEN pairs and required typecheck/lint/build PASS. Its scope/chronology are
+recorded in the linked research;public readiness remains unchanged.
+
+### Smart Patch owned coherence settings
+
+The qualified [owned coherence scope](../engineering/phase-4-smart-patch-coherence-settings-research.md)
+adds optional top-level `coherenceSettings:{mode,edgeSize,minimumDenoise}` to the
+strict Smart Patch schema. Modes are Gaussian Blur/Box Blur/Staged;edge is integer
+0..1024 PROCESSING pixels,minimum denoise finite0..1. Resolved defaults are
+Gaussian Blur/16/0. Parse/open/Save retain legacy absence;read/default no-op do
+not inject fields,dirty the document or change member hashes. Affected1927 TS,
+prototype180,native14 including actual process death→Home Recover,and three
+semantic RED/GREEN pairs PASS;typecheck/lint/build PASS. Old strict readers
+accepting new fields is not claimed.
+
+Captured whole-profile Main edits validate documentId/documentRevision and exact
+target;invalid/stale/locked/missing/foreign/Raster owners refuse. One changed
+profile uses existing Undo/Redo,Save/loader and local shadow/recovery;original mask
+assets/revision/bounds,blur/padding,bbox/internal/draft and other layers remain
+unchanged. Private capture resolves and freezes owned profile before await and
+uses it for default CPU conditioning;explicit private override is not a document
+write. No accepted variant/provenance/preset/Compare field or schema version is
+introduced by this slice. Relevant future coherence metadata belongs to immutable
+layer/source context for staleness,not reusable generation configuration.
 
 ### Generation draft dynamic settings
 

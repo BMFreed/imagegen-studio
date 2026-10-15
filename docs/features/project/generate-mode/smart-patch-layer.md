@@ -120,7 +120,34 @@ Variant lifecycle, staleness/compositing/comparison and Patch presets remain
 subsequent owners; existing authoring evidence and public promise statuses stay
 unchanged.
 
-## Current private conditioning scope: processing edge and world blur
+## Current owned coherence scope: controls,persistence and capture
+
+[Owned coherence research](../../../engineering/phase-4-smart-patch-coherence-settings-research.md)
+qualifies this UI/Main/document slice:affected1927 TS,prototype180,native14
+(including Save/reopen/owned SIGKILL→Home Recover),three semantic RED/GREEN pairs
+and typecheck/lint/build PASS. Physical exit/restoration/cleanup confirmed. Each
+Patch can store optional top-level `coherenceSettings:{mode,edgeSize,minimumDenoise}`.
+The exact modes are Gaussian Blur/Box Blur/Staged;edge is integer0..1024 PROCESSING
+pixels,minimum denoise finite0..1. Effective defaults are Gaussian Blur/16/0;
+legacy absence stays absent on read/open and default no-op,without dirty/history
+or altered member hashes. Original mask PNG/revision,blur/padding,bbox/internal
+size,draft and neighboring layers remain independent.
+
+Selected-Patch Mask controls show compact Coherence/Edge size/Minimum denoise
+rows. Captured whole-profile edits use one normal Undo step,explicit Save and
+local recovery;invalid/stale/locked/missing/foreign/Raster owners refuse. Numeric
+Enter/blur commits once,Escape/owner/navigation changes cancel raw drafts,and
+tooltips distinguish processing edge from world blur and coherence minimum from
+Generation denoising strength. These settings remain editable without a worker.
+
+Main capture freezes a detached resolved owned profile before awaits;
+`prepareConditioning(worker)` uses that profile despite later edits. Explicit
+private overrides remain operation policy and do not change the Project. Future
+variants will include these relevant settings in frozen layer/source context for
+staleness,but this slice adds no variants/provenance/preset/comparison fields or
+public Generate/native ML support.
+
+## Previous qualified private conditioning checkpoint: processing edge and world blur
 
 [Coherence research](../../../engineering/phase-4-smart-patch-coherence-research.md)
 qualifies the private Main/CPU slice:1905 affected TS/268 Python PASS,
@@ -140,8 +167,10 @@ and portable document limits remain valid.
 
 `latentMaskHasCoverage` reports loss separately without silently changing the
 frozen world mode. Preserving world output core does not prove a viable latent
-mask or ML admission. VAE/infill/denoising,queue/candidates/variants/provenance,
-public Generate and new coherence controls remain later owners. Existing normal
+mask or ML admission. This algorithm checkpoint left VAE/infill/denoising,
+queue/candidates/variants/provenance,public Generate and coherence controls to
+later owners;the owned-settings checkpoint above now qualifies the controls.
+The remaining inference/variant owners stay open. Existing normal
 OUT conditioning stays unchanged;full scaled Invoke pixel parity is not claimed.
 
 ## Previous qualified private contribution checkpoint: full core and external fade
@@ -538,11 +567,15 @@ The `smart-patch` scenario contains a self-contained Smart Patch with owned bbox
 
 The prototype supports adding an empty Smart Patch, selecting its layer-owned generation draft, deterministic mask revision/outdated transitions, deterministic fit-to-mask, generating temporary candidates, multi-accepting them as variants and switching the active accepted variant. These persistent actions participate in Project undo/redo.
 
-The current details card only reads mask revision, bbox size, internal size and active variant. General bbox dragging, numeric precision editing, internal-size editing, mask painting, compositing controls and source-composite hashing are not implemented. The finite Project Canvas frame in the prototype remains a gap against the unbounded-canvas contract. `generating`/`failed` are represented in mock state and staging, not driven by a production worker.
+The current details card only reads mask revision, bbox size, internal size and active variant. The selected Patch's Mask section now renders the shared Coherence, Edge size and Minimum denoise controls with mock owned-profile edits and history. General bbox dragging, numeric precision editing, internal-size editing, mask painting, the remaining compositing controls and source-composite hashing are not implemented. The finite Project Canvas frame in the prototype remains a gap against the unbounded-canvas contract. `generating`/`failed` are represented in mock state and staging, not driven by a production worker.
 
 The prototype also does not expose the shared `Compare generation settings`
 context action or provenance popover. Its current `outdated` flag is a simplified
 mock and does not substitute for `Generated with` / `Current Canvas` comparison.
+Its frozen provenance and staleness comparison do not yet consume
+`coherenceSettings`: editing that profile changes prototype document/history
+without making existing variants outdated. These controls do not qualify
+acceptance or outdated derivation; production has no accepted Patch variants yet.
 
 ## Acceptance Criteria
 

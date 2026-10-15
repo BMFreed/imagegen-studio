@@ -3,6 +3,10 @@ import {
   ANIMA_SAMPLING_METHOD_OPTIONS,
   isAnimaSamplingMethod,
 } from '../../../../../src/shared/projects/anima-sampling-method'
+import {
+  isSmartPatchCoherenceSettings,
+  resolveSmartPatchCoherenceSettings,
+} from '../../../../../src/shared/projects/smart-patch-coherence-settings'
 
 import { ArrowsShuffle, ListCheck, RotateClockwise, Wand, X } from '@vicons/tabler'
 import {
@@ -20,9 +24,12 @@ import {
 } from 'naive-ui'
 import { computed, ref } from 'vue'
 
+import type { ProjectCoherenceSettingsCommand } from '../../../../../src/renderer/components/project-coherence-settings-editor'
+import type { ProjectMaskSettingsOwner } from '../../../../../src/renderer/components/project-mask-settings-editor'
 import type { GenerationLora } from '../../components/generation/generation.types'
 import type { ProjectDynamicPromptSettings, ProjectSession } from './project.types'
 
+import ProjectCoherenceSettings from '../../../../../src/renderer/components/ProjectCoherenceSettings.vue'
 import {
   promptHasAmbiguousEmbedding,
   promptHasMissingEmbedding,
@@ -45,7 +52,7 @@ import ProjectPresetCard from './ProjectPresetCard.vue'
 import ProjectPromptCard from './ProjectPromptCard.vue'
 import ProjectSizeCard from './ProjectSizeCard.vue'
 
-const props = defineProps<{ session: ProjectSession }>()
+const props = defineProps<{ active?: boolean; session: ProjectSession }>()
 const emit = defineEmits<{
   applyPreset: [presetId: string]
   cancelGeneration: []
@@ -61,6 +68,46 @@ const target = computed(() => {
   const entity = getSelectedEntity(props.session)
   return entity && 'kind' in entity && entity.kind === 'smart-patch' ? entity : undefined
 })
+const coherenceOwner = computed<ProjectMaskSettingsOwner | null>(() =>
+  target.value && props.active !== false
+    ? {
+        documentId: props.session.document.id,
+        documentRevision: JSON.stringify(props.session.document),
+        layerId: target.value.id,
+        projectKey: props.session.document.id,
+      }
+    : null,
+)
+function changeCoherence(command: ProjectCoherenceSettingsCommand) {
+  const owner = coherenceOwner.value
+  const patch = target.value
+  if (
+    !owner ||
+    !patch ||
+    patch.locked ||
+    command.layerId !== owner.layerId ||
+    command.change.documentId !== owner.documentId ||
+    command.change.documentRevision !== owner.documentRevision ||
+    !isSmartPatchCoherenceSettings(command.change.value)
+  ) {
+    return
+  }
+  const current = resolveSmartPatchCoherenceSettings(patch.coherenceSettings)
+  const value = command.change.value
+  if (
+    current.mode === value.mode &&
+    current.edgeSize === value.edgeSize &&
+    current.minimumDenoise === value.minimumDenoise
+  ) {
+    return
+  }
+  commitProjectMutation(props.session, 'Change Smart Patch coherence', (document) => {
+    const layer = document.layers.find((item) => item.id === command.layerId)
+    if (layer?.kind === 'smart-patch') {
+      layer.coherenceSettings = { ...value }
+    }
+  })
+}
 const payload = computed(() => activeDraft.value.payload)
 const animaModel = computed(() => payload.value.model?.baseModelFamily === 'anima')
 const seedPolicy = computed(() => payload.value.seed?.policy ?? 'random')
@@ -326,6 +373,15 @@ function normalizeCount(value: number | null) {
         />
 
         <ProjectSizeCard :session />
+
+        <NCard v-if="target" aria-label="Smart Patch mask" size="small" title="Mask">
+          <ProjectCoherenceSettings
+            :disabled="target.locked || active === false"
+            :owner="coherenceOwner"
+            :settings="target.coherenceSettings"
+            @change="changeCoherence"
+          />
+        </NCard>
 
         <NCard size="small" title="LoRAs">
           <NAlert v-if="payload.loras?.some((lora) => lora.resource.missing)" type="warning">

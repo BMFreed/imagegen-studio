@@ -126,6 +126,7 @@ import { projectPromptLoraSources } from './project-prompt-context.js'
 import { externalVaeGenerationReason, projectVaeDiagnostic } from './project-vae-picker.js'
 import ProjectAcceptedResults from './ProjectAcceptedResults.vue'
 import ProjectCanvas from './ProjectCanvas.vue'
+import ProjectCoherenceSettings from './ProjectCoherenceSettings.vue'
 import ProjectDenoisingStrength from './ProjectDenoisingStrength.vue'
 import ProjectGenerationAdvancedOptions from './ProjectGenerationAdvancedOptions.vue'
 import ProjectLayerStack from './ProjectLayerStack.vue'
@@ -2692,6 +2693,12 @@ function applyFitBbox() {
                 <template v-slot:suffix>px</template>
               </NInput>
             </div>
+            <ProjectCoherenceSettings
+              :disabled="activeGeometryDisabled"
+              :owner="maskSettingsOwner"
+              :settings="activePatch.coherenceSettings"
+              @change="emit('updatePatch', $event.layerId, $event.change)"
+            />
             <p v-if="maskEditingReason" class="model-message" role="status">
               {{ maskEditingReason }}
             </p>

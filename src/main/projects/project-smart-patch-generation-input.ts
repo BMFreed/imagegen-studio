@@ -8,6 +8,10 @@ import type {
   IgsSmartPatchLayerV1,
 } from '../../shared/projects/project-schema.js'
 import { parseProjectDocumentV1 } from '../../shared/projects/project-schema.js'
+import {
+  resolveSmartPatchCoherenceSettings,
+  type SmartPatchCoherenceSettings,
+} from '../../shared/projects/smart-patch-coherence-settings.js'
 
 import { mkdtemp, writeFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -34,7 +38,6 @@ import {
   assertSmartPatchConditioningSize,
   assertSmartPatchProcessingSize,
   captureSmartPatchCoherenceParameters,
-  DEFAULT_SMART_PATCH_COHERENCE,
 } from './worker-client.js'
 
 /** Matches the existing CPU compositor/target verifier; not a model capacity or document ceiling. */
@@ -43,6 +46,7 @@ const MAX_SOURCE_PIXELS = 4_000_000
 
 export interface FrozenSmartPatchGenerationContext {
   bbox: IgsRectV1
+  coherenceSettings: SmartPatchCoherenceSettings
   documentId: string
   documentRevision: string
   generationDraft: IgsProjectDocumentV1['generationDraft']
@@ -119,6 +123,7 @@ export async function withFrozenSmartPatchGenerationInput<T>(
   const scope = { beneathLayerId: patch.id }
   const context: FrozenSmartPatchGenerationContext = {
     bbox,
+    coherenceSettings: resolveSmartPatchCoherenceSettings(patch.coherenceSettings),
     documentId: document.documentId,
     documentRevision: document.documentRevision,
     generationDraft: structuredClone(patch.generationDraft),
@@ -235,7 +240,7 @@ export async function withFrozenSmartPatchGenerationInput<T>(
           })
         const prepareConditioning: CapturedSmartPatchGenerationInput['prepareConditioning'] = (
           worker,
-          coherence = DEFAULT_SMART_PATCH_COHERENCE,
+          coherence = context.coherenceSettings,
         ) =>
           startOperation(async () => {
             const profile = captureSmartPatchCoherenceParameters(coherence)

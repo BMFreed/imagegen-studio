@@ -28,6 +28,13 @@ MVP candidates:
 - show/hide mask overlay;
 - mask overlay color/opacity.
 
+The chosen [owned coherence slice](../../../engineering/phase-4-smart-patch-coherence-settings-research.md)
+commits exactly Coherence mode/Edge size/Minimum denoise as layer-owned MVP
+controls,with the already-supported Gaussian Blur/Box Blur/Staged algorithms.
+Affected1927 TS/prototype180/native14 and three semantic RED/GREEN pairs PASS;
+typecheck/lint/build PASS. This does not promote every remaining
+infill/noise/overlay candidate or add fields to reusable presets.
+
 Post-MVP:
 
 - advanced mask preprocessing;
@@ -59,7 +66,13 @@ is qualified by1905 affected TS/268 Python PASS,36 pinned Invoke comparisons
 and four isolated semantic RED/GREEN pairs. Its frozen
 caller-owned profile has Gaussian Blur/Box Blur/Staged,edge0..1024/default16 and
 minimum denoise0..1/default0. These are private operation parameters,not new
-persisted `.igs` settings,rendered controls or additions to reusable presets.
+persisted `.igs` settings,rendered controls or additions to reusable presets in
+that algorithm checkpoint. The qualified owned slice above adds optional top-level
+Patch `coherenceSettings:{mode,edgeSize,minimumDenoise}` and compact Mask controls.
+Legacy absence resolves Gaussian/16/0 without injection/dirty/default no-op;
+changed whole-profile edits use captured document/layer ownership and one Undo,
+explicit Save/local recovery (including actual process death→Home Recover). Main default
+conditioning reads the frozen OWNED profile;private override remains supported.
 
 Conditioning combines numeric WORLD keep before resizing:INP255-authored,
 OUT Pillow multiply of that keep with source alpha,TXT/IMG0. Processing BICUBIC
@@ -68,7 +81,8 @@ Expanded processing keep projects NEAREST to world,then restores the original
 binary edit core before WORLD blur. `latentMaskHasCoverage` reports lost latent
 edit coverage separately;world output restoration does not prove inference
 support. Six grouped numeric outputs stay private;existing normal OUT remains
-fixed Gaussian and unchanged. No coherence UI/persistence is added by this slice.
+fixed Gaussian and unchanged. The algorithm checkpoint itself added no
+coherence UI/persistence;the subsequent owned slice is described above.
 
 Owned `maskSettings.blur` is an integer project-pixel value0..512, default16.
 The painted mask remains immutable; the generation/compositing snapshot must
@@ -119,7 +133,9 @@ Current-operation compositing settings can be used before a Smart Patch Layer ex
 
 ## Vue Prototype Coverage
 
-The prototype preserves the ownership boundary and keeps Denoising Strength in the Generation card. It can mark a Smart Patch outdated when deterministic mask/bbox/generation inputs change. A dedicated Smart Patch compositing form for blur, coherence, infill, overlay color/opacity and related controls is not currently rendered; those settings remain product scope.
+The prototype preserves the ownership boundary and keeps Denoising Strength in the Generation card. It renders the shared Coherence, Edge size and Minimum denoise controls with mock owned-profile edits and history. Blur, padding, infill, overlay color/opacity and the remaining compositing controls are still prototype gaps.
+
+Existing prototype variants become outdated on the already-supported deterministic mask/bbox/generation inputs. Their provenance and staleness comparison do not yet consume `coherenceSettings`, so these three controls do not qualify acceptance or outdated derivation. Production has no accepted Smart Patch variants yet.
 
 ## Acceptance Criteria
 

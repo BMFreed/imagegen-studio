@@ -1,6 +1,20 @@
 # Engineering Workflow
 
-Current private Main/CPU conditioning scope:
+Current owned coherence/UI persistence scope:
+[Smart Patch owned coherence settings](./phase-4-smart-patch-coherence-settings-research.md).
+The qualified slice adds optional per-Patch `coherenceSettings`,three compact
+Mask controls and captured whole-profile Undo/Save/local recovery. Legacy absence
+resolves Gaussian Blur/processing edge16/minimum0 without injecting fields or
+dirtying the document. Private conditioning defaults to the frozen OWNED profile;
+explicit private override remains supported. Affected1927 TS/prototype180/native14
+(Save/reopen/owned process death→Home Recover) and three semantic RED/GREEN pairs
+PASS;typecheck/lint/build PASS. Physical exit/source restoration and cleanup confirmed.
+Prototype controls edit mock profile/history;variant staleness/provenance still
+omits coherenceSettings and does not qualify acceptance/outdated derivation.
+No jobs/native inference,accepted variants,preset/comparison fields or public
+Generate capability is enabled.
+
+Previous qualified private Main/CPU conditioning checkpoint:
 [Smart Patch processing-space coherence/world contribution](./phase-4-smart-patch-coherence-research.md).
 The qualified private `prepareConditioning` path adds a frozen caller-owned profile
 for Gaussian Blur/Box Blur/Staged,processing-pixel edge16 and minDenoise0 by

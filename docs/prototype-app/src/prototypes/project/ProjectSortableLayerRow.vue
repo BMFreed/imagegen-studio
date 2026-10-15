@@ -44,7 +44,7 @@ const placementClass = computed(() => ({
 </script>
 
 <template>
-  <div ref="row" class="sortable-layer" :class="placementClass">
+  <div ref="row" class="sortable-layer" :class="placementClass" :data-layer-id="layer.id">
     <ProjectLayerRow
       :layer
       :selected

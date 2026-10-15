@@ -1,3 +1,5 @@
+import type { SmartPatchCoherenceSettings } from '../../../../../src/shared/projects/smart-patch-coherence-settings'
+
 import type { AspectRatioState } from '../../../../../src/renderer/components/resolution-control'
 import type {
   GenerationPayload,
@@ -82,6 +84,7 @@ export interface SmartPatchVariant {
 export interface ProjectSmartPatchLayer {
   activeVariantId?: string
   bbox: ProjectRect
+  coherenceSettings?: SmartPatchCoherenceSettings
   generationDraft: ProjectGenerationDraft
   id: string
   internalHeight: number

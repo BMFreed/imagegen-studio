@@ -2413,7 +2413,20 @@ Result` переносит фактический expanded prompt и portable ge
 
 ## Фаза 4. Полный Canvas и Smart Patch Layer
 
-**Текущий private Main/CPU conditioning scope:**
+**Текущий owned coherence/UI persistence scope:**
+[Smart Patch owned coherence settings](../engineering/phase-4-smart-patch-coherence-settings-research.md)
+добавляет optional top-level per-Patch `coherenceSettings`:Gaussian Blur/Box Blur/
+Staged,processing edge0..1024/default16,minDenoise0..1/default0. Legacy absence
+остаётся absent без injection/dirty/default no-op. Compact Mask controls используют
+captured whole-profile edit,one Undo,explicit Save/local recovery. Frozen capture
+default использует OWNED profile,private override сохранён. Affected1927 TS/
+prototype180/native14 (Save/reopen/owned SIGKILL→Home Recover),three semantic
+RED/GREEN,typecheck/lint/build PASS;physical exit/restoration/cleanup confirmed.
+Prototype profile/history does not yet feed variant staleness/provenance.
+No jobs/native inference/variants/new preset/comparison/provenance fields;public
+Generate не включается. Остальные compositing MVP candidates не повышаются.
+
+**Предыдущий qualified private Main/CPU conditioning checkpoint:**
 [Smart Patch processing-space coherence/world contribution](../engineering/phase-4-smart-patch-coherence-research.md)
 добавляет private `prepareConditioning` с frozen caller profile:Gaussian Blur/
 Box Blur/Staged,processing edge0..1024/default16,minDenoise0..1/default0.
@@ -2457,9 +2470,10 @@ Finite internal/source2048side/4M limits не сужают document schema и н
 подтверждают latent-grid/ML admission. Original mask/document/history/seed/Save
 owners сохраняются. Strict all255 source и any-nonzero mask — явные adaptations
 от Invoke; full pixel/mode parity не заявлена. На preparation checkpoint следующим
-owner был numerical blur/fade/coherence/masked conditioning;contribution checkpoint
-выше берёт world geometry,затем остаются coherence/masked conditioning,
-queue/inference/accepted variants.
+owner был numerical blur/fade/coherence/masked conditioning;последующие contribution/
+coherence checkpoints выше квалифицируют world geometry,processing-space coherence
+и numerical latent conditioning. ML admission,queue/inference/accepted variants
+остаются открытыми.
 Public Generate и `.igs` variant schema этим private срезом не включаются.
 
 **Предыдущий qualified private Main/CPU checkpoint:**

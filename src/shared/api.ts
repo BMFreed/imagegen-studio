@@ -31,6 +31,7 @@ import type {
   IgsSmartPatchLayerV1,
 } from './projects/project-schema.js'
 import type { PromptEmbeddingSelection } from './projects/prompt-embeddings.js'
+import type { SmartPatchCoherenceSettings } from './projects/smart-patch-coherence-settings.js'
 
 import { isAnimaSamplingMethod } from './projects/anima-sampling-method.js'
 import { isGenerationDynamicPromptSettings } from './projects/generation-dynamic-settings.js'
@@ -38,6 +39,7 @@ import { isIllustriousSamplingDraftPair } from './projects/illustrious-scheduler
 import { PROJECT_MASK_SETTINGS_MAX } from './projects/project-mask-settings.js'
 import { parseProjectMaskEdit } from './projects/project-mask.js'
 import { IGS_SAFETY_CEILINGS } from './projects/project-schema.js'
+import { isSmartPatchCoherenceSettings } from './projects/smart-patch-coherence-settings.js'
 
 export type {
   PresetDefinition,
@@ -272,6 +274,7 @@ export interface ProjectSmartPatchLayerView {
   activeRasterSubLayerId: null
   blendMode: ProjectRasterLayerView['blendMode']
   boundingBox: IgsRectV1
+  coherenceSettings?: SmartPatchCoherenceSettings
   generationDraft: ProjectTab['generationDraft']
   id: string
   internalResolution: { height: number; width: number }
@@ -305,6 +308,12 @@ export type ProjectSmartPatchLayerChange =
       documentRevision: string
       kind: 'bbox-padding' | 'mask-blur'
       value: number
+    }
+  | {
+      documentId: string
+      documentRevision: string
+      kind: 'coherence-settings'
+      value: SmartPatchCoherenceSettings
     }
   | { kind: 'bounding-box'; rect: IgsRectV1 }
   | { kind: 'internal-resolution'; size: { height: number; width: number } }
@@ -964,6 +973,17 @@ export function isProjectSmartPatchLayerChange(
     return false
   }
   const value = input as Record<string, unknown>
+  if (value['kind'] === 'coherence-settings') {
+    return (
+      Object.keys(value).length === 4 &&
+      ['documentId', 'documentRevision'].every(
+        (key) =>
+          typeof value[key] === 'string' &&
+          /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value[key]),
+      ) &&
+      isSmartPatchCoherenceSettings(value['value'])
+    )
+  }
   if (value['kind'] === 'mask-blur' || value['kind'] === 'bbox-padding') {
     return (
       Object.keys(value).length === 4 &&

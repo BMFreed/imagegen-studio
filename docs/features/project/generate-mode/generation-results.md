@@ -265,6 +265,14 @@ does not publish generated images,candidates,provenance or accepted variants and
 does not add coherence controls/schema. Explicit latent coverage loss remains a
 later inference-admission concern.
 
+The qualified [owned coherence scope](../../../engineering/phase-4-smart-patch-coherence-settings-research.md)
+adds document settings/controls and binds private capture to frozen OWNED policy;
+affected1927 TS/prototype180/native14 and three semantic RED/GREEN pairs PASS.
+It preserves this unavailable Smart Patch
+acceptance boundary:future relevant coherence state belongs to frozen layer/source
+context and `outdated`,not new reusable preset/Compare fields. No candidate,
+variant or generated result is created by a settings edit.
+
 ## Auto-Switch
 
 Supported focus modes may follow Invoke:

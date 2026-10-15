@@ -65,6 +65,7 @@ type CpuObservation = {
 
 type FixtureOptions = {
   bbox: IgsRectV1
+  coherenceSettings?: SmartPatchCoherenceParameters
   internal?: { height: number; width: number }
   mask: { alpha: readonly number[]; bounds: IgsRectV1 } | null
   maskSettings?: { blur: number; padding: number }
@@ -175,6 +176,7 @@ async function fixture(
       activeRasterSubLayerId: null,
       blendMode: 'normal',
       boundingBox: { ...options.bbox },
+      ...(options.coherenceSettings ? { coherenceSettings: { ...options.coherenceSettings } } : {}),
       generationDraft: structuredClone(document.generationDraft),
       id: randomUUID(),
       internalResolution: {
@@ -1579,6 +1581,98 @@ function coherentCircleFixture(internal = { height: 40, width: 40 }): FixtureOpt
     maskSettings: { blur: 0, padding: 5 },
   }
 }
+
+test('the real owned profile changes CPU conditioning while a private override leaves the Project untouched', async () => {
+  await fixture(coherentCircleFixture(), async (f) => {
+    const before = await state(f)
+    const initial: CpuObservation[] = []
+    const legacy = await prepareActualConditioning(f, initial)
+    assert.deepEqual(legacy.context.coherenceSettings, {
+      edgeSize: 16,
+      minimumDenoise: 0,
+      mode: 'Gaussian Blur',
+    })
+    expectNumericMask(initial, 'latentKeepMask', GAUSSIAN_WEAK_CIRCLE)
+    await unchanged(f, before)
+    const tab = f.service.getOpenTabs()[0]
+    const owned: SmartPatchCoherenceParameters = {
+      edgeSize: 16,
+      minimumDenoise: 0,
+      mode: 'Box Blur',
+    }
+    await f.service.updateSmartPatchLayer(f.tabId, f.patch.id, {
+      documentId: tab.documentId,
+      documentRevision: tab.documentRevision,
+      kind: 'coherence-settings',
+      value: owned,
+    })
+    await f.service.flushAutosave(f.tabId)
+    const afterEdit = await state(f)
+    const observed: CpuObservation[] = []
+    const result = await prepareActualConditioning(f, observed)
+    assert.deepEqual(result.coherence, owned)
+    assert.deepEqual(result.context.coherenceSettings, owned)
+    expectNumericMask(observed, 'latentKeepMask', BOX_WEAK_CIRCLE)
+    const override: CpuObservation[] = []
+    const overridden = await prepareActualConditioning(f, override, {
+      edgeSize: 16,
+      minimumDenoise: 0,
+      mode: 'Gaussian Blur',
+    })
+    assert.equal(overridden.coherence.mode, 'Gaussian Blur')
+    assert.deepEqual(overridden.context.coherenceSettings, owned)
+    expectNumericMask(override, 'latentKeepMask', GAUSSIAN_WEAK_CIRCLE)
+    await unchanged(f, afterEdit)
+  })
+})
+
+test('late document edits and exposed profile aliases cannot retarget an owned conditioning capture', async () => {
+  const owned: SmartPatchCoherenceParameters = {
+    edgeSize: 16,
+    minimumDenoise: 0,
+    mode: 'Staged',
+  }
+  await fixture({ ...coherentCircleFixture(), coherenceSettings: owned }, async (f) => {
+    const observed: CpuObservation[] = []
+    const actual = cpuWorker(f, observed)
+    const afterEdit = await f.service.withCapturedSmartPatchGenerationInput(
+      f.tabId,
+      f.patch.id,
+      async (capture) => {
+        capture.context.coherenceSettings.mode = 'Box Blur'
+        const exposed = capture.document.layers.find((layer) => layer.id === f.patch.id)
+        assert.ok(exposed?.kind === 'smart-patch' && exposed.coherenceSettings)
+        exposed.coherenceSettings.edgeSize = 0
+        const tab = f.service.getOpenTabs()[0]
+        await f.service.updateSmartPatchLayer(f.tabId, f.patch.id, {
+          documentId: tab.documentId,
+          documentRevision: tab.documentRevision,
+          kind: 'coherence-settings',
+          value: { ...owned, mode: 'Gaussian Blur' },
+        })
+        await f.service.flushAutosave(f.tabId)
+        const afterEdit = await state(f)
+        const first = await capture.prepareConditioning(actual)
+        assert.deepEqual(first.coherence, owned)
+        assert.deepEqual(first.context.coherenceSettings, owned)
+        expectNumericMask(observed, 'latentKeepMask', STAGED_WEAK_CIRCLE)
+        first.coherence.mode = 'Gaussian Blur'
+        first.context.coherenceSettings.edgeSize = 0
+        const second = await capture.prepareConditioning(actual)
+        assert.deepEqual(second.coherence, owned)
+        assert.deepEqual(second.context.coherenceSettings, owned)
+        expectNumericMask(observed, 'latentKeepMask', STAGED_WEAK_CIRCLE)
+        return afterEdit
+      },
+    )
+    await unchanged(f, afterEdit)
+    const current = f.service.getOpenTabs()[0].layers.find((layer) => layer.id === f.patch.id)
+    assert.equal(
+      current?.kind === 'smart-patch' && current.coherenceSettings?.mode,
+      'Gaussian Blur',
+    )
+  })
+})
 
 // Actual Service -> actual protocol/Pillow/NumPy. The OUT literals are independently
 // normalized cubic samples of world keep [95,255], not separately resized operands.
