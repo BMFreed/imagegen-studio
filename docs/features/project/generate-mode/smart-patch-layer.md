@@ -108,8 +108,14 @@ bytes and source RGBA/source alpha; effective mask clipping, four-mode
 classification and internal-size preparation were later owners, qualified by the
 current preparation checkpoint below.
 Null/disjoint masks remain valid for the future source-only mode contract.
-Locked/hidden existing targets remain readable; future generation/acceptance
-permissions are separate.
+Locked/hidden existing targets remain readable by private preparation. Public
+generation and Add as Variants are forbidden when the target is locked **or**
+hidden (user decision15.10.2026). Public admission and acceptance must recheck both
+flags at their own boundary and show an unavailable reason. They must not unlock
+or reveal the target implicitly. A completed frozen candidate remains temporary
+if its target becomes locked/hidden; it may be accepted after the user restores
+eligibility, or explicitly discarded. This does not change the settled rules for
+changed or missing targets.
 
 Final focused14/affected1852 PASS, four actual CPU tests/nine production
 `compose-target` calls and three isolated semantic RED/neighbor GREEN probes
@@ -121,7 +127,25 @@ Variant lifecycle, staleness/compositing/comparison and Patch presets remain
 subsequent owners; existing authoring evidence and public promise statuses stay
 unchanged.
 
-## Current private world-output scope
+## Current private durable-input scope
+
+[Durable input preparation](../../../engineering/phase-4-smart-patch-durable-input-research.md)
+adds `capture.prepareBatchInput` for1..32 already concrete prompt/seed items. One
+owned preparation freezes source RGBA, optional original authored mask, optional
+model RGB, latent KEEP and final world GENERATE, plus exact per-item family
+inference metadata. The separate input bundle persists fixed relative file roles
+and frozen target context without transient execution paths. Fresh reload checks
+actual bytes/hash/topology/ICC and their cross-field identities. Exclusive
+manifest publication commits the complete bundle; uncertain durability retains
+it for reconciliation. Explicit discard is limited to an exact verified owner.
+
+This is private preparation before SQL admission. It creates no pending/running
+jobs, candidates/receipts/cursor updates, accepted variants or Project/`.igs`/UI
+changes. Dynamic expansion and Random/Reuse resolution remain outside this
+already-concrete boundary. Next owners are complete queue/dispatch/staging and
+immutable acceptance; public promise status is unchanged.
+
+## Previous private world-output scope
 
 [World output](../../../engineering/phase-4-smart-patch-world-output-research.md)
 adds `capture.executeAndCompose` after the existing native execution. The CPU

@@ -741,6 +741,25 @@ export function isProjectSmartPatchMaskV1(input: unknown): input is IgsSmartPatc
   return v.safeParse(SmartPatchMaskSchema, input).success
 }
 
+/** Reuse the authored draft contract for private frozen operation metadata, without a fake Project. */
+export function isProjectGenerationDraftV1(
+  input: unknown,
+): input is IgsProjectDocumentV1['generationDraft'] {
+  const parsed = v.safeParse(GenerationDraftSchema, input)
+  if (!parsed.success) {
+    return false
+  }
+  const draft = parsed.output
+  return (
+    (draft.model === null || draft.model.kind === 'checkpoint') &&
+    (draft.vae === null || draft.vae.kind === 'vae') &&
+    draft.loras.every((entry) => entry.resource.kind === 'lora') &&
+    [draft.positivePrompt, draft.negativePrompt].every((prompt) =>
+      prompt.embeddingRefs.every((entry) => entry.resource.kind === 'embedding'),
+    )
+  )
+}
+
 /** Actual archive assets only. A null owned mask contributes no image member. */
 export function projectAssetReferences(
   document: Pick<IgsProjectDocumentV1, 'layers'>,

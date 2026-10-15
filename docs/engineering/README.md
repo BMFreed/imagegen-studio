@@ -1,6 +1,21 @@
 # Engineering Workflow
 
-Current private world-output scope:
+Current private durable-input scope:
+[Smart Patch durable inputs](./phase-4-smart-patch-durable-input-research.md).
+`capture.prepareBatchInput` prepares one frozen set of source/authored-mask,
+model RGB, latent KEEP and final world GENERATE pixels for1..32 caller-planned
+concrete items. Exact family inference metadata and frozen target context are
+stored without transient request/output/input paths. A separate app-owned bundle
+repository publishes fixed files before an exclusive manifest commit marker and
+strictly reloads their actual bytes. Publication uncertainty retains ownership;
+explicit discard targets only the exact verified bundle. This is the durable
+input foundation before SQL queue admission, not a dispatchable pending job.
+No dynamic expansion/seed resolution, cursor/candidate/receipt/variant, document/
+`.igs`/provenance/preset/Compare or UI change is added. Next: complete Smart Patch
+queue admission/dispatch/staging, then immutable variant acceptance.
+PP-007/008 remain «Пока не обещать»; checks and limits belong to the linked note.
+
+Previous private world-output scope:
 [Smart Patch world output](./phase-4-smart-patch-world-output-research.md).
 `capture.executeAndCompose` extends the existing execution chain with CPU
 `compose-smart-patch-output`: BICUBIC-resize generated RGB to the frozen bbox

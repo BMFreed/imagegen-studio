@@ -163,7 +163,10 @@ Null mask и целая маска вне bbox валидны; этот перв
 original mask metadata/bytes и source RGBA/source alpha. Effective clipping,
 four-mode classification и internal-scale conditioning — следующие owners.
 Future empty/outside coverage даёт source-only mode. Locked/hidden targets
-доступны для чтения; будущие admission permissions отдельны. После materialization
+доступны для private read-only подготовки. По решению15.10.2026 public generation
+и Add as Variants запрещены для locked **или** hidden target; admission и
+acceptance повторно проверяют оба флага, не меняя их автоматически. Готовый
+candidate остаётся временным до явного разрешённого Add либо Discard. После materialization
 и входа в callback private leases защищают snapshot при concurrent edit/Undo/Clear/
 Save/close. Завершение callback закрывает admission новых composition calls;
 cleanup ждёт settlement уже начатых calls, включая sibling после раннего
@@ -361,6 +364,22 @@ introduced by this slice. Relevant future coherence metadata belongs to immutabl
 layer/source context for staleness,not reusable generation configuration.
 
 ### Smart Patch private execution material
+
+[Private durable Smart Patch inputs](../engineering/phase-4-smart-patch-durable-input-research.md)
+adds a separate local `generation-prepared-inputs/smart-patch/<UUID>` owner before
+SQL admission. It stores one frozen target context,1..32 concrete family items
+and fixed source/authored-mask/model-source/latent-KEEP/final-contribution PNG
+roles. Transient execution paths/request IDs are excluded. Color/numeric topology,
+metadata and actual bytes are strictly checked on reload; source world dimensions
+and processing dimensions remain independent. Files are fsynced before an
+exclusive manifest commit marker, followed by directory/parent fsync. Uncertain
+postpublication durability retains the bundle and its identity. Explicit discard
+requires the exact verified owner; no broad startup sweep is added. This root is
+separate from `generation-inputs`, whose ordinary queue cleanup cannot own it.
+No SQL row/migration, worker execution, candidate/receipt/recovery session, seed
+cursor, document/shadow/history/`.igs` or accepted provenance change is added.
+Input persistence is not automatic job replay. Complete queue/staging ownership
+and immutable acceptance remain next; evidence/limits belong to the linked note.
 
 [Private world output](../engineering/phase-4-smart-patch-world-output-research.md)
 adds a transient world-bbox-size RGBA PNG and detached `worldContribution` to

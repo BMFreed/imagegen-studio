@@ -1,5 +1,6 @@
 import { LAMA_OUTPAINT_IDENTITY_V1 } from '../../shared/projects/alpha-outpaint.js'
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
+import { defaultIllustriousNoiseProfile } from '../../shared/projects/illustrious-noise-profile.js'
 import {
   createEmptyProjectDocumentV1,
   type IgsProjectDocumentV1,
@@ -21,6 +22,8 @@ import { crc32, deflateSync, inflateSync } from 'node:zlib'
 
 import type { OutpaintInfillResolver } from '../runtime/inference-auxiliary-resources.js'
 import type {
+  SmartPatchBatchInputOptions,
+  SmartPatchExecutionItem,
   SmartPatchExecutionModelResolver,
   SmartPatchExecutionOptions,
 } from './project-smart-patch-execution.js'
@@ -30,6 +33,7 @@ import type {
   SmartPatchWorldExecutionOptions,
 } from './project-smart-patch-world-output.js'
 import type { SmartPatchExecutionRequest } from './smart-patch-execution-request.js'
+import type { SmartPatchInputMaterial } from './smart-patch-frozen-input.js'
 import type {
   SmartPatchCoherenceParameters,
   SmartPatchOutputCompositionPayload,
@@ -43,6 +47,7 @@ import { decodeDerivedProjectMaskPng, encodeProjectMaskPng } from './project-mas
 import { readProjectPlaceholders } from './project-placeholders.js'
 import { ProjectService } from './project-service.js'
 import { ProjectShadowStore } from './project-shadow.js'
+import { SmartPatchInputBundleRepository } from './project-smart-patch-input-bundle.js'
 import { executeSmartPatchWithTransport } from './smart-patch-execution-request.js'
 import { decodeTargetPngAlpha } from './target-png-mode.js'
 import {
@@ -538,6 +543,111 @@ function executionOptions(
     item: { prompts: { negative: '(dark blur)--', positive: '(bright hair:2)' }, seed: 0 },
     modelService: modelService(family),
     preparationWorker: preparationWorker(f),
+  }
+}
+
+function batchInputOptions(
+  f: Fixture,
+  family: Family,
+  items: readonly SmartPatchExecutionItem[] = [
+    { prompts: { negative: '(dark blur)--', positive: '(bright hair:2)' }, seed: 0 },
+    { prompts: { negative: 'fog', positive: '(quiet sky:0.5)' }, seed: 0xff_ff_ff_ff },
+  ],
+): SmartPatchBatchInputOptions {
+  return { items, modelService: modelService(family), preparationWorker: preparationWorker(f) }
+}
+
+function observePreparation(input: SmartPatchBatchInputOptions) {
+  const counts = { compose: 0, condition: 0, modelSource: 0, prepare: 0 }
+  const stages: string[] = []
+  const worker = input.preparationWorker
+  const compose = worker.composeTarget.bind(worker)
+  const prepare = worker.prepareSmartPatch.bind(worker)
+  const condition = worker.conditionSmartPatch.bind(worker)
+  const modelSource = worker.prepareSmartPatchModelSource.bind(worker)
+  worker.composeTarget = async (request) => {
+    counts.compose++
+    stages.push(request.stagingRoot)
+    return await compose(request)
+  }
+  worker.prepareSmartPatch = async (request) => {
+    counts.prepare++
+    return await prepare(request)
+  }
+  worker.conditionSmartPatch = async (request) => {
+    counts.condition++
+    return await condition(request)
+  }
+  worker.prepareSmartPatchModelSource = async (request) => {
+    counts.modelSource++
+    return await modelSource(request)
+  }
+  return { counts, stages }
+}
+
+function assertDetachedBatchInput(
+  material: SmartPatchInputMaterial,
+  setup: FixtureOptions,
+  items: readonly SmartPatchExecutionItem[],
+  stage: string,
+) {
+  assert.equal(material.manifest.kind, 'smart-patch-frozen-input')
+  assert.equal(material.manifest.schemaVersion, 1)
+  assert.equal(material.manifest.mode, setup.mode)
+  assert.deepEqual(material.manifest.context.bbox, setup.bbox)
+  assert.deepEqual(material.manifest.context.internalResolution, { height: 64, width: 64 })
+  assert.deepEqual(
+    material.manifest.items.map((entry) => entry.item),
+    items,
+  )
+  assert.ok(material.manifest.items.every((entry) => entry.family === setup.family))
+  assert.ok(
+    !JSON.stringify(material.manifest).includes(stage),
+    'No transient stage survives in the durable material',
+  )
+  assert.ok(
+    !existsSync(stage),
+    'Capture removes its private source/preparation stage before returning',
+  )
+  const files = Object.entries(material.files)
+  assert.ok(
+    files.length >= 3,
+    'Source, latent KEEP and final world contribution remain independently owned',
+  )
+  for (const [name, bytes] of files) {
+    assert.ok(!path.isAbsolute(name) && !name.includes('..'), 'Material filenames stay relative')
+    assert.ok(
+      Buffer.isBuffer(bytes),
+      'Every returned input is a detached Buffer, not a lease pathname',
+    )
+    assert.ok(bytes.length > 33)
+    assert.equal(bytes.toString('ascii', 12, 16), 'IHDR')
+    const metadata = material.manifest.files[name as keyof typeof material.manifest.files]
+    assert.ok(metadata, 'Each actual file must have an independently matching frozen identity')
+    assert.equal(metadata.sha256, digest(bytes))
+    assert.equal(metadata.byteSize, bytes.length)
+    assert.equal(metadata.width, bytes.readUInt32BE(16))
+    assert.equal(metadata.height, bytes.readUInt32BE(20))
+  }
+  assert.equal(material.files['source.png'][25], 6)
+  assert.equal(actualIccHash(material.files['source.png']), IGS_SRGB_ICC_SHA256)
+  assert.deepEqual(
+    [
+      material.manifest.files['final-contribution-mask.png'].width,
+      material.manifest.files['final-contribution-mask.png'].height,
+    ],
+    [setup.bbox.width, setup.bbox.height],
+  )
+  if (setup.mode === 'txt2img') {
+    assert.equal(material.files['model-source.png'], undefined)
+    assert.ok(
+      decodeTargetPngAlpha(material.files['source.png'], setup.bbox.width, setup.bbox.height).every(
+        (alpha) => alpha === 0,
+      ),
+    )
+  } else {
+    assert.equal(material.files['model-source.png'][25], 2)
+    assert.equal(actualIccHash(material.files['model-source.png']), IGS_SRGB_ICC_SHA256)
   }
 }
 
@@ -1343,6 +1453,513 @@ for (const callbackFails of [false, true]) {
           await rm(path.join(f.scratch, entry), { force: true, recursive: true })
         }
       }
+      await unchanged(f, before)
+    })
+  })
+}
+
+// This new boundary never calls a native family executor. Its declared catalog resolver checks
+// actual tiny fixture files; all source composition, mask/model-source preparation and material
+// validation use the production Main path and real serialized CPU requests.
+for (const family of ['illustrious', 'anima'] as const) {
+  for (const mode of ['txt2img', 'inpaint'] as const) {
+    test(`actual ${family} ${mode} prepares detached batch inputs once without inference or durable side effects`, async () => {
+      const setup = options(family, mode)
+      if (mode === 'txt2img') {
+        setup.bbox = { ...setup.bbox, height: 79, width: 95 }
+      }
+      await fixture(setup, async (f) => {
+        const before = await state(f)
+        const input = batchInputOptions(f, family)
+        const frozenItems = structuredClone(input.items)
+        const observed = observePreparation(input)
+        const material = await f.service.withCapturedSmartPatchGenerationInput(
+          f.tabId,
+          f.patch.id,
+          (capture) => capture.prepareBatchInput(input),
+        )
+        assert.deepEqual(observed.counts, {
+          compose: 1,
+          condition: 1,
+          modelSource: mode === 'txt2img' ? 0 : 1,
+          prepare: 1,
+        })
+        assert.equal(observed.stages.length, 1)
+        assertDetachedBatchInput(material, setup, frozenItems, observed.stages[0])
+        if (f.maskBytes) {
+          assert.ok(
+            material.files['authored-mask.png'].equals(f.maskBytes),
+            'The authored mask survives preparation byte for byte',
+          )
+        }
+        assert.equal(material.manifest.context.generationDraft.seed.value, 0)
+        for (const [index, entry] of material.manifest.items.entries()) {
+          assert.equal(entry.inference.sampling.seed, frozenItems[index].seed)
+          if (entry.family === 'illustrious') {
+            assert.deepEqual(entry.inference.prompts, frozenItems[index].prompts)
+          } else {
+            assert.equal(
+              entry.inference.prompts.positive.cleanedText,
+              index === 0 ? 'bright hair' : 'quiet sky',
+            )
+            assert.equal(entry.inference.prompts.positive.spans[0]?.weight, index === 0 ? 2 : 0.5)
+          }
+        }
+        await unchanged(f, before)
+      })
+    })
+  }
+}
+
+test('batch input preparation freezes every concrete item and collaborator before the first CPU await', async () => {
+  const setup = options('illustrious', 'inpaint')
+  await fixture(setup, async (f) => {
+    const input = batchInputOptions(f, 'illustrious')
+    const frozenItems = structuredClone(input.items)
+    const observed = observePreparation(input)
+    const actual = input.preparationWorker.composeTarget
+    let lateMethodCalled = false
+    let afterEdit!: Awaited<ReturnType<typeof state>>
+    input.preparationWorker.composeTarget = async (request) => {
+      input.items[0].seed = 99
+      input.items[0].prompts.positive = 'Changed concrete item alias'
+      input.items = []
+      input.preparationWorker.conditionSmartPatch = async () => {
+        lateMethodCalled = true
+        throw new Error('Late CPU collaborator must not run')
+      }
+      input.modelService.resolveVerifiedGenerationCheckpointForPlan = async () => {
+        lateMethodCalled = true
+        throw new Error('Late model collaborator must not run')
+      }
+      await f.service.updateSmartPatchLayer(f.tabId, f.patch.id, {
+        kind: 'internal-resolution',
+        size: { height: 128, width: 128 },
+      })
+      await f.service.flushAutosave(f.tabId)
+      afterEdit = await state(f)
+      return await actual(request)
+    }
+    const material = await f.service.withCapturedSmartPatchGenerationInput(
+      f.tabId,
+      f.patch.id,
+      (capture) => {
+        capture.context.bbox.width = 1
+        capture.context.generationDraft.sampling.steps = 99
+        capture.document.layers = []
+        capture.maskPngBytes?.fill(0)
+        return capture.prepareBatchInput(input)
+      },
+    )
+    assert.equal(lateMethodCalled, false)
+    assert.deepEqual(observed.counts, { compose: 1, condition: 1, modelSource: 1, prepare: 1 })
+    assertDetachedBatchInput(material, setup, frozenItems, observed.stages[0])
+    assert.equal(material.manifest.context.generationDraft.sampling.steps, 3)
+    await unchanged(f, afterEdit)
+  })
+})
+
+test('a later concrete item resource refusal returns no prepared prefix and preserves the single execution neighbor', async () => {
+  const setup = options('illustrious', 'img2img')
+  await fixture(setup, async (f) => {
+    const before = await state(f)
+    const input = batchInputOptions(f, 'illustrious')
+    const observed = observePreparation(input)
+    let checkedItems = 0
+    input.modelService.assertNoUnboundGenerationEmbeddings = async () => {
+      checkedItems++
+      if (checkedItems === 2) {
+        throw new Error('Controlled refusal while qualifying the later concrete item')
+      }
+    }
+    let delivered = false
+    await assert.rejects(
+      f.service.withCapturedSmartPatchGenerationInput(f.tabId, f.patch.id, async (capture) => {
+        const result = await capture.prepareBatchInput(input)
+        delivered = true
+        return result
+      }),
+      /Controlled refusal while qualifying the later concrete item/,
+    )
+    assert.equal(checkedItems, 2, 'The first concrete item qualified before the later item refused')
+    assert.equal(delivered, false, 'A valid prefix must never escape a failed batch preparation')
+    assert.deepEqual(observed.counts, { compose: 1, condition: 1, modelSource: 1, prepare: 1 })
+    assert.ok(!existsSync(observed.stages[0]))
+    await unchanged(f, before)
+    const control = await f.service.withCapturedSmartPatchGenerationInput(
+      f.tabId,
+      f.patch.id,
+      (capture) => capture.execute(literalWorldExecutionOptions(f)),
+    )
+    assert.equal(
+      control.output.bytes[25],
+      2,
+      'Existing single execution still returns processing RGB',
+    )
+    assert.deepEqual([control.output.width, control.output.height], [64, 64])
+    assert.equal(control.item.seed, 0)
+    await unchanged(f, before)
+  })
+})
+
+test('batch input preparation refuses empty oversized and invalid later items before CPU work while cap32 shares one source', async () => {
+  const setup = options('illustrious', 'img2img')
+  await fixture(setup, async (f) => {
+    const before = await state(f)
+    const item = { prompts: { negative: '', positive: 'bright hair' }, seed: 0 }
+    const invalidBatches = [
+      [],
+      Array.from({ length: 33 }, () => structuredClone(item)),
+      [item, { ...item, seed: -1 }],
+    ]
+    for (const items of invalidBatches) {
+      const input = batchInputOptions(f, 'illustrious', items)
+      let composed = false
+      input.preparationWorker.composeTarget = async () => {
+        composed = true
+        throw new Error('Invalid concrete batch must refuse before CPU work')
+      }
+      await assert.rejects(
+        f.service.withCapturedSmartPatchGenerationInput(f.tabId, f.patch.id, (capture) =>
+          capture.prepareBatchInput(input),
+        ),
+        { code: 'GENERATION_PARAMETER_UNSUPPORTED' },
+      )
+      assert.equal(composed, false)
+      await unchanged(f, before)
+    }
+    const input = batchInputOptions(
+      f,
+      'illustrious',
+      Array.from({ length: 32 }, (_, seed) => ({ prompts: { ...item.prompts }, seed })),
+    )
+    const observed = observePreparation(input)
+    let resourceQualifications = 0
+    input.modelService = modelService('illustrious', async () => {
+      resourceQualifications++
+    })
+    let concreteChecks = 0
+    input.modelService.assertNoUnboundGenerationEmbeddings = async () => {
+      concreteChecks++
+    }
+    const material = await f.service.withCapturedSmartPatchGenerationInput(
+      f.tabId,
+      f.patch.id,
+      (capture) => capture.prepareBatchInput(input),
+    )
+    assert.equal(material.manifest.items.length, 32)
+    assert.equal(
+      resourceQualifications,
+      2,
+      'One initial qualification and one final recheck serve every identical exact selection',
+    )
+    assert.equal(
+      concreteChecks,
+      32,
+      'Concrete-prompt embedding checks are never memoized across items',
+    )
+    assert.deepEqual(observed.counts, { compose: 1, condition: 1, modelSource: 1, prepare: 1 })
+    assertDetachedBatchInput(material, setup, input.items, observed.stages[0])
+    await unchanged(f, before)
+  })
+})
+
+test('the complete batch input lease drains later resource qualification after callback failure and rejects escaped calls', async () => {
+  const setup = options('illustrious', 'inpaint')
+  await fixture(setup, async (f) => {
+    const before = await state(f)
+    const input = batchInputOptions(f, 'illustrious')
+    const observed = observePreparation(input)
+    let entered!: () => void
+    const didEnter = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    let release!: () => void
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let qualifications = 0
+    input.modelService = modelService('illustrious', async () => {
+      qualifications++
+      if (qualifications === 2) {
+        entered()
+        await released
+        assert.ok(
+          existsSync(observed.stages[0]),
+          'The batch lease retains prepared inputs through its final resource qualification',
+        )
+      }
+    })
+    let held!: CapturedSmartPatchGenerationInput
+    let operation: ReturnType<CapturedSmartPatchGenerationInput['prepareBatchInput']> | undefined
+    let callbackSettled = false
+    const capturing = f.service.withCapturedSmartPatchGenerationInput(
+      f.tabId,
+      f.patch.id,
+      async (capture) => {
+        held = capture
+        operation = capture.prepareBatchInput(input)
+        void operation.catch(() => undefined)
+        await didEnter
+        throw new Error('Intentional callback failure during batch input preparation')
+      },
+    )
+    void capturing.then(
+      () => {
+        callbackSettled = true
+      },
+      () => {
+        callbackSettled = true
+      },
+    )
+    try {
+      await Promise.race([
+        didEnter,
+        capturing.then(() => assert.fail('Missing final resource qualification witness')),
+      ])
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 100)
+      })
+      assert.equal(
+        callbackSettled,
+        false,
+        'The batch input lease must remain pending while admitted resource work is blocked',
+      )
+      assert.ok(existsSync(observed.stages[0]))
+      release()
+      await assert.rejects(capturing, /Intentional callback failure/)
+      assert.ok(operation)
+      const material = await operation
+      assertDetachedBatchInput(material, setup, input.items, observed.stages[0])
+      await assert.rejects(held.prepareBatchInput(input), /closed|lease/i)
+      assert.equal(qualifications, 2)
+      await unchanged(f, before)
+    } finally {
+      release()
+      await Promise.allSettled([capturing, operation ?? Promise.resolve()])
+    }
+  })
+})
+
+for (const callbackFails of [false, true]) {
+  test(`unconfirmed batch preparation exit retains the complete input lease when callback failure is ${callbackFails}`, async () => {
+    await fixture(options('illustrious', 'inpaint'), async (f) => {
+      const before = await state(f)
+      const input = batchInputOptions(f, 'illustrious')
+      const observed = observePreparation(input)
+      let entered!: () => void
+      const didEnter = new Promise<void>((resolve) => {
+        entered = resolve
+      })
+      let release!: () => void
+      const released = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      input.preparationWorker.conditionSmartPatch = async () => {
+        // Controlled settled adapter with no live child; physical unkillable behavior is not claimed.
+        entered()
+        await released
+        throw Object.assign(new Error('Controlled unconfirmed preparation child exit'), {
+          code: 'WORKER_EXIT_UNCONFIRMED',
+        })
+      }
+      let operation: ReturnType<CapturedSmartPatchGenerationInput['prepareBatchInput']> | undefined
+      const capturing = f.service.withCapturedSmartPatchGenerationInput(
+        f.tabId,
+        f.patch.id,
+        async (capture) => {
+          operation = capture.prepareBatchInput(input)
+          void operation.catch(() => undefined)
+          await didEnter
+          if (callbackFails) {
+            throw new Error('Intentional callback failure before unconfirmed preparation')
+          }
+          return await operation
+        },
+      )
+      void capturing.catch(() => undefined)
+      try {
+        await Promise.race([
+          didEnter,
+          capturing.then(() => assert.fail('Missing preparation worker witness')),
+        ])
+        release()
+        await assert.rejects(
+          capturing,
+          callbackFails ? /Intentional callback failure/ : /unconfirmed/i,
+        )
+        await assert.rejects(operation!, /unconfirmed/i)
+        const stage = observed.stages[0]
+        assert.ok(existsSync(stage), 'Unconfirmed CPU preparation keeps its leased inputs')
+        assert.ok(existsSync(path.join(stage, 'processing-source.png')))
+        assert.ok(existsSync(path.join(stage, 'world-mask.png')))
+      } finally {
+        release()
+        await Promise.allSettled([capturing, operation ?? Promise.resolve()])
+        // No child exists behind the controlled fault. Remove only this settled fixture's retained roots.
+        for (const entry of await scratchEntries(f.scratch)) {
+          await rm(path.join(f.scratch, entry), { force: true, recursive: true })
+        }
+      }
+      await unchanged(f, before)
+    })
+  })
+}
+
+test('private batch preparation retains readable hidden locked input without enabling public generation', async () => {
+  const setup = options('illustrious', 'inpaint')
+  await fixture(setup, async (f) => {
+    await f.service.updateSmartPatchLayer(f.tabId, f.patch.id, {
+      kind: 'visibility',
+      visible: false,
+    })
+    await f.service.updateSmartPatchLayer(f.tabId, f.patch.id, { kind: 'lock', locked: true })
+    await f.service.flushAutosave(f.tabId)
+    const before = await state(f)
+    const input = batchInputOptions(f, 'illustrious')
+    const observed = observePreparation(input)
+    const material = await f.service.withCapturedSmartPatchGenerationInput(
+      f.tabId,
+      f.patch.id,
+      (capture) => capture.prepareBatchInput(input),
+    )
+    assert.equal(material.manifest.context.locked, true)
+    assert.equal(material.manifest.context.visible, false)
+    assertDetachedBatchInput(material, setup, input.items, observed.stages[0])
+    await unchanged(f, before)
+  })
+})
+
+for (const field of ['prediction-type', 'noise-profile'] as const) {
+  test(`batch input final qualification refuses same-SHA checkpoint ${field} drift without returning a prefix`, async () => {
+    const setup = options('illustrious', 'inpaint')
+    await fixture(setup, async (f) => {
+      const before = await state(f)
+      const input = batchInputOptions(f, 'illustrious')
+      const observed = observePreparation(input)
+      const original = input.modelService.resolveVerifiedGenerationCheckpointForPlan
+      let qualifications = 0
+      input.modelService.resolveVerifiedGenerationCheckpointForPlan = async (saved) => {
+        const result = await original(saved)
+        qualifications++
+        if (qualifications === 1) {
+          return result
+        }
+        if (field === 'prediction-type') {
+          return { ...result, reference: { ...result.reference, predictionType: 'v_prediction' } }
+        }
+        return {
+          ...result,
+          noiseProfile: {
+            ...defaultIllustriousNoiseProfile(),
+            rescaleBetasZeroSnr: true,
+            timestepSpacing: 'trailing',
+          },
+        }
+      }
+      let delivered = false
+      await assert.rejects(
+        f.service.withCapturedSmartPatchGenerationInput(f.tabId, f.patch.id, async (capture) => {
+          const result = await capture.prepareBatchInput(input)
+          delivered = true
+          return result
+        }),
+        { code: 'GENERATION_RESOURCE_CHANGED' },
+      )
+      assert.equal(qualifications, 2, 'Final real qualification follows one shared exact snapshot')
+      assert.equal(delivered, false)
+      assert.deepEqual(observed.counts, { compose: 1, condition: 1, modelSource: 1, prepare: 1 })
+      assert.ok(!existsSync(observed.stages[0]))
+      await unchanged(f, before)
+    })
+  })
+}
+
+test('actual batch material retains INP and its world core when latent coverage is fully protected', async () => {
+  const setup = options('illustrious', 'inpaint', true)
+  await fixture(setup, async (f) => {
+    const before = await state(f)
+    const input = batchInputOptions(f, 'illustrious')
+    const observed = observePreparation(input)
+    const material = await f.service.withCapturedSmartPatchGenerationInput(
+      f.tabId,
+      f.patch.id,
+      (capture) => capture.prepareBatchInput(input),
+    )
+    assertDetachedBatchInput(material, setup, input.items, observed.stages[0])
+    const keep = material.manifest.files['latent-keep-mask.png']
+    assert.ok(
+      decodeDerivedProjectMaskPng(material.files['latent-keep-mask.png'], keep).every(
+        (alpha) => alpha === 255,
+      ),
+    )
+    assert.equal(material.manifest.latentMaskHasCoverage, false)
+    assert.equal(material.manifest.mode, 'inpaint')
+    const contribution = decodeDerivedProjectMaskPng(
+      material.files['final-contribution-mask.png'],
+      material.manifest.files['final-contribution-mask.png'],
+    )
+    assert.equal(
+      contribution[19 * setup.bbox.width + 17],
+      255,
+      'Loss on the latent grid must not erase the original world edit core',
+    )
+    assert.ok(contribution.includes(0))
+    await unchanged(f, before)
+  })
+})
+
+for (const family of ['illustrious', 'anima'] as const) {
+  test(`actual ${family} captured CPU batch material reloads from a fresh durable bundle owner after capture cleanup`, async () => {
+    const setup = options(family, 'inpaint')
+    await fixture(setup, async (f) => {
+      const before = await state(f)
+      const input = batchInputOptions(f, family)
+      const observed = observePreparation(input)
+      const material = await f.service.withCapturedSmartPatchGenerationInput(
+        f.tabId,
+        f.patch.id,
+        (capture) => capture.prepareBatchInput(input),
+      )
+      assertDetachedBatchInput(material, setup, input.items, observed.stages[0])
+      const expectedManifest = structuredClone(material.manifest)
+      const expectedFiles = Object.fromEntries(
+        Object.entries(material.files).map(([name, bytes]) => [name, Buffer.from(bytes)]),
+      )
+      // The repository only sees detached material after the real capture lease has been removed.
+      const dataRoot = path.dirname(f.scratch)
+      const published = await new SmartPatchInputBundleRepository(dataRoot).publish(material)
+      assert.equal(published.manifest.kind, 'smart-patch-frozen-input')
+      assert.equal(published.manifest.items.length, 2)
+      const committedManifest = await readFile(
+        path.join(
+          dataRoot,
+          'generation-prepared-inputs',
+          'smart-patch',
+          published.id,
+          'manifest.json',
+        ),
+      )
+      assert.equal(published.manifestSha256, digest(committedManifest))
+      material.files['source.png'].fill(0)
+      published.files['latent-keep-mask.png'].fill(0)
+      const fresh = new SmartPatchInputBundleRepository(dataRoot)
+      const loaded = await fresh.load(published.id)
+      assert.deepEqual(loaded.manifest, expectedManifest)
+      assert.equal(loaded.manifestSha256, published.manifestSha256)
+      assert.deepEqual(Object.keys(loaded.files).sort(), Object.keys(expectedFiles).sort())
+      for (const [name, bytes] of Object.entries(expectedFiles)) {
+        assert.ok(
+          loaded.files[name].equals(bytes),
+          `Fresh reload preserves actual ${name} bytes after caller aliases change`,
+        )
+      }
+      assert.equal(existsSync(observed.stages[0]), false)
+      await unchanged(f, before)
+      await fresh.discard(loaded.id, loaded.manifestSha256)
+      await assert.rejects(new SmartPatchInputBundleRepository(dataRoot).load(loaded.id), {
+        code: 'SMART_PATCH_INPUT_NOT_FOUND',
+      })
       await unchanged(f, before)
     })
   })

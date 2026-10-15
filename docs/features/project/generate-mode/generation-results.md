@@ -273,7 +273,15 @@ acceptance boundary:future relevant coherence state belongs to frozen layer/sour
 context and `outdated`,not new reusable preset/Compare fields. No candidate,
 variant or generated result is created by a settings edit.
 
-The current [private world-output scope](../../../engineering/phase-4-smart-patch-world-output-research.md)
+The current [private durable-input scope](../../../engineering/phase-4-smart-patch-durable-input-research.md)
+persists the prepared source/mask/model/latent/final-contribution inputs and exact
+family metadata for1..32 caller-planned items in a separate local bundle. It is
+not a SQL job, completed candidate, staging recovery session or accepted variant.
+Fresh bundle reload verifies actual files; uncertain publication retains its
+owner. No cursor, Project/`.igs`, Add or Results UI behavior changes. Complete
+Smart Patch queue admission/dispatch/staging and immutable acceptance remain next.
+
+The previous [private world-output scope](../../../engineering/phase-4-smart-patch-world-output-research.md)
 adds detached `worldContribution` from `capture.executeAndCompose`. The CPU worker
 BICUBIC-resizes generated RGB to frozen bbox dimensions, attaches the unchanged
 final world GENERATE alpha and exclusively publishes pinned-sRGB RGBA. Main

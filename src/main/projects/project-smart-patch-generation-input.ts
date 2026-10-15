@@ -19,6 +19,8 @@ import path from 'node:path'
 import type { OutpaintInfillResolver } from '../runtime/inference-auxiliary-resources.js'
 import type { IgsAssetSource } from './igs-package.js'
 import type { FrozenGenerationTarget } from './project-generation-target.js'
+import type { SmartPatchExecutionRequest } from './smart-patch-execution-request.js'
+import type { SmartPatchInputMaterial } from './smart-patch-frozen-input.js'
 import type { ProjectWorkerClient, SmartPatchCoherenceParameters } from './worker-client.js'
 
 import { readIgsPackage } from './igs-package.js'
@@ -27,9 +29,14 @@ import { readProjectMaskSource } from './project-mask.js'
 import { withProjectPathLock } from './project-path-lock.js'
 import { compositionRasterLayers, withFrozenRasterComposition } from './project-raster-snapshot.js'
 import {
+  captureSmartPatchBatchInputOptions,
   captureSmartPatchExecutionOptions,
+  createSmartPatchBatchModelResolver,
   type ExecutedSmartPatchGenerationInput,
   executePreparedSmartPatch,
+  prepareSmartPatchExecutionRequest,
+  type SmartPatchBatchInputOptions,
+  type SmartPatchExecutionItem,
   type SmartPatchExecutionOptions,
   validateSmartPatchExecutionDraft,
 } from './project-smart-patch-execution.js'
@@ -49,6 +56,7 @@ import {
   composeExecutedSmartPatchOutput,
   type SmartPatchWorldExecutionOptions,
 } from './project-smart-patch-world-output.js'
+import { captureSmartPatchInputMaterial } from './smart-patch-frozen-input.js'
 import { classifyTargetPngAlpha } from './target-png-mode.js'
 import {
   assertSmartPatchConditioningSize,
@@ -99,6 +107,7 @@ export interface CapturedSmartPatchGenerationInput {
   maskPngBytes: Buffer | null
   /** Main-only leased material; never a portable path or renderer capability. */
   maskPngPath: string | null
+  prepareBatchInput: (input: SmartPatchBatchInputOptions) => Promise<SmartPatchInputMaterial>
   prepareConditioning: (
     worker: Pick<
       ProjectWorkerClient,
@@ -312,28 +321,60 @@ export async function withFrozenSmartPatchGenerationInput<T>(
             return prepareFrozenSmartPatchModelSource(conditioned, stagingRoot, worker, resolver)
           })
         }
+        const prepareModelSourceAt = async (
+          preparation: Pick<SmartPatchExecutionOptions, 'infillResolver' | 'preparationWorker'>,
+          stagingRoot: string,
+        ): Promise<PreparedSmartPatchModelSourceInput> => {
+          const profile = captureSmartPatchCoherenceParameters(context.coherenceSettings)
+          assertSmartPatchConditioningSize(context.internalResolution)
+          const prepared = await prepareAt(preparation.preparationWorker, stagingRoot)
+          const conditioned = await prepareFrozenSmartPatchConditioning(
+            prepared,
+            stagingRoot,
+            profile,
+            preparation.preparationWorker,
+          )
+          return await prepareFrozenSmartPatchModelSource(
+            conditioned,
+            stagingRoot,
+            preparation.preparationWorker,
+            preparation.infillResolver,
+          )
+        }
         const executeAt = async (
           execution: SmartPatchExecutionOptions,
           stagingRoot: string,
         ): Promise<ExecutedSmartPatchGenerationInput> => {
           validateSmartPatchExecutionDraft(context, execution.item)
-          const profile = captureSmartPatchCoherenceParameters(context.coherenceSettings)
-          assertSmartPatchConditioningSize(context.internalResolution)
-          const prepared = await prepareAt(execution.preparationWorker, stagingRoot)
-          const conditioned = await prepareFrozenSmartPatchConditioning(
-            prepared,
-            stagingRoot,
-            profile,
-            execution.preparationWorker,
-          )
-          const source = await prepareFrozenSmartPatchModelSource(
-            conditioned,
-            stagingRoot,
-            execution.preparationWorker,
-            execution.infillResolver,
-          )
+          const source = await prepareModelSourceAt(execution, stagingRoot)
           return await executePreparedSmartPatch({ execution, prepared: source, stagingRoot })
         }
+        const prepareBatchInput: CapturedSmartPatchGenerationInput['prepareBatchInput'] = (input) =>
+          startOperation(async () => {
+            const preparation = captureSmartPatchBatchInputOptions(input)
+            for (const item of preparation.items) {
+              validateSmartPatchExecutionDraft(context, item)
+            }
+            const resources = createSmartPatchBatchModelResolver(preparation.modelService)
+            const stagingRoot = await mkdtemp(path.join(composition.stagingRoot, 'batch-input-'))
+            const prepared = await prepareModelSourceAt(preparation, stagingRoot)
+            const executions: {
+              item: SmartPatchExecutionItem
+              request: SmartPatchExecutionRequest
+            }[] = []
+            for (const item of preparation.items) {
+              const request = await prepareSmartPatchExecutionRequest({
+                item,
+                modelService: resources.models,
+                prepared,
+                stagingRoot,
+              })
+              executions.push({ item, request })
+            }
+            const material = await captureSmartPatchInputMaterial(prepared, executions)
+            await resources.reverify()
+            return material
+          })
         const execute: CapturedSmartPatchGenerationInput['execute'] = (input) =>
           startOperation(async () => {
             const execution = captureSmartPatchExecutionOptions(input)
@@ -360,6 +401,7 @@ export async function withFrozenSmartPatchGenerationInput<T>(
             executeAndCompose,
             maskPngBytes: maskPngBytes ? Buffer.from(maskPngBytes) : null,
             maskPngPath,
+            prepareBatchInput,
             prepareConditioning,
             prepareContribution,
             prepareInput,

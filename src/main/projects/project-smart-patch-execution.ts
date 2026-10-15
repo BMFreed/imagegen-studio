@@ -1,6 +1,7 @@
 import { compileAnimaFlowSamplingPlan } from '../../shared/projects/anima-flow-sampling-plan.js'
 import { compileAnimaPromptWeighting } from '../../shared/projects/anima-prompt-weighting.js'
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
+import { GENERATION_BATCH_JOB_LIMIT } from '../../shared/projects/generation-batch-policy.js'
 import {
   defaultIllustriousNoiseProfile,
   supportsIllustriousNoiseProfile,
@@ -35,6 +36,7 @@ import {
   GenerationPreparationError,
   validateNormalGenerationDraft,
 } from './project-generation-preparation.js'
+import { captureSmartPatchExecutionRequest } from './smart-patch-execution-request.js'
 import {
   readSmartPatchModelSourceOutput,
   readSmartPatchPreparationOutput,
@@ -64,50 +66,109 @@ export interface SmartPatchExecutionOptions {
   preparationWorker: SmartPatchExecutionPreparationWorker
 }
 
+export type SmartPatchBatchInputOptions = Omit<
+  SmartPatchExecutionOptions,
+  'generationWorker' | 'item'
+> & {
+  /** Already concrete prompt/seed items; preparation never plans or executes them. */
+  items: readonly SmartPatchExecutionItem[]
+}
+
 export interface ExecutedSmartPatchGenerationInput extends PreparedSmartPatchModelSourceInput {
   item: SmartPatchExecutionItem
   /** Verified processing-size RGB, detached before the operation-owned stage is removed. */
   output: FrozenGenerationTarget['composite']
 }
 
+type SmartPatchPreparationOptions = Pick<
+  SmartPatchExecutionOptions,
+  'infillResolver' | 'modelService' | 'preparationWorker'
+>
+
 /** Capture methods as well as values before any asynchronous work can retarget a collaborator. */
 export function captureSmartPatchExecutionOptions(
   input: SmartPatchExecutionOptions,
 ): SmartPatchExecutionOptions {
-  const models = input.modelService
-  const worker = input.preparationWorker
-  const resolver = input.infillResolver
   return {
+    ...captureSmartPatchPreparationOptions(input),
     generationWorker: {
       executeSmartPatch: input.generationWorker.executeSmartPatch.bind(input.generationWorker),
     },
-    ...(resolver
-      ? {
-          infillResolver: {
-            resolveVerifiedOutpaintInfill: resolver.resolveVerifiedOutpaintInfill.bind(resolver),
-          },
-        }
-      : {}),
     item: structuredClone(input.item),
-    modelService: {
-      assertNoUnboundGenerationEmbeddings: models.assertNoUnboundGenerationEmbeddings.bind(models),
-      resolveVerifiedAnimaGenerationLoraForPlan:
-        models.resolveVerifiedAnimaGenerationLoraForPlan.bind(models),
-      resolveVerifiedGenerationAnimaBundleForPlan:
-        models.resolveVerifiedGenerationAnimaBundleForPlan.bind(models),
-      resolveVerifiedGenerationCheckpointForPlan:
-        models.resolveVerifiedGenerationCheckpointForPlan.bind(models),
-      resolveVerifiedGenerationEmbeddingForPlan:
-        models.resolveVerifiedGenerationEmbeddingForPlan.bind(models),
-      resolveVerifiedGenerationLoraForPlan:
-        models.resolveVerifiedGenerationLoraForPlan.bind(models),
-      resolveVerifiedGenerationVaeForPlan: models.resolveVerifiedGenerationVaeForPlan.bind(models),
+  }
+}
+
+/** Capture the complete batch and every collaborator synchronously before CPU/resource awaits. */
+export function captureSmartPatchBatchInputOptions(
+  input: SmartPatchBatchInputOptions,
+): SmartPatchBatchInputOptions {
+  if (
+    !Array.isArray(input.items) ||
+    input.items.length < 1 ||
+    input.items.length > GENERATION_BATCH_JOB_LIMIT
+  ) {
+    refuse(
+      'GENERATION_PARAMETER_UNSUPPORTED',
+      'Smart Patch preparation requires 1..32 concrete items.',
+    )
+  }
+  return {
+    ...captureSmartPatchPreparationOptions(input),
+    items: structuredClone(input.items),
+  }
+}
+
+/** One frozen qualification per selection across the batch, followed by real final verification. */
+export function createSmartPatchBatchModelResolver(input: SmartPatchExecutionModelResolver): {
+  models: SmartPatchExecutionModelResolver
+  reverify: () => Promise<void>
+} {
+  const models = captureSmartPatchModelResolver(input)
+  const verifications: (() => Promise<void>)[] = []
+  const memoize = <Args extends unknown[], Result>(
+    resolve: (...args: Args) => Promise<Result>,
+  ): ((...args: Args) => Promise<Result>) => {
+    const snapshots = new Map<string, Promise<Result>>()
+    return (...args) => {
+      const capturedArgs = structuredClone(args)
+      const key = JSON.stringify(capturedArgs)
+      let pending = snapshots.get(key)
+      if (!pending) {
+        pending = resolve(...capturedArgs).then((result) => {
+          const snapshot = structuredClone(result)
+          verifications.push(async () => {
+            requireUnchanged(snapshot, await resolve(...structuredClone(capturedArgs)))
+          })
+          return snapshot
+        })
+        snapshots.set(key, pending)
+      }
+      return pending.then((result) => structuredClone(result))
+    }
+  }
+  return {
+    models: {
+      // The unbound-token check is concrete-prompt-specific and intentionally runs for every item.
+      assertNoUnboundGenerationEmbeddings: models.assertNoUnboundGenerationEmbeddings,
+      resolveVerifiedAnimaGenerationLoraForPlan: memoize(
+        models.resolveVerifiedAnimaGenerationLoraForPlan,
+      ),
+      resolveVerifiedGenerationAnimaBundleForPlan: memoize(
+        models.resolveVerifiedGenerationAnimaBundleForPlan,
+      ),
+      resolveVerifiedGenerationCheckpointForPlan: memoize(
+        models.resolveVerifiedGenerationCheckpointForPlan,
+      ),
+      resolveVerifiedGenerationEmbeddingForPlan: memoize(
+        models.resolveVerifiedGenerationEmbeddingForPlan,
+      ),
+      resolveVerifiedGenerationLoraForPlan: memoize(models.resolveVerifiedGenerationLoraForPlan),
+      resolveVerifiedGenerationVaeForPlan: memoize(models.resolveVerifiedGenerationVaeForPlan),
     },
-    preparationWorker: {
-      composeTarget: worker.composeTarget.bind(worker),
-      conditionSmartPatch: worker.conditionSmartPatch.bind(worker),
-      prepareSmartPatch: worker.prepareSmartPatch.bind(worker),
-      prepareSmartPatchModelSource: worker.prepareSmartPatchModelSource.bind(worker),
+    reverify: async () => {
+      for (const verify of verifications) {
+        await verify()
+      }
     },
   }
 }
@@ -151,15 +212,16 @@ export function validateSmartPatchExecutionDraft(
   }
 }
 
-/** Called only inside the capture's registered whole-operation lease. */
-export async function executePreparedSmartPatch(input: {
-  execution: SmartPatchExecutionOptions
+/** Freeze exact resources and verify actual prepared files without running a family model. */
+export async function prepareSmartPatchExecutionRequest(input: {
+  item: SmartPatchExecutionItem
+  modelService: SmartPatchExecutionModelResolver
   prepared: PreparedSmartPatchModelSourceInput
   stagingRoot: string
-}): Promise<ExecutedSmartPatchGenerationInput> {
+}): Promise<SmartPatchExecutionRequest> {
   const prepared = copyPreparedInput(input.prepared)
-  const item = structuredClone(input.execution.item)
-  const { generationWorker, modelService } = input.execution
+  const item = structuredClone(input.item)
+  const modelService = captureSmartPatchModelResolver(input.modelService)
   const stagingRoot = input.stagingRoot
   const { context, mode } = prepared
   const size = context.internalResolution
@@ -209,13 +271,32 @@ export async function executePreparedSmartPatch(input: {
     inference.family === 'anima'
       ? { ...common, family: 'anima', inference: inference.inference }
       : { ...common, family: 'illustrious', inference: inference.inference }
+  return captureSmartPatchExecutionRequest(request)
+}
+
+/** Called only inside the capture's registered whole-operation lease. */
+export async function executePreparedSmartPatch(input: {
+  execution: SmartPatchExecutionOptions
+  prepared: PreparedSmartPatchModelSourceInput
+  stagingRoot: string
+}): Promise<ExecutedSmartPatchGenerationInput> {
+  const prepared = copyPreparedInput(input.prepared)
+  const item = structuredClone(input.execution.item)
+  const { generationWorker, modelService } = input.execution
+  const request = await prepareSmartPatchExecutionRequest({
+    item,
+    modelService,
+    prepared,
+    stagingRoot: input.stagingRoot,
+  })
+  const size = prepared.context.internalResolution
   const result = structuredClone(await generationWorker.executeSmartPatch(request))
   if (result.output.width !== size.width || result.output.height !== size.height) {
     refuse('GENERATION_INPUT_CHANGED', 'Smart Patch output differs from its frozen internal size.')
   }
   // This is intentionally repeated outside the concrete transport: adapters cannot bypass Main's
   // actual file/CRC/profile/RGB/hash checks by returning plausible metadata.
-  const bytes = await readSmartPatchModelSourceOutput(common.output.pngPath, result.output)
+  const bytes = await readSmartPatchModelSourceOutput(request.output.pngPath, result.output)
   return {
     ...prepared,
     item,
@@ -228,6 +309,47 @@ export async function executePreparedSmartPatch(input: {
       sha256: result.output.sha256,
       width: size.width,
     },
+  }
+}
+
+function captureSmartPatchPreparationOptions(
+  input: SmartPatchPreparationOptions,
+): SmartPatchPreparationOptions {
+  const worker = input.preparationWorker
+  const resolver = input.infillResolver
+  return {
+    ...(resolver
+      ? {
+          infillResolver: {
+            resolveVerifiedOutpaintInfill: resolver.resolveVerifiedOutpaintInfill.bind(resolver),
+          },
+        }
+      : {}),
+    modelService: captureSmartPatchModelResolver(input.modelService),
+    preparationWorker: {
+      composeTarget: worker.composeTarget.bind(worker),
+      conditionSmartPatch: worker.conditionSmartPatch.bind(worker),
+      prepareSmartPatch: worker.prepareSmartPatch.bind(worker),
+      prepareSmartPatchModelSource: worker.prepareSmartPatchModelSource.bind(worker),
+    },
+  }
+}
+
+function captureSmartPatchModelResolver(
+  models: SmartPatchExecutionModelResolver,
+): SmartPatchExecutionModelResolver {
+  return {
+    assertNoUnboundGenerationEmbeddings: models.assertNoUnboundGenerationEmbeddings.bind(models),
+    resolveVerifiedAnimaGenerationLoraForPlan:
+      models.resolveVerifiedAnimaGenerationLoraForPlan.bind(models),
+    resolveVerifiedGenerationAnimaBundleForPlan:
+      models.resolveVerifiedGenerationAnimaBundleForPlan.bind(models),
+    resolveVerifiedGenerationCheckpointForPlan:
+      models.resolveVerifiedGenerationCheckpointForPlan.bind(models),
+    resolveVerifiedGenerationEmbeddingForPlan:
+      models.resolveVerifiedGenerationEmbeddingForPlan.bind(models),
+    resolveVerifiedGenerationLoraForPlan: models.resolveVerifiedGenerationLoraForPlan.bind(models),
+    resolveVerifiedGenerationVaeForPlan: models.resolveVerifiedGenerationVaeForPlan.bind(models),
   }
 }
 

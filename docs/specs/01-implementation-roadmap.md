@@ -2413,7 +2413,24 @@ Result` переносит фактический expanded prompt и portable ge
 
 ## Фаза 4. Полный Canvas и Smart Patch Layer
 
-**Текущий private world-output scope:**
+**Текущий private durable-input scope:**
+[Smart Patch durable inputs](../engineering/phase-4-smart-patch-durable-input-research.md)
+добавляет `capture.prepareBatchInput` и отдельный app-owned input bundle до SQL
+admission.1..32 caller-planned concrete items делят frozen source/authored mask,
+model RGB, latent KEEP и final world contribution. Family inference metadata,
+exact resources, target layer/document identity и world/internal geometry
+сохраняются без transient execution paths. Strict reload читает actual PNG/hash/
+ICC/alpha; files-first fsync и exclusive manifest marker отделяют полный bundle
+от незавершённой записи. Publication uncertainty сохраняет bundle для сверки.
+Нет новых SQL operations/dispatchable jobs, candidates/receipts/cursor/variants,
+public Generate или `.igs`/UI/provenance/preset/Compare changes. Seed resolution и
+dynamic expansion не входят в этот concrete-input boundary. Далее — целостное
+подключение queue admission/dispatch/staging, затем immutable acceptance. Locked
+или hidden targets запрещены для public Generate/Add as Variants по решению
+пользователя15.10.2026; private read-only preparation остаётся доступной.
+PP-007/008 остаются «Пока не обещать»; actual evidence/limits в linked research.
+
+**Предыдущий private world-output scope:**
 [Smart Patch world output](../engineering/phase-4-smart-patch-world-output-research.md)
 добавляет `capture.executeAndCompose`: после native execution CPU worker
 масштабирует generated RGB через BICUBIC до frozen world bbox и присоединяет
