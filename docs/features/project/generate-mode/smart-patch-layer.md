@@ -121,7 +121,32 @@ Variant lifecycle, staleness/compositing/comparison and Patch presets remain
 subsequent owners; existing authoring evidence and public promise statuses stay
 unchanged.
 
-## Current private execution scope: family VAE and denoising
+## Current private execution scope: Main/worker bridge
+
+[Execution bridge](../../../engineering/phase-4-smart-patch-execution-bridge-research.md)
+connects the existing owned capture to native family execution through the actual
+private protocol. `capture.execute` takes one concrete prompt pair and uint32
+seed. It neither expands dynamic syntax nor selects Random/Reuse or updates the
+seed cursor. Main resolves exact family resources, freezes their policy and
+rechecks selections; Python independently verifies file identities around native
+loading. The private `smart-patch-execution` capability is required on worker0.14.0;
+source support does not upgrade an existing installed runtime.
+
+Preparation, resource admission, execution and strict RGB file consumption share
+one drained lease. TXT/IMG use ordinary routes; INP/OUT keep their frozen masked
+mode, including all255 KEEP. Processing dimensions stay independent of the world
+bbox. Main returns detached verified sRGB RGB bytes. Worker process failure/timeout waits
+for physical exit before cleanup; unconfirmed exit retains the capture staging,
+including when a sibling callback already failed.
+
+This publication is transient private numerical material. It adds no public
+Generate, durable batch/queue/candidate/receipt, world compositing, accepted
+variant, provenance/preset/Compare, schema or UI behavior. Evidence and exact
+qualification limits belong to the linked research. World composition, durable
+queue integration and immutable variant acceptance remain next; public promise
+statuses are unchanged.
+
+## Previous private execution scope: family VAE and denoising
 
 [Denoising research](../../../engineering/phase-4-smart-patch-denoising-research.md)
 qualifies private numerical adapters for prepared RGB and independent numeric
@@ -141,8 +166,9 @@ family and Illustrious EPS/V; actual prepared INP uses world128/internal64/Euler
 for both families. These random small CPU-native models do not qualify trained,
 installed, GPU or full Invoke pixel parity. No Main transport/public worker
 command, queue/publication, world compositing, immutable variants, schema, preset,
-Compare or UI behavior is added. The private worker/Main execution bridge/resource
-admission, world composition and immutable acceptance remain subsequent owners.
+Compare or UI behavior is added at that numerical checkpoint. The current bridge
+above adds worker/Main transport and resource admission; world composition and
+immutable acceptance remain subsequent owners.
 PP-007/008 public readiness remains unchanged; further checks/mutation evidence
 are recorded separately in the linked research note.
 

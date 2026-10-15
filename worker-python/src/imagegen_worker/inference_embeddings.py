@@ -19,8 +19,8 @@ from typing import Any, cast
 from imagegen_worker.derivatives import DerivativeError, canonical_absolute_path
 from imagegen_worker.protocol import (
     MAX_EMBEDDING_VECTORS,
-    GenerateIllustriousTxt2ImgCommand,
     GenerationEmbedding,
+    IllustriousInferenceParameters,
 )
 
 MAX_EMBEDDING_HEADER_BYTES = 32 * 1024 * 1024
@@ -225,7 +225,7 @@ def _replace_ranges(text: str, ranges: list[tuple[int, int, int]], aliases: list
     return text
 
 
-def masked_embedding_prompts(command: GenerateIllustriousTxt2ImgCommand) -> tuple[str, str]:
+def masked_embedding_prompts(command: IllustriousInferenceParameters) -> tuple[str, str]:
     """Validate literal bindings and mask only resolved resources before early syntax preflight."""
     prompts = [
         _replace_ranges(text, _literal_ranges(text, entries), ["igs_embedding"] * len(entries))
@@ -248,7 +248,7 @@ def _manager(pads: dict[int, list[int]]) -> Any:
 
 
 def load_generation_embeddings(
-    command: GenerateIllustriousTxt2ImgCommand, pipeline: Any, torch: Any
+    command: IllustriousInferenceParameters, pipeline: Any, torch: Any
 ) -> EmbeddingConditioningInputs:
     signed = (
         (command.positive_prompt, command.positive_embeddings),

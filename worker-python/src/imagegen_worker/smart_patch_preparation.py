@@ -151,8 +151,10 @@ def _snapshot(image: PreparationImage) -> bytes:
     return snapshot
 
 
-def _verify_png_stream(snapshot: bytes, width: int, height: int, *, numeric_mask: bool) -> None:
-    """Verify exact RGBA8 geometry, all CRCs, and a bounded complete pixel stream."""
+def _verify_png_stream(
+    snapshot: bytes, width: int, height: int, *, numeric_mask: bool, rgb: bool = False
+) -> None:
+    """Verify exact RGB(A)8 geometry, all CRCs and a bounded complete pixel stream."""
     if not snapshot.startswith(PNG_SIGNATURE):
         raise DerivativeError("INVALID_IMAGE", "Preparation input must be a PNG.")
     cursor = len(PNG_SIGNATURE)
@@ -177,9 +179,9 @@ def _verify_png_stream(snapshot: bytes, width: int, height: int, *, numeric_mask
                 or length != 13
                 or int.from_bytes(data[:4], "big") != width
                 or int.from_bytes(data[4:8], "big") != height
-                or data[8:] != bytes((8, 6, 0, 0, 0))
+                or data[8:] != bytes((8, 2 if rgb else 6, 0, 0, 0))
             ):
-                raise DerivativeError("INVALID_IMAGE", "Preparation PNG must be exact RGBA8.")
+                raise DerivativeError("INVALID_IMAGE", "Preparation PNG color topology differs.")
             header_seen = True
         elif tag == b"IDAT" and length > 0 and not data_closed:
             if numeric_mask and len(compressed) >= MAX_OWNED_MASK_IDAT_CHUNKS:
@@ -204,7 +206,7 @@ def _verify_png_stream(snapshot: bytes, width: int, height: int, *, numeric_mask
             break
     if not end_seen:
         raise DerivativeError("INVALID_IMAGE", "Preparation PNG has no complete pixels.")
-    expected = (width * 4 + 1) * height
+    expected = (width * (3 if rgb else 4) + 1) * height
     try:
         inflater = zlib.decompressobj()
         decoded = inflater.decompress(b"".join(compressed), expected + 1)
@@ -263,6 +265,37 @@ def decode_preparation_image(
         ):
             raise DerivativeError("INVALID_IMAGE", "Owned mask must have nonempty tight coverage.")
     return captured
+
+
+def decode_preparation_rgb(image: PreparationImage) -> Image.Image:
+    """Strict prepared model RGB; RGBA source admission remains independent."""
+    _dimensions(image.width, image.height)
+    snapshot = _snapshot(image)
+    _verify_png_stream(snapshot, image.width, image.height, numeric_mask=False, rgb=True)
+    profile, conflicting = png_embedded_color_metadata(snapshot)
+    if conflicting or profile != SRGB_ICC_PROFILE:
+        raise DerivativeError("INPUT_COLOR_PROFILE", "Prepared RGB must be pinned sRGB.")
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(snapshot)) as decoded:
+                if (
+                    decoded.format != "PNG"
+                    or decoded.mode != "RGB"
+                    or decoded.size != (image.width, image.height)
+                    or getattr(decoded, "n_frames", 1) != 1
+                    or decoded.info.get("icc_profile") != SRGB_ICC_PROFILE
+                ):
+                    raise DerivativeError("INVALID_IMAGE", "Prepared RGB topology differs.")
+                decoded.load()
+                return decoded.copy()
+    except (
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+        UnidentifiedImageError,
+        OSError,
+    ) as error:
+        raise DerivativeError("INVALID_IMAGE", "Prepared RGB could not be decoded.") from error
 
 
 def _world_coverage(mask: Image.Image | None, request: SmartPatchPreparationRequest) -> Image.Image:

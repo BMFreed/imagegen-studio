@@ -923,6 +923,11 @@ export class ProjectWorkerClient {
       ) {
         this.fail(error)
       }
+      if (this.closed) {
+        // A request owns its source files until its failed child has physically
+        // exited. Preserve an unconfirmed-exit error so capture cleanup can retain them.
+        await this.close()
+      }
       throw error
     } finally {
       this.busy = false

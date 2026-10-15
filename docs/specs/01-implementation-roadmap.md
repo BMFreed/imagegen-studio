@@ -2413,7 +2413,26 @@ Result` переносит фактический expanded prompt и portable ge
 
 ## Фаза 4. Полный Canvas и Smart Patch Layer
 
-**Текущий private numerical family execution scope:**
+**Текущий private Main/worker execution scope:**
+[Smart Patch execution bridge](../engineering/phase-4-smart-patch-execution-bridge-research.md)
+связывает `capture.execute` с реальным worker protocol, exact resource admission,
+семейными native VAE/denoising и exclusive processing-size RGB publication.
+Caller передаёт один concrete item: готовые positive/negative prompts и uint32
+seed. Эта граница не разворачивает dynamic prompt, не выбирает Random/Reuse и
+не читает/обновляет seed cursor. Worker0.14.0 обязан объявить private capability
+`smart-patch-execution`; старый installed runtime не получает её автоматически.
+Одна lease охватывает подготовку, resources, execution и строгий Main readback
+RGB/ICC/hash/geometry. При worker process failure/timeout освобождение inputs ждёт
+physical exit; при `WORKER_EXIT_UNCONFIRMED` staging сохраняется, в том числе
+после ошибки callback. World mode и independent internal resolution сохраняются;
+all255 latent KEEP продолжает VAE/denoising с полной защитой latents.
+Нет public Generate, durable queue/batch/candidates/receipts, world composition,
+accepted variants/provenance/preset/Compare, schema/UI или изменений `.igs`.
+Точные выполненные проверки и границы qualification — в linked research;
+PP-007/008 остаются «Пока не обещать». Далее — world composition, durable
+batch/queue integration и immutable variant acceptance.
+
+**Предыдущий private numerical family execution scope:**
 [Smart Patch VAE and denoising](../engineering/phase-4-smart-patch-denoising-research.md)
 передаёт prepared RGB и numeric latent KEEP в существующие native loops с
 caller-owned loaded models. TXT/IMG используют ordinary route;INP/OUT — masked
@@ -2427,8 +2446,9 @@ Prepared INP проверен world128/internal64/Euler у обоих семей
 native CPU models,не trained/installed/GPU/full Invoke pixel parity. Нет Main
 transport/public worker command,queue,publication,world compositing,variants,
 schema/UI changes или повышения public readiness. Full checks/mutations
-фиксируются отдельно в linked research. Следующие owners — private worker/Main
-execution bridge/resource admission,world composition и immutable variants.
+фиксируются отдельно в linked research. Bridge/resource admission были следующим
+owner на том numerical checkpoint; текущий scope выше добавляет их. World
+composition и immutable variants остаются отдельными owners.
 
 **Предыдущий qualified private Main/CPU model-source scope:**
 [Smart Patch model-source and LaMa preparation](../engineering/phase-4-smart-patch-model-source-research.md)
@@ -2445,8 +2465,8 @@ build и worker Ruff/basedpyright PASS;границы evidence записаны 
 provenance/presets/Compare/public Generate. Prototype mocks не меняются и не
 доказывают source/infill или acceptance. Этот source checkpoint ещё не
 квалифицировал family VAE/denoising;current numerical adapter выше закрывает
-all255 policy. Execution bridge/resource admission и immutable variant acceptance
-остаются отдельными owners.
+all255 policy. Текущий scope выше добавляет execution bridge/resource admission;
+immutable variant acceptance остаётся отдельным owner.
 
 **Предыдущий qualified owned coherence/UI persistence scope:**
 [Smart Patch owned coherence settings](../engineering/phase-4-smart-patch-coherence-settings-research.md)

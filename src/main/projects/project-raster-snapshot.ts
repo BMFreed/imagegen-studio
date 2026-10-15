@@ -49,7 +49,8 @@ export function compositionRasterLayers(
 /**
  * Freeze all visible raster inputs before invoking a worker. Saved members are extracted under the
  * same in-process path lock as Save; pending sources are verified against the captured document.
- * Scratch files stay alive only for the callback and are never candidate or Project assets.
+ * Scratch files stay alive for the callback, unless its owner retains them for an unconfirmed
+ * worker exit. They are never candidate or Project assets.
  */
 export async function withFrozenRasterComposition<T>(
   input: {
@@ -58,10 +59,13 @@ export async function withFrozenRasterComposition<T>(
     pendingSource: (asset: RasterAsset) => IgsAssetSource | null
     scope?: RasterCompositionScope
     scratchBasePath: string
+    /** A live child may retain its inputs until physical exit has been confirmed. */
+    shouldCleanupStaging?: () => boolean
     stagePrefix: string
   },
   use: (composition: FrozenRasterComposition) => Promise<T>,
 ): Promise<T> {
+  const shouldCleanupStaging = input.shouldCleanupStaging
   // Do this before any await: a concurrent Project edit cannot alter the settings or asset refs
   // being frozen. Copy pending byte sources too, because the original Buffer may be reused.
   const document = parseProjectDocumentV1(structuredClone(input.document))
@@ -131,9 +135,15 @@ export async function withFrozenRasterComposition<T>(
     }))
     return await use({ document, layers, stagingRoot: stage })
   } finally {
-    await rm(stage, { force: true, recursive: true }).catch((error: unknown) => {
-      process.emitWarning(`Project composition staging cleanup failed: ${String(error)}`)
-    })
+    if (shouldCleanupStaging?.() ?? true) {
+      await rm(stage, { force: true, recursive: true }).catch((error: unknown) => {
+        process.emitWarning(`Project composition staging cleanup failed: ${String(error)}`)
+      })
+    } else {
+      process.emitWarning(
+        'Project composition staging retained because worker exit is unconfirmed.',
+      )
+    }
   }
 }
 

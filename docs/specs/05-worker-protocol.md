@@ -194,6 +194,58 @@ Python route tests — настоящий compositor/PNG без CUDA startup.
 
 ## Минимальные сообщения worker'а
 
+### Private Smart Patch execution bridge (15.10.2026)
+
+[Execution bridge](../engineering/phase-4-smart-patch-execution-bridge-research.md)
+adds internal `execute-smart-patch` / `smart-patch-executed` to inference
+worker0.14.0 only with its explicit `smart-patch-execution` capability. The CPU
+worker does not advertise this capability. An older installed payload without it
+refuses before dispatch; this source checkpoint does not install/upgrade runtime.
+The operation is outside public Generate and durable queue unions.
+
+The executable request is owned by
+[SmartPatchExecutionRequest](../../src/main/projects/smart-patch-execution-request.ts)
+and the strict Python parser, not by the illustrative job sketch above:
+
+- `protocolVersion:'1'`, `schemaVersion:1`, correlated `requestId` and
+  `type:'execute-smart-patch'`;
+- frozen `family`, four-way world `mode`, independent `internalResolution`;
+- nullable `modelSource` RGB reference (null only for TXT) and exact /8-grid
+  `latentKeepMask` numeric PNG reference, each SHA/byte-size/dimension-bound;
+- family-specific `inference`: verified checkpoint/prediction/noise policy,
+  applicable resources/advanced settings and concrete prompts/seed for Illustrious;
+  exact checkpoint/Qwen3/VAE bundle, compiled weighted prompts/native TS sampling
+  plan and supported resources for Anima;
+- Main-nominated distinct canonical PNG paths under `output.stagingRoot` and
+  `output.pngPath`. The operation stage is private; the owned scratch base may
+  retain its existing safe directory mode.
+
+RGB is noninterlaced RGB8 PNG with the pinned sRGB ICC. Numeric KEEP is white RGBA
+with alpha=KEEP and no color metadata/conversion. Internal dimensions use the
+existing /8,2048-side/4M-pixel bounds (Anima minimum64); PNG32MiB and JSONL64KiB
+limits remain. Resources are canonical exact regular files outside the owned
+scratch tree, distinct from inputs/output; Python rechecks identities before and
+after native loading. No resolver downloads missing files. TXT/IMG use ordinary
+native routes; INP/OUT preserve masked mode and all255 KEEP still executes
+VAE/denoising. The inference operation does not repeat LaMa/coherence or classify
+source alpha.
+
+`smart-patch-executed` returns correlated protocol/request identity plus only
+`output:{byteSize,colorSpace:'srgb',height,sha256,width}`. It is not
+`generation-done`, candidate metadata or provenance. Main independently consumes
+and verifies actual RGB/ICC/hash/geometry before returning detached bytes.
+Existing correlated denoising progress applies; malformed or crossed responses
+fail the worker. An explicit concrete execution item never expands dynamic
+syntax, chooses Random/Reuse or reads/advances the seed cursor.
+
+One captured operation drains preparation, resources, execution and consumption
+before staging cleanup. Worker process failure/timeout must confirm physical exit first;
+`WORKER_EXIT_UNCONFIRMED` retains the complete staging lease, including callback
+failure. Such retained scratch is not a recoverable candidate or automatic-replay
+record. No durable queue/batch/receipt, world contribution, accepted variant,
+document/`.igs` edit or public readiness is added. Exact executed checks and
+qualification limits belong to the linked research note.
+
 ### Исполнимая граница превью Project в фазе 2A
 
 Для явного Save main передаёт worker'у `compose-preview` с массивом видимых

@@ -159,8 +159,8 @@ export function captureCompiledAnimaWorkerRequest(
   ])
   const prompts = capture(job.prompts, ['positive', 'negative'])
   const compiled = Object.freeze({
-    negative: captureCompiledPrompt(prompts.negative),
-    positive: captureCompiledPrompt(prompts.positive),
+    negative: captureCompiledAnimaPrompt(prompts.negative),
+    positive: captureCompiledAnimaPrompt(prompts.positive),
   })
   const base = buildAnimaWorkerRequest(
     {
@@ -337,7 +337,8 @@ export function buildAnimaWorkerRequest(input: unknown, ready: unknown): AnimaWo
   return request
 }
 
-function captureCompiledPrompt(input: unknown): CompiledAnimaPromptWeighting {
+/** Validate already compiled Unicode weights without reparsing cleaned authored syntax. */
+export function captureCompiledAnimaPrompt(input: unknown): CompiledAnimaPromptWeighting {
   const fields = capture(input, ['version', 'cleanedText', 'spans'])
   if (fields.version !== 'anima-prompt-weighting-v1' || typeof fields.cleanedText !== 'string') {
     invalid('Anima compiled prompt version or text is invalid.')

@@ -59,7 +59,25 @@ Smart Patch Layer owns:
 
 If a setting affects an already generated Smart Patch Layer, changing it marks the layer as `outdated`.
 
-The current [private family VAE/denoising scope](../../../engineering/phase-4-smart-patch-denoising-research.md)
+The current [private Main/worker execution bridge](../../../engineering/phase-4-smart-patch-execution-bridge-research.md)
+connects one owned `capture.execute` operation through exact family resource
+admission, prepared-file verification, native execution, exclusive processing RGB
+publication and strict Main consumption. It accepts one already concrete prompt
+pair and uint32 seed, without dynamic expansion or seed-cursor effects. Worker0.14.0
+must explicitly advertise `smart-patch-execution`; this is not an installed-runtime
+upgrade. World mode, independent internal size and all255 latent KEEP survive the
+handoff. Preparation and output remain leased through completion/consumption and,
+on worker process failure or timeout, confirmed physical exit. Unconfirmed exit retains
+staging even after callback failure.
+
+That transient RGB is not a world contribution, candidate or accepted variant.
+World-space composition, durable queue/batch and immutable acceptance remain
+separate; `.igs`, document history, provenance/preset/Compare, UI and public
+Generate are unchanged. Executed checks and qualification limits are recorded in
+the linked research; no new trained-family/GPU or full Invoke pixel-parity claim
+follows from the bridge implementation.
+
+The previous [private family VAE/denoising scope](../../../engineering/phase-4-smart-patch-denoising-research.md)
 consumes the prepared RGB and numeric latent KEEP with caller-owned loaded models.
 TXT/IMG keep their ordinary native route; INP/OUT use the existing masked route
 without source reclassification or repeated coherence/LaMa. KEEP all255 after
@@ -73,8 +91,9 @@ CPU protocol preparation-to-adapter cases. Six solvers/family and Illustrious
 EPS/V are covered; prepared INP is world128/internal64/Euler for both families.
 This is random small CPU-native evidence, not trained/installed/GPU/full Invoke
 pixel parity. No Main transport/public worker command, queue, publication,
-variants, schema/UI or public readiness is added. Worker/Main execution bridge
-and resource admission, world composition and immutable variants remain next.
+variants, schema/UI or public readiness was added at that numerical checkpoint.
+The current scope above adds the worker/Main execution bridge and resource
+admission; world composition and immutable variants remain next.
 
 The previous [private model-source scope](../../../engineering/phase-4-smart-patch-model-source-research.md)
 adds actual Main→worker RGB preparation after the existing six conditioning
@@ -157,9 +176,9 @@ expands/fades at processing size and then resizes the mask back,so full scaled
 pixel parity is not claimed. That contribution helper is pre-coherence geometry.
 The qualified private coherence scope above adds processing-space edge expansion
 and projected world contribution. The later model-source scope above qualifies
-private source-only LaMa; the current numerical family adapter qualifies private
-VAE/denoising. Execution bridge/resource admission and final world compositing
-remain subsequent owners. Full scaled Invoke pixel parity is not claimed.
+private source-only LaMa; the numerical family adapter qualifies private
+VAE/denoising. The current bridge adds resource admission and transport; final
+world compositing remains a subsequent owner. Full scaled Invoke pixel parity is not claimed.
 
 Current-operation compositing settings can be used before a Smart Patch Layer exists. Once a Smart Patch Layer is created, the relevant settings are copied into the layer-owned state.
 

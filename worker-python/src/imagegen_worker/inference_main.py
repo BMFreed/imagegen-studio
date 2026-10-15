@@ -42,6 +42,7 @@ from imagegen_worker.inference_config import configured_sdxl_path
 from imagegen_worker.protocol import (
     MAX_MESSAGE_BYTES,
     ComposeTargetCommand,
+    ExecuteSmartPatchCommand,
     GenerateAnimaTxt2ImgCommand,
     GenerateIllustriousImg2ImgCommand,
     GenerateIllustriousOutpaintCommand,
@@ -81,6 +82,7 @@ def inference_ready_message(runtime: MLRuntime | None = None) -> dict[str, objec
             INFERENCE_OUTPAINT_CAPABILITY,
             INFERENCE_EULER_CAPABILITY,
             INFERENCE_NOISE_PROFILE_CAPABILITY,
+            "smart-patch-execution",
             *(
                 ANIMA_CAPABILITIES
                 if runtime is not None and supports_anima_compute(runtime)
@@ -122,7 +124,12 @@ def process_inference_request(
                 **result,
             }
         if not isinstance(
-            command, (GenerateIllustriousTxt2ImgCommand, GenerateAnimaTxt2ImgCommand)
+            command,
+            (
+                GenerateIllustriousTxt2ImgCommand,
+                GenerateAnimaTxt2ImgCommand,
+                ExecuteSmartPatchCommand,
+            ),
         ):
             raise DerivativeError(
                 "INVALID_REQUEST", "This worker accepts generation and target requests only."
@@ -141,6 +148,15 @@ def process_inference_request(
                 )
 
         with contextlib.redirect_stdout(sys.stderr):
+            if isinstance(command, ExecuteSmartPatchCommand):
+                from imagegen_worker.smart_patch_execution import execute_smart_patch
+
+                return execute_smart_patch(
+                    command,
+                    config_dir=config_dir,
+                    runtime=runtime,
+                    on_progress=report_progress if on_progress is not None else None,
+                )
             if isinstance(command, GenerateAnimaTxt2ImgCommand):
                 return generate_anima(
                     command,

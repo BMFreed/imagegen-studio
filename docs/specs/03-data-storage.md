@@ -360,7 +360,31 @@ write. No accepted variant/provenance/preset/Compare field or schema version is
 introduced by this slice. Relevant future coherence metadata belongs to immutable
 layer/source context for staleness,not reusable generation configuration.
 
-### Smart Patch private numerical denoising material
+### Smart Patch private execution material
+
+[Private Main/worker execution bridge](../engineering/phase-4-smart-patch-execution-bridge-research.md)
+adds a transient processing-size RGB PNG and returns detached verified bytes to
+one `capture.execute` caller. The exact concrete prompt pair and uint32 seed are
+already planned inputs; this boundary neither expands dynamic prompts nor reads
+or advances the durable actual-seed cursor. Existing resource storage remains
+authoritative: Main resolves exact files and Python verifies them around loading.
+Worker0.14.0 must advertise the private `smart-patch-execution` capability;
+source changes do not upgrade installed runtime payloads.
+
+The same operation lease covers original inputs, preparation, resources, worker
+execution and final Main RGB/ICC/hash/geometry verification. Cleanup follows all
+admitted work and consumption. On worker process failure/timeout it also waits for
+physical exit; `WORKER_EXIT_UNCONFIRMED` retains the capture staging even after
+callback failure. Retention is a safety hold, not a candidate/recovery manifest
+or automatic replay contract.
+
+This slice adds no SQL rows/migration, durable jobs/candidates/receipts, seed
+cursor changes, document/history/shadow mutations, accepted variant, `.igs`
+member/schema or public readiness. World composition and immutable acceptance
+remain separate. Executed evidence and qualification limits are in the linked
+research.
+
+### Previous Smart Patch private numerical denoising material
 
 [Private family VAE/denoising](../engineering/phase-4-smart-patch-denoising-research.md)
 consumes detached prepared RGB and numeric latent KEEP with caller-owned loaded
@@ -375,8 +399,9 @@ not fabricate latent coverage or promise generated detail in a lost tiny edit.
 Focused72 Python PASS covers65 real tiny native family cases and seven actual CPU
 protocol preparation-to-adapter cases. Six solvers/family and Illustrious EPS/V
 are numerical CPU evidence, not trained/installed/GPU or public persistence proof.
-The worker/Main execution bridge/resource admission, world composition and
-immutable variant lifecycle remain future owners; public statuses stay unchanged.
+At that numerical checkpoint the worker/Main execution bridge/resource admission
+was pending; the current bridge above adds it. World composition and immutable
+variant lifecycle remain future owners; public statuses stay unchanged.
 
 ### Previous Smart Patch private model-source material
 

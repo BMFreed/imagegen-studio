@@ -43,6 +43,7 @@ from imagegen_worker.smart_patch_conditioning import (
     condition_smart_patch,
 )
 from imagegen_worker.smart_patch_fade import (
+    SmartPatchFadeMode,
     SmartPatchFadeRequest,
     fade_smart_patch,
 )
@@ -204,29 +205,19 @@ def validate_illustrious_noise_scheduler(
         )
 
 
-@dataclass(frozen=True)
-class GenerateIllustriousTxt2ImgCommand:
-    """Validated, versioned inference input. The derivatives entrypoint still refuses it."""
+@dataclass(frozen=True, kw_only=True)
+class IllustriousInferenceParameters:
+    """Immutable family policy shared by normal and private prepared execution."""
 
-    request_id: str
     checkpoint_path: Path
     checkpoint_sha256: str
     prediction_type: Literal["epsilon", "v_prediction", "sample"]
-    target_path: Path
-    target_sha256: str
-    target_byte_size: int
-    target_icc_sha256: str
-    width: int
-    height: int
-    bbox: PreviewRect
     positive_prompt: str
     negative_prompt: str
     steps: int
     cfg_scale: float
     seed: int
     scheduler: Literal["dpmpp_2m_k", "dpmpp_2m", "euler", "euler_a", "dpmpp_sde_k", "dpmpp_sde"]
-    staging_root: Path
-    output_path: Path
     cfg_rescale: float = 0.0
     loras: tuple[GenerationLora, ...] = ()
     vae_precision: Literal["Auto", "FP16", "FP32"] = "Auto"
@@ -234,6 +225,22 @@ class GenerateIllustriousTxt2ImgCommand:
     positive_embeddings: tuple[GenerationEmbedding, ...] = ()
     negative_embeddings: tuple[GenerationEmbedding, ...] = ()
     noise_profile: IllustriousNoiseProfile | None = None
+
+
+@dataclass(frozen=True)
+class GenerateIllustriousTxt2ImgCommand(IllustriousInferenceParameters):
+    """Validated normal input; derivatives-only entrypoint still refuses it."""
+
+    request_id: str
+    target_path: Path
+    target_sha256: str
+    target_byte_size: int
+    target_icc_sha256: str
+    width: int
+    height: int
+    bbox: PreviewRect
+    staging_root: Path
+    output_path: Path
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -249,22 +256,28 @@ class GenerateIllustriousOutpaintCommand(GenerateIllustriousImg2ImgCommand):
     infill_resource: OutpaintInfillResource
 
 
+@dataclass(frozen=True, kw_only=True)
+class AnimaInferenceParameters:
+    """Exact original Anima bundle, compiled prompts and native sampling policy."""
+
+    bundle: AnimaModelBundle
+    positive_prompt: CompiledAnimaPrompt
+    negative_prompt: CompiledAnimaPrompt
+    sampling: AnimaFlowSamplingPlan
+    loras: tuple[GenerationLora, ...]
+
+
 @dataclass(frozen=True)
-class GenerateAnimaTxt2ImgCommand:
-    """Original Anima's captured worker boundary, separate from Main admission and SDXL."""
+class GenerateAnimaTxt2ImgCommand(AnimaInferenceParameters):
+    """Original Anima's captured ordinary worker boundary."""
 
     request_id: str
-    bundle: AnimaModelBundle
     target_path: Path
     target_sha256: str
     target_byte_size: int
     width: int
     height: int
     bbox: PreviewRect
-    positive_prompt: CompiledAnimaPrompt
-    negative_prompt: CompiledAnimaPrompt
-    sampling: AnimaFlowSamplingPlan
-    loras: tuple[GenerationLora, ...]
     staging_root: Path
     output_path: Path
 
@@ -278,6 +291,23 @@ class GenerateAnimaImg2ImgCommand(GenerateAnimaTxt2ImgCommand):
 class GenerateAnimaOutpaintCommand(GenerateAnimaImg2ImgCommand):
     conditioning: AlphaOutpaintConditioning
     infill_resource: OutpaintInfillResource
+
+
+@dataclass(frozen=True)
+class ExecuteSmartPatchCommand:
+    """Private prepared execution; never an ordinary alpha-classified target."""
+
+    request_id: str
+    family: Literal["illustrious", "anima"]
+    mode: SmartPatchFadeMode
+    width: int
+    height: int
+    model_source: PreparationImage | None
+    latent_keep_mask: PreparationImage
+    inference: IllustriousInferenceParameters | AnimaInferenceParameters
+    denoising_strength: float | None
+    staging_root: Path
+    output_path: Path
 
 
 def ready_message() -> dict[str, object]:
@@ -421,18 +451,15 @@ def _illustrious_noise_profile(value: object) -> IllustriousNoiseProfile:
     return IllustriousNoiseProfile(rescale, spacing)
 
 
-def _generate_illustrious_txt2img(
-    value: object, request_id: str, *, img2img: bool = False, outpaint: bool = False
-) -> GenerateIllustriousTxt2ImgCommand:
+def _illustrious_inference_parameters(
+    value: object, *, img2img: bool
+) -> tuple[IllustriousInferenceParameters, float | None]:
     job = _object(
         value,
-        "Generation job",
-        {"schemaVersion", "checkpoint", "target", "bbox", "prompts", "sampling", "output"}
-        | ({"conditioning", "infillResource"} if outpaint else set()),
+        "Illustrious inference",
+        {"checkpoint", "prompts", "sampling"},
         optional_keys={"loras", "vaePrecision", "vae", "embeddings"},
     )
-    if type(job["schemaVersion"]) is not int or job["schemaVersion"] != 1:
-        raise DerivativeError("INVALID_REQUEST", "Generation job schema version is unsupported.")
     vae_precision = job.get("vaePrecision", "Auto")
     if not isinstance(vae_precision, str) or vae_precision not in ("Auto", "FP16", "FP32"):
         raise DerivativeError("INVALID_REQUEST", "VAE precision is unsupported.")
@@ -476,33 +503,6 @@ def _generate_illustrious_txt2img(
         "sample",
     ):
         raise DerivativeError("INVALID_REQUEST", "Checkpoint prediction type is unsupported.")
-
-    target = _object(
-        job["target"],
-        "Target",
-        {"path", "sha256", "byteSize", "width", "height", "iccSha256"},
-    )
-    target_path = _absolute_path(target["path"], "Target path")
-    target_sha256 = _sha256(target["sha256"], "Target SHA-256")
-    target_icc_sha256 = _sha256(target["iccSha256"], "Target ICC SHA-256")
-    if target_icc_sha256 != PINNED_SRGB_ICC_SHA256:
-        raise DerivativeError("INVALID_REQUEST", "Target ICC profile is unsupported.")
-    target_byte_size = _positive_integer(target["byteSize"], "Target byte size")
-    if target_byte_size > MAX_GENERATION_TARGET_BYTES:
-        raise DerivativeError("INVALID_REQUEST", "Target byte size exceeds the provisional limit.")
-    width = _positive_integer(target["width"], "Target width")
-    height = _positive_integer(target["height"], "Target height")
-    bbox = _target_bbox(job["bbox"])
-    if (
-        width != bbox["width"]
-        or height != bbox["height"]
-        or width % 8 != 0
-        or height % 8 != 0
-        or width > MAX_TARGET_SIDE
-        or height > MAX_TARGET_SIDE
-        or width * height > MAX_TARGET_PIXELS
-    ):
-        raise DerivativeError("INVALID_REQUEST", "Generation dimensions are unsupported.")
 
     prompts = _object(job["prompts"], "Prompts", {"positive", "negative"})
     if not isinstance(prompts["positive"], str) or not isinstance(prompts["negative"], str):
@@ -599,6 +599,81 @@ def _generate_illustrious_txt2img(
     )
     validate_illustrious_noise_scheduler(noise_profile, scheduler)
 
+    return IllustriousInferenceParameters(
+        checkpoint_path=checkpoint_path,
+        checkpoint_sha256=checkpoint_sha256,
+        prediction_type=prediction_type,
+        positive_prompt=prompts["positive"],
+        negative_prompt=prompts["negative"],
+        steps=steps,
+        cfg_scale=cfg_scale,
+        seed=seed,
+        scheduler=scheduler,
+        cfg_rescale=cfg_rescale,
+        loras=tuple(loras),
+        vae_precision=vae_precision,
+        vae=vae,
+        positive_embeddings=signed_embeddings[0],
+        negative_embeddings=signed_embeddings[1],
+        noise_profile=noise_profile,
+    ), denoising_strength
+
+
+def _generate_illustrious_txt2img(
+    value: object, request_id: str, *, img2img: bool = False, outpaint: bool = False
+) -> GenerateIllustriousTxt2ImgCommand:
+    job = _object(
+        value,
+        "Generation job",
+        {"schemaVersion", "checkpoint", "target", "bbox", "prompts", "sampling", "output"}
+        | ({"conditioning", "infillResource"} if outpaint else set()),
+        optional_keys={"loras", "vaePrecision", "vae", "embeddings"},
+    )
+    if type(job["schemaVersion"]) is not int or job["schemaVersion"] != 1:
+        raise DerivativeError("INVALID_REQUEST", "Generation job schema version is unsupported.")
+    parameters, denoising_strength = _illustrious_inference_parameters(
+        {
+            key: job[key]
+            for key in (
+                "checkpoint",
+                "prompts",
+                "sampling",
+                "loras",
+                "vaePrecision",
+                "vae",
+                "embeddings",
+            )
+            if key in job
+        },
+        img2img=img2img,
+    )
+    target = _object(
+        job["target"],
+        "Target",
+        {"path", "sha256", "byteSize", "width", "height", "iccSha256"},
+    )
+    target_path = _absolute_path(target["path"], "Target path")
+    target_sha256 = _sha256(target["sha256"], "Target SHA-256")
+    target_icc_sha256 = _sha256(target["iccSha256"], "Target ICC SHA-256")
+    if target_icc_sha256 != PINNED_SRGB_ICC_SHA256:
+        raise DerivativeError("INVALID_REQUEST", "Target ICC profile is unsupported.")
+    target_byte_size = _positive_integer(target["byteSize"], "Target byte size")
+    if target_byte_size > MAX_GENERATION_TARGET_BYTES:
+        raise DerivativeError("INVALID_REQUEST", "Target byte size exceeds the provisional limit.")
+    width = _positive_integer(target["width"], "Target width")
+    height = _positive_integer(target["height"], "Target height")
+    bbox = _target_bbox(job["bbox"])
+    if (
+        width != bbox["width"]
+        or height != bbox["height"]
+        or width % 8 != 0
+        or height % 8 != 0
+        or width > MAX_TARGET_SIDE
+        or height > MAX_TARGET_SIDE
+        or width * height > MAX_TARGET_PIXELS
+    ):
+        raise DerivativeError("INVALID_REQUEST", "Generation dimensions are unsupported.")
+
     output = _object(job["output"], "Output", {"stagingRoot", "pngPath"})
     staging_root = _absolute_path(output["stagingRoot"], "Output staging root")
     png_path = _absolute_path(output["pngPath"], "Output PNG path")
@@ -609,10 +684,8 @@ def _generate_illustrious_txt2img(
     if png_path == target_path:
         raise DerivativeError("INVALID_REQUEST", "Output PNG must not replace the target PNG.")
     command = GenerateIllustriousTxt2ImgCommand(
+        **vars(parameters),
         request_id=request_id,
-        checkpoint_path=checkpoint_path,
-        checkpoint_sha256=checkpoint_sha256,
-        prediction_type=prediction_type,
         target_path=target_path,
         target_sha256=target_sha256,
         target_byte_size=target_byte_size,
@@ -620,19 +693,6 @@ def _generate_illustrious_txt2img(
         width=width,
         height=height,
         bbox=bbox,
-        positive_prompt=prompts["positive"],
-        negative_prompt=prompts["negative"],
-        steps=steps,
-        cfg_scale=cfg_scale,
-        cfg_rescale=cfg_rescale,
-        loras=tuple(loras),
-        vae_precision=vae_precision,
-        vae=vae,
-        positive_embeddings=signed_embeddings[0],
-        negative_embeddings=signed_embeddings[1],
-        noise_profile=noise_profile,
-        seed=seed,
-        scheduler=scheduler,
         staging_root=staging_root,
         output_path=png_path,
     )
@@ -669,22 +729,13 @@ def _anima_byte_size(value: object, label: str) -> int:
     return size
 
 
-def _generate_anima(
-    value: object, request_id: str, *, img2img: bool, outpaint: bool = False
-) -> GenerateAnimaTxt2ImgCommand:
+def _anima_inference_parameters(value: object, *, img2img: bool) -> AnimaInferenceParameters:
     # Local imports avoid a cycle: the numerical helpers share GenerationLora above.
     from imagegen_worker.anima_conditioning import validate_compiled_anima_prompt
     from imagegen_worker.anima_flow_sampling import validate_anima_flow_sampling_plan
     from imagegen_worker.inference_anima import AnimaModelBundle, AnimaModelFile
 
-    job = _object(
-        value,
-        "Anima generation job",
-        {"schemaVersion", "model", "target", "bbox", "prompts", "sampling", "loras", "output"}
-        | ({"conditioning", "infillResource"} if outpaint else set()),
-    )
-    if type(job["schemaVersion"]) is not int or job["schemaVersion"] != 1:
-        raise DerivativeError("INVALID_REQUEST", "Anima job schema version is unsupported.")
+    job = _object(value, "Anima inference", {"model", "prompts", "sampling", "loras"})
     model = _object(
         job["model"], "Anima model", {"architecture", "checkpoint", "qwen3Encoder", "vae"}
     )
@@ -711,25 +762,6 @@ def _generate_anima(
         raise DerivativeError(
             "INVALID_REQUEST", "Anima command mode differs from its sampling plan."
         )
-    bbox = _target_bbox(job["bbox"])
-    target = _object(
-        job["target"],
-        "Anima target",
-        {"path", "sha256", "byteSize", "width", "height", "iccSha256"},
-    )
-    target_path = _anima_path(target["path"], "Anima target path")
-    target_size = _anima_byte_size(target["byteSize"], "Anima target byte size")
-    width = _positive_integer(target["width"], "Anima target width")
-    height = _positive_integer(target["height"], "Anima target height")
-    if (
-        _sha256(target["iccSha256"], "Anima target ICC") != PINNED_SRGB_ICC_SHA256
-        or target_size > MAX_GENERATION_TARGET_BYTES
-        or width != sampling.width
-        or height != sampling.height
-        or bbox["width"] != width
-        or bbox["height"] != height
-    ):
-        raise DerivativeError("INVALID_REQUEST", "Anima target identity or dimensions are invalid.")
     prompts = _object(job["prompts"], "Anima prompts", {"positive", "negative"})
     positive = validate_compiled_anima_prompt(prompts["positive"])
     negative = validate_compiled_anima_prompt(prompts["negative"])
@@ -752,6 +784,49 @@ def _generate_anima(
                 _number(fields["weight"], "Anima LoRA weight"),
             )
         )
+    return AnimaInferenceParameters(
+        bundle=bundle,
+        positive_prompt=positive,
+        negative_prompt=negative,
+        sampling=sampling,
+        loras=tuple(loras),
+    )
+
+
+def _generate_anima(
+    value: object, request_id: str, *, img2img: bool, outpaint: bool = False
+) -> GenerateAnimaTxt2ImgCommand:
+    job = _object(
+        value,
+        "Anima generation job",
+        {"schemaVersion", "model", "target", "bbox", "prompts", "sampling", "loras", "output"}
+        | ({"conditioning", "infillResource"} if outpaint else set()),
+    )
+    if type(job["schemaVersion"]) is not int or job["schemaVersion"] != 1:
+        raise DerivativeError("INVALID_REQUEST", "Anima job schema version is unsupported.")
+    parameters = _anima_inference_parameters(
+        {key: job[key] for key in ("model", "prompts", "sampling", "loras")}, img2img=img2img
+    )
+    bundle, sampling = parameters.bundle, parameters.sampling
+    bbox = _target_bbox(job["bbox"])
+    target = _object(
+        job["target"],
+        "Anima target",
+        {"path", "sha256", "byteSize", "width", "height", "iccSha256"},
+    )
+    target_path = _anima_path(target["path"], "Anima target path")
+    target_size = _anima_byte_size(target["byteSize"], "Anima target byte size")
+    width = _positive_integer(target["width"], "Anima target width")
+    height = _positive_integer(target["height"], "Anima target height")
+    if (
+        _sha256(target["iccSha256"], "Anima target ICC") != PINNED_SRGB_ICC_SHA256
+        or target_size > MAX_GENERATION_TARGET_BYTES
+        or width != sampling.width
+        or height != sampling.height
+        or bbox["width"] != width
+        or bbox["height"] != height
+    ):
+        raise DerivativeError("INVALID_REQUEST", "Anima target identity or dimensions are invalid.")
     output = _object(job["output"], "Anima output", {"stagingRoot", "pngPath"})
     staging_root = _anima_path(output["stagingRoot"], "Anima staging root")
     output_path = _anima_path(output["pngPath"], "Anima output path")
@@ -765,23 +840,20 @@ def _generate_anima(
         raise DerivativeError(
             "INVALID_REQUEST", "Anima target/output must be direct staging files."
         )
+    paths = {entry.path for entry in parameters.loras}
     model_paths = {bundle.checkpoint.path, bundle.qwen3_encoder.path, bundle.vae.path}
     if paths & model_paths or {target_path, output_path} & (model_paths | paths):
         raise DerivativeError("INVALID_REQUEST", "Anima models, LoRAs and images must be distinct.")
     command_type = GenerateAnimaImg2ImgCommand if img2img else GenerateAnimaTxt2ImgCommand
     command = command_type(
+        **vars(parameters),
         request_id=request_id,
-        bundle=bundle,
         target_path=target_path,
         target_sha256=_sha256(target["sha256"], "Anima target SHA-256"),
         target_byte_size=target_size,
         width=width,
         height=height,
         bbox=bbox,
-        positive_prompt=positive,
-        negative_prompt=negative,
-        sampling=sampling,
-        loras=tuple(loras),
         staging_root=staging_root,
         output_path=output_path,
     )
@@ -791,6 +863,87 @@ def _generate_anima(
             **vars(command), conditioning=conditioning, infill_resource=infill_resource
         )
     return command
+
+
+def _execute_smart_patch(fields: dict[str, object], request_id: str) -> ExecuteSmartPatchCommand:
+    _object(
+        fields,
+        "Smart Patch execution",
+        {
+            "type",
+            "requestId",
+            "protocolVersion",
+            "schemaVersion",
+            "family",
+            "mode",
+            "internalResolution",
+            "modelSource",
+            "latentKeepMask",
+            "inference",
+            "output",
+        },
+    )
+    if type(fields["schemaVersion"]) is not int or fields["schemaVersion"] != 1:
+        raise DerivativeError("INVALID_REQUEST", "Smart Patch execution schema is unsupported.")
+    family, mode = fields["family"], fields["mode"]
+    if family not in ("illustrious", "anima") or mode not in (
+        "txt2img",
+        "img2img",
+        "inpaint",
+        "outpaint",
+    ):
+        raise DerivativeError("INVALID_REQUEST", "Smart Patch execution family/mode is invalid.")
+    resolution = _object(fields["internalResolution"], "Internal resolution", {"width", "height"})
+    width = _positive_integer(resolution["width"], "Internal width")
+    height = _positive_integer(resolution["height"], "Internal height")
+    if (
+        width % 8
+        or height % 8
+        or width > MAX_TARGET_SIDE
+        or height > MAX_TARGET_SIDE
+        or width * height > MAX_TARGET_PIXELS
+    ):
+        raise DerivativeError("INVALID_REQUEST", "Smart Patch internal dimensions are invalid.")
+    source = (
+        None
+        if fields["modelSource"] is None
+        else _preparation_image(fields["modelSource"], "Prepared model RGB")
+    )
+    keep = _preparation_image(fields["latentKeepMask"], "Latent KEEP")
+    if (
+        (source is None) != (mode == "txt2img")
+        or (source is not None and (source.width, source.height) != (width, height))
+        or (keep.width, keep.height) != (width // 8, height // 8)
+        or keep.byte_size > MAX_GENERATION_TARGET_BYTES
+        or (source is not None and source.byte_size > MAX_GENERATION_TARGET_BYTES)
+    ):
+        raise DerivativeError(
+            "INVALID_REQUEST", "Smart Patch prepared identities differ from mode."
+        )
+    parameters: IllustriousInferenceParameters | AnimaInferenceParameters
+    strength = None
+    if family == "illustrious":
+        parameters, strength = _illustrious_inference_parameters(
+            fields["inference"], img2img=mode != "txt2img"
+        )
+    else:
+        parameters = _anima_inference_parameters(fields["inference"], img2img=mode != "txt2img")
+        if (parameters.sampling.width, parameters.sampling.height) != (width, height):
+            raise DerivativeError("INVALID_REQUEST", "Anima plan differs from internal resolution.")
+    output = _object(fields["output"], "Smart Patch output", {"stagingRoot", "pngPath"})
+    return ExecuteSmartPatchCommand(
+        request_id=request_id,
+        family=family,
+        mode=mode,
+        width=width,
+        height=height,
+        model_source=source,
+        latent_keep_mask=keep,
+        inference=parameters,
+        denoising_strength=strength,
+        staging_root=_absolute_path(output["stagingRoot"], "Smart Patch staging root"),
+        output_path=_absolute_path(output["pngPath"], "Smart Patch RGB output"),
+    )
 
 
 def _outpaint_identity(
@@ -957,6 +1110,7 @@ def parse_request(
     | FadeSmartPatchCommand
     | ConditionSmartPatchCommand
     | PrepareSmartPatchModelSourceCommand
+    | ExecuteSmartPatchCommand
     | GenerateIllustriousTxt2ImgCommand
     | GenerateAnimaTxt2ImgCommand
 ):
@@ -974,6 +1128,8 @@ def parse_request(
     if fields.get("type") == "self-test":
         _object(fields, "Self-test request", {"type", "requestId", "protocolVersion"})
         return SelfTestCommand(request_id)
+    if fields.get("type") == "execute-smart-patch":
+        return _execute_smart_patch(fields, request_id)
     if fields.get("type") in (
         "generate-illustrious-txt2img",
         "generate-illustrious-img2img",
@@ -1452,7 +1608,14 @@ def process_request(value: object) -> dict[str, object]:
                 "runtimeProfile": RUNTIME_PROFILE,
                 "checks": _self_test(),
             }
-        if isinstance(command, (GenerateIllustriousTxt2ImgCommand, GenerateAnimaTxt2ImgCommand)):
+        if isinstance(
+            command,
+            (
+                GenerateIllustriousTxt2ImgCommand,
+                GenerateAnimaTxt2ImgCommand,
+                ExecuteSmartPatchCommand,
+            ),
+        ):
             return error_message(
                 command.request_id,
                 "INFERENCE_UNAVAILABLE",

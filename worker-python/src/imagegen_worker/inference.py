@@ -17,7 +17,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from PIL import Image
 
@@ -46,6 +46,7 @@ from imagegen_worker.protocol import (
     GenerateIllustriousImg2ImgCommand,
     GenerateIllustriousOutpaintCommand,
     GenerateIllustriousTxt2ImgCommand,
+    IllustriousInferenceParameters,
     validate_illustrious_noise_scheduler,
 )
 
@@ -346,7 +347,7 @@ def normalize_compel_prompt(prompt: str) -> str:
 
 
 def select_inference_scheduler(
-    command: GenerateIllustriousTxt2ImgCommand, pipeline: Any, runtime: MLRuntime
+    command: IllustriousInferenceParameters, pipeline: Any, runtime: MLRuntime
 ) -> Any:
     if command.prediction_type == "sample":
         raise DerivativeError(
@@ -400,7 +401,7 @@ def select_inference_scheduler(
 
 
 def validate_pipeline_prompts(
-    command: GenerateIllustriousTxt2ImgCommand,
+    command: IllustriousInferenceParameters,
     pipeline: Any,
     *,
     effective_prompts: tuple[str, str] | None = None,
@@ -472,7 +473,7 @@ def _clip_embeddings(
 
 
 def build_sdxl_conditioning(
-    command: GenerateIllustriousTxt2ImgCommand,
+    command: IllustriousInferenceParameters,
     pipeline: Any,
     runtime: MLRuntime,
     *,
@@ -808,6 +809,91 @@ def run_sdxl_pipeline(
         handle.remove()
 
 
+def load_illustrious_pipeline(
+    command: IllustriousInferenceParameters,
+    *,
+    config_dir: Path,
+    runtime: MLRuntime,
+    mode: Literal["txt2img", "img2img", "inpaint", "outpaint"],
+) -> tuple[Any, EmbeddingConditioningInputs]:
+    """Load the caller-verified exact checkpoint, without target or publication.
+
+    Normal execution verifies assets before entering here; private execution
+    verifies all prepared resources. The post-load digest below detects changes
+    while the native single-file loader reads the checkpoint.
+    """
+    if command.prediction_type == "sample":
+        raise DerivativeError(
+            "GENERATION_PREDICTION_UNSUPPORTED", "Sample prediction is not qualified yet."
+        )
+    validate_illustrious_noise_scheduler(command.noise_profile, command.scheduler)
+    for prompt in masked_embedding_prompts(command):
+        normalize_compel_prompt(prompt)
+    verify_pinned_config(str(config_dir))
+    torch = cast(Any, runtime.torch)
+    diffusers = cast(Any, runtime.diffusers)
+    if mode in ("inpaint", "outpaint"):
+        from imagegen_worker.sdxl_outpaint import outpaint_pipeline_class
+
+        pipeline_class = outpaint_pipeline_class(diffusers, torch)
+    else:
+        pipeline_class = (
+            img2img_pipeline_class(diffusers, torch)
+            if mode == "img2img"
+            else diffusers.StableDiffusionXLPipeline
+        )
+    selected_vae = (
+        load_generation_vae(command.vae, config_dir, diffusers, torch)
+        if command.vae is not None
+        else None
+    )
+    pipeline = pipeline_class.from_single_file(
+        str(command.checkpoint_path),
+        config=str(config_dir),
+        local_files_only=True,
+        torch_dtype=torch.float16,
+        **({"vae": selected_vae} if selected_vae is not None else {}),
+    )
+    verify_pinned_config(str(config_dir))
+    # The single-file loader reads the file after our preflight hash. Detect mutation during load.
+    if _checkpoint_digest(command.checkpoint_path) != command.checkpoint_sha256:
+        raise DerivativeError("GENERATION_INPUT_CHANGED", "Checkpoint changed during loading.")
+    pipeline.scheduler = select_inference_scheduler(command, pipeline, runtime)
+    pipeline.set_progress_bar_config(disable=True)
+    load_generation_loras(pipeline, command.loras, torch)
+    embedding_inputs = load_generation_embeddings(command, pipeline, torch)
+    configure_vae_precision(pipeline, command.vae_precision, torch)
+    pipeline = pipeline.to("cuda")
+    return pipeline, embedding_inputs
+
+
+def prepare_illustrious_conditioning(
+    command: IllustriousInferenceParameters,
+    pipeline: Any,
+    runtime: MLRuntime,
+    embedding_inputs: EmbeddingConditioningInputs,
+) -> SdxlConditioning:
+    """Build finite conditioning; execution owners guard VAE/UNet evaluation."""
+    torch = cast(Any, runtime.torch)
+    with torch.inference_mode():
+        conditioning = build_sdxl_conditioning(
+            command, pipeline, runtime, embedding_inputs=embedding_inputs
+        )
+    if (command.loras or command.positive_embeddings or command.negative_embeddings) and any(
+        not bool(torch.isfinite(tensor).all().item())
+        for tensor in (
+            conditioning.positive,
+            conditioning.negative,
+            conditioning.positive_pooled,
+            conditioning.negative_pooled,
+        )
+    ):
+        raise DerivativeError(
+            "GENERATION_WORKER_FAILED", "Resource conditioning produced non-finite values."
+        )
+    return conditioning
+
+
 def generate_illustrious_txt2img(
     command: GenerateIllustriousTxt2ImgCommand,
     *,
@@ -879,59 +965,25 @@ def _generate_illustrious(
     else:
         image = validate_generation_assets(command)
     torch = cast(Any, runtime.torch)
-    diffusers = cast(Any, runtime.diffusers)
-    if isinstance(command, GenerateIllustriousOutpaintCommand):
-        from imagegen_worker.sdxl_outpaint import outpaint_pipeline_class
-
-        pipeline_class = outpaint_pipeline_class(diffusers, torch)
-    else:
-        pipeline_class = (
-            img2img_pipeline_class(diffusers, torch)
+    pipeline, embedding_inputs = load_illustrious_pipeline(
+        command,
+        config_dir=config_dir,
+        runtime=runtime,
+        mode=(
+            "outpaint"
+            if isinstance(command, GenerateIllustriousOutpaintCommand)
+            else "img2img"
             if isinstance(command, GenerateIllustriousImg2ImgCommand)
-            else diffusers.StableDiffusionXLPipeline
-        )
-    selected_vae = (
-        load_generation_vae(command.vae, config_dir, diffusers, torch)
-        if command.vae is not None
-        else None
+            else "txt2img"
+        ),
     )
-    pipeline = pipeline_class.from_single_file(
-        str(command.checkpoint_path),
-        config=str(config_dir),
-        local_files_only=True,
-        torch_dtype=torch.float16,
-        **({"vae": selected_vae} if selected_vae is not None else {}),
-    )
-    verify_pinned_config(str(config_dir))
-    # The single-file loader reads the file after our preflight hash. Detect mutation during load.
-    if _checkpoint_digest(command.checkpoint_path) != command.checkpoint_sha256:
-        raise DerivativeError("GENERATION_INPUT_CHANGED", "Checkpoint changed during loading.")
-    pipeline.scheduler = select_inference_scheduler(command, pipeline, runtime)
-    pipeline.set_progress_bar_config(disable=True)
-    load_generation_loras(pipeline, command.loras, torch)
-    embedding_inputs = load_generation_embeddings(command, pipeline, torch)
-    configure_vae_precision(pipeline, command.vae_precision, torch)
-    pipeline = pipeline.to("cuda")
     with (
         finite_vae_outputs(pipeline, torch),
         finite_unet_outputs(pipeline, torch),
     ):
-        with torch.inference_mode():
-            conditioning = build_sdxl_conditioning(
-                command, pipeline, runtime, embedding_inputs=embedding_inputs
-            )
-        if (command.loras or command.positive_embeddings or command.negative_embeddings) and any(
-            not bool(torch.isfinite(tensor).all().item())
-            for tensor in (
-                conditioning.positive,
-                conditioning.negative,
-                conditioning.positive_pooled,
-                conditioning.negative_pooled,
-            )
-        ):
-            raise DerivativeError(
-                "GENERATION_WORKER_FAILED", "Resource conditioning produced non-finite values."
-            )
+        conditioning = prepare_illustrious_conditioning(
+            command, pipeline, runtime, embedding_inputs
+        )
         generator = torch.Generator(device="cpu").manual_seed(command.seed)
         arguments: dict[str, Any] = {
             "width": command.width,

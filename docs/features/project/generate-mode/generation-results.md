@@ -273,7 +273,24 @@ acceptance boundary:future relevant coherence state belongs to frozen layer/sour
 context and `outdated`,not new reusable preset/Compare fields. No candidate,
 variant or generated result is created by a settings edit.
 
-The current [private family VAE/denoising checkpoint](../../../engineering/phase-4-smart-patch-denoising-research.md)
+The current [private Main/worker execution bridge](../../../engineering/phase-4-smart-patch-execution-bridge-research.md)
+returns detached verified processing-size RGB after actual private worker
+execution. One concrete prompt pair and uint32 seed are caller-owned inputs;
+this boundary performs no dynamic expansion, seed-cursor update or durable batch
+planning. Exact resources and prepared RGB/numeric KEEP are independently
+verified. Worker0.14.0 needs the explicit private `smart-patch-execution`
+capability; an existing installed runtime is not upgraded by source changes.
+
+Preparation, resources, execution and final Main RGB consumption share one
+operation lease. Crashed/timed-out worker processes must physically exit before cleanup;
+`WORKER_EXIT_UNCONFIRMED` retains staging, including after callback failure.
+This internal exclusive PNG publication creates no `GenerationCandidate`, queue
+row, receipt, accepted variant, document/`.igs` edit or visible staging result.
+World composition and the durable queue/batch/explicit-acceptance lifecycle below
+remain later owners. Public Generate and PP-008 readiness are unchanged; exact
+executed evidence and limits belong to the linked research.
+
+The previous [private family VAE/denoising checkpoint](../../../engineering/phase-4-smart-patch-denoising-research.md)
 executes prepared RGB and numeric latent KEEP through existing native family
 loops with caller-owned loaded models. It returns transient RGB/Anima latents,
 not a staged candidate or accepted variant. TXT/IMG remain ordinary; INP/OUT
@@ -287,9 +304,9 @@ Prepared INP uses world128/internal64/Euler for both families. These random smal
 CPU-native checks do not prove trained, installed, GPU or full Invoke pixel
 parity. No Main transport/public worker command, queue/publication, world
 compositing, variants/provenance, schema/UI or public Generate is added.
-The worker/Main execution bridge/resource admission, world composition and this
-explicit immutable acceptance lifecycle remain subsequent owners. Existing
-prototype acceptance/staleness mocks remain unchanged.
+The current bridge above adds worker/Main execution/resource admission; world
+composition and this explicit immutable acceptance lifecycle remain subsequent
+owners. Existing prototype acceptance/staleness mocks remain unchanged.
 
 The previous [private model-source checkpoint](../../../engineering/phase-4-smart-patch-model-source-research.md)
 qualifies actual Main→worker source RGB preparation,not a generated candidate.
@@ -303,9 +320,9 @@ semantic RED/GREEN pairs qualify this boundary. Global lint/typecheck/build and
 worker Ruff/basedpyright PASS;limits are in the research note.
 No jobs,diffusion,candidates,accepted variants,provenance,preset/
 Compare fields or public Generate are enabled. Existing prototype variants and
-their acceptance/staleness mocks are unaffected. The current private adapter now
-defines all255 latent coverage behavior; the execution bridge and this explicit
-acceptance lifecycle remain subsequent owners.
+their acceptance/staleness mocks are unaffected. The numerical adapter defines
+all255 latent coverage behavior; the current bridge above adds transport, while
+this explicit acceptance lifecycle remains a subsequent owner.
 
 ## Auto-Switch
 

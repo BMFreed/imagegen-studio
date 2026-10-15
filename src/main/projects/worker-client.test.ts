@@ -343,6 +343,32 @@ test('fixed executable path, handshake, self-test and protocol failures', async 
   })
 })
 
+test('preparation request failure confirms resistant child exit before the input lease may clean up', async () => {
+  await withTemp(async (directory) => {
+    const runtimeRoot = path.join(directory, 'runtime')
+    const stagingBasePath = path.join(directory, 'staging')
+    await mkdir(runtimeRoot)
+    await mkdir(stagingBasePath)
+    const pythonExecutable = await fakeWorker(runtimeRoot)
+    const client = await ProjectWorkerClient.start(
+      { pythonExecutable, runtimeRoot, stagingBasePath },
+      { environment: { FAKE_MODE: 'ignore-sigterm' }, requestTimeoutMs: 60, shutdownWaitMs: 30 },
+    )
+    const child = (client as unknown as { child: ChildProcessWithoutNullStreams }).child
+    try {
+      await assert.rejects(client.selfTest(), { code: 'REQUEST_TIMEOUT' })
+      assert.equal(
+        child.signalCode,
+        'SIGKILL',
+        'The admitted preparation must physically exit before its promise settles',
+      )
+      assert.throws(() => process.kill(child.pid!, 0), { code: 'ESRCH' })
+    } finally {
+      await client.close()
+    }
+  })
+})
+
 test('close rejects an active request and waits for the real child to exit after SIGTERM', async () => {
   await withTemp(async (directory) => {
     const runtimeRoot = path.join(directory, 'runtime')
@@ -390,9 +416,8 @@ test(
         const activeRequest = assert.rejects(client.selfTest(), { code: 'CLOSED' })
         const firstClose = client.close()
         const secondClose = client.close()
-        await activeRequest
         assert.equal(exitObserved, false)
-        await Promise.all([firstClose, secondClose])
+        await Promise.all([firstClose, secondClose, activeRequest])
         assert.equal(exitObserved, true)
         assert.equal(child.signalCode, 'SIGKILL')
       } finally {
@@ -454,7 +479,7 @@ test(
       })
       child.kill = (signal) => (signal === 'SIGKILL' ? false : originalKill(signal))
       try {
-        const activeRequest = assert.rejects(client.selfTest(), { code: 'CLOSED' })
+        const activeRequest = assert.rejects(client.selfTest(), { code: 'WORKER_EXIT_UNCONFIRMED' })
         await assert.rejects(client.close(), { code: 'WORKER_EXIT_UNCONFIRMED' })
         await activeRequest
         assert.equal(exitObserved, false)

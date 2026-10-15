@@ -1142,4 +1142,5 @@ def test_separate_entrypoint_refuses_ready_without_offline_config() -> None:
         "illustrious-outpaint",
         "illustrious-euler",
         "illustrious-noise-profile",
+        "smart-patch-execution",
     ]

@@ -5,7 +5,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, cast
 
 from imagegen_worker.anima_conditioning import COMPILED_PROMPT_VERSION, CompiledAnimaPrompt
-from imagegen_worker.anima_flow_sampling import PLAN_VERSION, generate_anima_flow_sampling
+from imagegen_worker.anima_flow_sampling import (
+    PLAN_VERSION,
+    AnimaFlowSamplingPlan,
+    generate_anima_flow_sampling,
+)
 from imagegen_worker.derivatives import DerivativeError
 from imagegen_worker.generation_artifacts import (
     publish_generation_image,
@@ -22,13 +26,36 @@ if TYPE_CHECKING:
     from imagegen_worker.inference import DenoisingProgressSink, MLRuntime
 
 
-def _prompt_payload(prompt: CompiledAnimaPrompt) -> dict[str, object]:
+def anima_prompt_payload(prompt: CompiledAnimaPrompt) -> dict[str, object]:
     return {
         "version": COMPILED_PROMPT_VERSION,
         "cleanedText": prompt.cleaned_text,
         "spans": [
             {"start": span.start, "end": span.end, "weight": span.weight} for span in prompt.spans
         ],
+    }
+
+
+def anima_sampling_payload(plan: AnimaFlowSamplingPlan) -> dict[str, object]:
+    """Fresh canonical native policy shared by normal and prepared execution."""
+    return {
+        "version": PLAN_VERSION,
+        "scheduler": plan.scheduler,
+        "mode": plan.mode,
+        "width": plan.width,
+        "height": plan.height,
+        "steps": plan.steps,
+        "seed": plan.seed,
+        "stepSeed": plan.step_seed,
+        "guidanceScale": plan.guidance_scale,
+        "strength": plan.strength,
+        "posteriorSeed": plan.posterior_seed,
+        "startStep": plan.start_step,
+        "totalSteps": plan.total_steps,
+        "sigmas": list(plan.sigmas),
+        "beginIndex": plan.begin_index,
+        "timesteps": list(plan.timesteps),
+        "initialSigma": plan.initial_sigma,
     }
 
 
@@ -74,32 +101,14 @@ def generate_anima(
     plan = command.sampling
     # The parser captured immutable native-policy values. Build a fresh canonical
     # helper envelope; Python never interprets the authored attention syntax.
-    sampling: dict[str, object] = {
-        "version": PLAN_VERSION,
-        "scheduler": plan.scheduler,
-        "mode": plan.mode,
-        "width": plan.width,
-        "height": plan.height,
-        "steps": plan.steps,
-        "seed": plan.seed,
-        "stepSeed": plan.step_seed,
-        "guidanceScale": plan.guidance_scale,
-        "strength": plan.strength,
-        "posteriorSeed": plan.posterior_seed,
-        "startStep": plan.start_step,
-        "totalSteps": plan.total_steps,
-        "sigmas": list(plan.sigmas),
-        "beginIndex": plan.begin_index,
-        "timesteps": list(plan.timesteps),
-        "initialSigma": plan.initial_sigma,
-    }
+    sampling = anima_sampling_payload(plan)
     if alpha_conditioning is not None:
         from imagegen_worker.anima_outpaint import generate_anima_outpaint
 
         result = generate_anima_outpaint(
             sampling,
-            _prompt_payload(command.positive_prompt),
-            _prompt_payload(command.negative_prompt),
+            anima_prompt_payload(command.positive_prompt),
+            anima_prompt_payload(command.negative_prompt),
             models,
             source_image=source,
             keep_mask=alpha_conditioning.latent_keep_mask,
@@ -109,8 +118,8 @@ def generate_anima(
     else:
         result = generate_anima_flow_sampling(
             sampling,
-            _prompt_payload(command.positive_prompt),
-            _prompt_payload(command.negative_prompt),
+            anima_prompt_payload(command.positive_prompt),
+            anima_prompt_payload(command.negative_prompt),
             models,
             source_image=source,
             loras=command.loras,

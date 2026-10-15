@@ -1,6 +1,23 @@
 # Engineering Workflow
 
-Current private numerical family execution scope:
+Current private Main/worker execution scope:
+[Smart Patch execution bridge](./phase-4-smart-patch-execution-bridge-research.md).
+Main `capture.execute` tracks composition, preparation, exact resource resolution,
+serialized inference and final RGB consumption as one leased operation. The caller
+supplies one concrete prompt pair and uint32 seed; this boundary neither expands
+dynamic prompts nor reads/advances the actual-seed cursor. The private worker
+0.14.0 capability `smart-patch-execution` gates `execute-smart-patch`; no installed
+runtime upgrade is implied. The existing native family loaders recheck resources
+and execute the prepared four-way mode, independent internal size and latent KEEP.
+Main consumes strict sRGB RGB bytes before cleanup. Worker process failure/timeout waits
+for physical exit; unconfirmed exit retains staging, including callback failure.
+This internal RGB publication does not create queue jobs, candidates, receipts,
+accepted variants, world composition, document/`.igs` edits or public Generate.
+Evidence, executed checks and qualification limits belong to the linked research.
+Next owners are world composition, durable batch/queue integration and immutable
+Smart Patch variant acceptance. PP-007/008 remain «Пока не обещать».
+
+Previous private numerical family execution scope:
 [Smart Patch VAE and denoising](./phase-4-smart-patch-denoising-research.md).
 Prepared RGB and numeric latent KEEP enter the existing native family loops with
 caller-owned loaded models. TXT/IMG retain their ordinary routes; INP/OUT use the
@@ -14,8 +31,9 @@ family and Illustrious EPS/V; prepared INP uses world128/internal64/Euler for bo
 families. These are random small native models on CPU, not trained, installed,
 GPU or full Invoke pixel-parity evidence. No Main transport/public worker command,
 queue, publication, world compositing, variants, schema or UI change is added.
-Next owners are the private worker/Main execution bridge and resource admission,
-world composition and immutable variant acceptance. Public promise statuses stay
+At that numerical checkpoint, the worker/Main execution bridge and resource
+admission were pending; the current scope above adds them. World composition
+and immutable variant acceptance remain separate. Public promise statuses stay
 unchanged; full checks and mutation evidence belong to the linked research note.
 
 Previous qualified private Main/CPU model-source scope:
@@ -34,7 +52,8 @@ No document/schema/UI change, diffusion/jobs/candidates/variants/provenance or
 preset/Compare/public capability is added. Prototype variant mocks are unaffected.
 That source checkpoint did not qualify family VAE/denoising. The current numerical
 adapter scope above now defines and exercises the all255 latent-KEEP behavior;
-the execution bridge and immutable variant acceptance remain separate owners.
+the current execution bridge above adds resource admission and transport;
+immutable variant acceptance remains separate.
 
 Previous qualified owned coherence/UI persistence scope:
 [Smart Patch owned coherence settings](./phase-4-smart-patch-coherence-settings-research.md).

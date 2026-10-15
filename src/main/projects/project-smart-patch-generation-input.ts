@@ -27,6 +27,13 @@ import { readProjectMaskSource } from './project-mask.js'
 import { withProjectPathLock } from './project-path-lock.js'
 import { compositionRasterLayers, withFrozenRasterComposition } from './project-raster-snapshot.js'
 import {
+  captureSmartPatchExecutionOptions,
+  type ExecutedSmartPatchGenerationInput,
+  executePreparedSmartPatch,
+  type SmartPatchExecutionOptions,
+  validateSmartPatchExecutionDraft,
+} from './project-smart-patch-execution.js'
+import {
   type PreparedSmartPatchConditioningInput,
   type PreparedSmartPatchContributionInput,
   type PreparedSmartPatchGenerationInput,
@@ -79,6 +86,7 @@ export interface CapturedSmartPatchGenerationInput {
   /** Caller-owned snapshots cannot mutate the private context used by composeSource. */
   context: FrozenSmartPatchGenerationContext
   document: IgsProjectDocumentV1
+  execute: (input: SmartPatchExecutionOptions) => Promise<ExecutedSmartPatchGenerationInput>
   maskPngBytes: Buffer | null
   /** Main-only leased material; never a portable path or renderer capability. */
   maskPngPath: string | null
@@ -152,6 +160,7 @@ export async function withFrozenSmartPatchGenerationInput<T>(
   const maskReading = readCapturedMask(document, patch, maskSource, input.packagePath)
   // A source-snapshot failure must still observe the independent mask read's settlement.
   void maskReading.catch(() => undefined)
+  let cleanupAllowed = true
   try {
     return await withFrozenRasterComposition(
       {
@@ -160,6 +169,7 @@ export async function withFrozenSmartPatchGenerationInput<T>(
         pendingSource: input.pendingSource,
         scope,
         scratchBasePath: input.scratchBasePath,
+        shouldCleanupStaging: () => cleanupAllowed,
         stagePrefix: 'smart-patch-input-',
       },
       async (composition) => {
@@ -174,7 +184,17 @@ export async function withFrozenSmartPatchGenerationInput<T>(
           if (!open) {
             return Promise.reject(new Error('The Smart Patch capture lease is closed.'))
           }
-          const operation = run()
+          const operation = run().catch((error: unknown) => {
+            if (
+              typeof error === 'object' &&
+              error !== null &&
+              'code' in error &&
+              error.code === 'WORKER_EXIT_UNCONFIRMED'
+            ) {
+              cleanupAllowed = false
+            }
+            throw error
+          })
           operations.add(operation)
           const settled = () => {
             operations.delete(operation)
@@ -283,11 +303,34 @@ export async function withFrozenSmartPatchGenerationInput<T>(
             return prepareFrozenSmartPatchModelSource(conditioned, stagingRoot, worker, resolver)
           })
         }
+        const execute: CapturedSmartPatchGenerationInput['execute'] = (input) =>
+          startOperation(async () => {
+            const execution = captureSmartPatchExecutionOptions(input)
+            validateSmartPatchExecutionDraft(context, execution.item)
+            const profile = captureSmartPatchCoherenceParameters(context.coherenceSettings)
+            assertSmartPatchConditioningSize(context.internalResolution)
+            const stagingRoot = await mkdtemp(path.join(composition.stagingRoot, 'execution-'))
+            const prepared = await prepareAt(execution.preparationWorker, stagingRoot)
+            const conditioned = await prepareFrozenSmartPatchConditioning(
+              prepared,
+              stagingRoot,
+              profile,
+              execution.preparationWorker,
+            )
+            const source = await prepareFrozenSmartPatchModelSource(
+              conditioned,
+              stagingRoot,
+              execution.preparationWorker,
+              execution.infillResolver,
+            )
+            return await executePreparedSmartPatch({ execution, prepared: source, stagingRoot })
+          })
         try {
           return await use({
             composeSource,
             context: structuredClone(context),
             document: structuredClone(document),
+            execute,
             maskPngBytes: maskPngBytes ? Buffer.from(maskPngBytes) : null,
             maskPngPath,
             prepareConditioning,

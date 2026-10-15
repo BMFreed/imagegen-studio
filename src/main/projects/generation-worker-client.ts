@@ -48,6 +48,12 @@ import {
   isOutpaintWorkerRequest,
 } from './outpaint-worker-request.js'
 import {
+  captureSmartPatchExecutionRequest,
+  executeSmartPatchWithTransport,
+  type SmartPatchExecutionRequest,
+  type SmartPatchExecutionResult,
+} from './smart-patch-execution-request.js'
+import {
   type ComposeTargetInput,
   type ComposeTargetResult,
   composeTargetWithTransport,
@@ -83,7 +89,7 @@ export interface GenerationWorkerReady extends InferenceWorkerReady {
 }
 
 type PendingGeneration = {
-  completionType: 'generation-done' | 'target-done'
+  completionType: 'generation-done' | 'smart-patch-executed' | 'target-done'
   generationType: GenerationWorkerRequest['type'] | null
   outputPath: string
   progress: {
@@ -351,6 +357,75 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
         throw mapped
       }
       throw error
+    } finally {
+      this.busy = false
+    }
+  }
+
+  /** Private processing-size RGB; it never enters the durable generation/queue request union. */
+  async executeSmartPatch(
+    input: SmartPatchExecutionRequest,
+    onProgress?: (progress: GenerationDenoisingProgress) => void,
+  ): Promise<SmartPatchExecutionResult> {
+    if (this.closed) {
+      throw new GenerationWorkerError('CLOSED', 'The generation worker is unavailable.')
+    }
+    if (this.busy) {
+      throw new GenerationWorkerError('BUSY', 'The generation worker is already processing a job.')
+    }
+    this.busy = true
+    try {
+      const request = captureSmartPatchExecutionRequest(input)
+      if (
+        this.ready.workerVersion !== '0.14.0' ||
+        !this.ready.capabilities.includes('smart-patch-execution') ||
+        (request.family === 'anima' && !supportsInferenceAnima(this.ready))
+      ) {
+        throw new GenerationWorkerError(
+          'WORKER_VERSION_MISMATCH',
+          'The active worker has not qualified private Smart Patch execution.',
+        )
+      }
+      const result = await executeSmartPatchWithTransport(request, this.scratchBasePath, (frozen) =>
+        this.exchange(
+          Buffer.from(`${JSON.stringify(frozen)}\n`, 'utf8'),
+          frozen.requestId,
+          frozen.output.pngPath,
+          'smart-patch-executed',
+          {
+            expectedTotalSteps:
+              frozen.family === 'anima' ? frozen.inference.sampling.totalSteps : null,
+            maxSteps: 2 * frozen.inference.sampling.steps,
+            onProgress,
+          },
+        ),
+      )
+      if (this.closed) {
+        throw new GenerationWorkerError('CLOSED', 'The generation worker is unavailable.')
+      }
+      return result
+    } catch (error) {
+      const mapped =
+        error instanceof ProjectWorkerError
+          ? new GenerationWorkerError(error.code, error.message, error.workerCode)
+          : error
+      if (
+        mapped instanceof GenerationWorkerError &&
+        (mapped.code === 'OUTPUT_MISMATCH' || mapped.code === 'PROTOCOL_ERROR')
+      ) {
+        this.fail(mapped)
+      }
+      if (this.closed) {
+        // The capture may remove its inputs after this promise settles. Confirm
+        // physical exit on worker failure/timeout before relinquishing its lease.
+        try {
+          await this.close()
+        } catch (closeError) {
+          GenerationWorkerClient.unconfirmedStartChildren.add(this)
+          throw closeError
+        }
+      }
+      throw mapped
     } finally {
       this.busy = false
     }

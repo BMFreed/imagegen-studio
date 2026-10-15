@@ -103,10 +103,29 @@ interface AnimaDraftValidationInput {
   lastActualSeedSnapshot?: number | null
 }
 
-/** Synchronous pre-compose checks. The neutral validation seed never resolves or consumes Random. */
+interface AnimaGenerationSettingsValidationInput {
+  internalResolution: { height: number; width: number }
+  lastActualSeed?: number | null
+  lastActualSeedSnapshot?: number | null
+}
+
+/** Normal generation keeps its world-position contract separate from native sampling settings. */
 export function validateAnimaGenerationDraft(
   draft: GenerationDraft,
   input: AnimaDraftValidationInput,
+): void {
+  validateAnimaGenerationSettings(draft, {
+    internalResolution: { height: input.bbox.height, width: input.bbox.width },
+    lastActualSeed: input.lastActualSeed,
+    lastActualSeedSnapshot: input.lastActualSeedSnapshot,
+  })
+  assertBbox(input.bbox)
+}
+
+/** Synchronous settings checks. The neutral validation seed never resolves or consumes Random. */
+export function validateAnimaGenerationSettings(
+  draft: GenerationDraft,
+  input: AnimaGenerationSettingsValidationInput,
 ): void {
   if (!draft.model) {
     refuse('GENERATION_MODEL_REQUIRED', 'Choose an Anima checkpoint first.')
@@ -171,18 +190,17 @@ export function validateAnimaGenerationDraft(
   if (draft.seed.policy === 'reuse' && !isUint32(reusableSeed)) {
     refuse('GENERATION_SEED_INVALID', 'The completed seed must be an unsigned 32-bit integer.')
   }
-  assertBbox(input.bbox)
   // A saved strength is validated even when transparent pixels later make it inactive.
   const strength = draft.sampling.denoisingStrength
   compileAnimaFlowSamplingPlan({
     guidanceScale: draft.sampling.cfgScale,
-    height: input.bbox.height,
+    height: input.internalResolution.height,
     mode: strength === null ? 'txt2img' : 'img2img',
     scheduler: draft.sampling.animaMethod,
     seed: 0,
     steps: draft.sampling.steps,
     strength,
-    width: input.bbox.width,
+    width: input.internalResolution.width,
   })
 }
 
