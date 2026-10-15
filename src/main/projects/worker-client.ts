@@ -21,7 +21,7 @@ import { inflateSync } from 'node:zlib'
 import { verifyInferenceAuxiliaryFile } from '../runtime/inference-auxiliary-resources.js'
 import { validateSrgbPngStream, validateSrgbWebpStream } from './igs-package.js'
 import { decodeDerivedProjectMaskPng, readProjectMaskSource } from './project-mask.js'
-import { classifyTargetPngAlpha } from './target-png-mode.js'
+import { classifyTargetPngAlpha, decodeTargetPngAlpha } from './target-png-mode.js'
 
 const PROTOCOL_VERSION = '1'
 const WORKER_VERSION = '0.1.0'
@@ -273,6 +273,24 @@ export interface SmartPatchModelSourceResult {
   modelSource: VerifiedWorkerImage | null
 }
 
+/** Private processing RGB and independent world GENERATE alpha, never document composition. */
+export interface SmartPatchOutputCompositionInput {
+  contributionMask: VerifiedWorkerMask
+  image: SmartPatchPreparationSource
+  pngPath: string
+  stagingRoot: string
+}
+
+export type SmartPatchOutputCompositionPayload = {
+  contributionMask: VerifiedWorkerMask
+  image: SmartPatchPreparationSource
+  output: { pngPath: string; stagingRoot: string }
+}
+
+export interface SmartPatchOutputCompositionResult {
+  output: VerifiedWorkerImage
+}
+
 export type ComposePreviewResult =
   | { merged: null; rect: null; status: 'empty'; thumbnail: null }
   | {
@@ -339,6 +357,7 @@ type PendingRequest = {
     | 'smart-patch-conditioned'
     | 'smart-patch-faded'
     | 'smart-patch-model-source-prepared'
+    | 'smart-patch-output-composed'
     | 'smart-patch-prepared'
     | 'target-done'
 }
@@ -635,6 +654,22 @@ export class ProjectWorkerClient {
         throw this.outputFailure('Preview ICC profiles do not match.')
       }
       return { merged, rect, status: 'rendered', thumbnail }
+    })
+  }
+
+  async composeSmartPatchOutput(
+    input: SmartPatchOutputCompositionInput,
+  ): Promise<SmartPatchOutputCompositionResult> {
+    return this.exclusive(async () => {
+      if (!this.ready.capabilities.includes('smart-patch-output-composition')) {
+        throw new ProjectWorkerError(
+          'WORKER_VERSION_MISMATCH',
+          'The image worker cannot compose Smart Patch world output.',
+        )
+      }
+      return composeSmartPatchOutputWithTransport(input, this.stagingBasePath, (payload) =>
+        this.request('compose-smart-patch-output', 'smart-patch-output-composed', payload),
+      )
     })
   }
 
@@ -1078,6 +1113,7 @@ export class ProjectWorkerClient {
   private request(
     type:
       | 'compose-preview'
+      | 'compose-smart-patch-output'
       | 'compose-target'
       | 'condition-smart-patch'
       | 'create-resource-preview'
@@ -1546,6 +1582,105 @@ export async function prepareSmartPatchModelSourceWithTransport(
   }
   await readSmartPatchModelSourceOutput(paths[0], modelSource)
   return { modelSource }
+}
+
+/** Resize only generated RGB; attach the already frozen world contribution without reinterpretation. */
+export async function composeSmartPatchOutputWithTransport(
+  requestInput: SmartPatchOutputCompositionInput,
+  stagingBasePath: string,
+  request: (payload: SmartPatchOutputCompositionPayload) => Promise<Record<string, unknown>>,
+): Promise<SmartPatchOutputCompositionResult> {
+  const input = structuredClone(requestInput)
+  assertSmartPatchConditioningSize(input.image)
+  assertSmartPatchProcessingSize(input.contributionMask)
+  const base = await canonicalDirectory(stagingBasePath, 'Smart Patch scratch base')
+  const { paths, stagingRoot } = await validateOutputPathsWithinBase(base, input.stagingRoot, [
+    [input.pngPath, '.png'],
+  ])
+  const baseEntry = await lstat(base)
+  const stageEntry = await lstat(stagingRoot)
+  if (
+    baseEntry.uid !== process.getuid?.() ||
+    stageEntry.uid !== process.getuid?.() ||
+    (stageEntry.mode & 0o7777) !== 0o700
+  ) {
+    throw new ProjectWorkerError(
+      'INVALID_PATH',
+      'Smart Patch output staging must be private and owned.',
+    )
+  }
+  const imagePaths = [input.image.path, input.contributionMask.path, paths[0]]
+  if (
+    new Set(imagePaths).size !== imagePaths.length ||
+    imagePaths.some(
+      (imagePath) => path.dirname(imagePath) !== stagingRoot || path.extname(imagePath) !== '.png',
+    )
+  ) {
+    throw new ProjectWorkerError(
+      'INVALID_PATH',
+      'Smart Patch output inputs and destination must be distinct direct staging PNGs.',
+    )
+  }
+  await validateInputPath(input.image.path, input.image.sha256, paths)
+  await validateInputPath(input.contributionMask.path, input.contributionMask.sha256, paths)
+  await readSmartPatchModelSourceOutput(input.image.path, {
+    ...input.image,
+    colorSpace: 'srgb',
+    iccSha256: IGS_SRGB_ICC_SHA256,
+  })
+  const maskBytes = await readSmartPatchPreparationOutput(
+    input.contributionMask.path,
+    input.contributionMask,
+    'mask',
+  )
+  const response = structuredClone(
+    await request(
+      structuredClone({
+        contributionMask: input.contributionMask,
+        image: input.image,
+        output: { pngPath: paths[0], stagingRoot },
+      }),
+    ),
+  )
+  const metadata = object(response.output, 'Smart Patch world output metadata')
+  if (
+    Object.keys(metadata).some(
+      (key) => !['byteSize', 'colorSpace', 'height', 'sha256', 'width'].includes(key),
+    ) ||
+    metadata.width !== input.contributionMask.width ||
+    metadata.height !== input.contributionMask.height
+  ) {
+    throw new ProjectWorkerError('OUTPUT_MISMATCH', 'Smart Patch world output dimensions differ.')
+  }
+  const output = await verifyImageOutput(paths[0], metadata, MAX_TARGET_BYTES, 'png')
+  await readSmartPatchWorldOutput(paths[0], output, { ...input.contributionMask, bytes: maskBytes })
+  return { output }
+}
+
+/** Actual RGBA consumption plus the frozen world alpha, repeated outside transport by Main. */
+export async function readSmartPatchWorldOutput(
+  expectedPath: string,
+  artifactInput: VerifiedWorkerImage,
+  contributionInput: { bytes: Buffer; height: number; width: number },
+): Promise<Buffer> {
+  const artifact = { ...artifactInput }
+  const contribution = { ...contributionInput, bytes: Buffer.from(contributionInput.bytes) }
+  if (artifact.width !== contribution.width || artifact.height !== contribution.height) {
+    throw new ProjectWorkerError(
+      'OUTPUT_MISMATCH',
+      'Smart Patch world output size differs from its contribution.',
+    )
+  }
+  const bytes = await readSmartPatchPreparationOutput(expectedPath, artifact, 'source')
+  const expected = decodeDerivedProjectMaskPng(contribution.bytes, contribution)
+  const actual = decodeTargetPngAlpha(bytes, artifact.width, artifact.height)
+  if (!actual.equals(expected)) {
+    throw new ProjectWorkerError(
+      'OUTPUT_MISMATCH',
+      'Smart Patch output alpha differs from its frozen world contribution.',
+    )
+  }
+  return bytes
 }
 
 /** Only latent conditioning requires an eight-pixel grid; ordinary prep still accepts one pixel. */

@@ -1,6 +1,26 @@
 # Engineering Workflow
 
-Current private Main/worker execution scope:
+Current private world-output scope:
+[Smart Patch world output](./phase-4-smart-patch-world-output-research.md).
+`capture.executeAndCompose` extends the existing execution chain with CPU
+`compose-smart-patch-output`: BICUBIC-resize generated RGB to the frozen bbox
+dimensions, then attach the already computed final world GENERATE alpha unchanged.
+There is no second fade, latent-mask reconstruction or source pasteback. Main
+independently consumes actual RGBA/ICC/hash/geometry and exact final-mask alpha
+before returning detached `worldContribution`; placement remains `context.bbox`.
+Preparation, native execution, world composition and readback share one drained
+lease, including callback failure and unconfirmed-worker-exit retention.
+The CPU derivatives-only worker 0.1.0 must advertise `smart-patch-output-composition`;
+an older payload refuses before dispatch. Its operation stage is `0700` beneath the
+owned scratch base, which may retain `0775`. This does not upgrade installed runtime
+or change `capture.execute`'s processing RGB contract. Evidence and limits belong
+to the linked research; no trained GPU/full Invoke pixel parity is claimed.
+Public Generate, durable batch/queue/candidates/receipts, immutable variants,
+document/`.igs`, provenance/preset/Compare and UI remain unchanged. Next owners
+are durable batch/queue integration and immutable variant acceptance;
+PP-007/008 remain «Пока не обещать».
+
+Previous private Main/worker execution scope:
 [Smart Patch execution bridge](./phase-4-smart-patch-execution-bridge-research.md).
 Main `capture.execute` tracks composition, preparation, exact resource resolution,
 serialized inference and final RGB consumption as one leased operation. The caller
@@ -14,8 +34,9 @@ for physical exit; unconfirmed exit retains staging, including callback failure.
 This internal RGB publication does not create queue jobs, candidates, receipts,
 accepted variants, world composition, document/`.igs` edits or public Generate.
 Evidence, executed checks and qualification limits belong to the linked research.
-Next owners are world composition, durable batch/queue integration and immutable
-Smart Patch variant acceptance. PP-007/008 remain «Пока не обещать».
+World composition was the next owner at that checkpoint and is added above;
+durable batch/queue integration and immutable Smart Patch variant acceptance
+remain open. PP-007/008 remain «Пока не обещать».
 
 Previous private numerical family execution scope:
 [Smart Patch VAE and denoising](./phase-4-smart-patch-denoising-research.md).
@@ -32,8 +53,9 @@ families. These are random small native models on CPU, not trained, installed,
 GPU or full Invoke pixel-parity evidence. No Main transport/public worker command,
 queue, publication, world compositing, variants, schema or UI change is added.
 At that numerical checkpoint, the worker/Main execution bridge and resource
-admission were pending; the current scope above adds them. World composition
-and immutable variant acceptance remain separate. Public promise statuses stay
+admission were pending; the later bridge and current world-output scope above
+add them and private composition. Immutable variant acceptance remains separate.
+Public promise statuses stay
 unchanged; full checks and mutation evidence belong to the linked research note.
 
 Previous qualified private Main/CPU model-source scope:

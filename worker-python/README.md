@@ -36,7 +36,7 @@ uv run basedpyright src tests
 uv run pytest
 ```
 
-The worker is long-lived. It writes one JSON object per line to stdout and reads one command per line from stdin. Stdout carries protocol messages only. It emits `ready` immediately with `protocolVersion: "1"`, `workerVersion`, `pythonVersion`, `runtimeProfile: "derivatives-only"`, and `capabilities: ["image-derivatives", "import-normalization", "preview-composition", "self-test", "target-composition"]`. Main must reject incompatible versions/profiles and impose its own startup/request deadlines.
+The worker is long-lived. It writes one JSON object per line to stdout and reads one command per line from stdin. Stdout carries protocol messages only. It emits `ready` immediately with `protocolVersion: "1"`, `workerVersion: "0.1.0"`, `pythonVersion`, `runtimeProfile: "derivatives-only"`, and `capabilities: ["image-derivatives", "import-normalization", "preview-composition", "resource-preview", "self-test", "target-composition", "smart-patch-preparation", "smart-patch-fade", "smart-patch-conditioning", "smart-patch-model-source", "smart-patch-output-composition"]`. Main must reject incompatible versions/profiles, require the operation's capability before dispatch and impose its own startup/request deadlines.
 
 The five executable image-operation command shapes are:
 
@@ -154,7 +154,36 @@ full author recipe or trained CUDA output quality.
 
 After qualification, `ready` has `workerVersion:"0.14.0"`, `runtimeProfile:"linux-nvidia"`, `capabilities:["illustrious-txt2img","target-composition","denoising-progress","candidate-thumbnails","illustrious-cfg-rescale","illustrious-img2img","illustrious-lora","illustrious-vae-precision","illustrious-external-vae","illustrious-embeddings","illustrious-outpaint","illustrious-euler","illustrious-noise-profile","smart-patch-execution"]`, `protocolVersion:"1"` and `pythonVersion`. On a GPU with native CUDA BF16, the same ready additionally advertises `anima-txt2img`, `anima-img2img`, `anima-lora`, `anima-prompt-weighting`, `anima-flow-sampling` and `anima-outpaint`; a false or failed BF16 probe withholds only those six capabilities. The accepted commands are `generate-illustrious-txt2img`, `generate-illustrious-img2img`, `generate-illustrious-outpaint`, `generate-anima-txt2img`, `generate-anima-img2img`, `generate-anima-outpaint`, `compose-target` and private `execute-smart-patch` DTOs. Anima requests independently require native BF16; there is no CPU/FP16 fallback. Target composition uses the existing strict parser and Pillow compositor in this same qualified child; it neither starts another worker nor bypasses startup qualification. Other derivative commands remain unavailable in this entrypoint. During Illustrious generation, the public Diffusers `callback_on_step_end` sends exact `{type:"generation-progress",protocolVersion:"1",requestId,step,totalSteps}` messages without requesting or changing tensors. `step` counts completed denoising evaluations from 1; `totalSteps` is the actual initialized scheduler timestep count, constant for the job and bounded by 400 and twice the requested Steps. The pinned second-order DPMSolverSDE scheduler has `2 * Steps - 1` evaluations. Progress does not include loading, conditioning, image decoding, PNG publication or main-process staging validation, so its final step is not candidate completion. `generation-done` returns its exact `requestId`, `protocolVersion:"1"`, the main-nominated `outputPath` and actual uint32 `seed`; errors return correlated safe `error` messages. Each protocol line is flushed immediately to the original binary stdout even while library output is redirected to stderr. Older app clients reject the new worker version during startup instead of receiving messages their terminal-only transport cannot parse. Cancellation remains process termination by main, not a worker cancel command.
 
-### Private Smart Patch execution bridge (worker 0.14.0 source snapshot)
+### Private Smart Patch world output (CPU worker 0.1.0 source snapshot)
+
+The [private world-output scope](../docs/engineering/phase-4-smart-patch-world-output-research.md)
+adds `compose-smart-patch-output` / `smart-patch-output-composed` to the default
+derivatives-only CPU entrypoint, requiring `smart-patch-output-composition`.
+This marker is not an inference worker0.14.0 capability. Older CPU payloads without
+it refuse before dispatch; no installed-runtime upgrade is implied.
+
+The request carries verified processing RGB `image`, numeric world GENERATE
+`contributionMask` and `output:{stagingRoot,pngPath}`. Each image reference is
+`{path,sha256,byteSize,width,height}`. Inputs/output are distinct direct PNG children
+of one canonical owned `0700` operation stage; the owned scratch base may retain `0775`.
+Pillow BICUBIC resizes only generated RGB, then the already final world alpha is
+attached unchanged. Identity-size RGB, including pixels under alpha0, is preserved.
+No source pasteback, second fade, mask inversion or latent-mask reconstruction is
+performed. Exclusive pinned-sRGB RGBA8 publication and inode-aware rollback retain
+the existing input/output ownership contract.
+
+The correlated reply contains `output:{byteSize,colorSpace:'srgb',height,sha256,width}`.
+Main independently consumes actual RGBA/ICC/hash/dimensions and compares decoded
+alpha exactly with its frozen final contribution mask. `capture.executeAndCompose`
+returns detached `worldContribution`, placed using frozen `context.bbox`; no world
+position enters the CPU wire request. Preparation, native inference, composition
+and readback share one drained lease, including callback failure and unconfirmed
+worker-exit retention. Existing `capture.execute` processing RGB stays unchanged.
+No public Generate, durable job/queue/batch/candidate/receipt, accepted variant,
+`.igs`/provenance/preset/Compare or UI change follows. Queue integration and
+immutable acceptance remain next; checks and limits belong to the linked research.
+
+### Previous private Smart Patch execution bridge (worker 0.14.0 source snapshot)
 
 The [private execution bridge](../docs/engineering/phase-4-smart-patch-execution-bridge-research.md)
 accepts frozen four-way world mode, independent internal resolution, prepared
@@ -173,7 +202,8 @@ upgraded by these source changes. This private command creates no public
 Generate action, dynamic expansion, actual-seed cursor update, durable job,
 candidate/receipt/thumbnail, world contribution, accepted variant or `.igs` edit.
 Executed evidence and qualification limits belong to the linked research note;
-normal commands and the default CPU worker remain unchanged.
+normal commands and the default CPU worker were unchanged at that checkpoint.
+The later world-output scope above adds only private CPU composition.
 
 ### Internal outpaint commands (worker 0.12.0)
 

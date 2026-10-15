@@ -2413,7 +2413,26 @@ Result` переносит фактический expanded prompt и portable ge
 
 ## Фаза 4. Полный Canvas и Smart Patch Layer
 
-**Текущий private Main/worker execution scope:**
+**Текущий private world-output scope:**
+[Smart Patch world output](../engineering/phase-4-smart-patch-world-output-research.md)
+добавляет `capture.executeAndCompose`: после native execution CPU worker
+масштабирует generated RGB через BICUBIC до frozen world bbox и присоединяет
+готовую final GENERATE alpha без изменений. Повторного fade, восстановления
+alpha из latent KEEP или source pasteback нет. Main независимо проверяет actual
+RGBA/ICC/hash/geometry и точное равенство alpha frozen final mask, возвращая
+detached `worldContribution`; placement остаётся `context.bbox`, не worker DTO.
+Одна drained lease охватывает всю цепь и readback; callback failure ждёт admitted
+work, unconfirmed worker exit сохраняет inputs. CPU derivatives-only worker 0.1.0
+обязан объявить `smart-patch-output-composition`; old payload отказывает до
+dispatch. Operation stage `0700`, owned scratch base может сохранять `0775`.
+`capture.execute` и inference worker0.14.0 RGB contract не меняются; installed
+runtime не обновляется автоматически. Нет public Generate, durable jobs/queue/
+batch/candidates/receipts, variants, document/`.igs`/schema/UI или provenance/
+preset/Compare changes. Проверки и qualification limits — в linked research;
+PP-007/008 остаются «Пока не обещать». Далее — durable batch/queue integration
+и immutable variant acceptance.
+
+**Предыдущий private Main/worker execution scope:**
 [Smart Patch execution bridge](../engineering/phase-4-smart-patch-execution-bridge-research.md)
 связывает `capture.execute` с реальным worker protocol, exact resource admission,
 семейными native VAE/denoising и exclusive processing-size RGB publication.
@@ -2429,8 +2448,9 @@ all255 latent KEEP продолжает VAE/denoising с полной защит
 Нет public Generate, durable queue/batch/candidates/receipts, world composition,
 accepted variants/provenance/preset/Compare, schema/UI или изменений `.igs`.
 Точные выполненные проверки и границы qualification — в linked research;
-PP-007/008 остаются «Пока не обещать». Далее — world composition, durable
-batch/queue integration и immutable variant acceptance.
+PP-007/008 остаются «Пока не обещать». World composition была следующим owner
+этого checkpoint и добавлена выше; durable batch/queue integration и immutable
+variant acceptance остаются открытыми.
 
 **Предыдущий private numerical family execution scope:**
 [Smart Patch VAE and denoising](../engineering/phase-4-smart-patch-denoising-research.md)
@@ -2447,8 +2467,8 @@ native CPU models,не trained/installed/GPU/full Invoke pixel parity. Нет Ma
 transport/public worker command,queue,publication,world compositing,variants,
 schema/UI changes или повышения public readiness. Full checks/mutations
 фиксируются отдельно в linked research. Bridge/resource admission были следующим
-owner на том numerical checkpoint; текущий scope выше добавляет их. World
-composition и immutable variants остаются отдельными owners.
+owner на том numerical checkpoint; later bridge и текущий world-output scope
+выше добавляют их и private composition. Immutable variants остаются отдельным owner.
 
 **Предыдущий qualified private Main/CPU model-source scope:**
 [Smart Patch model-source and LaMa preparation](../engineering/phase-4-smart-patch-model-source-research.md)

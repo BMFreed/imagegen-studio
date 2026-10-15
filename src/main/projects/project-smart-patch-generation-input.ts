@@ -43,6 +43,12 @@ import {
   prepareFrozenSmartPatchInput,
   prepareFrozenSmartPatchModelSource,
 } from './project-smart-patch-preparation.js'
+import {
+  captureSmartPatchWorldExecutionOptions,
+  type ComposedSmartPatchGenerationInput,
+  composeExecutedSmartPatchOutput,
+  type SmartPatchWorldExecutionOptions,
+} from './project-smart-patch-world-output.js'
 import { classifyTargetPngAlpha } from './target-png-mode.js'
 import {
   assertSmartPatchConditioningSize,
@@ -87,6 +93,9 @@ export interface CapturedSmartPatchGenerationInput {
   context: FrozenSmartPatchGenerationContext
   document: IgsProjectDocumentV1
   execute: (input: SmartPatchExecutionOptions) => Promise<ExecutedSmartPatchGenerationInput>
+  executeAndCompose: (
+    input: SmartPatchWorldExecutionOptions,
+  ) => Promise<ComposedSmartPatchGenerationInput>
   maskPngBytes: Buffer | null
   /** Main-only leased material; never a portable path or renderer capability. */
   maskPngPath: string | null
@@ -303,27 +312,44 @@ export async function withFrozenSmartPatchGenerationInput<T>(
             return prepareFrozenSmartPatchModelSource(conditioned, stagingRoot, worker, resolver)
           })
         }
+        const executeAt = async (
+          execution: SmartPatchExecutionOptions,
+          stagingRoot: string,
+        ): Promise<ExecutedSmartPatchGenerationInput> => {
+          validateSmartPatchExecutionDraft(context, execution.item)
+          const profile = captureSmartPatchCoherenceParameters(context.coherenceSettings)
+          assertSmartPatchConditioningSize(context.internalResolution)
+          const prepared = await prepareAt(execution.preparationWorker, stagingRoot)
+          const conditioned = await prepareFrozenSmartPatchConditioning(
+            prepared,
+            stagingRoot,
+            profile,
+            execution.preparationWorker,
+          )
+          const source = await prepareFrozenSmartPatchModelSource(
+            conditioned,
+            stagingRoot,
+            execution.preparationWorker,
+            execution.infillResolver,
+          )
+          return await executePreparedSmartPatch({ execution, prepared: source, stagingRoot })
+        }
         const execute: CapturedSmartPatchGenerationInput['execute'] = (input) =>
           startOperation(async () => {
             const execution = captureSmartPatchExecutionOptions(input)
-            validateSmartPatchExecutionDraft(context, execution.item)
-            const profile = captureSmartPatchCoherenceParameters(context.coherenceSettings)
-            assertSmartPatchConditioningSize(context.internalResolution)
             const stagingRoot = await mkdtemp(path.join(composition.stagingRoot, 'execution-'))
-            const prepared = await prepareAt(execution.preparationWorker, stagingRoot)
-            const conditioned = await prepareFrozenSmartPatchConditioning(
-              prepared,
+            return await executeAt(execution, stagingRoot)
+          })
+        const executeAndCompose: CapturedSmartPatchGenerationInput['executeAndCompose'] = (input) =>
+          startOperation(async () => {
+            const execution = captureSmartPatchWorldExecutionOptions(input)
+            const stagingRoot = await mkdtemp(path.join(composition.stagingRoot, 'world-output-'))
+            const executed = await executeAt(execution, stagingRoot)
+            return await composeExecutedSmartPatchOutput({
+              executed,
+              outputWorker: execution.outputWorker,
               stagingRoot,
-              profile,
-              execution.preparationWorker,
-            )
-            const source = await prepareFrozenSmartPatchModelSource(
-              conditioned,
-              stagingRoot,
-              execution.preparationWorker,
-              execution.infillResolver,
-            )
-            return await executePreparedSmartPatch({ execution, prepared: source, stagingRoot })
+            })
           })
         try {
           return await use({
@@ -331,6 +357,7 @@ export async function withFrozenSmartPatchGenerationInput<T>(
             context: structuredClone(context),
             document: structuredClone(document),
             execute,
+            executeAndCompose,
             maskPngBytes: maskPngBytes ? Buffer.from(maskPngBytes) : null,
             maskPngPath,
             prepareConditioning,

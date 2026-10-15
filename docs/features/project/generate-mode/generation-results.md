@@ -273,7 +273,26 @@ acceptance boundary:future relevant coherence state belongs to frozen layer/sour
 context and `outdated`,not new reusable preset/Compare fields. No candidate,
 variant or generated result is created by a settings edit.
 
-The current [private Main/worker execution bridge](../../../engineering/phase-4-smart-patch-execution-bridge-research.md)
+The current [private world-output scope](../../../engineering/phase-4-smart-patch-world-output-research.md)
+adds detached `worldContribution` from `capture.executeAndCompose`. The CPU worker
+BICUBIC-resizes generated RGB to frozen bbox dimensions, attaches the unchanged
+final world GENERATE alpha and exclusively publishes pinned-sRGB RGBA. Main
+independently verifies actual RGBA/ICC/hash/geometry and byte-exact final-mask
+alpha. There is no second fade, latent-mask reconstruction or source pasteback;
+placement remains frozen `context.bbox`. Existing `capture.execute` processing
+RGB output is unchanged.
+
+The CPU derivatives-only worker 0.1.0 requires `smart-patch-output-composition`;
+old payloads refuse before dispatch. Preparation, resources, native execution,
+world composition and final consumption share one drained lease. Callback failure
+waits admitted work; unconfirmed process exit retains the full stage. This private
+RGBA is not a visible staging result, `GenerationCandidate`, durable job/queue/
+batch/receipt, recovery manifest or accepted variant. Document/`.igs`, provenance,
+presets/Compare, UI and public Generate remain unchanged. Durable queue/batch and
+the explicit immutable-acceptance lifecycle below remain later owners. Executed
+checks and qualification limits are in the linked research; PP-008 stays open.
+
+The previous [private Main/worker execution bridge](../../../engineering/phase-4-smart-patch-execution-bridge-research.md)
 returns detached verified processing-size RGB after actual private worker
 execution. One concrete prompt pair and uint32 seed are caller-owned inputs;
 this boundary performs no dynamic expansion, seed-cursor update or durable batch
@@ -286,8 +305,9 @@ operation lease. Crashed/timed-out worker processes must physically exit before 
 `WORKER_EXIT_UNCONFIRMED` retains staging, including after callback failure.
 This internal exclusive PNG publication creates no `GenerationCandidate`, queue
 row, receipt, accepted variant, document/`.igs` edit or visible staging result.
-World composition and the durable queue/batch/explicit-acceptance lifecycle below
-remain later owners. Public Generate and PP-008 readiness are unchanged; exact
+World composition was a later owner at that checkpoint and is added above;
+durable queue/batch/explicit acceptance remain open. Public Generate and PP-008
+readiness are unchanged; exact
 executed evidence and limits belong to the linked research.
 
 The previous [private family VAE/denoising checkpoint](../../../engineering/phase-4-smart-patch-denoising-research.md)
@@ -304,9 +324,10 @@ Prepared INP uses world128/internal64/Euler for both families. These random smal
 CPU-native checks do not prove trained, installed, GPU or full Invoke pixel
 parity. No Main transport/public worker command, queue/publication, world
 compositing, variants/provenance, schema/UI or public Generate is added.
-The current bridge above adds worker/Main execution/resource admission; world
-composition and this explicit immutable acceptance lifecycle remain subsequent
-owners. Existing prototype acceptance/staleness mocks remain unchanged.
+The later bridge above adds worker/Main execution/resource admission, and the
+current world-output scope adds private composition. The explicit immutable
+acceptance lifecycle remains a subsequent owner. Existing prototype acceptance/
+staleness mocks remain unchanged.
 
 The previous [private model-source checkpoint](../../../engineering/phase-4-smart-patch-model-source-research.md)
 qualifies actual Main→worker source RGB preparation,not a generated candidate.
@@ -321,8 +342,9 @@ worker Ruff/basedpyright PASS;limits are in the research note.
 No jobs,diffusion,candidates,accepted variants,provenance,preset/
 Compare fields or public Generate are enabled. Existing prototype variants and
 their acceptance/staleness mocks are unaffected. The numerical adapter defines
-all255 latent coverage behavior; the current bridge above adds transport, while
-this explicit acceptance lifecycle remains a subsequent owner.
+all255 latent coverage behavior; the later bridge above adds transport, and the
+current world-output scope adds private composition. This explicit acceptance
+lifecycle remains a subsequent owner.
 
 ## Auto-Switch
 

@@ -362,7 +362,26 @@ layer/source context for staleness,not reusable generation configuration.
 
 ### Smart Patch private execution material
 
-[Private Main/worker execution bridge](../engineering/phase-4-smart-patch-execution-bridge-research.md)
+[Private world output](../engineering/phase-4-smart-patch-world-output-research.md)
+adds a transient world-bbox-size RGBA PNG and detached `worldContribution` to
+`capture.executeAndCompose`. Generated RGB is resized with BICUBIC; the frozen
+final world GENERATE alpha is attached unchanged, without repeated fade or source
+pasteback. Main independently verifies actual pixels/profile/hash/dimensions and
+byte-exact alpha equality against that frozen mask. Placement remains the frozen
+`context.bbox`, without adding world coordinates to the CPU request.
+
+One drained operation lease covers preparation, exact resources, native inference,
+CPU composition and final consumption; unconfirmed worker exit retains the full
+stage even after callback failure. The CPU derivatives-only worker 0.1.0 requires
+`smart-patch-output-composition`; old payloads refuse before dispatch. The owned
+operation directory is `0700` beneath the existing scratch base, which may be `0775`.
+`capture.execute` retains its detached processing RGB contract. No SQL rows,
+migration, durable job/candidate/receipt/recovery manifest, seed-cursor update,
+document/history/shadow/`.igs` mutation, variant or provenance/preset/Compare
+field is added. Durable queue/batch and immutable acceptance remain subsequent
+owners. Evidence and qualification limits belong to the linked research.
+
+The previous [Main/worker execution bridge](../engineering/phase-4-smart-patch-execution-bridge-research.md)
 adds a transient processing-size RGB PNG and returns detached verified bytes to
 one `capture.execute` caller. The exact concrete prompt pair and uint32 seed are
 already planned inputs; this boundary neither expands dynamic prompts nor reads
@@ -380,8 +399,9 @@ or automatic replay contract.
 
 This slice adds no SQL rows/migration, durable jobs/candidates/receipts, seed
 cursor changes, document/history/shadow mutations, accepted variant, `.igs`
-member/schema or public readiness. World composition and immutable acceptance
-remain separate. Executed evidence and qualification limits are in the linked
+member/schema or public readiness. World composition was separate at that
+checkpoint and is added above; immutable acceptance remains open. Executed
+evidence and qualification limits are in the linked
 research.
 
 ### Previous Smart Patch private numerical denoising material
@@ -400,8 +420,9 @@ Focused72 Python PASS covers65 real tiny native family cases and seven actual CP
 protocol preparation-to-adapter cases. Six solvers/family and Illustrious EPS/V
 are numerical CPU evidence, not trained/installed/GPU or public persistence proof.
 At that numerical checkpoint the worker/Main execution bridge/resource admission
-was pending; the current bridge above adds it. World composition and immutable
-variant lifecycle remain future owners; public statuses stay unchanged.
+was pending; the later bridge above adds it, and the current world-output scope
+adds private composition. Immutable variant lifecycle remains a future owner;
+public statuses stay unchanged.
 
 ### Previous Smart Patch private model-source material
 

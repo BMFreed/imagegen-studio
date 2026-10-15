@@ -121,7 +121,30 @@ Variant lifecycle, staleness/compositing/comparison and Patch presets remain
 subsequent owners; existing authoring evidence and public promise statuses stay
 unchanged.
 
-## Current private execution scope: Main/worker bridge
+## Current private world-output scope
+
+[World output](../../../engineering/phase-4-smart-patch-world-output-research.md)
+adds `capture.executeAndCompose` after the existing native execution. The CPU
+worker BICUBIC-resizes generated RGB to the frozen bbox dimensions, then attaches
+the already computed final world GENERATE alpha unchanged. No repeated fade,
+latent-mask reconstruction or source pasteback is applied. Main independently
+verifies actual RGBA/ICC/hash/geometry and exact alpha equality before returning
+detached `worldContribution`; world placement remains the frozen `context.bbox`.
+One drained lease covers preparation, resources, native execution, world output
+and final consumption. Callback failure drains admitted work; unconfirmed worker
+exit retains all inputs. The CPU derivatives-only worker 0.1.0 requires explicit
+`smart-patch-output-composition`; older payloads refuse before dispatch. The
+operation stage is `0700`; the owned scratch base may retain `0775`.
+
+The existing `capture.execute` processing RGB contract and inference worker0.14.0
+gate are unchanged. Source changes do not upgrade installed runtime. This private
+material creates no public Generate, durable queue/batch/candidate/receipt,
+accepted variant, document/`.igs`, provenance/preset/Compare or UI behavior.
+Evidence and qualification limits belong to the linked research. Durable queue
+integration and immutable variant acceptance remain next; public promise statuses
+are unchanged.
+
+## Previous private execution scope: Main/worker bridge
 
 [Execution bridge](../../../engineering/phase-4-smart-patch-execution-bridge-research.md)
 connects the existing owned capture to native family execution through the actual
@@ -142,8 +165,9 @@ including when a sibling callback already failed.
 This publication is transient private numerical material. It adds no public
 Generate, durable batch/queue/candidate/receipt, world compositing, accepted
 variant, provenance/preset/Compare, schema or UI behavior. Evidence and exact
-qualification limits belong to the linked research. World composition, durable
-queue integration and immutable variant acceptance remain next; public promise
+qualification limits belong to the linked research. World composition was next
+at that checkpoint and is added above; durable queue integration and immutable
+variant acceptance remain open; public promise
 statuses are unchanged.
 
 ## Previous private execution scope: family VAE and denoising
@@ -166,9 +190,9 @@ family and Illustrious EPS/V; actual prepared INP uses world128/internal64/Euler
 for both families. These random small CPU-native models do not qualify trained,
 installed, GPU or full Invoke pixel parity. No Main transport/public worker
 command, queue/publication, world compositing, immutable variants, schema, preset,
-Compare or UI behavior is added at that numerical checkpoint. The current bridge
-above adds worker/Main transport and resource admission; world composition and
-immutable acceptance remain subsequent owners.
+Compare or UI behavior is added at that numerical checkpoint. The later bridge
+above adds worker/Main transport and resource admission; the current world-output
+scope adds private composition. Immutable acceptance remains a subsequent owner.
 PP-007/008 public readiness remains unchanged; further checks/mutation evidence
 are recorded separately in the linked research note.
 

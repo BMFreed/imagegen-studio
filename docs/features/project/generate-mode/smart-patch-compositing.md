@@ -59,7 +59,27 @@ Smart Patch Layer owns:
 
 If a setting affects an already generated Smart Patch Layer, changing it marks the layer as `outdated`.
 
-The current [private Main/worker execution bridge](../../../engineering/phase-4-smart-patch-execution-bridge-research.md)
+The current [private world-output scope](../../../engineering/phase-4-smart-patch-world-output-research.md)
+adds `capture.executeAndCompose`. After native inference, the CPU worker resizes
+generated RGB with BICUBIC to frozen bbox dimensions and attaches the already
+computed final world GENERATE alpha unchanged. The alpha is not resized, inverted,
+blurred again or reconstructed from latent KEEP, and original source pixels are
+not pasted back. Identity-size RGB, including hidden RGB under alpha0, is retained.
+Main independently verifies actual RGBA/ICC/hash/geometry and exact alpha equality
+with the frozen final mask before returning detached `worldContribution`.
+Placement stays in `context.bbox`; the CPU DTO carries no world coordinates.
+
+The CPU derivatives-only worker 0.1.0 requires `smart-patch-output-composition`;
+older payloads refuse before dispatch. One captured lease includes preparation,
+resources, native execution, CPU publication and Main consumption. Callback
+failure drains admitted work, and unconfirmed worker exit retains the stage.
+`capture.execute` still returns processing RGB. No public Generate, durable
+queue/batch/candidates/receipts, accepted variants, document/`.igs`, provenance/
+preset/Compare or UI behavior is added. Queue integration and immutable acceptance
+remain next. Evidence and numerical/installed-runtime limits are in the linked
+research; full scaled Invoke pixel parity is not claimed.
+
+The previous [private Main/worker execution bridge](../../../engineering/phase-4-smart-patch-execution-bridge-research.md)
 connects one owned `capture.execute` operation through exact family resource
 admission, prepared-file verification, native execution, exclusive processing RGB
 publication and strict Main consumption. It accepts one already concrete prompt
@@ -71,8 +91,9 @@ on worker process failure or timeout, confirmed physical exit. Unconfirmed exit 
 staging even after callback failure.
 
 That transient RGB is not a world contribution, candidate or accepted variant.
-World-space composition, durable queue/batch and immutable acceptance remain
-separate; `.igs`, document history, provenance/preset/Compare, UI and public
+World-space composition was separate at that checkpoint and is added above;
+durable queue/batch and immutable acceptance remain open. `.igs`, document history,
+provenance/preset/Compare, UI and public
 Generate are unchanged. Executed checks and qualification limits are recorded in
 the linked research; no new trained-family/GPU or full Invoke pixel-parity claim
 follows from the bridge implementation.
@@ -84,7 +105,8 @@ without source reclassification or repeated coherence/LaMa. KEEP all255 after
 lost latent coverage still runs VAE and denoising, preserves the world mode and
 fully protects the source latents as in Invoke. It returns a VAE reconstruction,
 not new denoised detail for the lost tiny edit; there is no fallback or fabricated
-coverage. Final world compositing remains separate.
+coverage. Final world compositing was separate at that checkpoint; the current
+world-output scope adds private composition.
 
 Focused72 Python PASS consists of65 real tiny native family cases and seven actual
 CPU protocol preparation-to-adapter cases. Six solvers/family and Illustrious
@@ -92,8 +114,9 @@ EPS/V are covered; prepared INP is world128/internal64/Euler for both families.
 This is random small CPU-native evidence, not trained/installed/GPU/full Invoke
 pixel parity. No Main transport/public worker command, queue, publication,
 variants, schema/UI or public readiness was added at that numerical checkpoint.
-The current scope above adds the worker/Main execution bridge and resource
-admission; world composition and immutable variants remain next.
+The later bridge above adds worker/Main execution and resource
+admission; the current world-output scope adds private composition. Immutable
+variants remain next.
 
 The previous [private model-source scope](../../../engineering/phase-4-smart-patch-model-source-research.md)
 adds actual Main→worker RGB preparation after the existing six conditioning
@@ -177,8 +200,9 @@ pixel parity is not claimed. That contribution helper is pre-coherence geometry.
 The qualified private coherence scope above adds processing-space edge expansion
 and projected world contribution. The later model-source scope above qualifies
 private source-only LaMa; the numerical family adapter qualifies private
-VAE/denoising. The current bridge adds resource admission and transport; final
-world compositing remains a subsequent owner. Full scaled Invoke pixel parity is not claimed.
+VAE/denoising. The later bridge adds resource admission and transport, and the
+current world-output scope adds private composition; immutable variants remain
+separate. Full scaled Invoke pixel parity is not claimed.
 
 Current-operation compositing settings can be used before a Smart Patch Layer exists. Once a Smart Patch Layer is created, the relevant settings are copied into the layer-owned state.
 

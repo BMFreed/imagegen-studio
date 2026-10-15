@@ -194,6 +194,41 @@ Python route tests — настоящий compositor/PNG без CUDA startup.
 
 ## Минимальные сообщения worker'а
 
+### Private Smart Patch world output (15.10.2026)
+
+[World output](../engineering/phase-4-smart-patch-world-output-research.md)
+adds CPU `compose-smart-patch-output` / `smart-patch-output-composed`, gated by
+`smart-patch-output-composition` on the derivatives-only worker 0.1.0. This is not
+an inference 0.14.0 capability or a public generation/candidate command. Older CPU
+payloads without the marker refuse before dispatch; source support does not
+upgrade installed runtime.
+
+The strict request has correlated `protocolVersion:'1'`/`requestId`,
+`image:{path,sha256,byteSize,width,height}` for pinned-sRGB processing RGB8,
+`contributionMask` with the same reference fields for numeric world GENERATE
+alpha, and `output:{stagingRoot,pngPath}`. Inputs and destination are distinct
+direct PNG children of one canonical owned `0700` operation stage beneath the
+scratch base; the existing owned base may retain `0775`. World dimensions use the
+existing 2048-side/4M-pixel and PNG32MiB limits but need not follow the latent /8
+grid. The worker receives dimensions, not world placement coordinates.
+
+The worker resizes RGB with explicit Pillow BICUBIC, then attaches the final
+contribution alpha unchanged. It does not resize/invert/blur that alpha,
+reconstruct it from latent KEEP or paste original source pixels back. Publication
+is exclusive pinned-sRGB RGBA8 with inode-aware rollback. The correlated response
+contains only `output:{byteSize,colorSpace:'srgb',height,sha256,width}`. Main
+consumes actual RGBA/ICC/hash/dimensions and compares decoded alpha byte-for-byte
+with the privately frozen final mask, independently of the adapter metadata.
+
+`capture.executeAndCompose` captures the output-worker method before awaits and
+drains preparation, native inference, composition and final readback as one
+operation. Callback failure waits admitted work; unconfirmed process exit retains
+the full input lease. Detached `worldContribution` is placed using frozen
+`context.bbox`. Existing `capture.execute` processing RGB semantics are unchanged.
+No durable queue/batch/candidate/receipt/variant, `.igs`/provenance/preset/Compare
+change or public Generate readiness follows. Checks and limits are in the linked
+research; durable queue integration and immutable acceptance remain next.
+
 ### Private Smart Patch execution bridge (15.10.2026)
 
 [Execution bridge](../engineering/phase-4-smart-patch-execution-bridge-research.md)
@@ -242,8 +277,9 @@ One captured operation drains preparation, resources, execution and consumption
 before staging cleanup. Worker process failure/timeout must confirm physical exit first;
 `WORKER_EXIT_UNCONFIRMED` retains the complete staging lease, including callback
 failure. Such retained scratch is not a recoverable candidate or automatic-replay
-record. No durable queue/batch/receipt, world contribution, accepted variant,
-document/`.igs` edit or public readiness is added. Exact executed checks and
+record. That execution checkpoint added no durable queue/batch/receipt, world
+contribution, accepted variant, document/`.igs` edit or public readiness. The
+world-output scope above now adds the private contribution only. Exact executed checks and
 qualification limits belong to the linked research note.
 
 ### Исполнимая граница превью Project в фазе 2A

@@ -52,6 +52,7 @@ from imagegen_worker.smart_patch_model_source import (
     SmartPatchModelSourceRequest,
     prepare_smart_patch_model_source,
 )
+from imagegen_worker.smart_patch_output import SmartPatchOutputRequest, compose_smart_patch_output
 from imagegen_worker.smart_patch_preparation import (
     PreparationImage,
     PreparationMask,
@@ -132,6 +133,12 @@ class ConditionSmartPatchCommand:
 class PrepareSmartPatchModelSourceCommand:
     request_id: str
     source: SmartPatchModelSourceRequest
+
+
+@dataclass(frozen=True)
+class ComposeSmartPatchOutputCommand:
+    request_id: str
+    composition: SmartPatchOutputRequest
 
 
 @dataclass(frozen=True)
@@ -328,6 +335,7 @@ def ready_message() -> dict[str, object]:
             "smart-patch-fade",
             "smart-patch-conditioning",
             "smart-patch-model-source",
+            "smart-patch-output-composition",
         ],
     }
 
@@ -1110,6 +1118,7 @@ def parse_request(
     | FadeSmartPatchCommand
     | ConditionSmartPatchCommand
     | PrepareSmartPatchModelSourceCommand
+    | ComposeSmartPatchOutputCommand
     | ExecuteSmartPatchCommand
     | GenerateIllustriousTxt2ImgCommand
     | GenerateAnimaTxt2ImgCommand
@@ -1527,6 +1536,26 @@ def parse_request(
                 ),
             ),
         )
+    if fields.get("type") == "compose-smart-patch-output":
+        _object(
+            fields,
+            "Smart Patch output request",
+            {"type", "requestId", "protocolVersion", "image", "contributionMask", "output"},
+        )
+        output = _object(
+            fields["output"], "Smart Patch output destination", {"stagingRoot", "pngPath"}
+        )
+        return ComposeSmartPatchOutputCommand(
+            request_id=request_id,
+            composition=SmartPatchOutputRequest(
+                image=_preparation_image(fields["image"], "Smart Patch generated RGB"),
+                contribution_mask=_preparation_image(
+                    fields["contributionMask"], "Smart Patch final contribution"
+                ),
+                staging_root=_path(output["stagingRoot"], "Smart Patch output staging root"),
+                output_png_path=_path(output["pngPath"], "Smart Patch output PNG"),
+            ),
+        )
     if fields.get("type") != "derive-image":
         raise DerivativeError("INVALID_REQUEST", "Request type is unsupported.")
 
@@ -1684,6 +1713,14 @@ def process_request(value: object) -> dict[str, object]:
                 "protocolVersion": PROTOCOL_VERSION,
                 "requestId": command.request_id,
                 **model_source_result,
+            }
+        if isinstance(command, ComposeSmartPatchOutputCommand):
+            composition_result = compose_smart_patch_output(command.composition)
+            return {
+                "type": "smart-patch-output-composed",
+                "protocolVersion": PROTOCOL_VERSION,
+                "requestId": command.request_id,
+                **composition_result,
             }
         result = normalize_import(command.imported)
         return {

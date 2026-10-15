@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test, { after, before } from 'node:test'
 import { promisify } from 'node:util'
-import { crc32, deflateSync } from 'node:zlib'
+import { crc32, deflateSync, inflateSync } from 'node:zlib'
 
 import type { OutpaintInfillResolver } from '../runtime/inference-auxiliary-resources.js'
 import type {
@@ -25,8 +25,15 @@ import type {
   SmartPatchExecutionOptions,
 } from './project-smart-patch-execution.js'
 import type { CapturedSmartPatchGenerationInput } from './project-smart-patch-generation-input.js'
+import type {
+  ComposedSmartPatchGenerationInput,
+  SmartPatchWorldExecutionOptions,
+} from './project-smart-patch-world-output.js'
 import type { SmartPatchExecutionRequest } from './smart-patch-execution-request.js'
-import type { SmartPatchCoherenceParameters } from './worker-client.js'
+import type {
+  SmartPatchCoherenceParameters,
+  SmartPatchOutputCompositionPayload,
+} from './worker-client.js'
 
 import { openAppDatabase } from '../db/database.js'
 import { readIgsPackage, saveIgsPackage } from './igs-package.js'
@@ -37,7 +44,9 @@ import { readProjectPlaceholders } from './project-placeholders.js'
 import { ProjectService } from './project-service.js'
 import { ProjectShadowStore } from './project-shadow.js'
 import { executeSmartPatchWithTransport } from './smart-patch-execution-request.js'
+import { decodeTargetPngAlpha } from './target-png-mode.js'
 import {
+  composeSmartPatchOutputWithTransport,
   composeTargetWithTransport,
   conditionSmartPatchWithTransport,
   prepareSmartPatchModelSourceWithTransport,
@@ -211,14 +220,15 @@ function modelService(
   }
 }
 
-/** Input-only PNG encoding. No crop, resize, compositor or output oracle lives here. */
-function sourcePng(
+/** Literal fixture PNG encoding. No crop, resize, compositor or expected-output oracle lives here. */
+function literalPng(
   profile: Buffer,
   width: number,
   height: number,
-  rgba: readonly number[],
+  pixels: readonly number[],
+  channels: 3 | 4,
 ): Buffer {
-  assert.equal(rgba.length, width * height * 4)
+  assert.equal(pixels.length, width * height * channels)
   const chunk = (name: string, bytes: Buffer): Buffer => {
     const encoded = Buffer.alloc(bytes.length + 12)
     encoded.writeUInt32BE(bytes.length, 0)
@@ -231,10 +241,13 @@ function sourcePng(
   header.writeUInt32BE(width, 0)
   header.writeUInt32BE(height, 4)
   header[8] = 8
-  header[9] = 6
-  const rows = Buffer.alloc(height * (width * 4 + 1))
+  header[9] = channels === 3 ? 2 : 6
+  const rows = Buffer.alloc(height * (width * channels + 1))
   for (let row = 0; row < height; row++) {
-    rows.set(rgba.slice(row * width * 4, (row + 1) * width * 4), row * (width * 4 + 1) + 1)
+    rows.set(
+      pixels.slice(row * width * channels, (row + 1) * width * channels),
+      row * (width * channels + 1) + 1,
+    )
   }
   return Buffer.concat([
     Buffer.from('89504e470d0a1a0a', 'hex'),
@@ -243,6 +256,15 @@ function sourcePng(
     chunk('IDAT', deflateSync(rows)),
     chunk('IEND', Buffer.alloc(0)),
   ])
+}
+
+function sourcePng(
+  profile: Buffer,
+  width: number,
+  height: number,
+  rgba: readonly number[],
+): Buffer {
+  return literalPng(profile, width, height, rgba, 4)
 }
 
 function raster(bytes: Buffer, bbox: IgsRectV1, name: string): IgsRasterLayerV1 {
@@ -517,6 +539,110 @@ function executionOptions(
     modelService: modelService(family),
     preparationWorker: preparationWorker(f),
   }
+}
+
+function worldExecutionOptions(
+  f: Fixture,
+  family: Family,
+  observed: Observation[],
+  composed: SmartPatchOutputCompositionPayload[] = [],
+): SmartPatchWorldExecutionOptions {
+  return {
+    ...executionOptions(f, family, observed),
+    outputWorker: {
+      composeSmartPatchOutput: (input) =>
+        composeSmartPatchOutputWithTransport(input, f.scratch, async (payload) => {
+          composed.push(structuredClone(payload))
+          const observation = await child<{ response: Record<string, unknown> }>(ORACLE, {
+            action: 'prepare',
+            request: {
+              ...payload,
+              protocolVersion: '1',
+              requestId: randomUUID(),
+              type: 'compose-smart-patch-output',
+            },
+          })
+          return observation.response
+        }),
+    },
+  }
+}
+
+/**
+ * Declared inference collaborator for Main ownership/failure cases only. It writes actual valid RGB
+ * pixels; the capture's builders/readers and actual CPU preparation/composition remain real. These
+ * cases deliberately make no native inference claim.
+ */
+function literalWorldExecutionOptions(
+  f: Fixture,
+  composed: SmartPatchOutputCompositionPayload[] = [],
+): SmartPatchWorldExecutionOptions {
+  const input = worldExecutionOptions(f, 'illustrious', [], composed)
+  input.generationWorker.executeSmartPatch = async (request) => {
+    const profile = await readFile(path.join(WORKER_SOURCE, 'imagegen_worker/srgb.icc'))
+    const { height, width } = request.internalResolution
+    const bytes = literalPng(
+      profile,
+      width,
+      height,
+      Array.from({ length: width * height }, () => [23, 47, 91]).flat(),
+      3,
+    )
+    await writeFile(request.output.pngPath, bytes, { flag: 'wx' })
+    return {
+      output: {
+        byteSize: bytes.length,
+        colorSpace: 'srgb',
+        height,
+        iccSha256: IGS_SRGB_ICC_SHA256,
+        path: request.output.pngPath,
+        sha256: digest(bytes),
+        width,
+      },
+    }
+  }
+  return input
+}
+
+/** Read the embedded profile independently of the returned metadata and Main's PNG verifier. */
+function actualIccHash(bytes: Buffer): string {
+  let offset = 8
+  while (offset + 12 <= bytes.length) {
+    const length = bytes.readUInt32BE(offset)
+    const next = offset + length + 12
+    assert.ok(next <= bytes.length, 'The returned PNG chunks must be complete')
+    if (bytes.toString('ascii', offset + 4, offset + 8) === 'iCCP') {
+      const chunk = bytes.subarray(offset + 8, offset + 8 + length)
+      const terminator = chunk.indexOf(0)
+      assert.ok(terminator > 0 && terminator + 2 < chunk.length)
+      assert.equal(chunk[terminator + 1], 0)
+      return digest(inflateSync(chunk.subarray(terminator + 2), { maxOutputLength: 64 * 1024 }))
+    }
+    offset = next
+  }
+  assert.fail('The actual world PNG must embed its ICC profile')
+}
+
+function assertWorldContribution(result: ComposedSmartPatchGenerationInput, bbox: IgsRectV1) {
+  assert.deepEqual(result.context.bbox, bbox)
+  const world = result.worldContribution
+  assert.equal(world.width, bbox.width)
+  assert.equal(world.height, bbox.height)
+  assert.equal(world.byteSize, world.bytes.length)
+  assert.equal(world.sha256, digest(world.bytes))
+  assert.equal(world.colorSpace, 'srgb')
+  assert.equal(world.iccSha256, IGS_SRGB_ICC_SHA256)
+  assert.equal(world.bytes[24], 8, 'The detached world PNG has actual 8-bit channels')
+  assert.equal(world.bytes[25], 6, 'The detached world PNG has actual RGBA topology')
+  assert.equal(actualIccHash(world.bytes), IGS_SRGB_ICC_SHA256)
+  const expected = result.conditioning.finalContributionMask
+  const expectedAlpha = decodeDerivedProjectMaskPng(expected.bytes, expected)
+  const worldAlpha = decodeTargetPngAlpha(world.bytes, world.width, world.height)
+  assert.ok(
+    worldAlpha.equals(expectedAlpha),
+    'Actual world output alpha must exactly equal the frozen final contribution, without a second fade',
+  )
+  return { expectedAlpha, worldAlpha }
 }
 
 async function state(f: Fixture) {
@@ -908,6 +1034,311 @@ for (const callbackFails of [false, true]) {
         await Promise.allSettled([capturing, operation ?? Promise.resolve()])
         // The controlled adapter is now settled and has no child. Dispose only
         // this test's retained capture root; no arbitrary artifact sweep.
+        for (const entry of await scratchEntries(f.scratch)) {
+          await rm(path.join(f.scratch, entry), { force: true, recursive: true })
+        }
+      }
+      await unchanged(f, before)
+    })
+  })
+}
+
+// The additional world boundary executes four native family cases. Ownership/fault cases below
+// use the explicitly declared literal RGB collaborator instead of repeatedly loading native models.
+for (const family of ['illustrious', 'anima'] as const) {
+  for (const loss of [false, true]) {
+    const mode = loss ? 'inpaint' : 'img2img'
+    test(`actual ${family} ${mode} composes detached world RGBA${loss ? ' after latent coverage disappears' : ''} without touching durable owners`, async () => {
+      const setup = options(family, mode, loss)
+      await fixture(setup, async (f) => {
+        const before = await state(f)
+        const observed: Observation[] = []
+        const composed: SmartPatchOutputCompositionPayload[] = []
+        const result = await f.service.withCapturedSmartPatchGenerationInput(
+          f.tabId,
+          f.patch.id,
+          (capture) =>
+            capture.executeAndCompose(worldExecutionOptions(f, family, observed, composed)),
+        )
+        assert.equal(observed.length, 1)
+        assertNativeExecution(observed[0], family, mode)
+        assert.equal(composed.length, 1, 'A real serialized CPU composition must complete')
+        assert.deepEqual(
+          [composed[0].image.width, composed[0].image.height],
+          [64, 64],
+          'Composition receives actual processing-size RGB rather than an invented world target',
+        )
+        assert.deepEqual(
+          [composed[0].contributionMask.width, composed[0].contributionMask.height],
+          [setup.bbox.width, setup.bbox.height],
+        )
+        assert.equal(result.output.width, 64)
+        assert.equal(result.output.height, 64)
+        assert.equal(result.output.bytes[25], 2, 'The processing result remains independent RGB')
+        const { expectedAlpha, worldAlpha } = assertWorldContribution(result, setup.bbox)
+        if (loss) {
+          const keep = result.conditioning.latentKeepMask
+          assert.ok(
+            decodeDerivedProjectMaskPng(keep.bytes, keep).every((alpha) => alpha === 255),
+            'This case actually reaches fully protected latent KEEP',
+          )
+          assert.equal(result.conditioning.latentMaskHasCoverage, false)
+          assert.equal(result.mode, 'inpaint', 'World output must preserve frozen INP mode')
+          assert.equal(expectedAlpha[19 * setup.bbox.width + 17], 255)
+          assert.equal(worldAlpha[19 * setup.bbox.width + 17], 255)
+          assert.ok(worldAlpha.includes(0))
+        } else {
+          assert.ok(worldAlpha.every((alpha) => alpha === 255))
+        }
+        assert.equal(result.item.seed, 0)
+        assert.ok(!existsSync(composed[0].output.stagingRoot))
+        // The returned buffers remain complete after the actual stage has been removed.
+        assert.equal(digest(result.worldContribution.bytes), result.worldContribution.sha256)
+        await unchanged(f, before)
+      })
+    })
+  }
+}
+
+test('world final consumption refuses truthful wrong-alpha PNG metadata outside the composition adapter', async () => {
+  const setup = options('illustrious', 'img2img')
+  await fixture(setup, async (f) => {
+    const before = await state(f)
+    const input = literalWorldExecutionOptions(f)
+    const actual = input.outputWorker.composeSmartPatchOutput
+    let replaced = false
+    input.outputWorker.composeSmartPatchOutput = async (request) => {
+      const result = await actual(request)
+      const profile = await readFile(path.join(WORKER_SOURCE, 'imagegen_worker/srgb.icc'))
+      const bytes = sourcePng(
+        profile,
+        request.contributionMask.width,
+        request.contributionMask.height,
+        Array.from(
+          { length: request.contributionMask.width * request.contributionMask.height },
+          () => [23, 47, 91, 0],
+        ).flat(),
+      )
+      await writeFile(request.pngPath, bytes)
+      replaced = true
+      assert.ok(
+        decodeTargetPngAlpha(bytes, setup.bbox.width, setup.bbox.height).every(
+          (alpha) => alpha === 0,
+        ),
+      )
+      assert.equal(actualIccHash(bytes), IGS_SRGB_ICC_SHA256)
+      return {
+        output: { ...result.output, byteSize: bytes.length, sha256: digest(bytes) },
+      }
+    }
+    await assert.rejects(
+      f.service.withCapturedSmartPatchGenerationInput(f.tabId, f.patch.id, (capture) =>
+        capture.executeAndCompose(input),
+      ),
+      /alpha.*frozen|contribution.*alpha/i,
+    )
+    assert.equal(replaced, true, 'The bad but valid actual PNG reached the independent Main reader')
+    await unchanged(f, before)
+    const control = await f.service.withCapturedSmartPatchGenerationInput(
+      f.tabId,
+      f.patch.id,
+      (capture) => capture.executeAndCompose(literalWorldExecutionOptions(f)),
+    )
+    assertWorldContribution(control, setup.bbox)
+    await unchanged(f, before)
+  })
+})
+
+test('world execution captures the output method and owned geometry before preparation yields', async () => {
+  const setup = options('illustrious', 'inpaint')
+  await fixture(setup, async (f) => {
+    const composed: SmartPatchOutputCompositionPayload[] = []
+    const input = literalWorldExecutionOptions(f, composed)
+    const actual = input.preparationWorker.composeTarget
+    let lateMethodCalled = false
+    let afterEdit!: Awaited<ReturnType<typeof state>>
+    input.preparationWorker.composeTarget = async (request) => {
+      input.outputWorker.composeSmartPatchOutput = async () => {
+        lateMethodCalled = true
+        throw new Error('Late output method must not run')
+      }
+      input.item.seed = 99
+      input.item.prompts.positive = 'Late world prompt alias'
+      await f.service.updateSmartPatchLayer(f.tabId, f.patch.id, {
+        kind: 'bounding-box',
+        rect: { height: 48, width: 40, x: 300, y: -600 },
+      })
+      await f.service.flushAutosave(f.tabId)
+      afterEdit = await state(f)
+      return await actual(request)
+    }
+    const result = await f.service.withCapturedSmartPatchGenerationInput(
+      f.tabId,
+      f.patch.id,
+      (capture) => {
+        capture.context.bbox = { height: 1, width: 1, x: 0, y: 0 }
+        capture.context.maskSettings.blur = 99
+        capture.maskPngBytes?.fill(0)
+        capture.document.layers = []
+        return capture.executeAndCompose(input)
+      },
+    )
+    assert.equal(lateMethodCalled, false)
+    assert.equal(composed.length, 1)
+    assertWorldContribution(result, setup.bbox)
+    assert.equal(result.context.maskSettings.blur, 0)
+    assert.equal(result.item.seed, 0)
+    assert.equal(result.item.prompts.positive, '(bright hair:2)')
+    await unchanged(f, afterEdit)
+  })
+})
+
+test('the full lease drains admitted world composition after callback failure and rejects escaped calls', async () => {
+  const setup = options('illustrious', 'img2img')
+  await fixture(setup, async (f) => {
+    const before = await state(f)
+    const input = literalWorldExecutionOptions(f)
+    const actual = input.outputWorker.composeSmartPatchOutput
+    let entered!: () => void
+    const didEnter = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    let release!: () => void
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let held!: CapturedSmartPatchGenerationInput
+    let stage = ''
+    let callbackSettled = false
+    let operation: ReturnType<CapturedSmartPatchGenerationInput['executeAndCompose']> | undefined
+    input.outputWorker.composeSmartPatchOutput = async (request) => {
+      stage = request.stagingRoot
+      entered()
+      await released
+      assert.ok(existsSync(stage), 'The admitted world step retains its processing and mask files')
+      assert.ok(existsSync(request.image.path))
+      assert.ok(existsSync(request.contributionMask.path))
+      return await actual(request)
+    }
+    const capturing = f.service.withCapturedSmartPatchGenerationInput(
+      f.tabId,
+      f.patch.id,
+      async (capture) => {
+        held = capture
+        operation = capture.executeAndCompose(input)
+        void operation.catch(() => undefined)
+        await didEnter
+        throw new Error('Intentional callback failure during world composition')
+      },
+    )
+    void capturing.then(
+      () => {
+        callbackSettled = true
+      },
+      () => {
+        callbackSettled = true
+      },
+    )
+    try {
+      await Promise.race([
+        didEnter,
+        capturing.then(() => assert.fail('Capture settled before the world-step witness')),
+      ])
+      // The independent world-step witness has fired and its gate is still
+      // closed. Give erroneous early cleanup time to settle before releasing it.
+      await Promise.race([
+        capturing.catch(() => undefined),
+        new Promise<void>((resolve) => {
+          setTimeout(resolve, 100)
+        }),
+      ])
+      assert.equal(callbackSettled, false, 'The callback must wait for admitted world composition')
+      assert.ok(existsSync(stage))
+      release()
+      await assert.rejects(capturing, /Intentional callback failure/)
+      assert.ok(operation)
+      const result = await operation
+      assertWorldContribution(result, setup.bbox)
+      assert.equal(existsSync(stage), false)
+      let lateDispatched = false
+      input.outputWorker.composeSmartPatchOutput = async () => {
+        lateDispatched = true
+        throw new Error('Late world call')
+      }
+      await assert.rejects(held.executeAndCompose(input), /closed|lease/i)
+      assert.equal(lateDispatched, false)
+      await unchanged(f, before)
+    } finally {
+      release()
+      await Promise.allSettled([capturing, operation ?? Promise.resolve()])
+    }
+  })
+})
+
+for (const callbackFails of [false, true]) {
+  test(`unconfirmed world worker exit retains the whole input lease when callback failure is ${callbackFails}`, async () => {
+    await fixture(options('illustrious', 'img2img'), async (f) => {
+      const before = await state(f)
+      const input = literalWorldExecutionOptions(f)
+      let entered!: () => void
+      const didEnter = new Promise<void>((resolve) => {
+        entered = resolve
+      })
+      let release!: () => void
+      const released = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let stage = ''
+      let operation: ReturnType<CapturedSmartPatchGenerationInput['executeAndCompose']> | undefined
+      input.outputWorker.composeSmartPatchOutput = async (request) => {
+        // Declared failure collaborator; it owns no live child. OS exit confirmation is tested
+        // in the real transport client suite, not simulated by this capture retention case.
+        stage = request.stagingRoot
+        entered()
+        await released
+        throw Object.assign(new Error('Controlled unconfirmed world worker exit'), {
+          code: 'WORKER_EXIT_UNCONFIRMED',
+        })
+      }
+      const capturing = f.service.withCapturedSmartPatchGenerationInput(
+        f.tabId,
+        f.patch.id,
+        async (capture) => {
+          operation = capture.executeAndCompose(input)
+          void operation.catch(() => undefined)
+          await didEnter
+          if (callbackFails) {
+            throw new Error('Intentional callback failure before unconfirmed world exit')
+          }
+          return await operation
+        },
+      )
+      void capturing.catch(() => undefined)
+      try {
+        await Promise.race([
+          didEnter,
+          capturing.then(() => assert.fail('Missing world worker witness')),
+        ])
+        release()
+        await assert.rejects(
+          capturing,
+          callbackFails ? /Intentional callback failure/ : /unconfirmed/i,
+        )
+        await assert.rejects(operation!, /unconfirmed/i)
+        assert.ok(existsSync(stage))
+        const retained = await readdir(stage)
+        for (const name of [
+          'latent-keep-mask.png',
+          'model-source.png',
+          'model-result.png',
+          'conditioned-world-contribution-mask.png',
+        ]) {
+          assert.ok(retained.includes(name), `Retain ${name} until physical exit is confirmed`)
+        }
+      } finally {
+        release()
+        await Promise.allSettled([capturing, operation ?? Promise.resolve()])
+        // The fault collaborator has settled and never owned a child. Dispose only this fixture.
         for (const entry of await scratchEntries(f.scratch)) {
           await rm(path.join(f.scratch, entry), { force: true, recursive: true })
         }
