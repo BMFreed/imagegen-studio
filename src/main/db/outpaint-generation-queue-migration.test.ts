@@ -1,6 +1,6 @@
 import { sql } from 'kysely'
 import assert from 'node:assert/strict'
-import { cp, mkdtemp, rm } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
@@ -12,9 +12,12 @@ const migrations = path.resolve('src/main/db/migrations')
 test('Outpaint queue migration preserves all four legacy operations, every status and independent receipts/seed across actual reopen', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'igs-outpaint-queue-migration-'))
   const legacyMigrations = path.join(root, 'legacy')
-  await cp(migrations, legacyMigrations, { recursive: true })
-  await rm(path.join(legacyMigrations, '0015_outpaint_generation_queue.sql'))
-  await rm(path.join(legacyMigrations, '0016_checkpoint_noise_profile_override.sql'))
+  await mkdir(legacyMigrations)
+  for (const name of await readdir(migrations)) {
+    if (name.endsWith('.sql') && name < '0015') {
+      await cp(path.join(migrations, name), path.join(legacyMigrations, name))
+    }
+  }
   try {
     const before = openAppDatabase(root, legacyMigrations)
     const timestamp = '2026-10-05T00:00:00.000Z'

@@ -52,3 +52,12 @@ test('unknown outpaint state remains a check in progress; ordinary frozen operat
     )
   }
 })
+
+test('private Smart Patch Retry stays unavailable independently of ordinary worker capabilities', () => {
+  for (const operation of ['illustrious-smart-patch', 'anima-smart-patch'] as const) {
+    for (const state of [null, {}, { animaOutpaintSupported: true, outpaintSupported: true }]) {
+      assert.match(outpaintQueueRetryReason(operation, state)!, /Smart Patch.*not available yet/)
+    }
+  }
+  assert.equal(outpaintQueueRetryReason('illustrious-outpaint', { outpaintSupported: true }), null)
+})

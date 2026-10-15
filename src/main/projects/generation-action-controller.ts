@@ -992,6 +992,15 @@ export class ProjectGenerationActionController {
 
   private async retryUnlocked(review: GenerationQueueReview): Promise<void> {
     const source = await this.options.queue.getManagerEntry(review.id)
+    if (
+      source.operation === 'illustrious-smart-patch' ||
+      source.operation === 'anima-smart-patch'
+    ) {
+      throw new ProjectGenerationActionError(
+        'GENERATION_RUNTIME_UNAVAILABLE',
+        'Smart Patch queue execution and retry are not available yet.',
+      )
+    }
     const tabId = source.projectKey
     const documentId = source.documentId
     this.admittingTabId = tabId

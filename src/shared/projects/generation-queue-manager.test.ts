@@ -261,3 +261,36 @@ test('Queue Manager outpaint history requires exact family details and frozen st
   )
   assert.equal(isGenerationQueuePage(page([illustrious])), true)
 })
+
+test('Smart Patch queue summaries preserve native family and non-grid world bounds without weakening normal bounds', () => {
+  const row = entry()
+  for (const operation of ['illustrious-smart-patch', 'anima-smart-patch'] as const) {
+    const sampling =
+      operation === 'anima-smart-patch'
+        ? { animaMethod: 'heun' as const, cfgScale: 4, seed: 0, steps: 4 }
+        : row.details!.sampling
+    const details = { ...row.details!, sampling, size: { height: 1, width: 3 } }
+    const patch = { ...row, details, operation }
+    assert.equal(isGenerationQueuePage(page([patch])), true)
+    assert.equal(
+      isGenerationQueuePage(
+        page([
+          { ...patch, details: { ...details, sampling: { ...sampling, denoisingStrength: 0 } } },
+        ]),
+      ),
+      true,
+    )
+    assert.equal(
+      isGenerationQueuePage(
+        page([{ ...patch, details: { ...details, size: { height: 0, width: 3 } } }]),
+      ),
+      false,
+    )
+    const opposite =
+      operation === 'anima-smart-patch' ? 'illustrious-smart-patch' : 'anima-smart-patch'
+    assert.equal(isGenerationQueuePage(page([{ ...patch, operation: opposite }])), false)
+    const normal = operation === 'anima-smart-patch' ? 'anima-txt2img' : 'illustrious-txt2img'
+    assert.equal(isGenerationQueuePage(page([{ ...patch, operation: normal }])), false)
+  }
+  assert.equal(isGenerationQueuePage(page([row])), true)
+})

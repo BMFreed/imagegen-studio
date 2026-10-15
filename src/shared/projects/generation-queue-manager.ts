@@ -44,9 +44,11 @@ export interface GenerationQueueEntry extends GenerationQueueReview {
   operation:
     | 'anima-img2img'
     | 'anima-outpaint'
+    | 'anima-smart-patch'
     | 'anima-txt2img'
     | 'illustrious-img2img'
     | 'illustrious-outpaint'
+    | 'illustrious-smart-patch'
     | 'illustrious-txt2img'
   projectKey: string
   projectName: string
@@ -137,8 +139,8 @@ const EntrySchema = v.pipe(
           }),
         ]),
         size: v.strictObject({
-          height: v.pipe(v.number(), v.safeInteger(), v.minValue(8)),
-          width: v.pipe(v.number(), v.safeInteger(), v.minValue(8)),
+          height: v.pipe(v.number(), v.safeInteger(), v.minValue(1)),
+          width: v.pipe(v.number(), v.safeInteger(), v.minValue(1)),
         }),
       }),
     ),
@@ -158,9 +160,11 @@ const EntrySchema = v.pipe(
       'illustrious-txt2img',
       'illustrious-img2img',
       'illustrious-outpaint',
+      'illustrious-smart-patch',
       'anima-txt2img',
       'anima-img2img',
       'anima-outpaint',
+      'anima-smart-patch',
     ]),
     projectKey: v.pipe(v.string(), v.regex(/^project-v1-[a-f0-9]{64}$/)),
     projectName: text,
@@ -174,14 +178,23 @@ const EntrySchema = v.pipe(
     if (!entry.details) {
       return true
     }
+    const isSmartPatch =
+      entry.operation === 'anima-smart-patch' || entry.operation === 'illustrious-smart-patch'
+    if (!isSmartPatch && (entry.details.size.width < 8 || entry.details.size.height < 8)) {
+      return false
+    }
     const isAnima =
       entry.operation === 'anima-txt2img' ||
       entry.operation === 'anima-img2img' ||
-      entry.operation === 'anima-outpaint'
+      entry.operation === 'anima-outpaint' ||
+      entry.operation === 'anima-smart-patch'
     if (isAnima !== 'animaMethod' in entry.details.sampling) {
       return false
     }
     if (isAnima) {
+      if (isSmartPatch) {
+        return true
+      }
       const isImg = entry.operation === 'anima-img2img' || entry.operation === 'anima-outpaint'
       return isImg === 'denoisingStrength' in entry.details.sampling
     }

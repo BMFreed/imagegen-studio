@@ -34,6 +34,8 @@ import type {
 } from './project-generation-preparation.js'
 import type { ProjectIndexRepository } from './project-index.js'
 import type { ProjectService } from './project-service.js'
+import type { SmartPatchExecutionModelResolver } from './project-smart-patch-execution.js'
+import type { SmartPatchInputMaterial } from './smart-patch-frozen-input.js'
 import type { ProjectWorkerClient } from './worker-client.js'
 
 import { withAnimaGenerationBatchRequests } from './anima-generation-request.js'
@@ -53,6 +55,7 @@ import {
 } from './illustrious-txt2img-job.js'
 import { buildQueuedOutpaintWorkerRequest } from './outpaint-worker-request.js'
 import { canonicalProjectPath, localProjectRecoveryKey } from './project-identity.js'
+import { captureSmartPatchModelResolver } from './project-smart-patch-execution.js'
 
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
 
@@ -118,10 +121,10 @@ export class GenerationOrchestrator {
   private readonly fencedProjects = new Set<string>()
 
   constructor(
-    private readonly projects: Pick<
-      ProjectService,
-      'getOpenDocumentId' | 'getOpenTabs' | 'prepareNormalGenerationContext'
-    >,
+    private readonly projects: Partial<
+      Pick<ProjectService, 'assertSmartPatchGenerationAdmission'>
+    > &
+      Pick<ProjectService, 'getOpenDocumentId' | 'getOpenTabs' | 'prepareNormalGenerationContext'>,
     private readonly projectIndex: Pick<ProjectIndexRepository, 'getProject'>,
     private readonly models: GenerationModelResolver & Partial<AnimaGenerationModelResolver>,
     private readonly queue: GenerationQueueRepository,
@@ -766,6 +769,94 @@ export class GenerationOrchestrator {
         throw error
       }
       return { assertCurrent: assertIdentity, items: queued, plan }
+    })
+    this.enqueueBarrier = operation.then(
+      () => undefined,
+      () => undefined,
+    )
+    return await operation
+  }
+
+  /** Private durable admission only. Smart Patch execution remains outside the normal dispatcher. */
+  async enqueuePreparedSmartPatchBatch(
+    tabId: string,
+    material: SmartPatchInputMaterial,
+  ): Promise<QueuedGenerationItem[]> {
+    this.assertGenerationOpen(tabId)
+    const assertAdmission = this.projects.assertSmartPatchGenerationAdmission?.bind(this.projects)
+    if (!assertAdmission) {
+      throw new GenerationOrchestratorError(
+        'GENERATION_BATCH_INVALID',
+        'The current Smart Patch owner cannot be checked.',
+      )
+    }
+    const snapshot: SmartPatchInputMaterial = {
+      files: Object.fromEntries(
+        Object.entries(material.files).map(([name, bytes]) => [name, Buffer.from(bytes)]),
+      ),
+      manifest: structuredClone(material.manifest),
+    }
+    const models = captureSmartPatchModelResolver(this.models as SmartPatchExecutionModelResolver)
+    const context = snapshot.manifest.context
+    const assertCurrent = (): void => {
+      this.assertGenerationOpen(tabId)
+      if (
+        context.projectKey !== tabId ||
+        this.projects.getOpenDocumentId(tabId) !== context.documentId
+      ) {
+        throw new GenerationOrchestratorError(
+          'PROJECT_DOCUMENT_CHANGED',
+          'The captured Smart Patch no longer belongs to the open Project.',
+        )
+      }
+      assertAdmission(tabId, context.documentId, context.layerId)
+    }
+    assertCurrent()
+    const operation = this.enqueueBarrier.then(async () => {
+      this.queue.assertReadyForDispatch()
+      assertCurrent()
+      const project = await this.indexedProject(tabId)
+      const assertIdentity = async (): Promise<void> => {
+        assertCurrent()
+        const current = await this.indexedProject(tabId)
+        assertCurrent()
+        if (
+          current.canonicalPath !== project.canonicalPath ||
+          current.documentId !== context.documentId
+        ) {
+          throw new GenerationOrchestratorError(
+            'PROJECT_DOCUMENT_CHANGED',
+            'The indexed Project changed while the Smart Patch batch was being queued.',
+          )
+        }
+      }
+      await assertIdentity()
+      const queued = await this.queue.enqueuePreparedSmartPatchBatch({
+        assertCurrent,
+        material: snapshot,
+        modelService: models,
+        projectPath: project.canonicalPath,
+        stagingSessionId: randomUUID(),
+      })
+      try {
+        await assertIdentity()
+      } catch (error) {
+        try {
+          for (const item of queued) {
+            const stopped = await this.processor.cancelAndWait(item.id)
+            if (stopped.status !== 'canceled') {
+              throw cancellationUncertain('A refused Smart Patch batch job has not stopped.')
+            }
+          }
+        } catch {
+          this.batchCleanupUnconfirmed.add(tabId)
+          this.fencedProjects.add(tabId)
+          this.queue.fenceProject(tabId)
+          throw cancellationUncertain('The Smart Patch batch cancellation needs recovery.')
+        }
+        throw error
+      }
+      return queued
     })
     this.enqueueBarrier = operation.then(
       () => undefined,

@@ -58,6 +58,10 @@ import type {
   PreparedNormalOutpaintGeneration,
   PreparedNormalTxt2Img,
 } from './project-generation-preparation.js'
+import type { SmartPatchExecutionModelResolver } from './project-smart-patch-execution.js'
+import type { SmartPatchInputBundle } from './project-smart-patch-input-bundle.js'
+import type { SmartPatchInputMaterial } from './smart-patch-frozen-input.js'
+import type { FrozenQueuedSmartPatchV1 } from './smart-patch-queued-generation.js'
 
 import { prepareAnimaGenerationBatch } from './anima-generation-batch.js'
 import { assertFrozenAnimaOutpaintGeneration } from './anima-generation-preparation.js'
@@ -101,9 +105,29 @@ import {
   FrozenAlphaOutpaintConditioningSchema,
 } from './outpaint-conditioning.js'
 import { canonicalProjectPath, localProjectRecoveryKey } from './project-identity.js'
+import {
+  captureSmartPatchModelResolver,
+  reverifyFrozenSmartPatchInput,
+} from './project-smart-patch-execution.js'
+import { SmartPatchInputBundleRepository } from './project-smart-patch-input-bundle.js'
+import { parseSmartPatchInputMaterial } from './smart-patch-frozen-input.js'
+import {
+  assertQueuedSmartPatchBundle,
+  buildFrozenQueuedSmartPatchV1,
+  isSmartPatchQueueOperation,
+  parseFrozenQueuedSmartPatchV1,
+} from './smart-patch-queued-generation.js'
 import { classifyTargetPngAlpha } from './target-png-mode.js'
 
 const MAX_TARGET_BYTES = 32 * 1024 * 1024
+const NORMAL_QUEUE_OPERATIONS = [
+  'illustrious-txt2img',
+  'illustrious-img2img',
+  'illustrious-outpaint',
+  'anima-txt2img',
+  'anima-img2img',
+  'anima-outpaint',
+] as const
 const MAX_PAYLOAD_BYTES = 128 * 1024
 const MAX_MANIFEST_BYTES = 4096
 const QUEUE_INPUT_VERSION = 1
@@ -421,6 +445,13 @@ export interface VerifiedQueuedInput {
   targetPath: string
 }
 
+/** Private durable handoff; deliberately outside the ordinary processor's accepted union. */
+export interface VerifiedQueuedSmartPatchInput {
+  bundle: SmartPatchInputBundle
+  item: QueuedGenerationItem
+  payload: FrozenQueuedSmartPatchV1
+}
+
 export interface NormalizedQueueFailure {
   code: string
   message: string
@@ -495,6 +526,9 @@ function sha256(bytes: Buffer): string {
  * commit first, then the SQLite row; startup removes unreferenced file commits after a crash.
  */
 export class GenerationQueueRepository {
+  /** A second repository's restart sweep must not race files-first admission in this process. */
+  private static readonly activeSmartPatchBundles = new Set<string>()
+  private readonly dataRoot: string
   private readonly fencedProjects = new Set<string>()
   private pendingOperation: Promise<void> = Promise.resolve()
   private readonly publicationUncertainProjects = new Set<string>()
@@ -510,6 +544,7 @@ export class GenerationQueueRepository {
       throw new GenerationQueueError('QUEUE_STORAGE_UNSAFE', 'Application data root is invalid.')
     }
     this.root = path.join(dataRoot, 'generation-inputs')
+    this.dataRoot = dataRoot
   }
 
   /** Called by the processor only after the canceled worker has actually exited. */
@@ -671,6 +706,7 @@ export class GenerationQueueRepository {
           .selectFrom('generation_queue_item')
           .selectAll()
           .where('status', '=', 'pending')
+          .where('operation', 'in', NORMAL_QUEUE_OPERATIONS)
           .orderBy('created_at', 'asc')
           .orderBy('id', 'asc')
         if (this.fencedProjects.size > 0) {
@@ -733,6 +769,8 @@ export class GenerationQueueRepository {
           .where('status', '=', 'pending')
           .where('status_sequence', '=', pending.status_sequence)
           .where('frozen_payload_json', '=', pending.frozen_payload_json)
+          .where('operation', '=', pending.operation)
+          .where('operation', 'in', NORMAL_QUEUE_OPERATIONS)
           .where(
             sql<boolean>`NOT EXISTS (
             SELECT 1 FROM generation_queue_item AS active WHERE active.status = 'running'
@@ -755,6 +793,7 @@ export class GenerationQueueRepository {
       this.assertReadyForDispatch()
       const root = await this.ensureRoot()
       const row = await this.requireRow(id)
+      const smartPatchBundles = smartPatchCleanupRefs([row])
       if (row.status_sequence !== expectedStatusSequence || !isTerminalStatus(row.status)) {
         throw statusConflict()
       }
@@ -774,9 +813,11 @@ export class GenerationQueueRepository {
       }
       await this.testHooks.afterPruneCommit?.()
       await this.cleanupPrunedInputs(root, [id])
+      await this.cleanupSmartPatchBundles(smartPatchBundles)
     })
   }
 
+  /** Call within the qualified request's scratch lease, while its target path is still valid. */
   /** Call within the qualified request's scratch lease, while its target path is still valid. */
   async enqueueIllustriousGeneration(input: {
     prepared: PreparedNormalGeneration
@@ -1583,6 +1624,175 @@ export class GenerationQueueRepository {
     })
   }
 
+  /** Private files-first admission. These jobs remain excluded from the normal dispatch owner. */
+  async enqueuePreparedSmartPatchBatch(input: {
+    assertCurrent: () => void
+    batchId?: string
+    beforeCommit?: () => Promise<void>
+    material: SmartPatchInputMaterial
+    modelService: SmartPatchExecutionModelResolver
+    projectPath: string
+    stagingSessionId: string
+  }): Promise<QueuedGenerationItem[]> {
+    if (
+      typeof input.assertCurrent !== 'function' ||
+      (input.beforeCommit !== undefined && typeof input.beforeCommit !== 'function') ||
+      !v.is(UuidSchema, input.stagingSessionId) ||
+      (input.batchId !== undefined && !v.is(UuidSchema, input.batchId))
+    ) {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'Smart Patch admission needs exact batch ownership.',
+      )
+    }
+    const assertCurrent = input.assertCurrent
+    const beforeCommit = input.beforeCommit
+    const modelService = captureSmartPatchModelResolver(input.modelService)
+    const projectPath = input.projectPath
+    const stagingSessionId = input.stagingSessionId
+    const batchId = input.batchId ?? randomUUID()
+    const captured = captureSmartPatchMaterial(input.material)
+    assertCurrent()
+    const material = await parseSmartPatchInputMaterial(captured.manifest, captured.files)
+    if (material.manifest.context.locked || !material.manifest.context.visible) {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'Locked or hidden Smart Patch targets cannot generate.',
+      )
+    }
+    return await this.serialize(async () => {
+      this.assertReadyForDispatch()
+      const canonicalPath = await canonicalProjectPath(projectPath)
+      const localProjectKey = localProjectRecoveryKey(canonicalPath)
+      if (
+        canonicalPath !== projectPath ||
+        material.manifest.context.projectKey !== localProjectKey
+      ) {
+        throw new GenerationQueueError(
+          'QUEUE_PROJECT_IDENTITY_CHANGED',
+          'The Smart Patch Project identity changed.',
+        )
+      }
+      this.assertProjectCanEnqueue(localProjectKey)
+      assertCurrent()
+      await reverifyFrozenSmartPatchInput(material, modelService)
+      this.assertProjectCanEnqueue(localProjectKey)
+      assertCurrent()
+      const bundleId = randomUUID()
+      const pin = this.smartPatchBundlePin(bundleId)
+      const repository = new SmartPatchInputBundleRepository(
+        this.dataRoot,
+        { createId: () => bundleId },
+        'queue',
+      )
+      const ids = material.manifest.items.map(() => randomUUID()).sort()
+      let bundle: SmartPatchInputBundle | undefined
+      let rows: Selectable<GenerationQueueItem>[] = []
+      GenerationQueueRepository.activeSmartPatchBundles.add(pin)
+      try {
+        bundle = await repository.publish(material)
+        const now = new Date().toISOString()
+        rows = material.manifest.items.map((_, index) => {
+          const payload = buildFrozenQueuedSmartPatchV1(bundle!, index)
+          const json = JSON.stringify(payload)
+          if (Buffer.byteLength(json, 'utf8') > MAX_PAYLOAD_BYTES) {
+            throw new GenerationQueueError(
+              'QUEUE_INPUT_INVALID',
+              'The Smart Patch queue payload is too large.',
+            )
+          }
+          return {
+            batch_id: batchId,
+            canonical_project_path: canonicalPath,
+            created_at: now,
+            document_id: payload.context.documentId,
+            document_revision: payload.context.documentRevision,
+            error_code: null,
+            error_message: null,
+            finished_at: null,
+            frozen_payload_json: json,
+            id: ids[index],
+            local_project_key: localProjectKey,
+            operation: payload.kind,
+            staging_session_id: stagingSessionId,
+            started_at: null,
+            status: 'pending',
+            status_sequence: 0,
+            updated_at: now,
+          }
+        })
+        await this.testHooks.afterInputPublish?.()
+        this.assertProjectCanEnqueue(localProjectKey)
+        assertCurrent()
+        await beforeCommit?.()
+        await reverifyFrozenSmartPatchInput(material, modelService)
+        this.assertProjectCanEnqueue(localProjectKey)
+        assertCurrent()
+        // A replaced bundle must not become authoritative merely because its old bytes qualified.
+        const reloaded = await repository.load(bundle.id)
+        if (reloaded.manifestSha256 !== bundle.manifestSha256) {
+          throw new GenerationQueueError(
+            'QUEUE_INPUT_INVALID',
+            'The queued Smart Patch bundle changed.',
+          )
+        }
+        for (const row of rows) {
+          assertQueuedSmartPatchBundle(parseSmartPatchQueueRow(row), reloaded)
+        }
+        await this.db.transaction().execute(async (transaction) => {
+          this.assertProjectCanEnqueue(localProjectKey)
+          assertCurrent()
+          for (const row of rows) {
+            await transaction.insertInto('generation_queue_item').values(row).execute()
+            this.assertProjectCanEnqueue(localProjectKey)
+          }
+          await this.testHooks.beforeBatchCommit?.()
+          this.assertProjectCanEnqueue(localProjectKey)
+          assertCurrent()
+        })
+        await this.testHooks.afterBatchCommit?.()
+        return rows.map(toItem)
+      } catch (error) {
+        if (!bundle) {
+          if (
+            error instanceof Error &&
+            'code' in error &&
+            error.code === 'SMART_PATCH_INPUT_PUBLICATION_UNCERTAIN'
+          ) {
+            this.retainUncertainSmartPatchProject(localProjectKey)
+            throw batchPublicationUncertain()
+          }
+          throw error
+        }
+        let committed: Selectable<GenerationQueueItem>[]
+        try {
+          committed = await this.db
+            .selectFrom('generation_queue_item')
+            .selectAll()
+            .where('id', 'in', ids)
+            .execute()
+        } catch {
+          this.retainUncertainSmartPatchProject(localProjectKey)
+          throw batchPublicationUncertain()
+        }
+        if (rows.length === ids.length && batchRowsMatch(committed, rows)) {
+          return rows.map((expected) => toItem(committed.find((row) => row.id === expected.id)!))
+        }
+        if (committed.length > 0) {
+          this.retainUncertainSmartPatchProject(localProjectKey)
+          throw batchPublicationUncertain()
+        }
+        await this.cleanupSmartPatchBundles(
+          [{ id: bundle.id, manifestSha256: bundle.manifestSha256 }],
+          true,
+        )
+        throw error
+      } finally {
+        GenerationQueueRepository.activeSmartPatchBundles.delete(pin)
+      }
+    })
+  }
+
   /** A worker failure is accepted only for the exact running revision it was started for. */
   async failRunning(
     id: string,
@@ -1668,6 +1878,7 @@ export class GenerationQueueRepository {
           .selectFrom('generation_queue_item')
           .select('local_project_key')
           .where('status', '=', 'pending')
+          .where('operation', 'in', NORMAL_QUEUE_OPERATIONS)
           .where(
             sql<boolean>`NOT EXISTS (
             SELECT 1 FROM generation_queue_item AS active WHERE active.status = 'running'
@@ -1808,6 +2019,21 @@ export class GenerationQueueRepository {
         .execute()
       return rows.map((row) => {
         const item = toItem(row)
+        if (isSmartPatchQueueOperation(row.operation)) {
+          const payload = parseSmartPatchQueueRow(row)
+          if (item.status !== 'pending' && item.status !== 'running') {
+            throw statusConflict()
+          }
+          return {
+            batchId: item.batchId,
+            createdAt: item.createdAt,
+            id: item.id,
+            prompt: payload.item.item.prompts.positive,
+            seed: payload.item.item.seed,
+            status: item.status,
+            statusSequence: item.statusSequence,
+          }
+        }
         const payloadBytes = Buffer.from(row.frozen_payload_json, 'utf8')
         if (payloadBytes.length > MAX_PAYLOAD_BYTES) {
           throw new GenerationQueueError(
@@ -1940,6 +2166,19 @@ export class GenerationQueueRepository {
     )
   }
 
+  async loadVerifiedSmartPatchInput(id: string): Promise<VerifiedQueuedSmartPatchInput> {
+    validateQueueId(id)
+    return await this.serialize(async () => {
+      const row = await this.requireRow(id)
+      const payload = parseSmartPatchQueueRow(row)
+      const bundle = await new SmartPatchInputBundleRepository(this.dataRoot, {}, 'queue').load(
+        payload.bundle.id,
+      )
+      assertQueuedSmartPatchBundle(payload, bundle)
+      return { bundle, item: toItem(row), payload }
+    })
+  }
+
   /** Clear selected terminal statuses; uncertain manifest-first completions remain recoverable. */
   async pruneTerminal(statuses: readonly TerminalGenerationStatus[]): Promise<number> {
     if (statuses.some((status) => !isTerminalStatus(status))) {
@@ -1952,18 +2191,32 @@ export class GenerationQueueRepository {
         return 0
       }
       const root = await this.ensureRoot()
-      const removed = await this.db
-        .deleteFrom('generation_queue_item')
-        .where('status', 'in', selected)
-        .where(noReservedReceipt())
-        .returning('id')
-        .execute()
+      const { removed, smartPatchBundles } = await this.db
+        .transaction()
+        .execute(async (transaction) => {
+          const candidates = await transaction
+            .selectFrom('generation_queue_item')
+            .selectAll()
+            .where('status', 'in', selected)
+            .where(noReservedReceipt())
+            .execute()
+          const references = smartPatchCleanupRefs(candidates)
+          const removed = await transaction
+            .deleteFrom('generation_queue_item')
+            .where('status', 'in', selected)
+            .where(noReservedReceipt())
+            .returning('id')
+            .execute()
+          // The transaction prevents another owner changing the selected references between reads.
+          return { removed, smartPatchBundles: references }
+        })
       if (removed.length > 0) {
         await this.testHooks.afterPruneCommit?.()
         await this.cleanupPrunedInputs(
           root,
           removed.map((row) => row.id),
         )
+        await this.cleanupSmartPatchBundles(smartPatchBundles)
       }
       return removed.length
     })
@@ -2021,6 +2274,12 @@ export class GenerationQueueRepository {
       }
       if (removed > 0) {
         await syncDirectory(root)
+      }
+      try {
+        const ids = await new SmartPatchInputBundleRepository(this.dataRoot, {}, 'queue').listIds()
+        removed += await this.cleanupSmartPatchBundles(ids.map((id) => ({ id })))
+      } catch {
+        warnSmartPatchCleanup()
       }
       this.reconciled = true
       this.publicationUncertainProjects.clear()
@@ -2094,6 +2353,50 @@ export class GenerationQueueRepository {
     }
   }
 
+  private async cleanupSmartPatchBundles(
+    candidates: readonly { id: string; manifestSha256?: string }[],
+    ownActivePublication = false,
+  ): Promise<number> {
+    let removed = 0
+    const repository = new SmartPatchInputBundleRepository(this.dataRoot, {}, 'queue')
+    const seen = new Set<string>()
+    for (const candidate of candidates) {
+      if (seen.has(candidate.id)) {
+        continue
+      }
+      seen.add(candidate.id)
+      if (
+        !ownActivePublication &&
+        GenerationQueueRepository.activeSmartPatchBundles.has(
+          this.smartPatchBundlePin(candidate.id),
+        )
+      ) {
+        continue
+      }
+      try {
+        if ((await this.referencedSmartPatchBundles()).has(candidate.id)) {
+          continue
+        }
+        const bundle = await repository.load(candidate.id)
+        if (
+          candidate.manifestSha256 !== undefined &&
+          candidate.manifestSha256 !== bundle.manifestSha256
+        ) {
+          throw new Error('The Smart Patch cleanup identity changed.')
+        }
+        // Bundle verification awaited; recheck SQL before the destructive exact discard.
+        if ((await this.referencedSmartPatchBundles()).has(candidate.id)) {
+          continue
+        }
+        await repository.discard(bundle.id, bundle.manifestSha256)
+        removed++
+      } catch {
+        warnSmartPatchCleanup()
+      }
+    }
+    return removed
+  }
+
   private async ensureRoot(): Promise<string> {
     const parent = path.dirname(this.root)
     const canonicalParent = await realpath(parent)
@@ -2143,6 +2446,16 @@ export class GenerationQueueRepository {
     )
   }
 
+  /** Failure to parse even one possible reference is not proof that a bundle is unowned. */
+  private async referencedSmartPatchBundles(): Promise<Set<string>> {
+    const rows = await this.db
+      .selectFrom('generation_queue_item')
+      .selectAll()
+      .where('operation', 'in', ['illustrious-smart-patch', 'anima-smart-patch'])
+      .execute()
+    return new Set(rows.map((row) => parseSmartPatchQueueRow(row).bundle.id))
+  }
+
   private async requireRow(id: string): Promise<Selectable<GenerationQueueItem>> {
     const row = await this.db
       .selectFrom('generation_queue_item')
@@ -2153,6 +2466,11 @@ export class GenerationQueueRepository {
       throw new GenerationQueueError('QUEUE_ITEM_NOT_FOUND', 'The queue item was not found.')
     }
     return row
+  }
+
+  private retainUncertainSmartPatchProject(localProjectKey: string): void {
+    this.publicationUncertainProjects.add(localProjectKey)
+    this.fencedProjects.add(localProjectKey)
   }
 
   private async retryTerminalInternal(
@@ -2170,6 +2488,12 @@ export class GenerationQueueRepository {
     return await this.serialize(async () => {
       this.assertReadyForDispatch()
       const source = await this.requireRow(id)
+      if (isSmartPatchQueueOperation(source.operation)) {
+        throw new GenerationQueueError(
+          'QUEUE_INPUT_INVALID',
+          'Smart Patch Retry requires its future dispatch owner.',
+        )
+      }
       if (
         source.status_sequence !== expectedStatusSequence ||
         (source.status !== 'failed' && source.status !== 'canceled')
@@ -2353,6 +2677,10 @@ export class GenerationQueueRepository {
     }
   }
 
+  private smartPatchBundlePin(id: string): string {
+    return path.join(this.dataRoot, 'generation-queued-inputs', 'smart-patch', id)
+  }
+
   private async verifyRow(row: Selectable<GenerationQueueItem>): Promise<VerifiedQueuedInput> {
     const verified = await this.verifyRowWithBytes(row)
     return { item: verified.item, payload: verified.payload, targetPath: verified.targetPath }
@@ -2361,6 +2689,12 @@ export class GenerationQueueRepository {
   private async verifyRowWithBytes(
     row: Selectable<GenerationQueueItem>,
   ): Promise<VerifiedQueuedInput & { targetPngBytes: Buffer }> {
+    if (isSmartPatchQueueOperation(row.operation)) {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'Smart Patch input is outside the ordinary generation owner.',
+      )
+    }
     const id = row.id
     const root = await this.ensureRoot()
     const directory = path.join(root, id)
@@ -2582,6 +2916,78 @@ export async function reverifyFrozenQueuedOutpaintGeneration(
       'The frozen outpaint infill resource changed.',
     )
   }
+}
+
+function captureSmartPatchMaterial(input: SmartPatchInputMaterial): SmartPatchInputMaterial {
+  if (!input || typeof input !== 'object' || !input.files || typeof input.files !== 'object') {
+    throw new GenerationQueueError(
+      'QUEUE_INPUT_INVALID',
+      'The Smart Patch input material is invalid.',
+    )
+  }
+  const files: Record<string, Buffer> = {}
+  for (const [name, bytes] of Object.entries(input.files)) {
+    if (!Buffer.isBuffer(bytes)) {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'Smart Patch admission requires detached input bytes.',
+      )
+    }
+    files[name] = Buffer.from(bytes)
+  }
+  return { files, manifest: structuredClone(input.manifest) }
+}
+
+function parseSmartPatchQueueRow(row: Selectable<GenerationQueueItem>): FrozenQueuedSmartPatchV1 {
+  try {
+    if (
+      !isSmartPatchQueueOperation(row.operation) ||
+      Buffer.byteLength(row.frozen_payload_json, 'utf8') > MAX_PAYLOAD_BYTES
+    ) {
+      throw new Error('Not a bounded Smart Patch queue row.')
+    }
+    const payload = parseFrozenQueuedSmartPatchV1(JSON.parse(row.frozen_payload_json))
+    if (
+      payload.kind !== row.operation ||
+      payload.context.documentId !== row.document_id ||
+      payload.context.documentRevision !== row.document_revision ||
+      payload.context.projectKey !== row.local_project_key ||
+      !path.isAbsolute(row.canonical_project_path) ||
+      path.resolve(row.canonical_project_path) !== row.canonical_project_path ||
+      localProjectRecoveryKey(row.canonical_project_path) !== row.local_project_key
+    ) {
+      throw new Error('The frozen Smart Patch queue identity changed.')
+    }
+    return payload
+  } catch {
+    throw new GenerationQueueError(
+      'QUEUE_INPUT_INVALID',
+      'The frozen Smart Patch queue input is invalid.',
+    )
+  }
+}
+
+function smartPatchCleanupRefs(
+  rows: readonly Selectable<GenerationQueueItem>[],
+): { id: string; manifestSha256: string }[] {
+  return rows.flatMap((row) => {
+    if (!isSmartPatchQueueOperation(row.operation)) {
+      return []
+    }
+    try {
+      const payload = parseSmartPatchQueueRow(row)
+      return [{ id: payload.bundle.id, manifestSha256: payload.bundle.manifestSha256 }]
+    } catch {
+      warnSmartPatchCleanup()
+      return []
+    }
+  })
+}
+
+function warnSmartPatchCleanup(): void {
+  process.emitWarning('Smart Patch queue input cleanup retained unverified or still-owned data.', {
+    code: 'SMART_PATCH_QUEUE_INPUT_CLEANUP_DEFERRED',
+  })
 }
 
 function validateQueueId(id: string): void {
@@ -3205,9 +3611,11 @@ function toManagerEntry(
     ![
       'anima-img2img',
       'anima-outpaint',
+      'anima-smart-patch',
       'anima-txt2img',
       'illustrious-img2img',
       'illustrious-outpaint',
+      'illustrious-smart-patch',
       'illustrious-txt2img',
     ].includes(row.operation) ||
     !v.is(UuidSchema, row.document_id)
@@ -3245,6 +3653,55 @@ function managerDetails(row: Selectable<GenerationQueueItem>): GenerationQueueEn
   try {
     if (Buffer.byteLength(row.frozen_payload_json, 'utf8') > MAX_PAYLOAD_BYTES) {
       return null
+    }
+    if (isSmartPatchQueueOperation(row.operation)) {
+      const payload = parseSmartPatchQueueRow(row)
+      const selected = payload.item
+      const model = payload.context.generationDraft.model
+      if (!model) {
+        return null
+      }
+      const common = {
+        modelName: model.displayName,
+        modelVersion: model.versionName,
+        negativePrompt: selected.item.prompts.negative,
+        prompt: selected.item.prompts.positive,
+        size: { height: payload.context.bbox.height, width: payload.context.bbox.width },
+      }
+      if (selected.family === 'anima') {
+        const sampling = selected.inference.sampling
+        return {
+          ...common,
+          sampling: {
+            animaMethod: sampling.scheduler,
+            cfgScale: sampling.guidanceScale,
+            ...(payload.mode !== 'txt2img' ? { denoisingStrength: sampling.strength! } : {}),
+            seed: selected.item.seed,
+            steps: sampling.steps,
+          },
+        }
+      }
+      return {
+        ...common,
+        sampling: {
+          cfgScale: selected.inference.sampling.cfgScale,
+          ...(selected.inference.sampling.cfgRescale !== undefined
+            ? { cfgRescale: selected.inference.sampling.cfgRescale }
+            : {}),
+          ...(selected.inference.sampling.denoisingStrength !== undefined
+            ? { denoisingStrength: selected.inference.sampling.denoisingStrength }
+            : {}),
+          predictionType: selected.inference.checkpoint.predictionType,
+          sampler:
+            payload.context.generationDraft.sampling.sampler ??
+            selected.inference.sampling.scheduler,
+          scheduler:
+            payload.context.generationDraft.sampling.scheduler ??
+            selected.inference.sampling.scheduler,
+          seed: selected.item.seed,
+          steps: selected.inference.sampling.steps,
+        },
+      }
     }
     const payload = parsePayload(row.frozen_payload_json)
     if (

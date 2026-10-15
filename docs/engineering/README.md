@@ -1,6 +1,28 @@
 # Engineering Workflow
 
-Current private durable-input scope:
+Current private queue-admission scope:
+[Private Smart Patch queue admission](./phase-4-smart-patch-queue-admission-research.md)
+adds real `illustrious-smart-patch` / `anima-smart-patch` pending rows to the common
+SQL queue. One independent queue-owned bundle under
+`generation-queued-inputs/smart-patch/<UUID>` serves1..32 concrete items;
+caller-owned prepared bundles remain independent. Strict DTO and actual-byte
+reload bind Project/document/layer, world/internal geometry, exact manifest and
+item index. Resource/prediction/noise policy and current unlocked+visible target
+are rechecked before atomic SQL insertion. Exact lost-ack readback confirms the
+whole batch; unknown outcomes retain files and fence the Project. Cancel and
+restart cancel unfinished jobs without replay; terminal pruning reclaims only
+an exact verified bundle after its last SQL reference. Unknown/corrupt/incomplete
+bundles are retained. Queue metadata understands both families; normal dispatch,
+ordinary Retry and normal input readers refuse these jobs before runtime use.
+This is private durable admission, not runnable public generation. No candidate,
+receipt, actual-seed cursor, variant, Project/`.igs`/provenance/preset/Compare or
+public Smart Patch Generate/acceptance UI is introduced; Retry remains explicitly
+disabled. Next: dedicated typed dispatch with worker-confirmed
+actualSeed, owned inference+CPU cancellation and independently durable world
+candidates, then immutable variant acceptance. Public PP-007/008 remain
+«Пока не обещать». Verification evidence and limits are in the linked research.
+
+Previous private durable-input scope:
 [Smart Patch durable inputs](./phase-4-smart-patch-durable-input-research.md).
 `capture.prepareBatchInput` prepares one frozen set of source/authored-mask,
 model RGB, latent KEEP and final world GENERATE pixels for1..32 caller-planned
@@ -68,7 +90,7 @@ families. These are random small native models on CPU, not trained, installed,
 GPU or full Invoke pixel-parity evidence. No Main transport/public worker command,
 queue, publication, world compositing, variants, schema or UI change is added.
 At that numerical checkpoint, the worker/Main execution bridge and resource
-admission were pending; the later bridge and current world-output scope above
+admission were pending; the later bridge and later world-output checkpoint above
 add them and private composition. Immutable variant acceptance remains separate.
 Public promise statuses stay
 unchanged; full checks and mutation evidence belong to the linked research note.

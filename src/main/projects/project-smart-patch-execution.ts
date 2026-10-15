@@ -21,6 +21,7 @@ import type {
   SmartPatchExecutionRequest,
   SmartPatchExecutionResult,
 } from './smart-patch-execution-request.js'
+import type { SmartPatchInputMaterial } from './smart-patch-frozen-input.js'
 import type { ProjectWorkerClient } from './worker-client.js'
 
 import { validateAnimaGenerationSettings } from './anima-generation-preparation.js'
@@ -173,6 +174,32 @@ export function createSmartPatchBatchModelResolver(input: SmartPatchExecutionMod
   }
 }
 
+/** Requalify frozen metadata once per exact selection, with no CPU preparation or live Project. */
+export async function reverifyFrozenSmartPatchInput(
+  material: SmartPatchInputMaterial,
+  models: SmartPatchExecutionModelResolver,
+): Promise<void> {
+  const manifest = structuredClone(material.manifest)
+  const resources = createSmartPatchBatchModelResolver(models)
+  if (
+    !Array.isArray(manifest.items) ||
+    manifest.items.length < 1 ||
+    manifest.items.length > GENERATION_BATCH_JOB_LIMIT
+  ) {
+    refuse('GENERATION_INPUT_CHANGED', 'The frozen Smart Patch item count is invalid.')
+  }
+  const prepared = { context: manifest.context, mode: manifest.mode }
+  for (const item of manifest.items) {
+    validateSmartPatchExecutionDraft(manifest.context, item.item)
+    const actual =
+      manifest.context.generationDraft.model?.baseModelFamily === 'anima'
+        ? await prepareAnimaInference(prepared, item.item, resources.models)
+        : await prepareIllustriousInference(prepared, item.item, resources.models)
+    requireUnchanged({ family: item.family, inference: item.inference }, actual)
+  }
+  await resources.reverify()
+}
+
 /** Preflight uses the authored policy for validity and the explicit item's seed for availability. */
 export function validateSmartPatchExecutionDraft(
   context: FrozenSmartPatchGenerationContext,
@@ -312,6 +339,24 @@ export async function executePreparedSmartPatch(input: {
   }
 }
 
+export function captureSmartPatchModelResolver(
+  models: SmartPatchExecutionModelResolver,
+): SmartPatchExecutionModelResolver {
+  return {
+    assertNoUnboundGenerationEmbeddings: models.assertNoUnboundGenerationEmbeddings.bind(models),
+    resolveVerifiedAnimaGenerationLoraForPlan:
+      models.resolveVerifiedAnimaGenerationLoraForPlan.bind(models),
+    resolveVerifiedGenerationAnimaBundleForPlan:
+      models.resolveVerifiedGenerationAnimaBundleForPlan.bind(models),
+    resolveVerifiedGenerationCheckpointForPlan:
+      models.resolveVerifiedGenerationCheckpointForPlan.bind(models),
+    resolveVerifiedGenerationEmbeddingForPlan:
+      models.resolveVerifiedGenerationEmbeddingForPlan.bind(models),
+    resolveVerifiedGenerationLoraForPlan: models.resolveVerifiedGenerationLoraForPlan.bind(models),
+    resolveVerifiedGenerationVaeForPlan: models.resolveVerifiedGenerationVaeForPlan.bind(models),
+  }
+}
+
 function captureSmartPatchPreparationOptions(
   input: SmartPatchPreparationOptions,
 ): SmartPatchPreparationOptions {
@@ -335,26 +380,8 @@ function captureSmartPatchPreparationOptions(
   }
 }
 
-function captureSmartPatchModelResolver(
-  models: SmartPatchExecutionModelResolver,
-): SmartPatchExecutionModelResolver {
-  return {
-    assertNoUnboundGenerationEmbeddings: models.assertNoUnboundGenerationEmbeddings.bind(models),
-    resolveVerifiedAnimaGenerationLoraForPlan:
-      models.resolveVerifiedAnimaGenerationLoraForPlan.bind(models),
-    resolveVerifiedGenerationAnimaBundleForPlan:
-      models.resolveVerifiedGenerationAnimaBundleForPlan.bind(models),
-    resolveVerifiedGenerationCheckpointForPlan:
-      models.resolveVerifiedGenerationCheckpointForPlan.bind(models),
-    resolveVerifiedGenerationEmbeddingForPlan:
-      models.resolveVerifiedGenerationEmbeddingForPlan.bind(models),
-    resolveVerifiedGenerationLoraForPlan: models.resolveVerifiedGenerationLoraForPlan.bind(models),
-    resolveVerifiedGenerationVaeForPlan: models.resolveVerifiedGenerationVaeForPlan.bind(models),
-  }
-}
-
 async function prepareIllustriousInference(
-  prepared: PreparedSmartPatchModelSourceInput,
+  prepared: Pick<PreparedSmartPatchModelSourceInput, 'context' | 'mode'>,
   item: SmartPatchExecutionItem,
   models: SmartPatchExecutionModelResolver,
 ): Promise<{
@@ -463,7 +490,7 @@ async function prepareIllustriousInference(
 }
 
 async function prepareAnimaInference(
-  prepared: PreparedSmartPatchModelSourceInput,
+  prepared: Pick<PreparedSmartPatchModelSourceInput, 'context' | 'mode'>,
   item: SmartPatchExecutionItem,
   models: SmartPatchExecutionModelResolver,
 ): Promise<{

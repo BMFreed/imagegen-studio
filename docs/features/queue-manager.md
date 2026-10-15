@@ -256,6 +256,29 @@ Startup recovery:
 - terminal queue history may be pruned by retention policy;
 - queue-history pruning must not remove valid completed candidate recovery.
 
+## Private Smart Patch admission boundary
+
+[Private Smart Patch queue admission](../engineering/phase-4-smart-patch-queue-admission-research.md)
+adds real `illustrious-smart-patch` / `anima-smart-patch` pending rows to the common
+SQL queue. One independent queue-owned bundle under
+`generation-queued-inputs/smart-patch/<UUID>` serves1..32 concrete items;
+caller-owned prepared bundles remain independent. Strict DTO and actual-byte
+reload bind Project/document/layer, world/internal geometry, exact manifest and
+item index. Resource/prediction/noise policy and current unlocked+visible target
+are rechecked before atomic SQL insertion. Exact lost-ack readback confirms the
+whole batch; unknown outcomes retain files and fence the Project. Cancel and
+restart cancel unfinished jobs without replay; terminal pruning reclaims only
+an exact verified bundle after its last SQL reference. Unknown/corrupt/incomplete
+bundles are retained. Queue metadata understands both families; normal dispatch,
+ordinary Retry and normal input readers refuse these jobs before runtime use.
+This is private durable admission, not runnable public generation. No candidate,
+receipt, actual-seed cursor, variant, Project/`.igs`/provenance/preset/Compare or
+public Smart Patch Generate/acceptance UI is introduced; Retry remains explicitly
+disabled. Next: dedicated typed dispatch with worker-confirmed
+actualSeed, owned inference+CPU cancellation and independently durable world
+candidates, then immutable variant acceptance. Public PP-007/008 remain
+«Пока не обещать». Verification evidence and limits are in the linked research.
+
 ## Historical boundary: Phase 2B private processor checkpoint
 
 Main now stores one frozen Illustrious `txt2img` input and a SQLite `pending`

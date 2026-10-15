@@ -381,6 +381,24 @@ export class ProjectService {
     return toTab(tabId, coordinator)
   }
 
+  /** Synchronous permission check at the private Smart Patch SQL admission boundary. */
+  assertSmartPatchGenerationAdmission(tabId: string, documentId: string, layerId: string): void {
+    const document = this.requireTab(tabId).document
+    if (document.documentId !== documentId) {
+      throw new ProjectServiceError(
+        'PROJECT_IDENTITY_MISMATCH',
+        'The captured Smart Patch belongs to another Project document.',
+      )
+    }
+    const patch = requireSmartPatch(document, layerId)
+    if (patch.locked) {
+      throw new ProjectServiceError('PROJECT_LAYER_LOCKED', 'Unlock this Smart Patch to generate.')
+    }
+    if (!patch.visible) {
+      throw new ProjectServiceError('PROJECT_LAYER_HIDDEN', 'Show this Smart Patch to generate.')
+    }
+  }
+
   /** Cancel never changes the chosen external file or the managed workspace. */
   cancelImport(importId: string): void {
     this.pendingImports.delete(importId)

@@ -127,7 +127,30 @@ Variant lifecycle, staleness/compositing/comparison and Patch presets remain
 subsequent owners; existing authoring evidence and public promise statuses stay
 unchanged.
 
-## Current private durable-input scope
+## Current private SQL admission scope
+
+[Private Smart Patch queue admission](../../../engineering/phase-4-smart-patch-queue-admission-research.md)
+adds real `illustrious-smart-patch` / `anima-smart-patch` pending rows to the common
+SQL queue. One independent queue-owned bundle under
+`generation-queued-inputs/smart-patch/<UUID>` serves1..32 concrete items;
+caller-owned prepared bundles remain independent. Strict DTO and actual-byte
+reload bind Project/document/layer, world/internal geometry, exact manifest and
+item index. Resource/prediction/noise policy and current unlocked+visible target
+are rechecked before atomic SQL insertion. Exact lost-ack readback confirms the
+whole batch; unknown outcomes retain files and fence the Project. Cancel and
+restart cancel unfinished jobs without replay; terminal pruning reclaims only
+an exact verified bundle after its last SQL reference. Unknown/corrupt/incomplete
+bundles are retained. Queue metadata understands both families; normal dispatch,
+ordinary Retry and normal input readers refuse these jobs before runtime use.
+This is private durable admission, not runnable public generation. No candidate,
+receipt, actual-seed cursor, variant, Project/`.igs`/provenance/preset/Compare or
+public Smart Patch Generate/acceptance UI is introduced; Retry remains explicitly
+disabled. Next: dedicated typed dispatch with worker-confirmed
+actualSeed, owned inference+CPU cancellation and independently durable world
+candidates, then immutable variant acceptance. Public PP-007/008 remain
+«Пока не обещать». Verification evidence and limits are in the linked research.
+
+## Previous private durable-input scope
 
 [Durable input preparation](../../../engineering/phase-4-smart-patch-durable-input-research.md)
 adds `capture.prepareBatchInput` for1..32 already concrete prompt/seed items. One
@@ -215,7 +238,7 @@ for both families. These random small CPU-native models do not qualify trained,
 installed, GPU or full Invoke pixel parity. No Main transport/public worker
 command, queue/publication, world compositing, immutable variants, schema, preset,
 Compare or UI behavior is added at that numerical checkpoint. The later bridge
-above adds worker/Main transport and resource admission; the current world-output
+above adds worker/Main transport and resource admission; the later world-output
 scope adds private composition. Immutable acceptance remains a subsequent owner.
 PP-007/008 public readiness remains unchanged; further checks/mutation evidence
 are recorded separately in the linked research note.
@@ -242,7 +265,7 @@ The six conditioning planes remain separate. No `.igs` state/schema,UI,jobs,
 diffusion/VAE,candidates,accepted variants,provenance or preset/Compare fields are
 added. Prototype source/infill controls and accepted-variant lifecycle are not
 qualified by this private operation. At that checkpoint model-source RGB did not
-prove Smart Patch diffusion readiness; the current private adapter above now
+prove Smart Patch diffusion readiness; the later private adapter above now
 defines the all255 latent-coverage policy without adding a public execution path.
 
 ## Previous qualified owned coherence scope: controls,persistence and capture

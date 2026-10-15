@@ -701,3 +701,89 @@ test('incomplete reservations stay untouched across new repository owners and un
     }
   })
 })
+
+test('queue-owned publication is independent of prepared storage even when namespace UUIDs collide', async () => {
+  await fixture(async ({ dataRoot }) => {
+    const id = randomUUID()
+    const material = await literalPreparedSmartPatchInputMaterial()
+    const queue = new SmartPatchInputBundleRepository(dataRoot, { createId: () => id }, 'queue')
+    const prepared = new SmartPatchInputBundleRepository(dataRoot, { createId: () => id })
+    const queued = await queue.publish(material)
+    const queueRoot = path.join(dataRoot, 'generation-queued-inputs', 'smart-patch')
+    assert.equal(existsSync(repositoryRoot(dataRoot)), false)
+    await assert.rejects(prepared.load(id), { code: 'SMART_PATCH_INPUT_NOT_FOUND' })
+    await assert.rejects(prepared.discard(id, queued.manifestSha256), {
+      code: 'SMART_PATCH_INPUT_NOT_FOUND',
+    })
+    assert.deepEqual(materialSummary(await queue.load(id)), materialSummary(material))
+    const caller = await prepared.publish(material)
+    assert.equal(caller.id, queued.id, 'The same UUID is reserved independently in each namespace')
+    assert.deepEqual(await queue.listIds(), [id])
+    assert.deepEqual(await prepared.listIds(), [id])
+    await prepared.discard(caller.id, caller.manifestSha256)
+    assert.deepEqual(await prepared.listIds(), [])
+    assert.deepEqual(materialSummary(await queue.load(id)), materialSummary(material))
+    assert.ok(existsSync(path.join(queueRoot, id, 'manifest.json')))
+    await queue.discard(id, queued.manifestSha256)
+    assert.deepEqual(await queue.listIds(), [])
+    assert.equal(existsSync(path.join(dataRoot, 'generation-inputs')), false)
+  })
+})
+
+test('queue identity enumeration skips links, unknown names and partial reservations without changing disk', async () => {
+  await fixture(async ({ dataRoot, root }) => {
+    const queue = new SmartPatchInputBundleRepository(dataRoot, {}, 'queue')
+    const queueRoot = path.join(dataRoot, 'generation-queued-inputs', 'smart-patch')
+    assert.deepEqual(await queue.listIds(), [])
+    assert.equal(existsSync(queueRoot), false, 'Enumeration does not create a namespace')
+    const healthy = await queue.publish(await literalPreparedSmartPatchInputMaterial())
+    const outside = path.join(root, 'outside')
+    await mkdir(outside, { mode: 0o700 })
+    await writeFile(path.join(outside, 'foreign.txt'), 'preserved outside data', { mode: 0o600 })
+    await symlink(outside, path.join(queueRoot, randomUUID()))
+    await symlink(outside, path.join(queueRoot, 'unknown-link'))
+    await mkdir(path.join(queueRoot, 'unknown-directory'), { mode: 0o700 })
+    await mkdir(path.join(queueRoot, `.tmp-${randomUUID()}`), { mode: 0o700 })
+    await writeFile(path.join(queueRoot, randomUUID()), 'not a directory', { mode: 0o600 })
+    const partial = path.join(queueRoot, randomUUID())
+    await mkdir(partial, { mode: 0o700 })
+    await writeFile(path.join(partial, 'source.png'), 'no commit marker', { mode: 0o600 })
+    const unsafe = path.join(queueRoot, randomUUID())
+    await mkdir(unsafe, { mode: 0o700 })
+    await chmod(unsafe, 0o755)
+    const linkedMarker = path.join(queueRoot, randomUUID())
+    await mkdir(linkedMarker, { mode: 0o700 })
+    await writeFile(path.join(linkedMarker, 'manifest.json'), '{}', { mode: 0o600 })
+    await link(
+      path.join(linkedMarker, 'manifest.json'),
+      path.join(queueRoot, '.retained-manifest.tmp'),
+    )
+    const before = (await readdir(queueRoot)).sort()
+    assert.deepEqual(await queue.listIds(), [healthy.id])
+    assert.deepEqual((await readdir(queueRoot)).sort(), before)
+    assert.equal(
+      await readFile(path.join(outside, 'foreign.txt'), 'utf8'),
+      'preserved outside data',
+    )
+    assert.equal(await readFile(path.join(partial, 'source.png'), 'utf8'), 'no commit marker')
+    assert.equal((await lstat(path.join(linkedMarker, 'manifest.json'))).nlink, 2)
+    assert.deepEqual(materialSummary(await queue.load(healthy.id)), materialSummary(healthy))
+  })
+})
+
+test('queue namespace enumeration refuses a symlinked storage ancestor and preserves the target', async () => {
+  await fixture(async ({ dataRoot, root }) => {
+    const outside = path.join(root, 'outside')
+    await mkdir(outside, { mode: 0o700 })
+    await writeFile(path.join(outside, 'foreign.txt'), 'never scan this tree', { mode: 0o600 })
+    await symlink(outside, path.join(dataRoot, 'generation-queued-inputs'))
+    const queue = new SmartPatchInputBundleRepository(dataRoot, {}, 'queue')
+    await assert.rejects(queue.listIds(), { code: 'SMART_PATCH_INPUT_STORAGE_UNSAFE' })
+    await assert.rejects(queue.publish(await literalPreparedSmartPatchInputMaterial()), {
+      code: 'SMART_PATCH_INPUT_STORAGE_UNSAFE',
+    })
+    assert.deepEqual(await readdir(outside), ['foreign.txt'])
+    assert.equal(await readFile(path.join(outside, 'foreign.txt'), 'utf8'), 'never scan this tree')
+    assert.equal(existsSync(repositoryRoot(dataRoot)), false)
+  })
+})

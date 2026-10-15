@@ -11,6 +11,9 @@ export function outpaintQueueRetryReason(
   operation: GenerationQueueEntry['operation'],
   state: OutpaintRetryState | null,
 ): string | null {
+  if (operation === 'illustrious-smart-patch' || operation === 'anima-smart-patch') {
+    return 'Smart Patch queue execution and retry are not available yet.'
+  }
   if (operation !== 'illustrious-outpaint' && operation !== 'anima-outpaint') {
     return null
   }

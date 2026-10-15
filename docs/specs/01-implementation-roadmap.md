@@ -2413,7 +2413,29 @@ Result` переносит фактический expanded prompt и portable ge
 
 ## Фаза 4. Полный Canvas и Smart Patch Layer
 
-**Текущий private durable-input scope:**
+**Текущий private SQL queue-admission scope:**
+[Private Smart Patch queue admission](../engineering/phase-4-smart-patch-queue-admission-research.md)
+adds real `illustrious-smart-patch` / `anima-smart-patch` pending rows to the common
+SQL queue. One independent queue-owned bundle under
+`generation-queued-inputs/smart-patch/<UUID>` serves1..32 concrete items;
+caller-owned prepared bundles remain independent. Strict DTO and actual-byte
+reload bind Project/document/layer, world/internal geometry, exact manifest and
+item index. Resource/prediction/noise policy and current unlocked+visible target
+are rechecked before atomic SQL insertion. Exact lost-ack readback confirms the
+whole batch; unknown outcomes retain files and fence the Project. Cancel and
+restart cancel unfinished jobs without replay; terminal pruning reclaims only
+an exact verified bundle after its last SQL reference. Unknown/corrupt/incomplete
+bundles are retained. Queue metadata understands both families; normal dispatch,
+ordinary Retry and normal input readers refuse these jobs before runtime use.
+This is private durable admission, not runnable public generation. No candidate,
+receipt, actual-seed cursor, variant, Project/`.igs`/provenance/preset/Compare or
+public Smart Patch Generate/acceptance UI is introduced; Retry remains explicitly
+disabled. Next: dedicated typed dispatch with worker-confirmed
+actualSeed, owned inference+CPU cancellation and independently durable world
+candidates, then immutable variant acceptance. Public PP-007/008 remain
+«Пока не обещать». Verification evidence and limits are in the linked research.
+
+**Предыдущий private durable-input scope:**
 [Smart Patch durable inputs](../engineering/phase-4-smart-patch-durable-input-research.md)
 добавляет `capture.prepareBatchInput` и отдельный app-owned input bundle до SQL
 admission.1..32 caller-planned concrete items делят frozen source/authored mask,
@@ -2484,7 +2506,7 @@ native CPU models,не trained/installed/GPU/full Invoke pixel parity. Нет Ma
 transport/public worker command,queue,publication,world compositing,variants,
 schema/UI changes или повышения public readiness. Full checks/mutations
 фиксируются отдельно в linked research. Bridge/resource admission были следующим
-owner на том numerical checkpoint; later bridge и текущий world-output scope
+owner на том numerical checkpoint; later bridge и последующий world-output checkpoint
 выше добавляют их и private composition. Immutable variants остаются отдельным owner.
 
 **Предыдущий qualified private Main/CPU model-source scope:**
@@ -2501,7 +2523,7 @@ build и worker Ruff/basedpyright PASS;границы evidence записаны 
 Нет `.igs` state/schema/UI changes,jobs,diffusion/variants,
 provenance/presets/Compare/public Generate. Prototype mocks не меняются и не
 доказывают source/infill или acceptance. Этот source checkpoint ещё не
-квалифицировал family VAE/denoising;current numerical adapter выше закрывает
+квалифицировал family VAE/denoising;later numerical adapter выше закрывает
 all255 policy. Текущий scope выше добавляет execution bridge/resource admission;
 immutable variant acceptance остаётся отдельным owner.
 

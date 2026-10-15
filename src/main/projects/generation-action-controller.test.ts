@@ -4268,3 +4268,58 @@ test('noise policy changes cause preserving public frozen Retry refusal; exact r
     assert.equal(runtime.generated[1].job.sampling.noiseProfile?.timestepSpacing, 'trailing')
   })
 })
+
+test('public Retry refuses private Smart Patch kinds before ordinary frozen input or runtime acquisition', async () => {
+  await withFixture(async (f) => {
+    const { controller, database, documentId, projects, runtime, tabId } = f
+    await projects.updateGenerationDraft(tabId, {
+      kind: 'positive-prompt',
+      text: 'private queue gate',
+    })
+    runtime.beforeGenerate = async () => {
+      throw new Error('Controlled terminal neighbor')
+    }
+    await controller.generate(tabId, { documentId, iterations: 1 })
+    await waitForState(controller, tabId, (state) => state.phase === 'idle')
+    const source = (await controller.getQueue()).items[0]
+    assert.equal(source.status, 'failed')
+    const originals = await database.db
+      .selectFrom('generation_queue_item')
+      .selectAll()
+      .orderBy('id')
+      .execute()
+    const original = originals.find((row) => row.id === source.id)!
+    const generated = runtime.generated.length
+    const admissions = runtime.admissionCount
+    for (const operation of ['illustrious-smart-patch', 'anima-smart-patch']) {
+      // Deliberately unparseable payload proves the private operation gate precedes normal parsing.
+      await database.db
+        .updateTable('generation_queue_item')
+        .set({ frozen_payload_json: '{}', operation })
+        .where('id', '=', source.id)
+        .execute()
+      await assert.rejects(controller.retryJob(source), { code: 'GENERATION_RUNTIME_UNAVAILABLE' })
+      assert.equal(runtime.admissionCount, admissions)
+      const rows = await database.db
+        .selectFrom('generation_queue_item')
+        .selectAll()
+        .orderBy('id')
+        .execute()
+      assert.deepEqual(
+        rows,
+        originals.map((row) =>
+          row.id === source.id ? { ...row, frozen_payload_json: '{}', operation } : row,
+        ),
+      )
+    }
+    await database.db
+      .updateTable('generation_queue_item')
+      .set({ frozen_payload_json: original.frozen_payload_json, operation: original.operation })
+      .where('id', '=', source.id)
+      .execute()
+    runtime.beforeGenerate = null
+    await controller.retryJob(source)
+    await waitForState(controller, tabId, (state) => state.phase === 'idle')
+    assert.equal(runtime.generated.length, generated + 1)
+  })
+})

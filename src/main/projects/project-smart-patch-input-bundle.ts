@@ -19,6 +19,7 @@ export interface SmartPatchInputBundle extends SmartPatchInputMaterial {
   /** Identity of the exact committed manifest bytes, suitable for an explicit exact discard. */
   manifestSha256: string
 }
+export type SmartPatchInputBundleNamespace = 'prepared' | 'queue'
 /** Fault hooks surround actual filesystem boundaries; no fake storage replaces the repository. */
 export interface SmartPatchInputBundleTestHooks {
   afterManifestPublication?: (input: { bundlePath: string; id: string }) => Promise<void>
@@ -71,11 +72,19 @@ export class SmartPatchInputBundleRepository {
   constructor(
     private readonly dataRoot: string,
     private readonly hooks: SmartPatchInputBundleTestHooks = {},
+    namespace: SmartPatchInputBundleNamespace = 'prepared',
   ) {
     if (!path.isAbsolute(dataRoot) || path.resolve(dataRoot) !== dataRoot) {
       throw unsafe('The application data root must be canonical and absolute.')
     }
-    this.root = path.join(dataRoot, 'generation-prepared-inputs', 'smart-patch')
+    if (namespace !== 'prepared' && namespace !== 'queue') {
+      throw unsafe('The Smart Patch input namespace is invalid.')
+    }
+    this.root = path.join(
+      dataRoot,
+      namespace === 'queue' ? 'generation-queued-inputs' : 'generation-prepared-inputs',
+      'smart-patch',
+    )
   }
 
   /** Exact explicit discard only. Missing/corrupt/replaced or foreign bundles are never swept. */
@@ -116,6 +125,51 @@ export class SmartPatchInputBundleRepository {
       await assertDirectoryIdentity(bundlePath, directory)
       await rmdir(bundlePath)
       await this.syncDirectory(this.root, id, 'discard-parent')
+    })
+  }
+
+  /**
+   * Enumerate direct committed-looking identities only, without following links or changing disk.
+   * This is not qualification or permission to delete: queue GC must load and exact-discard each
+   * unreferenced bundle. Unknown, partial and crash-window entries remain retained for review.
+   */
+  async listIds(): Promise<string[]> {
+    return await this.serialize(async () => {
+      try {
+        await this.storageRoot(false, '')
+      } catch (error) {
+        if (
+          error instanceof SmartPatchInputBundleError &&
+          error.code === 'SMART_PATCH_INPUT_NOT_FOUND'
+        ) {
+          return []
+        }
+        throw error
+      }
+      const root = await ownedDirectory(this.root)
+      const ids: string[] = []
+      for (const name of await readdir(this.root)) {
+        if (!UUID.test(name)) {
+          continue
+        }
+        const directory = path.join(this.root, name)
+        try {
+          const identity = await ownedDirectory(directory)
+          const manifest = await ownedRegularFile(path.join(directory, MANIFEST))
+          if (manifest.size < 1n || manifest.size > BigInt(MAX_MANIFEST_BYTES)) {
+            continue
+          }
+          await assertDirectoryIdentity(directory, identity)
+          ids.push(name)
+        } catch (error) {
+          if (error instanceof SmartPatchInputBundleError || hasCode(error, 'ENOENT')) {
+            continue
+          }
+          throw error
+        }
+      }
+      await assertDirectoryIdentity(this.root, root)
+      return ids.sort()
     })
   }
 
@@ -281,7 +335,7 @@ export class SmartPatchInputBundleRepository {
       throw unsafe('The application data root is not an owned canonical directory.')
     }
     let parent = this.dataRoot
-    for (const name of ['generation-prepared-inputs', 'smart-patch']) {
+    for (const name of [path.basename(path.dirname(this.root)), 'smart-patch']) {
       const directory = path.join(parent, name)
       if (create) {
         try {

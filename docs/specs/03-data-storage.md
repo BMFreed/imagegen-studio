@@ -363,7 +363,30 @@ write. No accepted variant/provenance/preset/Compare field or schema version is
 introduced by this slice. Relevant future coherence metadata belongs to immutable
 layer/source context for staleness,not reusable generation configuration.
 
-### Smart Patch private execution material
+### Smart Patch private SQL queue material
+
+[Private Smart Patch queue admission](../engineering/phase-4-smart-patch-queue-admission-research.md)
+adds real `illustrious-smart-patch` / `anima-smart-patch` pending rows to the common
+SQL queue. One independent queue-owned bundle under
+`generation-queued-inputs/smart-patch/<UUID>` serves1..32 concrete items;
+caller-owned prepared bundles remain independent. Strict DTO and actual-byte
+reload bind Project/document/layer, world/internal geometry, exact manifest and
+item index. Resource/prediction/noise policy and current unlocked+visible target
+are rechecked before atomic SQL insertion. Exact lost-ack readback confirms the
+whole batch; unknown outcomes retain files and fence the Project. Cancel and
+restart cancel unfinished jobs without replay; terminal pruning reclaims only
+an exact verified bundle after its last SQL reference. Unknown/corrupt/incomplete
+bundles are retained. Queue metadata understands both families; normal dispatch,
+ordinary Retry and normal input readers refuse these jobs before runtime use.
+This is private durable admission, not runnable public generation. No candidate,
+receipt, actual-seed cursor, variant, Project/`.igs`/provenance/preset/Compare or
+public Smart Patch Generate/acceptance UI is introduced; Retry remains explicitly
+disabled. Next: dedicated typed dispatch with worker-confirmed
+actualSeed, owned inference+CPU cancellation and independently durable world
+candidates, then immutable variant acceptance. Public PP-007/008 remain
+«Пока не обещать». Verification evidence and limits are in the linked research.
+
+### Previous Smart Patch private execution material
 
 [Private durable Smart Patch inputs](../engineering/phase-4-smart-patch-durable-input-research.md)
 adds a separate local `generation-prepared-inputs/smart-patch/<UUID>` owner before
@@ -439,7 +462,7 @@ Focused72 Python PASS covers65 real tiny native family cases and seven actual CP
 protocol preparation-to-adapter cases. Six solvers/family and Illustrious EPS/V
 are numerical CPU evidence, not trained/installed/GPU or public persistence proof.
 At that numerical checkpoint the worker/Main execution bridge/resource admission
-was pending; the later bridge above adds it, and the current world-output scope
+was pending; the later bridge above adds it, and the later world-output checkpoint
 adds private composition. Immutable variant lifecycle remains a future owner;
 public statuses stay unchanged.
 

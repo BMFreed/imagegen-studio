@@ -40,6 +40,10 @@ import type {
 } from './worker-client.js'
 
 import { openAppDatabase } from '../db/database.js'
+import { recoverGenerationRepositories } from './generation-bootstrap.js'
+import { GenerationOrchestrator } from './generation-orchestrator.js'
+import { GenerationProcessor } from './generation-processor.js'
+import { GenerationQueueRepository } from './generation-queue.js'
 import { readIgsPackage, saveIgsPackage } from './igs-package.js'
 import { ProjectAutosaveLeaseRegistry } from './project-autosave.js'
 import { ProjectIndexRepository } from './project-index.js'
@@ -1964,3 +1968,191 @@ for (const family of ['illustrious', 'anima'] as const) {
     })
   })
 }
+
+for (const family of ['illustrious', 'anima'] as const) {
+  test(`actual ${family} captured CPU inputs enter private SQL admission and survive queue reload without ordinary dispatch`, async () => {
+    await fixture(options(family, 'inpaint'), async (f) => {
+      const before = await state(f)
+      const input = batchInputOptions(f, family)
+      const material = await f.service.withCapturedSmartPatchGenerationInput(
+        f.tabId,
+        f.patch.id,
+        (capture) => capture.prepareBatchInput(input),
+      )
+      const expected = structuredClone(material.manifest)
+      const root = path.dirname(f.scratch)
+      const { queue, staging } = await recoverGenerationRepositories(f.database, root)
+      const processor = new GenerationProcessor(queue, staging, input.modelService, f.scratch)
+      const orchestrator = new GenerationOrchestrator(
+        f.service,
+        new ProjectIndexRepository(f.database.db),
+        input.modelService,
+        queue,
+        staging,
+        processor,
+        f.scratch,
+      )
+      const admitted = await orchestrator.enqueuePreparedSmartPatchBatch(f.tabId, material)
+      assert.equal(admitted.length, 2)
+      assert.equal(new Set(admitted.map((row) => row.batchId)).size, 1)
+      assert.ok(admitted.every((row) => row.status === 'pending'))
+      assert.ok(
+        (await queue.listManagerPage()).items.every(
+          (row) => row.operation === `${family}-smart-patch`,
+        ),
+      )
+      material.files['source.png'].fill(0)
+      material.manifest.items[0].item.seed = 99
+      const fresh = new GenerationQueueRepository(f.database.db, root)
+      for (const [index, row] of admitted.entries()) {
+        const loaded = await fresh.loadVerifiedSmartPatchInput(row.id)
+        assert.deepEqual(loaded.bundle.manifest, expected)
+        assert.equal(loaded.payload.bundle.itemIndex, index)
+      }
+      assert.equal(await queue.hasDispatchablePending(), false)
+      assert.equal(await queue.claimNextPending(), null)
+      assert.deepEqual(await staging.listVerifiedCandidates(f.tabId), [])
+      const after = await state(f)
+      assert.equal(after.queue.length, 2)
+      assert.deepEqual({ ...after, queue: before.queue }, before)
+      await fresh.recoverAfterRestart()
+      for (const row of admitted) {
+        const recovered = await fresh.getManagerEntry(row.id)
+        assert.equal(recovered.status, 'canceled')
+        assert.equal(recovered.error?.code, 'APP_RESTART')
+      }
+      assert.equal(await fresh.pruneTerminal(['canceled']), 2)
+      await unchanged(f, before)
+    })
+  })
+}
+
+for (const permission of ['lock', 'visibility'] as const) {
+  test(`real Smart Patch admission refuses a late ${permission} change at final SQL boundary`, async () => {
+    await fixture(options('illustrious', 'inpaint'), async (f) => {
+      const material = await f.service.withCapturedSmartPatchGenerationInput(
+        f.tabId,
+        f.patch.id,
+        (capture) => capture.prepareBatchInput(batchInputOptions(f, 'illustrious')),
+      )
+      const { queue, staging } = await recoverGenerationRepositories(
+        f.database,
+        path.dirname(f.scratch),
+      )
+      let calls = 0
+      const models = modelService('illustrious', async () => {
+        if (++calls === 3) {
+          await f.service.updateSmartPatchLayer(
+            f.tabId,
+            f.patch.id,
+            permission === 'lock'
+              ? { kind: 'lock', locked: true }
+              : { kind: 'visibility', visible: false },
+          )
+        }
+      })
+      const processor = new GenerationProcessor(queue, staging, models, f.scratch)
+      const orchestrator = new GenerationOrchestrator(
+        f.service,
+        new ProjectIndexRepository(f.database.db),
+        models,
+        queue,
+        staging,
+        processor,
+        f.scratch,
+      )
+      await assert.rejects(orchestrator.enqueuePreparedSmartPatchBatch(f.tabId, material), {
+        code: permission === 'lock' ? 'PROJECT_LAYER_LOCKED' : 'PROJECT_LAYER_HIDDEN',
+      })
+      assert.ok(calls >= 3)
+      assert.deepEqual(
+        await f.database.db.selectFrom('generation_queue_item').selectAll().execute(),
+        [],
+      )
+      assert.deepEqual(
+        await readdir(
+          path.join(path.dirname(f.scratch), 'generation-queued-inputs', 'smart-patch'),
+        ),
+        [],
+      )
+      assert.deepEqual(await staging.listVerifiedCandidates(f.tabId), [])
+      await f.service.updateSmartPatchLayer(
+        f.tabId,
+        f.patch.id,
+        permission === 'lock'
+          ? { kind: 'lock', locked: false }
+          : { kind: 'visibility', visible: true },
+      )
+      const neighbor = await orchestrator.enqueuePreparedSmartPatchBatch(f.tabId, material)
+      assert.equal(neighbor.length, 2)
+    })
+  })
+}
+
+test('orchestrator cancels only its new Smart Patch batch after a target becomes hidden just after SQL commit', async () => {
+  await fixture(options('illustrious', 'inpaint'), async (f) => {
+    const material = await f.service.withCapturedSmartPatchGenerationInput(
+      f.tabId,
+      f.patch.id,
+      (capture) => capture.prepareBatchInput(batchInputOptions(f, 'illustrious')),
+    )
+    const root = path.dirname(f.scratch)
+    const { staging } = await recoverGenerationRepositories(f.database, root)
+    let hide = true
+    const queue = new GenerationQueueRepository(f.database.db, root, {
+      afterBatchCommit: async () => {
+        if (hide) {
+          await f.service.updateSmartPatchLayer(f.tabId, f.patch.id, {
+            kind: 'visibility',
+            visible: false,
+          })
+        }
+      },
+    })
+    await queue.recoverAfterRestart()
+    const models = modelService('illustrious')
+    const orchestrator = new GenerationOrchestrator(
+      f.service,
+      new ProjectIndexRepository(f.database.db),
+      models,
+      queue,
+      staging,
+      new GenerationProcessor(queue, staging, models, f.scratch),
+      f.scratch,
+    )
+    assert.throws(
+      () => f.service.assertSmartPatchGenerationAdmission(f.tabId, randomUUID(), f.patch.id),
+      { code: 'PROJECT_IDENTITY_MISMATCH' },
+    )
+    assert.throws(
+      () =>
+        f.service.assertSmartPatchGenerationAdmission(
+          f.tabId,
+          material.manifest.context.documentId,
+          f.source.id,
+        ),
+      { code: 'PROJECT_LAYER_NOT_FOUND' },
+    )
+    await assert.rejects(orchestrator.enqueuePreparedSmartPatchBatch(f.tabId, material), {
+      code: 'PROJECT_LAYER_HIDDEN',
+    })
+    const canceled = await queue.listManagerPage()
+    assert.equal(canceled.items.length, 2)
+    assert.ok(
+      canceled.items.every(
+        (item) => item.status === 'canceled' && item.error?.code === 'USER_CANCELED',
+      ),
+    )
+    hide = false
+    await f.service.updateSmartPatchLayer(f.tabId, f.patch.id, {
+      kind: 'visibility',
+      visible: true,
+    })
+    const neighbor = await orchestrator.enqueuePreparedSmartPatchBatch(f.tabId, material)
+    assert.ok(neighbor.every((item) => item.status === 'pending'))
+    for (const row of canceled.items) {
+      assert.equal((await queue.getManagerEntry(row.id)).status, 'canceled')
+    }
+    assert.deepEqual(await staging.listVerifiedCandidates(f.tabId), [])
+  })
+})
