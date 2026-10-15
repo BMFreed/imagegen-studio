@@ -121,7 +121,32 @@ Variant lifecycle, staleness/compositing/comparison and Patch presets remain
 subsequent owners; existing authoring evidence and public promise statuses stay
 unchanged.
 
-## Current private model-source scope: RGB preparation and LaMa
+## Current private execution scope: family VAE and denoising
+
+[Denoising research](../../../engineering/phase-4-smart-patch-denoising-research.md)
+qualifies private numerical adapters for prepared RGB and independent numeric
+latent KEEP images, using caller-owned loaded native models. TXT/IMG retain the
+ordinary route; INP/OUT use the existing masked family route. Source alpha is not
+reclassified, masks/coherence and LaMa are not rebuilt, and pixels are not pasted
+back into the document. Source/mask buffers are detached before native callbacks.
+
+If reduction removes latent edit coverage (KEEP all255), VAE and denoising still
+execute as in Invoke with fully protected latents and the same frozen world mode.
+There is no refusal, fallback or invented mask coverage. The result is a VAE
+reconstruction, not new generated detail for the lost tiny edit.
+
+Focused72 Python PASS:65 real tiny native family cases plus seven actual CPU
+protocol preparation-to-adapter cases. The finite matrix covers six solvers per
+family and Illustrious EPS/V; actual prepared INP uses world128/internal64/Euler
+for both families. These random small CPU-native models do not qualify trained,
+installed, GPU or full Invoke pixel parity. No Main transport/public worker
+command, queue/publication, world compositing, immutable variants, schema, preset,
+Compare or UI behavior is added. The private worker/Main execution bridge/resource
+admission, world composition and immutable acceptance remain subsequent owners.
+PP-007/008 public readiness remains unchanged; further checks/mutation evidence
+are recorded separately in the linked research note.
+
+## Previous private model-source scope: RGB preparation and LaMa
 
 [Model-source research](../../../engineering/phase-4-smart-patch-model-source-research.md)
 qualifies actual Main `prepareModelSource` through source composition,preparation,
@@ -142,8 +167,9 @@ the linked note.
 The six conditioning planes remain separate. No `.igs` state/schema,UI,jobs,
 diffusion/VAE,candidates,accepted variants,provenance or preset/Compare fields are
 added. Prototype source/infill controls and accepted-variant lifecycle are not
-qualified by this private operation. Latent-coverage admission is a separate
-future decision;model-source RGB does not prove Smart Patch diffusion readiness.
+qualified by this private operation. At that checkpoint model-source RGB did not
+prove Smart Patch diffusion readiness; the current private adapter above now
+defines the all255 latent-coverage policy without adding a public execution path.
 
 ## Previous qualified owned coherence scope: controls,persistence and capture
 

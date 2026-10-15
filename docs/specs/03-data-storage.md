@@ -360,7 +360,25 @@ write. No accepted variant/provenance/preset/Compare field or schema version is
 introduced by this slice. Relevant future coherence metadata belongs to immutable
 layer/source context for staleness,not reusable generation configuration.
 
-### Smart Patch private model-source material
+### Smart Patch private numerical denoising material
+
+[Private family VAE/denoising](../engineering/phase-4-smart-patch-denoising-research.md)
+consumes detached prepared RGB and numeric latent KEEP with caller-owned loaded
+models. Returned RGB/Anima latents are transient numerical results, not durable
+staging candidates or accepted assets. This adapter adds no filesystem publisher,
+worker command, Main transport, queue/receipt, `.igs` member/schema, document edit,
+history, recovery or immutable provenance. It does not save automatically.
+
+The all255 KEEP case still executes VAE and denoising with fully protected latents,
+retains the frozen INP/OUT world mode and returns the VAE reconstruction; it does
+not fabricate latent coverage or promise generated detail in a lost tiny edit.
+Focused72 Python PASS covers65 real tiny native family cases and seven actual CPU
+protocol preparation-to-adapter cases. Six solvers/family and Illustrious EPS/V
+are numerical CPU evidence, not trained/installed/GPU or public persistence proof.
+The worker/Main execution bridge/resource admission, world composition and
+immutable variant lifecycle remain future owners; public statuses stay unchanged.
+
+### Previous Smart Patch private model-source material
 
 [Private model-source preparation](../engineering/phase-4-smart-patch-model-source-research.md)
 adds no `.igs` member/schema or persisted Project state. Its RGB PNG or TXT null

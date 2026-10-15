@@ -273,7 +273,25 @@ acceptance boundary:future relevant coherence state belongs to frozen layer/sour
 context and `outdated`,not new reusable preset/Compare fields. No candidate,
 variant or generated result is created by a settings edit.
 
-The current [private model-source checkpoint](../../../engineering/phase-4-smart-patch-model-source-research.md)
+The current [private family VAE/denoising checkpoint](../../../engineering/phase-4-smart-patch-denoising-research.md)
+executes prepared RGB and numeric latent KEEP through existing native family
+loops with caller-owned loaded models. It returns transient RGB/Anima latents,
+not a staged candidate or accepted variant. TXT/IMG remain ordinary; INP/OUT
+remain masked. All255 KEEP still executes VAE and denoising with fully protected
+latents and unchanged world mode, yielding a VAE reconstruction without fallback
+or fabricated coverage. This does not promise new detail in a lost tiny edit.
+
+Focused72 Python PASS covers65 real tiny native cases and seven actual CPU
+protocol preparation-to-adapter cases, six solvers/family and Illustrious EPS/V.
+Prepared INP uses world128/internal64/Euler for both families. These random small
+CPU-native checks do not prove trained, installed, GPU or full Invoke pixel
+parity. No Main transport/public worker command, queue/publication, world
+compositing, variants/provenance, schema/UI or public Generate is added.
+The worker/Main execution bridge/resource admission, world composition and this
+explicit immutable acceptance lifecycle remain subsequent owners. Existing
+prototype acceptance/staleness mocks remain unchanged.
+
+The previous [private model-source checkpoint](../../../engineering/phase-4-smart-patch-model-source-research.md)
 qualifies actual Main→worker source RGB preparation,not a generated candidate.
 TXT returns null;IMG/INP use exact processing RGB without LaMa;OUT uses full
 pinned local LaMa RGB with holes from source alpha<255 alone,including resized
@@ -285,8 +303,9 @@ semantic RED/GREEN pairs qualify this boundary. Global lint/typecheck/build and
 worker Ruff/basedpyright PASS;limits are in the research note.
 No jobs,diffusion,candidates,accepted variants,provenance,preset/
 Compare fields or public Generate are enabled. Existing prototype variants and
-their acceptance/staleness mocks are unaffected. Latent-coverage admission and
-this explicit acceptance lifecycle remain subsequent owners.
+their acceptance/staleness mocks are unaffected. The current private adapter now
+defines all255 latent coverage behavior; the execution bridge and this explicit
+acceptance lifecycle remain subsequent owners.
 
 ## Auto-Switch
 

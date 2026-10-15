@@ -59,7 +59,24 @@ Smart Patch Layer owns:
 
 If a setting affects an already generated Smart Patch Layer, changing it marks the layer as `outdated`.
 
-The [private model-source scope](../../../engineering/phase-4-smart-patch-model-source-research.md)
+The current [private family VAE/denoising scope](../../../engineering/phase-4-smart-patch-denoising-research.md)
+consumes the prepared RGB and numeric latent KEEP with caller-owned loaded models.
+TXT/IMG keep their ordinary native route; INP/OUT use the existing masked route
+without source reclassification or repeated coherence/LaMa. KEEP all255 after
+lost latent coverage still runs VAE and denoising, preserves the world mode and
+fully protects the source latents as in Invoke. It returns a VAE reconstruction,
+not new denoised detail for the lost tiny edit; there is no fallback or fabricated
+coverage. Final world compositing remains separate.
+
+Focused72 Python PASS consists of65 real tiny native family cases and seven actual
+CPU protocol preparation-to-adapter cases. Six solvers/family and Illustrious
+EPS/V are covered; prepared INP is world128/internal64/Euler for both families.
+This is random small CPU-native evidence, not trained/installed/GPU/full Invoke
+pixel parity. No Main transport/public worker command, queue, publication,
+variants, schema/UI or public readiness is added. Worker/Main execution bridge
+and resource admission, world composition and immutable variants remain next.
+
+The previous [private model-source scope](../../../engineering/phase-4-smart-patch-model-source-research.md)
 adds actual Main→worker RGB preparation after the existing six conditioning
 planes. TXT returns null;IMG/INP convert processing RGBA to exact RGB without
 LaMa. OUT lazily resolves pinned Main-owned LaMa and infills solely source alpha<255,
@@ -94,8 +111,9 @@ OUT Pillow multiply of that keep with source alpha,TXT/IMG0. Processing BICUBIC
 and latent BILINEAR reduction precede the pinned F32 weighted MAX/threshold.
 Expanded processing keep projects NEAREST to world,then restores the original
 binary edit core before WORLD blur. `latentMaskHasCoverage` reports lost latent
-edit coverage separately;world output restoration does not prove inference
-support. Six grouped numeric outputs stay private;existing normal OUT remains
+edit coverage separately. The current adapter still executes all255 KEEP with
+fully protected latents; world output restoration does not invent latent edit
+coverage or generated detail. Six grouped numeric outputs stay private;existing normal OUT remains
 fixed Gaussian and unchanged. The algorithm checkpoint itself added no
 coherence UI/persistence;the subsequent owned slice is described above.
 
@@ -139,7 +157,8 @@ expands/fades at processing size and then resizes the mask back,so full scaled
 pixel parity is not claimed. That contribution helper is pre-coherence geometry.
 The qualified private coherence scope above adds processing-space edge expansion
 and projected world contribution. The later model-source scope above qualifies
-private source-only LaMa;VAE/latent denoising and final inference/compositing
+private source-only LaMa; the current numerical family adapter qualifies private
+VAE/denoising. Execution bridge/resource admission and final world compositing
 remain subsequent owners. Full scaled Invoke pixel parity is not claimed.
 
 Current-operation compositing settings can be used before a Smart Patch Layer exists. Once a Smart Patch Layer is created, the relevant settings are copied into the layer-owned state.
@@ -152,7 +171,7 @@ The prototype preserves the ownership boundary and keeps Denoising Strength in t
 
 Existing prototype variants become outdated on the already-supported deterministic mask/bbox/generation inputs. Their provenance and staleness comparison do not yet consume `coherenceSettings`, so these three controls do not qualify acceptance or outdated derivation. Production has no accepted Smart Patch variants yet.
 
-Private model-source/LaMa preparation adds no prototype controls or generated
+Private model-source/LaMa preparation and numerical VAE/denoising add no prototype controls or generated
 variant behavior;existing variant mocks do not qualify source/infill or acceptance.
 
 ## Acceptance Criteria

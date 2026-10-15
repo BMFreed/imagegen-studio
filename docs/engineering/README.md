@@ -1,6 +1,24 @@
 # Engineering Workflow
 
-Current private Main/CPU model-source scope:
+Current private numerical family execution scope:
+[Smart Patch VAE and denoising](./phase-4-smart-patch-denoising-research.md).
+Prepared RGB and numeric latent KEEP enter the existing native family loops with
+caller-owned loaded models. TXT/IMG retain their ordinary routes; INP/OUT use the
+masked route without reclassification, repeated coherence, LaMa or pixel pasteback.
+If latent reduction loses edit coverage (KEEP all255), VAE and denoising still
+execute as in Invoke, with fully protected latents and unchanged frozen world mode.
+This produces a VAE reconstruction, not new denoised detail for the lost tiny edit.
+Focused72 Python PASS:65 real tiny native family cases plus seven actual CPU
+protocol preparation-to-adapter cases. The finite matrix covers six solvers per
+family and Illustrious EPS/V; prepared INP uses world128/internal64/Euler for both
+families. These are random small native models on CPU, not trained, installed,
+GPU or full Invoke pixel-parity evidence. No Main transport/public worker command,
+queue, publication, world compositing, variants, schema or UI change is added.
+Next owners are the private worker/Main execution bridge and resource admission,
+world composition and immutable variant acceptance. Public promise statuses stay
+unchanged; full checks and mutation evidence belong to the linked research note.
+
+Previous qualified private Main/CPU model-source scope:
 [Smart Patch model-source and LaMa preparation](./phase-4-smart-patch-model-source-research.md).
 Actual Main `prepareModelSource` chains compose/preparation/conditioning and lazy
 pinned Main resource resolution inside one admitted/drained lease. TXT returns
@@ -14,8 +32,9 @@ lint/typecheck/build and worker Ruff/basedpyright PASS;limits are recorded in th
 linked research.
 No document/schema/UI change, diffusion/jobs/candidates/variants/provenance or
 preset/Compare/public capability is added. Prototype variant mocks are unaffected.
-Family diffusion admission/execution and immutable variant acceptance remain next;
-`latentMaskHasCoverage:false` still needs its later admission decision.
+That source checkpoint did not qualify family VAE/denoising. The current numerical
+adapter scope above now defines and exercises the all255 latent-KEEP behavior;
+the execution bridge and immutable variant acceptance remain separate owners.
 
 Previous qualified owned coherence/UI persistence scope:
 [Smart Patch owned coherence settings](./phase-4-smart-patch-coherence-settings-research.md).

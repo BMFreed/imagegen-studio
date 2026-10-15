@@ -2413,7 +2413,24 @@ Result` переносит фактический expanded prompt и portable ge
 
 ## Фаза 4. Полный Canvas и Smart Patch Layer
 
-**Текущий private Main/CPU model-source scope:**
+**Текущий private numerical family execution scope:**
+[Smart Patch VAE and denoising](../engineering/phase-4-smart-patch-denoising-research.md)
+передаёт prepared RGB и numeric latent KEEP в существующие native loops с
+caller-owned loaded models. TXT/IMG используют ordinary route;INP/OUT — masked
+route,без reclassification,repeated coherence/LaMa или pixel pasteback.
+Принятое решение:при `latentMaskHasCoverage:false` (KEEP all255) VAE и denoising
+всё равно выполняются как в Invoke,с полной защитой latents и прежним world mode.
+Результат — VAE reconstruction,а не обещание новой детали в исчезнувшей tiny edit.
+Focused72 Python PASS:65 real tiny native cases плюс семь actual CPU protocol
+preparation→adapter cases;шесть solvers каждого семейства,Illustrious EPS/V.
+Prepared INP проверен world128/internal64/Euler у обоих семейств. Это random small
+native CPU models,не trained/installed/GPU/full Invoke pixel parity. Нет Main
+transport/public worker command,queue,publication,world compositing,variants,
+schema/UI changes или повышения public readiness. Full checks/mutations
+фиксируются отдельно в linked research. Следующие owners — private worker/Main
+execution bridge/resource admission,world composition и immutable variants.
+
+**Предыдущий qualified private Main/CPU model-source scope:**
 [Smart Patch model-source and LaMa preparation](../engineering/phase-4-smart-patch-model-source-research.md)
 добавляет actual `prepareModelSource`:compose→prepare→condition→lazy pinned Main
 resolver для OUT→worker RGB в одном admitted/drained lease. TXT возвращает null;
@@ -2426,9 +2443,10 @@ semantic RED/GREEN pairs квалифицируют finite boundary. Global lint
 build и worker Ruff/basedpyright PASS;границы evidence записаны в research note.
 Нет `.igs` state/schema/UI changes,jobs,diffusion/variants,
 provenance/presets/Compare/public Generate. Prototype mocks не меняются и не
-доказывают source/infill или acceptance. Следующие owners — family diffusion admission/
-execution и immutable variant acceptance;`latentMaskHasCoverage:false` требует
-отдельного решения при admission.
+доказывают source/infill или acceptance. Этот source checkpoint ещё не
+квалифицировал family VAE/denoising;current numerical adapter выше закрывает
+all255 policy. Execution bridge/resource admission и immutable variant acceptance
+остаются отдельными owners.
 
 **Предыдущий qualified owned coherence/UI persistence scope:**
 [Smart Patch owned coherence settings](../engineering/phase-4-smart-patch-coherence-settings-research.md)
