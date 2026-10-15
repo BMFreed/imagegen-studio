@@ -84,9 +84,10 @@ creating history. Real settings edits use normal Undo/Redo, explicit Save and
 local recovery. They retain painted PNG/id/revision/bounds, owned bbox, internal
 resolution, draft and neighboring layers. Settings do not automatically fit bbox.
 Fit uses the selected Patch's `blur + padding` margin and outward grid8. Padding
-is Fit policy; blur must also be frozen and consumed by the upcoming inpaint edge
-processing, and changing blur must stale future variants. This slice does not
-implement that pipeline or a blurred mask preview.
+is Fit policy. At this settings checkpoint blur consumption was a later owner;
+the subsequent private coherence/fade path freezes and consumes it in world
+project pixels. Changing blur must stale future variants,whose lifecycle remains
+unimplemented. These settings do not add a blurred authored-mask preview.
 
 Qualification: impacted regression1835 PASS before final UI refinement, final
 affected104 PASS, built native109 checks and three semantic RED/neighbor GREEN
@@ -120,7 +121,31 @@ Variant lifecycle, staleness/compositing/comparison and Patch presets remain
 subsequent owners; existing authoring evidence and public promise statuses stay
 unchanged.
 
-## Current owned coherence scope: controls,persistence and capture
+## Current private model-source scope: RGB preparation and LaMa
+
+[Model-source research](../../../engineering/phase-4-smart-patch-model-source-research.md)
+qualifies actual Main `prepareModelSource` through source composition,preparation,
+six-plane conditioning and private worker RGB publication in one admitted/drained
+lease. TXT has null model source;IMG/INP use exact processing RGBA converted to RGB
+without resolving/loading LaMa. Only OUT lazily resolves the existing pinned
+Main-owned LaMa and uses its full RGB output. Its binary holes are source alpha<255,
+independent of authored/coherence masks;world OUT stays OUT when BICUBIC processing
+resize yields uniformly0/255 alpha. Existing normal OUT mixed-alpha refusal stays
+unchanged. Missing/changed resources and invalid RGB/hash/ICC/path/topology refuse;
+there is no download,approximation,source paste-back or mode fallback.
+
+Affected1937 TS/527 Python (focused65/68),two actual Main trained-source cases (OUT plus IMG control)
+with unchanged storage/original source,four exact trained wholeRGB matches to
+pinned Invoke and three semantic RED/GREEN pairs qualify this boundary. Global
+lint/typecheck/build and worker Ruff/basedpyright PASS;execution limits live in
+the linked note.
+The six conditioning planes remain separate. No `.igs` state/schema,UI,jobs,
+diffusion/VAE,candidates,accepted variants,provenance or preset/Compare fields are
+added. Prototype source/infill controls and accepted-variant lifecycle are not
+qualified by this private operation. Latent-coverage admission is a separate
+future decision;model-source RGB does not prove Smart Patch diffusion readiness.
+
+## Previous qualified owned coherence scope: controls,persistence and capture
 
 [Owned coherence research](../../../engineering/phase-4-smart-patch-coherence-settings-research.md)
 qualifies this UI/Main/document slice:affected1927 TS,prototype180,native14
@@ -194,7 +219,9 @@ fade distance. Clip first:outside original paint cannot leak into bbox from
 beyond its edges. Blur0 keeps the exact binary core.
 
 This is pre-coherence geometry,not the final inference/compositing pipeline.
-Future edge coherence/latent/infill processing may expand the base edit area.
+At that contribution checkpoint edge coherence/latent processing were later
+owners. The subsequent coherence scope above expands conditioning coverage;
+model-source infill is separate and never replaces a mask plane.
 Full Invoke scaled-pixel parity,ML execution,queue/candidates/accepted variants
 and public promise readiness remain unclaimed.
 

@@ -1,6 +1,23 @@
 # Engineering Workflow
 
-Current owned coherence/UI persistence scope:
+Current private Main/CPU model-source scope:
+[Smart Patch model-source and LaMa preparation](./phase-4-smart-patch-model-source-research.md).
+Actual Main `prepareModelSource` chains compose/preparation/conditioning and lazy
+pinned Main resource resolution inside one admitted/drained lease. TXT returns
+null; IMG/INP convert processing RGBA to exact RGB without LaMa; OUT uses full
+LaMa RGB with holes from source alpha<255 only, including uniformly0/255 alpha
+after resize. Six conditioning planes remain independent; normal OUT retains its
+strict mixed-alpha admission. Affected1937 TS/527 Python (focused65/68), two real Main trained-source
+cases (OUT plus IMG control), four exact trained wholeRGB comparisons with pinned
+Invoke and three semantic RED/GREEN pairs qualify this finite boundary. Global
+lint/typecheck/build and worker Ruff/basedpyright PASS;limits are recorded in the
+linked research.
+No document/schema/UI change, diffusion/jobs/candidates/variants/provenance or
+preset/Compare/public capability is added. Prototype variant mocks are unaffected.
+Family diffusion admission/execution and immutable variant acceptance remain next;
+`latentMaskHasCoverage:false` still needs its later admission decision.
+
+Previous qualified owned coherence/UI persistence scope:
 [Smart Patch owned coherence settings](./phase-4-smart-patch-coherence-settings-research.md).
 The qualified slice adds optional per-Patch `coherenceSettings`,three compact
 Mask controls and captured whole-profile Undo/Save/local recovery. Legacy absence
@@ -50,10 +67,11 @@ affected1871 TS/125 Python PASS. Required typecheck/lint/build and global Python
 Ruff/basedpyright pass; physical exit and temporary-copy cleanup are confirmed.
 BICUBIC resizing follows Invoke's resize default; strict all255 source alpha and
 any-nonzero soft-mask policy remain explicit ImageGen Studio adaptations.
-At that checkpoint blur/fade/coherence were later owners;the current
-contribution scope above addresses world contribution geometry only. Coherence,
-GPU inference,public Generate,queue/staging and accepted variants remain later
-owners. Public promise statuses stay unchanged.
+At that checkpoint blur/fade/coherence were later owners;the subsequent
+contribution/coherence scopes above address their private numerical preparation.
+Model-source preparation is qualified separately above;GPU inference,public
+Generate,queue/staging and accepted variants remain later owners. Public promise
+statuses stay unchanged.
 
 Previous qualified private Main/CPU checkpoint:
 [Smart Patch generation input capture](./phase-4-smart-patch-generation-capture-research.md).

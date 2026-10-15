@@ -34,13 +34,21 @@ expected_type = {
     "condition-smart-patch": "smart-patch-conditioned",
     "prepare-smart-patch": "smart-patch-prepared",
     "fade-smart-patch": "smart-patch-faded",
+    "prepare-smart-patch-model-source": "smart-patch-model-source-prepared",
 }[request["type"]]
 if response.get("type") != expected_type:
     raise RuntimeError(f"Actual CPU protocol route failed: {response!r}")
 
-for module in (compositor, smart_patch_preparation, smart_patch_fade, smart_patch_conditioning):
+for module in (
+    compositor,
+    smart_patch_preparation,
+    smart_patch_fade,
+    smart_patch_conditioning,
+):
     if not Path(module.__file__).resolve(strict=True).is_relative_to(source_root):
-        raise RuntimeError("The requested checkout's production CPU module was not loaded.")
+        raise RuntimeError(
+            "The requested checkout's production CPU module was not loaded."
+        )
 
 if request["type"] == "compose-target":
     paths = {"source": request["output"]["targetPngPath"]}
@@ -58,6 +66,12 @@ elif request["type"] == "condition-smart-patch":
             "finalContributionMask",
         )
     }
+elif request["type"] == "prepare-smart-patch-model-source":
+    paths = (
+        {"modelSource": request["output"]["modelSourcePngPath"]}
+        if request["output"]["modelSourcePngPath"] is not None
+        else {}
+    )
 else:
     paths = {
         "effectiveMask": request["output"]["worldMaskPngPath"],
@@ -88,14 +102,35 @@ if envelope.get("corrupt") in (
     response[plane]["byteSize"] = len(damaged_bytes)
     response[plane]["sha256"] = hashlib.sha256(damaged_bytes).hexdigest()
 
+if envelope.get("corrupt") in ("model-source-rgba", "model-source-icc"):
+    # Fault injection happens after the actual model-source route publishes its
+    # RGB PNG. Updated metadata forces consumers to inspect real topology/ICC.
+    target = Path(paths["modelSource"])
+    with Image.open(target) as original:
+        original.load()
+        damaged = (
+            original.convert("RGBA")
+            if envelope["corrupt"] == "model-source-rgba"
+            else original.copy()
+        )
+        profile = original.info.get("icc_profile")
+    if envelope["corrupt"] == "model-source-icc":
+        profile = b"not the pinned sRGB profile"
+    damaged.save(target, "PNG", icc_profile=profile)
+    damaged_bytes = target.read_bytes()
+    response["modelSource"]["byteSize"] = len(damaged_bytes)
+    response["modelSource"]["sha256"] = hashlib.sha256(damaged_bytes).hexdigest()
+
 decoded = {}
 for name, output_path in paths.items():
     with Image.open(output_path) as image:
         image.load()
-        if image.format != "PNG" or image.mode != "RGBA":
-            raise RuntimeError("The actual CPU operation did not publish RGBA PNG pixels.")
+        if image.format != "PNG" or (image.mode != "RGBA" and name != "modelSource"):
+            raise RuntimeError(
+                "The actual CPU operation did not publish expected PNG pixels."
+            )
         profile = image.info.get("icc_profile")
-        rgba = image.tobytes()
+        rgba = image.convert("RGBA").tobytes()
         decoded[name] = {
             "format": image.format,
             "mode": image.mode,
@@ -103,17 +138,16 @@ for name, output_path in paths.items():
             "height": image.height,
             "iccSha256": hashlib.sha256(profile).hexdigest() if profile else None,
             "rgbaBase64": base64.b64encode(rgba).decode("ascii"),
+            "rgbBase64": base64.b64encode(image.convert("RGB").tobytes()).decode(
+                "ascii"
+            ),
         }
 
 loaded_ml = [
     name
     for name in sys.modules
-    if name == "torch"
-    or name.startswith("torch.")
-    or name == "diffusers"
-    or name.startswith("diffusers.")
-    or name == "compel"
-    or name.startswith("compel.")
+    if name in ("torch", "diffusers", "compel")
+    or name.startswith(("torch.", "diffusers.", "compel."))
 ]
 if loaded_ml:
     raise RuntimeError(f"The CPU preparation probe loaded ML modules: {loaded_ml!r}")
@@ -124,8 +158,12 @@ print(
             "response": response,
             "decoded": decoded,
             "compositorPath": str(Path(compositor.__file__).resolve(strict=True)),
-            "conditioningPath": str(Path(smart_patch_conditioning.__file__).resolve(strict=True)),
-            "preparationPath": str(Path(smart_patch_preparation.__file__).resolve(strict=True)),
+            "conditioningPath": str(
+                Path(smart_patch_conditioning.__file__).resolve(strict=True)
+            ),
+            "preparationPath": str(
+                Path(smart_patch_preparation.__file__).resolve(strict=True)
+            ),
             "fadePath": str(Path(smart_patch_fade.__file__).resolve(strict=True)),
             "pillowVersion": pillow_version,
             "loadedMlModules": loaded_ml,

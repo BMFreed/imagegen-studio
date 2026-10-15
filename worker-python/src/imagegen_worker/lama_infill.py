@@ -19,12 +19,38 @@ from typing import Any, Literal, cast
 
 from PIL import Image
 
+from imagegen_worker.compositor import MAX_TARGET_PIXELS, MAX_TARGET_SIDE
 from imagegen_worker.derivatives import (
     SRGB_ICC_PROFILE,
     DerivativeError,
     canonical_absolute_path,
 )
-from imagegen_worker.outpaint_conditioning import capture_outpaint_source
+from imagegen_worker.outpaint_conditioning import LATENT_SCALE, capture_outpaint_source
+
+OUTPAINT_INFILL_SHA256 = "344c77bbcb158f17dd143070d1e789f38a66c04202311ae3a258ef66667a9ea9"
+OUTPAINT_INFILL_BYTE_SIZE = 205_669_692
+
+
+def _capture_processing_source(source: object) -> Image.Image:
+    """Copy processing RGBA without reclassifying its frozen world OUT mode."""
+    if not isinstance(source, Image.Image) or source.mode != "RGBA":
+        raise DerivativeError("GENERATION_TARGET_UNSUPPORTED", "LaMa processing requires RGBA.")
+    width, height = source.size
+    if (
+        not LATENT_SCALE <= width <= MAX_TARGET_SIDE
+        or not LATENT_SCALE <= height <= MAX_TARGET_SIDE
+        or width % LATENT_SCALE
+        or height % LATENT_SCALE
+        or width * height > MAX_TARGET_PIXELS
+    ):
+        raise DerivativeError(
+            "GENERATION_TARGET_UNSUPPORTED", "LaMa processing must match the bounded latent grid."
+        )
+    captured = source.copy()
+    profile = captured.info.get("icc_profile")
+    if profile is not None and profile != SRGB_ICC_PROFILE:
+        raise DerivativeError("GENERATION_INPUT_CHANGED", "LaMa processing source must be sRGB.")
+    return captured
 
 
 def _model_snapshot(path: object, expected_sha256: str, expected_byte_size: int) -> bytes:
@@ -93,7 +119,14 @@ class LocalLamaModel:
     _device: Any
 
     def infill(self, source: object) -> Image.Image:
-        captured = capture_outpaint_source(source)
+        """Normal OUT remains strict: empty or opaque targets are unsupported."""
+        return self._infill_captured(capture_outpaint_source(source))
+
+    def infill_processing_source(self, source: object) -> Image.Image:
+        """Smart Patch OUT can resize to uniformly empty or opaque processing alpha."""
+        return self._infill_captured(_capture_processing_source(source))
+
+    def _infill_captured(self, captured: Image.Image) -> Image.Image:
         torch = self._torch
         try:
             pixels = torch.frombuffer(bytearray(captured.tobytes()), dtype=torch.uint8)

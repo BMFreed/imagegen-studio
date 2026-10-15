@@ -1,3 +1,4 @@
+import { LAMA_OUTPAINT_IDENTITY_V1 } from '../../shared/projects/alpha-outpaint.js'
 import {
   IGS_SRGB_ICC_SHA256,
   isSrgbCompatiblePngColorChunk,
@@ -17,6 +18,7 @@ import { access, type FileHandle, lstat, open, readdir, realpath } from 'node:fs
 import path from 'node:path'
 import { inflateSync } from 'node:zlib'
 
+import { verifyInferenceAuxiliaryFile } from '../runtime/inference-auxiliary-resources.js'
 import { validateSrgbPngStream, validateSrgbWebpStream } from './igs-package.js'
 import { decodeDerivedProjectMaskPng, readProjectMaskSource } from './project-mask.js'
 import { classifyTargetPngAlpha } from './target-png-mode.js'
@@ -247,6 +249,30 @@ export interface SmartPatchConditioningResult {
   worldKeepMask: VerifiedWorkerMask
 }
 
+export interface SmartPatchModelSourceInput {
+  infillResource: {
+    byteSize: number
+    path: string
+    role: 'outpaint-infill'
+    sha256: string
+  } | null
+  mode: SmartPatchFadeMode
+  modelSourcePngPath: string | null
+  source: SmartPatchPreparationSource | null
+  stagingRoot: string
+}
+
+export type SmartPatchModelSourcePayload = {
+  infillResource: SmartPatchModelSourceInput['infillResource']
+  mode: SmartPatchFadeMode
+  output: { modelSourcePngPath: string | null; stagingRoot: string }
+  source: SmartPatchPreparationSource | null
+}
+
+export interface SmartPatchModelSourceResult {
+  modelSource: VerifiedWorkerImage | null
+}
+
 export type ComposePreviewResult =
   | { merged: null; rect: null; status: 'empty'; thumbnail: null }
   | {
@@ -312,6 +338,7 @@ type PendingRequest = {
     | 'self-test-result'
     | 'smart-patch-conditioned'
     | 'smart-patch-faded'
+    | 'smart-patch-model-source-prepared'
     | 'smart-patch-prepared'
     | 'target-done'
 }
@@ -815,6 +842,26 @@ export class ProjectWorkerClient {
     })
   }
 
+  async prepareSmartPatchModelSource(
+    input: SmartPatchModelSourceInput,
+  ): Promise<SmartPatchModelSourceResult> {
+    return this.exclusive(async () => {
+      if (!this.ready.capabilities.includes('smart-patch-model-source')) {
+        throw new ProjectWorkerError(
+          'WORKER_VERSION_MISMATCH',
+          'The image worker cannot prepare Smart Patch model sources.',
+        )
+      }
+      return prepareSmartPatchModelSourceWithTransport(input, this.stagingBasePath, (payload) =>
+        this.request(
+          'prepare-smart-patch-model-source',
+          'smart-patch-model-source-prepared',
+          payload,
+        ),
+      )
+    })
+  }
+
   async selfTest(): Promise<WorkerSelfTestResult> {
     return this.exclusive(async () => {
       const response = await this.request('self-test', 'self-test-result', {})
@@ -1032,6 +1079,7 @@ export class ProjectWorkerClient {
       | 'derive-image'
       | 'fade-smart-patch'
       | 'normalize-import'
+      | 'prepare-smart-patch-model-source'
       | 'prepare-smart-patch'
       | 'self-test',
     resultType: PendingRequest['type'],
@@ -1402,6 +1450,99 @@ export async function conditionSmartPatchWithTransport(
   }
 }
 
+/** Private source preparation keeps numerical masks separate from the VAE-bound RGB image. */
+export async function prepareSmartPatchModelSourceWithTransport(
+  requestInput: SmartPatchModelSourceInput,
+  stagingBasePath: string,
+  request: (payload: SmartPatchModelSourcePayload) => Promise<Record<string, unknown>>,
+): Promise<SmartPatchModelSourceResult> {
+  const input = structuredClone(requestInput)
+  if (!['img2img', 'inpaint', 'outpaint', 'txt2img'].includes(input.mode)) {
+    throw new ProjectWorkerError('INVALID_REQUEST', 'The Smart Patch source mode is invalid.')
+  }
+  if (input.mode === 'txt2img') {
+    if (
+      input.source !== null ||
+      input.modelSourcePngPath !== null ||
+      input.infillResource !== null
+    ) {
+      throw new ProjectWorkerError('INVALID_REQUEST', 'TXT cannot have a model source or infill.')
+    }
+  } else if (!input.source || typeof input.modelSourcePngPath !== 'string') {
+    throw new ProjectWorkerError('INVALID_REQUEST', 'The Smart Patch processing source is missing.')
+  }
+  const resource = input.infillResource
+  if (
+    input.mode === 'outpaint'
+      ? !resource ||
+        Object.keys(resource).some(
+          (key) => !['byteSize', 'path', 'role', 'sha256'].includes(key),
+        ) ||
+        resource.byteSize !== LAMA_OUTPAINT_IDENTITY_V1.byteSize ||
+        resource.role !== LAMA_OUTPAINT_IDENTITY_V1.role ||
+        resource.sha256 !== LAMA_OUTPAINT_IDENTITY_V1.sha256
+      : resource !== null
+  ) {
+    throw new ProjectWorkerError('INVALID_REQUEST', 'The Smart Patch infill resource is invalid.')
+  }
+  if (input.source) {
+    assertSmartPatchConditioningSize(input.source)
+  }
+  const { paths, stagingRoot } = await validateOutputPathsWithinBase(
+    stagingBasePath,
+    input.stagingRoot,
+    input.modelSourcePngPath === null ? [] : [[input.modelSourcePngPath, '.png']],
+  )
+  if (input.source) {
+    await validateInputPath(input.source.path, input.source.sha256, paths)
+    const source = await verifyImageOutput(
+      input.source.path,
+      { ...input.source, colorSpace: 'srgb' },
+      MAX_TARGET_BYTES,
+      'png',
+    )
+    await readSmartPatchPreparationOutput(input.source.path, source, 'source')
+  }
+  if (resource) {
+    await validateInputPath(resource.path, resource.sha256, paths)
+    if (resource.path === input.source?.path || isWithin(stagingRoot, resource.path)) {
+      throw new ProjectWorkerError('INVALID_PATH', 'LaMa must stay outside disposable staging.')
+    }
+    await verifyInferenceAuxiliaryFile({
+      byteSize: resource.byteSize,
+      managedPath: resource.path,
+      sha256: resource.sha256,
+    })
+  }
+  const response = await request({
+    infillResource: resource,
+    mode: input.mode,
+    output: { modelSourcePngPath: paths[0] ?? null, stagingRoot },
+    source: input.source,
+  })
+  if (input.mode === 'txt2img') {
+    if (response.modelSource !== null) {
+      throw new ProjectWorkerError('OUTPUT_MISMATCH', 'TXT must not return a model source.')
+    }
+    return { modelSource: null }
+  }
+  const source = input.source
+  if (!source) {
+    throw new ProjectWorkerError('INVALID_REQUEST', 'The Smart Patch model source is missing.')
+  }
+  const modelSource = await verifyImageOutput(
+    paths[0],
+    response.modelSource,
+    MAX_TARGET_BYTES,
+    'png',
+  )
+  if (modelSource.width !== source.width || modelSource.height !== source.height) {
+    throw new ProjectWorkerError('OUTPUT_MISMATCH', 'Model source processing dimensions differ.')
+  }
+  await readSmartPatchModelSourceOutput(paths[0], modelSource)
+  return { modelSource }
+}
+
 /** Only latent conditioning requires an eight-pixel grid; ordinary prep still accepts one pixel. */
 export function assertSmartPatchConditioningSize(size: { height: number; width: number }): void {
   assertSmartPatchProcessingSize(size)
@@ -1422,7 +1563,7 @@ export function assertSmartPatchProcessingSize(size: { height: number; width: nu
 export async function readSmartPatchPreparationOutput(
   expectedPath: string,
   artifactInput: VerifiedWorkerImage | VerifiedWorkerMask,
-  kind: 'mask' | 'source',
+  kind: 'mask' | 'model-source' | 'source',
 ): Promise<Buffer> {
   const artifact = { ...artifactInput }
   if (artifact.path !== expectedPath) {
@@ -1473,10 +1614,42 @@ export async function readSmartPatchPreparationOutput(
   }
   if (kind === 'mask') {
     decodeDerivedProjectMaskPng(actual.bytes, artifact)
-  } else {
+  } else if (kind === 'source') {
     classifyTargetPngAlpha(actual.bytes, artifact.width, artifact.height)
+  } else {
+    assertSmartPatchConditioningSize(artifact)
+    assertSmartPatchModelSourceRgb(actual.bytes, artifact)
   }
   return actual.bytes
+}
+
+/** RGB model inputs are deliberately distinct from RGBA composition targets. */
+export async function readSmartPatchModelSourceOutput(
+  expectedPath: string,
+  artifact: VerifiedWorkerImage,
+): Promise<Buffer> {
+  return readSmartPatchPreparationOutput(expectedPath, artifact, 'model-source')
+}
+
+function assertSmartPatchModelSourceRgb(
+  bytes: Buffer,
+  dimensions: { height: number; width: number },
+): void {
+  // Full CRC/ICC/zlib/row validation is done by verifyImageOutput above, before this constraint.
+  if (
+    bytes.length < 33 ||
+    bytes.readUInt32BE(8) !== 13 ||
+    bytes.toString('ascii', 12, 16) !== 'IHDR' ||
+    bytes.readUInt32BE(16) !== dimensions.width ||
+    bytes.readUInt32BE(20) !== dimensions.height ||
+    bytes[24] !== 8 ||
+    bytes[25] !== 2 ||
+    bytes[26] !== 0 ||
+    bytes[27] !== 0 ||
+    bytes[28] !== 0
+  ) {
+    throw new ProjectWorkerError('OUTPUT_MISMATCH', 'Model source must be noninterlaced RGB8 PNG.')
+  }
 }
 
 async function verifyCoverageOutput(

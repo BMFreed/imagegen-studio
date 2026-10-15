@@ -2413,7 +2413,24 @@ Result` переносит фактический expanded prompt и portable ge
 
 ## Фаза 4. Полный Canvas и Smart Patch Layer
 
-**Текущий owned coherence/UI persistence scope:**
+**Текущий private Main/CPU model-source scope:**
+[Smart Patch model-source and LaMa preparation](../engineering/phase-4-smart-patch-model-source-research.md)
+добавляет actual `prepareModelSource`:compose→prepare→condition→lazy pinned Main
+resolver для OUT→worker RGB в одном admitted/drained lease. TXT возвращает null;
+IMG/INP — exact processing RGB без LaMa;OUT — full LaMa RGB с holes только из
+source alpha<255,включая processing alpha целиком0/255 после BICUBIC resize.
+Frozen world mode,шесть conditioning planes и strict normal OUT остаются прежними.
+Affected1937 TS/527 Python (focused65/68),two actual Main trained-source cases с unchanged storage/
+original source,four exact trained wholeRGB comparisons к pinned Invoke и three
+semantic RED/GREEN pairs квалифицируют finite boundary. Global lint/typecheck/
+build и worker Ruff/basedpyright PASS;границы evidence записаны в research note.
+Нет `.igs` state/schema/UI changes,jobs,diffusion/variants,
+provenance/presets/Compare/public Generate. Prototype mocks не меняются и не
+доказывают source/infill или acceptance. Следующие owners — family diffusion admission/
+execution и immutable variant acceptance;`latentMaskHasCoverage:false` требует
+отдельного решения при admission.
+
+**Предыдущий qualified owned coherence/UI persistence scope:**
 [Smart Patch owned coherence settings](../engineering/phase-4-smart-patch-coherence-settings-research.md)
 добавляет optional top-level per-Patch `coherenceSettings`:Gaussian Blur/Box Blur/
 Staged,processing edge0..1024/default16,minDenoise0..1/default0. Legacy absence
@@ -2452,8 +2469,9 @@ pixels,padding исключён,internal dimensions не задают fade radiu
 TS/203 Python PASS,50 fade cases/21 pinned Invoke numerical comparisons,three
 semantic RED/single-condition neighbor GREEN pairs и typecheck/lint/build/global
 Python checks PASS;physical exit/temporary-copy cleanup confirmed. Только
-pre-coherence geometry:edge/latent/infill expansion,
-inference/queue/candidates/accepted variants и public Generate остаются позже.
+pre-coherence geometry:на этом checkpoint edge/latent processing и infill были
+следующими owners,квалифицированными отдельно выше. Inference/queue/candidates/
+accepted variants и public Generate остаются позже.
 Pillow-only prepare сохраняется;native NumPy/OpenCV lazy для nontrivial fade,
 missing dependencies дают явный отказ без download/approximation. Status прежний.
 

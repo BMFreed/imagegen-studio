@@ -59,6 +59,21 @@ Smart Patch Layer owns:
 
 If a setting affects an already generated Smart Patch Layer, changing it marks the layer as `outdated`.
 
+The [private model-source scope](../../../engineering/phase-4-smart-patch-model-source-research.md)
+adds actual Main→worker RGB preparation after the existing six conditioning
+planes. TXT returns null;IMG/INP convert processing RGBA to exact RGB without
+LaMa. OUT lazily resolves pinned Main-owned LaMa and infills solely source alpha<255,
+including resized uniformly0/255 processing alpha without changing world mode.
+Authored/coherence masks and world contribution remain independent;full model RGB
+is not pasted into the document or merged back with the source. Normal OUT's
+strict mixed-alpha admission remains unchanged. Affected1937 TS/527 Python
+(focused65/68),two actual
+Main trained-source cases,four exact trained wholeRGB Invoke matches and three
+semantic RED/GREEN pairs qualify this finite boundary. Global lint/typecheck/build
+and worker Ruff/basedpyright PASS;limits are recorded in the linked note.
+No selectable infill setting,UI/schema change,
+diffusion/jobs/variants/provenance/preset/Compare or public readiness is added.
+
 The settled coordinate rule is:coherence edge size is in **processing pixels**,
 owned mask blur is in **world project pixels**. The two radii do not share units.
 The [private coherence scope](../../../engineering/phase-4-smart-patch-coherence-research.md)
@@ -123,9 +138,9 @@ not change this geometric fade distance. Invoke's scaled `addInpaint` graph
 expands/fades at processing size and then resizes the mask back,so full scaled
 pixel parity is not claimed. That contribution helper is pre-coherence geometry.
 The qualified private coherence scope above adds processing-space edge expansion
-and projected world contribution. VAE/infill/latent
-denoising and final inference/compositing remain subsequent owners;full scaled
-Invoke pixel parity is not claimed.
+and projected world contribution. The later model-source scope above qualifies
+private source-only LaMa;VAE/latent denoising and final inference/compositing
+remain subsequent owners. Full scaled Invoke pixel parity is not claimed.
 
 Current-operation compositing settings can be used before a Smart Patch Layer exists. Once a Smart Patch Layer is created, the relevant settings are copied into the layer-owned state.
 
@@ -136,6 +151,9 @@ Current-operation compositing settings can be used before a Smart Patch Layer ex
 The prototype preserves the ownership boundary and keeps Denoising Strength in the Generation card. It renders the shared Coherence, Edge size and Minimum denoise controls with mock owned-profile edits and history. Blur, padding, infill, overlay color/opacity and the remaining compositing controls are still prototype gaps.
 
 Existing prototype variants become outdated on the already-supported deterministic mask/bbox/generation inputs. Their provenance and staleness comparison do not yet consume `coherenceSettings`, so these three controls do not qualify acceptance or outdated derivation. Production has no accepted Smart Patch variants yet.
+
+Private model-source/LaMa preparation adds no prototype controls or generated
+variant behavior;existing variant mocks do not qualify source/infill or acceptance.
 
 ## Acceptance Criteria
 

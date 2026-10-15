@@ -159,3 +159,42 @@ def test_truncated_real_script_and_opaque_neighbor_refuse(tmp_path: Path, torch:
     with pytest.raises(DerivativeError) as raised:
         loaded.infill(Image.new("RGBA", (64, 64), (1, 2, 3, 255)))
     assert raised.value.code == "GENERATION_TARGET_UNSUPPORTED"
+
+
+@pytest.mark.parametrize("alpha", [0, 255])
+def test_processing_extremes_are_distinct_from_strict_normal_out_entrypoint(
+    tmp_path: Path, torch: Any, alpha: int
+) -> None:
+    path, digest, size = _script_fixture(tmp_path, torch)
+    loaded = load_local_lama(path, expected_sha256=digest, expected_byte_size=size)
+    source = Image.new("RGBA", (64, 64), (32, 64, 96, alpha))
+    source.info["icc_profile"] = SRGB_ICC_PROFILE
+    before = source.tobytes(), dict(source.info)
+    with pytest.raises(DerivativeError) as raised:
+        loaded.infill(source)
+    assert raised.value.code == "GENERATION_TARGET_UNSUPPORTED"
+    result = loaded.infill_processing_source(source)
+    expected = (127, 127, 127) if alpha == 0 else (32, 64, 96)
+    assert result.mode == "RGB" and result.tobytes() == bytes(expected) * 4096
+    assert result.info["icc_profile"] == SRGB_ICC_PROFILE
+    assert (source.tobytes(), source.info) == before
+
+
+@pytest.mark.parametrize("fault", ["rgb", "grid", "side", "profile"])
+def test_processing_source_guard_refuses_before_any_native_forward(
+    tmp_path: Path, torch: Any, fault: str
+) -> None:
+    path, digest, size = _script_fixture(tmp_path, torch)
+    loaded = load_local_lama(path, expected_sha256=digest, expected_byte_size=size)
+    source = Image.new("RGBA", (64, 64), (32, 64, 96, 128))
+    if fault == "rgb":
+        source = source.convert("RGB")
+    elif fault == "grid":
+        source = source.resize((63, 64))
+    elif fault == "side":
+        source = source.resize((2056, 8))
+    else:
+        source.info["icc_profile"] = b"untrusted-profile"
+    with pytest.raises(DerivativeError) as raised:
+        loaded.infill_processing_source(source)
+    assert raised.value.code in {"GENERATION_TARGET_UNSUPPORTED", "GENERATION_INPUT_CHANGED"}

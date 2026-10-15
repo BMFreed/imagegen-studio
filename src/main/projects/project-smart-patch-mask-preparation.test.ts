@@ -17,6 +17,7 @@ import test from 'node:test'
 import { promisify } from 'node:util'
 import { crc32, deflateSync } from 'node:zlib'
 
+import type { OutpaintInfillResolver } from '../runtime/inference-auxiliary-resources.js'
 import type { CapturedSmartPatchGenerationInput } from './project-smart-patch-generation-input.js'
 import type { ProjectWorkerClient, SmartPatchCoherenceParameters } from './worker-client.js'
 
@@ -32,6 +33,7 @@ import {
   composeTargetWithTransport,
   conditionSmartPatchWithTransport,
   fadeSmartPatchWithTransport,
+  prepareSmartPatchModelSourceWithTransport,
   prepareSmartPatchWithTransport,
 } from './worker-client.js'
 
@@ -53,6 +55,7 @@ type CpuObservation = {
       iccSha256: string | null
       mode: string
       rgbaBase64: string
+      rgbBase64: string
       width: number
     }
   >
@@ -272,10 +275,20 @@ async function fixture(
 }
 
 async function actualCpu(
-  type: 'compose-target' | 'condition-smart-patch' | 'fade-smart-patch' | 'prepare-smart-patch',
+  type:
+    | 'compose-target'
+    | 'condition-smart-patch'
+    | 'fade-smart-patch'
+    | 'prepare-smart-patch-model-source'
+    | 'prepare-smart-patch',
   payload: object,
   observed: CpuObservation[],
-  corrupt?: 'conditioning-mask-rgb' | 'contribution-mask-rgb' | 'processing-mask-rgb',
+  corrupt?:
+    | 'conditioning-mask-rgb'
+    | 'contribution-mask-rgb'
+    | 'model-source-icc'
+    | 'model-source-rgba'
+    | 'processing-mask-rgb',
 ): Promise<Record<string, unknown>> {
   assert.ok(existsSync(PYTHON), 'The existing checkout CPU Python environment is required')
   const execution = execFileAsync(PYTHON, ['-I', '-B', ORACLE, WORKER_SOURCE], {
@@ -324,7 +337,11 @@ function cpuWorker(
   } = {},
 ): Pick<
   ProjectWorkerClient,
-  'composeTarget' | 'conditionSmartPatch' | 'fadeSmartPatch' | 'prepareSmartPatch'
+  | 'composeTarget'
+  | 'conditionSmartPatch'
+  | 'fadeSmartPatch'
+  | 'prepareSmartPatch'
+  | 'prepareSmartPatchModelSource'
 > {
   return {
     composeTarget: (input) =>
@@ -362,6 +379,10 @@ function cpuWorker(
         options.transformReply?.(response)
         return response
       }),
+    prepareSmartPatchModelSource: (input) =>
+      prepareSmartPatchModelSourceWithTransport(input, f.scratch, (payload) =>
+        actualCpu('prepare-smart-patch-model-source', payload, observed),
+      ),
   }
 }
 
@@ -2170,6 +2191,387 @@ test('an admitted conditioning chain survives callback closure between preparati
           composeTarget: async () => late(),
           conditionSmartPatch: async () => late(),
           prepareSmartPatch: async () => late(),
+        }),
+        /closed|lease/i,
+      )
+      assert.equal(lateDispatched, false)
+      await unchanged(f, before)
+    } finally {
+      release()
+      await Promise.allSettled([capturing, pending.operation ?? Promise.resolve()])
+    }
+  })
+})
+
+const MODEL_SOURCE_BBOX = { height: 8, width: 8, x: -3, y: -4 }
+const MODEL_SOURCE_COHERENCE: SmartPatchCoherenceParameters = {
+  edgeSize: 0,
+  minimumDenoise: 0,
+  mode: 'Gaussian Blur',
+}
+
+function literalModelSourceFixture(
+  mode: 'img2img' | 'inpaint' | 'outpaint' | 'txt2img',
+): FixtureOptions {
+  return {
+    bbox: { ...MODEL_SOURCE_BBOX },
+    coherenceSettings: { ...MODEL_SOURCE_COHERENCE },
+    mask:
+      mode === 'inpaint'
+        ? {
+            alpha: [64],
+            bounds: { height: 1, width: 1, x: -3, y: -4 },
+          }
+        : null,
+    maskSettings: { blur: 0, padding: 8 },
+    sourceRgba: Array.from({ length: 64 }, () => [
+      32,
+      64,
+      96,
+      mode === 'txt2img' ? 0 : mode === 'outpaint' ? 128 : 255,
+    ]).flat(),
+  }
+}
+
+function expectLiteralModelRgb(
+  result: Awaited<ReturnType<CapturedSmartPatchGenerationInput['prepareModelSource']>>,
+  observed: CpuObservation[],
+): void {
+  assert.ok(result.modelSource, 'Image modes require actual model RGB bytes')
+  assert.deepEqual([result.modelSource.width, result.modelSource.height], [8, 8])
+  assert.equal(result.modelSource.byteSize, result.modelSource.bytes.length)
+  assert.equal(result.modelSource.sha256, digest(result.modelSource.bytes))
+  assert.equal(result.modelSource.colorSpace, 'srgb')
+  assert.equal(result.modelSource.iccSha256, IGS_SRGB_ICC_SHA256)
+  assert.equal(result.modelSource.bytes[24], 8, 'Model source is actual PNG RGB8')
+  assert.equal(result.modelSource.bytes[25], 2, 'Model source contains RGB rather than RGBA pixels')
+  const decoded = observed.at(-1)?.decoded.modelSource
+  assert.ok(decoded)
+  assert.equal(decoded.mode, 'RGB')
+  assert.equal(decoded.iccSha256, IGS_SRGB_ICC_SHA256)
+  const literal = Buffer.from(Array.from({ length: 64 }, () => [32, 64, 96]).flat())
+  assert.ok(
+    Buffer.from(decoded.rgbBase64, 'base64').equals(literal),
+    'Actual model-source pixels differ from literal unpremultiplied RGB',
+  )
+}
+
+// Boundary: actual ProjectService capture -> transport -> production CPU protocol -> RGB consumer.
+// Oracle: literal same-size pixels, null TXT, independently decoded RGB8/sRGB and persisted state.
+// Neighbor: only source alpha or authored-mask coverage changes IMG/INP/TXT mode. A resolver
+// that throws proves that non-OUT modes neither resolve nor approximate LaMa.
+for (const mode of ['txt2img', 'img2img', 'inpaint'] as const) {
+  test(`actual ${mode} model-source preparation returns its literal RGB/null contract without LaMa or Project effects`, async () => {
+    await fixture(literalModelSourceFixture(mode), async (f) => {
+      const before = await state(f)
+      const observed: CpuObservation[] = []
+      let resourceCalls = 0
+      const resolver: OutpaintInfillResolver = {
+        async resolveVerifiedOutpaintInfill(): Promise<never> {
+          resourceCalls++
+          throw new Error('Non-OUT model preparation must not resolve LaMa')
+        },
+      }
+      const result = await f.service.withCapturedSmartPatchGenerationInput(
+        f.tabId,
+        f.patch.id,
+        (capture) => capture.prepareModelSource(cpuWorker(f, observed), resolver),
+      )
+      assert.equal(result.mode, mode)
+      assert.equal(resourceCalls, 0)
+      assert.deepEqual(result.context.bbox, MODEL_SOURCE_BBOX)
+      assert.equal(result.context.lastActualSeedSnapshot, 0)
+      assert.equal(result.context.generationDraft.positivePrompt.text, 'frozen owned prompt')
+      assert.deepEqual(result.coherence, MODEL_SOURCE_COHERENCE)
+      assert.deepEqual(
+        Object.keys(result.conditioning).sort(),
+        [
+          'expandedProcessingKeepMask',
+          'expandedWorldKeepMask',
+          'finalContributionMask',
+          'latentKeepMask',
+          'latentMaskHasCoverage',
+          'processingKeepMask',
+          'worldKeepMask',
+        ].sort(),
+      )
+      assert.deepEqual(
+        observed.map((entry) => entry.response.type),
+        [
+          'target-done',
+          'smart-patch-prepared',
+          'smart-patch-conditioned',
+          ...(mode === 'txt2img' ? [] : ['smart-patch-model-source-prepared']),
+        ],
+      )
+      if (mode === 'txt2img') {
+        assert.equal(result.modelSource, null)
+        assert.equal(
+          observed.some((entry) => entry.decoded.modelSource),
+          false,
+        )
+      } else {
+        expectLiteralModelRgb(result, observed)
+        assert.ok(
+          !result.modelSource!.bytes.equals(result.processingSource.bytes),
+          'The detached RGB publication differs from its RGBA processing input',
+        )
+      }
+      if (mode === 'inpaint') {
+        assert.ok(result.maskPngBytes?.equals(f.maskBytes!))
+        expectNumericMask(
+          observed,
+          'worldKeepMask',
+          [191, ...Array.from({ length: 63 }, () => 255)],
+          2,
+        )
+      }
+      await unchanged(f, before)
+    })
+  })
+}
+
+test('frozen model-source operation ignores exposed aliases and a later real owned geometry/profile edit', async () => {
+  await fixture(literalModelSourceFixture('inpaint'), async (f) => {
+    const observed: CpuObservation[] = []
+    const actual = cpuWorker(f, observed)
+    const afterEdit = await f.service.withCapturedSmartPatchGenerationInput(
+      f.tabId,
+      f.patch.id,
+      async (capture) => {
+        capture.context.bbox.x = 900
+        capture.context.internalResolution.width = 999
+        capture.context.coherenceSettings.edgeSize = 1024
+        capture.context.maskSettings.blur = 512
+        capture.document.layers = []
+        capture.maskPngBytes?.fill(0)
+        await f.service.updateSmartPatchLayer(f.tabId, f.patch.id, {
+          kind: 'internal-resolution',
+          size: { height: 16, width: 16 },
+        })
+        const tab = f.service.getOpenTabs()[0]
+        await f.service.updateSmartPatchLayer(f.tabId, f.patch.id, {
+          documentId: tab.documentId,
+          documentRevision: tab.documentRevision,
+          kind: 'coherence-settings',
+          value: { edgeSize: 8, minimumDenoise: 0.25, mode: 'Staged' },
+        })
+        await f.service.flushAutosave(f.tabId)
+        const ownedAfterEdit = await state(f)
+        const first = await capture.prepareModelSource(actual)
+        expectLiteralModelRgb(first, observed)
+        assert.equal(first.mode, 'inpaint')
+        assert.deepEqual(first.context.bbox, MODEL_SOURCE_BBOX)
+        assert.deepEqual(first.context.internalResolution, { height: 8, width: 8 })
+        assert.deepEqual(first.coherence, MODEL_SOURCE_COHERENCE)
+        assert.deepEqual(first.context.maskSettings, { blur: 0, padding: 8 })
+        assert.ok(first.maskPngBytes?.equals(f.maskBytes!))
+        const originalRgbHash = first.modelSource!.sha256
+        first.modelSource!.bytes.fill(0)
+        first.processingSource.bytes.fill(0)
+        first.conditioning.worldKeepMask.bytes.fill(0)
+        first.context.coherenceSettings.edgeSize = 512
+        const second = await capture.prepareModelSource(actual)
+        expectLiteralModelRgb(second, observed)
+        assert.equal(second.modelSource!.sha256, originalRgbHash)
+        assert.deepEqual(second.coherence, MODEL_SOURCE_COHERENCE)
+        return ownedAfterEdit
+      },
+    )
+    await unchanged(f, afterEdit)
+  })
+})
+
+test('actual frozen OUT alone requests LaMa and preserves all state when its resolver refuses', async () => {
+  await fixture(literalModelSourceFixture('outpaint'), async (f) => {
+    const before = await state(f)
+    const observed: CpuObservation[] = []
+    let resourceCalls = 0
+    let sourceCalls = 0
+    const actual = cpuWorker(f, observed)
+    await assert.rejects(
+      f.service.withCapturedSmartPatchGenerationInput(f.tabId, f.patch.id, (capture) =>
+        capture.prepareModelSource(
+          {
+            ...actual,
+            async prepareSmartPatchModelSource(input) {
+              sourceCalls++
+              return actual.prepareSmartPatchModelSource(input)
+            },
+          },
+          {
+            async resolveVerifiedOutpaintInfill(): Promise<never> {
+              resourceCalls++
+              throw new Error('Intentional verified LaMa unavailable')
+            },
+          },
+        ),
+      ),
+      /Intentional verified LaMa unavailable/,
+    )
+    assert.equal(resourceCalls, 1)
+    assert.equal(sourceCalls, 0)
+    assert.deepEqual(
+      observed.map((entry) => entry.response.type),
+      ['target-done', 'smart-patch-prepared', 'smart-patch-conditioned'],
+    )
+    await unchanged(f, before)
+  })
+})
+
+for (const corruption of [
+  'model-source-rgba',
+  'model-source-icc',
+  'metadata-width',
+  'metadata-hash',
+] as const) {
+  test(`actual late ${corruption} model-source adapter result is refused by Main consumption with no Project effects`, async () => {
+    await fixture(literalModelSourceFixture('img2img'), async (f) => {
+      const before = await state(f)
+      const observed: CpuObservation[] = []
+      const actual = cpuWorker(f, observed)
+      // Declared seam: only the final transport adapter is bypassed. Source creation,
+      // preparation, conditioning and RGB publication all run real protocol routes.
+      // A content fault updates its claimed hash, so Main must inspect the PNG itself.
+      await assert.rejects(
+        f.service.withCapturedSmartPatchGenerationInput(f.tabId, f.patch.id, (capture) =>
+          capture.prepareModelSource({
+            ...actual,
+            async prepareSmartPatchModelSource(input) {
+              const response = await actualCpu(
+                'prepare-smart-patch-model-source',
+                {
+                  infillResource: input.infillResource,
+                  mode: input.mode,
+                  output: {
+                    modelSourcePngPath: input.modelSourcePngPath,
+                    stagingRoot: input.stagingRoot,
+                  },
+                  source: input.source,
+                },
+                observed,
+                corruption === 'model-source-rgba' || corruption === 'model-source-icc'
+                  ? corruption
+                  : undefined,
+              )
+              const metadata = response.modelSource as Record<string, unknown>
+              assert.ok(metadata)
+              assert.ok(input.modelSourcePngPath)
+              return {
+                modelSource: {
+                  byteSize: metadata.byteSize as number,
+                  colorSpace: 'srgb',
+                  height: metadata.height as number,
+                  iccSha256: IGS_SRGB_ICC_SHA256,
+                  path: input.modelSourcePngPath,
+                  sha256:
+                    corruption === 'metadata-hash' ? '0'.repeat(64) : (metadata.sha256 as string),
+                  width: corruption === 'metadata-width' ? 16 : (metadata.width as number),
+                },
+              }
+            },
+          }),
+        ),
+        /source|image|PNG|RGB|profile|ICC|dimension|output|metadata/i,
+      )
+      assert.equal(observed.at(-1)?.response.type, 'smart-patch-model-source-prepared')
+      assert.equal(observed.length, 4)
+      await unchanged(f, before)
+      const control: CpuObservation[] = []
+      const valid = await f.service.withCapturedSmartPatchGenerationInput(
+        f.tabId,
+        f.patch.id,
+        (capture) => capture.prepareModelSource(cpuWorker(f, control)),
+      )
+      expectLiteralModelRgb(valid, control)
+      await unchanged(f, before)
+    })
+  })
+}
+
+test('an admitted model-source chain drains after callback failure and refuses retained late calls', async () => {
+  await fixture(literalModelSourceFixture('img2img'), async (f) => {
+    const before = await state(f)
+    const observed: CpuObservation[] = []
+    const actual = cpuWorker(f, observed)
+    let entered!: () => void
+    const sourceEntered = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    let release!: () => void
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let held!: CapturedSmartPatchGenerationInput
+    let stage = ''
+    let sourceFinished = false
+    let callbackSettled = false
+    const pending: {
+      operation: ReturnType<CapturedSmartPatchGenerationInput['prepareModelSource']> | null
+    } = { operation: null }
+    const capturing = f.service.withCapturedSmartPatchGenerationInput(
+      f.tabId,
+      f.patch.id,
+      async (capture) => {
+        held = capture
+        pending.operation = capture.prepareModelSource({
+          ...actual,
+          async prepareSmartPatchModelSource(input) {
+            stage = input.stagingRoot
+            entered()
+            await released
+            assert.ok(existsSync(stage), 'Admitted RGB work retains its source staging')
+            const result = await actual.prepareSmartPatchModelSource(input)
+            sourceFinished = true
+            return result
+          },
+        })
+        void pending.operation.catch(() => undefined)
+        await sourceEntered
+        throw new Error('Intentional callback failure during model-source operation')
+      },
+    )
+    void capturing.then(
+      () => {
+        callbackSettled = true
+      },
+      () => {
+        callbackSettled = true
+      },
+    )
+    try {
+      await Promise.race([
+        sourceEntered,
+        capturing.then(() => assert.fail('Capture settled before its RGB source witness')),
+      ])
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve)
+      })
+      assert.equal(callbackSettled, false)
+      assert.equal(sourceFinished, false)
+      assert.ok(existsSync(stage))
+      release()
+      await assert.rejects(capturing, /Intentional callback failure during model-source operation/)
+      assert.ok(pending.operation)
+      await assert.doesNotReject(
+        pending.operation,
+        'Admitted RGB work completes before staging cleanup',
+      )
+      const completed = await pending.operation
+      expectLiteralModelRgb(completed, observed)
+      assert.equal(sourceFinished, true)
+      assert.equal(existsSync(stage), false)
+      let lateDispatched = false
+      const late = async (): Promise<never> => {
+        lateDispatched = true
+        throw new Error('Late model-source dispatch forbidden')
+      }
+      await assert.rejects(
+        held.prepareModelSource({
+          composeTarget: late,
+          conditionSmartPatch: late,
+          prepareSmartPatch: late,
+          prepareSmartPatchModelSource: late,
         }),
         /closed|lease/i,
       )

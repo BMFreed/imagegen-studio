@@ -1,7 +1,9 @@
+import { LAMA_OUTPAINT_IDENTITY_V1 } from '../../shared/projects/alpha-outpaint.js'
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
 
 import path from 'node:path'
 
+import type { OutpaintInfillResolver } from '../runtime/inference-auxiliary-resources.js'
 import type { FrozenGenerationTarget } from './project-generation-target.js'
 import type {
   FrozenSmartPatchGenerationContext,
@@ -13,12 +15,16 @@ import type {
   SmartPatchConditioningInput,
   SmartPatchFadeInput,
   SmartPatchFadeMode,
+  SmartPatchModelSourceInput,
   SmartPatchPreparationInput,
   VerifiedWorkerMask,
 } from './worker-client.js'
 
 import { decodeDerivedProjectMaskPng } from './project-mask.js'
-import { readSmartPatchPreparationOutput } from './worker-client.js'
+import {
+  readSmartPatchModelSourceOutput,
+  readSmartPatchPreparationOutput,
+} from './worker-client.js'
 
 export type SmartPatchGenerationMode = SmartPatchFadeMode
 
@@ -53,6 +59,86 @@ export interface PreparedSmartPatchConditioningInput extends PreparedSmartPatchG
     latentMaskHasCoverage: boolean
     processingKeepMask: PreparedMaskPlane & { polarity: 'keep' }
     worldKeepMask: PreparedMaskPlane & { polarity: 'keep' }
+  }
+}
+
+export interface PreparedSmartPatchModelSourceInput extends PreparedSmartPatchConditioningInput {
+  /** RGB at processing resolution, never a portable target or accepted output. TXT has none. */
+  modelSource: FrozenGenerationTarget['composite'] | null
+}
+
+/** Only frozen OUT resolves shared infill; source alpha and numerical masks stay independent. */
+export async function prepareFrozenSmartPatchModelSource(
+  input: PreparedSmartPatchConditioningInput,
+  stagingRoot: string,
+  worker: Pick<ProjectWorkerClient, 'prepareSmartPatchModelSource'>,
+  infillResolver?: OutpaintInfillResolver,
+): Promise<PreparedSmartPatchModelSourceInput> {
+  if (input.mode === 'txt2img') {
+    return { ...input, modelSource: null }
+  }
+  let infillResource: SmartPatchModelSourceInput['infillResource'] = null
+  if (input.mode === 'outpaint') {
+    if (!infillResolver) {
+      throw new Error('Smart Patch OUT requires the Main-owned LaMa resolver.')
+    }
+    const resolved = await infillResolver.resolveVerifiedOutpaintInfill()
+    infillResource = {
+      byteSize: resolved.byteSize,
+      path: resolved.managedPath,
+      role: resolved.role,
+      sha256: resolved.sha256,
+    }
+    const relative = path.relative(stagingRoot, infillResource.path)
+    if (
+      infillResource.byteSize !== LAMA_OUTPAINT_IDENTITY_V1.byteSize ||
+      infillResource.role !== LAMA_OUTPAINT_IDENTITY_V1.role ||
+      infillResource.sha256 !== LAMA_OUTPAINT_IDENTITY_V1.sha256 ||
+      !path.isAbsolute(infillResource.path) ||
+      path.resolve(infillResource.path) !== infillResource.path ||
+      relative === '' ||
+      (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))
+    ) {
+      throw new Error('Smart Patch LaMa must be the pinned resource outside disposable staging.')
+    }
+  }
+  const outputPath = path.join(stagingRoot, 'model-source.png')
+  const request: SmartPatchModelSourceInput = {
+    infillResource,
+    mode: input.mode,
+    modelSourcePngPath: outputPath,
+    source: {
+      byteSize: input.processingSource.byteSize,
+      height: input.context.internalResolution.height,
+      path: path.join(stagingRoot, 'processing-source.png'),
+      sha256: input.processingSource.sha256,
+      width: input.context.internalResolution.width,
+    },
+    stagingRoot,
+  }
+  const result = structuredClone(
+    await worker.prepareSmartPatchModelSource(structuredClone(request)),
+  )
+  const artifact = result.modelSource
+  if (
+    !artifact ||
+    artifact.width !== input.context.internalResolution.width ||
+    artifact.height !== input.context.internalResolution.height
+  ) {
+    throw new Error('Smart Patch model source differs from the frozen processing size.')
+  }
+  const bytes = await readSmartPatchModelSourceOutput(outputPath, artifact)
+  return {
+    ...input,
+    modelSource: {
+      bytes,
+      byteSize: bytes.length,
+      colorSpace: 'srgb',
+      height: artifact.height,
+      iccSha256: IGS_SRGB_ICC_SHA256,
+      sha256: artifact.sha256,
+      width: artifact.width,
+    },
   }
 }
 

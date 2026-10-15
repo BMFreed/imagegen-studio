@@ -249,7 +249,7 @@ provenance, target routing and `Add N as Variants` unavailable. Internal coverag
 loss is an explicit later inference concern, not a reason to silently replace
 the frozen world mask or acceptance context.
 
-The current [private contribution checkpoint](../../../engineering/phase-4-smart-patch-contribution-fade-research.md)
+The previous [private contribution checkpoint](../../../engineering/phase-4-smart-patch-contribution-fade-research.md)
 adds binary/full output core and world-space external fade only;affected1888
 TS/203 Python PASS,three semantic RED/neighbor GREEN pairs and required checks
 qualify this private path;physical exit/temporary-copy cleanup confirmed. It
@@ -272,6 +272,21 @@ It preserves this unavailable Smart Patch
 acceptance boundary:future relevant coherence state belongs to frozen layer/source
 context and `outdated`,not new reusable preset/Compare fields. No candidate,
 variant or generated result is created by a settings edit.
+
+The current [private model-source checkpoint](../../../engineering/phase-4-smart-patch-model-source-research.md)
+qualifies actual Main→worker source RGB preparation,not a generated candidate.
+TXT returns null;IMG/INP use exact processing RGB without LaMa;OUT uses full
+pinned local LaMa RGB with holes from source alpha<255 alone,including resized
+uniform alpha while retaining frozen world mode. Six conditioning planes and
+original source/storage remain independent. Affected1937 TS/527 Python
+(focused65/68),two actual Main
+trained-source cases,four exact trained wholeRGB Invoke comparisons and three
+semantic RED/GREEN pairs qualify this boundary. Global lint/typecheck/build and
+worker Ruff/basedpyright PASS;limits are in the research note.
+No jobs,diffusion,candidates,accepted variants,provenance,preset/
+Compare fields or public Generate are enabled. Existing prototype variants and
+their acceptance/staleness mocks are unaffected. Latent-coverage admission and
+this explicit acceptance lifecycle remain subsequent owners.
 
 ## Auto-Switch
 

@@ -331,8 +331,9 @@ Undo. PNG/hash/mask revision/bounds and bbox/internal/draft/other owners remain
 unchanged. Fit reads current owned settings and applies blur+padding outward8-grid
 only on invocation. Save/shadow serialize actual optional values with existing
 package and retention owners; no new worker or persistence backend is introduced.
-The future inpaint/compositing snapshot must freeze and use the same blur without
-baking it into authored mask pixels; padding affects Fit only. The checkpoint
+Private coherence/fade preparation now freezes and uses the same blur without
+baking it into authored mask pixels;future inference/compositing must retain
+that input ownership. Padding affects Fit only. The checkpoint
 is qualified:impacted1835/final104/native109 PASS,three isolated semantic
 RED/GREEN pairs and required typecheck/lint/build PASS. Its scope/chronology are
 recorded in the linked research;public readiness remains unchanged.
@@ -358,6 +359,24 @@ uses it for default CPU conditioning;explicit private override is not a document
 write. No accepted variant/provenance/preset/Compare field or schema version is
 introduced by this slice. Relevant future coherence metadata belongs to immutable
 layer/source context for staleness,not reusable generation configuration.
+
+### Smart Patch private model-source material
+
+[Private model-source preparation](../engineering/phase-4-smart-patch-model-source-research.md)
+adds no `.igs` member/schema or persisted Project state. Its RGB PNG or TXT null
+and six independent conditioning planes are leased operation material,not an
+accepted image,document asset or automatic Save. Main freezes ownership/context,
+resolves pinned LaMa only for OUT,and the worker returns full source-alpha-only
+LaMa RGB or exact IMG/INP RGB. Resize-derived uniform alpha does not change the
+frozen world mode. Existing normal OUT admission is preserved.
+
+Affected1937 TS/527 Python (focused65/68),two actual Main trained-source cases with unchanged
+storage/original source,four exact trained wholeRGB Invoke comparisons and three
+semantic RED/GREEN pairs qualify this finite boundary. Global lint/typecheck/build
+and worker Ruff/basedpyright PASS;limits are recorded in the linked research.
+Saved packages,shadow/history/seed and
+queue/receipts remain unchanged;no durable jobs,variants,provenance,preset/Compare
+fields or public Smart Patch Generate readiness follow from temporary RGB preparation.
 
 ### Generation draft dynamic settings
 

@@ -16,6 +16,7 @@ import {
 import { mkdtemp, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
+import type { OutpaintInfillResolver } from '../runtime/inference-auxiliary-resources.js'
 import type { IgsAssetSource } from './igs-package.js'
 import type { FrozenGenerationTarget } from './project-generation-target.js'
 import type { ProjectWorkerClient, SmartPatchCoherenceParameters } from './worker-client.js'
@@ -29,9 +30,11 @@ import {
   type PreparedSmartPatchConditioningInput,
   type PreparedSmartPatchContributionInput,
   type PreparedSmartPatchGenerationInput,
+  type PreparedSmartPatchModelSourceInput,
   prepareFrozenSmartPatchConditioning,
   prepareFrozenSmartPatchContribution,
   prepareFrozenSmartPatchInput,
+  prepareFrozenSmartPatchModelSource,
 } from './project-smart-patch-preparation.js'
 import { classifyTargetPngAlpha } from './target-png-mode.js'
 import {
@@ -92,6 +95,13 @@ export interface CapturedSmartPatchGenerationInput {
   prepareInput: (
     worker: Pick<ProjectWorkerClient, 'composeTarget' | 'prepareSmartPatch'>,
   ) => Promise<PreparedSmartPatchGenerationInput>
+  prepareModelSource: (
+    worker: Pick<
+      ProjectWorkerClient,
+      'composeTarget' | 'conditionSmartPatch' | 'prepareSmartPatch' | 'prepareSmartPatchModelSource'
+    >,
+    infillResolver?: OutpaintInfillResolver,
+  ) => Promise<PreparedSmartPatchModelSourceInput>
 }
 
 /** Existing immutable members and pending byte buffers are captured before filesystem awaits. */
@@ -249,6 +259,30 @@ export async function withFrozenSmartPatchGenerationInput<T>(
             const prepared = await prepareAt(worker, stagingRoot)
             return prepareFrozenSmartPatchConditioning(prepared, stagingRoot, profile, worker)
           })
+        const prepareModelSource: CapturedSmartPatchGenerationInput['prepareModelSource'] = (
+          worker,
+          infillResolver,
+        ) => {
+          const resolver = infillResolver
+            ? {
+                resolveVerifiedOutpaintInfill:
+                  infillResolver.resolveVerifiedOutpaintInfill.bind(infillResolver),
+              }
+            : undefined
+          return startOperation(async () => {
+            const profile = captureSmartPatchCoherenceParameters(context.coherenceSettings)
+            assertSmartPatchConditioningSize(context.internalResolution)
+            const stagingRoot = await mkdtemp(path.join(composition.stagingRoot, 'model-source-'))
+            const prepared = await prepareAt(worker, stagingRoot)
+            const conditioned = await prepareFrozenSmartPatchConditioning(
+              prepared,
+              stagingRoot,
+              profile,
+              worker,
+            )
+            return prepareFrozenSmartPatchModelSource(conditioned, stagingRoot, worker, resolver)
+          })
+        }
         try {
           return await use({
             composeSource,
@@ -259,6 +293,7 @@ export async function withFrozenSmartPatchGenerationInput<T>(
             prepareConditioning,
             prepareContribution,
             prepareInput,
+            prepareModelSource,
           })
         } finally {
           open = false

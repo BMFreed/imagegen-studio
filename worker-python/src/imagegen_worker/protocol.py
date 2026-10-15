@@ -35,6 +35,7 @@ from imagegen_worker.derivatives import (
     create_derivatives,
 )
 from imagegen_worker.imports import NormalizeImportRequest, normalize_import
+from imagegen_worker.lama_infill import OUTPAINT_INFILL_BYTE_SIZE, OUTPAINT_INFILL_SHA256
 from imagegen_worker.resource_previews import ResourcePreviewRequest, create_resource_preview
 from imagegen_worker.smart_patch_conditioning import (
     SmartPatchCoherence,
@@ -44,6 +45,11 @@ from imagegen_worker.smart_patch_conditioning import (
 from imagegen_worker.smart_patch_fade import (
     SmartPatchFadeRequest,
     fade_smart_patch,
+)
+from imagegen_worker.smart_patch_model_source import (
+    SmartPatchInfillResource,
+    SmartPatchModelSourceRequest,
+    prepare_smart_patch_model_source,
 )
 from imagegen_worker.smart_patch_preparation import (
     PreparationImage,
@@ -64,8 +70,6 @@ MAX_GENERATION_STEPS = 200
 MAX_GENERATION_CFG_RESCALE = 0.99
 MAX_GENERATION_CFG_SCALE = 30
 MAX_EMBEDDING_VECTORS = 300  # Four CLIP chunks, each with 75 content positions.
-OUTPAINT_INFILL_SHA256 = "344c77bbcb158f17dd143070d1e789f38a66c04202311ae3a258ef66667a9ea9"
-OUTPAINT_INFILL_BYTE_SIZE = 205_669_692
 _REQUEST_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _SHA256_PATTERN = re.compile(r"[a-f0-9]{64}\Z")
 
@@ -121,6 +125,12 @@ class FadeSmartPatchCommand:
 class ConditionSmartPatchCommand:
     request_id: str
     conditioning: SmartPatchConditioningRequest
+
+
+@dataclass(frozen=True)
+class PrepareSmartPatchModelSourceCommand:
+    request_id: str
+    source: SmartPatchModelSourceRequest
 
 
 @dataclass(frozen=True)
@@ -287,6 +297,7 @@ def ready_message() -> dict[str, object]:
             "smart-patch-preparation",
             "smart-patch-fade",
             "smart-patch-conditioning",
+            "smart-patch-model-source",
         ],
     }
 
@@ -945,6 +956,7 @@ def parse_request(
     | PrepareSmartPatchCommand
     | FadeSmartPatchCommand
     | ConditionSmartPatchCommand
+    | PrepareSmartPatchModelSourceCommand
     | GenerateIllustriousTxt2ImgCommand
     | GenerateAnimaTxt2ImgCommand
 ):
@@ -1310,6 +1322,55 @@ def parse_request(
                 ),
             ),
         )
+    if fields.get("type") == "prepare-smart-patch-model-source":
+        _object(
+            fields,
+            "Smart Patch model source request",
+            {"type", "requestId", "protocolVersion", "mode", "source", "infillResource", "output"},
+        )
+        mode = fields["mode"]
+        if not isinstance(mode, str) or mode not in ("txt2img", "img2img", "inpaint", "outpaint"):
+            raise DerivativeError(
+                "INVALID_REQUEST", "Smart Patch model source mode is unsupported."
+            )
+        source = (
+            None
+            if fields["source"] is None
+            else _preparation_image(fields["source"], "Smart Patch processing source")
+        )
+        infill_resource = None
+        if fields["infillResource"] is not None:
+            resource = _object(
+                fields["infillResource"],
+                "Smart Patch infill resource",
+                {"path", "sha256", "byteSize", "role"},
+            )
+            if resource["role"] != "outpaint-infill":
+                raise DerivativeError("INVALID_REQUEST", "Smart Patch infill role is unsupported.")
+            infill_resource = SmartPatchInfillResource(
+                path=_path(resource["path"], "Smart Patch infill path"),
+                sha256=_sha256(resource["sha256"], "Smart Patch infill hash"),
+                byte_size=_positive_integer(resource["byteSize"], "Smart Patch infill bytes"),
+            )
+        output = _object(
+            fields["output"],
+            "Smart Patch model source output",
+            {"stagingRoot", "modelSourcePngPath"},
+        )
+        return PrepareSmartPatchModelSourceCommand(
+            request_id=request_id,
+            source=SmartPatchModelSourceRequest(
+                mode=mode,
+                source=source,
+                infill_resource=infill_resource,
+                staging_root=_path(output["stagingRoot"], "Smart Patch model source staging root"),
+                model_source_png_path=(
+                    None
+                    if output["modelSourcePngPath"] is None
+                    else _path(output["modelSourcePngPath"], "Smart Patch model source output")
+                ),
+            ),
+        )
     if fields.get("type") != "derive-image":
         raise DerivativeError("INVALID_REQUEST", "Request type is unsupported.")
 
@@ -1452,6 +1513,14 @@ def process_request(value: object) -> dict[str, object]:
                 "protocolVersion": PROTOCOL_VERSION,
                 "requestId": command.request_id,
                 **conditioning_result,
+            }
+        if isinstance(command, PrepareSmartPatchModelSourceCommand):
+            model_source_result = prepare_smart_patch_model_source(command.source)
+            return {
+                "type": "smart-patch-model-source-prepared",
+                "protocolVersion": PROTOCOL_VERSION,
+                "requestId": command.request_id,
+                **model_source_result,
             }
         result = normalize_import(command.imported)
         return {
