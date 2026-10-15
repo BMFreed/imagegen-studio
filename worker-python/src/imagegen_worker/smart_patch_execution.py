@@ -139,7 +139,9 @@ def capture_smart_patch_execution(command: ExecuteSmartPatchCommand) -> SmartPat
     )
 
 
-def _publish(command: ExecuteSmartPatchCommand, image: Image.Image) -> dict[str, object]:
+def _publish(
+    command: ExecuteSmartPatchCommand, image: Image.Image, actual_seed: int
+) -> dict[str, object]:
     if (
         image.mode != "RGB"
         or image.size != (command.width, command.height)
@@ -169,6 +171,7 @@ def _publish(command: ExecuteSmartPatchCommand, image: Image.Image) -> dict[str,
             "type": "smart-patch-executed",
             "protocolVersion": PROTOCOL_VERSION,
             "requestId": command.request_id,
+            "actualSeed": actual_seed,
             "output": metadata,
         }
     except FileExistsError as error:
@@ -203,6 +206,9 @@ def execute_smart_patch(
     _verify_resources(resources)
     torch = cast(Any, runtime.torch)
     policy = command.inference
+    actual_seed = (
+        policy.seed if isinstance(policy, IllustriousInferenceParameters) else policy.sampling.seed
+    )
     if isinstance(policy, IllustriousInferenceParameters):
         pipeline, embeddings = inference.load_illustrious_pipeline(
             policy, config_dir=config_dir, runtime=runtime, mode=command.mode
@@ -243,4 +249,4 @@ def execute_smart_patch(
         if result.total_steps != policy.sampling.total_steps:
             raise DerivativeError("GENERATION_WORKER_FAILED", "Anima execution count differs.")
         image = result.image
-    return _publish(command, image)
+    return _publish(command, image, actual_seed)

@@ -168,6 +168,7 @@ def test_inference_target_capability_is_additive_and_other_derivative_route_stay
         "illustrious-euler",
         "illustrious-noise-profile",
         "smart-patch-execution",
+        "smart-patch-seed-confirmation",
     ]
 
     response = process_inference_request(

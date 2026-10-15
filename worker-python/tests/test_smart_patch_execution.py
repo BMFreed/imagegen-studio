@@ -70,6 +70,7 @@ def _wire(
     *,
     keep: int | None = None,
     bundle: Any = None,
+    seed: int = 0,
 ) -> dict[str, Any]:
     root.mkdir(mode=0o700)
     stage, resources = root / "stage", root / "resources"
@@ -99,7 +100,7 @@ def _wire(
             "prompts": {"positive": "(portrait)++", "negative": "blur"},
             "sampling": {
                 "steps": 3,
-                "seed": 0,
+                "seed": seed,
                 "cfgScale": 5,
                 "cfgRescale": 0.2,
                 "scheduler": "euler",
@@ -113,6 +114,7 @@ def _wire(
             scheduler="euler",
             steps=3,
             strength=None if mode == "txt2img" else 0.75,
+            seed=seed,
         )
         model: dict[str, Any] = {"architecture": "anima-base-1.0"}
         for role, attr in (
@@ -209,6 +211,7 @@ def _install_illustrious(
 
         monkeypatch.setattr(pipeline, "to", cpu_to)
         if on_decode is not None:
+
             def observed_decode(_module: Any, _args: Any, _output: Any) -> None:
                 on_decode()
 
@@ -243,8 +246,10 @@ def _runtime(
 
 
 def _pixels(wire: dict[str, Any], result: dict[str, object]) -> bytes:
-    assert set(result) == {"type", "protocolVersion", "requestId", "output"}, result
+    assert set(result) == {"type", "protocolVersion", "requestId", "actualSeed", "output"}, result
     assert result["type"] == "smart-patch-executed" and result["requestId"] == wire["requestId"]
+    assert type(result["actualSeed"]) is int
+    assert result["actualSeed"] == wire["inference"]["sampling"]["seed"]
     output = Path(wire["output"]["pngPath"])
     raw = output.read_bytes()
     info = cast(dict[str, object], result["output"])
@@ -279,6 +284,23 @@ def test_actual_entrypoint_native_modes_replay_and_publish_only_rgb(
     assert first == _pixels(replay, _route(replay, tmp_path, runtime))
     assert events and events[-1]["step"] == events[-1]["totalSteps"]
     assert all(path.read_bytes() == raw for path, raw in inputs.items())
+
+
+@pytest.mark.parametrize("family", FAMILIES)
+def test_native_completion_confirms_uint32max_seed(
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+    family: str,
+) -> None:
+    runtime, bundle = _runtime(request, family, tmp_path, monkeypatch)
+    wire = _wire(tmp_path / "maximum", family, "img2img", bundle=bundle, seed=0xFFFFFFFF)
+    result = _route(wire, tmp_path, runtime)
+    pixels = _pixels(wire, result)
+    assert result["actualSeed"] == 0xFFFFFFFF
+    assert len(pixels) == 64 * 64 * 3
+    if family == "anima":
+        assert wire["inference"]["sampling"]["posteriorSeed"] == 1_640_531_526
 
 
 @pytest.mark.parametrize("family", FAMILIES)
@@ -319,7 +341,8 @@ def test_private_marker_cpu_refusal_and_parser_owned_metadata(tmp_path: Path, fa
     wire["inference"]["sampling"]["seed"] = 71
     assert captured.inference == original
     assert (
-        captured.inference.seed if isinstance(captured.inference, IllustriousInferenceParameters)
+        captured.inference.seed
+        if isinstance(captured.inference, IllustriousInferenceParameters)
         else captured.inference.sampling.seed
     ) == 0
     assert process_request(unmutated)["code"] == "INFERENCE_UNAVAILABLE"
@@ -327,6 +350,10 @@ def test_private_marker_cpu_refusal_and_parser_owned_metadata(tmp_path: Path, fa
         list[str], inference_ready_message(fake_runtime())["capabilities"]
     )
     assert "smart-patch-execution" not in cast(list[str], ready_message()["capabilities"])
+    assert "smart-patch-seed-confirmation" in cast(
+        list[str], inference_ready_message(fake_runtime())["capabilities"]
+    )
+    assert "smart-patch-seed-confirmation" not in cast(list[str], ready_message()["capabilities"])
 
 
 @pytest.mark.parametrize("family", FAMILIES)

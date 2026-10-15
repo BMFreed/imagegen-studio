@@ -36,6 +36,12 @@ import type { ProjectIndexRepository } from './project-index.js'
 import type { ProjectService } from './project-service.js'
 import type { SmartPatchExecutionModelResolver } from './project-smart-patch-execution.js'
 import type { SmartPatchInputMaterial } from './smart-patch-frozen-input.js'
+import type {
+  SmartPatchInferenceTransport,
+  SmartPatchOutputWorkerOwner,
+  SmartPatchProcessorResult,
+} from './smart-patch-generation-processor.js'
+import type { SmartPatchGenerationStagingRepository } from './smart-patch-generation-staging.js'
 import type { ProjectWorkerClient } from './worker-client.js'
 
 import { withAnimaGenerationBatchRequests } from './anima-generation-request.js'
@@ -56,6 +62,7 @@ import {
 import { buildQueuedOutpaintWorkerRequest } from './outpaint-worker-request.js'
 import { canonicalProjectPath, localProjectRecoveryKey } from './project-identity.js'
 import { captureSmartPatchModelResolver } from './project-smart-patch-execution.js'
+import { SmartPatchGenerationProcessor } from './smart-patch-generation-processor.js'
 
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
 
@@ -75,6 +82,13 @@ export interface PreparedBatchAdmissionResult {
   assertCurrent?: () => Promise<void>
   items: QueuedGenerationItem[]
   plan: GenerationBatchPlan
+}
+
+/** Main-only execution handle. Its caller must stop/drain it before Project or runtime close. */
+export interface PrivateSmartPatchExecution {
+  cancelAndWait: SmartPatchGenerationProcessor['cancelAndWait']
+  runNext: (worker: SmartPatchInferenceTransport) => Promise<SmartPatchProcessorResult>
+  stopAndCancelActive: SmartPatchGenerationProcessor['stopAndCancelActive']
 }
 
 interface AcceptanceCancellationScope {
@@ -266,6 +280,44 @@ export class GenerationOrchestrator {
       )
     }
     this.completedProjectCloses.add(tabId)
+  }
+
+  /** Dedicated private composition; normal public dispatch and lifecycle remain unchanged. */
+  createSmartPatchExecution(
+    staging: SmartPatchGenerationStagingRepository,
+    outputOwner: SmartPatchOutputWorkerOwner,
+  ): PrivateSmartPatchExecution {
+    if (
+      typeof this.models.resolveVerifiedAnimaGenerationLoraForPlan !== 'function' ||
+      typeof this.models.resolveVerifiedGenerationAnimaBundleForPlan !== 'function'
+    ) {
+      throw new GenerationOrchestratorError(
+        'GENERATION_BATCH_INVALID',
+        'Private Smart Patch execution requires the complete model resolver.',
+      )
+    }
+    const processor = new SmartPatchGenerationProcessor(
+      this.queue,
+      staging,
+      this.models as SmartPatchExecutionModelResolver,
+      this.scratchBasePath,
+      outputOwner,
+    )
+    return {
+      cancelAndWait: processor.cancelAndWait.bind(processor),
+      runNext: async (worker) => {
+        const captured: SmartPatchInferenceTransport = {
+          close: worker.close.bind(worker),
+          executeSmartPatch: worker.executeSmartPatch.bind(worker),
+          ready: structuredClone(worker.ready),
+        }
+        await this.enqueueBarrier
+        this.queue.assertReadyForDispatch()
+        staging.assertReadyForPublication()
+        return await processor.runOne(captured)
+      },
+      stopAndCancelActive: processor.stopAndCancelActive.bind(processor),
+    }
   }
 
   /** Atomically admit a concrete planned group; prompt expansion and seed scheduling are upstream. */

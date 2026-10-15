@@ -1143,4 +1143,5 @@ def test_separate_entrypoint_refuses_ready_without_offline_config() -> None:
         "illustrious-euler",
         "illustrious-noise-profile",
         "smart-patch-execution",
+        "smart-patch-seed-confirmation",
     ]

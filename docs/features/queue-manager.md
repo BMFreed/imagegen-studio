@@ -256,7 +256,35 @@ Startup recovery:
 - terminal queue history may be pruned by retention policy;
 - queue-history pruning must not remove valid completed candidate recovery.
 
-## Private Smart Patch admission boundary
+## Private Smart Patch execution boundary
+
+[Private queued Smart Patch execution](../engineering/phase-4-smart-patch-queued-execution-research.md)
+connects dedicated SQL claim, exact frozen inference, worker-confirmed uint32 seed,
+CPU world composition and independently durable Smart Patch world candidates.
+The private `GenerationOrchestrator.createSmartPatchExecution` handle waits for
+admission and exposes explicit run/cancel/stop ownership; public drain stays off.
+Both family operations share the global running-slot CAS with ordinary jobs;
+normal dispatch/readers and Raster acceptance remain separate. One cancellation
+owner drains inference, CPU startup/request/readback and publication before
+acknowledging cancel or cleaning scratch; unconfirmed exit retains its owner,
+slot and files. The private inference capability now also requires
+`smart-patch-seed-confirmation`; older installed payloads refuse before ML.
+
+A separate typed store at `recovery/smart-patch-staging` reserves the shared
+receipt before fsynced world RGBA/final-mask/manifest publication, then commits
+queue+receipt+actual-seed cursor atomically. Exact reload and APP_RESTART recovery
+keep independent final alpha and context after terminal queue/input pruning;
+USER_CANCELED cannot resurrect a candidate. Shared tombstones hide discarded
+sessions across both stores. Normal Results never discovers these candidates,
+and the Smart DTO cannot be assigned to the normal Raster DTO.
+
+This is a private executable/recoverable path. Public Generate/Retry/Results,
+immutable variant acceptance/outdated/orphan handling, portable provenance and
+installed GPU/release qualification remain subsequent owners. There are no
+Project/document/`.igs`/history/preset/Compare edits. PP-007/008 public readiness
+remains «Пока не обещать»; actual checks and limits belong to the linked research.
+
+## Previous private Smart Patch admission boundary
 
 [Private Smart Patch queue admission](../engineering/phase-4-smart-patch-queue-admission-research.md)
 adds real `illustrious-smart-patch` / `anima-smart-patch` pending rows to the common
@@ -274,9 +302,9 @@ ordinary Retry and normal input readers refuse these jobs before runtime use.
 This is private durable admission, not runnable public generation. No candidate,
 receipt, actual-seed cursor, variant, Project/`.igs`/provenance/preset/Compare or
 public Smart Patch Generate/acceptance UI is introduced; Retry remains explicitly
-disabled. Next: dedicated typed dispatch with worker-confirmed
-actualSeed, owned inference+CPU cancellation and independently durable world
-candidates, then immutable variant acceptance. Public PP-007/008 remain
+disabled. At that admission checkpoint the next owners were dedicated typed
+dispatch, worker-confirmed actualSeed, owned inference+CPU cancellation and
+durable world candidates, now covered above; immutable acceptance remains next. Public PP-007/008 remain
 «Пока не обещать». Verification evidence and limits are in the linked research.
 
 ## Historical boundary: Phase 2B private processor checkpoint

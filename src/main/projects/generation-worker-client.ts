@@ -379,6 +379,7 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
       if (
         this.ready.workerVersion !== '0.14.0' ||
         !this.ready.capabilities.includes('smart-patch-execution') ||
+        !this.ready.capabilities.includes('smart-patch-seed-confirmation') ||
         (request.family === 'anima' && !supportsInferenceAnima(this.ready))
       ) {
         throw new GenerationWorkerError(

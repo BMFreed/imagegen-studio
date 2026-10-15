@@ -83,6 +83,7 @@ def inference_ready_message(runtime: MLRuntime | None = None) -> dict[str, objec
             INFERENCE_EULER_CAPABILITY,
             INFERENCE_NOISE_PROFILE_CAPABILITY,
             "smart-patch-execution",
+            "smart-patch-seed-confirmation",
             *(
                 ANIMA_CAPABILITIES
                 if runtime is not None and supports_anima_compute(runtime)

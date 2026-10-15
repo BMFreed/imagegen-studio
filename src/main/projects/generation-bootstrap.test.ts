@@ -27,6 +27,7 @@ test('bootstrap returns the recovered repository instances used for dispatch and
     const recovered = await recoverGenerationRepositories(database, dataRoot)
     assert.doesNotThrow(() => recovered.queue.assertReadyForDispatch())
     assert.doesNotThrow(() => recovered.staging.assertReadyForPublication())
+    assert.doesNotThrow(() => recovered.smartPatchStaging.assertReadyForPublication())
     assert.equal(await recovered.queue.claimNextPending(), null)
   })
 })
@@ -53,6 +54,21 @@ test('unsafe queue recovery rejects bootstrap before staging is available', asyn
       await symlink(outside, path.join(dataRoot, 'generation-inputs'))
       await assert.rejects(recoverGenerationRepositories(database, dataRoot), {
         code: 'QUEUE_STORAGE_UNSAFE',
+      })
+    } finally {
+      await rm(outside, { force: true, recursive: true })
+    }
+  })
+})
+
+test('unsafe Smart Patch staging refuses bootstrap before the dedicated owner can dispatch', async () => {
+  await withDatabase(async (dataRoot, database) => {
+    const outside = await mkdtemp(path.join(os.tmpdir(), 'imagegen-outside-patch-staging-'))
+    try {
+      await mkdir(path.join(dataRoot, 'recovery'))
+      await symlink(outside, path.join(dataRoot, 'recovery', 'smart-patch-staging'))
+      await assert.rejects(recoverGenerationRepositories(database, dataRoot), {
+        code: 'STAGING_STORAGE_UNSAFE',
       })
     } finally {
       await rm(outside, { force: true, recursive: true })

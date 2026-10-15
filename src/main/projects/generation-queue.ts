@@ -785,6 +785,102 @@ export class GenerationQueueRepository {
     })
   }
 
+  /** Private Smart Patch claim shares the global slot while keeping ordinary readers separate. */
+  async claimNextPendingSmartPatch(): Promise<VerifiedQueuedSmartPatchInput | null> {
+    return await this.serialize(async () => {
+      for (;;) {
+        this.assertReadyForDispatch()
+        const running = await this.db
+          .selectFrom('generation_queue_item')
+          .select('id')
+          .where('status', '=', 'running')
+          .executeTakeFirst()
+        if (running) {
+          return null
+        }
+        let pendingQuery = this.db
+          .selectFrom('generation_queue_item')
+          .selectAll()
+          .where('status', '=', 'pending')
+          .where('operation', 'in', ['illustrious-smart-patch', 'anima-smart-patch'])
+          .orderBy('created_at', 'asc')
+          .orderBy('id', 'asc')
+        if (this.fencedProjects.size > 0) {
+          pendingQuery = pendingQuery.where('local_project_key', 'not in', [...this.fencedProjects])
+        }
+        const pending = await pendingQuery.executeTakeFirst()
+        if (!pending) {
+          return null
+        }
+
+        // A fence can be raised after the read and while frozen files are verified.
+        if (this.fencedProjects.has(pending.local_project_key)) {
+          continue
+        }
+
+        let verified: VerifiedQueuedSmartPatchInput
+        try {
+          verified = await this.verifySmartPatchRow(pending)
+        } catch (error) {
+          if (!(error instanceof GenerationQueueError) || error.code !== 'QUEUE_INPUT_INVALID') {
+            throw error
+          }
+          // A corrupt frozen input cannot be dispatched. Mark only the still-pending revision
+          // failed, preserving its files and allowing the next valid item to progress.
+          const now = new Date().toISOString()
+          await this.db
+            .updateTable('generation_queue_item')
+            .set({
+              error_code: 'QUEUE_INPUT_INVALID',
+              error_message: 'The frozen queue input is invalid.',
+              finished_at: now,
+              status: 'failed',
+              status_sequence: sql<number>`status_sequence + 1`,
+              updated_at: now,
+            })
+            .where('id', '=', pending.id)
+            .where('status', '=', 'pending')
+            .where('status_sequence', '=', pending.status_sequence)
+            .returning('id')
+            .executeTakeFirst()
+          continue
+        }
+
+        await this.testHooks.beforeClaimUpdate?.(pending.id)
+        if (this.fencedProjects.has(pending.local_project_key)) {
+          continue
+        }
+        const now = new Date().toISOString()
+        const claimed = await this.db
+          .updateTable('generation_queue_item')
+          .set({
+            error_code: null,
+            error_message: null,
+            started_at: now,
+            status: 'running',
+            status_sequence: sql<number>`status_sequence + 1`,
+            updated_at: now,
+          })
+          .where('id', '=', pending.id)
+          .where('status', '=', 'pending')
+          .where('status_sequence', '=', pending.status_sequence)
+          .where('frozen_payload_json', '=', pending.frozen_payload_json)
+          .where('operation', '=', pending.operation)
+          .where('operation', 'in', ['illustrious-smart-patch', 'anima-smart-patch'])
+          .where(
+            sql<boolean>`NOT EXISTS (
+            SELECT 1 FROM generation_queue_item AS active WHERE active.status = 'running'
+          )`,
+          )
+          .returningAll()
+          .executeTakeFirst()
+        if (claimed) {
+          return { ...verified, item: toItem(claimed) }
+        }
+      }
+    })
+  }
+
   /** Delete one terminal queue row without touching its independent staging candidate. */
   async deleteTerminal(id: string, expectedStatusSequence: number): Promise<void> {
     validateQueueId(id)
@@ -1900,6 +1996,37 @@ export class GenerationQueueRepository {
     })
   }
 
+  /** Advisory for the dedicated private owner; no runtime or pixel reads. */
+  async hasDispatchableSmartPatchPending(): Promise<boolean> {
+    return await this.serialize(async () => {
+      for (;;) {
+        this.assertReadyForDispatch()
+        let pendingQuery = this.db
+          .selectFrom('generation_queue_item')
+          .select('local_project_key')
+          .where('status', '=', 'pending')
+          .where('operation', 'in', ['illustrious-smart-patch', 'anima-smart-patch'])
+          .where(
+            sql<boolean>`NOT EXISTS (
+            SELECT 1 FROM generation_queue_item AS active WHERE active.status = 'running'
+          )`,
+          )
+          .orderBy('created_at', 'asc')
+          .orderBy('id', 'asc')
+        if (this.fencedProjects.size > 0) {
+          pendingQuery = pendingQuery.where('local_project_key', 'not in', [...this.fencedProjects])
+        }
+        const pending = await pendingQuery.executeTakeFirst()
+        this.assertReadyForDispatch()
+        // Project close can raise its synchronous fence while the metadata read awaits.
+        if (pending && this.fencedProjects.has(pending.local_project_key)) {
+          continue
+        }
+        return pending !== undefined
+      }
+    })
+  }
+
   /** App-wide history metadata. Neither target pixels nor checkpoint files are read. */
   async listManagerPage(cursor?: GenerationQueueCursor | null): Promise<GenerationQueuePage> {
     if (cursor !== undefined && cursor !== null && !isGenerationQueueCursor(cursor)) {
@@ -2170,12 +2297,7 @@ export class GenerationQueueRepository {
     validateQueueId(id)
     return await this.serialize(async () => {
       const row = await this.requireRow(id)
-      const payload = parseSmartPatchQueueRow(row)
-      const bundle = await new SmartPatchInputBundleRepository(this.dataRoot, {}, 'queue').load(
-        payload.bundle.id,
-      )
-      assertQueuedSmartPatchBundle(payload, bundle)
-      return { bundle, item: toItem(row), payload }
+      return await this.verifySmartPatchRow(row)
     })
   }
 
@@ -2749,6 +2871,24 @@ export class GenerationQueueRepository {
     )
     await validateTargetPng(targetBytes, payload.context)
     return { item: toItem(row), payload, targetPath, targetPngBytes: targetBytes }
+  }
+
+  private async verifySmartPatchRow(
+    row: Selectable<GenerationQueueItem>,
+  ): Promise<VerifiedQueuedSmartPatchInput> {
+    try {
+      const payload = parseSmartPatchQueueRow(row)
+      const bundle = await new SmartPatchInputBundleRepository(this.dataRoot, {}, 'queue').load(
+        payload.bundle.id,
+      )
+      assertQueuedSmartPatchBundle(payload, bundle)
+      return { bundle, item: toItem(row), payload }
+    } catch {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'The frozen Smart Patch queue input is invalid.',
+      )
+    }
   }
 }
 

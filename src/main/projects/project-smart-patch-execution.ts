@@ -37,7 +37,10 @@ import {
   GenerationPreparationError,
   validateNormalGenerationDraft,
 } from './project-generation-preparation.js'
-import { captureSmartPatchExecutionRequest } from './smart-patch-execution-request.js'
+import {
+  captureSmartPatchExecutionRequest,
+  requireSmartPatchActualSeed,
+} from './smart-patch-execution-request.js'
 import {
   readSmartPatchModelSourceOutput,
   readSmartPatchPreparationOutput,
@@ -76,6 +79,7 @@ export type SmartPatchBatchInputOptions = Omit<
 }
 
 export interface ExecutedSmartPatchGenerationInput extends PreparedSmartPatchModelSourceInput {
+  actualSeed: number
   item: SmartPatchExecutionItem
   /** Verified processing-size RGB, detached before the operation-owned stage is removed. */
   output: FrozenGenerationTarget['composite']
@@ -318,6 +322,7 @@ export async function executePreparedSmartPatch(input: {
   })
   const size = prepared.context.internalResolution
   const result = structuredClone(await generationWorker.executeSmartPatch(request))
+  const actualSeed = requireSmartPatchActualSeed(result.actualSeed, item.seed)
   if (result.output.width !== size.width || result.output.height !== size.height) {
     refuse('GENERATION_INPUT_CHANGED', 'Smart Patch output differs from its frozen internal size.')
   }
@@ -326,6 +331,7 @@ export async function executePreparedSmartPatch(input: {
   const bytes = await readSmartPatchModelSourceOutput(request.output.pngPath, result.output)
   return {
     ...prepared,
+    actualSeed,
     item,
     output: {
       bytes,

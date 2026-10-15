@@ -1,3 +1,5 @@
+import { compileAnimaFlowSamplingPlan } from '../../shared/projects/anima-flow-sampling-plan.js'
+import { compileAnimaPromptWeighting } from '../../shared/projects/anima-prompt-weighting.js'
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
 
 import assert from 'node:assert/strict'
@@ -54,6 +56,7 @@ async function withClient(
     request: SmartPatchExecutionRequest,
     marker: string,
   ) => Promise<void>,
+  family: 'anima' | 'illustrious' = 'illustrious',
 ): Promise<void> {
   const root = await mkdtemp(path.join(tmpdir(), 'igs-patch-client-'))
   let client: GenerationWorkerClient | undefined
@@ -82,6 +85,7 @@ async function withClient(
       'illustrious-euler',
       'illustrious-noise-profile',
       ...(mode === 'old' ? [] : ['smart-patch-execution']),
+      ...(mode === 'old' || mode === 'old-seed' ? [] : ['smart-patch-seed-confirmation']),
     ]
     const script = String.raw`#!${process.execPath}
 const fs=require('node:fs'),crypto=require('node:crypto'),rl=require('node:readline');
@@ -95,7 +99,16 @@ rl.createInterface({input:process.stdin}).on('line',line=>{
  fs.writeFileSync(r.output.pngPath,rgb,{flag:'wx'});
  const output={byteSize:rgb.length,colorSpace:'srgb',width:64,height:64,sha256:crypto.createHash('sha256').update(rgb).digest('hex')};
  if(mode==='bad-hash')output.sha256='0'.repeat(64);
- process.stdout.write(JSON.stringify({type:'smart-patch-executed',protocolVersion:'1',requestId:r.requestId,output})+'\n');
+ const response={type:'smart-patch-executed',protocolVersion:'1',requestId:r.requestId,actualSeed:r.inference.sampling.seed,output};
+ if(mode==='missing-seed')delete response.actualSeed;
+ if(mode==='wrong-seed')response.actualSeed=(response.actualSeed+1)%4294967296;
+ if(mode==='negative-seed')response.actualSeed=-1;
+ if(mode==='overflow-seed')response.actualSeed=4294967296;
+ if(mode==='fractional-seed')response.actualSeed=0.5;
+ if(mode==='string-seed')response.actualSeed='0';
+ if(mode==='null-seed')response.actualSeed=null;
+ if(mode==='boolean-seed')response.actualSeed=false;
+ process.stdout.write(JSON.stringify(response)+'\n');
 });
 `
     await writeFile(executable, script)
@@ -104,7 +117,7 @@ rl.createInterface({input:process.stdin}).on('line',line=>{
       { pythonExecutable: executable, runtimeRoot: runtime, scratchBasePath: scratch },
       { requestTimeoutMs: 150, shutdownWaitMs: 40 },
     )
-    const request: SmartPatchExecutionRequest = {
+    let request: SmartPatchExecutionRequest = {
       family: 'illustrious',
       inference: {
         checkpoint: {
@@ -131,6 +144,45 @@ rl.createInterface({input:process.stdin}).on('line',line=>{
       schemaVersion: 1,
       type: 'execute-smart-patch',
     }
+    if (family === 'anima') {
+      const component = async (name: string) => {
+        const componentPath = path.join(root, `${name}.bin`)
+        const bytes = Buffer.from(`declared fake ${name}`)
+        await writeFile(componentPath, bytes)
+        return { byteSize: bytes.length, path: componentPath, sha256: sha(bytes) }
+      }
+      request = {
+        ...request,
+        family,
+        inference: {
+          loras: [],
+          model: {
+            architecture: 'anima-base-1.0',
+            checkpoint: {
+              byteSize: Buffer.byteLength('declared fake native checkpoint'),
+              path: checkpoint,
+              sha256: sha(Buffer.from('declared fake native checkpoint')),
+            },
+            qwen3Encoder: await component('qwen3'),
+            vae: await component('vae'),
+          },
+          prompts: {
+            negative: compileAnimaPromptWeighting('blur'),
+            positive: compileAnimaPromptWeighting('portrait'),
+          },
+          sampling: compileAnimaFlowSamplingPlan({
+            guidanceScale: 5,
+            height: 64,
+            mode: 'img2img',
+            scheduler: 'euler',
+            seed: 0,
+            steps: 3,
+            strength: 0.75,
+            width: 64,
+          }),
+        },
+      }
+    }
     await run(client, request, marker)
   } finally {
     // Confirm physical exit first. An unconfirmed close deliberately retains this fixture.
@@ -139,12 +191,14 @@ rl.createInterface({input:process.stdin}).on('line',line=>{
   }
 }
 
-test('private Smart Patch client requires its explicit capability before writing to a child', async () => {
-  await withClient('old', async (client, request, marker) => {
-    await assert.rejects(client.executeSmartPatch(request), { code: 'WORKER_VERSION_MISMATCH' })
-    await assert.rejects(readFile(marker), { code: 'ENOENT' })
+for (const mode of ['old', 'old-seed']) {
+  test(`private Smart Patch client refuses ${mode} capabilities before writing to a child`, async () => {
+    await withClient(mode, async (client, request, marker) => {
+      await assert.rejects(client.executeSmartPatch(request), { code: 'WORKER_VERSION_MISMATCH' })
+      await assert.rejects(readFile(marker), { code: 'ENOENT' })
+    })
   })
-})
+}
 
 test('private Smart Patch client consumes actual RGB metadata without a generation-done response', async () => {
   await withClient('done', async (client, request) => {
@@ -155,8 +209,67 @@ test('private Smart Patch client consumes actual RGB metadata without a generati
     assert.equal(result.output.path, request.output.pngPath)
     assert.equal(result.output.sha256, sha(await readFile(request.output.pngPath)))
     assert.equal(result.output.iccSha256, IGS_SRGB_ICC_SHA256)
+    assert.equal(result.actualSeed, 0)
   })
 })
+
+for (const family of ['illustrious', 'anima'] as const) {
+  for (const seed of [0, 0xff_ff_ff_ff]) {
+    test(`actual JSONL ${family} completion confirms exact seed ${seed}`, async () => {
+      await withClient(
+        'done',
+        async (client, request) => {
+          if (request.family === 'anima') {
+            request.inference = {
+              ...request.inference,
+              sampling: compileAnimaFlowSamplingPlan({
+                guidanceScale: 5,
+                height: 64,
+                mode: 'img2img',
+                scheduler: 'euler',
+                seed,
+                steps: 3,
+                strength: 0.75,
+                width: 64,
+              }),
+            }
+          } else {
+            request.inference.sampling.seed = seed
+          }
+          const result = await client.executeSmartPatch(request)
+          assert.equal(result.actualSeed, seed)
+          assert.equal(result.output.sha256, sha(await readFile(request.output.pngPath)))
+        },
+        family,
+      )
+    })
+  }
+}
+
+for (const mode of [
+  'missing-seed',
+  'wrong-seed',
+  'negative-seed',
+  'overflow-seed',
+  'fractional-seed',
+  'string-seed',
+  'null-seed',
+  'boolean-seed',
+]) {
+  test(`private Smart Patch JSONL rejects ${mode} despite valid RGB and confirms child exit`, async () => {
+    await withClient(mode, async (client, request, marker) => {
+      await assert.rejects(client.executeSmartPatch(request), { code: 'OUTPUT_MISMATCH' })
+      const pid = Number(await readFile(marker, 'utf8'))
+      assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' })
+      assert.equal(
+        (await readFile(request.output.pngPath))[25],
+        2,
+        'A real RGB PNG reached seed correlation',
+      )
+      assert.ok(await readFile(request.latentKeepMask.path))
+    })
+  })
+}
 
 test('private Smart Patch client refuses a writable operation directory before sending any work', async () => {
   await withClient('done', async (client, request, marker) => {

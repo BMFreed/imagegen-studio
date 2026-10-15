@@ -7,6 +7,34 @@ Related contracts: [frozen queue jobs](../../queue-manager.md#frozen-job-rule),
 [Project Undo/Redo](../undo-redo.md), [document lifecycle](../document-lifecycle.md)
 and [accepted-result provenance](./generation-provenance.md).
 
+## Private Smart Patch candidate boundary
+
+[Private queued Smart Patch execution](../../../engineering/phase-4-smart-patch-queued-execution-research.md)
+connects dedicated SQL claim, exact frozen inference, worker-confirmed uint32 seed,
+CPU world composition and independently durable Smart Patch world candidates.
+The private `GenerationOrchestrator.createSmartPatchExecution` handle waits for
+admission and exposes explicit run/cancel/stop ownership; public drain stays off.
+Both family operations share the global running-slot CAS with ordinary jobs;
+normal dispatch/readers and Raster acceptance remain separate. One cancellation
+owner drains inference, CPU startup/request/readback and publication before
+acknowledging cancel or cleaning scratch; unconfirmed exit retains its owner,
+slot and files. The private inference capability now also requires
+`smart-patch-seed-confirmation`; older installed payloads refuse before ML.
+
+A separate typed store at `recovery/smart-patch-staging` reserves the shared
+receipt before fsynced world RGBA/final-mask/manifest publication, then commits
+queue+receipt+actual-seed cursor atomically. Exact reload and APP_RESTART recovery
+keep independent final alpha and context after terminal queue/input pruning;
+USER_CANCELED cannot resurrect a candidate. Shared tombstones hide discarded
+sessions across both stores. Normal Results never discovers these candidates,
+and the Smart DTO cannot be assigned to the normal Raster DTO.
+
+This is a private executable/recoverable path. Public Generate/Retry/Results,
+immutable variant acceptance/outdated/orphan handling, portable provenance and
+installed GPU/release qualification remain subsequent owners. There are no
+Project/document/`.igs`/history/preset/Compare edits. PP-007/008 public readiness
+remains «Пока не обещать»; actual checks and limits belong to the linked research.
+
 ## Current Anima boundary
 
 [Public Anima generation](../../../engineering/phase-2c-anima-public-generation-research.md)

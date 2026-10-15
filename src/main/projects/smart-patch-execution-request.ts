@@ -48,6 +48,7 @@ export type SmartPatchExecutionRequest = SmartPatchExecutionFields &
     | { family: 'illustrious'; inference: SmartPatchIllustriousInference }
   )
 export interface SmartPatchExecutionResult {
+  actualSeed: number
   output: VerifiedWorkerImage
 }
 interface SmartPatchExecutionFields {
@@ -229,6 +230,23 @@ export function captureSmartPatchExecutionRequest(input: unknown): SmartPatchExe
   return request as SmartPatchExecutionRequest
 }
 
+/** Confirm the worker's concrete seed, preserving zero and the complete uint32 range. */
+export function requireSmartPatchActualSeed(actualSeed: unknown, expectedSeed: number): number {
+  if (
+    typeof actualSeed !== 'number' ||
+    !Number.isInteger(actualSeed) ||
+    actualSeed < 0 ||
+    actualSeed > 0xff_ff_ff_ff ||
+    actualSeed !== expectedSeed
+  ) {
+    throw new ProjectWorkerError(
+      'OUTPUT_MISMATCH',
+      'Smart Patch execution actual seed differs from its frozen request.',
+    )
+  }
+  return actualSeed
+}
+
 /** Full file boundary shared by production JSONL transport and declared integration collaborators. */
 export async function executeSmartPatchWithTransport(
   input: SmartPatchExecutionRequest,
@@ -316,6 +334,10 @@ export async function executeSmartPatchWithTransport(
     }
   }
   const response = await exchange(request)
+  const actualSeed = requireSmartPatchActualSeed(
+    response.actualSeed,
+    request.inference.sampling.seed,
+  )
   const metadata = v.safeParse(
     v.strictObject({
       ...dimensions,
@@ -344,7 +366,7 @@ export async function executeSmartPatchWithTransport(
     path: request.output.pngPath,
   }
   await readSmartPatchModelSourceOutput(output.path, output)
-  return { output }
+  return { actualSeed, output }
 }
 
 function within(parent: string, child: string): boolean {

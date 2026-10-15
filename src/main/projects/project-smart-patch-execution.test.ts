@@ -53,7 +53,10 @@ import { ProjectService } from './project-service.js'
 import { ProjectShadowStore } from './project-shadow.js'
 import { SmartPatchInputBundleRepository } from './project-smart-patch-input-bundle.js'
 import { executeSmartPatchWithTransport } from './smart-patch-execution-request.js'
+import { SmartPatchGenerationStagingRepository } from './smart-patch-generation-staging.js'
 import { decodeTargetPngAlpha } from './target-png-mode.js'
+import { OUTPAINT_READY } from './test-fixtures/outpaint-ready.js'
+import { createSourceOutputWorkerOwner } from './test-fixtures/source-output-worker.js'
 import {
   composeSmartPatchOutputWithTransport,
   composeTargetWithTransport,
@@ -704,6 +707,7 @@ function literalWorldExecutionOptions(
     )
     await writeFile(request.output.pngPath, bytes, { flag: 'wx' })
     return {
+      actualSeed: request.inference.sampling.seed,
       output: {
         byteSize: bytes.length,
         colorSpace: 'srgb',
@@ -803,6 +807,7 @@ function assertNativeExecution(observation: Observation, family: Family, mode: M
   assert.equal(request.mode, mode)
   assert.deepEqual(request.internalResolution, { height: 64, width: 64 })
   assert.equal(result.response.type, 'smart-patch-executed')
+  assert.equal(result.response.actualSeed, request.inference.sampling.seed)
   assert.ok(result.decoded, 'The actual published native PNG must decode')
   assert.equal(result.decoded.mode, 'RGB')
   assert.equal(result.decoded.iccSha256, IGS_SRGB_ICC_SHA256)
@@ -875,6 +880,7 @@ for (const family of ['illustrious', 'anima'] as const) {
           assert.equal(result.output.bytes[25], 2, 'Main returns actual RGB8 PNG topology')
           assert.equal(result.mode, mode)
           assert.equal(result.item.seed, 0)
+          assert.equal(result.actualSeed, 0)
           assert.equal(infillCalls, mode === 'outpaint' ? 1 : 0)
           assert.ok(!existsSync(observed[0].request.output.stagingRoot))
           await unchanged(f, before)
@@ -963,7 +969,10 @@ test('Main final consumption refuses a genuinely published RGBA PNG even through
         sha256: string
         width: number
       }
-      return { output: { ...output, iccSha256: IGS_SRGB_ICC_SHA256, path: request.output.pngPath } }
+      return {
+        actualSeed: response.actualSeed as number,
+        output: { ...output, iccSha256: IGS_SRGB_ICC_SHA256, path: request.output.pngPath },
+      }
     }
     await assert.rejects(
       f.service.withCapturedSmartPatchGenerationInput(f.tabId, f.patch.id, (capture) =>
@@ -979,6 +988,37 @@ test('Main final consumption refuses a genuinely published RGBA PNG even through
       capture.execute(executionOptions(f, 'illustrious', control)),
     )
     assertNativeExecution(control[0], 'illustrious', 'img2img')
+    await unchanged(f, before)
+  })
+})
+
+test('Main rejects a wrong worker seed outside the concrete transport despite valid RGB bytes', async () => {
+  await fixture(options('illustrious', 'img2img'), async (f) => {
+    const before = await state(f)
+    const input = literalWorldExecutionOptions(f)
+    const actual = input.generationWorker.executeSmartPatch
+    let completed = false
+    input.generationWorker.executeSmartPatch = async (request) => {
+      const result = await actual(request)
+      completed = true
+      return { ...result, actualSeed: 1 }
+    }
+    await assert.rejects(
+      f.service.withCapturedSmartPatchGenerationInput(f.tabId, f.patch.id, (capture) =>
+        capture.execute(input),
+      ),
+      /actual seed.*frozen/i,
+    )
+    assert.equal(completed, true, 'The independent Main boundary receives a genuine valid RGB file')
+    await unchanged(f, before)
+    const control = await f.service.withCapturedSmartPatchGenerationInput(
+      f.tabId,
+      f.patch.id,
+      (capture) => capture.execute(literalWorldExecutionOptions(f)),
+    )
+    assert.equal(control.actualSeed, 0)
+    assert.equal(control.item.seed, 0)
+    assert.equal(digest(control.output.bytes), control.output.sha256)
     await unchanged(f, before)
   })
 })
@@ -1205,6 +1245,7 @@ for (const family of ['illustrious', 'anima'] as const) {
           assert.ok(worldAlpha.every((alpha) => alpha === 255))
         }
         assert.equal(result.item.seed, 0)
+        assert.equal(result.actualSeed, 0)
         assert.ok(!existsSync(composed[0].output.stagingRoot))
         // The returned buffers remain complete after the actual stage has been removed.
         assert.equal(digest(result.worldContribution.bytes), result.worldContribution.sha256)
@@ -1302,6 +1343,7 @@ test('world execution captures the output method and owned geometry before prepa
     assertWorldContribution(result, setup.bbox)
     assert.equal(result.context.maskSettings.blur, 0)
     assert.equal(result.item.seed, 0)
+    assert.equal(result.actualSeed, 0)
     assert.equal(result.item.prompts.positive, '(bright hair:2)')
     await unchanged(f, afterEdit)
   })
@@ -2156,3 +2198,86 @@ test('orchestrator cancels only its new Smart Patch batch after a target becomes
     assert.deepEqual(await staging.listVerifiedCandidates(f.tabId), [])
   })
 })
+
+for (const family of ['illustrious', 'anima'] as const) {
+  test(`actual ${family} Project capture and SQL admission execute native RGB then CPU world output into independent durable Smart Patch candidate`, async () => {
+    await fixture(options(family, 'inpaint'), async (f) => {
+      const before = await state(f)
+      const input = batchInputOptions(f, family, [
+        { prompts: { negative: '(dark blur)--', positive: '(bright hair:2)' }, seed: 0 },
+      ])
+      const material = await f.service.withCapturedSmartPatchGenerationInput(
+        f.tabId,
+        f.patch.id,
+        (capture) => capture.prepareBatchInput(input),
+      )
+      const root = path.dirname(f.scratch)
+      const { queue, smartPatchStaging, staging } = await recoverGenerationRepositories(
+        f.database,
+        root,
+      )
+      const orchestrator = new GenerationOrchestrator(
+        f.service,
+        new ProjectIndexRepository(f.database.db),
+        input.modelService,
+        queue,
+        staging,
+        new GenerationProcessor(queue, staging, input.modelService, f.scratch),
+        f.scratch,
+      )
+      const [item] = await orchestrator.enqueuePreparedSmartPatchBatch(f.tabId, material)
+      const owner = await createSourceOutputWorkerOwner({ root, scratch: f.scratch })
+      const processor = orchestrator.createSmartPatchExecution(smartPatchStaging, owner)
+      const observed: Observation[] = []
+      try {
+        const result = await processor.runNext({
+          close: async () => undefined,
+          executeSmartPatch: (request) =>
+            executeSmartPatchWithTransport(request, f.scratch, (payload) =>
+              actualExecution(payload, observed),
+            ),
+          ready: {
+            ...OUTPAINT_READY,
+            capabilities: [
+              ...OUTPAINT_READY.capabilities,
+              'illustrious-euler',
+              'illustrious-noise-profile',
+              'smart-patch-execution',
+              'smart-patch-seed-confirmation',
+            ],
+            workerVersion: '0.14.0',
+          },
+        })
+        assert.equal(result.kind, 'completed')
+        if (result.kind !== 'completed') {
+          assert.fail('Actual queued execution must produce durable candidate')
+        }
+        assert.equal(observed.length, 1)
+        assertNativeExecution(observed[0], family, 'inpaint')
+        assert.equal(result.candidate.kind, 'smart-patch-world-candidate')
+        assert.equal(result.candidate.actualSeed, 0)
+        assert.deepEqual(result.candidate.bbox, f.patch.boundingBox)
+        assert.deepEqual(await staging.listVerifiedCandidates(f.tabId), [])
+        assert.equal((await queue.getManagerEntry(item.id)).status, 'completed')
+        await queue.pruneTerminal(['completed'])
+        const fresh = new SmartPatchGenerationStagingRepository(f.database.db, root)
+        await fresh.recoverAfterRestart()
+        const [candidate] = await fresh.listVerifiedCandidates(f.tabId)
+        assert.equal(candidate.image.sha256, result.candidate.image.sha256)
+        const after = await state(f)
+        assert.ok(after.file.equals(before.file))
+        assert.deepEqual(after.document, before.document)
+        assert.deepEqual(after.history, before.history)
+        assert.deepEqual(after.shadow, before.shadow)
+        assert.deepEqual(after.queue, [])
+        assert.equal(after.receipts.length, 1)
+        assert.equal(after.receipts[0].status, 'completed')
+        assert.equal(after.seed[0].actual_seed, 0)
+        assert.deepEqual(await scratchEntries(f.scratch), [])
+      } finally {
+        await processor.stopAndCancelActive()
+        await owner.cleanup()
+      }
+    })
+  })
+}

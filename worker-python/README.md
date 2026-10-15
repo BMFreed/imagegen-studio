@@ -1,6 +1,6 @@
 # ImageGen Studio Python worker
 
-This package contains the Phase 2A image-import/derivative subprocess and a **separate, narrow development inference entrypoint**. The default `python -I -m imagegen_worker` stays version `0.1.0`, `derivatives-only`, with Pillow-only default dependencies and no generation capability. There is no packaged Linux/NVIDIA inference runtime or installer yet; this package alone must not satisfy the production runtime activation gate.
+This package contains the Phase 2A image-import/derivative subprocess and a **separate, narrow development inference entrypoint**. The default `python -I -m imagegen_worker` stays version `0.1.0`, `derivatives-only`, with Pillow-only default dependencies and no generation capability. Production runtime installation/activation is owned by Main; this Python package alone must not satisfy that gate.
 
 The [normal outpaint foundation](../docs/engineering/phase-2c-outpaint-conditioning-research.md)
 adds internal `outpaint_conditioning` and `lama_infill` helpers. Exact Invoke
@@ -152,9 +152,43 @@ finite steps across both objectives and supported profile combinations, with
 independent Euler-grid and zero-SNR equations. These tests do not establish the
 full author recipe or trained CUDA output quality.
 
-After qualification, `ready` has `workerVersion:"0.14.0"`, `runtimeProfile:"linux-nvidia"`, `capabilities:["illustrious-txt2img","target-composition","denoising-progress","candidate-thumbnails","illustrious-cfg-rescale","illustrious-img2img","illustrious-lora","illustrious-vae-precision","illustrious-external-vae","illustrious-embeddings","illustrious-outpaint","illustrious-euler","illustrious-noise-profile","smart-patch-execution"]`, `protocolVersion:"1"` and `pythonVersion`. On a GPU with native CUDA BF16, the same ready additionally advertises `anima-txt2img`, `anima-img2img`, `anima-lora`, `anima-prompt-weighting`, `anima-flow-sampling` and `anima-outpaint`; a false or failed BF16 probe withholds only those six capabilities. The accepted commands are `generate-illustrious-txt2img`, `generate-illustrious-img2img`, `generate-illustrious-outpaint`, `generate-anima-txt2img`, `generate-anima-img2img`, `generate-anima-outpaint`, `compose-target` and private `execute-smart-patch` DTOs. Anima requests independently require native BF16; there is no CPU/FP16 fallback. Target composition uses the existing strict parser and Pillow compositor in this same qualified child; it neither starts another worker nor bypasses startup qualification. Other derivative commands remain unavailable in this entrypoint. During Illustrious generation, the public Diffusers `callback_on_step_end` sends exact `{type:"generation-progress",protocolVersion:"1",requestId,step,totalSteps}` messages without requesting or changing tensors. `step` counts completed denoising evaluations from 1; `totalSteps` is the actual initialized scheduler timestep count, constant for the job and bounded by 400 and twice the requested Steps. The pinned second-order DPMSolverSDE scheduler has `2 * Steps - 1` evaluations. Progress does not include loading, conditioning, image decoding, PNG publication or main-process staging validation, so its final step is not candidate completion. `generation-done` returns its exact `requestId`, `protocolVersion:"1"`, the main-nominated `outputPath` and actual uint32 `seed`; errors return correlated safe `error` messages. Each protocol line is flushed immediately to the original binary stdout even while library output is redirected to stderr. Older app clients reject the new worker version during startup instead of receiving messages their terminal-only transport cannot parse. Cancellation remains process termination by main, not a worker cancel command.
+After qualification, `ready` has `workerVersion:"0.14.0"`, `runtimeProfile:"linux-nvidia"`, `capabilities:["illustrious-txt2img","target-composition","denoising-progress","candidate-thumbnails","illustrious-cfg-rescale","illustrious-img2img","illustrious-lora","illustrious-vae-precision","illustrious-external-vae","illustrious-embeddings","illustrious-outpaint","illustrious-euler","illustrious-noise-profile","smart-patch-execution","smart-patch-seed-confirmation"]`, `protocolVersion:"1"` and `pythonVersion`. On a GPU with native CUDA BF16, the same ready additionally advertises `anima-txt2img`, `anima-img2img`, `anima-lora`, `anima-prompt-weighting`, `anima-flow-sampling` and `anima-outpaint`; a false or failed BF16 probe withholds only those six capabilities. The accepted commands are `generate-illustrious-txt2img`, `generate-illustrious-img2img`, `generate-illustrious-outpaint`, `generate-anima-txt2img`, `generate-anima-img2img`, `generate-anima-outpaint`, `compose-target` and private `execute-smart-patch` DTOs. Anima requests independently require native BF16; there is no CPU/FP16 fallback. Target composition uses the existing strict parser and Pillow compositor in this same qualified child; it neither starts another worker nor bypasses startup qualification. Other derivative commands remain unavailable in this entrypoint. During Illustrious generation, the public Diffusers `callback_on_step_end` sends exact `{type:"generation-progress",protocolVersion:"1",requestId,step,totalSteps}` messages without requesting or changing tensors. `step` counts completed denoising evaluations from 1; `totalSteps` is the actual initialized scheduler timestep count, constant for the job and bounded by 400 and twice the requested Steps. The pinned second-order DPMSolverSDE scheduler has `2 * Steps - 1` evaluations. Progress does not include loading, conditioning, image decoding, PNG publication or main-process staging validation, so its final step is not candidate completion. `generation-done` returns its exact `requestId`, `protocolVersion:"1"`, the main-nominated `outputPath` and actual uint32 `seed`; errors return correlated safe `error` messages. Each protocol line is flushed immediately to the original binary stdout even while library output is redirected to stderr. Older app clients reject the new worker version during startup instead of receiving messages their terminal-only transport cannot parse. Cancellation remains process termination by main, not a worker cancel command.
 
-### Private Smart Patch world output (CPU worker 0.1.0 source snapshot)
+### Private queued Smart Patch execution
+
+[Private queued Smart Patch execution](../docs/engineering/phase-4-smart-patch-queued-execution-research.md)
+connects dedicated SQL claim, exact frozen inference, worker-confirmed uint32 seed,
+CPU world composition and independently durable Smart Patch world candidates.
+The private `GenerationOrchestrator.createSmartPatchExecution` handle waits for
+admission and exposes explicit run/cancel/stop ownership; public drain stays off.
+Both family operations share the global running-slot CAS with ordinary jobs;
+normal dispatch/readers and Raster acceptance remain separate. One cancellation
+owner drains inference, CPU startup/request/readback and publication before
+acknowledging cancel or cleaning scratch; unconfirmed exit retains its owner,
+slot and files. The private inference capability now also requires
+`smart-patch-seed-confirmation`; older installed payloads refuse before ML.
+
+A separate typed store at `recovery/smart-patch-staging` reserves the shared
+receipt before fsynced world RGBA/final-mask/manifest publication, then commits
+queue+receipt+actual-seed cursor atomically. Exact reload and APP_RESTART recovery
+keep independent final alpha and context after terminal queue/input pruning;
+USER_CANCELED cannot resurrect a candidate. Shared tombstones hide discarded
+sessions across both stores. Normal Results never discovers these candidates,
+and the Smart DTO cannot be assigned to the normal Raster DTO.
+
+This is a private executable/recoverable path. Public Generate/Retry/Results,
+immutable variant acceptance/outdated/orphan handling, portable provenance and
+installed GPU/release qualification remain subsequent owners. There are no
+Project/document/`.igs`/history/preset/Compare edits. PP-007/008 public readiness
+remains «Пока не обещать»; actual checks and limits belong to the linked research.
+
+Private `smart-patch-executed` replies now include `actualSeed` from the exact
+parsed Illustrious or Anima policy used by that invocation. Main checks uint32
+and exact correlation outside both the concrete transport and injected adapters.
+Default CPU readiness is unchanged; only the inference peer advertises the new
+seed-confirmation marker. Source changes do not upgrade an installed payload.
+
+### Previous private Smart Patch world output (CPU worker 0.1.0 source snapshot)
 
 The [private world-output scope](../docs/engineering/phase-4-smart-patch-world-output-research.md)
 adds `compose-smart-patch-output` / `smart-patch-output-composed` to the default

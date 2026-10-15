@@ -2,9 +2,11 @@ import type { AppDatabase } from '../db/database.js'
 
 import { GenerationQueueRepository } from './generation-queue.js'
 import { GenerationStagingRepository } from './generation-staging.js'
+import { SmartPatchGenerationStagingRepository } from './smart-patch-generation-staging.js'
 
 export interface RecoveredGenerationRepositories {
   queue: GenerationQueueRepository
+  smartPatchStaging: SmartPatchGenerationStagingRepository
   staging: GenerationStagingRepository
 }
 
@@ -18,9 +20,12 @@ export async function recoverGenerationRepositories(
 ): Promise<RecoveredGenerationRepositories> {
   const queue = new GenerationQueueRepository(database.db, dataRoot)
   const staging = new GenerationStagingRepository(database.db, dataRoot)
+  const smartPatchStaging = new SmartPatchGenerationStagingRepository(database.db, dataRoot)
   await queue.recoverAfterRestart()
   await staging.recoverAfterRestart()
+  await smartPatchStaging.recoverAfterRestart()
+  smartPatchStaging.assertReadyForPublication()
   queue.assertReadyForDispatch()
   staging.assertReadyForPublication()
-  return { queue, staging }
+  return { queue, smartPatchStaging, staging }
 }

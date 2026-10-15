@@ -578,3 +578,40 @@ test('Smart Patch exact reload refuses crossed row document bundle hash and item
     await preserved(f)
   })
 })
+
+test('dedicated Smart Patch and ordinary claims contend for the same actual SQL running slot', async () => {
+  await fixture('illustrious', async (f) => {
+    let reached = 0
+    let release!: () => void
+    const bothReached = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const beforeClaimUpdate = async () => {
+      if (++reached === 2) {
+        release()
+      }
+      await bothReached
+    }
+    const ordinary = new GenerationQueueRepository(f.database.db, f.root, { beforeClaimUpdate })
+    const smart = new GenerationQueueRepository(f.database.db, f.root, { beforeClaimUpdate })
+    await ordinary.recoverAfterRestart()
+    await smart.recoverAfterRestart()
+    await admit(f)
+    await enqueueAnimaStagingBatch({ ...f, queue: f.queue })
+    assert.equal(await ordinary.hasDispatchablePending(), true)
+    assert.equal(await smart.hasDispatchableSmartPatchPending(), true)
+    const claims = await Promise.all([
+      ordinary.claimNextPending(),
+      smart.claimNextPendingSmartPatch(),
+    ])
+    assert.equal(reached, 2, 'Both independent claims reached the same CAS seam')
+    assert.equal(claims.filter(Boolean).length, 1)
+    const rows = await f.database.db
+      .selectFrom('generation_queue_item')
+      .selectAll()
+      .where('status', '=', 'running')
+      .execute()
+    assert.equal(rows.length, 1, 'Normal and Patch execution cannot own the GPU concurrently')
+    await preserved(f)
+  })
+})
