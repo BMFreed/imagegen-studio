@@ -158,6 +158,11 @@ import {
 } from './project-session.js'
 import { prepareSmartPatchAcceptancePlan } from './project-smart-patch-acceptance-plan.js'
 import {
+  projectSmartPatchAdoptionDocument,
+  SmartPatchAdoptionError,
+  type SmartPatchAdoptionRequest,
+} from './project-smart-patch-adoption.js'
+import {
   type CapturedSmartPatchGenerationInput,
   withFrozenSmartPatchGenerationInput,
 } from './project-smart-patch-generation-input.js'
@@ -330,6 +335,81 @@ export class ProjectService {
       { expectedDocumentRevision: document.documentRevision },
     )
     return toTab(tabId, coordinator)
+  }
+
+  /**
+   * Private document adoption only. The caller owns the shared generation/close gate, recorded
+   * handoff, reviewed staging and durable shadow proof. This method never consumes staging.
+   */
+  async appendSmartPatchVariants(
+    tabId: string,
+    input: SmartPatchAdoptionRequest,
+    assetSources: Readonly<Record<string, IgsAssetSource>> = {},
+  ): Promise<{
+    documentRevision: string
+    kind: 'adopted' | 'already-adopted'
+    variantIds: string[]
+  }> {
+    let request: SmartPatchAdoptionRequest
+    try {
+      request = structuredClone(input)
+    } catch {
+      throw new SmartPatchAdoptionError(
+        'SMART_PATCH_ADOPTION_INVALID',
+        'The Smart Patch adoption request is invalid.',
+      )
+    }
+    const coordinator = this.requireTab(tabId)
+    const epoch = coordinator.documentEpoch
+    const proposed = projectSmartPatchAdoptionDocument(coordinator.document, request)
+    const variantIds = request.acceptedVariants.map(({ id }) => id)
+    if (proposed.kind === 'already-adopted') {
+      return {
+        documentRevision: coordinator.document.documentRevision,
+        kind: 'already-adopted',
+        variantIds,
+      }
+    }
+    const expectedPaths = new Set(request.acceptedVariants.map(({ asset }) => asset.path))
+    const entries = Object.entries(assetSources)
+    const sources: Record<string, IgsAssetSource> = {}
+    if (entries.length !== expectedPaths.size) {
+      throw new SmartPatchAdoptionError(
+        'SMART_PATCH_ADOPTION_INVALID',
+        'Each new variant needs its exact Main-owned image source.',
+      )
+    }
+    for (const [memberPath, source] of entries) {
+      // Serial coordinator copies avoid retaining an additional 64 full PNG Buffers for a batch.
+      if (
+        !expectedPaths.has(memberPath) ||
+        !source ||
+        !('sourcePath' in source) ||
+        typeof source.sourcePath !== 'string' ||
+        !path.isAbsolute(source.sourcePath)
+      ) {
+        throw new SmartPatchAdoptionError(
+          'SMART_PATCH_ADOPTION_INVALID',
+          'Variant adoption accepts exact Main-owned file sources only.',
+        )
+      }
+      sources[memberPath] = { sourcePath: source.sourcePath }
+    }
+    const applied = await coordinator.applyDocument(proposed.document, sources, {
+      expectedDocumentEpoch: epoch,
+      expectedDocumentRevision: request.expectedDocumentRevision,
+    })
+    if (
+      this.getOpenDocumentForAcceptance(tabId) !== coordinator ||
+      coordinator.document.documentId !== request.documentId ||
+      coordinator.document.documentRevision !== applied.documentRevision
+    ) {
+      throw new SmartPatchAdoptionError(
+        'SMART_PATCH_ADOPTION_CONFLICT',
+        'The Project owner changed during Smart Patch adoption. Keep the pending handoff.',
+      )
+    }
+    return { documentRevision: applied.documentRevision, kind: 'adopted', variantIds }
   }
 
   /** Verify a detached selection against the captured document, then publish one undo step. */
@@ -1203,7 +1283,7 @@ export class ProjectService {
     })
   }
 
-  /** Private read-only proposal; document schema and durable variant Add remain closed. */
+  /** Private read-only proposal; the durable Add owner must revalidate before committing it. */
   async prepareSmartPatchVariantAcceptance(
     tabId: string,
     input: SmartPatchAcceptancePlanInput,

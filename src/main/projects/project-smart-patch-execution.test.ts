@@ -46,12 +46,15 @@ import { GenerationProcessor } from './generation-processor.js'
 import { GenerationQueueRepository } from './generation-queue.js'
 import { readIgsPackage, saveIgsPackage } from './igs-package.js'
 import { ProjectAutosaveLeaseRegistry } from './project-autosave.js'
+import { ProjectGenerationOperationGate } from './project-generation-operation-gate.js'
 import { ProjectIndexRepository } from './project-index.js'
 import { decodeDerivedProjectMaskPng, encodeProjectMaskPng } from './project-mask.js'
 import { readProjectPlaceholders } from './project-placeholders.js'
 import { ProjectService } from './project-service.js'
 import { ProjectShadowStore } from './project-shadow.js'
+import { ProjectSmartPatchAcceptance } from './project-smart-patch-acceptance.js'
 import { SmartPatchInputBundleRepository } from './project-smart-patch-input-bundle.js'
+import { SmartPatchAcceptanceJournalRepository } from './smart-patch-acceptance-journal.js'
 import { executeSmartPatchWithTransport } from './smart-patch-execution-request.js'
 import { SmartPatchGenerationStagingRepository } from './smart-patch-generation-staging.js'
 import { decodeTargetPngAlpha } from './target-png-mode.js'
@@ -2200,7 +2203,7 @@ test('orchestrator cancels only its new Smart Patch batch after a target becomes
 })
 
 for (const family of ['illustrious', 'anima'] as const) {
-  test(`actual ${family} Project capture and SQL admission execute native RGB then CPU world output into independent durable Smart Patch candidate`, async () => {
+  test(`actual ${family} Project capture and SQL execution reach durable Smart Patch Add, Undo and explicit Save/reopen`, async () => {
     await fixture(options(family, 'inpaint'), async (f) => {
       const before = await state(f)
       const input = batchInputOptions(f, family, [
@@ -2295,19 +2298,66 @@ for (const family of ['illustrious', 'anima'] as const) {
             1,
             'Plan preserves temporary candidate',
           )
+          const after = await state(f)
+          assert.ok(after.file.equals(before.file))
+          assert.deepEqual(after.document, before.document)
+          assert.deepEqual(after.history, before.history)
+          assert.deepEqual(after.shadow, before.shadow)
+          assert.deepEqual(after.queue, [])
+          assert.equal(after.receipts.length, 1)
+          assert.equal(after.receipts[0].status, 'completed')
+          assert.equal(after.seed[0].actual_seed, 0)
+          const acceptance = new ProjectSmartPatchAcceptance({
+            gate: new ProjectGenerationOperationGate(),
+            journal: new SmartPatchAcceptanceJournalRepository(f.database.db),
+            normalStaging: staging,
+            orchestrator,
+            projects: f.service,
+            queue,
+            staging: fresh,
+          })
+          await f.service.clearHistory(f.tabId)
+          const added = await acceptance.accept(f.tabId, {
+            candidateIds: [candidate.candidateId],
+            expectedAvailableIds: [candidate.candidateId],
+            expectedUnfinishedJobIds: [],
+            focusedCandidateId: candidate.candidateId,
+            worker: sourceWorker,
+          })
+          assert.equal(added.kind, 'accepted')
+          const current = f.service.getOpenDocumentForAcceptance(f.tabId)!.document.layers[1]
+          assert.ok(current.kind === 'smart-patch')
+          assert.equal(current.rasterSubLayers.length, 1)
+          assert.equal(current.activeRasterSubLayerId, added.variantIds[0])
+          assert.equal(current.rasterSubLayers[0].asset.sha256, candidate.image.sha256)
+          assert.deepEqual(await fresh.listVerifiedCandidates(f.tabId), [])
+          assert.equal((await readFile(f.packagePath)).equals(before.file), true)
+          const shadow = await f.shadow.inspect({
+            projectPath: f.packagePath,
+            savedPackage: await readIgsPackage(f.packagePath),
+          })
+          assert.equal(shadow.status, 'recoverable')
+          await f.service.undo(f.tabId)
+          assert.deepEqual(
+            f.service.getOpenDocumentForAcceptance(f.tabId)!.document.layers,
+            before.document.layers,
+          )
+          assert.equal(f.service.getOpenDocumentForAcceptance(f.tabId)!.canUndo, false)
+          await f.service.redo(f.tabId)
+          await f.service.save(f.tabId)
+          const archive = await readIgsPackage(f.packagePath)
+          const asset = current.rasterSubLayers[0].asset
+          assert.equal(digest(await archive.readMember(asset.path)), candidate.image.sha256)
+          await f.service.close(f.tabId)
+          const reopened = await f.service.open(f.tabId)
+          assert.equal(reopened.kind, 'opened')
+          const restored = f.service.getOpenDocumentForAcceptance(f.tabId)!.document.layers[1]
+          assert.ok(restored.kind === 'smart-patch')
+          assert.deepEqual(restored.rasterSubLayers, current.rasterSubLayers)
+          assert.deepEqual(await scratchEntries(f.scratch), [])
         } finally {
           await sourceWorker.close()
         }
-        const after = await state(f)
-        assert.ok(after.file.equals(before.file))
-        assert.deepEqual(after.document, before.document)
-        assert.deepEqual(after.history, before.history)
-        assert.deepEqual(after.shadow, before.shadow)
-        assert.deepEqual(after.queue, [])
-        assert.equal(after.receipts.length, 1)
-        assert.equal(after.receipts[0].status, 'completed')
-        assert.equal(after.seed[0].actual_seed, 0)
-        assert.deepEqual(await scratchEntries(f.scratch), [])
       } finally {
         await processor.stopAndCancelActive()
         await owner.cleanup()

@@ -12,6 +12,7 @@ import type { SmartPatchWorldCandidateFixture } from './test-fixtures/smart-patc
 
 import { prepareSmartPatchAcceptancePlan } from './project-smart-patch-acceptance-plan.js'
 import { projectVerifiedSmartPatchVariant } from './project-smart-patch-variant-projection.js'
+import { smartPatchVariantMetadataFixture } from './test-fixtures/smart-patch-variant.js'
 import {
   smartPatchWorldPng,
   withSmartPatchWorldCandidateFixture,
@@ -467,5 +468,32 @@ test('private projection records actual library prediction while preserving an u
       proposed.generationProvenance.layerSourceContext.generationDraft.model!.predictionType,
       null,
     )
+  })
+})
+
+test('private planner retries a proposed UUID already owned by an inactive stored variant', async () => {
+  await fixture('illustrious', async (f) => {
+    const target = f.owner.document.layers[0]
+    assert.ok(target.kind === 'smart-patch')
+    const stored = smartPatchVariantMetadataFixture('illustrious')
+    stored.generationProvenance.layerSourceContext.layerId = target.id
+    stored.generationProvenance.layerSourceContext.sourceDocumentId = f.owner.document.documentId
+    const active = smartPatchVariantMetadataFixture('anima')
+    active.generationProvenance.layerSourceContext.layerId = target.id
+    active.generationProvenance.layerSourceContext.sourceDocumentId = f.owner.document.documentId
+    target.rasterSubLayers = [stored, active]
+    target.activeRasterSubLayerId = active.id
+    const nextId = randomUUID()
+    let calls = 0
+    f.input.createVariantId = () => (++calls === 1 ? stored.id : nextId)
+    const plan = await prepareSmartPatchAcceptancePlan(
+      f.projects,
+      f.base.nomination.localProjectKey,
+      f.input,
+    )
+    assert.equal(calls, 2, 'An inactive variant UUID remains occupied.')
+    assert.equal(plan.proposedVariants[0].variant.id, nextId)
+    assert.equal(target.activeRasterSubLayerId, active.id)
+    assert.deepEqual(target.rasterSubLayers, [stored, active])
   })
 })

@@ -4,6 +4,7 @@ import type { GenerationStagingRepository } from './generation-staging.js'
 import type { GenerationModelResolver } from './illustrious-generation-loras.js'
 import type { ProjectIndexRepository } from './project-index.js'
 import type { ProjectService } from './project-service.js'
+import type { SmartPatchGenerationStagingRepository } from './smart-patch-generation-staging.js'
 
 import {
   createInferenceAuxiliaryResourceRoot,
@@ -32,6 +33,7 @@ export interface RecoveredGenerationServices {
   readonly orchestrator: GenerationOrchestrator
   readonly processor: GenerationProcessor
   readonly queue: GenerationQueueRepository
+  readonly smartPatchStaging: SmartPatchGenerationStagingRepository
   readonly staging: GenerationStagingRepository
 }
 
@@ -100,12 +102,12 @@ export class GenerationAppContextError extends Error {
   }
 }
 
-/** Recover exactly one pair, then bind one processor and orchestrator to those same instances. */
+/** Recover one queue and both staging stores; all consumers retain those exact recovered owners. */
 export async function createGenerationAppContext(
   dependencies: GenerationAppDependencies,
 ): Promise<GenerationAppContext> {
   try {
-    const { queue, staging } = await recoverGenerationRepositories(
+    const { queue, smartPatchStaging, staging } = await recoverGenerationRepositories(
       dependencies.database,
       dependencies.dataRoot,
     )
@@ -143,7 +145,7 @@ export async function createGenerationAppContext(
       infillResolver,
     )
     return new OwnedGenerationAppContext(
-      { infillResolver, orchestrator, processor, queue, staging },
+      { infillResolver, orchestrator, processor, queue, smartPatchStaging, staging },
       null,
     )
   } catch (error) {

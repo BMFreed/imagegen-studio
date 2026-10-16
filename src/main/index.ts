@@ -105,6 +105,10 @@ import {
   ProjectCandidateImageExportError,
 } from './projects/project-candidate-image-export.js'
 import {
+  ProjectGenerationAcceptanceRecovery,
+  ProjectGenerationAcceptanceRecoveryError,
+} from './projects/project-generation-acceptance-recovery.js'
+import {
   ProjectGenerationAcceptance,
   ProjectGenerationAcceptanceError,
 } from './projects/project-generation-acceptance.js'
@@ -144,6 +148,11 @@ import {
 import { ProjectService, ProjectServiceError } from './projects/project-service.js'
 import { ProjectSessionError } from './projects/project-session.js'
 import { ProjectShadowError, ProjectShadowStore } from './projects/project-shadow.js'
+import {
+  ProjectSmartPatchAcceptance,
+  ProjectSmartPatchAcceptanceError,
+} from './projects/project-smart-patch-acceptance.js'
+import { SmartPatchAdoptionError } from './projects/project-smart-patch-adoption.js'
 import { ProjectTargetInspectionOwner } from './projects/project-target-inspection-owner.js'
 import {
   inspectTemporaryRecovery,
@@ -151,6 +160,13 @@ import {
   unavailableTemporaryRecovery,
 } from './projects/project-temporary-recovery.js'
 import { RasterImportError } from './projects/raster-import.js'
+import {
+  readGenerationAcceptanceKind,
+  SmartPatchAcceptanceJournalError,
+  SmartPatchAcceptanceJournalRepository,
+} from './projects/smart-patch-acceptance-journal.js'
+import { SmartPatchProcessorError } from './projects/smart-patch-generation-processor.js'
+import { SmartPatchGenerationStagingError } from './projects/smart-patch-generation-staging.js'
 import { ProjectWorkerError } from './projects/worker-client.js'
 import { createRuntimeRoots, RuntimeManager } from './runtime/index.js'
 
@@ -560,11 +576,34 @@ if (!gotInstanceLock) {
             staging: recoveredGeneration.staging,
           })
         : null
+      const smartPatchAcceptance = recoveredGeneration
+        ? new ProjectSmartPatchAcceptance({
+            gate: projectGenerationGate,
+            journal: new SmartPatchAcceptanceJournalRepository(database.db),
+            normalStaging: recoveredGeneration.staging,
+            orchestrator: recoveredGeneration.orchestrator,
+            projects: projectService,
+            queue: recoveredGeneration.queue,
+            staging: recoveredGeneration.smartPatchStaging,
+          })
+        : null
+      const acceptanceRecovery =
+        recoveredGeneration && generationAcceptance && smartPatchAcceptance
+          ? new ProjectGenerationAcceptanceRecovery({
+              documents: projectService,
+              gate: projectGenerationGate,
+              orchestrator: recoveredGeneration.orchestrator,
+              raster: generationAcceptance,
+              readKind: (tabId, documentId) =>
+                readGenerationAcceptanceKind(database.db, tabId, documentId),
+              smartPatch: smartPatchAcceptance,
+            })
+          : null
       const projectGenerationClose = new ProjectGenerationClose(
         projectService,
         recoveredGeneration,
         projectGenerationGate,
-        (tabId) => generationAcceptance?.hasPendingHandoff(tabId) ?? false,
+        (tabId) => acceptanceRecovery?.hasPendingHandoff(tabId) ?? false,
       )
       const projectGenerationRecovery = new ProjectGenerationRecovery(
         projectService,
@@ -580,7 +619,7 @@ if (!gotInstanceLock) {
           tabId,
           wasOpen,
           recoveredGeneration?.orchestrator ?? null,
-          generationAcceptance,
+          acceptanceRecovery,
         )
       const generationResults = new ProjectGenerationResultResource(
         recoveredGeneration?.staging ?? null,
@@ -829,9 +868,7 @@ if (!gotInstanceLock) {
             for (const tab of tabs) {
               await projectGenerationGate.drain(tab.id)
             }
-            const unresolvedTab = tabs.find((tab) =>
-              generationAcceptance?.hasPendingHandoff(tab.id),
-            )
+            const unresolvedTab = tabs.find((tab) => acceptanceRecovery?.hasPendingHandoff(tab.id))
             if (unresolvedTab) {
               throw new ProjectGenerationAcceptanceError(
                 'ACCEPTANCE_HANDOFF_PENDING',
@@ -947,7 +984,7 @@ if (!gotInstanceLock) {
             if (!closeCommitted) {
               releaseCanceledWindowCloseFences(
                 fencedTabs,
-                (tabId) => generationAcceptance?.hasPendingHandoff(tabId) ?? false,
+                (tabId) => acceptanceRecovery?.hasPendingHandoff(tabId) ?? false,
                 (tabId) => recoveredGeneration?.orchestrator.releaseProjectGenerationFence(tabId),
               )
             }
@@ -1117,6 +1154,12 @@ if (!gotInstanceLock) {
               error instanceof ProjectGenerationCloseError ||
               error instanceof ProjectGenerationRecoveryError ||
               error instanceof ProjectGenerationAcceptanceError ||
+              error instanceof ProjectGenerationAcceptanceRecoveryError ||
+              error instanceof ProjectSmartPatchAcceptanceError ||
+              error instanceof SmartPatchAcceptanceJournalError ||
+              error instanceof SmartPatchAdoptionError ||
+              error instanceof SmartPatchGenerationStagingError ||
+              error instanceof SmartPatchProcessorError ||
               error instanceof ProjectGenerationProvenanceError ||
               error instanceof ProjectGenerationResultResourceError ||
               error instanceof ProjectGenerationActionError ||
@@ -1520,7 +1563,7 @@ if (!gotInstanceLock) {
       )
       const runProjectDocumentAction = (tabId: string, action: () => Promise<ProjectTab>) =>
         projectGenerationGate.run(tabId, async () => {
-          if (resolvingClose || generationAcceptance?.hasPendingHandoff(tabId)) {
+          if (resolvingClose || acceptanceRecovery?.hasPendingHandoff(tabId)) {
             throw new ProjectGenerationAcceptanceError(
               'ACCEPTANCE_HANDOFF_PENDING',
               'Finish the Project close or accepted-result recovery before changing the Project.',
@@ -1861,18 +1904,20 @@ if (!gotInstanceLock) {
               'Wait for the application close decision before adding results.',
             )
           }
-          if (!generationAcceptance) {
+          if (!generationAcceptance || !acceptanceRecovery) {
             throw new ProjectServiceError(
               'PROJECT_NOT_READY',
               'Temporary result recovery is unavailable. Try again after repair.',
             )
           }
-          await generationAcceptance.accept(
-            tabId as string,
-            candidateIds as string[],
-            focusedCandidateId as string | null,
-            expectedAvailableIds as string[],
-            expectedUnfinishedJobIds as string[],
+          await acceptanceRecovery.withRasterAdd(tabId as string, () =>
+            generationAcceptance.accept(
+              tabId as string,
+              candidateIds as string[],
+              focusedCandidateId as string | null,
+              expectedAvailableIds as string[],
+              expectedUnfinishedJobIds as string[],
+            ),
           )
           const tab = projectService.getOpenTabs().find((item) => item.id === tabId)
           if (!tab) {

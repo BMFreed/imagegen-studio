@@ -11,9 +11,6 @@ import {
 } from '../../shared/projects/project-schema.js'
 
 import { randomUUID } from 'node:crypto'
-import { type BigIntStats, constants } from 'node:fs'
-import { lstat, open, realpath } from 'node:fs/promises'
-import path from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
 import type {
@@ -29,7 +26,8 @@ import type { ProjectGenerationOperationGate } from './project-generation-operat
 import type { ProjectShadowCommit } from './project-shadow.js'
 
 import { isQueuedOutpaint, parseFrozenGenerationPayloadV1 } from './generation-queue.js'
-import { DEFAULT_IGS_PACKAGE_LIMITS, readIgsPackage } from './igs-package.js'
+import { DEFAULT_IGS_PACKAGE_LIMITS } from './igs-package.js'
+import { proveAcceptedSavedPackage } from './project-accepted-save-proof.js'
 import { provenanceFromVerifiedRasterCandidate } from './project-generation-provenance.js'
 
 const projectKeyPattern = /^project-v1-[a-f0-9]{64}$/
@@ -1017,52 +1015,11 @@ function preflightProjectedDocument(document: IgsProjectDocumentV1): void {
 /** A clean replay may use a verified, already saved package instead of a discarded shadow. */
 async function proveSavedPackage(owner: ProjectGenerationAcceptanceDocument): Promise<void> {
   try {
-    const target = owner.filePath
-    const before = await lstat(target, { bigint: true })
-    if (!before.isFile() || before.isSymbolicLink() || (await realpath(target)) !== target) {
-      throw new Error('The saved Project path is not a canonical regular file.')
-    }
-    // readIgsPackage verifies every ZIP member, not only the Project JSON.
-    const packageContent = await readIgsPackage(target)
-    if (!isDeepStrictEqual(packageContent.project, owner.document)) {
-      throw new Error('The saved Project document differs from the accepted document.')
-    }
-    const file = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW)
-    try {
-      if (!sameFileStat(before, await file.stat({ bigint: true }))) {
-        throw new Error('The saved Project file changed during verification.')
-      }
-      await file.sync()
-    } finally {
-      await file.close()
-    }
-    const directory = await open(
-      path.dirname(target),
-      constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
-    )
-    try {
-      await directory.sync()
-    } finally {
-      await directory.close()
-    }
-    if (!sameFileStat(before, await lstat(target, { bigint: true }))) {
-      throw new Error('The saved Project file changed during verification.')
-    }
+    await proveAcceptedSavedPackage(owner)
   } catch (error) {
     throw new ProjectGenerationAcceptanceError(
       'ACCEPTANCE_SHADOW_UNCONFIRMED',
       `The saved Project could not be verified for result handoff: ${error instanceof Error ? error.message : String(error)}`,
     )
   }
-}
-
-function sameFileStat(a: BigIntStats, b: BigIntStats): boolean {
-  return (
-    a.dev === b.dev &&
-    a.ino === b.ino &&
-    a.size === b.size &&
-    a.mtimeNs === b.mtimeNs &&
-    a.ctimeNs === b.ctimeNs &&
-    a.mode === b.mode
-  )
 }

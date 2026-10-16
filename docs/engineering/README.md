@@ -1,6 +1,30 @@
 # Engineering Workflow
 
-Current Smart Patch variant storage/display scope:
+Current private Smart Patch durable acceptance:
+
+[Smart Patch durable acceptance](./phase-4-smart-patch-durable-acceptance-research.md)
+Private Main Add now appends verified world candidates to the exact Smart Patch,
+preserving old variants and current authoring with one active anchor and one Undo.
+A shared Project gate and SQL intent slot serialize Raster/Smart acceptance and
+close. Dedicated Smart cancellation drains inference, claim startup, CPU work
+and publication; late completions require renewed review. Captured sessions are
+checked against foreign targets, documents and ordinary results.
+
+The durable order is intent → asset adoption → synced shadow → atomic session
+tombstones/intent removal → staging cleanup. Recovery dispatch selects one owner;
+full immutable lineage completes, absence abandons without consuming candidates,
+partial/changed lineage or unknown overlap stays fenced. A clean saved package
+must pass actual member verification plus file/directory sync before replacing
+shadow proof. Replays do not duplicate or reactivate variants. Add never performs
+Save or rewrites completed receipts/seed cursor.
+
+Public Smart Generate/Results/IPC, variant lifecycle controls, freshness/resource
+UI, accepted-history navigation, Compare/Preset and installed inference
+qualification remain later owners. PP-007/008 remain «Пока не обещать». Next finite
+owner is variant lifecycle and current-state diagnostics before public integration.
+Executed evidence and finite limits belong to the linked research.
+
+Previous Smart Patch variant storage/display scope:
 
 [Variant storage and material composition](./phase-4-smart-patch-variant-storage-research.md)
 The document now owns nonempty Smart Patches: all active and inactive variant

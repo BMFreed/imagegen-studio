@@ -426,6 +426,22 @@ export interface QueuedGenerationItem {
   statusSequence: number
 }
 
+/** Main-only witnesses from the already verified Smart Patch staging candidate set. */
+export interface SmartPatchAcceptanceCandidateWitness {
+  candidateId: string
+  frozenPayloadSha256: string
+  stagingSessionId: string
+}
+
+export interface SmartPatchAcceptanceSessionScope {
+  documentId: string
+  layerId: string
+  localProjectKey: string
+  projectPath: string
+  stagingSessionIds: readonly string[]
+  verifiedCandidates: readonly SmartPatchAcceptanceCandidateWitness[]
+}
+
 /** Metadata-only view for the Project action bar; no target or checkpoint file is read. */
 export interface QueuedGenerationActionJob {
   batchId: string
@@ -2121,6 +2137,130 @@ export class GenerationQueueRepository {
     })
   }
 
+  /**
+   * Qualify every retained row/receipt in the captured sessions before Smart Patch Add can cancel
+   * or discard them. Pruned receipts contain no target metadata: only an exact independently
+   * verified candidate witness can establish their membership. This performs no image/model IO.
+   */
+  async listSmartPatchAcceptanceSessionJobs(
+    input: SmartPatchAcceptanceSessionScope,
+  ): Promise<QueuedGenerationItem[]> {
+    const scope = snapshotSmartPatchAcceptanceSessionScope(input)
+    return await this.serialize(async () => {
+      this.assertReadyForDispatch()
+      return await this.db.transaction().execute(async (transaction) => {
+        const witnesses = new Map(
+          scope.verifiedCandidates.map((entry) => [entry.candidateId, entry]),
+        )
+        const rows = new Map<string, { payloadSha256: string; stagingSessionId: string }>()
+        const receipts = new Map<
+          string,
+          { payloadSha256: string; queueItemId: string; stagingSessionId: string }
+        >()
+        const unfinished: QueuedGenerationItem[] = []
+        let receiptCount = 0
+        // 400 session bindings stay below legacy SQLite's 999 limit; pages of 100 bounded
+        // 128KiB payloads keep one read near 12.5MiB instead of retaining a whole history.
+        for (let offset = 0; offset < scope.stagingSessionIds.length; offset += 400) {
+          const sessions = scope.stagingSessionIds.slice(offset, offset + 400)
+          let after = ''
+          for (;;) {
+            const page = await transaction
+              .selectFrom('generation_queue_item')
+              .selectAll()
+              .where('local_project_key', '=', scope.localProjectKey)
+              .where('staging_session_id', 'in', sessions)
+              .where('id', '>', after)
+              .orderBy('id', 'asc')
+              .limit(100)
+              .execute()
+            for (const row of page) {
+              const payload = parseSmartPatchQueueRow(row)
+              if (
+                row.document_id !== scope.documentId ||
+                row.canonical_project_path !== scope.projectPath ||
+                payload.context.layerId !== scope.layerId ||
+                rows.size >= IGS_SAFETY_CEILINGS.archiveEntries
+              ) {
+                throw smartPatchAcceptanceScopeInvalid()
+              }
+              rows.set(row.id, {
+                payloadSha256: sha256(Buffer.from(row.frozen_payload_json)),
+                stagingSessionId: row.staging_session_id,
+              })
+              if (row.status === 'pending' || row.status === 'running') {
+                unfinished.push(toItem(row))
+              }
+            }
+            if (page.length < 100) {
+              break
+            }
+            after = page.at(-1)!.id
+          }
+          after = ''
+          for (;;) {
+            const page = await transaction
+              .selectFrom('generation_candidate_receipt')
+              .selectAll()
+              .where('local_project_key', '=', scope.localProjectKey)
+              .where('staging_session_id', 'in', sessions)
+              .where('candidate_id', '>', after)
+              .orderBy('candidate_id', 'asc')
+              .limit(100)
+              .execute()
+            for (const receipt of page) {
+              const row = rows.get(receipt.queue_item_id)
+              const witness = witnesses.get(receipt.candidate_id)
+              if (
+                ++receiptCount > IGS_SAFETY_CEILINGS.archiveEntries ||
+                receipt.canonical_project_path !== scope.projectPath ||
+                receipt.candidate_id !== receipt.queue_item_id ||
+                (row
+                  ? row.stagingSessionId !== receipt.staging_session_id ||
+                    row.payloadSha256 !== receipt.frozen_payload_sha256
+                  : !witness ||
+                    witness.stagingSessionId !== receipt.staging_session_id ||
+                    witness.frozenPayloadSha256 !== receipt.frozen_payload_sha256) ||
+                (witness &&
+                  (witness.stagingSessionId !== receipt.staging_session_id ||
+                    witness.frozenPayloadSha256 !== receipt.frozen_payload_sha256))
+              ) {
+                throw smartPatchAcceptanceScopeInvalid()
+              }
+              receipts.set(receipt.candidate_id, {
+                payloadSha256: receipt.frozen_payload_sha256,
+                queueItemId: receipt.queue_item_id,
+                stagingSessionId: receipt.staging_session_id,
+              })
+            }
+            if (page.length < 100) {
+              break
+            }
+            after = page.at(-1)!.candidate_id
+          }
+        }
+        // A receipt can precede its retained queue row's session-binding chunk. Recheck after
+        // all chunks so a witness can never disguise a conflicting row as pruned history.
+        for (const receipt of receipts.values()) {
+          const row = rows.get(receipt.queueItemId)
+          if (
+            row &&
+            (row.stagingSessionId !== receipt.stagingSessionId ||
+              row.payloadSha256 !== receipt.payloadSha256)
+          ) {
+            throw smartPatchAcceptanceScopeInvalid()
+          }
+        }
+        if (scope.verifiedCandidates.some((entry) => !receipts.has(entry.candidateId))) {
+          throw smartPatchAcceptanceScopeInvalid()
+        }
+        return unfinished.sort((left, right) =>
+          `${left.createdAt}:${left.id}`.localeCompare(`${right.createdAt}:${right.id}`),
+        )
+      })
+    })
+  }
+
   /** Read every unfinished job's frozen display fields without rehashing its image payload. */
   async listUnfinishedActionJobsByProjectDocument(
     localProjectKey: string,
@@ -3105,6 +3245,58 @@ function parseSmartPatchQueueRow(row: Selectable<GenerationQueueItem>): FrozenQu
       'The frozen Smart Patch queue input is invalid.',
     )
   }
+}
+
+function smartPatchAcceptanceScopeInvalid(): GenerationQueueError {
+  return new GenerationQueueError(
+    'QUEUE_INPUT_INVALID',
+    'The captured Smart Patch sessions contain unverified or differently owned work.',
+  )
+}
+
+function snapshotSmartPatchAcceptanceSessionScope(
+  input: SmartPatchAcceptanceSessionScope,
+): SmartPatchAcceptanceSessionScope {
+  if (
+    !input ||
+    !Array.isArray(input.stagingSessionIds) ||
+    !Array.isArray(input.verifiedCandidates) ||
+    input.stagingSessionIds.length > IGS_SAFETY_CEILINGS.archiveEntries ||
+    input.verifiedCandidates.length > IGS_SAFETY_CEILINGS.archiveEntries
+  ) {
+    throw smartPatchAcceptanceScopeInvalid()
+  }
+  const scope = {
+    documentId: input.documentId,
+    layerId: input.layerId,
+    localProjectKey: input.localProjectKey,
+    projectPath: input.projectPath,
+    stagingSessionIds: [...input.stagingSessionIds],
+    verifiedCandidates: input.verifiedCandidates.map((entry) => ({ ...entry })),
+  }
+  if (
+    typeof scope.projectPath !== 'string' ||
+    !path.isAbsolute(scope.projectPath) ||
+    path.resolve(scope.projectPath) !== scope.projectPath ||
+    localProjectRecoveryKey(scope.projectPath) !== scope.localProjectKey ||
+    !UUID_PATTERN.test(scope.documentId) ||
+    !UUID_PATTERN.test(scope.layerId) ||
+    scope.stagingSessionIds.some((id) => typeof id !== 'string' || !UUID_PATTERN.test(id)) ||
+    new Set(scope.stagingSessionIds).size !== scope.stagingSessionIds.length ||
+    new Set(scope.verifiedCandidates.map(({ candidateId }) => candidateId)).size !==
+      scope.verifiedCandidates.length ||
+    scope.verifiedCandidates.some(
+      (entry) =>
+        typeof entry.candidateId !== 'string' ||
+        !UUID_PATTERN.test(entry.candidateId) ||
+        typeof entry.frozenPayloadSha256 !== 'string' ||
+        !/^[a-f0-9]{64}$/.test(entry.frozenPayloadSha256) ||
+        !scope.stagingSessionIds.includes(entry.stagingSessionId),
+    )
+  ) {
+    throw smartPatchAcceptanceScopeInvalid()
+  }
+  return scope
 }
 
 function smartPatchCleanupRefs(

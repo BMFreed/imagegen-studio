@@ -23,6 +23,8 @@ export interface SmartPatchAcceptancePlanInput {
   /** Proposed operation timestamp; preparing this plan does not accept any result. */
   acceptedAt: string
   candidateIds: readonly string[]
+  /** Private source-of-randomness seam; production always uses crypto.randomUUID. */
+  createVariantId?: () => string
   /** Exact reviewed set for this target, excluding candidates for other targets/documents. */
   expectedAvailableIds: readonly string[]
   focusedCandidateId: string | null
@@ -81,6 +83,7 @@ export async function prepareSmartPatchAcceptancePlan(
 ): Promise<SmartPatchAcceptancePlan> {
   const acceptedAt = input.acceptedAt
   const candidateIds = Array.isArray(input.candidateIds) ? [...input.candidateIds] : []
+  const createVariantId = input.createVariantId ?? randomUUID
   const expectedAvailableIds = Array.isArray(input.expectedAvailableIds)
     ? [...input.expectedAvailableIds]
     : []
@@ -200,7 +203,9 @@ export async function prepareSmartPatchAcceptancePlan(
   )
   const occupied = new Set(
     initial.layers.flatMap((layer) =>
-      layer.kind === 'smart-patch' ? [layer.id, layer.mask.id] : [layer.id],
+      layer.kind === 'smart-patch'
+        ? [layer.id, layer.mask.id, ...layer.rasterSubLayers.map(({ id }) => id)]
+        : [layer.id],
     ),
   )
   const proposed: IgsSmartPatchVariantV1[] = []
@@ -215,9 +220,9 @@ export async function prepareSmartPatchAcceptancePlan(
         'A selected image or frozen input changed. Temporary results were kept.',
       )
     }
-    let variantId = randomUUID()
+    let variantId = createVariantId()
     while (occupied.has(variantId)) {
-      variantId = randomUUID()
+      variantId = createVariantId()
     }
     occupied.add(variantId)
     proposed.push(await projectVerifiedSmartPatchVariant({ acceptedAt, read: current, variantId }))

@@ -53,6 +53,11 @@ export type SmartPatchProcessorResult =
   | { kind: 'canceled' | 'failed'; queueItemId: string }
   | { kind: 'idle' }
 
+export interface SmartPatchProcessorProjectScope {
+  localProjectKey: string
+  stagingSessionIds: readonly string[]
+}
+
 type Active = {
   abort: AbortController
   cancelPromise: Promise<QueuedGenerationItem> | null
@@ -88,6 +93,7 @@ export class SmartPatchProcessorError extends Error {
 /** Private dedicated owner. It never sends Patch candidates to normal Results or Raster Add. */
 export class SmartPatchGenerationProcessor {
   private active: Active | null = null
+  private claiming: Promise<VerifiedQueuedSmartPatchInput | null> | null = null
   private currentRun: Promise<SmartPatchProcessorResult> | null = null
   private readonly models: SmartPatchExecutionModelResolver
   private readonly outputOwner: SmartPatchOutputWorkerOwner
@@ -140,6 +146,34 @@ export class SmartPatchGenerationProcessor {
     return settled
   }
 
+  /** Route cancellation only to the actual local owner; never mutate a different owner's row. */
+  async cancelOwnedAndWait(id: string): Promise<QueuedGenerationItem | null> {
+    await this.claiming?.catch(() => undefined)
+    return this.active?.item.id === id ? await this.cancelActive(this.active) : null
+  }
+
+  /** Join a scoped claim/publication without permanently stopping this reusable private owner. */
+  async quiesceForProject(input: SmartPatchProcessorProjectScope): Promise<void> {
+    const project = input.localProjectKey
+    const sessions = new Set(input.stagingSessionIds)
+    await this.claiming?.catch(() => undefined)
+    const active = this.active
+    if (
+      !active ||
+      active.item.localProjectKey !== project ||
+      !sessions.has(active.item.stagingSessionId)
+    ) {
+      return
+    }
+    await this.currentRun
+    if (this.active === active || active.exitUnconfirmed || active.publicationUncertain) {
+      throw new SmartPatchProcessorError(
+        'WORKER_EXIT_UNCONFIRMED',
+        'The scoped Smart Patch owner has not confirmed publication and cleanup.',
+      )
+    }
+  }
+
   async runOne(transport: SmartPatchInferenceTransport): Promise<SmartPatchProcessorResult> {
     if (this.stopping) {
       throw new SmartPatchProcessorError('CLOSED', 'Smart Patch dispatch is stopping.')
@@ -183,6 +217,12 @@ export class SmartPatchGenerationProcessor {
     }
     if (this.currentRun) {
       await this.currentRun
+    }
+    if (this.active) {
+      throw new SmartPatchProcessorError(
+        'WORKER_EXIT_UNCONFIRMED',
+        'The stopped Smart Patch owner still retains an unresolved operation.',
+      )
     }
   }
 
@@ -433,7 +473,16 @@ export class SmartPatchGenerationProcessor {
   private async runInternal(
     transport: SmartPatchInferenceTransport,
   ): Promise<SmartPatchProcessorResult> {
-    const claimed = await this.queue.claimNextPendingSmartPatch()
+    const claim = this.queue.claimNextPendingSmartPatch()
+    this.claiming = claim
+    let claimed: VerifiedQueuedSmartPatchInput | null
+    try {
+      claimed = await claim
+    } finally {
+      if (this.claiming === claim) {
+        this.claiming = null
+      }
+    }
     if (!claimed) {
       return { kind: 'idle' }
     }

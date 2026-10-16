@@ -55,7 +55,7 @@ function dependencies(dataRoot: string, database: ReturnType<typeof openAppDatab
   }
 }
 
-test('startup retains one recovered pair without starting inference or claiming runtime readiness', async () => {
+test('startup retains the same recovered queue and both staging stores without starting inference or claiming runtime readiness', async () => {
   await withDatabase(async (dataRoot, database) => {
     // The model and Project stubs throw if construction accidentally starts an inference run.
     const context = await createGenerationAppContext(dependencies(dataRoot, database))
@@ -67,10 +67,16 @@ test('startup retains one recovered pair without starting inference or claiming 
     assert.strictEqual(first, second)
     assert.strictEqual(first.queue, second.queue)
     assert.strictEqual(first.staging, second.staging)
+    assert.strictEqual(first.smartPatchStaging, second.smartPatchStaging)
     assert.strictEqual(first.processor, second.processor)
     assert.strictEqual(first.orchestrator, second.orchestrator)
     assert.doesNotThrow(() => first.queue.assertReadyForDispatch())
     assert.doesNotThrow(() => first.staging.assertReadyForPublication())
+    assert.doesNotThrow(() => first.smartPatchStaging.assertReadyForPublication())
+    assert.deepEqual(
+      await first.smartPatchStaging.listVerifiedCandidates(`project-v1-${'a'.repeat(64)}`),
+      [],
+    )
     assert.equal(await first.queue.claimNextPending(), null)
 
     // This startup-only context has no active worker or Generate entry point to drain.

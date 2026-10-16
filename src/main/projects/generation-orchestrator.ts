@@ -22,7 +22,7 @@ import type { AnimaGenerationModelResolver } from './anima-generation-preparatio
 import type { GenerationWorkerTransport } from './generation-processor.js'
 import type { GenerationProcessorResult } from './generation-processor.js'
 import type { GenerationProcessor } from './generation-processor.js'
-import type { QueuedGenerationItem } from './generation-queue.js'
+import type { QueuedGenerationItem, SmartPatchAcceptanceSessionScope } from './generation-queue.js'
 import type { GenerationQueueRepository } from './generation-queue.js'
 import type { PreparedOutpaintGeneration } from './generation-queue.js'
 import type { GenerationStagingRepository } from './generation-staging.js'
@@ -87,8 +87,17 @@ export interface PreparedBatchAdmissionResult {
 /** Main-only execution handle. Its caller must stop/drain it before Project or runtime close. */
 export interface PrivateSmartPatchExecution {
   cancelAndWait: SmartPatchGenerationProcessor['cancelAndWait']
+  quiesceForProject: SmartPatchGenerationProcessor['quiesceForProject']
   runNext: (worker: SmartPatchInferenceTransport) => Promise<SmartPatchProcessorResult>
   stopAndCancelActive: SmartPatchGenerationProcessor['stopAndCancelActive']
+}
+
+export interface SmartPatchAcceptanceCancellationScope extends Omit<
+  SmartPatchAcceptanceSessionScope,
+  'localProjectKey'
+> {
+  expectedUnfinishedJobIds: readonly string[]
+  tabId: string
 }
 
 interface AcceptanceCancellationScope {
@@ -133,10 +142,19 @@ export class GenerationOrchestrator {
   private readonly completedProjectCloses = new Set<string>()
   private enqueueBarrier: Promise<void> = Promise.resolve()
   private readonly fencedProjects = new Set<string>()
+  private readonly smartPatchAcceptanceCanceled = new Map<
+    string,
+    SmartPatchAcceptanceCancellationScope
+  >()
+  private readonly smartPatchAcceptanceCanceling = new Map<
+    string,
+    { operation: Promise<void>; scope: SmartPatchAcceptanceCancellationScope }
+  >()
+  private readonly smartPatchProcessors = new Set<SmartPatchGenerationProcessor>()
 
   constructor(
     private readonly projects: Partial<
-      Pick<ProjectService, 'assertSmartPatchGenerationAdmission'>
+      Pick<ProjectService, 'assertSmartPatchGenerationAdmission' | 'getOpenDocumentForAcceptance'>
     > &
       Pick<ProjectService, 'getOpenDocumentId' | 'getOpenTabs' | 'prepareNormalGenerationContext'>,
     private readonly projectIndex: Pick<ProjectIndexRepository, 'getProject'>,
@@ -155,6 +173,12 @@ export class GenerationOrchestrator {
     stagingSessionIds: readonly string[],
     expectedJobIds: readonly string[],
   ): Promise<void> {
+    if (
+      this.smartPatchAcceptanceCanceled.has(tabId) ||
+      this.smartPatchAcceptanceCanceling.has(tabId)
+    ) {
+      throw cancellationUncertain('Resolve the Smart Patch acceptance cancellation first.')
+    }
     if (!this.fencedProjects.has(tabId)) {
       throw new GenerationOrchestratorError(
         'PROJECT_NOT_FENCED',
@@ -223,7 +247,11 @@ export class GenerationOrchestrator {
         'Fence Project generation before canceling its jobs.',
       )
     }
-    if (this.acceptanceCancelingProjects.has(tabId)) {
+    if (
+      this.acceptanceCancelingProjects.has(tabId) ||
+      this.smartPatchAcceptanceCanceling.has(tabId) ||
+      this.smartPatchAcceptanceCanceled.has(tabId)
+    ) {
       throw cancellationUncertain('Acceptance cancellation is still waiting for worker exit.')
     }
     const existing = this.cancelingProjects.get(tabId)
@@ -257,6 +285,84 @@ export class GenerationOrchestrator {
     }
   }
 
+  /** Main-only exact Smart Patch Add cancellation; ordinary Raster processors never receive it. */
+  async cancelSmartPatchAcceptanceJobs(
+    input: SmartPatchAcceptanceCancellationScope,
+  ): Promise<void> {
+    const scope = snapshotSmartPatchAcceptanceCancellationScope(input)
+    const tabId = scope.tabId
+    if (!this.fencedProjects.has(tabId)) {
+      throw new GenerationOrchestratorError(
+        'PROJECT_NOT_FENCED',
+        'Fence Project generation before canceling Smart Patch acceptance jobs.',
+      )
+    }
+    const owner = this.assertSmartPatchAcceptanceDocument(scope)
+    const assertCurrent = () => {
+      if (this.assertSmartPatchAcceptanceDocument(scope) !== owner) {
+        throw new GenerationOrchestratorError(
+          'PROJECT_DOCUMENT_CHANGED',
+          'The Smart Patch cancellation document owner changed.',
+        )
+      }
+    }
+    if (this.cancelingProjects.has(tabId) || this.cancellationStarted.has(tabId)) {
+      throw new GenerationOrchestratorError(
+        'PROJECT_GENERATION_CLOSING',
+        'Project generation close has already begun.',
+      )
+    }
+    if (this.acceptanceCanceled.has(tabId) || this.acceptanceCancelingProjects.has(tabId)) {
+      throw cancellationUncertain('Resolve the Raster acceptance cancellation first.')
+    }
+    const active = this.smartPatchAcceptanceCanceling.get(tabId)
+    if (active) {
+      if (!sameSmartPatchAcceptanceScope(active.scope, scope, true)) {
+        throw cancellationUncertain('Another Smart Patch cancellation scope is still active.')
+      }
+      await active.operation
+      return
+    }
+    const unresolved = this.smartPatchAcceptanceCanceled.get(tabId)
+    if (unresolved && !sameSmartPatchAcceptanceScope(unresolved, scope, false)) {
+      throw cancellationUncertain('Resolve the previous Smart Patch cancellation scope first.')
+    }
+    this.smartPatchAcceptanceCanceled.set(tabId, scope)
+    const operation = (async () => {
+      await this.enqueueBarrier
+      for (;;) {
+        assertCurrent()
+        await this.readSmartPatchAcceptanceJobs(scope)
+        const current = await this.readSmartPatchAcceptanceJobs(scope)
+        assertCurrent()
+        if (current.length === 0) {
+          for (const processor of this.smartPatchProcessors) {
+            await processor.quiesceForProject({
+              localProjectKey: tabId,
+              stagingSessionIds: scope.stagingSessionIds,
+            })
+            assertCurrent()
+          }
+          if ((await this.readSmartPatchAcceptanceJobs(scope)).length !== 0) {
+            continue
+          }
+          assertCurrent()
+          this.smartPatchAcceptanceCanceled.delete(tabId)
+          return
+        }
+        await this.cancelSmartPatchQueueItem(current[0].id)
+      }
+    })()
+    this.smartPatchAcceptanceCanceling.set(tabId, { operation, scope })
+    try {
+      await operation
+    } finally {
+      if (this.smartPatchAcceptanceCanceling.get(tabId)?.operation === operation) {
+        this.smartPatchAcceptanceCanceling.delete(tabId)
+      }
+    }
+  }
+
   /** Convenience for callers that already obtained close confirmation. */
   async closeProjectGeneration(tabId: string): Promise<void> {
     await this.fenceProjectGeneration(tabId)
@@ -271,6 +377,8 @@ export class GenerationOrchestrator {
       this.cancelingProjects.has(tabId) ||
       this.acceptanceCancelingProjects.has(tabId) ||
       this.acceptanceCanceled.has(tabId) ||
+      this.smartPatchAcceptanceCanceling.has(tabId) ||
+      this.smartPatchAcceptanceCanceled.has(tabId) ||
       this.batchCleanupUnconfirmed.has(tabId) ||
       this.projects.getOpenTabs().some((tab) => tab.id === tabId)
     ) {
@@ -303,8 +411,10 @@ export class GenerationOrchestrator {
       this.scratchBasePath,
       outputOwner,
     )
+    this.smartPatchProcessors.add(processor)
     return {
       cancelAndWait: processor.cancelAndWait.bind(processor),
+      quiesceForProject: processor.quiesceForProject.bind(processor),
       runNext: async (worker) => {
         const captured: SmartPatchInferenceTransport = {
           close: worker.close.bind(worker),
@@ -316,7 +426,10 @@ export class GenerationOrchestrator {
         staging.assertReadyForPublication()
         return await processor.runOne(captured)
       },
-      stopAndCancelActive: processor.stopAndCancelActive.bind(processor),
+      stopAndCancelActive: async () => {
+        await processor.stopAndCancelActive()
+        this.smartPatchProcessors.delete(processor)
+      },
     }
   }
 
@@ -942,7 +1055,12 @@ export class GenerationOrchestrator {
         'The failed batch has not confirmed cancellation. Close the Project or restart to recover.',
       )
     }
-    if (this.acceptanceCancelingProjects.has(tabId) || this.acceptanceCanceled.has(tabId)) {
+    if (
+      this.acceptanceCancelingProjects.has(tabId) ||
+      this.acceptanceCanceled.has(tabId) ||
+      this.smartPatchAcceptanceCanceling.has(tabId) ||
+      this.smartPatchAcceptanceCanceled.has(tabId)
+    ) {
       throw cancellationUncertain('Acceptance cancellation has not confirmed all worker exits.')
     }
     if (this.cancelingProjects.has(tabId) || this.cancellationStarted.has(tabId)) {
@@ -963,6 +1081,8 @@ export class GenerationOrchestrator {
       this.cancelingProjects.has(tabId) ||
       this.acceptanceCancelingProjects.has(tabId) ||
       this.acceptanceCanceled.has(tabId) ||
+      this.smartPatchAcceptanceCanceling.has(tabId) ||
+      this.smartPatchAcceptanceCanceled.has(tabId) ||
       this.batchCleanupUnconfirmed.has(tabId) ||
       (this.fencedProjects.has(tabId) && !this.completedProjectCloses.has(tabId))
     ) {
@@ -1016,6 +1136,41 @@ export class GenerationOrchestrator {
       throw new GenerationOrchestratorError(
         'PROJECT_NOT_OPEN',
         'Open the Project before preparing a generation.',
+      )
+    }
+  }
+
+  private assertSmartPatchAcceptanceDocument(scope: SmartPatchAcceptanceCancellationScope) {
+    this.assertAcceptanceDocument(scope.tabId, scope.documentId)
+    const owner = this.projects.getOpenDocumentForAcceptance?.(scope.tabId)
+    if (
+      !owner ||
+      owner.filePath !== scope.projectPath ||
+      owner.document.documentId !== scope.documentId ||
+      localProjectRecoveryKey(owner.filePath) !== scope.tabId
+    ) {
+      throw new GenerationOrchestratorError(
+        'PROJECT_DOCUMENT_CHANGED',
+        'The exact open Smart Patch cancellation document/path is unavailable.',
+      )
+    }
+    return owner
+  }
+
+  private async cancelSmartPatchQueueItem(id: string): Promise<void> {
+    const requested = await this.queue.cancel(id)
+    if (requested.status !== 'running') {
+      return
+    }
+    for (const processor of this.smartPatchProcessors) {
+      if (await processor.cancelOwnedAndWait(id)) {
+        return
+      }
+    }
+    const settled = await this.queue.cancel(id)
+    if (settled.status === 'running') {
+      throw cancellationUncertain(
+        'The running Smart Patch has no confirmed registered local owner.',
       )
     }
   }
@@ -1250,6 +1405,49 @@ export class GenerationOrchestrator {
     return scoped
   }
 
+  private async readSmartPatchAcceptanceJobs(scope: SmartPatchAcceptanceCancellationScope) {
+    this.assertSmartPatchAcceptanceDocument(scope)
+    const current = await this.queue.listSmartPatchAcceptanceSessionJobs({
+      ...scope,
+      localProjectKey: scope.tabId,
+    })
+    const currentIds = new Set(current.map(({ id }) => id))
+    const expected = new Set(scope.expectedUnfinishedJobIds)
+    const confirmed = await this.queue.listUnfinishedByIds(scope.expectedUnfinishedJobIds)
+    if (
+      current.some(({ id }) => !expected.has(id)) ||
+      confirmed.some(({ id }) => !currentIds.has(id))
+    ) {
+      throw cancellationUncertain('The exact Smart Patch sibling job set changed after review.')
+    }
+    for (const id of scope.expectedUnfinishedJobIds) {
+      try {
+        const item = await this.queue.getManagerEntry(id)
+        if (
+          !['anima-smart-patch', 'illustrious-smart-patch'].includes(item.operation) ||
+          item.projectKey !== scope.tabId ||
+          item.documentId !== scope.documentId ||
+          !scope.stagingSessionIds.includes(item.stagingSessionId)
+        ) {
+          throw cancellationUncertain('A reviewed sibling belongs to a different generation owner.')
+        }
+      } catch (error) {
+        if (
+          !(error instanceof Error) ||
+          !('code' in error) ||
+          error.code !== 'QUEUE_ITEM_NOT_FOUND' ||
+          !scope.verifiedCandidates.some((candidate) => candidate.candidateId === id)
+        ) {
+          throw error
+        }
+        // A naturally completed row may have been pruned. The session helper has already proved
+        // its independent durable receipt against this exact verified Smart candidate witness.
+      }
+    }
+    this.assertSmartPatchAcceptanceDocument(scope)
+    return current
+  }
+
   private requireBatchDocument(
     tabId: string,
     documentId: string,
@@ -1331,6 +1529,75 @@ function sameAcceptanceScope(
 ): boolean {
   return (
     left.documentId === right.documentId && sameIds(left.stagingSessionIds, right.stagingSessionIds)
+  )
+}
+
+function snapshotSmartPatchAcceptanceCancellationScope(
+  input: SmartPatchAcceptanceCancellationScope,
+): SmartPatchAcceptanceCancellationScope {
+  if (!input || !Array.isArray(input.verifiedCandidates)) {
+    throw cancellationUncertain('The Smart Patch cancellation witnesses are invalid.')
+  }
+  const scope = {
+    documentId: input.documentId,
+    expectedUnfinishedJobIds: snapshotAcceptanceIds(input.expectedUnfinishedJobIds),
+    layerId: input.layerId,
+    projectPath: input.projectPath,
+    stagingSessionIds: snapshotAcceptanceIds(input.stagingSessionIds),
+    tabId: input.tabId,
+    verifiedCandidates: input.verifiedCandidates.map((entry) => ({
+      candidateId: entry?.candidateId,
+      frozenPayloadSha256: entry?.frozenPayloadSha256,
+      stagingSessionId: entry?.stagingSessionId,
+    })),
+  }
+  if (
+    typeof scope.projectPath !== 'string' ||
+    !path.isAbsolute(scope.projectPath) ||
+    path.resolve(scope.projectPath) !== scope.projectPath ||
+    localProjectRecoveryKey(scope.projectPath) !== scope.tabId ||
+    !UUID_PATTERN.test(scope.documentId) ||
+    !UUID_PATTERN.test(scope.layerId) ||
+    scope.verifiedCandidates.length > IGS_SAFETY_CEILINGS.archiveEntries ||
+    new Set(scope.verifiedCandidates.map(({ candidateId }) => candidateId)).size !==
+      scope.verifiedCandidates.length ||
+    scope.verifiedCandidates.some(
+      (entry) =>
+        typeof entry.candidateId !== 'string' ||
+        !UUID_PATTERN.test(entry.candidateId) ||
+        typeof entry.frozenPayloadSha256 !== 'string' ||
+        !/^[a-f0-9]{64}$/.test(entry.frozenPayloadSha256) ||
+        !scope.stagingSessionIds.includes(entry.stagingSessionId),
+    )
+  ) {
+    throw cancellationUncertain('The Smart Patch cancellation scope is invalid.')
+  }
+  scope.verifiedCandidates.sort((left, right) => left.candidateId.localeCompare(right.candidateId))
+  return scope
+}
+
+function sameSmartPatchAcceptanceScope(
+  left: SmartPatchAcceptanceCancellationScope,
+  right: SmartPatchAcceptanceCancellationScope,
+  includeReview: boolean,
+): boolean {
+  const witnessed = new Map(right.verifiedCandidates.map((entry) => [entry.candidateId, entry]))
+  return (
+    left.tabId === right.tabId &&
+    left.documentId === right.documentId &&
+    left.projectPath === right.projectPath &&
+    left.layerId === right.layerId &&
+    sameIds(left.stagingSessionIds, right.stagingSessionIds) &&
+    sameIds(left.expectedUnfinishedJobIds, right.expectedUnfinishedJobIds) &&
+    (includeReview
+      ? JSON.stringify(left.verifiedCandidates) === JSON.stringify(right.verifiedCandidates)
+      : left.verifiedCandidates.every((entry) => {
+          const candidate = witnessed.get(entry.candidateId)
+          return (
+            candidate?.stagingSessionId === entry.stagingSessionId &&
+            candidate.frozenPayloadSha256 === entry.frozenPayloadSha256
+          )
+        }))
   )
 }
 
