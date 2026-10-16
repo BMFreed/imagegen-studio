@@ -20,11 +20,16 @@ const emit = defineEmits<{
   select: [layerId: string]
   update: [layerId: string, change: Parameters<ProjectApi['updateSmartPatchLayer']>[2]]
 }>()
+const activeVariant = computed(() =>
+  props.layer.rasterSubLayers.find((variant) => variant.id === props.layer.activeRasterSubLayerId),
+)
 const menu = computed<ProjectEntityRowAction[]>(() => [
   {
     disabled: true,
     key: 'compare-generation',
-    label: 'Compare generation settings · No generation data',
+    label: props.layer.activeRasterSubLayerId
+      ? 'Compare generation settings · Smart Patch comparison unavailable'
+      : 'Compare generation settings · No generation data',
     run: () => undefined,
   },
   {
@@ -97,7 +102,9 @@ provideProjectEntityRow({
       </dl>
       <div class="patch-details">
         <span>Mask revision {{ layer.mask.revision }}</span>
-        <span>No variant</span>
+        <span class="active-variant" :title="activeVariant?.name">
+          {{ activeVariant?.name ?? 'No variant' }}
+        </span>
       </div>
     </template>
   </ProjectEntitySurface>
@@ -137,5 +144,12 @@ provideProjectEntityRow({
   display: flex;
   justify-content: space-between;
   gap: 6px;
+}
+.active-variant {
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

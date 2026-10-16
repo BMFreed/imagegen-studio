@@ -27,6 +27,7 @@ function raster(id: string, x: number): ProjectRasterLayerView {
 }
 function patch(): ProjectSmartPatchLayerView {
   return {
+    activeRaster: null,
     activeRasterSubLayerId: null,
     blendMode: 'normal',
     boundingBox: { height: 384, width: 384, x: 4000, y: -4000 },
@@ -92,4 +93,54 @@ test('patch editor ownership follows only an acknowledged exact layer selection,
   assert.equal(selectedSmartPatchLayer(layers, 'removed-or-other-document-owner'), null)
   assert.equal(selectedSmartPatchLayer(layers, null), null)
   assert.equal(selectedSmartPatchLayer([normal], empty.id), null)
+})
+
+test('Canvas projects only the active stored pixels at frozen placement with the Patch owner appearance', () => {
+  const owner = patch()
+  owner.activeRasterSubLayerId = 'active-variant'
+  owner.rasterSubLayers = [
+    { id: 'inactive-variant', name: 'Older contribution' },
+    { id: 'active-variant', name: 'Active contribution' },
+  ]
+  owner.status = 'stored'
+  owner.blendMode = 'multiply'
+  owner.locked = true
+  owner.opacity = 0.375
+  owner.activeRaster = raster(owner.id, -32)
+  const top = raster('higher-owner', 128)
+  const bottom = raster('lower-owner', 256)
+  const before = structuredClone(owner)
+  const projected = rasterLayerViews([top, owner, bottom])
+  assert.deepEqual(
+    projected.map(({ id }) => id),
+    ['higher-owner', owner.id, 'lower-owner'],
+  )
+  assert.deepEqual(projected[1], {
+    ...owner.activeRaster,
+    blendMode: 'multiply',
+    locked: true,
+    name: owner.name,
+    opacity: 0.375,
+  })
+  assert.deepEqual(fitTargetBounds([projected[1]], owner.boundingBox), {
+    bottom: 40,
+    left: -32,
+    right: 32,
+    top: -8,
+  })
+  assert.equal(selectedSmartPatchLayer([owner], projected[1].id), owner)
+  assert.deepEqual(owner, before, 'Display does not turn a Patch into a new Raster owner.')
+
+  const edited = structuredClone(owner)
+  edited.boundingBox = { height: 1024, width: 1024, x: -900, y: 900 }
+  edited.mask.revision += 1
+  assert.deepEqual(rasterLayerViews([edited]), [projected[1]])
+  edited.visible = false
+  assert.equal(rasterLayerViews([edited])[0]!.visible, false)
+  assert.deepEqual(fitTargetBounds(rasterLayerViews([edited]), owner.boundingBox), {
+    bottom: -3616,
+    left: 4000,
+    right: 4384,
+    top: -4000,
+  })
 })

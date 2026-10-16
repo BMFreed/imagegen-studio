@@ -682,7 +682,7 @@ const SmartPatchProvenanceCommonEntries = {
   schemaVersion: v.literal(1),
 }
 
-/** Standalone prerequisite only: Project documents still reject accepted Smart Patch variants. */
+/** Immutable portable provenance; authored Patch inputs may subsequently change. */
 export const SmartPatchGenerationProvenanceV1Schema = v.pipe(
   v.variant('kind', [
     v.strictObject({
@@ -760,27 +760,39 @@ export const SmartPatchVariantV1Schema = v.pipe(
   }, 'The Smart Patch variant asset or placement differs from its immutable provenance.'),
 )
 
-/** Owned mask authoring; accepted variants still need a later schema. */
-const SmartPatchLayerSchema = v.strictObject({
-  activeRasterSubLayerId: v.null(),
-  blendMode: v.picklist(['normal', 'multiply', 'screen', 'overlay']),
-  boundingBox: RectSchema,
-  coherenceSettings: v.optional(SmartPatchCoherenceSettingsSchema),
-  generationDraft: GenerationDraftSchema,
-  id: UuidSchema,
-  internalResolution: v.strictObject({
-    height: BoundedDimensionSchema,
-    width: BoundedDimensionSchema,
+const SmartPatchLayerSchema = v.pipe(
+  v.strictObject({
+    activeRasterSubLayerId: v.nullable(UuidSchema),
+    blendMode: v.picklist(['normal', 'multiply', 'screen', 'overlay']),
+    boundingBox: RectSchema,
+    coherenceSettings: v.optional(SmartPatchCoherenceSettingsSchema),
+    generationDraft: GenerationDraftSchema,
+    id: UuidSchema,
+    internalResolution: v.strictObject({
+      height: BoundedDimensionSchema,
+      width: BoundedDimensionSchema,
+    }),
+    kind: v.literal('smart-patch'),
+    locked: v.boolean(),
+    mask: SmartPatchMaskSchema,
+    maskSettings: v.optional(ProjectMaskSettingsSchema),
+    name: NonemptyTextSchema,
+    opacity: UnitIntervalSchema,
+    rasterSubLayers: v.pipe(
+      v.array(SmartPatchVariantV1Schema),
+      v.maxLength(IGS_SAFETY_CEILINGS.archiveEntries),
+    ),
+    visible: v.boolean(),
   }),
-  kind: v.literal('smart-patch'),
-  locked: v.boolean(),
-  mask: SmartPatchMaskSchema,
-  maskSettings: v.optional(ProjectMaskSettingsSchema),
-  name: NonemptyTextSchema,
-  opacity: UnitIntervalSchema,
-  rasterSubLayers: v.strictTuple([]),
-  visible: v.boolean(),
-})
+  v.check(
+    ({ activeRasterSubLayerId, rasterSubLayers }) =>
+      rasterSubLayers.length === 0
+        ? activeRasterSubLayerId === null
+        : activeRasterSubLayerId !== null &&
+          rasterSubLayers.some(({ id }) => id === activeRasterSubLayerId),
+    'A nonempty Smart Patch must nominate one of its owned variants.',
+  ),
+)
 
 const ProjectLayerSchema = v.variant('kind', [RasterLayerSchema, SmartPatchLayerSchema])
 
@@ -894,6 +906,18 @@ export function parseProjectDocumentV1(input: unknown): IgsProjectDocumentV1 {
         )
       }
       ownedIds.add(layer.mask.id)
+      for (const variant of layer.rasterSubLayers) {
+        // Provenance identifies the historical source. A later copy may own fresh hierarchy and
+        // asset identities without rewriting the accepted history; exact target matching belongs
+        // to the acceptance boundary, not to portable document ownership validation.
+        if (ownedIds.has(variant.id)) {
+          throw new IgsSchemaError(
+            'INVALID_PROJECT',
+            'A Smart Patch variant must have its own identity.',
+          )
+        }
+        ownedIds.add(variant.id)
+      }
       continue
     }
     if (!LAYER_ASSET_PATH_PATTERN.test(layer.asset.path)) {
@@ -951,11 +975,58 @@ export function parseProjectDocumentV1(input: unknown): IgsProjectDocumentV1 {
   return document
 }
 
-/** Empty Smart Patches contribute no pixels; use this at Raster-only material consumers. */
+/** Top-level Raster owners only; do not use for all assets or material composition. */
 export function projectRasterLayers(
   document: Pick<IgsProjectDocumentV1, 'layers'>,
 ): IgsRasterLayerV1[] {
   return document.layers.filter((layer): layer is IgsRasterLayerV1 => layer.kind === 'raster')
+}
+
+/** Every owned raster image, including inactive variants; no synthetic owner projection. */
+export function projectRasterAssets(
+  document: Pick<IgsProjectDocumentV1, 'layers'>,
+): (IgsRasterLayerV1 | IgsSmartPatchVariantV1)[] {
+  return document.layers.flatMap<IgsRasterLayerV1 | IgsSmartPatchVariantV1>((layer) =>
+    layer.kind === 'raster' ? [layer] : layer.rasterSubLayers,
+  )
+}
+
+/**
+ * Material composition only. A Patch occupies its owner stack position and contributes exactly its
+ * active immutable image at the accepted world bbox. The synthetic Raster id identifies the parent
+ * owner for source-selection scope; it is not a mutable Raster or an accepted-history row.
+ */
+export function projectActiveRasterContributions(
+  document: Pick<IgsProjectDocumentV1, 'layers'>,
+): IgsRasterLayerV1[] {
+  return document.layers.flatMap((layer) => {
+    if (layer.kind === 'raster') {
+      return [layer]
+    }
+    const active = layer.rasterSubLayers.find(({ id }) => id === layer.activeRasterSubLayerId)
+    if (!active) {
+      return []
+    }
+    return [
+      {
+        asset: active.asset,
+        blendMode: layer.blendMode,
+        id: layer.id,
+        kind: 'raster' as const,
+        locked: layer.locked,
+        name: layer.name,
+        opacity: layer.opacity,
+        transform: {
+          rotationDegrees: 0,
+          scaleX: 1,
+          scaleY: 1,
+          x: active.bbox.x,
+          y: active.bbox.y,
+        },
+        visible: layer.visible,
+      },
+    ]
+  })
 }
 
 /** Reuse the exact portable mask guard in IPC DTOs without a fake enclosing document. */
@@ -988,9 +1059,10 @@ export function projectAssetReferences(
 ): IgsProjectAssetRefV1[] {
   return document.layers.flatMap((layer) =>
     layer.kind === 'smart-patch'
-      ? layer.mask.asset
-        ? [layer.mask.asset]
-        : []
+      ? [
+          ...layer.rasterSubLayers.map(({ asset }) => asset),
+          ...(layer.mask.asset ? [layer.mask.asset] : []),
+        ]
       : [layer.asset, ...(layer.sourceIccProfile ? [layer.sourceIccProfile] : [])],
   )
 }
@@ -1019,7 +1091,7 @@ export function parseRasterGenerationProvenanceV1(input: unknown): IgsRasterGene
   return parsed.output
 }
 
-/** Validate proposed immutable metadata without admitting it to the current Project schema. */
+/** Validate standalone immutable metadata before attachment to an exact Project owner. */
 export function parseSmartPatchGenerationProvenanceV1(
   input: unknown,
 ): IgsSmartPatchGenerationProvenanceV1 {
@@ -1088,11 +1160,15 @@ export function validateIgsPackageMetadataV1(
     throw new IgsSchemaError('PACKAGE_MISMATCH', 'The Project package revision does not match.')
   }
   const rasterLayers = projectRasterLayers(document)
-  if (rasterLayers.length === 0 && manifest.preview.status !== 'empty') {
+  const rasterAssets = projectRasterAssets(document)
+  if (
+    projectActiveRasterContributions(document).length === 0 &&
+    manifest.preview.status !== 'empty'
+  ) {
     throw new IgsSchemaError('PACKAGE_MISMATCH', 'An empty Project cannot have a raster preview.')
   }
   const members = new Map(manifest.members.map((member) => [member.path, member]))
-  const assetPaths = new Set(rasterLayers.map((layer) => layer.asset.path))
+  const assetPaths = new Set(rasterAssets.map((layer) => layer.asset.path))
   const maskPaths = new Set(
     document.layers.flatMap((layer) =>
       layer.kind === 'smart-patch' && layer.mask.asset ? [layer.mask.asset.path] : [],
@@ -1101,12 +1177,12 @@ export function validateIgsPackageMetadataV1(
   const profilePaths = new Set(
     rasterLayers.flatMap((layer) => (layer.sourceIccProfile ? [layer.sourceIccProfile.path] : [])),
   )
-  for (const layer of rasterLayers) {
+  for (const layer of rasterAssets) {
     const member = members.get(layer.asset.path)
     if (member?.bytes !== layer.asset.bytes || member.sha256 !== layer.asset.sha256) {
       throw new IgsSchemaError('PACKAGE_MISMATCH', 'A Project layer asset is missing or differs.')
     }
-    if (layer.sourceIccProfile) {
+    if ('sourceIccProfile' in layer && layer.sourceIccProfile) {
       const profile = members.get(layer.sourceIccProfile.path)
       if (
         profile?.bytes !== layer.sourceIccProfile.bytes ||

@@ -2,7 +2,6 @@ import type {
   IgsProjectDocumentV1,
   IgsRasterLayerV1,
 } from '../../shared/projects/project-schema.js'
-import { projectRasterLayers } from '../../shared/projects/project-schema.js'
 
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
@@ -13,7 +12,7 @@ import type { IgsAssetSource } from './igs-package.js'
 import type { RenderedProjectPreview } from './project-session.js'
 import type { ProjectWorkerClient } from './worker-client.js'
 
-import { withFrozenRasterComposition } from './project-raster-snapshot.js'
+import { compositionRasterLayers, withFrozenRasterComposition } from './project-raster-snapshot.js'
 
 const THUMBNAIL_MAX_SIDE = 256
 export type ProjectPreviewResult =
@@ -34,7 +33,7 @@ export async function buildProjectPreview(input: {
   scratchBasePath: string
   worker: PreviewWorker
 }): Promise<ProjectPreviewResult> {
-  if (!projectRasterLayers(input.document).some((layer) => layer.visible && layer.opacity > 0)) {
+  if (compositionRasterLayers(input.document).length === 0) {
     return { documentRevision: input.document.documentRevision, kind: 'empty' }
   }
   return await withFrozenRasterComposition(

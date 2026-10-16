@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 
-import type { ProjectRasterLayerView } from '../api.js'
+import type { ProjectRasterLayerView, ProjectSmartPatchLayerView } from '../api.js'
 
 import { projectLayerImageUrl } from '../../main/projects/project-layer-resource.js'
 import {
@@ -10,6 +10,7 @@ import {
   hashGenerationTargetSignature,
   isProjectGenerationTargetState,
 } from './project-generation-target-state.js'
+import { createEmptyProjectDocumentV1 } from './project-schema.js'
 
 test('target fingerprint captures every raster pixel input and ignores editor-only signed revisions', async () => {
   const layer: ProjectRasterLayerView = {
@@ -85,6 +86,60 @@ test('target fingerprint captures every raster pixel input and ignores editor-on
   )
   assert.match(await hashGenerationTargetSignature(original), /^[a-f0-9]{64}$/)
   assert.deepEqual(tab, before)
+})
+
+test('raw Project target fingerprints include only the active stored Patch pixels and parent appearance', () => {
+  const base = createEmptyProjectDocumentV1({ title: 'Stored Patch pixels' })
+  const ownerId = randomUUID()
+  const variantId = randomUUID()
+  const imageUrl = (sha = 'a'.repeat(64)) =>
+    projectLayerImageUrl(`project-v1-${'b'.repeat(64)}`, base.documentRevision, ownerId, sha)
+  const activeRaster: ProjectRasterLayerView = {
+    blendMode: 'normal',
+    height: 5,
+    id: ownerId,
+    imageUrl: imageUrl(),
+    locked: false,
+    name: 'Stored Patch',
+    opacity: 1,
+    transform: { rotationDegrees: 0, scaleX: 1, scaleY: 1, x: -19, y: 31 },
+    visible: true,
+    width: 7,
+  }
+  const patch: ProjectSmartPatchLayerView = {
+    activeRaster,
+    activeRasterSubLayerId: variantId,
+    blendMode: 'normal',
+    boundingBox: { height: 128, width: 128, x: 100, y: 200 },
+    generationDraft: base.generationDraft,
+    id: ownerId,
+    internalResolution: { height: 64, width: 64 },
+    kind: 'smart-patch',
+    locked: false,
+    mask: { asset: null, id: randomUUID(), revision: 0 },
+    maskImageUrl: null,
+    name: 'Stored Patch',
+    opacity: 1,
+    rasterSubLayers: [{ id: variantId, name: 'Frozen pixels' }],
+    status: 'stored',
+    visible: true,
+  }
+  const tab = { ...base, layers: [patch] }
+  const original = generationTargetSignature(tab)
+  assert.equal(original, generationTargetSignature({ ...tab, layers: [activeRaster] }))
+  assert.notEqual(original, generationTargetSignature({ ...tab, layers: [] }))
+  const edited = structuredClone(tab)
+  edited.layers[0].boundingBox.x += 64
+  edited.layers[0].mask.revision += 1
+  edited.layers[0].rasterSubLayers.push({ id: randomUUID(), name: 'Inactive alternative' })
+  assert.equal(generationTargetSignature(edited), original)
+  edited.layers[0].activeRaster!.imageUrl = imageUrl('c'.repeat(64))
+  assert.notEqual(generationTargetSignature(edited), original)
+  edited.layers[0].activeRaster!.imageUrl = imageUrl()
+  edited.layers[0].opacity = 0.5
+  assert.notEqual(generationTargetSignature(edited), original)
+  edited.layers[0].visible = false
+  assert.equal(generationTargetSignature(edited), generationTargetSignature({ ...tab, layers: [] }))
 })
 
 test('target state validates exact typed mode and unavailable pairing without paths or forged scalars', () => {

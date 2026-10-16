@@ -8,8 +8,8 @@ import type {
 import {
   createEmptyProjectDocumentV1,
   parseProjectDocumentV1,
+  projectActiveRasterContributions,
   projectAssetReferences,
-  projectRasterLayers,
 } from '../../shared/projects/project-schema.js'
 
 import { randomUUID } from 'node:crypto'
@@ -525,7 +525,9 @@ function containsRect(outer: IgsPreviewRectV1, inner: IgsPreviewRectV1): boolean
 
 /** World-space visible raster bounds, separate from the finite preview bitmap resolution. */
 function visibleRasterBounds(document: IgsProjectDocumentV1): IgsPreviewRectV1 | null {
-  const layers = projectRasterLayers(document).filter((layer) => layer.visible && layer.opacity > 0)
+  const layers = projectActiveRasterContributions(document).filter(
+    (layer) => layer.visible && layer.opacity > 0,
+  )
   if (layers.length === 0) {
     return null
   }

@@ -5,8 +5,8 @@
   "main": "dist/main/main.cjs",
   "packageManager": "pnpm@11.9.0",
   "scripts": {
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
+    "lint": "node scripts/lint.mjs",
+    "lint:fix": "node scripts/lint.mjs --fix",
     "typecheck": "pnpm run prototype:typecheck && pnpm run app:typecheck",
     "app:typecheck": "vue-tsc --project tsconfig.app.json --noEmit",
     "app:build": "vite build --config vite.desktop.config.ts && node scripts/build-electron.mjs",

@@ -5,6 +5,7 @@ import {
 } from '../../shared/projects/color-profile.js'
 import { PROJECT_MASK_MAX_PNG_BYTES } from '../../shared/projects/project-mask.js'
 import {
+  IGS_GENERATION_PNG_MAX_BYTES,
   IGS_MIMETYPE,
   IGS_REQUIRED_MEMBER_PATHS,
   IGS_SAFETY_CEILINGS,
@@ -12,10 +13,12 @@ import {
   type IgsManifestV1,
   type IgsPreviewRectV1,
   type IgsProjectDocumentV1,
+  type IgsSmartPatchVariantV1,
   isIgsMemberPathV1,
   parseIgsManifestV1,
   parseProjectDocumentV1,
   projectAssetReferences,
+  projectRasterAssets,
   projectRasterLayers,
   validateIgsPackageMetadataV1,
 } from '../../shared/projects/project-schema.js'
@@ -751,7 +754,7 @@ export async function readIgsPackage(
       throw new IgsPackageError('MISSING_ENTRY', `Missing package member: ${required}`)
     }
   }
-  for (const layer of projectRasterLayers(document)) {
+  for (const layer of projectRasterAssets(document)) {
     const dimensions = imageDimensions(
       layer.asset.path,
       scanned.get(layer.asset.path)!.header,
@@ -958,6 +961,14 @@ export async function readIgsPackage(
     }
   }
   for (const layer of document.layers) {
+    if (layer.kind !== 'smart-patch') {
+      continue
+    }
+    for (const variant of layer.rasterSubLayers) {
+      await verifySmartPatchVariantPng(variant, await result.readMember(variant.asset.path))
+    }
+  }
+  for (const layer of document.layers) {
     if (layer.kind !== 'smart-patch' || !layer.mask.asset) {
       continue
     }
@@ -968,6 +979,64 @@ export async function readIgsPackage(
     }
   }
   return result
+}
+
+/**
+ * Verify actual immutable worker output before .igs or local shadow adoption, including inactive
+ * images.
+ */
+export async function verifySmartPatchVariantPng(
+  variant: IgsSmartPatchVariantV1,
+  bytes: Buffer,
+): Promise<void> {
+  const output = variant.generationProvenance.executionResultContext.output
+  if (
+    bytes.length !== variant.asset.bytes ||
+    createHash('sha256').update(bytes).digest('hex') !== variant.asset.sha256
+  ) {
+    throw new IgsPackageError(
+      'MEMBER_MISMATCH',
+      'A Smart Patch variant PNG differs from its asset identity.',
+    )
+  }
+  let alpha: Buffer
+  try {
+    assertSmartPatchContributionChunks(bytes)
+    async function* source(): AsyncIterable<Buffer> {
+      yield bytes
+    }
+    // Existing complete PNG structure/CRC/color validation qualifies the actual canonical profile.
+    const limits = resolveLimits({
+      memberBytes: IGS_GENERATION_PNG_MAX_BYTES,
+      rasterDimension: 2048,
+    })
+    const scanned = await scanStream(
+      source(),
+      variant.asset.path,
+      limits.memberBytes,
+      false,
+      limits,
+    )
+    const dimensions = imageDimensions(variant.asset.path, scanned.header, limits)
+    if (dimensions.width !== variant.asset.width || dimensions.height !== variant.asset.height) {
+      throw new Error('The Smart Patch PNG dimensions differ from its asset identity.')
+    }
+    alpha = decodeTargetPngAlpha(bytes, output.width, output.height)
+  } catch {
+    throw new IgsPackageError(
+      'INVALID_IMAGE',
+      'An accepted Smart Patch contribution must be a bounded RGBA PNG with its sRGB profile.',
+    )
+  }
+  if (
+    alpha.length !== output.contributionAlpha8.byteSize ||
+    createHash('sha256').update(alpha).digest('hex') !== output.contributionAlpha8.sha256
+  ) {
+    throw new IgsPackageError(
+      'MEMBER_MISMATCH',
+      'The accepted Smart Patch contribution alpha differs from its provenance.',
+    )
+  }
 }
 
 export async function saveIgsPackage(
@@ -1110,6 +1179,32 @@ export async function saveIgsPackage(
     return { directorySynced, manifest }
   } finally {
     await unlink(temporaryPath).catch(() => undefined)
+  }
+}
+
+/** Bound the alpha decoder's retained IDAT views before invoking it on accepted worker output. */
+function assertSmartPatchContributionChunks(bytes: Buffer): void {
+  let iccSeen = false
+  let idatChunks = 0
+  for (let offset = 8; offset + 12 <= bytes.length;) {
+    const length = bytes.readUInt32BE(offset)
+    const type = bytes.toString('ascii', offset + 4, offset + 8)
+    if (offset + 12 + length > bytes.length) {
+      throw new Error('The contribution PNG is truncated.')
+    }
+    if (type === 'iCCP') {
+      iccSeen = true
+    }
+    if (type === 'IDAT' && ++idatChunks > 256) {
+      throw new Error('The contribution PNG has too many IDAT chunks.')
+    }
+    offset += 12 + length
+    if (type === 'IEND') {
+      break
+    }
+  }
+  if (!iccSeen) {
+    throw new Error('The contribution PNG omits its declared sRGB profile.')
   }
 }
 

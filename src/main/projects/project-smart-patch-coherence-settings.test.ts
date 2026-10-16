@@ -193,7 +193,7 @@ function patch(tab: ProjectTab, id: string): ProjectSmartPatchLayerView {
 }
 
 function editable(value: ProjectSmartPatchLayerView) {
-  const { maskImageUrl: _url, status: _status, ...document } = value
+  const { activeRaster: _display, maskImageUrl: _url, status: _status, ...document } = value
   return document
 }
 

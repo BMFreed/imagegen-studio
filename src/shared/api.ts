@@ -269,9 +269,10 @@ export interface ProjectRasterLayerView {
   width: number
 }
 
-/** Owned document entity; accepted variants have a separate later implementation owner. */
+/** Display-only projection; variant lifecycle and settings comparison have separate owners. */
 export interface ProjectSmartPatchLayerView {
-  activeRasterSubLayerId: null
+  activeRaster: ProjectRasterLayerView | null
+  activeRasterSubLayerId: string | null
   blendMode: ProjectRasterLayerView['blendMode']
   boundingBox: IgsRectV1
   coherenceSettings?: SmartPatchCoherenceSettings
@@ -285,8 +286,8 @@ export interface ProjectSmartPatchLayerView {
   maskSettings?: ProjectMaskSettings
   name: string
   opacity: number
-  rasterSubLayers: []
-  status: 'empty'
+  rasterSubLayers: { id: string; name: string }[]
+  status: 'empty' | 'stored'
   visible: boolean
 }
 

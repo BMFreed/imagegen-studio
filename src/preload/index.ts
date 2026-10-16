@@ -511,6 +511,7 @@ function isProjectSmartPatchLayerView(value: unknown): value is ProjectSmartPatc
   if (!isRecord(value) || !isRecord(value.mask) || value.kind !== 'smart-patch') {
     return false
   }
+  const maskId = value.mask.id
   return (
     isProjectDocumentId(value.id) &&
     typeof value.name === 'string' &&
@@ -530,9 +531,36 @@ function isProjectSmartPatchLayerView(value: unknown): value is ProjectSmartPatc
       : typeof value.maskImageUrl === 'string' &&
         value.maskImageUrl.startsWith('igs-mask://asset/')) &&
     Array.isArray(value.rasterSubLayers) &&
-    value.rasterSubLayers.length === 0 &&
-    value.activeRasterSubLayerId === null &&
-    value.status === 'empty'
+    value.rasterSubLayers.length <= IGS_SAFETY_CEILINGS.archiveEntries &&
+    value.rasterSubLayers.every(
+      (variant: unknown) =>
+        isRecord(variant) &&
+        Object.keys(variant).length === 2 &&
+        isProjectDocumentId(variant.id) &&
+        variant.id !== value.id &&
+        variant.id !== maskId &&
+        typeof variant.name === 'string' &&
+        variant.name.trim().length > 0,
+    ) &&
+    new Set(value.rasterSubLayers.map((variant) => variant.id)).size ===
+      value.rasterSubLayers.length &&
+    (value.rasterSubLayers.length === 0
+      ? value.activeRasterSubLayerId === null &&
+        value.activeRaster === null &&
+        value.status === 'empty'
+      : isProjectDocumentId(value.activeRasterSubLayerId) &&
+        value.rasterSubLayers.some((variant) => variant.id === value.activeRasterSubLayerId) &&
+        value.status === 'stored' &&
+        isProjectRasterLayerView(value.activeRaster) &&
+        value.activeRaster.id === value.id &&
+        value.activeRaster.name === value.name &&
+        value.activeRaster.blendMode === value.blendMode &&
+        value.activeRaster.locked === value.locked &&
+        value.activeRaster.opacity === value.opacity &&
+        value.activeRaster.visible === value.visible &&
+        value.activeRaster.transform.rotationDegrees === 0 &&
+        value.activeRaster.transform.scaleX === 1 &&
+        value.activeRaster.transform.scaleY === 1)
   )
 }
 

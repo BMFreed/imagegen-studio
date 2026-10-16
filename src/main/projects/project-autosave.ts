@@ -1,5 +1,6 @@
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 import {
+  IGS_SAFETY_CEILINGS,
   parseProjectDocumentV1,
   projectAssetReferences,
   projectMaskAssets,
@@ -23,6 +24,11 @@ import {
   type ProjectSessionRoots,
   type RenderedProjectPreview,
 } from './project-session.js'
+import {
+  smartPatchVariantImageIdentity,
+  smartPatchVariants,
+  verifySmartPatchVariantSource,
+} from './project-smart-patch-variant-assets.js'
 
 export interface ProjectAutosaveOptions {
   /** Test seam at the unavoidable `.igs`/single-base-shadow crash window. */
@@ -171,6 +177,8 @@ export class ProjectAutosaveCoordinator {
 
   private timer: ReturnType<typeof setTimeout> | undefined
 
+  private readonly verifiedVariantImages = new Set<string>()
+
   private wroteShadow = false
 
   private constructor(
@@ -183,6 +191,9 @@ export class ProjectAutosaveCoordinator {
   ) {
     this.releaseLease = releaseLease
     this.baseDocument = savedDocument
+    for (const variant of smartPatchVariants(savedDocument)) {
+      this.verifiedVariantImages.add(smartPatchVariantImageIdentity(variant))
+    }
     this.stagingBase = roots.scratchDir
     this.debounceMs = options.debounceMs ?? 1000
     if (!Number.isSafeInteger(this.debounceMs) || this.debounceMs < 0) {
@@ -1225,6 +1236,39 @@ export class ProjectAutosaveCoordinator {
           const destination = path.join(directory, `${staged.size}.asset`)
           await copyVerifiedFile(source.sourcePath, destination, ref)
           staged.set(memberPath, { ref, source: { sourcePath: destination } })
+        }
+      }
+      // Validate pixel/provenance relations even when only metadata changed and no new source
+      // was supplied. An exact previously verified image proof needs no repeated PNG decoding.
+      let savedPackage: Awaited<ReturnType<typeof readIgsPackage>> | undefined
+      for (const variant of smartPatchVariants(document)) {
+        const identity = smartPatchVariantImageIdentity(variant)
+        if (this.verifiedVariantImages.has(identity)) {
+          continue
+        }
+        const pending = this.sourceFor(variant.asset, staged)
+        let source = pending?.source
+        if (!source) {
+          savedPackage ??= await readIgsPackage(this.filePath)
+          if (!sameDocument(savedPackage.project, this.baseDocument)) {
+            throw new ProjectAutosaveError(
+              'SAVED_PROJECT_CHANGED',
+              'The saved Project changed during variant validation.',
+            )
+          }
+          const ref = referencedMembers(savedPackage.project).get(variant.asset.path)
+          if (!ref || !sameRef(variant.asset, ref)) {
+            throw new ProjectAutosaveError(
+              'ASSET_SOURCE_MISSING',
+              'A new Smart Patch variant needs its immutable source.',
+            )
+          }
+          source = { bytes: await savedPackage.readMember(variant.asset.path) }
+        }
+        await verifySmartPatchVariantSource(variant, source)
+        this.verifiedVariantImages.add(identity)
+        if (this.verifiedVariantImages.size > IGS_SAFETY_CEILINGS.archiveEntries) {
+          this.verifiedVariantImages.delete(this.verifiedVariantImages.values().next().value!)
         }
       }
       if (directory) {

@@ -2,7 +2,7 @@ import {
   type IgsProjectDocumentV1,
   type IgsRasterLayerV1,
   parseProjectDocumentV1,
-  projectRasterLayers,
+  projectActiveRasterContributions,
 } from '../../shared/projects/project-schema.js'
 
 import { createHash } from 'node:crypto'
@@ -30,7 +30,7 @@ type RasterAsset = RasterLayer['asset']
 
 type FrozenSource = IgsAssetSource | null
 
-/** Project stack order is top first. Empty Smart Patches currently contribute no pixels. */
+/** Project stack order is top first; each Patch contributes only its active frozen world raster. */
 export function compositionRasterLayers(
   document: IgsProjectDocumentV1,
   scope?: RasterCompositionScope,
@@ -43,7 +43,9 @@ export function compositionRasterLayers(
     }
     scoped = { ...document, layers: document.layers.slice(index + 1) }
   }
-  return projectRasterLayers(scoped).filter((layer) => layer.visible && layer.opacity > 0)
+  return projectActiveRasterContributions(scoped).filter(
+    (layer) => layer.visible && layer.opacity > 0,
+  )
 }
 
 /**

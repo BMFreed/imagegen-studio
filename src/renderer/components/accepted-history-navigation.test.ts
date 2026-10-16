@@ -109,6 +109,7 @@ test('accepted history navigation refuses missing owners and neighboring documen
 test('accepted history navigation never treats an empty Smart Patch as an accepted Raster owner', () => {
   const { layer, reference, tab } = fixture()
   const patch: ProjectSmartPatchLayerView = {
+    activeRaster: null,
     activeRasterSubLayerId: null,
     blendMode: 'normal',
     boundingBox: { height: 256, width: 256, x: 0, y: 0 },

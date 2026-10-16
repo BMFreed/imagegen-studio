@@ -7,6 +7,7 @@ import type {
   ProjectLoraIdentity,
   ProjectOpenResult,
   ProjectRasterLayerChange,
+  ProjectRasterLayerView,
   ProjectRebuildResult,
   ProjectSaveResult,
   ProjectSmartPatchLayerChange,
@@ -64,7 +65,7 @@ import {
   type IgsRectV1,
   IgsSchemaError,
   type IgsSmartPatchLayerV1,
-  projectRasterLayers,
+  projectActiveRasterContributions,
 } from '../../shared/projects/project-schema.js'
 import {
   type GenerationPrompt,
@@ -2175,15 +2176,13 @@ export class ProjectService {
     const coordinator = this.requireTab(tabId)
     const document = coordinator.document
     const pendingSources = new Map(
-      projectRasterLayers(document)
-        .filter((layer) => layer.visible && layer.opacity > 0)
-        .map(
-          (layer) =>
-            [
-              `${layer.asset.path}:${layer.asset.sha256}`,
-              coordinator.getCurrentAssetSource(layer.asset),
-            ] as const,
-        ),
+      compositionRasterLayers(document).map(
+        (layer) =>
+          [
+            `${layer.asset.path}:${layer.asset.sha256}`,
+            coordinator.getCurrentAssetSource(layer.asset),
+          ] as const,
+      ),
     )
     return await withFrozenRasterComposition(
       {
@@ -2746,6 +2745,23 @@ async function readMaskAssetBytes(
 
 function toTab(id: string, coordinator: ProjectAutosaveCoordinator): ProjectTab {
   const document = coordinator.document
+  const displayRasters = new Map(
+    projectActiveRasterContributions(document).map((layer) => [
+      layer.id,
+      {
+        blendMode: layer.blendMode,
+        height: layer.asset.height,
+        id: layer.id,
+        imageUrl: projectLayerImageUrl(id, document.documentRevision, layer.id, layer.asset.sha256),
+        locked: layer.locked,
+        name: layer.name,
+        opacity: layer.opacity,
+        transform: layer.transform,
+        visible: layer.visible,
+        width: layer.asset.width,
+      } satisfies ProjectRasterLayerView,
+    ]),
+  )
   return {
     acceptedResults: projectAcceptedResults(id, document),
     autosaveError: coordinator.lastAutosaveError?.message ?? null,
@@ -2761,6 +2777,7 @@ function toTab(id: string, coordinator: ProjectAutosaveCoordinator): ProjectTab 
       layer.kind === 'smart-patch'
         ? {
             ...layer,
+            activeRaster: displayRasters.get(layer.id) ?? null,
             coherenceSettings: resolveSmartPatchCoherenceSettings(layer.coherenceSettings),
             maskImageUrl:
               layer.mask.asset === null
@@ -2774,25 +2791,10 @@ function toTab(id: string, coordinator: ProjectAutosaveCoordinator): ProjectTab 
                     tabId: id,
                   }),
             maskSettings: resolveProjectMaskSettings(layer.maskSettings),
-            status: 'empty' as const,
+            rasterSubLayers: layer.rasterSubLayers.map(({ id, name }) => ({ id, name })),
+            status: layer.rasterSubLayers.length === 0 ? ('empty' as const) : ('stored' as const),
           }
-        : {
-            blendMode: layer.blendMode,
-            height: layer.asset.height,
-            id: layer.id,
-            imageUrl: projectLayerImageUrl(
-              id,
-              document.documentRevision,
-              layer.id,
-              layer.asset.sha256,
-            ),
-            locked: layer.locked,
-            name: layer.name,
-            opacity: layer.opacity,
-            transform: layer.transform,
-            visible: layer.visible,
-            width: layer.asset.width,
-          },
+        : displayRasters.get(layer.id)!,
     ),
     primaryBbox: document.primaryBbox,
     title: document.title,

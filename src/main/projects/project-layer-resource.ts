@@ -2,7 +2,10 @@ import type {
   IgsProjectDocumentV1,
   IgsRasterLayerV1,
 } from '../../shared/projects/project-schema.js'
-import { projectRasterLayers } from '../../shared/projects/project-schema.js'
+import {
+  projectActiveRasterContributions,
+  projectRasterAssets,
+} from '../../shared/projects/project-schema.js'
 
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { constants, createReadStream } from 'node:fs'
@@ -75,7 +78,9 @@ export function resolveProjectLayerAsset(
   if (document.documentRevision !== request.documentRevision) {
     return null
   }
-  const layer = projectRasterLayers(document).find((item) => item.id === request.layerId)
+  const layer = projectActiveRasterContributions(document).find(
+    (item) => item.id === request.layerId,
+  )
   return layer?.asset.sha256 === request.assetSha256 ? layer.asset : null
 }
 
@@ -85,7 +90,7 @@ export async function streamSavedProjectLayer(
   scratchRoot: string,
 ): Promise<Response> {
   const archive = await readIgsPackage(packagePath)
-  const saved = projectRasterLayers(archive.project).find(
+  const saved = projectRasterAssets(archive.project).find(
     (layer) =>
       layer.asset.path === member.path &&
       layer.asset.sha256 === member.sha256 &&

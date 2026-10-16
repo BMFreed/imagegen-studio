@@ -3,6 +3,7 @@ import {
   IGS_SAFETY_CEILINGS,
   type IgsMemberRefV1,
   type IgsProjectDocumentV1,
+  type IgsSmartPatchVariantV1,
   isIgsMemberPathV1,
   parseProjectDocumentV1,
   projectAssetReferences,
@@ -18,6 +19,11 @@ import * as v from 'valibot'
 import { type IgsAssetSource, type IgsPackageReadResult, readIgsPackage } from './igs-package.js'
 import { canonicalProjectPath, localProjectRecoveryKey } from './project-identity.js'
 import { readProjectMaskSource } from './project-mask.js'
+import {
+  smartPatchVariantImageIdentity,
+  smartPatchVariants,
+  verifySmartPatchVariantSource,
+} from './project-smart-patch-variant-assets.js'
 
 const SHADOW_VERSION = 1
 const MANIFEST_NAME = 'manifest.json'
@@ -306,6 +312,18 @@ export class ProjectShadowStore {
         }
         dirtyAssets[member.path] = { sourcePath: assetPath }
       }
+      try {
+        await verifyVariantImages(
+          [document],
+          saved,
+          async (variant) =>
+            dirtyAssets[variant.asset.path] ?? {
+              bytes: await input.savedPackage.readMember(variant.asset.path),
+            },
+        )
+      } catch {
+        return { reason: 'ASSET_MISMATCH', status: 'invalid' }
+      }
       return {
         dirtyAssets,
         document,
@@ -415,6 +433,27 @@ export class ProjectShadowStore {
             }
           }
         }
+        let savedPackage: IgsPackageReadResult | undefined
+        const changedPaths = new Set(changed.map((member) => member.path))
+        try {
+          await verifyVariantImages([document], savedDocument, async (variant) => {
+            if (changedPaths.has(variant.asset.path)) {
+              return { sourcePath: path.join(pending, variant.asset.path) }
+            }
+            savedPackage ??= await readIgsPackage(input.projectPath)
+            if (
+              sha256(documentBytes(savedPackage.project)) !== sha256(documentBytes(savedDocument))
+            ) {
+              throw new Error('The saved Project changed during shadow validation.')
+            }
+            return { bytes: await savedPackage.readMember(variant.asset.path) }
+          })
+        } catch {
+          throw new ProjectShadowError(
+            'SHADOW_ASSET_MISMATCH',
+            'The Smart Patch variant PNG is invalid.',
+          )
+        }
         const directories = new Set<string>([pending])
         for (const member of changed) {
           let current = path.dirname(path.join(pending, member.path))
@@ -501,6 +540,24 @@ async function withKeyLock<T>(key: string, work: () => Promise<T>): Promise<T> {
     release()
     if (keyLocks.get(key) === tail) {
       keyLocks.delete(key)
+    }
+  }
+}
+
+/** Saved records were validated by the package loader; new pixel proofs use owned snapshot bytes. */
+async function verifyVariantImages(
+  documents: IgsProjectDocumentV1[],
+  savedDocument: IgsProjectDocumentV1,
+  sourceFor: (variant: IgsSmartPatchVariantV1) => Promise<IgsAssetSource>,
+): Promise<void> {
+  const verified = new Set(smartPatchVariants(savedDocument).map(smartPatchVariantImageIdentity))
+  for (const document of documents) {
+    for (const variant of smartPatchVariants(document)) {
+      const identity = smartPatchVariantImageIdentity(variant)
+      if (!verified.has(identity)) {
+        await verifySmartPatchVariantSource(variant, await sourceFor(variant))
+        verified.add(identity)
+      }
     }
   }
 }

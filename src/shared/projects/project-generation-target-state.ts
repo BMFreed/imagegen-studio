@@ -2,6 +2,7 @@ import type { ProjectRasterLayerView, ProjectTab } from '../api.js'
 
 import { IGS_SRGB_ICC_SHA256 } from './color-profile.js'
 import { isProjectDocumentId } from './project-generation-actions.js'
+import { projectRasterDisplayViews } from './project-layer-views.js'
 
 export interface ProjectGenerationTargetState {
   documentId: string
@@ -42,8 +43,8 @@ export function generationTargetSignature(
   tab: Pick<ProjectTab, 'documentId' | 'layers' | 'primaryBbox'>,
 ): string | null {
   const layers = []
-  for (const layer of tab.layers) {
-    if (layer.kind === 'smart-patch' || !layer.visible || layer.opacity === 0) {
+  for (const layer of projectRasterDisplayViews(tab.layers)) {
+    if (!layer.visible || layer.opacity === 0) {
       continue
     }
     const digest = layerAssetDigest(layer)

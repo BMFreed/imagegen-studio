@@ -212,10 +212,11 @@ for (const family of ['illustrious', 'anima'] as const) {
     }
   })
 
-  test(`${family} standalone Smart Patch metadata does not admit variants into production documents`, () => {
+  test(`${family} Smart Patch document attachment requires an owned active variant`, () => {
     const variant = smartPatchVariantMetadataFixture(family)
     const source = variant.generationProvenance.layerSourceContext
     const document = createEmptyProjectDocumentV1({ title: 'Still an empty Smart Patch' })
+    source.sourceDocumentId = document.documentId
     const patch = {
       activeRasterSubLayerId: null,
       blendMode: 'normal',
@@ -239,6 +240,8 @@ for (const family of ['illustrious', 'anima'] as const) {
     patch.rasterSubLayers = []
     Reflect.set(patch, 'activeRasterSubLayerId', variant.id)
     assert.throws(() => parseProjectDocumentV1(raw), { code: 'INVALID_PROJECT' })
+    Reflect.set(patch, 'rasterSubLayers', [variant])
+    assert.doesNotThrow(() => parseProjectDocumentV1(raw))
     assert.equal(
       isRasterGenerationConfigurationV1(variant.generationProvenance.generationConfiguration),
       false,

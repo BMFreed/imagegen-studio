@@ -3,6 +3,7 @@ import type {
   ProjectRasterLayerView,
   ProjectSmartPatchLayerView,
 } from '../../shared/api.js'
+import { projectRasterDisplayViews } from '../../shared/projects/project-layer-views.js'
 
 /** Raster transport predates a discriminator; the new entity has an explicit kind. */
 export function isSmartPatchLayerView(
@@ -11,9 +12,9 @@ export function isSmartPatchLayerView(
   return 'kind' in layer && layer.kind === 'smart-patch'
 }
 
-/** Empty patches contribute no pixels, image URL, raster transform or accepted result. */
+/** Active pixels preserve stack/owner identity; empty patches contribute no display image. */
 export function rasterLayerViews(layers: readonly ProjectLayerView[]): ProjectRasterLayerView[] {
-  return layers.filter((layer): layer is ProjectRasterLayerView => !isSmartPatchLayerView(layer))
+  return projectRasterDisplayViews(layers)
 }
 
 export function selectedSmartPatchLayer(

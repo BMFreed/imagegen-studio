@@ -2413,7 +2413,32 @@ Result` переносит фактический expanded prompt и portable ge
 
 ## Фаза 4. Полный Canvas и Smart Patch Layer
 
-**Текущий private acceptance-plan scope:**
+**Текущий variant storage/display scope:**
+
+[Variant storage and material composition](../engineering/phase-4-smart-patch-variant-storage-research.md)
+The document now owns nonempty Smart Patches: all active and inactive variant
+images survive explicit Save, local recovery and Undo/Redo retention. Actual PNG
+bytes, canonical sRGB profile, dimensions and immutable contribution alpha are
+verified before package or new shadow publication. A metadata-only alpha change
+cannot reuse a prior pixel proof. Current layer/mask/variant IDs are unique;
+frozen source IDs remain historical when a later copy has new ownership.
+
+Only the active image contributes pixels, at its own frozen world bbox and its
+parent's stack position, visibility, opacity and blend mode. Current Patch bbox,
+mask, blur and internal-resolution edits do not move, resize or remask stored
+RGBA. Main source capture, preview/bounds and the signed renderer image resource
+use this projection. The DTO/card reports `stored`, without claiming freshness
+or current model availability. Top-level Raster mutation/history selectors stay
+separate from this material projection.
+
+This is storage/display support for an already populated document, not the
+public acceptance command. Generate/Add, durable acceptance journal and sibling
+cancellation/reconciliation, variant lifecycle controls, accepted-history
+navigation, Smart Patch Compare/Preset and installed inference qualification
+remain later owners. PP-007/008 remain «Пока не обещать». Executed evidence and
+remaining limits belong to the linked research.
+
+**Предыдущий private acceptance-plan scope:**
 [Smart Patch acceptance plan](../engineering/phase-4-smart-patch-acceptance-plan-research.md)
 adds strict standalone variant/provenance contracts and a read-only proposal;
 the Project schema still accepts only empty Smart Patches. Identity-bound staging
