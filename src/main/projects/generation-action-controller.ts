@@ -117,17 +117,26 @@ interface GenerationActionRuntime {
 }
 
 interface GenerationActionDependencies {
-  dispatch: Pick<GenerationDispatchCoordinator, 'runNext' | 'shutdown'>
+  dispatch: Partial<Pick<GenerationDispatchCoordinator, 'onChanged'>> &
+    Pick<GenerationDispatchCoordinator, 'runNext' | 'shutdown'>
   gate: ProjectGenerationOperationGate
   infillResolver?: OutpaintInfillResolver
   models: GenerationModelResolver & Partial<AnimaGenerationModelResolver>
   orchestrator: Partial<
-    Pick<GenerationOrchestrator, 'enqueuePreparedAnimaBatch' | 'enqueuePreparedOutpaintBatch'>
+    Pick<
+      GenerationOrchestrator,
+      'cancelGenerationJob' | 'enqueuePreparedAnimaBatch' | 'enqueuePreparedOutpaintBatch'
+    >
   > &
     Pick<GenerationOrchestrator, 'enqueuePreparedBatch'>
   processor: Pick<GenerationProcessor, 'cancelAndWait' | 'onChanged'>
   projects: CapturedProjectService
-  queue: Partial<Pick<GenerationQueueRepository, 'retryPreparedOutpaintTerminal'>> &
+  queue: Partial<
+    Pick<
+      GenerationQueueRepository,
+      'listUnfinishedNormalByProjectDocument' | 'retryPreparedOutpaintTerminal'
+    >
+  > &
     Pick<
       GenerationQueueRepository,
       | 'cancel'
@@ -175,6 +184,7 @@ export class ProjectGenerationActionError extends Error {
       | 'GENERATION_NO_CURRENT_JOB'
       | 'GENERATION_REPLACEMENT_UNCERTAIN'
       | 'GENERATION_RUNTIME_UNAVAILABLE'
+      | 'GENERATION_SEED_INVALID'
       | 'GENERATION_WORKER_EXIT_UNCONFIRMED',
     message: string,
   ) {
@@ -207,7 +217,12 @@ export class ProjectGenerationActionController {
   private readonly unsubscribeProcessor: () => void
 
   constructor(private readonly options: GenerationActionDependencies) {
-    this.unsubscribeProcessor = options.processor.onChanged(() => this.emitChanged())
+    const ordinary = options.processor.onChanged(() => this.emitChanged())
+    const smart = options.dispatch.onChanged?.(() => this.emitChanged())
+    this.unsubscribeProcessor = () => {
+      ordinary()
+      smart?.()
+    }
   }
 
   async cancelCurrent(
@@ -227,7 +242,7 @@ export class ProjectGenerationActionController {
       )
     }
     try {
-      const canceled = await this.options.processor.cancelAndWait(current.id)
+      const canceled = await this.cancelQueuedItem(current.id)
       if (canceled.status === 'running') {
         throw new ProjectGenerationActionError(
           'GENERATION_WORKER_EXIT_UNCONFIRMED',
@@ -248,7 +263,7 @@ export class ProjectGenerationActionController {
     const item = await this.options.queue.cancel(review.id, review.statusSequence)
     if (item.status === 'running') {
       try {
-        const stopped = await this.options.processor.cancelAndWait(item.id)
+        const stopped = await this.cancelQueuedItem(item.id)
         if (stopped.status === 'running') {
           throw new ProjectGenerationActionError(
             'GENERATION_WORKER_EXIT_UNCONFIRMED',
@@ -373,6 +388,12 @@ export class ProjectGenerationActionController {
               ? 'processing'
               : 'idle',
       runningJobId: jobs.find((job) => job.status === 'running')?.id ?? null,
+      smartPatchSupported:
+        !this.blocked &&
+        !this.closed &&
+        ready?.workerVersion === '0.14.0' &&
+        ready.capabilities.includes('smart-patch-execution') &&
+        ready.capabilities.includes('smart-patch-seed-confirmation'),
       vaePrecisionSupported: !this.blocked && !this.closed && supportsInferenceVaePrecision(ready),
     }
   }
@@ -387,6 +408,10 @@ export class ProjectGenerationActionController {
     const removed = await this.options.queue.pruneTerminal(statuses)
     this.emitChanged()
     return removed
+  }
+
+  requestDrain(): void {
+    this.startDrain()
   }
 
   /** Retry copies the old operation; it never prepares from the current Project draft. */
@@ -442,6 +467,35 @@ export class ProjectGenerationActionController {
     return this.shutdownPromise
   }
 
+  /** Share app-wide admission and the existing serial drain with the Smart Patch action owner. */
+  async withExternalAdmission<T>(tabId: string, prepare: () => Promise<T>): Promise<T> {
+    this.assertAdmissionOpen()
+    if (this.admission) {
+      throw new ProjectGenerationActionError(
+        'GENERATION_BUSY',
+        'Another generation is being prepared.',
+      )
+    }
+    const operation = this.options.gate.run(tabId, prepare)
+    this.admission = operation
+    this.admittingTabId = tabId
+    this.error = null
+    this.emitChanged()
+    try {
+      return await operation
+    } catch (error) {
+      this.rememberError(error)
+      throw error
+    } finally {
+      if (this.admission === operation) {
+        this.admission = null
+        this.admittingTabId = null
+      }
+      this.startDrain()
+      this.emitChanged()
+    }
+  }
+
   private assertAdmissionOpen(): void {
     this.assertOpen()
     if (this.blocked) {
@@ -470,7 +524,7 @@ export class ProjectGenerationActionController {
   ): Promise<void> {
     try {
       for (const item of items) {
-        const stopped = await this.options.processor.cancelAndWait(item.id)
+        const stopped = await this.cancelQueuedItem(item.id)
         if (stopped.status !== 'canceled') {
           throw new Error('A newly admitted outpaint job has not stopped.')
         }
@@ -479,6 +533,12 @@ export class ProjectGenerationActionController {
       this.options.queue.fenceProject(tabId)
       throw replacementUncertain()
     }
+  }
+
+  private async cancelQueuedItem(id: string): Promise<QueuedGenerationItem> {
+    return this.options.orchestrator.cancelGenerationJob
+      ? await this.options.orchestrator.cancelGenerationJob(id)
+      : await this.options.processor.cancelAndWait(id)
   }
 
   private emitChanged(): void {
@@ -834,7 +894,7 @@ export class ProjectGenerationActionController {
                       await admitted.assertCurrent?.()
                       this.assertAdmissionOpen()
                       oldCleanupStarted = true
-                      const stopped = await this.options.processor.cancelAndWait(item.id)
+                      const stopped = await this.cancelQueuedItem(item.id)
                       if (stopped.status !== 'canceled') {
                         throw new ProjectGenerationActionError(
                           'GENERATION_WORKER_EXIT_UNCONFIRMED',
@@ -852,7 +912,7 @@ export class ProjectGenerationActionController {
                 } catch (error) {
                   try {
                     for (const item of admitted.items) {
-                      const canceled = await this.options.processor.cancelAndWait(item.id)
+                      const canceled = await this.cancelQueuedItem(item.id)
                       if (canceled.status !== 'canceled') {
                         throw new Error('A newly admitted replacement job did not stop.')
                       }
@@ -909,7 +969,7 @@ export class ProjectGenerationActionController {
             await admitted.assertCurrent?.()
             this.assertAdmissionOpen()
             outpaintOldCleanupStarted = true
-            const stopped = await this.options.processor.cancelAndWait(item.id)
+            const stopped = await this.cancelQueuedItem(item.id)
             if (stopped.status !== 'canceled') {
               throw new ProjectGenerationActionError(
                 'GENERATION_WORKER_EXIT_UNCONFIRMED',
@@ -950,7 +1010,9 @@ export class ProjectGenerationActionController {
     this.assertDocument(tabId, documentId)
     const [allCandidates, unfinished] = await Promise.all([
       this.options.staging.listVerifiedCandidates(tabId),
-      this.options.queue.listUnfinishedByProjectDocument(tabId, documentId),
+      this.options.queue.listUnfinishedNormalByProjectDocument
+        ? this.options.queue.listUnfinishedNormalByProjectDocument(tabId, documentId)
+        : this.options.queue.listUnfinishedByProjectDocument(tabId, documentId),
     ])
     this.assertDocument(tabId, documentId)
     const excluded = new Set(excludedJobIds)
@@ -998,7 +1060,7 @@ export class ProjectGenerationActionController {
     ) {
       throw new ProjectGenerationActionError(
         'GENERATION_RUNTIME_UNAVAILABLE',
-        'Smart Patch queue execution and retry are not available yet.',
+        'Retry is not available for Smart Patch jobs. Select the Patch and use Generate.',
       )
     }
     const tabId = source.projectKey
@@ -1143,7 +1205,7 @@ export class ProjectGenerationActionController {
                   await this.cancelPublishedOutpaintJobs(tabId, [queued])
                   publishedOutpaintRetry = null
                 } else {
-                  await this.options.processor.cancelAndWait(queued.id)
+                  await this.cancelQueuedItem(queued.id)
                 }
                 throw error
               }

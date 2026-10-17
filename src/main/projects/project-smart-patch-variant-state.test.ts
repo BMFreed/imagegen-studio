@@ -11,6 +11,9 @@ import test from 'node:test'
 
 import {
   assessSmartPatchVariantState,
+  assessStoredSmartPatchVariantForLayer,
+  assessStoredSmartPatchVariants,
+  assessStoredSmartPatchVariantState,
   type SmartPatchVariantChangedInput,
 } from './project-smart-patch-variant-state.js'
 import { smartPatchVariantMetadataFixture } from './test-fixtures/smart-patch-variant.js'
@@ -383,4 +386,250 @@ test('transparent-source txt2img ignores the dormant denoising strength', () => 
   provenance.layerSourceContext.preparedInputs.modelSource = null
   f.patch.generationDraft.sampling.denoisingStrength = 0.9
   assert.equal(assessSmartPatchVariantState(provenance, f.document, f.source).status, 'ready')
+})
+
+for (const family of ['illustrious', 'anima'] as const) {
+  test(`${family} stored freshness follows an explicit copied owner without rewriting lineage`, () => {
+    const f = fixture(family)
+    const provenanceBefore = structuredClone(f.provenance)
+    f.document.documentId = randomUUID()
+    f.patch.id = randomUUID()
+    f.patch.mask.id = randomUUID()
+    if (f.patch.mask.asset !== null) {
+      f.patch.mask.asset.path = `assets/masks/${f.patch.mask.id}/${f.patch.mask.asset.sha256}.png`
+    }
+    const documentBefore = structuredClone(f.document)
+    assert.deepEqual(
+      assessStoredSmartPatchVariantState(f.provenance, f.document, f.patch.id, f.source),
+      { changedInputs: [], sourceVerified: true, status: 'ready' },
+    )
+    assert.equal(
+      assessSmartPatchVariantState(f.provenance, f.document, f.source).status,
+      'orphaned',
+    )
+    assert.deepEqual(f.provenance, provenanceBefore)
+    assert.deepEqual(f.document, documentBefore)
+  })
+}
+
+test('stored freshness remains inspectable while its owner is hidden or locked', () => {
+  const f = fixture()
+  f.patch.locked = true
+  f.patch.visible = false
+  assert.deepEqual(
+    assessStoredSmartPatchVariantState(f.provenance, f.document, f.patch.id, f.source),
+    { changedInputs: [], sourceVerified: true, status: 'ready' },
+  )
+  f.patch.generationDraft.positivePrompt.text = 'new owned input'
+  assert.deepEqual(assessStoredSmartPatchVariantState(f.provenance, f.document, f.patch.id), {
+    changedInputs: ['generation-draft'],
+    sourceVerified: false,
+    status: 'outdated',
+  })
+  assert.equal(assessSmartPatchVariantState(f.provenance, f.document, f.source).status, 'blocked')
+})
+
+test('stored matching authoring is unverified until actual current source is supplied', () => {
+  const f = fixture()
+  assert.deepEqual(assessStoredSmartPatchVariantState(f.provenance, f.document, f.patch.id), {
+    changedInputs: [],
+    sourceVerified: false,
+    status: 'unverified',
+  })
+  assert.deepEqual(
+    assessStoredSmartPatchVariantState(f.provenance, f.document, f.patch.id, {
+      ...f.source,
+      sha256: '8'.repeat(64),
+    }),
+    { changedInputs: ['source-composite'], sourceVerified: true, status: 'outdated' },
+  )
+  assert.equal(
+    assessStoredSmartPatchVariantState(f.provenance, f.document, f.patch.id, f.source).status,
+    'ready',
+  )
+})
+
+test('stored freshness ignores unrelated document revisions, presentation and Fit-only padding', () => {
+  const f = fixture()
+  f.document.documentRevision = randomUUID()
+  f.document.title = 'Another Project title'
+  f.document.generationDraft.positivePrompt.text = 'normal Canvas authoring'
+  f.document.primaryBbox.x += 100
+  f.document.lastActualSeedSnapshot = 12
+  f.patch.name = 'Renamed current owner'
+  f.patch.opacity = 0.25
+  f.patch.blendMode = 'screen'
+  f.patch.maskSettings = { blur: 16, padding: 400 }
+  assert.deepEqual(
+    assessStoredSmartPatchVariantState(f.provenance, f.document, f.patch.id, f.source),
+    { changedInputs: [], sourceVerified: true, status: 'ready' },
+  )
+})
+
+test('restored exact mask bytes and geometry do not stale stored output when edit revision changes', () => {
+  const f = fixture()
+  const before = structuredClone(f.provenance)
+  f.patch.mask.revision += 2
+  assert.deepEqual(
+    assessStoredSmartPatchVariantState(f.provenance, f.document, f.patch.id, f.source),
+    { changedInputs: [], sourceVerified: true, status: 'ready' },
+  )
+  assert.deepEqual(assessSmartPatchVariantState(f.provenance, f.document, f.source).changedInputs, [
+    'mask',
+  ])
+  assert.deepEqual(f.provenance, before)
+})
+
+for (const row of ownedChanges.filter(({ name }) => name !== 'mask revision')) {
+  test(`stored changed ${row.name} is outdated even before source verification`, () => {
+    const f = fixture()
+    const before = structuredClone(f.provenance)
+    row.change(f.patch)
+    assert.deepEqual(assessStoredSmartPatchVariantState(f.provenance, f.document, f.patch.id), {
+      changedInputs: [row.axis],
+      sourceVerified: false,
+      status: 'outdated',
+    })
+    assert.deepEqual(f.provenance, before)
+  })
+}
+
+test('stored changed mask content and dimensions are detected independently of revision', () => {
+  const f = fixture()
+  assert.ok(f.patch.mask.asset)
+  f.patch.mask.asset.sha256 = '4'.repeat(64)
+  f.patch.mask.asset.path = `assets/masks/${f.patch.mask.id}/${f.patch.mask.asset.sha256}.png`
+  assert.deepEqual(assessStoredSmartPatchVariantState(f.provenance, f.document, f.patch.id), {
+    changedInputs: ['mask'],
+    sourceVerified: false,
+    status: 'outdated',
+  })
+  f.patch.mask = structuredClone(f.provenance.layerSourceContext.mask)
+  assert.ok(f.patch.mask.asset)
+  f.patch.mask.asset.width += 1
+  f.patch.mask.bounds.width += 1
+  assert.deepEqual(assessStoredSmartPatchVariantState(f.provenance, f.document, f.patch.id), {
+    changedInputs: ['mask'],
+    sourceVerified: false,
+    status: 'outdated',
+  })
+})
+
+test('stored inspection refuses absent owners and invalid or incorrectly sized source identities', () => {
+  const f = fixture()
+  assert.throws(() => assessStoredSmartPatchVariantState(f.provenance, f.document, randomUUID()))
+  for (const source of [
+    { ...f.source, height: f.source.height + 1 },
+    { ...f.source, width: 0 },
+    { ...f.source, byteSize: 0 },
+    { ...f.source, sha256: 'invalid-source' },
+    { ...f.source, path: '/not-a-portable-identity.png' },
+  ]) {
+    assert.throws(() =>
+      assessStoredSmartPatchVariantState(f.provenance, f.document, f.patch.id, source),
+    )
+  }
+  f.patch.boundingBox.width += 1
+  assert.throws(() =>
+    assessStoredSmartPatchVariantState(f.provenance, f.document, f.patch.id, f.source),
+  )
+  assert.deepEqual(
+    assessStoredSmartPatchVariantState(f.provenance, f.document, f.patch.id, {
+      ...f.source,
+      width: f.patch.boundingBox.width,
+    }),
+    { changedInputs: ['bbox', 'source-composite'], sourceVerified: true, status: 'outdated' },
+  )
+})
+
+test('stored draft freshness retains dormant-input and exact resource relinking semantics', () => {
+  const f = fixture('anima')
+  assert.ok(f.patch.generationDraft.model)
+  Object.assign(f.patch.generationDraft.model, {
+    displayName: 'Relinked display name',
+    localModelId: randomUUID(),
+    localVersionId: randomUUID(),
+  })
+  f.patch.generationDraft.loras.push(lora(f.patch.generationDraft, '6', false))
+  f.patch.generationDraft.sampling.sampler = 'DPM++ 2M'
+  f.patch.generationDraft.sampling.scheduler = 'Karras'
+  assert.equal(
+    assessStoredSmartPatchVariantState(f.provenance, f.document, f.patch.id, f.source).status,
+    'ready',
+  )
+  f.patch.generationDraft.sampling.animaMethod = 'heun'
+  assert.deepEqual(assessStoredSmartPatchVariantState(f.provenance, f.document, f.patch.id), {
+    changedInputs: ['generation-draft'],
+    sourceVerified: false,
+    status: 'outdated',
+  })
+})
+
+test('bulk stored inspection assesses each owned variant in order against the same current owner', () => {
+  const f = fixture()
+  const matching = smartPatchVariantMetadataFixture('illustrious')
+  matching.generationProvenance = structuredClone(f.provenance)
+  const otherFamily = smartPatchVariantMetadataFixture('anima')
+  f.patch.rasterSubLayers = [matching, otherFamily]
+  f.patch.activeRasterSubLayerId = otherFamily.id
+  const before = structuredClone(f.document)
+  assert.deepEqual(assessStoredSmartPatchVariants(f.document, f.patch.id, f.source), [
+    { changedInputs: [], id: matching.id, sourceVerified: true, status: 'ready' },
+    {
+      changedInputs: ['generation-draft'],
+      id: otherFamily.id,
+      sourceVerified: true,
+      status: 'outdated',
+    },
+  ])
+  assert.deepEqual(assessStoredSmartPatchVariants(f.document, f.patch.id), [
+    { changedInputs: [], id: matching.id, sourceVerified: false, status: 'unverified' },
+    {
+      changedInputs: ['generation-draft'],
+      id: otherFamily.id,
+      sourceVerified: false,
+      status: 'outdated',
+    },
+  ])
+  assert.deepEqual(f.document, before)
+})
+
+test('bulk stored inspection preserves empty owners and rejects invalid members or source inputs', () => {
+  const f = fixture()
+  assert.deepEqual(assessStoredSmartPatchVariants(f.document, f.patch.id, f.source), [])
+  assert.throws(() => assessStoredSmartPatchVariants(f.document, randomUUID()))
+  assert.throws(() =>
+    assessStoredSmartPatchVariants(f.document, f.patch.id, { ...f.source, width: 0 }),
+  )
+  const invalid = smartPatchVariantMetadataFixture('illustrious')
+  invalid.asset.sha256 = 'changed-image-identity'
+  f.patch.rasterSubLayers = [invalid]
+  f.patch.activeRasterSubLayerId = invalid.id
+  assert.throws(() => assessStoredSmartPatchVariants(f.document, f.patch.id, f.source))
+})
+
+test('validated-owner projection shares strict stored semantics without requiring a full document', () => {
+  const f = fixture('anima')
+  const provenanceBefore = structuredClone(f.provenance)
+  f.patch.id = randomUUID()
+  f.patch.locked = true
+  f.patch.visible = false
+  const before = structuredClone(f.patch)
+  assert.deepEqual(
+    assessStoredSmartPatchVariantForLayer(f.provenance, f.patch, f.source),
+    assessStoredSmartPatchVariantState(f.provenance, f.document, f.patch.id, f.source),
+  )
+  f.patch.coherenceSettings = { edgeSize: 18, minimumDenoise: 0, mode: 'Gaussian Blur' }
+  assert.deepEqual(assessStoredSmartPatchVariantForLayer(f.provenance, f.patch), {
+    changedInputs: ['coherence'],
+    sourceVerified: false,
+    status: 'outdated',
+  })
+  const invalid = structuredClone(f.provenance)
+  invalid.layerSourceContext.sourceTarget.sha256 = 'invalid-provenance'
+  assert.throws(() => assessStoredSmartPatchVariantForLayer(invalid, before, f.source))
+  assert.throws(() =>
+    assessStoredSmartPatchVariantForLayer(f.provenance, before, { ...f.source, height: 0 }),
+  )
+  assert.deepEqual(f.provenance, provenanceBefore)
 })

@@ -1,5 +1,49 @@
 # GenerationResults And Staging
 
+## Current installed Smart Patch acceptance qualification
+
+[Installed trained Smart Patch generation](../../../engineering/phase-4-smart-patch-installed-generation-research.md)
+passes 27 native checks and ten public Generate → temporary Results → explicit
+Add as Variant → Undo/Redo → Save/reopen cycles. Genuine installed Illustrious
+V-prediction and Anima cover TXT/IMG/INP/OUT and one INP replay each at
+processing 256/world 128, four steps and seed 123. Every accepted output retains
+its exact world RGBA, immutable provenance and authored target context; ordinary
+authoring and above/below neighbors are preserved. Completion alone does not
+accept a result, and Add does not Save it.
+
+Independent alpha checks cover all ten outputs; each family's IMG/INP contrast
+differs at all 16,384 raw RGB pixels and its INP replay matches exact whole RGBA.
+Actual correlated steps reach the rendered counter without durable progress
+writes. Busy Layer Select follows the existing action guard, and every reopened
+selected Patch offers Generate without false Repair before a diagnostic status
+getter. All 80 observed actors physically exited; installed worker/source/bundle
+and model hashes remain unchanged. The research keeps failed attempts separate.
+Reopened stored rows can still show `unverified`; automatic source-freshness
+re-verification after worker lifecycle is outside this stored-pixel/lineage proof.
+
+Retry, orphan Raster conversion, accepted-history navigation, Compare/Preset,
+arbitrary options, quality, full Invoke parity and release qualification remain
+open. PP-007/008 remain **Пока не обещать**.
+
+## Previous Smart Patch public integration
+
+[Public Smart Patch generation](../../../engineering/phase-4-smart-patch-public-generation-research.md)
+connects layer-bound Generate, the typed temporary tray and reviewed journaled
+Add as Variants. Smart results have their own signed image/thumbnail reads,
+target/session scope and exact Queue Open/View continuation; they never enter
+ordinary Raster acceptance. Preview substitutes the target contribution at its
+stack position with frozen geometry. Explicit image export remains available
+for blocked, missing-target and foreign-document results.
+
+Replacement is scoped to the exact source document/Patch; Close and recovery
+discard are Project-wide across both stores. Late completion renews review.
+Reviewed owner/revision is rechecked inside the Add gate; Generate and Save do
+not implicitly accept. Orphan Raster conversion, Smart Retry, accepted-history
+navigation, Compare/Preset and trained installed-model qualification were open
+at that checkpoint. The linked research records its declared test collaborators;
+prototype mocks do not qualify persistence or inference. PP-007/008 remain
+**Пока не обещать**.
+
 Supporting contract for [PP-008: Генерация меняет проект только по явному решению](../../../product-promises.md#pp-008-генерация-меняет-проект-только-по-явному-решению).
 The promise registry owns the concise commitment and public readiness. This
 document owns selection, preview, acceptance and staging cleanup.
@@ -7,7 +51,7 @@ Related contracts: [frozen queue jobs](../../queue-manager.md#frozen-job-rule),
 [Project Undo/Redo](../undo-redo.md), [document lifecycle](../document-lifecycle.md)
 and [accepted-result provenance](./generation-provenance.md).
 
-## Current private Smart Patch durable acceptance
+## Previous private Smart Patch durable acceptance checkpoint
 
 [Smart Patch durable acceptance](../../../engineering/phase-4-smart-patch-durable-acceptance-research.md)
 Private Main Add now appends verified world candidates to the exact Smart Patch,
@@ -25,11 +69,13 @@ must pass actual member verification plus file/directory sync before replacing
 shadow proof. Replays do not duplicate or reactivate variants. Add never performs
 Save or rewrites completed receipts/seed cursor.
 
-Public Smart Generate/Results/IPC, variant lifecycle controls, freshness/resource
-UI, accepted-history navigation, Compare/Preset and installed inference
-qualification remain later owners. PP-007/008 remain «Пока не обещать». Next finite
-owner is variant lifecycle and current-state diagnostics before public integration.
-Executed evidence and finite limits belong to the linked research.
+At that checkpoint public Generate/Results/IPC and variant lifecycle/status were
+still pending. The public integration above and the
+[variant lifecycle checkpoint](../../../engineering/phase-4-smart-patch-variant-lifecycle-research.md)
+now cover those boundaries. Smart accepted-history navigation, Compare/Preset,
+orphan Raster conversion, Retry and installed inference qualification remain
+open. PP-007/008 remain «Пока не обещать». Executed evidence and finite limits
+belong to each linked research note.
 
 ## Previous Smart Patch variant storage/display boundary
 

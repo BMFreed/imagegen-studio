@@ -256,7 +256,37 @@ Startup recovery:
 - terminal queue history may be pruned by retention policy;
 - queue-history pruning must not remove valid completed candidate recovery.
 
-## Private Smart Patch execution boundary
+## Current public Smart Patch dispatch and installed qualification
+
+[Public Smart Patch integration](../engineering/phase-4-smart-patch-public-generation-research.md)
+connects captured layer-owned admission to the shared serial drain/CUDA lease,
+typed Smart execution and signed temporary Results. Replacement and cancellation
+keep the exact document/Patch scope; ordinary candidates and sibling Patches
+remain independent. Project Close/recovery inspects and drains both stores.
+Completion remains temporary until explicit journaled Add as Variants.
+
+[Installed trained qualification](../engineering/phase-4-smart-patch-installed-generation-research.md)
+passes 27 native checks with the current noneditable worker 0.14.0: ten public
+completions and explicit Add/Undo/Redo/Save/reopen cycles across Illustrious
+V-prediction and Anima × TXT/IMG/INP/OUT plus one INP replay each. The finite
+recipe is processing 256/world 128, four steps and seed 123. Independent full-alpha
+oracles, two whole-RGB IMG/INP contrasts and exact whole-RGBA replays verify that
+boundary. All 80 observed actors physically exited; 51 installed worker files and
+source/bundle/original/managed hashes remain unchanged. Earlier failed attempts
+are recorded separately, not added to the successful matrix.
+
+Actual Smart denoising uses the common transient progress source and rendered
+step counter described below. Layer Select respects the busy guard. Healthy
+worker close preserves runtime ready status: every saved/reopened selected Patch
+offers Generate without Repair before a diagnostic status getter. Smart Retry, orphan
+Raster conversion, accepted-history navigation, Compare/Preset, arbitrary
+options, quality, full Invoke parity and release qualification remain open.
+PP-007/008 remain **Пока не обещать**.
+
+Reopened stored rows can still show `unverified`; this matrix does not qualify
+automatic source-freshness re-verification after worker lifecycle.
+
+## Previous private Smart Patch execution boundary
 
 [Private queued Smart Patch execution](../engineering/phase-4-smart-patch-queued-execution-research.md)
 connects dedicated SQL claim, exact frozen inference, worker-confirmed uint32 seed,
@@ -278,7 +308,7 @@ USER_CANCELED cannot resurrect a candidate. Shared tombstones hide discarded
 sessions across both stores. Normal Results never discovers these candidates,
 and the Smart DTO cannot be assigned to the normal Raster DTO.
 
-This is a private executable/recoverable path. Public Generate/Retry/Results,
+At that checkpoint this was a private executable/recoverable path. Public Generate/Retry/Results,
 immutable variant acceptance/outdated/orphan handling, portable provenance and
 installed GPU/release qualification remain subsequent owners. There are no
 Project/document/`.igs`/history/preset/Compare edits. PP-007/008 public readiness
@@ -651,7 +681,7 @@ Native evidence uses controlled inference, not production CUDA/release readiness
 
 ## Production denoising progress checkpoint
 
-[Actual progress boundary](../engineering/phase-2b-generation-progress-research.md)
+[Original progress boundary](../engineering/phase-2b-generation-progress-research.md)
 connects the pinned pipeline's step-end callback to the qualified worker0.3.0,
 strict request-scoped JSONL transport and a separate typed renderer notification.
 Legacy worker0.2.0 remains usable with a Running status and no invented step count.
@@ -669,9 +699,19 @@ and no cancellation. Main invalidates before waiting for worker exit and before
 result publication. Progress updates neither perform DB/manifest writes nor trigger
 the lifecycle notification that rereads staging and queue pages.
 
+The [installed Smart extension](../engineering/phase-4-smart-patch-installed-generation-research.md)
+connects real Smart worker callbacks to the same validated transient contract.
+A shared app-lifetime source merges ordinary and Smart processor snapshots with
+one monotonic revision, preserving the current owner across operation changes.
+Smart invalidates reception before cancellation waits and before world-output
+publication; foreign, regressing and late callbacks cannot revive it. All ten
+installed trained completions have positive correlated IPC progress and a real
+rendered `Denoising step N of M` counter. The worker protocol and durable queue/
+receipt/seed state remain unchanged.
+
 The general `QueueEvent` example above describes product intent, not an additional
 implemented event bus. Durable statuses continue through the existing invalidation;
 `projects:generation-progress` carries only the validated transient snapshot.
 Progress is discarded on restart, while job/candidate recovery follows its durable
-contract. Preview images, ETA, other generation operations and release GPU/runtime
-qualification remain separate work.
+contract. Denoising preview images, ETA, Upscale, broader runtime/device coverage
+and release qualification remain separate work.

@@ -37,7 +37,7 @@ export class ProjectGenerationAcceptanceRecovery {
   private readonly inFlight = new Map<
     string,
     {
-      mode: 'before-raster' | 'full' | 'raster-add'
+      mode: 'before-raster' | 'full' | 'raster-add' | 'smart-add'
       operation: Promise<'cleaned' | 'none'>
     }
   >()
@@ -87,6 +87,32 @@ export class ProjectGenerationAcceptanceRecovery {
       } finally {
         // Admission/acceptance errors belong to the normal owner. Wake waiting recovery even
         // when Add failed; its own pending map/fence records any uncertain handoff.
+        settle('none')
+        if (this.inFlight.get(tabId) === marker) {
+          this.inFlight.delete(tabId)
+        }
+      }
+    }
+  }
+
+  /** Hold the recovery marker through CPU preflight and the Smart owner's gate/journal. */
+  async withSmartPatchAdd<T>(tabId: string, add: () => Promise<T>): Promise<T> {
+    for (;;) {
+      await this.reconcile(tabId)
+      const existing = this.inFlight.get(tabId)
+      if (existing) {
+        await existing.operation
+        continue
+      }
+      let settle!: (value: 'none') => void
+      const operation = new Promise<'none'>((resolve) => {
+        settle = resolve
+      })
+      const marker = { mode: 'smart-add' as const, operation }
+      this.inFlight.set(tabId, marker)
+      try {
+        return await add()
+      } finally {
         settle('none')
         if (this.inFlight.get(tabId) === marker) {
           this.inFlight.delete(tabId)
@@ -188,7 +214,11 @@ export class ProjectGenerationAcceptanceRecovery {
       const result = await existing.operation
       // Full open/recovery must not be satisfied by a narrow Add check that skipped Raster
       // reconciliation. Run that remaining work after the earlier operation leaves its marker.
-      if ((mode === 'full' && existing.mode !== 'full') || existing.mode === 'raster-add') {
+      if (
+        (mode === 'full' && existing.mode !== 'full') ||
+        existing.mode === 'raster-add' ||
+        existing.mode === 'smart-add'
+      ) {
         const full = await this.run(tabId, mode)
         return result === 'cleaned' || full === 'cleaned' ? 'cleaned' : 'none'
       }

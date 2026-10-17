@@ -12,6 +12,8 @@ import type {
   ProjectSaveResult,
   ProjectSmartPatchLayerChange,
   ProjectSmartPatchMaskEditRequest,
+  ProjectSmartPatchVariantChange,
+  ProjectSmartPatchVariantsInspection,
   ProjectSummary,
   ProjectTab,
 } from '../../shared/api.js'
@@ -22,6 +24,7 @@ import {
   isProjectSmartPatchLayerChange,
   isProjectSmartPatchMaskEditRequest,
 } from '../../shared/api.js'
+import type { ModelCatalogItem } from '../../shared/api.js'
 import {
   applyPresetSections,
   parsePresetApplication,
@@ -74,6 +77,10 @@ import {
 } from '../../shared/projects/prompt-embeddings.js'
 import { sameResourceModel } from '../../shared/projects/resource-identity.js'
 import { resolveSmartPatchCoherenceSettings } from '../../shared/projects/smart-patch-coherence-settings.js'
+import {
+  isProjectSmartPatchVariantChange,
+  smartPatchResourceDiagnostics,
+} from '../../shared/projects/smart-patch-variants.js'
 
 import { createHash, randomUUID } from 'node:crypto'
 import { type BigIntStats, constants } from 'node:fs'
@@ -166,6 +173,11 @@ import {
   type CapturedSmartPatchGenerationInput,
   withFrozenSmartPatchGenerationInput,
 } from './project-smart-patch-generation-input.js'
+import {
+  assessStoredSmartPatchVariantForLayer,
+  assessStoredSmartPatchVariants,
+  type SmartPatchCurrentSourceTarget,
+} from './project-smart-patch-variant-state.js'
 import { unavailableTemporaryRecovery } from './project-temporary-recovery.js'
 import { importRasterLayer } from './raster-import.js'
 
@@ -1097,6 +1109,90 @@ export class ProjectService {
         currentMode === null
           ? 'The current generation mode is unavailable. The image worker could not compose this Canvas.'
           : null,
+    }
+  }
+
+  /** Read current freshness separately from model availability and public Generate readiness. */
+  async getSmartPatchVariants(
+    tabId: string,
+    layerId: string,
+    documentId: string,
+    documentRevision: string,
+    worker?: Pick<ProjectWorkerClient, 'composeTarget'>,
+    catalog: ModelCatalogItem[] | null = null,
+  ): Promise<ProjectSmartPatchVariantsInspection> {
+    if (!isProjectDocumentId(documentId) || !isProjectDocumentId(documentRevision)) {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'The variant inspection owner is invalid.',
+      )
+    }
+    const coordinator = this.requireTab(tabId)
+    const epoch = coordinator.documentEpoch
+    const document = coordinator.document
+    const assertCurrent = () => {
+      if (
+        this.openTabs.get(tabId) !== coordinator ||
+        coordinator.documentEpoch !== epoch ||
+        coordinator.document.documentId !== documentId ||
+        coordinator.document.documentRevision !== documentRevision
+      ) {
+        throw new ProjectAutosaveError(
+          'EDIT_CONFLICT',
+          'The Project changed while checking its variants. Refresh the browser.',
+        )
+      }
+    }
+    assertCurrent()
+    const patch = requireSmartPatch(document, layerId)
+    // Capture the read-only registry snapshot before any source-composition await.
+    const resourceDiagnostics = smartPatchResourceDiagnostics(patch, catalog)
+    let currentSource: SmartPatchCurrentSourceTarget | undefined
+    let sourceUnavailableReason: string | null =
+      patch.rasterSubLayers.length > 0
+        ? 'Current source pixels have not been verified. Stored variants remain available.'
+        : null
+    if (worker && patch.rasterSubLayers.length > 0) {
+      try {
+        currentSource = await this.withCapturedSmartPatchGenerationInput(
+          tabId,
+          layerId,
+          async (capture) => {
+            assertCurrent()
+            const source = (await capture.composeSource(worker)).source
+            assertCurrent()
+            return {
+              byteSize: source.byteSize,
+              height: source.height,
+              sha256: source.sha256,
+              width: source.width,
+            }
+          },
+        )
+        sourceUnavailableReason = null
+      } catch (error) {
+        assertCurrent()
+        if (
+          typeof error === 'object' &&
+          error !== null &&
+          'code' in error &&
+          error.code === 'WORKER_EXIT_UNCONFIRMED'
+        ) {
+          throw error
+        }
+        sourceUnavailableReason =
+          'Current source pixels could not be verified. Stored variants remain available; check the image worker and source bounds, then refresh.'
+      }
+    }
+    assertCurrent()
+    return {
+      documentId,
+      documentRevision,
+      layerId,
+      resourceDiagnostics,
+      resourcesChecked: catalog !== null,
+      sourceUnavailableReason,
+      variants: assessStoredSmartPatchVariants(document, layerId, currentSource),
     }
   }
 
@@ -2243,6 +2339,81 @@ export class ProjectService {
     return toTab(tabId, coordinator)
   }
 
+  /** Exact current member edits use the existing document/history asset owner. */
+  async updateSmartPatchVariant(
+    tabId: string,
+    layerId: string,
+    input: ProjectSmartPatchVariantChange,
+  ): Promise<ProjectTab> {
+    if (!isProjectSmartPatchVariantChange(input)) {
+      throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'The variant change is invalid.')
+    }
+    const change = structuredClone(input)
+    const coordinator = this.requireTab(tabId)
+    const document = coordinator.document
+    if (
+      document.documentId !== change.documentId ||
+      document.documentRevision !== change.documentRevision
+    ) {
+      throw new ProjectAutosaveError(
+        'EDIT_CONFLICT',
+        'The Project changed. Review the variants before trying again.',
+      )
+    }
+    const patch = requireSmartPatch(document, layerId)
+    if (patch.locked) {
+      throw new ProjectServiceError(
+        'PROJECT_LAYER_LOCKED',
+        'Unlock this Smart Patch before changing its variants.',
+      )
+    }
+    const index = patch.rasterSubLayers.findIndex(({ id }) => id === change.variantId)
+    if (index < 0) {
+      throw new ProjectServiceError(
+        'PROJECT_LAYER_NOT_FOUND',
+        'This stored variant is unavailable.',
+      )
+    }
+    const next = { ...patch, rasterSubLayers: [...patch.rasterSubLayers] }
+    switch (change.kind) {
+      case 'delete': {
+        next.rasterSubLayers.splice(index, 1)
+        if (patch.activeRasterSubLayerId === change.variantId) {
+          next.activeRasterSubLayerId =
+            next.rasterSubLayers[Math.min(index, next.rasterSubLayers.length - 1)]?.id ?? null
+        }
+        break
+      }
+      case 'rename': {
+        const name = change.name.trim()
+        if (patch.rasterSubLayers[index].name === name) {
+          return toTab(tabId, coordinator)
+        }
+        next.rasterSubLayers[index] = { ...patch.rasterSubLayers[index], name }
+        break
+      }
+      case 'select': {
+        if (patch.activeRasterSubLayerId === change.variantId) {
+          return toTab(tabId, coordinator)
+        }
+        next.activeRasterSubLayerId = change.variantId
+        break
+      }
+    }
+    await coordinator.applyDocument(
+      {
+        ...document,
+        layers: document.layers.map((layer) => (layer.id === layerId ? next : layer)),
+      },
+      {},
+      {
+        expectedDocumentEpoch: coordinator.documentEpoch,
+        expectedDocumentRevision: document.documentRevision,
+      },
+    )
+    return toTab(tabId, coordinator)
+  }
+
   /** Capture before runtime awaits and retain frozen raster files through callback admission. */
   async withCapturedNormalGenerationInput<T>(
     tabId: string,
@@ -2872,7 +3043,15 @@ function toTab(id: string, coordinator: ProjectAutosaveCoordinator): ProjectTab 
                   }),
             maskSettings: resolveProjectMaskSettings(layer.maskSettings),
             rasterSubLayers: layer.rasterSubLayers.map(({ id, name }) => ({ id, name })),
-            status: layer.rasterSubLayers.length === 0 ? ('empty' as const) : ('stored' as const),
+            status: layer.activeRasterSubLayerId
+              ? assessStoredSmartPatchVariantForLayer(
+                  layer.rasterSubLayers.find(({ id }) => id === layer.activeRasterSubLayerId)!
+                    .generationProvenance,
+                  layer,
+                ).status === 'outdated'
+                ? ('outdated' as const)
+                : ('unverified' as const)
+              : ('empty' as const),
           }
         : displayRasters.get(layer.id)!,
     ),

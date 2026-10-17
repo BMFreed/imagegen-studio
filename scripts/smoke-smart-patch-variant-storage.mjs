@@ -416,7 +416,7 @@ async function assertDisplay(label) {
   const view = patch(await current())
   assert.equal(view.activeRasterSubLayerId, active.value.id)
   assert.equal(view.rasterSubLayers.length, 2)
-  assert.equal(view.status, 'stored')
+  assert.equal(view.status, 'outdated')
   assert.equal(view.activeRaster.width, bbox.width)
   assert.equal(view.activeRaster.height, bbox.height)
   assert.deepEqual(view.activeRaster.transform, {
@@ -427,13 +427,16 @@ async function assertDisplay(label) {
     y: bbox.y,
   })
   const card = window.locator(`[data-layer-id="${patchId}"]`)
-  await expect(card.getByText('2 variants · stored', { exact: true })).toBeVisible()
+  await expect(card.getByText('2 variants · outdated', { exact: true })).toBeVisible()
   await expect(card.getByText(active.value.name, { exact: true })).toBeVisible()
   await card.getByRole('button', { name: 'Select Stored Smart Patch', exact: true }).click()
   await expect(window.getByRole('button', { name: 'Generate', exact: true })).toBeDisabled()
-  await expect(
-    window.getByText('Smart Patch generation is not available yet.', { exact: true }),
-  ).toBeVisible()
+  const generationState = await window.evaluate(
+    (tabId) => window.api.projects.getGenerationState(tabId),
+    (await current()).id,
+  )
+  assert.equal(generationState.ok, true)
+  assert.equal(generationState.value.smartPatchSupported, false)
   await expect(canvas().locator('.canvas-area')).toHaveAttribute('data-scene-ready', 'true')
   await expect.poll(() => sample(`${label}-live-canvas`)).toEqual(color)
   const resource = await application.evaluate(async ({ net }, url) => {

@@ -326,9 +326,12 @@ async function select(id) {
   await expect(button).toHaveAttribute('aria-pressed', 'true')
   await expect(window.getByRole('textbox', { name: 'Positive prompt', exact: true })).toBeVisible()
   await expect(window.getByRole('button', { name: 'Generate', exact: true })).toBeDisabled()
-  await expect(
-    window.getByText('Smart Patch generation is not available yet.', { exact: true }),
-  ).toBeVisible()
+  const generationState = await window.evaluate(
+    (tabId) => window.api.projects.getGenerationState(tabId),
+    (await current()).id,
+  )
+  assert.equal(generationState.ok, true)
+  assert.equal(generationState.value.smartPatchSupported, false)
 }
 async function prompt(text) {
   const input = window.getByRole('textbox', { name: 'Positive prompt', exact: true })

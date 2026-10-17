@@ -1,6 +1,59 @@
 # Engineering Workflow
 
-Current private Smart Patch durable acceptance:
+Current installed Smart Patch qualification:
+
+[Installed trained public generation](./phase-4-smart-patch-installed-generation-research.md)
+passed 27 native checks with the current noneditable worker 0.14.0 and genuine
+trained Illustrious V-prediction/Anima resources. Ten public completions cover
+both families in TXT/IMG/INP/OUT plus one fixed-seed INP replay per family at
+processing 256/world 128, four steps and seed 123. All ten explicitly Add one
+variant, exercise Undo/Redo and Save/reopen, preserve immutable bytes/provenance
+and retain independent normal authoring and above/below neighbors. Two raw RGB
+controls distinguish IMG from INP at all 16,384 pixels; both INP replays match
+whole RGBA exactly. All 51 installed worker files and final source/bundle/original/
+managed hashes remain unchanged; all 80 observed actors physically exited.
+
+Actual Smart denoising now reaches the shared transient progress source and
+rendered step counter. Layer Select follows the existing busy guard. Healthy
+worker shutdown no longer reports false Repair; every saved/reopened Patch
+offers Generate without Repair before a diagnostic status getter. The linked
+research separates failed attempts and actual-child status regressions from the
+successful matrix. Reopened stored rows can still show `unverified`; automatic
+source-freshness re-verification after worker lifecycle is outside these assertions.
+Retry, orphan Raster conversion, accepted-history navigation, Compare/Preset,
+arbitrary options, quality, full Invoke parity and release
+qualification remain open. PP-007/008 remain **Пока не обещать**.
+
+Previous public Smart Patch generation integration:
+
+[Public Generate, Results and Add](./phase-4-smart-patch-public-generation-research.md)
+connects a captured layer-owned request to installed CPU preparation, typed queue
+execution, signed temporary Smart results and explicit journaled Add as Variants.
+One public drain/CUDA lease drives both operation families. Replacement is scoped
+to the exact document/Patch; ordinary candidates and sibling Patches remain.
+Close/recovery presence and teardown include both stores. Smart preview substitutes
+the active contribution at its parent's stack position and frozen bbox. Missing
+targets remain orphaned with export/discard; conversion, Retry, accepted-history
+navigation, Compare/Preset and trained installed-model qualification were open
+at that checkpoint. Its declared inference collaborators remain distinct from
+the installed qualification above. PP-007/008 remain **Пока не обещать**.
+
+Previous Smart Patch variant lifecycle/status:
+
+[Variant lifecycle and current state](./phase-4-smart-patch-variant-lifecycle-research.md)
+adds exact-revision select/rename/delete through the shared Main document gate,
+one Undo per real change, deterministic active-neighbor selection and final
+removal back to the same empty Patch. Existing history owns deleted pixels across
+Save/Undo; no immediate unlink or implicit Save occurs. A persistent variants
+browser displays authored/source freshness separately from current resource
+availability. Stored ownership is explicit, so copied historical lineage is not
+orphaned. Unknown source is unverified; known changed inputs are outdated. Public
+Generate/Add, accepted-history navigation, Compare/Preset and installed inference
+qualification remain open. The next finite owner is public Smart Generate/Results
+integration with its production admission, cancellation and Close/recovery impact
+policy. Executed evidence and limits are recorded in the linked research.
+
+Previous private Smart Patch durable acceptance:
 
 [Smart Patch durable acceptance](./phase-4-smart-patch-durable-acceptance-research.md)
 Private Main Add now appends verified world candidates to the exact Smart Patch,

@@ -102,6 +102,7 @@ function selectFromSurface(event: MouseEvent) {
         :aria-label="`Select ${row.state.value.name}`"
         :aria-pressed="row.state.value.selected"
         class="entity-select selection-button"
+        :disabled="row.state.value.disabled"
         text
         :themeOverrides="selectionButtonTheme"
         @click="row.select"

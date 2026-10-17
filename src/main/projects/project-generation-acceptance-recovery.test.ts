@@ -30,6 +30,43 @@ const projectPath = '/private/projects/recovery-dispatch.igs'
 const tabId = localProjectRecoveryKey(projectPath)
 const migrations = path.resolve('src/main/db/migrations')
 
+test(
+  'Raster Add reclassifies a failed concurrent public Smart Add before admitting its own callback',
+  { timeout: 5000 },
+  async () => {
+    await withDispatcher(async (f) => {
+      const entered = deferred()
+      const release = deferred()
+      const smart = f.dispatcher.withSmartPatchAdd(tabId, () =>
+        f.gate.run(tabId, async () => {
+          f.state.smartPending = true
+          entered.resolve()
+          await release.promise
+          throw new Error('controlled Smart handoff uncertainty')
+        }),
+      )
+      const refused = assert.rejects(smart, /controlled Smart handoff uncertainty/)
+      await entered.promise
+      let admitted = false
+      const raster = f.dispatcher.withRasterAdd(tabId, async () => {
+        assert.equal(
+          f.state.smartPending,
+          false,
+          'A foreign pending Smart handoff must be reconciled before Raster Add.',
+        )
+        admitted = true
+        return 'raster-admitted'
+      })
+      assert.equal(admitted, false)
+      release.resolve()
+      await refused
+      assert.equal(await raster, 'raster-admitted')
+      assert.ok(f.calls.includes('smart'))
+      assert.equal(f.dispatcher.hasPendingHandoff(tabId), false)
+    })
+  },
+)
+
 function handoff(documentId: string): SmartPatchAcceptanceHandoff {
   const variant = smartPatchVariantMetadataFixture('anima')
   const targetLayerId = variant.generationProvenance.layerSourceContext.layerId

@@ -1,9 +1,13 @@
 <script setup lang="ts">
 import type {
   ProjectGenerationResultView,
+  ProjectLayerView,
   ProjectRasterLayerView,
+  ProjectSmartPatchCandidateExportRequest,
   ProjectSmartPatchLayerView,
   ProjectSmartPatchMaskEditRequest,
+  ProjectSmartPatchResultsSnapshot,
+  ProjectSmartPatchResultView,
 } from '../../shared/api.js'
 import type { IgsRectV1 } from '../../shared/projects/project-schema.js'
 import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
@@ -32,6 +36,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   type GenerationResultFocusRequest,
   resultFocusCandidate,
+  smartResultFocusCandidate,
 } from './generation-queue-result.js'
 import { reconcileResultSession, resultSessionFocus } from './generation-result-sessions.js'
 import {
@@ -57,6 +62,12 @@ import {
   snapProjectMaskTransformToPixelGrid,
 } from './project-mask-transform-gesture.js'
 import ProjectGenerationResultsTray from './ProjectGenerationResultsTray.vue'
+import ProjectSmartPatchResultsTray from './ProjectSmartPatchResultsTray.vue'
+import {
+  smartPatchCandidateHasTarget,
+  smartPatchPreviewRasters,
+  smartPatchResultScope,
+} from './smart-patch-result-context.js'
 
 const props = defineProps<{
   bbox: IgsRectV1
@@ -68,6 +79,7 @@ const props = defineProps<{
   disabled: boolean
   documentId: string
   documentRevision: string
+  entityLayers: ProjectLayerView[]
   generationResults: ProjectGenerationResultView[]
   generationResultsLoading: boolean
   historyPending: 'redo' | 'undo' | null
@@ -78,14 +90,27 @@ const props = defineProps<{
   projectKey: string
   resultFocus: GenerationResultFocusRequest | null
   selectedLayerId: string | null
+  smartPatchResults: ProjectSmartPatchResultsSnapshot | null
+  smartPatchResultsLoading: boolean
 }>()
 
 const emit = defineEmits<{
   acceptCandidates: [selection: { candidateIds: string[]; focusedCandidateId: string | null }]
+  acceptSmartPatch: [
+    selection: {
+      candidateIds: string[]
+      documentId: string
+      focusedCandidateId: string | null
+      layerId: string
+    },
+  ]
   changeBbox: [rect: IgsRectV1]
+  discardSmartPatch: [scope: { documentId: string; layerId: string }]
   editMask: [layerId: string, request: ProjectSmartPatchMaskEditRequest]
+  exportSmartPatch: [request: ProjectSmartPatchCandidateExportRequest]
   redo: []
   refreshGenerationResults: []
+  refreshSmartPatch: []
   resultFocusHandled: [revision: number]
   saveCandidateImage: [candidateId: string]
   selectLayer: [layerId: string]
@@ -148,12 +173,59 @@ const resultSessionId = ref<string | null>(null)
 const selectedCandidateIds = ref<string[]>([])
 const stagingHeight = ref(0)
 const previewVisible = ref(true)
-const localBboxPosition = ref<{ x: number; y: number } | null>(null)
-const focusedCandidate = computed(
+const resultTarget = ref('project-canvas')
+const smartFocusedId = ref<string | null>(null)
+const smartSelectedIds = ref<string[]>([])
+const smartActionsDisabled = computed(
   () =>
-    props.generationResults.find(
-      (candidate) => candidate.candidateId === focusedCandidateId.value,
+    props.candidateActionsDisabled ||
+    !props.smartPatchResults ||
+    props.smartPatchResults.recoveryUnavailable ||
+    props.smartPatchResults.documentId !== props.documentId ||
+    props.smartPatchResults.documentRevision !== props.documentRevision,
+)
+const smartTargets = computed(() => props.smartPatchResults?.targets ?? [])
+const smartTarget = computed(
+  () =>
+    smartTargets.value.find(
+      (target) => smartPatchResultScope(target.documentId, target.layerId) === resultTarget.value,
     ) ?? null,
+)
+const smartCandidates = computed(() =>
+  smartTarget.value
+    ? (props.smartPatchResults?.candidates ?? []).filter(
+        (candidate) =>
+          candidate.documentId === smartTarget.value!.documentId &&
+          candidate.layerId === smartTarget.value!.layerId,
+      )
+    : [],
+)
+const resultTargetOptions = computed(() => [
+  { label: 'Project Canvas results', value: 'project-canvas' },
+  ...smartTargets.value.map((target) => ({
+    label: `${target.layerName ?? 'Missing Smart Patch'}${target.disposition === 'foreign-document' ? ' · different document' : ''}`,
+    value: smartPatchResultScope(target.documentId, target.layerId),
+  })),
+])
+const focusedSmartCandidate = computed(
+  () =>
+    smartCandidates.value.find((candidate) => candidate.candidateId === smartFocusedId.value) ??
+    null,
+)
+const previewRasters = computed(() =>
+  smartPatchPreviewRasters(
+    props.entityLayers,
+    smartTarget.value && previewVisible.value ? focusedSmartCandidate.value : null,
+    props.documentId,
+  ),
+)
+const localBboxPosition = ref<{ x: number; y: number } | null>(null)
+const focusedCandidate = computed(() =>
+  smartTarget.value
+    ? focusedSmartCandidate.value
+    : (props.generationResults.find(
+        (candidate) => candidate.candidateId === focusedCandidateId.value,
+      ) ?? null),
 )
 const zoomPercent = computed(() => Number((camera.value.scale * 100).toPrecision(3)))
 const zoomOptions = computed(() =>
@@ -162,7 +234,7 @@ const zoomOptions = computed(() =>
     .map((value) => ({ label: `${value}%`, value })),
 )
 const failedLayerCount = computed(
-  () => props.layers.filter((layer) => failedImageUrls.value.has(layer.imageUrl)).length,
+  () => previewRasters.value.filter((layer) => failedImageUrls.value.has(layer.imageUrl)).length,
 )
 
 const controlTheme = {
@@ -838,7 +910,74 @@ function fitView() {
 }
 
 function stagingSpace(): number {
-  return props.generationResults.length > 0 ? (stagingHeight.value || 108) + 12 : 0
+  return smartTarget.value || props.generationResults.length > 0
+    ? (stagingHeight.value || 108) + 12
+    : 0
+}
+
+function focusSmartCandidate(candidateId: string) {
+  if (!smartCandidates.value.some((candidate) => candidate.candidateId === candidateId)) {
+    return
+  }
+  smartFocusedId.value = candidateId
+  previewVisible.value = true
+  fitMode = false
+  candidateFitMode = true
+  fitFocusedCandidate()
+}
+function selectSmartCandidate(candidateId: string, selected: boolean) {
+  if (
+    smartActionsDisabled.value ||
+    smartTarget.value?.disposition !== 'available' ||
+    !smartCandidates.value.some((candidate) => candidate.candidateId === candidateId)
+  ) {
+    return
+  }
+  const ids = new Set(smartSelectedIds.value)
+  if (selected) {
+    ids.add(candidateId)
+  } else {
+    ids.delete(candidateId)
+  }
+  smartSelectedIds.value = smartCandidates.value
+    .filter((candidate) => ids.has(candidate.candidateId))
+    .map((candidate) => candidate.candidateId)
+}
+function selectAllSmartCandidates(selected: boolean) {
+  if (!smartActionsDisabled.value && smartTarget.value?.disposition === 'available') {
+    smartSelectedIds.value = selected
+      ? smartCandidates.value.map(({ candidateId }) => candidateId)
+      : []
+  }
+}
+function acceptSmartCandidates() {
+  const target = smartTarget.value
+  if (
+    target?.disposition === 'available' &&
+    !smartActionsDisabled.value &&
+    smartSelectedIds.value.length
+  ) {
+    emit('acceptSmartPatch', {
+      candidateIds: [...smartSelectedIds.value],
+      documentId: target.documentId,
+      focusedCandidateId: smartFocusedId.value,
+      layerId: target.layerId,
+    })
+  }
+}
+function exportSmartCandidate(candidate: ProjectSmartPatchResultView) {
+  emit('exportSmartPatch', {
+    candidateId: candidate.candidateId,
+    documentId: candidate.documentId,
+    layerId: candidate.layerId,
+    stagingSessionId: candidate.stagingSessionId,
+  })
+}
+function discardCurrentSmartTarget() {
+  const target = smartTarget.value
+  if (target && !smartActionsDisabled.value) {
+    emit('discardSmartPatch', { documentId: target.documentId, layerId: target.layerId })
+  }
 }
 
 function fitFocusedCandidate() {
@@ -1190,7 +1329,7 @@ function loadImage(layer: ProjectRasterLayerView): HTMLImageElement | null {
 }
 
 function releaseStaleImages() {
-  const activeUrls = new Set(props.layers.map((layer) => layer.imageUrl))
+  const activeUrls = new Set(previewRasters.value.map((layer) => layer.imageUrl))
   for (const [url, image] of images) {
     if (activeUrls.has(url)) {
       continue
@@ -1203,7 +1342,9 @@ function releaseStaleImages() {
   failedImageUrls.value = new Set([...failedImageUrls.value].filter((url) => activeUrls.has(url)))
 }
 
-function loadCandidateImage(candidate: ProjectGenerationResultView): HTMLImageElement | null {
+function loadCandidateImage(
+  candidate: Pick<ProjectGenerationResultView, 'imageUrl'>,
+): HTMLImageElement | null {
   const cached = candidateImages.get(candidate.imageUrl)
   if (cached) {
     return cached.complete && cached.naturalWidth > 0 ? cached : null
@@ -1224,7 +1365,11 @@ function loadCandidateImage(candidate: ProjectGenerationResultView): HTMLImageEl
 }
 
 function releaseStaleCandidateImages() {
-  const activeUrls = new Set(props.generationResults.map((candidate) => candidate.imageUrl))
+  const activeUrls = new Set(
+    [...props.generationResults, ...(props.smartPatchResults?.candidates ?? [])].map(
+      (candidate) => candidate.imageUrl,
+    ),
+  )
   for (const [url, image] of candidateImages) {
     if (activeUrls.has(url) && !failedCandidateUrls.value.has(url)) {
       continue
@@ -1248,21 +1393,26 @@ function renderCandidatePreview() {
     sceneLayer.batchDraw()
     return
   }
-  const image = loadCandidateImage(candidate)
-  if (!image) {
-    sceneLayer.batchDraw()
-    return
+  if (
+    !('kind' in candidate) ||
+    !smartPatchCandidateHasTarget(props.entityLayers, candidate, props.documentId)
+  ) {
+    const image = loadCandidateImage(candidate)
+    if (!image) {
+      sceneLayer.batchDraw()
+      return
+    }
+    candidatePreview.add(
+      new Konva.Image({
+        height: candidate.bbox.height,
+        image,
+        listening: false,
+        width: candidate.bbox.width,
+        x: candidate.bbox.x,
+        y: candidate.bbox.y,
+      }),
+    )
   }
-  candidatePreview.add(
-    new Konva.Image({
-      height: candidate.bbox.height,
-      image,
-      listening: false,
-      width: candidate.bbox.width,
-      x: candidate.bbox.x,
-      y: candidate.bbox.y,
-    }),
-  )
   previewBorder = new Konva.Rect({
     dash: [5, 4],
     height: candidate.bbox.height,
@@ -1282,7 +1432,7 @@ function renderRasters() {
     return
   }
   rasters.destroyChildren()
-  for (const layer of [...props.layers].reverse()) {
+  for (const layer of [...previewRasters.value].reverse()) {
     if (!layer.visible || layer.opacity === 0) {
       continue
     }
@@ -1549,6 +1699,68 @@ watch(
   },
 )
 watch(() => props.selectedLayerId, renderRasters)
+watch(previewRasters, () => {
+  renderRasters()
+  releaseStaleImages()
+})
+watch(
+  [smartTargets, () => props.maskTarget?.id],
+  ([targets], previous) => {
+    const preferred = targets.find(
+      (target) => target.documentId === props.documentId && target.layerId === props.maskTarget?.id,
+    )
+    const ownerChanged = previous && previous[1] !== props.maskTarget?.id
+    const preferredAppeared =
+      preferred &&
+      !previous?.[0]?.some(
+        (target) =>
+          target.documentId === preferred.documentId && target.layerId === preferred.layerId,
+      )
+    if (
+      preferred &&
+      (ownerChanged ||
+        preferredAppeared ||
+        (resultTarget.value === 'project-canvas' && !props.generationResults.length))
+    ) {
+      resultTarget.value = smartPatchResultScope(preferred.documentId, preferred.layerId)
+    } else if (
+      resultTarget.value !== 'project-canvas' &&
+      !targets.some(
+        (target) => smartPatchResultScope(target.documentId, target.layerId) === resultTarget.value,
+      )
+    ) {
+      resultTarget.value = props.generationResults.length
+        ? 'project-canvas'
+        : targets[0]
+          ? smartPatchResultScope(targets[0].documentId, targets[0].layerId)
+          : 'project-canvas'
+    }
+  },
+  { immediate: true },
+)
+watch(resultTarget, () => {
+  smartSelectedIds.value = []
+  if (!smartCandidates.value.some((candidate) => candidate.candidateId === smartFocusedId.value)) {
+    smartFocusedId.value = smartCandidates.value[0]?.candidateId ?? null
+  }
+  previewVisible.value = true
+})
+watch(
+  [smartCandidates, () => smartTarget.value?.disposition],
+  ([candidates]) => {
+    const ids = new Set(candidates.map(({ candidateId }) => candidateId))
+    smartSelectedIds.value =
+      smartTarget.value?.disposition === 'available'
+        ? smartSelectedIds.value.filter((id) => ids.has(id))
+        : []
+    if (!smartFocusedId.value || !ids.has(smartFocusedId.value)) {
+      smartFocusedId.value = candidates[0]?.candidateId ?? null
+    }
+    releaseStaleCandidateImages()
+    renderCandidatePreview()
+  },
+  { immediate: true },
+)
 watch(
   [() => props.generationResults, () => props.generationResultsLoading],
   ([candidates, loading]) => {
@@ -1596,9 +1808,24 @@ watch(resultSessionId, (sessionId) => {
   }
 })
 watch(
-  [() => props.resultFocus, () => props.generationResults],
+  [() => props.resultFocus, () => props.generationResults, () => props.smartPatchResults],
   ([request, candidates]) => {
     if (!request || request.revision <= resultFocusRevision.value) {
+      return
+    }
+    if (request.targetKind === 'smart-patch') {
+      const candidate = smartResultFocusCandidate(
+        request,
+        props.smartPatchResults?.candidates ?? [],
+        { documentId: props.documentId, projectKey: props.projectKey },
+      )
+      if (!candidate) {
+        return
+      }
+      resultTarget.value = smartPatchResultScope(candidate.documentId, candidate.layerId)
+      focusSmartCandidate(candidate.candidateId)
+      resultFocusRevision.value = request.revision
+      emit('resultFocusHandled', request.revision)
       return
     }
     const candidate = resultFocusCandidate(request, candidates, {
@@ -1609,6 +1836,7 @@ watch(
       return
     }
     // Queue navigation changes preview focus only. Acceptance checkboxes stay independent.
+    resultTarget.value = 'project-canvas'
     resultSessionId.value = candidate.stagingSessionId
     focusCandidate(candidate.candidateId)
     resultFocusRevision.value = request.revision
@@ -1623,7 +1851,7 @@ watch(stagingHeight, () => {
     fitFocusedCandidate()
   }
 })
-watch([focusedCandidateId, previewVisible], renderCandidatePreview)
+watch([focusedCandidateId, smartFocusedId, resultTarget, previewVisible], renderCandidatePreview)
 watch(
   [
     () => props.projectKey,
@@ -1721,6 +1949,16 @@ watch(bboxDisabled, (disabled) => {
       <slot name="queue" />
       <div class="canvas-top-overlays">
         <div class="canvas-context-bar">
+          <NSelect
+            v-if="smartTargets.length"
+            v-model:value="resultTarget"
+            aria-label="Generation results target"
+            class="result-target-select"
+            :options="resultTargetOptions"
+            size="small"
+            @pointerdown.stop
+            @wheel.stop
+          />
           <div class="bbox-readout">
             {{ bboxLabel ?? 'Generation area' }} · {{ bbox.width }} × {{ bbox.height }} · X
             {{ localBboxPosition?.x ?? bbox.x }} · Y {{ localBboxPosition?.y ?? bbox.y }}
@@ -1849,7 +2087,7 @@ watch(bboxDisabled, (disabled) => {
         </template>
       </div>
       <ProjectGenerationResultsTray
-        v-if="generationResults.length > 0"
+        v-if="!smartTarget && generationResults.length > 0"
         v-model:sessionId="resultSessionId"
         :actionsDisabled="candidateActionsDisabled"
         :candidates="generationResults"
@@ -1866,6 +2104,25 @@ watch(bboxDisabled, (disabled) => {
         @saveCandidateImage="emit('saveCandidateImage', $event)"
         @selectAll="selectAllCandidates"
         @selectCandidate="setCandidateSelected"
+        @togglePreview="previewVisible = !previewVisible"
+      />
+      <ProjectSmartPatchResultsTray
+        v-if="smartTarget"
+        :busy="smartActionsDisabled"
+        :candidates="smartCandidates"
+        :focusedCandidateId="smartFocusedId"
+        :loading="smartPatchResultsLoading"
+        :previewVisible
+        :selectedIds="smartSelectedIds"
+        :target="smartTarget"
+        @accept="acceptSmartCandidates"
+        @discard="discardCurrentSmartTarget"
+        @export="exportSmartCandidate"
+        @focus="focusSmartCandidate"
+        @refresh="emit('refreshSmartPatch')"
+        @resize="stagingHeight = $event"
+        @select="selectSmartCandidate"
+        @selectAll="selectAllSmartCandidates"
         @togglePreview="previewVisible = !previewVisible"
       />
       <div
@@ -2029,6 +2286,10 @@ watch(bboxDisabled, (disabled) => {
   justify-content: space-between;
   gap: 6px;
   width: 100%;
+}
+.result-target-select {
+  width: min(240px, 100%);
+  pointer-events: auto;
 }
 
 .tool-rail {

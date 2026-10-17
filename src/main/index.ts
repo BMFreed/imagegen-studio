@@ -11,6 +11,7 @@ import {
 } from '../shared/api.js'
 import type {
   ApiResult,
+  ModelCatalogItem,
   ProjectCreateInput,
   ProjectEmbeddingIdentity,
   ProjectGenerateOptions,
@@ -21,6 +22,7 @@ import type {
   ProjectRasterLayerChange,
   ProjectSmartPatchLayerChange,
   ProjectSmartPatchMaskEditRequest,
+  ProjectSmartPatchVariantChange,
   ProjectTab,
   RuntimeStatus,
   SetCheckpointNoiseProfileChange,
@@ -53,9 +55,30 @@ import { ProjectMaskError } from '../shared/projects/project-mask.js'
 import { IGS_SAFETY_CEILINGS, IgsSchemaError } from '../shared/projects/project-schema.js'
 import type { IgsRectV1 } from '../shared/projects/project-schema.js'
 import { reconcilePromptEmbeddings } from '../shared/projects/prompt-embeddings.js'
+import {
+  isProjectSmartPatchAcceptRequest,
+  isProjectSmartPatchCandidateExportRequest,
+  isProjectSmartPatchDiscardRequest,
+  isProjectSmartPatchGenerateOptions,
+  type ProjectSmartPatchAcceptRequest,
+  type ProjectSmartPatchCandidateExportRequest,
+  type ProjectSmartPatchDiscardRequest,
+  type ProjectSmartPatchGenerateOptions,
+} from '../shared/projects/smart-patch-public-generation.js'
+import { isProjectSmartPatchVariantChange } from '../shared/projects/smart-patch-variants.js'
 import { WINDOW_CLOSE_CANCELED_MESSAGE, WindowCloseCanceledError } from '../shared/window-close.js'
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, safeStorage, shell } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeImage,
+  protocol,
+  safeStorage,
+  shell,
+} from 'electron'
 import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { mkdir, realpath } from 'node:fs/promises'
@@ -95,6 +118,7 @@ import { GenerationDispatchCoordinator } from './projects/generation-dispatch-co
 import { GenerationDispatchError } from './projects/generation-dispatch-coordinator.js'
 import { GenerationOrchestratorError } from './projects/generation-orchestrator.js'
 import { GenerationProcessorError } from './projects/generation-processor.js'
+import { GenerationProgressSource } from './projects/generation-progress-source.js'
 import { GenerationQueueError } from './projects/generation-queue.js'
 import { GenerationStagingError } from './projects/generation-staging.js'
 import { IgsPackageError } from './projects/igs-package.js'
@@ -128,6 +152,7 @@ import {
   ProjectGenerationResultResource,
   ProjectGenerationResultResourceError,
 } from './projects/project-generation-result-resource.js'
+import { ProjectGenerationStagingLifecycle } from './projects/project-generation-staging-lifecycle.js'
 import { releaseCanceledWindowCloseFences } from './projects/project-generation-window-close.js'
 import { ProjectIdentityError } from './projects/project-identity.js'
 import { ProjectIndexError, ProjectIndexRepository } from './projects/project-index.js'
@@ -148,11 +173,20 @@ import {
 import { ProjectService, ProjectServiceError } from './projects/project-service.js'
 import { ProjectSessionError } from './projects/project-session.js'
 import { ProjectShadowError, ProjectShadowStore } from './projects/project-shadow.js'
+import { SmartPatchAcceptancePlanError } from './projects/project-smart-patch-acceptance-plan.js'
 import {
   ProjectSmartPatchAcceptance,
   ProjectSmartPatchAcceptanceError,
 } from './projects/project-smart-patch-acceptance.js'
 import { SmartPatchAdoptionError } from './projects/project-smart-patch-adoption.js'
+import { ProjectSmartPatchGenerationActionController } from './projects/project-smart-patch-generation-action-controller.js'
+import { ProjectSmartPatchResultActions } from './projects/project-smart-patch-result-actions.js'
+import {
+  ProjectSmartPatchResultResource,
+  SmartPatchPublicResultError,
+} from './projects/project-smart-patch-result-resource.js'
+import { inspectSmartPatchVariantsWithOptionalWorker } from './projects/project-smart-patch-variant-inspection.js'
+import { SmartPatchVariantProjectionError } from './projects/project-smart-patch-variant-projection.js'
 import { ProjectTargetInspectionOwner } from './projects/project-target-inspection-owner.js'
 import {
   inspectTemporaryRecovery,
@@ -167,7 +201,7 @@ import {
 } from './projects/smart-patch-acceptance-journal.js'
 import { SmartPatchProcessorError } from './projects/smart-patch-generation-processor.js'
 import { SmartPatchGenerationStagingError } from './projects/smart-patch-generation-staging.js'
-import { ProjectWorkerError } from './projects/worker-client.js'
+import { ProjectWorkerClient, ProjectWorkerError } from './projects/worker-client.js'
 import { createRuntimeRoots, RuntimeManager } from './runtime/index.js'
 
 const moduleDir = __dirname
@@ -207,6 +241,16 @@ protocol.registerSchemesAsPrivileged([
       supportFetchAPI: true,
     },
     scheme: 'igs-staging',
+  },
+  {
+    privileges: {
+      corsEnabled: true,
+      secure: true,
+      standard: true,
+      stream: true,
+      supportFetchAPI: true,
+    },
+    scheme: 'igs-smart-staging',
   },
 ])
 const gotInstanceLock = app.requestSingleInstanceLock()
@@ -515,8 +559,18 @@ if (!gotInstanceLock) {
         ownedGenerationContext.availability.kind === 'storage-recovered'
           ? ownedGenerationContext.requireRecoveredServices()
           : null
+      const generationStagingLifecycle = recoveredGeneration
+        ? new ProjectGenerationStagingLifecycle(
+            recoveredGeneration.staging,
+            recoveredGeneration.smartPatchStaging,
+          )
+        : null
+      const generationLifecycleServices =
+        recoveredGeneration && generationStagingLifecycle
+          ? { ...recoveredGeneration, staging: generationStagingLifecycle }
+          : null
       readTemporaryRecovery = (projectKey) =>
-        inspectTemporaryRecovery(recoveredGeneration?.staging ?? null, projectKey)
+        inspectTemporaryRecovery(generationStagingLifecycle, projectKey)
       readGenerationSeed = recoveredGeneration
         ? (projectKey, documentId) =>
             recoveredGeneration.staging.readLastActualSeed(projectKey, documentId)
@@ -530,13 +584,56 @@ if (!gotInstanceLock) {
         withGenerationAdmission: async () => null,
         withGenerationPreparation: async () => null,
         withGenerationWorker: async () => null,
+        withSmartPatchGenerationPreparation: async () => null,
       }
+      const smartPatchExecution = recoveredGeneration
+        ? recoveredGeneration.orchestrator.createSmartPatchExecution(
+            recoveredGeneration.smartPatchStaging,
+            {
+              confirmUnconfirmedStartupExit: async () => {
+                if (!(await ProjectWorkerClient.retryUnconfirmedStartExit())) {
+                  throw new ProjectWorkerError(
+                    'WORKER_EXIT_UNCONFIRMED',
+                    'The image worker has not confirmed exit.',
+                  )
+                }
+              },
+              start: async (signal) => {
+                if (!generationRuntime) {
+                  throw new ProjectGenerationActionError(
+                    'GENERATION_RUNTIME_UNAVAILABLE',
+                    'The installed image engine is unavailable.',
+                  )
+                }
+                return await generationRuntime.startSmartPatchOutputWorker(
+                  path.join(paths.dataRoot, 'scratch'),
+                  signal,
+                )
+              },
+            },
+          )
+        : null
+      const generationProgress = new GenerationProgressSource(
+        recoveredGeneration
+          ? smartPatchExecution
+            ? [recoveredGeneration.processor, smartPatchExecution]
+            : [recoveredGeneration.processor]
+          : [],
+      )
       const generationDispatch = recoveredGeneration
         ? new GenerationDispatchCoordinator(
             generationLease,
             recoveredGeneration.orchestrator,
             recoveredGeneration.processor,
             path.join(paths.dataRoot, 'scratch'),
+            smartPatchExecution
+              ? {
+                  execution: smartPatchExecution,
+                  nextPending: recoveredGeneration.orchestrator.nextDispatchableKind.bind(
+                    recoveredGeneration.orchestrator,
+                  ),
+                }
+              : undefined,
           )
         : null
       const generationActions =
@@ -553,6 +650,23 @@ if (!gotInstanceLock) {
               runtime: generationLease,
               scratchBasePath: path.join(paths.dataRoot, 'scratch'),
               staging: recoveredGeneration.staging,
+            })
+          : null
+      const smartPatchActions =
+        recoveredGeneration && generationActions
+          ? new ProjectSmartPatchGenerationActionController({
+              gate: projectGenerationGate,
+              infillResolver: recoveredGeneration.infillResolver,
+              models: modelService,
+              orchestrator: recoveredGeneration.orchestrator,
+              projects: projectService,
+              queue: recoveredGeneration.queue,
+              runtime: generationLease,
+              scratchBasePath: path.join(paths.dataRoot, 'scratch'),
+              seedReader: recoveredGeneration.staging,
+              staging: recoveredGeneration.smartPatchStaging,
+              wakeDispatch: generationActions.requestDrain.bind(generationActions),
+              withAdmission: generationActions.withExternalAdmission.bind(generationActions),
             })
           : null
       const requireGenerationActions = (): ProjectGenerationActionController => {
@@ -601,13 +715,13 @@ if (!gotInstanceLock) {
           : null
       const projectGenerationClose = new ProjectGenerationClose(
         projectService,
-        recoveredGeneration,
+        generationLifecycleServices,
         projectGenerationGate,
         (tabId) => acceptanceRecovery?.hasPendingHandoff(tabId) ?? false,
       )
       const projectGenerationRecovery = new ProjectGenerationRecovery(
         projectService,
-        recoveredGeneration,
+        generationLifecycleServices,
         projectGenerationGate,
       )
       openImportedProject = (projectId) => projectGenerationRecovery.open(projectId)
@@ -626,6 +740,38 @@ if (!gotInstanceLock) {
         (tabId) => projectService.getOpenDocumentId(tabId),
         recoveredGeneration?.queue ?? null,
       )
+      const smartPatchResults = new ProjectSmartPatchResultResource({
+        makeThumbnail: (bytes, size) =>
+          nativeImage
+            .createFromBuffer(bytes)
+            .resize({ ...size, quality: 'good' })
+            .toPNG(),
+        projects: projectService,
+        queue: recoveredGeneration?.queue ?? null,
+        readLastActualSeed: recoveredGeneration
+          ? recoveredGeneration.staging.readLastActualSeed.bind(recoveredGeneration.staging)
+          : null,
+        staging: recoveredGeneration?.smartPatchStaging ?? null,
+      })
+      const smartPatchResultActions =
+        recoveredGeneration && smartPatchAcceptance
+          ? new ProjectSmartPatchResultActions({
+              acceptance: smartPatchAcceptance,
+              chooseDestination: (defaultFileName) =>
+                dialog.showSaveDialog(window, {
+                  defaultPath: defaultFileName,
+                  filters: [{ extensions: ['png'], name: 'PNG Images' }],
+                  title: 'Save Smart Patch Candidate Image',
+                }),
+              gate: projectGenerationGate,
+              normalStaging: recoveredGeneration.staging,
+              orchestrator: recoveredGeneration.orchestrator,
+              projects: projectService,
+              queue: recoveredGeneration.queue,
+              staging: recoveredGeneration.smartPatchStaging,
+              withWorker: (use) => targetInspectionOwner.useWorker(use),
+            })
+          : null
       const candidateImageExporter = new ProjectCandidateImageExporter(
         recoveredGeneration?.staging ?? null,
         (tabId) => projectService.getOpenDocumentId(tabId),
@@ -669,10 +815,40 @@ if (!gotInstanceLock) {
           })
         }
       })
+      protocol.handle('igs-smart-staging', async (request) => {
+        const headers = {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-store',
+          'Content-Type': 'image/png',
+          'X-Content-Type-Options': 'nosniff',
+        }
+        if (request.method !== 'GET') {
+          return new Response('Method not allowed.', { headers, status: 405 })
+        }
+        try {
+          const bytes =
+            new URL(request.url).hostname === 'thumbnail'
+              ? await smartPatchResults.readThumbnail(request.url)
+              : await smartPatchResults.readImage(request.url)
+          return bytes
+            ? new Response(new Uint8Array(bytes), { headers })
+            : new Response('Smart Patch result not found.', { headers, status: 404 })
+        } catch {
+          return new Response('Smart Patch result unavailable.', { headers, status: 503 })
+        }
+      })
       const appShutdown = new GenerationAppShutdown({
         closeDatabase: closeStorage,
         context: ownedGenerationContext,
-        coordinator: generationActions,
+        coordinator: generationActions
+          ? {
+              shutdown: async () => {
+                const smart = smartPatchActions?.shutdown()
+                await generationActions.shutdown()
+                await smart
+              },
+            }
+          : null,
         pendingJobs: recoveredGeneration?.queue ?? null,
         runtimeExit: generationRuntime,
         shutdownImageReads: () => targetInspectionOwner.shutdown(),
@@ -706,14 +882,15 @@ if (!gotInstanceLock) {
           window.webContents.send(ipcChannels.projects.generationChanged)
         }
       })
-      const unsubscribeProgress = recoveredGeneration?.processor.onProgress((snapshot) => {
+      const unsubscribeProgress = generationProgress.onProgress((snapshot) => {
         if (!window.webContents.isDestroyed()) {
           window.webContents.send(ipcChannels.projects.generationProgress, snapshot)
         }
       })
-      if (unsubscribeProgress) {
-        window.on('closed', unsubscribeProgress)
-      }
+      window.on('closed', () => {
+        unsubscribeProgress()
+        generationProgress.dispose()
+      })
       if (unsubscribeGeneration) {
         window.on('closed', unsubscribeGeneration)
       }
@@ -1137,6 +1314,7 @@ if (!gotInstanceLock) {
           } catch (error) {
             if (
               channel === ipcChannels.projects.generate ||
+              channel === ipcChannels.projects.generateSmartPatch ||
               channel === ipcChannels.projects.getGenerationState ||
               channel === ipcChannels.projects.cancelCurrentGeneration ||
               channel === ipcChannels.projects.getGenerationQueue ||
@@ -1156,6 +1334,9 @@ if (!gotInstanceLock) {
               error instanceof ProjectGenerationAcceptanceError ||
               error instanceof ProjectGenerationAcceptanceRecoveryError ||
               error instanceof ProjectSmartPatchAcceptanceError ||
+              error instanceof SmartPatchPublicResultError ||
+              error instanceof SmartPatchAcceptancePlanError ||
+              error instanceof SmartPatchVariantProjectionError ||
               error instanceof SmartPatchAcceptanceJournalError ||
               error instanceof SmartPatchAdoptionError ||
               error instanceof SmartPatchGenerationStagingError ||
@@ -1242,6 +1423,29 @@ if (!gotInstanceLock) {
         },
       )
       registerProjectHandler(
+        ipcChannels.projects.getSmartPatchVariants,
+        (args) =>
+          args.length === 4 && isProjectId(args[0]) && args.slice(1).every(isProjectDocumentId),
+        async (tabId, layerId, documentId, documentRevision) => {
+          let catalog: ModelCatalogItem[] | null = null
+          try {
+            catalog = await modelService.getCatalog({ buildPreviews: false })
+          } catch {
+            // Unknown registry availability must not hide stored images or pretend they are missing.
+          }
+          const read = (worker?: Parameters<ProjectService['getSmartPatchVariants']>[4]) =>
+            projectService.getSmartPatchVariants(
+              tabId as string,
+              layerId as string,
+              documentId as string,
+              documentRevision as string,
+              worker,
+              catalog,
+            )
+          return await inspectSmartPatchVariantsWithOptionalWorker(targetInspectionOwner, read)
+        },
+      )
+      registerProjectHandler(
         ipcChannels.projects.getRasterGenerationData,
         (args) =>
           args.length === 3 &&
@@ -1311,11 +1515,8 @@ if (!gotInstanceLock) {
         async (statuses) =>
           await requireGenerationActions().pruneQueue(statuses as GenerationQueueTerminalStatus[]),
       )
-      registerProjectHandler(
-        ipcChannels.projects.getGenerationProgress,
-        noArgs,
-        async () =>
-          recoveredGeneration?.processor.getProgressSnapshot() ?? { current: null, revision: 0 },
+      registerProjectHandler(ipcChannels.projects.getGenerationProgress, noArgs, async () =>
+        generationProgress.getProgressSnapshot(),
       )
       registerProjectHandler(
         ipcChannels.projects.getGenerationState,
@@ -1329,6 +1530,101 @@ if (!gotInstanceLock) {
           await requireGenerationActions().generate(
             tabId as string,
             options as ProjectGenerateOptions,
+          ),
+      )
+      const requireSmartPatchResultActions = () => {
+        if (!smartPatchResultActions) {
+          throw new SmartPatchPublicResultError(
+            'PROJECT_NOT_READY',
+            'Smart Patch recovery storage is unavailable. Editing and Save remain available.',
+          )
+        }
+        return smartPatchResultActions
+      }
+      const assertSmartActionOpen = (tabId: string) => {
+        if (resolvingClose || acceptanceRecovery?.hasPendingHandoff(tabId)) {
+          throw new SmartPatchPublicResultError(
+            'ACCEPTANCE_HANDOFF_PENDING',
+            'Finish the Project close or accepted-result recovery before changing temporary Smart Patch results.',
+          )
+        }
+      }
+      registerProjectHandler(
+        ipcChannels.projects.generateSmartPatch,
+        (args) =>
+          args.length === 2 && isProjectId(args[0]) && isProjectSmartPatchGenerateOptions(args[1]),
+        async (tabId, request) => {
+          assertSmartActionOpen(tabId as string)
+          if (!smartPatchActions) {
+            throw new ProjectGenerationActionError(
+              'GENERATION_RUNTIME_UNAVAILABLE',
+              'Smart Patch generation storage is unavailable. Editing and Save remain available.',
+            )
+          }
+          return await smartPatchActions.generate(
+            tabId as string,
+            request as ProjectSmartPatchGenerateOptions,
+          )
+        },
+      )
+      registerProjectHandler(
+        ipcChannels.projects.listSmartPatchGenerationResults,
+        oneProjectId,
+        (tabId) => smartPatchResults.list(tabId as string),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.getSmartPatchGenerationTargetState,
+        (args) =>
+          args.length === 4 && isProjectId(args[0]) && args.slice(1).every(isProjectDocumentId),
+        (tabId, documentId, documentRevision, layerId) =>
+          requireSmartPatchResultActions().targetState(
+            tabId as string,
+            documentId as string,
+            documentRevision as string,
+            layerId as string,
+          ),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.acceptSmartPatchVariants,
+        (args) =>
+          args.length === 2 && isProjectId(args[0]) && isProjectSmartPatchAcceptRequest(args[1]),
+        async (tabId, request) => {
+          if (resolvingClose || !acceptanceRecovery) {
+            throw new SmartPatchPublicResultError(
+              'ACCEPTANCE_HANDOFF_PENDING',
+              'Finish recovery or the application close decision before adding Smart Patch results.',
+            )
+          }
+          return await acceptanceRecovery.withSmartPatchAdd(tabId as string, () =>
+            requireSmartPatchResultActions().accept(
+              tabId as string,
+              request as ProjectSmartPatchAcceptRequest,
+            ),
+          )
+        },
+      )
+      registerProjectHandler(
+        ipcChannels.projects.discardSmartPatchGenerationResults,
+        (args) =>
+          args.length === 2 && isProjectId(args[0]) && isProjectSmartPatchDiscardRequest(args[1]),
+        async (tabId, request) => {
+          assertSmartActionOpen(tabId as string)
+          return await requireSmartPatchResultActions().discard(
+            tabId as string,
+            request as ProjectSmartPatchDiscardRequest,
+          )
+        },
+      )
+      registerProjectHandler(
+        ipcChannels.projects.saveSmartPatchCandidateImage,
+        (args) =>
+          args.length === 2 &&
+          isProjectId(args[0]) &&
+          isProjectSmartPatchCandidateExportRequest(args[1]),
+        (tabId, request) =>
+          requireSmartPatchResultActions().save(
+            tabId as string,
+            request as ProjectSmartPatchCandidateExportRequest,
           ),
       )
       registerProjectHandler(
@@ -1605,6 +1901,22 @@ if (!gotInstanceLock) {
               tabId as string,
               layerId as string,
               change as ProjectSmartPatchLayerChange,
+            ),
+          ),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.updateSmartPatchVariant,
+        (args) =>
+          args.length === 3 &&
+          isProjectId(args[0]) &&
+          isProjectDocumentId(args[1]) &&
+          isProjectSmartPatchVariantChange(args[2]),
+        (tabId, layerId, change) =>
+          runProjectDocumentAction(tabId as string, () =>
+            projectService.updateSmartPatchVariant(
+              tabId as string,
+              layerId as string,
+              change as ProjectSmartPatchVariantChange,
             ),
           ),
       )

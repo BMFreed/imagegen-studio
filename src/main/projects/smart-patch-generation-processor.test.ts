@@ -1,4 +1,8 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
+import type {
+  GenerationDenoisingProgress,
+  GenerationProgressSnapshot,
+} from '../../shared/projects/generation-progress.js'
 
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
@@ -95,6 +99,226 @@ async function noOutput(f: SmartPatchQueueFixture) {
 }
 
 for (const family of ['illustrious', 'anima'] as const) {
+  test(`${family} Smart progress is monotonic, identity-bound and transient through actual world publication`, async () => {
+    await withSmartPatchQueueFixture(family, async (f) => {
+      const owner = await cpuOwner(f)
+      let processor!: SmartPatchGenerationProcessor
+      let late: ((progress: GenerationDenoisingProgress) => void) | undefined
+      const wrapped: SmartPatchOutputWorkerOwner = {
+        start: async (signal) => {
+          assert.equal(
+            processor.getProgressSnapshot().current,
+            null,
+            'Numerical telemetry ends before CPU/world work.',
+          )
+          const revision = processor.getProgressSnapshot().revision
+          late?.({ step: 1, totalSteps: 1 })
+          assert.equal(processor.getProgressSnapshot().revision, revision)
+          return await owner.start(signal)
+        },
+      }
+      const prepared = await setup(f, wrapped)
+      processor = prepared.processor
+      const observed: GenerationProgressSnapshot[] = []
+      const steps = [1]
+      let changed = 0
+      processor.onChanged(() => {
+        changed++
+      })
+      processor.onProgress((snapshot) => {
+        if (snapshot.current) {
+          snapshot.current.step = 400
+        }
+        throw new Error('Controlled failed telemetry observer')
+      })
+      processor.onProgress((snapshot) => observed.push(snapshot))
+      try {
+        const result = await processor.runOne({
+          close: async () => undefined,
+          executeSmartPatch: async (request, onProgress) => {
+            assert.ok(onProgress)
+            late = onProgress
+            const rowBefore = await f.database.db
+              .selectFrom('generation_queue_item')
+              .selectAll()
+              .where('id', '=', prepared.item.id)
+              .executeTakeFirstOrThrow()
+            const changesBefore = changed
+            const totalSteps =
+              request.family === 'anima'
+                ? request.inference.sampling.totalSteps
+                : request.inference.sampling.steps
+            const first = { step: 1, totalSteps }
+            onProgress(first)
+            first.step = 400
+            const expected = {
+              documentId: f.material.manifest.context.documentId,
+              jobId: prepared.item.id,
+              projectKey: prepared.item.localProjectKey,
+              statusSequence: rowBefore.status_sequence,
+              step: 1,
+              totalSteps,
+            }
+            assert.deepEqual(processor.getProgressSnapshot(), { current: expected, revision: 1 })
+            const detached = processor.getProgressSnapshot()
+            detached.current!.step = 399
+            onProgress({ step: 1, totalSteps })
+            onProgress({ step: 0, totalSteps })
+            onProgress({ step: NaN, totalSteps })
+            if (request.family === 'illustrious') {
+              onProgress({ step: 2, totalSteps: totalSteps + 1 })
+            }
+            onProgress({
+              step: 1,
+              totalSteps:
+                request.family === 'anima'
+                  ? totalSteps + 1
+                  : 2 * request.inference.sampling.steps + 1,
+            })
+            assert.deepEqual(processor.getProgressSnapshot(), { current: expected, revision: 1 })
+            if (totalSteps > 1) {
+              onProgress({ step: 2, totalSteps })
+              steps.push(2)
+              onProgress({ step: 1, totalSteps })
+              assert.equal(processor.getProgressSnapshot().current?.step, 2)
+              assert.equal(processor.getProgressSnapshot().revision, 2)
+            }
+            assert.equal(
+              changed,
+              changesBefore,
+              'Telemetry does not emit durable generation-change events.',
+            )
+            assert.deepEqual(
+              await f.database.db
+                .selectFrom('generation_queue_item')
+                .selectAll()
+                .where('id', '=', prepared.item.id)
+                .executeTakeFirstOrThrow(),
+              rowBefore,
+              'Telemetry does not write queue status or timestamps.',
+            )
+            return await literalInference(request)
+          },
+          ready,
+        })
+        assert.equal(result.kind, 'completed')
+        assert.deepEqual(
+          observed.map(({ current }) => current?.step ?? null),
+          [...steps, null],
+        )
+        assert.deepEqual(
+          observed.map(({ revision }) => revision),
+          steps.map((_, i) => i + 1).concat(steps.length + 1),
+        )
+        const originalCallback = late
+        const [next] = await admitSmartPatch(f, {
+          material: {
+            ...f.material,
+            manifest: { ...f.material.manifest, items: [f.material.manifest.items[0]] },
+          },
+        })
+        const second = await processor.runOne({
+          close: async () => undefined,
+          executeSmartPatch: async (request, onProgress) => {
+            assert.ok(onProgress)
+            late = onProgress
+            const totalSteps =
+              request.family === 'anima'
+                ? request.inference.sampling.totalSteps
+                : request.inference.sampling.steps
+            onProgress({ step: 1, totalSteps })
+            const before = processor.getProgressSnapshot()
+            assert.equal(before.current?.jobId, next.id)
+            originalCallback?.({ step: totalSteps, totalSteps })
+            assert.deepEqual(
+              processor.getProgressSnapshot(),
+              before,
+              'A previous job callback cannot update the next owner.',
+            )
+            return await literalInference(request)
+          },
+          ready,
+        })
+        assert.equal(second.kind, 'completed')
+        late?.({ step: 1, totalSteps: 1 })
+        assert.deepEqual(processor.getProgressSnapshot(), {
+          current: null,
+          revision: steps.length + 3,
+        })
+      } finally {
+        await processor.stopAndCancelActive()
+        await owner.cleanup()
+      }
+    })
+  })
+
+  test(`${family} Smart Cancel clears progress before waiting for transport exit and rejects late callbacks`, async () => {
+    await withSmartPatchQueueFixture(family, async (f) => {
+      const { item, processor } = await setup(f, {
+        start: async () => assert.fail('Canceled inference must not start CPU output.'),
+      })
+      const closeEntered = deferred()
+      const entered = deferred()
+      const exit = deferred()
+      const finish = deferred()
+      let late: ((progress: GenerationDenoisingProgress) => void) | undefined
+      let totalSteps = 1
+      const observed: GenerationProgressSnapshot[] = []
+      processor.onProgress((snapshot) => observed.push(snapshot))
+      const running = processor.runOne({
+        close: async () => {
+          assert.equal(processor.getProgressSnapshot().current, null)
+          closeEntered.resolve()
+          await exit.promise
+        },
+        executeSmartPatch: async (request, onProgress) => {
+          assert.ok(onProgress)
+          late = onProgress
+          totalSteps =
+            request.family === 'anima'
+              ? request.inference.sampling.totalSteps
+              : request.inference.sampling.steps
+          onProgress({ step: 1, totalSteps })
+          entered.resolve()
+          await finish.promise
+          return await literalInference(request)
+        },
+        ready,
+      })
+      let cancel: ReturnType<typeof processor.cancelAndWait> | undefined
+      try {
+        await Promise.race([
+          entered.promise,
+          running.then(() => assert.fail('The controlled inference must start.')),
+        ])
+        cancel = processor.cancelAndWait(item.id)
+        assert.deepEqual(processor.getProgressSnapshot(), { current: null, revision: 2 })
+        late?.({ step: totalSteps, totalSteps })
+        await closeEntered.promise
+        const pending = await f.queue.getManagerEntry(item.id)
+        assert.equal(pending.status, 'running')
+        assert.equal(pending.cancelRequested, true)
+        assert.equal(processor.getProgressSnapshot().revision, 2)
+        exit.resolve()
+        finish.resolve()
+        assert.equal((await cancel).status, 'canceled')
+        assert.equal((await running).kind, 'canceled')
+        late?.({ step: totalSteps, totalSteps })
+        assert.deepEqual(
+          observed.map(({ current }) => current?.step ?? null),
+          [1, null],
+        )
+        assert.equal(processor.getProgressSnapshot().revision, 2)
+        await noOutput(f)
+      } finally {
+        exit.resolve()
+        finish.resolve()
+        await Promise.allSettled([cancel, running])
+        await processor.stopAndCancelActive()
+      }
+    })
+  })
+
   test(`private ${family} executor publishes actual CPU world candidate and cursor independently of pruned queue inputs`, async () => {
     await withSmartPatchQueueFixture(family, async (f) => {
       const owner = await cpuOwner(f)
@@ -142,6 +366,35 @@ for (const family of ['illustrious', 'anima'] as const) {
     })
   })
 }
+
+test('failed Smart inference clears telemetry before transport cleanup without publishing a candidate', async () => {
+  await withSmartPatchQueueFixture('illustrious', async (f) => {
+    const { item, processor } = await setup(f, {
+      start: async () => assert.fail('Failed inference cannot start output.'),
+    })
+    let closeObserved = false
+    try {
+      const result = await processor.runOne({
+        close: async () => {
+          assert.deepEqual(processor.getProgressSnapshot(), { current: null, revision: 2 })
+          closeObserved = true
+        },
+        executeSmartPatch: async (request, onProgress) => {
+          assert.ok(onProgress)
+          onProgress({ step: 1, totalSteps: request.inference.sampling.steps })
+          throw new Error('Controlled numerical failure')
+        },
+        ready,
+      })
+      assert.equal(result.kind, 'failed')
+      assert.equal(closeObserved, true)
+      assert.equal((await f.queue.getManagerEntry(item.id)).status, 'failed')
+      await noOutput(f)
+    } finally {
+      await processor.stopAndCancelActive()
+    }
+  })
+})
 
 for (const phase of ['inference', 'startup', 'composition'] as const) {
   test(`Cancel drains admitted Smart Patch ${phase} work before releasing the SQL slot or scratch`, async () => {

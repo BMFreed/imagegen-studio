@@ -1,6 +1,11 @@
 import type { ProjectGenerationActionState } from '../../shared/projects/project-generation-actions.js'
 import type { ProjectGenerationTargetState } from '../../shared/projects/project-generation-target-state.js'
 
+export interface DenoisingTarget {
+  mode: 'inpaint' | ProjectGenerationTargetState['mode']
+  unavailableReason: string | null
+}
+
 export function denoisingRuntimeSupport(
   modelFamily: string | null,
   state: Pick<
@@ -40,7 +45,7 @@ export function denoisingControlReason(input: {
   modelFamily: string | null
   runtimeUnavailableReason: string | null
   supported: boolean | null
-  target: ProjectGenerationTargetState | null
+  target: DenoisingTarget | null
   targetError: string | null
 }): string | null {
   if (input.modelFamily !== 'illustrious' && input.modelFamily !== 'anima') {
@@ -71,12 +76,12 @@ export function denoisingControlReason(input: {
 }
 
 export function denoisingGenerationReason(
-  mode: ProjectGenerationTargetState['mode'],
+  mode: DenoisingTarget['mode'],
   value: number | null,
   supported: boolean,
   modelFamily: string | null = 'illustrious',
 ): string | null {
-  if (mode !== 'img2img' && mode !== 'outpaint') {
+  if (mode !== 'img2img' && mode !== 'outpaint' && mode !== 'inpaint') {
     return null
   }
   if (value === null) {

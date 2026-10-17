@@ -102,7 +102,7 @@ test('Canvas projects only the active stored pixels at frozen placement with the
     { id: 'inactive-variant', name: 'Older contribution' },
     { id: 'active-variant', name: 'Active contribution' },
   ]
-  owner.status = 'stored'
+  owner.status = 'unverified'
   owner.blendMode = 'multiply'
   owner.locked = true
   owner.opacity = 0.375

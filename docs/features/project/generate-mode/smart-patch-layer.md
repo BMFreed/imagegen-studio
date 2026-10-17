@@ -127,7 +127,108 @@ Variant lifecycle, staleness/compositing/comparison and Patch presets remain
 subsequent owners; existing authoring evidence and public promise statuses stay
 unchanged.
 
-## Current private durable acceptance
+## Current installed qualification: trained public generation
+
+[Installed Smart Patch generation](../../../engineering/phase-4-smart-patch-installed-generation-research.md)
+passes 27 native checks through the built public UI and current noneditable
+worker 0.14.0 with genuine trained Illustrious V-prediction and Anima resources.
+The finite matrix is two families × TXT/IMG/INP/OUT plus each family's fixed-seed
+INP replay: ten completions at processing 256/world 128, four steps, seed 123.
+Independent full-world alpha checks cover every output. Each IMG/INP raw RGB
+contrast differs at all 16,384 pixels, and both INP replays preserve exact whole
+RGBA. These are finite numerical controls, not full Invoke parity or image quality.
+
+All ten cycles explicitly Add a variant, exercise one Undo/Redo, Save and reopen
+with exact image bytes, immutable provenance, authored Patch settings and normal/
+above/below neighbors preserved. Generate does not implicitly accept or Save.
+Actual correlated denoising steps appear in the UI through shared transient
+telemetry. Layer Select is disabled during existing busy actions. Healthy worker
+close preserves runtime ready status; all ten reopened selected Patches offer
+Generate without a Repair notice before any diagnostic status getter. The 51 installed
+worker files and final source/bundle/original/managed hashes are unchanged, and
+all 80 observed actors physically exited. Failed attempts remain separately
+recorded in the research.
+
+Reopened stored rows can still show `unverified`. The matrix verifies stored
+pixels and lineage, without qualifying automatic source-freshness re-verification
+after worker lifecycle.
+
+Smart Retry, orphan Raster conversion, accepted-history navigation, Compare/
+Preset, arbitrary options, broader device/capacity coverage and release
+qualification remain open. PP-007/008 remain **Пока не обещать**.
+
+## Previous production integration: public Generate, Results and Add
+
+[Public generation integration](../../../engineering/phase-4-smart-patch-public-generation-research.md)
+adds dedicated renderer/preload/Main requests for the captured selected Patch,
+its exact document/revision and owned draft. Installed capabilities and current
+visible/unlocked membership are checked at the real admission/dispatch boundaries.
+Dynamic prompts and Fixed/Random/Reuse plan concrete bounded jobs from that frozen
+draft. The single public dispatch/worker lease drives typed Smart execution.
+
+Completed world contributions remain temporary in the dedicated Smart store.
+The Canvas tray scopes selection to one original document/Patch, keeps focus
+separate from selection, and supports reviewed Add, discard and image export.
+Preview replaces that Patch's active contribution at its current stack position
+with the candidate's frozen geometry; above layers and parent display settings
+remain effective. Signed bounded thumbnails do not substitute for verified full
+candidate bytes. Smart candidates never become ordinary Raster result DTOs.
+
+Generate replacement confirms only the same document/Patch's current candidate
+and unfinished-job sets. Sibling Patches and ordinary generation are independent.
+Project Close and document-recovery discard inspect/drain both stores. Valid
+completed candidates survive restart independently of prunable queue rows;
+unfinished work follows the existing cancel-on-restart policy. Missing targets
+stay visible as orphaned with Add as Variant disabled and export/discard available.
+Explicit orphan Raster conversion, Smart Retry, accepted-history navigation and
+Compare/Preset remain separate visible limitations.
+
+Add retains the existing shared gate/journal/asset handoff and immutable lineage.
+It checks the public reviewed owner inside the gate before any destructive work.
+A source CPU lease is acquired inside that gate to preserve Save's lock order.
+Changes made before the reviewed Add click remain current authoring, while the
+accepted candidate keeps its frozen provenance and may be outdated. Generate
+does not edit the document; only explicit Save writes accepted variants to `.igs`.
+Executed checks and literal test inference belong to that checkpoint; installed
+trained evidence is recorded above, while release remains open. PP-007/008 remain
+**Пока не обещать**.
+
+## Previous production checkpoint: variant lifecycle and current state
+
+[Variant lifecycle/status](../../../engineering/phase-4-smart-patch-variant-lifecycle-research.md)
+connects select, rename and delete for already accepted variants through actual
+renderer/preload/Main commands and the existing Project history/asset owner.
+Each real change is one Undo step; identical selection/normalized name is a no-op.
+Deleting an inactive variant preserves active selection. Deleting the active
+variant selects the next surviving index, or the preceding last member. Deleting
+the final variant leaves the same empty Patch and all of its authored inputs.
+Deleted pixels remain retained for Undo even after explicit Save. Locked variants
+are read-only; hidden stored variants remain editable. Revision conflicts refuse
+rather than replay a stale command after a pending prompt flush.
+
+The row exposes known authored freshness and opens a persistent variants browser.
+The browser separately checks actual source pixels and current exact-bound
+resource availability. Matching authored inputs without source verification are
+`unverified`; any known difference is `outdated`; `ready` requires a verified
+matching source. Readiness here means matching generation inputs, not available
+Generate or an installed runtime. Resource loss does not erase stored pixels or
+block their selection/rename/delete. Catalog failure is unknown availability.
+Only enabled LoRAs and active literal embedding references require resources.
+
+Stored freshness uses the explicit current owner and preserves historical frozen
+lineage on copies. Mask pixel/bounds identity matters; ownership IDs, paths and
+revision counters alone do not stale restored identical coverage. Fit-only
+padding, unrelated Project revisions and parent display settings are excluded.
+Actual below-target source includes lower active contributions and excludes the
+current Patch and higher layers. Source failures remain visible and unverified;
+uncertain physical worker exit is a refusal.
+
+This checkpoint manages existing accepted pixels. Public Smart Generate/Results/
+Add IPC, accepted-history navigation, Compare/Preset and installed trained-model
+qualification remain separate. PP-007/008 stay «Пока не обещать». Prototype mock
+status behavior remains a separate limitation, not production evidence.
+
+## Previous private durable acceptance
 
 [Smart Patch durable acceptance](../../../engineering/phase-4-smart-patch-durable-acceptance-research.md)
 Private Main Add now appends verified world candidates to the exact Smart Patch,
@@ -145,11 +246,12 @@ must pass actual member verification plus file/directory sync before replacing
 shadow proof. Replays do not duplicate or reactivate variants. Add never performs
 Save or rewrites completed receipts/seed cursor.
 
-Public Smart Generate/Results/IPC, variant lifecycle controls, freshness/resource
-UI, accepted-history navigation, Compare/Preset and installed inference
-qualification remain later owners. PP-007/008 remain «Пока не обещать». Next finite
-owner is variant lifecycle and current-state diagnostics before public integration.
-Executed evidence and finite limits belong to the linked research.
+At that checkpoint public Generate/Results/IPC and variant lifecycle/status were
+still pending. The current integration and lifecycle sections above now cover
+those boundaries. Smart accepted-history navigation, Compare/Preset, orphan
+Raster conversion, Retry and installed inference qualification remain open.
+PP-007/008 remain «Пока не обещать». Executed evidence and finite limits belong
+to each linked research note.
 
 ## Previous variant storage/display scope
 
@@ -826,8 +928,9 @@ context action or provenance popover. Its current `outdated` flag is a simplifie
 mock and does not substitute for `Generated with` / `Current Canvas` comparison.
 Its frozen provenance and staleness comparison do not yet consume
 `coherenceSettings`: editing that profile changes prototype document/history
-without making existing variants outdated. These controls do not qualify
-acceptance or outdated derivation; production has no accepted Patch variants yet.
+without making existing variants outdated. These mocks do not qualify production
+acceptance or freshness. The separately implemented Main-owned stored variants,
+lifecycle controls and current-state checks are described above.
 
 ## Acceptance Criteria
 

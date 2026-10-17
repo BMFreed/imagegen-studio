@@ -50,6 +50,13 @@ import {
   isProjectSmartPatchMaskV1,
 } from '../shared/projects/project-schema.js'
 import type { IgsProjectDocumentV1, IgsRectV1 } from '../shared/projects/project-schema.js'
+import {
+  isProjectSmartPatchDiscardResult,
+  isProjectSmartPatchGenerateResult,
+  isProjectSmartPatchGenerationTargetState,
+  isProjectSmartPatchResultsSnapshot,
+} from '../shared/projects/smart-patch-public-generation.js'
+import { isProjectSmartPatchVariantsInspection } from '../shared/projects/smart-patch-variants.js'
 
 import { contextBridge, ipcRenderer } from 'electron'
 
@@ -550,7 +557,7 @@ function isProjectSmartPatchLayerView(value: unknown): value is ProjectSmartPatc
         value.status === 'empty'
       : isProjectDocumentId(value.activeRasterSubLayerId) &&
         value.rasterSubLayers.some((variant) => variant.id === value.activeRasterSubLayerId) &&
-        value.status === 'stored' &&
+        (value.status === 'outdated' || value.status === 'unverified') &&
         isProjectRasterLayerView(value.activeRaster) &&
         value.activeRaster.id === value.id &&
         value.activeRaster.name === value.name &&
@@ -831,6 +838,8 @@ const api: StudioApi = {
         [tabId, candidateIds, focusedCandidateId, expectedAvailableIds, expectedUnfinishedJobIds],
         isProjectTab,
       ),
+    acceptSmartPatchVariants: (tabId, request) =>
+      invokeProject(ipcChannels.projects.acceptSmartPatchVariants, [tabId, request], isProjectTab),
     addGenerationLora: (tabId, selection, targetLayerId) =>
       invokeProject(
         ipcChannels.projects.addGenerationLora,
@@ -860,6 +869,12 @@ const api: StudioApi = {
       invokeProject(ipcChannels.projects.deleteGenerationJob, [review], isVoid),
     discardAndClose: (tabId, confirmCloseImpact = false) =>
       invokeProject(ipcChannels.projects.discardAndClose, [tabId, confirmCloseImpact], isVoid),
+    discardSmartPatchGenerationResults: (tabId, request) =>
+      invokeProject(
+        ipcChannels.projects.discardSmartPatchGenerationResults,
+        [tabId, request],
+        isProjectSmartPatchDiscardResult,
+      ),
     editSmartPatchMask: (tabId, layerId, request) =>
       invokeProject(
         ipcChannels.projects.editSmartPatchMask,
@@ -874,6 +889,12 @@ const api: StudioApi = {
       ),
     generate: (tabId, options) =>
       invokeProject(ipcChannels.projects.generate, [tabId, options], isProjectGenerateResult),
+    generateSmartPatch: (tabId, options) =>
+      invokeProject(
+        ipcChannels.projects.generateSmartPatch,
+        [tabId, options],
+        isProjectSmartPatchGenerateResult,
+      ),
     getAcceptedResultHistory: (cursor = null) =>
       invokeProject(
         ipcChannels.projects.getAcceptedResultHistory,
@@ -919,6 +940,18 @@ const api: StudioApi = {
           value.documentId === documentId &&
           value.layerId === layerId,
       ),
+    getSmartPatchGenerationTargetState: (tabId, documentId, documentRevision, layerId) =>
+      invokeProject(
+        ipcChannels.projects.getSmartPatchGenerationTargetState,
+        [tabId, documentId, documentRevision, layerId],
+        isProjectSmartPatchGenerationTargetState,
+      ),
+    getSmartPatchVariants: (tabId, layerId, documentId, documentRevision) =>
+      invokeProject(
+        ipcChannels.projects.getSmartPatchVariants,
+        [tabId, layerId, documentId, documentRevision],
+        isProjectSmartPatchVariantsInspection,
+      ),
     importRasterImage: (tabId) =>
       invokeProject(
         ipcChannels.projects.importRasterImage,
@@ -936,6 +969,12 @@ const api: StudioApi = {
         ipcChannels.projects.listGenerationResults,
         [tabId],
         isProjectGenerationResultsSnapshot,
+      ),
+    listSmartPatchGenerationResults: (tabId) =>
+      invokeProject(
+        ipcChannels.projects.listSmartPatchGenerationResults,
+        [tabId],
+        isProjectSmartPatchResultsSnapshot,
       ),
     moveRasterLayer: (tabId, layerId, targetIndex) =>
       invokeProject(
@@ -1054,6 +1093,12 @@ const api: StudioApi = {
         [tabId, candidateId],
         isProjectCandidateExportResult,
       ),
+    saveSmartPatchCandidateImage: (tabId, request) =>
+      invokeProject(
+        ipcChannels.projects.saveSmartPatchCandidateImage,
+        [tabId, request],
+        isProjectCandidateExportResult,
+      ),
     sealPromptHistory: (tabId, historyGroupId) =>
       invokeProject(
         ipcChannels.projects.sealPromptHistory,
@@ -1088,6 +1133,12 @@ const api: StudioApi = {
     updateSmartPatchLayer: (tabId, layerId, change) =>
       invokeProject(
         ipcChannels.projects.updateSmartPatchLayer,
+        [tabId, layerId, change],
+        isProjectTab,
+      ),
+    updateSmartPatchVariant: (tabId, layerId, change) =>
+      invokeProject(
+        ipcChannels.projects.updateSmartPatchVariant,
         [tabId, layerId, change],
         isProjectTab,
       ),

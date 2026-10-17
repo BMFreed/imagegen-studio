@@ -1930,8 +1930,8 @@ test('Project input is captured before an asynchronous replacement-impact read',
   await withFixture(async (fixture) => {
     const entered = signal()
     const release = signal()
-    const readUnfinished = fixture.queue.listUnfinishedByProjectDocument.bind(fixture.queue)
-    fixture.queue.listUnfinishedByProjectDocument = async (...args) => {
+    const readUnfinished = fixture.queue.listUnfinishedNormalByProjectDocument.bind(fixture.queue)
+    fixture.queue.listUnfinishedNormalByProjectDocument = async (...args) => {
       entered.resolve()
       await release.promise
       return await readUnfinished(...args)

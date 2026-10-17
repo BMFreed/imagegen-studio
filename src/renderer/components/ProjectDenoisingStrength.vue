@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import type { ProjectGenerationTargetState } from '../../shared/projects/project-generation-target-state.js'
-
 import { RotateClockwise as ResetIcon } from '@vicons/tabler'
 import { NInput } from 'naive-ui'
 import { computed, ref, watch } from 'vue'
+
+import type { DenoisingTarget } from './denoising-strength-control.js'
 
 import IconButton from '../../../docs/prototype-app/src/components/IconButton.vue'
 import LabeledControl from '../../../docs/prototype-app/src/components/LabeledControl.vue'
@@ -14,7 +14,7 @@ const props = defineProps<{
   modelFamily: string | null
   runtimeUnavailableReason: string | null
   supported: boolean | null
-  target: ProjectGenerationTargetState | null
+  target: DenoisingTarget | null
   targetError: string | null
 }>()
 const strength = defineModel<number | null>({ required: true })

@@ -4,6 +4,8 @@ import type {
   ProjectGenerationActionState,
   ProjectGenerationResultsSnapshot,
   ProjectGenerationResultView,
+  ProjectSmartPatchResultsSnapshot,
+  ProjectSmartPatchResultView,
   ProjectTab,
 } from '../../shared/api.js'
 import { ANIMA_SAMPLING_METHOD_LABELS } from '../../shared/projects/anima-sampling-method.js'
@@ -40,6 +42,8 @@ import {
   type QueueResultOpenReference,
   queueResultReference,
   type QueueResultReference,
+  queueSmartResultCandidate,
+  queueSmartResultReference,
 } from './generation-queue-result.js'
 import { outpaintQueueRetryReason } from './generation-queue-retry.js'
 import GenerationProgressIndicator from './GenerationProgressIndicator.vue'
@@ -60,6 +64,9 @@ const props = defineProps<{
   resultOpeningId: string | null
   resultSnapshots: Record<string, ProjectGenerationResultsSnapshot>
   runtimeUnavailableReason: string | null
+  smartResultErrors: Record<string, string | null>
+  smartResultLoading: Record<string, boolean>
+  smartResultSnapshots: Record<string, ProjectSmartPatchResultsSnapshot>
 }>()
 const emit = defineEmits<{
   changed: []
@@ -92,6 +99,9 @@ let disposed = false
 
 const selected = computed(() => items.value.find((item) => item.id === selectedId.value) ?? null)
 const selectedResult = computed(() => (selected.value ? resultCandidate(selected.value) : null))
+const selectedSmartResult = computed(() =>
+  selected.value ? smartResultCandidate(selected.value) : null,
+)
 const controlsBusy = computed(() => busy.value !== null || props.appBusy)
 const countsTotal = computed(
   () => counts.value && Object.values(counts.value).reduce((a, b) => a + b, 0),
@@ -155,13 +165,29 @@ function resultCandidate(item: GenerationQueueEntry): ProjectGenerationResultVie
   const tab = props.projectTabs.find((candidate) => candidate.id === item.projectKey)
   return queueResultCandidate(item, props.resultSnapshots[item.projectKey], tab?.documentId)
 }
+function smartResultCandidate(item: GenerationQueueEntry): ProjectSmartPatchResultView | null {
+  if (props.reloadRequiredIds.has(item.projectKey)) {
+    return null
+  }
+  const tab = props.projectTabs.find((candidate) => candidate.id === item.projectKey)
+  return queueSmartResultCandidate(
+    item,
+    props.smartResultSnapshots[item.projectKey],
+    tab?.documentId,
+  )
+}
+function resultIsLoading(item: GenerationQueueEntry): boolean {
+  return ['anima-smart-patch', 'illustrious-smart-patch'].includes(item.operation)
+    ? Boolean(props.smartResultLoading[item.projectKey])
+    : Boolean(props.resultLoading[item.projectKey])
+}
 
-function thumbnailUrl(candidate: ProjectGenerationResultView | null): string | null {
+function thumbnailUrl(candidate: { thumbnailUrl?: string } | null): string | null {
   const url = candidate?.thumbnailUrl
   return url && !failedThumbnails.value.has(url) ? url : null
 }
 
-function thumbnailFailed(candidate: ProjectGenerationResultView | null) {
+function thumbnailFailed(candidate: { thumbnailUrl?: string } | null) {
   if (candidate?.thumbnailUrl) {
     failedThumbnails.value.add(candidate.thumbnailUrl)
   }
@@ -183,8 +209,19 @@ function resultReason(item: GenerationQueueEntry): string | null {
   if (props.reloadRequiredIds.has(item.projectKey)) {
     return 'Reload this Project before viewing its results.'
   }
-  if (props.resultLoading[item.projectKey]) {
+  if (resultIsLoading(item)) {
     return 'Checking the local result…'
+  }
+  if (['anima-smart-patch', 'illustrious-smart-patch'].includes(item.operation)) {
+    if (props.smartResultErrors[item.projectKey]) {
+      return props.smartResultErrors[item.projectKey]!
+    }
+    if (props.smartResultSnapshots[item.projectKey]?.recoveryUnavailable) {
+      return 'Local Smart Patch recovery is unavailable. Reopen the Project to check its results.'
+    }
+    return smartResultCandidate(item)
+      ? null
+      : 'The local Smart Patch candidate is unavailable. It may have been added or discarded.'
   }
   if (props.resultErrors[item.projectKey]) {
     return props.resultErrors[item.projectKey]!
@@ -201,10 +238,15 @@ function resultReason(item: GenerationQueueEntry): string | null {
 function openResult(item: GenerationQueueEntry) {
   const tab = props.projectTabs.find((candidate) => candidate.id === item.projectKey)
   const candidate = resultCandidate(item)
-  if (controlsBusy.value || props.resultLoading[item.projectKey] || !tab || !candidate) {
+  const smartCandidate = smartResultCandidate(item)
+  if (controlsBusy.value || resultIsLoading(item) || !tab || (!candidate && !smartCandidate)) {
     return
   }
-  emit('openResult', queueResultReference(item, candidate, tab.documentId))
+  if (smartCandidate) {
+    emit('openResult', queueSmartResultReference(item, smartCandidate, tab.documentId))
+  } else if (candidate) {
+    emit('openResult', queueResultReference(item, candidate, tab.documentId))
+  }
 }
 
 function openProject(item: GenerationQueueEntry) {
@@ -820,11 +862,11 @@ onBeforeUnmount(() => {
                   data-testid="queue-result-thumbnail"
                 >
                   <img
-                    v-if="thumbnailUrl(selectedResult)"
+                    v-if="thumbnailUrl(selectedResult ?? selectedSmartResult)"
                     alt="Temporary generation result"
                     decoding="async"
-                    :src="thumbnailUrl(selectedResult) ?? undefined"
-                    @error="thumbnailFailed(selectedResult)"
+                    :src="thumbnailUrl(selectedResult ?? selectedSmartResult) ?? undefined"
+                    @error="thumbnailFailed(selectedResult ?? selectedSmartResult)"
                   />
                   <NIcon
                     v-else
@@ -848,10 +890,17 @@ onBeforeUnmount(() => {
                       Thumbnail unavailable. View the full result in Project.
                     </p>
                   </template>
+                  <p v-else-if="selectedSmartResult" class="secondary-text">
+                    Temporary Smart Patch candidate.
+                    {{
+                      selectedSmartResult.unavailableReason ??
+                      'View it at its Patch stack position in Project.'
+                    }}
+                  </p>
                   <NButton
-                    v-if="selectedResult"
+                    v-if="selectedResult || selectedSmartResult"
                     aria-label="View result"
-                    :disabled="controlsBusy || Boolean(resultLoading[selected.projectKey])"
+                    :disabled="controlsBusy || resultIsLoading(selected)"
                     :loading="resultOpeningId === selected.id"
                     secondary
                     size="small"

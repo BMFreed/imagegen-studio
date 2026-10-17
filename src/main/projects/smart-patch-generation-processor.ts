@@ -1,7 +1,13 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
+import type {
+  GenerationDenoisingProgress,
+  GenerationProgressSnapshot,
+} from '../../shared/projects/generation-progress.js'
+import { isGenerationDenoisingProgress } from '../../shared/projects/generation-progress.js'
 import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceAnima,
+  supportsInferenceDenoisingProgress,
 } from '../../shared/projects/inference-worker-capabilities.js'
 
 import { randomUUID } from 'node:crypto'
@@ -38,7 +44,10 @@ import { readSmartPatchModelSourceOutput } from './worker-client.js'
 
 export interface SmartPatchInferenceTransport {
   close: () => Promise<void>
-  executeSmartPatch: (request: SmartPatchExecutionRequest) => Promise<SmartPatchExecutionResult>
+  executeSmartPatch: (
+    request: SmartPatchExecutionRequest,
+    onProgress?: (progress: GenerationDenoisingProgress) => void,
+  ) => Promise<SmartPatchExecutionResult>
   readonly ready: InferenceWorkerReady
 }
 export type SmartPatchOutputWorker = Pick<ProjectWorkerClient, 'close' | 'composeSmartPatchOutput'>
@@ -55,7 +64,7 @@ export type SmartPatchProcessorResult =
 
 export interface SmartPatchProcessorProjectScope {
   localProjectKey: string
-  stagingSessionIds: readonly string[]
+  stagingSessionIds?: readonly string[]
 }
 
 type Active = {
@@ -67,6 +76,7 @@ type Active = {
   item: QueuedGenerationItem
   publicationUncertain: boolean
   publishing: boolean
+  receivingProgress: boolean
   root: string | null
   rootIdentity: { dev: number; ino: number } | null
   runSettled: boolean
@@ -95,8 +105,11 @@ export class SmartPatchGenerationProcessor {
   private active: Active | null = null
   private claiming: Promise<VerifiedQueuedSmartPatchInput | null> | null = null
   private currentRun: Promise<SmartPatchProcessorResult> | null = null
+  private readonly listeners = new Set<() => void>()
   private readonly models: SmartPatchExecutionModelResolver
   private readonly outputOwner: SmartPatchOutputWorkerOwner
+  private progress: GenerationProgressSnapshot = { current: null, revision: 0 }
+  private readonly progressListeners = new Set<(snapshot: GenerationProgressSnapshot) => void>()
   private stopping = false
 
   constructor(
@@ -152,16 +165,30 @@ export class SmartPatchGenerationProcessor {
     return this.active?.item.id === id ? await this.cancelActive(this.active) : null
   }
 
+  getProgressSnapshot(): GenerationProgressSnapshot {
+    return structuredClone(this.progress)
+  }
+
+  onChanged(listener: () => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  onProgress(listener: (snapshot: GenerationProgressSnapshot) => void): () => void {
+    this.progressListeners.add(listener)
+    return () => this.progressListeners.delete(listener)
+  }
+
   /** Join a scoped claim/publication without permanently stopping this reusable private owner. */
   async quiesceForProject(input: SmartPatchProcessorProjectScope): Promise<void> {
     const project = input.localProjectKey
-    const sessions = new Set(input.stagingSessionIds)
+    const sessions = input.stagingSessionIds ? new Set(input.stagingSessionIds) : null
     await this.claiming?.catch(() => undefined)
     const active = this.active
     if (
       !active ||
       active.item.localProjectKey !== project ||
-      !sessions.has(active.item.stagingSessionId)
+      (sessions !== null && !sessions.has(active.item.stagingSessionId))
     ) {
       return
     }
@@ -264,6 +291,7 @@ export class SmartPatchGenerationProcessor {
 
   private cancelActive(active: Active): Promise<QueuedGenerationItem> {
     if (!active.cancelPromise) {
+      this.clearProgress(active)
       active.abort.abort()
       active.exitUnconfirmed = true
       const operation = (async () => {
@@ -301,6 +329,13 @@ export class SmartPatchGenerationProcessor {
     return active.cancelPromise
   }
 
+  private clearProgress(active: Active): void {
+    active.receivingProgress = false
+    if (this.progress.current?.jobId === active.item.id) {
+      this.publishProgress(null)
+    }
+  }
+
   private async closeOwned(active: Active, inference: boolean): Promise<void> {
     const closes: Promise<unknown>[] = []
     if (inference) {
@@ -328,6 +363,16 @@ export class SmartPatchGenerationProcessor {
         'WORKER_EXIT_UNCONFIRMED',
         'A Smart Patch child has not confirmed physical exit.',
       )
+    }
+  }
+
+  private emitChanged(): void {
+    for (const listener of this.listeners) {
+      try {
+        listener()
+      } catch {
+        /* Observers do not own processing/publication. */
+      }
     }
   }
 
@@ -395,7 +440,46 @@ export class SmartPatchGenerationProcessor {
     })
     await this.assertRunning(active)
     active.dispatched = true
-    const result = await active.transport.executeSmartPatch(request)
+    active.receivingProgress = true
+    const onProgress = (progress: GenerationDenoisingProgress): void => {
+      if (
+        this.active !== active ||
+        !active.receivingProgress ||
+        active.abort.signal.aborted ||
+        active.cancelPromise ||
+        active.exitUnconfirmed ||
+        this.stopping ||
+        !supportsInferenceDenoisingProgress(active.transport.ready) ||
+        !isGenerationDenoisingProgress(progress) ||
+        (request.family === 'anima'
+          ? progress.totalSteps !== request.inference.sampling.totalSteps
+          : progress.totalSteps > 2 * request.inference.sampling.steps)
+      ) {
+        return
+      }
+      const previous = this.progress.current
+      if (
+        previous &&
+        (previous.totalSteps !== progress.totalSteps || previous.step >= progress.step)
+      ) {
+        return
+      }
+      this.publishProgress({
+        documentId: payload.context.documentId,
+        jobId: active.item.id,
+        projectKey: active.item.localProjectKey,
+        statusSequence: active.item.statusSequence,
+        step: progress.step,
+        totalSteps: progress.totalSteps,
+      })
+    }
+    let result: SmartPatchExecutionResult
+    try {
+      result = await active.transport.executeSmartPatch(request, onProgress)
+    } finally {
+      // Numerical progress ends before CPU/world processing, publication or failure cleanup.
+      this.clearProgress(active)
+    }
     const actualSeed = requireSmartPatchActualSeed(result.actualSeed, payload.item.item.seed)
     const output = { ...structuredClone(result.output) }
     if (
@@ -454,7 +538,19 @@ export class SmartPatchGenerationProcessor {
     return candidate
   }
 
+  private publishProgress(current: GenerationProgressSnapshot['current']): void {
+    this.progress = { current, revision: this.progress.revision + 1 }
+    for (const listener of this.progressListeners) {
+      try {
+        listener(this.getProgressSnapshot())
+      } catch {
+        /* Telemetry observers cannot change inference, durable state or other snapshots. */
+      }
+    }
+  }
+
   private async release(active: Active): Promise<void> {
+    this.clearProgress(active)
     if (active.root) {
       try {
         await this.assertOwnedScratch(active)
@@ -467,6 +563,7 @@ export class SmartPatchGenerationProcessor {
     }
     if (this.active === active) {
       this.active = null
+      this.emitChanged()
     }
   }
 
@@ -495,6 +592,7 @@ export class SmartPatchGenerationProcessor {
       item: claimed.item,
       publicationUncertain: false,
       publishing: false,
+      receivingProgress: false,
       root: null,
       rootIdentity: null,
       runSettled: false,
@@ -502,6 +600,7 @@ export class SmartPatchGenerationProcessor {
       work: null,
     }
     this.active = active
+    this.emitChanged()
     let terminal = false
     try {
       active.work = this.execute(active, claimed)
@@ -554,6 +653,7 @@ export class SmartPatchGenerationProcessor {
       terminal = true
       return { kind: 'failed', queueItemId: claimed.item.id }
     } finally {
+      this.clearProgress(active)
       active.runSettled = true
       if (terminal && !active.exitUnconfirmed && !active.publicationUncertain) {
         await this.release(active)

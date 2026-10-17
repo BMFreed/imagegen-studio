@@ -1,9 +1,14 @@
 import type { GenerationOrchestrator } from './generation-orchestrator.js'
+import type { PrivateSmartPatchExecution } from './generation-orchestrator.js'
 import type {
   GenerationProcessorResult,
   GenerationWorkerTransport,
 } from './generation-processor.js'
 import type { GenerationProcessor } from './generation-processor.js'
+import type {
+  SmartPatchInferenceTransport,
+  SmartPatchProcessorResult,
+} from './smart-patch-generation-processor.js'
 
 export interface GenerationWorkerLease {
   retryUnconfirmedGenerationExit: () => Promise<boolean>
@@ -12,6 +17,8 @@ export interface GenerationWorkerLease {
     use: (worker: GenerationWorkerTransport) => Promise<T>,
   ) => Promise<T | null>
 }
+
+type DispatchResult = GenerationProcessorResult | SmartPatchProcessorResult
 
 export class GenerationDispatchError extends Error {
   constructor(
@@ -29,7 +36,7 @@ export class GenerationDispatchError extends Error {
  * still owns dispatch. The runtime lease owns confirmed exit after completion, failure or cancel.
  */
 export class GenerationDispatchCoordinator {
-  private activeRun: Promise<GenerationProcessorResult> | null = null
+  private activeRun: Promise<DispatchResult> | null = null
   private closed = false
   private shutdownPromise: Promise<void> | null = null
 
@@ -41,17 +48,30 @@ export class GenerationDispatchCoordinator {
     >,
     private readonly processor: Pick<GenerationProcessor, 'stopAndCancelActive'>,
     private readonly scratchBasePath: string,
+    private readonly smartPatch?: {
+      execution: PrivateSmartPatchExecution
+      nextPending: () => Promise<'normal' | 'smart-patch' | null>
+    },
   ) {}
 
-  async runNext(): Promise<GenerationProcessorResult> {
+  onChanged(listener: () => void): () => void {
+    return this.smartPatch?.execution.onChanged?.(listener) ?? (() => undefined)
+  }
+
+  async runNext(): Promise<DispatchResult> {
     if (this.closed) {
       throw new GenerationDispatchError('CLOSED', 'Generation dispatch has stopped.')
     }
     if (this.activeRun) {
       throw new GenerationDispatchError('BUSY', 'A generation job is already being processed.')
     }
-    const operation = (async (): Promise<GenerationProcessorResult> => {
-      if (!(await this.orchestrator.hasDispatchablePending()) || this.closed) {
+    const operation = (async (): Promise<DispatchResult> => {
+      const kind = this.smartPatch
+        ? await this.smartPatch.nextPending()
+        : (await this.orchestrator.hasDispatchablePending())
+          ? 'normal'
+          : null
+      if (!kind || this.closed) {
         return { kind: 'idle' }
       }
       const result = await this.runtime.withGenerationWorker(
@@ -59,6 +79,25 @@ export class GenerationDispatchCoordinator {
         async (worker) => {
           if (this.closed) {
             return { kind: 'idle' as const }
+          }
+          const currentKind = this.smartPatch ? await this.smartPatch.nextPending() : kind
+          if (!currentKind) {
+            return { kind: 'idle' as const }
+          }
+          if (currentKind === 'smart-patch' && this.smartPatch) {
+            const transport = worker as GenerationWorkerTransport &
+              Partial<SmartPatchInferenceTransport>
+            if (typeof transport.executeSmartPatch !== 'function') {
+              throw new GenerationDispatchError(
+                'RUNTIME_UNAVAILABLE',
+                'The installed worker cannot execute Smart Patches.',
+              )
+            }
+            return await this.smartPatch.execution.runNext({
+              close: transport.close.bind(transport),
+              executeSmartPatch: transport.executeSmartPatch.bind(transport),
+              ready: transport.ready,
+            })
           }
           return await this.orchestrator.runNext(worker)
         },
@@ -92,7 +131,10 @@ export class GenerationDispatchCoordinator {
   }
 
   private async shutdownOne(): Promise<void> {
-    const stopping = this.processor.stopAndCancelActive()
+    const stopping = Promise.all([
+      this.processor.stopAndCancelActive(),
+      this.smartPatch?.execution.stopAndCancelActive(),
+    ])
     const running = this.activeRun
     await Promise.allSettled([stopping, running ?? Promise.resolve()])
     if (!(await this.runtime.retryUnconfirmedGenerationExit())) {
@@ -104,5 +146,6 @@ export class GenerationDispatchCoordinator {
     // The first stop may have run before a queue claim, or failed before acknowledging worker
     // exit. Repeat after the active lease settles so no newly claimed row remains running.
     await this.processor.stopAndCancelActive()
+    await this.smartPatch?.execution.stopAndCancelActive()
   }
 }

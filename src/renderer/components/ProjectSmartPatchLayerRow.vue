@@ -2,7 +2,7 @@
 import type { ProjectApi, ProjectSmartPatchLayerView } from '../../shared/api.js'
 
 import { Brush } from '@vicons/tabler'
-import { NIcon } from 'naive-ui'
+import { NButton, NIcon } from 'naive-ui'
 import { computed } from 'vue'
 
 import { type ProjectEntityRowAction, provideProjectEntityRow } from './project-entity-row.js'
@@ -16,6 +16,7 @@ const props = defineProps<{
   selected: boolean
 }>()
 const emit = defineEmits<{
+  browseVariants: [layerId: string]
   move: [layerId: string, targetIndex: number]
   select: [layerId: string]
   update: [layerId: string, change: Parameters<ProjectApi['updateSmartPatchLayer']>[2]]
@@ -24,6 +25,11 @@ const activeVariant = computed(() =>
   props.layer.rasterSubLayers.find((variant) => variant.id === props.layer.activeRasterSubLayerId),
 )
 const menu = computed<ProjectEntityRowAction[]>(() => [
+  {
+    key: 'browse-variants',
+    label: 'Browse variants',
+    run: () => emit('browseVariants', props.layer.id),
+  },
   {
     disabled: true,
     key: 'compare-generation',
@@ -102,9 +108,25 @@ provideProjectEntityRow({
       </dl>
       <div class="patch-details">
         <span>Mask revision {{ layer.mask.revision }}</span>
-        <span class="active-variant" :title="activeVariant?.name">
-          {{ activeVariant?.name ?? 'No variant' }}
-        </span>
+        <NButton
+          :aria-label="`Browse variants for ${layer.name}`"
+          data-entity-control
+          data-patch-variants-trigger
+          size="tiny"
+          text
+          @click="emit('browseVariants', layer.id)"
+        >
+          Variants ({{ layer.rasterSubLayers.length }})
+        </NButton>
+      </div>
+      <div v-if="activeVariant" class="patch-active-result">
+        <img
+          v-if="layer.activeRaster"
+          :alt="`Active variant: ${activeVariant.name}`"
+          class="raster-thumbnail"
+          :src="layer.activeRaster.imageUrl"
+        />
+        <span class="active-variant" :title="activeVariant.name">{{ activeVariant.name }}</span>
       </div>
     </template>
   </ProjectEntitySurface>
@@ -148,8 +170,21 @@ provideProjectEntityRow({
 .active-variant {
   min-width: 0;
   overflow: hidden;
-  text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.patch-active-result {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 6px;
+}
+.raster-thumbnail {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  object-fit: contain;
+  border: 1px solid var(--app-border);
+  background: var(--app-chrome);
 }
 </style>

@@ -121,7 +121,7 @@ test('raw Project target fingerprints include only the active stored Patch pixel
     name: 'Stored Patch',
     opacity: 1,
     rasterSubLayers: [{ id: variantId, name: 'Frozen pixels' }],
-    status: 'stored',
+    status: 'unverified',
     visible: true,
   }
   const tab = { ...base, layers: [patch] }

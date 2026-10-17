@@ -19,6 +19,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   addPatch: []
+  browseVariants: [layerId: string]
   importImage: []
   move: [layerId: string, targetIndex: number]
   saveResultPreset: [layerId: string]
@@ -234,6 +235,7 @@ makeDroppable(
         :layer
         :layers
         :selected="selectedLayerId === layer.id"
+        @browseVariants="emit('browseVariants', $event)"
         @move="(layerId, targetIndex) => emit('move', layerId, targetIndex)"
         @saveResultPreset="emit('saveResultPreset', $event)"
         @select="selectedLayerId = $event"

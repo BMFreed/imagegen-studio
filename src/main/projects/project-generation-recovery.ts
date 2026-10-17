@@ -1,7 +1,6 @@
 import type { ProjectOpenResult, ProjectTab } from '../../shared/api.js'
 
 import type { GenerationOrchestrator } from './generation-orchestrator.js'
-import type { GenerationStagingRepository } from './generation-staging.js'
 import type { ProjectGenerationAcceptance } from './project-generation-acceptance.js'
 import type { ProjectGenerationCloseServices } from './project-generation-close.js'
 import type { ProjectGenerationOperationGate } from './project-generation-operation-gate.js'
@@ -9,7 +8,7 @@ import type { ProjectService } from './project-service.js'
 
 interface RecoveryServices {
   orchestrator: ProjectGenerationCloseServices['orchestrator']
-  staging: Pick<GenerationStagingRepository, 'discardProject'>
+  staging: { discardProject: (projectId: string) => Promise<{ cleanupDeferred: boolean }> }
 }
 
 export class ProjectGenerationRecoveryError extends Error {

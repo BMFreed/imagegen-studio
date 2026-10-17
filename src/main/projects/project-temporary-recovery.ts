@@ -1,5 +1,3 @@
-import type { GenerationStagingRepository } from './generation-staging.js'
-
 export type ProjectTemporaryRecoveryInspection =
   { completedCandidateCount: number; kind: 'available' } | { kind: 'unavailable'; reason: string }
 
@@ -18,7 +16,9 @@ export function unavailableTemporaryRecovery(error?: unknown): ProjectTemporaryR
 
 /** Main-only presence uses authoritative PNG/receipt verification, not queue or thumbnail metadata. */
 export async function inspectTemporaryRecovery(
-  staging: Pick<GenerationStagingRepository, 'listVerifiedCandidates'> | null,
+  staging: {
+    listVerifiedCandidates: (projectKey: string) => Promise<readonly { localProjectKey: string }[]>
+  } | null,
   projectKey: string,
 ): Promise<ProjectTemporaryRecoveryInspection> {
   if (!staging) {

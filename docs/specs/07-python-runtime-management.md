@@ -458,6 +458,18 @@ SQLite CAS остаются окончательной authority. Если по�
 между idle и detach. Успешные controlled subprocess/SQLite tests и behavioral
 mutations проверяют эти границы отдельно от trained generation и release installer.
 
+### Advisory status при штатном закрытии
+
+Если текущий generation lease уже подтвердил qualified handshake и Main явно
+закрывает этот здоровый child, совпадающие pointer/config сохраняют advisory
+`ready` с отложенным отдельным probe до окончания close. Штатное завершение не
+показывается как необходимость Repair. Это не разрешает новый lease, выдачу
+transport/metadata или второй CUDA child до физически подтверждённого выхода.
+Ранее сломанный child, изменённые metadata и global exit fences остаются
+недоступными; отказ close сразу сохраняет `unconfirmed-exit` до explicit retry.
+Оба инициатора close и отказные соседи проверены actual-child regressions в
+[Smart Patch installed qualification](../engineering/phase-4-smart-patch-installed-generation-research.md).
+
 ## Acceptance criteria
 
 - Приложение запускает worker без установленного системного Python.

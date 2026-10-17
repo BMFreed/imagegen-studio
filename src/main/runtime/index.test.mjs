@@ -130,6 +130,15 @@ const ready = {
   workerVersion: mode.startsWith('rescale-') ? '0.5.0' : mode.startsWith('thumbnail-') ? '0.4.0' : mode === 'wrong-version' || mode === 'wrong-version-keepalive' ? '0.1.0' : mode.startsWith('progress-') ? '0.3.0' : '0.2.0',
   runtimeProfile: 'linux-nvidia', capabilities: mode === 'rescale-ready' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails', 'illustrious-cfg-rescale'] : mode === 'rescale-missing-capability' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-ready' ? ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails'] : mode === 'thumbnail-missing-capability' ? ['illustrious-txt2img', 'denoising-progress'] : mode === 'progress-ready' ? ['illustrious-txt2img', 'denoising-progress'] : ['illustrious-txt2img']
 }
+if (mode.startsWith('smart-')) {
+  ready.workerVersion = '0.14.0'
+  ready.capabilities = ['illustrious-txt2img', 'denoising-progress', 'candidate-thumbnails',
+    'illustrious-cfg-rescale', 'illustrious-img2img', 'illustrious-lora',
+    'illustrious-vae-precision', 'illustrious-external-vae', 'illustrious-embeddings',
+    'illustrious-outpaint',
+    ...(mode === 'smart-missing-execution' ? [] : ['smart-patch-execution']),
+    ...(mode === 'smart-missing-seed' ? [] : ['smart-patch-seed-confirmation'])]
+}
 process.on('SIGTERM', () => {
   process.exit(0)
 })
@@ -1386,6 +1395,200 @@ function deferred() {
   return { promise, resolve }
 }
 
+test('Smart preparation refuses legacy and incomplete peers before CPU admission while ordinary preparation remains usable', async (t) => {
+  // Real RuntimeManager and JSONL children; only peer capabilities and pixel composition are controlled.
+  for (const mode of ['ready', 'smart-missing-execution', 'smart-missing-seed']) {
+    await t.test(mode, async () => {
+      const { roots, manager } = await fixture()
+      const installed = await installFakeInferenceRuntime(roots)
+      await fs.writeFile(path.join(installed.environment, 'mode'), mode)
+      await installCpuTarget(roots)
+      const scratch = path.join(roots.appDataDir, 'scratch')
+      await fs.mkdir(scratch)
+      const completed = await manager.withGenerationWorker(scratch, async (gpu) => {
+        assert.equal(
+          await manager.withSmartPatchGenerationPreparation(scratch, async () =>
+            assert.fail('An unqualified Smart capability must not admit preparation.'),
+          ),
+          null,
+        )
+        assert.deepEqual(await lines(path.join(roots.runtimeDir, 'cpu-launches')), [])
+        assert.equal(
+          await manager.withGenerationPreparation(
+            scratch,
+            async ({ targetWorker }) => (await composeCpuTarget(targetWorker, scratch)).mode,
+          ),
+          'txt2img',
+        )
+        assert.equal(gpu.ready.workerVersion, mode === 'ready' ? '0.2.0' : '0.14.0')
+        assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+        assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 1)
+        assert.equal((await lines(path.join(roots.runtimeDir, 'cpu-launches'))).length, 1)
+        assert.equal((await lines(path.join(roots.runtimeDir, 'cpu-exits'))).length, 1)
+        return 'ordinary-owner-completed'
+      })
+      assert.equal(completed, 'ordinary-owner-completed')
+      assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 2)
+    })
+  }
+})
+
+test('qualified Smart preparation owns one installed CUDA-hidden CPU child through its callback and confirmed exit', async () => {
+  const { roots, manager } = await fixture()
+  const installed = await installFakeInferenceRuntime(roots)
+  await fs.writeFile(path.join(installed.environment, 'mode'), 'smart-ready')
+  await installCpuTarget(roots)
+  const scratch = path.join(roots.appDataDir, 'scratch')
+  await fs.mkdir(scratch)
+  const completed = await manager.withGenerationWorker(scratch, async (gpu) => {
+    const snapshot = structuredClone(gpu.ready)
+    const entered = deferred()
+    const finish = deferred()
+    const preparation = manager.withSmartPatchGenerationPreparation(
+      scratch,
+      async ({ inferenceReady, preparationWorker }) => {
+        assert.equal(preparationWorker instanceof ProjectWorkerClient, true)
+        assert.notEqual(inferenceReady, gpu.ready)
+        assert.notEqual(inferenceReady.capabilities, gpu.ready.capabilities)
+        inferenceReady.capabilities.push('caller-local')
+        assert.equal((await composeCpuTarget(preparationWorker, scratch)).mode, 'txt2img')
+        entered.resolve()
+        await finish.promise
+        return 'smart-prepared'
+      },
+    )
+    try {
+      await Promise.race([
+        entered.promise,
+        preparation.then(() => assert.fail('Qualified Smart preparation must enter its callback.')),
+      ])
+      assert.equal((await lines(path.join(roots.runtimeDir, 'cpu-launches'))).length, 1)
+      assert.deepEqual(await lines(path.join(roots.runtimeDir, 'cpu-exits')), [])
+      assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+      assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 1)
+      assert.equal(
+        await manager.withSmartPatchGenerationPreparation(scratch, async () => 'second Smart'),
+        null,
+      )
+      assert.equal(await manager.withGenerationPreparation(scratch, async () => 'second CPU'), null)
+      assert.equal(await manager.withGenerationWorker(scratch, async () => 'second GPU'), null)
+      assert.equal(
+        await manager.withGenerationAdmission(scratch, async () => 'second admission'),
+        null,
+      )
+      assert.deepEqual(gpu.ready, snapshot)
+      finish.resolve()
+      assert.equal(await preparation, 'smart-prepared')
+      assert.equal((await lines(path.join(roots.runtimeDir, 'cpu-exits'))).length, 1)
+      assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 1)
+      const failure = new Error('Smart callback failed.')
+      await assert.rejects(
+        manager.withSmartPatchGenerationPreparation(scratch, async () => {
+          throw failure
+        }),
+        (error) => error === failure,
+      )
+      assert.equal((await lines(path.join(roots.runtimeDir, 'cpu-exits'))).length, 2)
+      assert.equal(
+        await manager.withGenerationAdmission(scratch, async () => 'same GPU remains ready'),
+        'same GPU remains ready',
+      )
+      assert.deepEqual(gpu.ready, snapshot)
+    } finally {
+      finish.resolve()
+      await preparation
+    }
+    return 'smart-owner-completed'
+  })
+  assert.equal(completed, 'smart-owner-completed')
+  assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 2)
+  assert.equal(
+    await manager.withSmartPatchGenerationPreparation(
+      scratch,
+      async ({ inferenceReady, preparationWorker }) => {
+        assert.equal(inferenceReady.workerVersion, '0.14.0')
+        assert.equal(preparationWorker instanceof ProjectWorkerClient, true)
+        return (await composeCpuTarget(preparationWorker, scratch)).mode
+      },
+    ),
+    'txt2img',
+  )
+  assert.equal((await lines(path.join(roots.runtimeDir, 'cpu-launches'))).length, 3)
+  assert.equal((await lines(path.join(roots.runtimeDir, 'cpu-exits'))).length, 3)
+  assert.equal(
+    (await lines(path.join(roots.runtimeDir, 'launches'))).length,
+    (await lines(path.join(roots.runtimeDir, 'exits'))).length,
+  )
+  assert.deepEqual(await lines(path.join(roots.runtimeDir, 'requests')), [])
+  assert.deepEqual(await lines(path.join(roots.runtimeDir, 'cpu-requests')), [
+    'compose-target',
+    'compose-target',
+  ])
+})
+
+test('Smart preparation refuses captured readiness when its borrowed GPU exit fails during CPU startup', async () => {
+  // Both protocol children are real. Only the GPU close acknowledgment is refused; startup-gate
+  // holds the CPU ready line until that failure is observed, before the Smart callback can run.
+  const { roots, manager } = await fixture()
+  const installed = await installFakeInferenceRuntime(roots)
+  await fs.writeFile(path.join(installed.environment, 'mode'), 'smart-ready')
+  await fs.writeFile(path.join(installed.environment, 'cpu-mode'), 'startup-gate')
+  const scratch = path.join(roots.appDataDir, 'scratch')
+  await fs.mkdir(scratch)
+  const gpuEntered = deferred()
+  const gpuFinish = deferred()
+  let blockClose = true
+  let preparation
+  let callbacks = 0
+  const generation = manager.withGenerationWorker(scratch, async (gpu) => {
+    const close = gpu.close.bind(gpu)
+    gpu.close = async () => {
+      if (blockClose) throw new Error('Borrowed GPU exit remains unconfirmed.')
+      await close()
+    }
+    gpuEntered.resolve()
+    await gpuFinish.promise
+  })
+  const generationFailure = assert.rejects(generation, /Borrowed GPU exit remains unconfirmed/)
+  try {
+    await Promise.race([
+      gpuEntered.promise,
+      generation.then(() => assert.fail('The installed Smart peer must own the GPU lease.')),
+    ])
+    preparation = manager.withSmartPatchGenerationPreparation(scratch, async () => {
+      callbacks++
+      return 'stale-readiness-was-lent'
+    })
+    await waitForLines(path.join(roots.runtimeDir, 'cpu-launches'), 1)
+    gpuFinish.resolve()
+    await generationFailure
+    assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
+    await fs.writeFile(path.join(roots.runtimeDir, 'cpu-release-start'), '')
+    assert.equal(await preparation, null)
+    assert.equal(callbacks, 0)
+    assert.equal((await lines(path.join(roots.runtimeDir, 'cpu-exits'))).length, 1)
+    assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+    assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 1)
+    assert.equal(await manager.retryUnconfirmedGenerationExit(), false)
+    assert.equal(
+      await manager.withSmartPatchGenerationPreparation(scratch, async () => 'unsafe'),
+      null,
+    )
+    assert.equal(await manager.withGenerationWorker(scratch, async () => 'unsafe'), null)
+    blockClose = false
+    assert.equal(await manager.retryUnconfirmedGenerationExit(), true)
+    assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 2)
+    assert.notEqual(await manager.resolveInstalledProjectWorker(scratch), null)
+    assert.equal(ProjectWorkerClient.hasUnconfirmedExit(), false)
+  } finally {
+    blockClose = false
+    gpuFinish.resolve()
+    await fs.writeFile(path.join(roots.runtimeDir, 'cpu-release-start'), '')
+    await Promise.allSettled([generation, generationFailure, preparation])
+    await manager.retryUnconfirmedGenerationExit()
+  }
+})
+
 test('new-generation preparation uses one CUDA-hidden target child while the actual GPU owner remains live', async () => {
   // Boundary: actual RuntimeManager, two real JSONL children and verified target composition.
   // Invariant: one CPU lease, no second GPU or inference request; copied metadata and confirmed exit.
@@ -1971,5 +2174,161 @@ test('CPU preparation cannot lend ready status after its GPU owner has an unconf
     await Promise.allSettled([generation, generationFailure, preparation].filter(Boolean))
     await manager.retryUnconfirmedGenerationExit()
     await gpu?.close()
+  }
+})
+
+test(
+  'qualified normal close stays advisory-ready without another CUDA probe for callback and runtime-finally owners',
+  { timeout: 10_000 },
+  async (t) => {
+    // Real installed-location resolver and JSONL child. Only close completion is held;
+    // the actual close runs first, so ready really throws CLOSED during the barrier.
+    for (const initiator of ['callback', 'runtime-finally']) {
+      await t.test(initiator, async () => {
+        const { roots, manager } = await fixture()
+        const installed = await installFakeInferenceRuntime(roots)
+        await fs.writeFile(path.join(installed.environment, 'mode'), 'smart-ready')
+        const scratch = path.join(roots.appDataDir, 'scratch')
+        await fs.mkdir(scratch)
+        const closeEntered = deferred()
+        const closeRelease = deferred()
+        let client
+        let settled = false
+        const generation = manager.withGenerationWorker(scratch, async (worker) => {
+          client = worker
+          const close = worker.close.bind(worker)
+          worker.close = async () => {
+            const closing = close()
+            void closing.catch(() => undefined)
+            closeEntered.resolve()
+            await closeRelease.promise
+            await closing
+          }
+          if (initiator === 'callback') await worker.close()
+          return 'completed'
+        })
+        const outcome = generation.then(
+          (value) => {
+            settled = true
+            return { value }
+          },
+          (error) => {
+            settled = true
+            return { error }
+          },
+        )
+        try {
+          await closeEntered.promise
+          assert.throws(() => client.ready, { code: 'CLOSED' })
+          assert.equal(settled, false, 'Close completion still belongs to the active lease.')
+          const status = await manager.getStatus()
+          assert.equal(status.value.kind, 'ready')
+          assert.match(status.value.detail, /separate status probe is deferred/)
+          assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+          assert.equal(await manager.readQualifiedInferenceReady(), null)
+          assert.equal(
+            await manager.withGenerationAdmission(scratch, async () =>
+              assert.fail('A closing child cannot lend metadata or accept new work.'),
+            ),
+            null,
+          )
+          assert.equal(await manager.resolveInstalledProjectWorker(scratch), null)
+          await fs.writeFile(path.join(installed.config, 'model_index.json'), 'changed')
+          assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
+          await fs.writeFile(path.join(installed.config, 'model_index.json'), 'pinned')
+          assert.equal((await manager.getStatus()).value.kind, 'ready')
+          assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+        } finally {
+          closeRelease.resolve()
+          const finished = await outcome
+          assert.equal(finished.error, undefined)
+          assert.equal(finished.value, 'completed')
+          assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 2)
+        }
+      })
+    }
+  },
+)
+
+test('unexpected worker exit cannot borrow normal-close advisory readiness', { timeout: 10_000 }, async () => {
+  const { roots, manager } = await fixture()
+  await installFakeInferenceRuntime(roots)
+  const scratch = path.join(roots.appDataDir, 'scratch')
+  await fs.mkdir(scratch)
+  const value = await manager.withGenerationWorker(scratch, async (worker) => {
+    const child = worker.child
+    const exited = new Promise((resolve) => child.once('exit', resolve))
+    child.kill('SIGKILL')
+    await exited
+    assert.throws(() => worker.ready, { code: 'CLOSED' })
+    await worker.close()
+    assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
+    assert.equal(await manager.readQualifiedInferenceReady(), null)
+    assert.equal(
+      await manager.withGenerationAdmission(scratch, async () =>
+        assert.fail('A failed child cannot lend readiness.'),
+      ),
+      null,
+    )
+    assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+    assert.equal(child.exitCode !== null || child.signalCode !== null, true)
+    return 'observed-unexpected-exit'
+  })
+  assert.equal(value, 'observed-unexpected-exit')
+})
+
+test('rejected normal close becomes unavailable immediately and retains the exit fence until explicit retry', { timeout: 10_000 }, async () => {
+  // Actual close rejects after its bounded SIGTERM/SIGKILL waits. The fixture child's
+  // open stdin and intercepted own kill method keep that exact child physically alive.
+  const { roots, manager } = await fixture()
+  await installFakeInferenceRuntime(roots)
+  const scratch = path.join(roots.appDataDir, 'scratch')
+  await fs.mkdir(scratch)
+  let client
+  let child
+  let kill
+  let end
+  try {
+    await assert.rejects(
+      manager.withGenerationWorker(scratch, async (worker) => {
+        client = worker
+        child = worker.child
+        kill = child.kill
+        end = child.stdin.end
+        child.kill = () => false
+        child.stdin.end = () => child.stdin
+        worker.shutdownWaitMs = 25
+        await assert.rejects(worker.close(), { code: 'WORKER_EXIT_UNCONFIRMED' })
+        assert.equal(child.exitCode, null)
+        assert.equal(child.signalCode, null)
+        assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
+        assert.equal(await manager.readQualifiedInferenceReady(), null)
+        assert.equal(
+          await manager.withGenerationAdmission(scratch, async () =>
+            assert.fail('Rejected normal close must immediately revoke advisory readiness.'),
+          ),
+          null,
+        )
+        return 'callback-ended-with-unconfirmed-child'
+      }),
+      { code: 'WORKER_EXIT_UNCONFIRMED' },
+    )
+    assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
+    assert.equal(await manager.retryUnconfirmedGenerationExit(), false)
+    assert.equal(await manager.withGenerationWorker(scratch, async () => 'unsafe'), null)
+    assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+    child.kill = kill
+    child.stdin.end = end
+    assert.equal(await manager.retryUnconfirmedGenerationExit(), true)
+    assert.equal(child.exitCode !== null || child.signalCode !== null, true)
+    assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+  } finally {
+    if (child) {
+      child.kill = kill
+      child.stdin.end = end
+    }
+    await manager.retryUnconfirmedGenerationExit()
+    await client?.close()
+    if (child) assert.equal(child.exitCode !== null || child.signalCode !== null, true)
   }
 })

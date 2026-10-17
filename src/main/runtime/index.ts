@@ -8,10 +8,12 @@ import * as path from 'node:path'
 
 import type { GenerationWorkerLocation } from '../projects/generation-worker-client.js'
 import type { InferenceWorkerReady } from '../projects/illustrious-txt2img-job.js'
+import type { SmartPatchExecutionPreparationWorker } from '../projects/project-smart-patch-execution.js'
+import type { SmartPatchOutputWorker } from '../projects/smart-patch-generation-processor.js'
 import type { ProjectWorkerLocation } from '../projects/worker-client.js'
 
 import { GenerationWorkerClient } from '../projects/generation-worker-client.js'
-import { ProjectWorkerClient } from '../projects/worker-client.js'
+import { ProjectWorkerClient, ProjectWorkerError } from '../projects/worker-client.js'
 
 const POINTER_SCHEMA_VERSION = 1
 const MAX_POINTER_BYTES = 16 * 1024
@@ -54,6 +56,11 @@ export interface GenerationPreparation {
   targetWorker: Pick<ProjectWorkerClient, 'composeTarget'>
 }
 
+export interface SmartPatchGenerationPreparation {
+  inferenceReady: InferenceWorkerReady
+  preparationWorker: SmartPatchExecutionPreparationWorker
+}
+
 interface ActiveRuntimePointer {
   pythonExecutable: string
   runtimeId: string
@@ -83,7 +90,7 @@ interface GenerationLease {
   advisoryReadyKey: string | null
   client: GenerationWorkerClient | null
   key: string | null
-  phase: 'qualifying' | 'running' | 'unconfirmed-exit'
+  phase: 'closing' | 'qualifying' | 'running' | 'unconfirmed-exit'
   retry: Promise<boolean> | null
   runtimeId: string | null
 }
@@ -529,6 +536,24 @@ export class RuntimeManager {
     return await retry
   }
 
+  /** Processor owns this installed CPU child and must drain it before releasing its GPU lease. */
+  async startSmartPatchOutputWorker(
+    scratchBasePath: string,
+    signal: AbortSignal,
+  ): Promise<SmartPatchOutputWorker> {
+    const source = await this.resolveInstalledProjectWorker(scratchBasePath)
+    if (!source) {
+      throw new ProjectWorkerError(
+        'CLOSED',
+        'The installed Smart Patch output worker is unavailable.',
+      )
+    }
+    return await ProjectWorkerClient.start(source.location, {
+      environment: { ...source.environment, CUDA_VISIBLE_DEVICES: '' },
+      signal,
+    })
+  }
+
   /**
    * Admit metadata-only preparation using a qualified active child's fresh ready message. This
    * never shares its transport or takes ownership of its lease; busy inference must keep its
@@ -686,11 +711,6 @@ export class RuntimeManager {
     }
   }
 
-  /**
-   * Own one CUDA generation child from live qualification through the caller's last operation and
-   * confirmed child exit. The callback may cancel via worker.close(); final close is idempotent. A
-   * second caller receives null instead of queueing another GPU worker behind a long job.
-   */
   async withGenerationWorker<T>(
     scratchBasePath: string,
     use: (worker: GenerationWorkerClient, runtime: QualifiedGenerationWorker) => Promise<T>,
@@ -743,6 +763,28 @@ export class RuntimeManager {
         })
         lease.client = client
         lease.phase = 'running'
+        // A callback may close this exact transport before returning (Cancel/failure), or the
+        // lease may close it in finally. Track only an intentional close of a healthy child.
+        const close = client.close.bind(client)
+        client.close = async () => {
+          if (lease.phase === 'running') {
+            try {
+              if (isQualifiedInferenceWorkerReady(client.ready)) {
+                lease.phase = 'closing'
+              }
+            } catch {
+              // Unexpectedly closed/failed clients cannot lend normal-close readiness.
+            }
+          }
+          try {
+            await close()
+          } catch (error) {
+            // Revocation must be immediate even if the callback handles the rejected close.
+            // Only retryUnconfirmedGenerationExit may release this retained lease.
+            lease.phase = 'unconfirmed-exit'
+            throw error
+          }
+        }
         try {
           // Activation may race the second startup. Do not pass a stale environment to a job.
           const currentPointer = await readPointer(this.roots)
@@ -776,6 +818,100 @@ export class RuntimeManager {
     }
   }
 
+  /**
+   * Own one CUDA generation child from live qualification through the caller's last operation and
+   * confirmed child exit. The callback may cancel via worker.close(); final close is idempotent. A
+   * second caller receives null instead of queueing another GPU worker behind a long job.
+   */
+  async withSmartPatchGenerationPreparation<T>(
+    scratchBasePath: string,
+    use: (preparation: SmartPatchGenerationPreparation) => Promise<T>,
+  ): Promise<T | null> {
+    return await this.withGenerationAdmission(scratchBasePath, async (ready) => {
+      const generation = this.generationLease
+      if (
+        !generation?.key ||
+        generation.phase !== 'running' ||
+        this.preparationLease ||
+        ready.workerVersion !== '0.14.0' ||
+        !ready.capabilities.includes('smart-patch-execution') ||
+        !ready.capabilities.includes('smart-patch-seed-confirmation')
+      ) {
+        return null
+      }
+      let settle!: () => void
+      const preparation: PreparationLease = {
+        client: null,
+        controller: new AbortController(),
+        key: generation.key,
+        phase: 'starting',
+        runtimeId: generation.runtimeId,
+        startupSettled: new Promise<void>((resolve) => {
+          settle = resolve
+        }),
+      }
+      this.preparationLease = preparation
+      try {
+        const pointer = await readPointer(this.roots)
+        const prepared =
+          pointer.kind === 'valid'
+            ? await this.prepareQualification(pointer.value, scratchBasePath)
+            : null
+        if (
+          this.generationWorkPrevented ||
+          prepared?.key !== generation.key ||
+          this.hasUnconfirmedGenerationExit()
+        ) {
+          return null
+        }
+        const client = await ProjectWorkerClient.start(
+          {
+            pythonExecutable: prepared.worker.location.pythonExecutable,
+            runtimeRoot: prepared.worker.location.runtimeRoot,
+            stagingBasePath: scratchBasePath,
+          },
+          {
+            environment: { ...prepared.worker.environment, CUDA_VISIBLE_DEVICES: '' },
+            signal: preparation.controller.signal,
+          },
+        )
+        preparation.client = client
+        preparation.phase = 'running'
+        settle()
+        try {
+          const latestPointer = await readPointer(this.roots)
+          const latest =
+            latestPointer.kind === 'valid'
+              ? await this.prepareQualification(latestPointer.value, scratchBasePath)
+              : null
+          if (
+            this.generationWorkPrevented ||
+            this.hasUnconfirmedGenerationExit() ||
+            latest?.key !== generation.key
+          ) {
+            return null
+          }
+          return await use({ inferenceReady: copyInferenceReady(ready), preparationWorker: client })
+        } finally {
+          try {
+            await client.close()
+          } catch (error) {
+            preparation.phase = 'unconfirmed-exit'
+            throw error
+          }
+        }
+      } finally {
+        settle()
+        if (ProjectWorkerClient.hasUnconfirmedExit()) {
+          preparation.phase = 'unconfirmed-exit'
+        }
+        if (preparation.phase !== 'unconfirmed-exit' && this.preparationLease === preparation) {
+          this.preparationLease = null
+        }
+      }
+    })
+  }
+
   private async confirmPreviousExit(): Promise<boolean> {
     if (!this.unconfirmedClient) {
       return true
@@ -807,6 +943,13 @@ export class RuntimeManager {
     }
     if (lease.phase === 'unconfirmed-exit' || !lease.client) {
       return false
+    }
+    if (lease.phase === 'closing') {
+      return (
+        !this.unconfirmedClient &&
+        !GenerationWorkerClient.hasUnconfirmedStartExit() &&
+        !ProjectWorkerClient.hasUnconfirmedExit()
+      )
     }
     try {
       return isQualifiedInferenceWorkerReady(lease.client.ready)

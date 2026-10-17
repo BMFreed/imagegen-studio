@@ -14,8 +14,14 @@ import type {
   ProjectLoraIdentity,
   ProjectOpenResult,
   ProjectSaveResult,
+  ProjectSmartPatchAcceptRequest,
+  ProjectSmartPatchCandidateExportRequest,
+  ProjectSmartPatchDiscardRequest,
+  ProjectSmartPatchGenerateOptions,
   ProjectSmartPatchLayerChange,
   ProjectSmartPatchMaskEditRequest,
+  ProjectSmartPatchResultsSnapshot,
+  ProjectSmartPatchVariantChange,
   ProjectSummary,
   ProjectTab,
   RuntimeStatus,
@@ -69,6 +75,7 @@ import ApplyPresetModal from './components/ApplyPresetModal.vue'
 import {
   GenerationQueueResultNavigator,
   resultFocusCandidate,
+  smartResultFocusCandidate,
 } from './components/generation-queue-result.js'
 import GenerationQueueManager from './components/GenerationQueueManager.vue'
 import HomeView from './components/HomeView.vue'
@@ -80,6 +87,10 @@ import { createProjectPresetIntent } from './components/project-preset-draft.js'
 import ProjectView from './components/ProjectView.vue'
 import { createResultPresetIntent } from './components/result-preset-draft.js'
 import RuntimeNotice from './components/RuntimeNotice.vue'
+import {
+  captureSmartPatchVariantOwner,
+  smartPatchVariantOwnerAfterFlush,
+} from './components/smart-patch-variant-owner.js'
 import { imageGenNaiveTheme } from './theme/naive-theme.js'
 
 type RecoveryDecision = Extract<ProjectOpenResult, { kind: 'recovery-required' }>
@@ -100,6 +111,22 @@ type PendingGeneration = {
   tabId: string
   unfinishedJobIds: string[]
 }
+type SmartCandidateSelection = {
+  candidateIds: string[]
+  documentId: string
+  focusedCandidateId: string | null
+  layerId: string
+}
+type PendingSmartReview =
+  | {
+      candidateIds: string[]
+      kind: 'generate'
+      request: ProjectSmartPatchGenerateOptions
+      tabId: string
+      unfinishedJobIds: string[]
+    }
+  | { kind: 'accept'; request: ProjectSmartPatchAcceptRequest; tabId: string }
+  | { kind: 'discard'; request: ProjectSmartPatchDiscardRequest; tabId: string }
 type PendingProjectAction =
   | { kind: 'create' | 'import-finish' | 'import-select' | 'recover' }
   | { kind: 'open' | 'rebuild'; projectId: string }
@@ -182,6 +209,12 @@ const generationDraftOverlays = ref<Record<string, ProjectTab['generationDraft']
 const selectedProjectLayerIds = ref<Record<string, string | null>>({})
 const promptHistoryEpochs = ref<Record<string, number>>({})
 const generationResultsByTab = ref<Record<string, ProjectGenerationResultsSnapshot>>({})
+const smartPatchResultsByTab = ref<Record<string, ProjectSmartPatchResultsSnapshot>>({})
+const smartPatchResultsErrors = ref<Record<string, string | null>>({})
+const smartPatchResultsLoading = ref<Record<string, boolean>>({})
+const smartPatchResultRequests = new Map<string, number>()
+const pendingSmartReview = ref<PendingSmartReview | null>(null)
+const smartReviewError = ref<string | null>(null)
 const generationResultsErrors = ref<Record<string, string | null>>({})
 const generationResultsLoading = ref<Record<string, boolean>>({})
 const generationResultsRequests = new Map<string, number>()
@@ -767,6 +800,68 @@ async function refreshGenerationResults(tabId: string) {
   await readGenerationResults(tabId).catch(() => undefined)
 }
 
+async function readSmartPatchResults(tabId: string): Promise<ProjectSmartPatchResultsSnapshot> {
+  const owner = projectTabs.value.find((tab) => tab.id === tabId)
+  if (!owner) {
+    throw new Error('Open the Project before reading Smart Patch results.')
+  }
+  const request = (smartPatchResultRequests.get(tabId) ?? 0) + 1
+  smartPatchResultRequests.set(tabId, request)
+  smartPatchResultsLoading.value = { ...smartPatchResultsLoading.value, [tabId]: true }
+  smartPatchResultsErrors.value = { ...smartPatchResultsErrors.value, [tabId]: null }
+  const current = () =>
+    !rendererDisposed &&
+    smartPatchResultRequests.get(tabId) === request &&
+    projectTabs.value.some(
+      (tab) =>
+        tab.id === tabId &&
+        tab.documentId === owner.documentId &&
+        tab.documentRevision === owner.documentRevision,
+    )
+  try {
+    const snapshot = await apiValue(() => projectApi().listSmartPatchGenerationResults(tabId))
+    if (
+      snapshot.documentId !== owner.documentId ||
+      snapshot.documentRevision !== owner.documentRevision
+    ) {
+      throw new Error(
+        'The Project changed while Smart Patch results were being read. Refresh to retry.',
+      )
+    }
+    if (current()) {
+      smartPatchResultsByTab.value = { ...smartPatchResultsByTab.value, [tabId]: snapshot }
+    }
+    return snapshot
+  } catch (cause) {
+    if (current()) {
+      smartPatchResultsErrors.value = {
+        ...smartPatchResultsErrors.value,
+        [tabId]: errorMessage(cause),
+      }
+    }
+    throw cause
+  } finally {
+    if (current()) {
+      smartPatchResultsLoading.value = { ...smartPatchResultsLoading.value, [tabId]: false }
+    }
+  }
+}
+async function refreshSmartPatchResults(tabId: string) {
+  await readSmartPatchResults(tabId).catch(() => undefined)
+}
+watch(
+  [
+    () => activeTab.value?.id,
+    () => activeTab.value?.documentId,
+    () => activeTab.value?.documentRevision,
+  ],
+  ([tabId]) => {
+    if (tabId) {
+      void refreshSmartPatchResults(tabId)
+    }
+  },
+)
+
 function generationDocumentIsOpen(tabId: string, documentId: string): boolean {
   return (
     !rendererDisposed &&
@@ -814,6 +909,7 @@ function refreshOpenGeneration() {
   for (const tab of projectTabs.value) {
     void refreshGenerationState(tab.id)
     void refreshGenerationResults(tab.id)
+    void refreshSmartPatchResults(tab.id)
   }
 }
 
@@ -830,6 +926,7 @@ function refreshQueueResults() {
   for (const tab of projectTabs.value) {
     void refreshGenerationState(tab.id)
     void refreshGenerationResults(tab.id)
+    void refreshSmartPatchResults(tab.id)
   }
 }
 
@@ -1021,6 +1118,7 @@ const queueResultNavigator = new GenerationQueueResultNavigator({
       ? null
       : (projectTabs.value.find((tab) => tab.id === projectKey)?.documentId ?? null),
   readResults: readGenerationResults,
+  readSmartResults: readSmartPatchResults,
 })
 
 watch(generationQueueOpen, (open) => {
@@ -1035,10 +1133,15 @@ function applyQueueResultFocus(focus: GenerationResultFocusRequest): boolean {
   )
   if (
     !tab ||
-    !resultFocusCandidate(focus, generationResultsByTab.value[tab.id]?.candidates ?? [], {
-      documentId: tab.documentId,
-      projectKey: tab.id,
-    })
+    !(focus.targetKind === 'smart-patch'
+      ? smartResultFocusCandidate(focus, smartPatchResultsByTab.value[tab.id]?.candidates ?? [], {
+          documentId: tab.documentId,
+          projectKey: tab.id,
+        })
+      : resultFocusCandidate(focus, generationResultsByTab.value[tab.id]?.candidates ?? [], {
+          documentId: tab.documentId,
+          projectKey: tab.id,
+        }))
   ) {
     return false
   }
@@ -1209,8 +1312,9 @@ async function flushProjectDraft(tabId: string) {
 }
 
 async function generateProject(tabId: string, iterations: number) {
-  if (patchTargetId(tabId)) {
-    setTabError(tabId, 'Smart Patch generation is not available yet.')
+  const layerId = patchTargetId(tabId)
+  if (layerId) {
+    await generateSmartPatchProject(tabId, layerId, iterations)
     return
   }
   const tab = projectTabs.value.find((candidate) => candidate.id === tabId)
@@ -1231,6 +1335,353 @@ async function generateProject(tabId: string, iterations: number) {
     return
   }
   await requestGeneration(tabId, iterations)
+}
+
+function smartOwnerCurrent(
+  tabId: string,
+  documentId: string,
+  documentRevision: string,
+  layerId: string,
+  requireEligible = true,
+): boolean {
+  const tab = projectTabs.value.find((candidate) => candidate.id === tabId)
+  const layer = tab?.layers.find((candidate) => candidate.id === layerId)
+  return Boolean(
+    tab &&
+    tab.documentId === documentId &&
+    tab.documentRevision === documentRevision &&
+    layer?.kind === 'smart-patch' &&
+    (!requireEligible || (!layer.locked && layer.visible)),
+  )
+}
+async function generateSmartPatchProject(tabId: string, layerId: string, iterations: number) {
+  const tab = projectTabs.value.find((candidate) => candidate.id === tabId)
+  if (
+    !tab ||
+    pendingProjectAction.value ||
+    windowClosePending.value ||
+    reloadRequiredIds.value.has(tabId) ||
+    draftValidity.value[tabId] === false ||
+    runtimeUnavailableReason.value !== null ||
+    !Number.isSafeInteger(iterations) ||
+    iterations < 1 ||
+    iterations > 100 ||
+    !smartOwnerCurrent(tabId, tab.documentId, tab.documentRevision, layerId)
+  ) {
+    return
+  }
+  await submitSmartPatchGeneration(tabId, {
+    documentId: tab.documentId,
+    documentRevision: tab.documentRevision,
+    iterations,
+    kind: 'smart-patch',
+    layerId,
+  })
+}
+async function submitSmartPatchGeneration(
+  tabId: string,
+  request: ProjectSmartPatchGenerateOptions,
+) {
+  pendingProjectAction.value = { kind: 'generate', tabId }
+  generationCommitting.value = true
+  setTabError(tabId, null)
+  smartReviewError.value = null
+  try {
+    await flushProjectDraft(tabId)
+    if (
+      activeTab.value?.id !== tabId ||
+      !smartOwnerCurrent(tabId, request.documentId, request.documentRevision, request.layerId) ||
+      patchTargetId(tabId) !== request.layerId
+    ) {
+      throw new Error(
+        'Project inputs were saved to the draft or changed. Review this Smart Patch and try Generate again.',
+      )
+    }
+    const result = await apiValue(() => projectApi().generateSmartPatch(tabId, request))
+    if (!generationDocumentIsOpen(tabId, request.documentId) || windowClosePending.value) {
+      return
+    }
+    if (result.documentId !== request.documentId || result.layerId !== request.layerId) {
+      throw new Error('Generation returned a different Smart Patch owner.')
+    }
+    if (result.kind === 'confirmation-required') {
+      pendingSmartReview.value = {
+        candidateIds: [...result.candidateIds],
+        kind: 'generate',
+        request: { ...request, confirmation: undefined },
+        tabId,
+        unfinishedJobIds: [...result.unfinishedJobIds],
+      }
+    } else {
+      pendingSmartReview.value = null
+      generationNotices.value = {
+        ...generationNotices.value,
+        [tabId]: result.truncated
+          ? 'Max prompts limited the concrete prompts in this Smart Patch batch.'
+          : null,
+      }
+    }
+  } catch (cause) {
+    if (pendingSmartReview.value) {
+      smartReviewError.value = errorMessage(cause)
+    } else {
+      setTabError(tabId, errorMessage(cause))
+    }
+  } finally {
+    generationCommitting.value = false
+    if (!pendingSmartReview.value) {
+      pendingProjectAction.value = null
+    }
+    refreshOpenGeneration()
+  }
+}
+
+function cancelSmartReview() {
+  if (generationCommitting.value || acceptanceCommitting.value) {
+    return
+  }
+  pendingSmartReview.value = null
+  smartReviewError.value = null
+  pendingProjectAction.value = null
+}
+async function confirmSmartReview() {
+  const review = pendingSmartReview.value
+  if (
+    !review ||
+    generationCommitting.value ||
+    acceptanceCommitting.value ||
+    windowClosePending.value
+  ) {
+    return
+  }
+  await (review.kind === 'generate'
+    ? submitSmartPatchGeneration(review.tabId, {
+        ...review.request,
+        confirmation: {
+          candidateIds: [...review.candidateIds],
+          unfinishedJobIds: [...review.unfinishedJobIds],
+        },
+      })
+    : commitSmartPatchResults(review))
+}
+
+async function acceptSmartPatchResults(tabId: string, selection: SmartCandidateSelection) {
+  if (
+    pendingProjectAction.value ||
+    windowClosePending.value ||
+    reloadRequiredIds.value.has(tabId) ||
+    selection.candidateIds.length === 0
+  ) {
+    return
+  }
+  pendingProjectAction.value = { kind: 'accept-candidate', tabId }
+  setTabError(tabId, null)
+  try {
+    const snapshot = await readSmartPatchResults(tabId)
+    if (snapshot.recoveryUnavailable) {
+      throw new Error('Smart Patch result recovery is unavailable.')
+    }
+    const target = snapshot.targets.find(
+      (candidate) =>
+        candidate.documentId === selection.documentId && candidate.layerId === selection.layerId,
+    )
+    const candidates = snapshot.candidates.filter(
+      (candidate) =>
+        candidate.documentId === selection.documentId && candidate.layerId === selection.layerId,
+    )
+    if (
+      target?.disposition !== 'available' ||
+      selection.documentId !== snapshot.documentId ||
+      new Set(selection.candidateIds).size !== selection.candidateIds.length ||
+      selection.candidateIds.some(
+        (id) => !candidates.some((candidate) => candidate.candidateId === id),
+      )
+    ) {
+      throw new Error(
+        'The selected Smart Patch results changed or their target is unavailable. Review them before Add.',
+      )
+    }
+    const request: ProjectSmartPatchAcceptRequest = {
+      candidateIds: [...selection.candidateIds],
+      documentId: snapshot.documentId,
+      documentRevision: snapshot.documentRevision,
+      expectedAvailableIds: candidates.map(({ candidateId }) => candidateId),
+      expectedUnfinishedJobIds: [...target.unfinishedJobIds],
+      focusedCandidateId: selection.focusedCandidateId,
+      kind: 'smart-patch',
+      layerId: selection.layerId,
+    }
+    const review: Extract<PendingSmartReview, { kind: 'accept' }> = {
+      kind: 'accept',
+      request,
+      tabId,
+    }
+    if (
+      request.expectedAvailableIds.length > request.candidateIds.length ||
+      request.expectedUnfinishedJobIds.length
+    ) {
+      pendingSmartReview.value = review
+    } else {
+      await commitSmartPatchResults(review)
+    }
+  } catch (cause) {
+    setTabError(tabId, errorMessage(cause))
+  } finally {
+    if (!pendingSmartReview.value && !acceptanceCommitting.value) {
+      pendingProjectAction.value = null
+    }
+  }
+}
+
+async function discardSmartPatchResults(
+  tabId: string,
+  scope: { documentId: string; layerId: string },
+) {
+  if (
+    pendingProjectAction.value ||
+    windowClosePending.value ||
+    reloadRequiredIds.value.has(tabId)
+  ) {
+    return
+  }
+  pendingProjectAction.value = { kind: 'accept-candidate', tabId }
+  setTabError(tabId, null)
+  try {
+    const snapshot = await readSmartPatchResults(tabId)
+    if (snapshot.recoveryUnavailable) {
+      throw new Error('Smart Patch result recovery is unavailable.')
+    }
+    const target = snapshot.targets.find(
+      (candidate) =>
+        candidate.documentId === scope.documentId && candidate.layerId === scope.layerId,
+    )
+    if (!target) {
+      throw new Error('These Smart Patch results changed. Refresh and review them again.')
+    }
+    pendingSmartReview.value = {
+      kind: 'discard',
+      request: {
+        documentId: snapshot.documentId,
+        documentRevision: snapshot.documentRevision,
+        expectedAvailableIds: snapshot.candidates
+          .filter(
+            (candidate) =>
+              candidate.documentId === scope.documentId && candidate.layerId === scope.layerId,
+          )
+          .map(({ candidateId }) => candidateId),
+        expectedUnfinishedJobIds: [...target.unfinishedJobIds],
+        kind: 'smart-patch',
+        layerId: scope.layerId,
+        sourceDocumentId: scope.documentId,
+      },
+      tabId,
+    }
+  } catch (cause) {
+    setTabError(tabId, errorMessage(cause))
+    pendingProjectAction.value = null
+  }
+}
+
+async function commitSmartPatchResults(
+  review: Extract<PendingSmartReview, { kind: 'accept' | 'discard' }>,
+) {
+  acceptanceCommitting.value = true
+  smartReviewError.value = null
+  try {
+    await flushProjectDraft(review.tabId)
+    const tab = projectTabs.value.find((candidate) => candidate.id === review.tabId)
+    if (
+      !tab ||
+      tab.documentId !== review.request.documentId ||
+      tab.documentRevision !== review.request.documentRevision
+    ) {
+      throw new Error(
+        'Project inputs were saved to the draft or changed. Review the results and try again.',
+      )
+    }
+    if (review.kind === 'accept') {
+      if (
+        !smartOwnerCurrent(
+          review.tabId,
+          review.request.documentId,
+          review.request.documentRevision,
+          review.request.layerId,
+        )
+      ) {
+        throw new Error(
+          'Unlock and show the exact Smart Patch before Add. Temporary results were kept.',
+        )
+      }
+      replaceTab(
+        await apiValue(() => projectApi().acceptSmartPatchVariants(review.tabId, review.request)),
+      )
+      saveNotices.value = { ...saveNotices.value, [review.tabId]: null }
+    } else {
+      const result = await apiValue(() =>
+        projectApi().discardSmartPatchGenerationResults(review.tabId, review.request),
+      )
+      if (result.cleanupDeferred) {
+        generationNotices.value = {
+          ...generationNotices.value,
+          [review.tabId]:
+            'Smart Patch results were discarded. Temporary file cleanup will retry later.',
+        }
+      }
+    }
+  } catch (cause) {
+    if (review.kind === 'accept') {
+      try {
+        const opened = await apiValue(() => projectApi().open(review.tabId))
+        if (opened.kind === 'opened') {
+          replaceTab(opened.tab)
+        }
+      } catch {
+        /* Preserve the authoritative operation error. */
+      }
+    }
+    setTabError(
+      review.tabId,
+      `${review.kind === 'accept' ? 'Smart Patch acceptance could not be confirmed. Check variants and temporary results before retrying. ' : ''}${errorMessage(cause)}`,
+    )
+  } finally {
+    pendingSmartReview.value = null
+    acceptanceCommitting.value = false
+    pendingProjectAction.value = null
+    refreshOpenGeneration()
+  }
+}
+
+async function exportSmartPatchCandidate(
+  tabId: string,
+  request: ProjectSmartPatchCandidateExportRequest,
+) {
+  if (pendingProjectAction.value || windowClosePending.value) {
+    return
+  }
+  pendingProjectAction.value = { kind: 'export-candidate', tabId }
+  clearExportFeedback(tabId)
+  try {
+    const result = await apiValue(() => projectApi().saveSmartPatchCandidateImage(tabId, request))
+    if (result.kind === 'saved') {
+      exportFeedbackByTab.value = {
+        ...exportFeedbackByTab.value,
+        [tabId]: {
+          kind: 'success',
+          message: `Saved ${result.fileName}. The candidate remains temporary.`,
+        },
+      }
+    }
+  } catch (cause) {
+    exportFeedbackByTab.value = {
+      ...exportFeedbackByTab.value,
+      [tabId]: {
+        kind: 'error',
+        message: `Candidate image could not be saved. ${errorMessage(cause)}`,
+      },
+    }
+  } finally {
+    pendingProjectAction.value = null
+  }
 }
 
 async function requestGeneration(tabId: string, iterations: number, decision?: PendingGeneration) {
@@ -1380,6 +1831,17 @@ async function cancelCurrentGeneration(tabId: string) {
 }
 
 function forgetGenerationUi(tabId: string, forgetCount: boolean) {
+  smartPatchResultRequests.set(tabId, (smartPatchResultRequests.get(tabId) ?? 0) + 1)
+  const { [tabId]: _closedSmartResults, ...smartResults } = smartPatchResultsByTab.value
+  const { [tabId]: _closedSmartError, ...smartErrors } = smartPatchResultsErrors.value
+  const { [tabId]: _closedSmartLoading, ...smartLoading } = smartPatchResultsLoading.value
+  smartPatchResultsByTab.value = smartResults
+  smartPatchResultsErrors.value = smartErrors
+  smartPatchResultsLoading.value = smartLoading
+  if (pendingSmartReview.value?.tabId === tabId) {
+    pendingSmartReview.value = null
+    smartReviewError.value = null
+  }
   generationStateRequests.set(tabId, (generationStateRequests.get(tabId) ?? 0) + 1)
   generationCommandRequests.set(tabId, (generationCommandRequests.get(tabId) ?? 0) + 1)
   generationCancelRequests.set(tabId, (generationCancelRequests.get(tabId) ?? 0) + 1)
@@ -1615,6 +2077,52 @@ async function editActiveSmartPatchMask(
 function updateActiveSmartPatchLayer(layerId: string, change: ProjectSmartPatchLayerChange) {
   if (activeTab.value) {
     void updateSmartPatchLayer(activeTab.value.id, layerId, change)
+  }
+}
+
+async function updateActiveSmartPatchVariant(
+  layerId: string,
+  change: ProjectSmartPatchVariantChange,
+) {
+  const tab = activeTab.value
+  if (
+    !tab ||
+    pendingProjectAction.value ||
+    windowClosePending.value ||
+    reloadRequiredIds.value.has(tab.id)
+  ) {
+    return
+  }
+  const owner = captureSmartPatchVariantOwner(tab, layerId, change)
+  if (!owner) {
+    setTabError(tab.id, 'The Project changed. Review the variants and try again.')
+    return
+  }
+  const tabId = tab.id
+  pendingProjectAction.value = { kind: 'layer', tabId }
+  setTabError(tabId, null)
+  try {
+    await flushProjectDraft(tabId)
+    const current = projectTabs.value.find((candidate) => candidate.id === tabId)
+    if (activeTab.value?.id !== tabId || !smartPatchVariantOwnerAfterFlush(owner, current)) {
+      throw new Error(
+        'Project inputs were saved to the draft or changed. Review the variants and try again.',
+      )
+    }
+    if (!current) {
+      return
+    }
+    const request = {
+      ...change,
+      documentId: current.documentId,
+      documentRevision: current.documentRevision,
+    }
+    replaceTab(await apiValue(() => projectApi().updateSmartPatchVariant(tabId, layerId, request)))
+    saveNotices.value = { ...saveNotices.value, [tabId]: null }
+  } catch (cause) {
+    setTabError(tabId, errorMessage(cause))
+  } finally {
+    pendingProjectAction.value = null
   }
 }
 
@@ -2842,6 +3350,13 @@ onMounted(() => {
     unsubscribeBeforeWindowClose = globalThis.window.api?.projects.onBeforeWindowClose(
       async (setDecisionPending) => {
         windowClosePending.value = true
+        if (
+          pendingSmartReview.value &&
+          !generationCommitting.value &&
+          !acceptanceCommitting.value
+        ) {
+          cancelSmartReview()
+        }
         queueResultNavigator.cancel()
         if (pendingAcceptance.value && !acceptanceCommitting.value) {
           cancelAcceptance()
@@ -3062,8 +3577,12 @@ onBeforeUnmount(() => {
           :reloadRequired="reloadRequiredIds.has(activeTab.id)"
           :runtimeUnavailableReason
           :saveNotice="saveNotices[activeTab.id] ?? null"
+          :smartPatchResults="smartPatchResultsByTab[activeTab.id] ?? null"
+          :smartPatchResultsError="smartPatchResultsErrors[activeTab.id] ?? null"
+          :smartPatchResultsLoading="smartPatchResultsLoading[activeTab.id] ?? false"
           :tab="activeTab"
           @acceptCandidates="acceptGenerationCandidates(activeTab.id, $event)"
+          @acceptSmartPatch="acceptSmartPatchResults(activeTab.id, $event)"
           @acceptedHistoryFocusHandled="
             acceptedHistoryFocus?.requestId === $event && (acceptedHistoryFocus = null)
           "
@@ -3074,7 +3593,9 @@ onBeforeUnmount(() => {
           @choosePreset="chooseProjectPreset(activeTab.id, $event)"
           @clearExportFeedback="clearExportFeedback(activeTab.id)"
           @clearHistory="runProjectHistoryAction(activeTab.id, 'clear-history')"
+          @discardSmartPatch="discardSmartPatchResults(activeTab.id, $event)"
           @editMask="editActiveSmartPatchMask"
+          @exportSmartPatch="exportSmartPatchCandidate(activeTab.id, $event)"
           @generate="generateProject(activeTab.id, $event)"
           @importImage="importActiveRasterImage"
           @manageModels="openModelManager($event)"
@@ -3085,6 +3606,7 @@ onBeforeUnmount(() => {
           @refreshGenerationState="refreshGenerationState(activeTab.id)"
           @refreshModels="refreshModelCatalog"
           @refreshPresets="refreshPresetCatalog"
+          @refreshSmartPatch="refreshSmartPatchResults(activeTab.id)"
           @relinkEmbedding="relinkGenerationEmbedding(activeTab.id, $event)"
           @relinkLora="relinkGenerationLora(activeTab.id, $event)"
           @relinkModel="relinkGenerationModel(activeTab.id)"
@@ -3102,6 +3624,7 @@ onBeforeUnmount(() => {
           @updateDraft="updateActiveGenerationDraft"
           @updateLayer="updateActiveRasterLayer"
           @updatePatch="updateActiveSmartPatchLayer"
+          @updatePatchVariant="updateActiveSmartPatchVariant"
           @validateDraft="setDraftValidity"
         />
         <NEmpty v-else class="empty-document" description="No document open">
@@ -3168,6 +3691,9 @@ onBeforeUnmount(() => {
         :resultOpeningId="queueResultOpeningId"
         :resultSnapshots="generationResultsByTab"
         :runtimeUnavailableReason
+        :smartResultErrors="smartPatchResultsErrors"
+        :smartResultLoading="smartPatchResultsLoading"
+        :smartResultSnapshots="smartPatchResultsByTab"
         @changed="refreshOpenGeneration"
         @openProject="openQueueProject"
         @openResult="openQueueResult"
@@ -3226,6 +3752,81 @@ onBeforeUnmount(() => {
         @create="createProject"
         @refreshPresets="refreshPresetCatalog"
       />
+
+      <NModal
+        :closeOnEsc="!generationCommitting && !acceptanceCommitting"
+        :maskClosable="false"
+        :show="pendingSmartReview !== null"
+        @update:show="!$event && cancelSmartReview()"
+      >
+        <NCard
+          aria-label="Review Smart Patch results"
+          class="dialog-card"
+          contentScrollable
+          role="dialog"
+          size="small"
+          :title="
+            pendingSmartReview?.kind === 'generate'
+              ? 'Replace Smart Patch temporary results?'
+              : pendingSmartReview?.kind === 'discard'
+                ? 'Discard Smart Patch results?'
+                : 'Add selected Smart Patch variants?'
+          "
+        >
+          <template v-if="pendingSmartReview?.kind === 'generate'">
+            <p>
+              This Smart Patch has {{ pendingSmartReview.candidateIds.length }} temporary results
+              and {{ pendingSmartReview.unfinishedJobIds.length }} unfinished jobs. Starting again
+              discards those results and cancels those jobs.
+            </p>
+          </template>
+          <template v-else-if="pendingSmartReview?.kind === 'accept'">
+            <p>
+              Add {{ pendingSmartReview.request.candidateIds.length }} selected results as variants.
+              This discards
+              {{
+                pendingSmartReview.request.expectedAvailableIds.length -
+                pendingSmartReview.request.candidateIds.length
+              }}
+              unchecked results and cancels
+              {{ pendingSmartReview.request.expectedUnfinishedJobIds.length }} unfinished jobs for
+              this exact Smart Patch.
+            </p>
+          </template>
+          <template v-else-if="pendingSmartReview?.kind === 'discard'">
+            <p>
+              Discard {{ pendingSmartReview.request.expectedAvailableIds.length }} temporary results
+              and cancel {{ pendingSmartReview.request.expectedUnfinishedJobIds.length }} unfinished
+              jobs for this exact Smart Patch?
+            </p>
+          </template>
+          <p>Other Smart Patches and Project Canvas results are kept.</p>
+          <NAlert v-if="smartReviewError" :showIcon="false" type="error">
+            {{ smartReviewError }}
+          </NAlert>
+          <div class="dialog-actions">
+            <NButton
+              :disabled="generationCommitting || acceptanceCommitting"
+              @click="cancelSmartReview"
+            >
+              Keep results
+            </NButton>
+            <NButton
+              :loading="generationCommitting || acceptanceCommitting"
+              :type="pendingSmartReview?.kind === 'discard' ? 'error' : 'primary'"
+              @click="confirmSmartReview"
+            >
+              {{
+                pendingSmartReview?.kind === 'generate'
+                  ? 'Discard and Generate'
+                  : pendingSmartReview?.kind === 'discard'
+                    ? 'Discard results'
+                    : 'Add selected variants'
+              }}
+            </NButton>
+          </div>
+        </NCard>
+      </NModal>
 
       <NModal
         :closeOnEsc="pendingProjectAction?.kind !== 'recover'"

@@ -7,7 +7,12 @@ import type {
   ProjectGenerationDraftChange,
   ProjectGenerationResultsSnapshot,
   ProjectLoraIdentity,
+  ProjectSmartPatchCandidateExportRequest,
+  ProjectSmartPatchGenerationTargetState,
+  ProjectSmartPatchLayerView,
   ProjectSmartPatchMaskEditRequest,
+  ProjectSmartPatchResultsSnapshot,
+  ProjectSmartPatchVariantChange,
   ProjectTab,
 } from '../../shared/api.js'
 import type { PresetRecord } from '../../shared/presets/preset-schema.js'
@@ -138,6 +143,7 @@ import ProjectVaePicker from './ProjectVaePicker.vue'
 import { promptEmbeddingDiagnosticReason } from './prompt-embeddings-codemirror.js'
 import PromptEmbeddingDiagnostics from './PromptEmbeddingDiagnostics.vue'
 import ResolutionControl from './ResolutionControl.vue'
+import SmartPatchVariantsBrowser from './SmartPatchVariantsBrowser.vue'
 import { vaePrecisionGenerationReason } from './vae-precision-control.js'
 
 const props = defineProps<{
@@ -171,6 +177,9 @@ const props = defineProps<{
   reloadRequired: boolean
   runtimeUnavailableReason: string | null
   saveNotice: string | null
+  smartPatchResults: ProjectSmartPatchResultsSnapshot | null
+  smartPatchResultsError: string | null
+  smartPatchResultsLoading: boolean
   tab: ProjectTab
 }>()
 
@@ -191,6 +200,14 @@ const currentProgress = computed(() => {
 const emit = defineEmits<{
   acceptCandidates: [selection: { candidateIds: string[]; focusedCandidateId: string | null }]
   acceptedHistoryFocusHandled: [requestId: number]
+  acceptSmartPatch: [
+    selection: {
+      candidateIds: string[]
+      documentId: string
+      focusedCandidateId: string | null
+      layerId: string
+    },
+  ]
   addLora: [identity: ProjectLoraIdentity]
   addPatch: []
   applyBbox: [rect: IgsRectV1]
@@ -198,7 +215,9 @@ const emit = defineEmits<{
   choosePreset: [id: string]
   clearExportFeedback: []
   clearHistory: []
+  discardSmartPatch: [scope: { documentId: string; layerId: string }]
   editMask: [layerId: string, request: ProjectSmartPatchMaskEditRequest]
+  exportSmartPatch: [request: ProjectSmartPatchCandidateExportRequest]
   generate: [iterations: number]
   importImage: []
   manageModels: [focus: ModelManagerFocus | null]
@@ -209,6 +228,7 @@ const emit = defineEmits<{
   refreshGenerationState: []
   refreshModels: []
   refreshPresets: []
+  refreshSmartPatch: []
   relinkEmbedding: [identity: ProjectEmbeddingIdentity]
   relinkLora: [identity: ProjectLoraIdentity]
   relinkModel: []
@@ -226,6 +246,7 @@ const emit = defineEmits<{
   updateDraft: [change: ProjectGenerationDraftChange, historyGroupId?: string]
   updateLayer: [layerId: string, change: Parameters<ProjectApi['updateRasterLayer']>[2]]
   updatePatch: [layerId: string, change: Parameters<ProjectApi['updateSmartPatchLayer']>[2]]
+  updatePatchVariant: [layerId: string, change: ProjectSmartPatchVariantChange]
   validateDraft: [tabId: string, valid: boolean]
 }>()
 
@@ -1000,11 +1021,13 @@ const samplingFamilyNotice = computed(() => {
     : null
 })
 const denoisingRuntimeSupported = computed(() =>
-  denoisingRuntimeSupport(
-    selectedModel.value?.baseModelFamily ?? null,
-    props.generationState,
-    targetState.value?.mode ?? null,
-  ),
+  activePatch.value
+    ? (props.generationState?.smartPatchSupported ?? false)
+    : denoisingRuntimeSupport(
+        selectedModel.value?.baseModelFamily ?? null,
+        props.generationState,
+        targetState.value?.mode ?? null,
+      ),
 )
 const samplerOptions = computed(() => {
   const options = [...new Set(ILLUSTRIOUS_SCHEDULER_PAIRS.map((pair) => pair.sampler))].map(
@@ -1119,6 +1142,82 @@ const advancedOptionsValid = ref(true)
 const denoisingValid = ref(true)
 const targetState = ref<ProjectGenerationTargetState | null>(null)
 const targetError = ref<string | null>(null)
+const smartTargetState = ref<ProjectSmartPatchGenerationTargetState | null>(null)
+const smartTargetError = ref<string | null>(null)
+let smartTargetRequest = 0
+watch(
+  [
+    () => props.tab.id,
+    () => props.tab.documentId,
+    () => props.tab.documentRevision,
+    () => activePatch.value?.id,
+    () => props.draftPending,
+    () => props.runtimeUnavailableReason,
+    () => props.generationState?.smartPatchSupported,
+  ],
+  async () => {
+    const request = ++smartTargetRequest
+    smartTargetState.value = null
+    smartTargetError.value = null
+    const layerId = activePatch.value?.id
+    if (!layerId) {
+      return
+    }
+    if (props.draftPending) {
+      smartTargetError.value = 'Waiting for draft changes…'
+      return
+    }
+    const { documentId, documentRevision, id: tabId } = props.tab
+    const current = () =>
+      request === smartTargetRequest &&
+      props.tab.id === tabId &&
+      props.tab.documentId === documentId &&
+      props.tab.documentRevision === documentRevision &&
+      activePatch.value?.id === layerId &&
+      !props.draftPending
+    try {
+      const api = globalThis.window.api?.projects
+      if (!api) {
+        throw new Error('The application connection is unavailable.')
+      }
+      const result = await api.getSmartPatchGenerationTargetState(
+        tabId,
+        documentId,
+        documentRevision,
+        layerId,
+      )
+      if (!current()) {
+        return
+      }
+      if (!result.ok) {
+        throw new Error(result.error.message)
+      }
+      if (
+        result.value.documentId !== documentId ||
+        result.value.documentRevision !== documentRevision ||
+        result.value.layerId !== layerId
+      ) {
+        throw new Error('Smart Patch inputs changed. Review the target again.')
+      }
+      smartTargetState.value = result.value
+    } catch (cause) {
+      if (current()) {
+        smartTargetError.value =
+          cause instanceof Error ? cause.message : 'Smart Patch inputs could not be inspected.'
+      }
+    }
+  },
+  { immediate: true },
+)
+onBeforeUnmount(() => {
+  smartTargetRequest += 1
+})
+const denoisingTarget = computed(() =>
+  activePatch.value ? smartTargetState.value : targetState.value,
+)
+const denoisingTargetError = computed(() =>
+  activePatch.value ? smartTargetError.value : targetError.value,
+)
 const targetReader = new GenerationTargetReader({
   onState: (state, error) => {
     targetState.value = state
@@ -1355,6 +1454,43 @@ function restoreInvalidFixedSeed() {
 }
 
 const layersPanel = ref<InstanceType<typeof ProjectLayerStack> | null>(null)
+const patchVariantsOpen = ref(false)
+const patchVariantsLayerId = ref<string | null>(null)
+const patchVariantsLayer = computed<ProjectSmartPatchLayerView | null>(() => {
+  const layer = props.tab.layers.find((candidate) => candidate.id === patchVariantsLayerId.value)
+  return layer?.kind === 'smart-patch' ? layer : null
+})
+function openPatchVariants(layerId: string) {
+  if (!props.tab.layers.some((layer) => layer.id === layerId && layer.kind === 'smart-patch')) {
+    return
+  }
+  comparisonLayerId.value = null
+  patchVariantsLayerId.value = layerId
+  patchVariantsOpen.value = true
+}
+function patchVariantsClosed() {
+  const layerId = patchVariantsLayerId.value
+  patchVariantsLayerId.value = null
+  if (layerId) {
+    void nextTick(() => {
+      const row = layersPanel.value?.$el.querySelector(
+        `[data-layer-id="${CSS.escape(layerId)}"]`,
+      ) as HTMLElement | null
+      row
+        ?.querySelector<HTMLElement>('[data-patch-variants-trigger]')
+        ?.focus({ preventScroll: true })
+    })
+  }
+}
+watch([() => props.tab.id, () => props.tab.documentId, selectedLayerId], () => {
+  patchVariantsOpen.value = false
+  patchVariantsLayerId.value = null
+})
+watch(patchVariantsLayer, (layer) => {
+  if (!layer) {
+    patchVariantsOpen.value = false
+  }
+})
 const comparisonLayerId = ref<string | null>(null)
 const comparisonData = ref<RasterGenerationData | null>(null)
 const comparisonLoading = ref(false)
@@ -1784,8 +1920,8 @@ function commitInternalAfterUpdate() {
 }
 
 const generationBlockingReason = computed(() => {
-  if (activePatch.value) {
-    return 'Smart Patch generation is not available yet.'
+  if (activePatch.value?.locked || (activePatch.value && !activePatch.value.visible)) {
+    return 'Unlock and show this Smart Patch before generating.'
   }
   if (rawBboxInvalid.height || rawBboxInvalid.width || !validBbox.value) {
     return 'Enter a valid generation area size and press Enter before generating.'
@@ -1847,6 +1983,62 @@ const generationBlockingReason = computed(() => {
   }
   if (props.generationState.phase === 'preparing') {
     return 'Wait for the current batch to finish preparing.'
+  }
+  if (activePatch.value) {
+    if (
+      rawInternalInvalid.width ||
+      rawInternalInvalid.height ||
+      internalSize.value.width !== activePatch.value.internalResolution.width ||
+      internalSize.value.height !== activePatch.value.internalResolution.height
+    ) {
+      return 'Enter a valid Smart Patch internal size and press Enter before generating.'
+    }
+    if (!props.generationState.smartPatchSupported) {
+      return 'The current image engine does not support Smart Patch generation. Repair or update the runtime.'
+    }
+    if (!smartTargetState.value) {
+      return smartTargetError.value ?? 'Checking Smart Patch input pixels…'
+    }
+    if (smartTargetState.value.unavailableReason) {
+      return smartTargetState.value.unavailableReason
+    }
+    if (selectedModel.value.baseModelFamily === 'anima') {
+      const reason =
+        animaEngineReason(props.generationState.animaSupported) ??
+        animaDraftGenerationReason(props.generationDraft)
+      if (reason) {
+        return reason
+      }
+    }
+    if (
+      (props.generationDraft.positivePrompt.embeddingRefs.length ||
+        props.generationDraft.negativePrompt.embeddingRefs.length) &&
+      !props.generationState.embeddingsSupported
+    ) {
+      return 'This image engine does not support embeddings yet. Remove their activation tokens to generate.'
+    }
+    const capabilityReason =
+      externalVaeGenerationReason(
+        props.generationDraft.vae,
+        props.generationState.externalVaeSupported,
+      ) ??
+      cfgRescaleGenerationCapabilityReason(
+        props.generationDraft.cfgRescale,
+        props.generationState.cfgRescaleSupported,
+      ) ??
+      vaePrecisionGenerationReason(
+        props.generationDraft.vaePrecision,
+        props.generationState.vaePrecisionSupported,
+      )
+    if (capabilityReason) {
+      return capabilityReason
+    }
+    return denoisingGenerationReason(
+      smartTargetState.value.mode,
+      props.generationDraft.sampling.denoisingStrength,
+      true,
+      selectedModel.value.baseModelFamily,
+    )
   }
   if (selectedModel.value.baseModelFamily === 'anima') {
     return (
@@ -1970,6 +2162,25 @@ function applyFitBbox() {
       {{ exportFeedback.message }}
     </NAlert>
     <div class="project-notices">
+      <NAlert
+        v-if="smartPatchResultsError || smartPatchResults?.recoveryUnavailable"
+        key="n-alert-2"
+        title="Smart Patch results unavailable"
+        type="warning"
+      >
+        {{
+          smartPatchResultsError ??
+          'Temporary Smart Patch results could not be recovered. Their files were kept for another recovery attempt.'
+        }}
+        <NButton
+          :loading="smartPatchResultsLoading"
+          size="tiny"
+          tertiary
+          @click="emit('refreshSmartPatch')"
+        >
+          Retry
+        </NButton>
+      </NAlert>
       <NAlert v-if="generationNotice" key="n-alert-2" title="Generation batch" type="warning">
         {{ generationNotice }}
       </NAlert>
@@ -2452,8 +2663,8 @@ function applyFitBbox() {
               :modelValue="generationDraft.sampling.denoisingStrength"
               :runtimeUnavailableReason
               :supported="denoisingRuntimeSupported"
-              :target="targetState"
-              :targetError
+              :target="denoisingTarget"
+              :targetError="denoisingTargetError"
               @update:modelValue="
                 emit('updateDraft', { kind: 'denoising-strength', value: $event })
               "
@@ -2745,6 +2956,7 @@ function applyFitBbox() {
         :disabled="busy || reloadRequired"
         :documentId="tab.documentId"
         :documentRevision="tab.documentRevision"
+        :entityLayers="tab.layers"
         :generationResults="generationResults?.candidates ?? []"
         :generationResultsLoading
         :historyPending="pending === 'undo' || pending === 'redo' ? pending : null"
@@ -2755,11 +2967,17 @@ function applyFitBbox() {
         :projectKey="tab.id"
         :resultFocus="generationResultFocus"
         :selectedLayerId
+        :smartPatchResults
+        :smartPatchResultsLoading
         @acceptCandidates="emit('acceptCandidates', $event)"
+        @acceptSmartPatch="emit('acceptSmartPatch', $event)"
         @changeBbox="changeActiveBbox"
+        @discardSmartPatch="emit('discardSmartPatch', $event)"
         @editMask="editCanvasMask"
+        @exportSmartPatch="emit('exportSmartPatch', $event)"
         @redo="emit('redo')"
         @refreshGenerationResults="emit('refreshGenerationResults')"
+        @refreshSmartPatch="emit('refreshSmartPatch')"
         @resultFocusHandled="emit('resultFocusHandled', $event)"
         @saveCandidateImage="emit('saveCandidateImage', $event)"
         @selectLayer="selectedLayerId = $event"
@@ -2783,45 +3001,60 @@ function applyFitBbox() {
         </template>
       </ProjectCanvas>
 
-      <DnDProvider :autoScrollViewport="false">
-        <ProjectLayerStack
-          ref="layersPanel"
-          v-model:comparisonLayerId="comparisonLayerId"
-          v-model:selectedLayerId="selectedLayerId"
-          :disabled="busy || reloadRequired"
-          :generatedLayerIds="tab.acceptedResults.map((result) => result.layerId)"
-          :importing="pending === 'import-image'"
-          :layers="tab.layers"
-          @addPatch="emit('addPatch')"
-          @importImage="emit('importImage')"
-          @move="(layerId, targetIndex) => emit('moveLayer', layerId, targetIndex)"
-          @saveResultPreset="saveResultPreset"
-          @update="(layerId, change) => emit('updateLayer', layerId, change)"
-          @updatePatch="(layerId, change) => emit('updatePatch', layerId, change)"
-        >
-          <template v-slot:comparison="{ layer }">
-            <GenerationSettingsComparison
-              :key="`${tab.id}:${tab.documentId}:${layer.id}`"
-              :error="comparisonError"
-              :layerName="layer.name"
-              :loading="comparisonLoading"
-              :sections="comparisonSections"
-              @close="closeComparison"
-            />
-          </template>
-          <template v-slot:header-actions>
-            <NButton
-              aria-label="Accepted results"
-              :disabled="busy || reloadRequired"
-              quaternary
-              size="tiny"
-              @click="openAcceptedResults"
-            >
-              Accepted results
-            </NButton>
-          </template>
-        </ProjectLayerStack>
-      </DnDProvider>
+      <div class="layer-workspace">
+        <DnDProvider :autoScrollViewport="false">
+          <ProjectLayerStack
+            v-show="!patchVariantsOpen"
+            ref="layersPanel"
+            v-model:comparisonLayerId="comparisonLayerId"
+            v-model:selectedLayerId="selectedLayerId"
+            :disabled="busy || reloadRequired"
+            :generatedLayerIds="tab.acceptedResults.map((result) => result.layerId)"
+            :importing="pending === 'import-image'"
+            :layers="tab.layers"
+            @addPatch="emit('addPatch')"
+            @browseVariants="openPatchVariants"
+            @importImage="emit('importImage')"
+            @move="(layerId, targetIndex) => emit('moveLayer', layerId, targetIndex)"
+            @saveResultPreset="saveResultPreset"
+            @update="(layerId, change) => emit('updateLayer', layerId, change)"
+            @updatePatch="(layerId, change) => emit('updatePatch', layerId, change)"
+          >
+            <template v-slot:comparison="{ layer }">
+              <GenerationSettingsComparison
+                :key="`${tab.id}:${tab.documentId}:${layer.id}`"
+                :error="comparisonError"
+                :layerName="layer.name"
+                :loading="comparisonLoading"
+                :sections="comparisonSections"
+                @close="closeComparison"
+              />
+            </template>
+            <template v-slot:header-actions>
+              <NButton
+                aria-label="Accepted results"
+                :disabled="busy || reloadRequired"
+                quaternary
+                size="tiny"
+                @click="openAcceptedResults"
+              >
+                Accepted results
+              </NButton>
+            </template>
+          </ProjectLayerStack>
+        </DnDProvider>
+        <SmartPatchVariantsBrowser
+          v-model:show="patchVariantsOpen"
+          :busy
+          :draftPending
+          :error
+          :layer="patchVariantsLayer"
+          :reloadRequired
+          :tab
+          @change="(layerId, change) => emit('updatePatchVariant', layerId, change)"
+          @closed="patchVariantsClosed"
+        />
+      </div>
     </div>
     <ProjectAcceptedResults
       :key="`${tab.id}:${tab.documentId}`"
@@ -2904,6 +3137,13 @@ function applyFitBbox() {
   grid-template-columns: 280px minmax(0, 1fr) minmax(280px, 22vw);
   flex: 1 1 auto;
   min-height: 0;
+}
+
+.layer-workspace {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .project-settings {

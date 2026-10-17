@@ -32,6 +32,20 @@ import type {
 } from './projects/project-schema.js'
 import type { PromptEmbeddingSelection } from './projects/prompt-embeddings.js'
 import type { SmartPatchCoherenceSettings } from './projects/smart-patch-coherence-settings.js'
+import type {
+  ProjectSmartPatchAcceptRequest,
+  ProjectSmartPatchCandidateExportRequest,
+  ProjectSmartPatchDiscardRequest,
+  ProjectSmartPatchDiscardResult,
+  ProjectSmartPatchGenerateOptions,
+  ProjectSmartPatchGenerateResult,
+  ProjectSmartPatchGenerationTargetState,
+  ProjectSmartPatchResultsSnapshot,
+} from './projects/smart-patch-public-generation.js'
+import type {
+  ProjectSmartPatchVariantChange,
+  ProjectSmartPatchVariantsInspection,
+} from './projects/smart-patch-variants.js'
 
 import { isAnimaSamplingMethod } from './projects/anima-sampling-method.js'
 import { isGenerationDynamicPromptSettings } from './projects/generation-dynamic-settings.js'
@@ -57,6 +71,23 @@ export type {
   ProjectGenerationActionState,
   ProjectGenerationQueueJob,
 } from './projects/project-generation-actions.js'
+export type {
+  ProjectSmartPatchAcceptRequest,
+  ProjectSmartPatchCandidateExportRequest,
+  ProjectSmartPatchDiscardRequest,
+  ProjectSmartPatchDiscardResult,
+  ProjectSmartPatchGenerateOptions,
+  ProjectSmartPatchGenerateResult,
+  ProjectSmartPatchGenerationTargetState,
+  ProjectSmartPatchResultsSnapshot,
+  ProjectSmartPatchResultTarget,
+  ProjectSmartPatchResultView,
+} from './projects/smart-patch-public-generation.js'
+
+export type {
+  ProjectSmartPatchVariantChange,
+  ProjectSmartPatchVariantsInspection,
+} from './projects/smart-patch-variants.js'
 
 /** Renderer contract. System APIs remain in Electron main. */
 export const ipcChannels = {
@@ -89,6 +120,7 @@ export const ipcChannels = {
   },
   projects: {
     acceptGenerationCandidates: 'projects:accept-generation-candidates',
+    acceptSmartPatchVariants: 'projects:accept-smart-patch-variants',
     addGenerationLora: 'projects:add-generation-lora',
     addSmartPatchLayer: 'projects:add-smart-patch-layer',
     applyPreset: 'projects:apply-preset',
@@ -100,9 +132,11 @@ export const ipcChannels = {
     create: 'projects:create',
     deleteGenerationJob: 'projects:delete-generation-job',
     discardAndClose: 'projects:discard-and-close',
+    discardSmartPatchGenerationResults: 'projects:discard-smart-patch-generation-results',
     editSmartPatchMask: 'projects:edit-smart-patch-mask',
     finishImport: 'projects:finish-import',
     generate: 'projects:generate',
+    generateSmartPatch: 'projects:generate-smart-patch',
     generationChanged: 'projects:generation-changed',
     generationProgress: 'projects:generation-progress',
     getAcceptedResultHistory: 'projects:get-accepted-result-history',
@@ -113,9 +147,12 @@ export const ipcChannels = {
     getGenerationTargetState: 'projects:get-generation-target-state',
     getRasterGenerationData: 'projects:get-raster-generation-data',
     getRasterPresetData: 'projects:get-raster-preset-data',
+    getSmartPatchGenerationTargetState: 'projects:get-smart-patch-generation-target-state',
+    getSmartPatchVariants: 'projects:get-smart-patch-variants',
     importRasterImage: 'projects:import-raster-image',
     list: 'projects:list',
     listGenerationResults: 'projects:list-generation-results',
+    listSmartPatchGenerationResults: 'projects:list-smart-patch-generation-results',
     moveRasterLayer: 'projects:move-raster-layer',
     open: 'projects:open',
     prepareWindowClose: 'projects:prepare-window-close',
@@ -132,6 +169,7 @@ export const ipcChannels = {
     reviewAcceptedResult: 'projects:review-accepted-result',
     save: 'projects:save',
     saveGenerationCandidateImage: 'projects:save-generation-candidate-image',
+    saveSmartPatchCandidateImage: 'projects:save-smart-patch-candidate-image',
     sealPromptHistory: 'projects:seal-prompt-history',
     selectImport: 'projects:select-import',
     setGenerationModel: 'projects:set-generation-model',
@@ -142,6 +180,7 @@ export const ipcChannels = {
     updateGenerationDraft: 'projects:update-generation-draft',
     updateRasterLayer: 'projects:update-raster-layer',
     updateSmartPatchLayer: 'projects:update-smart-patch-layer',
+    updateSmartPatchVariant: 'projects:update-smart-patch-variant',
     windowCloseDecisionPending: 'projects:window-close-decision-pending',
     windowCloseEditorReady: 'projects:window-close-editor-ready',
     windowCloseReady: 'projects:window-close-ready',
@@ -269,7 +308,7 @@ export interface ProjectRasterLayerView {
   width: number
 }
 
-/** Display-only projection; variant lifecycle and settings comparison have separate owners. */
+/** Stored pixels and authored freshness; actual source inspection is a separate read. */
 export interface ProjectSmartPatchLayerView {
   activeRaster: ProjectRasterLayerView | null
   activeRasterSubLayerId: string | null
@@ -287,7 +326,7 @@ export interface ProjectSmartPatchLayerView {
   name: string
   opacity: number
   rasterSubLayers: { id: string; name: string }[]
-  status: 'empty' | 'stored'
+  status: 'empty' | 'outdated' | 'unverified'
   visible: boolean
 }
 
@@ -432,6 +471,10 @@ export interface ProjectApi {
     expectedAvailableIds: string[],
     expectedUnfinishedJobIds?: string[],
   ) => Promise<ApiResult<ProjectTab>>
+  acceptSmartPatchVariants: (
+    tabId: string,
+    request: ProjectSmartPatchAcceptRequest,
+  ) => Promise<ApiResult<ProjectTab>>
   addGenerationLora: (
     tabId: string,
     selection: NonNullable<ProjectGenerationModelSelection>,
@@ -451,6 +494,10 @@ export interface ProjectApi {
   create: (options: ProjectCreateInput) => Promise<ApiResult<ProjectTab>>
   deleteGenerationJob: (review: GenerationQueueReview) => Promise<ApiResult<void>>
   discardAndClose: (tabId: string, confirmCloseImpact?: boolean) => Promise<ApiResult<void>>
+  discardSmartPatchGenerationResults: (
+    tabId: string,
+    request: ProjectSmartPatchDiscardRequest,
+  ) => Promise<ApiResult<ProjectSmartPatchDiscardResult>>
   editSmartPatchMask: (
     tabId: string,
     layerId: string,
@@ -464,6 +511,10 @@ export interface ProjectApi {
     tabId: string,
     options: ProjectGenerateOptions,
   ) => Promise<ApiResult<ProjectGenerateResult>>
+  generateSmartPatch: (
+    tabId: string,
+    options: ProjectSmartPatchGenerateOptions,
+  ) => Promise<ApiResult<ProjectSmartPatchGenerateResult>>
   getAcceptedResultHistory: (
     cursor?: AcceptedResultHistoryCursor | null,
   ) => Promise<ApiResult<AcceptedResultHistoryPage>>
@@ -489,9 +540,24 @@ export interface ProjectApi {
     documentId: string,
     layerId: string,
   ) => Promise<ApiResult<RasterGenerationData>>
+  getSmartPatchGenerationTargetState: (
+    tabId: string,
+    documentId: string,
+    documentRevision: string,
+    layerId: string,
+  ) => Promise<ApiResult<ProjectSmartPatchGenerationTargetState>>
+  getSmartPatchVariants: (
+    tabId: string,
+    layerId: string,
+    documentId: string,
+    documentRevision: string,
+  ) => Promise<ApiResult<ProjectSmartPatchVariantsInspection>>
   importRasterImage: (tabId: string) => Promise<ApiResult<ProjectTab | null>>
   list: () => Promise<ApiResult<ProjectSummary[]>>
   listGenerationResults: (tabId: string) => Promise<ApiResult<ProjectGenerationResultsSnapshot>>
+  listSmartPatchGenerationResults: (
+    tabId: string,
+  ) => Promise<ApiResult<ProjectSmartPatchResultsSnapshot>>
   moveRasterLayer: (
     tabId: string,
     layerId: string,
@@ -536,6 +602,10 @@ export interface ProjectApi {
     tabId: string,
     candidateId: string,
   ) => Promise<ApiResult<ProjectCandidateExportResult>>
+  saveSmartPatchCandidateImage: (
+    tabId: string,
+    request: ProjectSmartPatchCandidateExportRequest,
+  ) => Promise<ApiResult<ProjectCandidateExportResult>>
   sealPromptHistory: (tabId: string, historyGroupId?: string) => Promise<ApiResult<ProjectTab>>
   selectImport: () => Promise<ApiResult<ProjectImportSelection | null>>
   setGenerationModel: (
@@ -565,6 +635,11 @@ export interface ProjectApi {
     tabId: string,
     layerId: string,
     change: ProjectSmartPatchLayerChange,
+  ) => Promise<ApiResult<ProjectTab>>
+  updateSmartPatchVariant: (
+    tabId: string,
+    layerId: string,
+    change: ProjectSmartPatchVariantChange,
   ) => Promise<ApiResult<ProjectTab>>
 }
 

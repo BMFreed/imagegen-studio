@@ -87,6 +87,9 @@ export interface PreparedBatchAdmissionResult {
 /** Main-only execution handle. Its caller must stop/drain it before Project or runtime close. */
 export interface PrivateSmartPatchExecution {
   cancelAndWait: SmartPatchGenerationProcessor['cancelAndWait']
+  getProgressSnapshot: SmartPatchGenerationProcessor['getProgressSnapshot']
+  onChanged?: SmartPatchGenerationProcessor['onChanged']
+  onProgress: SmartPatchGenerationProcessor['onProgress']
   quiesceForProject: SmartPatchGenerationProcessor['quiesceForProject']
   runNext: (worker: SmartPatchInferenceTransport) => Promise<SmartPatchProcessorResult>
   stopAndCancelActive: SmartPatchGenerationProcessor['stopAndCancelActive']
@@ -239,6 +242,22 @@ export class GenerationOrchestrator {
     }
   }
 
+  /** Route cancellation by the durable operation discriminator, never by current UI selection. */
+  async cancelGenerationJob(id: string): Promise<QueuedGenerationItem> {
+    const entry = await this.queue.getManagerEntry(id)
+    if (entry.operation === 'illustrious-smart-patch' || entry.operation === 'anima-smart-patch') {
+      await this.cancelSmartPatchQueueItem(id)
+      for (const processor of this.smartPatchProcessors) {
+        await processor.quiesceForProject({
+          localProjectKey: entry.projectKey,
+          stagingSessionIds: [entry.stagingSessionId],
+        })
+      }
+      return await this.queue.cancel(id)
+    }
+    return await this.processor.cancelAndWait(id)
+  }
+
   /** Cancel only this Project's unfinished rows; running work needs confirmed worker exit. */
   async cancelProjectJobs(tabId: string): Promise<void> {
     if (!this.fencedProjects.has(tabId)) {
@@ -265,13 +284,16 @@ export class GenerationOrchestrator {
       for (;;) {
         const unfinished = await this.queue.listUnfinishedByProject(tabId)
         if (unfinished.length === 0) {
+          for (const processor of this.smartPatchProcessors) {
+            await processor.quiesceForProject({ localProjectKey: tabId })
+          }
           // A confirmed whole-Project close may resolve a previous acceptance cancellation.
           this.acceptanceCanceled.delete(tabId)
           this.batchCleanupUnconfirmed.delete(tabId)
           return
         }
         for (const item of unfinished) {
-          await this.processor.cancelAndWait(item.id)
+          await this.cancelGenerationJob(item.id)
         }
       }
     })()
@@ -414,6 +436,9 @@ export class GenerationOrchestrator {
     this.smartPatchProcessors.add(processor)
     return {
       cancelAndWait: processor.cancelAndWait.bind(processor),
+      getProgressSnapshot: processor.getProgressSnapshot.bind(processor),
+      onChanged: processor.onChanged.bind(processor),
+      onProgress: processor.onProgress.bind(processor),
       quiesceForProject: processor.quiesceForProject.bind(processor),
       runNext: async (worker) => {
         const captured: SmartPatchInferenceTransport = {
@@ -1008,7 +1033,7 @@ export class GenerationOrchestrator {
       } catch (error) {
         try {
           for (const item of queued) {
-            const stopped = await this.processor.cancelAndWait(item.id)
+            const stopped = await this.cancelGenerationJob(item.id)
             if (stopped.status !== 'canceled') {
               throw cancellationUncertain('A refused Smart Patch batch job has not stopped.')
             }
@@ -1046,6 +1071,20 @@ export class GenerationOrchestrator {
     this.queue.assertReadyForDispatch()
     this.staging.assertReadyForPublication()
     return await this.queue.hasDispatchablePending()
+  }
+
+  async nextDispatchableKind(): Promise<'normal' | 'smart-patch' | null> {
+    await this.enqueueBarrier
+    return await this.queue.nextDispatchableKind()
+  }
+
+  async quiesceSmartPatchForProject(
+    tabId: string,
+    stagingSessionIds?: readonly string[],
+  ): Promise<void> {
+    for (const processor of this.smartPatchProcessors) {
+      await processor.quiesceForProject({ localProjectKey: tabId, stagingSessionIds })
+    }
   }
 
   /** Only valid before destructive Project-close cancellation has begun. */

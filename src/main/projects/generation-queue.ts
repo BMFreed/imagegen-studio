@@ -2418,6 +2418,60 @@ export class GenerationQueueRepository {
     })
   }
 
+  async listUnfinishedNormalByProjectDocument(
+    localProjectKey: string,
+    documentId: string,
+  ): Promise<QueuedGenerationItem[]> {
+    validateProjectKey(localProjectKey)
+    if (!UUID_PATTERN.test(documentId)) {
+      throw new GenerationQueueError(
+        'QUEUE_PROJECT_IDENTITY_CHANGED',
+        'The Project document identity is invalid.',
+      )
+    }
+    return await this.serialize(async () => {
+      this.assertReadyForDispatch()
+      const rows = await this.db
+        .selectFrom('generation_queue_item')
+        .selectAll()
+        .where('local_project_key', '=', localProjectKey)
+        .where('document_id', '=', documentId)
+        .where('operation', 'in', NORMAL_QUEUE_OPERATIONS)
+        .where('status', 'in', ['pending', 'running'])
+        .orderBy('created_at', 'asc')
+        .orderBy('id', 'asc')
+        .execute()
+      return rows.map(toItem)
+    })
+  }
+
+  /** Metadata-only Smart target groups, including historical documents at the same Project path. */
+  async listUnfinishedSmartPatchJobsByProject(
+    localProjectKey: string,
+  ): Promise<(QueuedGenerationItem & { documentId: string; layerId: string })[]> {
+    validateProjectKey(localProjectKey)
+    return await this.serialize(async () => {
+      this.assertReadyForDispatch()
+      const rows = await this.db
+        .selectFrom('generation_queue_item')
+        .selectAll()
+        .where('local_project_key', '=', localProjectKey)
+        .where('operation', 'in', ['illustrious-smart-patch', 'anima-smart-patch'])
+        .where('status', 'in', ['pending', 'running'])
+        .orderBy('created_at', 'asc')
+        .orderBy('id', 'asc')
+        .execute()
+      return rows.map((row) => {
+        const payload = parseSmartPatchQueueRow(row)
+        return {
+          ...toItem(row),
+          documentId: payload.context.documentId,
+          layerId: payload.context.layerId,
+        }
+      })
+    })
+  }
+
   async loadVerifiedInput(id: string): Promise<VerifiedQueuedInput> {
     validateQueueId(id)
     return await this.serialize(async () => await this.verifyRow(await this.requireRow(id)))
@@ -2438,6 +2492,36 @@ export class GenerationQueueRepository {
     return await this.serialize(async () => {
       const row = await this.requireRow(id)
       return await this.verifySmartPatchRow(row)
+    })
+  }
+
+  /** Global FIFO routing hint; each typed processor still verifies and claims its own row. */
+  async nextDispatchableKind(): Promise<'normal' | 'smart-patch' | null> {
+    return await this.serialize(async () => {
+      for (;;) {
+        this.assertReadyForDispatch()
+        let query = this.db
+          .selectFrom('generation_queue_item')
+          .select(['operation', 'local_project_key'])
+          .where('status', '=', 'pending')
+          .where(
+            sql<boolean>`NOT EXISTS (SELECT 1 FROM generation_queue_item AS active WHERE active.status = 'running')`,
+          )
+          .orderBy('created_at', 'asc')
+          .orderBy('id', 'asc')
+        if (this.fencedProjects.size > 0) {
+          query = query.where('local_project_key', 'not in', [...this.fencedProjects])
+        }
+        const row = await query.executeTakeFirst()
+        this.assertReadyForDispatch()
+        if (!row) {
+          return null
+        }
+        if (this.fencedProjects.has(row.local_project_key)) {
+          continue
+        }
+        return isSmartPatchQueueOperation(row.operation) ? 'smart-patch' : 'normal'
+      }
     })
   }
 

@@ -37,6 +37,13 @@ import { projectVerifiedSmartPatchVariant } from './project-smart-patch-variant-
 export interface SmartPatchAcceptRequest {
   candidateIds: readonly string[]
   expectedAvailableIds: readonly string[]
+  /** Main-only reviewed owner; checked after the shared gate actually admits this action. */
+  expectedOwner?: {
+    documentEpoch: number
+    documentId: string
+    documentRevision: string
+    layerId: string
+  }
   expectedUnfinishedJobIds: readonly string[]
   focusedCandidateId: string | null
   worker: Pick<ProjectWorkerClient, 'composeTarget'>
@@ -101,17 +108,22 @@ export class ProjectSmartPatchAcceptance {
     const request = snapshotRequest(tabId, input)
     return await this.options.gate.run(tabId, async () => {
       const owner = this.owner(tabId)
+      this.assertExpectedOwner(tabId, owner, request.expectedOwner)
       let retain = true
       try {
         await this.options.orchestrator.fenceProjectGeneration(tabId)
         await this.resolvePending(tabId, owner)
         retain = false
+        this.assertExpectedOwner(tabId, owner, request.expectedOwner)
         const initial = owner.document
         const initialEpoch = owner.documentEpoch
         const assertInitial = () =>
           this.sameOwner(tabId, owner, initial.documentId, initial.documentRevision, initialEpoch)
         const existing = existingSelection(initial, request.candidateIds)
         if (existing) {
+          if (request.expectedOwner && existing.layerId !== request.expectedOwner.layerId) {
+            throw stale('The reviewed Smart Patch target changed before Add.')
+          }
           retain = true
           await this.requireNoUnjournaledOverlap(tabId, initial)
           assertInitial()
@@ -133,6 +145,9 @@ export class ProjectSmartPatchAcceptance {
           staging: this.options.staging,
           worker: request.worker,
         })
+        if (request.expectedOwner && plan.layerId !== request.expectedOwner.layerId) {
+          throw stale('The reviewed Smart Patch target changed before Add.')
+        }
         assertInitial()
         const adoption = {
           acceptedVariants: plan.proposedVariants.map((v) => v.variant),
@@ -266,6 +281,30 @@ export class ProjectSmartPatchAcceptance {
         this.finishFence(tabId, retain)
       }
     })
+  }
+
+  private assertExpectedOwner(
+    tabId: string,
+    owner: Owner,
+    expected: SmartPatchAcceptRequest['expectedOwner'],
+  ): void {
+    if (!expected) {
+      return
+    }
+    this.sameOwner(
+      tabId,
+      owner,
+      expected.documentId,
+      expected.documentRevision,
+      expected.documentEpoch,
+    )
+    const target = owner.document.layers.find((layer) => layer.id === expected.layerId)
+    if (target?.kind !== 'smart-patch') {
+      throw new ProjectSmartPatchAcceptanceError(
+        'PROJECT_DOCUMENT_CHANGED',
+        'The reviewed Smart Patch target changed before Add. Temporary results were kept.',
+      )
+    }
   }
 
   private async durable(
@@ -418,7 +457,6 @@ export class ProjectSmartPatchAcceptance {
     }
     return owner
   }
-
   private async requireNoUnjournaledOverlap(
     tabId: string,
     document: IgsProjectDocumentV1,
@@ -482,6 +520,7 @@ export class ProjectSmartPatchAcceptance {
     await this.finishHandoff(tabId, owner, handoff)
     return 'cleaned'
   }
+
   private sameOwner(
     tabId: string,
     owner: Owner,
@@ -625,11 +664,33 @@ function snapshotRequest(tabId: string, input: SmartPatchAcceptRequest): SmartPa
   ) {
     throw invalidInput()
   }
+  let expectedOwner: SmartPatchAcceptRequest['expectedOwner']
+  try {
+    expectedOwner =
+      input.expectedOwner === undefined ? undefined : structuredClone(input.expectedOwner)
+  } catch {
+    throw invalidInput()
+  }
+  if (
+    expectedOwner !== undefined &&
+    (typeof expectedOwner !== 'object' ||
+      expectedOwner === null ||
+      Object.keys(expectedOwner).length !== 4 ||
+      typeof expectedOwner.documentEpoch !== 'number' ||
+      !Number.isSafeInteger(expectedOwner.documentEpoch) ||
+      expectedOwner.documentEpoch < 0 ||
+      [expectedOwner.documentId, expectedOwner.documentRevision, expectedOwner.layerId].some(
+        (id) => typeof id !== 'string' || !UUID.test(id),
+      ))
+  ) {
+    throw invalidInput()
+  }
   const request = {
     candidateIds: [...input.candidateIds],
     expectedAvailableIds: [...input.expectedAvailableIds],
     expectedUnfinishedJobIds: [...input.expectedUnfinishedJobIds],
     focusedCandidateId: input.focusedCandidateId,
+    ...(expectedOwner === undefined ? {} : { expectedOwner }),
     worker: { composeTarget: input.worker.composeTarget.bind(input.worker) },
   }
   if (

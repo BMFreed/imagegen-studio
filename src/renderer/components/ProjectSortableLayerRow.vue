@@ -18,6 +18,7 @@ const props = defineProps<{
 }>()
 const comparisonLayerId = defineModel<string | null>('comparisonLayerId', { required: true })
 const emit = defineEmits<{
+  browseVariants: [layerId: string]
   move: [layerId: string, targetIndex: number]
   saveResultPreset: [layerId: string]
   select: [layerId: string]
@@ -52,6 +53,7 @@ const placementClass = computed(() => ({
       :layer
       :layerCount="layers.length"
       :selected
+      @browseVariants="emit('browseVariants', $event)"
       @move="(layerId, targetIndex) => emit('move', layerId, targetIndex)"
       @select="emit('select', $event)"
       @update="(layerId, change) => emit('updatePatch', layerId, change)"

@@ -31,6 +31,7 @@ export interface ProjectGenerationActionState {
   /** Engine admission/dispatch is app-wide; jobs and current cancellation are document-scoped. */
   phase: 'blocked' | 'closed' | 'idle' | 'preparing' | 'processing'
   runningJobId: string | null
+  smartPatchSupported?: boolean
   vaePrecisionSupported: boolean
 }
 
@@ -107,12 +108,14 @@ export function isProjectGenerationActionState(
         'runningJobId',
         'vaePrecisionSupported',
       ],
-      ['animaSupported', 'animaOutpaintSupported', 'outpaintSupported'],
+      ['animaSupported', 'animaOutpaintSupported', 'outpaintSupported', 'smartPatchSupported'],
     ) ||
     (value['animaSupported'] !== undefined && typeof value['animaSupported'] !== 'boolean') ||
     (value['animaOutpaintSupported'] !== undefined &&
       typeof value['animaOutpaintSupported'] !== 'boolean') ||
     (value['outpaintSupported'] !== undefined && typeof value['outpaintSupported'] !== 'boolean') ||
+    (value['smartPatchSupported'] !== undefined &&
+      typeof value['smartPatchSupported'] !== 'boolean') ||
     typeof value['cfgRescaleSupported'] !== 'boolean' ||
     typeof value['embeddingsSupported'] !== 'boolean' ||
     typeof value['externalVaeSupported'] !== 'boolean' ||
