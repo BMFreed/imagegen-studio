@@ -1,7 +1,8 @@
-import type { PresetApi, PresetApiResult } from '../../shared/api.js'
+import type { PresetApi, PresetApiResult, ProjectSmartPatchLayerView } from '../../shared/api.js'
 import type { PresetDefinition } from '../../shared/presets/preset-schema.js'
 import { createEmptyProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 
+import { sql } from 'kysely'
 import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
@@ -13,8 +14,10 @@ import type { PresetResultCreateIntent } from './preset-create-intent.js'
 
 import { openAppDatabase } from '../../main/db/database.js'
 import { PresetRepository, PresetRepositoryError } from '../../main/presets/preset-repository.js'
+import { validatePresetDefinition } from './preset-editor.js'
 import { PresetManagerSession } from './preset-manager-session.js'
 import { createProjectPresetIntent } from './project-preset-draft.js'
+import { captureSmartPatchPresetIntent } from './smart-patch-preset-draft.js'
 
 const migrations = path.resolve('src/main/db/migrations')
 const startedAt = Date.parse('2026-10-13T10:00:00.000Z')
@@ -153,6 +156,264 @@ function resultIntent(): PresetResultCreateIntent {
     workflowUnknown: false,
   }
 }
+
+function smartPatchDraftSource(
+  family: 'anima' | 'illustrious' = 'illustrious',
+  incomplete = false,
+) {
+  const document = createEmptyProjectDocumentV1({ title: 'Current Smart source.igs' })
+  const { noiseProfile: _noiseProfile, ...model } = definition().payload.model!
+  const draft = document.generationDraft
+  draft.model = {
+    ...model,
+    baseModelFamily: family,
+    predictionType: family === 'anima' ? null : model.predictionType,
+  }
+  draft.positivePrompt = {
+    embeddingRefs: [
+      {
+        resource: { ...draft.model, kind: 'embedding', predictionType: null },
+        token: '<saved-alias>',
+      },
+    ],
+    text: '<saved-alias>, current authored {day|night}',
+  }
+  draft.negativePrompt.text = 'authored {fog|blur}'
+  draft.loras = [
+    {
+      enabled: false,
+      resource: { ...draft.model, kind: 'lora', predictionType: null },
+      weight: -0.7,
+    },
+  ]
+  draft.sampling = {
+    animaMethod: 'heun',
+    cfgScale: 0,
+    denoisingStrength: 0,
+    sampler: 'Euler',
+    scheduler: 'Normal',
+    steps: incomplete ? null : 24,
+  }
+  draft.cfgRescale = 0
+  draft.vaePrecision = 'Auto'
+  draft.seed = { policy: 'fixed', value: 0 }
+  draft.dynamicPrompt = { maxPrompts: 200, seedBehavior: 'per-prompt' }
+  const patch: ProjectSmartPatchLayerView = {
+    activeRaster: null,
+    activeRasterSubLayerId: null,
+    blendMode: 'normal',
+    boundingBox: { height: 384, width: 512, x: -73, y: 51 },
+    generationDraft: draft,
+    id: '11111111-1111-4111-8111-111111111111',
+    internalResolution: { height: 192, width: 256 },
+    kind: 'smart-patch',
+    locked: true,
+    mask: { asset: null, id: '22222222-2222-4222-8222-222222222222', revision: 0 },
+    maskImageUrl: null,
+    name: 'Current Patch',
+    opacity: 1,
+    rasterSubLayers: [],
+    status: 'empty',
+    visible: false,
+  }
+  const tab = {
+    documentId: document.documentId,
+    documentRevision: document.documentRevision,
+    id: `project-v1-${'a'.repeat(64)}`,
+    layers: [patch],
+    title: document.title,
+  }
+  const captured = captureSmartPatchPresetIntent({
+    blocked: false,
+    pendingDraft: false,
+    selectedLayerId: patch.id,
+    tab,
+  })
+  assert.ok(captured)
+  return { ...captured, patch, tab }
+}
+
+test('Smart draft capture freezes source before held real catalog reads; edits, Cancel and late reload allocate no record', async () => {
+  await withFixture(async ({ api, repository }) => {
+    const neighbor = await repository().create(definition('Unrelated recipe'))
+    const entered = held<void>()
+    const deliver = held<void>()
+    let closed = 0
+    const session = new PresetManagerSession(
+      {
+        ...api,
+        list: async (options) => {
+          const result = await api.list(options)
+          entered.release()
+          await deliver.promise
+          return result
+        },
+      },
+      {
+        onClose: () => {
+          closed += 1
+        },
+      },
+    )
+    const { intent, patch, tab } = smartPatchDraftSource()
+    const source = structuredClone(intent)
+    const opening = session.openCreate(intent)
+    patch.generationDraft.positivePrompt.text = 'Later Patch mutation'
+    patch.name = 'Later Patch name'
+    tab.title = 'Later Project name'
+    intent.patchName = 'Caller changed captured name'
+    intent.definition.payload.prompt!.embeddingRefs[0].resource.displayName = 'Caller changed ref'
+    await entered.promise
+    assert.deepEqual(session.state.createIntent, source)
+    assert.deepEqual(session.state.draft, source.definition)
+    assert.equal(session.state.creating, true)
+    assert.equal(session.state.selectedId, null)
+    assert.equal(session.valid, true)
+    assert.deepEqual(await repository().list(), [neighbor])
+    session.state.draft.name = 'Edited draft name'
+    session.state.draft.payload.prompt!.text = 'Edited detached prompt'
+    assert.deepEqual(session.state.createIntent, source)
+    session.cancelCreate()
+    assert.equal(closed, 1)
+    assert.equal(session.isOpen, false)
+    assert.equal(session.state.createIntent, null)
+    deliver.release()
+    await opening
+    assert.equal(session.state.draft, null)
+    assert.equal(session.state.selectedId, null)
+    assert.deepEqual(await repository().list(), [neighbor])
+  })
+})
+
+test('Smart draft real SQLite Create failure preserves source and edits; retry and reload persist only edited settings', async () => {
+  for (const family of ['illustrious', 'anima'] as const) {
+    await withFixture(async ({ api, database, reopen, repository }) => {
+      const neighbor = await repository().create(definition('Unrelated recipe'))
+      const { intent, patch, tab } = smartPatchDraftSource(family, true)
+      const before = structuredClone({ intent, patch, tab })
+      const session = new PresetManagerSession(api)
+      await session.openCreate(intent)
+      assert.equal(session.valid, false, 'unfinished acknowledged guidance remains editable')
+      await session.save()
+      assert.equal(session.state.error, null)
+      assert.deepEqual(await repository().list(), [neighbor])
+      session.state.draft!.payload.guidance!.steps = 24
+      assert.equal(
+        session.valid,
+        true,
+        'missing or incompatible authoring refs do not require a catalog',
+      )
+      session.state.draft!.name = `Reusable ${family} authored settings`
+      session.state.draft!.payload.prompt!.text = 'Edited {sunrise|sunset}, <saved-alias>'
+      session.state.draft!.payload.loras![0].weight = -1.2
+      session.state.draft!.favorite = true
+      const edited = structuredClone(session.state.draft!)
+      const expected = validatePresetDefinition(edited)
+      assert.ok(expected)
+      // Fail the actual repository INSERT; the session and production SQLite command stay real.
+      await sql`CREATE TRIGGER smart_draft_create_failure BEFORE INSERT ON presets BEGIN SELECT RAISE(ABORT, 'Owned Smart draft Create refusal'); END`.execute(
+        database.db,
+      )
+      session.requestClose()
+      await session.save()
+      assert.ok(session.state.error)
+      assert.equal(session.state.pending?.kind, 'close')
+      assert.equal(session.state.busy, false)
+      assert.equal(session.dirty, true)
+      assert.equal(session.valid, true)
+      assert.equal(session.state.selectedId, null)
+      assert.deepEqual(session.state.draft, edited)
+      assert.deepEqual(session.state.createIntent, intent)
+      assert.deepEqual(await repository().list(), [neighbor])
+      session.cancelPending()
+      await sql`DROP TRIGGER smart_draft_create_failure`.execute(database.db)
+      await session.save()
+      const id = session.state.selectedId
+      assert.ok(id)
+      assert.equal(session.state.error, null)
+      assert.equal(session.state.createIntent, null)
+      assert.equal(session.state.creating, false)
+      assert.equal(session.dirty, false)
+      const stored = await repository().get(id)
+      assert.ok(stored)
+      assert.deepEqual(stored.payload, expected.payload)
+      assert.equal(stored.name, expected.name)
+      assert.equal(stored.workflow, 'smartPatch')
+      assert.equal(Object.hasOwn(stored.payload, 'seed'), false)
+      assert.equal(Object.hasOwn(stored.payload, 'size'), false)
+      assert.equal(Object.hasOwn(stored, 'patchName'), false)
+      assert.equal(Object.hasOwn(stored, 'projectName'), false)
+      assert.equal(Object.hasOwn(stored, 'owner'), false)
+      assert.equal(session.state.records.length, 2)
+      assert.deepEqual({ intent, patch, tab }, before)
+      session.requestClose()
+      assert.equal(session.isOpen, false)
+      await reopen()
+      assert.deepEqual(await repository().get(id), stored)
+      assert.deepEqual(await repository().get(neighbor.id), neighbor)
+      const restored = new PresetManagerSession(api)
+      await restored.open(id)
+      assert.equal(restored.state.selectedId, id)
+      assert.deepEqual(restored.state.draft, expected)
+      assert.equal(restored.state.createIntent, null)
+      assert.equal(restored.dirty, false)
+    })
+  }
+})
+
+test('Smart source banner and geometry exclusions survive detached edits, failed Create and retry without allocating on Cancel', async () => {
+  await withFixture(async ({ api, reopen, repository }) => {
+    let refuse = false
+    const session = new PresetManagerSession({
+      ...api,
+      create: (input) =>
+        refuse
+          ? Promise.resolve({
+              error: {
+                code: 'PRESET_STORAGE_FAILED' as const,
+                message: 'Controlled create refusal',
+              },
+              ok: false as const,
+            })
+          : api.create(input),
+    })
+    const source = resultIntent()
+    source.definition.workflow = 'smartPatch'
+    delete source.definition.payload.size
+    source.layerName = 'Patch · Inactive result'
+    source.projectSummary = 'Copied checkpoint · Exact version'
+    source.smartGeometryExcluded = true
+    const before = structuredClone(source)
+    await session.openCreate(source)
+    session.state.draft!.payload.prompt!.text = 'Detached prompt edit'
+    assert.deepEqual(session.state.createIntent, before)
+    session.cancelCreate()
+    assert.deepEqual(await repository().list(), [])
+    await session.openCreate(source)
+    session.state.draft!.name = 'Reusable Smart settings'
+    session.state.draft!.payload.prompt!.text = 'Explicit edited prompt'
+    const edited = structuredClone(session.state.draft)
+    refuse = true
+    await session.save()
+    assert.deepEqual(session.state.draft, edited)
+    assert.deepEqual(session.state.createIntent, before)
+    assert.equal(session.state.selectedId, null)
+    assert.equal(session.dirty, true)
+    assert.deepEqual(await repository().list(), [])
+    refuse = false
+    await session.save()
+    const id = session.state.selectedId!
+    assert.equal(session.state.createIntent, null)
+    await reopen()
+    const saved = await repository().get(id)
+    assert.equal(saved?.workflow, 'smartPatch')
+    assert.equal(saved?.payload.prompt?.text, 'Explicit edited prompt')
+    assert.equal(Object.hasOwn(saved.payload, 'size'), false)
+    assert.equal(Object.hasOwn(saved.payload, 'seed'), false)
+    assert.equal(Object.hasOwn(saved, 'smartGeometryExcluded'), false)
+    assert.deepEqual(source, before)
+  })
+})
 
 test('result create captures its source before catalog await and Cancel never allocates or persists a preset', async () => {
   await withFixture(async ({ api, repository }) => {

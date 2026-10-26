@@ -310,6 +310,55 @@ function signal() {
   return { promise, resolve }
 }
 
+function regionalDocumentOwner(projects: ProjectService, tabId: string) {
+  const owner = projects.getOpenDocumentForAcceptance(tabId)
+  assert.ok(owner)
+  return {
+    documentId: owner.document.documentId,
+    documentRevision: owner.document.documentRevision,
+  }
+}
+
+/** Durable queue/staging evidence only; regional authoring and advisory action errors may change. */
+async function regionalQueueSnapshot(f: Fixture) {
+  const candidates = (await f.staging.listVerifiedCandidates(f.tabId)).sort((a, b) =>
+    a.candidateId.localeCompare(b.candidateId),
+  )
+  return {
+    candidatePixels: await Promise.all(
+      candidates.map(async (candidate) => ({
+        id: candidate.candidateId,
+        sha256: sha256(await readFile(candidate.assetPath)),
+      })),
+    ),
+    candidates,
+    inputs: await componentPrivateTree(path.join(f.root, 'generation-inputs')),
+    queue: await f.database.db
+      .selectFrom('generation_queue_item')
+      .selectAll()
+      .orderBy('id')
+      .execute(),
+    receipts: await f.database.db
+      .selectFrom('generation_candidate_receipt')
+      .selectAll()
+      .orderBy('candidate_id')
+      .execute(),
+    savedSha256: sha256(await readFile(f.packagePath)),
+    seeds: await f.database.db
+      .selectFrom('generation_seed_cursor')
+      .selectAll()
+      .orderBy('local_project_key')
+      .orderBy('document_id')
+      .execute(),
+    tombstones: await f.database.db
+      .selectFrom('generation_staging_discarded_session')
+      .selectAll()
+      .orderBy('local_project_key')
+      .orderBy('staging_session_id')
+      .execute(),
+  }
+}
+
 async function withFixture(
   run: (fixture: Fixture) => Promise<void>,
   queueHooks: GenerationQueueTestHooks = {},
@@ -4269,7 +4318,7 @@ test('noise policy changes cause preserving public frozen Retry refusal; exact r
   })
 })
 
-test('public Retry refuses private Smart Patch kinds before ordinary frozen input or runtime acquisition', async () => {
+test('public Retry refuses malformed Smart Patch input before runtime acquisition and preserves ordinary Retry', async () => {
   await withFixture(async (f) => {
     const { controller, database, documentId, projects, runtime, tabId } = f
     await projects.updateGenerationDraft(tabId, {
@@ -4291,15 +4340,22 @@ test('public Retry refuses private Smart Patch kinds before ordinary frozen inpu
     const original = originals.find((row) => row.id === source.id)!
     const generated = runtime.generated.length
     const admissions = runtime.admissionCount
+    const readOrdinary = f.queue.loadVerifiedRetryInput.bind(f.queue)
+    let ordinaryReads = 0
+    f.queue.loadVerifiedRetryInput = async (id) => {
+      ordinaryReads++
+      return await readOrdinary(id)
+    }
     for (const operation of ['illustrious-smart-patch', 'anima-smart-patch']) {
-      // Deliberately unparseable payload proves the private operation gate precedes normal parsing.
+      // The dedicated Smart parser refuses this crossed payload before any runtime acquisition.
       await database.db
         .updateTable('generation_queue_item')
         .set({ frozen_payload_json: '{}', operation })
         .where('id', '=', source.id)
         .execute()
-      await assert.rejects(controller.retryJob(source), { code: 'GENERATION_RUNTIME_UNAVAILABLE' })
+      await assert.rejects(controller.retryJob(source), { code: 'QUEUE_INPUT_INVALID' })
       assert.equal(runtime.admissionCount, admissions)
+      assert.equal(ordinaryReads, 0, 'Smart input must not enter the ordinary frozen reader')
       const rows = await database.db
         .selectFrom('generation_queue_item')
         .selectAll()
@@ -4321,5 +4377,381 @@ test('public Retry refuses private Smart Patch kinds before ordinary frozen inpu
     await controller.retryJob(source)
     await waitForState(controller, tabId, (state) => state.phase === 'idle')
     assert.equal(runtime.generated.length, generated + 1)
+    assert.equal(ordinaryReads, 1, 'The restored ordinary neighbor still uses its own reader')
+  })
+})
+
+// Boundary: public Generate -> current Main document -> eligibility, before any replacement,
+// planning, seed read, model work or queue publication. The held second output makes absence of
+// cancellation observable while a real candidate, receipt/cursor, running job and pending jobs exist.
+for (const lockedZeroOverlay of [false, true]) {
+  test(`ordinary Generate refuses an enabled unselected ${lockedZeroOverlay ? 'locked zero-overlay' : 'empty'} region before fresh work or stale replacement confirmation`, async (t) => {
+    await withFixture(async (f) => {
+      const entered = signal()
+      const release = signal()
+      f.runtime.beforeGenerate = async () => {
+        if (f.runtime.generated.length === 2) {
+          entered.resolve()
+          await release.promise
+        }
+      }
+      const initial = await f.controller.generate(f.tabId, {
+        documentId: f.documentId,
+        iterations: 1,
+      })
+      assert.equal(initial.kind, 'queued')
+      await entered.promise
+      try {
+        assert.equal((await f.staging.listVerifiedCandidates(f.tabId)).length, 1)
+        const review = await f.controller.generate(f.tabId, {
+          documentId: f.documentId,
+          iterations: 1,
+        })
+        assert.equal(review.kind, 'confirmation-required')
+        let tab = await f.projects.addRegionalGuidance(
+          f.tabId,
+          regionalDocumentOwner(f.projects, f.tabId),
+        )
+        const regionId = tab.regionalGuidance![0].id
+        if (lockedZeroOverlay) {
+          tab = await f.projects.updateRegionalGuidance(
+            f.tabId,
+            { ...regionalDocumentOwner(f.projects, f.tabId), regionId },
+            { kind: 'overlay-opacity', overlayOpacity: 0 },
+          )
+          tab = await f.projects.updateRegionalGuidance(
+            f.tabId,
+            { ...regionalDocumentOwner(f.projects, f.tabId), regionId },
+            { kind: 'lock', locked: true },
+          )
+        }
+        // An invalid dynamic prompt is a planning tripwire: regional refusal must take priority.
+        await f.projects.updateGenerationDraft(f.tabId, {
+          kind: 'positive-prompt',
+          text: '{unfinished',
+        })
+        await f.projects.flushAutosave(f.tabId)
+        const before = await regionalQueueSnapshot(f)
+        const document = structuredClone(f.projects.getOpenDocumentForAcceptance(f.tabId)!.document)
+        const counts = [
+          f.runtime.leaseCount,
+          f.runtime.preparationCount,
+          f.runtime.admissionCount,
+          f.runtime.composedTargets.length,
+          f.runtime.generated.length,
+        ]
+        const forbidden = [
+          t.mock.method(f.projects, 'withCapturedNormalGenerationInput', async () =>
+            assert.fail('Enabled regions must refuse before source capture.'),
+          ),
+          t.mock.method(f.runtime, 'withGenerationPreparation', async () =>
+            assert.fail('Enabled regions must refuse before runtime preparation.'),
+          ),
+          t.mock.method(f.runtime, 'withGenerationAdmission', async () =>
+            assert.fail('Enabled regions must refuse before runtime admission.'),
+          ),
+          t.mock.method(f.runtime, 'withGenerationWorker', async () =>
+            assert.fail('Enabled regions must refuse before acquiring an inference worker.'),
+          ),
+          t.mock.method(f.modelService, 'resolveVerifiedGenerationCheckpointForPlan', async () =>
+            assert.fail('Enabled regions must refuse before model resolution.'),
+          ),
+          t.mock.method(f.modelService, 'assertNoUnboundGenerationEmbeddings', async () =>
+            assert.fail('Enabled regions must refuse before model/prompt resource checks.'),
+          ),
+          t.mock.method(f.staging, 'readLastActualSeed', async () =>
+            assert.fail('Enabled regions must refuse before seed cursor reads.'),
+          ),
+          t.mock.method(f.orchestrator, 'enqueuePreparedBatch', async () =>
+            assert.fail('Enabled regions must refuse before enqueue.'),
+          ),
+          t.mock.method(f.queue, 'cancel', async () =>
+            assert.fail('Regional refusal must not cancel existing jobs.'),
+          ),
+          t.mock.method(f.staging, 'discardSessions', async () =>
+            assert.fail('Regional refusal must not consume candidates.'),
+          ),
+        ]
+        try {
+          for (const confirmation of [undefined, { candidateIds: [], unfinishedJobIds: [] }]) {
+            await assert.rejects(
+              f.controller.generate(f.tabId, {
+                documentId: f.documentId,
+                iterations: 1,
+                ...(confirmation ? { confirmation } : {}),
+              }),
+              {
+                code: 'GENERATION_REGIONAL_GUIDANCE_UNSUPPORTED',
+                message:
+                  'Regional Guidance generation is not available yet. Disable or delete all enabled regions before generating.',
+              },
+            )
+          }
+          for (const method of forbidden) {
+            assert.equal(method.mock.callCount(), 0)
+          }
+          assert.deepEqual(await regionalQueueSnapshot(f), before)
+          assert.deepEqual(f.projects.getOpenDocumentForAcceptance(f.tabId)!.document, document)
+          assert.deepEqual(
+            [
+              f.runtime.leaseCount,
+              f.runtime.preparationCount,
+              f.runtime.admissionCount,
+              f.runtime.composedTargets.length,
+              f.runtime.generated.length,
+            ],
+            counts,
+          )
+        } finally {
+          t.mock.restoreAll()
+        }
+      } finally {
+        release.resolve()
+      }
+      await waitForState(
+        f.controller,
+        f.tabId,
+        (state) => state.phase === 'idle' && state.jobs.length === 0,
+      )
+      assert.equal(
+        f.runtime.generated.length,
+        4,
+        'Only the original admitted work reaches inference.',
+      )
+    })
+  })
+}
+
+test('ordinary Generate with a disabled region admits and completes the real controlled batch', async () => {
+  await withFixture(async (f) => {
+    let tab = await f.projects.addRegionalGuidance(
+      f.tabId,
+      regionalDocumentOwner(f.projects, f.tabId),
+    )
+    tab = await f.projects.updateRegionalGuidance(
+      f.tabId,
+      { ...regionalDocumentOwner(f.projects, f.tabId), regionId: tab.regionalGuidance![0].id },
+      { enabled: false, kind: 'enabled' },
+    )
+    const document = structuredClone(f.projects.getOpenDocumentForAcceptance(f.tabId)!.document)
+    const result = await f.controller.generate(f.tabId, { documentId: f.documentId, iterations: 1 })
+    assert.equal(result.kind, 'queued')
+    if (result.kind !== 'queued') {
+      assert.fail('Disabled regions must permit actual batch admission.')
+    }
+    assert.equal(result.jobIds.length, 4)
+    await waitForState(
+      f.controller,
+      f.tabId,
+      (state) => state.phase === 'idle' && state.jobs.length === 0,
+    )
+    assert.equal(f.runtime.generated.length, 4)
+    assert.ok(f.runtime.leaseCount > 0)
+    assert.equal((await f.queue.listManagerPage()).counts.completed, 4)
+    assert.equal((await f.staging.listVerifiedCandidates(f.tabId)).length, 4)
+    assert.equal(
+      (await f.database.db.selectFrom('generation_candidate_receipt').selectAll().execute()).length,
+      4,
+    )
+    assert.deepEqual(f.projects.getOpenDocumentForAcceptance(f.tabId)!.document, document)
+    assert.equal((await readIgsPackage(f.packagePath)).project.regionalGuidance, undefined)
+  })
+})
+
+test('ordinary pre-SQL regional guard rolls back staged batch rows and input files while preserving reviewed neighbors', async (t) => {
+  const entered = signal()
+  const release = signal()
+  let active: Fixture | undefined
+  let armed = false
+  await withFixture(
+    async (f) => {
+      active = f
+      const initial = await f.controller.generate(f.tabId, {
+        documentId: f.documentId,
+        iterations: 1,
+      })
+      assert.equal(initial.kind, 'queued')
+      await waitForState(
+        f.controller,
+        f.tabId,
+        (state) => state.phase === 'idle' && state.jobs.length === 0,
+      )
+      const review = await f.controller.generate(f.tabId, {
+        documentId: f.documentId,
+        iterations: 1,
+      })
+      assert.equal(review.kind, 'confirmation-required')
+      if (review.kind !== 'confirmation-required') {
+        assert.fail('Existing candidates must require replacement review.')
+      }
+      const before = await regionalQueueSnapshot(f)
+      assert.equal(before.queue.length, 4)
+      assert.equal(before.candidates.length, 4)
+      const cancel = f.queue.cancel.bind(f.queue)
+      const discard = f.staging.discardSessions.bind(f.staging)
+      const cancelSpy = t.mock.method(f.queue, 'cancel', (...args: Parameters<typeof cancel>) =>
+        cancel(...args),
+      )
+      const discardSpy = t.mock.method(
+        f.staging,
+        'discardSessions',
+        (...args: Parameters<typeof discard>) => discard(...args),
+      )
+      armed = true
+      const generating = f.controller.generate(f.tabId, {
+        confirmation: {
+          candidateIds: review.candidateIds,
+          unfinishedJobIds: review.unfinishedJobIds,
+        },
+        documentId: f.documentId,
+        iterations: 1,
+      })
+      const settled = generating.then(
+        (value) => ({ kind: 'resolved' as const, value }),
+        (error: unknown) => ({ error, kind: 'rejected' as const }),
+      )
+      try {
+        await Promise.race([
+          entered.promise,
+          generating.then(() => assert.fail('The staged batch must enter its SQL commit barrier.')),
+        ])
+        assert.equal(
+          f.projects.getOpenDocumentForAcceptance(f.tabId)!.document.regionalGuidance?.[0].enabled,
+          true,
+        )
+      } finally {
+        release.resolve()
+      }
+      const outcome = await settled
+      armed = false
+      const after = await regionalQueueSnapshot(f)
+      assert.equal(
+        after.queue.length,
+        before.queue.length,
+        'The pre-SQL guard must prevent new durable rows, including canceled replacement jobs.',
+      )
+      assert.equal(outcome.kind, 'rejected')
+      if (outcome.kind !== 'rejected') {
+        assert.fail('The late enabled region must refuse admission.')
+      }
+      await assert.rejects(Promise.reject(outcome.error), {
+        code: 'GENERATION_REGIONAL_GUIDANCE_UNSUPPORTED',
+      })
+      assert.deepEqual(
+        after,
+        before,
+        'The real transaction and published input directories must roll back, not leave canceled rows.',
+      )
+      assert.equal(cancelSpy.mock.callCount(), 0)
+      assert.equal(discardSpy.mock.callCount(), 0)
+      assert.equal(f.runtime.generated.length, 4)
+      t.mock.restoreAll()
+    },
+    {
+      beforeBatchCommit: async () => {
+        if (!armed) {
+          return
+        }
+        assert.ok(active)
+        // Deliberately bypass the public Project operation gate while the real SQL transaction is
+        // held. Removing the queue's final synchronous guard must leave an observable extra batch.
+        await active.projects.addRegionalGuidance(
+          active.tabId,
+          regionalDocumentOwner(active.projects, active.tabId),
+        )
+        entered.resolve()
+        await release.promise
+      },
+    },
+  )
+})
+
+test('ordinary frozen Retry survives regional add enable rename delete and Undo with original bytes seed and one source CAS', async (t) => {
+  await withFixture(async (f) => {
+    const review = await makeFailedSource(f)
+    const frozen = await f.queue.loadVerifiedRetryInput(review.id)
+    const previous = await f.staging.listVerifiedCandidates(f.tabId)
+    const previousPixels = await Promise.all(
+      previous.map(async (candidate) => ({
+        id: candidate.candidateId,
+        sha256: sha256(await readFile(candidate.assetPath)),
+      })),
+    )
+    const oldIds = (await f.queue.listManagerPage()).items.map(({ id }) => id)
+    let tab = await f.projects.addRegionalGuidance(
+      f.tabId,
+      regionalDocumentOwner(f.projects, f.tabId),
+    )
+    const regionId = tab.regionalGuidance![0].id
+    for (const enabled of [false, true]) {
+      tab = await f.projects.updateRegionalGuidance(
+        f.tabId,
+        { ...regionalDocumentOwner(f.projects, f.tabId), regionId },
+        { enabled, kind: 'enabled' },
+      )
+    }
+    tab = await f.projects.updateRegionalGuidance(
+      f.tabId,
+      { ...regionalDocumentOwner(f.projects, f.tabId), regionId },
+      { kind: 'rename', name: 'Later regional authoring' },
+    )
+    await f.projects.deleteRegionalGuidance(f.tabId, {
+      ...regionalDocumentOwner(f.projects, f.tabId),
+      regionId,
+    })
+    tab = await f.projects.undo(f.tabId)
+    assert.equal(tab.regionalGuidance![0].enabled, true)
+    assert.equal(tab.regionalGuidance![0].name, 'Later regional authoring')
+    await f.projects.updateGenerationDraft(f.tabId, {
+      kind: 'positive-prompt',
+      text: 'Later global prompt',
+    })
+    await f.projects.updateGenerationDraft(f.tabId, { kind: 'seed', policy: 'fixed', value: 991 })
+    const document = structuredClone(f.projects.getOpenDocumentForAcceptance(f.tabId)!.document)
+    const saved = await readFile(f.packagePath)
+    const capture = t.mock.method(f.projects, 'withCapturedNormalGenerationInput', async () =>
+      assert.fail('Frozen Retry cannot recapture current regions or source.'),
+    )
+    const preparation = t.mock.method(f.runtime, 'withGenerationPreparation', async () =>
+      assert.fail('Frozen Retry cannot prepare a fresh regional job.'),
+    )
+    try {
+      await f.controller.retryJob(review)
+      const page = await f.queue.listManagerPage()
+      const retry = page.items.find(({ id }) => !oldIds.includes(id))
+      assert.ok(retry)
+      await waitForState(
+        f.controller,
+        f.tabId,
+        (state) => state.phase === 'idle' && state.jobs.length === 0,
+      )
+      const replay = await f.queue.loadVerifiedInput(retry.id)
+      assert.deepEqual(replay.payload, frozen.payload)
+      assert.ok((await readFile(replay.targetPath)).equals(frozen.targetPngBytes))
+      assert.notEqual(retry.id, frozen.item.id)
+      assert.notEqual(retry.batchId, frozen.item.batchId)
+      assert.notEqual(retry.stagingSessionId, frozen.item.stagingSessionId)
+      assert.equal(
+        (await f.queue.getManagerEntry(review.id)).statusSequence,
+        review.statusSequence + 1,
+      )
+      assert.equal(f.runtime.generated.at(-1)!.job.sampling.seed, 42)
+      assert.equal(f.runtime.generated.at(-1)!.job.prompts.positive, 'red lantern')
+      const after = await f.staging.listVerifiedCandidates(f.tabId)
+      assert.equal(after.length, previous.length + 1)
+      for (const old of previousPixels) {
+        const retained = after.find((candidate) => candidate.candidateId === old.id)
+        assert.ok(retained)
+        assert.equal(sha256(await readFile(retained.assetPath)), old.sha256)
+      }
+      assert.deepEqual(f.projects.getOpenDocumentForAcceptance(f.tabId)!.document, document)
+      assert.ok((await readFile(f.packagePath)).equals(saved))
+      assert.equal(capture.mock.callCount(), 0)
+      assert.equal(preparation.mock.callCount(), 0)
+      await assert.rejects(f.controller.retryJob(review), { code: 'GENERATION_INVALID_REQUEST' })
+      assert.equal((await f.queue.listManagerPage()).items.length, oldIds.length + 1)
+    } finally {
+      t.mock.restoreAll()
+    }
   })
 })

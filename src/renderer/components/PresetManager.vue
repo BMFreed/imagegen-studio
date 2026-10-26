@@ -56,6 +56,7 @@ const props = defineProps<{
   initialPresetId?: string | null
 }>()
 const show = defineModel<boolean>('show', { required: true })
+const emit = defineEmits<{ afterLeave: [] }>()
 let closingWindow: {
   reject: (error: Error) => void
   resolve: () => void
@@ -216,7 +217,11 @@ const needsAttention = computed(
 )
 const createSource = computed(() => (state.value.creating ? state.value.createIntent : null))
 const sourceTitle = computed(() =>
-  createSource.value?.kind === 'result' ? 'Source result' : 'Source project',
+  createSource.value?.kind === 'smart-patch-draft'
+    ? 'Source Smart Patch'
+    : createSource.value?.kind === 'result'
+      ? 'Source result'
+      : 'Source project',
 )
 const unavailableResultSections = computed(() =>
   createSource.value?.kind === 'result'
@@ -386,6 +391,7 @@ onBeforeUnmount(() => {
     :maskClosable="false"
     :show
     :zIndex="AppLayer.appOverlay"
+    @afterLeave="emit('afterLeave')"
     @update:show="!$event && session.requestClose()"
   >
     <div
@@ -611,10 +617,27 @@ onBeforeUnmount(() => {
                           <p>
                             Uses this result's expanded prompts and portable generation settings.
                           </p>
+                          <p v-if="createSource.smartGeometryExcluded">
+                            Smart Patch mask, bounds, internal resolution and source context are not
+                            copied. Size is not included.
+                          </p>
                           <p v-if="unavailableResultSections">
                             Not recorded as reusable preset settings:
                             {{ unavailableResultSections }}. No values were copied for these
                             sections.
+                          </p>
+                        </template>
+                        <template v-else-if="createSource.kind === 'smart-patch-draft'">
+                          <strong>{{ createSource.patchName }}</strong>
+                          <span>· {{ createSource.projectName }}</span>
+                          <p>{{ createSource.projectSummary }}</p>
+                          <p>
+                            Copies this Smart Patch's authored prompt templates and reusable
+                            generation settings.
+                          </p>
+                          <p>
+                            Smart Patch mask, bounds, internal resolution and source context are not
+                            copied. Size is not included.
                           </p>
                         </template>
                         <template v-else>

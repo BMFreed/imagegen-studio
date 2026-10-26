@@ -62,6 +62,17 @@ const LAYER_ASSET_PATH_PATTERN =
 const ICC_PROFILE_PATH_PATTERN = /^assets\/profiles\/([a-f0-9]{64})\.icc$/
 const MASK_ASSET_PATH_PATTERN =
   /^assets\/masks\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[a-f0-9]{64}\.png$/
+const REGIONAL_REFERENCE_PATH_PATTERN =
+  /^assets\/regional-references\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[a-f0-9]{64}\.(?:png|webp)$/
+
+/** Existing CPU normalization/thumbnail ceilings, not measured regional capacity. */
+export const REGIONAL_REFERENCE_LIMITS = {
+  imageBytes: 512 * 1024 * 1024,
+  imageDimension: 16_384,
+  imagePixels: 64_000_000,
+  thumbnailBytes: 128_000,
+  thumbnailDimension: 128,
+} as const
 
 const UuidSchema = v.pipe(v.string(), v.uuid())
 const Sha256Schema = v.pipe(v.string(), v.regex(SHA256_PATTERN))
@@ -494,34 +505,6 @@ const MemberRefSchema = v.strictObject({
   sha256: Sha256Schema,
 })
 
-const RasterLayerSchema = v.strictObject({
-  asset: v.strictObject({
-    ...MemberRefSchema.entries,
-    height: BoundedDimensionSchema,
-    width: BoundedDimensionSchema,
-  }),
-  blendMode: v.picklist(['normal', 'multiply', 'screen', 'overlay']),
-  generationProvenance: v.optional(RasterGenerationProvenanceV1Schema),
-  id: UuidSchema,
-  kind: v.literal('raster'),
-  locked: v.boolean(),
-  name: NonemptyTextSchema,
-  opacity: UnitIntervalSchema,
-  sourceIccProfile: v.optional(MemberRefSchema),
-  transform: v.strictObject({
-    rotationDegrees: v.pipe(
-      FiniteNumberSchema,
-      v.minValue(-IGS_SAFETY_CEILINGS.rotationDegrees),
-      v.maxValue(IGS_SAFETY_CEILINGS.rotationDegrees),
-    ),
-    scaleX: BoundedScaleSchema,
-    scaleY: BoundedScaleSchema,
-    x: BoundedCoordinateSchema,
-    y: BoundedCoordinateSchema,
-  }),
-  visible: v.boolean(),
-})
-
 const SmartPatchMaskSchema = v.union([
   v.strictObject({ asset: v.null(), id: UuidSchema, revision: SafeUIntSchema }),
   v.pipe(
@@ -732,6 +715,37 @@ export const SmartPatchGenerationProvenanceV1Schema = v.pipe(
   }, 'The Smart Patch provenance differs from its frozen source, family or output.'),
 )
 
+/** A converted orphan retains its Smart history; its new owner is an ordinary Raster. */
+const RasterLayerSchema = v.strictObject({
+  asset: v.strictObject({
+    ...MemberRefSchema.entries,
+    height: BoundedDimensionSchema,
+    width: BoundedDimensionSchema,
+  }),
+  blendMode: v.picklist(['normal', 'multiply', 'screen', 'overlay']),
+  generationProvenance: v.optional(
+    v.union([RasterGenerationProvenanceV1Schema, SmartPatchGenerationProvenanceV1Schema]),
+  ),
+  id: UuidSchema,
+  kind: v.literal('raster'),
+  locked: v.boolean(),
+  name: NonemptyTextSchema,
+  opacity: UnitIntervalSchema,
+  sourceIccProfile: v.optional(MemberRefSchema),
+  transform: v.strictObject({
+    rotationDegrees: v.pipe(
+      FiniteNumberSchema,
+      v.minValue(-IGS_SAFETY_CEILINGS.rotationDegrees),
+      v.maxValue(IGS_SAFETY_CEILINGS.rotationDegrees),
+    ),
+    scaleX: BoundedScaleSchema,
+    scaleY: BoundedScaleSchema,
+    x: BoundedCoordinateSchema,
+    y: BoundedCoordinateSchema,
+  }),
+  visible: v.boolean(),
+})
+
 export const SmartPatchVariantV1Schema = v.pipe(
   v.strictObject({
     asset: v.strictObject({
@@ -796,6 +810,92 @@ const SmartPatchLayerSchema = v.pipe(
 
 const ProjectLayerSchema = v.variant('kind', [RasterLayerSchema, SmartPatchLayerSchema])
 
+const RegionalPromptSchema = v.pipe(
+  PromptSchema,
+  v.check(
+    (prompt) => prompt.embeddingRefs.every((ref) => ref.resource.kind === 'embedding'),
+    'Regional prompt references must be embeddings.',
+  ),
+)
+const RegionalPromptsSchema = v.pipe(
+  v.strictObject({
+    negative: v.nullable(RegionalPromptSchema),
+    positive: v.nullable(RegionalPromptSchema),
+    useGlobalNegativePrompt: v.boolean(),
+  }),
+  v.check(
+    ({ negative, positive, useGlobalNegativePrompt }) =>
+      (positive !== null || negative !== null) && (negative !== null || useGlobalNegativePrompt),
+    'Regional prompt blocks and their negative source are inconsistent.',
+  ),
+)
+
+const RegionalReferenceImageSchema = v.pipe(
+  v.strictObject({
+    asset: v.strictObject({
+      ...MemberRefSchema.entries,
+      height: PositiveIntegerSchema,
+      width: PositiveIntegerSchema,
+    }),
+    id: UuidSchema,
+    name: NonemptyTextSchema,
+    sourceFormat: v.picklist(['PNG', 'JPEG', 'WEBP']),
+    sourceIccProfile: v.optional(MemberRefSchema),
+    thumbnail: v.strictObject({
+      ...MemberRefSchema.entries,
+      height: PositiveIntegerSchema,
+      width: PositiveIntegerSchema,
+    }),
+  }),
+  v.check(({ asset, id, sourceIccProfile, thumbnail }) => {
+    const prefix = `assets/regional-references/${id}/`
+    const landscape = asset.width >= asset.height
+    const sourceMajor = landscape ? asset.width : asset.height
+    const sourceMinor = landscape ? asset.height : asset.width
+    const major = landscape ? thumbnail.width : thumbnail.height
+    const minor = landscape ? thumbnail.height : thumbnail.width
+    const expectedMajor = Math.min(REGIONAL_REFERENCE_LIMITS.thumbnailDimension, sourceMajor)
+    const scaledMinor = (sourceMinor * expectedMajor) / sourceMajor
+    return (
+      REGIONAL_REFERENCE_PATH_PATTERN.test(asset.path) &&
+      REGIONAL_REFERENCE_PATH_PATTERN.test(thumbnail.path) &&
+      asset.path === `${prefix}${asset.sha256}.png` &&
+      thumbnail.path === `${prefix}${thumbnail.sha256}.webp` &&
+      asset.bytes <= REGIONAL_REFERENCE_LIMITS.imageBytes &&
+      asset.width <= REGIONAL_REFERENCE_LIMITS.imageDimension &&
+      asset.height <= REGIONAL_REFERENCE_LIMITS.imageDimension &&
+      asset.width * asset.height <= REGIONAL_REFERENCE_LIMITS.imagePixels &&
+      thumbnail.bytes <= REGIONAL_REFERENCE_LIMITS.thumbnailBytes &&
+      thumbnail.width <= Math.min(asset.width, REGIONAL_REFERENCE_LIMITS.thumbnailDimension) &&
+      thumbnail.height <= Math.min(asset.height, REGIONAL_REFERENCE_LIMITS.thumbnailDimension) &&
+      major === expectedMajor &&
+      minor >= Math.max(1, Math.floor(scaledMinor)) &&
+      minor <= Math.max(1, Math.ceil(scaledMinor)) &&
+      (!sourceIccProfile ||
+        (sourceIccProfile.path === `assets/profiles/${sourceIccProfile.sha256}.icc` &&
+          sourceIccProfile.bytes >= 128 &&
+          sourceIccProfile.bytes <= IGS_SAFETY_CEILINGS.iccProfileBytes))
+    )
+  }, 'The regional reference image ownership, dimensions or source profile is invalid.'),
+)
+
+const RegionalGuidanceV1Schema = v.strictObject({
+  enabled: v.boolean(),
+  id: UuidSchema,
+  locked: v.boolean(),
+  mask: SmartPatchMaskSchema,
+  name: NonemptyTextSchema,
+  overlayOpacity: UnitIntervalSchema,
+  prompts: v.optional(RegionalPromptsSchema),
+  referenceImages: v.optional(
+    v.pipe(
+      v.array(RegionalReferenceImageSchema),
+      v.minLength(1),
+      v.maxLength(IGS_SAFETY_CEILINGS.archiveEntries),
+    ),
+  ),
+})
+
 const ProjectDocumentV1Schema = v.strictObject({
   colorSpace: v.literal('srgb'),
   documentId: UuidSchema,
@@ -804,6 +904,10 @@ const ProjectDocumentV1Schema = v.strictObject({
   lastActualSeedSnapshot: v.nullable(UInt32Schema),
   layers: v.pipe(v.array(ProjectLayerSchema), v.maxLength(IGS_SAFETY_CEILINGS.archiveEntries)),
   primaryBbox: RectSchema,
+  // Borrow the existing defensive array ceiling; this is not qualified regional capacity.
+  regionalGuidance: v.optional(
+    v.pipe(v.array(RegionalGuidanceV1Schema), v.maxLength(IGS_SAFETY_CEILINGS.archiveEntries)),
+  ),
   title: NonemptyTextSchema,
 })
 
@@ -831,6 +935,8 @@ export type IgsRasterLayerV1 = v.InferOutput<typeof RasterLayerSchema>
 export type IgsSmartPatchLayerV1 = v.InferOutput<typeof SmartPatchLayerSchema>
 export type IgsSmartPatchMaskAssetV1 = NonNullable<IgsSmartPatchLayerV1['mask']['asset']>
 export type IgsProjectLayerV1 = v.InferOutput<typeof ProjectLayerSchema>
+export type IgsRegionalGuidanceV1 = v.InferOutput<typeof RegionalGuidanceV1Schema>
+export type IgsRegionalGuidanceReferenceImageV1 = v.InferOutput<typeof RegionalReferenceImageSchema>
 export type IgsProjectAssetRefV1 = IgsMemberRefV1 & {
   height?: number
   width?: number
@@ -882,6 +988,7 @@ export function isIgsMemberPathV1(path: string): boolean {
     REQUIRED_MEMBER_PATH_SET.has(path) ||
     LAYER_ASSET_PATH_PATTERN.test(path) ||
     MASK_ASSET_PATH_PATTERN.test(path) ||
+    REGIONAL_REFERENCE_PATH_PATTERN.test(path) ||
     ICC_PROFILE_PATH_PATTERN.test(path)
   )
 }
@@ -892,39 +999,27 @@ export function parseProjectDocumentV1(input: unknown): IgsProjectDocumentV1 {
     throw new IgsSchemaError('INVALID_PROJECT', 'The Project document is invalid.')
   }
   const document = parsed.output
-  const ownedIds = new Set<string>()
+  const ownedIds = projectOwnedIds(document)
+  if (new Set(ownedIds).size !== ownedIds.length) {
+    throw new IgsSchemaError(
+      'INVALID_PROJECT',
+      'Each Project entity and mask must own a unique identity.',
+    )
+  }
   for (const layer of document.layers) {
-    if (ownedIds.has(layer.id)) {
-      throw new IgsSchemaError('INVALID_PROJECT', 'The Project layer references are invalid.')
-    }
-    ownedIds.add(layer.id)
     if (layer.kind === 'smart-patch') {
-      if (ownedIds.has(layer.mask.id)) {
-        throw new IgsSchemaError(
-          'INVALID_PROJECT',
-          'A Smart Patch mask must have its own identity.',
-        )
-      }
-      ownedIds.add(layer.mask.id)
-      for (const variant of layer.rasterSubLayers) {
-        // Provenance identifies the historical source. A later copy may own fresh hierarchy and
-        // asset identities without rewriting the accepted history; exact target matching belongs
-        // to the acceptance boundary, not to portable document ownership validation.
-        if (ownedIds.has(variant.id)) {
-          throw new IgsSchemaError(
-            'INVALID_PROJECT',
-            'A Smart Patch variant must have its own identity.',
-          )
-        }
-        ownedIds.add(variant.id)
-      }
       continue
     }
     if (!LAYER_ASSET_PATH_PATTERN.test(layer.asset.path)) {
       throw new IgsSchemaError('INVALID_PROJECT', 'The Project layer references are invalid.')
     }
     const provenance = layer.generationProvenance
-    if (provenance?.kind === 'illustrious-outpaint' || provenance?.kind === 'anima-outpaint') {
+    if (
+      provenance?.kind === 'illustrious-outpaint' ||
+      provenance?.kind === 'anima-outpaint' ||
+      provenance?.kind === 'illustrious-smart-patch' ||
+      provenance?.kind === 'anima-smart-patch'
+    ) {
       const output = provenance.executionResultContext.output
       if (
         !layer.asset.path.endsWith('.png') ||
@@ -935,7 +1030,7 @@ export function parseProjectDocumentV1(input: unknown): IgsProjectDocumentV1 {
       ) {
         throw new IgsSchemaError(
           'INVALID_PROJECT',
-          'The outpaint layer asset differs from its accepted contribution.',
+          'The layer asset differs from its accepted contribution.',
         )
       }
     }
@@ -975,11 +1070,45 @@ export function parseProjectDocumentV1(input: unknown): IgsProjectDocumentV1 {
   return document
 }
 
+/** Current ownership only. Historical provenance source identities are deliberately excluded. */
+export function projectOwnedIds(
+  document: Pick<IgsProjectDocumentV1, 'layers' | 'regionalGuidance'>,
+): string[] {
+  return [
+    ...document.layers.flatMap((layer) =>
+      layer.kind === 'smart-patch'
+        ? [layer.id, layer.mask.id, ...layer.rasterSubLayers.map(({ id }) => id)]
+        : [layer.id],
+    ),
+    ...(document.regionalGuidance ?? []).flatMap((region) => [
+      region.id,
+      region.mask.id,
+      ...(region.referenceImages ?? []).map(({ id }) => id),
+    ]),
+  ]
+}
+
+/** Strict persisted regional state; runtime image capabilities never belong in the document. */
+export function isProjectRegionalGuidanceV1(input: unknown): input is IgsRegionalGuidanceV1 {
+  return v.safeParse(RegionalGuidanceV1Schema, input).success
+}
+
 /** Top-level Raster owners only; do not use for all assets or material composition. */
 export function projectRasterLayers(
   document: Pick<IgsProjectDocumentV1, 'layers'>,
 ): IgsRasterLayerV1[] {
   return document.layers.filter((layer): layer is IgsRasterLayerV1 => layer.kind === 'raster')
+}
+
+/** Typed owner guard; parsing the document has already validated the complete provenance. */
+export function isSmartPatchRasterLayer(
+  layer: IgsProjectLayerV1,
+): layer is IgsRasterLayerV1 & { generationProvenance: IgsSmartPatchGenerationProvenanceV1 } {
+  return (
+    layer.kind === 'raster' &&
+    (layer.generationProvenance?.kind === 'illustrious-smart-patch' ||
+      layer.generationProvenance?.kind === 'anima-smart-patch')
+  )
 }
 
 /** Every owned raster image, including inactive variants; no synthetic owner projection. */
@@ -1055,24 +1184,45 @@ export function isProjectGenerationDraftV1(
 
 /** Actual archive assets only. A null owned mask contributes no image member. */
 export function projectAssetReferences(
-  document: Pick<IgsProjectDocumentV1, 'layers'>,
+  document: Pick<IgsProjectDocumentV1, 'layers' | 'regionalGuidance'>,
 ): IgsProjectAssetRefV1[] {
-  return document.layers.flatMap((layer) =>
-    layer.kind === 'smart-patch'
-      ? [
-          ...layer.rasterSubLayers.map(({ asset }) => asset),
-          ...(layer.mask.asset ? [layer.mask.asset] : []),
-        ]
-      : [layer.asset, ...(layer.sourceIccProfile ? [layer.sourceIccProfile] : [])],
-  )
+  return [
+    ...document.layers.flatMap((layer) =>
+      layer.kind === 'smart-patch'
+        ? [
+            ...layer.rasterSubLayers.map(({ asset }) => asset),
+            ...(layer.mask.asset ? [layer.mask.asset] : []),
+          ]
+        : [layer.asset, ...(layer.sourceIccProfile ? [layer.sourceIccProfile] : [])],
+    ),
+    ...(document.regionalGuidance ?? []).flatMap((region) => [
+      ...(region.mask.asset ? [region.mask.asset] : []),
+      ...(region.referenceImages ?? []).flatMap((reference) => [
+        reference.asset,
+        reference.thumbnail,
+        ...(reference.sourceIccProfile ? [reference.sourceIccProfile] : []),
+      ]),
+    ]),
+  ]
+}
+
+export function projectRegionalReferenceImages(
+  document: Pick<IgsProjectDocumentV1, 'regionalGuidance'>,
+): IgsRegionalGuidanceReferenceImageV1[] {
+  return (document.regionalGuidance ?? []).flatMap((region) => region.referenceImages ?? [])
 }
 
 export function projectMaskAssets(
-  document: Pick<IgsProjectDocumentV1, 'layers'>,
+  document: Pick<IgsProjectDocumentV1, 'layers' | 'regionalGuidance'>,
 ): IgsSmartPatchMaskAssetV1[] {
-  return document.layers.flatMap((layer) =>
-    layer.kind === 'smart-patch' && layer.mask.asset ? [layer.mask.asset] : [],
-  )
+  return [
+    ...document.layers.flatMap((layer) =>
+      layer.kind === 'smart-patch' && layer.mask.asset ? [layer.mask.asset] : [],
+    ),
+    ...(document.regionalGuidance ?? []).flatMap((region) =>
+      region.mask.asset ? [region.mask.asset] : [],
+    ),
+  ]
 }
 
 /** Validate the portable comparison payload without accepting private provenance groups. */
@@ -1080,6 +1230,16 @@ export function isRasterGenerationConfigurationV1(
   input: unknown,
 ): input is IgsRasterGenerationProvenanceV1['generationConfiguration'] {
   return v.is(RasterGenerationConfigurationV1Schema, input)
+}
+
+/** Smart comparison carries reusable settings only, with no Size or private provenance groups. */
+export function isSmartPatchGenerationConfigurationV1(
+  input: unknown,
+): input is IgsSmartPatchGenerationProvenanceV1['generationConfiguration'] {
+  return (
+    v.is(SmartPatchIllustriousConfigurationV1Schema, input) ||
+    v.is(SmartPatchAnimaConfigurationV1Schema, input)
+  )
 }
 
 /** Validate a mapper-produced record before it is attached to a generated Raster Layer. */
@@ -1169,14 +1329,30 @@ export function validateIgsPackageMetadataV1(
   }
   const members = new Map(manifest.members.map((member) => [member.path, member]))
   const assetPaths = new Set(rasterAssets.map((layer) => layer.asset.path))
-  const maskPaths = new Set(
-    document.layers.flatMap((layer) =>
-      layer.kind === 'smart-patch' && layer.mask.asset ? [layer.mask.asset.path] : [],
+  const maskAssets = projectMaskAssets(document)
+  const maskPaths = new Set(maskAssets.map((asset) => asset.path))
+  const references = projectRegionalReferenceImages(document)
+  const referencePaths = new Set(references.flatMap((ref) => [ref.asset.path, ref.thumbnail.path]))
+  const profilePaths = new Set(
+    [...rasterLayers, ...references].flatMap((layer) =>
+      layer.sourceIccProfile ? [layer.sourceIccProfile.path] : [],
     ),
   )
-  const profilePaths = new Set(
-    rasterLayers.flatMap((layer) => (layer.sourceIccProfile ? [layer.sourceIccProfile.path] : [])),
-  )
+  for (const ref of references) {
+    for (const asset of [
+      ref.asset,
+      ref.thumbnail,
+      ...(ref.sourceIccProfile ? [ref.sourceIccProfile] : []),
+    ]) {
+      const member = members.get(asset.path)
+      if (member?.bytes !== asset.bytes || member.sha256 !== asset.sha256) {
+        throw new IgsSchemaError(
+          'PACKAGE_MISMATCH',
+          'A regional reference member is missing or differs.',
+        )
+      }
+    }
+  }
   for (const layer of rasterAssets) {
     const member = members.get(layer.asset.path)
     if (member?.bytes !== layer.asset.bytes || member.sha256 !== layer.asset.sha256) {
@@ -1192,16 +1368,19 @@ export function validateIgsPackageMetadataV1(
       }
     }
   }
-  for (const layer of document.layers) {
-    if (layer.kind !== 'smart-patch' || !layer.mask.asset) {
-      continue
-    }
-    const member = members.get(layer.mask.asset.path)
-    if (member?.bytes !== layer.mask.asset.bytes || member.sha256 !== layer.mask.asset.sha256) {
+  for (const asset of maskAssets) {
+    const member = members.get(asset.path)
+    if (member?.bytes !== asset.bytes || member.sha256 !== asset.sha256) {
       throw new IgsSchemaError('PACKAGE_MISMATCH', 'A Project mask asset is missing or differs.')
     }
   }
   for (const member of manifest.members) {
+    if (member.path.startsWith('assets/regional-references/') && !referencePaths.has(member.path)) {
+      throw new IgsSchemaError(
+        'PACKAGE_MISMATCH',
+        'The package has an unreferenced regional reference image.',
+      )
+    }
     if (member.path.startsWith('assets/layers/') && !assetPaths.has(member.path)) {
       throw new IgsSchemaError(
         'PACKAGE_MISMATCH',

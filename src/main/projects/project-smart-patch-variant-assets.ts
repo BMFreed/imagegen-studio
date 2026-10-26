@@ -2,20 +2,34 @@ import type {
   IgsProjectDocumentV1,
   IgsSmartPatchVariantV1,
 } from '../../shared/projects/project-schema.js'
+import { isSmartPatchRasterLayer } from '../../shared/projects/project-schema.js'
 
 import { constants } from 'node:fs'
 import { open } from 'node:fs/promises'
 
 import { type IgsAssetSource, verifySmartPatchVariantPng } from './igs-package.js'
 
-export function smartPatchVariants(document: IgsProjectDocumentV1): IgsSmartPatchVariantV1[] {
-  return document.layers.flatMap((layer) =>
-    layer.kind === 'smart-patch' ? layer.rasterSubLayers : [],
-  )
+export type SmartPatchContributionImage = Pick<
+  IgsSmartPatchVariantV1,
+  'asset' | 'generationProvenance'
+>
+
+/** Pixel proofs include converted orphans under their ordinary Raster owner. */
+export function smartPatchContributionImages(
+  document: IgsProjectDocumentV1,
+): SmartPatchContributionImage[] {
+  return document.layers.flatMap<SmartPatchContributionImage>((layer) => {
+    if (layer.kind === 'smart-patch') {
+      return layer.rasterSubLayers
+    }
+    return isSmartPatchRasterLayer(layer)
+      ? [{ asset: layer.asset, generationProvenance: layer.generationProvenance }]
+      : []
+  })
 }
 
 /** A cached pixel proof never qualifies provenance freshness or current model availability. */
-export function smartPatchVariantImageIdentity(variant: IgsSmartPatchVariantV1): string {
+export function smartPatchVariantImageIdentity(variant: SmartPatchContributionImage): string {
   return JSON.stringify([
     variant.asset,
     variant.generationProvenance.executionResultContext.output.contributionAlpha8,
@@ -24,7 +38,7 @@ export function smartPatchVariantImageIdentity(variant: IgsSmartPatchVariantV1):
 
 /** Read only bounded, detached bytes; a source path is never itself a pixel-validation proof. */
 export async function verifySmartPatchVariantSource(
-  variant: IgsSmartPatchVariantV1,
+  variant: SmartPatchContributionImage,
   source: IgsAssetSource,
 ): Promise<void> {
   if ('bytes' in source) {

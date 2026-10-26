@@ -33,9 +33,10 @@ export async function withSmartPatchQueueFixture(
   family: Family,
   run: (f: SmartPatchQueueFixture) => Promise<void>,
   hooks: GenerationQueueTestHooks = {},
+  mode: Parameters<typeof literalSmartPatchPreparedInput>[1] = 'inpaint',
 ) {
   await withAnimaStagingFixture(async (normal) => {
-    const { executions, prepared } = literalSmartPatchPreparedInput(family, 'inpaint')
+    const { executions, prepared } = literalSmartPatchPreparedInput(family, mode)
     prepared.context.projectKey = localProjectRecoveryKey(normal.projectPath)
     prepared.context.documentId = normal.prepared.context.documentId
     prepared.context.documentRevision = normal.prepared.context.documentRevision

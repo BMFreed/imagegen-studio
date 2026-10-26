@@ -28,10 +28,22 @@ Its actual qualification results and limits belong to that checkpoint.
 saved portable settings and one concrete expanded prompt pair to detached creation.
 [Project Apply Models handoff](../engineering/phase-3-preset-model-handoff-research.md)
 connects selected-resource diagnostics to exact category/version browsing and
-returns to the same edited Apply draft after catalog refresh. Smart Patch
-source/target routing, other handoff contexts and installed Apply→inference
-qualification remain separate work. Existing prototype flows are not production
-persistence evidence, and PP-006 remains unavailable as a complete user flow.
+returns to the same edited Apply draft after catalog refresh.
+[Smart accepted result sources](../engineering/phase-4-smart-patch-result-preset-research.md)
+connect active and exact inactive variants plus converted Smart Rasters to the
+same detached editor through a strict worker-independent read. The separate
+[Smart settings Compare](../engineering/phase-4-smart-patch-compare-research.md)
+route is implemented with scoped native qualification recorded in the linked checkpoint; preset extraction
+is preserved. [Smart-target Apply](../engineering/phase-4-smart-patch-preset-apply-research.md)
+now implements the finite selected-Patch boundary described below. Qualification
+passes 363 focused/neighbor tests (including 33 shared/renderer/control and 18 real
+Main tests), 12 native checks, typecheck, lint and a fresh build. Native R4 covers
+both families, one Undo/Redo, actual Save/loader/reopen and 900×620 layout/keyboard,
+with normal physical exit and retained final SQLite. A staged-review semantic
+mutation detects the omitted guard and restores to GREEN. Portable fixtures do
+not qualify installed Smart Apply→inference or release; other handoff contexts
+remain separate work. Prototype flows are not production persistence evidence,
+and PP-006 remains unavailable as a complete user flow.
 
 ## Feature
 
@@ -131,7 +143,7 @@ The preview shows:
 
 Each section is an accordion row. Expanding it exposes the same generation-value controls used by the Preset Manager, but edits are made against a detached application draft. They affect only the values about to be copied into the current project; they never update the stored preset. A changed section can be reset independently, and `Reset all` restores every value from the source preset without changing the section selection.
 
-The modal initially keeps all sections collapsed. All sections present in the source preset are shown with a per-row `Apply` checkbox; all are selected by default except `Size` and `Seed`. Deselecting a section disables its fields but preserves the edited draft value so reselecting it restores editing without data loss.
+The modal initially keeps all sections collapsed. For ordinary Project Canvas targets, all sections present in the source preset are shown with a per-row `Apply` checkbox; all are selected by default except `Size` and `Seed`. Smart targets omit Size entirely. Deselecting a section disables its fields but preserves the edited draft value so reselecting it restores editing without data loss.
 
 The header makes this ownership boundary explicit: its persistent subtitle says that the user is customizing a temporary copy for the current project and that the saved preset will not change. An adjacent info tooltip additionally explains that Apply copies selected settings, does not update the saved preset and does not create a live link between the project and preset. Critical ownership information must not exist only inside the tooltip.
 
@@ -153,6 +165,44 @@ Partial apply is a normal workflow, not an advanced escape hatch. Users often ne
 Validation only checks selected sections. If the user applies only prompt text, missing model or LoRA resources in the preset must not block the action.
 
 For list-like sections, selection and content remain distinct. A selected empty LoRA stack means “clear the project's LoRAs”; a deselected LoRA section means “leave the project's LoRAs unchanged”. `Apply` is disabled when no section is selected.
+
+### Selected Smart Patch target
+
+The [finite Smart-target checkpoint](../engineering/phase-4-smart-patch-preset-apply-research.md)
+connects the same detached preview to the selected Smart Patch's generation draft
+through dedicated `getSmartPatchPresetApplicationReview` and
+`applySmartPatchPreset` APIs. Target context identifies the Project and Patch;
+the current values come from that Patch, not the Project Canvas draft. Ownership
+is captured before asynchronous preset loading. Main's ephemeral review token
+binds the exact coordinator, monotonic document epoch, reviewed revision and
+layer from the fixed preview through staged commit. Edit→Undo, close/reopen or a
+replacement review cannot retarget an old Apply. The review/token is never
+persisted in `.igs`, the preset or provenance.
+
+All preset workflows are eligible for this target. The workflow badge is advisory:
+it neither changes generation mode nor supplies sections absent from the source.
+Smart preview and Select all omit Size; a forged request selecting Size refuses.
+An unselected source Size is not applied or validated as a selected section.
+A size-only preset explains that no sections are available and cannot Apply.
+Preset Size never changes the Smart bbox or internal resolution. Seed starts
+deselected; explicit selection copies only policy/value, without resolving a seed
+or advancing the operational cursor.
+
+Selected-only validation uses the current Patch model family and exact selected
+resources, without an ML runtime. Missing selected resources block visibly;
+deselection permits a valid remaining selection. Hidden targets remain editable;
+locked targets refuse with the unlock explanation. Pending Project or sibling
+Patch draft synchronization blocks opening/submitting Smart Apply. This path
+does not flush drafts or seal prompt history to make itself available.
+
+Only the reviewed Patch generation draft may change. A changed Apply creates one
+Undo step; a no-op adds none, and neither implies Save. Source preset, Project
+draft/primary bbox, other Patch drafts, mask/bbox/internal resolution,
+coherence/compositing, variants/active member, accepted pixels/provenance, frozen
+jobs/queue, seed cursor and Model Manager policies stay unchanged. Derived
+freshness may reflect authored settings. Ordinary Project Apply, result-preset
+creation and settings Compare retain their separate behavior. The finite
+qualification above does not complete PP-006.
 
 ## New Project Preset Customization
 
@@ -241,7 +291,59 @@ does not mutate the Project document, its history or seed cursor, or the model
 library's prediction/noise policy. Missing references warn but remain saveable.
 [New Project initialization](../engineering/phase-3-new-project-preset-research.md)
 and [accepted Raster result projection](../engineering/phase-3-result-preset-research.md)
-have separate production checkpoints. Smart Patch sources remain a later integration.
+have separate production checkpoints. The
+[Smart result checkpoint](../engineering/phase-4-smart-patch-result-preset-research.md)
+adds accepted Smart sources without geometry or current-target inspection.
+
+### Selected Smart Patch source
+
+The separate [Smart draft checkpoint](../engineering/phase-4-smart-patch-current-preset-research.md)
+connects Save Current to the exact acknowledged selected Patch generation draft. It
+copies authored templates and exact sidecars/resources, rather than accepted
+result prompts or Project Canvas settings. Capture is synchronous before Manager
+and catalog reads. Workflow starts as `Smart Patch` for every Patch, including
+empty-mask and variant-free sources; no current pixel-mode inspection is required.
+Copying needs neither ML nor an available catalog; missing references remain
+editable/saveable and matching catalog hints are advisory.
+
+Hidden and locked Patches may be copied: this action reads settings and edits only
+the detached definition. Pending synchronization for any Project/Patch owner blocks
+capture without flushing drafts or sealing prompt history. Invalid raw reusable
+settings block with an explanation for the selected owner. Changing selection
+clears prior-owner validity; same-owner refresh preserves unpublished invalid raw
+input. Excluded raw Seed/batch/geometry input does not block after synchronization
+settles. Size, Seed, dynamic batch state, mask, bounds, internal resolution,
+coherence/compositing, variants and provenance are not copied.
+Source/execution identities remain outside the definition.
+The existing editor still permits explicitly authoring generic optional sections;
+this never derives Size from Patch geometry.
+
+`Source Smart Patch` identifies both the captured Patch and Project, with model
+summary and no geometry summary. Subsequent source or catalog changes cannot
+replace that snapshot. Cancel allocates nothing, failed Create retains the draft
+and source for retry after an actual INSERT failure, and explicit successful
+Create uses existing preset storage. The Project/history/queue/cursor, accepted
+pixels/provenance, `.igs` and library policy remain unchanged. Ordinary Canvas
+Save Current retains its Size and mode rules.
+
+Root execution passes **222 neighbor tests, zero failures/skips**,
+typecheck r3, full lint r2 and a fresh build. The isolated wrong-owner mutation
+goes GREEN (2) → semantic RED/control GREEN → restored GREEN (2), with all 1,313
+archived source members byte-exact restored. The focused owner regression is
+RED before the fix and GREEN after it without changing its causal assertion.
+Actual `native-r2` passes **12 automated checks**, exits code 0 across two healthy
+Electron lifetimes and retains two recipes after restart. Checks cover frozen
+source through later authoring/catalog changes and failed INSERT/retry, exact
+unchanged PNG/provenance/Project/seed/library policy/package bytes, and keyboard,
+focus and layout at 1440×900 and the real 900×620 minimum. Production review R2
+and final native-source R4 review of the two `useInnerText` assertions are clean;
+scoped final-harness ESLint passes. Root opened six final native-r2 screenshots
+(normal, minimum-width source, scrolled, restored, SQLite failure and restart)
+and found no material UI defect in scope; `root-visual-review.json` is retained.
+Both retention audits are clean; root completes scoped temporary-data cleanup
+with retained byte evidence and 96.59 MiB reclaimed, as recorded in the checkpoint. Inference,
+release and complete PP-006 remain outside this authoring qualification; public
+status stays **Пока не обещать**.
 
 The same boundary applies when a draft is created from an accepted Raster Layer
 or Smart Patch variant. `Save Preset from Result` copies only portable generation
@@ -250,6 +352,12 @@ dimensions, not the size of the infinite Canvas. It never copies a Smart Patch
 mask, bounding box, internal resolution, compositing state, source revisions or
 source composite identity. In particular, Smart Patch `internalResolution` must
 not be mapped into preset `Size`.
+
+Every Smart-provenance source defaults to the `Smart Patch` workflow, including
+accepted variants recorded in TXT/IMG/INP/OUT modes and explicit orphan Raster
+conversions. The origin determines this initial workflow; recorded mode never
+turns Smart world dimensions or internal resolution into preset Size. Users can
+edit the detached draft before explicit creation.
 
 Those values are properties of a Smart Patch Layer, not generation-template
 fields. When users want to reuse them, they duplicate the Smart Patch Layer;
@@ -308,11 +416,32 @@ Raster and Smart Patch Layer context menus expose a separate read-only `Compare
 generation settings` popover. It compares `Generated with` provenance to
 `Current Canvas`, contains no Apply/Recall/preset action and does not mutate the
 Project. `Save Preset from Result` remains a separate action. The prototype
-implements these origins on in-memory records. Production Raster comparison
-reads saved provenance; `Save Preset from Result` now reads that portable
-configuration through a worker-independent native endpoint and opens the same
-detached Manager used by Save Current. Imported/legacy images without generation
+implements these origins on in-memory records. Production ordinary Raster
+comparison retains its existing read; active accepted Smart variants and converted
+Smart Rasters use strict `getSmartResultComparisonData` against the current
+**Project Canvas**, including while a Patch is selected. Smart comparison omits
+the entire Size section and geometry/layer/source/execution context. Its scoped native qualification passes all 18 checks.
+`Save Preset from Result` separately reads portable configuration through a
+worker-independent native endpoint and opens the same detached Manager used by
+Save Current. Imported/legacy images without generation
 data have a disabled result action; they can use Save Current instead.
+
+Smart sources use the active accepted variant from its layer menu, the exact
+stored variant's own `Save Preset from Result` action, or the converted Raster's
+menu. Inactive, hidden/locked and outdated/unverified sources remain readable;
+the action does not activate a variant. The variants browser stays open beneath
+the Manager, and guarded focus returns to the originating control after dismissal.
+These inactive-source and worker-independent guarantees belong to preset
+extraction: it needs no runtime, installed model, source PNG, draft flush or
+prompt-history seal. A late reply after owner/revision/navigation changes cannot
+open a stale draft. The separate
+[Smart settings Compare](../engineering/phase-4-smart-patch-compare-research.md)
+route supports only the active accepted variant and converted Smart Raster;
+there is no inactive direct Compare action. Its optional current-Canvas mode
+inspection is separate from preset extraction. At that Compare checkpoint,
+Smart-target Apply, image comparison and inference were outside its slice;
+the later finite Smart-target Apply checkpoint is linked above. PP-005/006 remain
+**Пока не обещать**. Final comparison outcomes belong to the linked research.
 
 `New Preset` in the manager creates a minimal manual draft with `Text to Image`, an empty name and only an empty Prompt section. A pinned `Draft` row remains visible above saved results regardless of active filters. `Cancel` discards the manual draft and returns to the previously selected preset.
 
@@ -538,7 +667,7 @@ prototype mocks do not prove that mapping. PP-006 stays `пока не обещ�
 - Project-integrated Apply explains why `Apply` is disabled, identifies the affected selected section/resource and uses the same nested-resource detection as Preset Manager and standalone Apply.
 - Project Playwright coverage must prove warnings for nested LoRA and prompt-owned embedding refs, deselection recovery and the absence of silent application.
 - Applying a preset copies settings into the project and does not create a live synchronization relationship.
-- Apply initially selects every source section except Size and Seed, keeps all sections collapsed, and disables Apply for an empty selection or a missing resource in a selected section.
+- Apply initially selects every available source section except Size and Seed, keeps all sections collapsed, and disables Apply for an empty selection or a missing resource in a selected section. Smart targets omit Size entirely, refuse selected Size and explain size-only sources as having no available sections.
 
 ## Production Project Apply checkpoint
 
@@ -561,6 +690,12 @@ explicitly in the editor. Cancel creates no record, storage failures preserve
 the draft for retry, and source/project/library ownership remains unchanged.
 [Project Apply handoff checkpoint](../engineering/phase-3-preset-model-handoff-research.md)
 connects diagnostics to exact Model Manager focus with a guarded return to the
-same detached editor. Smart Patch source/target routing, other handoff contexts
-and installed-resource Apply→inference qualification remain pending; PP-006 is
-not complete. Actual qualification counts and limitations belong to each checkpoint.
+same detached editor. The
+[Smart source checkpoint](../engineering/phase-4-smart-patch-result-preset-research.md)
+adds all three accepted Smart origins and retains the same storage lifecycle.
+At that Project Apply checkpoint, Smart-target Apply was still pending. The later
+[finite Smart-target Apply checkpoint](../engineering/phase-4-smart-patch-preset-apply-research.md)
+qualifies the selected-Patch draft boundary above through focused and native
+checks, without installed Smart Apply→inference qualification. Other
+handoff contexts remain separate work and PP-006 is not complete. Actual
+qualification counts and limitations belong to each checkpoint.

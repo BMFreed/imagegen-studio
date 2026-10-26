@@ -83,6 +83,23 @@ test('Fit View still contains the largest allowed raster dimensions', () => {
   assert.ok(camera.y + 32_768 * camera.scale <= 600)
 })
 
+test('a short or narrow preview area keeps the focused contribution visible', () => {
+  for (const viewport of [
+    { height: 120, width: 324 },
+    { height: 324, width: 120 },
+  ]) {
+    const bounds = { bottom: 247, left: 160, right: 289, top: 120 }
+    const camera = fitCamera(bounds, viewport)
+    const width = (bounds.right - bounds.left) * camera.scale
+    const height = (bounds.bottom - bounds.top) * camera.scale
+    assert.ok(Math.max(width / viewport.width, height / viewport.height) >= 0.5)
+    assert.ok(bounds.left * camera.scale + camera.x >= 0)
+    assert.ok(bounds.top * camera.scale + camera.y >= 0)
+    assert.ok(bounds.right * camera.scale + camera.x <= viewport.width)
+    assert.ok(bounds.bottom * camera.scale + camera.y <= viewport.height)
+  }
+})
+
 test('wheel zoom keeps the world point under the pointer stationary', () => {
   const start = { scale: 0.5, x: 120, y: -80 }
   const screen = { x: 360, y: 240 }

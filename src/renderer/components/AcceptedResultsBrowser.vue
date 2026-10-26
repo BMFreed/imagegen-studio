@@ -125,7 +125,8 @@ function imageFailed(url: string) {
       </template>
       <div class="history-content">
         <p class="history-description">
-          Generated images saved in your projects. Select an image to open its layer.
+          Generated images saved in your projects. Select an image to reveal its layer or inspect
+          its Smart Patch variant.
         </p>
         <NAlert v-if="navigationError" :showIcon="false" type="warning">
           {{ navigationError }}
@@ -143,7 +144,8 @@ function imageFailed(url: string) {
             size="small"
           >
             <template v-slot:extra>
-              Accept a generation as a layer and save its project to include it here.
+              Accept a generation as a layer or Smart Patch variant and save its project to include
+              it here.
             </template>
           </NEmpty>
           <NEmpty
@@ -339,6 +341,7 @@ function imageFailed(url: string) {
 .result-name,
 .result-project,
 .result-model {
+  line-height: 1.5;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

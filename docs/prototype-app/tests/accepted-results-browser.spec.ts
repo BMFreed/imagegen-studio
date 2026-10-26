@@ -10,7 +10,7 @@ test.beforeAll(async () => {
   await mkdir(screenshotsDir, { recursive: true })
 })
 
-test('saved accepted results keep 50-row list scrollable and page without losing navigation identity', async ({
+test('saved accepted results keep labels unclipped, scroll 50 rows and retain navigation identity', async ({
   page,
 }) => {
   await page.setViewportSize({ height: 900, width: 1440 })
@@ -22,6 +22,27 @@ test('saved accepted results keep 50-row list scrollable and page without losing
   await expect(dialog.getByText('50 shown · 57 saved')).toBeVisible()
 
   const first = list.locator(`[data-layer-id="${firstLayerId}"]`)
+  await expect.poll(() => dialog.evaluate((node) => getComputedStyle(node).transform)).toBe('none')
+  await page.evaluate(() => document.fonts.ready.then(() => undefined))
+  const clippedLabels = await first
+    .locator('.result-name, .result-project, .result-model')
+    .evaluateAll((labels) =>
+      labels.flatMap((label) => {
+        const range = document.createRange()
+        range.selectNodeContents(label)
+        const clip = label.getBoundingClientRect()
+        const top = clip.top + label.clientTop
+        // Horizontal title ellipsis is deliberate; the full glyph height must remain visible.
+        return [...range.getClientRects()]
+          .filter((rect) => rect.top < top - 1 || rect.bottom > top + label.clientHeight + 1)
+          .map((rect) => ({
+            glyphHeight: rect.height,
+            height: label.clientHeight,
+            name: label.className,
+          }))
+      }),
+    )
+  expect(clippedLabels).toEqual([])
   await expect(first.getByText('Seed 0')).toBeVisible()
   await expect(first.getByText('Preview unavailable')).toBeVisible()
   await expect(first.locator('.result-name')).toHaveAttribute(

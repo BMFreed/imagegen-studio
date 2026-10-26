@@ -932,11 +932,19 @@ export class GenerationQueueRepository {
   /** Call within the qualified request's scratch lease, while its target path is still valid. */
   /** Call within the qualified request's scratch lease, while its target path is still valid. */
   async enqueueIllustriousGeneration(input: {
+    assertCurrent?: () => void
     prepared: PreparedNormalGeneration
     projectPath: string
     request: IllustriousGenerationRequestV1
     stagingSessionId: string
   }): Promise<QueuedGenerationItem> {
+    const assertCurrent = input.assertCurrent
+    if (assertCurrent !== undefined && typeof assertCurrent !== 'function') {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'The generation owner check is invalid.',
+      )
+    }
     // Freeze caller-owned objects before any await, including the source Project path.
     const request = structuredClone(input.request)
     const context = structuredClone(input.prepared.context)
@@ -1003,28 +1011,34 @@ export class GenerationQueueRepository {
         // A close may have fenced the Project while durable input files were written. The
         // catch path removes this unreferenced directory; no pending row becomes visible.
         this.assertProjectCanEnqueue(localProjectKey)
-        await this.db
-          .insertInto('generation_queue_item')
-          .values({
-            batch_id: batchId,
-            canonical_project_path: canonicalPath,
-            created_at: now,
-            document_id: context.documentId,
-            document_revision: context.documentRevision,
-            error_code: null,
-            error_message: null,
-            finished_at: null,
-            frozen_payload_json: payloadJson,
-            id,
-            local_project_key: localProjectKey,
-            operation: payload.kind,
-            staging_session_id: stagingSessionId,
-            started_at: null,
-            status: 'pending',
-            status_sequence: 0,
-            updated_at: now,
-          })
-          .execute()
+        await this.db.transaction().execute(async (transaction) => {
+          this.assertProjectCanEnqueue(localProjectKey)
+          assertCurrent?.()
+          await transaction
+            .insertInto('generation_queue_item')
+            .values({
+              batch_id: batchId,
+              canonical_project_path: canonicalPath,
+              created_at: now,
+              document_id: context.documentId,
+              document_revision: context.documentRevision,
+              error_code: null,
+              error_message: null,
+              finished_at: null,
+              frozen_payload_json: payloadJson,
+              id,
+              local_project_key: localProjectKey,
+              operation: payload.kind,
+              staging_session_id: stagingSessionId,
+              started_at: null,
+              status: 'pending',
+              status_sequence: 0,
+              updated_at: now,
+            })
+            .execute()
+          assertCurrent?.()
+          this.assertProjectCanEnqueue(localProjectKey)
+        })
         return {
           batchId,
           cancelRequested: false,
@@ -1066,6 +1080,7 @@ export class GenerationQueueRepository {
 
   /** Publish one fresh group of already qualified concrete jobs, with no partial visible batch. */
   async enqueueIllustriousGenerationBatch(input: {
+    assertCurrent?: () => void
     items: readonly {
       prepared: PreparedNormalGeneration
       request: IllustriousGenerationRequestV1
@@ -1080,7 +1095,8 @@ export class GenerationQueueRepository {
       !Array.isArray(input.items) ||
       input.items.length < 1 ||
       input.items.length > GENERATION_STAGING_LIMITS.candidates ||
-      typeof input.preflight !== 'function'
+      typeof input.preflight !== 'function' ||
+      (input.assertCurrent !== undefined && typeof input.assertCurrent !== 'function')
     ) {
       throw new GenerationQueueError(
         'QUEUE_INPUT_INVALID',
@@ -1090,6 +1106,7 @@ export class GenerationQueueRepository {
     const projectPath = input.projectPath
     const stagingSessionId = input.stagingSessionId
     const preflight = input.preflight
+    const assertCurrent = input.assertCurrent
     if (!Buffer.isBuffer(input.items[0]?.prepared?.targetPngBytes)) {
       throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The batch target is unavailable.')
     }
@@ -1217,12 +1234,14 @@ export class GenerationQueueRepository {
         }
         await this.db.transaction().execute(async (transaction) => {
           this.assertProjectCanEnqueue(localProjectKey)
+          assertCurrent?.()
           // Separate small INSERTs share one transaction; SQLite binding counts stay bounded.
           for (const row of rows) {
             await transaction.insertInto('generation_queue_item').values(row).execute()
             this.assertProjectCanEnqueue(localProjectKey)
           }
           await this.testHooks.beforeBatchCommit?.()
+          assertCurrent?.()
           this.assertProjectCanEnqueue(localProjectKey)
         })
         await this.testHooks.afterBatchCommit?.()
@@ -2673,6 +2692,245 @@ export class GenerationQueueRepository {
   }
 
   /**
+   * Main-only replay of one concrete Smart Patch item. Copy the complete verified bundle so the
+   * retry owns its inputs independently of source/sibling history, preserving the original index.
+   */
+  async retryPreparedSmartPatchTerminal(
+    id: string,
+    expectedStatusSequence: number,
+    options: {
+      /** Synchronous document/close assertion; must not reenter the database connection. */
+      assertCurrent: () => void
+      modelService: SmartPatchExecutionModelResolver
+    },
+  ): Promise<QueuedGenerationItem> {
+    validateQueueId(id)
+    validateExpectedSequence(expectedStatusSequence)
+    if (typeof options.assertCurrent !== 'function') {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'Smart Patch Retry needs its current document owner.',
+      )
+    }
+    const assertCurrent = options.assertCurrent
+    const modelService = captureSmartPatchModelResolver(options.modelService)
+    assertCurrent()
+    return await this.serialize(async () => {
+      assertCurrent()
+      this.assertReadyForDispatch()
+      const source = await this.requireRow(id)
+      const assertCanRetry = () => {
+        this.assertProjectCanEnqueue(source.local_project_key)
+        assertCurrent()
+      }
+      assertCanRetry()
+      if (!isSmartPatchQueueOperation(source.operation)) {
+        throw new GenerationQueueError(
+          'QUEUE_INPUT_INVALID',
+          'Expected a Smart Patch Retry source.',
+        )
+      }
+      if (
+        source.status_sequence !== expectedStatusSequence ||
+        (source.status !== 'failed' && source.status !== 'canceled')
+      ) {
+        throw statusConflict()
+      }
+      const hasReceipt = await this.hasReceipt(id)
+      assertCanRetry()
+      if (hasReceipt) {
+        throw publicationUncertain()
+      }
+      const assertCanonicalIdentity = async () => {
+        assertCanRetry()
+        const canonicalPath = await canonicalProjectPath(source.canonical_project_path)
+        assertCanRetry()
+        if (
+          canonicalPath !== source.canonical_project_path ||
+          localProjectRecoveryKey(canonicalPath) !== source.local_project_key
+        ) {
+          throw new GenerationQueueError(
+            'QUEUE_PROJECT_IDENTITY_CHANGED',
+            'The Smart Patch Project path changed before retrying.',
+          )
+        }
+      }
+      await assertCanonicalIdentity()
+      assertCanRetry()
+      const verified = await this.verifySmartPatchRow(source)
+      assertCanRetry()
+      const reverifyItem = async (bundle: SmartPatchInputBundle) => {
+        assertCanRetry()
+        // Other items stay in the copied manifest, but their prompts/resources are not retried.
+        await reverifyFrozenSmartPatchInput(
+          { files: bundle.files, manifest: { ...bundle.manifest, items: [verified.payload.item] } },
+          modelService,
+        )
+        assertCanRetry()
+      }
+      await reverifyItem(verified.bundle)
+      assertCanRetry()
+      const bundleId = randomUUID()
+      const pin = this.smartPatchBundlePin(bundleId)
+      const repository = new SmartPatchInputBundleRepository(
+        this.dataRoot,
+        { createId: () => bundleId },
+        'queue',
+      )
+      const nextId = randomUUID()
+      const nextBatchId = randomUUID()
+      const nextSessionId = randomUUID()
+      let bundle: SmartPatchInputBundle | undefined
+      let nextRow: Selectable<GenerationQueueItem> | undefined
+      let sourceSequenceConsumed = false
+      let transactionCommitted = false
+      GenerationQueueRepository.activeSmartPatchBundles.add(pin)
+      try {
+        bundle = await repository.publish(verified.bundle)
+        assertCanRetry()
+        const payload = buildFrozenQueuedSmartPatchV1(bundle, verified.payload.bundle.itemIndex)
+        const json = JSON.stringify(payload)
+        if (Buffer.byteLength(json, 'utf8') > MAX_PAYLOAD_BYTES) {
+          throw new GenerationQueueError(
+            'QUEUE_INPUT_INVALID',
+            'The Smart Patch Retry payload is too large.',
+          )
+        }
+        const now = new Date().toISOString()
+        nextRow = {
+          batch_id: nextBatchId,
+          canonical_project_path: source.canonical_project_path,
+          created_at: now,
+          document_id: source.document_id,
+          document_revision: source.document_revision,
+          error_code: null,
+          error_message: null,
+          finished_at: null,
+          frozen_payload_json: json,
+          id: nextId,
+          local_project_key: source.local_project_key,
+          operation: source.operation,
+          staging_session_id: nextSessionId,
+          started_at: null,
+          status: 'pending',
+          status_sequence: 0,
+          updated_at: now,
+        }
+        await this.testHooks.afterRetryInputPublish?.()
+        assertCanRetry()
+        await reverifyItem(bundle)
+        assertCanRetry()
+        await assertCanonicalIdentity()
+        assertCanRetry()
+        // Bind SQL to a fresh actual-byte reload, not merely the copy's publication response.
+        const reloaded = await repository.load(bundle.id)
+        assertCanRetry()
+        assertQueuedSmartPatchBundle(parseSmartPatchQueueRow(nextRow), reloaded)
+        const expectedRow = nextRow
+        await this.db.transaction().execute(async (transaction) => {
+          assertCanRetry()
+          const consumed = await transaction
+            .updateTable('generation_queue_item')
+            .set({ status_sequence: sql<number>`status_sequence + 1`, updated_at: now })
+            .where('id', '=', id)
+            .where('status', '=', source.status)
+            .where('status_sequence', '=', expectedStatusSequence)
+            .where('frozen_payload_json', '=', source.frozen_payload_json)
+            .where('canonical_project_path', '=', source.canonical_project_path)
+            .where('local_project_key', '=', source.local_project_key)
+            .where('document_id', '=', source.document_id)
+            .where('document_revision', '=', source.document_revision)
+            .where('operation', '=', source.operation)
+            .where(
+              sql<boolean>`NOT EXISTS (
+                SELECT 1 FROM generation_candidate_receipt AS receipt
+                WHERE receipt.queue_item_id = generation_queue_item.id
+              )`,
+            )
+            .returning('id')
+            .executeTakeFirst()
+          sourceSequenceConsumed = consumed !== undefined
+          assertCanRetry()
+          if (!consumed) {
+            throw statusConflict()
+          }
+          await transaction.insertInto('generation_queue_item').values(expectedRow).execute()
+          assertCanRetry()
+          await this.testHooks.beforeRetryCommit?.()
+          assertCanRetry()
+        })
+        transactionCommitted = true
+        assertCanRetry()
+        await this.testHooks.afterRetryCommit?.()
+        assertCanRetry()
+        return toItem(nextRow)
+      } catch (error) {
+        if (!bundle) {
+          if (
+            error instanceof Error &&
+            'code' in error &&
+            error.code === 'SMART_PATCH_INPUT_PUBLICATION_UNCERTAIN'
+          ) {
+            this.retainUncertainSmartPatchProject(source.local_project_key)
+            throw batchPublicationUncertain()
+          }
+          throw error
+        }
+        // A lost acknowledgement is success only for this exact immutable retry row. Unknown or
+        // partial publication retains the copy and blocks further admission/dispatch until recovery.
+        let committed: Selectable<GenerationQueueItem>[]
+        try {
+          committed = await this.db
+            .selectFrom('generation_queue_item')
+            .selectAll()
+            .where('id', '=', nextId)
+            .execute()
+        } catch {
+          this.retainUncertainSmartPatchProject(source.local_project_key)
+          throw batchPublicationUncertain()
+        }
+        if (nextRow && batchRowsMatch(committed, [nextRow])) {
+          return toItem(committed[0])
+        }
+        if (committed.length > 0) {
+          this.retainUncertainSmartPatchProject(source.local_project_key)
+          throw batchPublicationUncertain()
+        }
+        if (transactionCommitted) {
+          this.retainUncertainSmartPatchProject(source.local_project_key)
+          throw batchPublicationUncertain()
+        }
+        if (sourceSequenceConsumed) {
+          // An absent retry row alone cannot prove rollback after the transaction consumed the
+          // source: a lost acknowledgement may have been followed by deletion/partial publication.
+          let currentSource: Selectable<GenerationQueueItem> | undefined
+          try {
+            currentSource = await this.db
+              .selectFrom('generation_queue_item')
+              .selectAll()
+              .where('id', '=', id)
+              .executeTakeFirst()
+          } catch {
+            this.retainUncertainSmartPatchProject(source.local_project_key)
+            throw batchPublicationUncertain()
+          }
+          if (!isDeepStrictEqual(currentSource, source)) {
+            this.retainUncertainSmartPatchProject(source.local_project_key)
+            throw batchPublicationUncertain()
+          }
+        }
+        await this.cleanupSmartPatchBundles(
+          [{ id: bundle.id, manifestSha256: bundle.manifestSha256 }],
+          true,
+        )
+        throw error
+      } finally {
+        GenerationQueueRepository.activeSmartPatchBundles.delete(pin)
+      }
+    })
+  }
+
+  /**
    * Retry from the original frozen bytes, never from today's Project draft. A fresh queue item and
    * staging session keep an old candidate/receipt independent of this new attempt. The source row's
    * sequence is consumed atomically with insertion, so a stale second click cannot create another
@@ -2837,7 +3095,7 @@ export class GenerationQueueRepository {
       if (isSmartPatchQueueOperation(source.operation)) {
         throw new GenerationQueueError(
           'QUEUE_INPUT_INVALID',
-          'Smart Patch Retry requires its future dispatch owner.',
+          'Smart Patch Retry requires its dedicated frozen-input owner.',
         )
       }
       if (

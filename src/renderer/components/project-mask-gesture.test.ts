@@ -10,6 +10,7 @@ import {
   type MaskGestureOwner,
   maskWorldPoint,
   ProjectMaskGesture,
+  sameMaskGestureOwner,
 } from './project-mask-gesture.js'
 
 const owner: MaskGestureOwner = {
@@ -110,6 +111,7 @@ test('changed owner or baseline refuses the complete gesture instead of retarget
     { layerId: 'other-patch' },
     { maskId: 'other-mask' },
     { maskRevision: 4 },
+    { kind: 'regional-guidance' },
   ]
   for (const change of neighboringChanges) {
     const gesture = new ProjectMaskGesture(owner, 'brush', 'add', 20)
@@ -119,6 +121,27 @@ test('changed owner or baseline refuses the complete gesture instead of retarget
   const valid = new ProjectMaskGesture(owner, 'brush', 'add', 20)
   valid.append({ x: -40, y: 32 })
   assert.notEqual(valid.finish(owner), null)
+})
+
+test('regional strokes retain their explicit owner kind and cannot finish as a Smart mask', () => {
+  const regionalOwner: MaskGestureOwner = { ...owner, kind: 'regional-guidance' }
+  const gesture = new ProjectMaskGesture(regionalOwner, 'eraser', 'add', 20)
+  regionalOwner.kind = 'smart-patch'
+  gesture.append({ x: -40, y: 32 })
+  assert.equal(gesture.owner.kind, 'regional-guidance')
+  assert.equal(gesture.finish(regionalOwner), null)
+
+  const original = { ...owner, kind: 'regional-guidance' as const }
+  const valid = new ProjectMaskGesture(original, 'brush', 'subtract', 20)
+  valid.append({ x: -40, y: 32 })
+  assert.deepEqual(valid.finish(original)?.edit, {
+    diameter: 20,
+    kind: 'brush',
+    operation: 'add',
+    points: [{ x: -40, y: 32 }],
+  })
+  assert.equal(sameMaskGestureOwner(owner, { ...owner, kind: 'smart-patch' }), true)
+  assert.equal(sameMaskGestureOwner(original, owner), false)
 })
 
 test('Escape-style cancellation and incomplete Lasso cannot produce an edit on later pointerup', () => {

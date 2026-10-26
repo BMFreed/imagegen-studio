@@ -1,18 +1,26 @@
 import type { GenerationQueueEntry } from '../../shared/projects/generation-queue-manager.js'
 import type { ProjectGenerationActionState } from '../../shared/projects/project-generation-actions.js'
 
-type OutpaintRetryState = Pick<
+type RetryState = Pick<
   ProjectGenerationActionState,
-  'animaOutpaintSupported' | 'outpaintSupported'
+  'animaOutpaintSupported' | 'animaSupported' | 'outpaintSupported' | 'smartPatchSupported'
 >
 
 /** Advisory worker gate follows the frozen operation; Main still verifies exact local resources. */
-export function outpaintQueueRetryReason(
+export function generationQueueRetryReason(
   operation: GenerationQueueEntry['operation'],
-  state: OutpaintRetryState | null,
+  state: RetryState | null,
 ): string | null {
   if (operation === 'illustrious-smart-patch' || operation === 'anima-smart-patch') {
-    return 'Smart Patch queue execution and retry are not available yet.'
+    if (state === null) {
+      return 'Checking image engine support for this frozen Smart Patch job.'
+    }
+    if (state.smartPatchSupported !== true) {
+      return 'The current image engine does not support Smart Patch generation.'
+    }
+    return operation === 'anima-smart-patch' && state.animaSupported !== true
+      ? 'The current image engine does not support Smart Patch generation for Anima.'
+      : null
   }
   if (operation !== 'illustrious-outpaint' && operation !== 'anima-outpaint') {
     return null

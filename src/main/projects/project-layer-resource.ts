@@ -17,7 +17,7 @@ import { type IgsAssetSource, readIgsPackage } from './igs-package.js'
 
 const secret = randomBytes(32)
 const resourcePath =
-  /^\/(project-v1-[a-f0-9]{64})\/([a-f0-9-]{36})\/([a-f0-9-]{36})\/([a-f0-9]{64})\/([a-f0-9]{64})\.img$/
+  /^\/(project-v1-[a-f0-9]{64})\/([a-fA-F0-9-]{36})\/([a-fA-F0-9-]{36})\/([a-f0-9]{64})\/([a-f0-9]{64})\.img$/
 
 export interface ProjectLayerResourceRequest {
   assetSha256: string
@@ -70,7 +70,7 @@ export function parseProjectLayerImageUrl(input: string): ProjectLayerResourceRe
   return { assetSha256, documentRevision, layerId, tabId }
 }
 
-/** Resolve only a layer in the currently open revision, then stream its verified ZIP member. */
+/** Exact owned raster IDs include inactive variants; parent Patch IDs retain active-only pixels. */
 export function resolveProjectLayerAsset(
   document: IgsProjectDocumentV1,
   request: ProjectLayerResourceRequest,
@@ -78,9 +78,9 @@ export function resolveProjectLayerAsset(
   if (document.documentRevision !== request.documentRevision) {
     return null
   }
-  const layer = projectActiveRasterContributions(document).find(
-    (item) => item.id === request.layerId,
-  )
+  const layer =
+    projectRasterAssets(document).find((item) => item.id === request.layerId) ??
+    projectActiveRasterContributions(document).find((item) => item.id === request.layerId)
   return layer?.asset.sha256 === request.assetSha256 ? layer.asset : null
 }
 

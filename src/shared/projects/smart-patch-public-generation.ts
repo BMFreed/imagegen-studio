@@ -27,6 +27,20 @@ const acceptSchema = v.strictObject({
   focusedCandidateId: v.nullable(uuid),
   kind: v.literal('smart-patch'),
 })
+const rasterAcceptSchema = v.pipe(
+  v.strictObject({
+    ...acceptSchema.entries,
+    kind: v.literal('smart-patch-raster'),
+  }),
+  v.check((request) =>
+    request.candidateIds.every((id) => request.expectedAvailableIds.includes(id)),
+  ),
+  v.check(
+    (request) =>
+      request.focusedCandidateId === null ||
+      request.candidateIds.includes(request.focusedCandidateId),
+  ),
+)
 const discardSchema = v.strictObject({
   ...owner,
   ...reviewed,
@@ -89,6 +103,7 @@ const candidateSchema = v.pipe(
     imageUrl: v.string(),
     kind: v.literal('smart-patch-world-candidate'),
     queueItemId: uuid,
+    rasterConversionUnavailableReason: v.nullable(boundedMessage),
     stagingSessionId: uuid,
     thumbnailUrl: v.optional(v.string()),
   }),
@@ -99,6 +114,10 @@ const candidateSchema = v.pipe(
       isSmartThumbnailUrl(candidate.thumbnailUrl, candidate),
   ),
   v.check((candidate) => validDisposition(candidate)),
+  v.check(
+    (candidate) =>
+      candidate.disposition === 'orphaned' || candidate.rasterConversionUnavailableReason !== null,
+  ),
 )
 const snapshotSchema = v.pipe(
   v.strictObject({
@@ -139,6 +158,13 @@ const snapshotSchema = v.pipe(
       ),
     ),
   ),
+  v.check((snapshot) =>
+    snapshot.candidates.every(
+      (candidate) =>
+        candidate.rasterConversionUnavailableReason !== null ||
+        candidate.documentId === snapshot.documentId,
+    ),
+  ),
 )
 
 export type ProjectSmartPatchGenerateOptions = v.InferOutput<typeof generateSchema>
@@ -148,6 +174,7 @@ export type ProjectSmartPatchGenerateResult = ProjectGenerateResult & {
   targetKind: 'smart-patch'
 }
 export type ProjectSmartPatchAcceptRequest = v.InferOutput<typeof acceptSchema>
+export type ProjectSmartPatchRasterAcceptRequest = v.InferOutput<typeof rasterAcceptSchema>
 export type ProjectSmartPatchDiscardRequest = v.InferOutput<typeof discardSchema>
 export type ProjectSmartPatchDiscardResult = v.InferOutput<typeof discardResultSchema>
 export type ProjectSmartPatchCandidateExportRequest = v.InferOutput<typeof exportSchema>
@@ -170,6 +197,9 @@ export const isProjectSmartPatchGenerateOptions = (
 export const isProjectSmartPatchAcceptRequest = (
   value: unknown,
 ): value is ProjectSmartPatchAcceptRequest => v.is(acceptSchema, value)
+export const isProjectSmartPatchRasterAcceptRequest = (
+  value: unknown,
+): value is ProjectSmartPatchRasterAcceptRequest => v.is(rasterAcceptSchema, value)
 export const isProjectSmartPatchDiscardRequest = (
   value: unknown,
 ): value is ProjectSmartPatchDiscardRequest => v.is(discardSchema, value)

@@ -1,6 +1,645 @@
 # Engineering Workflow
 
-Current installed Smart Patch qualification:
+## Private Regional shared-readonly text components — native qualification verified
+
+The [shared text owner](./phase-4-regional-guidance-shared-text-research.md) admits the full pinned CLIP text architecture
+through explicit CPU/CUDA exact-TI profiles. Mutable graphs/tokenizers and final
+TI tables remain private; qualified non-token tensors are borrowed read-only.
+The unchanged native loader performs a verified no-op resize. Old independent
+copy profiles and their 512 MiB arithmetic remain unchanged.
+
+ROOT records **282 PASS = 79 new + 201 legacy neighbors + two whole-Main cases**,
+zero failures/errors/skips, 168 warnings. The full architecture matrix produces
+**22 RGB PNGs / 42 UNet / 42 Euler / 22 VAE** using random 12/32-layer CLIPs,
+49,408-row vocabularies and small native UNet/VAE consumers. Ownership and exact
+regional-vector mutations give semantic RED with unchanged controls and exact
+restoration; regional vector substitution changes 308/590 RGB channels on
+CPU/CUDA. Native EmbeddingBag/InstanceNorm write paths were reproduced and
+closed by finite shared-class admission. R3 source review and scoped retention
+audits are CLEAN. ROOT release removes 108 idle candidates and reclaims
+58,130,432 bytes; compact evidence and protected dependencies remain.
+
+This qualifies random full-CLIP architecture mechanics under the cooperative
+contract. Trained weights/quality, full SDXL capacity, public admission and Main
+candidate durability remain open. PP-001/007/008 remain **Пока не обещать**.
+
+## Private Regional provisional RGB output — native qualification verified
+
+The [private output owner](./phase-4-regional-guidance-output-research.md) connects a matching command and verified
+transparent target through the existing regional native runner to an exclusive
+RGB PNG and worker completion response. ROOT confirms **77 PASS** (60 new,
+15 publisher/thumbnail neighbors, two whole-Main native cases), strict Python
+typing and scoped checks; a separate conversion mechanism probe passes two cases.
+Four complete Main recipes produce 16 native runs / 32 UNet / 32 Euler /
+16 VAE / 16 pixel-exact PNGs across CPU and CUDA. Regional resource changes
+reach RGB8; the channel mutation gives 6 GREEN → 4 semantic RED + 2 controls
+GREEN → 6 restored GREEN. Source review and retained-byte audit are CLEAN
+within their scopes; ROOT release reclaims **34,156,544 bytes** from 23 idle paths.
+
+This is provisional worker output. Public Generate, Main candidate durability,
+acceptance and provenance remain separate. Random fixture mechanics establish
+no trained quality/capacity; active exact-TI still refuses the normal full CLIP
+architecture under its 512 MiB copy ceiling. PP-001/007/008 remain **Пока не обещать**.
+
+## Private Regional exact embeddings — native qualification verified
+
+The [private resource owner](./phase-4-regional-guidance-embeddings-research.md) connects complete Main recipes and
+verified exact files to isolated native TI/Compel and existing regional
+CPU/CUDA Euler/VAE consumers. ROOT confirms **1,399 Python PASS**, **62 Main PASS**,
+required typecheck and scoped checks, with 16 whole-recipe runs / 32 UNet /
+32 Euler / 16 VAE observations. A wrong-regional-vector mutation gives semantic
+RED, controls GREEN and exact restored GREEN on both lanes. Source R2 is CLEAN
+within source-only limits; retained-byte closure and ROOT release gates retain
+compact proof and reclaim **101,548,032 bytes** from 134 idle payload paths
+(plus the separately recorded bytecode cleanup).
+
+Random authored vectors/models qualify private mechanics. The 512 MiB copy
+ceiling can refuse full trained CLIPs; trained quality/capacity, installed model
+attestation and public generation remain unqualified. Existing plain profiles,
+public NEW refusal, frozen work and provenance exclusions remain.
+PP-001/007/008 remain **Пока не обещать**.
+
+## Private Regional CUDA FP16 — native qualification verified
+
+The [private CUDA checkpoint](./phase-4-regional-guidance-cuda-research.md)
+extends the shared Regional owners with explicit manual-FP16 CUDA profiles.
+ROOT's final combined run passes **1,203 cases** (121 CUDA, 1,081 CPU/neighbors,
+one actual Main handoff), with 16 native UNet calls across eight whole-recipe
+runs. Three final-source causal mutation pairs restore GREEN. Full R2 source
+review and R3 ownership-priority correction review are CLEAN within source-only
+limits. Final byte audit is CLEAN; ROOT release gates and six-path cleanup reclaim
+**37,310,464 bytes**, retaining compact proof and protected dependencies. Public NEW refusal and
+PP-001/007/008 **Пока не обещать** remain unchanged.
+
+
+## Private Regional Euler denoising — CPU qualification verified
+
+The [private native execution owner](./phase-4-regional-guidance-denoising-research.md)
+encodes/assembles one concrete recipe once and uses the original SDXL Euler loop
+and VAE decode. ROOT confirms 1,082 tests, including 71 new and the actual Main
+boundary, with 16 native UNet calls across eight whole-recipe runs. The second-step
+spatial mutation has semantic RED/control/restored GREEN; full source R1 is
+CLEAN within its source-only scope. The retained-byte audit is CLEAN; ROOT
+release gates and three-path cleanup
+are complete, reclaiming 32,870,400 bytes. Compact proof and dependencies remain.
+No public admission/readiness is added; PP-001/007/008 remain Пока не обещать.
+
+## Private Current Canvas recipe consumer — CPU encoding/consumption verified
+
+The [private text-to-native owner](./phase-4-regional-guidance-consumer-research.md) is complete within its finite CPU scope.
+Main's private recipe now owns explicit global prompt sidecars. The one-shot
+consumer encodes actual concrete text through CLIP/Compel, reuses existing
+geometry and the owned bridge, and returns the original normal UNet result.
+Global support and pooled sources remain explicit private candidate inputs.
+
+ROOT confirms four full recipes from two saved/reopened Service projects and
+eight native forwards, final **878 Python / 91 Main tests**, full typecheck and
+scoped strict Python typing/Ruff/format PASS. R1's CLIP-hook substitution P2 has
+causal RED/control evidence; corrected guards and real partial-setup restoration
+pass. Independent fresh source R2 and both retention audits are CLEAN within
+their scopes. ROOT's fresh release gates cover 16 then-existing readers and
+36 owned units; five exact payloads were removed, reclaiming **62,427,136 bytes**.
+Compact causal proof, raw Main fixtures, sources and runtime dependencies remain.
+
+This adds no public generation caller or readiness promotion. Enabled-region
+NEW refusal, target-only Smart permission, published/frozen Retry and Regional
+Guidance provenance/Compare/preset exclusions remain. PP-001/007/008 stay
+**Пока не обещать**; random CPU fixtures do not qualify trained quality or GPU.
+
+The [private ordinary Canvas regional geometry owner](./phase-4-regional-guidance-geometry-research.md)
+is **complete within its private CPU world-to-latent/consumer boundary**. An explicit origin-nearest8
+profile samples full-target world-alpha into existing latent `Alpha8`, with
+strict bounds/grid checks and exact selected bytes. ROOT confirms two real Main
+recipe probes, four native consumption forwards, 588 combined tests (237 new),
+and actual four-stage VAE/pipeline `24×40 → 3×5`, zero failures/skips. Scoped
+Ruff/format and strict BasedPyright pass after the recorded test-only corrections.
+Center-phase mutation gives semantic RED/control/restored GREEN, with all 1,363
+isolated members restored. Independent source R1 and retention review are
+CLEAN/READFINISHED within their scopes. ROOT's fresh exit/source/dependency/reader
+gates and three-path cleanup are complete: 31,268,864 bytes measured reclaimed.
+Compact causal proof, raw Main fixtures, sources and external runtime remain protected.
+No public generation caller or Smart rescaling is added; PP-001/007/008 remain
+**Пока не обещать**.
+
+The [private Illustrious encoded-conditioning bridge](./phase-4-regional-guidance-conditioning-research.md)
+is **complete within its private native CPU assembly/consumption boundary**. Root confirms three existing
+native CLIP/Compel baseline cases, an actual unequal-tokenizer 77/154/231/308
+probe and four new owned normal UNet forwards on the reused environment. Existing
+165 adapter/numerical/neighbor cases still pass; the new combined run passes all
+351 cases, including 183 new, zero failures/skips, after the recorded
+preflight/observer corrections and R1 association finding. R1's changed-argument
+hooks have 11 semantic RED/11 control GREEN evidence; late owned-value guards
+make all 22 pass and preserve equal clones. Partial guard-registration rollback
+also passes. Corrected-source Ruff/format and strict BasedPyright pass; the
+typing-only correction and execution mapping remain explicit. The one-shot owner derives
+plan/context from the same ordered tensors and consumes them in a normal native
+forward, with explicit pooled ownership and no public caller. Owned producer
+conversion is implemented. Final same-source combined run is 351 PASS. R2 order
+mutation is semantic RED/control/restored GREEN with all 1,360 isolated members
+restored. Independent source R2 and both retention audits are CLEAN/READFINISHED;
+ROOT's fresh process/source/dependency/reader gates and seven-path cleanup are
+complete, with 61,374,464 bytes measured reclaimed. Compact evidence, source and
+native dependencies remain retained. Public NEW
+refusal and PP-001/007/008 **Пока не обещать** remain unchanged.
+
+The [private Illustrious regional tensor adapter](./phase-4-regional-guidance-tensor-research.md)
+is **complete within its private CPU tensor-mechanics boundary**. Root confirms 111 focused and
+165 combined native CPU/numerical/neighbor cases, zero failures/skips, plus
+Ruff/format and strict BasedPyright PASS on the existing pinned environment.
+The observed pre-existing-hook geometry defect has causal RED/control/GREEN
+evidence and is corrected. Source R1's caught-posthook P2 and root's prehook
+reentry finding have RED2/control2/GREEN4 evidence and a native call-entry guard;
+exact instance-slot restoration joins processor/hook restoration. Spatial-mask
+mutation is semantic RED/control/restored GREEN on both R1 and final R2, with
+both four-file closures restored. Final source R2 and candidate retention audit
+are CLEAN/READFINISHED within their source/retention scopes. Root's fresh
+exit/source/restoration/dependency/reader gates and four-path cleanup are
+complete: 327,680 bytes measured reclaimed; compact proof remains retained.
+This scoped adapter consumes explicit numerical plans and
+Transformer/factor bindings through the original cross-attention processor.
+It adds no public generation caller,
+encoding/composition policy, queue format, Anima/Smart or trained-model claim.
+Enabled-region NEW refusal and PP-001/007/008 **Пока не обещать** remain unchanged.
+
+The [private numerical Illustrious regional attention planner](./phase-4-regional-guidance-attention-research.md)
+is **complete within its CPU numerical boundary** on dirty `master@10115df`.
+Root confirms 48 unittest cases under isolated no-site Python and 52 pytest cases
+(the same 48 plus four controlled padding/encoder neighbors), zero failures/skips,
+Ruff/format and strict BasedPyright PASS. Threshold mutation gives alpha-128 RED,
+binary control GREEN and restored GREEN; the three-file stdlib closure is restored
+exactly. Source R1 and candidate-only retention audit are CLEAN/READFINISHED;
+fresh root release removes three exact idle paths, reclaiming 159,744 bytes.
+Source/RED-GREEN/controls/version proof remains retained without a model or env
+copy. The planner consumes explicit encoded lengths and latent alpha8 grids;
+it does not connect the Canvas recipe to production inference. No real-tensor,
+native-worker, packaged/runtime, model or public-generation qualification is added.
+Prior recipe/authoring evidence below remains historical. Public Generate refusal
+and PP-001/007/008 **Пока не обещать** statuses are unchanged.
+
+The [private concrete Canvas regional recipe](./phase-4-regional-guidance-recipe-research.md)
+is **complete within its internal semantic/CPU boundary** on dirty `master@10115df`.
+Root confirms 40 focused cases and 1,039 affected/neighbor tests across 60 files,
+zero failures/skips, typecheck r2, full lint r1 and fresh build r1 PASS. Concrete
+inheritance mutation gives semantic RED/control GREEN/restored GREEN; all 1,351
+isolated sources are restored. Production source R1 and mutation retention audit
+are CLEAN, source/retention-only. Root release gates and disposal of the sole
+payload are complete: 31,682,560 bytes measured reclaimed, compact proof retained.
+The adapter consumes one existing concrete Main item inside the completed lease;
+it resolves text/ref ownership without another capture layer, regional expansion,
+worker dispatch or admission change. Batch membership remains a Main-caller
+precondition; no production generation caller or installed-resource/conditioning
+qualification is added. PP-001/007/008 stay **Пока не обещать**. Earlier capture and
+authoring evidence below remains historical and distinct.
+
+The [Regional Guidance private input checkpoint](./phase-4-regional-guidance-input-research.md)
+is **complete within its internal capture/CPU boundary** on dirty `master@10115df`.
+Root confirms 47 focused and 999 affected/neighbor tests across 59 files, zero
+failures/skips, final typecheck r4, full lint r3 and fresh build r1 PASS.
+Independent source R3 is CLEAN after three causal ownership/preflight/cleanup
+corrections. Both candidate retention audits are CLEAN/READFINISHED; root release
+checks and disposal of two exact isolated payloads are complete (61,464,576 bytes
+measured reclaimed). Compact source/build/RED-GREEN/restoration proof is retained.
+This Main-only authored snapshot/asset lease and exact world-alpha projection has
+no UI/worker/queue consumer, effective-prompt policy or conditioning qualification.
+Every enabled-region NEW-generation refusal and frozen-work boundary remains;
+PP-001/007/008 stay **Пока не обещать**.
+
+The current [Regional Guidance reference-image owner](./phase-4-regional-guidance-references-research.md)
+has **source implemented; finite native-r10 qualification PASS; retention/release complete** on dirty
+`master@10115df581d9e07049478dee3866a280886794fd`; the preserved baseline has
+1,331 source members. UI, CPU worker and core storage source are implemented;
+finite native-r10 qualification passes; final retention/release is complete.
+The settled boundary is
+one authorized PNG/JPEG/WebP per Add, an optional nonempty ordered attachment
+collection, fresh globally owned IDs, canonical PNG plus full-frame 128-side
+WebP and optional original ICC, independent duplication, Project Undo,
+explicit Save/reopen and dirty recovery. The finite evidence below qualifies
+this authoring boundary within its declared controls and limits.
+
+Root reports **118 Python checks passed, 0 failed/skipped** across the new
+thumbnail, import, derivative, resource-preview and protocol suites: 1.09 s suite
+time, 1.546 s bounded group, a 2 GiB group limit, zero swap and a physically empty
+group after exit. This Python result qualifies that CPU boundary only.
+
+Root confirms **source implemented; lower-level checks and finite native-r10
+qualification PASS**. Final lower checks are **Python 118 PASS**, post-lint
+**typecheck-r3 PASS**, **full lint-r2 PASS**, **neighbors-r2: 952 PASS / 57 files /
+0 skips**, and **fresh build-r1 PASS**. Later changes were harness-only, each with
+syntax/format/scoped ESLint PASS. Earlier typecheck-r2 and neighbors-r1
+950/57 preceded the final checks; neighbors-r1 predates the Save fix. The earlier
+lint-r1's 196 autofixable ordering/braces errors in 16 changed files are historical,
+not the final lint outcome.
+
+The duplicate mutation records **2 GREEN → 1 semantic RED + 1 control GREEN →
+2 restored GREEN**; all **1,343 mutation-source members** are restored.
+Production **R2 source review is CLEAN** after the P2 Save A/B rebase fix and
+external-replacement neighbor. Rebase requires full-document equality to exact
+`baseDocument` or exact authorized `saveTarget`. The causal
+`SAVED_PROJECT_CHANGED` assertion was unchanged when the explicit
+Recover-new-revision test oracle was corrected; `save-rebase-green-r2` passed
+both cases.
+
+Final **native-r10: 12/12 PASS in 191.188 s**, script `1f5ac7ce`, with its
+**R11 source review CLEAN**. The successful run uses the source-r2 archive
+(1,343 members), exact script overlay and build-r1 (33 members). It observes
+**882 Main calls, originals exactly once**, and **149 actual CPU children**
+across two Electron lifetimes: intentional dirty SIGKILL, then healthy code 0.
+Exact Main/dialog/spawn/kill/write restoration completes with zero in-flight
+calls and zero page errors; root freshly confirms recorded PID/start identities
+absent. Contract R1 is CLEAN source-only; final source/build/version mapping is retained.
+
+Root actually opened **all 10 final screenshots** under `ui-audit`: 1440×900
+and 900×620, reference cards, keyboard tooltips and recovered image states.
+This bounded self-review found no material new reference-layout defect; it is
+not independent review, full WCAG or all-compositor qualification.
+
+Native attempts **1–9 remain FAILED**. Harness source-oracle findings R7/R8
+were closed by subsequent code/reviews and successful replay; those failures
+do not establish another product bug beyond the corrected Save rebase.
+
+The OS picker result was controlled; the worker was the **actual development
+CPU worker**, with no ML/catalog injection. Installed-resource transitions,
+packaged-worker behavior, inference and frozen active work are not
+native-qualified. Transient target/Smart-preparation outputs have metadata-only
+witnesses, without raw replay. Prototype SVG/data URLs remain separate mock
+behavior and do not extend this evidence boundary.
+
+Retention **R1–R7 are CLEAN, candidate-only, READ-FINISHED**; contract **R1 is
+CLEAN, source-only**. Root freshly verified source/build bytes, physical exits,
+exact restoration, dependencies and all-reader completion, then released all
+22 exact disposable paths: 2 unit and 20 native payloads. Measured artifact-root
+allocation reduction is **216,420,352 bytes** (unit 35,950,592; native 180,469,760).
+Compact evidence and external runtime/package dependencies remain protected.
+Final source/build/version mapping is retained in the linked checkpoint.
+PP-001/007/008 remain
+**Пока не обещать**; finite qualification does not promote public readiness.
+
+The failed-attempt chronology retains these corrections: normal CPU SIGTERM
+was initially mistaken for a required code-0 exit; unrelated background variants
+CPU work was counted as import; stale variants reads needed their exact current
+successor; an NAlert title was assumed to be a heading. Manual viewport changes
+still recenter: the corrected oracle independently measures the notice, viewport
+and world-centre law. A JPEG fixture's double ICC was corrected without weakening
+the worker, family checkpoint names became unique, and tooltip lookup uses the
+actual `.n-tooltip` element. Attempts 1–9 are not retroactively counted as PASS.
+
+Add uses Current Canvas Illustrious metadata even with Smart selected and does
+not require an installed model. Anima/unknown family gets a reason; existing
+references remain visible/removable/reorderable in any family. Disabled regions
+stay editable; locks refuse attachment mutations. The new CPU thumbnail primitive
+preserves canonical source bytes, full-frame alpha/aspect, old derivative and
+resource-preview APIs/caps. No conditioning, inference, adapter/weight UI,
+queue/admission, provenance or model-policy expansion is included; enabled-region
+NEW Generate refusal and frozen Retry remain separate. PP-001/007/008 stay
+**Пока не обещать**. Earlier checkpoint records below retain their original
+scope and evidence; prototype SVG/multiple data URLs are not production proof.
+
+The [Regional Guidance owned-mask checkpoint](./phase-4-regional-guidance-masks-research.md)
+has **source implemented, lower-level checks and finite native-r7 qualification
+passed**; root reviewed local visuals and retention/release are **complete**. It connects the existing
+CPU Brush/Eraser/Lasso/Polygon Lasso,
+Transform Region and Clear operations to separate regional owners, without a
+regional bbox or Fit action. Disabled regions stay editable, lock refuses writes,
+and the selected overlay uses `overlayOpacity` even when disabled. Captured
+commands, revision/epoch guards, immutable PNG ownership, duplicate paths,
+Save/shadow/recovery collectors and separate signed resource namespaces are integrated.
+
+Root reports **869 Node tests in 50 files, 0 failures/skips** before the production
+lint-only delta; the focused 89 are a subset. Post-lint typecheck r3 and focused
+r3 **89 PASS**, full lint r2 in all four partitions and fresh app build r1 after
+final production source PASS. Production review R2 is **CLEAN, source-only**,
+closing the stale type annotation and Raster DTO lookup fixture findings and
+covering the semantically equivalent lint delta. Prototype r2 passes **182 tests**
+with one worker and a 3 GiB limit in 348.041 s. The earlier default eight-worker
+3 GiB OOM after ten partial tests remains a setup failure, not a feature RED.
+The isolated mutation yields 2 GREEN → 1 semantic RED (copied mask asset cleared)
+and 1 neighboring GREEN → 2 restored GREEN; all 1,331 isolated sources are restored
+exactly and the shared subject was never mutated. Later intentional Service import
+sorting is separate from mutation restoration.
+
+Root's final **native-r7 passes all 12 checks**, with
+`fullTwelveCheckQualification: true`, in **157.061 s**. Script SHA-256:
+`26215dbae471ea7fabfbfb17739dc9cd689212f02897610960abcf91300401c4`.
+Actual Save/read/reopen and dirty-PNG crash → Recover → Save/reopen pass, together
+with all tools, whole-alpha/geometry/history, refusal, namespace and duplicate
+controls. Both lifetimes restore all 95 original handlers with zero in-flight
+calls and zero page errors. The 826 first-lifetime and 52 second-lifetime original
+calls execute exactly once, with 2,478 and 156 journal events respectively.
+The intentional dirty crash accounts for nine PID/start identities; healthy close
+accounts for nine more and final code 0. Launcher peak is 1,471,905,792 bytes with
+zero swap; limits are 2 GiB per group, 4 GiB aggregate and a shared 300 s deadline.
+Root opens all six final screenshots at actual 1440×900/900×620, including
+quarter-turn and recovered states, with no material local finding. This is bounded
+self-review, not a full accessibility audit. Production R2, canonical/restoration
+source R4 and the two exact menu-label changes in source R5 are CLEAN, source-only.
+
+Attempts 1–4 remain setup failures. Native5 passes checks 1–7, then stops on a V8
+prefix-hash mismatch after the full unchanged-state oracle passed; its specific
+cause remains unconfirmed and was not reproduced by the metadata microtest.
+Native6 passes eight checks before a harness `Duplicate`/`Duplicate region`
+selector mismatch; its 95 handlers are restored and physical exit is recorded.
+This is not a feature RED. Native-r7 changes only `Duplicate region` and
+`Delete region` relative to that attempt, preserving all oracles. The canonical
+startup self-check passes; native6/native7 retain 11/13 canonical-equal,
+V8-different diagnostics. These observations do not establish native5's cause.
+
+Mutation retention audit R1 is CLEAN/READ-FINISHED. Failed-native1–4 retention audit
+R2 is CLEAN for retained bytes and READ-FINISHED, with a restoration evidence gap:
+native3 has no successful observer restoration before SIGKILL, though all nine
+process identities physically terminated. Attempts 1/2/4 record 95 restored
+handlers and zero in-flight calls. Native3's unchanged Main/source/build and final
+SQL evidence is retained; physical termination does not establish restoration.
+The harness cleanup correction separates original IPC drain from renderer frames;
+raw failed-attempt evidence remains unchanged. All four retention audits are
+CLEAN/READ-FINISHED; contract R2 is CLEAN, source-only. Final harness-scoped lint
+r2 passes. Root freshly verifies exit/restoration/readers, restores all 1,331
+isolated mutation members, and removes only 15 exact idle paths: **113,537,024
+bytes (108.28 MiB) reclaimed**. Compact evidence and external dependencies
+remain protected. Final source/build mappings are retained. The linked research
+owns the attempt history and current evidence.
+Enabled-region NEW Generate refusal remains; conditioning, reference images,
+inference and public readiness are outside this slice. PP-001/007/008 remain
+**Пока не обещать**.
+
+The completed [Regional Guidance authored-prompts checkpoint](./phase-4-regional-guidance-prompts-research.md)
+implements durable inline positive/negative prompt blocks and explicit global-negative
+inheritance. Optional `region.prompts` has nullable ordinary `GenerationPrompt`
+values and a required inheritance flag; legacy absence has no parser default.
+Add persists an empty block, Clear retains it, and the last Remove omits the
+wrapper. Add Negative selects an empty local prompt; inheritance preserves dormant
+local text/refs, while Remove Negative clears them and restores inheritance.
+Current Canvas supplies the displayed global negative, model and LoRA context
+even when a Smart Patch is selected; future Smart-job freeze semantics remain separate.
+
+Dedicated strict `updateRegionalGuidancePrompt` preserves metadata APIs and
+ordinary generation-draft target/change validation. The shared seal endpoint
+additionally accepts strictly validated regional namespaced group IDs; ordinary
+generation-draft group validation stays unchanged. Shared compact `PlainPromptEditor` uses syntax/
+attention actions and Main-verified exact ID-only embedding choices, without
+dynamic preview. One document stream orders live writes and focus-group seals,
+advancing only through its own ACK chain. Main retains revision/epoch/lock guards.
+Unpublished failures stay visible for correction/retry or explicit pending-only
+discard; unrelated revisions or observed edit/Undo ABA invalidate the stream
+without rebasing. Text keeps the 1 MiB ceiling, and regional publication, including
+Add/Duplicate, checks the 16 MiB serialized document ceiling; neither is measured
+capacity. Enabled-region NEW ordinary/Smart refusal and independent frozen Retry/
+published jobs are unchanged. No geometry, provenance, presets, operational cursor,
+queue or model-policy mutation, regional mask pixels/reference images, conditioning or
+inference is introduced. Public PP-001/007/008 remain **Пока не обещать**.
+
+**The finite authoring checkpoint and retention/release are complete.** Root confirms 795 affected/neighbor Node tests in 41 files, zero
+failures/skips, before the final single row ARIA attribute change. Final row
+`20c2fb6e` has typecheck r7 PASS, fresh app build r4 PASS and later row/script
+scoped lint PASS; full lint r2 passed all four partitions. Prototype r1 passes
+182 shared-consumer browser checks without prototype source changes. Production
+R1–R3 findings retain their causal controls/fixes; complete production R4 and
+narrow ARIA R5 are CLEAN at source level. Final native-source R7 is CLEAN
+source-only; none of these reviews is an independently rerun native campaign.
+
+Root's final `native-r8`, script `ff502357` with portable tagged journals, passes
+**all 12 checks in 97.714 seconds**, with final healthy code 0 across two Electron
+lifetimes. The intentional dirty SIGKILL lifetime records nine actor identities;
+the healthy-close lifetime records another nine, with physical closure confirmed.
+Both observer restorations are true with `inFlight: 0`; page errors are zero.
+All 675 first-lifetime and 46 second-lifetime original calls execute once, and all
+handlers are restored. Actual Save/loader/reopen and dirty recovery preserve full
+SQL/document/PNG/mask/variant/provenance/neighbors/cursor/policy state. Root opens
+and views all seven screenshots at actual 1440×900 and 900×620 with no material
+layout finding in scope. This is bounded self-review, not an independent full
+accessibility audit.
+
+The final harness retains complete original IPC arguments/results once in
+`ipc/launch-*.jsonl`; compact witnesses use prefix references to those retained
+journals. This is an evidence-format correction, not an app API or data-model
+change. The launcher and each owned actor have 2 GiB limits, zero swap and an
+explicit 4 GiB aggregate ceiling under one 300-second overall deadline. Launcher
+peak is 1,097,486,336 bytes (about 1.02 GiB); these are campaign bounds, not product
+capacity claims.
+
+Historical native attempts 1–7 remain failures: product seal refusal, absolute-row
+geometry oracle, auto-Fit precondition, missing ARIA, OOM after eight partial
+checks, and two setup failures. Native 5 retains its raw running report plus an
+aborted-OOM supplement; root rescued final SQL/product bytes and confirmed actors
+gone, but claims no observer restoration for that attempt. Native-source R5's
+dynamic-import setup P1 and R6's cross-runtime V8 setup P1 close through
+`getBuiltinModule` plus the portable codec, with source review and actual native-r8
+execution. The linked root research owns the full failure/correction record.
+
+Root's Main inheritance mutation goes 2 GREEN → 1 semantic RED with
+1 unchanged GREEN control → 2 restored GREEN; all 1,325 source files and the
+shared subject are restored exactly. Retention audits 1 (mutation/native 1),
+2 (native 2–4) and 3 (rescued OOM native 5) are CLEAN and READ-FINISHED.
+**Final audit 4 is CLEAN and READ-FINISHED.** Root completes fresh exit,
+restoration and reader checks, then removes 18 exact idle payload paths, reclaiming
+116,359,168 allocated bytes (110.97 MiB); compact evidence and external dependencies
+remain protected. Contract review R2 is CLEAN at source/document level.
+No regional masks/reference images, conditioning, inference, installed embedding/
+autocomplete, active-work or Main-ABA qualification is claimed. Final retention/release details are recorded in the linked root research;
+PP-001/007/008 stay **Пока не обещать**. Foundation results below remain separate.
+
+The completed [Regional Guidance empty-entity foundation](./phase-4-regional-guidance-foundation-research.md)
+added a separate noncompositing group with strict optional persistence, current-owner
+UUIDs, captured revision/epoch commands, ordinary Undo and explicit Save/recovery.
+Enabled regions explicitly refuse NEW ordinary and Smart generation before
+planning/seed/runtime/SQL publication; disabled regions are inert. Frozen work,
+Retry, composition, Compare, presets and acceptance retain their separate owners.
+At that checkpoint, prompts and inheritance were unavailable; reference images,
+nonempty masks, painting/transforms and regional conditioning remain outside the
+current authoring slice. Immutable accepted provenance, seed/model policy
+and Project/Smart drafts stay unchanged; commands never implicitly Save.
+Public PP-001/007/008 remain **Пока не обещать**.
+
+Root confirms **711 affected/neighbor Node tests across 33 test files, zero failures/skips**.
+The 54 focused, 3 actual-preload and 11 generation-guard cases are subsets of 711.
+**182 full prototype browser tests** pass as shared LayerStack consumer controls;
+this owner changes no prototype code. Final typecheck r7, full lint r4 and fresh
+build r3 pass. The isolated final pre-SQL guard mutation goes 2 GREEN → semantic
+RED (8 queue rows versus 4), with the disabled-region control GREEN → 2 restored
+GREEN. All 1,320 isolated source members and the shared Queue subject are restored.
+
+Final `native-r5` (`c4fe3498…`, script `a7ea1ccd…`) passes **12 checks** in
+266.205 seconds, code 0, across two Electron lifetimes: one intentional dirty-shadow
+crash, recovery and healthy close. Actual 1440×900 and 900×620 checks cover legacy
+absence through clean no-op Save/loader/reopen; lifecycle, global IDs, lock/no-op,
+duplicate/delete/Undo/Redo; enabled NEW ordinary/Smart refusal without side effects
+and disabled normal offline controls; meaningful Save through actual package/reopen;
+and dirty recovery with exact neighbors. Root verifies final post-close protected
+SQL, package, assets and source bytes. No ML/catalog/runtime provisioning or
+inference is qualified; native active-work execution is outside this evidence.
+Successful frozen Retry belongs to controlled unit evidence.
+
+Native R3 supplies the causal Escape→BODY focus RED; native R4 then passes all
+12 checks. Adjacent slow/failed Rename P2 from product review R3 is addressed by
+the pending-intent candidate `40a04…` and lint ordering `c4fe…`; independent R4/R5
+source reviews are clean. Focus waits for both afterLeave and terminal busy
+settlement, with stale-context/reopen/unmount/user-focus guards and no queue/data
+writes. `rename-focus-red-r1` has delayed-original and declared IPC-transport-error
+focus RED, full state controls GREEN and ordinary successful focus GREEN. With the
+exact same harness, `rename-focus-green-r1` passes all 3 focus/state cases and
+exits healthy with code 0. Only that focused scenario throws before the original
+Main transport handler (0 original calls); it fabricates no DTO and proves no
+Main service atomicity. The full 12-check mode uses original Main pass-through
+without fault injection.
+
+Native-source R6, product core R1/R2 and contract R1 reviews are clean. Root
+actually opens normal/minimum/recovered and focused-error screenshots, including
+the new final native-r5 normal/minimum views, with no material UI issue in scope.
+Historical failures and source/harness corrections remain retained. Completed
+retention R1–R4 audits are clean with readers finished. Root independently verifies
+82 recorded PID/start identities gone, empty owned scopes/timers and no accessible
+candidate readers, plus all 1,320 mutation members restored. Only the 15 declared
+temporary trees are removed, reclaiming 104.66 MiB allocated space; 5,309 retained
+snapshot files, archives and external dependencies remain protected.
+Full release remains outside the finite foundation.
+
+[Selected Smart Patch Save Current](./phase-4-smart-patch-current-preset-research.md)
+captures the exact acknowledged selected Patch authoring draft synchronously into
+detached Preset Manager creation. It preserves authored templates/exact references,
+initializes Smart Patch workflow for every Smart origin and initially omits
+Size/Seed/batch/geometry and source/execution context. Hidden and locked sources
+are readable without ML or an available catalog; pending synchronization anywhere
+in the Project blocks without flush/seal. Explicit Create owns storage. Cancel
+writes nothing; failed INSERT retains the draft/source for retry, and later
+authoring/catalog changes cannot rewrite that frozen source.
+No new IPC, Project mutation, worker or persisted schema is introduced.
+
+Root execution passes **222 neighbor tests, zero failures/skips**,
+typecheck r3, full lint r2 and a fresh build. The isolated wrong-selected-owner
+mutation goes GREEN (2) → semantic RED with its control GREEN → restored GREEN (2),
+with all 1,313 archived source members restored byte-for-byte. The focused owner
+regression goes RED before the fix → GREEN after it with the same causal assertion;
+same-owner refresh still preserves unpublished invalid raw input.
+
+Actual `native-r2` passes all **12 automated checks**, exits code 0 and spans two
+healthy Electron lifetimes, with two recipes persisted after restart. It covers
+real failed INSERT/retry, detached source retention, exact unchanged accepted
+PNG/provenance, Project, seed/library policy and package bytes, plus keyboard,
+focus and layout at 1440×900 and the real 900×620 minimum. Production review R2
+and final native-source review R4 (the two `useInnerText` assertions) are clean;
+scoped final-harness ESLint passes. Root opened six final native-r2 screenshots
+(normal, minimum-width source, scrolled, restored, SQLite failure and restart),
+with no material UI defect in scope; `root-visual-review.json` is retained.
+Both retention audits are clean. Root verifies physical exit/restoration and releases
+only the 15 listed temporary trees, reclaiming 96.59 MiB; compact evidence remains.
+Exact disposal and retained dependencies are recorded in the root research.
+This authoring slice does not qualify inference, release or complete PP-006;
+public status remains **Пока не обещать**.
+
+[Smart-target preset Apply](./phase-4-smart-patch-preset-apply-research.md) is
+implemented as a finite selected-Patch authoring boundary. Dedicated
+`getSmartPatchPresetApplicationReview` / `applySmartPatchPreset` APIs copy only
+selected detached settings into the reviewed Patch generation draft, using its
+current model family. The ephemeral review token binds the exact coordinator,
+document epoch, revision and layer from fixed preview through staged commit;
+it is never persisted. A changed draft owns one Undo, with no implicit Save,
+runtime, draft flush or prompt-history seal. Pending draft synchronization blocks
+opening/submitting; hidden targets are editable and locked targets refuse.
+
+All preset workflows are eligible: the badge is advisory and never changes mode
+or supplies omitted sections. Smart Size is absent from preview and Select all;
+selected Size refuses and a size-only preset has no available sections. Seed is
+deselected initially; explicit selection copies policy/value without advancing
+the cursor. Source preset, Project/other-Patch drafts, bbox/internal resolution,
+mask/coherence/compositing, variants/provenance, queue and library policies stay
+unchanged. Ordinary Apply, result-preset creation and Compare retain their owners.
+
+The finite checkpoint passes **363 focused/neighbor tests** (including 33
+shared/renderer/control and 18 real Main tests), **12 native checks**, typecheck,
+lint and a fresh build. An isolated staged-review mutation produces semantic RED
+with a passing neighbor and byte-exact restored GREEN. Native R4 covers both
+families, one Undo/Redo, actual Save/loader/reopen and 900×620 layout/keyboard;
+it exits normally with retained final SQLite. Earlier failed attempts are kept.
+Portable fixtures qualify authoring, not installed Apply→inference or release.
+PP-006 remains **Пока не обещать**.
+
+[Smart result settings Compare](./phase-4-smart-patch-compare-research.md)
+is implemented for the active accepted Smart variant and converted Smart Raster.
+The strict `getSmartResultComparisonData` read compares immutable recorded settings
+with the current **Project Canvas**, including while a Patch is selected. Smart
+comparison omits the entire Size section and geometry/layer/source/execution
+context. Opening and inspecting it does not mutate the Project. Ordinary Raster
+Compare and existing Smart result-to-preset actions are preserved. Inactive direct
+Compare, Smart-target Apply, image comparison and inference were outside that
+Compare checkpoint. The later finite Smart-target Apply checkpoint is linked above.
+
+The finite checkpoint passes **852 neighbor tests, 182 prototype tests and 18
+native checks**, full typecheck/lint/build and an isolated restored epoch mutation.
+Actual CPU composition qualifies mode/race/retention boundaries; portable accepted
+fixtures qualify the native settings route without inference or acceptance.
+The native run includes same-pixel/different-provenance active switching,
+current Project recompute, delayed success/error suppression, and 900×620
+layout/focus. Production source reviews and the root visual inspection are
+separately identified in the research note. PP-005/006 remain **Пока не обещать**.
+
+[Smart accepted result presets](./phase-4-smart-patch-result-preset-research.md)
+connect active and exact inactive accepted variants plus converted Smart Rasters
+to the existing detached Preset Manager and explicit Create. A strict Main read
+copies concrete frozen prompts and recorded reusable settings without a worker,
+catalog, Size, default Seed or Project mutation. Every Smart origin uses the
+`smartPatch` workflow. The checkpoint records 790 focused/neighbor tests, 181
+prototype checks, an isolated semantic mutation and 15 full native checks,
+including failed Create/retry, 12 persisted recipes, Save/loader/restart and
+keyboard/focus return at 900×620. Portable accepted fixtures qualify this source
+route; they do not qualify inference or acceptance.
+At that result-source checkpoint, separate Smart Compare native qualification was
+in progress and Smart-target Apply was pending. Their later checkpoints above
+record their own evidence. PP-005/006 stay **Пока не обещать**.
+
+[Accepted Smart variant history](./phase-4-smart-patch-history-research.md)
+connects nested accepted variants to Project history and Saved generations.
+Current document containment owns navigation; inactive and hidden/locked variants
+open at their exact stored row without activating them or editing the Project.
+The existing result UUID/reference/cursor/index shapes are retained. The linked
+note records 835 focused/neighbor tests, 180 prototype checks and 16 full native
+checks on portable accepted fixtures, including Save/reopen and state-preserving
+cross-project navigation. This does not qualify inference or Smart presets;
+the separate source checkpoint above adds preset creation. Smart Compare belongs
+to its own checkpoint above, with scoped native qualification recorded in the linked checkpoint. Public PP-007/008
+readiness remains **Пока не обещать**.
+
+Current explicit orphan Smart Patch Raster acceptance:
+
+[Orphan Raster Add](./phase-4-smart-patch-orphan-raster-research.md) connects the
+candidate's secondary action to the existing Raster journal/recovery owner.
+The clicked contribution becomes a new top-level Raster at its frozen world
+bounds, with exact PNG/alpha and unchanged Smart provenance; no image runtime or
+current target is required. Reviewed cancellation/disposal includes fresh Retry
+sessions while unrelated results remain. Add owns one Undo and never Saves.
+Converted Rasters appear in Project/saved history, including 1px and nonaligned
+world sizes; their settings Compare uses the dedicated Smart read above, with
+the scoped native qualification recorded above, and result presets retain their dedicated source.
+Executed evidence, review corrections and remaining qualification are recorded in
+the research.
+PP-007/008 remain **Пока не обещать**.
+
+Current Smart Patch frozen Retry:
+
+[Frozen queue Retry](./phase-4-smart-patch-retry-research.md) adds a dedicated
+verified Smart input copy, source CAS/new-job transaction and original open
+coordinator checks to the existing public Retry admission owner. One concrete
+job retains its original source/masks/model-source, resources, prompts and seed;
+current authoring and older candidates remain independent. Busy admission uses
+the existing readiness snapshot and single FIFO drain. Receipt recovery and
+uncertain publication/exit refuse safely. Results still require explicit Add and
+Save. Missing current targets remain orphaned. The research records actual checks,
+declared collaborators and remaining installed/release gaps. PP-007/008 remain
+**Пока не обещать**.
+
+Current selected Smart Patch freshness:
+
+[Selected Patch source freshness](./phase-4-smart-patch-freshness-research.md) shares one App-owned transient
+inspection reader between the selected stored Patch row and variants browser.
+Open/selection, document changes, settled runtime/catalog actions and post-dispatch
+events refresh actual source diagnostics. One running request plus the newest
+waiting owner survives ProjectView/tab remounts; late replies cannot publish.
+Matching source displays `Inputs match` in the row (`Matches current inputs`
+in the browser), known changes `Outdated`, and
+unavailable source stays `Unverified`. Stored pixels/lineage, Undo and Save are
+unchanged. This is CPU inspection, independent of Generate/resource readiness;
+no trained inference or installer readiness is added. PP-007/008 remain
+**Пока не обещать**. Executed evidence and limits belong to the linked research.
+
+Previous installed Smart Patch qualification:
 
 [Installed trained public generation](./phase-4-smart-patch-installed-generation-research.md)
 passed 27 native checks with the current noneditable worker 0.14.0 and genuine
@@ -20,9 +659,9 @@ offers Generate without Repair before a diagnostic status getter. The linked
 research separates failed attempts and actual-child status regressions from the
 successful matrix. Reopened stored rows can still show `unverified`; automatic
 source-freshness re-verification after worker lifecycle is outside these assertions.
-Retry, orphan Raster conversion, accepted-history navigation, Compare/Preset,
+At that checkpoint, Retry, orphan Raster conversion, accepted-history navigation, Compare/Preset,
 arbitrary options, quality, full Invoke parity and release
-qualification remain open. PP-007/008 remain **Пока не обещать**.
+qualification were open. PP-007/008 remain **Пока не обещать**.
 
 Previous public Smart Patch generation integration:
 
@@ -47,11 +686,11 @@ removal back to the same empty Patch. Existing history owns deleted pixels acros
 Save/Undo; no immediate unlink or implicit Save occurs. A persistent variants
 browser displays authored/source freshness separately from current resource
 availability. Stored ownership is explicit, so copied historical lineage is not
-orphaned. Unknown source is unverified; known changed inputs are outdated. Public
-Generate/Add, accepted-history navigation, Compare/Preset and installed inference
-qualification remain open. The next finite owner is public Smart Generate/Results
-integration with its production admission, cancellation and Close/recovery impact
-policy. Executed evidence and limits are recorded in the linked research.
+orphaned. Unknown source is unverified; known changed inputs are outdated. At that
+lifecycle checkpoint, public Generate/Add, accepted-history navigation, Compare/Preset
+and installed inference qualification remained open. The next finite owner at that
+checkpoint was public Smart Generate/Results integration with its production
+admission, cancellation and Close/recovery impact policy. Executed evidence and limits are recorded in the linked research.
 
 Previous private Smart Patch durable acceptance:
 
@@ -71,10 +710,11 @@ must pass actual member verification plus file/directory sync before replacing
 shadow proof. Replays do not duplicate or reactivate variants. Add never performs
 Save or rewrites completed receipts/seed cursor.
 
-Public Smart Generate/Results/IPC, variant lifecycle controls, freshness/resource
-UI, accepted-history navigation, Compare/Preset and installed inference
-qualification remain later owners. PP-007/008 remain «Пока не обещать». Next finite
-owner is variant lifecycle and current-state diagnostics before public integration.
+At that durable-acceptance checkpoint, public Smart Generate/Results/IPC, variant
+lifecycle controls, freshness/resource UI, accepted-history navigation, Compare/Preset
+and installed inference qualification remained later owners. PP-007/008 remain
+«Пока не обещать». The next finite owner at that checkpoint was variant lifecycle
+and current-state diagnostics before public integration.
 Executed evidence and finite limits belong to the linked research.
 
 Previous Smart Patch variant storage/display scope:
@@ -99,7 +739,7 @@ This is storage/display support for an already populated document, not the
 public acceptance command. Generate/Add, durable acceptance journal and sibling
 cancellation/reconciliation, variant lifecycle controls, accepted-history
 navigation, Smart Patch Compare/Preset and installed inference qualification
-remain later owners. PP-007/008 remain «Пока не обещать». Executed evidence and
+were later owners at that storage/display checkpoint. PP-007/008 remain «Пока не обещать». Executed evidence and
 remaining limits belong to the linked research.
 
 Previous private acceptance-plan scope:
@@ -385,7 +1025,8 @@ chronology and excluded compositor attempts live in the newer checkpoint.
 
 Next roadmap owner is Phase 4 Smart Patch inpaint/generation and accepted variants,
 followed by staleness/compositing/comparison, Regional Guidance and Patch presets.
-PP-006 stays open for its Smart Patch and other-context handoffs.
+At that checkpoint, Smart-target Apply and other-context handoffs remained open;
+the later finite Apply checkpoint above records its scoped qualification.
 
 Shared strict payload → native IPC/preload → Main lifetime owner → SQLite now
 supports CRUD/duplicate, soft delete/restore and automatic 30-day expiry. Actual
@@ -425,7 +1066,9 @@ and returns after Model Manager dismissal/catalog settlement. Missing nominal
 versions and SHA mismatches remain visible; late/cancelled refresh cannot reopen
 an obsolete Apply. Its finite qualification and PP-006 review pilot belong to
 its checkpoint. Installed EPS/V Apply→inference is now qualified in the declared
-finite recipe above; Smart Patch and other-context handoffs remain open.
+finite recipe above. At that installed checkpoint, Smart-target Apply and
+other-context handoffs remained open; later finite Smart-target Apply is linked
+above without installed-inference qualification.
 PP-006 remains «Пока не обещать».
 [Current Phase2C exit ledger](./phase-2c-exit-ledger.md) assigns the remaining
 Preset/Canvas/release owners and records the named missing-version handoff.
@@ -519,8 +1162,8 @@ Older checkpoint successor labels retain their historical meaning.
 - [Staging-only recovery decisions](./phase-2b-staging-only-recovery-research.md) — verified temporary candidates trigger Home/Open/Import decisions independently of shadow and Queue history; clean Recover, all-session Discard and unavailable-storage warnings preserve saved files.
 - [Project-local accepted-result history](./phase-2b-project-accepted-results-research.md) — current Raster provenance produces a read-only list after Add/Undo/Recover/Save/reopen; selection reveals the owning layer, while the global durable index remains separate.
 - [Saved accepted-result SQLite index](./phase-2b-saved-accepted-index-research.md) — verified saved `.igs` metadata replaces Home/result rows atomically; scoped queries exclude unhealthy sources, Save reports committed-file index failures, and workspace Refresh rebuilds the projection. The following browser checkpoint connects global browsing/IPC.
-- [Saved accepted-result browser](./phase-2b-accepted-history-browser-research.md) — shared modal from Home/Project, bounded strict IPC, saved-only signed previews and guarded owning-layer navigation through Open/recovery, preserving dirty tabs. Smart Patch and result-to-preset remain pending; the next checkpoint adds current-format Raster comparison.
-- [Read-only Raster settings comparison](./phase-2c-raster-comparison-research.md) — production layer menu/popover, strict portable-only read, immutable baseline versus live draft/catalog/bbox and verified CPU-derived mode; missing/legacy fields and async edit/Undo/close boundaries stay explicit. Full pipeline/provenance and Smart Patch remain pending.
+- [Saved accepted-result browser](./phase-2b-accepted-history-browser-research.md) — shared modal from Home/Project, bounded strict IPC, saved-only signed previews and guarded owning-layer navigation through Open/recovery, preserving dirty tabs. Smart Patch and result-to-preset were pending at that browser checkpoint; the next checkpoint added current-format Raster comparison.
+- [Read-only Raster settings comparison](./phase-2c-raster-comparison-research.md) — production layer menu/popover, strict portable-only read, immutable baseline versus live draft/catalog/bbox and verified CPU-derived mode; missing/legacy fields and async edit/Undo/close boundaries stay explicit. Full pipeline/provenance and Smart Patch were pending at that Raster comparison checkpoint.
 - [SQLite lock safety](./sqlite-lock-safety-research.md) — metadata-only file checks preserve WAL visibility across secondary close/reopen; existing shared SQLite file permissions require explicit repair.
 - [Queue result previews/navigation](./phase-2b-queue-result-preview-research.md) — exact job/session projection from verified open-Project Results, bounded previews, fresh one-use Canvas focus and user Refresh; accepted history remains separate.
 - [New Generate during inference](./phase-2b-busy-generate-research.md) — frozen Canvas prepared by one CPU derivatives child from the same installed runtime, copied inference readiness, confirmed child exit and preserved replacement/close boundaries.
@@ -638,3 +1281,18 @@ branch review, запускать существующие проверки и �
 [Installed Anima image Reuse после crash](./phase-2c-anima-image-reuse-crash-research.md): Euler256 IMG/normal mixed-alpha OUT,22 admissions/18 completions/4 APP_RESTART/18 accepted layers/2 Save-reopen packages,16 Reuse+2 recovered own fullRGBA matches. Home Recover сохраняет source/candidate/cursor B; public Reuse/value null, hidden recovered Fixed layer и8 fresh Reuse layers сохранены вместе с source. Source-only Save snapshot null; final(B+7),10 layers/9 provenance,18 owning comparisons; OUT55552 protected pixels. Исключённый первый native3/1/2cancel/0accepted учтён отдельно; raw total25/19/6cancel/18accepted. FullMVP/quality/Invoke parity/release не заявлены. Следующий finite gate: Anima image MAX→0 подтверждён отдельно8/6/4; Anima image cap32/prefix refusal подтверждён отдельно76/4/12/2; следующий finite gate — NoobAI V / DPM++ 2M Karras wrong-EPS: наблюдаемый отказ и диагностика.
 
 [Anima image MAX→0](./phase-2c-anima-image-seed-wrap-research.md): Installed Anima image MAX→0: 8 admissions/completions/accepted layers, 6 Save-reopen packages, 4 wholeRGBA matches с собственными numeric MAX/0 controls и 2 same-prompt contrasts. Frozen worker inputs сохраняют MAX→0 actual/step/posterior seeds и compiled weighting; 6 cursor/Save snapshots и 8 portable provenance сохраняют raw weighted text, actual seed и resource/source context. Три OUT previews сохраняют 166656 protected source pixels. Independent raw reader PASS (18700 checks); actual Main modulo fault: 18 executions, 2 RED / 16 GREEN. Все 584 copied source members restored and guarded-cleaned. Только Euler256/N3/two updates/exact ресурсы; cross-pair wrap/cap32/new installed mutation/quality/Invoke parity/fullMVP/release не заявлены. Anima image cap32/prefix refusal подтверждён отдельно76/4/12/2; текущий следующий finite gate — NoobAI V / DPM++ 2M Karras wrong-EPS: наблюдаемый отказ и диагностика.
+
+## Private trained Illustrious regional qualification
+
+[Trained Illustrious qualification](./phase-4-regional-guidance-trained-illustrious-research.md)
+closes one exact official epsilon file through the production loader, full
+11-parent/70-cross-attention UNet, genuine Main recipes and provisional RGB PNGs.
+ROOT qualified 1,049 unique Python selections in separate recorded groups;
+22 accepted PNGs, exact ordinary-zero equivalence and two trained semantic
+prediction/RGB mutations are retained. Source R2 and retained-byte audit are
+CLEAN within their stated scopes. Final source/bookkeeping review is separate.
+Cleanup removed 14 idle payload paths / 32,862,208 bytes; exact checkpoint,
+source/config/native pins and compact reproduction bytes remain protected.
+Anima/Illustrious are the product families; private SDXL internals do not add a
+family. One/two steps at 104×72 establish mechanics, without public admission,
+Main candidate durability or visual-quality readiness.

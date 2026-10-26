@@ -118,7 +118,225 @@ member paths с uncompressed byte size и SHA-256. `project.json` хранит �
 document ID/revision, title, primary bbox, generation draft, ordered layers
 с точными asset references и saved last-actual-seed snapshot. ZIP member names
 и ссылки валидируются строго; неизвестное или более новое schema version
-не переписывается молча. [Smart Patch foundation](../engineering/phase-4-smart-patch-foundation-research.md)
+не переписывается молча.
+
+The current [Regional Guidance reference-image owner](../engineering/phase-4-regional-guidance-references-research.md)
+has **source implemented; finite native-r10 qualification PASS; retention/release
+complete**. Core storage source and final lower checks are complete; the
+finite native evidence below closes this bounded authoring checkpoint, not overall public readiness.
+Its settled portable contract adds
+optional, nonempty `region.referenceImages`, with no parser default/empty
+wrapper. One authorized PNG/JPEG/WebP per Add creates one fresh globally owned
+attachment UUID; cancel creates none. Array order is durable, equal-order move
+is a no-op and remove-last omits the field. Each item stores `id`, `name`,
+`sourceFormat`, `asset` and `thumbnail` descriptors with exact
+`path/sha256/bytes/width/height`, plus optional `sourceIccProfile` with exact
+`path/sha256/bytes`. No runtime URL or renderer source path is stored.
+
+Canonical source PNG and full-frame thumbnail WebP have immutable hash-named
+members under `assets/regional-references/<referenceId>/`; original ICC uses
+`assets/profiles/<sha256>.icc`. The source/thumbnail roles and owner must match
+the path. All-asset/profile collectors must retain both images and ICC through
+adoption, package Save/rebuild, shadow and recovery, independently of Raster
+composition/preview collectors. Exact bytes, hashes, content and dimensions
+must be validated. Duplicate allocates fresh reference IDs/member paths and
+copies verified bytes; ICC may retain existing immutable sharing. Delete/Undo
+follow coordinator history retention without eager filesystem deletion.
+
+Candidate publication, including Duplicate, must check the existing 16 MiB
+project JSON, 4 MiB manifest, 10,000 ZIP-entry and 32 GiB aggregate ceilings,
+counting unique asset/profile paths plus five non-asset ZIP members. There is no
+new arbitrary reference-count capacity promise. Existing normalization ceilings
+remain 256 MiB source, 16,384 per side, 64,000,000 pixels, 4 MiB ICC and 512 MiB
+verified canonical output. The separate pinned-canonical-PNG CPU thumbnail
+primitive produces full-frame lossless WebP, without crop/upscale, bounded to
+128 per side and 128,000 bytes; legacy derivative/resource-preview APIs/caps
+are preserved. These are defensive limits, not measured regional capacity.
+
+Dedicated owner-bound import/update APIs accept no renderer paths, pixels or
+asset descriptors. Capture/revision/epoch and lock/family checks must hold across
+dialog/worker awaits and staged publication. Cancel/failure keeps the document,
+history, package and neighbors unchanged. A separate signed regional-reference
+namespace within `igs-layer` resolves only exact thumbnail ownership; runtime
+`thumbnailUrl` never enters `project.json`. Ordinary Undo, explicit Save,
+portable reopen after external source removal and dirty-image recovery retain
+separate lower-level and finite native evidence boundaries, both recorded below.
+
+Root reports **118 Python checks passed, 0 failed/skipped** at the CPU
+thumbnail/import/derivative/resource-preview/protocol boundary only.
+
+Root confirms **source implemented; lower-level checks and finite native-r10
+qualification PASS**. Final lower checks are **Python 118 PASS**, post-lint
+**typecheck-r3 PASS**, **full lint-r2 PASS**, **neighbors-r2: 952 PASS / 57 files /
+0 skips**, and **fresh build-r1 PASS**. Later changes were harness-only, each with
+syntax/format/scoped ESLint PASS. Earlier typecheck-r2 and neighbors-r1
+950/57 preceded the final checks; neighbors-r1 predates the Save fix. The earlier
+lint-r1's 196 autofixable ordering/braces errors in 16 changed files are historical,
+not the final lint outcome.
+
+The duplicate mutation records **2 GREEN → 1 semantic RED + 1 control GREEN →
+2 restored GREEN**; all **1,343 mutation-source members** are restored.
+Production **R2 source review is CLEAN** after the P2 Save A/B rebase fix and
+external-replacement neighbor. Rebase requires full-document equality to exact
+`baseDocument` or exact authorized `saveTarget`. The causal
+`SAVED_PROJECT_CHANGED` assertion was unchanged when the explicit
+Recover-new-revision test oracle was corrected; `save-rebase-green-r2` passed
+both cases.
+
+Final **native-r10: 12/12 PASS in 191.188 s**, script `1f5ac7ce`, with its
+**R11 source review CLEAN**. The successful run uses the source-r2 archive
+(1,343 members), exact script overlay and build-r1 (33 members). It observes
+**882 Main calls, originals exactly once**, and **149 actual CPU children**
+across two Electron lifetimes: intentional dirty SIGKILL, then healthy code 0.
+Exact Main/dialog/spawn/kill/write restoration completes with zero in-flight
+calls and zero page errors; root freshly confirms recorded PID/start identities
+absent. Contract R1 is CLEAN source-only; final source/build/version mapping is retained.
+
+Root actually opened **all 10 final screenshots** under `ui-audit`: 1440×900
+and 900×620, reference cards, keyboard tooltips and recovered image states.
+This bounded self-review found no material new reference-layout defect; it is
+not independent review, full WCAG or all-compositor qualification.
+
+Native attempts **1–9 remain FAILED**. Harness source-oracle findings R7/R8
+were closed by subsequent code/reviews and successful replay; those failures
+do not establish another product bug beyond the corrected Save rebase.
+
+The OS picker result was controlled; the worker was the **actual development
+CPU worker**, with no ML/catalog injection. Installed-resource transitions,
+packaged-worker behavior, inference and frozen active work are not
+native-qualified. Transient target/Smart-preparation outputs have metadata-only
+witnesses, without raw replay. Prototype SVG/data URLs remain separate mock
+behavior and do not extend this evidence boundary.
+
+Retention **R1–R7 are CLEAN, candidate-only, READ-FINISHED**; contract **R1 is
+CLEAN, source-only**. Root freshly verified source/build bytes, physical exits,
+exact restoration, dependencies and all-reader completion, then released all
+22 exact disposable paths: 2 unit and 20 native payloads. Measured artifact-root
+allocation reduction is **216,420,352 bytes** (unit 35,950,592; native 180,469,760).
+Compact evidence and external runtime/package dependencies remain protected.
+Final source/build/version mapping is retained in the linked checkpoint.
+PP-001/007/008 remain
+**Пока не обещать**; finite qualification does not promote public readiness.
+
+The failed-attempt chronology retains these corrections: normal CPU SIGTERM
+was initially mistaken for a required code-0 exit; unrelated background variants
+CPU work was counted as import; stale variants reads needed their exact current
+successor; an NAlert title was assumed to be a heading. Manual viewport changes
+still recenter: the corrected oracle independently measures the notice, viewport
+and world-centre law. A JPEG fixture's double ICC was corrected without weakening
+the worker, family checkpoint names became unique, and tooltip lookup uses the
+actual `.n-tooltip` element. Attempts 1–9 are not retroactively counted as PASS.
+
+The prototype's SVG/multiple data URLs do not prove durable storage. No SQL/model
+policy, conditioning/inference, accepted provenance or automatic Save expansion
+is included. PP-001/007/008 remain **Пока не обещать**; the earlier checkpoint
+records below retain their original scope/evidence.
+
+The [Regional Guidance owned-mask checkpoint](../engineering/phase-4-regional-guidance-masks-research.md)
+has **source implemented, lower-level checks and finite native-r7 qualification
+passed**; local visuals are root-reviewed and retention/release are complete.
+Regional `mask` adopts
+the existing strict owned-mask union:
+`{ id, revision, asset: null }` or `{ id, revision, bounds, asset }`, with immutable
+white-RGB/alpha PNGs under `assets/masks/<maskId>/<sha256>.png`. Bounds are integer
+world-pixel coordinates, independent of every generation bbox. Shared asset
+collectors, package membership/PNG validation, shadow and Save include regional
+masks; raster composition/preview collectors stay unchanged. Duplicate allocates
+fresh owner IDs and a copied member path; historical Undo bytes stay with the
+existing coordinator rather than being eagerly deleted.
+
+The dedicated geometry-only edit envelope captures document/mask revisions;
+Main checks lock, coordinator/epoch and staged publication. Runtime-only signed
+`igs-mask://regional/...` display URLs never enter portable JSON. Smart resources
+retain their separate namespace and resolver. No SQL migration, reference-image
+asset, worker conditioning, accepted provenance or implicit Save is introduced.
+Root's Node, post-lint and build checks PASS at the source boundaries recorded in
+the linked research; production R2 is CLEAN, source-only. Prototype r2 passes 182
+mock/shared-consumer checks and does not qualify production persistence. Root's
+final native-r7 passes all 12 checks in 157.061 s, including actual Save/read/reopen
+and dirty-PNG crash → Recover → Save/reopen with exact coverage, geometry, history
+and owner/resource controls. Both lifetimes restore all 95 handlers with zero
+in-flight calls/page errors. Root's six final screenshot reviews are bounded local
+self-review, not a full accessibility audit. Earlier failures retain native3's
+instrumentation restoration gap. All four retention audits are CLEAN/READ-FINISHED;
+contract R2 is CLEAN source-only and final harness-scoped lint passes. Root
+release checks and exact cleanup are complete: 15 idle paths, 113,537,024 bytes
+(108.28 MiB), with retained compact bytes and protected external dependencies. Earlier
+descriptions below are historical.
+
+[Regional Guidance foundation](../engineering/phase-4-regional-guidance-foundation-research.md)
+extends pre-release v1 with optional `regionalGuidance`, separate from `layers`.
+At that checkpoint, strict empty entities contained only `id`, `name`, `enabled`, `locked`,
+`overlayOpacity` and `mask: { id, revision: 0, asset: null }`. Unknown fields,
+nonempty assets and future mask revisions refused at that checkpoint. Entity/mask identities join the
+same current-owner namespace as layers and nested variants; no regional PNG,
+provenance, SQL migration or worker payload is added. Missing collection stays
+missing through legacy Open/no-op Save; deleting its final owner omits the field.
+The new reader accepts legacy packages; older strict binaries reject the new
+field. Regional inference and nonempty masks remained outside that foundation schema.
+
+The subsequent [Regional Guidance authored-prompts checkpoint](../engineering/phase-4-regional-guidance-prompts-research.md)
+adds only optional `prompts: { positive: GenerationPrompt | null;
+negative: GenerationPrompt | null; useGlobalNegativePrompt: boolean }` to a
+region. Each ordinary prompt owns authored `text` and exact embedding refs; the
+regional shape accepts embedding-kind refs only. The parser introduces no
+defaults: absent `prompts` means no blocks and global-negative inheritance.
+Both-null wrappers refuse, and a null negative requires inheritance true.
+An explicitly empty block remains persisted after Add/Clear; Remove clears that
+block, and the final Remove omits the wrapper. Add Negative selects local/empty;
+inheritance preserves dormant local text/refs, while Remove Negative clears them
+and restores inheritance. Effective inherited text is never copied into the
+region. Current Canvas supplies authoring context; future Smart-job freezing is separate.
+
+Strict dedicated prompt IPC accepts authored text or exact ID-only embedding
+choices; metadata APIs and ordinary generation-draft target/change validation
+are preserved. The shared seal endpoint additionally accepts strict regional
+namespaced group IDs, without widening ordinary draft group validation. Main
+creates verified refs and checks lock, current owner, revision and epoch through
+final publication. Live acknowledged edits participate in grouped
+Project Undo, shadow recovery and explicit Save; failed unpublished text remains
+local for correction/retry or explicit pending-only discard. Observed external
+revision/Undo ABA invalidates the pending stream without rebasing. Existing
+1 MiB prompt-text and 16 MiB serialized-document ceilings are defensive format
+limits, not measured capacity; regional publication, including Add/Duplicate,
+checks the full candidate size before publishing it. No regional PNG, reference
+image asset, SQL migration, worker conditioning or accepted provenance is added.
+The exclusion of Regional Guidance from every accepted-result provenance group
+also applies to future region-conditioned results. Enabled-region NEW ordinary/
+Smart refusal and independent published jobs/frozen Retry remain unchanged.
+The finite authoring checkpoint is root-qualified. Root confirms 795 Node tests
+in 41 files, zero failures/skips, before the final single row ARIA attribute
+change. Final row 20c2fb6e has typecheck r7, later row/script scoped lint and fresh
+app build r4 PASS; full lint r2 passes all four partitions. Prototype r1 passes
+182 shared-consumer browser checks without prototype source changes. Complete
+production R4, narrow ARIA R5 and final native-source R7 are CLEAN source-only.
+Main inheritance mutation: 2 GREEN → 1 semantic RED / 1 unchanged GREEN control →
+2 restored GREEN; all 1,325 source files and the shared subject are restored exactly.
+
+Root's final native-r8/script ff502357 passes all 12 checks in 97.714 seconds,
+healthy final code 0 across two Electron lifetimes, including dirty SIGKILL/recovery
+and healthy close. Actual Save/loader/reopen and dirty recovery preserve full SQL,
+documents, PNGs, masks, variants, provenance, neighbors, operational cursor and
+policy. Both observer restorations are true with inFlight zero; all 675/46 original
+calls execute once and all handlers are restored. Required `ipc/launch-*.jsonl`
+journals retain complete original arguments/results once in portable tagged form;
+compact witnesses use prefix references. These are retained qualification evidence,
+not new app API or persisted Project data-model fields. Root opens/views all seven
+normal/minimum screenshots without material layout findings in scope, as bounded
+self-review rather than an independent full accessibility audit. Historical failed
+attempts remain failures; native 5's raw running report has an aborted-OOM supplement,
+rescued final SQL/product bytes and physical actor closure, without any observer
+restoration claim for that attempt.
+
+Retention audits 1–4 are CLEAN and READ-FINISHED. Root completes fresh exit,
+restoration and reader checks, removes 18 exact idle payload paths and reclaims
+116,359,168 allocated bytes (110.97 MiB), preserving compact evidence and external
+dependencies. Contract review R2 is CLEAN at source/document level. No regional masks/reference images,
+conditioning, inference, installed embedding/autocomplete, active-work or Main-ABA
+qualification is claimed. Final retention/release evidence belongs to the linked
+root research; PP-001/007/008 remain **Пока не обещать**.
+
+[Smart Patch foundation](../engineering/phase-4-smart-patch-foundation-research.md)
 расширяет pre-release v1 строгой веткой `kind: 'smart-patch'`: common layer fields,
 owned `mask: { id, revision: 0, asset: null }`, bbox, internal resolution,
 generation draft, пустой `rasterSubLayers` и `activeRasterSubLayerId: null`.
@@ -152,8 +370,8 @@ identity/revision/bytes и internal resolution. Нынешние owned defaults1
 а inference blur step остаётся открытым. Qualification: impacted regression1820 PASS
 до terminal snapping, final affected59 PASS, built native57 checks и три semantic
 RED/neighbor GREEN pairs; typecheck/lint/build PASS. Chronology, source/exit proof
-и границы находятся в linked checkpoint. Nonempty variants и Regional Guidance
-всё ещё отклоняются.
+и границы находятся в linked checkpoint. At that checkpoint nonempty variants
+and Regional Guidance still refused; their later storage owners are separate.
 
 [Private Main/CPU Smart Patch input capture](../engineering/phase-4-smart-patch-generation-capture-research.md)
 не расширяет `.igs` и не сериализует отдельный generation snapshot. Read-only

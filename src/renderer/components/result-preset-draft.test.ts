@@ -12,6 +12,7 @@ import {
   isRasterGenerationConfigurationV1,
   parseRasterGenerationProvenanceV1,
 } from '../../shared/projects/project-schema.js'
+import { parseSmartResultPresetData } from '../../shared/projects/smart-result-preset.js'
 
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
@@ -22,7 +23,7 @@ import {
   acceptedAnimaProvenanceFixture,
   acceptedRasterProvenanceFixture,
 } from '../../main/projects/test-fixtures/accepted-provenance.js'
-import { createResultPresetIntent } from './result-preset-draft.js'
+import { createResultPresetIntent, createSmartResultPresetIntent } from './result-preset-draft.js'
 
 /** Actual strict portable metadata fixtures; this suite does not claim PNG or ML execution. */
 function fixture(family: 'anima'): IgsAnimaRasterGenerationProvenanceV1
@@ -304,5 +305,63 @@ test('invalid or private transport data refuses authoring rather than normalizin
     const before = structuredClone(source)
     assert.throws(() => intent(source), /saved result generation data is invalid/)
     assert.deepEqual(source, before)
+  }
+})
+
+test('Smart result drafts preserve portable frozen settings and identities while omitting geometry and Seed', () => {
+  for (const family of ['illustrious', 'anima'] as const) {
+    const recorded = family === 'illustrious' ? fullIllustriousRecord() : fixture('anima')
+    const raster = intent(data(recorded)).definition.payload
+    const { size: _size, ...payload } = raster
+    const resultId = randomUUID()
+    const source = parseSmartResultPresetData({
+      assetSha256: 'b'.repeat(64),
+      documentId: randomUUID(),
+      documentRevision: randomUUID(),
+      owner: { kind: 'smart-patch-variant', layerId: randomUUID(), variantId: resultId },
+      payload,
+      resultId,
+      workflow: 'smartPatch',
+    })
+    const before = structuredClone(source)
+    const created = createSmartResultPresetIntent({
+      data: reactive(source),
+      layerName: 'Patch · Inspected inactive variant',
+      projectName: 'Dirty Project.igs',
+    })
+    assert.equal(created.definition.workflow, 'smartPatch')
+    assert.equal(created.smartGeometryExcluded, true)
+    assert.equal(
+      created.projectSummary,
+      `${payload.model!.displayName} · ${payload.model!.versionName}`,
+    )
+    assert.deepEqual(created.definition.payload, payload)
+    assert.equal(Object.hasOwn(created.definition.payload, 'size'), false)
+    assert.equal(Object.hasOwn(created.definition.payload, 'seed'), false)
+    assert.equal(Object.hasOwn(created.definition.payload, 'anima'), false)
+    assert.deepEqual(parsePresetDefinition(created.definition).payload, payload)
+    created.definition.payload.prompt!.text = 'Detached edit'
+    created.definition.payload.model!.displayName = 'Detached model label'
+    assert.deepEqual(source, before)
+    assert.deepEqual(source.payload.prompt, recorded.generationConfiguration.positivePrompt)
+    assert.deepEqual(source.payload.loras, recorded.generationConfiguration.loras)
+
+    for (const extra of [
+      { size: { height: 256, width: 256 } },
+      { seed: { policy: 'fixed', value: 0 } },
+      { sourceTarget: { sha256: 'c'.repeat(64) } },
+    ]) {
+      const invalid = structuredClone(source)
+      Object.assign(invalid.payload, extra)
+      assert.throws(
+        () =>
+          createSmartResultPresetIntent({
+            data: invalid,
+            layerName: 'Patch',
+            projectName: 'Project',
+          }),
+        /saved Smart result settings are invalid/,
+      )
+    }
   }
 })

@@ -34,6 +34,7 @@ from imagegen_worker.derivatives import (
     DerivativeRequest,
     create_derivatives,
 )
+from imagegen_worker.import_thumbnail import ImportThumbnailRequest, create_import_thumbnail
 from imagegen_worker.imports import NormalizeImportRequest, normalize_import
 from imagegen_worker.lama_infill import OUTPAINT_INFILL_BYTE_SIZE, OUTPAINT_INFILL_SHA256
 from imagegen_worker.resource_previews import ResourcePreviewRequest, create_resource_preview
@@ -91,6 +92,12 @@ class DeriveImageCommand:
 class NormalizeImportCommand:
     request_id: str
     imported: NormalizeImportRequest
+
+
+@dataclass(frozen=True)
+class ImportThumbnailCommand:
+    request_id: str
+    thumbnail: ImportThumbnailRequest
 
 
 @dataclass(frozen=True)
@@ -327,6 +334,7 @@ def ready_message() -> dict[str, object]:
         "capabilities": [
             "image-derivatives",
             "import-normalization",
+            "import-thumbnail",
             "preview-composition",
             "resource-preview",
             "self-test",
@@ -1111,6 +1119,7 @@ def parse_request(
     SelfTestCommand
     | DeriveImageCommand
     | NormalizeImportCommand
+    | ImportThumbnailCommand
     | ResourcePreviewCommand
     | ComposePreviewCommand
     | ComposeTargetCommand
@@ -1166,6 +1175,26 @@ def parse_request(
             request_id,
             img2img=fields["type"] != "generate-anima-txt2img",
             outpaint=fields["type"] == "generate-anima-outpaint",
+        )
+    if fields.get("type") == "create-import-thumbnail":
+        _object(
+            fields,
+            "Import thumbnail request",
+            {"type", "requestId", "protocolVersion", "input", "output"},
+        )
+        source = _object(fields["input"], "Input", {"path", "sha256", "colorSpace"})
+        output = _object(fields["output"], "Output", {"stagingRoot", "thumbnailWebpPath"})
+        if source["colorSpace"] != "srgb":
+            raise DerivativeError("INVALID_REQUEST", "Canonical import color space must be sRGB.")
+        return ImportThumbnailCommand(
+            request_id=request_id,
+            thumbnail=ImportThumbnailRequest(
+                input_path=_path(source["path"], "Input path"),
+                input_sha256=_sha256(source["sha256"], "Input SHA-256"),
+                input_color_space="srgb",
+                staging_root=_path(output["stagingRoot"], "Staging root"),
+                thumbnail_webp_path=_path(output["thumbnailWebpPath"], "Thumbnail output path"),
+            ),
         )
     if fields.get("type") == "create-resource-preview":
         _object(
@@ -1665,6 +1694,14 @@ def process_request(value: object) -> dict[str, object]:
                 "protocolVersion": PROTOCOL_VERSION,
                 "requestId": command.request_id,
                 **result,
+            }
+        if isinstance(command, ImportThumbnailCommand):
+            thumbnail = create_import_thumbnail(command.thumbnail)
+            return {
+                "type": "import-thumbnail-done",
+                "protocolVersion": PROTOCOL_VERSION,
+                "requestId": command.request_id,
+                "thumbnail": thumbnail,
             }
         if isinstance(command, ResourcePreviewCommand):
             resource_result = create_resource_preview(command.preview)

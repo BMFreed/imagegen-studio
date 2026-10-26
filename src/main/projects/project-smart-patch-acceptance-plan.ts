@@ -1,6 +1,7 @@
 import {
   IGS_SAFETY_CEILINGS,
   type IgsSmartPatchVariantV1,
+  projectOwnedIds,
 } from '../../shared/projects/project-schema.js'
 
 import { randomUUID } from 'node:crypto'
@@ -201,13 +202,7 @@ export async function prepareSmartPatchAcceptancePlan(
   selected.sort(
     (a, b) => a.completionOrder - b.completionOrder || a.candidateId.localeCompare(b.candidateId),
   )
-  const occupied = new Set(
-    initial.layers.flatMap((layer) =>
-      layer.kind === 'smart-patch'
-        ? [layer.id, layer.mask.id, ...layer.rasterSubLayers.map(({ id }) => id)]
-        : [layer.id],
-    ),
-  )
+  const occupied = new Set(projectOwnedIds(initial))
   const proposed: IgsSmartPatchVariantV1[] = []
   const candidateReads: SmartPatchCandidateReadIdentity[] = []
   for (const candidate of selected) {

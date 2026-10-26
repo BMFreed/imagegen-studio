@@ -3,15 +3,19 @@ import * as v from 'valibot'
 import type { AnimaModelBundleView, ModelCatalogItem, ModelVersionView } from '../api.js'
 import type {
   IgsAnimaRasterGenerationProvenanceV1,
+  IgsAnimaSmartPatchGenerationProvenanceV1,
   IgsIllustriousRasterGenerationProvenanceV1,
+  IgsIllustriousSmartPatchGenerationProvenanceV1,
   IgsProjectDocumentV1,
   IgsRasterGenerationProvenanceV1,
 } from './project-schema.js'
+import type { SmartResultComparisonData } from './smart-result-comparison.js'
 
 import { ANIMA_SAMPLING_METHOD_LABELS } from './anima-sampling-method.js'
 import { getEffectiveDynamicPromptSettings } from './generation-dynamic-settings.js'
 import { resolveIllustriousScheduler } from './illustrious-scheduler.js'
 import { IGS_SAFETY_CEILINGS, isRasterGenerationConfigurationV1 } from './project-schema.js'
+import { isSmartResultComparisonData } from './smart-result-comparison.js'
 
 export interface RasterGenerationData {
   currentMode: 'img2img' | 'outpaint' | 'txt2img' | null
@@ -78,6 +82,14 @@ type Lora = IgsProjectDocumentV1['generationDraft']['loras'][number]
 
 type Prompt = IgsProjectDocumentV1['generationDraft']['positivePrompt']
 type Availability = 'Missing resource' | 'Unavailable' | null
+type IllustriousConfiguration =
+  | IgsIllustriousRasterGenerationProvenanceV1['generationConfiguration']
+  | IgsIllustriousSmartPatchGenerationProvenanceV1['generationConfiguration']
+type AnimaConfiguration =
+  | IgsAnimaRasterGenerationProvenanceV1['generationConfiguration']
+  | IgsAnimaSmartPatchGenerationProvenanceV1['generationConfiguration']
+type CurrentCanvasMode = Pick<RasterGenerationData, 'currentMode' | 'modeUnavailableReason'>
+
 /** The comparison transport contains portable settings, never layer/source or execution context. */
 export function isRasterGenerationData(value: unknown): value is RasterGenerationData {
   return v.is(RasterGenerationDataSchema, value)
@@ -94,6 +106,25 @@ export function compareRasterGenerationSettings(
   if (!baseline) {
     return []
   }
+  return compareGenerationSettings(baseline, data, current)
+}
+
+/** Smart settings deliberately have no generation Size, including after conversion to Raster. */
+export function compareSmartResultGenerationSettings(
+  data: SmartResultComparisonData,
+  current: GenerationSettingsComparisonCurrent,
+): GenerationSettingsComparisonSection[] {
+  if (!isSmartResultComparisonData(data)) {
+    return []
+  }
+  return compareGenerationSettings(data.generationConfiguration, data, current)
+}
+
+function compareGenerationSettings(
+  baseline: AnimaConfiguration | IllustriousConfiguration,
+  data: CurrentCanvasMode,
+  current: GenerationSettingsComparisonCurrent,
+): GenerationSettingsComparisonSection[] {
   if ('anima' in baseline) {
     return compareAnimaGenerationSettings(baseline, data, current)
   }
@@ -124,8 +155,8 @@ export function compareRasterGenerationSettings(
 }
 
 function compareIllustriousGenerationSettings(
-  baseline: IgsIllustriousRasterGenerationProvenanceV1['generationConfiguration'],
-  data: RasterGenerationData,
+  baseline: IllustriousConfiguration,
+  data: CurrentCanvasMode,
   current: GenerationSettingsComparisonCurrent,
 ): GenerationSettingsComparisonSection[] {
   const draft = current.generationDraft
@@ -240,20 +271,7 @@ function compareIllustriousGenerationSettings(
         ),
       ],
     },
-    {
-      key: 'size',
-      label: 'Size',
-      rows: [
-        row(
-          'size.dimensions',
-          'Generation size',
-          [baseline.size.width, baseline.size.height],
-          [current.bbox.width, current.bbox.height],
-          `${baseline.size.width} × ${baseline.size.height}`,
-          `${current.bbox.width} × ${current.bbox.height}`,
-        ),
-      ],
-    },
+    ...sizeSections(baseline, current),
     {
       key: 'sampling',
       label: 'Sampler & Scheduler',
@@ -483,8 +501,8 @@ function compareIllustriousGenerationSettings(
 }
 
 function compareAnimaGenerationSettings(
-  baseline: IgsAnimaRasterGenerationProvenanceV1['generationConfiguration'],
-  data: RasterGenerationData,
+  baseline: AnimaConfiguration,
+  data: CurrentCanvasMode,
   current: GenerationSettingsComparisonCurrent,
 ): GenerationSettingsComparisonSection[] {
   const draft = current.generationDraft
@@ -542,16 +560,20 @@ function compareAnimaGenerationSettings(
   const componentRow = (role: 'qwen3Encoder' | 'vae', label: string) => {
     const recorded = baseline.anima[role]
     const after = currentBundle?.[role]
-    // Companion rows are hidden from the general catalog. Their owning checkpoint supplies the
-    // verified bindings, and each historical local binding still has to match exactly.
+    // Smart records retain only bytes/hash. Ordinary records additionally require their actual
+    // historical local bindings; neither path invents companion registry IDs.
     const bound = recordedBundle?.[role]
     const externalVaeUnsupported = nativeCurrent && role === 'vae' && draft.vae !== null
     const availability: Availability =
       externalVaeUnsupported ||
       !bound ||
       !after ||
-      recorded.localModelId !== bound.localModelId ||
-      recorded.localVersionId !== bound.localVersionId ||
+      ('localModelId' in recorded &&
+        (recorded.localModelId !== bound.localModelId ||
+          recorded.localVersionId !== bound.localVersionId)) ||
+      (!('localModelId' in recorded) &&
+        (recordedBundle?.architecture !== baseline.anima.architecture ||
+          recordedBundle.checkpointByteSize !== baseline.anima.checkpointByteSize)) ||
       recorded.sha256 !== bound.sha256 ||
       recorded.byteSize !== bound.byteSize
         ? 'Unavailable'
@@ -627,20 +649,7 @@ function compareAnimaGenerationSettings(
         ),
       ],
     },
-    {
-      key: 'size',
-      label: 'Size',
-      rows: [
-        row(
-          'size.dimensions',
-          'Generation size',
-          [baseline.size.width, baseline.size.height],
-          [current.bbox.width, current.bbox.height],
-          `${baseline.size.width} × ${baseline.size.height}`,
-          `${current.bbox.width} × ${current.bbox.height}`,
-        ),
-      ],
-    },
+    ...sizeSections(baseline, current),
     {
       key: 'sampling',
       label: 'Anima Sampling',
@@ -740,7 +749,7 @@ function compareAnimaGenerationSettings(
           'Dynamic prompt seed behavior',
           baseline.sampling.seedBehavior,
           getEffectiveDynamicPromptSettings(draft.dynamicPrompt).seedBehavior,
-          baseline.sampling.seedBehavior,
+          baseline.sampling.seedBehavior ?? UNRECORDED,
           getEffectiveDynamicPromptSettings(draft.dynamicPrompt).seedBehavior,
         ),
       ],
@@ -800,6 +809,31 @@ function compareAnimaGenerationSettings(
   ]
 }
 
+function sizeSections(
+  baseline: AnimaConfiguration | IllustriousConfiguration,
+  current: GenerationSettingsComparisonCurrent,
+): GenerationSettingsComparisonSection[] {
+  if (!('size' in baseline)) {
+    return []
+  }
+  return [
+    {
+      key: 'size',
+      label: 'Size',
+      rows: [
+        row(
+          'size.dimensions',
+          'Generation size',
+          [baseline.size.width, baseline.size.height],
+          [current.bbox.width, current.bbox.height],
+          `${baseline.size.width} × ${baseline.size.height}`,
+          `${current.bbox.width} × ${current.bbox.height}`,
+        ),
+      ],
+    },
+  ]
+}
+
 function animaMethodDescription(
   method: keyof typeof ANIMA_SAMPLING_METHOD_LABELS | undefined,
 ): string {
@@ -835,11 +869,16 @@ function boundAnimaBundle(version: ModelVersionView | null): AnimaModelBundleVie
     : null
 }
 
-function componentIdentity(component: AnimaModelBundleView['vae'], architecture: string) {
+function componentIdentity(
+  component: Pick<AnimaModelBundleView['vae'], 'byteSize' | 'sha256'>,
+  architecture: string,
+) {
   return { architecture, byteSize: component.byteSize, sha256: component.sha256 }
 }
 
-function describeAnimaComponent(component: AnimaModelBundleView['vae']): string {
+function describeAnimaComponent(
+  component: Pick<AnimaModelBundleView['vae'], 'byteSize' | 'sha256'>,
+): string {
   return `SHA-256 ${component.sha256}\n${component.byteSize} bytes`
 }
 

@@ -87,8 +87,6 @@ test('Patch image capabilities expose only current active pixels under the exact
   assert.deepEqual(resolveProjectLayerAsset(project, request), active.asset)
   for (const wrong of [
     { ...request, assetSha256: inactive.asset.sha256 },
-    { ...request, layerId: active.id },
-    { ...request, assetSha256: inactive.asset.sha256, layerId: inactive.id },
     { ...request, documentRevision: randomUUID() },
   ]) {
     assert.equal(resolveProjectLayerAsset(project, wrong), null)
@@ -107,6 +105,76 @@ test('Patch image capabilities expose only current active pixels under the exact
   assert.deepEqual(
     resolveProjectLayerAsset(edited, { ...request, assetSha256: inactive.asset.sha256 }),
     inactive.asset,
+  )
+})
+
+test('exact variant capabilities expose inactive hidden/locked pixels without changing the active parent contract', () => {
+  const { active, inactive, ownerId, project } = storedPatchPixels()
+  const patch = project.layers[0]
+  assert.ok(patch.kind === 'smart-patch')
+  patch.locked = true
+  patch.visible = false
+  const before = structuredClone(project)
+  const tabId = `project-v1-${'a'.repeat(64)}`
+  for (const variant of [active, inactive]) {
+    const url = projectLayerImageUrl(
+      tabId,
+      project.documentRevision,
+      variant.id,
+      variant.asset.sha256,
+    )
+    const request = parseProjectLayerImageUrl(url)
+    assert.ok(request)
+    assert.deepEqual(resolveProjectLayerAsset(project, request), variant.asset)
+    assert.equal(parseProjectLayerImageUrl(url.replace(variant.id, ownerId)), null)
+    assert.equal(
+      resolveProjectLayerAsset(project, { ...request, assetSha256: 'f'.repeat(64) }),
+      null,
+    )
+  }
+  assert.deepEqual(project, before)
+  const inactiveRequest = parseProjectLayerImageUrl(
+    projectLayerImageUrl(tabId, project.documentRevision, inactive.id, inactive.asset.sha256),
+  )!
+  patch.rasterSubLayers = [active]
+  assert.equal(resolveProjectLayerAsset(project, inactiveRequest), null)
+  assert.equal(resolveProjectLayerAsset(project, { ...inactiveRequest, layerId: ownerId }), null)
+})
+
+test('variant capabilities preserve uppercase portable UUIDs without relaxing hash or MAC case', () => {
+  const { inactive, project } = storedPatchPixels()
+  const patch = project.layers[0]
+  assert.ok(patch.kind === 'smart-patch')
+  const uppercaseId = 'ABCDEFAB-1234-4ABC-8DEF-123456ABCDEF'
+  const variant = patch.rasterSubLayers.find(({ id }) => id === inactive.id)!
+  variant.id = uppercaseId
+  variant.asset.path = `assets/layers/${uppercaseId}.png`
+  const document = parseProjectDocumentV1({
+    ...project,
+    documentRevision: 'ABCDEFAB-5678-4ABC-8DEF-123456ABCDEF',
+  })
+  const url = projectLayerImageUrl(
+    `project-v1-${'a'.repeat(64)}`,
+    document.documentRevision,
+    uppercaseId,
+    variant.asset.sha256,
+  )
+  const request = parseProjectLayerImageUrl(url)
+  assert.ok(request)
+  assert.deepEqual(resolveProjectLayerAsset(document, request), variant.asset)
+  assert.equal(parseProjectLayerImageUrl(url.replace(uppercaseId, uppercaseId.toLowerCase())), null)
+  assert.equal(
+    parseProjectLayerImageUrl(
+      url.replace(variant.asset.sha256, variant.asset.sha256.toUpperCase()),
+    ),
+    null,
+  )
+  const macStart = url.lastIndexOf('/') + 1
+  assert.equal(
+    parseProjectLayerImageUrl(
+      `${url.slice(0, macStart)}${url.slice(macStart, -4).toUpperCase()}.img`,
+    ),
+    null,
   )
 })
 

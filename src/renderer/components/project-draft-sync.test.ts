@@ -3,6 +3,7 @@ import { createEmptyProjectDocumentV1 } from '../../shared/projects/project-sche
 
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
+import { computed, ref } from 'vue'
 
 import { ProjectDraftSync } from './project-draft-sync.js'
 
@@ -24,6 +25,101 @@ function projectTab(): ProjectTab {
     title: document.title,
   }
 }
+
+test('a standalone Canvas or Smart prompt seal publishes reactive pending state before regional input can enter', async () => {
+  for (const targetLayerId of [undefined, 'captured-smart-patch']) {
+    const tab = projectTab()
+    const overlays = ref<Record<string, ProjectTab['generationDraft']>>({})
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let calls = 0
+    const sync = new ProjectDraftSync({
+      onAcknowledged: () => {},
+      onError: () => assert.fail('Unexpected seal error'),
+      onOverlay: (_tabId, draft) => {
+        overlays.value = draft ? { owner: draft } : {}
+      },
+      seal: async () => {
+        calls += 1
+        await held
+        return tab
+      },
+      send: async () => assert.fail('A standalone seal must not write draft text'),
+    })
+    // This computed represents the cached renderer dependency used by regional input.
+    const regionalInputBlocked = computed(
+      () => Object.keys(overlays.value).length > 0 || sync.hasPending(tab.id),
+    )
+    assert.equal(regionalInputBlocked.value, false)
+    sync.sealPromptHistory(tab, 'outgoing-focus', targetLayerId)
+    try {
+      assert.equal(
+        regionalInputBlocked.value,
+        true,
+        'the outgoing seal must visibly block the incoming regional editor',
+      )
+      assert.equal(calls, 1)
+    } finally {
+      release()
+      await sync.flush(tab.id)
+    }
+    assert.equal(regionalInputBlocked.value, false)
+    assert.equal(calls, 1)
+  }
+})
+
+// Production boundary: history selection reads the same pending-owner guard used by App.
+test('pending draft inspection spans every captured owner without flushing, sealing or redirecting edits', async () => {
+  const tab = projectTab()
+  const other = projectTab()
+  const releases: (() => void)[] = []
+  const gates = [0, 1].map(() => new Promise<void>((resolve) => releases.push(resolve)))
+  const calls: { change: ProjectGenerationDraftChange; tabId: string; targetLayerId?: string }[] =
+    []
+  const acknowledged: string[] = []
+  let seals = 0
+  const sync = new ProjectDraftSync({
+    onAcknowledged: (value) => acknowledged.push(value.id),
+    onError: () => assert.fail('Unexpected draft error'),
+    onOverlay: () => {},
+    seal: async () => {
+      seals += 1
+      return tab
+    },
+    send: async (tabId, change, _groupId, targetLayerId) => {
+      const index = calls.length
+      calls.push({ change, tabId, targetLayerId })
+      await gates[index]
+      return tabId === tab.id ? tab : other
+    },
+  })
+  sync.change(
+    tab,
+    { kind: 'positive-prompt', text: 'Captured old Patch draft' },
+    'old-owner',
+    'old-patch',
+  )
+  sync.change(other, { kind: 'seed', policy: 'fixed', value: 19 })
+  assert.equal(sync.hasPending(tab.id), true)
+  assert.equal(sync.hasPending(other.id), true)
+  assert.equal(sync.hasPending('a different Project'), false)
+  assert.deepEqual(acknowledged, [])
+  assert.equal(seals, 0)
+  assert.equal(calls[0].targetLayerId, 'old-patch')
+  releases[0]()
+  await sync.flush(tab.id)
+  assert.equal(sync.hasPending(tab.id), false)
+  assert.equal(sync.hasPending(other.id), true)
+  assert.equal(calls[0].targetLayerId, 'old-patch')
+  assert.deepEqual(calls[0].change, { kind: 'positive-prompt', text: 'Captured old Patch draft' })
+  releases[1]()
+  await sync.flush(other.id)
+  assert.equal(sync.hasPending(other.id), false)
+  assert.equal(seals, 0)
+  assert.deepEqual(acknowledged, [tab.id, other.id])
+})
 
 test('blur seal stays between queued prompt focus groups while earlier IPC is in flight', async () => {
   let saved = projectTab()

@@ -188,25 +188,34 @@ function badgeLabel(section: PresetSectionKey) {
   min-width: 0;
 }
 .preset-picker {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   width: min(320px, calc(100vw - 64px));
+  /* Leave room for the trigger, popover padding/gap and viewport edge on either side. */
+  max-height: min(356px, calc(50vh - 48px));
   gap: 8px;
 }
 .picker-search {
   display: grid;
+  flex-shrink: 0;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 4px;
 }
 .preset-results {
-  display: grid;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   max-height: 320px;
   overflow: auto;
 }
 .preset-result {
+  flex-shrink: 0;
+  justify-content: flex-start;
   min-height: 44px;
   height: auto;
   padding: 8px 10px;
+  white-space: normal;
 }
 .preset-copy {
   display: grid;

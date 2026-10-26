@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
-import { createHash, randomUUID } from 'node:crypto'
+import crypto, { createHash, randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
 import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { syncBuiltinESMExports } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -98,6 +99,58 @@ function testImportWorker() {
     },
   }
 }
+
+test('Raster import retries regional entity and owned null-mask UUID collisions before publishing its asset path', async (t) => {
+  await withProject(async ({ directory, session, stagingBasePath }) => {
+    const region = {
+      enabled: false,
+      id: randomUUID(),
+      locked: false,
+      mask: { asset: null, id: randomUUID(), revision: 0 as const },
+      name: 'Reserved regional identities',
+      overlayOpacity: 0.5,
+    }
+    session.applyDocument({ ...session.document, regionalGuidance: [region] })
+    const before = structuredClone(session.document)
+    const selectedFile = path.join(directory, 'selected.png')
+    await writeFile(selectedFile, SOURCE_PNG)
+    const originalRandom = crypto.randomUUID
+    const expected = originalRandom()
+    let calls = 0
+    const ids = [region.id, region.mask.id, expected]
+    const mocked = t.mock.method(crypto, 'randomUUID', () => {
+      calls++
+      return ids.shift() ?? originalRandom()
+    })
+    syncBuiltinESMExports()
+    try {
+      const prepared = await importRasterLayer({
+        authorizedSourcePath: selectedFile,
+        getDocument: () => session.document,
+        insertIndex: 0,
+        name: 'Imported control',
+        position: { x: 0, y: 0 },
+        stagingBasePath,
+        worker: testImportWorker(),
+      })
+      try {
+        assert.equal(calls, 3)
+        assert.equal(prepared.layer.id, expected)
+        assert.equal(prepared.layer.asset.path, `assets/layers/${expected}.png`)
+        assert.deepEqual(prepared.document.regionalGuidance, [region])
+        assert.deepEqual(session.document, before, 'Preparation must not mutate the current owner.')
+        assert.ok(
+          (await readFile(path.join(prepared.stagingRoot, 'normalized.png'))).equals(SOURCE_PNG),
+        )
+      } finally {
+        await prepared.dispose()
+      }
+    } finally {
+      mocked.mock.restore()
+      syncBuiltinESMExports()
+    }
+  })
+})
 
 test(
   'authorized ICC raster becomes a dirty sRGB layer, then explicit Save preserves original ICC',

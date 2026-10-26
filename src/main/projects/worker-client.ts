@@ -42,6 +42,7 @@ const MAX_ICC_BYTES = 4 * 1024 * 1024
 const MAX_RESOURCE_SOURCE_BYTES = 1_000_000
 const MAX_RESOURCE_PREVIEW_BYTES = 1_000_000
 const MAX_RESOURCE_THUMBNAIL_BYTES = 128_000
+const MAX_RESOURCE_THUMBNAIL_SIDE = 128
 const MAX_IMAGE_SIDE = 16_384
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const SHUTDOWN_WAIT_MS = 2000
@@ -78,6 +79,13 @@ export interface NormalizeImportInput {
   normalizedPngPath: string
   originalIccPath: string
   stagingRoot: string
+}
+
+export interface ImportThumbnailInput {
+  inputPath: string
+  inputSha256: string
+  stagingRoot: string
+  thumbnailWebpPath: string
 }
 
 export interface ResourcePreviewInput {
@@ -351,6 +359,7 @@ type PendingRequest = {
   type:
     | 'derivative-done'
     | 'import-done'
+    | 'import-thumbnail-done'
     | 'preview-done'
     | 'resource-preview-done'
     | 'self-test-result'
@@ -703,6 +712,49 @@ export class ProjectWorkerClient {
     })
   }
 
+  async createImportThumbnail(request: ImportThumbnailInput): Promise<VerifiedWorkerImage> {
+    const input = { ...request }
+    return this.exclusive(async () => {
+      if (!this.ready.capabilities.includes('import-thumbnail')) {
+        throw new ProjectWorkerError(
+          'WORKER_VERSION_MISMATCH',
+          'The image worker cannot create import thumbnails.',
+        )
+      }
+      const { paths, stagingRoot } = await this.validateOutputPaths(input.stagingRoot, [
+        [input.thumbnailWebpPath, '.webp'],
+      ])
+      await validateInputPath(input.inputPath, input.inputSha256, paths)
+      const source = await inspectCanonicalImportSource(input.inputPath, input.inputSha256)
+      const response = await this.request('create-import-thumbnail', 'import-thumbnail-done', {
+        input: { colorSpace: 'srgb', path: input.inputPath, sha256: input.inputSha256 },
+        output: { stagingRoot, thumbnailWebpPath: paths[0] },
+      })
+      const thumbnail = await verifyImageOutput(
+        paths[0],
+        response.thumbnail,
+        MAX_RESOURCE_THUMBNAIL_BYTES,
+        'webp',
+      )
+      // Allow only integer rounding of the full frame, never crop, stretch or upscale.
+      const landscape = source.width >= source.height
+      const sourceMajor = landscape ? source.width : source.height
+      const sourceMinor = landscape ? source.height : source.width
+      const major = landscape ? thumbnail.width : thumbnail.height
+      const minor = landscape ? thumbnail.height : thumbnail.width
+      const expectedMajor = Math.min(MAX_RESOURCE_THUMBNAIL_SIDE, sourceMajor)
+      const scaledMinor = (sourceMinor * expectedMajor) / sourceMajor
+      if (
+        major !== expectedMajor ||
+        minor < Math.max(1, Math.floor(scaledMinor)) ||
+        minor > Math.max(1, Math.ceil(scaledMinor))
+      ) {
+        throw this.outputFailure('Import thumbnail dimensions do not preserve the full frame.')
+      }
+      return thumbnail
+    })
+  }
+
   async createResourcePreview(
     request: ResourcePreviewInput,
   ): Promise<VerifiedResourcePreviewResult> {
@@ -716,7 +768,7 @@ export class ProjectWorkerClient {
       }
       for (const [side, maximum] of [
         [input.previewMaxSide, 512],
-        [input.thumbnailMaxSide, 128],
+        [input.thumbnailMaxSide, MAX_RESOURCE_THUMBNAIL_SIDE],
       ]) {
         if (!Number.isSafeInteger(side) || side < 32 || side > maximum) {
           throw new ProjectWorkerError('INVALID_REQUEST', 'Resource preview size is invalid.')
@@ -1116,6 +1168,7 @@ export class ProjectWorkerClient {
       | 'compose-smart-patch-output'
       | 'compose-target'
       | 'condition-smart-patch'
+      | 'create-import-thumbnail'
       | 'create-resource-preview'
       | 'derive-image'
       | 'fade-smart-patch'
@@ -2225,6 +2278,46 @@ async function verifyTargetAlphaMode(composite: VerifiedWorkerImage): Promise<Co
     )
   }
   return inspected.mode
+}
+
+async function inspectCanonicalImportSource(
+  inputPath: string,
+  inputSha256: string,
+): Promise<InspectedFile & InspectedImage> {
+  try {
+    const source = await inspectVerifiedFile(
+      inputPath,
+      MAX_NORMALIZED_BYTES,
+      async (file, size) => {
+        const image = await inspectPng(file, size)
+        if (
+          image.width > MAX_IMAGE_SIDE ||
+          image.height > MAX_IMAGE_SIDE ||
+          image.width * image.height > MAX_COMPOSITION_SOURCE_PIXELS ||
+          image.iccSha256 !== IGS_SRGB_ICC_SHA256
+        ) {
+          throw new Error('Canonical import profile or geometry differs.')
+        }
+        await validateSrgbPngStream(
+          file.createReadStream({ autoClose: false, start: 0 }),
+          inputPath,
+          MAX_NORMALIZED_BYTES,
+          MAX_IMAGE_SIDE,
+        )
+        return image
+      },
+    )
+    if (
+      source.sha256 !== inputSha256 ||
+      source.iccSha256 !== IGS_SRGB_ICC_SHA256 ||
+      source.width * source.height > MAX_COMPOSITION_SOURCE_PIXELS
+    ) {
+      throw new Error('Canonical import identity or geometry differs.')
+    }
+    return source
+  } catch {
+    throw new ProjectWorkerError('INVALID_REQUEST', 'The canonical import is invalid or changed.')
+  }
 }
 
 async function verifyImageOutput(

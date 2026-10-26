@@ -4,6 +4,7 @@ import {
   parseProjectDocumentV1,
   projectAssetReferences,
   projectMaskAssets,
+  projectRegionalReferenceImages,
 } from '../../shared/projects/project-schema.js'
 
 import { createHash } from 'node:crypto'
@@ -14,7 +15,12 @@ import path from 'node:path'
 import type { ProjectShadowStore } from './project-shadow.js'
 import type { ProjectShadowCommit, ProjectShadowInspection } from './project-shadow.js'
 
-import { type IgsAssetSource, readIgsPackage } from './igs-package.js'
+import {
+  type IgsAssetSource,
+  readIgsPackage,
+  regionalReferenceMembers,
+  verifyRegionalReferenceAssetSource,
+} from './igs-package.js'
 import { readProjectMaskSource } from './project-mask.js'
 import {
   type ProjectRebuildPreviewInput,
@@ -25,8 +31,8 @@ import {
   type RenderedProjectPreview,
 } from './project-session.js'
 import {
+  smartPatchContributionImages,
   smartPatchVariantImageIdentity,
-  smartPatchVariants,
   verifySmartPatchVariantSource,
 } from './project-smart-patch-variant-assets.js'
 
@@ -191,7 +197,7 @@ export class ProjectAutosaveCoordinator {
   ) {
     this.releaseLease = releaseLease
     this.baseDocument = savedDocument
-    for (const variant of smartPatchVariants(savedDocument)) {
+    for (const variant of smartPatchContributionImages(savedDocument)) {
       this.verifiedVariantImages.add(smartPatchVariantImageIdentity(variant))
     }
     this.stagingBase = roots.scratchDir
@@ -385,11 +391,19 @@ export class ProjectAutosaveCoordinator {
     input: unknown,
     assetSources: Readonly<Record<string, IgsAssetSource>> = {},
     options: {
+      /** Main-owned synchronous permission check immediately before document publication. */
+      beforeCommit?: () => void
       expectedDocumentEpoch?: number
       expectedDocumentRevision?: string
       historyGroupId?: string
     } = {},
   ): Promise<{ documentRevision: string }> {
+    if (options.beforeCommit && options.expectedDocumentEpoch === undefined) {
+      throw new ProjectAutosaveError(
+        'EDIT_CONFLICT',
+        'A guarded Project edit requires its captured document epoch.',
+      )
+    }
     if (
       options.historyGroupId !== undefined &&
       (typeof options.historyGroupId !== 'string' ||
@@ -420,6 +434,7 @@ export class ProjectAutosaveCoordinator {
             this.future.length = 0
           }
         },
+        options.beforeCommit,
       )
       await this.pruneHistorySources()
       return { documentRevision }
@@ -1241,7 +1256,42 @@ export class ProjectAutosaveCoordinator {
       // Validate pixel/provenance relations even when only metadata changed and no new source
       // was supplied. An exact previously verified image proof needs no repeated PNG decoding.
       let savedPackage: Awaited<ReturnType<typeof readIgsPackage>> | undefined
-      for (const variant of smartPatchVariants(document)) {
+      for (const reference of projectRegionalReferenceImages(document)) {
+        for (const { member, role } of regionalReferenceMembers(reference)) {
+          const pending = this.sourceFor(member, staged)
+          if (pending) {
+            await verifyRegionalReferenceAssetSource(pending.source, member, role)
+          } else {
+            savedPackage ??= await readIgsPackage(this.filePath)
+            if (
+              !sameDocument(savedPackage.project, this.baseDocument) &&
+              (!this.saveTarget || !sameDocument(savedPackage.project, this.saveTarget))
+            ) {
+              throw new ProjectAutosaveError(
+                'SAVED_PROJECT_CHANGED',
+                'The saved Project changed during regional reference adoption.',
+              )
+            }
+            const savedRef = referencedMembers(savedPackage.project).get(member.path)
+            if (!sameRef(member, savedRef)) {
+              throw new ProjectAutosaveError(
+                'ASSET_SOURCE_MISSING',
+                'A regional reference needs its exact immutable source.',
+              )
+            }
+            // The package loader streams image validation; a profile shared with a Raster must
+            // additionally satisfy the new regional source-profile role.
+            if (role === 'profile') {
+              await verifyRegionalReferenceAssetSource(
+                { bytes: await savedPackage.readMember(member.path) },
+                member,
+                role,
+              )
+            }
+          }
+        }
+      }
+      for (const variant of smartPatchContributionImages(document)) {
         const identity = smartPatchVariantImageIdentity(variant)
         if (this.verifiedVariantImages.has(identity)) {
           continue

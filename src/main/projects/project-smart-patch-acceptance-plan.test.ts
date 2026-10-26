@@ -497,3 +497,33 @@ test('private planner retries a proposed UUID already owned by an inactive store
     assert.deepEqual(target.rasterSubLayers, [stored, active])
   })
 })
+
+test('private planner skips regional entity and owned null-mask UUIDs without changing regional authoring', async () => {
+  await fixture('illustrious', async (f) => {
+    const region = {
+      enabled: false,
+      id: randomUUID(),
+      locked: false,
+      mask: { asset: null, id: randomUUID(), revision: 0 as const },
+      name: 'Independent regional owner',
+      overlayOpacity: 0.5,
+    }
+    f.owner.document.regionalGuidance = [region]
+    const expected = randomUUID()
+    const candidates = [region.id, region.mask.id, expected]
+    let calls = 0
+    f.input.createVariantId = () => candidates[calls++]
+    const plan = await prepareSmartPatchAcceptancePlan(
+      f.projects,
+      f.base.nomination.localProjectKey,
+      f.input,
+    )
+    assert.equal(calls, 3)
+    assert.equal(plan.proposedVariants[0].variant.id, expected)
+    assert.deepEqual(f.owner.document.regionalGuidance, [region])
+    assert.equal(
+      (await f.base.patch.listVerifiedCandidates(f.base.nomination.localProjectKey)).length,
+      1,
+    )
+  })
+})

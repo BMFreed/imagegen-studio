@@ -8,10 +8,13 @@ import type { ProjectCompositingLayer, ProjectSession } from './project.types'
 import {
   presetSectionHasMissingResources,
   sectionLabels,
-  sectionOrder,
   summarizePresetSection,
 } from '../presets/presets.utils'
-import { currentCanvasPayload, resultProvenance } from './project-provenance'
+import {
+  currentCanvasPayload,
+  resultComparisonSectionOrder,
+  resultProvenance,
+} from './project-provenance'
 import { deriveGenerationMode } from './project.utils'
 
 const props = defineProps<{ layer: ProjectCompositingLayer; session: ProjectSession }>()
@@ -67,7 +70,7 @@ const rows = computed(() => {
   if (!record) {
     return []
   }
-  const rows = sectionOrder.map((section) => ({
+  const rows = resultComparisonSectionOrder(props.layer).map((section) => ({
     after: describeSection(current.value, section),
     before:
       section === 'seed'

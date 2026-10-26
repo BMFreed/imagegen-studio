@@ -190,7 +190,7 @@ def qualify_embedding_state(state: dict[str, Any], torch: Any) -> dict[str, Any]
 
 
 def _literal_ranges(
-    text: str, entries: tuple[GenerationEmbedding, ...]
+    text: str, entries: tuple[GenerationEmbedding, ...], *, require_all: bool = True
 ) -> list[tuple[int, int, int]]:
     matches: list[tuple[int, int, int]] = []
     tokens: set[str] = set()
@@ -214,7 +214,7 @@ def _literal_ranges(
     for match in sorted(matches, key=lambda item: (-literal_lengths[item[2]], item[0], item[2])):
         if all(match[0] >= old[1] or match[1] <= old[0] for old in selected):
             selected.append(match)
-    if {match[2] for match in selected} != set(range(len(entries))):
+    if require_all and {match[2] for match in selected} != set(range(len(entries))):
         raise _unsupported("Embedding binding has no active exact literal occurrence.")
     return sorted(selected)
 
@@ -247,30 +247,50 @@ def _manager(pads: dict[int, list[int]]) -> Any:
     return Manager()
 
 
-def load_generation_embeddings(
-    command: IllustriousInferenceParameters, pipeline: Any, torch: Any
-) -> EmbeddingConditioningInputs:
-    signed = (
-        (command.positive_prompt, command.positive_embeddings),
-        (command.negative_prompt, command.negative_embeddings),
-    )
-    if not any(entries for _, entries in signed):
-        return EmbeddingConditioningInputs(
-            (command.positive_prompt, command.negative_prompt), (None, None)
-        )
+@dataclass(frozen=True)
+class PreparedEmbeddingBindings:
+    """One alias per signed binding, with both dtype conversions completed before loading."""
+
+    prompts: tuple[str, ...]
+    aliases: tuple[str, ...]
+    counts: tuple[int, ...]
+    tensors: tuple[tuple[Any, ...], tuple[Any, ...]]
+    vocabularies: tuple[dict[str, int], dict[str, int]]
+    signed_vectors: tuple[int, ...]
+
+
+def prepare_embedding_bindings(
+    signed: tuple[tuple[str, tuple[GenerationEmbedding, ...]], ...],
+    pipeline: Any,
+    torch: Any,
+    *,
+    max_alias_attempts: int | None = None,
+) -> PreparedEmbeddingBindings:
+    """Snapshot and qualify every binding without loading a tokenizer or encoder table.
+
+    The cache key deliberately includes the exact path. A second path to the same
+    bytes must pass its own no-follow/stat/hash checks. Streams are never deduplicated.
+    """
     ranges = [_literal_ranges(text, entries) for text, entries in signed]
     states: list[dict[str, Any]] = []
     aliases: list[str] = []
     signed_aliases: list[list[str]] = []
     cache: dict[tuple[str, str, int], dict[str, Any]] = {}
     tokenizers = (pipeline.tokenizer, pipeline.tokenizer_2)
-    originals = [
-        tokenizer.backend_tokenizer.normalizer.normalize_str(text)
-        for tokenizer in tokenizers
-        for text, _ in signed
-    ]
+    originals: list[str] = []
+    for tokenizer in tokenizers:
+        backend = getattr(tokenizer, "backend_tokenizer", None)
+        for text, _ in signed:
+            if backend is not None and backend.normalizer is not None:
+                originals.append(backend.normalizer.normalize_str(text))
+            else:
+                # Native slow CLIP tokenization includes its cleaning/case folding.
+                originals.extend((text.casefold(), " ".join(tokenizer.tokenize(text))))
+    base_vocabularies = tuple(tokenizer.get_vocab() for tokenizer in tokenizers)
+    occupied = set(base_vocabularies[0]) | set(base_vocabularies[1])
     safetensors = cast(Any, importlib.import_module("safetensors.torch"))
     index = 0
+    signed_vectors: list[int] = []
     for _, entries in signed:
         remaining = MAX_EMBEDDING_VECTORS
         current_aliases: list[str] = []
@@ -289,39 +309,135 @@ def load_generation_embeddings(
             if remaining < 0:
                 raise _unsupported("Active embeddings exceed the per-prompt vector budget.")
             while True:
+                if max_alias_attempts is not None and index >= max_alias_attempts:
+                    raise _unsupported("Embedding alias planning exceeded its candidate budget.")
                 alias = f"igs_ti_private_{index}"
                 index += 1
                 names = [alias] + [f"{alias}_{vector}" for vector in range(1, count)]
-                if not any(name in text for name in names for text in originals) and all(
-                    name not in tokenizer.get_vocab() for name in names for tokenizer in tokenizers
+                if not any(name in text for name in names for text in originals) and not (
+                    occupied.intersection(names)
                 ):
                     break
+            occupied.update(names)
             states.append(state)
             aliases.append(alias)
             current_aliases.append(alias)
         signed_aliases.append(current_aliases)
-    managers: list[Any] = []
-    for key, tokenizer, encoder in (
-        ("clip_l", pipeline.tokenizer, pipeline.text_encoder),
-        ("clip_g", pipeline.tokenizer_2, pipeline.text_encoder_2),
+        signed_vectors.append(MAX_EMBEDDING_VECTORS - remaining)
+    converted: list[tuple[Any, ...]] = []
+    for key, encoder in (
+        ("clip_l", pipeline.text_encoder),
+        ("clip_g", pipeline.text_encoder_2),
     ):
         if encoder.get_input_embeddings().weight.shape[-1] != _WIDTHS[key]:
             raise _unsupported("The text encoder does not match the dual-CLIP profile.")
         tensors = [state[key].to(dtype=encoder.dtype) for state in states]
         if any(not bool(torch.isfinite(tensor).all().item()) for tensor in tensors):
             raise _unsupported("Embedding weights overflowed the text encoder dtype.")
+        converted.append(tuple(tensors))
+    counts = tuple(int(state["clip_l"].shape[0]) for state in states)
+    names = tuple(
+        alias if vector == 0 else f"{alias}_{vector}"
+        for alias, count in zip(aliases, counts, strict=True)
+        for vector in range(count)
+    )
+    vocabularies = tuple(
+        {**vocab, **{name: len(vocab) + index for index, name in enumerate(names)}}
+        for vocab in base_vocabularies
+    )
+    prompts = tuple(
+        _replace_ranges(text, selected, aliases_for_sign)
+        for (text, _), selected, aliases_for_sign in zip(
+            signed, ranges, signed_aliases, strict=True
+        )
+    )
+    return PreparedEmbeddingBindings(
+        prompts,
+        tuple(aliases),
+        counts,
+        cast(tuple[tuple[Any, ...], tuple[Any, ...]], tuple(converted)),
+        cast(tuple[dict[str, int], dict[str, int]], vocabularies),
+        tuple(signed_vectors),
+    )
+
+
+def _prepared_managers(
+    prepared: PreparedEmbeddingBindings, tokenizers: tuple[Any, Any], *, exact_vocabulary: bool
+) -> tuple[Any, Any]:
+    managers: list[Any] = []
+    for tokenizer, vocabulary in zip(tokenizers, prepared.vocabularies, strict=True):
+        if exact_vocabulary and (
+            tokenizer.get_vocab() != vocabulary or len(tokenizer) != len(vocabulary)
+        ):
+            raise _unsupported("Embedding native loading did not preserve the planned vocabulary.")
+        pads: dict[int, list[int]] = {}
+        for alias, count in zip(prepared.aliases, prepared.counts, strict=True):
+            names = [alias if vector == 0 else f"{alias}_{vector}" for vector in range(count)]
+            ids = [tokenizer.convert_tokens_to_ids(name) for name in names]
+            if exact_vocabulary and ids != [vocabulary[name] for name in names]:
+                raise _unsupported("Embedding aliases did not retain their planned token IDs.")
+            pads[ids[0]] = ids[1:]
+        managers.append(_manager(pads) if prepared.aliases else None)
+    return managers[0], managers[1]
+
+
+def stage_embedding_aliases(
+    prepared: PreparedEmbeddingBindings, tokenizers: tuple[Any, Any]
+) -> tuple[Any, Any]:
+    """Populate only private tokenizer metadata for the real Compel length preflight."""
+    for tokenizer in tokenizers:
+        for alias, count in zip(prepared.aliases, prepared.counts, strict=True):
+            for vector in range(count):
+                name = alias if vector == 0 else f"{alias}_{vector}"
+                if tokenizer.add_tokens(name) != 1:
+                    raise _unsupported("Staged embedding alias was not added exactly once.")
+    return _prepared_managers(prepared, tokenizers, exact_vocabulary=True)
+
+
+def install_prepared_embeddings(
+    prepared: PreparedEmbeddingBindings,
+    pipeline: Any,
+    torch: Any,
+    *,
+    exact_vocabulary: bool = False,
+) -> tuple[Any, Any]:
+    """Replay the prepared alias plan using tensors only; never reopen a resource file."""
+    for tokenizer, encoder, tensors, vocabulary in zip(
+        (pipeline.tokenizer, pipeline.tokenizer_2),
+        (pipeline.text_encoder, pipeline.text_encoder_2),
+        prepared.tensors,
+        prepared.vocabularies,
+        strict=True,
+    ):
+        if not prepared.aliases:
+            continue
+        previous = encoder.get_input_embeddings().weight
+        expected_device, expected_dtype = previous.device, previous.dtype
+        expected_grad = previous.requires_grad
         try:
             pipeline.load_textual_inversion(
-                tensors,
-                token=aliases,
+                list(tensors),
+                token=list(prepared.aliases),
                 tokenizer=tokenizer,
                 text_encoder=encoder,
                 local_files_only=True,
             )
         except Exception as error:
             raise _unsupported("Embedding native loading failed.") from error
-        pads: dict[int, list[int]] = {}
-        for alias, tensor in zip(aliases, tensors, strict=True):
+        if exact_vocabulary:
+            table = encoder.get_input_embeddings()
+            if not (
+                type(table.weight) is torch.nn.Parameter
+                and table.weight.device == expected_device
+                and table.weight.dtype == expected_dtype
+                and table.weight.requires_grad is expected_grad
+                and tuple(table.weight.shape) == (len(vocabulary), tensors[0].shape[1])
+                and table.num_embeddings == encoder.config.vocab_size == len(vocabulary)
+            ):
+                raise _unsupported(
+                    "Embedding native loading changed the planned encoder table profile."
+                )
+        for alias, tensor in zip(prepared.aliases, tensors, strict=True):
             ids = [
                 tokenizer.convert_tokens_to_ids(alias if vector == 0 else f"{alias}_{vector}")
                 for vector in range(tensor.shape[0])
@@ -329,18 +445,28 @@ def load_generation_embeddings(
             loaded = encoder.get_input_embeddings().weight[ids]
             if not torch.equal(loaded, tensor.to(device=loaded.device)):
                 raise _unsupported("Embedding native loading did not preserve every vector.")
-            pads[ids[0]] = ids[1:]
-        managers.append(_manager(pads))
-    prompts = tuple(
-        _replace_ranges(text, selected, aliases_for_sign)
-        for (text, _), selected, aliases_for_sign in zip(
-            signed, ranges, signed_aliases, strict=True
-        )
+    return _prepared_managers(
+        prepared, (pipeline.tokenizer, pipeline.tokenizer_2), exact_vocabulary=exact_vocabulary
     )
-    return EmbeddingConditioningInputs(cast(tuple[str, str], prompts), (managers[0], managers[1]))
 
 
-def validate_expanded_conditioning(builder: Any, prompt: str) -> None:
+def load_generation_embeddings(
+    command: IllustriousInferenceParameters, pipeline: Any, torch: Any
+) -> EmbeddingConditioningInputs:
+    signed = (
+        (command.positive_prompt, command.positive_embeddings),
+        (command.negative_prompt, command.negative_embeddings),
+    )
+    if not any(entries for _, entries in signed):
+        return EmbeddingConditioningInputs(
+            (command.positive_prompt, command.negative_prompt), (None, None)
+        )
+    prepared = prepare_embedding_bindings(signed, pipeline, torch)
+    managers = install_prepared_embeddings(prepared, pipeline, torch)
+    return EmbeddingConditioningInputs(cast(tuple[str, str], prepared.prompts), managers)
+
+
+def expanded_conditioning_length(builder: Any, prompt: str) -> int:
     """Use the real parser/weight/token splitter before any CLIP forward, without truncation."""
     parsed = builder.parse_prompt_string(prompt)
     if len(parsed.prompts) != 1 or type(parsed.prompts[0]).__name__ != "FlattenedPrompt":
@@ -355,3 +481,9 @@ def validate_expanded_conditioning(builder: Any, prompt: str) -> None:
             "GENERATION_PROMPT_UNSUPPORTED",
             "Expanded prompt exceeds the conditioning safety limit.",
         )
+    return int(ids.numel())
+
+
+def validate_expanded_conditioning(builder: Any, prompt: str) -> None:
+    """Use the real parser/weight/token splitter before any CLIP forward, without truncation."""
+    expanded_conditioning_length(builder, prompt)

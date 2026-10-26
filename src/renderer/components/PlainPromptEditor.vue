@@ -42,6 +42,7 @@ import PromptEditorHelp from './PromptEditorHelp.vue'
 
 const props = defineProps<{
   ariaLabel: string
+  compact?: boolean
   disabled: boolean
   dynamicPreviewAvailable?: boolean
   embeddingCatalogReady: boolean
@@ -87,6 +88,8 @@ function focus() {
     view?.focus()
   }
 }
+
+defineExpose({ focus })
 
 function attention(direction: -1 | 1) {
   if (view && !props.disabled) {
@@ -283,7 +286,11 @@ onBeforeUnmount(() => {
   <section
     :aria-label="`${ariaLabel} editor`"
     class="prompt-editor"
-    :class="{ 'prompt-editor-positive': polarity === 'positive', 'prompt-editor-focused': focused }"
+    :class="{
+      'prompt-editor-positive': polarity === 'positive',
+      'prompt-editor-focused': focused,
+      'prompt-editor-compact': compact,
+    }"
   >
     <header class="prompt-heading">
       <strong>{{ ariaLabel }}</strong>
@@ -330,6 +337,14 @@ onBeforeUnmount(() => {
 
 .prompt-editor-positive {
   min-height: 214px;
+}
+
+.prompt-editor-compact {
+  min-height: 144px;
+}
+
+.prompt-editor-compact .prompt-heading {
+  flex-wrap: wrap;
 }
 
 .prompt-editor-focused {

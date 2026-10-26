@@ -13,10 +13,16 @@ export type MaskOperation = 'add' | 'subtract'
 export interface MaskGestureOwner {
   documentId: string
   documentRevision: string
+  /** Omitted only by legacy Smart callers. layerId names the captured entity of this kind. */
+  kind?: 'regional-guidance' | 'smart-patch'
   layerId: string
   maskId: string
   maskRevision: number
   projectKey: string
+}
+
+export type ProjectMaskGestureRequest = Omit<ProjectSmartPatchMaskEditRequest, 'edit'> & {
+  edit: Extract<ProjectMaskEdit, { kind: 'brush' | 'polygon' }>
 }
 
 /** No selection lookup and no per-move IPC: the whole gesture has one immutable owner. */
@@ -70,7 +76,7 @@ export class ProjectMaskGesture {
     this.samples = []
   }
 
-  finish(owner: MaskGestureOwner | null): ProjectSmartPatchMaskEditRequest | null {
+  finish(owner: MaskGestureOwner | null): ProjectMaskGestureRequest | null {
     if (this.ended) {
       return null
     }
@@ -79,7 +85,7 @@ export class ProjectMaskGesture {
       return null
     }
     const points = this.samples.map((point) => ({ ...point }))
-    let edit: ProjectMaskEdit
+    let edit: ProjectMaskGestureRequest['edit']
     if (this.tool === 'brush' || this.tool === 'eraser') {
       if (points.length === 0) {
         return null
@@ -122,6 +128,7 @@ export function sameMaskGestureOwner(
     left.projectKey === right.projectKey &&
     left.documentId === right.documentId &&
     left.documentRevision === right.documentRevision &&
+    (left.kind ?? 'smart-patch') === (right.kind ?? 'smart-patch') &&
     left.layerId === right.layerId &&
     left.maskId === right.maskId &&
     left.maskRevision === right.maskRevision

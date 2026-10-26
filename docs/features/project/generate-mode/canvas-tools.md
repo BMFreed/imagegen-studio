@@ -1,5 +1,78 @@
 # Canvas Tools
 
+The current [regional reference-image owner](../../../engineering/phase-4-regional-guidance-references-research.md)
+has **source implemented; finite native-r10 qualification PASS; retention/release complete**. It adds row-owned image
+attachments, not a Canvas tool, compositing Raster, shared mask, region bbox or
+Fit action. The established regional mask tools, gesture ownership, selected
+overlay and Current Canvas/Smart geometry retain their existing contracts.
+Add/remove/reorder controls must preserve selection, inline prompt mounting and
+focus ownership. Disabled regions remain authorable; lock refuses attachment
+mutations. A bounded full-frame thumbnail, including transparent padding, is a
+display asset rather than painted Canvas pixels or inference conditioning.
+
+Root's **118 Python checks passed, 0 failed/skipped** cover the CPU thumbnail,
+import, derivative, resource-preview and protocol boundary only. They do not
+qualify Canvas interaction, UI/focus, actual OS dialog selection or native
+reference Save/recovery.
+
+Root confirms **source implemented; lower-level checks and finite native-r10
+qualification PASS**. Final lower checks are **Python 118 PASS**, post-lint
+**typecheck-r3 PASS**, **full lint-r2 PASS**, **neighbors-r2: 952 PASS / 57 files /
+0 skips**, and **fresh build-r1 PASS**. Later changes were harness-only, each with
+syntax/format/scoped ESLint PASS. Earlier typecheck-r2 and neighbors-r1
+950/57 preceded the final checks; neighbors-r1 predates the Save fix. The earlier
+lint-r1's 196 autofixable ordering/braces errors in 16 changed files are historical,
+not the final lint outcome.
+
+The duplicate mutation records **2 GREEN → 1 semantic RED + 1 control GREEN →
+2 restored GREEN**; all **1,343 mutation-source members** are restored.
+Production **R2 source review is CLEAN** after the P2 Save A/B rebase fix and
+external-replacement neighbor. Rebase requires full-document equality to exact
+`baseDocument` or exact authorized `saveTarget`. The causal
+`SAVED_PROJECT_CHANGED` assertion was unchanged when the explicit
+Recover-new-revision test oracle was corrected; `save-rebase-green-r2` passed
+both cases.
+
+Final **native-r10: 12/12 PASS in 191.188 s**, script `1f5ac7ce`, with its
+**R11 source review CLEAN**. The successful run uses the source-r2 archive
+(1,343 members), exact script overlay and build-r1 (33 members). It observes
+**882 Main calls, originals exactly once**, and **149 actual CPU children**
+across two Electron lifetimes: intentional dirty SIGKILL, then healthy code 0.
+Exact Main/dialog/spawn/kill/write restoration completes with zero in-flight
+calls and zero page errors; root freshly confirms recorded PID/start identities
+absent. Contract R1 is CLEAN source-only; final source/build/version mapping is retained.
+
+Root actually opened **all 10 final screenshots** under `ui-audit`: 1440×900
+and 900×620, reference cards, keyboard tooltips and recovered image states.
+This bounded self-review found no material new reference-layout defect; it is
+not independent review, full WCAG or all-compositor qualification.
+
+Native attempts **1–9 remain FAILED**. Harness source-oracle findings R7/R8
+were closed by subsequent code/reviews and successful replay; those failures
+do not establish another product bug beyond the corrected Save rebase.
+
+The OS picker result was controlled; the worker was the **actual development
+CPU worker**, with no ML/catalog injection. Installed-resource transitions,
+packaged-worker behavior, inference and frozen active work are not
+native-qualified. Transient target/Smart-preparation outputs have metadata-only
+witnesses, without raw replay. Prototype SVG/data URLs remain separate mock
+behavior and do not extend this evidence boundary.
+
+Retention **R1–R7 are CLEAN, candidate-only, READ-FINISHED**; contract **R1 is
+CLEAN, source-only**. Root freshly verified source/build bytes, physical exits,
+exact restoration, dependencies and all-reader completion, then released all
+22 exact disposable paths: 2 unit and 20 native payloads. Measured artifact-root
+allocation reduction is **216,420,352 bytes** (unit 35,950,592; native 180,469,760).
+Compact evidence and external runtime/package dependencies remain protected.
+Final source/build/version mapping is retained in the linked checkpoint.
+PP-001/007/008 remain
+**Пока не обещать**; finite qualification does not promote public readiness.
+
+The prototype's SVG/multiple data URLs are not production ownership evidence. Enabled-region
+NEW Generate refusal and frozen Retry remain independent; weights/adapters,
+conditioning/inference, provenance and model-policy changes are excluded.
+Earlier mask-tool evidence below retains its historical scope.
+
 ## Feature
 
 Generate canvas tools provide direct manipulation for the primary generation bbox, masks, regional guidance regions and Smart Patch bounding boxes on an unbounded Project Canvas.
@@ -17,6 +90,25 @@ For the product, panels and popovers provide precision editing while direct canv
 MVP canvas tools are scoped to generative editing primitives. ImageGen Studio does not try to become a raster editor in MVP.
 
 ## Production checkpoint: Smart Patch mask authoring
+
+The later [Regional Guidance owned-mask checkpoint](../../../engineering/phase-4-regional-guidance-masks-research.md)
+has **source implemented, lower-level checks and finite native-r7 qualification
+passed**; local visuals are root-reviewed and retention/release are complete.
+It reuses the same CPU tool/gesture
+semantics for an explicit
+regional owner: Brush, Eraser, both Lassos, Transform Region and Clear. No regional
+bbox or Fit is introduced. Disabled regions stay editable, lock refuses writes,
+and selected overlays use `overlayOpacity` even when disabled. Persistence/resource
+integration is implemented; root's lower-level checks PASS at the exact source
+and post-lint boundaries recorded in the linked research.
+Final native-r7 passes all 12 checks in 157.061 s, including actual tools and
+whole-alpha/geometry/history controls. Root opens all six final screenshots at
+1440×900/900×620, including quarter-turn/recovered states, with no material local
+finding; this is bounded self-review, not a full accessibility audit. Earlier
+failures stay separate, including native3's restoration gap. All four retention
+audits are CLEAN/READ-FINISHED, contract R2 is CLEAN source-only, and final
+harness-scoped lint passes. Root release checks and exact cleanup are complete:
+15 idle paths, 113,537,024 bytes (108.28 MiB); compact evidence remains retained. The historical Smart evidence below is unchanged.
 
 [Owned-mask authoring](../../../engineering/phase-4-smart-patch-mask-authoring-research.md)
 connects Brush, Eraser, Lasso and Polygon Lasso to captured Project/layer/mask

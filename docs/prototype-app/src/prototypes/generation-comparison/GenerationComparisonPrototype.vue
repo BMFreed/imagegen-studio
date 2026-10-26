@@ -72,6 +72,7 @@ const sections = computed(() =>
           :generatedLayerIds="[fixture.generatedLayerId]"
           :importing="false"
           :layers="fixture.layers"
+          :presetLayerIds="[fixture.generatedLayerId]"
         >
           <template v-slot:comparison="{ layer }">
             <GenerationSettingsComparison

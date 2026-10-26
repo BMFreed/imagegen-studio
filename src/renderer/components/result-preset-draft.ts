@@ -1,6 +1,10 @@
 import type { PresetPayload, PresetSectionKey } from '../../shared/presets/preset-schema.js'
 import type { RasterGenerationData } from '../../shared/projects/generation-settings-comparison.js'
 import { isRasterGenerationData } from '../../shared/projects/generation-settings-comparison.js'
+import {
+  isSmartResultPresetData,
+  type SmartResultPresetData,
+} from '../../shared/projects/smart-result-preset.js'
 
 import type { PresetResultCreateIntent } from './preset-create-intent.js'
 
@@ -67,6 +71,38 @@ export function createResultPresetIntent(input: {
     layerName: input.layerName,
     projectName: input.projectName,
     projectSummary: `${recorded.size.width} × ${recorded.size.height} · ${recorded.model.displayName}`,
+    unavailableSections: optionalSections.filter((key) => payload[key] === undefined),
+    workflowUnknown: false,
+  }
+}
+
+/** Main has already projected reusable settings; never fill gaps from the current Project. */
+export function createSmartResultPresetIntent(input: {
+  data: SmartResultPresetData
+  layerName: string
+  projectName: string
+}): PresetResultCreateIntent {
+  if (!isSmartResultPresetData(input.data)) {
+    throw new Error(
+      'The saved Smart result settings are invalid. Reopen the Project and try again.',
+    )
+  }
+  const payload = copy(input.data.payload)
+  const optionalSections: PresetSectionKey[] = ['loras', 'vae', 'cfgRescale', 'vaePrecision']
+  return {
+    definition: {
+      description: '',
+      favorite: false,
+      name: `${input.layerName} Preset`,
+      payload,
+      tags: ['result'],
+      workflow: 'smartPatch',
+    },
+    kind: 'result',
+    layerName: input.layerName,
+    projectName: input.projectName,
+    projectSummary: `${payload.model.displayName} · ${payload.model.versionName}`,
+    smartGeometryExcluded: true,
     unavailableSections: optionalSections.filter((key) => payload[key] === undefined),
     workflowUnknown: false,
   }

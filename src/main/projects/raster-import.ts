@@ -2,6 +2,7 @@ import type {
   IgsProjectDocumentV1,
   IgsRasterLayerV1,
 } from '../../shared/projects/project-schema.js'
+import { projectOwnedIds } from '../../shared/projects/project-schema.js'
 
 import { createHash, randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
@@ -99,7 +100,8 @@ export async function importRasterLayer(input: RasterImportInput): Promise<Prepa
       )
     }
     let layerId = randomUUID()
-    while (latest.layers.some((layer) => layer.id === layerId)) {
+    const occupied = new Set(projectOwnedIds(latest))
+    while (occupied.has(layerId)) {
       layerId = randomUUID()
     }
     const layerPath = `assets/layers/${layerId}.png`
@@ -161,7 +163,7 @@ export async function importRasterLayer(input: RasterImportInput): Promise<Prepa
   }
 }
 
-async function canonicalDirectory(directory: string): Promise<string> {
+export async function canonicalDirectory(directory: string): Promise<string> {
   if (!path.isAbsolute(directory) || path.resolve(directory) !== directory) {
     throw new RasterImportError('IMPORT_STAGING_INVALID', 'Import staging base must be canonical.')
   }
@@ -183,7 +185,10 @@ async function canonicalDirectory(directory: string): Promise<string> {
   return directory
 }
 
-async function freezeAuthorizedSource(sourcePath: string, destination: string): Promise<string> {
+export async function freezeAuthorizedSource(
+  sourcePath: string,
+  destination: string,
+): Promise<string> {
   if (!path.isAbsolute(sourcePath) || path.resolve(sourcePath) !== sourcePath) {
     throw new RasterImportError('IMPORT_INVALID_REQUEST', 'Selected raster path must be canonical.')
   }

@@ -1,4 +1,8 @@
-import { ipcChannels, PRESET_ERROR_CODES } from '../shared/api.js'
+import {
+  ipcChannels,
+  isProjectRegionalGuidanceMaskEditRequest,
+  PRESET_ERROR_CODES,
+} from '../shared/api.js'
 import type {
   ApiError,
   ApiResult,
@@ -9,7 +13,6 @@ import type {
   PresetApiError,
   PresetApiResult,
   PresetRecord,
-  ProjectAcceptedResultView,
   ProjectCandidateExportResult,
   ProjectCloseImpact,
   ProjectImportFinishResult,
@@ -17,6 +20,7 @@ import type {
   ProjectOpenResult,
   ProjectRasterLayerView,
   ProjectRebuildResult,
+  ProjectRegionalGuidanceLayerView,
   ProjectSaveResult,
   ProjectSmartPatchLayerView,
   ProjectSummary,
@@ -25,6 +29,12 @@ import type {
   StudioApi,
 } from '../shared/api.js'
 import { isPresetRecord } from '../shared/presets/preset-schema.js'
+import {
+  isSmartPatchPresetApplicationReviewForRequest,
+  parseSmartPatchPresetApplicationRequest,
+  parseSmartPatchPresetApplicationReviewRequest,
+  type SmartPatchPresetApplicationReview,
+} from '../shared/presets/smart-patch-preset-application.js'
 import { isAcceptedResultHistoryPage } from '../shared/projects/accepted-result-history.js'
 import { isGenerationDynamicPromptSettings } from '../shared/projects/generation-dynamic-settings.js'
 import { isGenerationProgressSnapshot } from '../shared/projects/generation-progress.js'
@@ -34,7 +44,7 @@ import {
   type RasterGenerationData,
 } from '../shared/projects/generation-settings-comparison.js'
 import { isIllustriousNoiseProfileV1 } from '../shared/projects/illustrious-noise-profile.js'
-import { isProjectAcceptedResultView } from '../shared/projects/project-accepted-results.js'
+import { isProjectAcceptedResults } from '../shared/projects/project-accepted-results.js'
 import {
   isProjectDocumentId,
   isProjectGenerateResult,
@@ -47,9 +57,17 @@ import {
 } from '../shared/projects/project-generation-target-state.js'
 import {
   IGS_SAFETY_CEILINGS,
+  isProjectRegionalGuidanceV1,
   isProjectSmartPatchMaskV1,
 } from '../shared/projects/project-schema.js'
 import type { IgsProjectDocumentV1, IgsRectV1 } from '../shared/projects/project-schema.js'
+import {
+  isProjectRegionalGuidanceChange,
+  isProjectRegionalGuidanceDocumentOwner,
+  isProjectRegionalGuidanceOwner,
+  isProjectRegionalGuidancePromptChangeForOwner,
+  isProjectRegionalGuidanceReferenceImageChange,
+} from '../shared/projects/regional-guidance.js'
 import {
   isProjectSmartPatchDiscardResult,
   isProjectSmartPatchGenerateResult,
@@ -57,6 +75,18 @@ import {
   isProjectSmartPatchResultsSnapshot,
 } from '../shared/projects/smart-patch-public-generation.js'
 import { isProjectSmartPatchVariantsInspection } from '../shared/projects/smart-patch-variants.js'
+import {
+  isSmartResultComparisonDataForRequest,
+  isSmartResultComparisonRequest,
+  type SmartResultComparisonData,
+  type SmartResultComparisonRequest,
+} from '../shared/projects/smart-result-comparison.js'
+import {
+  isSmartResultPresetDataForRequest,
+  isSmartResultPresetRequest,
+  type SmartResultPresetData,
+  type SmartResultPresetRequest,
+} from '../shared/projects/smart-result-preset.js'
 
 import { contextBridge, ipcRenderer } from 'electron'
 
@@ -231,6 +261,13 @@ function isVoid(value: unknown): value is void {
 
 const presetErrorCodes = new Set<string>(PRESET_ERROR_CODES)
 
+type RegionalGuidanceChannel =
+  | typeof ipcChannels.projects.addRegionalGuidance
+  | typeof ipcChannels.projects.deleteRegionalGuidance
+  | typeof ipcChannels.projects.duplicateRegionalGuidance
+  | typeof ipcChannels.projects.updateRegionalGuidance
+  | typeof ipcChannels.projects.updateRegionalGuidancePrompt
+
 function isPresetApiError(value: unknown): value is PresetApiError {
   return (
     isRecord(value) &&
@@ -339,6 +376,91 @@ function isProjectRect(value: unknown): value is IgsRectV1 {
   )
 }
 
+/** Runtime capabilities are validated separately from the strict portable owner. */
+function isRegionalGuidanceLayerView(
+  value: unknown,
+  tab: Record<string, unknown>,
+): value is ProjectRegionalGuidanceLayerView {
+  if (!isRecord(value)) {
+    return false
+  }
+  const { maskImageUrl, referenceImages, ...base } = value
+  if (
+    referenceImages !== undefined &&
+    (!Array.isArray(referenceImages) || referenceImages.some((item) => !isRecord(item)))
+  ) {
+    return false
+  }
+  const runtimeReferences = Array.isArray(referenceImages) ? referenceImages : []
+  const storedReferences = Array.isArray(referenceImages)
+    ? runtimeReferences.map((item: Record<string, unknown>) => {
+        const { thumbnailUrl: _thumbnailUrl, ...stored } = item
+        return stored
+      })
+    : undefined
+  const stored = {
+    ...base,
+    ...(storedReferences === undefined ? {} : { referenceImages: storedReferences }),
+  }
+  if (!isProjectRegionalGuidanceV1(stored)) {
+    return false
+  }
+  if (
+    stored.referenceImages?.some((reference, index) => {
+      const url = runtimeReferences[index].thumbnailUrl
+      const prefix = `igs-layer://regional-reference/${tab.id}/${tab.documentRevision}/${stored.id}/${reference.id}/${reference.thumbnail.sha256}/`
+      return (
+        typeof url !== 'string' ||
+        !url.startsWith(prefix) ||
+        !/^[a-f0-9]{64}\.webp$/.test(url.slice(prefix.length))
+      )
+    })
+  ) {
+    return false
+  }
+  if (stored.mask.asset === null) {
+    return maskImageUrl === undefined || maskImageUrl === null
+  }
+  if (typeof maskImageUrl !== 'string') {
+    return false
+  }
+  const prefix = `igs-mask://regional/${tab.id}/${tab.documentRevision}/${stored.id}/${stored.mask.id}/${stored.mask.revision}/${stored.mask.asset.sha256}/`
+  return (
+    maskImageUrl.startsWith(prefix) && /^[a-f0-9]{64}\.png$/.test(maskImageUrl.slice(prefix.length))
+  )
+}
+
+/** Regional owners share the document's selectable/owned identity namespace. */
+function hasValidRegionalGuidanceOwners(value: Record<string, unknown>): boolean {
+  if (value.regionalGuidance === undefined) {
+    return true
+  }
+  if (
+    !Array.isArray(value.regionalGuidance) ||
+    value.regionalGuidance.length > IGS_SAFETY_CEILINGS.archiveEntries ||
+    !value.regionalGuidance.every((region): region is ProjectRegionalGuidanceLayerView =>
+      isRegionalGuidanceLayerView(region, value),
+    ) ||
+    !Array.isArray(value.layers)
+  ) {
+    return false
+  }
+  const ids: string[] = []
+  for (const layer of value.layers) {
+    if (!isRecord(layer) || typeof layer.id !== 'string') {
+      return false
+    }
+    ids.push(layer.id)
+    if (isProjectSmartPatchLayerView(layer)) {
+      ids.push(layer.mask.id, ...layer.rasterSubLayers.map((variant) => variant.id))
+    }
+  }
+  for (const region of value.regionalGuidance) {
+    ids.push(region.id, region.mask.id, ...(region.referenceImages ?? []).map((item) => item.id))
+  }
+  return ids.length === new Set(ids).size
+}
+
 function isProjectTab(value: unknown): value is ProjectTab {
   return (
     isRecord(value) &&
@@ -355,37 +477,15 @@ function isProjectTab(value: unknown): value is ProjectTab {
     value.layers.every(
       (layer) => isProjectRasterLayerView(layer) || isProjectSmartPatchLayerView(layer),
     ) &&
-    isProjectAcceptedResults(
-      value.acceptedResults,
-      value.layers.filter(isProjectRasterLayerView),
-    ) &&
+    hasValidRegionalGuidanceOwners(value) &&
+    isProjectAcceptedResults(value.acceptedResults, {
+      documentRevision: value.documentRevision,
+      id: value.id,
+      layers: value.layers,
+    }) &&
     typeof value.dirty === 'boolean' &&
     (value.autosaveError === null || typeof value.autosaveError === 'string') &&
     (value.storageWarning === undefined || typeof value.storageWarning === 'string')
-  )
-}
-
-/** Each accepted identity must still be owned by the same layer and signed image resource. */
-function isProjectAcceptedResults(
-  value: unknown,
-  layers: readonly ProjectRasterLayerView[],
-): value is ProjectAcceptedResultView[] {
-  if (
-    !Array.isArray(value) ||
-    value.length > layers.length ||
-    !value.every(isProjectAcceptedResultView)
-  ) {
-    return false
-  }
-  const owned = new Map(layers.map((layer) => [layer.id, layer]))
-  return (
-    new Set(value.map((result) => result.layerId)).size === value.length &&
-    value.every((result) => {
-      const layer = owned.get(result.layerId)
-      return (
-        layer !== undefined && layer.name === result.layerName && layer.imageUrl === result.imageUrl
-      )
-    })
   )
 }
 
@@ -497,6 +597,16 @@ function isProjectRasterLayerView(value: unknown): value is ProjectRasterLayerVi
     typeof value.id === 'string' &&
     /^[a-f0-9-]{36}$/i.test(value.id) &&
     typeof value.name === 'string' &&
+    (value.generationSettingsUnavailableReason === undefined ||
+      (typeof value.generationSettingsUnavailableReason === 'string' &&
+        value.generationSettingsUnavailableReason.trim().length > 0 &&
+        value.generationSettingsUnavailableReason.length <= 512)) &&
+    (value.resultComparisonSourceKind === undefined ||
+      value.resultComparisonSourceKind === 'raster' ||
+      value.resultComparisonSourceKind === 'smart-patch') &&
+    (value.resultPresetSourceKind === undefined ||
+      value.resultPresetSourceKind === 'raster' ||
+      value.resultPresetSourceKind === 'smart-patch') &&
     typeof value.imageUrl === 'string' &&
     value.imageUrl.startsWith('igs-layer://asset/') &&
     typeof value.visible === 'boolean' &&
@@ -701,6 +811,195 @@ async function invokeProject<T>(
   }
 }
 
+/** Import authorization remains in Main; only detached owner/change scalars cross IPC. */
+function invokeRegionalReferenceImage(
+  importing: boolean,
+  tabId: string,
+  owner: unknown,
+  change?: unknown,
+): Promise<ApiResult<ProjectTab | null>> {
+  let capturedOwner: unknown
+  let capturedChange: unknown
+  try {
+    capturedOwner = structuredClone(owner)
+    capturedChange = change === undefined ? undefined : structuredClone(change)
+  } catch {
+    capturedOwner = null
+  }
+  if (
+    !isProjectId(tabId) ||
+    !isProjectRegionalGuidanceOwner(capturedOwner) ||
+    (importing
+      ? capturedChange !== undefined
+      : !isProjectRegionalGuidanceReferenceImageChange(capturedChange))
+  ) {
+    return Promise.resolve({
+      error: {
+        code: 'IPC_INVALID_CALLER',
+        message: 'The Regional Guidance reference-image request was rejected.',
+      },
+      ok: false,
+    })
+  }
+  const captured = capturedOwner
+  return invokeProject(
+    importing
+      ? ipcChannels.projects.importRegionalGuidanceReferenceImage
+      : ipcChannels.projects.updateRegionalGuidanceReferenceImage,
+    importing ? [tabId, captured] : [tabId, captured, capturedChange],
+    (value): value is ProjectTab | null => {
+      if (value === null) {
+        return importing
+      }
+      if (!isProjectTab(value) || value.id !== tabId || value.documentId !== captured.documentId) {
+        return false
+      }
+      const region = value.regionalGuidance?.find((item) => item.id === captured.regionId)
+      if (!region) {
+        return false
+      }
+      if (isProjectRegionalGuidanceReferenceImageChange(capturedChange)) {
+        return capturedChange.kind === 'remove'
+          ? !(region.referenceImages ?? []).some((item) => item.id === capturedChange.referenceId)
+          : region.referenceImages?.[capturedChange.targetIndex]?.id === capturedChange.referenceId
+      }
+      return true
+    },
+  )
+}
+
+/** Snapshot reviewed scalars before IPC; invalid/private fields never reach Main. */
+function invokeRegionalGuidance(
+  channel: RegionalGuidanceChannel,
+  tabId: string,
+  owner: unknown,
+  change?: unknown,
+): Promise<ApiResult<ProjectTab>> {
+  const invalid = (): Promise<ApiResult<ProjectTab>> =>
+    Promise.resolve({
+      error: { code: 'IPC_INVALID_CALLER', message: 'The Regional Guidance request was rejected.' },
+      ok: false,
+    })
+  let capturedOwner: unknown
+  let capturedChange: unknown
+  try {
+    capturedOwner = structuredClone(owner)
+    capturedChange = change === undefined ? undefined : structuredClone(change)
+  } catch {
+    return invalid()
+  }
+  if (
+    !isProjectId(tabId) ||
+    (!isProjectRegionalGuidanceDocumentOwner(capturedOwner) &&
+      !isProjectRegionalGuidanceOwner(capturedOwner))
+  ) {
+    return invalid()
+  }
+  if (channel === ipcChannels.projects.addRegionalGuidance) {
+    if (!isProjectRegionalGuidanceDocumentOwner(capturedOwner) || capturedChange !== undefined) {
+      return invalid()
+    }
+  } else if (!isProjectRegionalGuidanceOwner(capturedOwner)) {
+    return invalid()
+  }
+  if (channel === ipcChannels.projects.updateRegionalGuidance) {
+    if (!isProjectRegionalGuidanceChange(capturedChange)) {
+      return invalid()
+    }
+  } else if (channel === ipcChannels.projects.updateRegionalGuidancePrompt) {
+    if (
+      !isProjectRegionalGuidanceOwner(capturedOwner) ||
+      !isProjectRegionalGuidancePromptChangeForOwner(capturedChange, capturedOwner)
+    ) {
+      return invalid()
+    }
+  } else if (capturedChange !== undefined) {
+    return invalid()
+  }
+  const documentId = capturedOwner.documentId
+  return invokeProject(
+    channel,
+    capturedChange === undefined ? [tabId, capturedOwner] : [tabId, capturedOwner, capturedChange],
+    (value): value is ProjectTab =>
+      isProjectTab(value) &&
+      value.id === tabId &&
+      value.documentId === documentId &&
+      (channel !== ipcChannels.projects.updateRegionalGuidancePrompt ||
+        (isProjectRegionalGuidanceOwner(capturedOwner) &&
+          isProjectRegionalGuidancePromptChangeForOwner(capturedChange, capturedOwner) &&
+          regionalPromptReplyMatches(value, capturedOwner.regionId, capturedChange))),
+  )
+}
+
+/** Capture the complete gesture before awaiting Main; never resolve the current selection here. */
+function invokeRegionalMaskEdit(
+  tabId: string,
+  regionId: string,
+  request: unknown,
+): Promise<ApiResult<ProjectTab>> {
+  let captured: unknown
+  try {
+    captured = structuredClone(request)
+  } catch {
+    captured = null
+  }
+  if (
+    !isProjectId(tabId) ||
+    !isProjectDocumentId(regionId) ||
+    !isProjectRegionalGuidanceMaskEditRequest(captured)
+  ) {
+    return Promise.resolve({
+      error: {
+        code: 'IPC_INVALID_CALLER',
+        message: 'The Regional Guidance mask request was rejected.',
+      },
+      ok: false,
+    })
+  }
+  const baseline = captured
+  return invokeProject(
+    ipcChannels.projects.editRegionalGuidanceMask,
+    [tabId, regionId, baseline],
+    (value): value is ProjectTab => {
+      if (!isProjectTab(value) || value.id !== tabId || value.documentId !== baseline.documentId) {
+        return false
+      }
+      const mask = value.regionalGuidance?.find((region) => region.id === regionId)?.mask
+      return (
+        mask?.id === baseline.maskId &&
+        (value.documentRevision === baseline.documentRevision
+          ? mask.revision === baseline.maskRevision
+          : mask.revision === baseline.maskRevision + 1)
+      )
+    },
+  )
+}
+
+function regionalPromptReplyMatches(
+  tab: ProjectTab,
+  regionId: string,
+  change: Parameters<StudioApi['projects']['updateRegionalGuidancePrompt']>[2],
+): boolean {
+  const region = tab.regionalGuidance?.find((entry) => entry.id === regionId)
+  if (!region) {
+    return false
+  }
+  switch (change.kind) {
+    case 'block': {
+      return Boolean(region.prompts?.[change.polarity]) === change.present
+    }
+    case 'negative-source': {
+      return (
+        Boolean(region.prompts?.negative) &&
+        region.prompts?.useGlobalNegativePrompt === change.useGlobalNegativePrompt
+      )
+    }
+    case 'text': {
+      return region.prompts?.[change.polarity]?.text === change.text
+    }
+  }
+}
+
 const api: StudioApi = {
   models: {
     cancelInstall: (jobId) =>
@@ -838,6 +1137,8 @@ const api: StudioApi = {
         [tabId, candidateIds, focusedCandidateId, expectedAvailableIds, expectedUnfinishedJobIds],
         isProjectTab,
       ),
+    acceptSmartPatchRaster: (tabId, request) =>
+      invokeProject(ipcChannels.projects.acceptSmartPatchRaster, [tabId, request], isProjectTab),
     acceptSmartPatchVariants: (tabId, request) =>
       invokeProject(ipcChannels.projects.acceptSmartPatchVariants, [tabId, request], isProjectTab),
     addGenerationLora: (tabId, selection, targetLayerId) =>
@@ -846,10 +1147,34 @@ const api: StudioApi = {
         [tabId, selection, targetLayerId ?? null],
         isProjectTab,
       ),
+    addRegionalGuidance: (tabId, owner) =>
+      invokeRegionalGuidance(ipcChannels.projects.addRegionalGuidance, tabId, owner),
     addSmartPatchLayer: (tabId) =>
       invokeProject(ipcChannels.projects.addSmartPatchLayer, [tabId], isProjectTab),
     applyPreset: (tabId, request) =>
       invokeProject(ipcChannels.projects.applyPreset, [tabId, request], isProjectTab),
+    applySmartPatchPreset: (tabId, request) => {
+      try {
+        if (!isProjectId(tabId)) {
+          throw new Error('Invalid Project.')
+        }
+        const captured = parseSmartPatchPresetApplicationRequest(request)
+        return invokeProject(
+          ipcChannels.projects.applySmartPatchPreset,
+          [tabId, captured],
+          (value): value is ProjectTab =>
+            isProjectTab(value) && value.id === tabId && value.documentId === captured.documentId,
+        )
+      } catch {
+        return Promise.resolve({
+          error: {
+            code: 'PROJECT_INVALID_INPUT',
+            message: 'Choose valid preset sections. Size cannot be applied to a Smart Patch.',
+          },
+          ok: false as const,
+        })
+      }
+    },
     cancelCurrentGeneration: (tabId, documentId, expectedJobId) =>
       invokeProject(
         ipcChannels.projects.cancelCurrentGeneration,
@@ -867,6 +1192,8 @@ const api: StudioApi = {
     create: (options) => invokeProject(ipcChannels.projects.create, [options], isProjectTab),
     deleteGenerationJob: (review) =>
       invokeProject(ipcChannels.projects.deleteGenerationJob, [review], isVoid),
+    deleteRegionalGuidance: (tabId, owner) =>
+      invokeRegionalGuidance(ipcChannels.projects.deleteRegionalGuidance, tabId, owner),
     discardAndClose: (tabId, confirmCloseImpact = false) =>
       invokeProject(ipcChannels.projects.discardAndClose, [tabId, confirmCloseImpact], isVoid),
     discardSmartPatchGenerationResults: (tabId, request) =>
@@ -875,6 +1202,10 @@ const api: StudioApi = {
         [tabId, request],
         isProjectSmartPatchDiscardResult,
       ),
+    duplicateRegionalGuidance: (tabId, owner) =>
+      invokeRegionalGuidance(ipcChannels.projects.duplicateRegionalGuidance, tabId, owner),
+    editRegionalGuidanceMask: (tabId, regionId, request) =>
+      invokeRegionalMaskEdit(tabId, regionId, request),
     editSmartPatchMask: (tabId, layerId, request) =>
       invokeProject(
         ipcChannels.projects.editSmartPatchMask,
@@ -946,18 +1277,90 @@ const api: StudioApi = {
         [tabId, documentId, documentRevision, layerId],
         isProjectSmartPatchGenerationTargetState,
       ),
+    getSmartPatchPresetApplicationReview: (tabId, request) => {
+      try {
+        if (!isProjectId(tabId)) {
+          throw new Error('Invalid Project.')
+        }
+        const captured = parseSmartPatchPresetApplicationReviewRequest(request)
+        return invokeProject(
+          ipcChannels.projects.getSmartPatchPresetApplicationReview,
+          [tabId, captured],
+          (value): value is SmartPatchPresetApplicationReview =>
+            isSmartPatchPresetApplicationReviewForRequest(value, captured),
+        )
+      } catch {
+        return Promise.resolve({
+          error: {
+            code: 'PROJECT_INVALID_INPUT',
+            message: 'Choose a valid Smart Patch to review.',
+          },
+          ok: false as const,
+        })
+      }
+    },
     getSmartPatchVariants: (tabId, layerId, documentId, documentRevision) =>
       invokeProject(
         ipcChannels.projects.getSmartPatchVariants,
         [tabId, layerId, documentId, documentRevision],
         isProjectSmartPatchVariantsInspection,
       ),
+    getSmartResultComparisonData: (tabId, request) => {
+      let captured: SmartResultComparisonRequest
+      try {
+        if (!isProjectId(tabId) || !isSmartResultComparisonRequest(request)) {
+          throw new Error('Invalid Smart comparison owner.')
+        }
+        // Capture before invoke yields, including the nested current owner.
+        captured = JSON.parse(JSON.stringify(request)) as SmartResultComparisonRequest
+        if (!isSmartResultComparisonRequest(captured)) {
+          throw new Error('Invalid Smart comparison owner.')
+        }
+      } catch {
+        return Promise.resolve({
+          error: { code: 'PROJECT_INVALID_INPUT', message: 'The saved result owner is invalid.' },
+          ok: false as const,
+        })
+      }
+      return invokeProject(
+        ipcChannels.projects.getSmartResultComparisonData,
+        [tabId, captured],
+        (value): value is SmartResultComparisonData =>
+          isSmartResultComparisonDataForRequest(value, captured),
+      )
+    },
+    getSmartResultPresetData: (tabId, request) => {
+      let captured: SmartResultPresetRequest
+      try {
+        if (!isProjectId(tabId) || !isSmartResultPresetRequest(request)) {
+          throw new Error('Invalid Smart result owner.')
+        }
+        // Capture before invoke can yield; the caller may mutate a Vue-backed request later.
+        captured = JSON.parse(JSON.stringify(request)) as SmartResultPresetRequest
+        if (!isSmartResultPresetRequest(captured)) {
+          throw new Error('Invalid Smart result owner.')
+        }
+      } catch {
+        return Promise.resolve({
+          error: { code: 'PROJECT_INVALID_INPUT', message: 'The saved result owner is invalid.' },
+          ok: false as const,
+        })
+      }
+      return invokeProject(
+        ipcChannels.projects.getSmartResultPresetData,
+        [tabId, captured],
+        (value): value is SmartResultPresetData =>
+          isSmartResultPresetDataForRequest(value, captured),
+      )
+    },
     importRasterImage: (tabId) =>
       invokeProject(
         ipcChannels.projects.importRasterImage,
         [tabId],
         (value): value is ProjectTab | null => value === null || isProjectTab(value),
       ),
+    importRegionalGuidanceReferenceImage: (tabId, owner) =>
+      invokeRegionalReferenceImage(true, tabId, owner),
     list: () =>
       invokeProject(
         ipcChannels.projects.list,
@@ -1130,6 +1533,28 @@ const api: StudioApi = {
       ),
     updateRasterLayer: (tabId, layerId, change) =>
       invokeProject(ipcChannels.projects.updateRasterLayer, [tabId, layerId, change], isProjectTab),
+    updateRegionalGuidance: (tabId, owner, change) =>
+      invokeRegionalGuidance(ipcChannels.projects.updateRegionalGuidance, tabId, owner, change),
+    updateRegionalGuidancePrompt: (tabId, owner, change) =>
+      invokeRegionalGuidance(
+        ipcChannels.projects.updateRegionalGuidancePrompt,
+        tabId,
+        owner,
+        change,
+      ),
+    updateRegionalGuidanceReferenceImage: async (tabId, owner, change) => {
+      const result = await invokeRegionalReferenceImage(false, tabId, owner, change)
+      if (!result.ok) {
+        return result
+      }
+      if (result.value === null) {
+        return {
+          error: { code: 'IPC_INVALID_RESPONSE', message: 'The Project response was empty.' },
+          ok: false,
+        }
+      }
+      return { ok: true, value: result.value }
+    },
     updateSmartPatchLayer: (tabId, layerId, change) =>
       invokeProject(
         ipcChannels.projects.updateSmartPatchLayer,

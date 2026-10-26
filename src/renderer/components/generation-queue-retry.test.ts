@@ -3,17 +3,17 @@ import type { GenerationQueueEntry } from '../../shared/projects/generation-queu
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { outpaintQueueRetryReason } from './generation-queue-retry.js'
+import { generationQueueRetryReason } from './generation-queue-retry.js'
 
 test('outpaint Retry uses the frozen family and fails closed for missing or opposite capabilities', () => {
   // Boundary: renderer advisory over the typed Main state. Neighbor: the opposite family flag
   // remains true. Mutation: qualify all frozen jobs from one common flag or treat absence as ready.
   for (const supported of [undefined, false, true]) {
-    const illustrious = outpaintQueueRetryReason('illustrious-outpaint', {
+    const illustrious = generationQueueRetryReason('illustrious-outpaint', {
       animaOutpaintSupported: true,
       outpaintSupported: supported,
     })
-    const anima = outpaintQueueRetryReason('anima-outpaint', {
+    const anima = generationQueueRetryReason('anima-outpaint', {
       animaOutpaintSupported: supported,
       outpaintSupported: true,
     })
@@ -25,13 +25,13 @@ test('outpaint Retry uses the frozen family and fails closed for missing or oppo
       assert.match(anima!, /outpaint for Anima/)
     }
   }
-  assert.match(outpaintQueueRetryReason('illustrious-outpaint', {})!, /outpaint for Illustrious/)
-  assert.match(outpaintQueueRetryReason('anima-outpaint', {})!, /outpaint for Anima/)
+  assert.match(generationQueueRetryReason('illustrious-outpaint', {})!, /outpaint for Illustrious/)
+  assert.match(generationQueueRetryReason('anima-outpaint', {})!, /outpaint for Anima/)
 })
 
 test('unknown outpaint state remains a check in progress; ordinary frozen operations keep their existing gates', () => {
-  assert.match(outpaintQueueRetryReason('illustrious-outpaint', null)!, /Checking image engine/)
-  assert.match(outpaintQueueRetryReason('anima-outpaint', null)!, /Checking image engine/)
+  assert.match(generationQueueRetryReason('illustrious-outpaint', null)!, /Checking image engine/)
+  assert.match(generationQueueRetryReason('anima-outpaint', null)!, /Checking image engine/)
   // The finite ordinary neighbors come from GenerationQueueEntry.operation. A helper failure
   // or legacy peer must not add an outpaint-specific refusal to their existing Retry flow.
   const ordinary: GenerationQueueEntry['operation'][] = [
@@ -41,10 +41,10 @@ test('unknown outpaint state remains a check in progress; ordinary frozen operat
     'anima-img2img',
   ]
   for (const operation of ordinary) {
-    assert.equal(outpaintQueueRetryReason(operation, null), null)
-    assert.equal(outpaintQueueRetryReason(operation, {}), null)
+    assert.equal(generationQueueRetryReason(operation, null), null)
+    assert.equal(generationQueueRetryReason(operation, {}), null)
     assert.equal(
-      outpaintQueueRetryReason(operation, {
+      generationQueueRetryReason(operation, {
         animaOutpaintSupported: false,
         outpaintSupported: false,
       }),
@@ -53,11 +53,32 @@ test('unknown outpaint state remains a check in progress; ordinary frozen operat
   }
 })
 
-test('private Smart Patch Retry stays unavailable independently of ordinary worker capabilities', () => {
-  for (const operation of ['illustrious-smart-patch', 'anima-smart-patch'] as const) {
-    for (const state of [null, {}, { animaOutpaintSupported: true, outpaintSupported: true }]) {
-      assert.match(outpaintQueueRetryReason(operation, state)!, /Smart Patch.*not available yet/)
+test('Smart Patch Retry requires its own capability and the frozen family, including absent legacy flags', () => {
+  // Boundary: renderer advisory. Neighbor: all ordinary/outpaint capabilities remain true.
+  // Mutation: enable Smart Retry from outpaint support, or ignore the frozen Anima family.
+  for (const smartPatchSupported of [undefined, false, true]) {
+    for (const animaSupported of [undefined, false, true]) {
+      const state = {
+        animaOutpaintSupported: true,
+        animaSupported,
+        outpaintSupported: true,
+        smartPatchSupported,
+      }
+      const illustrious = generationQueueRetryReason('illustrious-smart-patch', state)
+      const anima = generationQueueRetryReason('anima-smart-patch', state)
+      assert.equal(illustrious === null, smartPatchSupported === true)
+      assert.equal(anima === null, smartPatchSupported === true && animaSupported === true)
     }
   }
-  assert.equal(outpaintQueueRetryReason('illustrious-outpaint', { outpaintSupported: true }), null)
+  for (const operation of ['illustrious-smart-patch', 'anima-smart-patch'] as const) {
+    assert.match(generationQueueRetryReason(operation, null)!, /Checking image engine/)
+    assert.match(generationQueueRetryReason(operation, {})!, /does not support Smart Patch/)
+  }
+  assert.equal(
+    generationQueueRetryReason('illustrious-outpaint', {
+      outpaintSupported: true,
+      smartPatchSupported: false,
+    }),
+    null,
+  )
 })

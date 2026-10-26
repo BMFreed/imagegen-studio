@@ -134,6 +134,12 @@ export class ProjectSmartPatchResultResource {
           layerId: scope.layerId,
           layerName: scope.layerName,
           queueItemId: candidate.queueItemId,
+          rasterConversionUnavailableReason:
+            scope.disposition !== 'orphaned'
+              ? 'Only a result whose original Smart Patch is missing can be added as a Raster Layer.'
+              : owner.document.layers.some((layer) => layer.id === scope.layerId)
+                ? 'The original Smart Patch identity is occupied by another layer. Save Candidate Image or discard this result.'
+                : null,
           stagingSessionId: candidate.stagingSessionId,
           unavailableReason: scope.unavailableReason,
           ...(thumbnailUrls.has(candidate.candidateId)
@@ -330,7 +336,7 @@ export function smartPatchResultDisposition(
       disposition: 'orphaned',
       layerName: null,
       unavailableReason:
-        'The original Smart Patch is missing. Add as Variant is unavailable. Save Candidate Image or discard; Raster conversion is not available yet.',
+        'The original Smart Patch is missing. Add as Variant is unavailable. You can explicitly add a verified result as a Raster Layer, save its image or discard it.',
     }
   }
   if (layer.locked || !layer.visible) {

@@ -1,6 +1,11 @@
 import type { PresetApplicationRequest } from './presets/preset-application.js'
 import type { PresetDefinition, PresetRecord } from './presets/preset-schema.js'
 import type {
+  SmartPatchPresetApplicationRequest,
+  SmartPatchPresetApplicationReview,
+  SmartPatchPresetApplicationReviewRequest,
+} from './presets/smart-patch-preset-application.js'
+import type {
   AcceptedResultHistoryCursor,
   AcceptedResultHistoryPage,
   AcceptedResultHistoryReference,
@@ -28,9 +33,18 @@ import type { ProjectMaskEdit } from './projects/project-mask.js'
 import type {
   IgsProjectDocumentV1,
   IgsRectV1,
+  IgsRegionalGuidanceReferenceImageV1,
+  IgsRegionalGuidanceV1,
   IgsSmartPatchLayerV1,
 } from './projects/project-schema.js'
 import type { PromptEmbeddingSelection } from './projects/prompt-embeddings.js'
+import type {
+  ProjectRegionalGuidanceChange,
+  ProjectRegionalGuidanceDocumentOwner,
+  ProjectRegionalGuidanceOwner,
+  ProjectRegionalGuidancePromptChange,
+  ProjectRegionalGuidanceReferenceImageChange,
+} from './projects/regional-guidance.js'
 import type { SmartPatchCoherenceSettings } from './projects/smart-patch-coherence-settings.js'
 import type {
   ProjectSmartPatchAcceptRequest,
@@ -40,12 +54,21 @@ import type {
   ProjectSmartPatchGenerateOptions,
   ProjectSmartPatchGenerateResult,
   ProjectSmartPatchGenerationTargetState,
+  ProjectSmartPatchRasterAcceptRequest,
   ProjectSmartPatchResultsSnapshot,
 } from './projects/smart-patch-public-generation.js'
 import type {
   ProjectSmartPatchVariantChange,
   ProjectSmartPatchVariantsInspection,
 } from './projects/smart-patch-variants.js'
+import type {
+  SmartResultComparisonData,
+  SmartResultComparisonRequest,
+} from './projects/smart-result-comparison.js'
+import type {
+  SmartResultPresetData,
+  SmartResultPresetRequest,
+} from './projects/smart-result-preset.js'
 
 import { isAnimaSamplingMethod } from './projects/anima-sampling-method.js'
 import { isGenerationDynamicPromptSettings } from './projects/generation-dynamic-settings.js'
@@ -64,13 +87,20 @@ export type {
 } from './presets/preset-schema.js'
 
 export type { ProjectCreateInput } from './projects/project-create.js'
-
 export type {
   ProjectGenerateOptions,
   ProjectGenerateResult,
   ProjectGenerationActionState,
   ProjectGenerationQueueJob,
 } from './projects/project-generation-actions.js'
+export type {
+  ProjectRegionalGuidanceChange,
+  ProjectRegionalGuidanceDocumentOwner,
+  ProjectRegionalGuidanceOwner,
+  ProjectRegionalGuidancePromptChange,
+  ProjectRegionalGuidanceReferenceImageChange,
+} from './projects/regional-guidance.js'
+
 export type {
   ProjectSmartPatchAcceptRequest,
   ProjectSmartPatchCandidateExportRequest,
@@ -79,15 +109,20 @@ export type {
   ProjectSmartPatchGenerateOptions,
   ProjectSmartPatchGenerateResult,
   ProjectSmartPatchGenerationTargetState,
+  ProjectSmartPatchRasterAcceptRequest,
   ProjectSmartPatchResultsSnapshot,
   ProjectSmartPatchResultTarget,
   ProjectSmartPatchResultView,
 } from './projects/smart-patch-public-generation.js'
-
 export type {
   ProjectSmartPatchVariantChange,
   ProjectSmartPatchVariantsInspection,
 } from './projects/smart-patch-variants.js'
+
+export type {
+  SmartResultPresetData,
+  SmartResultPresetRequest,
+} from './projects/smart-result-preset.js'
 
 /** Renderer contract. System APIs remain in Electron main. */
 export const ipcChannels = {
@@ -120,10 +155,13 @@ export const ipcChannels = {
   },
   projects: {
     acceptGenerationCandidates: 'projects:accept-generation-candidates',
+    acceptSmartPatchRaster: 'projects:accept-smart-patch-raster',
     acceptSmartPatchVariants: 'projects:accept-smart-patch-variants',
     addGenerationLora: 'projects:add-generation-lora',
+    addRegionalGuidance: 'projects:add-regional-guidance',
     addSmartPatchLayer: 'projects:add-smart-patch-layer',
     applyPreset: 'projects:apply-preset',
+    applySmartPatchPreset: 'projects:apply-smart-patch-preset',
     cancelCurrentGeneration: 'projects:cancel-current-generation',
     cancelGenerationJob: 'projects:cancel-generation-job',
     cancelImport: 'projects:cancel-import',
@@ -131,8 +169,11 @@ export const ipcChannels = {
     close: 'projects:close',
     create: 'projects:create',
     deleteGenerationJob: 'projects:delete-generation-job',
+    deleteRegionalGuidance: 'projects:delete-regional-guidance',
     discardAndClose: 'projects:discard-and-close',
     discardSmartPatchGenerationResults: 'projects:discard-smart-patch-generation-results',
+    duplicateRegionalGuidance: 'projects:duplicate-regional-guidance',
+    editRegionalGuidanceMask: 'projects:edit-regional-guidance-mask',
     editSmartPatchMask: 'projects:edit-smart-patch-mask',
     finishImport: 'projects:finish-import',
     generate: 'projects:generate',
@@ -148,8 +189,12 @@ export const ipcChannels = {
     getRasterGenerationData: 'projects:get-raster-generation-data',
     getRasterPresetData: 'projects:get-raster-preset-data',
     getSmartPatchGenerationTargetState: 'projects:get-smart-patch-generation-target-state',
+    getSmartPatchPresetApplicationReview: 'projects:get-smart-patch-preset-application-review',
     getSmartPatchVariants: 'projects:get-smart-patch-variants',
+    getSmartResultComparisonData: 'projects:get-smart-result-comparison-data',
+    getSmartResultPresetData: 'projects:get-smart-result-preset-data',
     importRasterImage: 'projects:import-raster-image',
+    importRegionalGuidanceReferenceImage: 'projects:import-regional-guidance-reference-image',
     list: 'projects:list',
     listGenerationResults: 'projects:list-generation-results',
     listSmartPatchGenerationResults: 'projects:list-smart-patch-generation-results',
@@ -179,6 +224,9 @@ export const ipcChannels = {
     undo: 'projects:undo',
     updateGenerationDraft: 'projects:update-generation-draft',
     updateRasterLayer: 'projects:update-raster-layer',
+    updateRegionalGuidance: 'projects:update-regional-guidance',
+    updateRegionalGuidancePrompt: 'projects:update-regional-guidance-prompt',
+    updateRegionalGuidanceReferenceImage: 'projects:update-regional-guidance-reference-image',
     updateSmartPatchLayer: 'projects:update-smart-patch-layer',
     updateSmartPatchVariant: 'projects:update-smart-patch-variant',
     windowCloseDecisionPending: 'projects:window-close-decision-pending',
@@ -270,11 +318,12 @@ export interface ProjectTab {
   lastActualSeedSnapshot: IgsProjectDocumentV1['lastActualSeedSnapshot']
   layers: ProjectLayerView[]
   primaryBbox: IgsRectV1
+  regionalGuidance?: ProjectRegionalGuidanceLayerView[]
   storageWarning?: string
   title: string
 }
 
-/** Read-only Project-local projection of current accepted generated Raster Layers. */
+/** Read-only current accepted rasters: layerId is a Raster Layer or nested variant UUID. */
 export interface ProjectAcceptedResultView {
   acceptedAt: string
   height: number
@@ -290,6 +339,8 @@ export interface ProjectAcceptedResultView {
 
 export interface ProjectRasterLayerView {
   blendMode: 'multiply' | 'normal' | 'overlay' | 'screen'
+  /** Stored provenance is retained even when reusable generation settings are unsupported. */
+  generationSettingsUnavailableReason?: string
   height: number
   id: string
   imageUrl: string
@@ -297,6 +348,10 @@ export interface ProjectRasterLayerView {
   locked: boolean
   name: string
   opacity: number
+  /** Explicit comparison capability; absent ordinary Raster views remain compatible. */
+  resultComparisonSourceKind?: 'raster' | 'smart-patch'
+  /** Preset extraction is independent of comparison support. */
+  resultPresetSourceKind?: 'raster' | 'smart-patch'
   transform: {
     rotationDegrees: number
     scaleX: number
@@ -331,6 +386,25 @@ export interface ProjectSmartPatchLayerView {
 }
 
 export type ProjectLayerView = ProjectRasterLayerView | ProjectSmartPatchLayerView
+
+/** Noncompositing owners. The signed display capability is never persisted. */
+export type ProjectRegionalGuidanceLayerView = Omit<IgsRegionalGuidanceV1, 'referenceImages'> & {
+  maskImageUrl?: string | null
+  referenceImages?: ProjectRegionalGuidanceReferenceImageView[]
+}
+
+export type ProjectRegionalGuidanceReferenceImageView = IgsRegionalGuidanceReferenceImageV1 & {
+  thumbnailUrl: string
+}
+
+/** Regional masks have no generation bbox, so Fit is never an accepted operation. */
+export interface ProjectRegionalGuidanceMaskEditRequest {
+  documentId: string
+  documentRevision: string
+  edit: Exclude<ProjectMaskEdit, { kind: 'fit-bbox' }>
+  maskId: string
+  maskRevision: number
+}
 
 /** Captured gesture owner and baseline. Renderer never supplies pixels or an asset path. */
 export interface ProjectSmartPatchMaskEditRequest {
@@ -471,6 +545,10 @@ export interface ProjectApi {
     expectedAvailableIds: string[],
     expectedUnfinishedJobIds?: string[],
   ) => Promise<ApiResult<ProjectTab>>
+  acceptSmartPatchRaster: (
+    tabId: string,
+    request: ProjectSmartPatchRasterAcceptRequest,
+  ) => Promise<ApiResult<ProjectTab>>
   acceptSmartPatchVariants: (
     tabId: string,
     request: ProjectSmartPatchAcceptRequest,
@@ -480,8 +558,16 @@ export interface ProjectApi {
     selection: NonNullable<ProjectGenerationModelSelection>,
     targetLayerId?: string,
   ) => Promise<ApiResult<ProjectTab>>
+  addRegionalGuidance: (
+    tabId: string,
+    owner: ProjectRegionalGuidanceDocumentOwner,
+  ) => Promise<ApiResult<ProjectTab>>
   addSmartPatchLayer: (tabId: string) => Promise<ApiResult<ProjectTab>>
   applyPreset: (tabId: string, request: PresetApplicationRequest) => Promise<ApiResult<ProjectTab>>
+  applySmartPatchPreset: (
+    tabId: string,
+    request: SmartPatchPresetApplicationRequest,
+  ) => Promise<ApiResult<ProjectTab>>
   cancelCurrentGeneration: (
     tabId: string,
     documentId: string,
@@ -493,11 +579,24 @@ export interface ProjectApi {
   close: (tabId: string, confirmCloseImpact?: boolean) => Promise<ApiResult<void>>
   create: (options: ProjectCreateInput) => Promise<ApiResult<ProjectTab>>
   deleteGenerationJob: (review: GenerationQueueReview) => Promise<ApiResult<void>>
+  deleteRegionalGuidance: (
+    tabId: string,
+    owner: ProjectRegionalGuidanceOwner,
+  ) => Promise<ApiResult<ProjectTab>>
   discardAndClose: (tabId: string, confirmCloseImpact?: boolean) => Promise<ApiResult<void>>
   discardSmartPatchGenerationResults: (
     tabId: string,
     request: ProjectSmartPatchDiscardRequest,
   ) => Promise<ApiResult<ProjectSmartPatchDiscardResult>>
+  duplicateRegionalGuidance: (
+    tabId: string,
+    owner: ProjectRegionalGuidanceOwner,
+  ) => Promise<ApiResult<ProjectTab>>
+  editRegionalGuidanceMask: (
+    tabId: string,
+    regionId: string,
+    request: ProjectRegionalGuidanceMaskEditRequest,
+  ) => Promise<ApiResult<ProjectTab>>
   editSmartPatchMask: (
     tabId: string,
     layerId: string,
@@ -546,13 +645,31 @@ export interface ProjectApi {
     documentRevision: string,
     layerId: string,
   ) => Promise<ApiResult<ProjectSmartPatchGenerationTargetState>>
+  getSmartPatchPresetApplicationReview: (
+    tabId: string,
+    request: SmartPatchPresetApplicationReviewRequest,
+  ) => Promise<ApiResult<SmartPatchPresetApplicationReview>>
   getSmartPatchVariants: (
     tabId: string,
     layerId: string,
     documentId: string,
     documentRevision: string,
   ) => Promise<ApiResult<ProjectSmartPatchVariantsInspection>>
+  /** Frozen accepted Smart settings versus the current Project Canvas. */
+  getSmartResultComparisonData: (
+    tabId: string,
+    request: SmartResultComparisonRequest,
+  ) => Promise<ApiResult<SmartResultComparisonData>>
+  /** Frozen accepted Smart settings only; no current target or image worker is required. */
+  getSmartResultPresetData: (
+    tabId: string,
+    request: SmartResultPresetRequest,
+  ) => Promise<ApiResult<SmartResultPresetData>>
   importRasterImage: (tabId: string) => Promise<ApiResult<ProjectTab | null>>
+  importRegionalGuidanceReferenceImage: (
+    tabId: string,
+    owner: ProjectRegionalGuidanceOwner,
+  ) => Promise<ApiResult<ProjectTab | null>>
   list: () => Promise<ApiResult<ProjectSummary[]>>
   listGenerationResults: (tabId: string) => Promise<ApiResult<ProjectGenerationResultsSnapshot>>
   listSmartPatchGenerationResults: (
@@ -630,6 +747,21 @@ export interface ProjectApi {
     tabId: string,
     layerId: string,
     change: ProjectRasterLayerChange,
+  ) => Promise<ApiResult<ProjectTab>>
+  updateRegionalGuidance: (
+    tabId: string,
+    owner: ProjectRegionalGuidanceOwner,
+    change: ProjectRegionalGuidanceChange,
+  ) => Promise<ApiResult<ProjectTab>>
+  updateRegionalGuidancePrompt: (
+    tabId: string,
+    owner: ProjectRegionalGuidanceOwner,
+    change: ProjectRegionalGuidancePromptChange,
+  ) => Promise<ApiResult<ProjectTab>>
+  updateRegionalGuidanceReferenceImage: (
+    tabId: string,
+    owner: ProjectRegionalGuidanceOwner,
+    change: ProjectRegionalGuidanceReferenceImageChange,
   ) => Promise<ApiResult<ProjectTab>>
   updateSmartPatchLayer: (
     tabId: string,
@@ -1103,6 +1235,12 @@ export function isProjectSmartPatchLayerChange(
         Math.abs(dimensions[key]) <= IGS_SAFETY_CEILINGS.coordinateMagnitude,
     )
   )
+}
+
+export function isProjectRegionalGuidanceMaskEditRequest(
+  input: unknown,
+): input is ProjectRegionalGuidanceMaskEditRequest {
+  return isProjectSmartPatchMaskEditRequest(input) && input.edit.kind !== 'fit-bbox'
 }
 
 export function isProjectSmartPatchMaskEditRequest(

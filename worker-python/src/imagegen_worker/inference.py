@@ -640,6 +640,7 @@ def run_sdxl_pipeline(
     image: Image.Image | None = None,
     denoising_strength: float | None = None,
     on_denoising_step: Callable[[Any, int, Any, dict[str, Any]], dict[str, Any]] | None = None,
+    output_type: Literal["pil", "pt"] = "pil",
 ) -> Any:
     """Apply final conditioning padding and an optional scoped latent callback.
 
@@ -648,6 +649,8 @@ def run_sdxl_pipeline(
     lets this one pipeline call supply that supported UNet argument without
     replacing an attention processor or copying the denoising loop.
     """
+    if type(output_type) is not str or output_type not in ("pil", "pt"):
+        raise DerivativeError("GENERATION_WORKER_FAILED", "Unsupported SDXL output type.")
     positive = conditioning.positive
     negative = conditioning.negative
     if (
@@ -732,6 +735,7 @@ def run_sdxl_pipeline(
             guidance_scale=cfg_scale,
             guidance_rescale=cfg_rescale,
             generator=generator,
+            output_type=output_type,
             callback_on_step_end=(
                 report_step if on_progress is not None or on_denoising_step is not None else None
             ),

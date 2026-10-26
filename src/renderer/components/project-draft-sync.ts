@@ -124,6 +124,11 @@ export class ProjectDraftSync {
     this.options.onOverlay(tabId, null)
   }
 
+  /** Selection can wait for every captured owner without flushing or sealing its history. */
+  hasPending(tabId: string): boolean {
+    return [...this.states.values()].some((state) => state.tabId === tabId && !state.disposed)
+  }
+
   /** Serializes blur's history boundary after all preceding incremental edits. */
   sealPromptHistory(tab: ProjectTab, historyGroupId?: string, targetLayerId?: string): void {
     const ownerKey = draftOwnerKey(tab.id, targetLayerId)
@@ -146,6 +151,9 @@ export class ProjectDraftSync {
     }
     state.error = null
     state.pending.push({ historyGroupId, kind: 'seal' })
+    // A standalone blur seal also owns pending work. Publish its unchanged draft
+    // so renderer guards react before another editor can send an incoming edit.
+    this.options.onOverlay(tab.id, structuredClone(state.desired), state.targetLayerId)
     this.start(state)
   }
 

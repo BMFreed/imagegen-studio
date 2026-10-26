@@ -74,8 +74,10 @@ export function fitTargetBounds(
 export function fitCamera(bounds: WorldBounds, viewport: CanvasSize, padding = 64): CanvasCamera {
   const contentWidth = Math.max(1, bounds.right - bounds.left)
   const contentHeight = Math.max(1, bounds.bottom - bounds.top)
-  const usableWidth = Math.max(1, viewport.width - padding * 2)
-  const usableHeight = Math.max(1, viewport.height - padding * 2)
+  // A tall results tray can leave less space than the normal two-sided margin.
+  const margin = Math.min(padding, viewport.width / 4, viewport.height / 4)
+  const usableWidth = Math.max(1, viewport.width - margin * 2)
+  const usableHeight = Math.max(1, viewport.height - margin * 2)
   const scale = Math.min(
     1,
     Math.max(MIN_CANVAS_SCALE, Math.min(usableWidth / contentWidth, usableHeight / contentHeight)),

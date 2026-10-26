@@ -19,6 +19,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   accept: []
+  acceptRaster: [candidate: ProjectSmartPatchResultView]
   discard: []
   export: [candidate: ProjectSmartPatchResultView]
   focus: [candidateId: string]
@@ -70,10 +71,39 @@ const hiddenSelected = computed(
     ).length,
 )
 const selectionDisabled = computed(() => props.busy || props.target.disposition !== 'available')
-const menuOptions = [
-  { key: 'export', label: 'Save Candidate Image' },
-  { disabled: true, key: 'raster', label: 'Add as Raster Layer · unavailable' },
-]
+const focusedRasterUnavailableReason = computed(
+  () =>
+    props.candidates.find((candidate) => candidate.candidateId === props.focusedCandidateId)
+      ?.rasterConversionUnavailableReason ?? null,
+)
+function rasterUnavailableReason(candidate: ProjectSmartPatchResultView): string | null {
+  return (
+    candidate.rasterConversionUnavailableReason ??
+    (candidate.disposition === 'orphaned' && props.target.disposition === 'orphaned'
+      ? null
+      : 'Only a result whose original Smart Patch is missing can be added as a Raster Layer.')
+  )
+}
+function menuOptions(candidate: ProjectSmartPatchResultView) {
+  return [
+    { key: 'export', label: 'Save Candidate Image' },
+    {
+      disabled: props.busy || rasterUnavailableReason(candidate) !== null,
+      key: 'raster',
+      label: 'Add as Raster Layer',
+    },
+  ]
+}
+function selectAction(key: number | string, candidate: ProjectSmartPatchResultView) {
+  if (props.busy) {
+    return
+  }
+  if (key === 'export') {
+    emit('export', candidate)
+  } else if (key === 'raster' && rasterUnavailableReason(candidate) === null) {
+    emit('acceptRaster', candidate)
+  }
+}
 function step(delta: number) {
   const values = visibleCandidates.value
   const next = values[(Math.max(0, focusedIndex.value) + delta + values.length) % values.length]
@@ -175,11 +205,20 @@ onBeforeUnmount(() => {
           />
           <NDropdown
             :menuProps="() => ({ role: 'menu' })"
-            :nodeProps="() => ({ role: 'menuitem' })"
-            :options="menuOptions"
+            :nodeProps="
+              (option) => ({
+                'aria-disabled': option.disabled ? 'true' : 'false',
+                role: 'menuitem',
+                title:
+                  option.key === 'raster'
+                    ? (rasterUnavailableReason(candidate) ?? undefined)
+                    : undefined,
+              })
+            "
+            :options="menuOptions(candidate)"
             placement="top-start"
             trigger="click"
-            @select="(key) => key === 'export' && emit('export', candidate)"
+            @select="(key) => selectAction(key, candidate)"
           >
             <NButton
               :aria-label="`Smart Patch result ${index + 1} actions`"
@@ -279,7 +318,12 @@ onBeforeUnmount(() => {
     <p v-if="target.disposition !== 'available'" class="smart-result-notice" role="status">
       {{ target.disposition === 'orphaned' ? 'Orphaned result. ' : ''
       }}{{ target.unavailableReason ?? 'This target is unavailable for Add.' }}
-      You can save candidate images or discard these results. Add as Raster Layer is unavailable.
+      <template v-if="target.disposition === 'orphaned' && !focusedRasterUnavailableReason">
+        Use a result's actions menu to Add as Raster Layer.
+      </template>
+      <template v-else>
+        {{ focusedRasterUnavailableReason }} You can save candidate images or discard these results.
+      </template>
     </p>
     <p v-else class="smart-result-notice">
       {{ target.layerName ?? 'Smart Patch' }} · Frozen outputs. Changed Patch inputs are retained

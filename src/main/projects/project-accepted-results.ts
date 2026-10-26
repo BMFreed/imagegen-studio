@@ -1,6 +1,6 @@
 import type { ProjectAcceptedResultView } from '../../shared/api.js'
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
-import { projectRasterLayers } from '../../shared/projects/project-schema.js'
+import { projectRasterAssets } from '../../shared/projects/project-schema.js'
 
 import { projectLayerImageUrl } from './project-layer-resource.js'
 
@@ -9,7 +9,7 @@ export function projectAcceptedResults(
   projectId: string,
   document: IgsProjectDocumentV1,
 ): ProjectAcceptedResultView[] {
-  return projectRasterLayers(document)
+  return projectRasterAssets(document)
     .flatMap((layer): ProjectAcceptedResultView[] => {
       const provenance = layer.generationProvenance
       if (!provenance) {

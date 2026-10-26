@@ -5,6 +5,7 @@ import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceAnima,
 } from '../../shared/projects/inference-worker-capabilities.js'
+import { assertRegionalGuidanceGenerationAvailable } from '../../shared/projects/regional-guidance.js'
 import type {
   ProjectSmartPatchGenerateOptions,
   ProjectSmartPatchGenerateResult,
@@ -149,8 +150,13 @@ export class ProjectSmartPatchGenerationActionController {
         'The Project changed. Review this Smart Patch before generating.',
       )
     }
+    assertRegionalGuidanceGenerationAvailable(owner.document)
+    let regionalAdmissionComplete = false
     const assertCurrent = () => {
       this.assertOpen()
+      if (!regionalAdmissionComplete) {
+        assertRegionalGuidanceGenerationAvailable(owner.document)
+      }
       if (this.options.projects.getOpenDocumentForAcceptance(tabId) !== owner) {
         throw new ProjectGenerationActionError(
           'GENERATION_DOCUMENT_CHANGED',
@@ -263,6 +269,7 @@ export class ProjectSmartPatchGenerationActionController {
             tabId,
             material,
           )
+          regionalAdmissionComplete = true
           assertCurrent()
           return {
             batchId: published[0].batchId,

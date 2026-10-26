@@ -4,7 +4,7 @@ import {
   isAcceptedResultHistoryCursor,
 } from '../../shared/projects/accepted-result-history.js'
 import { isProjectDocumentId } from '../../shared/projects/project-generation-actions.js'
-import { IgsSchemaError, projectRasterLayers } from '../../shared/projects/project-schema.js'
+import { IgsSchemaError, projectRasterAssets } from '../../shared/projects/project-schema.js'
 
 import type { Kysely } from 'kysely'
 
@@ -407,7 +407,9 @@ export class ProjectIndexRepository {
       search_name: normalizeSearchName(project.title),
       workspace_id: workspaceId,
     } as const
-    const savedResults = projectRasterLayers(project).flatMap((layer) => {
+    // The raster UUID identifies each result, including every inactive nested variant.
+    // Parent Patch and candidate IDs are neither result identity nor catalog membership.
+    const savedResults = projectRasterAssets(project).flatMap((layer) => {
       const provenance = layer.generationProvenance
       if (!provenance) {
         return []

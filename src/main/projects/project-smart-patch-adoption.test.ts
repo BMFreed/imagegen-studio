@@ -1,5 +1,6 @@
 import type {
   IgsProjectDocumentV1,
+  IgsRegionalGuidanceV1,
   IgsSmartPatchLayerV1,
   IgsSmartPatchVariantV1,
 } from '../../shared/projects/project-schema.js'
@@ -421,6 +422,46 @@ test('handoff proof distinguishes absent, partial, changed and duplicate accepte
     code: 'SMART_PATCH_ADOPTION_CONFLICT',
   })
   assert.equal(projectSmartPatchVariantHandoffProof({ ...complete, layers: [] }, input), 'absent')
+})
+
+test('regional ownership of a proposed variant UUID fences adoption recovery as changed instead of absent', () => {
+  const document = createEmptyProjectDocumentV1({ title: 'Regional collision recovery' })
+  const patch = emptyPatch(document)
+  document.layers = [patch]
+  const variant = literalVariant(document, patch.id, 'illustrious').value
+  const input = request(document, patch, [variant])
+  for (const field of ['entity', 'mask'] as const) {
+    const region: IgsRegionalGuidanceV1 = {
+      enabled: false,
+      id: randomUUID(),
+      locked: false,
+      mask: { asset: null, id: randomUUID(), revision: 0 as const },
+      name: 'Regional identity owner',
+      overlayOpacity: 0.5,
+    }
+    if (field === 'entity') {
+      region.id = variant.id
+    } else {
+      region.mask.id = variant.id
+    }
+    const current = parseProjectDocumentV1({ ...document, regionalGuidance: [region] })
+    const before = structuredClone(current)
+    assert.equal(projectSmartPatchVariantHandoffProof(current, input), 'changed')
+    assert.throws(() => projectSmartPatchAdoptionDocument(current, input), {
+      code: 'SMART_PATCH_ADOPTION_CONFLICT',
+    })
+    assert.deepEqual(current, before)
+    const control = structuredClone(current)
+    if (field === 'entity') {
+      control.regionalGuidance![0].id = randomUUID()
+    } else {
+      control.regionalGuidance![0].mask.id = randomUUID()
+    }
+    assert.equal(projectSmartPatchVariantHandoffProof(control, input), 'absent')
+    const adopted = projectSmartPatchAdoptionDocument(control, input)
+    assert.equal(projectSmartPatchVariantHandoffProof(adopted.document, input), 'complete')
+    assert.deepEqual(adopted.document.regionalGuidance, control.regionalGuidance)
+  }
 })
 
 test('historical copied Patch variants preserve original handoff proof without blocking unrelated new adoption', () => {

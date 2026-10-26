@@ -8,7 +8,7 @@ import { reactive } from 'vue'
 
 import { validatePresetDefinition } from './preset-editor.js'
 import { ProjectDraftSync } from './project-draft-sync.js'
-import { createProjectPresetIntent } from './project-preset-draft.js'
+import { createAuthoringPresetPayload, createProjectPresetIntent } from './project-preset-draft.js'
 
 type Project = Pick<ProjectTab, 'generationDraft' | 'layers' | 'primaryBbox' | 'title'>
 type Resource = NonNullable<Project['generationDraft']['model']>
@@ -120,6 +120,24 @@ function catalog(ref: Resource): ModelCatalogItem[] {
     },
   ]
 }
+
+test('shared authoring projection leaves Size and workflow-dependent strength to each wrapper', () => {
+  const source = project()
+  const before = structuredClone(source)
+  const payload = createAuthoringPresetPayload({ draft: reactive(source.generationDraft) })
+  const ordinary = createProjectPresetIntent({ mode: 'img2img', project: source }).definition
+    .payload
+  const { denoisingStrength, size, ...reusable } = ordinary
+  assert.deepEqual(payload, reusable)
+  assert.deepEqual(size, { height: 832, width: 1536 })
+  assert.equal(denoisingStrength, 0.45)
+  assert.equal(Object.hasOwn(payload, 'size'), false)
+  assert.equal(Object.hasOwn(payload, 'denoisingStrength'), false)
+  payload.guidance!.steps = 99
+  payload.prompt!.embeddingRefs[0].resource.displayName = 'Detached shared copy'
+  assert.deepEqual(source, before)
+  assert.equal(ordinary.guidance!.steps, 30)
+})
 
 test('Save Current captures detached authoring settings and dimensions while excluding seed and execution context', () => {
   const source = project()

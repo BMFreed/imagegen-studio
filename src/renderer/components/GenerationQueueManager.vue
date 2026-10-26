@@ -45,7 +45,7 @@ import {
   queueSmartResultCandidate,
   queueSmartResultReference,
 } from './generation-queue-result.js'
-import { outpaintQueueRetryReason } from './generation-queue-retry.js'
+import { generationQueueRetryReason } from './generation-queue-retry.js'
 import GenerationProgressIndicator from './GenerationProgressIndicator.vue'
 
 const show = defineModel<boolean>('show', { required: true })
@@ -414,9 +414,9 @@ function retryReason(item: GenerationQueueEntry): string | null {
   if (state.phase !== 'idle' && state.phase !== 'processing') {
     return 'Wait for the current queue request to finish.'
   }
-  const outpaintReason = outpaintQueueRetryReason(item.operation, state)
-  if (outpaintReason) {
-    return outpaintReason
+  const operationReason = generationQueueRetryReason(item.operation, state)
+  if (operationReason) {
+    return operationReason
   }
   if (!counts.value) {
     return 'Wait for the queue to finish updating.'
@@ -735,7 +735,13 @@ onBeforeUnmount(() => {
                         {{ item.cancelRequested ? 'Canceling' : statusLabels[item.status] }}
                       </NTag>
                     </span>
-                    <span class="job-operation">Generate · Project Canvas</span>
+                    <span class="job-operation">
+                      {{
+                        item.operation.endsWith('smart-patch')
+                          ? 'Generate · Smart Patch'
+                          : 'Generate · Project Canvas'
+                      }}
+                    </span>
                     <span class="job-summary">
                       {{
                         item.details
@@ -822,7 +828,13 @@ onBeforeUnmount(() => {
             <div class="detail-heading">
               <div>
                 <h2>{{ selected.projectName }}</h2>
-                <p>Generate · Project Canvas</p>
+                <p>
+                  {{
+                    selected.operation.endsWith('smart-patch')
+                      ? 'Generate · Smart Patch'
+                      : 'Generate · Project Canvas'
+                  }}
+                </p>
               </div>
               <NTag :bordered="false" size="small" :type="statusType(selected.status)">
                 {{ selected.cancelRequested ? 'Canceling' : statusLabels[selected.status] }}

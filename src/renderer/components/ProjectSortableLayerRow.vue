@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ProjectApi, ProjectLayerView } from '../../shared/api.js'
+import type { ProjectAcceptedResultTarget } from '../../shared/projects/project-accepted-results.js'
 
 import { makeDraggable } from '@vue-dnd-kit/core'
 import { computed, ref } from 'vue'
@@ -11,9 +12,11 @@ import ProjectSmartPatchLayerRow from './ProjectSmartPatchLayerRow.vue'
 const props = defineProps<{
   disabled: boolean
   hasGenerationData: boolean
+  hasPresetData: boolean
   index: number
   layer: ProjectLayerView
   layers: ProjectLayerView[]
+  patchFreshnessLabel?: string
   selected: boolean
 }>()
 const comparisonLayerId = defineModel<string | null>('comparisonLayerId', { required: true })
@@ -21,6 +24,7 @@ const emit = defineEmits<{
   browseVariants: [layerId: string]
   move: [layerId: string, targetIndex: number]
   saveResultPreset: [layerId: string]
+  saveSmartResultPreset: [owner: ProjectAcceptedResultTarget]
   select: [layerId: string]
   update: [layerId: string, change: Parameters<ProjectApi['updateRasterLayer']>[2]]
   updatePatch: [layerId: string, change: Parameters<ProjectApi['updateSmartPatchLayer']>[2]]
@@ -48,21 +52,30 @@ const placementClass = computed(() => ({
   <div ref="row" class="sortable-row" :class="placementClass">
     <ProjectSmartPatchLayerRow
       v-if="isSmartPatchLayerView(layer)"
+      v-model:comparisonLayerId="comparisonLayerId"
       :disabled
+      :freshnessLabel="patchFreshnessLabel"
+      :hasGenerationData
       :index
       :layer
       :layerCount="layers.length"
       :selected
       @browseVariants="emit('browseVariants', $event)"
       @move="(layerId, targetIndex) => emit('move', layerId, targetIndex)"
+      @saveSmartResultPreset="emit('saveSmartResultPreset', $event)"
       @select="emit('select', $event)"
       @update="(layerId, change) => emit('updatePatch', layerId, change)"
-    />
+    >
+      <template v-slot:comparison="slotProps">
+        <slot name="comparison" v-bind="slotProps" />
+      </template>
+    </ProjectSmartPatchLayerRow>
     <ProjectRasterLayerRow
       v-else
       v-model:comparisonLayerId="comparisonLayerId"
       :disabled
       :hasGenerationData
+      :hasPresetData
       :index
       :layer
       :layerCount="layers.length"

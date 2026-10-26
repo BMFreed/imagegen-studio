@@ -12,6 +12,7 @@ import {
   IGS_GENERATION_PNG_MAX_BYTES,
   IGS_SAFETY_CEILINGS,
 } from '../../shared/projects/project-schema.js'
+import { assertRegionalGuidanceGenerationAvailable } from '../../shared/projects/regional-guidance.js'
 
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
@@ -100,6 +101,12 @@ export interface SmartPatchAcceptanceCancellationScope extends Omit<
   'localProjectKey'
 > {
   expectedUnfinishedJobIds: readonly string[]
+  /** Main verified these immutable attempts before cancellation; a missing row still needs drain. */
+  reviewedJobs?: readonly {
+    frozenPayloadSha256: string
+    jobId: string
+    stagingSessionId: string
+  }[]
   tabId: string
 }
 
@@ -463,7 +470,7 @@ export class GenerationOrchestrator {
     tabId: string,
     items: readonly QualifiedGenerationBatchItem[],
   ): Promise<QueuedGenerationItem[]> {
-    this.assertGenerationOpen(tabId)
+    this.assertNewGenerationAllowed(tabId)
     const frozen = snapshotQualifiedBatch(items)
     const operation = this.enqueueBarrier.then(
       async () => await this.enqueueBatchUnlocked(tabId, frozen),
@@ -480,7 +487,7 @@ export class GenerationOrchestrator {
     compositionWorker: Pick<ProjectWorkerClient, 'composeTarget'>,
     inferenceWorker: GenerationWorkerTransport,
   ): Promise<QueuedGenerationItem> {
-    this.assertGenerationOpen(tabId)
+    this.assertNewGenerationAllowed(tabId)
     // Keep dispatch behind the post-publication Project check, even if a caller schedules it
     // while durable queue insertion is still waiting on I/O.
     const operation = this.enqueueBarrier.then(
@@ -500,7 +507,7 @@ export class GenerationOrchestrator {
     inferenceWorker: Pick<GenerationWorkerTransport, 'ready'>,
     beforePublication?: () => Promise<void>,
   ): Promise<PreparedBatchAdmissionResult> {
-    this.assertGenerationOpen(tabId)
+    this.assertNewGenerationAllowed(tabId)
     const preparedBatch: PreparedAnimaGenerationBatch = {
       context: structuredClone(prepared.context),
       items: structuredClone(prepared.items),
@@ -512,7 +519,7 @@ export class GenerationOrchestrator {
     const operation = this.enqueueBarrier.then(async () => {
       this.queue.assertReadyForDispatch()
       this.staging.assertReadyForPublication()
-      this.assertGenerationOpen(tabId)
+      this.assertNewGenerationAllowed(tabId)
       const project = await this.indexedProject(tabId)
       const assertDocument = () => {
         this.assertGenerationOpen(tabId)
@@ -569,6 +576,7 @@ export class GenerationOrchestrator {
               // Tab/close identity is synchronous; index identity is checked after publication,
               // with exact new-batch cancellation on a late refusal.
               assertDocument()
+              this.assertNewGenerationAllowed(tabId)
             },
             preflight: async (entries) => {
               await assertIdentity()
@@ -628,7 +636,7 @@ export class GenerationOrchestrator {
     inferenceWorker: Pick<GenerationWorkerTransport, 'ready'>,
     beforePublication?: () => Promise<void>,
   ): Promise<PreparedBatchAdmissionResult> {
-    this.assertGenerationOpen(tabId)
+    this.assertNewGenerationAllowed(tabId)
     if (
       !Buffer.isBuffer(prepared?.targetPngBytes) ||
       prepared.targetPngBytes.length < 1 ||
@@ -671,7 +679,7 @@ export class GenerationOrchestrator {
     const operation = this.enqueueBarrier.then(async () => {
       this.queue.assertReadyForDispatch()
       this.staging.assertReadyForPublication()
-      this.assertGenerationOpen(tabId)
+      this.assertNewGenerationAllowed(tabId)
       const project = await this.indexedProject(tabId)
       this.requireBatchDocument(tabId, project.documentId, [
         { prepared: { context, targetPngBytes } },
@@ -751,7 +759,7 @@ export class GenerationOrchestrator {
     beforePublication?: () => Promise<void>,
     assertAdmissionCurrent?: () => void,
   ): Promise<PreparedBatchAdmissionResult> {
-    this.assertGenerationOpen(tabId)
+    this.assertNewGenerationAllowed(tabId)
     if (
       !Buffer.isBuffer(prepared?.targetPngBytes) ||
       prepared.targetPngBytes.length < 1 ||
@@ -865,7 +873,7 @@ export class GenerationOrchestrator {
     const operation = this.enqueueBarrier.then(async () => {
       this.queue.assertReadyForDispatch()
       this.staging.assertReadyForPublication()
-      this.assertGenerationOpen(tabId)
+      this.assertNewGenerationAllowed(tabId)
       const project = await this.indexedProject(tabId)
       const assertDocument = () => {
         this.assertGenerationOpen(tabId)
@@ -920,7 +928,10 @@ export class GenerationOrchestrator {
       assertDocument()
       const stagingSessionId = randomUUID()
       const queued = await this.queue.enqueuePreparedOutpaintBatch({
-        assertCurrent: assertDocument,
+        assertCurrent: () => {
+          assertDocument()
+          this.assertNewGenerationAllowed(tabId)
+        },
         beforeCommit: assertIdentity,
         infillResolver,
         items: concrete,
@@ -972,7 +983,7 @@ export class GenerationOrchestrator {
     tabId: string,
     material: SmartPatchInputMaterial,
   ): Promise<QueuedGenerationItem[]> {
-    this.assertGenerationOpen(tabId)
+    this.assertNewGenerationAllowed(tabId)
     const assertAdmission = this.projects.assertSmartPatchGenerationAdmission?.bind(this.projects)
     if (!assertAdmission) {
       throw new GenerationOrchestratorError(
@@ -988,8 +999,12 @@ export class GenerationOrchestrator {
     }
     const models = captureSmartPatchModelResolver(this.models as SmartPatchExecutionModelResolver)
     const context = snapshot.manifest.context
+    let regionalAdmissionComplete = false
     const assertCurrent = (): void => {
       this.assertGenerationOpen(tabId)
+      if (!regionalAdmissionComplete) {
+        this.assertNewGenerationAllowed(tabId)
+      }
       if (
         context.projectKey !== tabId ||
         this.projects.getOpenDocumentId(tabId) !== context.documentId
@@ -1028,6 +1043,7 @@ export class GenerationOrchestrator {
         projectPath: project.canonicalPath,
         stagingSessionId: randomUUID(),
       })
+      regionalAdmissionComplete = true
       try {
         await assertIdentity()
       } catch (error) {
@@ -1170,6 +1186,21 @@ export class GenerationOrchestrator {
     this.assertOpen(tabId)
   }
 
+  /** New admissions only. Existing frozen work remains valid after later regional edits. */
+  private assertNewGenerationAllowed(tabId: string): void {
+    this.assertGenerationOpen(tabId)
+    const owner = this.projects.getOpenDocumentForAcceptance?.(tabId)
+    const document = owner?.document ?? this.projects.getOpenTabs().find((tab) => tab.id === tabId)
+    if (!document) {
+      throw new GenerationOrchestratorError(
+        'PROJECT_NOT_OPEN',
+        'Open the Project before preparing a generation.',
+      )
+    }
+    // Both sources are Main-owned current projections; this check performs no SQL/queue I/O.
+    assertRegionalGuidanceGenerationAvailable(document)
+  }
+
   private assertOpen(tabId: string): void {
     if (!this.projects.getOpenTabs().some((tab) => tab.id === tabId)) {
       throw new GenerationOrchestratorError(
@@ -1220,7 +1251,7 @@ export class GenerationOrchestrator {
   ): Promise<QueuedGenerationItem[]> {
     this.queue.assertReadyForDispatch()
     this.staging.assertReadyForPublication()
-    this.assertGenerationOpen(tabId)
+    this.assertNewGenerationAllowed(tabId)
     const project = await this.indexedProject(tabId)
     this.requireBatchDocument(tabId, project.documentId, items)
     const model = items[0].prepared.context.model
@@ -1254,6 +1285,10 @@ export class GenerationOrchestrator {
     }
     const stagingSessionId = randomUUID()
     const queued = await this.queue.enqueueIllustriousGenerationBatch({
+      assertCurrent: () => {
+        this.requireBatchDocument(tabId, project.documentId, items)
+        this.assertNewGenerationAllowed(tabId)
+      },
       items,
       preflight: async (entries) => {
         this.assertGenerationOpen(tabId)
@@ -1316,7 +1351,7 @@ export class GenerationOrchestrator {
     // durable input before image composition or a model-file read can begin.
     this.queue.assertReadyForDispatch()
     this.staging.assertReadyForPublication()
-    this.assertGenerationOpen(tabId)
+    this.assertNewGenerationAllowed(tabId)
     const project = await this.indexedProject(tabId)
     const lastActualSeed = await this.staging.readLastActualSeed(tabId, project.documentId)
     const prepared = await this.projects.prepareNormalGenerationContext(
@@ -1354,6 +1389,15 @@ export class GenerationOrchestrator {
         }
         this.assertGenerationOpen(tabId)
         const queued = await this.queue.enqueueIllustriousGeneration({
+          assertCurrent: () => {
+            this.assertNewGenerationAllowed(tabId)
+            if (this.projects.getOpenDocumentId(tabId) !== prepared.context.documentId) {
+              throw new GenerationOrchestratorError(
+                'PROJECT_DOCUMENT_CHANGED',
+                'The prepared Project changed before queue publication.',
+              )
+            }
+          },
           prepared,
           projectPath: project.canonicalPath,
           request,
@@ -1445,46 +1489,80 @@ export class GenerationOrchestrator {
   }
 
   private async readSmartPatchAcceptanceJobs(scope: SmartPatchAcceptanceCancellationScope) {
-    this.assertSmartPatchAcceptanceDocument(scope)
-    const current = await this.queue.listSmartPatchAcceptanceSessionJobs({
-      ...scope,
-      localProjectKey: scope.tabId,
-    })
-    const currentIds = new Set(current.map(({ id }) => id))
-    const expected = new Set(scope.expectedUnfinishedJobIds)
-    const confirmed = await this.queue.listUnfinishedByIds(scope.expectedUnfinishedJobIds)
-    if (
-      current.some(({ id }) => !expected.has(id)) ||
-      confirmed.some(({ id }) => !currentIds.has(id))
-    ) {
-      throw cancellationUncertain('The exact Smart Patch sibling job set changed after review.')
-    }
-    for (const id of scope.expectedUnfinishedJobIds) {
-      try {
-        const item = await this.queue.getManagerEntry(id)
-        if (
-          !['anima-smart-patch', 'illustrious-smart-patch'].includes(item.operation) ||
-          item.projectKey !== scope.tabId ||
-          item.documentId !== scope.documentId ||
-          !scope.stagingSessionIds.includes(item.stagingSessionId)
-        ) {
-          throw cancellationUncertain('A reviewed sibling belongs to a different generation owner.')
-        }
-      } catch (error) {
-        if (
-          !(error instanceof Error) ||
-          !('code' in error) ||
-          error.code !== 'QUEUE_ITEM_NOT_FOUND' ||
-          !scope.verifiedCandidates.some((candidate) => candidate.candidateId === id)
-        ) {
-          throw error
-        }
-        // A naturally completed row may have been pruned. The session helper has already proved
-        // its independent durable receipt against this exact verified Smart candidate witness.
+    const drainedMissingJobs = new Set<string>()
+    const reviewedJobs = new Map((scope.reviewedJobs ?? []).map((job) => [job.jobId, job]))
+    for (;;) {
+      this.assertSmartPatchAcceptanceDocument(scope)
+      // This checks every retained row and receipt, including completed-but-publishing work.
+      // A frozen job witness never replaces the independent completed-candidate receipt proof.
+      const current = await this.queue.listSmartPatchAcceptanceSessionJobs({
+        ...scope,
+        localProjectKey: scope.tabId,
+      })
+      const currentIds = new Set(current.map(({ id }) => id))
+      const expected = new Set(scope.expectedUnfinishedJobIds)
+      const confirmed = await this.queue.listUnfinishedByIds(scope.expectedUnfinishedJobIds)
+      if (
+        current.some(({ id }) => !expected.has(id)) ||
+        confirmed.some(({ id }) => !currentIds.has(id))
+      ) {
+        throw cancellationUncertain('The exact Smart Patch sibling job set changed after review.')
       }
+      const missingJobs: NonNullable<
+        SmartPatchAcceptanceCancellationScope['reviewedJobs']
+      >[number][] = []
+      for (const id of scope.expectedUnfinishedJobIds) {
+        const reviewedJob = reviewedJobs.get(id)
+        try {
+          const item = await this.queue.getManagerEntry(id)
+          if (
+            !['anima-smart-patch', 'illustrious-smart-patch'].includes(item.operation) ||
+            item.projectKey !== scope.tabId ||
+            item.documentId !== scope.documentId ||
+            !scope.stagingSessionIds.includes(item.stagingSessionId) ||
+            (reviewedJob && item.stagingSessionId !== reviewedJob.stagingSessionId)
+          ) {
+            throw cancellationUncertain(
+              'A reviewed sibling belongs to a different generation owner.',
+            )
+          }
+        } catch (error) {
+          if (
+            !(error instanceof Error) ||
+            !('code' in error) ||
+            error.code !== 'QUEUE_ITEM_NOT_FOUND'
+          ) {
+            throw error
+          }
+          if (scope.verifiedCandidates.some((candidate) => candidate.candidateId === id)) {
+            // The session helper already verified this naturally completed/pruned receipt.
+            continue
+          }
+          if (!reviewedJob) {
+            throw error
+          }
+          if (!drainedMissingJobs.has(id)) {
+            missingJobs.push(reviewedJob)
+          }
+        }
+      }
+      this.assertSmartPatchAcceptanceDocument(scope)
+      if (missingJobs.length === 0) {
+        return current
+      }
+      // Queue Manager can remove a canceled row before our next metadata read. Qualify only
+      // witnessed sessions and confirm physical claim/publication exit before accepting absence.
+      // A missing row alone is never cancellation acknowledgement or cleanup permission.
+      for (const session of new Set(missingJobs.map((job) => job.stagingSessionId))) {
+        await this.quiesceSmartPatchForProject(scope.tabId, [session])
+        this.assertSmartPatchAcceptanceDocument(scope)
+      }
+      for (const job of missingJobs) {
+        drainedMissingJobs.add(job.jobId)
+      }
+      // Recheck all rows/receipts after the physical boundary. The loop can admit each reviewed
+      // missing ID only once; newly missing IDs require their own scoped drain.
     }
-    this.assertSmartPatchAcceptanceDocument(scope)
-    return current
   }
 
   private requireBatchDocument(
@@ -1574,7 +1652,11 @@ function sameAcceptanceScope(
 function snapshotSmartPatchAcceptanceCancellationScope(
   input: SmartPatchAcceptanceCancellationScope,
 ): SmartPatchAcceptanceCancellationScope {
-  if (!input || !Array.isArray(input.verifiedCandidates)) {
+  if (
+    !input ||
+    !Array.isArray(input.verifiedCandidates) ||
+    (input.reviewedJobs !== undefined && !Array.isArray(input.reviewedJobs))
+  ) {
     throw cancellationUncertain('The Smart Patch cancellation witnesses are invalid.')
   }
   const scope = {
@@ -1589,6 +1671,15 @@ function snapshotSmartPatchAcceptanceCancellationScope(
       frozenPayloadSha256: entry?.frozenPayloadSha256,
       stagingSessionId: entry?.stagingSessionId,
     })),
+    ...(input.reviewedJobs !== undefined
+      ? {
+          reviewedJobs: input.reviewedJobs.map((entry) => ({
+            frozenPayloadSha256: entry?.frozenPayloadSha256,
+            jobId: entry?.jobId,
+            stagingSessionId: entry?.stagingSessionId,
+          })),
+        }
+      : {}),
   }
   if (
     typeof scope.projectPath !== 'string' ||
@@ -1600,6 +1691,24 @@ function snapshotSmartPatchAcceptanceCancellationScope(
     scope.verifiedCandidates.length > IGS_SAFETY_CEILINGS.archiveEntries ||
     new Set(scope.verifiedCandidates.map(({ candidateId }) => candidateId)).size !==
       scope.verifiedCandidates.length ||
+    (scope.reviewedJobs !== undefined &&
+      (scope.reviewedJobs.length > IGS_SAFETY_CEILINGS.archiveEntries ||
+        new Set(scope.reviewedJobs.map((entry) => entry.jobId)).size !==
+          scope.reviewedJobs.length ||
+        scope.reviewedJobs.some(
+          (entry) =>
+            typeof entry.jobId !== 'string' ||
+            !UUID_PATTERN.test(entry.jobId) ||
+            typeof entry.frozenPayloadSha256 !== 'string' ||
+            !/^[a-f0-9]{64}$/.test(entry.frozenPayloadSha256) ||
+            !scope.stagingSessionIds.includes(entry.stagingSessionId) ||
+            scope.verifiedCandidates.some(
+              (candidate) =>
+                candidate.candidateId === entry.jobId &&
+                (candidate.stagingSessionId !== entry.stagingSessionId ||
+                  candidate.frozenPayloadSha256 !== entry.frozenPayloadSha256),
+            ),
+        ))) ||
     scope.verifiedCandidates.some(
       (entry) =>
         typeof entry.candidateId !== 'string' ||
@@ -1612,6 +1721,7 @@ function snapshotSmartPatchAcceptanceCancellationScope(
     throw cancellationUncertain('The Smart Patch cancellation scope is invalid.')
   }
   scope.verifiedCandidates.sort((left, right) => left.candidateId.localeCompare(right.candidateId))
+  scope.reviewedJobs?.sort((left, right) => left.jobId.localeCompare(right.jobId))
   return scope
 }
 
@@ -1628,6 +1738,7 @@ function sameSmartPatchAcceptanceScope(
     left.layerId === right.layerId &&
     sameIds(left.stagingSessionIds, right.stagingSessionIds) &&
     sameIds(left.expectedUnfinishedJobIds, right.expectedUnfinishedJobIds) &&
+    JSON.stringify(left.reviewedJobs ?? []) === JSON.stringify(right.reviewedJobs ?? []) &&
     (includeReview
       ? JSON.stringify(left.verifiedCandidates) === JSON.stringify(right.verifiedCandidates)
       : left.verifiedCandidates.every((entry) => {

@@ -9,6 +9,7 @@ import type {
   ProjectRasterLayerChange,
   ProjectRasterLayerView,
   ProjectRebuildResult,
+  ProjectRegionalGuidanceMaskEditRequest,
   ProjectSaveResult,
   ProjectSmartPatchLayerChange,
   ProjectSmartPatchMaskEditRequest,
@@ -21,6 +22,7 @@ import {
   isProjectEmbeddingIdentity,
   isProjectGenerationDraftChange,
   isProjectRasterLayerChange,
+  isProjectRegionalGuidanceMaskEditRequest,
   isProjectSmartPatchLayerChange,
   isProjectSmartPatchMaskEditRequest,
 } from '../../shared/api.js'
@@ -31,6 +33,13 @@ import {
   type PresetApplicationRequest,
   type PresetApplicationTarget,
 } from '../../shared/presets/preset-application.js'
+import {
+  parseSmartPatchPresetApplicationRequest,
+  parseSmartPatchPresetApplicationReviewRequest,
+  type SmartPatchPresetApplicationRequest,
+  type SmartPatchPresetApplicationReview,
+  type SmartPatchPresetApplicationReviewRequest,
+} from '../../shared/presets/smart-patch-preset-application.js'
 import {
   type AcceptedResultHistoryCursor,
   type AcceptedResultHistoryPage,
@@ -62,29 +71,63 @@ import type { ProjectMaskBitmap } from '../../shared/projects/project-mask.js'
 import { ProjectMaskError } from '../../shared/projects/project-mask.js'
 import {
   createEmptyProjectDocumentV1,
+  IGS_MIMETYPE,
   IGS_SAFETY_CEILINGS,
+  type IgsProjectAssetRefV1,
   type IgsProjectDocumentV1,
   type IgsRasterLayerV1,
   type IgsRectV1,
+  type IgsRegionalGuidanceV1,
   IgsSchemaError,
   type IgsSmartPatchLayerV1,
+  isSmartPatchRasterLayer,
+  parseProjectDocumentV1,
   projectActiveRasterContributions,
+  projectAssetReferences,
+  projectOwnedIds,
 } from '../../shared/projects/project-schema.js'
 import {
   type GenerationPrompt,
   type PromptEmbeddingSelection,
   reconcilePromptEmbeddings,
 } from '../../shared/projects/prompt-embeddings.js'
+import {
+  assertRegionalGuidanceGenerationAvailable,
+  isProjectRegionalGuidanceChange,
+  isProjectRegionalGuidanceDocumentOwner,
+  isProjectRegionalGuidanceOwner,
+  isProjectRegionalGuidancePromptChangeForOwner,
+  isProjectRegionalGuidanceReferenceImageChange,
+  type ProjectRegionalGuidanceChange,
+  type ProjectRegionalGuidanceDocumentOwner,
+  type ProjectRegionalGuidanceOwner,
+  type ProjectRegionalGuidancePromptChange,
+  type ProjectRegionalGuidanceReferenceImageChange,
+} from '../../shared/projects/regional-guidance.js'
 import { sameResourceModel } from '../../shared/projects/resource-identity.js'
 import { resolveSmartPatchCoherenceSettings } from '../../shared/projects/smart-patch-coherence-settings.js'
 import {
   isProjectSmartPatchVariantChange,
   smartPatchResourceDiagnostics,
 } from '../../shared/projects/smart-patch-variants.js'
+import {
+  isSmartResultComparisonRequest,
+  parseSmartResultComparisonData,
+  type SmartResultComparisonData,
+  type SmartResultComparisonRequest,
+  smartResultComparisonResultId,
+} from '../../shared/projects/smart-result-comparison.js'
+import {
+  isSmartResultPresetRequest,
+  parseSmartResultPresetData,
+  type SmartResultPresetData,
+  type SmartResultPresetRequest,
+  smartResultPresetResultId,
+} from '../../shared/projects/smart-result-preset.js'
 
 import { createHash, randomUUID } from 'node:crypto'
 import { type BigIntStats, constants } from 'node:fs'
-import { link, lstat, mkdir, open, realpath, unlink } from 'node:fs/promises'
+import { link, lstat, mkdir, mkdtemp, open, realpath, rm, unlink } from 'node:fs/promises'
 import path from 'node:path'
 
 import type { PreparedAnimaGenerationBatch } from './anima-generation-batch.js'
@@ -98,6 +141,7 @@ import type {
   SmartPatchAcceptancePlan,
   SmartPatchAcceptancePlanInput,
 } from './project-smart-patch-acceptance-plan.js'
+import type { TargetInspectionWorkerProvider } from './project-target-inspection-owner.js'
 import type { ProjectTemporaryRecoveryInspection } from './project-temporary-recovery.js'
 import type { ProjectWorkerClient } from './worker-client.js'
 
@@ -115,7 +159,12 @@ import {
   validateAnimaGenerationDraft,
 } from './anima-generation-preparation.js'
 import { withAnimaGenerationBatchRequests } from './anima-generation-request.js'
-import { type IgsAssetSource, readIgsPackage } from './igs-package.js'
+import {
+  type IgsAssetSource,
+  readIgsPackage,
+  verifyRegionalReferenceAssetSource,
+} from './igs-package.js'
+import { regionalReferenceMembers } from './igs-package.js'
 import { projectAcceptedResults } from './project-accepted-results.js'
 import {
   ProjectAutosaveCoordinator,
@@ -155,9 +204,28 @@ import {
   encodeProjectMaskPng,
   readProjectMaskSource,
 } from './project-mask.js'
+import { withProjectPathLock } from './project-path-lock.js'
 import { projectThumbnailImageUrl } from './project-preview-resource.js'
 import { buildProjectPreview } from './project-preview.js'
 import { compositionRasterLayers, withFrozenRasterComposition } from './project-raster-snapshot.js'
+import {
+  type CapturedRegionalGuidanceInput,
+  withFrozenRegionalGuidanceInput,
+} from './project-regional-guidance-input.js'
+import {
+  projectRegionalMaskImageUrl,
+  type ProjectRegionalMaskResourceRequest,
+  resolveProjectRegionalMaskAsset,
+} from './project-regional-mask-resource.js'
+import {
+  copyRegionalReferenceSource,
+  prepareRegionalReferenceImport,
+} from './project-regional-reference-import.js'
+import {
+  type ProjectRegionalReferenceThumbnailRequest,
+  projectRegionalReferenceThumbnailUrl,
+  resolveProjectRegionalReferenceThumbnail,
+} from './project-regional-reference-resource.js'
 import {
   type ProjectRebuildPreviewInput,
   ProjectSession,
@@ -178,8 +246,9 @@ import {
   assessStoredSmartPatchVariants,
   type SmartPatchCurrentSourceTarget,
 } from './project-smart-patch-variant-state.js'
+import { projectSmartResultPresetPayload } from './project-smart-result-preset.js'
 import { unavailableTemporaryRecovery } from './project-temporary-recovery.js'
-import { importRasterLayer } from './raster-import.js'
+import { canonicalDirectory, importRasterLayer } from './raster-import.js'
 
 export type {
   ProjectImportFinishResult,
@@ -234,6 +303,7 @@ export class ProjectServiceError extends Error {
     readonly code:
       | 'PROJECT_ALREADY_OPEN'
       | 'PROJECT_COMPARISON_CHANGED'
+      | 'PROJECT_COMPARISON_UNSUPPORTED'
       | 'PROJECT_CREATED_NOT_INDEXED'
       | 'PROJECT_DIRTY'
       | 'PROJECT_EMBEDDING_NOT_SELECTED'
@@ -281,6 +351,11 @@ export class ProjectService {
   private readonly pendingImports = new Map<string, PendingProjectImport>()
   private readonly rebuilding = new Map<string, Promise<unknown>>()
   private readonly saving = new Map<string, Promise<ProjectSaveResult>>()
+  // Weak ownership cannot retain a closed coordinator or its historical image sources.
+  private readonly smartPatchPresetReviews = new WeakMap<
+    ProjectAutosaveCoordinator,
+    Omit<SmartPatchPresetApplicationReview, 'generationDraft'> & { documentEpoch: number }
+  >()
   private readonly targetModes = new WeakMap<
     ProjectAutosaveCoordinator,
     { key: string; mode: NonNullable<ProjectGenerationTargetState['mode']> }
@@ -318,23 +393,64 @@ export class ProjectService {
     return toTab(tabId, coordinator)
   }
 
+  async addRegionalGuidance(
+    tabId: string,
+    inputOwner: ProjectRegionalGuidanceDocumentOwner,
+  ): Promise<ProjectTab> {
+    if (!isProjectRegionalGuidanceDocumentOwner(inputOwner)) {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'The Regional Guidance owner is invalid.',
+      )
+    }
+    const owner = structuredClone(inputOwner)
+    const captured = this.captureRegionalGuidanceDocument(tabId, owner)
+    const ownedIds = new Set(projectOwnedIds(captured.document))
+    const region: IgsRegionalGuidanceV1 = {
+      enabled: true,
+      id: allocateProjectOwnedId(ownedIds),
+      locked: false,
+      mask: { asset: null, id: allocateProjectOwnedId(ownedIds), revision: 0 },
+      name: 'Regional Guidance',
+      overlayOpacity: 0.5,
+    }
+    const next = {
+      ...captured.document,
+      regionalGuidance: [...(captured.document.regionalGuidance ?? []), region],
+    }
+    assertRegionalDocumentSize(next)
+    await captured.coordinator.applyDocument(
+      next,
+      {},
+      {
+        beforeCommit: captured.assertCurrent,
+        expectedDocumentEpoch: captured.documentEpoch,
+        expectedDocumentRevision: owner.documentRevision,
+      },
+    )
+    return toTab(tabId, captured.coordinator)
+  }
+
   async addSmartPatchLayer(tabId: string): Promise<ProjectTab> {
     const coordinator = this.requireTab(tabId)
     const document = coordinator.document
+    const ownedIds = new Set(projectOwnedIds(document))
+    const id = allocateProjectOwnedId(ownedIds)
+    const maskId = allocateProjectOwnedId(ownedIds)
     const patch: IgsSmartPatchLayerV1 = {
       activeRasterSubLayerId: null,
       blendMode: 'normal',
       boundingBox: structuredClone(document.primaryBbox),
       coherenceSettings: resolveSmartPatchCoherenceSettings(undefined),
       generationDraft: structuredClone(document.generationDraft),
-      id: randomUUID(),
+      id,
       internalResolution: {
         height: document.primaryBbox.height,
         width: document.primaryBbox.width,
       },
       kind: 'smart-patch',
       locked: false,
-      mask: { asset: null, id: randomUUID(), revision: 0 },
+      mask: { asset: null, id: maskId, revision: 0 },
       maskSettings: resolveProjectMaskSettings(undefined),
       name: 'New Smart Patch',
       opacity: 1,
@@ -479,6 +595,104 @@ export class ProjectService {
     return toTab(tabId, coordinator)
   }
 
+  /** The caller owns the shared Project gate; a review remains retryable until publication. */
+  async applySmartPatchPreset(
+    tabId: string,
+    input: SmartPatchPresetApplicationRequest,
+    verify: (
+      request: SmartPatchPresetApplicationRequest,
+      current: PresetApplicationTarget,
+    ) => Promise<void>,
+  ): Promise<ProjectTab> {
+    let request: SmartPatchPresetApplicationRequest
+    try {
+      request = parseSmartPatchPresetApplicationRequest(input)
+    } catch {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'Choose valid preset sections for this Smart Patch. Size cannot be applied.',
+      )
+    }
+    assertProjectId(tabId)
+    const coordinator = this.openTabs.get(tabId)
+    const review = coordinator && this.smartPatchPresetReviews.get(coordinator)
+    if (!coordinator || !review) {
+      throw new ProjectAutosaveError(
+        'EDIT_CONFLICT',
+        'The Smart Patch review expired. Reopen Apply.',
+      )
+    }
+    const assertCurrent = () => {
+      const document = coordinator.document
+      if (
+        this.openTabs.get(tabId) !== coordinator ||
+        this.smartPatchPresetReviews.get(coordinator) !== review ||
+        review.reviewToken !== request.reviewToken ||
+        review.documentId !== request.documentId ||
+        review.documentRevision !== request.documentRevision ||
+        review.layerId !== request.layerId ||
+        document.documentId !== request.documentId ||
+        document.documentRevision !== request.documentRevision ||
+        coordinator.documentEpoch !== review.documentEpoch
+      ) {
+        throw new ProjectAutosaveError(
+          'EDIT_CONFLICT',
+          'The Smart Patch changed since review. Reopen Apply.',
+        )
+      }
+      return generationDraftScope(document, request.layerId)
+    }
+    const scope = assertCurrent()
+    const document = coordinator.document
+    const current: PresetApplicationTarget = structuredClone({
+      generationDraft: scope.draft,
+      primaryBbox: document.primaryBbox,
+    })
+    await verify(structuredClone(request), structuredClone(current))
+    assertCurrent()
+    const next = applyPresetSections(current, request.payload, request.selectedSections)
+    if (JSON.stringify(next.generationDraft) !== JSON.stringify(current.generationDraft)) {
+      try {
+        await coordinator.applyDocument(
+          scope.replace(next.generationDraft),
+          {},
+          {
+            beforeCommit: () => {
+              assertCurrent()
+            },
+            expectedDocumentEpoch: review.documentEpoch,
+            expectedDocumentRevision: review.documentRevision,
+          },
+        )
+      } catch (error) {
+        if (error instanceof ProjectAutosaveError && error.code === 'COORDINATOR_CLOSED') {
+          throw new ProjectAutosaveError(
+            'EDIT_CONFLICT',
+            'The Smart Patch review expired when its Project closed. Reopen Apply.',
+          )
+        }
+        throw error
+      }
+    }
+    // A review issued after this commit already belongs to the newer document and survives.
+    if (this.smartPatchPresetReviews.get(coordinator) === review) {
+      this.smartPatchPresetReviews.delete(coordinator)
+    }
+    return toTab(tabId, coordinator)
+  }
+
+  /** New jobs only: frozen Retry and read-only source/settings consumers remain independent. */
+  assertNewGenerationAdmission(tabId: string, documentId: string): void {
+    const document = this.requireTab(tabId).document
+    if (document.documentId !== documentId) {
+      throw new ProjectServiceError(
+        'PROJECT_IDENTITY_MISMATCH',
+        'The captured generation belongs to another Project document.',
+      )
+    }
+    assertRegionalGuidanceGenerationAvailable(document)
+  }
+
   /** Synchronous permission check at the private Smart Patch SQL admission boundary. */
   assertSmartPatchGenerationAdmission(tabId: string, documentId: string, layerId: string): void {
     const document = this.requireTab(tabId).document
@@ -525,6 +739,7 @@ export class ProjectService {
       )
     }
     await coordinator.close()
+    this.smartPatchPresetReviews.delete(coordinator)
     this.openTabs.delete(tabId)
   }
 
@@ -572,6 +787,44 @@ export class ProjectService {
     }
   }
 
+  async deleteRegionalGuidance(
+    tabId: string,
+    inputOwner: ProjectRegionalGuidanceOwner,
+  ): Promise<ProjectTab> {
+    if (!isProjectRegionalGuidanceOwner(inputOwner)) {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'The Regional Guidance owner is invalid.',
+      )
+    }
+    const owner = structuredClone(inputOwner)
+    const captured = this.captureRegionalGuidanceDocument(tabId, owner)
+    const region = requireRegionalGuidance(captured.document, owner.regionId)
+    if (region.locked) {
+      throw new ProjectServiceError(
+        'PROJECT_LAYER_LOCKED',
+        'Unlock this Regional Guidance before deleting it.',
+      )
+    }
+    const regions = captured.document.regionalGuidance!.filter(({ id }) => id !== region.id)
+    const next = { ...captured.document }
+    if (regions.length > 0) {
+      next.regionalGuidance = regions
+    } else {
+      delete next.regionalGuidance
+    }
+    await captured.coordinator.applyDocument(
+      next,
+      {},
+      {
+        beforeCommit: captured.assertCurrent,
+        expectedDocumentEpoch: captured.documentEpoch,
+        expectedDocumentRevision: owner.documentRevision,
+      },
+    )
+    return toTab(tabId, captured.coordinator)
+  }
+
   async discardAndClose(tabId: string): Promise<void> {
     const rebuilding = this.rebuilding.get(tabId)
     if (rebuilding) {
@@ -583,10 +836,256 @@ export class ProjectService {
     }
     const coordinator = this.requireTab(tabId)
     const clean = await coordinator.discardChanges(this.options.roots)
+    this.smartPatchPresetReviews.delete(coordinator)
     // discardChanges transfers the exclusive path lease to its returned coordinator.
     this.openTabs.set(tabId, clean)
     await clean.close()
     this.openTabs.delete(tabId)
+  }
+
+  async duplicateRegionalGuidance(
+    tabId: string,
+    inputOwner: ProjectRegionalGuidanceOwner,
+  ): Promise<ProjectTab> {
+    if (!isProjectRegionalGuidanceOwner(inputOwner)) {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'The Regional Guidance owner is invalid.',
+      )
+    }
+    const owner = structuredClone(inputOwner)
+    const captured = this.captureRegionalGuidanceDocument(tabId, owner)
+    const source = requireRegionalGuidance(captured.document, owner.regionId)
+    if (source.locked) {
+      throw new ProjectServiceError(
+        'PROJECT_LAYER_LOCKED',
+        'Unlock this Regional Guidance before duplicating it.',
+      )
+    }
+    const ownedIds = new Set(projectOwnedIds(captured.document))
+    const name = `${source.name} copy`
+    const copy: IgsRegionalGuidanceV1 = {
+      ...structuredClone(source),
+      id: allocateProjectOwnedId(ownedIds),
+      locked: false,
+      mask: { asset: null, id: allocateProjectOwnedId(ownedIds), revision: 0 },
+      name: Buffer.byteLength(name, 'utf8') <= IGS_SAFETY_CEILINGS.titleBytes ? name : source.name,
+    }
+    const sources: Record<string, IgsAssetSource> = {}
+    if (source.mask.asset) {
+      copy.mask = {
+        asset: {
+          ...source.mask.asset,
+          path: `assets/masks/${copy.mask.id}/${source.mask.asset.sha256}.png`,
+        },
+        bounds: structuredClone(source.mask.bounds),
+        id: copy.mask.id,
+        revision: 1,
+      }
+    }
+    if (source.referenceImages) {
+      copy.referenceImages = source.referenceImages.map((reference) => {
+        const id = allocateProjectOwnedId(ownedIds)
+        const prefix = `assets/regional-references/${id}/`
+        return {
+          ...structuredClone(reference),
+          asset: { ...reference.asset, path: `${prefix}${reference.asset.sha256}.png` },
+          id,
+          thumbnail: {
+            ...reference.thumbnail,
+            path: `${prefix}${reference.thumbnail.sha256}.webp`,
+          },
+        }
+      })
+    }
+    const regions = [...captured.document.regionalGuidance!]
+    regions.splice(regions.findIndex(({ id }) => id === source.id) + 1, 0, copy)
+    const next = { ...captured.document, regionalGuidance: regions }
+    // Bound the complete candidate before copying potentially large immutable originals.
+    assertRegionalDocumentSize(next)
+    const hasReferences = captured.document.regionalGuidance?.some(
+      (region) => region.referenceImages,
+    )
+    if (hasReferences) {
+      await assertRegionalReferencePackageSize(next, captured.coordinator.filePath)
+      captured.assertCurrent()
+    }
+    if (source.mask.asset !== null) {
+      const bytes = await readMaskAssetBytes(captured.coordinator, source.mask.asset)
+      captured.assertCurrent()
+      const memberPath = `assets/masks/${copy.mask.id}/${source.mask.asset.sha256}.png`
+      copy.mask = {
+        asset: { ...source.mask.asset, path: memberPath },
+        bounds: structuredClone(source.mask.bounds),
+        id: copy.mask.id,
+        revision: 1,
+      }
+      sources[memberPath] = { bytes }
+    }
+    let staging: string | undefined
+    try {
+      if (source.referenceImages?.length) {
+        await mkdir(this.options.roots.scratchDir, { recursive: true })
+        captured.assertCurrent()
+        const scratch = await canonicalDirectory(this.options.roots.scratchDir)
+        captured.assertCurrent()
+        staging = await mkdtemp(path.join(scratch, 'regional-reference-copy-'))
+        captured.assertCurrent()
+        for (const [index, reference] of source.referenceImages.entries()) {
+          const copied = copy.referenceImages![index]
+          for (const [roleIndex, { member, role }] of regionalReferenceMembers(
+            reference,
+          ).entries()) {
+            if (role === 'profile') {
+              continue
+            } // Immutable hash-addressed ICC retains its existing owner.
+            const destination = path.join(staging, `${index}-${roleIndex}.asset`)
+            const pending = captured.coordinator.getCurrentAssetSource(member)
+            if (pending) {
+              await copyRegionalReferenceSource(pending, destination, member, role)
+            } else {
+              await withProjectPathLock(captured.coordinator.filePath, async () => {
+                captured.assertCurrent()
+                const saved = await readIgsPackage(captured.coordinator.filePath)
+                captured.assertCurrent()
+                if (saved.project.documentId !== captured.document.documentId) {
+                  throw new Error('The saved regional reference Project changed.')
+                }
+                await saved.extractMemberToFile(member.path, destination)
+              })
+              await verifyRegionalReferenceAssetSource({ sourcePath: destination }, member, role)
+            }
+            captured.assertCurrent()
+            sources[role === 'image' ? copied.asset.path : copied.thumbnail.path] = {
+              sourcePath: destination,
+            }
+          }
+        }
+      }
+      assertRegionalDocumentSize(next)
+      if (hasReferences) {
+        await assertRegionalReferencePackageSize(next, captured.coordinator.filePath)
+        captured.assertCurrent()
+      }
+      await captured.coordinator.applyDocument(next, sources, {
+        beforeCommit: captured.assertCurrent,
+        expectedDocumentEpoch: captured.documentEpoch,
+        expectedDocumentRevision: owner.documentRevision,
+      })
+      return toTab(tabId, captured.coordinator)
+    } finally {
+      if (staging) {
+        await rm(staging, { force: true, recursive: true }).catch((error: unknown) =>
+          process.emitWarning(`Regional reference copy cleanup failed: ${String(error)}`),
+        )
+      }
+    }
+  }
+
+  /** One captured regional gesture; enabled controls generation, never authoring permission. */
+  async editRegionalGuidanceMask(
+    tabId: string,
+    regionId: string,
+    input: ProjectRegionalGuidanceMaskEditRequest,
+  ): Promise<ProjectTab> {
+    if (!isProjectDocumentId(regionId) || !isProjectRegionalGuidanceMaskEditRequest(input)) {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'The regional mask gesture is invalid.',
+      )
+    }
+    const request = structuredClone(input)
+    const owner: ProjectRegionalGuidanceOwner = {
+      documentId: request.documentId,
+      documentRevision: request.documentRevision,
+      regionId,
+    }
+    const captured = this.captureRegionalGuidanceDocument(tabId, owner)
+    const region = requireRegionalGuidance(captured.document, regionId)
+    const assertEditable = () => {
+      captured.assertCurrent()
+      const current = requireRegionalGuidance(captured.coordinator.document, regionId)
+      if (current.mask.id !== request.maskId || current.mask.revision !== request.maskRevision) {
+        throw new ProjectAutosaveError(
+          'EDIT_CONFLICT',
+          'The regional mask changed. Start a new gesture.',
+        )
+      }
+      if (current.locked) {
+        throw new ProjectServiceError(
+          'PROJECT_LAYER_LOCKED',
+          'Unlock this Regional Guidance to edit its mask.',
+        )
+      }
+    }
+    assertEditable()
+    let current: ProjectMaskBitmap | null = null
+    let currentBytes: Buffer | null = null
+    if (region.mask.asset !== null) {
+      currentBytes = await readMaskAssetBytes(captured.coordinator, region.mask.asset)
+      current = {
+        alpha: decodeProjectMaskPng(currentBytes, region.mask.asset),
+        bounds: structuredClone(region.mask.bounds),
+      }
+    }
+    assertEditable()
+    const rendered = applyProjectMaskEdit(current, request.edit)
+    if (
+      (!rendered && !current) ||
+      (rendered &&
+        current &&
+        JSON.stringify(rendered.bounds) === JSON.stringify(current.bounds) &&
+        Buffer.from(rendered.alpha).equals(Buffer.from(current.alpha)))
+    ) {
+      return toTab(tabId, captured.coordinator)
+    }
+    const revision = region.mask.revision + 1
+    if (!Number.isSafeInteger(revision)) {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'The mask revision limit has been reached.',
+      )
+    }
+    let mask: IgsRegionalGuidanceV1['mask'] = { asset: null, id: region.mask.id, revision }
+    const sources: Record<string, IgsAssetSource> = {}
+    if (rendered) {
+      const bytes =
+        current &&
+        currentBytes &&
+        rendered.bounds.width === current.bounds.width &&
+        rendered.bounds.height === current.bounds.height &&
+        Buffer.from(rendered.alpha).equals(Buffer.from(current.alpha))
+          ? currentBytes
+          : encodeProjectMaskPng(rendered.alpha, rendered.bounds.width, rendered.bounds.height)
+      const sha256 = createHash('sha256').update(bytes).digest('hex')
+      const memberPath = `assets/masks/${region.mask.id}/${sha256}.png`
+      mask = {
+        asset: {
+          bytes: bytes.length,
+          height: rendered.bounds.height,
+          path: memberPath,
+          sha256,
+          width: rendered.bounds.width,
+        },
+        bounds: rendered.bounds,
+        id: region.mask.id,
+        revision,
+      }
+      sources[memberPath] = { bytes }
+    }
+    const next = {
+      ...captured.document,
+      regionalGuidance: captured.document.regionalGuidance!.map((value) =>
+        value.id === regionId ? { ...value, mask } : value,
+      ),
+    }
+    assertRegionalDocumentSize(next)
+    await captured.coordinator.applyDocument(next, sources, {
+      beforeCommit: assertEditable,
+      expectedDocumentEpoch: captured.documentEpoch,
+      expectedDocumentRevision: request.documentRevision,
+    })
+    return toTab(tabId, captured.coordinator)
   }
 
   /** Publish one captured gesture. Pixels and paths are created only by Main. */
@@ -1059,9 +1558,19 @@ export class ProjectService {
         'This Raster Layer is not available.',
       )
     }
+    const provenance = layer.generationProvenance
+    if (
+      provenance?.kind === 'illustrious-smart-patch' ||
+      provenance?.kind === 'anima-smart-patch'
+    ) {
+      throw new ProjectServiceError(
+        'PROJECT_COMPARISON_UNSUPPORTED',
+        'Smart Patch generation settings are unavailable for Compare.',
+      )
+    }
     const documentEpoch = coordinator.documentEpoch
-    const generationConfiguration = layer.generationProvenance
-      ? structuredClone(layer.generationProvenance.generationConfiguration)
+    const generationConfiguration = provenance
+      ? structuredClone(provenance.generationConfiguration)
       : null
     const assertCurrent = (): void => {
       const current = this.openTabs.get(tabId)
@@ -1110,6 +1619,94 @@ export class ProjectService {
           ? 'The current generation mode is unavailable. The image worker could not compose this Canvas.'
           : null,
     }
+  }
+
+  /** Exact regional capability; Smart and Raster owners never resolve through this entry point. */
+  getRegionalMaskAsset(resource: ProjectRegionalMaskResourceRequest):
+    | {
+        filePath: string
+        kind: 'saved'
+        member: NonNullable<IgsRegionalGuidanceV1['mask']['asset']>
+      }
+    | {
+        kind: 'staged'
+        member: NonNullable<IgsRegionalGuidanceV1['mask']['asset']>
+        source: IgsAssetSource
+      }
+    | null {
+    if (!PROJECT_ID_PATTERN.test(resource.tabId)) {
+      return null
+    }
+    const coordinator = this.openTabs.get(resource.tabId)
+    if (!coordinator) {
+      return null
+    }
+    const member = resolveProjectRegionalMaskAsset(coordinator.document, resource)
+    if (!member) {
+      return null
+    }
+    const source = coordinator.getCurrentAssetSource(member)
+    return source
+      ? { kind: 'staged', member, source }
+      : { filePath: coordinator.filePath, kind: 'saved', member }
+  }
+
+  getRegionalReferenceThumbnail(resource: ProjectRegionalReferenceThumbnailRequest):
+    | {
+        filePath: string
+        kind: 'saved'
+        member: NonNullable<IgsRegionalGuidanceV1['referenceImages']>[number]['thumbnail']
+      }
+    | {
+        kind: 'staged'
+        member: NonNullable<IgsRegionalGuidanceV1['referenceImages']>[number]['thumbnail']
+        source: IgsAssetSource
+      }
+    | null {
+    if (!PROJECT_ID_PATTERN.test(resource.tabId)) {
+      return null
+    }
+    const coordinator = this.openTabs.get(resource.tabId)
+    if (!coordinator) {
+      return null
+    }
+    const member = resolveProjectRegionalReferenceThumbnail(coordinator.document, resource)
+    if (!member) {
+      return null
+    }
+    const source = coordinator.getCurrentAssetSource(member)
+    return source
+      ? { kind: 'staged', member, source }
+      : { filePath: coordinator.filePath, kind: 'saved', member }
+  }
+
+  /** Issue one current, ephemeral review without touching history, storage or resource owners. */
+  getSmartPatchPresetApplicationReview(
+    tabId: string,
+    input: SmartPatchPresetApplicationReviewRequest,
+  ): SmartPatchPresetApplicationReview {
+    let request: SmartPatchPresetApplicationReviewRequest
+    try {
+      request = parseSmartPatchPresetApplicationReviewRequest(input)
+    } catch {
+      throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'The Smart Patch review is invalid.')
+    }
+    const coordinator = this.requireTab(tabId)
+    const document = coordinator.document
+    if (
+      request.documentId !== document.documentId ||
+      request.documentRevision !== document.documentRevision
+    ) {
+      throw new ProjectAutosaveError('EDIT_CONFLICT', 'The Project changed. Reopen Apply.')
+    }
+    const scope = generationDraftScope(document, request.layerId)
+    const reviewToken = randomUUID()
+    this.smartPatchPresetReviews.set(coordinator, {
+      ...request,
+      documentEpoch: coordinator.documentEpoch,
+      reviewToken,
+    })
+    return { ...request, generationDraft: structuredClone(scope.draft), reviewToken }
   }
 
   /** Read current freshness separately from model availability and public Generate readiness. */
@@ -1196,6 +1793,205 @@ export class ProjectService {
     }
   }
 
+  /** Accepted Smart settings stay readable even when optional current Canvas pixels are unavailable. */
+  async getSmartResultComparisonData(
+    tabId: string,
+    input: SmartResultComparisonRequest,
+    withWorker?: TargetInspectionWorkerProvider,
+  ): Promise<SmartResultComparisonData> {
+    assertProjectId(tabId)
+    if (!isSmartResultComparisonRequest(input)) {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'The comparison result owner is invalid.',
+      )
+    }
+    // Caller-owned request objects must not change identity during capture, composition or close.
+    const request = structuredClone(input)
+    const coordinator = this.requireTab(tabId)
+    const document = coordinator.document
+    if (document.documentId !== request.documentId) {
+      throw new ProjectServiceError(
+        'PROJECT_IDENTITY_MISMATCH',
+        'The comparison belongs to another Project document.',
+      )
+    }
+    if (document.documentRevision !== request.documentRevision) {
+      throw new ProjectServiceError(
+        'PROJECT_TARGET_CHANGED',
+        'The Project changed. Open Compare again.',
+      )
+    }
+    const resolveResult = (current: IgsProjectDocumentV1) => {
+      const layer = current.layers.find(({ id }) => id === request.owner.layerId)
+      if (request.owner.kind === 'raster') {
+        return layer?.kind === 'raster' ? layer : null
+      }
+      return layer?.kind === 'smart-patch' &&
+        layer.activeRasterSubLayerId === request.owner.variantId
+        ? layer.rasterSubLayers.find(
+            ({ id }) => id === smartResultComparisonResultId(request.owner),
+          )
+        : null
+    }
+    const result = resolveResult(document)
+    if (!result) {
+      throw new ProjectServiceError(
+        'PROJECT_LAYER_NOT_FOUND',
+        'This accepted result is no longer the active result owned by the specified layer.',
+      )
+    }
+    if (result.asset.sha256 !== request.assetSha256) {
+      throw new ProjectServiceError(
+        'PROJECT_TARGET_CHANGED',
+        'The accepted image changed. Open Compare again.',
+      )
+    }
+    const provenance = result.generationProvenance
+    if (
+      provenance?.kind !== 'illustrious-smart-patch' &&
+      provenance?.kind !== 'anima-smart-patch'
+    ) {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'This comparison requires accepted Smart Patch generation data.',
+      )
+    }
+    const generationConfiguration = structuredClone(provenance.generationConfiguration)
+    const documentEpoch = coordinator.documentEpoch
+    const signature = generationTargetSignature(toTab(tabId, coordinator))
+    const assertCurrent = () => {
+      const current = this.openTabs.get(tabId)
+      const currentResult = current ? resolveResult(current.document) : null
+      if (
+        current !== coordinator ||
+        current.documentEpoch !== documentEpoch ||
+        current.document.documentId !== request.documentId ||
+        current.document.documentRevision !== request.documentRevision ||
+        !currentResult ||
+        currentResult.id !== result.id ||
+        currentResult.asset.sha256 !== request.assetSha256 ||
+        generationTargetSignature(toTab(tabId, current)) !== signature
+      ) {
+        throw new ProjectServiceError(
+          'PROJECT_COMPARISON_CHANGED',
+          'The Project changed while reading generation settings. Open the comparison again.',
+        )
+      }
+    }
+    let currentMode: SmartResultComparisonData['currentMode'] = null
+    let retainWorkerInputs = false
+    if (withWorker) {
+      try {
+        if (!signature) {
+          throw new Error('The generation area inputs are unavailable.')
+        }
+        currentMode = await this.withCapturedNormalGenerationInput(
+          tabId,
+          async (capture) => {
+            assertCurrent()
+            try {
+              // The provider resolves only after ProjectTargetInspectionOwner.read and physical
+              // close. Keep the capture alive through that entire lifetime, including close errors.
+              return await withWorker(async (worker) => {
+                assertCurrent()
+                const target = await capture.composeTarget(worker)
+                assertCurrent()
+                return target.mode
+              })
+            } catch (error) {
+              if (isWorkerExitUnconfirmed(error)) {
+                retainWorkerInputs = true
+              }
+              throw error
+            }
+          },
+          { shouldCleanupStaging: () => !retainWorkerInputs },
+        )
+        assertCurrent()
+      } catch (error) {
+        // A still-live child owns its scratch. Its physical-exit fence must remain observable,
+        // including when an edit/close also invalidated the comparison during worker teardown.
+        if (isWorkerExitUnconfirmed(error)) {
+          throw error
+        }
+        assertCurrent()
+      }
+    }
+    assertCurrent()
+    return parseSmartResultComparisonData({
+      ...request,
+      currentMode,
+      generationConfiguration,
+      modeUnavailableReason:
+        currentMode === null
+          ? 'The current generation mode is unavailable. The image worker could not compose this Canvas.'
+          : null,
+      resultId: result.id,
+    })
+  }
+
+  /** Synchronous accepted-source copy; never inspects current pixels, resources or draft history. */
+  getSmartResultPresetData(
+    tabId: string,
+    request: SmartResultPresetRequest,
+  ): SmartResultPresetData {
+    assertProjectId(tabId)
+    if (!isSmartResultPresetRequest(request)) {
+      throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'The preset result owner is invalid.')
+    }
+    const document = this.requireTab(tabId).document
+    if (document.documentId !== request.documentId) {
+      throw new ProjectServiceError(
+        'PROJECT_IDENTITY_MISMATCH',
+        'The preset result belongs to another Project document.',
+      )
+    }
+    if (document.documentRevision !== request.documentRevision) {
+      throw new ProjectServiceError(
+        'PROJECT_TARGET_CHANGED',
+        'The Project changed. Open Save Preset from Result again.',
+      )
+    }
+    const layer = document.layers.find(({ id }) => id === request.owner.layerId)
+    const result =
+      request.owner.kind === 'raster'
+        ? layer?.kind === 'raster'
+          ? layer
+          : null
+        : layer?.kind === 'smart-patch'
+          ? layer.rasterSubLayers.find(({ id }) => id === smartResultPresetResultId(request.owner))
+          : null
+    if (!result) {
+      throw new ProjectServiceError(
+        'PROJECT_LAYER_NOT_FOUND',
+        'This accepted result is no longer owned by the specified layer.',
+      )
+    }
+    if (result.asset.sha256 !== request.assetSha256) {
+      throw new ProjectServiceError(
+        'PROJECT_TARGET_CHANGED',
+        'The accepted result image changed. Open Save Preset from Result again.',
+      )
+    }
+    const provenance = result.generationProvenance
+    if (
+      provenance?.kind !== 'illustrious-smart-patch' &&
+      provenance?.kind !== 'anima-smart-patch'
+    ) {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'This action requires accepted Smart Patch generation data.',
+      )
+    }
+    return parseSmartResultPresetData({
+      ...structuredClone(request),
+      payload: projectSmartResultPresetPayload(provenance.generationConfiguration),
+      resultId: result.id,
+      workflow: 'smartPatch',
+    })
+  }
+
   hasDirtyTabs(): boolean {
     return [...this.openTabs.values()].some((coordinator) => coordinator.dirty)
   }
@@ -1229,6 +2025,87 @@ export class ProjectService {
       await prepared.dispose().catch((error: unknown) => {
         process.emitWarning(`Raster import staging cleanup failed: ${String(error)}`)
       })
+    }
+  }
+
+  async importRegionalGuidanceReferenceImage(
+    tabId: string,
+    inputOwner: ProjectRegionalGuidanceOwner,
+    selectSource: () => Promise<string | null>,
+    worker: Pick<ProjectWorkerClient, 'createImportThumbnail' | 'normalizeImport'>,
+  ): Promise<ProjectTab | null> {
+    if (!isProjectRegionalGuidanceOwner(inputOwner) || typeof selectSource !== 'function') {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'The Regional Guidance reference request is invalid.',
+      )
+    }
+    const owner = structuredClone(inputOwner)
+    const captured = this.captureRegionalGuidanceDocument(tabId, owner)
+    const assertEditable = () => {
+      captured.assertCurrent()
+      if (requireRegionalGuidance(captured.coordinator.document, owner.regionId).locked) {
+        throw new ProjectServiceError(
+          'PROJECT_LAYER_LOCKED',
+          'Unlock this Regional Guidance to attach reference images.',
+        )
+      }
+      if (captured.coordinator.document.generationDraft.model?.baseModelFamily !== 'illustrious') {
+        throw new ProjectServiceError(
+          'PROJECT_INVALID_INPUT',
+          'Regional reference images require an Illustrious Current Canvas model. Anima and unknown models are unsupported.',
+        )
+      }
+    }
+    assertEditable()
+    const selected = await selectSource()
+    assertEditable()
+    if (selected === null) {
+      return null
+    }
+    await mkdir(this.options.roots.scratchDir, { recursive: true })
+    assertEditable()
+    const occupied = new Set(projectOwnedIds(captured.document))
+    const name = path.basename(selected)
+    const prepared = await prepareRegionalReferenceImport({
+      assertCurrent: assertEditable,
+      authorizedSourcePath: selected,
+      name:
+        name.trim().length > 0 && Buffer.byteLength(name, 'utf8') <= IGS_SAFETY_CEILINGS.titleBytes
+          ? name
+          : 'Reference image',
+      referenceId: allocateProjectOwnedId(occupied),
+      stagingBasePath: this.options.roots.scratchDir,
+      worker,
+    })
+    try {
+      assertEditable()
+      const next = {
+        ...captured.document,
+        regionalGuidance: captured.document.regionalGuidance!.map((region) =>
+          region.id === owner.regionId
+            ? {
+                ...region,
+                referenceImages: [...(region.referenceImages ?? []), prepared.reference],
+              }
+            : region,
+        ),
+      }
+      assertRegionalDocumentSize(next)
+      await assertRegionalReferencePackageSize(next, captured.coordinator.filePath)
+      assertEditable()
+      await captured.coordinator.applyDocument(next, prepared.assetSources, {
+        beforeCommit: assertEditable,
+        expectedDocumentEpoch: captured.documentEpoch,
+        expectedDocumentRevision: owner.documentRevision,
+      })
+      return toTab(tabId, captured.coordinator)
+    } finally {
+      await prepared
+        .dispose()
+        .catch((error: unknown) =>
+          process.emitWarning(`Regional reference import cleanup failed: ${String(error)}`),
+        )
     }
   }
 
@@ -2247,6 +3124,262 @@ export class ProjectService {
     return toTab(tabId, coordinator)
   }
 
+  async updateRegionalGuidance(
+    tabId: string,
+    inputOwner: ProjectRegionalGuidanceOwner,
+    inputChange: ProjectRegionalGuidanceChange,
+  ): Promise<ProjectTab> {
+    if (
+      !isProjectRegionalGuidanceOwner(inputOwner) ||
+      !isProjectRegionalGuidanceChange(inputChange)
+    ) {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'The Regional Guidance change is invalid.',
+      )
+    }
+    const owner = structuredClone(inputOwner)
+    const change = structuredClone(inputChange)
+    const captured = this.captureRegionalGuidanceDocument(tabId, owner)
+    const region = requireRegionalGuidance(captured.document, owner.regionId)
+    if (region.locked && change.kind !== 'lock' && change.kind !== 'enabled') {
+      throw new ProjectServiceError(
+        'PROJECT_LAYER_LOCKED',
+        'Unlock this Regional Guidance before editing it.',
+      )
+    }
+    const next = { ...region }
+    switch (change.kind) {
+      case 'enabled': {
+        next.enabled = change.enabled
+        break
+      }
+      case 'lock': {
+        next.locked = change.locked
+        break
+      }
+      case 'overlay-opacity': {
+        next.overlayOpacity = change.overlayOpacity
+        break
+      }
+      case 'rename': {
+        next.name = change.name
+        break
+      }
+    }
+    if (JSON.stringify(next) === JSON.stringify(region)) {
+      return toTab(tabId, captured.coordinator)
+    }
+    await captured.coordinator.applyDocument(
+      {
+        ...captured.document,
+        regionalGuidance: captured.document.regionalGuidance!.map((value) =>
+          value.id === region.id ? next : value,
+        ),
+      },
+      {},
+      {
+        beforeCommit: captured.assertCurrent,
+        expectedDocumentEpoch: captured.documentEpoch,
+        expectedDocumentRevision: owner.documentRevision,
+      },
+    )
+    return toTab(tabId, captured.coordinator)
+  }
+
+  /** Regional authoring only; neither this edit nor its history can enable conditioning. */
+  async updateRegionalGuidancePrompt(
+    tabId: string,
+    inputOwner: ProjectRegionalGuidanceOwner,
+    inputChange: ProjectRegionalGuidancePromptChange,
+  ): Promise<ProjectTab> {
+    if (!isProjectRegionalGuidancePromptChangeForOwner(inputChange, inputOwner)) {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'The regional prompt change is invalid.',
+      )
+    }
+    const owner = structuredClone(inputOwner)
+    const change = structuredClone(inputChange)
+    const captured = this.captureRegionalGuidanceDocument(tabId, owner)
+    const region = requireRegionalGuidance(captured.document, owner.regionId)
+    const assertEditable = () => {
+      captured.assertCurrent()
+      const current = requireRegionalGuidance(captured.coordinator.document, owner.regionId)
+      if (current.locked) {
+        throw new ProjectServiceError(
+          'PROJECT_LAYER_LOCKED',
+          'Unlock this Regional Guidance before editing its prompts.',
+        )
+      }
+      const currentPrompts = current.prompts
+      if (
+        change.kind === 'text' &&
+        (!currentPrompts ||
+          currentPrompts[change.polarity] === null ||
+          (change.polarity === 'negative' && currentPrompts.useGlobalNegativePrompt))
+      ) {
+        throw new ProjectServiceError(
+          'PROJECT_INVALID_INPUT',
+          'Add the prompt block and choose its custom source before editing it.',
+        )
+      }
+    }
+    assertEditable()
+    const prompts = structuredClone(
+      region.prompts ?? { negative: null, positive: null, useGlobalNegativePrompt: true },
+    )
+    switch (change.kind) {
+      case 'block': {
+        if (Boolean(prompts[change.polarity]) === change.present) {
+          return toTab(tabId, captured.coordinator)
+        }
+        prompts[change.polarity] = change.present ? { embeddingRefs: [], text: '' } : null
+        if (change.polarity === 'negative') {
+          prompts.useGlobalNegativePrompt = !change.present
+        }
+        break
+      }
+      case 'negative-source': {
+        if (prompts.negative === null) {
+          throw new ProjectServiceError(
+            'PROJECT_INVALID_INPUT',
+            'Add a regional negative prompt block before choosing its source.',
+          )
+        }
+        // Source selection never copies global text or discards the dormant custom prompt.
+        prompts.useGlobalNegativePrompt = change.useGlobalNegativePrompt
+        break
+      }
+      case 'text': {
+        const before = structuredClone(prompts[change.polarity]!)
+        const modelFamily = captured.document.generationDraft.model?.baseModelFamily ?? null
+        if (change.embeddingSelection && !this.options.resolvePromptEmbeddings) {
+          throw new ProjectServiceError(
+            'PROJECT_NOT_READY',
+            'Installed embedding verification is unavailable in this Project session.',
+          )
+        }
+        // Plain text and imported aliases need only pure retain/prune reconciliation.
+        // Canonical embedding literals or an explicit choice may need installed verification.
+        const resolve =
+          change.embeddingSelection || /<[^<>\r\n]+>/u.test(change.text)
+            ? this.options.resolvePromptEmbeddings
+            : undefined
+        const prompt = resolve
+          ? await resolve({
+              modelFamily,
+              prompt: before,
+              selection: change.embeddingSelection && { ...change.embeddingSelection },
+              text: change.text,
+            })
+          : reconcilePromptEmbeddings({ ...before, text: change.text }, [])
+        assertEditable()
+        if (prompt.text !== change.text) {
+          throw new ProjectServiceError(
+            'PROJECT_INVALID_INPUT',
+            'Embedding reconciliation cannot rewrite the authored regional prompt text.',
+          )
+        }
+        prompts[change.polarity] = structuredClone(prompt)
+        break
+      }
+    }
+    const nextRegion = { ...region }
+    if (prompts.negative === null && prompts.positive === null) {
+      delete nextRegion.prompts
+    } else {
+      nextRegion.prompts = prompts
+    }
+    if (JSON.stringify(nextRegion) === JSON.stringify(region)) {
+      return toTab(tabId, captured.coordinator)
+    }
+    const next = {
+      ...captured.document,
+      regionalGuidance: captured.document.regionalGuidance!.map((value) =>
+        value.id === region.id ? nextRegion : value,
+      ),
+    }
+    assertRegionalDocumentSize(next)
+    await captured.coordinator.applyDocument(
+      next,
+      {},
+      {
+        beforeCommit: assertEditable,
+        expectedDocumentEpoch: captured.documentEpoch,
+        expectedDocumentRevision: owner.documentRevision,
+        ...(change.kind === 'text' && change.historyGroupId !== undefined
+          ? { historyGroupId: change.historyGroupId }
+          : {}),
+      },
+    )
+    return toTab(tabId, captured.coordinator)
+  }
+
+  async updateRegionalGuidanceReferenceImage(
+    tabId: string,
+    inputOwner: ProjectRegionalGuidanceOwner,
+    inputChange: ProjectRegionalGuidanceReferenceImageChange,
+  ): Promise<ProjectTab> {
+    if (
+      !isProjectRegionalGuidanceOwner(inputOwner) ||
+      !isProjectRegionalGuidanceReferenceImageChange(inputChange)
+    ) {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'The Regional Guidance reference change is invalid.',
+      )
+    }
+    const owner = structuredClone(inputOwner)
+    const change = structuredClone(inputChange)
+    const captured = this.captureRegionalGuidanceDocument(tabId, owner)
+    const region = requireRegionalGuidance(captured.document, owner.regionId)
+    if (region.locked) {
+      throw new ProjectServiceError(
+        'PROJECT_LAYER_LOCKED',
+        'Unlock this Regional Guidance to change reference images.',
+      )
+    }
+    const references = [...(region.referenceImages ?? [])]
+    const index = references.findIndex(({ id }) => id === change.referenceId)
+    if (index < 0 || (change.kind === 'move' && change.targetIndex >= references.length)) {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'The regional reference image or move position is unavailable.',
+      )
+    }
+    if (change.kind === 'move' && change.targetIndex === index) {
+      return toTab(tabId, captured.coordinator)
+    }
+    const [reference] = references.splice(index, 1)
+    if (change.kind === 'move') {
+      references.splice(change.targetIndex, 0, reference)
+    }
+    const updated = { ...region }
+    if (references.length) {
+      updated.referenceImages = references
+    } else {
+      delete updated.referenceImages
+    }
+    const next = {
+      ...captured.document,
+      regionalGuidance: captured.document.regionalGuidance!.map((value) =>
+        value.id === region.id ? updated : value,
+      ),
+    }
+    assertRegionalDocumentSize(next)
+    await captured.coordinator.applyDocument(
+      next,
+      {},
+      {
+        beforeCommit: captured.assertCurrent,
+        expectedDocumentEpoch: captured.documentEpoch,
+        expectedDocumentRevision: owner.documentRevision,
+      },
+    )
+    return toTab(tabId, captured.coordinator)
+  }
+
   async updateSmartPatchLayer(
     tabId: string,
     layerId: string,
@@ -2423,6 +3556,7 @@ export class ProjectService {
       ) => Promise<FrozenGenerationTarget>
       document: IgsProjectDocumentV1
     }) => Promise<T>,
+    options: { shouldCleanupStaging?: () => boolean } = {},
   ): Promise<T> {
     const coordinator = this.requireTab(tabId)
     const document = coordinator.document
@@ -2441,6 +3575,7 @@ export class ProjectService {
         packagePath: coordinator.filePath,
         pendingSource: (asset) => pendingSources.get(`${asset.path}:${asset.sha256}`) ?? null,
         scratchBasePath: this.options.roots.scratchDir,
+        shouldCleanupStaging: options.shouldCleanupStaging,
         stagePrefix: 'project-target-',
       },
       (composition) =>
@@ -2449,6 +3584,34 @@ export class ProjectService {
           // The callback can own this value without changing the private composition snapshot.
           document: structuredClone(composition.document),
         }),
+    )
+  }
+
+  /**
+   * Internal authored-input lease. It grants no generation permission and resolves no job policy.
+   * Acquisition must finish on the captured coordinator/epoch; the callback then owns a historical
+   * snapshot independent of later edits, Save or close.
+   */
+  async withCapturedRegionalGuidanceInput<T>(
+    tabId: string,
+    use: (capture: CapturedRegionalGuidanceInput) => Promise<T>,
+  ): Promise<T> {
+    const coordinator = this.requireTab(tabId)
+    const document = coordinator.document
+    const captured = this.captureRegionalGuidanceDocument(tabId, {
+      documentId: document.documentId,
+      documentRevision: document.documentRevision,
+    })
+    return await withFrozenRegionalGuidanceInput(
+      {
+        assertCurrent: captured.assertCurrent,
+        document,
+        packagePath: coordinator.filePath,
+        // The helper preflights the complete byte budget before synchronously resolving sources.
+        pendingSource: (member) => coordinator.getCurrentAssetSource(member),
+        scratchBasePath: this.options.roots.scratchDir,
+      },
+      use,
     )
   }
 
@@ -2561,6 +3724,30 @@ export class ProjectService {
         use: (requests) => use({ preparedBatch, requests }),
       })
     })
+  }
+
+  private captureRegionalGuidanceDocument(
+    tabId: string,
+    owner: ProjectRegionalGuidanceDocumentOwner,
+  ) {
+    const coordinator = this.requireTab(tabId)
+    const document = coordinator.document
+    const documentEpoch = coordinator.documentEpoch
+    const assertCurrent = () => {
+      if (
+        this.openTabs.get(tabId) !== coordinator ||
+        coordinator.document.documentId !== owner.documentId ||
+        coordinator.document.documentRevision !== owner.documentRevision ||
+        coordinator.documentEpoch !== documentEpoch
+      ) {
+        throw new ProjectAutosaveError(
+          'EDIT_CONFLICT',
+          'The Project changed. Review this Regional Guidance again.',
+        )
+      }
+    }
+    assertCurrent()
+    return { assertCurrent, coordinator, document, documentEpoch }
   }
 
   private async inspectTemporaryRecovery(
@@ -2912,6 +4099,98 @@ function requireSmartPatch(document: IgsProjectDocumentV1, layerId: string): Igs
   return layer
 }
 
+/** Reject an unrecoverable document before publishing regional authoring or a copied owner. */
+function assertRegionalDocumentSize(document: IgsProjectDocumentV1): void {
+  if (Buffer.byteLength(JSON.stringify(document), 'utf8') > IGS_SAFETY_CEILINGS.projectJsonBytes) {
+    throw new ProjectServiceError(
+      'PROJECT_INVALID_INPUT',
+      'This Regional Guidance change would exceed the Project document safety limit.',
+    )
+  }
+}
+
+/** Account for exact current assets, ICC deduplication and all five non-asset ZIP members. */
+async function assertRegionalReferencePackageSize(
+  document: IgsProjectDocumentV1,
+  filePath: string,
+): Promise<void> {
+  parseProjectDocumentV1(document)
+  const assets = new Map<string, IgsProjectAssetRefV1>()
+  for (const member of projectAssetReferences(document)) {
+    const previous = assets.get(member.path)
+    if (previous && JSON.stringify(previous) !== JSON.stringify(member)) {
+      throw new ProjectServiceError(
+        'PROJECT_INVALID_INPUT',
+        'A Project member has conflicting asset references.',
+      )
+    }
+    assets.set(member.path, member)
+  }
+  const jsonBytes = Buffer.byteLength(JSON.stringify(document), 'utf8')
+  const saved = await withProjectPathLock(filePath, () => readIgsPackage(filePath))
+  if (saved.project.documentId !== document.documentId) {
+    throw new ProjectServiceError(
+      'PROJECT_IDENTITY_MISMATCH',
+      'The saved Project identity changed.',
+    )
+  }
+  const members = [
+    { bytes: jsonBytes, path: 'project.json', sha256: '0'.repeat(64) },
+    ...saved.manifest.members.filter(
+      ({ path }) => path === 'preview/merged.png' || path === 'preview/thumbnail.webp',
+    ),
+    ...[...assets.values()].map(({ bytes, path, sha256 }) => ({ bytes, path, sha256 })),
+  ]
+  const manifestBytes = Buffer.byteLength(
+    JSON.stringify({
+      documentId: document.documentId,
+      documentRevision: document.documentRevision,
+      members,
+      preview: saved.manifest.preview,
+      schemaVersion: 1,
+    }),
+    'utf8',
+  )
+  const total = members.reduce(
+    (sum, member) => sum + member.bytes,
+    manifestBytes + Buffer.byteLength(IGS_MIMETYPE),
+  )
+  if (
+    assets.size + 5 > IGS_SAFETY_CEILINGS.archiveEntries ||
+    manifestBytes > IGS_SAFETY_CEILINGS.manifestJsonBytes ||
+    total > IGS_SAFETY_CEILINGS.archiveUncompressedBytes
+  ) {
+    throw new ProjectServiceError(
+      'PROJECT_INVALID_INPUT',
+      'This Regional Guidance change would exceed the Project package safety limit.',
+    )
+  }
+}
+
+function requireRegionalGuidance(
+  document: IgsProjectDocumentV1,
+  regionId: string,
+): IgsRegionalGuidanceV1 {
+  const region = document.regionalGuidance?.find(({ id }) => id === regionId)
+  if (!region) {
+    throw new ProjectServiceError(
+      'PROJECT_LAYER_NOT_FOUND',
+      'This Regional Guidance is no longer available.',
+    )
+  }
+  return region
+}
+
+/** Reserve immediately so a second new owner cannot reuse an ID from the same operation. */
+function allocateProjectOwnedId(occupied: Set<string>): string {
+  let id = randomUUID()
+  while (occupied.has(id)) {
+    id = randomUUID()
+  }
+  occupied.add(id)
+  return id
+}
+
 /** A captured owner: replacement never consults renderer selection or changes the normal draft. */
 function generationDraftScope(document: IgsProjectDocumentV1, targetLayerId?: string) {
   if (targetLayerId === undefined) {
@@ -3007,6 +4286,16 @@ function toTab(id: string, coordinator: ProjectAutosaveCoordinator): ProjectTab 
         locked: layer.locked,
         name: layer.name,
         opacity: layer.opacity,
+        ...(layer.generationProvenance
+          ? {
+              resultComparisonSourceKind: isSmartPatchRasterLayer(layer)
+                ? ('smart-patch' as const)
+                : ('raster' as const),
+              resultPresetSourceKind: isSmartPatchRasterLayer(layer)
+                ? ('smart-patch' as const)
+                : ('raster' as const),
+            }
+          : {}),
         transform: layer.transform,
         visible: layer.visible,
         width: layer.asset.width,
@@ -3056,6 +4345,39 @@ function toTab(id: string, coordinator: ProjectAutosaveCoordinator): ProjectTab 
         : displayRasters.get(layer.id)!,
     ),
     primaryBbox: document.primaryBbox,
+    ...(document.regionalGuidance !== undefined
+      ? {
+          regionalGuidance: document.regionalGuidance.map(({ referenceImages, ...region }) => ({
+            ...structuredClone(region),
+            ...(referenceImages
+              ? {
+                  referenceImages: referenceImages.map((reference) => ({
+                    ...structuredClone(reference),
+                    thumbnailUrl: projectRegionalReferenceThumbnailUrl({
+                      documentRevision: document.documentRevision,
+                      referenceId: reference.id,
+                      regionId: region.id,
+                      tabId: id,
+                      thumbnailSha256: reference.thumbnail.sha256,
+                    }),
+                  })),
+                }
+              : {}),
+            ...(region.mask.asset !== null
+              ? {
+                  maskImageUrl: projectRegionalMaskImageUrl({
+                    assetSha256: region.mask.asset.sha256,
+                    documentRevision: document.documentRevision,
+                    maskId: region.mask.id,
+                    maskRevision: region.mask.revision,
+                    regionId: region.id,
+                    tabId: id,
+                  }),
+                }
+              : {}),
+          })),
+        }
+      : {}),
     title: document.title,
   }
 }
@@ -3255,4 +4577,14 @@ async function syncImportDirectory(directoryPath: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+/** Preserve worker-owned input files until the inspection owner confirms physical child exit. */
+function isWorkerExitUnconfirmed(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    error.code === 'WORKER_EXIT_UNCONFIRMED'
+  )
 }

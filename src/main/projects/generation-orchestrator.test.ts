@@ -1333,12 +1333,16 @@ test(
       const held = new Promise<void>((resolve) => {
         release = resolve
       })
-      const queue = new GenerationQueueRepository(fixture.database.db, fixture.root, {
-        afterInputPublish: async () => {
-          published()
-          await held
-        },
-      })
+      const queue = new GenerationQueueRepository(fixture.database.db, fixture.root)
+      const enqueueCommitted = queue.enqueueIllustriousGeneration.bind(queue)
+      // Hold after the real SQL commit, not after input-file publication. New pre-SQL owner
+      // guards correctly refuse a closed tab earlier; this control owns the later boundary.
+      queue.enqueueIllustriousGeneration = async (input) => {
+        const row = await enqueueCommitted(input)
+        published()
+        await held
+        return row
+      }
       await queue.recoverAfterRestart()
       const processor = new GenerationProcessor(
         queue,

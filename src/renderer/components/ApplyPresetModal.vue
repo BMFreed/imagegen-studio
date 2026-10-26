@@ -42,13 +42,16 @@ const props = defineProps<{
   catalogReady: boolean
   current: PresetApplicationTarget
   error: string | null
+  excludeSize?: boolean
   projectName: string
   source: PresetRecord
   suspended: boolean
+  targetLabel?: string
 }>()
 const show = defineModel<boolean>('show', { required: true })
 const emit = defineEmits<{
   apply: [value: { payload: PresetPayload; selectedSections: PresetSectionKey[] }]
+  closed: []
   editOriginal: [id: string]
   manageModels: [focus: ModelManagerFocus]
   suspended: []
@@ -56,7 +59,7 @@ const emit = defineEmits<{
 const modalRoot = ref<HTMLDivElement | null>(null)
 let handoffTrigger: HTMLElement | null = null
 let handoffActionKey: string | null = null
-const draft = ref<EditablePresetPayload>(clone(props.source.payload))
+const draft = ref<EditablePresetPayload>(createDraft())
 const selectedSections = ref<PresetSectionKey[]>(initialSelection())
 const expandedSections = ref<PresetSectionKey[]>([])
 const sectionRevisions = ref<Partial<Record<PresetSectionKey, number>>>({})
@@ -64,7 +67,7 @@ const editorValid = ref(true)
 const dirtyRaw = ref(false)
 const rawSections = ref<PresetSectionKey[]>([])
 const editOriginalConfirm = ref(false)
-const sections = computed(() => includedPresetSections(props.source.payload))
+const sections = computed(applicableSections)
 const allSelected = computed(
   () =>
     sections.value.length > 0 &&
@@ -115,7 +118,7 @@ watch(
     }
     handoffTrigger = null
     handoffActionKey = null
-    draft.value = clone(props.source.payload)
+    draft.value = createDraft()
     selectedSections.value = initialSelection()
     expandedSections.value = []
     sectionRevisions.value = {}
@@ -138,12 +141,22 @@ function equal(a: unknown, b: unknown) {
   return serialize(a) === serialize(b)
 }
 function initialSelection() {
+  return applicableSections().filter((section) => section !== 'size' && section !== 'seed')
+}
+function applicableSections() {
   return includedPresetSections(props.source.payload).filter(
-    (section) => section !== 'size' && section !== 'seed',
+    (section) => !props.excludeSize || section !== 'size',
   )
 }
+function createDraft(): EditablePresetPayload {
+  const value = clone(props.source.payload)
+  if (props.excludeSize) {
+    delete value.size
+  }
+  return value
+}
 function setSelected(section: PresetSectionKey, selected: boolean) {
-  if (props.busy) {
+  if (props.busy || !sections.value.includes(section)) {
     return
   }
   selectedSections.value = selected
@@ -151,7 +164,7 @@ function setSelected(section: PresetSectionKey, selected: boolean) {
     : selectedSections.value.filter((item) => item !== section)
 }
 function resetSection(section: PresetSectionKey) {
-  if (props.busy) {
+  if (props.busy || !sections.value.includes(section)) {
     return
   }
   const next = clone(draft.value)
@@ -163,7 +176,7 @@ function resetAll() {
   if (props.busy) {
     return
   }
-  draft.value = clone(props.source.payload)
+  draft.value = createDraft()
   for (const section of sections.value) {
     sectionRevisions.value[section] = (sectionRevisions.value[section] ?? 0) + 1
   }
@@ -215,6 +228,8 @@ function requestModels(
 function afterLeave() {
   if (show.value && props.suspended) {
     emit('suspended')
+  } else if (!show.value) {
+    emit('closed')
   }
 }
 function afterEnter() {
@@ -369,7 +384,7 @@ function summary(section: PresetSectionKey, value: unknown): string {
           </div>
           <NText class="application-context" depth="3">
             Customize a temporary copy for
-            <strong>{{ projectName }}</strong>
+            <strong>{{ projectName }}{{ targetLabel ? ` · ${targetLabel}` : '' }}</strong>
             . The saved preset will not change.
           </NText>
         </div>
@@ -387,6 +402,13 @@ function summary(section: PresetSectionKey, value: unknown): string {
           <p v-if="source.description.trim()" class="preset-description">
             {{ source.description }}
           </p>
+          <NText v-if="excludeSize" depth="3">
+            Size is not applied to Smart Patches. Bounds and internal resolution stay with the
+            Patch.
+          </NText>
+          <NText v-if="excludeSize && !sections.length" key="n-text-2" depth="3">
+            This preset only contains Size. There are no settings to apply to this Smart Patch.
+          </NText>
           <NAlert v-if="error" aria-label="Preset Apply failed" role="alert" type="error">
             {{ error }}
           </NAlert>
@@ -503,7 +525,11 @@ function summary(section: PresetSectionKey, value: unknown): string {
               </NCheckbox>
             </template>
           </PresetPayloadEditor>
-          <NText v-if="selectedSections.length && (!editorValid || canonical === null)" depth="3">
+          <NText
+            v-if="selectedSections.length && (!editorValid || canonical === null)"
+            key="n-text-3"
+            depth="3"
+          >
             Correct the selected fields before applying, or deselect their sections.
           </NText>
         </div>

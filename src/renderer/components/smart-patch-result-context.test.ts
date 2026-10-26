@@ -60,6 +60,7 @@ function fixture() {
     layerId: patch.id,
     layerName: patch.name,
     queueItemId: 'job',
+    rasterConversionUnavailableReason: 'The original Smart Patch is still present.',
     stagingSessionId: 'session',
     unavailableReason: null,
   }

@@ -1,5 +1,36 @@
 # Queue Manager
 
+## Current Smart Patch frozen Retry
+
+[Frozen Smart Patch Retry](../engineering/phase-4-smart-patch-retry-research.md)
+uses the existing reviewed `retryGenerationJob` action and shared admission/FIFO
+dispatch. A failed/canceled Smart job creates one new job/batch/session and an
+independent copy of its original verified input bundle. It preserves the selected
+item index, concrete prompt/seed, source, prepared model-source, masks, geometry
+and exact inference resources. Current Project authoring and the seed cursor are
+not inputs to admission; older candidates are not replaced. Completion produces
+temporary Smart Results, with no automatic Add, Undo entry or Save.
+
+The original Project/document/coordinator must remain open. Main verifies current
+Smart worker capabilities and frozen selected resources; a stale source sequence
+or any candidate publication receipt refuses Retry. Source CAS and insertion are
+atomic. Lost acknowledgement requires exact readback; unknown publication retains
+inputs and fences the Project. Late admission/exit refusal cancels only its new
+attempt. Busy Retry borrows readiness, then the existing serial drain dispatches
+with a fresh worker after the previous owner exits.
+
+Frozen replay remains available after current target edits, hiding/locking or
+deletion. A missing target produces an orphaned result with Add unavailable; no
+retarget or Raster conversion is implied. OUT replay uses already frozen RGB and
+does not rerun LaMa. Every Retry has one fresh Smart staging session; existing
+per-session publication ceilings remain, separate from ordinary Raster capacity
+preflight. Evidence and remaining qualification limits are in the linked research.
+PP-007/008 remain **Пока не обещать**.
+
+[Selected Smart Patch freshness](../engineering/phase-4-smart-patch-freshness-research.md) is transient CPU
+inspection, separate from queue status and generation readiness. It rechecks on
+post-dispatch notifications without changing jobs, accepted results or provenance.
+
 ## Feature
 
 Queue Manager lets the user enqueue generation operations, monitor their status, cancel/retry failed work and inspect outputs/errors. Upscale jobs may reuse the same queue later, but Upscale UI is outside the current Project pass.

@@ -52,6 +52,7 @@ test('changed project, document or mask identity and revisions cancel rather tha
     { layerId: 'later-patch' },
     { maskId: 'later-mask' },
     { maskRevision: 4 },
+    { kind: 'regional-guidance' as const },
   ]) {
     const gesture = new ProjectMaskTransformGesture(owner, bounds)
     gesture.update({ rotationDegrees: 0, scaleX: 1, scaleY: 1, x: -19, y: 32 })
@@ -60,6 +61,18 @@ test('changed project, document or mask identity and revisions cancel rather tha
   const original = new ProjectMaskTransformGesture(owner, bounds)
   original.update({ rotationDegrees: 0, scaleX: 1, scaleY: 1, x: -19, y: 32 })
   assert.notEqual(original.finish(owner), null)
+})
+
+test('regional transforms preserve their captured owner and leave the Smart Fit producer unchanged', () => {
+  const regionalOwner: MaskGestureOwner = { ...owner, kind: 'regional-guidance' }
+  const moved = { rotationDegrees: 90, scaleX: 1, scaleY: 1, x: -19, y: 32 }
+  const refused = new ProjectMaskTransformGesture(regionalOwner, bounds)
+  refused.update(moved)
+  assert.equal(refused.finish(owner), null)
+  const valid = new ProjectMaskTransformGesture(regionalOwner, bounds)
+  valid.update(moved)
+  assert.deepEqual(valid.finish(regionalOwner)?.edit, { kind: 'transform', transform: moved })
+  assert.deepEqual(projectMaskFitRequest(owner).edit, { kind: 'fit-bbox' })
 })
 
 test('Escape-style cancellation discards preview and refuses late dragend or Enter', () => {

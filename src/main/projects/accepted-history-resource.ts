@@ -5,7 +5,7 @@ import {
 import {
   IGS_GENERATION_PNG_MAX_BYTES,
   IgsSchemaError,
-  projectRasterLayers,
+  projectRasterAssets,
 } from '../../shared/projects/project-schema.js'
 
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
@@ -30,7 +30,7 @@ type Repository = Pick<
 >
 type VerifiedResult = { archive: IgsPackageReadResult; record: ProjectSavedAcceptedResultRecord }
 
-/** Opaque process-lifetime URL for one saved layer. It contains no local filesystem path. */
+/** Opaque capability for one saved raster or variant, without a local filesystem path. */
 export function acceptedHistoryImageUrl(reference: AcceptedResultHistoryReference): string {
   if (!validReference(reference)) {
     throw new Error('The saved result identity is invalid.')
@@ -179,7 +179,7 @@ async function reviewSavedAcceptedResultLocked(
     }
     const archive = await readIgsPackage(lockedPath)
     const document = archive.project
-    const layer = projectRasterLayers(document).find((item) => item.id === reference.layerId)
+    const layer = projectRasterAssets(document).find((item) => item.id === reference.layerId)
     const provenance = layer?.generationProvenance
     if (
       document.documentId !== reference.documentId ||

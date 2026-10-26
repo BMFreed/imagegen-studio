@@ -6,17 +6,28 @@ import {
   IGS_MIMETYPE,
   IGS_SAFETY_CEILINGS,
   IGS_SCHEMA_VERSION,
+  parseProjectDocumentV1,
   projectAssetReferences,
+  projectOwnedIds,
   projectRasterLayers,
 } from '../../shared/projects/project-schema.js'
 
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 
 import type {
   GenerationAcceptanceHandoff,
   GenerationAcceptanceJournalRepository,
+  SmartPatchRasterAcceptanceSource,
 } from './generation-acceptance-journal.js'
+import type {
+  GenerationOrchestrator,
+  SmartPatchAcceptanceCancellationScope,
+} from './generation-orchestrator.js'
+import type {
+  GenerationQueueRepository,
+  VerifiedQueuedSmartPatchInput,
+} from './generation-queue.js'
 import type {
   GenerationStagingRepository,
   VerifiedGenerationCandidate,
@@ -24,11 +35,18 @@ import type {
 import type { IgsAssetSource } from './igs-package.js'
 import type { ProjectGenerationOperationGate } from './project-generation-operation-gate.js'
 import type { ProjectShadowCommit } from './project-shadow.js'
+import type {
+  SmartPatchGenerationStagingRepository,
+  VerifiedSmartPatchWorldCandidate,
+} from './smart-patch-generation-staging.js'
 
+import { preflightGenerationAcceptanceHandoff } from './generation-acceptance-journal.js'
 import { isQueuedOutpaint, parseFrozenGenerationPayloadV1 } from './generation-queue.js'
 import { DEFAULT_IGS_PACKAGE_LIMITS } from './igs-package.js'
 import { proveAcceptedSavedPackage } from './project-accepted-save-proof.js'
 import { provenanceFromVerifiedRasterCandidate } from './project-generation-provenance.js'
+import { canonicalProjectPath, localProjectRecoveryKey } from './project-identity.js'
+import { projectVerifiedSmartPatchVariant } from './project-smart-patch-variant-projection.js'
 
 const projectKeyPattern = /^project-v1-[a-f0-9]{64}$/
 const uuidPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
@@ -39,10 +57,11 @@ export interface ProjectGenerationAcceptanceDocument {
   applyDocument: (
     input: unknown,
     sources: Readonly<Record<string, IgsAssetSource>>,
-    options: { expectedDocumentRevision: string },
+    options: { expectedDocumentEpoch?: number; expectedDocumentRevision: string },
   ) => Promise<{ documentRevision: string }>
   readonly dirty: boolean
   readonly document: IgsProjectDocumentV1
+  readonly documentEpoch?: number
   readonly filePath: string
   flush: () => Promise<ProjectShadowCommit | null>
 }
@@ -72,10 +91,38 @@ export interface ProjectGenerationAcceptanceOptions {
       documentId: string,
     ) => Promise<readonly { id: string; stagingSessionId: string }[]>
   }
+  smartPatch?: SmartPatchRasterAcceptanceDependencies
   staging: Pick<
     GenerationStagingRepository,
     'discardSessions' | 'listVerifiedCandidates' | 'readVerifiedCandidatePng'
   >
+}
+
+export interface SmartPatchRasterAcceptanceDependencies {
+  orchestrator: Pick<GenerationOrchestrator, 'cancelSmartPatchAcceptanceJobs'>
+  queue: Pick<
+    GenerationQueueRepository,
+    | 'listSmartPatchAcceptanceSessionJobs'
+    | 'listUnfinishedSmartPatchJobsByProject'
+    | 'loadVerifiedSmartPatchInput'
+  >
+  staging: Pick<
+    SmartPatchGenerationStagingRepository,
+    'discardSessions' | 'listVerifiedCandidates' | 'readVerifiedCandidate'
+  >
+}
+
+export interface SmartPatchOrphanRasterAcceptRequest {
+  candidateIds: readonly string[]
+  expectedAvailableIds: readonly string[]
+  expectedOwner: {
+    documentEpoch: number
+    documentId: string
+    documentRevision: string
+    layerId: string
+  }
+  expectedUnfinishedJobIds: readonly string[]
+  focusedCandidateId: string | null
 }
 
 export type ProjectGenerationAcceptanceResult = {
@@ -85,12 +132,202 @@ export type ProjectGenerationAcceptanceResult = {
 }
 
 type RasterLayer = IgsRasterLayerV1
+type SmartRasterCancellationScope = SmartPatchAcceptanceCancellationScope & {
+  reviewedJobs?: SmartPatchRasterAcceptanceSource['reviewedJobs']
+}
 
 type PendingCancellation = {
   documentId: string
   jobIds: string[]
   projectPath: string
   stagingSessionIds: string[]
+}
+
+/** Smart source operations stay typed; no ordinary candidate or frozen payload is fabricated. */
+class SmartPatchRasterSourceAdapter {
+  constructor(private readonly options: SmartPatchRasterAcceptanceDependencies) {}
+
+  async cancel(scope: SmartPatchAcceptanceCancellationScope): Promise<void> {
+    await this.options.orchestrator.cancelSmartPatchAcceptanceJobs(scope)
+  }
+
+  async captureReviewedJobs(
+    scope: SmartRasterCancellationScope,
+    assertCurrent: () => void,
+  ): Promise<SmartRasterCancellationScope> {
+    const list = this.options.queue.listUnfinishedSmartPatchJobsByProject
+    const unfinished = (await list.call(this.options.queue, scope.tabId)).filter(
+      (job) =>
+        job.localProjectKey === scope.tabId &&
+        job.projectPath === scope.projectPath &&
+        job.documentId === scope.documentId &&
+        job.layerId === scope.layerId,
+    )
+    assertCurrent()
+    requireExpectedJobIds(unfinished, scope.expectedUnfinishedJobIds)
+    const sessions = [
+      ...new Set([...scope.stagingSessionIds, ...unfinished.map((job) => job.stagingSessionId)]),
+    ]
+    if (
+      sessions.length > IGS_SAFETY_CEILINGS.archiveEntries ||
+      unfinished.length > IGS_SAFETY_CEILINGS.archiveEntries
+    ) {
+      throw new ProjectGenerationAcceptanceError(
+        'ACCEPTANCE_PACKAGE_LIMIT',
+        'The reviewed Smart Patch job/session set exceeds the recovery metadata limit.',
+      )
+    }
+    const load = this.options.queue.loadVerifiedSmartPatchInput
+    const reviewedJobs: NonNullable<SmartPatchRasterAcceptanceSource['reviewedJobs']> = []
+    for (const job of unfinished) {
+      const input = await load.call(this.options.queue, job.id)
+      assertCurrent()
+      const witness = smartJobWitness(input, scope)
+      if (witness.jobId !== job.id || witness.stagingSessionId !== job.stagingSessionId) {
+        throw handoffRecoveryError()
+      }
+      reviewedJobs.push(witness)
+    }
+    return { ...scope, reviewedJobs, stagingSessionIds: sessions }
+  }
+
+  async discard(tabId: string, sessions: readonly string[]): Promise<void> {
+    await this.options.staging.discardSessions(tabId, sessions)
+  }
+
+  async exclusive(
+    scope: SmartPatchAcceptanceCancellationScope,
+    smart: readonly VerifiedSmartPatchWorldCandidate[],
+    normal: ProjectGenerationAcceptanceOptions['staging'],
+  ): Promise<void> {
+    const sessions = new Set(scope.stagingSessionIds)
+    if (
+      smart.some(
+        (candidate) =>
+          sessions.has(candidate.stagingSessionId) &&
+          (candidate.localProjectKey !== scope.tabId ||
+            candidate.projectPath !== scope.projectPath ||
+            candidate.documentId !== scope.documentId ||
+            candidate.payload.context.layerId !== scope.layerId),
+      )
+    ) {
+      throw handoffRecoveryError()
+    }
+    if (
+      (await normal.listVerifiedCandidates(scope.tabId)).some((candidate) =>
+        sessions.has(candidate.stagingSessionId),
+      )
+    ) {
+      throw handoffRecoveryError()
+    }
+  }
+
+  async jobs(scope: SmartPatchAcceptanceCancellationScope) {
+    return await this.options.queue.listSmartPatchAcceptanceSessionJobs({
+      ...scope,
+      localProjectKey: scope.tabId,
+    })
+  }
+
+  async list(tabId: string): Promise<VerifiedSmartPatchWorldCandidate[]> {
+    return await this.options.staging.listVerifiedCandidates(tabId)
+  }
+
+  owned(
+    candidates: readonly VerifiedSmartPatchWorldCandidate[],
+    projectPath: string,
+    documentId: string,
+    layerId: string,
+  ): VerifiedSmartPatchWorldCandidate[] {
+    const projectKey = localProjectRecoveryKey(projectPath)
+    return candidates.filter(
+      (candidate) =>
+        candidate.localProjectKey === projectKey &&
+        candidate.projectPath === projectPath &&
+        candidate.documentId === documentId &&
+        candidate.payload.context.layerId === layerId,
+    )
+  }
+
+  async project(
+    candidate: VerifiedSmartPatchWorldCandidate,
+    acceptedAt: string,
+    id: string,
+    visible: boolean,
+  ): Promise<{ layer: RasterLayer; sourcePath: string }> {
+    const read = await this.options.staging.readVerifiedCandidate({
+      ...smartWitness(candidate),
+      documentId: candidate.documentId,
+      imageSha256: candidate.image.sha256,
+      localProjectKey: candidate.localProjectKey,
+    })
+    if (!read || !isDeepStrictEqual(read.candidate, candidate)) {
+      throw new ProjectGenerationAcceptanceError(
+        'ACCEPTANCE_CANDIDATE_UNAVAILABLE',
+        'The exact Smart Patch contribution or frozen context changed before Add.',
+      )
+    }
+    const variant = await projectVerifiedSmartPatchVariant({ acceptedAt, read, variantId: id })
+    return {
+      layer: {
+        asset: variant.asset,
+        blendMode: 'normal',
+        generationProvenance: variant.generationProvenance,
+        id,
+        kind: 'raster',
+        locked: false,
+        name: variant.name,
+        opacity: 1,
+        transform: {
+          rotationDegrees: 0,
+          scaleX: 1,
+          scaleY: 1,
+          x: variant.bbox.x,
+          y: variant.bbox.y,
+        },
+        visible,
+      },
+      sourcePath: read.candidate.assetPath,
+    }
+  }
+
+  async verifyReviewedJobs(
+    scope: SmartRasterCancellationScope,
+    allowPruned: boolean,
+  ): Promise<void> {
+    if (!scope.reviewedJobs?.length) {
+      return
+    }
+    const load = this.options.queue.loadVerifiedSmartPatchInput
+    for (const expected of scope.reviewedJobs) {
+      let input: VerifiedQueuedSmartPatchInput
+      try {
+        input = await load.call(this.options.queue, expected.jobId)
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          'code' in error &&
+          error.code === 'QUEUE_ITEM_NOT_FOUND' &&
+          (allowPruned ||
+            scope.verifiedCandidates.some(
+              (candidate) =>
+                candidate.candidateId === expected.jobId &&
+                candidate.stagingSessionId === expected.stagingSessionId &&
+                candidate.frozenPayloadSha256 === expected.frozenPayloadSha256,
+            ))
+        ) {
+          // A journal or retained cancellation scope proves this exact job's original ownership.
+          // This is only permission to reach the cancellation owner again: its independent session/
+          // receipt checks and physical quiescence must still qualify a pruned job's absence.
+          continue
+        }
+        throw error
+      }
+      if (!isDeepStrictEqual(smartJobWitness(input, scope), expected)) {
+        throw handoffRecoveryError()
+      }
+    }
+  }
 }
 
 export class ProjectGenerationAcceptanceError extends Error {
@@ -142,6 +379,8 @@ function acceptedLayers(document: IgsProjectDocumentV1): Map<string, RasterLayer
 export class ProjectGenerationAcceptance {
   private readonly pending = new Map<string, GenerationAcceptanceHandoff>()
   private readonly pendingCancellations = new Map<string, PendingCancellation>()
+  private readonly smartCancellations = new Map<string, SmartRasterCancellationScope>()
+  private readonly smartCancellationStarted = new Set<string>()
   private readonly unresolved = new Set<string>()
 
   constructor(private readonly options: ProjectGenerationAcceptanceOptions) {}
@@ -162,6 +401,15 @@ export class ProjectGenerationAcceptance {
       try {
         fenced = true
         await this.options.orchestrator.fenceProjectGeneration(tabId)
+        if (this.smartCancellations.has(tabId)) {
+          // Both sources share this Raster owner. Never register an ordinary cancellation while
+          // Smart cancellation still retains its physical-exit scope: neither may drain the other.
+          retainFence = true
+          throw new ProjectGenerationAcceptanceError(
+            'ACCEPTANCE_HANDOFF_PENDING',
+            'Finish recovery of the Smart Patch Raster Add before accepting ordinary results.',
+          )
+        }
         // Staging verifies source-bound RGBA contributions, including after queue pruning.
         // Preflight selected outpaint pixels and portable metadata before a pending handoff can
         // cancel siblings, write its journal or discard sessions. Already accepted results retain
@@ -219,13 +467,18 @@ export class ProjectGenerationAcceptance {
         let pending = await this.loadHandoff(tabId, initial.documentId)
         retainFence = pending !== undefined || this.unresolved.has(tabId)
         if (pending) {
+          if (pending.smartPatchSource) {
+            throw new ProjectGenerationAcceptanceError(
+              'ACCEPTANCE_HANDOFF_PENDING',
+              'Finish recovery of the Smart Patch Raster Add before accepting ordinary results.',
+            )
+          }
           const proof = handoffProof(initial, pending)
           if (pending.projectPath !== owner.filePath || proof === 'changed') {
             throw handoffRecoveryError()
           }
           if (proof === 'absent') {
-            await this.options.journal.abandon(pending)
-            this.pending.delete(tabId)
+            await this.abandonHandoff(tabId, owner, pending)
             pending = undefined
             retainFence = false
           }
@@ -488,10 +741,286 @@ export class ProjectGenerationAcceptance {
     })
   }
 
+  /** Exact frozen Smart contributions become new Raster owners, without current-layer or worker IO. */
+  async acceptSmartPatchOrphans(
+    tabId: string,
+    input: SmartPatchOrphanRasterAcceptRequest,
+  ): Promise<ProjectGenerationAcceptanceResult> {
+    const request = snapshotSmartRequest(tabId, input)
+    return await this.options.gate.run(tabId, async () => {
+      const owner = this.requireDocument(tabId)
+      const source = this.smartSource()
+      const assertInitial = () => this.requireSmartOwner(tabId, owner, request.expectedOwner)
+      assertInitial()
+      let retain = this.hasPendingHandoff(tabId)
+      try {
+        await this.options.orchestrator.fenceProjectGeneration(tabId)
+        assertInitial()
+        if ((await canonicalProjectPath(owner.filePath)) !== owner.filePath) {
+          throw handoffRecoveryError()
+        }
+        assertInitial()
+        retain = true
+        await this.finishPendingCancellation(tabId, owner)
+        await this.finishSmartCancellation(tabId, owner, assertInitial)
+        assertInitial()
+        const initial = structuredClone(owner.document)
+        let pending = await this.loadHandoff(tabId, initial.documentId)
+        if (pending) {
+          const proof = handoffProof(initial, pending)
+          if (pending.projectPath !== owner.filePath || proof === 'changed') {
+            throw handoffRecoveryError()
+          }
+          if (proof === 'absent') {
+            await this.abandonHandoff(tabId, owner, pending)
+            assertInitial()
+            pending = undefined
+          } else {
+            if (
+              !pending.smartPatchSource ||
+              pending.smartPatchSource.layerId !== request.expectedOwner.layerId ||
+              candidateKey(pending.acceptedLayers.map(candidateIdFromLayer)) !==
+                candidateKey(request.candidateIds)
+            ) {
+              throw new ProjectGenerationAcceptanceError(
+                'ACCEPTANCE_HANDOFF_PENDING',
+                'Finish recovery of the previous Add before accepting different results.',
+              )
+            }
+            await this.finishSmartHandoff(tabId, owner, pending)
+            retain = false
+            return {
+              documentRevision: owner.document.documentRevision,
+              kind: 'already-accepted',
+              layerIds: request.candidateIds.map(
+                (id) =>
+                  pending!.acceptedLayers.find((layer) => candidateIdFromLayer(layer) === id)!.id,
+              ),
+            }
+          }
+        }
+        const all = await source.list(tabId)
+        assertInitial()
+        retain = false
+        const owned = source.owned(
+          all,
+          owner.filePath,
+          initial.documentId,
+          request.expectedOwner.layerId,
+        )
+        const existing = acceptedLayers(initial)
+        if (
+          all.some(
+            (candidate) =>
+              candidate.documentId === initial.documentId &&
+              candidate.projectPath === owner.filePath &&
+              (existing.has(candidate.candidateId) ||
+                hasNestedCandidate(initial, [candidate.candidateId])),
+          )
+        ) {
+          retain = true
+          throw handoffRecoveryError()
+        }
+        const accepted = request.candidateIds.map((id) => existing.get(id))
+        if (accepted.every((layer) => layer !== undefined)) {
+          retain = true
+          if (
+            accepted.some(
+              (layer) =>
+                !isSmartRasterForTarget(layer, initial.documentId, request.expectedOwner.layerId),
+            ) ||
+            all.some((candidate) => request.candidateIds.includes(candidate.candidateId)) ||
+            hasNestedCandidate(initial, request.candidateIds)
+          ) {
+            throw handoffRecoveryError()
+          }
+          await this.requireDurable(
+            owner,
+            tabId,
+            initial.documentId,
+            initial.documentRevision,
+            true,
+          )
+          assertInitial()
+          retain = false
+          return {
+            documentRevision: initial.documentRevision,
+            kind: 'already-accepted',
+            layerIds: accepted.map((layer) => layer.id),
+          }
+        }
+        if (
+          accepted.some((layer) => layer !== undefined) ||
+          hasNestedCandidate(initial, request.candidateIds)
+        ) {
+          retain = true
+          throw handoffRecoveryError()
+        }
+        requireExpectedAvailable(owned, request.expectedAvailableIds)
+        const selected = owned.filter((candidate) =>
+          request.candidateIds.includes(candidate.candidateId),
+        )
+        selected.sort(
+          (a, b) =>
+            a.completionOrder - b.completionOrder || a.candidateId.localeCompare(b.candidateId),
+        )
+        if (selected.length !== request.candidateIds.length) {
+          throw new ProjectGenerationAcceptanceError(
+            'ACCEPTANCE_CANDIDATE_UNAVAILABLE',
+            'A selected Smart Patch contribution is missing or belongs to another owner.',
+          )
+        }
+        if (initial.layers.length + selected.length > IGS_SAFETY_CEILINGS.archiveEntries) {
+          throw new ProjectGenerationAcceptanceError(
+            'ACCEPTANCE_LAYER_LIMIT',
+            'This Project cannot hold that many Raster Layers.',
+          )
+        }
+        const anchor = request.candidateIds.includes(request.focusedCandidateId ?? '')
+          ? request.focusedCandidateId
+          : selected[0].candidateId
+        const acceptedAt = (this.options.now ?? (() => new Date().toISOString()))()
+        const sources: Record<string, IgsAssetSource> = {}
+        const layers: RasterLayer[] = []
+        for (const candidate of selected) {
+          const projected = await source.project(
+            candidate,
+            acceptedAt,
+            uniqueLayerId(initial, layers, [
+              candidate.payload.context.layerId,
+              candidate.payload.context.mask.id,
+            ]),
+            candidate.candidateId === anchor,
+          )
+          assertInitial()
+          layers.push(projected.layer)
+          sources[projected.layer.asset.path] = { sourcePath: projected.sourcePath }
+        }
+        const projected = parseProjectDocumentV1({
+          ...initial,
+          layers: [...layers, ...initial.layers],
+        })
+        preflightProjectedDocument(projected)
+        assertInitial()
+        if ((await canonicalProjectPath(owner.filePath)) !== owner.filePath) {
+          throw handoffRecoveryError()
+        }
+        assertInitial()
+        const scope = await source.captureReviewedJobs(
+          {
+            documentId: initial.documentId,
+            expectedUnfinishedJobIds: [...request.expectedUnfinishedJobIds],
+            layerId: request.expectedOwner.layerId,
+            projectPath: owner.filePath,
+            stagingSessionIds: [...new Set(owned.map((candidate) => candidate.stagingSessionId))],
+            tabId,
+            verifiedCandidates: owned.map(smartWitness),
+          },
+          assertInitial,
+        )
+        assertInitial()
+        const handoff = preflightGenerationAcceptanceHandoff({
+          acceptedLayers: structuredClone(layers),
+          documentId: initial.documentId,
+          localProjectKey: tabId,
+          operationId: randomUUID(),
+          projectPath: owner.filePath,
+          smartPatchSource: {
+            kind: 'smart-patch-orphans',
+            layerId: scope.layerId,
+            reviewedCandidates: scope.verifiedCandidates.map((candidate) => ({ ...candidate })),
+            ...(scope.reviewedJobs?.length
+              ? { reviewedJobs: scope.reviewedJobs.map((job) => ({ ...job })) }
+              : {}),
+          },
+          stagingSessionIds: [...scope.stagingSessionIds],
+        })
+        await source.exclusive(scope, all, this.options.staging)
+        assertInitial()
+        requireExpectedJobIds(await source.jobs(scope), request.expectedUnfinishedJobIds)
+        assertInitial()
+        this.smartCancellations.set(tabId, scope)
+        retain = true
+        await this.finishSmartCancellation(tabId, owner, assertInitial)
+        assertInitial()
+        retain = false
+        const afterCancellation = await source.list(tabId)
+        assertInitial()
+        const afterOwned = source.owned(
+          afterCancellation,
+          owner.filePath,
+          initial.documentId,
+          scope.layerId,
+        )
+        requireExpectedAvailable(afterOwned, request.expectedAvailableIds)
+        if (!isDeepStrictEqual(afterOwned.map(smartWitness), owned.map(smartWitness))) {
+          throw handoffRecoveryError()
+        }
+        await source.exclusive(scope, afterCancellation, this.options.staging)
+        assertInitial()
+        this.pending.set(tabId, handoff)
+        retain = true
+        await this.options.journal.record(handoff)
+        assertInitial()
+        if ((await canonicalProjectPath(owner.filePath)) !== owner.filePath) {
+          throw handoffRecoveryError()
+        }
+        assertInitial()
+        const applied = await owner.applyDocument(projected, sources, {
+          expectedDocumentEpoch: request.expectedOwner.documentEpoch,
+          expectedDocumentRevision: initial.documentRevision,
+        })
+        this.requireSameDocument(tabId, owner, initial.documentId)
+        if (
+          owner.document.documentRevision !== applied.documentRevision ||
+          handoffProof(owner.document, handoff) !== 'complete'
+        ) {
+          throw handoffRecoveryError()
+        }
+        await this.requireDurable(owner, tabId, initial.documentId, applied.documentRevision, false)
+        await this.options.afterDurableShadow?.()
+        if (
+          owner.document.documentRevision !== applied.documentRevision ||
+          handoffProof(owner.document, handoff) !== 'complete'
+        ) {
+          throw handoffRecoveryError()
+        }
+        await this.finishSmartHandoff(tabId, owner, handoff, false)
+        retain = false
+        return {
+          documentRevision: owner.document.documentRevision,
+          kind: 'accepted',
+          layerIds: layers.map((layer) => layer.id),
+        }
+      } catch (error) {
+        if (
+          error instanceof ProjectGenerationAcceptanceError &&
+          ['ACCEPTANCE_CANDIDATE_UNAVAILABLE', 'PROJECT_DOCUMENT_CHANGED'].includes(error.code) &&
+          !this.pending.has(tabId) &&
+          !this.pendingCancellations.has(tabId) &&
+          !this.smartCancellations.has(tabId)
+        ) {
+          retain = false
+        }
+        throw error
+      } finally {
+        if (retain) {
+          this.unresolved.add(tabId)
+        } else {
+          this.unresolved.delete(tabId)
+          this.options.orchestrator.releaseProjectGenerationFence(tabId)
+        }
+      }
+    })
+  }
+
   /** Close must not release an acceptance fence or discard its candidate before reconciliation. */
   hasPendingHandoff(tabId: string): boolean {
     return (
-      this.pending.has(tabId) || this.pendingCancellations.has(tabId) || this.unresolved.has(tabId)
+      this.pending.has(tabId) ||
+      this.pendingCancellations.has(tabId) ||
+      this.smartCancellations.has(tabId) ||
+      this.unresolved.has(tabId)
     )
   }
 
@@ -514,6 +1043,7 @@ export class ProjectGenerationAcceptance {
         fenced = true
         await this.options.orchestrator.fenceProjectGeneration(tabId)
         await this.finishPendingCancellation(tabId, owner)
+        await this.finishSmartCancellation(tabId, owner)
         // If recovery storage cannot be inspected, admission must stay blocked until a later
         // successful reconciliation establishes whether an accepted candidate is still staged.
         retainFence = true
@@ -528,13 +1058,17 @@ export class ProjectGenerationAcceptance {
           if (proof === 'absent') {
             // A durable intent is not a committed Add. This includes a crash before apply and a
             // full Undo: keep every candidate and permit a later explicit Add.
-            await this.options.journal.abandon(pending)
-            this.pending.delete(tabId)
+            await this.abandonHandoff(tabId, owner, pending)
             retainFence = false
             return 'none'
           }
           if (proof !== 'complete') {
             throw handoffRecoveryError()
+          }
+          if (pending.smartPatchSource) {
+            await this.finishSmartHandoff(tabId, owner, pending)
+            retainFence = false
+            return 'cleaned'
           }
           await this.requireNoUnfinishedJobs(tabId, document.documentId, pending.stagingSessionIds)
           await this.requireDurable(
@@ -554,6 +1088,21 @@ export class ProjectGenerationAcceptance {
           return 'cleaned'
         }
         const accepted = acceptedLayers(document)
+        if (this.options.smartPatch) {
+          const smartStaged = await this.options.smartPatch.staging.listVerifiedCandidates(tabId)
+          this.requireSameDocument(tabId, owner, document.documentId)
+          if (
+            smartStaged.some(
+              (candidate) =>
+                candidate.documentId === document.documentId &&
+                candidate.projectPath === owner.filePath &&
+                (accepted.has(candidate.candidateId) ||
+                  hasNestedCandidate(document, [candidate.candidateId])),
+            )
+          ) {
+            throw handoffRecoveryError()
+          }
+        }
         const staged = await this.options.staging.listVerifiedCandidates(tabId)
         const overlap = staged.some(
           (candidate) =>
@@ -616,6 +1165,32 @@ export class ProjectGenerationAcceptance {
     })
   }
 
+  private async abandonHandoff(
+    tabId: string,
+    owner: ProjectGenerationAcceptanceDocument,
+    handoff: GenerationAcceptanceHandoff,
+  ): Promise<void> {
+    const revision = owner.document.documentRevision
+    const epoch = owner.documentEpoch
+    await this.options.journal.abandon(handoff)
+    try {
+      this.requireSameDocument(tabId, owner, handoff.documentId)
+      if (
+        owner.document.documentRevision !== revision ||
+        owner.documentEpoch !== epoch ||
+        handoffProof(owner.document, handoff) !== 'absent'
+      ) {
+        throw handoffRecoveryError()
+      }
+    } catch (error) {
+      // A concurrent Redo can restore lineage while SQL acknowledges deletion. Restore the exact
+      // intent rather than permit an unjournaled accepted/staged overlap (including revision ABA).
+      await this.options.journal.record(handoff)
+      throw error
+    }
+    this.pending.delete(tabId)
+  }
+
   private async finishPendingCancellation(
     tabId: string,
     owner: ProjectGenerationAcceptanceDocument,
@@ -639,13 +1214,152 @@ export class ProjectGenerationAcceptance {
     this.pendingCancellations.delete(tabId)
   }
 
+  private async finishSmartCancellation(
+    tabId: string,
+    owner: ProjectGenerationAcceptanceDocument,
+    beforeCancel?: () => void,
+  ): Promise<void> {
+    let scope = this.smartCancellations.get(tabId)
+    if (!scope) {
+      return
+    }
+    try {
+      const source = this.smartSource()
+      this.requireSameDocument(tabId, owner, scope.documentId)
+      if (
+        owner.filePath !== scope.projectPath ||
+        localProjectRecoveryKey(owner.filePath) !== tabId
+      ) {
+        throw handoffRecoveryError()
+      }
+      const all = await source.list(tabId)
+      this.requireSameDocument(tabId, owner, scope.documentId)
+      beforeCancel?.()
+      await source.exclusive(scope, all, this.options.staging)
+      beforeCancel?.()
+      if (
+        beforeCancel &&
+        scope.verifiedCandidates.some(
+          (witness) =>
+            !all.some((candidate) => isDeepStrictEqual(smartWitness(candidate), witness)),
+        )
+      ) {
+        throw new ProjectGenerationAcceptanceError(
+          'ACCEPTANCE_CANDIDATE_UNAVAILABLE',
+          'A reviewed Smart Patch contribution changed before cancellation. Temporary results were kept.',
+        )
+      }
+      if (!this.pending.has(tabId)) {
+        const witnesses = new Map(
+          scope.verifiedCandidates.map((candidate) => [candidate.candidateId, candidate]),
+        )
+        for (const candidate of source.owned(
+          all,
+          scope.projectPath,
+          scope.documentId,
+          scope.layerId,
+        )) {
+          if (!scope.stagingSessionIds.includes(candidate.stagingSessionId)) {
+            continue
+          }
+          const witness = smartWitness(candidate)
+          const previous = witnesses.get(candidate.candidateId)
+          if (previous && !isDeepStrictEqual(previous, witness)) {
+            throw handoffRecoveryError()
+          }
+          witnesses.set(candidate.candidateId, witness)
+        }
+        scope = { ...scope, verifiedCandidates: [...witnesses.values()] }
+        this.smartCancellations.set(tabId, scope)
+      }
+      await source.verifyReviewedJobs(
+        scope,
+        this.pending.has(tabId) || this.smartCancellationStarted.has(tabId),
+      )
+      this.requireSameDocument(tabId, owner, scope.documentId)
+      beforeCancel?.()
+      this.smartCancellationStarted.add(tabId)
+      await source.cancel(scope)
+      this.requireSameDocument(tabId, owner, scope.documentId)
+      beforeCancel?.()
+      if ((await source.jobs(scope)).length !== 0) {
+        throw new ProjectGenerationAcceptanceError(
+          'ACCEPTANCE_UNFINISHED_JOBS',
+          'Smart Patch sibling cancellation has not confirmed completion.',
+        )
+      }
+      this.requireSameDocument(tabId, owner, scope.documentId)
+      beforeCancel?.()
+      this.smartCancellations.delete(tabId)
+      this.smartCancellationStarted.delete(tabId)
+    } catch (error) {
+      // A refused preflight did not start cancellation. Once requested, retain its scope until
+      // actual exit/publication drain is proved, including when the acknowledgement was lost.
+      if (!this.smartCancellationStarted.has(tabId)) {
+        this.smartCancellations.delete(tabId)
+      }
+      throw error
+    }
+  }
+
+  private async finishSmartHandoff(
+    tabId: string,
+    owner: ProjectGenerationAcceptanceDocument,
+    handoff: GenerationAcceptanceHandoff,
+    verifyDurability = true,
+  ): Promise<void> {
+    if (!handoff.smartPatchSource || handoff.projectPath !== owner.filePath) {
+      throw handoffRecoveryError()
+    }
+    const revision = owner.document.documentRevision
+    const epoch = owner.documentEpoch
+    const assertCurrent = () => {
+      this.requireSameDocument(tabId, owner, handoff.documentId)
+      if (
+        owner.document.documentRevision !== revision ||
+        owner.documentEpoch !== epoch ||
+        handoffProof(owner.document, handoff) !== 'complete'
+      ) {
+        throw handoffRecoveryError()
+      }
+    }
+    assertCurrent()
+    const scope: SmartRasterCancellationScope = {
+      documentId: handoff.documentId,
+      expectedUnfinishedJobIds: [],
+      layerId: handoff.smartPatchSource.layerId,
+      projectPath: handoff.projectPath,
+      stagingSessionIds: [...handoff.stagingSessionIds],
+      tabId,
+      verifiedCandidates: handoff.smartPatchSource.reviewedCandidates.map((candidate) => ({
+        ...candidate,
+      })),
+      ...(handoff.smartPatchSource.reviewedJobs
+        ? {
+            reviewedJobs: handoff.smartPatchSource.reviewedJobs.map((job) => ({ ...job })),
+          }
+        : {}),
+    }
+    this.smartCancellations.set(tabId, scope)
+    await this.finishSmartCancellation(tabId, owner)
+    assertCurrent()
+    if (verifyDurability) {
+      await this.requireDurable(owner, tabId, handoff.documentId, revision, true)
+      assertCurrent()
+    }
+    await this.options.journal.complete(handoff)
+    await this.smartSource().discard(tabId, handoff.stagingSessionIds)
+    assertCurrent()
+    this.pending.delete(tabId)
+  }
+
   private async loadHandoff(
     tabId: string,
     documentId: string,
   ): Promise<GenerationAcceptanceHandoff | undefined> {
     const durable = await this.options.journal.read(tabId, documentId)
     const local = this.pending.get(tabId)
-    if (durable && local && durable.operationId !== local.operationId) {
+    if (durable && local && !isDeepStrictEqual(durable, local)) {
       throw handoffRecoveryError()
     }
     const handoff = durable ?? local
@@ -746,6 +1460,25 @@ export class ProjectGenerationAcceptance {
     }
   }
 
+  private requireSmartOwner(
+    tabId: string,
+    owner: ProjectGenerationAcceptanceDocument,
+    expected: SmartPatchOrphanRasterAcceptRequest['expectedOwner'],
+  ): void {
+    this.requireSameDocument(tabId, owner, expected.documentId)
+    if (
+      localProjectRecoveryKey(owner.filePath) !== tabId ||
+      owner.document.documentRevision !== expected.documentRevision ||
+      owner.documentEpoch !== expected.documentEpoch ||
+      owner.document.layers.some((layer) => layer.id === expected.layerId)
+    ) {
+      throw new ProjectGenerationAcceptanceError(
+        'PROJECT_DOCUMENT_CHANGED',
+        'The reviewed Project or missing Smart Patch target changed. Review Raster conversion again.',
+      )
+    }
+  }
+
   private async scopedUnfinishedJobs(
     tabId: string,
     documentId: string,
@@ -755,6 +1488,16 @@ export class ProjectGenerationAcceptance {
     return (await this.options.queue.listUnfinishedByProjectDocument(tabId, documentId)).filter(
       (item) => sessions.has(item.stagingSessionId),
     )
+  }
+
+  private smartSource(): SmartPatchRasterSourceAdapter {
+    if (!this.options.smartPatch) {
+      throw new ProjectGenerationAcceptanceError(
+        'ACCEPTANCE_RECOVERY_REQUIRED',
+        'Smart Patch recovery storage is unavailable. Temporary results were kept.',
+      )
+    }
+    return new SmartPatchRasterSourceAdapter(this.options.smartPatch)
   }
 }
 
@@ -783,6 +1526,101 @@ function validateRequest(
       'Select between 1 and 64 distinct generation results.',
     )
   }
+}
+
+function snapshotSmartRequest(
+  tabId: string,
+  input: SmartPatchOrphanRasterAcceptRequest,
+): SmartPatchOrphanRasterAcceptRequest {
+  let request: SmartPatchOrphanRasterAcceptRequest
+  try {
+    request = structuredClone(input)
+  } catch {
+    throw new ProjectGenerationAcceptanceError(
+      'ACCEPTANCE_INPUT_INVALID',
+      'The Smart Patch Raster selection is invalid.',
+    )
+  }
+  if (!request || typeof request !== 'object') {
+    throw new ProjectGenerationAcceptanceError(
+      'ACCEPTANCE_INPUT_INVALID',
+      'The Smart Patch Raster selection is invalid.',
+    )
+  }
+  validateRequest(
+    tabId,
+    request.candidateIds,
+    request.focusedCandidateId,
+    request.expectedAvailableIds,
+  )
+  validateJobIds(request.expectedUnfinishedJobIds)
+  const expected = request.expectedOwner
+  if (
+    !expected ||
+    !Number.isSafeInteger(expected.documentEpoch) ||
+    expected.documentEpoch < 0 ||
+    [expected.documentId, expected.documentRevision, expected.layerId].some(
+      (id) => typeof id !== 'string' || !uuidPattern.test(id),
+    ) ||
+    request.candidateIds.some((id) => !request.expectedAvailableIds.includes(id))
+  ) {
+    throw new ProjectGenerationAcceptanceError(
+      'ACCEPTANCE_INPUT_INVALID',
+      'Review the exact Project document and orphan Smart Patch before Add.',
+    )
+  }
+  return request
+}
+
+function smartWitness(
+  candidate: VerifiedSmartPatchWorldCandidate,
+): SmartPatchRasterAcceptanceSource['reviewedCandidates'][number] {
+  return {
+    candidateId: candidate.candidateId,
+    frozenPayloadSha256: candidate.frozenPayloadSha256,
+    stagingSessionId: candidate.stagingSessionId,
+  }
+}
+
+function smartJobWitness(
+  input: VerifiedQueuedSmartPatchInput,
+  scope: SmartPatchAcceptanceCancellationScope,
+): NonNullable<SmartPatchRasterAcceptanceSource['reviewedJobs']>[number] {
+  const { item, payload } = input
+  if (
+    item.localProjectKey !== scope.tabId ||
+    item.projectPath !== scope.projectPath ||
+    payload.context.projectKey !== scope.tabId ||
+    payload.context.documentId !== scope.documentId ||
+    payload.context.layerId !== scope.layerId
+  ) {
+    throw handoffRecoveryError()
+  }
+  return {
+    frozenPayloadSha256: createHash('sha256').update(JSON.stringify(payload)).digest('hex'),
+    jobId: item.id,
+    stagingSessionId: item.stagingSessionId,
+  }
+}
+
+function isSmartRasterForTarget(layer: RasterLayer, documentId: string, layerId: string): boolean {
+  const provenance = layer.generationProvenance
+  return (
+    !!provenance &&
+    (provenance.kind === 'illustrious-smart-patch' || provenance.kind === 'anima-smart-patch') &&
+    provenance.layerSourceContext.sourceDocumentId === documentId &&
+    provenance.layerSourceContext.layerId === layerId
+  )
+}
+
+function hasNestedCandidate(document: IgsProjectDocumentV1, ids: readonly string[]): boolean {
+  return document.layers.some(
+    (layer) =>
+      layer.kind === 'smart-patch' &&
+      layer.rasterSubLayers.some((variant) =>
+        ids.includes(variant.generationProvenance.executionResultContext.candidateId),
+      ),
+  )
 }
 
 function validateJobIds(ids: readonly string[]): void {
@@ -819,7 +1657,7 @@ function requireExpectedJobIds(
 }
 
 function requireExpectedAvailable(
-  owned: readonly VerifiedGenerationCandidate[],
+  owned: readonly { candidateId: string }[],
   expectedAvailableIds: readonly string[],
 ): void {
   const current = new Set(owned.map((candidate) => candidate.candidateId))
@@ -838,14 +1676,14 @@ function candidateKey(candidateIds: readonly string[]): string {
   return [...candidateIds].sort().join(':')
 }
 
-function uniqueLayerId(document: IgsProjectDocumentV1, prepared: readonly RasterLayer[]): string {
+function uniqueLayerId(
+  document: IgsProjectDocumentV1,
+  prepared: readonly RasterLayer[],
+  excluded: readonly string[] = [],
+): string {
+  const occupied = new Set(projectOwnedIds(document))
   let id = randomUUID()
-  while (
-    document.layers.some(
-      (layer) => layer.id === id || (layer.kind === 'smart-patch' && layer.mask.id === id),
-    ) ||
-    prepared.some((layer) => layer.id === id)
-  ) {
+  while (occupied.has(id) || prepared.some((layer) => layer.id === id) || excluded.includes(id)) {
     id = randomUUID()
   }
   return id
@@ -908,6 +1746,21 @@ function handoffProof(
   document: IgsProjectDocumentV1,
   handoff: GenerationAcceptanceHandoff,
 ): 'absent' | 'changed' | 'complete' {
+  if (handoff.smartPatchSource) {
+    const candidateIds = handoff.acceptedLayers.map(candidateIdFromLayer)
+    if (hasNestedCandidate(document, candidateIds)) {
+      return 'changed'
+    }
+    const represented = projectRasterLayers(document).filter((layer) =>
+      candidateIds.includes(layer.generationProvenance?.executionResultContext.candidateId ?? ''),
+    )
+    if (represented.length !== 0 && represented.length !== handoff.acceptedLayers.length) {
+      return 'changed'
+    }
+    if (new Set(represented.map(candidateIdFromLayer)).size !== represented.length) {
+      return 'changed'
+    }
+  }
   if (sameAcceptedLayers(document, handoff.acceptedLayers)) {
     return 'complete'
   }

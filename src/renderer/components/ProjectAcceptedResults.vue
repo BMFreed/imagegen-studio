@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import type { ProjectRasterLayerView, ProjectTab } from '../../shared/api.js'
+import type { ProjectLayerView, ProjectTab } from '../../shared/api.js'
+import { projectAcceptedResultOwners } from '../../shared/projects/project-accepted-results.js'
 
 import { Photo as ImageIcon } from '@vicons/tabler'
 import { NButton, NCard, NEmpty, NIcon, NModal, NTag, NTooltip } from 'naive-ui'
@@ -7,12 +8,17 @@ import { computed, ref, watch } from 'vue'
 
 const props = defineProps<{
   disabled: boolean
-  layers: ProjectRasterLayerView[]
+  layers: ProjectLayerView[]
   results: ProjectTab['acceptedResults']
 }>()
 const emit = defineEmits<{ closed: []; selectLayer: [layerId: string] }>()
 const show = defineModel<boolean>('show', { required: true })
 const layersById = computed(() => new Map(props.layers.map((layer) => [layer.id, layer])))
+const owners = computed(() => projectAcceptedResultOwners(props.layers))
+function ownerLayer(resultId: string) {
+  const owner = owners.value?.get(resultId)
+  return owner && layersById.value.get(owner.layerId)
+}
 const failedImageUrls = ref(new Set<string>())
 
 watch(
@@ -28,7 +34,7 @@ function markImageFailed(url: string) {
 }
 
 function selectLayer(layerId: string) {
-  if (!props.disabled && layersById.value.has(layerId)) {
+  if (!props.disabled && owners.value?.has(layerId)) {
     emit('selectLayer', layerId)
   }
 }
@@ -49,11 +55,13 @@ const dateFormat = new Intl.DateTimeFormat(undefined, {
       size="small"
       title="Accepted results"
     >
-      <p class="history-description">Select a result to select its layer in this project.</p>
+      <p class="history-description">
+        Select a result to reveal its layer or inspect its Smart Patch variant.
+      </p>
       <div v-if="results.length === 0" class="history-empty">
         <NEmpty description="No accepted results yet" size="small">
           <template v-slot:extra>
-            <p>Use Add N as Layers in temporary results to add a generation to this project.</p>
+            <p>Accept a temporary result as a layer or Smart Patch variant to include it here.</p>
           </template>
         </NEmpty>
       </div>
@@ -66,10 +74,14 @@ const dateFormat = new Intl.DateTimeFormat(undefined, {
           role="listitem"
         >
           <NButton
-            :aria-label="`Select layer ${result.layerName}`"
+            :aria-label="
+              owners?.get(result.layerId)?.kind === 'smart-patch-variant'
+                ? `Show variant ${result.layerName} in ${ownerLayer(result.layerId)?.name}`
+                : `Select layer ${result.layerName}`
+            "
             block
             class="accepted-result-button"
-            :disabled="disabled || !layersById.has(result.layerId)"
+            :disabled="disabled || !owners?.has(result.layerId)"
             quaternary
             @click="selectLayer(result.layerId)"
           >
@@ -94,6 +106,13 @@ const dateFormat = new Intl.DateTimeFormat(undefined, {
                   {{ result.layerName }}
                 </strong>
                 <span
+                  v-if="owners?.get(result.layerId)?.kind === 'smart-patch-variant'"
+                  class="result-model"
+                  :title="ownerLayer(result.layerId)?.name"
+                >
+                  Smart Patch: {{ ownerLayer(result.layerId)?.name }}
+                </span>
+                <span
                   class="result-model"
                   :title="`${result.modelName} · ${result.modelVersionName}`"
                 >
@@ -103,7 +122,7 @@ const dateFormat = new Intl.DateTimeFormat(undefined, {
                   <span>Seed {{ result.seed }}</span>
                   <span>Generated size: {{ result.width }} × {{ result.height }}</span>
                   <NTag
-                    v-if="layersById.get(result.layerId)?.visible === false"
+                    v-if="ownerLayer(result.layerId)?.visible === false"
                     :bordered="false"
                     size="tiny"
                   >
@@ -122,7 +141,13 @@ const dateFormat = new Intl.DateTimeFormat(undefined, {
                   {{ result.modelFileSha256 }}
                 </NTooltip>
               </span>
-              <span class="select-label">Select layer</span>
+              <span class="select-label">
+                {{
+                  owners?.get(result.layerId)?.kind === 'smart-patch-variant'
+                    ? 'Show variant'
+                    : 'Select layer'
+                }}
+              </span>
             </span>
           </NButton>
         </article>

@@ -13,6 +13,11 @@ import type {
   ProjectImportSelection,
   ProjectLoraIdentity,
   ProjectOpenResult,
+  ProjectRegionalGuidanceChange,
+  ProjectRegionalGuidanceMaskEditRequest,
+  ProjectRegionalGuidanceOwner,
+  ProjectRegionalGuidancePromptChange,
+  ProjectRegionalGuidanceReferenceImageChange,
   ProjectSaveResult,
   ProjectSmartPatchAcceptRequest,
   ProjectSmartPatchCandidateExportRequest,
@@ -20,6 +25,7 @@ import type {
   ProjectSmartPatchGenerateOptions,
   ProjectSmartPatchLayerChange,
   ProjectSmartPatchMaskEditRequest,
+  ProjectSmartPatchRasterAcceptRequest,
   ProjectSmartPatchResultsSnapshot,
   ProjectSmartPatchVariantChange,
   ProjectSummary,
@@ -33,12 +39,13 @@ import type {
   AcceptedResultHistoryReference,
 } from '../shared/projects/accepted-result-history.js'
 import type { GenerationProgressSnapshot } from '../shared/projects/generation-progress.js'
+import type { ProjectAcceptedResultTarget } from '../shared/projects/project-accepted-results.js'
 import {
   generationTargetSignature,
   hashGenerationTargetSignature,
   type ProjectGenerationTargetState,
 } from '../shared/projects/project-generation-target-state.js'
-import type { IgsRectV1 } from '../shared/projects/project-schema.js'
+import type { IgsRectV1, IgsRegionalGuidanceV1 } from '../shared/projects/project-schema.js'
 import { WINDOW_CLOSE_CANCELED_MESSAGE } from '../shared/window-close.js'
 
 import { Home as HomeIcon, X as XIcon } from '@vicons/tabler'
@@ -54,7 +61,7 @@ import {
   NRadio,
   NRadioGroup,
 } from 'naive-ui'
-import { computed, onBeforeUnmount, onMounted, ref, toRaw, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, toRaw, watch } from 'vue'
 
 import type { CandidateExportFeedback } from './components/candidate-export-feedback.js'
 import type {
@@ -68,6 +75,7 @@ import type { PresetCreateIntent } from './components/preset-create-intent.js'
 import {
   type AcceptedHistoryFocusRequest,
   acceptedHistoryLayerAvailable,
+  resolveAcceptedHistoryTarget,
 } from './components/accepted-history-navigation.js'
 import AcceptedResultsBrowser from './components/AcceptedResultsBrowser.vue'
 import AppChrome from './components/AppChrome.vue'
@@ -83,14 +91,39 @@ import ModelManager from './components/ModelManager.vue'
 import NewProjectModal from './components/NewProjectModal.vue'
 import PresetManager from './components/PresetManager.vue'
 import { draftOwnerKey, ProjectDraftSync } from './components/project-draft-sync.js'
+import { resolveSelectedProjectEntity } from './components/project-layer-context.js'
 import { createProjectPresetIntent } from './components/project-preset-draft.js'
 import ProjectView from './components/ProjectView.vue'
-import { createResultPresetIntent } from './components/result-preset-draft.js'
+import { RegionalPromptSync } from './components/regional-prompt-sync.js'
+import {
+  createResultPresetIntent,
+  createSmartResultPresetIntent,
+} from './components/result-preset-draft.js'
 import RuntimeNotice from './components/RuntimeNotice.vue'
+import {
+  SmartPatchFreshnessReader,
+  type SmartPatchFreshnessState,
+} from './components/smart-patch-freshness-reader.js'
+import {
+  captureSmartPatchPresetApplicationOwner,
+  type SmartPatchPresetApplicationOwner,
+  smartPatchPresetApplicationOwnerCurrent,
+  SmartPatchPresetApplicationReader,
+  type SmartPatchPresetApplicationReview,
+} from './components/smart-patch-preset-application.js'
+import { captureSmartPatchPresetIntent } from './components/smart-patch-preset-draft.js'
 import {
   captureSmartPatchVariantOwner,
   smartPatchVariantOwnerAfterFlush,
 } from './components/smart-patch-variant-owner.js'
+import {
+  captureSmartResultPresetSource,
+  type SmartResultPresetOrigin,
+  type SmartResultPresetPresentation,
+  smartResultPresetReplyMatches,
+  type SmartResultPresetSource,
+  smartResultPresetSourceCurrent,
+} from './components/smart-result-preset-source.js'
 import { imageGenNaiveTheme } from './theme/naive-theme.js'
 
 type RecoveryDecision = Extract<ProjectOpenResult, { kind: 'recovery-required' }>
@@ -125,6 +158,7 @@ type PendingSmartReview =
       tabId: string
       unfinishedJobIds: string[]
     }
+  | { kind: 'accept-raster'; request: ProjectSmartPatchRasterAcceptRequest; tabId: string }
   | { kind: 'accept'; request: ProjectSmartPatchAcceptRequest; tabId: string }
   | { kind: 'discard'; request: ProjectSmartPatchDiscardRequest; tabId: string }
 type PendingProjectAction =
@@ -157,17 +191,55 @@ const presetManagerOpen = ref(false)
 const presetManagerInitialId = ref<string | null>(null)
 const presetManagerCreateIntent = ref<PresetCreateIntent | null>(null)
 let presetCreateEpoch = 0
+let smartPresetReturnFocus: {
+  epoch: number
+  restore: () => void
+  source: SmartResultPresetSource
+} | null = null
+let currentSmartPresetReturnFocus: {
+  documentId: string
+  epoch: number
+  layerId: string
+  tabId: string
+} | null = null
 const presetCatalog = ref<PresetRecord[]>([])
 const presetCatalogLoading = ref(false)
 const presetCatalogError = ref<string | null>(null)
 let presetCatalogEpoch = 0
 let presetOpeningEpoch = 0
-const presetApplication = ref<{ documentId: string; source: PresetRecord; tabId: string } | null>(
-  null,
-)
+type PresetApplication = {
+  documentId: string
+  smartPatch?: {
+    owner: SmartPatchPresetApplicationOwner
+    review: SmartPatchPresetApplicationReview
+  }
+  source: PresetRecord
+  tabId: string
+}
+const presetApplication = ref<PresetApplication | null>(null)
 const presetApplyOpen = ref(false)
 const presetApplyError = ref<string | null>(null)
 const presetApplyBusy = ref(false)
+let pendingSmartPresetOwner: SmartPatchPresetApplicationOwner | null = null
+let presetApplyReturnFocus: PresetApplication | null = null
+const smartPresetReader = new SmartPatchPresetApplicationReader({
+  current: (owner) => smartPresetOwnerCurrent(owner),
+  readPreset: async (id) => {
+    const api = globalThis.window.api?.presets
+    if (!api) {
+      throw new Error('The desktop preset connection is unavailable.')
+    }
+    return await apiValue(() => api.get(id))
+  },
+  readReview: (owner) =>
+    apiValue(() =>
+      projectApi().getSmartPatchPresetApplicationReview(owner.tabId, {
+        documentId: owner.documentId,
+        documentRevision: owner.documentRevision,
+        layerId: owner.layerId,
+      }),
+    ),
+})
 const presetModelHandoff = ref<{
   application: NonNullable<typeof presetApplication.value>
   catalogSettled: boolean
@@ -183,16 +255,22 @@ const presetApplyTab = computed(() => {
       ) ?? null)
     : null
 })
-const presetApplyCurrent = computed(
-  () =>
-    presetApplyTab.value && {
-      generationDraft:
-        generationDraftOverlays.value[presetApplyTab.value.id] ??
-        presetApplyTab.value.generationDraft,
-      primaryBbox: presetApplyTab.value.primaryBbox,
-    },
-)
+const presetApplyCurrent = computed(() => {
+  const smartPatch = presetApplication.value?.smartPatch
+  return smartPatch
+    ? {
+        generationDraft: smartPatch.review.generationDraft,
+        primaryBbox: smartPatch.owner.primaryBbox,
+      }
+    : presetApplyTab.value && {
+        generationDraft:
+          generationDraftOverlays.value[presetApplyTab.value.id] ??
+          presetApplyTab.value.generationDraft,
+        primaryBbox: presetApplyTab.value.primaryBbox,
+      }
+})
 const presetManager = ref<InstanceType<typeof PresetManager> | null>(null)
+const projectView = ref<InstanceType<typeof ProjectView> | null>(null)
 const generationQueueOpen = ref(false)
 const generationQueueEpoch = ref(0)
 const queueResultOpeningId = ref<string | null>(null)
@@ -206,6 +284,8 @@ const modelCatalogError = ref<string | null>(null)
 const modelCatalogLoaded = ref(false)
 const modelCatalogLoading = ref(false)
 const generationDraftOverlays = ref<Record<string, ProjectTab['generationDraft']>>({})
+const regionalPromptOverlays = ref<Record<string, Record<string, IgsRegionalGuidanceV1>>>({})
+const regionalPromptErrors = ref<Record<string, string | null>>({})
 const selectedProjectLayerIds = ref<Record<string, string | null>>({})
 const promptHistoryEpochs = ref<Record<string, number>>({})
 const generationResultsByTab = ref<Record<string, ProjectGenerationResultsSnapshot>>({})
@@ -240,6 +320,34 @@ const pendingProjectAction = ref<PendingProjectAction | null>(null)
 const pendingAcceptance = ref<PendingAcceptance | null>(null)
 const pendingGeneration = ref<PendingGeneration | null>(null)
 const generationCommitting = ref(false)
+// Survives keyed ProjectView remounts: tab navigation keeps only the latest waiting read.
+const patchFreshness = shallowRef<SmartPatchFreshnessState>({
+  error: null,
+  inspection: null,
+  loading: false,
+  owner: null,
+})
+const patchFreshnessReader = new SmartPatchFreshnessReader({
+  onState: (state) => {
+    patchFreshness.value = state
+  },
+  read: async ({ documentId, documentRevision, layerId, tabId }) => {
+    const result = await projectApi().getSmartPatchVariants(
+      tabId,
+      layerId,
+      documentId,
+      documentRevision,
+    )
+    if (!result.ok) {
+      throw new Error(result.error.message)
+    }
+    return result.value
+  },
+})
+const variantDiagnosticsEpoch = ref(0)
+const variantDiagnosticsPending = computed(
+  () => runtimePending.value !== null || modelCatalogLoading.value,
+)
 const generationConfirmationNotice = ref<string | null>(null)
 const acceptanceActionLabel = computed(() => {
   const decision = pendingAcceptance.value
@@ -341,6 +449,56 @@ function openModelManager(focus: ModelManagerFocus | null = null, fromPresetHand
   modelManagerFocus.value = focus
   modelManagerOpen.value = true
 }
+function smartPresetOwnerCurrent(owner: SmartPatchPresetApplicationOwner, applying = false) {
+  const action = pendingProjectAction.value
+  const ownAction =
+    applying && presetApplyBusy.value && action?.kind === 'preset' && action.tabId === owner.tabId
+  return smartPatchPresetApplicationOwnerCurrent(owner, {
+    activeTabId: activeTab.value?.id,
+    blocked: Boolean(
+      rendererDisposed ||
+      windowClosePending.value ||
+      (action && !ownAction) ||
+      reloadRequiredIds.value.has(owner.tabId) ||
+      presetManagerOpen.value ||
+      (modelManagerOpen.value && !presetModelHandoff.value) ||
+      showNewProject.value ||
+      importDialogVisible.value ||
+      recoveryDecision.value ||
+      closingTabId.value ||
+      pendingAcceptance.value ||
+      pendingGeneration.value ||
+      pendingSmartReview.value,
+    ),
+    pendingDraft: projectHasPendingDraft(owner.tabId),
+    selectedLayerId: selectedProjectLayerIds.value[owner.tabId] ?? null,
+    tab: projectTabs.value.find(({ id }) => id === owner.tabId),
+  })
+}
+function presetApplicationTargetCurrent(application: PresetApplication) {
+  return application.smartPatch
+    ? smartPresetOwnerCurrent(application.smartPatch.owner, presetApplyBusy.value)
+    : !patchTargetId(application.tabId)
+}
+function presetApplyClosed() {
+  const application = presetApplyReturnFocus
+  presetApplyReturnFocus = null
+  if (
+    !application ||
+    presetApplyOpen.value ||
+    rendererDisposed ||
+    presetManagerOpen.value ||
+    modelManagerOpen.value ||
+    pendingProjectAction.value ||
+    windowClosePending.value ||
+    activeTab.value?.id !== application.tabId ||
+    activeTab.value.documentId !== application.documentId ||
+    patchTargetId(application.tabId) !== application.smartPatch?.owner.layerId
+  ) {
+    return
+  }
+  projectView.value?.focusPresetApply()
+}
 function currentPresetModelHandoff(request: NonNullable<typeof presetModelHandoff.value>) {
   return (
     presetModelHandoff.value === request &&
@@ -349,7 +507,7 @@ function currentPresetModelHandoff(request: NonNullable<typeof presetModelHandof
     !modelManagerOpen.value &&
     activeTab.value?.id === request.application.tabId &&
     activeTab.value.documentId === request.application.documentId &&
-    !patchTargetId(request.application.tabId) &&
+    presetApplicationTargetCurrent(request.application) &&
     presetApplyTab.value !== null &&
     !pendingProjectAction.value &&
     !windowClosePending.value &&
@@ -368,7 +526,7 @@ function openPresetResourceModels(focus: ModelManagerFocus) {
     windowClosePending.value ||
     activeTab.value?.id !== application.tabId ||
     activeTab.value.documentId !== application.documentId ||
-    patchTargetId(application.tabId) ||
+    !presetApplicationTargetCurrent(application) ||
     reloadRequiredIds.value.has(application.tabId)
   ) {
     return
@@ -419,6 +577,7 @@ function presetModelsDismissed() {
 
 function openPresetManager() {
   ++presetCreateEpoch
+  smartPresetReturnFocus = null
   presetManagerCreateIntent.value = null
   presetManagerInitialId.value = null
   presetManagerOpen.value = true
@@ -426,6 +585,7 @@ function openPresetManager() {
 }
 async function saveCurrentAsPreset(tabId: string, target: ProjectGenerationTargetState | null) {
   if (patchTargetId(tabId)) {
+    saveSmartPatchCurrentAsPreset(tabId)
     return
   }
   if (
@@ -442,6 +602,7 @@ async function saveCurrentAsPreset(tabId: string, target: ProjectGenerationTarge
     return
   }
   const epoch = ++presetCreateEpoch
+  smartPresetReturnFocus = null
   const snapshot: ProjectTab = JSON.parse(JSON.stringify(tab))
   const capturedTarget = target ? { ...target } : null
   try {
@@ -480,6 +641,54 @@ async function saveCurrentAsPreset(tabId: string, target: ProjectGenerationTarge
     }
   }
 }
+function saveSmartPatchCurrentAsPreset(tabId: string) {
+  const tab = projectTabs.value.find((candidate) => candidate.id === tabId)
+  try {
+    const captured = captureSmartPatchPresetIntent({
+      blocked: Boolean(
+        rendererDisposed ||
+        activeTab.value?.id !== tabId ||
+        pendingProjectAction.value ||
+        windowClosePending.value ||
+        presetManagerOpen.value ||
+        presetApplyOpen.value ||
+        modelManagerOpen.value ||
+        showNewProject.value ||
+        importDialogVisible.value ||
+        recoveryDecision.value ||
+        closingTabId.value ||
+        pendingAcceptance.value ||
+        pendingGeneration.value ||
+        pendingSmartReview.value ||
+        reloadRequiredIds.value.has(tabId),
+      ),
+      catalog:
+        modelCatalogLoaded.value && !modelCatalogLoading.value && !modelCatalogError.value
+          ? modelCatalog.value
+          : null,
+      pendingDraft: projectHasPendingDraft(tabId),
+      selectedLayerId: selectedProjectLayerIds.value[tabId] ?? null,
+      tab,
+    })
+    if (!captured) {
+      return
+    }
+    const epoch = ++presetCreateEpoch
+    smartPresetReturnFocus = null
+    currentSmartPresetReturnFocus = {
+      documentId: captured.owner.documentId,
+      epoch,
+      layerId: captured.owner.layerId,
+      tabId: captured.owner.tabId,
+    }
+    presetManagerCreateIntent.value = captured.intent
+    presetManagerInitialId.value = null
+    presetManagerOpen.value = true
+    void refreshModelCatalog()
+  } catch (cause) {
+    setTabError(tabId, errorMessage(cause))
+  }
+}
 async function saveResultAsPreset(tabId: string, layerId: string) {
   if (
     pendingProjectAction.value ||
@@ -496,6 +705,7 @@ async function saveResultAsPreset(tabId: string, layerId: string) {
     return
   }
   const epoch = ++presetCreateEpoch
+  smartPresetReturnFocus = null
   const documentId = tab.documentId
   const layerIdentity = JSON.stringify(layer)
   const acceptedIdentity = JSON.stringify(accepted)
@@ -542,6 +752,125 @@ async function saveResultAsPreset(tabId: string, layerId: string) {
     }
   }
 }
+async function saveSmartResultAsPreset(
+  tabId: string,
+  owner: ProjectAcceptedResultTarget,
+  origin: SmartResultPresetOrigin,
+  presentation: SmartResultPresetPresentation,
+) {
+  if (
+    pendingProjectAction.value ||
+    windowClosePending.value ||
+    presetManagerOpen.value ||
+    reloadRequiredIds.value.has(tabId) ||
+    activeTab.value?.id !== tabId ||
+    !presentation.current()
+  ) {
+    return
+  }
+  const tab = projectTabs.value.find(({ id }) => id === tabId)
+  if (!tab) {
+    return
+  }
+  // Capture the exact result and copied display names before the first asynchronous read.
+  const source = captureSmartResultPresetSource(
+    tab,
+    owner,
+    origin,
+    selectedProjectLayerIds.value[tabId] ?? null,
+  )
+  if (!source) {
+    setTabError(
+      tabId,
+      'This saved Smart result is no longer available. Review its owner and retry.',
+    )
+    return
+  }
+  const epoch = ++presetCreateEpoch
+  smartPresetReturnFocus = null
+  const current = () =>
+    epoch === presetCreateEpoch &&
+    presentation.current() &&
+    activeTab.value?.id === tabId &&
+    !pendingProjectAction.value &&
+    !windowClosePending.value &&
+    !presetManagerOpen.value &&
+    !reloadRequiredIds.value.has(tabId) &&
+    smartResultPresetSourceCurrent(
+      source,
+      projectTabs.value.find(({ id }) => id === tabId),
+      selectedProjectLayerIds.value[tabId] ?? null,
+    )
+  try {
+    const result = await projectApi().getSmartResultPresetData(tabId, source.request)
+    if (!current()) {
+      return
+    }
+    if (!result.ok) {
+      throw new Error(result.error.message)
+    }
+    if (!smartResultPresetReplyMatches(source.request, result.value)) {
+      throw new Error('The saved generation settings belong to another Smart result.')
+    }
+    presetManagerCreateIntent.value = createSmartResultPresetIntent({
+      data: result.value,
+      layerName: source.layerName,
+      projectName: source.projectName,
+    })
+    presetManagerInitialId.value = null
+    smartPresetReturnFocus = { epoch, restore: presentation.restoreFocus, source }
+    presetManagerOpen.value = true
+    void refreshModelCatalog()
+  } catch (cause) {
+    if (current()) {
+      setTabError(tabId, errorMessage(cause))
+    }
+  }
+}
+
+function presetManagerAfterLeave() {
+  const focus = smartPresetReturnFocus
+  const currentFocus = currentSmartPresetReturnFocus
+  if (presetManagerOpen.value) {
+    return
+  }
+  smartPresetReturnFocus = null
+  currentSmartPresetReturnFocus = null
+  if (currentFocus) {
+    const tab = projectTabs.value.find(({ id }) => id === currentFocus.tabId)
+    if (
+      currentFocus.epoch === presetCreateEpoch &&
+      !rendererDisposed &&
+      !pendingProjectAction.value &&
+      !windowClosePending.value &&
+      !modelManagerOpen.value &&
+      !reloadRequiredIds.value.has(currentFocus.tabId) &&
+      activeTab.value?.id === currentFocus.tabId &&
+      tab?.documentId === currentFocus.documentId &&
+      patchTargetId(currentFocus.tabId) === currentFocus.layerId
+    ) {
+      projectView.value?.focusPresetSave()
+    }
+    return
+  }
+  if (
+    !focus ||
+    focus.epoch !== presetCreateEpoch ||
+    activeTab.value?.id !== focus.source.tabId ||
+    pendingProjectAction.value ||
+    windowClosePending.value ||
+    reloadRequiredIds.value.has(focus.source.tabId) ||
+    !smartResultPresetSourceCurrent(
+      focus.source,
+      projectTabs.value.find(({ id }) => id === focus.source.tabId),
+      selectedProjectLayerIds.value[focus.source.tabId] ?? null,
+    )
+  ) {
+    return
+  }
+  focus.restore()
+}
+
 async function refreshPresetCatalog() {
   const epoch = ++presetCatalogEpoch
   presetCatalogLoading.value = true
@@ -568,6 +897,7 @@ async function refreshPresetCatalog() {
 }
 async function chooseProjectPreset(tabId: string, id: string) {
   if (patchTargetId(tabId)) {
+    await chooseSmartPatchPreset(tabId, id)
     return
   }
   const tab = projectTabs.value.find((item) => item.id === tabId)
@@ -602,6 +932,7 @@ async function chooseProjectPreset(tabId: string, id: string) {
       throw new Error('This preset is no longer active. Refresh the preset list.')
     }
     presetApplication.value = { documentId: tab.documentId, source, tabId }
+    presetApplyReturnFocus = presetApplication.value
     presetApplyOpen.value = true
     void refreshModelCatalog()
   } catch (cause) {
@@ -610,10 +941,49 @@ async function chooseProjectPreset(tabId: string, id: string) {
     }
   }
 }
+async function chooseSmartPatchPreset(tabId: string, id: string) {
+  const tab = projectTabs.value.find((item) => item.id === tabId)
+  const owner =
+    tab &&
+    captureSmartPatchPresetApplicationOwner(tab, selectedProjectLayerIds.value[tabId] ?? null)
+  if (!owner || presetApplyBusy.value || !smartPresetOwnerCurrent(owner)) {
+    return
+  }
+  const epoch = ++presetOpeningEpoch
+  pendingSmartPresetOwner = owner
+  presetApplyError.value = null
+  try {
+    const captured = await smartPresetReader.open(owner, id)
+    if (!captured || epoch !== presetOpeningEpoch || !smartPresetOwnerCurrent(owner)) {
+      return
+    }
+    presetApplication.value = {
+      documentId: owner.documentId,
+      smartPatch: { owner, review: captured.review },
+      source: captured.source,
+      tabId,
+    }
+    presetApplyReturnFocus = presetApplication.value
+    presetApplyOpen.value = true
+    void refreshModelCatalog()
+  } catch (cause) {
+    if (epoch === presetOpeningEpoch && smartPresetOwnerCurrent(owner)) {
+      presetCatalogError.value = errorMessage(cause)
+    }
+  } finally {
+    if (pendingSmartPresetOwner === owner) {
+      pendingSmartPresetOwner = null
+    }
+  }
+}
 async function applyProjectPreset(
   selection: Pick<PresetApplicationRequest, 'payload' | 'selectedSections'>,
 ) {
   const application = presetApplication.value
+  if (application?.smartPatch) {
+    await applySmartProjectPreset(application, selection)
+    return
+  }
   if (
     !application ||
     !presetApplyTab.value ||
@@ -646,8 +1016,74 @@ async function applyProjectPreset(
     pendingProjectAction.value = null
   }
 }
+async function applySmartProjectPreset(
+  application: PresetApplication,
+  selection: Pick<PresetApplicationRequest, 'payload' | 'selectedSections'>,
+) {
+  const smartPatch = application.smartPatch
+  if (
+    !smartPatch ||
+    presetApplication.value !== application ||
+    !presetApplyOpen.value ||
+    presetApplyBusy.value ||
+    presetModelHandoff.value ||
+    !smartPresetOwnerCurrent(smartPatch.owner)
+  ) {
+    return
+  }
+  const request: Parameters<ProjectApi['applySmartPatchPreset']>[1] = {
+    ...JSON.parse(JSON.stringify(selection)),
+    documentId: application.documentId,
+    documentRevision: smartPatch.review.documentRevision,
+    layerId: smartPatch.review.layerId,
+    reviewToken: smartPatch.review.reviewToken,
+    sourcePresetId: application.source.id,
+  }
+  presetApplyBusy.value = true
+  presetApplyError.value = null
+  pendingProjectAction.value = { kind: 'preset', tabId: application.tabId }
+  const action = pendingProjectAction.value
+  try {
+    // Reviewed Smart Apply never flushes or seals another draft owner.
+    const result = await apiValue(() =>
+      projectApi().applySmartPatchPreset(application.tabId, request),
+    )
+    if (result.id !== application.tabId || result.documentId !== application.documentId) {
+      throw new Error('The applied preset response belongs to a different Project.')
+    }
+    const current = projectTabs.value.find(({ id }) => id === application.tabId)
+    if (
+      rendererDisposed ||
+      presetApplication.value !== application ||
+      !presetApplyOpen.value ||
+      current?.documentId !== application.documentId ||
+      !smartPresetOwnerCurrent(smartPatch.owner, true)
+    ) {
+      return
+    }
+    const returnFocus = presetApplyReturnFocus
+    replaceTab(result)
+    presetApplyReturnFocus = returnFocus
+    saveNotices.value = { ...saveNotices.value, [application.tabId]: null }
+    presetApplyOpen.value = false
+  } catch (cause) {
+    if (
+      presetApplication.value === application &&
+      presetApplyOpen.value &&
+      smartPresetOwnerCurrent(smartPatch.owner, true)
+    ) {
+      presetApplyError.value = errorMessage(cause)
+    }
+  } finally {
+    if (pendingProjectAction.value === action) {
+      pendingProjectAction.value = null
+    }
+    presetApplyBusy.value = false
+  }
+}
 function editPresetOriginal(id: string) {
   ++presetCreateEpoch
+  smartPresetReturnFocus = null
   presetManagerCreateIntent.value = null
   presetManagerInitialId.value = id
   presetManagerOpen.value = true
@@ -746,6 +1182,7 @@ async function refreshModelCatalog() {
   } finally {
     if (request === modelCatalogRequest) {
       modelCatalogLoading.value = false
+      variantDiagnosticsEpoch.value += 1
     }
   }
 }
@@ -906,6 +1343,8 @@ async function refreshGenerationState(tabId: string) {
 
 function refreshOpenGeneration() {
   generationQueueEpoch.value += 1
+  // Main also emits after dispatch has physically closed its worker and settled the lease.
+  variantDiagnosticsEpoch.value += 1
   for (const tab of projectTabs.value) {
     void refreshGenerationState(tab.id)
     void refreshGenerationResults(tab.id)
@@ -1007,7 +1446,61 @@ async function continueAcceptedHistoryOpen(projectKey: string) {
       'This saved result is not available in the current project. Your unsaved changes were preserved.'
     return
   }
-  acceptedHistoryFocus.value = { ...intent.reference, requestId: intent.requestId }
+  focusCurrentAcceptedResult(intent.reference, intent.requestId)
+}
+
+/** History focus changes only renderer selection; ordinary layer selection seals prompt history. */
+function focusCurrentAcceptedResult(reference: AcceptedResultHistoryReference, requestId: number) {
+  const tab = activeTab.value
+  if (
+    !tab ||
+    pendingProjectAction.value ||
+    windowClosePending.value ||
+    reloadRequiredIds.value.has(tab.id)
+  ) {
+    return
+  }
+  if (projectHasPendingDraft(tab.id)) {
+    globalNotice.value =
+      'Wait for the current settings to finish updating before navigating accepted results.'
+    return
+  }
+  const target = resolveAcceptedHistoryTarget(tab, reference)
+  if (!target) {
+    return
+  }
+  selectedProjectLayerIds.value = { ...selectedProjectLayerIds.value, [tab.id]: target.layerId }
+  acceptedHistoryFocus.value = { ...reference, requestId }
+}
+
+function focusProjectAcceptedResult(reference: AcceptedResultHistoryReference) {
+  if (
+    !activeTab.value ||
+    activeTab.value.id !== reference.projectKey ||
+    pendingProjectAction.value ||
+    windowClosePending.value
+  ) {
+    return
+  }
+  cancelAcceptedHistoryNavigation()
+  focusCurrentAcceptedResult(reference, acceptedHistoryRequest)
+}
+
+function projectHasPendingDraft(tabId: string): boolean {
+  return (
+    generationDraftPending(tabId) ||
+    Boolean(regionalPromptOverlays.value[tabId]) ||
+    regionalPromptSync.hasPending(tabId)
+  )
+}
+
+function generationDraftPending(tabId: string): boolean {
+  // Read overlays too so rendering tracks acknowledgements for every Project draft owner.
+  return (
+    Object.keys(generationDraftOverlays.value).some(
+      (key) => key === tabId || key.startsWith(`${tabId}:patch:`),
+    ) || draftSync.hasPending(tabId)
+  )
 }
 
 function acceptedHistoryClosed() {
@@ -1044,8 +1537,14 @@ async function openSavedAcceptedResult(reference: AcceptedResultHistoryReference
       return
     }
     const previous = activeTab.value
-    if (previous && previous.id !== reference.projectKey) {
-      await flushProjectDraft(previous.id)
+    if (
+      (previous && projectHasPendingDraft(previous.id)) ||
+      projectHasPendingDraft(reference.projectKey)
+    ) {
+      acceptedHistoryError.value =
+        'Wait for the current settings to finish updating before navigating accepted results.'
+      pendingAcceptedHistory = null
+      return
     }
     if (requestId !== acceptedHistoryRequest || !savedAcceptedResultsOpen.value) {
       return
@@ -1263,6 +1762,93 @@ const draftSync = new ProjectDraftSync({
     ),
 })
 
+const regionalPromptSync = new RegionalPromptSync({
+  current: (tabId) => projectTabs.value.find((tab) => tab.id === tabId),
+  onAcknowledged(tab) {
+    replaceTab(tab)
+    saveNotices.value = { ...saveNotices.value, [tab.id]: null }
+  },
+  onError(tabId, error) {
+    regionalPromptErrors.value = { ...regionalPromptErrors.value, [tabId]: error?.message ?? null }
+  },
+  onOverlay(tabId, overlay) {
+    const next = { ...regionalPromptOverlays.value }
+    if (overlay) {
+      next[tabId] = overlay
+    } else {
+      delete next[tabId]
+    }
+    regionalPromptOverlays.value = next
+  },
+  seal: (tabId, groupId) => apiValue(() => projectApi().sealPromptHistory(tabId, groupId)),
+  send: (tabId, owner, change) =>
+    apiValue(() => projectApi().updateRegionalGuidancePrompt(tabId, owner, change)),
+})
+
+watch(
+  [
+    () => activeTab.value?.id,
+    () => activeTab.value?.documentId,
+    () => activeTab.value?.documentRevision,
+    () => (activeTab.value ? (selectedProjectLayerIds.value[activeTab.value.id] ?? null) : null),
+    () => (activeTab.value ? reloadRequiredIds.value.has(activeTab.value.id) : false),
+    () => (activeTab.value ? projectHasPendingDraft(activeTab.value.id) : false),
+    () => {
+      const action = pendingProjectAction.value
+      return Boolean(
+        action &&
+        !(
+          presetApplyBusy.value &&
+          action.kind === 'preset' &&
+          action.tabId === presetApplication.value?.tabId
+        ),
+      )
+    },
+    () => windowClosePending.value,
+    () => presetManagerOpen.value,
+    () => modelManagerOpen.value && !presetModelHandoff.value,
+    () => showNewProject.value,
+    () => importDialogVisible.value,
+    () => recoveryDecision.value,
+    () => closingTabId.value,
+    () => pendingAcceptance.value,
+    () => pendingGeneration.value,
+    () => pendingSmartReview.value,
+  ],
+  () => {
+    const application = presetApplication.value
+    const owner =
+      pendingSmartPresetOwner ??
+      (presetApplyOpen.value || presetApplyBusy.value || presetModelHandoff.value
+        ? application?.smartPatch?.owner
+        : null)
+    if (!owner || smartPresetOwnerCurrent(owner, presetApplyBusy.value)) {
+      return
+    }
+    smartPresetReader.invalidate()
+    ++presetOpeningEpoch
+    pendingSmartPresetOwner = null
+    presetApplyReturnFocus = null
+    if (application?.smartPatch) {
+      presetApplyOpen.value = false
+      presetModelHandoff.value = null
+    }
+  },
+  { flush: 'sync' },
+)
+watch(
+  presetApplyOpen,
+  (open, previous) => {
+    if (!open && previous && presetApplication.value?.smartPatch) {
+      smartPresetReader.invalidate()
+      ++presetOpeningEpoch
+      pendingSmartPresetOwner = null
+      presetModelHandoff.value = null
+    }
+  },
+  { flush: 'sync' },
+)
+
 function updateGenerationDraft(
   tabId: string,
   change: ProjectGenerationDraftChange,
@@ -1271,6 +1857,7 @@ function updateGenerationDraft(
   if (
     pendingProjectAction.value !== null ||
     windowClosePending.value ||
+    regionalPromptSync.hasPending(tabId) ||
     reloadRequiredIds.value.has(tabId)
   ) {
     return
@@ -1306,6 +1893,7 @@ function rotatePromptHistoryGroup(tabId: string) {
 }
 
 async function flushProjectDraft(tabId: string) {
+  await regionalPromptSync.flush(tabId)
   await draftSync.flush(tabId)
   replaceTab(await apiValue(() => projectApi().sealPromptHistory(tabId)))
   rotatePromptHistoryGroup(tabId)
@@ -1445,15 +2033,17 @@ function cancelSmartReview() {
   pendingProjectAction.value = null
 }
 async function confirmSmartReview() {
-  const review = pendingSmartReview.value
+  const pending = pendingSmartReview.value
   if (
-    !review ||
+    !pending ||
     generationCommitting.value ||
     acceptanceCommitting.value ||
     windowClosePending.value
   ) {
     return
   }
+  // Vue wraps the pending review in proxies; Electron requires detached cloneable IPC data.
+  const review = structuredClone(toRaw(pending))
   await (review.kind === 'generate'
     ? submitSmartPatchGeneration(review.tabId, {
         ...review.request,
@@ -1465,7 +2055,11 @@ async function confirmSmartReview() {
     : commitSmartPatchResults(review))
 }
 
-async function acceptSmartPatchResults(tabId: string, selection: SmartCandidateSelection) {
+async function acceptSmartPatchResults(
+  tabId: string,
+  selection: SmartCandidateSelection,
+  kind: 'accept-raster' | 'accept' = 'accept',
+) {
   if (
     pendingProjectAction.value ||
     windowClosePending.value ||
@@ -1490,35 +2084,38 @@ async function acceptSmartPatchResults(tabId: string, selection: SmartCandidateS
         candidate.documentId === selection.documentId && candidate.layerId === selection.layerId,
     )
     if (
-      target?.disposition !== 'available' ||
+      target?.disposition !== (kind === 'accept-raster' ? 'orphaned' : 'available') ||
       selection.documentId !== snapshot.documentId ||
       new Set(selection.candidateIds).size !== selection.candidateIds.length ||
       selection.candidateIds.some(
-        (id) => !candidates.some((candidate) => candidate.candidateId === id),
+        (id) =>
+          !candidates.some(
+            (candidate) =>
+              candidate.candidateId === id &&
+              (kind !== 'accept-raster' || candidate.rasterConversionUnavailableReason === null),
+          ),
       )
     ) {
       throw new Error(
         'The selected Smart Patch results changed or their target is unavailable. Review them before Add.',
       )
     }
-    const request: ProjectSmartPatchAcceptRequest = {
+    const reviewed = {
       candidateIds: [...selection.candidateIds],
       documentId: snapshot.documentId,
       documentRevision: snapshot.documentRevision,
       expectedAvailableIds: candidates.map(({ candidateId }) => candidateId),
       expectedUnfinishedJobIds: [...target.unfinishedJobIds],
       focusedCandidateId: selection.focusedCandidateId,
-      kind: 'smart-patch',
       layerId: selection.layerId,
     }
-    const review: Extract<PendingSmartReview, { kind: 'accept' }> = {
-      kind: 'accept',
-      request,
-      tabId,
-    }
+    const review: Extract<PendingSmartReview, { kind: 'accept-raster' | 'accept' }> =
+      kind === 'accept-raster'
+        ? { kind, request: { ...reviewed, kind: 'smart-patch-raster' }, tabId }
+        : { kind, request: { ...reviewed, kind: 'smart-patch' }, tabId }
     if (
-      request.expectedAvailableIds.length > request.candidateIds.length ||
-      request.expectedUnfinishedJobIds.length
+      review.request.expectedAvailableIds.length > review.request.candidateIds.length ||
+      review.request.expectedUnfinishedJobIds.length
     ) {
       pendingSmartReview.value = review
     } else {
@@ -1583,7 +2180,7 @@ async function discardSmartPatchResults(
 }
 
 async function commitSmartPatchResults(
-  review: Extract<PendingSmartReview, { kind: 'accept' | 'discard' }>,
+  review: Extract<PendingSmartReview, { kind: 'accept-raster' | 'accept' | 'discard' }>,
 ) {
   acceptanceCommitting.value = true
   smartReviewError.value = null
@@ -1616,6 +2213,16 @@ async function commitSmartPatchResults(
         await apiValue(() => projectApi().acceptSmartPatchVariants(review.tabId, review.request)),
       )
       saveNotices.value = { ...saveNotices.value, [review.tabId]: null }
+    } else if (review.kind === 'accept-raster') {
+      if (tab.layers.some((layer) => layer.id === review.request.layerId)) {
+        throw new Error(
+          'The original Smart Patch target is present again. Review its temporary results before Add.',
+        )
+      }
+      replaceTab(
+        await apiValue(() => projectApi().acceptSmartPatchRaster(review.tabId, review.request)),
+      )
+      saveNotices.value = { ...saveNotices.value, [review.tabId]: null }
     } else {
       const result = await apiValue(() =>
         projectApi().discardSmartPatchGenerationResults(review.tabId, review.request),
@@ -1629,7 +2236,7 @@ async function commitSmartPatchResults(
       }
     }
   } catch (cause) {
-    if (review.kind === 'accept') {
+    if (review.kind !== 'discard') {
       try {
         const opened = await apiValue(() => projectApi().open(review.tabId))
         if (opened.kind === 'opened') {
@@ -1641,7 +2248,7 @@ async function commitSmartPatchResults(
     }
     setTabError(
       review.tabId,
-      `${review.kind === 'accept' ? 'Smart Patch acceptance could not be confirmed. Check variants and temporary results before retrying. ' : ''}${errorMessage(cause)}`,
+      `${review.kind !== 'discard' ? 'Smart Patch acceptance could not be confirmed. Check the layer stack and temporary results before retrying. ' : ''}${errorMessage(cause)}`,
     )
   } finally {
     pendingSmartReview.value = null
@@ -1957,8 +2564,12 @@ function setDraftValidity(tabId: string, valid: boolean) {
 
 function patchTargetId(tabId: string): string | undefined {
   const tab = projectTabs.value.find((candidate) => candidate.id === tabId)
-  const selected = tab?.layers.find((layer) => layer.id === selectedProjectLayerIds.value[tabId])
-  return selected?.kind === 'smart-patch' ? selected.id : undefined
+  const selected = tab
+    ? resolveSelectedProjectEntity(tab, selectedProjectLayerIds.value[tabId] ?? null)
+    : null
+  return selected?.kind === 'compositing-layer' && selected.layer.kind === 'smart-patch'
+    ? selected.layer.id
+    : undefined
 }
 
 function editorTab(tab: ProjectTab): ProjectTab {
@@ -1987,6 +2598,11 @@ const activeGenerationDraft = computed(() =>
     : null,
 )
 
+type RegionalGuidanceAction =
+  | { change: ProjectRegionalGuidanceChange; kind: 'update'; owner: ProjectRegionalGuidanceOwner }
+  | { kind: 'add' }
+  | { kind: 'delete' | 'duplicate'; owner: ProjectRegionalGuidanceOwner }
+
 async function selectProjectLayer(tabId: string, layerId: string | null) {
   if (
     selectedProjectLayerIds.value[tabId] === layerId ||
@@ -1996,14 +2612,14 @@ async function selectProjectLayer(tabId: string, layerId: string | null) {
     return
   }
   const tab = projectTabs.value.find((candidate) => candidate.id === tabId)
-  if (!tab || (layerId !== null && !tab.layers.some((layer) => layer.id === layerId))) {
+  if (!tab || (layerId !== null && !resolveSelectedProjectEntity(tab, layerId))) {
     return
   }
   pendingProjectAction.value = { kind: 'layer', tabId }
   try {
     await flushProjectDraft(tabId)
     const current = projectTabs.value.find((candidate) => candidate.id === tabId)
-    if (!current || (layerId !== null && !current.layers.some((layer) => layer.id === layerId))) {
+    if (!current || (layerId !== null && !resolveSelectedProjectEntity(current, layerId))) {
       return
     }
     selectedProjectLayerIds.value = { ...selectedProjectLayerIds.value, [tabId]: layerId }
@@ -2012,6 +2628,254 @@ async function selectProjectLayer(tabId: string, layerId: string | null) {
     setTabError(tabId, errorMessage(cause))
   } finally {
     pendingProjectAction.value = null
+  }
+}
+
+async function runRegionalGuidanceAction(tabId: string, action: RegionalGuidanceAction) {
+  if (
+    pendingProjectAction.value ||
+    regionalPromptSync.hasPending(tabId) ||
+    windowClosePending.value ||
+    reloadRequiredIds.value.has(tabId) ||
+    activeTab.value?.id !== tabId
+  ) {
+    return
+  }
+  const captured = structuredClone(toRaw(action))
+  const initial = projectTabs.value.find((tab) => tab.id === tabId)
+  if (!initial) {
+    return
+  }
+  const documentId = initial.documentId
+  pendingProjectAction.value = { kind: 'layer', tabId }
+  try {
+    await flushProjectDraft(tabId)
+    const current = projectTabs.value.find((tab) => tab.id === tabId)
+    if (!current || current.documentId !== documentId || reloadRequiredIds.value.has(tabId)) {
+      return
+    }
+    if (
+      'owner' in captured &&
+      (captured.owner.documentId !== current.documentId ||
+        captured.owner.documentRevision !== current.documentRevision ||
+        !(current.regionalGuidance ?? []).some((region) => region.id === captured.owner.regionId))
+    ) {
+      throw new Error(
+        'The Project changed. Review the Regional Guidance layer before trying again.',
+      )
+    }
+    const previousIds = new Set((current.regionalGuidance ?? []).map((region) => region.id))
+    const result = await apiValue(() => {
+      switch (captured.kind) {
+        case 'add': {
+          return projectApi().addRegionalGuidance(tabId, {
+            documentId: current.documentId,
+            documentRevision: current.documentRevision,
+          })
+        }
+        case 'delete': {
+          return projectApi().deleteRegionalGuidance(tabId, captured.owner)
+        }
+        case 'duplicate': {
+          return projectApi().duplicateRegionalGuidance(tabId, captured.owner)
+        }
+        case 'update': {
+          return projectApi().updateRegionalGuidance(tabId, captured.owner, captured.change)
+        }
+      }
+    })
+    // A late mutation reply may update only the still-open document which issued it.
+    if (!projectTabs.value.some((tab) => tab.id === tabId && tab.documentId === documentId)) {
+      return
+    }
+    replaceTab(result)
+    if (captured.kind === 'add' || captured.kind === 'duplicate') {
+      const added = (result.regionalGuidance ?? []).find((region) => !previousIds.has(region.id))
+      if (added) {
+        selectedProjectLayerIds.value = { ...selectedProjectLayerIds.value, [tabId]: added.id }
+      }
+    }
+    saveNotices.value = { ...saveNotices.value, [tabId]: null }
+    rotatePromptHistoryGroup(tabId)
+  } catch (cause) {
+    setTabError(tabId, errorMessage(cause))
+  } finally {
+    pendingProjectAction.value = null
+  }
+}
+function addRegionalGuidance(tabId: string) {
+  return runRegionalGuidanceAction(tabId, { kind: 'add' })
+}
+function updateRegionalGuidance(
+  tabId: string,
+  owner: ProjectRegionalGuidanceOwner,
+  change: ProjectRegionalGuidanceChange,
+) {
+  return runRegionalGuidanceAction(tabId, {
+    change: { ...change },
+    kind: 'update',
+    owner: { ...owner },
+  })
+}
+function duplicateRegionalGuidance(tabId: string, owner: ProjectRegionalGuidanceOwner) {
+  return runRegionalGuidanceAction(tabId, { kind: 'duplicate', owner: { ...owner } })
+}
+function deleteRegionalGuidance(tabId: string, owner: ProjectRegionalGuidanceOwner) {
+  return runRegionalGuidanceAction(tabId, { kind: 'delete', owner: { ...owner } })
+}
+
+async function runRegionalReferenceImageAction(
+  tabId: string,
+  owner: ProjectRegionalGuidanceOwner,
+  change?: ProjectRegionalGuidanceReferenceImageChange,
+) {
+  const initial = projectTabs.value.find((tab) => tab.id === tabId)
+  if (
+    !initial ||
+    rendererDisposed ||
+    activeTab.value?.id !== tabId ||
+    pendingProjectAction.value ||
+    projectHasPendingDraft(tabId) ||
+    windowClosePending.value ||
+    reloadRequiredIds.value.has(tabId)
+  ) {
+    return
+  }
+  const capturedOwner = structuredClone(toRaw(owner))
+  const capturedChange = change === undefined ? undefined : structuredClone(toRaw(change))
+  const capturedView = projectView.value
+  const matches = (tab: ProjectTab | undefined): boolean => {
+    const region = tab?.regionalGuidance?.find((item) => item.id === capturedOwner.regionId)
+    return (
+      tab?.documentId === capturedOwner.documentId &&
+      tab.documentRevision === capturedOwner.documentRevision &&
+      region !== undefined &&
+      !region.locked &&
+      (capturedChange !== undefined || tab.generationDraft.model?.baseModelFamily === 'illustrious')
+    )
+  }
+  if (!matches(initial)) {
+    return
+  }
+  pendingProjectAction.value = { kind: 'layer', tabId }
+  const pendingIdentity = pendingProjectAction.value
+  const contextCurrent = (): boolean =>
+    !rendererDisposed &&
+    !windowClosePending.value &&
+    activeTab.value?.id === tabId &&
+    projectView.value === capturedView &&
+    !reloadRequiredIds.value.has(tabId)
+  setTabError(tabId, null)
+  try {
+    await flushProjectDraft(tabId)
+    if (!contextCurrent() || !matches(projectTabs.value.find((tab) => tab.id === tabId))) {
+      throw new Error(
+        'The Project changed. Review the region before importing or editing a reference.',
+      )
+    }
+    const result = await apiValue(() =>
+      capturedChange === undefined
+        ? projectApi().importRegionalGuidanceReferenceImage(tabId, capturedOwner)
+        : projectApi().updateRegionalGuidanceReferenceImage(tabId, capturedOwner, capturedChange),
+    )
+    if (result === null || !contextCurrent()) {
+      return
+    }
+    const latest = projectTabs.value.find((tab) => tab.id === tabId)
+    if (latest?.documentId !== capturedOwner.documentId) {
+      return
+    }
+    if (
+      latest.documentRevision !== capturedOwner.documentRevision &&
+      latest.documentRevision !== result.documentRevision
+    ) {
+      throw new Error('The Project changed after the reference edit. Review its current state.')
+    }
+    replaceTab(result)
+    saveNotices.value = { ...saveNotices.value, [tabId]: null }
+    rotatePromptHistoryGroup(tabId)
+  } catch (cause) {
+    if (contextCurrent()) {
+      setTabError(tabId, errorMessage(cause))
+    }
+  } finally {
+    if (pendingProjectAction.value === pendingIdentity) {
+      pendingProjectAction.value = null
+      await nextTick()
+      if (capturedChange === undefined && contextCurrent()) {
+        capturedView?.focusRegionalReferenceImport(capturedOwner)
+      }
+    }
+  }
+}
+
+function importRegionalReferenceImage(tabId: string, owner: ProjectRegionalGuidanceOwner) {
+  return runRegionalReferenceImageAction(tabId, owner)
+}
+
+function updateRegionalReferenceImage(
+  tabId: string,
+  owner: ProjectRegionalGuidanceOwner,
+  change: ProjectRegionalGuidanceReferenceImageChange,
+) {
+  return runRegionalReferenceImageAction(tabId, owner, change)
+}
+
+function updateRegionalGuidancePrompt(
+  tabId: string,
+  owner: ProjectRegionalGuidanceOwner,
+  change: ProjectRegionalGuidancePromptChange,
+) {
+  if (
+    rendererDisposed ||
+    pendingProjectAction.value ||
+    windowClosePending.value ||
+    reloadRequiredIds.value.has(tabId) ||
+    activeTab.value?.id !== tabId ||
+    generationDraftPending(tabId)
+  ) {
+    return
+  }
+  const tab = projectTabs.value.find((candidate) => candidate.id === tabId)
+  if (tab) {
+    regionalPromptSync.change(
+      structuredClone(toRaw(tab)),
+      structuredClone(toRaw(owner)),
+      structuredClone(toRaw(change)),
+    )
+  }
+}
+
+function sealRegionalGuidancePromptHistory(
+  tabId: string,
+  owner: ProjectRegionalGuidanceOwner,
+  groupId: string,
+) {
+  if (rendererDisposed || windowClosePending.value) {
+    return
+  }
+  const tab = projectTabs.value.find((candidate) => candidate.id === tabId)
+  if (
+    tab?.documentId === owner.documentId &&
+    tab.regionalGuidance?.some((r) => r.id === owner.regionId)
+  ) {
+    regionalPromptSync.seal(structuredClone(toRaw(tab)), structuredClone(toRaw(owner)), groupId)
+  }
+}
+
+async function retryRegionalPrompts(tabId: string) {
+  try {
+    await regionalPromptSync.flush(tabId)
+  } catch (cause) {
+    regionalPromptErrors.value = { ...regionalPromptErrors.value, [tabId]: errorMessage(cause) }
+  }
+}
+
+function discardRegionalPrompts(tabId: string) {
+  try {
+    regionalPromptSync.discard(tabId)
+  } catch (cause) {
+    regionalPromptErrors.value = { ...regionalPromptErrors.value, [tabId]: errorMessage(cause) }
   }
 }
 
@@ -2038,6 +2902,73 @@ async function addSmartPatchLayer(tabId: string) {
       selectedProjectLayerIds.value = { ...selectedProjectLayerIds.value, [tabId]: added.id }
     }
     rotatePromptHistoryGroup(tabId)
+  } catch (cause) {
+    setTabError(tabId, errorMessage(cause))
+  } finally {
+    pendingProjectAction.value = null
+  }
+}
+
+async function editRegionalGuidanceMask(
+  tabId: string,
+  regionId: string,
+  input: ProjectRegionalGuidanceMaskEditRequest,
+) {
+  const tab = projectTabs.value.find((candidate) => candidate.id === tabId)
+  if (
+    !tab ||
+    activeTab.value?.id !== tabId ||
+    selectedProjectLayerIds.value[tabId] !== regionId ||
+    pendingProjectAction.value ||
+    projectHasPendingDraft(tabId) ||
+    windowClosePending.value ||
+    reloadRequiredIds.value.has(tabId)
+  ) {
+    return
+  }
+  const request = structuredClone(toRaw(input))
+  const matches = (candidate: ProjectTab | undefined): boolean => {
+    const region = candidate?.regionalGuidance?.find((value) => value.id === regionId)
+    return (
+      candidate?.documentId === request.documentId &&
+      candidate.documentRevision === request.documentRevision &&
+      region?.mask.id === request.maskId &&
+      region.mask.revision === request.maskRevision &&
+      !region.locked
+    )
+  }
+  if (!matches(tab)) {
+    return
+  }
+  pendingProjectAction.value = { kind: 'layer', tabId }
+  setTabError(tabId, null)
+  try {
+    await flushProjectDraft(tabId)
+    const current = projectTabs.value.find((candidate) => candidate.id === tabId)
+    if (
+      rendererDisposed ||
+      windowClosePending.value ||
+      activeTab.value?.id !== tabId ||
+      selectedProjectLayerIds.value[tabId] !== regionId ||
+      reloadRequiredIds.value.has(tabId) ||
+      !matches(current)
+    ) {
+      throw new Error('The Project changed. Start a new Regional Guidance mask gesture.')
+    }
+    const result = await apiValue(() =>
+      projectApi().editRegionalGuidanceMask(tabId, regionId, request),
+    )
+    const latest = projectTabs.value.find((candidate) => candidate.id === tabId)
+    if (!rendererDisposed && latest?.documentId === request.documentId) {
+      if (
+        latest.documentRevision !== request.documentRevision &&
+        latest.documentRevision !== result.documentRevision
+      ) {
+        throw new Error('The Project changed after the mask edit. Review its current state.')
+      }
+      replaceTab(result)
+      saveNotices.value = { ...saveNotices.value, [tabId]: null }
+    }
   } catch (cause) {
     setTabError(tabId, errorMessage(cause))
   } finally {
@@ -2151,8 +3082,9 @@ async function updateSmartPatchLayer(
 }
 
 function replaceTab(tab: ProjectTab) {
+  regionalPromptSync.observe(tab)
   const selected = selectedProjectLayerIds.value[tab.id]
-  if (selected && !tab.layers.some((layer) => layer.id === selected)) {
+  if (selected && !resolveSelectedProjectEntity(tab, selected)) {
     selectedProjectLayerIds.value = { ...selectedProjectLayerIds.value, [tab.id]: null }
   }
   const index = projectTabs.value.findIndex((candidate) => candidate.id === tab.id)
@@ -2188,6 +3120,9 @@ function removeTab(tabId: string) {
   forgetGenerationUi(tabId, true)
   stopExportFeedbackTimer(tabId)
   draftSync.forget(tabId)
+  regionalPromptSync.forget(tabId)
+  const { [tabId]: _closedRegionalError, ...remainingRegionalErrors } = regionalPromptErrors.value
+  regionalPromptErrors.value = remainingRegionalErrors
   const { [tabId]: _closedPromptEpoch, ...remainingPromptEpochs } = promptHistoryEpochs.value
   promptHistoryEpochs.value = remainingPromptEpochs
   generationResultsRequests.set(tabId, (generationResultsRequests.get(tabId) ?? 0) + 1)
@@ -2226,11 +3161,15 @@ function reconcileProjectTabs(nextTabs: ProjectTab[]) {
       forgetGenerationUi(tab.id, !next)
       stopExportFeedbackTimer(tab.id)
       draftSync.forget(tab.id)
+      regionalPromptSync.forget(tab.id)
       generationResultsRequests.set(tab.id, (generationResultsRequests.get(tab.id) ?? 0) + 1)
       delete generationResultsByTab.value[tab.id]
       delete generationResultsErrors.value[tab.id]
       delete generationResultsLoading.value[tab.id]
     }
+  }
+  for (const tab of nextTabs) {
+    regionalPromptSync.observe(tab)
   }
   projectTabs.value = nextTabs
   if (
@@ -2304,7 +3243,7 @@ async function activateDocument(documentId: string): Promise<boolean> {
     return false
   }
   if (switchingDuringHistoryOpen) {
-    // History navigation already flushed the departing draft before Main Open began.
+    // History navigation required settled drafts before Main Open began.
     activeDocument.value = documentId
     if (documentId === 'home') {
       void refreshProjects()
@@ -3239,6 +4178,7 @@ async function runRuntimeAction(action: 'check' | 'install' | 'repair') {
     runtimeError.value = errorMessage(cause)
   } finally {
     runtimePending.value = null
+    variantDiagnosticsEpoch.value += 1
   }
 }
 
@@ -3325,6 +4265,7 @@ onMounted(() => {
   try {
     unsubscribeStatus = globalThis.window.api?.runtime.onStatusChanged((nextStatus) => {
       status.value = nextStatus
+      variantDiagnosticsEpoch.value += 1
       if (nextStatus.kind === 'ready') {
         runtimeError.value = null
       }
@@ -3374,6 +4315,7 @@ onMounted(() => {
           if (Object.values(draftValidity.value).includes(false)) {
             throw new Error('Correct invalid generation settings before closing the app.')
           }
+          await regionalPromptSync.flushAll()
           await draftSync.flushAll()
           for (const tab of projectTabs.value) {
             replaceTab(await apiValue(() => projectApi().sealPromptHistory(tab.id)))
@@ -3401,9 +4343,17 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   ++presetCreateEpoch
+  currentSmartPresetReturnFocus = null
   ++presetCatalogEpoch
   ++presetOpeningEpoch
+  smartPresetReader.invalidate()
+  pendingSmartPresetOwner = null
+  presetApplyReturnFocus = null
   rendererDisposed = true
+  for (const tab of projectTabs.value) {
+    regionalPromptSync.forget(tab.id)
+  }
+  patchFreshnessReader.dispose()
   cancelAcceptedHistoryNavigation()
   queueResultNavigator.cancel()
   pendingGeneration.value = null
@@ -3537,6 +4487,7 @@ onBeforeUnmount(() => {
         <ProjectView
           v-else-if="activeTab"
           :key="activeTab.id"
+          ref="projectView"
           v-model:imagesPerClick="activeImagesPerClick"
           v-model:selectedLayerId="activeSelectedLayerId"
           :acceptedHistoryFocus="
@@ -3562,10 +4513,13 @@ onBeforeUnmount(() => {
             pendingProjectAction.tabId === activeTab.id &&
             generationCommitting
           "
+          :historyDraftPending="projectHasPendingDraft(activeTab.id)"
+          :maskDraftPending="projectHasPendingDraft(activeTab.id)"
           :modelCatalog
           :modelCatalogError
           :modelCatalogLoaded
           :modelCatalogLoading
+          :patchFreshness
           :pending="activeTabPending"
           :presets="presetCatalog"
           :presetsError="presetCatalogError"
@@ -3574,6 +4528,10 @@ onBeforeUnmount(() => {
             generationDraftOverlays[activeTab.id] ?? activeTab.generationDraft
           "
           :promptHistoryEpoch="promptHistoryEpochs[activeTab.id] ?? 0"
+          :regionalPromptError="regionalPromptErrors[activeTab.id] ?? null"
+          :regionalPromptInputBlocked="generationDraftPending(activeTab.id)"
+          :regionalPromptOverlays="regionalPromptOverlays[activeTab.id]"
+          :regionalPromptPending="Boolean(regionalPromptOverlays[activeTab.id])"
           :reloadRequired="reloadRequiredIds.has(activeTab.id)"
           :runtimeUnavailableReason
           :saveNotice="saveNotices[activeTab.id] ?? null"
@@ -3581,23 +4539,34 @@ onBeforeUnmount(() => {
           :smartPatchResultsError="smartPatchResultsErrors[activeTab.id] ?? null"
           :smartPatchResultsLoading="smartPatchResultsLoading[activeTab.id] ?? false"
           :tab="activeTab"
+          :variantDiagnosticsEpoch
+          :variantDiagnosticsPending
           @acceptCandidates="acceptGenerationCandidates(activeTab.id, $event)"
           @acceptSmartPatch="acceptSmartPatchResults(activeTab.id, $event)"
+          @acceptSmartPatchRaster="acceptSmartPatchResults(activeTab.id, $event, 'accept-raster')"
           @acceptedHistoryFocusHandled="
             acceptedHistoryFocus?.requestId === $event && (acceptedHistoryFocus = null)
           "
           @addLora="addGenerationLora(activeTab.id, $event)"
           @addPatch="addSmartPatchLayer(activeTab.id)"
+          @addRegionalGuidance="addRegionalGuidance"
           @applyBbox="applyBbox(activeTab.id, $event)"
           @cancelGeneration="cancelCurrentGeneration(activeTab.id)"
           @choosePreset="chooseProjectPreset(activeTab.id, $event)"
           @clearExportFeedback="clearExportFeedback(activeTab.id)"
           @clearHistory="runProjectHistoryAction(activeTab.id, 'clear-history')"
+          @deleteRegionalGuidance="deleteRegionalGuidance"
+          @discardRegionalPrompts="discardRegionalPrompts"
           @discardSmartPatch="discardSmartPatchResults(activeTab.id, $event)"
+          @duplicateRegionalGuidance="duplicateRegionalGuidance"
           @editMask="editActiveSmartPatchMask"
+          @editRegionalMask="editRegionalGuidanceMask"
           @exportSmartPatch="exportSmartPatchCandidate(activeTab.id, $event)"
+          @focusAcceptedResult="focusProjectAcceptedResult"
           @generate="generateProject(activeTab.id, $event)"
           @importImage="importActiveRasterImage"
+          @importRegionalReferenceImage="importRegionalReferenceImage"
+          @inspectPatch="patchFreshnessReader.change($event)"
           @manageModels="openModelManager($event)"
           @managePresets="openPresetManager"
           @moveLayer="moveActiveRasterLayer"
@@ -3613,11 +4582,17 @@ onBeforeUnmount(() => {
           @relinkVae="relinkGenerationVae(activeTab.id)"
           @removeLora="removeGenerationLora(activeTab.id, $event)"
           @resultFocusHandled="clearResultFocus(activeTab.id, $event)"
+          @retryRegionalPrompts="retryRegionalPrompts"
           @save="saveProject(activeTab.id)"
           @saveCandidateImage="saveCandidateImage(activeTab.id, $event)"
           @savePreset="saveCurrentAsPreset(activeTab.id, $event)"
           @saveResultPreset="saveResultAsPreset(activeTab.id, $event)"
+          @saveSmartResultPreset="
+            (owner, origin, presentation) =>
+              activeTab && saveSmartResultAsPreset(activeTab.id, owner, origin, presentation)
+          "
           @sealPromptHistory="sealPromptHistory(activeTab.id, $event)"
+          @sealRegionalGuidancePromptHistory="sealRegionalGuidancePromptHistory"
           @selectModel="setGenerationModel(activeTab.id, $event)"
           @selectVae="setGenerationVae(activeTab.id, $event)"
           @undo="runProjectHistoryAction(activeTab.id, 'undo')"
@@ -3625,6 +4600,9 @@ onBeforeUnmount(() => {
           @updateLayer="updateActiveRasterLayer"
           @updatePatch="updateActiveSmartPatchLayer"
           @updatePatchVariant="updateActiveSmartPatchVariant"
+          @updateRegionalGuidance="updateRegionalGuidance"
+          @updateRegionalGuidancePrompt="updateRegionalGuidancePrompt"
+          @updateRegionalReferenceImage="updateRegionalReferenceImage"
           @validateDraft="setDraftValidity"
         />
         <NEmpty v-else class="empty-document" description="No document open">
@@ -3646,6 +4624,7 @@ onBeforeUnmount(() => {
         :catalogReady="modelCatalogLoaded && !modelCatalogLoading && modelCatalogError === null"
         :createIntent="presetManagerCreateIntent"
         :initialPresetId="presetManagerInitialId"
+        @afterLeave="presetManagerAfterLeave"
       />
       <ApplyPresetModal
         v-if="presetApplication && presetApplyTab && presetApplyCurrent"
@@ -3655,10 +4634,17 @@ onBeforeUnmount(() => {
         :catalogReady="modelCatalogLoaded && !modelCatalogLoading && modelCatalogError === null"
         :current="presetApplyCurrent"
         :error="presetApplyError"
+        :excludeSize="Boolean(presetApplication.smartPatch)"
         :projectName="presetApplyTab.title"
         :source="presetApplication.source"
         :suspended="presetModelHandoff !== null"
+        :targetLabel="
+          presetApplication.smartPatch
+            ? `Smart Patch: ${presetApplication.smartPatch.owner.layerName}`
+            : undefined
+        "
         @apply="applyProjectPreset"
+        @closed="presetApplyClosed"
         @editOriginal="editPresetOriginal"
         @manageModels="openPresetResourceModels"
         @suspended="openSuspendedPresetModels"
@@ -3666,7 +4652,12 @@ onBeforeUnmount(() => {
 
       <AcceptedResultsBrowser
         v-model:show="savedAcceptedResultsOpen"
-        :busy="acceptedHistoryOpening || pendingProjectAction !== null || windowClosePending"
+        :busy="
+          acceptedHistoryOpening ||
+          pendingProjectAction !== null ||
+          windowClosePending ||
+          Boolean(activeTab && projectHasPendingDraft(activeTab.id))
+        "
         :navigationError="acceptedHistoryError"
         :readPage="readAcceptedHistoryPage"
         @closed="acceptedHistoryClosed"
@@ -3770,7 +4761,9 @@ onBeforeUnmount(() => {
               ? 'Replace Smart Patch temporary results?'
               : pendingSmartReview?.kind === 'discard'
                 ? 'Discard Smart Patch results?'
-                : 'Add selected Smart Patch variants?'
+                : pendingSmartReview?.kind === 'accept-raster'
+                  ? 'Add as Raster Layer?'
+                  : 'Add selected Smart Patch variants?'
           "
         >
           <template v-if="pendingSmartReview?.kind === 'generate'">
@@ -3780,9 +4773,19 @@ onBeforeUnmount(() => {
               discards those results and cancels those jobs.
             </p>
           </template>
-          <template v-else-if="pendingSmartReview?.kind === 'accept'">
+          <template
+            v-else-if="
+              pendingSmartReview?.kind === 'accept' || pendingSmartReview?.kind === 'accept-raster'
+            "
+          >
             <p>
-              Add {{ pendingSmartReview.request.candidateIds.length }} selected results as variants.
+              <template v-if="pendingSmartReview.kind === 'accept-raster'">
+                Add the selected result as a new Raster Layer at its frozen bounds.
+              </template>
+              <template v-else>
+                Add {{ pendingSmartReview.request.candidateIds.length }} selected results as
+                variants.
+              </template>
               This discards
               {{
                 pendingSmartReview.request.expectedAvailableIds.length -
@@ -3821,7 +4824,9 @@ onBeforeUnmount(() => {
                   ? 'Discard and Generate'
                   : pendingSmartReview?.kind === 'discard'
                     ? 'Discard results'
-                    : 'Add selected variants'
+                    : pendingSmartReview?.kind === 'accept-raster'
+                      ? 'Add as Raster Layer'
+                      : 'Add selected variants'
               }}
             </NButton>
           </div>

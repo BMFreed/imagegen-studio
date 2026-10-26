@@ -15,6 +15,7 @@ export interface AcceptedResultHistoryReference {
   assetSha256: string
   documentId: string
   documentRevision: string
+  /** Accepted Raster Layer or nested Smart Patch variant UUID, never a parent display proxy. */
   layerId: string
   projectKey: string
 }
@@ -56,13 +57,7 @@ const text = v.pipe(
   v.maxBytes(IGS_SAFETY_CEILINGS.titleBytes),
   v.check((value) => value.trim().length > 0),
 )
-const outputDimension = v.pipe(
-  v.number(),
-  v.safeInteger(),
-  v.minValue(8),
-  v.maxValue(2048),
-  v.check((value) => value % 8 === 0),
-)
+const outputDimension = v.pipe(v.number(), v.safeInteger(), v.minValue(1), v.maxValue(2048))
 const CursorSchema = v.strictObject({ acceptedAt: timestamp, layerId: uuid, projectKey })
 const ReferenceSchema = v.strictObject({
   assetSha256: sha256,

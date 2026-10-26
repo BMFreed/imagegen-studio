@@ -53,6 +53,7 @@ function fixture() {
     layerId: randomUUID(),
     layerName: 'Exact Patch',
     queueItemId: item.id,
+    rasterConversionUnavailableReason: 'The original Smart Patch is still present.',
     stagingSessionId: item.stagingSessionId,
     unavailableReason: null,
   }
@@ -204,6 +205,7 @@ test('a superseded Smart Open continuation cannot focus on late success or displ
 test('Smart navigation rechecks the open document after await and leaves orphaned results previewable', async () => {
   const { candidate, item, reference, snapshot } = fixture()
   candidate.disposition = 'orphaned'
+  candidate.rasterConversionUnavailableReason = null
   candidate.unavailableReason = 'The exact Patch is missing.'
   snapshot.targets[0]!.disposition = 'orphaned'
   snapshot.targets[0]!.unavailableReason = candidate.unavailableReason

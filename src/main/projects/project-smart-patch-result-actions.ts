@@ -3,10 +3,12 @@ import {
   isProjectSmartPatchAcceptRequest,
   isProjectSmartPatchCandidateExportRequest,
   isProjectSmartPatchDiscardRequest,
+  isProjectSmartPatchRasterAcceptRequest,
   type ProjectSmartPatchAcceptRequest,
   type ProjectSmartPatchCandidateExportRequest,
   type ProjectSmartPatchDiscardRequest,
   type ProjectSmartPatchGenerationTargetState,
+  type ProjectSmartPatchRasterAcceptRequest,
 } from '../../shared/projects/smart-patch-public-generation.js'
 
 import path from 'node:path'
@@ -15,6 +17,7 @@ import type { GenerationOrchestrator } from './generation-orchestrator.js'
 import type { GenerationQueueRepository } from './generation-queue.js'
 import type { GenerationStagingRepository } from './generation-staging.js'
 import type { CandidateImageDestinationSelection } from './project-candidate-image-export.js'
+import type { ProjectGenerationAcceptance } from './project-generation-acceptance.js'
 import type { ProjectGenerationOperationGate } from './project-generation-operation-gate.js'
 import type { ProjectService } from './project-service.js'
 import type { ProjectSmartPatchAcceptance } from './project-smart-patch-acceptance.js'
@@ -47,6 +50,7 @@ export interface SmartPatchResultActionOptions {
     GenerationQueueRepository,
     'listSmartPatchAcceptanceSessionJobs' | 'listUnfinishedSmartPatchJobsByProject'
   >
+  rasterAcceptance?: Pick<ProjectGenerationAcceptance, 'acceptSmartPatchOrphans'>
   staging: Pick<
     SmartPatchGenerationStagingRepository,
     'discardSessions' | 'listVerifiedCandidates' | 'readVerifiedCandidate'
@@ -111,6 +115,49 @@ export class ProjectSmartPatchResultActions {
     }
     const tab = this.options.projects.getOpenTabs().find((entry) => entry.id === tabId)
     if (!tab || tab.documentId !== request.documentId) {
+      throw changed()
+    }
+    return tab
+  }
+
+  async acceptRaster(
+    tabId: string,
+    input: ProjectSmartPatchRasterAcceptRequest,
+    reviewedDocumentEpoch?: number,
+  ): Promise<ProjectTab> {
+    if (!isProjectSmartPatchRasterAcceptRequest(input)) {
+      throw invalid()
+    }
+    const request = structuredClone(input)
+    const owner = this.owner(tabId, request)
+    const epoch = reviewedDocumentEpoch ?? owner.documentEpoch
+    this.current(tabId, request, owner, epoch)
+    if (!this.options.rasterAcceptance) {
+      throw new SmartPatchPublicResultError(
+        'PROJECT_NOT_READY',
+        'Raster acceptance recovery is unavailable. Temporary results were kept; Save Candidate Image and discard remain available.',
+      )
+    }
+    // The Raster owner admits the shared gate synchronously and rechecks this captured epoch
+    // inside it. No image-engine lease or current Smart Patch source is needed for conversion.
+    await this.options.rasterAcceptance.acceptSmartPatchOrphans(tabId, {
+      candidateIds: request.candidateIds,
+      expectedAvailableIds: request.expectedAvailableIds,
+      expectedOwner: {
+        documentEpoch: epoch,
+        documentId: request.documentId,
+        documentRevision: request.documentRevision,
+        layerId: request.layerId,
+      },
+      expectedUnfinishedJobIds: request.expectedUnfinishedJobIds,
+      focusedCandidateId: request.focusedCandidateId,
+    })
+    const tab = this.options.projects.getOpenTabs().find((entry) => entry.id === tabId)
+    if (
+      !tab ||
+      tab.documentId !== request.documentId ||
+      this.options.projects.getOpenDocumentForAcceptance(tabId) !== owner
+    ) {
       throw changed()
     }
     return tab

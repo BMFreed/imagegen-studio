@@ -14,14 +14,12 @@ export interface PresetProjectCreateIntent {
   workflowUnknown: boolean
 }
 
-/** Whole-Project authoring only. A selected Smart Patch will have a separate source contract. */
-export function createProjectPresetIntent(input: {
+/** Detached reusable authoring values. Size and workflow-dependent strength belong to the caller. */
+export function createAuthoringPresetPayload(input: {
   catalog?: readonly ModelCatalogItem[] | null
-  mode: ProjectGenerationTargetState['mode']
-  project: Pick<ProjectTab, 'generationDraft' | 'layers' | 'primaryBbox' | 'title'>
-}): PresetProjectCreateIntent {
-  const { catalog, mode, project } = input
-  const draft = project.generationDraft
+  draft: ProjectTab['generationDraft']
+}): EditablePresetPayload {
+  const { catalog, draft } = input
   const loras = draft.loras.map((lora) => {
     if (lora.resource.kind !== 'lora') {
       throw new Error('The Project LoRA reference has an invalid kind.')
@@ -31,20 +29,11 @@ export function createProjectPresetIntent(input: {
   if (draft.vae !== null && draft.vae.kind !== 'vae') {
     throw new Error('The Project VAE reference has an invalid kind.')
   }
-  const workflow: PresetWorkflow | null =
-    mode === 'txt2img'
-      ? 'textToImage'
-      : mode === 'img2img' || mode === 'outpaint'
-        ? 'imageToImage'
-        : project.layers.some((layer) => layer.visible && layer.opacity > 0)
-          ? null
-          : 'textToImage'
   const payload: EditablePresetPayload = {
     guidance: { cfgScale: draft.sampling.cfgScale, steps: draft.sampling.steps },
     loras,
     negativePrompt: copyPrompt(draft.negativePrompt),
     prompt: copyPrompt(draft.positivePrompt),
-    size: { height: project.primaryBbox.height, width: project.primaryBbox.width },
     vae: draft.vae === null ? null : { ...copy(draft.vae), kind: 'vae' },
   }
   if (draft.model !== null) {
@@ -85,6 +74,27 @@ export function createProjectPresetIntent(input: {
   if (draft.vaePrecision !== undefined) {
     payload.vaePrecision = draft.vaePrecision
   }
+  return payload
+}
+
+/** Whole-Project authoring retains its verified mode and primary generation-area dimensions. */
+export function createProjectPresetIntent(input: {
+  catalog?: readonly ModelCatalogItem[] | null
+  mode: ProjectGenerationTargetState['mode']
+  project: Pick<ProjectTab, 'generationDraft' | 'layers' | 'primaryBbox' | 'title'>
+}): PresetProjectCreateIntent {
+  const { catalog, mode, project } = input
+  const draft = project.generationDraft
+  const payload = createAuthoringPresetPayload({ catalog, draft })
+  const workflow: PresetWorkflow | null =
+    mode === 'txt2img'
+      ? 'textToImage'
+      : mode === 'img2img' || mode === 'outpaint'
+        ? 'imageToImage'
+        : project.layers.some((layer) => layer.visible && layer.opacity > 0)
+          ? null
+          : 'textToImage'
+  payload.size = { height: project.primaryBbox.height, width: project.primaryBbox.width }
   if (workflow !== 'textToImage' && draft.sampling.denoisingStrength !== null) {
     payload.denoisingStrength = draft.sampling.denoisingStrength
   }

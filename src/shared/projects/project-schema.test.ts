@@ -494,7 +494,10 @@ test('accepted provenance rejects unportable fields, invalid model/geometry and 
         '/home/user/models/checkpoint'
     },
     (document) => {
-      projectRasterLayers(document)[0].generationProvenance!.generationConfiguration.size.width = 72
+      const configuration =
+        projectRasterLayers(document)[0].generationProvenance!.generationConfiguration
+      assert.ok('size' in configuration)
+      configuration.size.width = 72
     },
     (document) => {
       projectRasterLayers(document)[0].generationProvenance!.executionResultContext.output.sha256 =

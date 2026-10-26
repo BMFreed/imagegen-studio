@@ -6,6 +6,7 @@ import {
   isProjectGenerationModelSelection,
   isProjectLoraIdentity,
   isProjectRasterLayerChange,
+  isProjectRegionalGuidanceMaskEditRequest,
   isProjectSmartPatchLayerChange,
   isProjectSmartPatchMaskEditRequest,
 } from '../shared/api.js'
@@ -20,14 +21,18 @@ import type {
   ProjectLoraIdentity,
   ProjectOpenResult,
   ProjectRasterLayerChange,
+  ProjectRegionalGuidanceMaskEditRequest,
   ProjectSmartPatchLayerChange,
   ProjectSmartPatchMaskEditRequest,
   ProjectSmartPatchVariantChange,
-  ProjectTab,
   RuntimeStatus,
   SetCheckpointNoiseProfileChange,
 } from '../shared/api.js'
 import { parsePresetApplication } from '../shared/presets/preset-application.js'
+import {
+  parseSmartPatchPresetApplicationRequest,
+  parseSmartPatchPresetApplicationReviewRequest,
+} from '../shared/presets/smart-patch-preset-application.js'
 import {
   type AcceptedResultHistoryCursor,
   type AcceptedResultHistoryReference,
@@ -56,16 +61,39 @@ import { IGS_SAFETY_CEILINGS, IgsSchemaError } from '../shared/projects/project-
 import type { IgsRectV1 } from '../shared/projects/project-schema.js'
 import { reconcilePromptEmbeddings } from '../shared/projects/prompt-embeddings.js'
 import {
+  isProjectRegionalGuidanceChange,
+  isProjectRegionalGuidanceDocumentOwner,
+  isProjectRegionalGuidanceHistoryGroupId,
+  isProjectRegionalGuidanceOwner,
+  isProjectRegionalGuidancePromptChangeForOwner,
+  isProjectRegionalGuidanceReferenceImageChange,
+  type ProjectRegionalGuidanceChange,
+  type ProjectRegionalGuidanceDocumentOwner,
+  type ProjectRegionalGuidanceOwner,
+  type ProjectRegionalGuidancePromptChange,
+  type ProjectRegionalGuidanceReferenceImageChange,
+} from '../shared/projects/regional-guidance.js'
+import {
   isProjectSmartPatchAcceptRequest,
   isProjectSmartPatchCandidateExportRequest,
   isProjectSmartPatchDiscardRequest,
   isProjectSmartPatchGenerateOptions,
+  isProjectSmartPatchRasterAcceptRequest,
   type ProjectSmartPatchAcceptRequest,
   type ProjectSmartPatchCandidateExportRequest,
   type ProjectSmartPatchDiscardRequest,
   type ProjectSmartPatchGenerateOptions,
+  type ProjectSmartPatchRasterAcceptRequest,
 } from '../shared/projects/smart-patch-public-generation.js'
 import { isProjectSmartPatchVariantChange } from '../shared/projects/smart-patch-variants.js'
+import {
+  isSmartResultComparisonRequest,
+  type SmartResultComparisonRequest,
+} from '../shared/projects/smart-result-comparison.js'
+import {
+  isSmartResultPresetRequest,
+  type SmartResultPresetRequest,
+} from '../shared/projects/smart-result-preset.js'
 import { WINDOW_CLOSE_CANCELED_MESSAGE, WindowCloseCanceledError } from '../shared/window-close.js'
 
 import {
@@ -170,6 +198,15 @@ import {
   parseProjectThumbnailImageUrl,
   readProjectThumbnail,
 } from './projects/project-preview-resource.js'
+import {
+  parseProjectRegionalMaskImageUrl,
+  streamSavedProjectRegionalMask,
+} from './projects/project-regional-mask-resource.js'
+import {
+  parseProjectRegionalReferenceThumbnailUrl,
+  streamSavedProjectRegionalReferenceThumbnail,
+  streamStagedProjectRegionalReferenceThumbnail,
+} from './projects/project-regional-reference-resource.js'
 import { ProjectService, ProjectServiceError } from './projects/project-service.js'
 import { ProjectSessionError } from './projects/project-session.js'
 import { ProjectShadowError, ProjectShadowStore } from './projects/project-shadow.js'
@@ -434,6 +471,20 @@ if (!gotInstanceLock) {
         if (request.method !== 'GET') {
           return new Response('Method not allowed.', { status: 405 })
         }
+        const reference = parseProjectRegionalReferenceThumbnailUrl(request.url)
+        if (reference) {
+          try {
+            const asset = projectService.getRegionalReferenceThumbnail(reference)
+            if (!asset) {
+              return new Response('Reference thumbnail not found.', { status: 404 })
+            }
+            return asset.kind === 'staged'
+              ? await streamStagedProjectRegionalReferenceThumbnail(asset.source, asset.member)
+              : await streamSavedProjectRegionalReferenceThumbnail(asset.filePath, asset.member)
+          } catch {
+            return new Response('Reference thumbnail unavailable.', { status: 503 })
+          }
+        }
         const resource = parseProjectLayerImageUrl(request.url)
         if (!resource) {
           return new Response('Layer not found.', { status: 404 })
@@ -458,6 +509,20 @@ if (!gotInstanceLock) {
       protocol.handle('igs-mask', async (request) => {
         if (request.method !== 'GET') {
           return new Response('Method not allowed.', { status: 405 })
+        }
+        const regional = parseProjectRegionalMaskImageUrl(request.url)
+        if (regional) {
+          try {
+            const asset = projectService.getRegionalMaskAsset(regional)
+            if (!asset) {
+              return new Response('Mask not found.', { status: 404 })
+            }
+            return asset.kind === 'staged'
+              ? await streamStagedProjectMask(asset.source, asset.member)
+              : await streamSavedProjectRegionalMask(asset.filePath, asset.member)
+          } catch {
+            return new Response('Mask unavailable.', { status: 503 })
+          }
         }
         const resource = parseProjectMaskImageUrl(request.url)
         if (!resource) {
@@ -687,6 +752,11 @@ if (!gotInstanceLock) {
             journal: new GenerationAcceptanceJournalRepository(database.db),
             orchestrator: recoveredGeneration.orchestrator,
             queue: recoveredGeneration.queue,
+            smartPatch: {
+              orchestrator: recoveredGeneration.orchestrator,
+              queue: recoveredGeneration.queue,
+              staging: recoveredGeneration.smartPatchStaging,
+            },
             staging: recoveredGeneration.staging,
           })
         : null
@@ -754,7 +824,7 @@ if (!gotInstanceLock) {
         staging: recoveredGeneration?.smartPatchStaging ?? null,
       })
       const smartPatchResultActions =
-        recoveredGeneration && smartPatchAcceptance
+        recoveredGeneration && smartPatchAcceptance && generationAcceptance
           ? new ProjectSmartPatchResultActions({
               acceptance: smartPatchAcceptance,
               chooseDestination: (defaultFileName) =>
@@ -768,6 +838,7 @@ if (!gotInstanceLock) {
               orchestrator: recoveredGeneration.orchestrator,
               projects: projectService,
               queue: recoveredGeneration.queue,
+              rasterAcceptance: generationAcceptance,
               staging: recoveredGeneration.smartPatchStaging,
               withWorker: (use) => targetInspectionOwner.useWorker(use),
             })
@@ -1478,6 +1549,31 @@ if (!gotInstanceLock) {
           ),
       )
       registerProjectHandler(
+        ipcChannels.projects.getSmartResultComparisonData,
+        (args) =>
+          args.length === 2 && isProjectId(args[0]) && isSmartResultComparisonRequest(args[1]),
+        async (tabId, request) =>
+          await projectService.getSmartResultComparisonData(
+            tabId as string,
+            request as SmartResultComparisonRequest,
+            // The service's final ownership/epoch check must follow actual worker lease close.
+            (use) =>
+              targetInspectionOwner.read(
+                async (provider) => (provider ? await provider(use) : null),
+                'comparison',
+              ),
+          ),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.getSmartResultPresetData,
+        (args) => args.length === 2 && isProjectId(args[0]) && isSmartResultPresetRequest(args[1]),
+        async (tabId, request) =>
+          projectService.getSmartResultPresetData(
+            tabId as string,
+            request as SmartResultPresetRequest,
+          ),
+      )
+      registerProjectHandler(
         ipcChannels.projects.reviewAcceptedResult,
         (args) => args.length === 1 && isAcceptedResultHistoryReference(args[0]),
         (reference) =>
@@ -1601,6 +1697,47 @@ if (!gotInstanceLock) {
               request as ProjectSmartPatchAcceptRequest,
             ),
           )
+        },
+      )
+      registerProjectHandler(
+        ipcChannels.projects.acceptSmartPatchRaster,
+        (args) =>
+          args.length === 2 &&
+          isProjectId(args[0]) &&
+          isProjectSmartPatchRasterAcceptRequest(args[1]),
+        async (tabId, input) => {
+          if (resolvingClose || !acceptanceRecovery) {
+            throw new SmartPatchPublicResultError(
+              'ACCEPTANCE_HANDOFF_PENDING',
+              'Finish recovery or the application close decision before adding Smart Patch results.',
+            )
+          }
+          const id = tabId as string
+          const request = structuredClone(input as ProjectSmartPatchRasterAcceptRequest)
+          const owner = projectService.getOpenDocumentForAcceptance(id)
+          if (
+            !owner ||
+            owner.document.documentId !== request.documentId ||
+            owner.document.documentRevision !== request.documentRevision
+          ) {
+            throw new SmartPatchPublicResultError(
+              'PROJECT_DOCUMENT_CHANGED',
+              'The Project changed. Review the current Smart Patch results before Add as Raster Layer.',
+            )
+          }
+          const epoch = owner.documentEpoch
+          return await acceptanceRecovery.withRasterAdd(id, () => {
+            if (
+              projectService.getOpenDocumentForAcceptance(id) !== owner ||
+              owner.documentEpoch !== epoch
+            ) {
+              throw new SmartPatchPublicResultError(
+                'PROJECT_DOCUMENT_CHANGED',
+                'The Project changed before Raster Add was admitted. Review its temporary results again.',
+              )
+            }
+            return requireSmartPatchResultActions().acceptRaster(id, request, epoch)
+          })
         },
       )
       registerProjectHandler(
@@ -1857,7 +1994,7 @@ if (!gotInstanceLock) {
           )
         },
       )
-      const runProjectDocumentAction = (tabId: string, action: () => Promise<ProjectTab>) =>
+      const runProjectDocumentAction = <T>(tabId: string, action: () => Promise<T>) =>
         projectGenerationGate.run(tabId, async () => {
           if (resolvingClose || acceptanceRecovery?.hasPendingHandoff(tabId)) {
             throw new ProjectGenerationAcceptanceError(
@@ -1867,10 +2004,166 @@ if (!gotInstanceLock) {
           }
           return await action()
         })
+      registerProjectHandler(
+        ipcChannels.projects.addRegionalGuidance,
+        (args) =>
+          args.length === 2 &&
+          isProjectId(args[0]) &&
+          isProjectRegionalGuidanceDocumentOwner(args[1]),
+        (tabId, owner) =>
+          runProjectDocumentAction(tabId as string, () =>
+            projectService.addRegionalGuidance(
+              tabId as string,
+              owner as ProjectRegionalGuidanceDocumentOwner,
+            ),
+          ),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.updateRegionalGuidance,
+        (args) =>
+          args.length === 3 &&
+          isProjectId(args[0]) &&
+          isProjectRegionalGuidanceOwner(args[1]) &&
+          isProjectRegionalGuidanceChange(args[2]),
+        (tabId, owner, change) =>
+          runProjectDocumentAction(tabId as string, () =>
+            projectService.updateRegionalGuidance(
+              tabId as string,
+              owner as ProjectRegionalGuidanceOwner,
+              change as ProjectRegionalGuidanceChange,
+            ),
+          ),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.updateRegionalGuidancePrompt,
+        (args) =>
+          args.length === 3 &&
+          isProjectId(args[0]) &&
+          isProjectRegionalGuidanceOwner(args[1]) &&
+          isProjectRegionalGuidancePromptChangeForOwner(args[2], args[1]),
+        (tabId, owner, change) =>
+          runProjectDocumentAction(tabId as string, () =>
+            projectService.updateRegionalGuidancePrompt(
+              tabId as string,
+              owner as ProjectRegionalGuidanceOwner,
+              change as ProjectRegionalGuidancePromptChange,
+            ),
+          ),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.duplicateRegionalGuidance,
+        (args) =>
+          args.length === 2 && isProjectId(args[0]) && isProjectRegionalGuidanceOwner(args[1]),
+        (tabId, owner) =>
+          runProjectDocumentAction(tabId as string, () =>
+            projectService.duplicateRegionalGuidance(
+              tabId as string,
+              owner as ProjectRegionalGuidanceOwner,
+            ),
+          ),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.importRegionalGuidanceReferenceImage,
+        (args) =>
+          args.length === 2 && isProjectId(args[0]) && isProjectRegionalGuidanceOwner(args[1]),
+        (tabId, owner) =>
+          runProjectDocumentAction(tabId as string, () =>
+            projectService.importRegionalGuidanceReferenceImage(
+              tabId as string,
+              owner as ProjectRegionalGuidanceOwner,
+              async () => {
+                if (!(await resolveProjectImageWorker())) {
+                  throw new ProjectServiceError(
+                    'PROJECT_WORKER_UNAVAILABLE',
+                    'Set up the image runtime before importing a regional reference image.',
+                  )
+                }
+                const selection = await dialog.showOpenDialog(window, {
+                  filters: [{ extensions: ['png', 'jpg', 'jpeg', 'webp'], name: 'Images' }],
+                  properties: ['openFile'],
+                  title: 'Add Regional Guidance reference image',
+                })
+                return selection.canceled || selection.filePaths.length !== 1
+                  ? null
+                  : selection.filePaths[0]
+              },
+              {
+                createImportThumbnail: async (input) => {
+                  const result = await targetInspectionOwner.useWorker((worker) =>
+                    worker.createImportThumbnail(input),
+                  )
+                  if (!result) {
+                    throw new ProjectServiceError(
+                      'PROJECT_WORKER_UNAVAILABLE',
+                      'The image worker is unavailable. The Project was not changed.',
+                    )
+                  }
+                  return result
+                },
+                normalizeImport: async (input) => {
+                  const result = await targetInspectionOwner.useWorker((worker) =>
+                    worker.normalizeImport(input),
+                  )
+                  if (!result) {
+                    throw new ProjectServiceError(
+                      'PROJECT_WORKER_UNAVAILABLE',
+                      'The image worker is unavailable. The Project was not changed.',
+                    )
+                  }
+                  return result
+                },
+              },
+            ),
+          ),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.updateRegionalGuidanceReferenceImage,
+        (args) =>
+          args.length === 3 &&
+          isProjectId(args[0]) &&
+          isProjectRegionalGuidanceOwner(args[1]) &&
+          isProjectRegionalGuidanceReferenceImageChange(args[2]),
+        (tabId, owner, change) =>
+          runProjectDocumentAction(tabId as string, () =>
+            projectService.updateRegionalGuidanceReferenceImage(
+              tabId as string,
+              owner as ProjectRegionalGuidanceOwner,
+              change as ProjectRegionalGuidanceReferenceImageChange,
+            ),
+          ),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.deleteRegionalGuidance,
+        (args) =>
+          args.length === 2 && isProjectId(args[0]) && isProjectRegionalGuidanceOwner(args[1]),
+        (tabId, owner) =>
+          runProjectDocumentAction(tabId as string, () =>
+            projectService.deleteRegionalGuidance(
+              tabId as string,
+              owner as ProjectRegionalGuidanceOwner,
+            ),
+          ),
+      )
       registerProjectHandler(ipcChannels.projects.addSmartPatchLayer, oneProjectId, (tabId) =>
         runProjectDocumentAction(tabId as string, () =>
           projectService.addSmartPatchLayer(tabId as string),
         ),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.editRegionalGuidanceMask,
+        (args) =>
+          args.length === 3 &&
+          isProjectId(args[0]) &&
+          isProjectDocumentId(args[1]) &&
+          isProjectRegionalGuidanceMaskEditRequest(args[2]),
+        (tabId, regionId, request) =>
+          runProjectDocumentAction(tabId as string, () =>
+            projectService.editRegionalGuidanceMask(
+              tabId as string,
+              regionId as string,
+              request as ProjectRegionalGuidanceMaskEditRequest,
+            ),
+          ),
       )
       registerProjectHandler(
         ipcChannels.projects.editSmartPatchMask,
@@ -1919,6 +2212,58 @@ if (!gotInstanceLock) {
               change as ProjectSmartPatchVariantChange,
             ),
           ),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.getSmartPatchPresetApplicationReview,
+        (args) => args.length === 2 && isProjectId(args[0]),
+        async (tabId, input) => {
+          let request: ReturnType<typeof parseSmartPatchPresetApplicationReviewRequest>
+          try {
+            request = parseSmartPatchPresetApplicationReviewRequest(input)
+          } catch {
+            throw new ProjectServiceError(
+              'PROJECT_INVALID_INPUT',
+              'Choose a valid Smart Patch to review.',
+            )
+          }
+          if (resolvingClose || acceptanceRecovery?.hasPendingHandoff(tabId as string)) {
+            throw new ProjectGenerationAcceptanceError(
+              'ACCEPTANCE_HANDOFF_PENDING',
+              'Finish Project recovery before applying a preset.',
+            )
+          }
+          return projectService.getSmartPatchPresetApplicationReview(tabId as string, request)
+        },
+      )
+      registerProjectHandler(
+        ipcChannels.projects.applySmartPatchPreset,
+        (args) => args.length === 2 && isProjectId(args[0]),
+        async (tabId, input) => {
+          let request: ReturnType<typeof parseSmartPatchPresetApplicationRequest>
+          try {
+            request = parseSmartPatchPresetApplicationRequest(input)
+          } catch {
+            throw new ProjectServiceError(
+              'PROJECT_INVALID_INPUT',
+              'Choose valid preset sections. Size cannot be applied to a Smart Patch.',
+            )
+          }
+          return runProjectDocumentAction(tabId as string, () =>
+            projectService.applySmartPatchPreset(
+              tabId as string,
+              request,
+              async (selection, current) => {
+                await modelService.verifyPresetApplication(selection, current)
+                if (!(await presetService.get(selection.sourcePresetId))) {
+                  throw new ProjectServiceError(
+                    'PROJECT_INVALID_INPUT',
+                    'This preset is no longer active. Choose it again.',
+                  )
+                }
+              },
+            ),
+          )
+        },
       )
       registerProjectHandler(
         ipcChannels.projects.applyPreset,
@@ -2060,7 +2405,9 @@ if (!gotInstanceLock) {
         (args) =>
           args.length === 2 &&
           isProjectId(args[0]) &&
-          (args[1] === null || isHistoryGroupId(args[1])),
+          (args[1] === null ||
+            isHistoryGroupId(args[1]) ||
+            isProjectRegionalGuidanceHistoryGroupId(args[1])),
         (tabId, historyGroupId) =>
           projectGenerationGate.run(tabId as string, () =>
             projectService.sealPromptHistory(

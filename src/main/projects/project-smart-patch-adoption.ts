@@ -8,6 +8,7 @@ import {
   parseProjectDocumentV1,
   parseSmartPatchVariantV1,
   projectAssetReferences,
+  projectOwnedIds,
 } from '../../shared/projects/project-schema.js'
 
 import { isDeepStrictEqual } from 'node:util'
@@ -88,13 +89,7 @@ export function projectSmartPatchVariantHandoffProof(
   ) {
     return 'complete'
   }
-  const ownedIds = new Set(
-    document.layers.flatMap((layer) =>
-      layer.kind === 'smart-patch'
-        ? [layer.id, layer.mask.id, ...layer.rasterSubLayers.map(({ id }) => id)]
-        : [layer.id],
-    ),
-  )
+  const ownedIds = new Set(projectOwnedIds(document))
   return identity.acceptedVariants.some(
     (expected) =>
       ownedIds.has(expected.id) ||

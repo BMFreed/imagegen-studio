@@ -1,14 +1,20 @@
 import type { GenerationPayload } from '../../components/generation/generation.types'
-import type { PresetCreateIntent } from '../presets/presets.types'
+import type { PresetCreateIntent, PresetSectionKey } from '../presets/presets.types'
 import type { GenerationProvenance, ProjectCompositingLayer, ProjectSession } from './project.types'
 
-import { clonePreset } from '../presets/presets.utils'
+import { clonePreset, sectionOrder } from '../presets/presets.utils'
 import { deriveGenerationMode, getActiveGenerationDraft, getSelectedEntity } from './project.utils'
 
 export function resultProvenance(layer: ProjectCompositingLayer) {
   return layer.kind === 'raster'
     ? layer.provenance
     : layer.variants.find((v) => v.id === layer.activeVariantId)?.provenance
+}
+
+/** Smart provenance has no reusable Size, including after conversion to a Raster. */
+export function resultComparisonSectionOrder(layer: ProjectCompositingLayer): PresetSectionKey[] {
+  const smart = layer.kind === 'smart-patch' || resultProvenance(layer)?.source !== undefined
+  return sectionOrder.filter((section) => section !== 'size' || !smart)
 }
 
 export function freezeGeneration(
@@ -75,6 +81,10 @@ export function presetIntentFromResult(
     return undefined
   }
   const payload = clonePreset(record.payload)
+  const smartPatchSource = layer.kind === 'smart-patch' || record.source !== undefined
+  if (smartPatchSource) {
+    delete payload.size
+  }
   // Seed remains opt-in in the preset editor, as in Save Current as Preset.
   delete payload.seed
   return {
@@ -85,7 +95,7 @@ export function presetIntentFromResult(
       payload,
       tags: ['result'],
       workflow:
-        record.mode === 'inpaint'
+        smartPatchSource || record.mode === 'inpaint'
           ? 'smartPatch'
           : record.mode === 'txt2img'
             ? 'textToImage'

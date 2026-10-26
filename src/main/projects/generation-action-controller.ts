@@ -21,6 +21,7 @@ import {
 } from '../../shared/projects/illustrious-noise-profile.js'
 import { resolveIllustriousScheduler } from '../../shared/projects/illustrious-scheduler.js'
 import {
+  isQualifiedInferenceWorkerReady,
   supportsInferenceAnima,
   supportsInferenceAnimaOutpaint,
   supportsInferenceCFGRescale,
@@ -39,8 +40,13 @@ import type {
   ProjectGenerationActionState,
 } from '../../shared/projects/project-generation-actions.js'
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
+import {
+  assertRegionalGuidanceGenerationAvailable,
+  RegionalGuidanceGenerationError,
+} from '../../shared/projects/regional-guidance.js'
 
 import { randomUUID } from 'node:crypto'
+import { realpath } from 'node:fs/promises'
 import path from 'node:path'
 
 import type { OutpaintInfillResolver } from '../runtime/inference-auxiliary-resources.js'
@@ -60,6 +66,8 @@ import type { GenerationModelResolver } from './illustrious-generation-loras.js'
 import type { ProjectGenerationOperationGate } from './project-generation-operation-gate.js'
 import type { PreparedNormalGeneration } from './project-generation-preparation.js'
 import type { FrozenGenerationTarget } from './project-generation-target.js'
+import type { ProjectService } from './project-service.js'
+import type { SmartPatchExecutionModelResolver } from './project-smart-patch-execution.js'
 import type { ProjectWorkerClient } from './worker-client.js'
 
 import { InferenceAuxiliaryResourceError } from '../runtime/inference-auxiliary-resources.js'
@@ -93,6 +101,7 @@ type CapturedNormalInput = {
 }
 
 interface CapturedProjectService {
+  getOpenDocumentForAcceptance?: ProjectService['getOpenDocumentForAcceptance']
   getOpenDocumentId: (tabId: string) => string | null
   withCapturedNormalGenerationInput: <T>(
     tabId: string,
@@ -134,7 +143,10 @@ interface GenerationActionDependencies {
   queue: Partial<
     Pick<
       GenerationQueueRepository,
-      'listUnfinishedNormalByProjectDocument' | 'retryPreparedOutpaintTerminal'
+      | 'listUnfinishedNormalByProjectDocument'
+      | 'loadVerifiedSmartPatchInput'
+      | 'retryPreparedOutpaintTerminal'
+      | 'retryPreparedSmartPatchTerminal'
     >
   > &
     Pick<
@@ -518,7 +530,7 @@ export class ProjectGenerationActionController {
     }
   }
 
-  private async cancelPublishedOutpaintJobs(
+  private async cancelPublishedJobs(
     tabId: string,
     items: readonly QueuedGenerationItem[],
   ): Promise<void> {
@@ -526,7 +538,7 @@ export class ProjectGenerationActionController {
       for (const item of items) {
         const stopped = await this.cancelQueuedItem(item.id)
         if (stopped.status !== 'canceled') {
-          throw new Error('A newly admitted outpaint job has not stopped.')
+          throw new Error('A newly admitted job has not stopped.')
         }
       }
     } catch {
@@ -557,6 +569,10 @@ export class ProjectGenerationActionController {
   ): Promise<ProjectGenerateResult> {
     this.assertAdmissionOpen()
     this.assertDocument(tabId, request.documentId)
+    const owner = this.options.projects.getOpenDocumentForAcceptance?.(tabId)
+    if (owner) {
+      assertRegionalGuidanceGenerationAvailable(owner.document)
+    }
     const outpaintPublication: { admission: PreparedBatchAdmissionResult | null } = {
       admission: null,
     }
@@ -567,6 +583,7 @@ export class ProjectGenerationActionController {
           tabId,
           async (capture) => {
             this.assertAdmissionOpen()
+            assertRegionalGuidanceGenerationAvailable(capture.document)
             if (capture.document.documentId !== request.documentId) {
               throw documentChanged()
             }
@@ -992,7 +1009,7 @@ export class ProjectGenerationActionController {
       return result
     } catch (error) {
       if (outpaintPublication.admission) {
-        await this.cancelPublishedOutpaintJobs(tabId, outpaintPublication.admission.items)
+        await this.cancelPublishedJobs(tabId, outpaintPublication.admission.items)
       }
       if (outpaintOldCleanupStarted) {
         this.options.queue.fenceProject(tabId)
@@ -1052,16 +1069,121 @@ export class ProjectGenerationActionController {
     return documentId
   }
 
+  /** Replay only the reviewed concrete frozen input; no live target or draft capture. */
+  private async retrySmartPatchUnlocked(
+    review: GenerationQueueReview,
+    tabId: string,
+    documentId: string,
+  ): Promise<void> {
+    this.admittingTabId = tabId
+    if (!this.options.projects.getOpenDocumentForAcceptance) {
+      throw new ProjectGenerationActionError(
+        'GENERATION_RUNTIME_UNAVAILABLE',
+        'Smart Patch Retry is unavailable. The original queue item was kept.',
+      )
+    }
+    const owner = this.options.projects.getOpenDocumentForAcceptance?.(tabId)
+    const assertCurrent = () => {
+      this.assertAdmissionOpen()
+      this.assertDocument(tabId, documentId)
+      if (!owner || this.options.projects.getOpenDocumentForAcceptance?.(tabId) !== owner) {
+        throw documentChanged()
+      }
+    }
+    assertCurrent()
+    await this.options.gate.run(tabId, async () => {
+      assertCurrent()
+      const { models, queue } = this.options
+      if (!queue.loadVerifiedSmartPatchInput || !queue.retryPreparedSmartPatchTerminal) {
+        throw new ProjectGenerationActionError(
+          'GENERATION_RUNTIME_UNAVAILABLE',
+          'Smart Patch Retry is unavailable. The original queue item was kept.',
+        )
+      }
+      const frozen = await queue.loadVerifiedSmartPatchInput(review.id)
+      assertCurrent()
+      if (
+        frozen.item.statusSequence !== review.statusSequence ||
+        (frozen.item.status !== 'failed' && frozen.item.status !== 'canceled')
+      ) {
+        throw new ProjectGenerationActionError(
+          'GENERATION_INVALID_REQUEST',
+          'The queue item changed. Refresh the queue before retrying.',
+        )
+      }
+      if (frozen.payload.context.documentId !== documentId) {
+        throw documentChanged()
+      }
+      if (
+        typeof models.resolveVerifiedGenerationAnimaBundleForPlan !== 'function' ||
+        typeof models.resolveVerifiedAnimaGenerationLoraForPlan !== 'function'
+      ) {
+        throw new ProjectGenerationActionError(
+          'GENERATION_MODEL_UNAVAILABLE',
+          'The saved Smart Patch resources cannot be verified. The original queue item was kept.',
+        )
+      }
+      let published: QueuedGenerationItem | null = null
+      try {
+        const admitted = await this.options.runtime.withGenerationAdmission(
+          this.options.scratchBasePath,
+          async (ready) => {
+            assertCurrent()
+            if (
+              !isQualifiedInferenceWorkerReady(ready) ||
+              ready.workerVersion !== '0.14.0' ||
+              !ready.capabilities.includes('smart-patch-execution') ||
+              !ready.capabilities.includes('smart-patch-seed-confirmation') ||
+              (frozen.payload.kind === 'anima-smart-patch' && !supportsInferenceAnima(ready))
+            ) {
+              throw new ProjectGenerationActionError(
+                'GENERATION_RUNTIME_UNAVAILABLE',
+                'The current image engine cannot retry this Smart Patch. The original queue item was kept.',
+              )
+            }
+            published = await queue.retryPreparedSmartPatchTerminal!(
+              review.id,
+              review.statusSequence,
+              { assertCurrent, modelService: models as SmartPatchExecutionModelResolver },
+            )
+            assertCurrent()
+            return true
+          },
+        )
+        // Admission includes physical worker exit. A late refusal must cancel its new pending row.
+        assertCurrent()
+        let canonicalPath: string
+        try {
+          canonicalPath = await realpath(frozen.item.projectPath)
+        } catch {
+          throw documentChanged()
+        }
+        assertCurrent()
+        if (canonicalPath !== frozen.item.projectPath) {
+          throw documentChanged()
+        }
+        if (admitted === null) {
+          throw new ProjectGenerationActionError(
+            'GENERATION_RUNTIME_UNAVAILABLE',
+            'The image runtime is unavailable. The original queue item was kept.',
+          )
+        }
+      } catch (error) {
+        if (published) {
+          await this.cancelPublishedJobs(tabId, [published])
+        }
+        throw error
+      }
+    })
+  }
+
   private async retryUnlocked(review: GenerationQueueReview): Promise<void> {
     const source = await this.options.queue.getManagerEntry(review.id)
     if (
       source.operation === 'illustrious-smart-patch' ||
       source.operation === 'anima-smart-patch'
     ) {
-      throw new ProjectGenerationActionError(
-        'GENERATION_RUNTIME_UNAVAILABLE',
-        'Retry is not available for Smart Patch jobs. Select the Patch and use Generate.',
-      )
+      return await this.retrySmartPatchUnlocked(review, source.projectKey, source.documentId)
     }
     const tabId = source.projectKey
     const documentId = source.documentId
@@ -1202,7 +1324,7 @@ export class ProjectGenerationActionController {
               } catch (error) {
                 // A late identity/shutdown refusal cannot leave this newly published retry live.
                 if (isQueuedOutpaint(payload)) {
-                  await this.cancelPublishedOutpaintJobs(tabId, [queued])
+                  await this.cancelPublishedJobs(tabId, [queued])
                   publishedOutpaintRetry = null
                 } else {
                   await this.cancelQueuedItem(queued.id)
@@ -1305,7 +1427,7 @@ export class ProjectGenerationActionController {
         }
       } catch (error) {
         if (publishedOutpaintRetry) {
-          await this.cancelPublishedOutpaintJobs(tabId, [publishedOutpaintRetry])
+          await this.cancelPublishedJobs(tabId, [publishedOutpaintRetry])
         }
         throw error
       }
@@ -1424,6 +1546,7 @@ function isGenerationErrorCode(code: string): boolean {
 function safeGenerationErrorMessage(error: unknown, code: string): string {
   if (
     error instanceof ProjectGenerationActionError ||
+    error instanceof RegionalGuidanceGenerationError ||
     error instanceof GenerationPreparationError ||
     error instanceof GenerationBatchPlanError ||
     error instanceof AnimaGenerationBatchError ||

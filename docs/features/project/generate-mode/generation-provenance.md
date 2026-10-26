@@ -171,12 +171,16 @@ interaction:
 
 The comparison never compares one Smart Patch variant with another. A generated
 Raster Layer uses its own provenance as `Generated with`; a Smart Patch Layer
-uses the provenance of its current active/visible accepted variant.
+uses the provenance of its current active/visible accepted variant. A converted
+Smart Raster retains its Smart provenance and follows the same Smart comparison
+rules. There is no direct Compare action for an inactive variant.
 
 `Current Canvas` is always derived from the current open `ProjectDocumentModel`
 at viewing time. It includes current generation settings and resources,
-applicable default generation bounding-box size and derived mode. It does not
-use another variant's provenance as the current side.
+derived mode and, for ordinary Raster comparison only, applicable default
+generation bounding-box size. Smart comparison has no Size section on either
+side. The current side never uses the selected Patch draft or another variant's
+provenance.
 
 The popover groups values into the same semantic sections used by
 generation/preset UI instead of displaying raw serialized payloads:
@@ -186,16 +190,16 @@ generation/preset UI instead of displaying raw serialized payloads:
 - LoRA stack;
 - Sampling;
 - Guidance;
-- generation Size where applicable;
+- generation Size for ordinary Raster provenance only;
 - Seed;
 - Denoising Strength where applicable;
 - VAE and other active model-aware options;
 - applicable reusable generation context. Regional Guidance is absent from
   both sides of the comparison, even when it affected the original image.
 
-Smart Patch mask, bbox, internal resolution, compositing state and source
-revision identities do not appear in this settings diff. They remain available
-to staleness logic and diagnostics, where a mismatch may mark the layer
+Smart Patch mask, bbox, internal resolution, compositing state, source revision
+identities and execution/result context do not appear in this settings diff.
+They remain available to staleness logic and diagnostics, where a mismatch may mark the layer
 `outdated` without presenting a layer property as a changed generation setting.
 
 Each section has a textual status: `Same`, `Changed`, `Added`, `Removed`,
@@ -248,7 +252,13 @@ replacement; an internal query excludes unhealthy/trashed or foreign-lineage
 sources. Unsaved changes do not enter it, and an index failure after committed
 Save keeps the previous DB snapshot and reports a warning until rescan repairs it.
 App-level saved Raster history browser/navigation and bounded read-only IPC are
-connected by the [browser checkpoint](../../../engineering/phase-2b-accepted-history-browser-research.md). Smart Patch indexing remains pending.
+connected by the [browser checkpoint](../../../engineering/phase-2b-accepted-history-browser-research.md).
+The later [Smart variant history slice](../../../engineering/phase-4-smart-patch-history-research.md)
+extends both projections to nested accepted variants, including inactive members.
+The existing result ID is the currently owning Raster/variant UUID; current
+containment, rather than historical source-target provenance, identifies a
+variant’s parent for navigation. Cursor/reference shapes and SQLite remain
+unchanged. History does not activate a stored variant.
 Crash recovery can reconstruct the unsaved projection from the document shadow.
 
 - one accepted candidate → one accepted result → one history entry;
@@ -305,10 +315,13 @@ removes accepted entries, Redo restores them, and clearing Undo history keeps
 accepted results. Recover and Save/reopen reconstruct the list from the owned
 provenance; Queue pruning and remaining staging do not define membership.
 
-This checkpoint supports generated Raster Layers only and adds no global
-SQLite history index or cross-project browser. Full settings comparison,
-result-to-preset and Smart Patch variants remain separate roadmap work. It is
-not a catalog of every past generation or of layers removed from current state.
+That initial checkpoint supported generated Raster Layers only. The subsequent
+global browser and Smart variant history slices extend membership/navigation;
+the [Smart result preset source](../../../engineering/phase-4-smart-patch-result-preset-research.md)
+now copies reusable frozen fields into detached creation. The separate
+[Smart settings Compare](../../../engineering/phase-4-smart-patch-compare-research.md)
+route is implemented, with scoped native qualification recorded in the linked checkpoint. History is not a
+catalog of every past generation or of layers removed from current state.
 
 ## Production Raster settings comparison
 
@@ -345,8 +358,9 @@ record the frozen effective value, including neutral zero. Comparison uses the
 current Illustrious draft's effective zero when unset. Historical absence of
 CFG Rescale remains `Unavailable`; it is never migrated to zero. Historical
 LoRA, VAE, Clip Skip and VAE precision likewise remain explicitly `Unavailable`.
-Full pipeline provenance, Smart Patch comparison and
-result-to-preset remain separate roadmap work. This checkpoint does not complete
+At that Raster comparison checkpoint, full pipeline provenance, Smart Patch
+comparison and result-to-preset remained separate roadmap work. Later source and
+Smart comparison slices have their own evidence. This checkpoint does not complete
 PP-005 or prove release runtime/inference readiness.
 
 [Installed CFG qualification](../../../engineering/phase-2c-installed-cfg-rescale-research.md)
@@ -357,6 +371,44 @@ shows Recorded zero/0.7, Current 0.2 and Changed without editing the document.
 The txt2img same-input decoded-pixel control checks numerical effect; the
 nonzero opaque img2img case checks wiring/provenance. Historical missing values
 and the remaining public readiness boundaries retain their rules above.
+
+## Production Smart settings comparison
+
+[Smart result settings Compare](../../../engineering/phase-4-smart-patch-compare-research.md)
+is implemented for the active accepted Smart Patch variant and converted Smart
+Raster. The dedicated strict `getSmartResultComparisonData(tabId, request)` route
+binds document/revision, the current Raster or exact active variant owner, and
+asset SHA. The response echoes the owner envelope and returns the result ID, portable Smart
+`generationConfiguration` and current Canvas mode or its unavailability reason.
+Current containment owns the read; historical target IDs remain lineage. The
+ordinary Raster reader continues refusing Smart records.
+
+The baseline contains only recorded reusable settings, including actual seed
+zero and explicit absence distinctions. The current side reads the acknowledged
+**Project Canvas** draft, catalog and document-scoped seed, including while a
+Patch is selected. Smart Size is absent from both sides; geometry, mask, internal
+resolution, compositing, source/execution context and Regional Guidance are
+excluded. Existing Smart preset extraction and ordinary Raster Compare remain
+separate and preserved.
+
+Recorded settings remain inspectable without a worker or installed generation
+resources. Optional CPU composition derives current TXT/IMG/OUT mode; unavailable
+composition leaves an explicit unknown current mode. The Smart owner/revision/
+active-member/asset checks run after awaited inspection and physical teardown.
+Unconfirmed worker exit retains capture inputs and the inspection fence instead
+of silently downgrading the lifecycle failure. Renderer context/draft guards
+reject stale replies. Opening, expanding or dismissing the popover does not
+activate a variant, flush/seal drafts, allocate seeds, mutate Project/history/
+library state or implicitly Save.
+
+The scoped native qualification passes all 18 checks.
+Confirmed execution is full `typecheck-r2`, 103 focused tests included in 852
+neighbor tests (0 failed / 0 skipped), and actual CPU modes/races/retention PASS.
+The pinned production R1 source review is clean and source-only. Prototype
+verification (182 tests) is running; mutation/native/build/lint remain pending.
+Final outcomes belong to the linked research. Inactive direct Compare,
+variant-to-variant/image comparison, Smart-target Apply and inference are outside
+this slice. PP-005/006 remain **Пока не обещать**.
 
 ## Production opaque img2img provenance
 
@@ -373,7 +425,8 @@ Comparison uses the current pixel-derived mode and shows applied strength for
 img2img, including 0. Transparent current input makes strength not applicable;
 unknown current composition remains unavailable. Legacy absence is not silently
 filled with a default. Add, Undo/recovery and explicit Save/reopen preserve the
-record; result-to-preset, Smart Patch and the full MVP pipeline remain open.
+record; at that opaque-img2img checkpoint, result-to-preset, Smart Patch and
+the full MVP pipeline remained open.
 
 ## Vue Prototype Coverage
 
@@ -387,7 +440,9 @@ Both result types expose a bounded, read-only `Compare generation settings`
 popover. The current side always reads the Project default generation draft, including while
 a Smart Patch is selected. The comparison reports textual section statuses,
 resource warnings and explicit unavailable fields in the legacy/error scenario.
-Imported layers retain a disabled `No generation data` action. A separate
+Smart origins, including converted Rasters, omit the entire Size section;
+ordinary Raster comparison retains Size. Imported layers retain a disabled
+`No generation data` action. A separate
 `Create Preset from Result` action opens an editable draft; Seed is excluded by
 default and Smart Patch geometry is never copied. The shared in-memory catalog
 makes the created preset available to Project Apply without reloading.
@@ -399,8 +454,9 @@ These are prototype checks, not production evidence: source/mask hashes, exact
 worker/runtime identities, real output assets, `.igs` serialization and the
 saved-result SQLite index are not implemented by the prototype. Mock staleness compares owned draft,
 bbox, mask revision and internal dimensions; it does not hash source composites.
-The mock still reads generation Size from its finite Project Canvas frame rather
-than an independently movable default generation bbox; this is a prototype gap.
+For ordinary Raster comparison, the mock still reads generation Size from its
+finite Project Canvas frame rather than an independently movable default
+generation bbox; this is a prototype gap. Smart comparison omits Size entirely.
 
 ## Acceptance Criteria
 
@@ -415,6 +471,8 @@ than an independently movable default generation bbox; this is a prototype gap.
 - Missing resources and unavailable legacy fields are not reported as equal.
 - Provenance can create a preset draft through a separate action.
 - Preset creation and the settings comparison exclude Smart Patch mask, bbox, internal resolution, compositing and source context.
+- Smart comparison, including converted Smart Rasters, omits the entire Size section; ordinary Raster Size remains supported.
+- No direct inactive-variant Compare action is part of this slice.
 - Smart Patch internal resolution is never mapped implicitly into generic preset Size.
 - Missing model/LoRA resources and prompt-owned embedding resources can be detected from provenance.
 - Regional Guidance never appears in result provenance, comparison or result-derived presets; results generated with regions cannot be fully reconstructed from their saved record.

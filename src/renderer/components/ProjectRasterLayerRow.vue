@@ -9,6 +9,7 @@ import ProjectEntitySurface from './ProjectEntitySurface.vue'
 const props = defineProps<{
   disabled: boolean
   hasGenerationData: boolean
+  hasPresetData?: boolean
   index: number
   layer: ProjectRasterLayerView
   layerCount: number
@@ -35,19 +36,33 @@ const emit = defineEmits<{
 
 const menu = computed<ProjectEntityRowAction[]>(() => [
   {
-    disabled: props.disabled || !props.hasGenerationData,
+    disabled:
+      props.disabled ||
+      !props.hasGenerationData ||
+      Boolean(props.layer.generationSettingsUnavailableReason),
     key: 'compare-generation',
-    label: props.hasGenerationData
-      ? 'Compare generation settings'
-      : 'Compare generation settings · No generation data',
+    label: props.layer.generationSettingsUnavailableReason
+      ? `Compare generation settings · ${props.layer.generationSettingsUnavailableReason}`
+      : props.hasGenerationData
+        ? 'Compare generation settings'
+        : 'Compare generation settings · No generation data',
     run: () => {
       comparisonOpen.value = true
     },
   },
   {
-    disabled: props.disabled || !props.hasGenerationData,
+    disabled:
+      props.disabled ||
+      !(props.hasPresetData ?? props.hasGenerationData) ||
+      (props.layer.resultPresetSourceKind !== 'smart-patch' &&
+        Boolean(props.layer.generationSettingsUnavailableReason)),
     key: 'save-result-preset',
-    label: 'Save Preset from Result',
+    label:
+      props.layer.resultPresetSourceKind === 'smart-patch'
+        ? 'Save Preset from Result'
+        : props.layer.generationSettingsUnavailableReason
+          ? `Save Preset from Result · ${props.layer.generationSettingsUnavailableReason}`
+          : 'Save Preset from Result',
     run: () => emit('saveResultPreset', props.layer.id),
   },
   {

@@ -12,14 +12,20 @@ import {
   IGS_SCHEMA_VERSION,
   type IgsManifestV1,
   type IgsPreviewRectV1,
+  type IgsProjectAssetRefV1,
   type IgsProjectDocumentV1,
+  type IgsRegionalGuidanceReferenceImageV1,
   type IgsSmartPatchVariantV1,
   isIgsMemberPathV1,
+  isSmartPatchRasterLayer,
   parseIgsManifestV1,
   parseProjectDocumentV1,
   projectAssetReferences,
+  projectMaskAssets,
   projectRasterAssets,
   projectRasterLayers,
+  projectRegionalReferenceImages,
+  REGIONAL_REFERENCE_LIMITS,
   validateIgsPackageMetadataV1,
 } from '../../shared/projects/project-schema.js'
 
@@ -313,6 +319,9 @@ class PngStructureValidator implements ImageStructureValidator {
     if (!this.sawIend || this.state !== 'done') {
       throw this.invalid('Truncated PNG image.')
     }
+    if (this.memberPath.startsWith('assets/regional-references/') && !this.iccSeen) {
+      throw this.invalid('A canonical regional reference must embed its sRGB profile.')
+    }
     this.inflator!.end()
     await this.inflateDone
     if (this.inflateFailure) {
@@ -396,6 +405,10 @@ class PngStructureValidator implements ImageStructureValidator {
       height < 1 ||
       width > this.limits.rasterDimension ||
       height > this.limits.rasterDimension ||
+      (this.memberPath.startsWith('assets/regional-references/') &&
+        (width > REGIONAL_REFERENCE_LIMITS.imageDimension ||
+          height > REGIONAL_REFERENCE_LIMITS.imageDimension ||
+          width * height > REGIONAL_REFERENCE_LIMITS.imagePixels)) ||
       !channels ||
       ![1, 2, 4, 8, 16].includes(bitDepth) ||
       (colorType === 3 && bitDepth === 16) ||
@@ -595,6 +608,9 @@ class WebpStructureValidator implements ImageStructureValidator {
     ) {
       throw this.invalid('Truncated or invalid WebP RIFF structure.')
     }
+    if (this.memberPath.startsWith('assets/regional-references/') && !this.iccSeen) {
+      throw this.invalid('A regional thumbnail must embed its sRGB profile.')
+    }
   }
 
   private invalid(message: string): IgsPackageError {
@@ -646,6 +662,37 @@ export async function validateSrgbWebpStream(
   const limits = resolveLimits({ memberBytes: maxBytes, rasterDimension: maxDimension })
   const scanned = await scanStream(chunks, label, maxBytes, false, limits)
   return imageDimensions(label, scanned.header, limits)
+}
+
+/** Verify adopted regional members using the package's streaming image validators. */
+export async function verifyRegionalReferenceAssetSource(
+  source: IgsAssetSource,
+  member: IgsProjectAssetRefV1,
+  role: 'image' | 'profile' | 'thumbnail',
+): Promise<void> {
+  if (
+    (role === 'profile' && member.path !== `assets/profiles/${member.sha256}.icc`) ||
+    (role !== 'profile' &&
+      (!member.path.startsWith('assets/regional-references/') ||
+        !member.path.endsWith(role === 'image' ? '.png' : '.webp')))
+  ) {
+    throw new IgsPackageError('MEMBER_MISMATCH', 'The regional reference asset role is invalid.')
+  }
+  const scanned = await scanAssetSource(member.path, source, DEFAULT_IGS_PACKAGE_LIMITS)
+  verifyRegionalReferenceScan(scanned, member, role, DEFAULT_IGS_PACKAGE_LIMITS)
+}
+
+export function regionalReferenceMembers(reference: IgsRegionalGuidanceReferenceImageV1): {
+  member: IgsProjectAssetRefV1
+  role: 'image' | 'profile' | 'thumbnail'
+}[] {
+  return [
+    { member: reference.asset, role: 'image' },
+    { member: reference.thumbnail, role: 'thumbnail' },
+    ...(reference.sourceIccProfile
+      ? [{ member: reference.sourceIccProfile, role: 'profile' as const }]
+      : []),
+  ]
 }
 
 export async function readIgsPackage(
@@ -764,20 +811,15 @@ export async function readIgsPackage(
       throw new IgsPackageError('MEMBER_MISMATCH', `Layer dimensions differ: ${layer.asset.path}`)
     }
   }
-  for (const layer of document.layers) {
-    if (layer.kind !== 'smart-patch' || !layer.mask.asset) {
-      continue
-    }
-    const dimensions = imageDimensions(
-      layer.mask.asset.path,
-      scanned.get(layer.mask.asset.path)!.header,
-      limits,
-    )
-    if (
-      dimensions.width !== layer.mask.asset.width ||
-      dimensions.height !== layer.mask.asset.height
-    ) {
+  for (const asset of projectMaskAssets(document)) {
+    const dimensions = imageDimensions(asset.path, scanned.get(asset.path)!.header, limits)
+    if (dimensions.width !== asset.width || dimensions.height !== asset.height) {
       throw new IgsPackageError('MEMBER_MISMATCH', 'The mask dimensions differ from its reference.')
+    }
+  }
+  for (const reference of projectRegionalReferenceImages(document)) {
+    for (const { member, role } of regionalReferenceMembers(reference)) {
+      verifyRegionalReferenceScan(scanned.get(member.path)!, member, role, limits)
     }
   }
   // The rect is in infinite-canvas coordinates; the PNG may be downsampled.
@@ -935,6 +977,10 @@ export async function readIgsPackage(
   // Portable validation still verifies that the retained contribution identity describes the
   // actual RGBA asset. Save also enters this reader before publishing its staged archive.
   for (const layer of projectRasterLayers(document)) {
+    if (isSmartPatchRasterLayer(layer)) {
+      await verifySmartPatchVariantPng(layer, await result.readMember(layer.asset.path))
+      continue
+    }
     const provenance = layer.generationProvenance
     if (provenance?.kind !== 'illustrious-outpaint' && provenance?.kind !== 'anima-outpaint') {
       continue
@@ -968,12 +1014,9 @@ export async function readIgsPackage(
       await verifySmartPatchVariantPng(variant, await result.readMember(variant.asset.path))
     }
   }
-  for (const layer of document.layers) {
-    if (layer.kind !== 'smart-patch' || !layer.mask.asset) {
-      continue
-    }
+  for (const asset of projectMaskAssets(document)) {
     try {
-      decodeProjectMaskPng(await result.readMember(layer.mask.asset.path), layer.mask.asset)
+      decodeProjectMaskPng(await result.readMember(asset.path), asset)
     } catch {
       throw new IgsPackageError('INVALID_IMAGE', 'The owned mask PNG coverage is invalid.')
     }
@@ -986,7 +1029,7 @@ export async function readIgsPackage(
  * images.
  */
 export async function verifySmartPatchVariantPng(
-  variant: IgsSmartPatchVariantV1,
+  variant: Pick<IgsSmartPatchVariantV1, 'asset' | 'generationProvenance'>,
   bytes: Buffer,
 ): Promise<void> {
   const output = variant.generationProvenance.executionResultContext.output
@@ -1182,6 +1225,31 @@ export async function saveIgsPackage(
   }
 }
 
+function verifyRegionalReferenceScan(
+  scanned: ScannedMember,
+  member: IgsProjectAssetRefV1,
+  role: 'image' | 'profile' | 'thumbnail',
+  limits: IgsPackageLimits,
+): void {
+  if (scanned.bytes !== member.bytes || scanned.sha256 !== member.sha256) {
+    throw new IgsPackageError('MEMBER_MISMATCH', 'A regional reference member changed.')
+  }
+  if (role === 'profile') {
+    if (
+      scanned.bytes < 128 ||
+      scanned.header.readUInt32BE(0) !== scanned.bytes ||
+      scanned.header.toString('ascii', 36, 40) !== 'acsp'
+    ) {
+      throw new IgsPackageError('INVALID_IMAGE', 'The regional source ICC profile is invalid.')
+    }
+    return
+  }
+  const actual = imageDimensions(member.path, scanned.header, limits)
+  if (actual.width !== member.width || actual.height !== member.height) {
+    throw new IgsPackageError('MEMBER_MISMATCH', 'Regional reference image dimensions differ.')
+  }
+}
+
 /** Bound the alpha decoder's retained IDAT views before invoking it on accepted worker output. */
 function assertSmartPatchContributionChunks(bytes: Buffer): void {
   let iccSeen = false
@@ -1323,6 +1391,14 @@ function resolveLimits(overrides: Partial<IgsPackageLimits> | undefined): IgsPac
 }
 
 function memberLimit(memberPath: string, limits: IgsPackageLimits): number {
+  if (memberPath.startsWith('assets/regional-references/')) {
+    return Math.min(
+      limits.memberBytes,
+      memberPath.endsWith('.png')
+        ? REGIONAL_REFERENCE_LIMITS.imageBytes
+        : REGIONAL_REFERENCE_LIMITS.thumbnailBytes,
+    )
+  }
   if (memberPath.startsWith('assets/masks/')) {
     return Math.min(limits.memberBytes, PROJECT_MASK_MAX_PNG_BYTES)
   }
@@ -1446,6 +1522,21 @@ function imageDimensions(
       `Image dimensions exceed the safety ceiling: ${memberPath}`,
     )
   }
+  if (memberPath.startsWith('assets/regional-references/')) {
+    const side = memberPath.endsWith('.png')
+      ? REGIONAL_REFERENCE_LIMITS.imageDimension
+      : REGIONAL_REFERENCE_LIMITS.thumbnailDimension
+    if (
+      width > side ||
+      height > side ||
+      (memberPath.endsWith('.png') && width * height > REGIONAL_REFERENCE_LIMITS.imagePixels)
+    ) {
+      throw new IgsPackageError(
+        'PACKAGE_LIMIT',
+        'The regional reference image exceeds its pixel limit.',
+      )
+    }
+  }
   return { height, width }
 }
 
@@ -1483,8 +1574,8 @@ async function scanStream(
       }
       hash.update(chunk)
       await validator?.feed(chunk)
-      if (header.length < 64) {
-        header = Buffer.concat([header, chunk.subarray(0, 64 - header.length)])
+      if (header.length < 128) {
+        header = Buffer.concat([header, chunk.subarray(0, 128 - header.length)])
       }
       if (retain) {
         content.push(chunk)

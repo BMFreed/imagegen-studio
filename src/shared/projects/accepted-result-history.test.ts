@@ -174,7 +174,7 @@ test('history page guard enforces source metadata, unique ownership and consiste
     { ...page([]), nextCursor: cursor(valid) },
     { ...page([valid]), nextCursor: cursor(valid) },
     { items, nextCursor: cursor(valid), totalCount: 51 },
-    page([{ ...valid, width: 15 }]),
+    page([{ ...valid, width: 0 }]),
     page([{ ...valid, height: 2049 }]),
     page([{ ...valid, acceptedAt: '2026-02-30T10:00:00.000Z' }]),
     page([{ ...valid, modelName: ' ' }]),

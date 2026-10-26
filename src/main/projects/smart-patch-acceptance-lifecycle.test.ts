@@ -216,6 +216,46 @@ test('pruned Smart receipt requires the exact verified candidate witness and sur
   })
 })
 
+test('a reviewed frozen job witness cannot substitute for a pruned completed candidate receipt witness', async () => {
+  await withSmartPatchWorldCandidateFixture('illustrious', async (f) => {
+    const candidate = await f.publish()
+    await f.queue.cancel(f.siblingId)
+    await f.queue.pruneTerminal(['completed', 'canceled'])
+    const scope = scopeFor(f, candidate.stagingSessionId, [candidate.candidateId])
+    scope.reviewedJobs = [
+      {
+        frozenPayloadSha256: candidate.frozenPayloadSha256,
+        jobId: candidate.candidateId,
+        stagingSessionId: candidate.stagingSessionId,
+      },
+    ]
+    const { orchestrator, owner } = await ownerFixture(f)
+    try {
+      await orchestrator.fenceProjectGeneration(scope.tabId)
+      await assert.rejects(orchestrator.cancelSmartPatchAcceptanceJobs(scope), {
+        code: 'QUEUE_INPUT_INVALID',
+      })
+      assert.throws(() => orchestrator.releaseProjectGenerationFence(scope.tabId), {
+        code: 'CANCELLATION_UNCERTAIN',
+      })
+      await orchestrator.cancelSmartPatchAcceptanceJobs({
+        ...scope,
+        verifiedCandidates: [
+          {
+            candidateId: candidate.candidateId,
+            frozenPayloadSha256: candidate.frozenPayloadSha256,
+            stagingSessionId: candidate.stagingSessionId,
+          },
+        ],
+      })
+      orchestrator.releaseProjectGenerationFence(scope.tabId)
+      assert.equal((await f.patch.listVerifiedCandidates(scope.tabId)).length, 1)
+    } finally {
+      await owner.close()
+    }
+  })
+})
+
 test('failed Smart cancellation permits only qualification-witness extension for the same reviewed job scope', async () => {
   await withSmartPatchWorldCandidateFixture('illustrious', async (f) => {
     const candidate = await f.publish()

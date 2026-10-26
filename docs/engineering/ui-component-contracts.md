@@ -12,7 +12,7 @@ Default не выбирается автоматически. Stable action key 
 [handoff checkpoint](./phase-3-preset-model-handoff-research.md).
 
 Production Preset Manager принимает detached `PresetCreateIntent` от текущего
-Project или принятого Raster результата. Общий session/editor владеет transient
+Project, выбранного Smart Patch draft или принятого результата. Общий session/editor владеет transient
 draft, Cancel/guards/Create/retry; source mapper владеет содержимым копии.
 `createIntent` не является сохранённым preset ID и не связывает новый preset с
 исходником. Source result показывает frozen layer/project label отдельно от
@@ -20,6 +20,11 @@ draft, Cancel/guards/Create/retry; source mapper владеет содержим
 Результат читается через `getRasterPresetData` без текущей Canvas composition.
 Точные типы: `preset-create-intent.ts`, `result-preset-draft.ts`; executable
 границы — [result checkpoint](./phase-3-result-preset-research.md).
+Smart draft использует отдельный `kind: 'smart-patch-draft'`: banner
+`Source Smart Patch` показывает captured Project/Patch и authored-settings copy,
+а не expanded result prompts. Mapper исключает Size/Seed/geometry до открытия
+общего editor; его generic optional sections не получают Patch dimensions.
+Граница — [Smart draft checkpoint](./phase-4-smart-patch-current-preset-research.md).
 
 Это публичный контракт повторяемых элементов Electron renderer и `docs/prototype-app`. Перед правкой
 откройте сам компонент и его потребителей: сигнатура в коде остаётся источником
@@ -407,3 +412,235 @@ an inherited `role="status"` does not override it. Use its actual alert role and
 an explicit `aria-label` when inspecting diagnostics. Check the live accessible
 tree and the installed component API instead of deriving the role from a Vue
 call site. The Project Apply native qualification verifies this boundary.
+
+## Regional Guidance reference-image authoring — finite native-r10 PASS, release complete
+
+The current [reference-image owner](./phase-4-regional-guidance-references-research.md)
+has **source implemented; finite native-r10 qualification PASS; retention/release complete**. Current source composes
+`ProjectRegionalReferenceImages` inside the existing regional row; cards use
+runtime-only `thumbnailUrl`, source name/format/dimensions, stable
+`data-regional-reference-id` and document/region/reference keys. Only the bounded
+full-frame WebP is displayed; the canonical original is not used as a tiny
+`img`. Existing blocks stay mounted independently of selection. Whole controls
+retain `data-entity-control`; Add/remove/reorder must not select an unselected
+region or change Current Canvas/Smart draft ownership.
+
+The visible Add text is `Reference Image`, with accessible name
+`Add regional reference image`. It is eligible only for Current Canvas
+`model.baseModelFamily === 'illustrious'`, independent of installed-model
+readiness or selected Smart settings. Anima/unknown family has a visible reason;
+existing references remain visible and repairable by remove/move in any family.
+Disabled regions stay editable. Lock, ordinary/regional pending sync and lifecycle
+guards disable mutations. Compact shared `IconButton` actions are labeled
+`Remove reference <name>` and `Move reference <name> earlier/later`; boundary
+moves use native disabled states. Thumbnail-load failure is a local placeholder,
+not a document mutation. Resource/weight selectors and adapter menus are excluded.
+
+Row events are `importReferenceImage(owner)` and
+`updateReferenceImage(owner, change)`; LayerStack relays
+`importRegionalReferenceImage(owner)` and
+`updateRegionalReferenceImage(owner, change)`. ProjectView adds `tabId` to
+those two events. App owns IPC and the exact operation lifetime. Exposed
+`ProjectView.focusRegionalReferenceImport(originalOwner): void` is called only
+after that import settles, its pending identity is released and props settle,
+including cancel/error. Row guards the originating lifetime, owner/revision,
+selection, stable context and intervening user focus; it does not infer success
+from an unrelated busy transition. Existing prompt and rename focus behavior
+must remain intact.
+
+Root reports **118 Python checks passed, 0 failed/skipped** at the CPU
+thumbnail/import/derivative/resource-preview/protocol boundary only.
+
+Root confirms **source implemented; lower-level checks and finite native-r10
+qualification PASS**. Final lower checks are **Python 118 PASS**, post-lint
+**typecheck-r3 PASS**, **full lint-r2 PASS**, **neighbors-r2: 952 PASS / 57 files /
+0 skips**, and **fresh build-r1 PASS**. Later changes were harness-only, each with
+syntax/format/scoped ESLint PASS. Earlier typecheck-r2 and neighbors-r1
+950/57 preceded the final checks; neighbors-r1 predates the Save fix. The earlier
+lint-r1's 196 autofixable ordering/braces errors in 16 changed files are historical,
+not the final lint outcome.
+
+The duplicate mutation records **2 GREEN → 1 semantic RED + 1 control GREEN →
+2 restored GREEN**; all **1,343 mutation-source members** are restored.
+Production **R2 source review is CLEAN** after the P2 Save A/B rebase fix and
+external-replacement neighbor. Rebase requires full-document equality to exact
+`baseDocument` or exact authorized `saveTarget`. The causal
+`SAVED_PROJECT_CHANGED` assertion was unchanged when the explicit
+Recover-new-revision test oracle was corrected; `save-rebase-green-r2` passed
+both cases.
+
+Final **native-r10: 12/12 PASS in 191.188 s**, script `1f5ac7ce`, with its
+**R11 source review CLEAN**. The successful run uses the source-r2 archive
+(1,343 members), exact script overlay and build-r1 (33 members). It observes
+**882 Main calls, originals exactly once**, and **149 actual CPU children**
+across two Electron lifetimes: intentional dirty SIGKILL, then healthy code 0.
+Exact Main/dialog/spawn/kill/write restoration completes with zero in-flight
+calls and zero page errors; root freshly confirms recorded PID/start identities
+absent. Contract R1 is CLEAN source-only; final source/build/version mapping is retained.
+
+Root actually opened **all 10 final screenshots** under `ui-audit`: 1440×900
+and 900×620, reference cards, keyboard tooltips and recovered image states.
+This bounded self-review found no material new reference-layout defect; it is
+not independent review, full WCAG or all-compositor qualification.
+
+Native attempts **1–9 remain FAILED**. Harness source-oracle findings R7/R8
+were closed by subsequent code/reviews and successful replay; those failures
+do not establish another product bug beyond the corrected Save rebase.
+
+The OS picker result was controlled; the worker was the **actual development
+CPU worker**, with no ML/catalog injection. Installed-resource transitions,
+packaged-worker behavior, inference and frozen active work are not
+native-qualified. Transient target/Smart-preparation outputs have metadata-only
+witnesses, without raw replay. Prototype SVG/data URLs remain separate mock
+behavior and do not extend this evidence boundary.
+
+Retention **R1–R7 are CLEAN, candidate-only, READ-FINISHED**; contract **R1 is
+CLEAN, source-only**. Root freshly verified source/build bytes, physical exits,
+exact restoration, dependencies and all-reader completion, then released all
+22 exact disposable paths: 2 unit and 20 native payloads. Measured artifact-root
+allocation reduction is **216,420,352 bytes** (unit 35,950,592; native 180,469,760).
+Compact evidence and external runtime/package dependencies remain protected.
+Final source/build/version mapping is retained in the linked checkpoint.
+PP-001/007/008 remain
+**Пока не обещать**; finite qualification does not promote public readiness.
+
+The prototype still uses SVG-capable `image/*`, multiple data URLs and mock
+identities; it lacks production thumbnail/asset ownership, reorder/metadata and
+family gates and is not evidence for this production flow. Earlier checkpoint
+records below remain historical.
+
+## Regional Guidance prompt authoring
+
+The subsequent [owned-mask checkpoint](./phase-4-regional-guidance-masks-research.md)
+has **source implemented, lower-level checks and finite native-r7 qualification
+passed**; local visuals are root-reviewed and retention/release are complete.
+Regional Canvas context has a
+distinct owner kind and dedicated
+edit event, never a fabricated Smart Patch. View adds the captured `tabId` to
+`editRegionalMask(regionId, request)`; App drains prompt streams and revalidates
+the original revision/mask owner before IPC without rebasing. Existing tool rail
+controls and transform diagnostics are reused. Selected disabled regions remain
+editable, locks refuse, and `overlayOpacity` affects only the isolated selected
+mask overlay. Bbox/Fit remain absent. Root's Node, post-lint, build and prototype
+checks PASS at the boundaries recorded in the linked research; production R2 is
+CLEAN, source-only. Final native-r7 passes all 12 checks in 157.061 s with both
+95-handler restorations complete and zero in-flight calls/page errors. Root opens
+all six final 1440×900/900×620, quarter-turn and recovered screenshots without a
+material local finding; this is bounded self-review, not a full accessibility
+audit. Source R4/R5 are CLEAN, source-only. Historical failed attempts, including
+native3's restoration gap, remain separate. All four retention audits are
+CLEAN/READ-FINISHED and contract R2 is CLEAN, source-only. Final harness-scoped
+lint passes; root exit/restoration/reader checks and exact cleanup are complete:
+15 idle paths, 113,537,024 bytes (108.28 MiB), with compact proof and external
+dependencies retained.
+
+The current [authored-prompts checkpoint](./phase-4-regional-guidance-prompts-research.md)
+extends `ProjectRegionalGuidanceRow` with optional durable inline blocks. Existing
+blocks remain mounted independently of selection, keyed by document/region/
+polarity rather than revision or pending state. The stable row attribute is
+`data-regional-guidance-id`. Whole blocks use `data-entity-control`, preserving
+the shared surface's independent selection and nested-control behavior.
+
+Production `PlainPromptEditor` supplies text, syntax/attention actions and exact
+ID-only `selectEmbedding` events; Main owns verification and trusted refs.
+Optional `compact` preserves existing consumer defaults and action-rail space;
+the public `focus()` handle supports guarded Add/Remove focus. No regional dynamic
+preview is connected. Labels are `Regional prompt`, `Regional negative prompt`
+and `Use global negative prompt`; Remove uses shared compact `IconButton` actions.
+Add persists an empty block, Clear retains it and the last Remove omits `prompts`.
+Add Negative starts local/empty; inheritance preserves dormant local text/refs,
+whereas Remove Negative clears them and restores inheritance. The read-only
+`Current Canvas negative prompt` display, model family and LoRA context come
+from `projectGenerationDraft`, including when a Smart Patch is selected. Future
+Smart-job freeze inheritance is outside this owner.
+
+The row emits captured `updatePrompt(owner, change)` and
+`sealPromptHistory(owner, historyGroupId)`; Stack/View relay dedicated regional
+events, with View adding `tabId`. Dedicated prompt commands preserve metadata
+APIs and ordinary generation-draft target/change validation. The shared seal
+endpoint additionally accepts strict regional namespaced group IDs, while ordinary
+draft group validation stays unchanged. Focus IDs use
+`regional:<regionId>:<polarity>:<focusUuid>`. The dedicated per-document stream
+serializes incremental writes and seals; no local CodeMirror Undo competes with
+Project history. View applies regional overlays only to stack rows; capture and
+other consumers retain acknowledged Project sources. Root supplies pending/
+input-blocked/error state. Metadata is disabled separately from prompt input so
+regional pending writes do not disable same-stream typing/block/source actions;
+ordinary/Smart pending drafts block regional input. Lock blocks every prompt
+write, while a disabled region stays editable.
+
+Failed unpublished edits remain visible. The scoped error alert offers
+`Retry regional edits` and `Discard pending regional edits`; discard retains
+acknowledged Project changes. Same-field correction may supersede refused
+unpublished text while exact embedding barriers and seal order remain protected.
+Retry uses the captured revision; unrelated revisions or observed edit/Undo ABA
+invalidate the stream permanently until explicit pending discard, without
+rebasing. Add/Remove focus intents guard owner/revision, local epoch, selection,
+unmount and intervening user focus. Existing Rename settlement remains a separate
+qualified foundation behavior. The finite authoring checkpoint is root-qualified:
+795 Node tests in 41 files pass with zero failures/skips before the final single
+row ARIA attribute change. Final row 20c2fb6e has typecheck r7, later row/script
+scoped lint and fresh app build r4 PASS; full lint r2 passes all four partitions.
+Prototype r1 passes 182 shared-consumer browser checks without prototype source
+changes. Complete production R4 and narrow ARIA R5 are CLEAN source-only;
+final native-source R7 is CLEAN source-only.
+
+Root's final native-r8, script ff502357, passes all 12 checks in 97.714 seconds,
+with healthy final code 0 across two Electron lifetimes, intentional dirty
+SIGKILL/recovery and healthy close. Both observer restorations are true with
+inFlight zero, all handlers restored and zero page errors. The 675 first-lifetime
+and 46 second-lifetime original calls each execute once. Full original arguments/
+results remain in required `ipc/launch-*.jsonl` portable tagged journals; compact
+witnesses reference journal prefixes. This evidence-format change adds no app API
+or data-model change. All seven actual 1440×900/900×620 screenshots are opened and
+viewed by root without material layout findings in scope. This is bounded
+self-review, not independent full accessibility qualification. Historical failures,
+including missing ARIA and failed setup attempts, remain failures in root research;
+R5/R6 setup P1 findings close through getBuiltinModule/portable-codec corrections
+and actual native-r8 execution.
+
+Retention audits 1–4 are CLEAN and READ-FINISHED. Root completes fresh exit,
+restoration and reader checks, removes 18 exact idle payload paths and reclaims
+116,359,168 allocated bytes (110.97 MiB), preserving compact evidence and external
+dependencies. Contract review R2 is CLEAN at source/document level. No regional masks/reference images,
+conditioning, inference, installed embedding/autocomplete, active-work or Main-ABA
+qualification is claimed. The prototype regional inputs remain plain textareas
+with mock masks/reference images. Final evidence belongs to the linked root
+research; PP-001/007/008 remain **Пока не обещать**.
+
+## Regional Guidance foundation surface
+
+At the [empty-entity checkpoint](./phase-4-regional-guidance-foundation-research.md), the UI
+used `ProjectRegionalGuidanceRow` and the existing entity surface in a separate
+Regional Guidance group above compositing Layers. Its shared selection/action
+layout stays outside raster drag ordering and blend controls. The row owns its
+rename dialog and captures document/revision/entity identity before deferred edits.
+Opacity is displayed as percent and persisted as 0..1 for the future overlay.
+Selection explicitly shows Current Canvas; no regional bbox or mask gesture is
+admitted. At that checkpoint, unsupported Prompt, Negative Prompt, Reference Image
+and transform/paint actions explained their unavailable state. Lock allows
+selection, enable and unlock;
+rename/opacity/duplicate/delete refuse. Legacy shared-stack consumers without a
+valid document owner retain their layer controls and receive no regional commands.
+
+Rename focus restoration retains an intent until both modal afterLeave and
+terminal busy settlement. Captured document/revision/entity and local focus epoch, reopen,
+unmount and user-focus guards prevent stale restoration or stealing focus.
+This focus-only correction performs no queue or data writes. Root confirms the
+original Escape→BODY causal native RED → full 12-check GREEN, followed by
+independent R4/R5 clean source review of the adjacent slow/failed Rename fix.
+The exact same focused harness goes from delayed-original and declared
+IPC-transport-error focus RED (full state controls and ordinary success GREEN)
+to 3/3 focus/state GREEN in `rename-focus-green-r1`, healthy exit code 0.
+Only the focused transport-error case throws before the original Main handler,
+with 0 original calls and no fabricated DTO; it does not prove Main service
+atomicity. The full 12-check native mode retains original Main pass-through
+without fault injection.
+
+Final native-source R6 and contract R1 are clean. Root views the final native-r5
+normal/minimum screenshots at actual 1440×900/900×620, plus recovered and
+focused-error views, with no material UI issue in scope. All 182 full prototype
+browser checks pass as shared-consumer controls; this owner changes no prototype
+code. Historical failures/corrections remain retained. All retention audits are
+clean; root independently verifies exit/restoration/readers and releases only the
+15 declared temporary trees, preserving compact evidence and external dependencies.

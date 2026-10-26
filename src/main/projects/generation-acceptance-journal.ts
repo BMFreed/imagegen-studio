@@ -35,12 +35,31 @@ export interface GenerationAcceptanceHandoff {
   localProjectKey: string
   operationId: string
   projectPath: string
+  smartPatchSource?: SmartPatchRasterAcceptanceSource
   stagingSessionIds: string[]
+}
+
+/** Durable source ownership survives queue pruning and temporary-file cleanup. */
+export interface SmartPatchRasterAcceptanceSource {
+  kind: 'smart-patch-orphans'
+  layerId: string
+  reviewedCandidates: {
+    candidateId: string
+    frozenPayloadSha256: string
+    stagingSessionId: string
+  }[]
+  /** Frozen unfinished attempts may own sessions with no completed candidate yet. */
+  reviewedJobs?: {
+    frozenPayloadSha256: string
+    jobId: string
+    stagingSessionId: string
+  }[]
 }
 
 type JournalDatabase = Kysely<DB> | Transaction<DB>
 
 type JournalRow = Selectable<GenerationAcceptanceJournal>
+
 export class GenerationAcceptanceJournalError extends Error {
   constructor(
     readonly code:
@@ -167,6 +186,11 @@ export class GenerationAcceptanceJournalRepository {
   }
 }
 
+/** Read-only metadata preflight before any reviewed sibling cancellation becomes irreversible. */
+export function preflightGenerationAcceptanceHandoff(input: unknown): GenerationAcceptanceHandoff {
+  return parseHandoff(input)
+}
+
 async function readPending(
   db: JournalDatabase,
   localProjectKey: string,
@@ -235,7 +259,12 @@ function parseHandoff(input: unknown): GenerationAcceptanceHandoff {
       !raw ||
       typeof raw !== 'object' ||
       Array.isArray(raw) ||
-      !isDeepStrictEqual(Object.keys(raw).sort(), handoffKeys) ||
+      !isDeepStrictEqual(
+        Object.keys(raw).sort(),
+        Object.hasOwn(raw, 'smartPatchSource')
+          ? [...handoffKeys, 'smartPatchSource'].sort()
+          : handoffKeys,
+      ) ||
       typeof raw.operationId !== 'string' ||
       !uuidPattern.test(raw.operationId) ||
       typeof raw.projectPath !== 'string' ||
@@ -269,6 +298,91 @@ function parseHandoff(input: unknown): GenerationAcceptanceHandoff {
       throw new Error('Only accepted Raster outputs can enter this journal.')
     }
     const candidateIds = new Set<string>()
+    const smartSource = raw.smartPatchSource
+    const witnesses = new Set<string>()
+    if (Object.hasOwn(raw, 'smartPatchSource')) {
+      if (
+        !smartSource ||
+        typeof smartSource !== 'object' ||
+        Array.isArray(smartSource) ||
+        !isDeepStrictEqual(
+          Object.keys(smartSource).sort(),
+          Object.hasOwn(smartSource, 'reviewedJobs')
+            ? ['kind', 'layerId', 'reviewedCandidates', 'reviewedJobs']
+            : ['kind', 'layerId', 'reviewedCandidates'],
+        ) ||
+        smartSource.kind !== 'smart-patch-orphans' ||
+        typeof smartSource.layerId !== 'string' ||
+        !uuidPattern.test(smartSource.layerId) ||
+        !Array.isArray(smartSource.reviewedCandidates) ||
+        smartSource.reviewedCandidates.length < 1 ||
+        smartSource.reviewedCandidates.length > IGS_SAFETY_CEILINGS.archiveEntries
+      ) {
+        throw new Error('Invalid Smart Patch source')
+      }
+      const witnessedSessions = new Set<string>()
+      for (const witness of smartSource.reviewedCandidates) {
+        if (
+          !witness ||
+          typeof witness !== 'object' ||
+          Array.isArray(witness) ||
+          !isDeepStrictEqual(Object.keys(witness).sort(), [
+            'candidateId',
+            'frozenPayloadSha256',
+            'stagingSessionId',
+          ]) ||
+          typeof witness.candidateId !== 'string' ||
+          !uuidPattern.test(witness.candidateId) ||
+          typeof witness.frozenPayloadSha256 !== 'string' ||
+          !/^[a-f0-9]{64}$/.test(witness.frozenPayloadSha256) ||
+          typeof witness.stagingSessionId !== 'string' ||
+          !raw.stagingSessionIds.includes(witness.stagingSessionId) ||
+          witnesses.has(witness.candidateId)
+        ) {
+          throw new Error('Invalid Smart Patch candidate witness')
+        }
+        witnesses.add(witness.candidateId)
+        witnessedSessions.add(witness.stagingSessionId)
+      }
+      if (Object.hasOwn(smartSource, 'reviewedJobs')) {
+        if (
+          !Array.isArray(smartSource.reviewedJobs) ||
+          smartSource.reviewedJobs.length > IGS_SAFETY_CEILINGS.archiveEntries
+        ) {
+          throw new Error('Invalid Smart Patch unfinished-job witnesses')
+        }
+        const jobs = new Set<string>()
+        for (const witness of smartSource.reviewedJobs) {
+          if (
+            !witness ||
+            typeof witness !== 'object' ||
+            Array.isArray(witness) ||
+            !isDeepStrictEqual(Object.keys(witness).sort(), [
+              'frozenPayloadSha256',
+              'jobId',
+              'stagingSessionId',
+            ]) ||
+            typeof witness.jobId !== 'string' ||
+            !uuidPattern.test(witness.jobId) ||
+            typeof witness.frozenPayloadSha256 !== 'string' ||
+            !/^[a-f0-9]{64}$/.test(witness.frozenPayloadSha256) ||
+            typeof witness.stagingSessionId !== 'string' ||
+            !raw.stagingSessionIds.includes(witness.stagingSessionId) ||
+            jobs.has(witness.jobId) ||
+            witnesses.has(witness.jobId)
+          ) {
+            throw new Error('Invalid Smart Patch unfinished-job witness')
+          }
+          jobs.add(witness.jobId)
+          witnessedSessions.add(witness.stagingSessionId)
+        }
+      }
+      if (witnessedSessions.size !== raw.stagingSessionIds.length) {
+        throw new Error(
+          'Every Smart Patch session needs a verified candidate or frozen reviewed job',
+        )
+      }
+    }
     for (const layer of acceptedLayers) {
       const provenance = layer.generationProvenance
       const output = provenance?.executionResultContext.output
@@ -288,6 +402,26 @@ function parseHandoff(input: unknown): GenerationAcceptanceHandoff {
       ) {
         throw new Error('Invalid accepted output')
       }
+      const smart =
+        provenance.kind === 'illustrious-smart-patch' || provenance.kind === 'anima-smart-patch'
+      if (
+        smart !== (smartSource !== undefined) ||
+        (smart &&
+          (!smartSource ||
+            provenance.layerSourceContext.layerId !== smartSource.layerId ||
+            layer.id === smartSource.layerId ||
+            layer.transform.rotationDegrees !== 0 ||
+            layer.transform.scaleX !== 1 ||
+            layer.transform.scaleY !== 1 ||
+            layer.transform.x !== provenance.layerSourceContext.bbox.x ||
+            layer.transform.y !== provenance.layerSourceContext.bbox.y ||
+            layer.blendMode !== 'normal' ||
+            layer.opacity !== 1 ||
+            layer.locked ||
+            !witnesses.has(candidateId)))
+      ) {
+        throw new Error('Smart Raster provenance requires its exact durable source witnesses')
+      }
       candidateIds.add(candidateId)
     }
     return {
@@ -296,6 +430,7 @@ function parseHandoff(input: unknown): GenerationAcceptanceHandoff {
       localProjectKey: raw.localProjectKey,
       operationId: raw.operationId,
       projectPath: raw.projectPath,
+      ...(smartSource ? { smartPatchSource: smartSource } : {}),
       stagingSessionIds: raw.stagingSessionIds,
     }
   } catch {

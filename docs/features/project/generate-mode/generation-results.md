@@ -1,6 +1,54 @@
 # GenerationResults And Staging
 
-## Current installed Smart Patch acceptance qualification
+[Smart settings Compare](../../../engineering/phase-4-smart-patch-compare-research.md)
+is implemented for the active accepted Smart variant and converted Smart Raster,
+using the dedicated strict read against the current **Project Canvas**. It omits
+Smart Size and geometry/layer/source/execution context, and does not activate a
+variant or mutate the Project. The scoped native qualification passes all 18 checks. Existing preset actions and ordinary Raster Compare are
+preserved. Inactive direct Compare, Smart-target Apply, image comparison and
+inference are outside this slice. PP-005/006 remain **Пока не обещать**; final
+outcomes belong to the linked research.
+
+[Accepted Smart variant history](../../../engineering/phase-4-smart-patch-history-research.md)
+follows current document containment in Project history and verified explicit
+Save in Saved generations. Each accepted variant owns its history UUID, including
+inactive members. Opening history selects the current parent and focuses the
+exact stored row, marked **From history**, without activating it or changing
+settings, pixels, Undo, dirty state or Save. Hidden/locked owners remain inspectable;
+missing or changed current ownership refuses navigation while preserving unsaved
+work. Queue/staging membership does not create history entries. Smart Compare and
+Preset remain outside that history slice. The subsequent
+[Smart result preset checkpoint](../../../engineering/phase-4-smart-patch-result-preset-research.md)
+adds a detached copy from active/inactive accepted variants and converted Smart
+Rasters, without geometry, activation or Project mutation. Compare has its
+own implemented route above, with scoped native qualification recorded in the linked checkpoint.
+
+[Explicit orphan Raster acceptance](../../../engineering/phase-4-smart-patch-orphan-raster-research.md)
+adds the secondary **Add as Raster Layer** action for a verified candidate whose
+original Smart Patch is absent from the same open document. The clicked candidate
+becomes a new Raster at its frozen bbox with exact contribution PNG and unchanged
+Smart provenance. Review names unselected disposal and unfinished target-local
+cancellation, including fresh Retry sessions; other targets remain independent.
+The shared Raster journal/recovery handoff owns one Undo and no implicit Save.
+Conversion needs no image runtime or current layer. Converted Rasters appear in
+history; settings Compare uses the dedicated Smart route above, with scoped native qualification recorded in the linked checkpoint, while the separate result preset route reads their
+unchanged Smart provenance.
+This is separate from Add as Variant and does not retarget the missing Patch.
+
+[Frozen Smart Patch Retry](../../../engineering/phase-4-smart-patch-retry-research.md)
+creates a separate temporary candidate attempt from one reviewed failed/canceled
+job's original input bundle and numeric seed. It does not discard older sessions
+or accept/save a result. Current authoring is independent of replay; deletion of
+the target leaves the result orphaned with Add as Variant unavailable. Explicit
+Raster recovery is described above; export/discard remain independent actions.
+Retry performs no automatic retargeting or conversion.
+
+Stored variant freshness is a separate read-only diagnostic. The current
+[selected Patch freshness slice](../../../engineering/phase-4-smart-patch-freshness-research.md) shares automatic
+row/browser inspection and preserves accepted pixels/provenance, explicit Add
+and Save boundaries. `Matches current inputs` does not imply Generate readiness.
+
+## Previous installed Smart Patch acceptance qualification
 
 [Installed trained Smart Patch generation](../../../engineering/phase-4-smart-patch-installed-generation-research.md)
 passes 27 native checks and ten public Generate → temporary Results → explicit
@@ -21,9 +69,9 @@ and model hashes remain unchanged. The research keeps failed attempts separate.
 Reopened stored rows can still show `unverified`; automatic source-freshness
 re-verification after worker lifecycle is outside this stored-pixel/lineage proof.
 
-Retry, orphan Raster conversion, accepted-history navigation, Compare/Preset,
-arbitrary options, quality, full Invoke parity and release qualification remain
-open. PP-007/008 remain **Пока не обещать**.
+At that installed checkpoint, Retry, orphan Raster conversion, accepted-history
+navigation, Compare/Preset, arbitrary options, quality, full Invoke parity and
+release qualification remained open. Current frozen Retry is scoped above. PP-007/008 remain **Пока не обещать**.
 
 ## Previous Smart Patch public integration
 
@@ -72,9 +120,9 @@ Save or rewrites completed receipts/seed cursor.
 At that checkpoint public Generate/Results/IPC and variant lifecycle/status were
 still pending. The public integration above and the
 [variant lifecycle checkpoint](../../../engineering/phase-4-smart-patch-variant-lifecycle-research.md)
-now cover those boundaries. Smart accepted-history navigation, Compare/Preset,
-orphan Raster conversion, Retry and installed inference qualification remain
-open. PP-007/008 remain «Пока не обещать». Executed evidence and finite limits
+now cover those boundaries. At that durable-acceptance checkpoint, Smart
+accepted-history navigation, Compare/Preset, orphan Raster conversion, Retry and
+installed inference qualification remained open; later slices above are separate. PP-007/008 remain «Пока не обещать». Executed evidence and finite limits
 belong to each linked research note.
 
 ## Previous Smart Patch variant storage/display boundary
@@ -99,7 +147,7 @@ This is storage/display support for an already populated document, not the
 public acceptance command. Generate/Add, durable acceptance journal and sibling
 cancellation/reconciliation, variant lifecycle controls, accepted-history
 navigation, Smart Patch Compare/Preset and installed inference qualification
-remain later owners. PP-007/008 remain «Пока не обещать». Executed evidence and
+were later owners at that storage/display checkpoint. PP-007/008 remain «Пока не обещать». Executed evidence and
 remaining limits belong to the linked research.
 
 ## Previous private Smart Patch acceptance-plan boundary
@@ -806,24 +854,34 @@ accepted history and full pipeline/release runtime remain open.
 ## Production Project-local accepted-result history
 
 [Project-local accepted-result history](../../../engineering/phase-2b-project-accepted-results-research.md)
-shows one entry for each current generated Raster Layer after Add, grouped
+originally covered current generated Raster Layers. The subsequent
+[Smart variant history slice](../../../engineering/phase-4-smart-patch-history-research.md)
+extends the same list to every current accepted Smart Patch variant, including
+inactive variants and hidden/locked parents. Membership follows Add, grouped
 Undo/Redo, shadow Recover and portable Save/reopen. The Layers toolbar action
 `Accepted results` opens the bounded list; selecting a result selects and reveals
-the owning layer row, including hidden layers, without accepting anything else
-or changing visibility/settings. Actual seed, copied exact checkpoint metadata
+the owning layer row, including hidden layers. A Smart variant opens its current
+parent’s Variants browser and focuses that exact stored member; it does not
+activate the variant. The separate `Select variant` action still changes the
+active Canvas contribution. History navigation changes no visibility, camera,
+settings, seed, document, Undo or Save. Actual seed, copied exact checkpoint metadata
 and original output size come from immutable provenance. Previews use the same
 current signed layer resource as the stack; preview failure yields a placeholder.
 
 Imported raster images without provenance and temporary candidates are excluded.
 The list reflects current document ownership, independently of Queue rows and
 the Undo stack. The saved global SQLite index and cross-project browser are connected separately
-below. Smart Patch acceptance and full pipeline/release runtime remain open.
+below. Smart result presets and settings Compare have separate checkpoints
+above, with scoped Compare qualification recorded in the linked checkpoint; full pipeline/release
+qualification remains open.
+Validation of the new history slice is tracked in its research note.
 
 ## App-level saved accepted-result history
 
 The app chrome `Saved generations` action opens one separate modal from both Home
-and Project. It lists saved generated Raster results across ready, non-trashed
-indexed Projects, newest first, with per-result preview, layer and Project names,
+and Project. It lists saved generated Raster results and accepted Smart Patch
+variants across ready, non-trashed indexed Projects, newest first, with per-result
+preview, Raster/variant and Project names,
 copied model/version, actual seed and original generated size. Copies at different
 local paths remain separate even when document and layer IDs are shared.
 
@@ -837,8 +895,9 @@ preview displays `Preview unavailable` without removing the row or blocking Open
 Selecting a row verifies its exact saved source and uses ordinary Project Open,
 focusing an existing tab or requesting Recover/Discard/Cancel when required.
 After Open or Recover it selects and reveals the owning layer, including hidden
-layers, without changing visibility, camera, bbox, settings, seed, dirty state or
-Undo. Discard and Cancel cancel the pending selection. An already-open dirty tab
+layers. For a variant it opens the current parent’s Variants browser and focuses
+the exact member, including inactive variants under locked Patches. This changes
+no visibility, active variant, camera, bbox, settings, seed, dirty state or Undo. Discard and Cancel cancel the pending selection. An already-open dirty tab
 keeps its changes: if its accepted layer is absent or its pixels differ, a visible
 notice explains that the saved result is unavailable in the current Project.
 The app never overwrites unsaved work to satisfy history navigation. A stale saved
@@ -847,8 +906,12 @@ cancels a pending request.
 
 The [production browser evidence](../../../engineering/phase-2b-accepted-history-browser-research.md)
 separates real `.igs`/SQLite/Electron from the shared-component mock scenario
-`?prototype=accepted-results`. Comparison, result-derived presets, Smart Patch
-history and worker-produced per-result thumbnail optimization remain open.
+`?prototype=accepted-results`. The later Smart variant slice retains the existing
+result-ID reference/cursor/resource shapes and adds no SQLite or `.igs` migration.
+Smart result presets and settings Compare have separate checkpoints above;
+the scoped native Compare qualification passes all 18 checks. Worker-produced per-result thumbnail
+optimization remains open. History native and automated evidence is tracked
+separately in its research note.
 
 ## Installed Anima image cap32 acceptance evidence
 

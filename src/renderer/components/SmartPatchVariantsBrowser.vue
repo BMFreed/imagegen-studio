@@ -5,36 +5,49 @@ import type {
   ProjectSmartPatchVariantsInspection,
   ProjectTab,
 } from '../../shared/api.js'
+import type { ProjectAcceptedResultTarget } from '../../shared/projects/project-accepted-results.js'
 import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
 
-import { Edit, Refresh, Trash, X } from '@vicons/tabler'
+import { DeviceFloppy, Edit, Refresh, Trash, X } from '@vicons/tabler'
 import { NAlert, NButton, NCard, NEmpty, NIcon, NInput, NSpin, NTag } from 'naive-ui'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+
+import IconButton from '../../../docs/prototype-app/src/components/IconButton.vue'
+import {
+  smartPatchVariantFocusAvailable,
+  type SmartPatchVariantFocusRequest,
+} from './accepted-history-navigation.js'
 
 const show = defineModel<boolean>('show', { required: true })
 const props = defineProps<{
   busy: boolean
   draftPending: boolean
   error: string | null
+  focusRequest?: SmartPatchVariantFocusRequest | null
+  inspection: ProjectSmartPatchVariantsInspection | null
   layer: ProjectSmartPatchLayerView | null
+  loading: boolean
+  readError: string | null
   reloadRequired: boolean
   tab: ProjectTab
 }>()
 const emit = defineEmits<{
   change: [layerId: string, change: ProjectSmartPatchVariantChange]
   closed: []
+  focusHandled: [requestId: number]
+  refresh: []
+  saveSmartResultPreset: [owner: ProjectAcceptedResultTarget]
 }>()
-const inspection = ref<ProjectSmartPatchVariantsInspection | null>(null)
-const loading = ref(false)
-const readError = ref<string | null>(null)
 const editingId = ref<string | null>(null)
 const deletingId = ref<string | null>(null)
 const nameDraft = ref('')
 const nameInput = ref<InstanceType<typeof NInput> | null>(null)
 const dialog = ref<HTMLElement | null>(null)
 const closeButton = ref<InstanceType<typeof NButton> | null>(null)
+const refreshButton = ref<InstanceType<typeof NButton> | null>(null)
+let restoreRefreshFocus = false
 const pendingIntent = ref<VariantIntent | null>(null)
-let requestId = 0
+const inspectedVariantId = ref<string | null>(null)
 let disposed = false
 
 const mutationDisabled = computed(
@@ -48,7 +61,7 @@ const nameError = computed(() =>
       : null,
 )
 const statuses = computed(
-  () => new Map(inspection.value?.variants.map((variant) => [variant.id, variant])),
+  () => new Map(props.inspection?.variants.map((variant) => [variant.id, variant])),
 )
 const changedInputLabels: Record<
   ProjectSmartPatchVariantsInspection['variants'][number]['changedInputs'][number],
@@ -71,68 +84,9 @@ function statusLabel(id: string): string {
       ? 'Outdated'
       : state
         ? 'Unverified'
-        : loading.value
+        : props.loading
           ? 'Checking freshness…'
           : 'Freshness unavailable'
-}
-
-async function read() {
-  const request = ++requestId
-  const layer = props.layer
-  inspection.value = null
-  readError.value = null
-  loading.value = false
-  if (!show.value || !layer || props.reloadRequired) {
-    return
-  }
-  loading.value = true
-  if (props.draftPending) {
-    return
-  }
-  const { documentId, documentRevision, id: tabId } = props.tab
-  const layerId = layer.id
-  const current = () =>
-    !disposed &&
-    show.value &&
-    request === requestId &&
-    props.tab.id === tabId &&
-    props.tab.documentId === documentId &&
-    props.tab.documentRevision === documentRevision &&
-    props.layer?.id === layerId &&
-    !props.draftPending &&
-    !props.reloadRequired
-  try {
-    const api = globalThis.window.api?.projects
-    if (!api) {
-      throw new Error('The application connection is unavailable.')
-    }
-    const result = await api.getSmartPatchVariants(tabId, layerId, documentId, documentRevision)
-    if (!current()) {
-      return
-    }
-    if (!result.ok) {
-      throw new Error(result.error.message)
-    }
-    if (
-      result.value.documentId !== documentId ||
-      result.value.documentRevision !== documentRevision ||
-      result.value.layerId !== layerId
-    ) {
-      throw new Error(
-        'The Project changed while variant diagnostics were being read. Refresh to retry.',
-      )
-    }
-    inspection.value = result.value
-  } catch (cause) {
-    if (current()) {
-      readError.value =
-        cause instanceof Error ? cause.message : 'Variant diagnostics could not be read.'
-    }
-  } finally {
-    if (current()) {
-      loading.value = false
-    }
-  }
 }
 
 watch(
@@ -148,6 +102,7 @@ watch(
   (values, previous) => {
     editingId.value = null
     deletingId.value = null
+    inspectedVariantId.value = null
     if (
       !show.value ||
       (previous &&
@@ -156,28 +111,171 @@ watch(
       pendingIntent.value = null
       nameDraft.value = ''
     }
-    void read()
   },
   { immediate: true },
 )
 watch(show, async (open, previous, onCleanup) => {
+  restoreRefreshFocus = false
+  const historyFocusRequested = Boolean(props.focusRequest)
+  const tabId = props.tab.id
+  const documentId = props.tab.documentId
+  const layerId = props.layer?.id
   let cancelled = false
   onCleanup(() => {
     cancelled = true
   })
   await nextTick()
-  if (cancelled || disposed) {
+  if (
+    cancelled ||
+    disposed ||
+    show.value !== open ||
+    props.tab.id !== tabId ||
+    props.tab.documentId !== documentId ||
+    props.layer?.id !== layerId
+  ) {
     return
   }
   if (open) {
-    closeButton.value?.$el.focus({ preventScroll: true })
+    if (!historyFocusRequested && !props.focusRequest) {
+      closeButton.value?.$el.focus({ preventScroll: true })
+    }
   } else if (previous) {
     emit('closed')
   }
 })
+watch(
+  [
+    show,
+    () => props.focusRequest,
+    () => props.busy,
+    () => props.reloadRequired,
+    () => props.tab.documentRevision,
+    () => props.layer?.id,
+    () => props.layer?.rasterSubLayers,
+  ],
+  async (_values, _previous, onCleanup) => {
+    let cancelled = false
+    onCleanup(() => {
+      cancelled = true
+    })
+    const request = props.focusRequest
+    if (!request) {
+      return
+    }
+    const available = () =>
+      show.value &&
+      !props.busy &&
+      !props.reloadRequired &&
+      props.layer &&
+      smartPatchVariantFocusAvailable(props.tab, props.layer.id, request)
+    if (!available()) {
+      emit('focusHandled', request.requestId)
+      return
+    }
+    await nextTick()
+    if (
+      cancelled ||
+      disposed ||
+      props.focusRequest?.requestId !== request.requestId ||
+      !available()
+    ) {
+      return
+    }
+    const row = dialog.value?.querySelector<HTMLElement>(
+      `[data-smart-patch-variant-id="${CSS.escape(request.variantId)}"]`,
+    )
+    if (row) {
+      inspectedVariantId.value = request.variantId
+      row.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+      row.focus({ preventScroll: true })
+    }
+    emit('focusHandled', request.requestId)
+  },
+  { immediate: true },
+)
+watch(
+  () =>
+    [
+      show.value,
+      inspectedVariantId.value,
+      props.tab.id,
+      props.tab.documentId,
+      props.tab.documentRevision,
+      props.layer?.id,
+      props.loading,
+      props.inspection,
+      props.readError,
+      props.error,
+      props.busy,
+      props.reloadRequired,
+      props.draftPending,
+      props.layer?.rasterSubLayers,
+    ] as const,
+  async ([open, variantId, tabId, documentId, documentRevision, layerId], _previous, onCleanup) => {
+    let cancelled = false
+    onCleanup(() => {
+      cancelled = true
+    })
+    if (!open || !variantId || !layerId || props.busy || props.reloadRequired) {
+      return
+    }
+    const selector = `[data-smart-patch-variant-id="${CSS.escape(variantId)}"]`
+    if (!dialog.value?.querySelector<HTMLElement>(selector)?.contains(document.activeElement)) {
+      return
+    }
+    await nextTick()
+    if (
+      cancelled ||
+      disposed ||
+      !show.value ||
+      props.busy ||
+      props.reloadRequired ||
+      inspectedVariantId.value !== variantId ||
+      props.tab.id !== tabId ||
+      props.tab.documentId !== documentId ||
+      props.tab.documentRevision !== documentRevision ||
+      props.layer?.id !== layerId ||
+      !props.layer.rasterSubLayers.some((variant) => variant.id === variantId)
+    ) {
+      return
+    }
+    // Freshness text can grow preceding rows after initial focus. Keep only the row
+    // still holding keyboard focus visible; inspecting another control ends this claim.
+    const row = dialog.value?.querySelector<HTMLElement>(selector)
+    if (row?.contains(document.activeElement)) {
+      row.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    }
+  },
+)
 onBeforeUnmount(() => {
   disposed = true
-  requestId += 1
+})
+
+function refresh() {
+  if (refreshDisabled.value) {
+    return
+  }
+  restoreRefreshFocus = document.activeElement === refreshButton.value?.$el
+  emit('refresh')
+}
+const refreshDisabled = computed(
+  () => props.busy || props.loading || props.draftPending || props.reloadRequired,
+)
+watch(refreshDisabled, async (disabled, previous) => {
+  if (disabled) {
+    restoreRefreshFocus ||= document.activeElement === refreshButton.value?.$el
+    return
+  }
+  if (!previous || !restoreRefreshFocus) {
+    return
+  }
+  restoreRefreshFocus = false
+  await nextTick()
+  // Disabling the focused refresh button drops keyboard focus onto the body. Return only
+  // that lost focus; keep any explicit focus move made while diagnostics were running.
+  if (!disposed && show.value && document.activeElement === document.body) {
+    refreshButton.value?.$el.focus({ preventScroll: true })
+  }
 })
 
 type VariantIntent =
@@ -298,6 +396,21 @@ function escape() {
     show.value = false
   }
 }
+
+function savePreset(variantId: string) {
+  if (
+    props.busy ||
+    props.reloadRequired ||
+    !props.layer?.rasterSubLayers.some(({ id }) => id === variantId)
+  ) {
+    return
+  }
+  emit('saveSmartResultPreset', {
+    kind: 'smart-patch-variant',
+    layerId: props.layer.id,
+    variantId,
+  })
+}
 </script>
 
 <template>
@@ -316,11 +429,12 @@ function escape() {
     <template v-slot:header-extra>
       <div class="variants-header-actions">
         <NButton
+          ref="refreshButton"
           aria-label="Refresh variant diagnostics"
-          :disabled="loading || draftPending || reloadRequired"
+          :disabled="refreshDisabled"
           quaternary
           size="small"
-          @click="read"
+          @click="refresh"
         >
           <template v-slot:icon><NIcon :component="Refresh" :size="16" /></template>
         </NButton>
@@ -374,7 +488,9 @@ function escape() {
           <article
             v-for="variant of layer.rasterSubLayers"
             :key="variant.id"
+            :aria-label="`Variant ${variant.name}`"
             class="variant-row"
+            :data-history-inspected="inspectedVariantId === variant.id ? '' : undefined"
             :data-smart-patch-variant-id="variant.id"
             role="listitem"
             tabindex="-1"
@@ -397,7 +513,25 @@ function escape() {
               >
                 Active
               </NTag>
+              <NTag
+                v-if="variant.id === inspectedVariantId"
+                key="history-inspected"
+                :bordered="false"
+                size="small"
+              >
+                From history
+              </NTag>
               <div class="variant-actions">
+                <span class="variant-preset-action" data-variant-preset>
+                  <IconButton
+                    compact
+                    :disabled="busy || reloadRequired"
+                    :icon="DeviceFloppy"
+                    :label="`Save Preset from Result for ${variant.name}`"
+                    tooltip="Save Preset from Result"
+                    @click="savePreset(variant.id)"
+                  />
+                </span>
                 <NButton
                   :aria-label="`Rename variant ${variant.name}`"
                   data-variant-rename
@@ -518,7 +652,10 @@ function escape() {
       </div>
       <p class="variants-explanation">
         Freshness compares saved generation inputs with the current Patch. Resource checks do not
-        confirm runtime readiness. Generate checks the current Patch and runtime separately.
+        confirm runtime readiness. Generate checks the current Patch and runtime separately. Compare
+        generation settings in the layer menu compares the active variant with Current Canvas. Save
+        Preset from Result copies frozen reusable settings without selecting a variant or checking
+        current inputs.
       </p>
     </div>
   </NCard>
@@ -630,12 +767,16 @@ function escape() {
 }
 .variant-name {
   display: block;
+  line-height: 1.5;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .variant-actions {
   flex: 0 0 auto;
+}
+.variant-preset-action {
+  display: inline-flex;
 }
 .variant-editor {
   display: grid;

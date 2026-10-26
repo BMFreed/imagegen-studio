@@ -1,5 +1,109 @@
 # Smart Patch Layer
 
+[Save Current as Preset](../../../engineering/phase-4-smart-patch-current-preset-research.md)
+captures the exact acknowledged selected Patch draft synchronously as a detached
+authoring source, separate from accepted-result presets and Apply. It retains
+authored prompt templates and exact resources, starts with Smart Patch workflow
+and omits Size/Seed/batch and all
+Patch geometry/source/execution context. Hidden, locked, empty-mask and variant-free
+sources may be copied without ML or an available catalog; pending synchronization
+anywhere in the Project blocks without flush/seal. Source Project/Patch identity
+stays fixed in the Manager banner through later authoring/catalog changes and actual
+failed INSERT/retry. Explicit Create changes only the preset catalog.
+
+Root execution passes **222 neighbor tests, zero failures/skips**,
+typecheck r3, full lint r2 and a fresh build. The isolated wrong-owner mutation
+goes GREEN (2) → semantic RED/control GREEN → restored GREEN (2), with all 1,313
+archived source members byte-exact restored. The focused owner regression goes
+RED before the fix → GREEN after it with the causal assertion unchanged;
+same-owner invalid raw input is preserved. Actual `native-r2` passes all **12
+automated checks**, exits code 0 across two healthy Electron lifetimes and retains
+two recipes after restart. Exact accepted PNG/provenance, Project, seed/library
+policy and package bytes stay unchanged; keyboard/focus/layout pass at 1440×900
+and the real 900×620 minimum. Production review R2 and final native-source R4
+review of the two `useInnerText` assertions are clean; scoped final-harness ESLint
+passes. Root opened six final native-r2 screenshots (normal, minimum-width source,
+scrolled, restored, SQLite failure and restart), with no material UI defect in
+scope; `root-visual-review.json` is retained. Both retention audits are clean; root completes the exact listed
+temporary-data cleanup with 96.59 MiB reclaimed and compact evidence preserved. This slice does not qualify inference, release
+or complete PP-006; public status remains **Пока не обещать**.
+
+[Smart-target preset Apply](../../../engineering/phase-4-smart-patch-preset-apply-research.md)
+implements a finite copy into the selected Patch generation draft through
+dedicated `getSmartPatchPresetApplicationReview` / `applySmartPatchPreset` APIs.
+The detached preview uses current Patch values and model family. Its ephemeral
+review token binds the exact coordinator, document epoch, revision and layer
+through staged commit; it is never persisted. Hidden targets remain editable,
+locked targets refuse, and pending Project/sibling-Patch draft synchronization
+blocks opening/submitting without flushing drafts or sealing prompt history.
+
+Every preset workflow is eligible; the badge is advisory and never changes mode
+or supplies absent sections. Smart Size is omitted from preview and Select all;
+selected Size refuses. A size-only source has no available sections and cannot
+Apply. Preset Size never touches bbox or internal resolution. Seed starts
+deselected; explicit selection copies policy/value without resolving a seed or
+advancing its cursor. Selected-only resource verification needs no ML runtime.
+
+Only the reviewed Patch generation draft changes, with one Undo for a changed
+Apply, no history entry for a no-op and no implicit Save. Source preset, Project
+draft/primary bbox, other Patch drafts, mask/bbox/internal resolution,
+coherence/compositing, variants/active member, accepted pixels/provenance,
+queue/frozen jobs, seed cursor and Model Manager policies stay unchanged.
+Derived freshness may reflect authored changes. Ordinary Apply, result-preset
+creation and Compare retain their separate owners.
+
+The finite checkpoint passes **363 focused/neighbor tests** (including 33
+shared/renderer/control and 18 real Main tests), **12 native checks**, typecheck,
+lint and a fresh build. Native qualification covers both families, selected-only
+mutation, one Undo/Redo, actual Save/loader/reopen and 900×620 layout/keyboard.
+The staged-review semantic mutation fails as intended and restores to GREEN.
+Earlier failed attempts remain recorded. Portable fixtures do not qualify
+installed Smart Apply→inference or release; PP-006 remains **Пока не обещать**.
+
+[Smart settings Compare](../../../engineering/phase-4-smart-patch-compare-research.md)
+is implemented from the active accepted variant's layer menu and the converted
+Smart Raster menu. The dedicated strict read compares recorded generation
+settings with the current **Project Canvas**, including while a Patch is selected.
+It omits the entire Size section and geometry/layer/source/execution context,
+without activation or Project mutation. Existing ordinary Compare and Smart
+preset actions remain intact. The scoped native qualification passes all 18 checks.
+At that Compare checkpoint, inactive direct Compare, Smart-target Apply,
+image comparison and inference were outside its slice. The later finite
+Smart-target Apply checkpoint is linked above. PP-005/006 remain
+**Пока не обещать**; final outcomes belong to the linked research.
+
+[Accepted variant history](../../../engineering/phase-4-smart-patch-history-research.md)
+includes each accepted nested variant in Project history and, after explicit Save,
+Saved generations. Navigation reveals its current parent and opens the exact
+stored variant with a separate **From history** marker. Inactive and hidden/locked
+variants remain inspectable without activation, document edits or implicit Save.
+Parent-ID Canvas resources remain active-only; exact variant resources retain
+revision, asset and ownership checks. Smart Compare belongs to the separate
+checkpoint above; history does not add a direct inactive-variant Compare action.
+
+[Save Preset from Result](../../../engineering/phase-4-smart-patch-result-preset-research.md)
+copies frozen reusable settings from the active accepted variant, an exact
+inactive stored variant, or a converted Smart Raster into the existing detached
+Preset Manager. Every Smart origin defaults to `Smart Patch`; Size, Seed by
+default, masks, bbox, internal resolution and source/execution context are
+excluded. It does not activate variants or edit the Project. Current containment
+and asset identity own the read; hidden/locked and unverified sources remain
+eligible without a worker or catalog. Explicit Create owns preset storage.
+Smart Compare uses its separate route above, with scoped native qualification
+recorded in the linked checkpoint. At that result-source checkpoint, Smart-target
+Apply was pending; its later finite implementation is linked above.
+
+[Explicit orphan Raster acceptance](../../../engineering/phase-4-smart-patch-orphan-raster-research.md)
+is a separate result action when the original Patch is absent from the current
+original document. It preserves the committed world contribution and complete
+Smart provenance in a new ordinary Raster, at the frozen bbox, without a runtime,
+current mask or automatic retargeting. The normal journal/recovery/Undo/Save rules
+apply. Reviewed target-local Retry work is canceled; unrelated results remain.
+A converted Raster appears in ordinary accepted history. Its settings Compare
+uses the dedicated Smart route above, with scoped native qualification recorded in the linked checkpoint;
+its preset source retains its separate dedicated route. Evidence and
+limits belong to their respective checkpoints.
+
 ## Feature
 
 Smart Patch Layer is the main ImageGen Studio entity for local generative editing in `Project` / `Generate`.
@@ -31,10 +135,11 @@ product model, not the current persistence schema.
 Empty masks contribute no asset references. Patches without accepted variants
 contribute no compositing pixels or accepted-history records. The later owned-mask
 authoring extension below admits painted masks; nonempty raster sub-layers and
-active variants were unsupported at this earlier checkpoint. Patch Generate, Apply Preset and Save Current
-as Preset show explicit unavailable reasons; Manage Presets stays available.
-Generation/variants, staleness, comparison and preset projection remain subsequent
-phase-4 slices.
+active variants were unsupported at this earlier checkpoint. At that checkpoint,
+Patch Generate, Apply Preset and Save Current as Preset showed explicit unavailable
+reasons; Manage Presets stayed available. Generation/variants, staleness,
+comparison and preset projection were subsequent phase-4 slices. Later finite
+Smart-target Apply is linked above.
 
 ## Production checkpoint: owned mask authoring
 
@@ -123,11 +228,55 @@ qualify this private boundary; required typecheck/lint/build pass. Physical exit
 and temporary-copy cleanup are confirmed in the checkpoint. No Electron/browser/ML run is
 claimed. This preparation does not enable Generate,
 enqueue work, run inference, publish candidates or persist accepted variants.
-Variant lifecycle, staleness/compositing/comparison and Patch presets remain
-subsequent owners; existing authoring evidence and public promise statuses stay
-unchanged.
+At that preparation checkpoint, variant lifecycle, staleness/compositing/comparison
+and Patch presets remained subsequent owners; later finite Smart-target Apply is
+linked above. Existing authoring evidence and public promise statuses stay unchanged.
 
-## Current installed qualification: trained public generation
+## Current frozen queue Retry
+
+[Frozen Retry](../../../engineering/phase-4-smart-patch-retry-research.md) repeats
+one reviewed failed/canceled concrete Smart job through Queue Manager. The original
+verified bundle is copied independently, preserving its selected index, pixels,
+masks, prepared model-source, geometry, prompts, exact resources and numeric seed.
+It never captures the current draft or replaces older candidate sessions. The
+original Project/document/coordinator must remain open; worker/resource and source
+CAS/receipt checks remain authoritative. One fresh job/batch/session enters the
+existing shared FIFO drain, including during another inference owner's work.
+
+Results remain temporary until explicit Add. Retry does not modify dirty/Undo,
+accepted variants or `.igs`. Current target edits, hiding/locking and deletion
+do not replace frozen replay inputs. A missing target remains orphaned with Add
+as Variant unavailable; the explicit Raster recovery action is described above.
+Retry performs no automatic retargeting or conversion. OUT uses its frozen model-source RGB
+without resolving or rerunning LaMa. Late refusal cancels the new attempt;
+uncertain publication or exit retains recovery ownership. Evidence and limits
+are in the linked research; PP-007/008 remain **Пока не обещать**.
+
+## Selected-Patch source freshness
+
+[Selected freshness research](../../../engineering/phase-4-smart-patch-freshness-research.md) extends the previous
+authored-only row summary with an automatic, read-only source inspection for the
+selected stored Patch. The open variants browser shares that same App-owned
+reader. Verified matching inputs display `Inputs match` in the row and
+`Matches current inputs` in the browser; known authored
+or lower-source changes display `Outdated`; unavailable source stays `Unverified`
+with details in the browser. Model availability and Generate readiness remain
+separate. Other rows retain conservative authored status.
+
+Document revision, selection, runtime/catalog settlement and post-dispatch events
+clear previous diagnostics and request current inputs. One running read plus the
+newest waiting owner is shared across tab remounts. Pending drafts/busy/reload
+state suspend reading. Wrong-owner/member replies and late success/failure are
+refused. Diagnostics create no document revision, dirty flag, Undo or saved
+provenance update. No polling or persisted freshness is introduced.
+
+This renderer/CPU inspection extension does not qualify trained generation,
+installer recovery or release; the earlier installed matrix remains separately
+scoped below. Smart variant history, preset creation and settings Compare
+have separate later checkpoints above; the scoped native Compare qualification passes all 18 checks.
+PP-007/008 stay **Пока не обещать**.
+
+## Previous installed qualification: trained public generation
 
 [Installed Smart Patch generation](../../../engineering/phase-4-smart-patch-installed-generation-research.md)
 passes 27 native checks through the built public UI and current noneditable
@@ -153,9 +302,9 @@ Reopened stored rows can still show `unverified`. The matrix verifies stored
 pixels and lineage, without qualifying automatic source-freshness re-verification
 after worker lifecycle.
 
-Smart Retry, orphan Raster conversion, accepted-history navigation, Compare/
+At that checkpoint, Smart Retry, orphan Raster conversion, accepted-history navigation, Compare/
 Preset, arbitrary options, broader device/capacity coverage and release
-qualification remain open. PP-007/008 remain **Пока не обещать**.
+qualification were open. PP-007/008 remain **Пока не обещать**.
 
 ## Previous production integration: public Generate, Results and Add
 
@@ -180,8 +329,9 @@ Project Close and document-recovery discard inspect/drain both stores. Valid
 completed candidates survive restart independently of prunable queue rows;
 unfinished work follows the existing cancel-on-restart policy. Missing targets
 stay visible as orphaned with Add as Variant disabled and export/discard available.
-Explicit orphan Raster conversion, Smart Retry, accepted-history navigation and
-Compare/Preset remain separate visible limitations.
+At that checkpoint, explicit orphan Raster conversion, Smart Retry,
+accepted-history navigation and Compare/Preset remained separate limitations.
+The current Raster and Retry checkpoints above supersede those two gaps.
 
 Add retains the existing shared gate/journal/asset handoff and immutable lineage.
 It checks the public reviewed owner inside the gate before any destructive work.
@@ -223,9 +373,9 @@ Actual below-target source includes lower active contributions and excludes the
 current Patch and higher layers. Source failures remain visible and unverified;
 uncertain physical worker exit is a refusal.
 
-This checkpoint manages existing accepted pixels. Public Smart Generate/Results/
-Add IPC, accepted-history navigation, Compare/Preset and installed trained-model
-qualification remain separate. PP-007/008 stay «Пока не обещать». Prototype mock
+That lifecycle checkpoint manages existing accepted pixels. At that checkpoint,
+public Smart Generate/Results/Add IPC, accepted-history navigation, Compare/Preset
+and installed trained-model qualification remained separate. PP-007/008 stay «Пока не обещать». Prototype mock
 status behavior remains a separate limitation, not production evidence.
 
 ## Previous private durable acceptance
@@ -248,8 +398,10 @@ Save or rewrites completed receipts/seed cursor.
 
 At that checkpoint public Generate/Results/IPC and variant lifecycle/status were
 still pending. The current integration and lifecycle sections above now cover
-those boundaries. Smart accepted-history navigation, Compare/Preset, orphan
-Raster conversion, Retry and installed inference qualification remain open.
+those boundaries. Orphan Raster conversion, Retry and installed inference have
+their own later checkpoints above. Smart variant accepted-history navigation
+and Compare/Preset were still open at that durable-acceptance checkpoint; their
+subsequent slices are described above, with scoped Compare qualification recorded in the linked checkpoint.
 PP-007/008 remain «Пока не обещать». Executed evidence and finite limits belong
 to each linked research note.
 
@@ -275,7 +427,7 @@ This is storage/display support for an already populated document, not the
 public acceptance command. Generate/Add, durable acceptance journal and sibling
 cancellation/reconciliation, variant lifecycle controls, accepted-history
 navigation, Smart Patch Compare/Preset and installed inference qualification
-remain later owners. PP-007/008 remain «Пока не обещать». Executed evidence and
+were later owners at that storage/display checkpoint. PP-007/008 remain «Пока не обещать». Executed evidence and
 remaining limits belong to the linked research.
 
 ## Previous private acceptance-plan scope
@@ -615,10 +767,10 @@ configurable blur UI; the inference/compositing blur step remains pending.
 Qualification: impacted regression1820 PASS before terminal snapping, final
 affected59 PASS, built native57 checks and three semantic RED/neighbor GREEN
 pairs. Required typecheck/lint/build pass; source/exit proof, attempt chronology
-and limits are recorded in the linked checkpoint. Smart Patch
+and limits are recorded in the linked checkpoint. At that Transform/Fit checkpoint, Smart Patch
 inpaint/generation, accepted variants, staleness, compositing, comparison,
-Regional Guidance and Patch preset source/target flows remain pending. Public
-promise statuses are unchanged.
+Regional Guidance and Patch preset source/target flows remained pending. Later
+finite Smart-target Apply is linked above; public promise statuses are unchanged.
 
 ## Reference
 
@@ -923,9 +1075,18 @@ The prototype supports adding an empty Smart Patch, selecting its layer-owned ge
 
 The current details card only reads mask revision, bbox size, internal size and active variant. The selected Patch's Mask section now renders the shared Coherence, Edge size and Minimum denoise controls with mock owned-profile edits and history. General bbox dragging, numeric precision editing, internal-size editing, mask painting, the remaining compositing controls and source-composite hashing are not implemented. The finite Project Canvas frame in the prototype remains a gap against the unbounded-canvas contract. `generating`/`failed` are represented in mock state and staging, not driven by a production worker.
 
-The prototype also does not expose the shared `Compare generation settings`
-context action or provenance popover. Its current `outdated` flag is a simplified
-mock and does not substitute for `Generated with` / `Current Canvas` comparison.
+The prototype exposes `Compare generation settings` and result-to-preset from
+the active accepted variant's layer menu. Its read-only popover compares
+`Generated with` against `Current Canvas` and omits the entire Size section for
+Smart provenance, including converted Rasters; ordinary Raster Size remains. Its
+simplified `outdated` flag remains
+a separate mock. Smart result presets use the `Smart Patch` workflow for every
+recorded mode and exclude geometry and Seed by default. These in-memory paths
+do not qualify production comparison or native preset storage. The direct
+inactive-variant action is preset creation only; inactive direct Compare is
+outside this slice. Native comparison focus restoration remains under the
+in-progress qualification above; preset-source focus evidence belongs to its
+separate checkpoint.
 Its frozen provenance and staleness comparison do not yet consume
 `coherenceSettings`: editing that profile changes prototype document/history
 without making existing variants outdated. These mocks do not qualify production
@@ -944,5 +1105,6 @@ lifecycle controls and current-state checks are described above.
 - Changing layer-owned editable inputs marks existing generated output `outdated`.
 - Null/disjoint masks use the actual frozen source-only mode without changing the owned mask.
 - Explicit acceptance into a still-existing changed target retains frozen context and derives `outdated`; it never retargets a missing target.
-- Smart Patch comparison uses active-variant provenance against current Canvas
-  state and never compares two variant provenance records.
+- Smart Patch comparison uses active-variant provenance against the current Project Canvas draft, including while a Patch is selected, and never compares two variant provenance records.
+- Converted Smart Rasters use the same Smart settings comparison rules; Size, geometry and layer/source/execution context are absent.
+- Inactive direct Compare is outside this slice; existing inactive preset actions remain separate.

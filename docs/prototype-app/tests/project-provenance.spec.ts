@@ -10,6 +10,7 @@ import {
   currentCanvasPayload,
   freezeGeneration,
   presetIntentFromResult,
+  resultComparisonSectionOrder,
   resultProvenance,
 } from '../src/prototypes/project/project-provenance'
 import { createProjectScenario } from '../src/prototypes/project/project.mock'
@@ -88,6 +89,45 @@ test('Smart Patch settings stay local, comparison uses Canvas, and presets exclu
   expect(resultProvenance(patch)?.payload.prompt?.text).toBe('hand repair, variation 1')
 })
 
+test('every Smart result mode retains Smart workflow after Raster conversion without copying geometry', () => {
+  const session = createProjectScenario('smart-patch')
+  const patch = session.document.layers.find((layer) => layer.kind === 'smart-patch')!
+  const raster = session.document.layers.find(
+    (layer) => layer.kind === 'raster' && layer.provenance,
+  )!
+  const record = resultProvenance(patch)!
+  if (patch.kind !== 'smart-patch' || raster.kind !== 'raster' || !record.source) {
+    throw new Error('Fixture requires accepted Smart provenance and a Raster control')
+  }
+  for (const mode of ['txt2img', 'img2img', 'inpaint', 'outpaint'] as const) {
+    record.mode = mode
+    const converted = { ...raster, provenance: record }
+    const before = JSON.stringify(record)
+    for (const owner of [patch, converted]) {
+      expect(resultComparisonSectionOrder(owner)).not.toContain('size')
+      const intent = presetIntentFromResult(owner)!
+      if (intent.kind !== 'project') {
+        throw new Error('Expected accepted-result project intent')
+      }
+      expect(intent.definition.workflow).toBe('smartPatch')
+      expect(intent.definition.payload.prompt).toEqual(record.payload.prompt)
+      expect(intent.definition.payload.size).toBeUndefined()
+      expect(intent.definition.payload.seed).toBeUndefined()
+      expect(intent.definition.payload).not.toHaveProperty('source')
+    }
+    expect(JSON.stringify(record)).toBe(before)
+  }
+  expect(resultComparisonSectionOrder(raster)).toContain('size')
+  const ordinary = presetIntentFromResult(raster)!
+  if (ordinary.kind !== 'project') {
+    throw new Error('Expected ordinary result project intent')
+  }
+  expect(ordinary.definition.workflow).toBe(
+    raster.provenance!.mode === 'txt2img' ? 'textToImage' : 'imageToImage',
+  )
+  expect(ordinary.definition.payload.size).toEqual(raster.provenance!.payload.size)
+})
+
 test('comparison is read-only and result preset is available in the integrated Apply picker', async ({
   page,
 }) => {
@@ -101,6 +141,7 @@ test('comparison is read-only and result preset is available in the integrated A
   await expect(comparison.getByText('portrait, studio lighting', { exact: true })).toBeVisible()
   await expect(comparison.getByText('Current Canvas', { exact: true })).toBeVisible()
   await comparison.getByRole('checkbox', { name: 'Show unchanged sections' }).check()
+  await expect(comparison.getByText('Size', { exact: true })).toBeVisible()
   await expect(comparison.getByRole('button')).toHaveCount(0)
   await page.locator('.canvas-size-label').click()
   await expect(prompt).toHaveText(original!)
@@ -129,6 +170,8 @@ test('imported layers explain missing provenance and patch comparison follows th
   await page.getByText('Compare generation settings', { exact: true }).click()
   const comparison = page.getByRole('region', { name: 'Compare generation settings' })
   await expect(comparison).toContainText('hand repair, variation 2')
+  await comparison.getByRole('checkbox', { name: 'Show unchanged sections' }).check()
+  await expect(comparison.getByText('Size', { exact: true })).toHaveCount(0)
   await expect(comparison).not.toContainText('Internal Size')
   await page.locator('.canvas-size-label').click()
   await page.getByRole('button', { name: 'Switch variant for Hand Repair Patch' }).click()
@@ -136,6 +179,38 @@ test('imported layers explain missing provenance and patch comparison follows th
   await page.getByRole('button', { name: 'Layer actions for Hand Repair Patch' }).click()
   await page.getByText('Compare generation settings', { exact: true }).click()
   await expect(comparison).toContainText('hand repair, variation 1')
+})
+
+test('converted Smart Raster comparison omits Size while ordinary Raster keeps it and preset actions survive', async ({
+  page,
+}) => {
+  await page.goto('/?prototype=project&scenario=smart-patch')
+  const comparison = page.getByRole('region', { name: 'Compare generation settings' })
+  for (const [name, hasSize] of [
+    ['Converted Smart result', false],
+    ['Portrait Base', true],
+  ] as const) {
+    await page.getByRole('button', { name: `Layer actions for ${name}` }).click()
+    await expect(page.getByText('Create Preset from Result', { exact: true })).toBeVisible()
+    await page.getByText('Compare generation settings', { exact: true }).click()
+    await expect(comparison).toBeVisible()
+    await comparison.getByRole('checkbox', { name: 'Show unchanged sections' }).check()
+    if (hasSize) {
+      await expect(comparison.getByText('Size', { exact: true })).toBeVisible()
+    } else {
+      await expect(comparison).toContainText('hand repair, variation 2')
+      await expect(comparison.getByText('Size', { exact: true })).toHaveCount(0)
+    }
+    await expect(page.getByRole('button', { name: 'Select Hand Repair Patch' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    await page.locator('.canvas-size-label').click()
+    await expect(comparison).toBeHidden()
+    // Naive removes the previous menu after its leave transition. Settle that owner
+    // before opening the next layer menu, rather than matching two menu generations.
+    await expect(page.getByText('Create Preset from Result', { exact: true })).toHaveCount(0)
+  }
 })
 
 test('generation freezes the chosen version and prompt before later edits', async ({ page }) => {

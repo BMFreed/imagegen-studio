@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ProjectApi, ProjectSmartPatchLayerView } from '../../shared/api.js'
+import type { ProjectAcceptedResultTarget } from '../../shared/projects/project-accepted-results.js'
 
 import { Brush } from '@vicons/tabler'
 import { NButton, NIcon } from 'naive-ui'
@@ -10,14 +11,28 @@ import ProjectEntitySurface from './ProjectEntitySurface.vue'
 
 const props = defineProps<{
   disabled: boolean
+  freshnessLabel?: string
+  hasGenerationData: boolean
   index: number
   layer: ProjectSmartPatchLayerView
   layerCount: number
   selected: boolean
 }>()
+const comparisonLayerId = defineModel<string | null>('comparisonLayerId', { required: true })
+const comparisonOpen = computed({
+  get: () => comparisonLayerId.value === props.layer.id,
+  set: (open) => {
+    if (open) {
+      comparisonLayerId.value = props.layer.id
+    } else if (comparisonLayerId.value === props.layer.id) {
+      comparisonLayerId.value = null
+    }
+  },
+})
 const emit = defineEmits<{
   browseVariants: [layerId: string]
   move: [layerId: string, targetIndex: number]
+  saveSmartResultPreset: [owner: ProjectAcceptedResultTarget]
   select: [layerId: string]
   update: [layerId: string, change: Parameters<ProjectApi['updateSmartPatchLayer']>[2]]
 }>()
@@ -31,18 +46,33 @@ const menu = computed<ProjectEntityRowAction[]>(() => [
     run: () => emit('browseVariants', props.layer.id),
   },
   {
-    disabled: true,
+    disabled: props.disabled || !activeVariant.value || !props.hasGenerationData,
     key: 'compare-generation',
-    label: props.layer.activeRasterSubLayerId
-      ? 'Compare generation settings · Smart Patch comparison unavailable'
-      : 'Compare generation settings · No generation data',
-    run: () => undefined,
+    label:
+      activeVariant.value && props.hasGenerationData
+        ? 'Compare generation settings'
+        : 'Compare generation settings · No generation data',
+    run: () => {
+      if (activeVariant.value && props.hasGenerationData && !props.disabled) {
+        comparisonOpen.value = true
+      }
+    },
   },
   {
-    disabled: true,
+    disabled: props.disabled || !activeVariant.value,
     key: 'save-result-preset',
-    label: 'Save Preset from Result',
-    run: () => undefined,
+    label: activeVariant.value
+      ? 'Save Preset from Result'
+      : 'Save Preset from Result · No generation data',
+    run: () => {
+      if (activeVariant.value && !props.disabled) {
+        emit('saveSmartResultPreset', {
+          kind: 'smart-patch-variant',
+          layerId: props.layer.id,
+          variantId: activeVariant.value.id,
+        })
+      }
+    },
   },
   {
     disabled: props.disabled || props.layer.locked || props.index === 0,
@@ -60,13 +90,20 @@ const menu = computed<ProjectEntityRowAction[]>(() => [
 
 provideProjectEntityRow({
   menu,
+  popoverOpen: comparisonOpen,
   select: () => emit('select', props.layer.id),
   state: computed(() => ({
     disabled: props.disabled,
     locked: props.layer.locked,
     name: props.layer.name,
     selected: props.selected,
-    summary: `${props.layer.rasterSubLayers.length} variants · ${props.layer.status}`,
+    summary: `${props.layer.rasterSubLayers.length} ${props.layer.rasterSubLayers.length === 1 ? 'variant' : 'variants'} · ${
+      props.layer.status === 'empty'
+        ? 'Empty'
+        : props.layer.status === 'outdated'
+          ? 'Outdated'
+          : (props.freshnessLabel ?? 'Unverified')
+    }`,
     visible: props.layer.visible,
   })),
   toggleLock: () => emit('update', props.layer.id, { kind: 'lock', locked: !props.layer.locked }),
@@ -95,6 +132,7 @@ provideProjectEntityRow({
         <NIcon :component="Brush" :size="18" />
       </span>
     </template>
+    <template v-slot:menu-overlay><slot :layer name="comparison" /></template>
     <template v-slot:details>
       <dl class="patch-properties">
         <div>

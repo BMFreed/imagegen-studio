@@ -5,7 +5,7 @@ import type { KyselyPlugin } from 'kysely'
 import Database from 'better-sqlite3'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { cp, mkdtemp, rm } from 'node:fs/promises'
+import { cp, mkdtemp, readdir, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -678,7 +678,12 @@ test('the preset migration upgrades the sixteen-migration database without touch
   const root = await mkdtemp(path.join(os.tmpdir(), 'igs-preset-upgrade-'))
   const legacy = path.join(root, 'legacy-migrations')
   await cp(migrations, legacy, { recursive: true })
-  await rm(path.join(legacy, '0017_presets.sql'))
+  const currentMigrations = (await readdir(migrations))
+    .filter((name) => name.endsWith('.sql'))
+    .sort()
+  for (const name of currentMigrations.filter((name) => name >= '0017_presets.sql')) {
+    await rm(path.join(legacy, name))
+  }
   let application: AppDatabase | null = null
   try {
     application = openAppDatabase(root, legacy)
@@ -725,10 +730,20 @@ test('the preset migration upgrades the sixteen-migration database without touch
       await application.db
         .selectFrom('schema_migrations')
         .selectAll()
-        .where('name', '!=', '0017_presets.sql')
+        .where('name', '<', '0017_presets.sql')
         .orderBy('name')
         .execute(),
       before,
+    )
+    assert.deepEqual(
+      (
+        await application.db
+          .selectFrom('schema_migrations')
+          .select('name')
+          .orderBy('name')
+          .execute()
+      ).map(({ name }) => name),
+      currentMigrations,
     )
     assert.deepEqual(await application.db.selectFrom('presets').selectAll().execute(), [])
     const repository = new PresetRepository(application.db, { now: () => new Date(createdAt) })

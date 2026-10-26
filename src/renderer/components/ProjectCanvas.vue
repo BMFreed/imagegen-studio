@@ -3,6 +3,8 @@ import type {
   ProjectGenerationResultView,
   ProjectLayerView,
   ProjectRasterLayerView,
+  ProjectRegionalGuidanceLayerView,
+  ProjectRegionalGuidanceMaskEditRequest,
   ProjectSmartPatchCandidateExportRequest,
   ProjectSmartPatchLayerView,
   ProjectSmartPatchMaskEditRequest,
@@ -31,7 +33,7 @@ import {
 } from '@vicons/tabler'
 import Konva from 'konva'
 import { NButton, NIcon, NSelect, NTooltip } from 'naive-ui'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 
 import {
   type GenerationResultFocusRequest,
@@ -85,9 +87,11 @@ const props = defineProps<{
   historyPending: 'redo' | 'undo' | null
   layers: ProjectRasterLayerView[]
   maskEditingDisabled: boolean
+  maskEditingReason?: string | null
   maskGeometryEditingDisabled: boolean
   maskTarget: ProjectSmartPatchLayerView | null
   projectKey: string
+  regionalContext?: ProjectRegionalGuidanceLayerView | null
   resultFocus: GenerationResultFocusRequest | null
   selectedLayerId: string | null
   smartPatchResults: ProjectSmartPatchResultsSnapshot | null
@@ -104,9 +108,18 @@ const emit = defineEmits<{
       layerId: string
     },
   ]
+  acceptSmartPatchRaster: [
+    selection: {
+      candidateIds: string[]
+      documentId: string
+      focusedCandidateId: string | null
+      layerId: string
+    },
+  ]
   changeBbox: [rect: IgsRectV1]
   discardSmartPatch: [scope: { documentId: string; layerId: string }]
   editMask: [layerId: string, request: ProjectSmartPatchMaskEditRequest]
+  editRegionalMask: [regionId: string, request: ProjectRegionalGuidanceMaskEditRequest]
   exportSmartPatch: [request: ProjectSmartPatchCandidateExportRequest]
   redo: []
   refreshGenerationResults: []
@@ -116,7 +129,14 @@ const emit = defineEmits<{
   selectLayer: [layerId: string]
   undo: []
 }>()
-const bboxDisabled = computed(() => props.disabled || props.bboxEditingDisabled)
+const bboxDisabled = computed(
+  () => props.disabled || props.bboxEditingDisabled || Boolean(props.regionalContext),
+)
+const maskToolReasonId = useId()
+const activeMaskTarget = computed(() => props.regionalContext ?? props.maskTarget)
+const transformToolLabel = computed(() =>
+  props.regionalContext ? 'Transform Region' : 'Transform Mask',
+)
 const maskDiameter = defineModel<number>('maskDiameter', { required: true })
 const maskOperation = defineModel<MaskOperation>('maskOperation', { required: true })
 const maskOverlayVisible = defineModel<boolean>('maskOverlayVisible', { required: true })
@@ -136,23 +156,48 @@ const maskGeometryDisabled = computed(
     !nativeSceneReady.value ||
     props.disabled ||
     props.maskGeometryEditingDisabled ||
-    !props.maskTarget ||
-    props.maskTarget.locked ||
-    !props.maskTarget.visible ||
-    props.maskTarget.mask.asset === null ||
+    !activeMaskTarget.value ||
+    activeMaskTarget.value.locked ||
+    (!props.regionalContext && !props.maskTarget?.visible) ||
+    activeMaskTarget.value.mask.asset === null ||
     !maskImageReady.value,
 )
-const fitMaskDisabled = computed(() => maskGeometryDisabled.value || maskTransformActive.value)
+const fitMaskDisabled = computed(
+  () => Boolean(props.regionalContext) || maskGeometryDisabled.value || maskTransformActive.value,
+)
 const maskDisabled = computed(
   () =>
     !nativeSceneReady.value ||
     props.disabled ||
     props.maskEditingDisabled ||
-    !props.maskTarget ||
-    props.maskTarget.locked ||
-    !props.maskTarget.visible ||
-    (props.maskTarget.mask.asset !== null && !maskImageReady.value),
+    !activeMaskTarget.value ||
+    activeMaskTarget.value.locked ||
+    (!props.regionalContext && !props.maskTarget?.visible) ||
+    (activeMaskTarget.value.mask.asset !== null && !maskImageReady.value),
 )
+const maskToolReason = computed(() => {
+  if (props.maskEditingReason) {
+    return props.maskEditingReason
+  }
+  if (props.disabled || props.maskEditingDisabled) {
+    return 'Wait for Project settings to finish updating before editing the mask.'
+  }
+  if (activeMaskTarget.value?.locked) {
+    return props.regionalContext
+      ? 'Unlock this Regional Guidance layer before editing its mask.'
+      : 'Unlock this Smart Patch before editing its mask.'
+  }
+  if (!props.regionalContext && props.maskTarget && !props.maskTarget.visible) {
+    return 'Show this Smart Patch before editing its mask.'
+  }
+  if (activeMaskTarget.value?.mask.asset && !maskImageReady.value) {
+    return maskDisplayError.value ?? 'Wait for the owned mask preview to load.'
+  }
+  if (activeMaskTarget.value?.mask.asset === null) {
+    return 'Paint this mask before transforming it.'
+  }
+  return null
+})
 const maskTools = [
   { icon: Brush, name: 'Brush tool', tool: 'brush' },
   { icon: Eraser, name: 'Eraser tool', tool: 'eraser' },
@@ -288,11 +333,12 @@ function isMaskTool(value: typeof tool.value): value is MaskTool {
 }
 
 function currentMaskOwner(): MaskGestureOwner | null {
-  const target = props.maskTarget
+  const target = activeMaskTarget.value
   return target
     ? {
         documentId: props.documentId,
         documentRevision: props.documentRevision,
+        kind: props.regionalContext ? 'regional-guidance' : 'smart-patch',
         layerId: target.id,
         maskId: target.mask.id,
         maskRevision: target.mask.revision,
@@ -371,7 +417,7 @@ function cancelMaskTransform() {
 
 function startMaskTransform() {
   const owner = currentMaskOwner()
-  const target = props.maskTarget
+  const target = activeMaskTarget.value
   if (
     maskGeometryDisabled.value ||
     !owner ||
@@ -477,7 +523,7 @@ function applyMaskTransform() {
   renderMaskOverlay()
   host.value?.focus({ preventScroll: true })
   if (request) {
-    emit('editMask', session.owner.layerId, request)
+    publishMaskEdit(session.owner, request)
   }
 }
 
@@ -488,11 +534,25 @@ function cancelMaskTransformAction() {
 
 function fitPatchBboxToMask() {
   const owner = currentMaskOwner()
-  if (fitMaskDisabled.value || !owner) {
+  if (fitMaskDisabled.value || !owner || owner.kind === 'regional-guidance') {
     return
   }
   cancelMaskGesture()
   emit('editMask', owner.layerId, projectMaskFitRequest(owner))
+}
+
+function publishMaskEdit(
+  owner: Readonly<MaskGestureOwner>,
+  request: ProjectRegionalGuidanceMaskEditRequest,
+) {
+  if (!sameMaskGestureOwner(owner, currentMaskOwner())) {
+    return
+  }
+  if (owner.kind === 'regional-guidance') {
+    emit('editRegionalMask', owner.layerId, request)
+  } else {
+    emit('editMask', owner.layerId, request)
+  }
 }
 
 function pointFromPointer(event: PointerEvent): MaskPoint | null {
@@ -584,7 +644,7 @@ function finishMaskGesture() {
   const request = !maskDisabled.value ? session?.finish(currentMaskOwner()) : null
   renderMaskOverlay()
   if (request && session) {
-    emit('editMask', session.owner.layerId, request)
+    publishMaskEdit(session.owner, request)
   }
 }
 
@@ -674,6 +734,9 @@ function leaveMaskCanvas() {
 }
 
 function chooseTool(value: typeof tool.value) {
+  if (props.regionalContext && value === 'bbox') {
+    return
+  }
   if (isMaskTool(value) && maskDisabled.value) {
     return
   }
@@ -703,7 +766,7 @@ function loadMaskImage() {
   maskImage = null
   maskImageReady.value = false
   maskDisplayError.value = null
-  const target = props.maskTarget
+  const target = activeMaskTarget.value
   if (!target || target.mask.asset === null) {
     maskImageReady.value = true
     renderMaskOverlay()
@@ -763,7 +826,7 @@ function renderMaskOverlay() {
   context.clearRect(0, 0, width, height)
   context.save()
   context.setTransform(camera.value.scale, 0, 0, camera.value.scale, camera.value.x, camera.value.y)
-  const target = props.maskTarget
+  const target = activeMaskTarget.value
   if (target?.mask.asset && maskImageReady.value && maskImage) {
     const bounds = target.mask.bounds
     const transform = maskTransformGesture?.transform
@@ -817,6 +880,7 @@ function renderMaskOverlay() {
   context.fillRect(0, 0, width, height)
   context.globalCompositeOperation = 'source-over'
   maskOverlay.size({ height, width })
+  maskOverlay.opacity(props.regionalContext?.overlayOpacity ?? 0.32)
   maskOverlay.visible(Boolean(target && maskOverlayVisible.value))
   maskCursor?.visible(
     Boolean(
@@ -971,6 +1035,28 @@ function exportSmartCandidate(candidate: ProjectSmartPatchResultView) {
     documentId: candidate.documentId,
     layerId: candidate.layerId,
     stagingSessionId: candidate.stagingSessionId,
+  })
+}
+function acceptSmartRasterCandidate(candidate: ProjectSmartPatchResultView) {
+  if (
+    smartActionsDisabled.value ||
+    candidate.documentId !== props.documentId ||
+    candidate.disposition !== 'orphaned' ||
+    candidate.rasterConversionUnavailableReason !== null ||
+    !smartCandidates.value.some(
+      (current) =>
+        current.candidateId === candidate.candidateId &&
+        current.stagingSessionId === candidate.stagingSessionId &&
+        current.imageUrl === candidate.imageUrl,
+    )
+  ) {
+    return
+  }
+  emit('acceptSmartPatchRaster', {
+    candidateIds: [candidate.candidateId],
+    documentId: candidate.documentId,
+    focusedCandidateId: candidate.candidateId,
+    layerId: candidate.layerId,
   })
 }
 function discardCurrentSmartTarget() {
@@ -1249,6 +1335,9 @@ function handleKeyup(event: KeyboardEvent) {
 }
 
 function selectBboxTool() {
+  if (props.regionalContext) {
+    return
+  }
   chooseTool('bbox')
   host.value?.focus({ preventScroll: true })
 }
@@ -1853,28 +1942,50 @@ watch(stagingHeight, () => {
 })
 watch([focusedCandidateId, smartFocusedId, resultTarget, previewVisible], renderCandidatePreview)
 watch(
+  () => props.regionalContext?.id,
+  (regionId) => {
+    if (!regionId) {
+      return
+    }
+    // Selection changes cancel the old edit; choosing Pan would finish a pending bbox nudge.
+    heldArrowKeys.clear()
+    keyboardBboxDirty = false
+    cancelMaskGesture()
+    cancelMaskTransform()
+    cursorPoint = null
+    bboxShape?.stopDrag()
+    bboxTransformer?.stopTransform()
+    tool.value = 'pan'
+    restoreBbox()
+    updateBboxTool()
+  },
+  { flush: 'sync' },
+)
+watch(
   [
     () => props.projectKey,
     () => props.documentId,
     () => props.documentRevision,
-    () => props.maskTarget?.id,
-    () => props.maskTarget?.mask.id,
-    () => props.maskTarget?.mask.revision,
-    () => props.maskTarget?.locked,
-    () => props.maskTarget?.visible,
+    () => (props.regionalContext ? 'regional-guidance' : 'smart-patch'),
+    () => activeMaskTarget.value?.id,
+    () => activeMaskTarget.value?.mask.id,
+    () => activeMaskTarget.value?.mask.revision,
+    () => activeMaskTarget.value?.locked,
+    () => (!props.regionalContext ? props.maskTarget?.visible : null),
   ],
   () => {
     cancelMaskGesture()
     cancelMaskTransform()
     cursorPoint = null
     maskGestureError.value = null
-    if (!props.maskTarget && isMaskTool(tool.value)) {
+    if (!activeMaskTarget.value && isMaskTool(tool.value)) {
       chooseTool('pan')
     }
     renderMaskOverlay()
   },
+  { flush: 'sync' },
 )
-watch(() => props.maskTarget?.maskImageUrl, loadMaskImage, { immediate: true })
+watch(() => activeMaskTarget.value?.maskImageUrl, loadMaskImage, { flush: 'sync', immediate: true })
 watch(maskDisabled, (disabled) => {
   if (disabled) {
     cancelMaskGesture()
@@ -1886,7 +1997,10 @@ watch(maskGeometryDisabled, (disabled) => {
     cancelMaskTransform()
   }
 })
-watch([maskDiameter, maskOverlayVisible], renderMaskOverlay)
+watch(
+  [maskDiameter, maskOverlayVisible, () => props.regionalContext?.overlayOpacity],
+  renderMaskOverlay,
+)
 watch(tool, () => {
   panMoved = false
   heldArrowKeys.clear()
@@ -1919,14 +2033,20 @@ watch(bboxDisabled, (disabled) => {
           : isMaskTool(tool)
             ? `Infinite project canvas. ${maskTools.find((item) => item.tool === tool)?.name}. Escape cancels the current mask gesture.`
             : tool === 'transform-mask'
-              ? 'Infinite project canvas. Transform Mask tool. Drag to move, use handles to scale or rotate. Enter applies the transform; Escape cancels.'
-              : 'Infinite project canvas. Use the Pan or Bounding Box tool. Zoom with the wheel.'
+              ? `Infinite project canvas. ${transformToolLabel} tool. Drag to move, use handles to scale or rotate. Enter applies the transform; Escape cancels.`
+              : regionalContext
+                ? 'Infinite project canvas. Use Pan or the selected Regional Guidance mask tools. Zoom with the wheel.'
+                : 'Infinite project canvas. Use the Pan or Bounding Box tool. Zoom with the wheel.'
       "
       class="canvas-area"
       :class="{ 'canvas-area--pan': tool === 'pan', 'canvas-area--panning': panning }"
       :data-camera-scale="camera.scale"
       :data-camera-x="camera.x"
       :data-camera-y="camera.y"
+      :data-mask-owner-id="activeMaskTarget?.id"
+      :data-mask-owner-kind="
+        regionalContext ? 'regional-guidance' : maskTarget ? 'smart-patch' : undefined
+      "
       :data-mask-ready="nativeSceneReady && !maskDisabled"
       :data-mask-transform-active="maskTransformActive"
       :data-mask-transform-handles="maskTransformHandles"
@@ -1992,6 +2112,14 @@ watch(bboxDisabled, (disabled) => {
             </NButton>
           </div>
         </div>
+        <div
+          v-if="regionalContext && maskToolReason"
+          :id="maskToolReasonId"
+          class="regional-tool-help"
+          role="status"
+        >
+          {{ maskToolReason }}
+        </div>
         <div v-if="maskDisplayError || maskGestureError" class="mask-warning" role="alert">
           {{ maskDisplayError ?? maskGestureError }}
         </div>
@@ -2022,6 +2150,7 @@ watch(bboxDisabled, (disabled) => {
           <template v-slot:icon><NIcon :component="HandMove" :size="18" /></template>
         </NButton>
         <NButton
+          v-if="!regionalContext"
           aria-label="Bounding Box tool"
           :aria-pressed="tool === 'bbox'"
           circle
@@ -2032,11 +2161,12 @@ watch(bboxDisabled, (disabled) => {
         >
           <template v-slot:icon><NIcon :component="Box" :size="18" /></template>
         </NButton>
-        <template v-if="maskTarget">
+        <template v-if="activeMaskTarget">
           <NTooltip>
             <template v-slot:trigger>
               <NButton
-                aria-label="Transform Mask"
+                :aria-describedby="regionalContext && maskToolReason ? maskToolReasonId : undefined"
+                :aria-label="transformToolLabel"
                 :aria-pressed="tool === 'transform-mask'"
                 circle
                 :disabled="maskGeometryDisabled"
@@ -2048,11 +2178,12 @@ watch(bboxDisabled, (disabled) => {
                 <template v-slot:icon><NIcon :component="Shape" :size="18" /></template>
               </NButton>
             </template>
-            Transform Mask
+            {{ maskGeometryDisabled && maskToolReason ? maskToolReason : transformToolLabel }}
           </NTooltip>
           <NTooltip v-for="item of maskTools" :key="item.tool">
             <template v-slot:trigger>
               <NButton
+                :aria-describedby="regionalContext && maskToolReason ? maskToolReasonId : undefined"
                 :aria-label="item.name"
                 :aria-pressed="tool === item.tool"
                 circle
@@ -2065,9 +2196,9 @@ watch(bboxDisabled, (disabled) => {
                 <template v-slot:icon><NIcon :component="item.icon" :size="18" /></template>
               </NButton>
             </template>
-            {{ item.name }}
+            {{ maskDisabled && maskToolReason ? maskToolReason : item.name }}
           </NTooltip>
-          <NTooltip>
+          <NTooltip v-if="!regionalContext">
             <template v-slot:trigger>
               <NButton
                 aria-label="Fit Patch BBox to Mask"
@@ -2116,6 +2247,7 @@ watch(bboxDisabled, (disabled) => {
         :selectedIds="smartSelectedIds"
         :target="smartTarget"
         @accept="acceptSmartCandidates"
+        @acceptRaster="acceptSmartRasterCandidate"
         @discard="discardCurrentSmartTarget"
         @export="exportSmartCandidate"
         @focus="focusSmartCandidate"
@@ -2126,7 +2258,7 @@ watch(bboxDisabled, (disabled) => {
         @togglePreview="previewVisible = !previewVisible"
       />
       <div
-        v-if="!maskTarget && layers.length === 0 && !(focusedCandidate && previewVisible)"
+        v-if="!activeMaskTarget && layers.length === 0 && !(focusedCandidate && previewVisible)"
         class="canvas-empty"
       >
         <strong>Canvas ready</strong>
@@ -2252,7 +2384,8 @@ watch(bboxDisabled, (disabled) => {
 .bbox-readout,
 .image-warning,
 .candidate-warning,
-.mask-warning {
+.mask-warning,
+.regional-tool-help {
   max-width: 100%;
   min-width: 0;
   padding: 4px 7px;
@@ -2265,6 +2398,11 @@ watch(bboxDisabled, (disabled) => {
   text-overflow: ellipsis;
   white-space: nowrap;
   pointer-events: none;
+}
+
+.regional-tool-help {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .canvas-top-overlays {

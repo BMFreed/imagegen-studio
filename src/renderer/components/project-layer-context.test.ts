@@ -3,13 +3,20 @@ import type {
   ProjectRasterLayerView,
   ProjectSmartPatchLayerView,
 } from '../../shared/api.js'
-import { createEmptyProjectDocumentV1 } from '../../shared/projects/project-schema.js'
+import {
+  createEmptyProjectDocumentV1,
+  type IgsRegionalGuidanceV1,
+} from '../../shared/projects/project-schema.js'
 
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { fitTargetBounds } from './project-canvas-geometry.js'
-import { rasterLayerViews, selectedSmartPatchLayer } from './project-layer-context.js'
+import {
+  rasterLayerViews,
+  resolveSelectedProjectEntity,
+  selectedSmartPatchLayer,
+} from './project-layer-context.js'
 
 function raster(id: string, x: number): ProjectRasterLayerView {
   return {
@@ -93,6 +100,50 @@ test('patch editor ownership follows only an acknowledged exact layer selection,
   assert.equal(selectedSmartPatchLayer(layers, 'removed-or-other-document-owner'), null)
   assert.equal(selectedSmartPatchLayer(layers, null), null)
   assert.equal(selectedSmartPatchLayer([normal], empty.id), null)
+})
+
+test('global entity selection distinguishes regions without selecting owned masks or accepted variants', () => {
+  const normal = raster('91d60edf-6f11-4cbe-9403-67791156732a', 0)
+  const smart = patch()
+  smart.id = '09f79dbe-f221-4cde-b870-6368cc4b3bec'
+  const variantId = '7e3c5f06-2349-4f0b-8adb-b92c266b925e'
+  smart.rasterSubLayers = [{ id: variantId, name: 'Accepted variant' }]
+  smart.activeRasterSubLayerId = variantId
+  smart.activeRaster = raster(smart.id, 0)
+  smart.status = 'unverified'
+  const region = {
+    enabled: true,
+    id: 'ab201a5c-d7be-49f7-a2e1-06dd5514b13c',
+    locked: true,
+    mask: { asset: null, id: 'e1dc0ab9-dd1a-44a8-acbf-5ab9ba8d7c92', revision: 0 },
+    name: 'Regional Guidance',
+    overlayOpacity: 0,
+  } satisfies IgsRegionalGuidanceV1
+  const tab = { layers: [normal, smart], regionalGuidance: [region] }
+  const before = structuredClone(tab)
+
+  assert.deepEqual(resolveSelectedProjectEntity(tab, normal.id), {
+    kind: 'compositing-layer',
+    layer: normal,
+  })
+  assert.deepEqual(resolveSelectedProjectEntity(tab, smart.id), {
+    kind: 'compositing-layer',
+    layer: smart,
+  })
+  assert.deepEqual(resolveSelectedProjectEntity(tab, region.id), {
+    kind: 'regional-guidance',
+    region,
+  })
+  assert.equal(selectedSmartPatchLayer(tab.layers, region.id), null)
+  for (const id of [region.mask.id, smart.mask.id, variantId, 'removed-owner', null]) {
+    assert.equal(resolveSelectedProjectEntity(tab, id), null)
+  }
+  assert.equal(resolveSelectedProjectEntity({ layers: tab.layers }, region.id), null)
+  assert.equal(
+    resolveSelectedProjectEntity({ layers: tab.layers, regionalGuidance: [] }, region.id),
+    null,
+  )
+  assert.deepEqual(tab, before, 'Selection does not change drafts, pixels or region metadata.')
 })
 
 test('Canvas projects only the active stored pixels at frozen placement with the Patch owner appearance', () => {

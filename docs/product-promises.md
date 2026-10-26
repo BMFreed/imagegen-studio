@@ -25,16 +25,16 @@
 Публичный статус относится к готовому продукту. Прототип может доказывать
 взаимодействие, но не заменяет filesystem, worker или persistence evidence.
 
-| ID     | Пользовательский результат                | Продуктовый статус   | Публичный статус | Supporting contract и evidence/gaps                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| ------ | ----------------------------------------- | -------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| PP-001 | Готовый понятный интерфейс                | Принятое направление | Пока не обещать  | [Композиция](./contracts/interface-composition.md), [desktop UI review](./engineering/desktop-ui-layout-review.md): Electron shell, базовые Home/Project и Model Manager; [production Preset Manager](./engineering/phase-3-preset-manager-research.md) подключает ручной create/edit и Deleted через SQLite. Полный Home, preferences и Project preset flows ещё открыты; [исправления аудита](./engineering/product-audit-fixes.md): standalone Home/Project session mapping проверен                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| PP-002 | Понятное намерение controls               | Принятое направление | Пока не обещать  | [Явные действия](./contracts/explicit-intent.md): production Create/Import/Save, install/repair и exact checkpoint явные; [syntax hints](./engineering/project-prompt-diagnostics-research.md) локальны и не меняют текст/Save; [Generate actions](./engineering/phase-2b-generate-actions-research.md) подключены в узком Illustrious txt2img срезе; [Project Apply](./engineering/phase-3-preset-apply-research.md) подключён; полный resource handoff остаётся открытым                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| PP-003 | Понятные роли и места управления          | Принятое направление | Пока не обещать  | [Ownership](./contracts/canonical-ownership.md): базовые Electron Home/Project и Model Manager подключены; [production Preset Manager](./engineering/phase-3-preset-manager-research.md) использует одного app-level owner и detached drafts. Полный Preset/Apply resource handoff остаётся открытым; global saved-result browser/navigation подключён отдельным checkpoint. [Main-owned LaMa delivery](./engineering/phase-2c-lama-install-research.md): internal exact auxiliary installer and full-artifact engine byte planner; Set up/Install/Repair remain unimplemented. [Public outpaint admission](./engineering/phase-2c-public-outpaint-research.md): Generate/frozen Retry connected for both families; installed development qualification does not prove public setup or signed release.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| PP-004 | Управляемые модели и версии               | Обязательный MVP     | Пока не обещать  | [Local resource previews](./engineering/phase-2c-resource-previews-research.md): real CPU derivatives/local cache, exact-version artwork/default ownership, built UI Save+offline restart, failure/exit fence and semantic mutations. Full model hard removal/Preset owners/packaged delivery remain open.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| PP-005 | Результат помнит настройки                | Обязательный MVP     | Пока не обещать  | [NoobAI Karras refusal](./engineering/phase-2c-noobai-karras-failure-research.md): V/Karras wrong-EPS:5 qualified admissions/4 completions/1 UNet failure/2 Save-reopen packages,2 own wholeRGBA matches; raw6/5/1/3 includes one excluded observer attempt. No candidate/receipt/cursor publication on failure; independent raw PASS7754. PP statuses remain «Пока не обещать». [Anima image cap32/prefix](engineering/phase-2c-anima-image-batch-cap-research.md):76 accepted outputs/4 packages/12 own prefix matches/2 preserving confirmed33 refusals; finite Euler256 scope. [Anima image MAX→0](engineering/phase-2c-anima-image-seed-wrap-research.md): Installed Anima image MAX→0: 8 admissions/completions/accepted layers, 6 Save-reopen packages, 4 wholeRGBA matches с собственными numeric MAX/0 controls и 2 same-prompt contrasts. Frozen worker inputs сохраняют MAX→0 actual/step/posterior seeds и compiled weighting; 6 cursor/Save snapshots и 8 portable provenance сохраняют raw weighted text, actual seed и resource/source context. Три OUT previews сохраняют 166656 protected source pixels. Independent raw reader PASS (18700 checks); actual Main modulo fault: 18 executions, 2 RED / 16 GREEN. Все 584 copied source members restored and guarded-cleaned. Только Euler256/N3/two updates/exact ресурсы; cross-pair wrap/cap32/new installed mutation/quality/Invoke parity/fullMVP/release не заявлены. [Installed Anima image Reuse после crash](engineering/phase-2c-anima-image-reuse-crash-research.md): Euler256 IMG/normal mixed-alpha OUT,22 admissions/18 completions/4 APP_RESTART/18 accepted layers/2 Save-reopen packages,16 Reuse+2 recovered own fullRGBA matches. Home Recover сохраняет source/candidate/cursor B; public Reuse/value null, hidden recovered Fixed layer и8 fresh Reuse layers сохранены вместе с source. Source-only Save snapshot null; final(B+7),10 layers/9 provenance,18 owning comparisons; OUT55552 protected pixels. Исключённый первый native3/1/2cancel/0accepted учтён отдельно; raw total25/19/6cancel/18accepted. FullMVP/quality/Invoke parity/release не заявлены. [Installed Anima image Random → Fixed](engineering/phase-2c-anima-image-seed-replay-research.md): Euler256 IMG/normal mixed-alpha OUT,32 admissions/completions/accepted layers,4 Save/reopen packages,16 own fullRGBA Random→numeric Fixed matches. Два исходных crypto-return Main наблюдались без подмены; full DTO сохраняет raw/compiled prompts, источники и uint32 seed/step/posterior. Matching исключает только3 owner IDs и проверенную policy; per-prompt сохраняется. Independent raw readback PASS19737:32 owning comparisons,4 chronological cursor/Save snapshots,11 old tables,43 worker identities,2 OUT previews/111104 protected pixels.161 focused tests PASS0skip; actual source18/2 RED/16 GREEN. Нет новой native mutation, deliberate wrap/cap32-refusal/Reuse/quality/fullMVP/release claim. Следующий finite gate — Anima image MAX→0 подтверждён отдельно8/6/4; Anima image cap32/prefix refusal подтверждён отдельно76/4/12/2; следующий finite gate — NoobAI V / DPM++ 2M Karras wrong-EPS: наблюдаемый отказ и диагностика. |
-| PP-006 | Настройки сохраняются и переиспользуются  | Обязательный MVP     | Пока не обещать  | [Preset storage/API](./engineering/phase-3-preset-storage-research.md): strict definitions, real SQLite lifecycle, native restart/purge; [production Preset Manager](./engineering/phase-3-preset-manager-research.md): manual CRUD/Deleted and guards. [Project Apply](./engineering/phase-3-preset-apply-research.md): detached preview, selected-only diagnostics and one Main Undo mutation. [Save Current](./engineering/phase-3-preset-save-current-research.md) connects acknowledged Project source creation after draft synchronization, without flush/seal, with authored prompts/sidecars, seed/batch omission and explicit unknown-workflow choice. [New Project customization](./engineering/phase-3-new-project-preset-research.md) connects a detached active TXT source to the shared editor, selected-only validation and initialization before the first `.igs` write with clean history; selected missing refs warn without blocking Create. New Project qualification: 221 focused tests/9 native scenarios; exact limits belong to its checkpoint. Qualification results belong to each checkpoint. [Accepted Raster result](./engineering/phase-3-result-preset-research.md) connects a worker-independent immutable provenance read to detached Create: concrete expanded prompts, recorded portable fields, Seed/batch omission, no source mutation; qualification belongs to its checkpoint. [Project Apply Models handoff](./engineering/phase-3-preset-model-handoff-research.md): exact edited diagnostic references, preserved suspended editor, guarded refresh/return, baseline RED→GREEN pilot. [Installed Project presets EPS/V](./engineering/phase-3-installed-presets-research.md): native full/partial Apply, 8 trained completions, 4 wholeRGBA manual controls, 4 accepted Save/reopen/Compare/result-preset chains; current library policy wins over advisory hints, 646 raw checks and restored source mutations. Only declared Euler256/N3 recipe; Anima Apply/other recipes remain unqualified. Other-context handoffs and Smart Patch source/target remain pending                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| PP-007 | Пользователь владеет переносимым проектом | Обязательный MVP     | Пока не обещать  | [Installed Smart Patch qualification](./engineering/phase-4-smart-patch-installed-generation-research.md): 27 native checks; 10 trained Illustrious V/Anima completions and explicit Add/Undo/Redo/Save/reopen cycles across four modes plus INP replay per family. Exact world RGBA/provenance, current authoring and neighbors survive; two raw RGB contrasts and whole-RGBA replays pass. Actual rendered progress, busy Select and healthy-close/no-Repair readiness are verified. All 51 installed worker files/source/bundle/model hashes remain unchanged; 80 observed actors physically exited. Failed attempts stay separate. Reopened stored rows can remain `unverified`; automatic freshness after worker lifecycle is outside these assertions. Retry, orphan Raster conversion, accepted-history navigation, Compare/Preset, arbitrary options, quality, full Invoke parity and release remain open.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| PP-008 | Результаты принимаются явно               | Обязательный MVP     | Пока не обещать  | [Installed Smart Patch qualification](./engineering/phase-4-smart-patch-installed-generation-research.md): 10 public trained completions remain temporary until 10 explicit Adds, each followed by one Undo/Redo and Save/reopen; Generate and Add do not implicitly Save. Illustrious V/Anima × TXT/IMG/INP/OUT plus INP replays pass independent alpha, two raw RGB contrast and exact whole-RGBA replay controls at processing 256/world 128, four steps, seed 123. Real rendered progress and healthy reopened Generate/no Repair pass; busy Select matches its guard. The 27-check successful matrix excludes failed attempts. Reopened stored rows can remain `unverified`; automatic freshness after worker lifecycle is outside these assertions. Retry, orphan Raster conversion, accepted-history navigation, Compare/Preset, arbitrary options, quality, full Invoke parity and release remain open.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ID     | Пользовательский результат                | Продуктовый статус   | Публичный статус | Supporting contract и evidence/gaps                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------ | ----------------------------------------- | -------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PP-001 | Готовый понятный интерфейс                | Принятое направление | Пока не обещать  | [Regional reference-image owner](./engineering/phase-4-regional-guidance-references-research.md): Inline bounded thumbnails, owner-bound actions, Current Canvas family/repair/lock guards and bounded root visual self-review. Source implemented; final lower checks and native-r10 12/12 PASS/191.188s, script1f5ac7ce/sourceR11 CLEAN. Python118, typecheck-r3, lint-r2, neighbors-r2 952/57files/0skip and fresh build-r1 PASS. Duplicate semantic RED/control GREEN/restored2GREEN, all1343 restored; productionR2 CLEAN after causal Save A/B fix. Attempts1–9 remain FAILED; oracle R7/R8 closed by replay. Root opened10 screenshots under ui-audit, bounded self-review. Controlled OS picker; actual development CPU; no ML/catalog injection or packaged/inference/installed-resource-transition qualification; transient preparation metadata-only. RetentionR1–R7 CLEAN candidate-only READ-FINISHED; contractR1 CLEAN source-only. Root exit/restoration/source/dependency/reader checks and cleanup complete:22 exact paths removed,216,420,352B measured root allocation reduction. Compact proof/external dependencies and final mapping retained; no public-status promotion. [Композиция](./contracts/interface-composition.md), [desktop UI review](./engineering/desktop-ui-layout-review.md): Electron shell, базовые Home/Project и Model Manager; [production Preset Manager](./engineering/phase-3-preset-manager-research.md) подключает ручной create/edit и Deleted через SQLite. Полный Home, preferences и Project preset flows ещё открыты; [исправления аудита](./engineering/product-audit-fixes.md): standalone Home/Project session mapping проверен [Regional Guidance foundation](./engineering/phase-4-regional-guidance-foundation-research.md): empty durable entities, grouped UI and explicit enabled-region NEW Generate refusal; root-confirmed 711 Node / 182 prototype / 12 native-r5 checks PASS, final typecheck/lint/build PASS; final [retention/cleanup completed](./engineering/phase-4-regional-guidance-foundation-research.md#retention-restoration-and-disposal): 15 exact payload paths removed, all candidate paths absent, 109,748,224 allocated bytes (104.66 MiB) reclaimed; no regional inference. [Regional prompt authoring](./engineering/phase-4-regional-guidance-prompts-research.md): finite authoring root-qualified; metadata APIs and ordinary draft target/change/group validation preserved, shared seal additionally accepts strict regional namespaced IDs. Root: 795 Node / 41 files, 0 failures/skips (before final single ARIA attribute), typecheck r7, full lint r2 (4 partitions) plus later row/script scoped lint, fresh app build r4 and prototype r1 182 PASS, no prototype source change; production R4/narrow ARIA R5 and native-source R7 CLEAN source-only. Final native-r8/script ff502357: 12/12 PASS in 97.714 s, healthy code 0 across two lifetimes, Save/reopen/recovery and protected-state controls; 7 screenshots opened/viewed by root, bounded self-review. Retention audits 1–4 CLEAN/READ-FINISHED and contract R2 CLEAN source-only; root release checks and cleanup complete: 18 exact idle paths removed, 116,359,168 allocated bytes (110.97 MiB) reclaimed; compact evidence/external dependencies protected. No regional masks/reference images, conditioning, inference, installed embedding/autocomplete, active-work/Main-ABA or full-promise qualification. [Regional Guidance owned-mask authoring](./engineering/phase-4-regional-guidance-masks-research.md): source implemented; lower-level checks and finite native-r7 qualification PASS (12 checks, 157.061 s; both 95-handler restorations, zero in-flight calls/page errors). Root reviews all 6 final screenshots at 1440×900/900×620 plus quarter-turn/recovered states without a material local finding; bounded self-review, not full accessibility audit. Root: 869 Node/50 files before lint-only delta; post-lint focused r3 89/typecheck r3, full lint r2, fresh app build r1 and prototype r2 182 PASS; production R2/source R4/R5 CLEAN source-only. Earlier failures/native3 restoration gap remain explicit; retention audits R1–R4 CLEAN/READ-FINISHED, contract R2 CLEAN source-only; root release checks and cleanup complete: 15 exact idle paths removed, 113,537,024 bytes (108.28 MiB) reclaimed, compact evidence/external dependencies retained. No regional conditioning/reference images/inference; public status unchanged.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| PP-002 | Понятное намерение controls               | Принятое направление | Пока не обещать  | [Явные действия](./contracts/explicit-intent.md): production Create/Import/Save, install/repair и exact checkpoint явные; [syntax hints](./engineering/project-prompt-diagnostics-research.md) локальны и не меняют текст/Save; [Generate actions](./engineering/phase-2b-generate-actions-research.md) подключены в узком Illustrious txt2img срезе; [Project Apply](./engineering/phase-3-preset-apply-research.md) подключён; полный resource handoff остаётся открытым                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| PP-003 | Понятные роли и места управления          | Принятое направление | Пока не обещать  | [Ownership](./contracts/canonical-ownership.md): базовые Electron Home/Project и Model Manager подключены; [production Preset Manager](./engineering/phase-3-preset-manager-research.md) использует одного app-level owner и detached drafts. Полный Preset/Apply resource handoff остаётся открытым; global saved-result browser/navigation подключён отдельным checkpoint. [Main-owned LaMa delivery](./engineering/phase-2c-lama-install-research.md): internal exact auxiliary installer and full-artifact engine byte planner; Set up/Install/Repair remain unimplemented. [Public outpaint admission](./engineering/phase-2c-public-outpaint-research.md): Generate/frozen Retry connected for both families; installed development qualification does not prove public setup or signed release.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| PP-004 | Управляемые модели и версии               | Обязательный MVP     | Пока не обещать  | [Local resource previews](./engineering/phase-2c-resource-previews-research.md): real CPU derivatives/local cache, exact-version artwork/default ownership, built UI Save+offline restart, failure/exit fence and semantic mutations. Full model hard removal/Preset owners/packaged delivery remain open.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| PP-005 | Результат помнит настройки                | Обязательный MVP     | Пока не обещать  | [Smart result presets](./engineering/phase-4-smart-patch-result-preset-research.md): active/exact inactive variants и converted Smart Rasters → worker-independent frozen copy → detached Manager/Create; geometry/Seed omission, strict ownership и source immutability; 790 focused/neighbor tests, 181 prototype tests и 15 native checks с 12 recipes после restart. [Smart settings Compare](./engineering/phase-4-smart-patch-compare-research.md): implemented active accepted variant / converted Smart Raster → current Project Canvas through strict `getSmartResultComparisonData`; no Smart Size/context/geometry or mutation. The scoped qualification passes 852 neighbor tests, 182 prototype tests and 18 native checks. Smart-target Apply has a separate [implemented finite checkpoint](./engineering/phase-4-smart-patch-preset-apply-research.md), with 363 focused/neighbor tests and 12 native checks, no provenance mutation, installed inference or release claim; статус не повышен. [NoobAI Karras refusal](./engineering/phase-2c-noobai-karras-failure-research.md): V/Karras wrong-EPS:5 qualified admissions/4 completions/1 UNet failure/2 Save-reopen packages,2 own wholeRGBA matches; raw6/5/1/3 includes one excluded observer attempt. No candidate/receipt/cursor publication on failure; independent raw PASS7754. PP statuses remain «Пока не обещать». [Anima image cap32/prefix](engineering/phase-2c-anima-image-batch-cap-research.md):76 accepted outputs/4 packages/12 own prefix matches/2 preserving confirmed33 refusals; finite Euler256 scope. [Anima image MAX→0](engineering/phase-2c-anima-image-seed-wrap-research.md): Installed Anima image MAX→0: 8 admissions/completions/accepted layers, 6 Save-reopen packages, 4 wholeRGBA matches с собственными numeric MAX/0 controls и 2 same-prompt contrasts. Frozen worker inputs сохраняют MAX→0 actual/step/posterior seeds и compiled weighting; 6 cursor/Save snapshots и 8 portable provenance сохраняют raw weighted text, actual seed и resource/source context. Три OUT previews сохраняют 166656 protected source pixels. Independent raw reader PASS (18700 checks); actual Main modulo fault: 18 executions, 2 RED / 16 GREEN. Все 584 copied source members restored and guarded-cleaned. Только Euler256/N3/two updates/exact ресурсы; cross-pair wrap/cap32/new installed mutation/quality/Invoke parity/fullMVP/release не заявлены. [Installed Anima image Reuse после crash](engineering/phase-2c-anima-image-reuse-crash-research.md): Euler256 IMG/normal mixed-alpha OUT,22 admissions/18 completions/4 APP_RESTART/18 accepted layers/2 Save-reopen packages,16 Reuse+2 recovered own fullRGBA matches. Home Recover сохраняет source/candidate/cursor B; public Reuse/value null, hidden recovered Fixed layer и8 fresh Reuse layers сохранены вместе с source. Source-only Save snapshot null; final(B+7),10 layers/9 provenance,18 owning comparisons; OUT55552 protected pixels. Исключённый первый native3/1/2cancel/0accepted учтён отдельно; raw total25/19/6cancel/18accepted. FullMVP/quality/Invoke parity/release не заявлены. [Installed Anima image Random → Fixed](engineering/phase-2c-anima-image-seed-replay-research.md): Euler256 IMG/normal mixed-alpha OUT,32 admissions/completions/accepted layers,4 Save/reopen packages,16 own fullRGBA Random→numeric Fixed matches. Два исходных crypto-return Main наблюдались без подмены; full DTO сохраняет raw/compiled prompts, источники и uint32 seed/step/posterior. Matching исключает только3 owner IDs и проверенную policy; per-prompt сохраняется. Independent raw readback PASS19737:32 owning comparisons,4 chronological cursor/Save snapshots,11 old tables,43 worker identities,2 OUT previews/111104 protected pixels.161 focused tests PASS0skip; actual source18/2 RED/16 GREEN. Нет новой native mutation, deliberate wrap/cap32-refusal/Reuse/quality/fullMVP/release claim. Следующий finite gate — Anima image MAX→0 подтверждён отдельно8/6/4; Anima image cap32/prefix refusal подтверждён отдельно76/4/12/2; следующий finite gate — NoobAI V / DPM++ 2M Karras wrong-EPS: наблюдаемый отказ и диагностика.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| PP-006 | Настройки сохраняются и переиспользуются  | Обязательный MVP     | Пока не обещать  | [Smart result presets](./engineering/phase-4-smart-patch-result-preset-research.md): active/exact inactive variants и converted Smart Rasters → worker-independent frozen copy → detached Manager/Create; geometry/Seed omission, strict ownership и source immutability; 790 focused/neighbor tests, 181 prototype tests и 15 native checks с 12 recipes после restart. [Smart settings Compare](./engineering/phase-4-smart-patch-compare-research.md): implemented active accepted variant / converted Smart Raster → current Project Canvas through strict `getSmartResultComparisonData`; no Smart Size/context/geometry or mutation. The scoped qualification passes 852 neighbor tests, 182 prototype tests and 18 native checks. [Smart-target Apply](./engineering/phase-4-smart-patch-preset-apply-research.md): finite selected-Patch draft implementation, dedicated review/apply APIs, selected-only copy, Size refused/omitted, Seed off by default and ephemeral coordinator/epoch/revision/layer token through staged commit; no implicit Save or source/geometry/variant/provenance/queue/cursor/policy mutation. Qualification: 363 focused/neighbor tests (including the 33 + 18 subset), 12 native checks, typecheck/lint/build and a restored semantic mutation PASS. No installed Smart inference or release claim; статус не повышен. [Preset storage/API](./engineering/phase-3-preset-storage-research.md): strict definitions, real SQLite lifecycle, native restart/purge; [production Preset Manager](./engineering/phase-3-preset-manager-research.md): manual CRUD/Deleted and guards. [Project Apply](./engineering/phase-3-preset-apply-research.md): detached preview, selected-only diagnostics and one Main Undo mutation. [Save Current](./engineering/phase-3-preset-save-current-research.md) connects acknowledged Project source creation after draft synchronization, without flush/seal, with authored prompts/sidecars, seed/batch omission and explicit unknown-workflow choice. [Smart draft Save Current](./engineering/phase-4-smart-patch-current-preset-research.md): synchronous exact acknowledged selected-Patch authored settings → detached Manager/explicit Create; Smart workflow, no initial Size/Seed/batch/geometry/source context; hidden/locked read sources without ML/catalog, whole-Project pending guard and no flush/seal. Root execution: 222 neighbor tests (0 fail/0 skip), typecheck r3/full lint r2/fresh build PASS; isolated wrong-owner GREEN2 → semantic RED/control GREEN → restored GREEN2, all 1,313 source members byte-exact restored; focused owner RED→GREEN with unchanged causal assertion and same-owner invalid raw input retained. Actual native-r2: 12 automated checks PASS/code 0, two healthy Electron lifetimes/two persisted recipes, actual failed INSERT/retry and frozen source despite later authoring/catalog changes; exact PNG/provenance/Project/seed/library policy/package unchanged; 1440×900 and real 900×620 keyboard/focus/layout. Production review R2 and final native-source R4 review of two useInnerText assertions clean; scoped final-harness ESLint PASS. Root opened six final native-r2 screenshots (normal/min900 source/scrolled/restored/SQLite failure/restart), no material UI defect in scope; root-visual-review.json retained. Both retention audits clean; root completes scoped temporary-data cleanup (96.59 MiB reclaimed), preserving compact byte evidence and dependency targets. No inference/release/complete PP-006 claim; public status unchanged. [New Project customization](./engineering/phase-3-new-project-preset-research.md) connects a detached active TXT source to the shared editor, selected-only validation and initialization before the first `.igs` write with clean history; selected missing refs warn without blocking Create. New Project qualification: 221 focused tests/9 native scenarios; exact limits belong to its checkpoint. Qualification results belong to each checkpoint. [Accepted Raster result](./engineering/phase-3-result-preset-research.md) connects a worker-independent immutable provenance read to detached Create: concrete expanded prompts, recorded portable fields, Seed/batch omission, no source mutation; qualification belongs to its checkpoint. [Project Apply Models handoff](./engineering/phase-3-preset-model-handoff-research.md): exact edited diagnostic references, preserved suspended editor, guarded refresh/return, baseline RED→GREEN pilot. [Installed Project presets EPS/V](./engineering/phase-3-installed-presets-research.md): native full/partial Apply, 8 trained completions, 4 wholeRGBA manual controls, 4 accepted Save/reopen/Compare/result-preset chains; current library policy wins over advisory hints, 646 raw checks and restored source mutations. Only declared Euler256/N3 recipe; Anima Apply/other recipes remain unqualified. Other-context handoffs remain pending; finite Smart-target Apply qualification is recorded at its linked checkpoint |
+| PP-007 | Пользователь владеет переносимым проектом | Обязательный MVP     | Пока не обещать  | [Regional reference-image owner](./engineering/phase-4-regional-guidance-references-research.md): Ordered owned PNG/WebP/ICC, independent Duplicate/Undo/Save/reopen/recovery within the finite controlled-picker/development-CPU boundary. Source implemented; final lower checks and native-r10 12/12 PASS/191.188s, script1f5ac7ce/sourceR11 CLEAN. Python118, typecheck-r3, lint-r2, neighbors-r2 952/57files/0skip and fresh build-r1 PASS. Duplicate semantic RED/control GREEN/restored2GREEN, all1343 restored; productionR2 CLEAN after causal Save A/B fix. Attempts1–9 remain FAILED; oracle R7/R8 closed by replay. Root opened10 screenshots under ui-audit, bounded self-review. Controlled OS picker; actual development CPU; no ML/catalog injection or packaged/inference/installed-resource-transition qualification; transient preparation metadata-only. RetentionR1–R7 CLEAN candidate-only READ-FINISHED; contractR1 CLEAN source-only. Root exit/restoration/source/dependency/reader checks and cleanup complete:22 exact paths removed,216,420,352B measured root allocation reduction. Compact proof/external dependencies and final mapping retained; no public-status promotion. [Accepted Smart variant history](./engineering/phase-4-smart-patch-history-research.md): nested variants own history UUIDs; current-parent navigation focuses stored inactive/hidden/locked members without activation, authoring or implicit Save; global membership follows verified Save. Exact resource guards remain. History native R8: 16 checks on portable accepted fixtures, including cross-project read-only navigation and Save/reopen; no inference. Smart Compare/Preset and release readiness were outside that history checkpoint. [Explicit orphan Raster Add](./engineering/phase-4-smart-patch-orphan-raster-research.md): verified world PNG/alpha, unchanged Smart provenance and frozen bbox; shared reviewed journal/recovery, one Undo, explicit Save; current original document only, no runtime or retargeting. Converted Raster history supports 1px/nonaligned world sizes; Smart Compare/Preset were unavailable at that orphan-acceptance checkpoint; later source/Compare slices are separate. Native R7: 15 checks on prepared PNGs, actual menu/confirmation, 900×620/1440×900, Undo/Redo, crash recovery and Save/reopen; inference is not part of this acceptance qualification. [Frozen Smart Retry](./engineering/phase-4-smart-patch-retry-research.md): one reviewed failed/canceled concrete job, independent verified input copy, original seed/settings/pixels, source CAS, shared admission/drain; no automatic acceptance/Save or candidate replacement. [Selected freshness](./engineering/phase-4-smart-patch-freshness-research.md): App-owned automatic row/browser source inspection; no document/provenance/acceptance changes; resource and Generate readiness separate. [Installed Smart Patch qualification](./engineering/phase-4-smart-patch-installed-generation-research.md): 27 native checks; 10 trained Illustrious V/Anima completions and explicit Add/Undo/Redo/Save/reopen cycles across four modes plus INP replay per family. Exact world RGBA/provenance, current authoring and neighbors survive; two raw RGB contrasts and whole-RGBA replays pass. Actual rendered progress, busy Select and healthy-close/no-Repair readiness are verified. All 51 installed worker files/source/bundle/model hashes remain unchanged; 80 observed actors physically exited. Failed attempts stay separate. Reopened stored rows can remain `unverified`; automatic freshness after worker lifecycle is outside these assertions. At that installed checkpoint, Compare/Preset, arbitrary options, quality, full Invoke parity and release remained open. [Regional Guidance foundation](./engineering/phase-4-regional-guidance-foundation-research.md): empty durable entities, grouped UI and explicit enabled-region NEW Generate refusal; root-confirmed 711 Node / 182 prototype / 12 native-r5 checks PASS, final typecheck/lint/build PASS; final [retention/cleanup completed](./engineering/phase-4-regional-guidance-foundation-research.md#retention-restoration-and-disposal): 15 exact payload paths removed, all candidate paths absent, 109,748,224 allocated bytes (104.66 MiB) reclaimed; no regional inference. [Regional prompt authoring](./engineering/phase-4-regional-guidance-prompts-research.md): finite authoring root-qualified; metadata APIs and ordinary draft target/change/group validation preserved, shared seal additionally accepts strict regional namespaced IDs. Root: 795 Node / 41 files, 0 failures/skips (before final single ARIA attribute), typecheck r7, full lint r2 (4 partitions) plus later row/script scoped lint, fresh app build r4 and prototype r1 182 PASS, no prototype source change; production R4/narrow ARIA R5 and native-source R7 CLEAN source-only. Final native-r8/script ff502357: 12/12 PASS in 97.714 s, healthy code 0 across two lifetimes, Save/reopen/recovery and protected-state controls; 7 screenshots opened/viewed by root, bounded self-review. Retention audits 1–4 CLEAN/READ-FINISHED and contract R2 CLEAN source-only; root release checks and cleanup complete: 18 exact idle paths removed, 116,359,168 allocated bytes (110.97 MiB) reclaimed; compact evidence/external dependencies protected. No regional masks/reference images, conditioning, inference, installed embedding/autocomplete, active-work/Main-ABA or full-promise qualification. [Regional Guidance owned-mask authoring](./engineering/phase-4-regional-guidance-masks-research.md): source implemented; lower-level checks and finite native-r7 qualification PASS (12 checks, 157.061 s; both 95-handler restorations, zero in-flight calls/page errors). Root reviews all 6 final screenshots at 1440×900/900×620 plus quarter-turn/recovered states without a material local finding; bounded self-review, not full accessibility audit. Root: 869 Node/50 files before lint-only delta; post-lint focused r3 89/typecheck r3, full lint r2, fresh app build r1 and prototype r2 182 PASS; production R2/source R4/R5 CLEAN source-only. Earlier failures/native3 restoration gap remain explicit; retention audits R1–R4 CLEAN/READ-FINISHED, contract R2 CLEAN source-only; root release checks and cleanup complete: 15 exact idle paths removed, 113,537,024 bytes (108.28 MiB) reclaimed, compact evidence/external dependencies retained. No regional conditioning/reference images/inference; public status unchanged.                                                                                                                                                                                                                                                                                                                   |
+| PP-008 | Результаты принимаются явно               | Обязательный MVP     | Пока не обещать  | [Regional reference-image owner](./engineering/phase-4-regional-guidance-references-research.md): Authored attachments only; enabled-region NEW Generate refusal and independent published work/frozen Retry remain; active frozen work is not native-qualified. Source implemented; final lower checks and native-r10 12/12 PASS/191.188s, script1f5ac7ce/sourceR11 CLEAN. Python118, typecheck-r3, lint-r2, neighbors-r2 952/57files/0skip and fresh build-r1 PASS. Duplicate semantic RED/control GREEN/restored2GREEN, all1343 restored; productionR2 CLEAN after causal Save A/B fix. Attempts1–9 remain FAILED; oracle R7/R8 closed by replay. Root opened10 screenshots under ui-audit, bounded self-review. Controlled OS picker; actual development CPU; no ML/catalog injection or packaged/inference/installed-resource-transition qualification; transient preparation metadata-only. RetentionR1–R7 CLEAN candidate-only READ-FINISHED; contractR1 CLEAN source-only. Root exit/restoration/source/dependency/reader checks and cleanup complete:22 exact paths removed,216,420,352B measured root allocation reduction. Compact proof/external dependencies and final mapping retained; no public-status promotion. [Accepted Smart variant history](./engineering/phase-4-smart-patch-history-research.md): nested variants own history UUIDs; current-parent navigation focuses stored inactive/hidden/locked members without activation, authoring or implicit Save; global membership follows verified Save. Exact resource guards remain. History native R8: 16 checks on portable accepted fixtures, including cross-project read-only navigation and Save/reopen; no inference. Smart Compare/Preset and release readiness were outside that history checkpoint. [Explicit orphan Raster Add](./engineering/phase-4-smart-patch-orphan-raster-research.md): verified world PNG/alpha, unchanged Smart provenance and frozen bbox; shared reviewed journal/recovery, one Undo, explicit Save; current original document only, no runtime or retargeting. Converted Raster history supports 1px/nonaligned world sizes; Smart Compare/Preset were unavailable at that orphan-acceptance checkpoint; later source/Compare slices are separate. Native R7: 15 checks on prepared PNGs, actual menu/confirmation, 900×620/1440×900, Undo/Redo, crash recovery and Save/reopen; inference is not part of this acceptance qualification. [Frozen Smart Retry](./engineering/phase-4-smart-patch-retry-research.md): one reviewed failed/canceled concrete job, independent verified input copy, original seed/settings/pixels, source CAS, shared admission/drain; no automatic acceptance/Save or candidate replacement. [Selected freshness](./engineering/phase-4-smart-patch-freshness-research.md): App-owned automatic row/browser source inspection; no document/provenance/acceptance changes; resource and Generate readiness separate. [Installed Smart Patch qualification](./engineering/phase-4-smart-patch-installed-generation-research.md): 10 public trained completions remain temporary until 10 explicit Adds, each followed by one Undo/Redo and Save/reopen; Generate and Add do not implicitly Save. Illustrious V/Anima × TXT/IMG/INP/OUT plus INP replays pass independent alpha, two raw RGB contrast and exact whole-RGBA replay controls at processing 256/world 128, four steps, seed 123. Real rendered progress and healthy reopened Generate/no Repair pass; busy Select matches its guard. The 27-check successful matrix excludes failed attempts. Reopened stored rows can remain `unverified`; automatic freshness after worker lifecycle is outside these assertions. At that installed checkpoint, Compare/Preset, arbitrary options, quality, full Invoke parity and release remained open. [Regional Guidance foundation](./engineering/phase-4-regional-guidance-foundation-research.md): empty durable entities, grouped UI and explicit enabled-region NEW Generate refusal; root-confirmed 711 Node / 182 prototype / 12 native-r5 checks PASS, final typecheck/lint/build PASS; final [retention/cleanup completed](./engineering/phase-4-regional-guidance-foundation-research.md#retention-restoration-and-disposal): 15 exact payload paths removed, all candidate paths absent, 109,748,224 allocated bytes (104.66 MiB) reclaimed; no regional inference. [Regional prompt authoring](./engineering/phase-4-regional-guidance-prompts-research.md): finite authoring root-qualified; metadata APIs and ordinary draft target/change/group validation preserved, shared seal additionally accepts strict regional namespaced IDs. Root: 795 Node / 41 files, 0 failures/skips (before final single ARIA attribute), typecheck r7, full lint r2 (4 partitions) plus later row/script scoped lint, fresh app build r4 and prototype r1 182 PASS, no prototype source change; production R4/narrow ARIA R5 and native-source R7 CLEAN source-only. Final native-r8/script ff502357: 12/12 PASS in 97.714 s, healthy code 0 across two lifetimes, Save/reopen/recovery and protected-state controls; 7 screenshots opened/viewed by root, bounded self-review. Retention audits 1–4 CLEAN/READ-FINISHED and contract R2 CLEAN source-only; root release checks and cleanup complete: 18 exact idle paths removed, 116,359,168 allocated bytes (110.97 MiB) reclaimed; compact evidence/external dependencies protected. No regional masks/reference images, conditioning, inference, installed embedding/autocomplete, active-work/Main-ABA or full-promise qualification. [Regional Guidance owned-mask authoring](./engineering/phase-4-regional-guidance-masks-research.md): source implemented; lower-level checks and finite native-r7 qualification PASS (12 checks, 157.061 s; both 95-handler restorations, zero in-flight calls/page errors). Root reviews all 6 final screenshots at 1440×900/900×620 plus quarter-turn/recovered states without a material local finding; bounded self-review, not full accessibility audit. Root: 869 Node/50 files before lint-only delta; post-lint focused r3 89/typecheck r3, full lint r2, fresh app build r1 and prototype r2 182 PASS; production R2/source R4/R5 CLEAN source-only. Earlier failures/native3 restoration gap remain explicit; retention audits R1–R4 CLEAN/READ-FINISHED, contract R2 CLEAN source-only; root release checks and cleanup complete: 15 exact idle paths removed, 113,537,024 bytes (108.28 MiB) reclaimed, compact evidence/external dependencies retained. No regional conditioning/reference images/inference; public status unchanged.                                                                                                                                                                                                                                                                                                                      |
 
 ### Статусы и доказательства
 
@@ -67,6 +67,163 @@ Supporting contract указывает UI/entry points, проверки, изв
 - [PP-008: Генерация меняет проект только по явному решению](#pp-008-генерация-меняет-проект-только-по-явному-решению)
 
 ## PP-001: Понятный интерфейс вместо собираемого workbench
+
+Текущий [Regional Guidance reference-image owner](./engineering/phase-4-regional-guidance-references-research.md)
+имеет **source implemented; finite native-r10 PASS; retention/release complete**; preserved baseline —
+1,331 source members. Current source добавляет inline thumbnail cards с
+name/format/dimensions и Add/remove/reorder без изменения selection, prompt
+mounting или Current Canvas context при выбранном Smart. Add доступен по
+Current Canvas Illustrious metadata независимо от installed resources;
+Anima/unknown показывает reason. Existing refs видимы и repairable через
+remove/move в любом семействе; disabled editable, lock/pending guards запрещают
+мутации. Guarded import callback восстанавливает только originating focus.
+
+Root confirms **source implemented; lower-level checks and finite native-r10
+qualification PASS**. Final lower checks are **Python 118 PASS**, post-lint
+**typecheck-r3 PASS**, **full lint-r2 PASS**, **neighbors-r2: 952 PASS / 57 files /
+0 skips**, and **fresh build-r1 PASS**. Later changes were harness-only, each with
+syntax/format/scoped ESLint PASS. Earlier typecheck-r2 and neighbors-r1
+950/57 preceded the final checks; neighbors-r1 predates the Save fix. The earlier
+lint-r1's 196 autofixable ordering/braces errors in 16 changed files are historical,
+not the final lint outcome.
+
+The duplicate mutation records **2 GREEN → 1 semantic RED + 1 control GREEN →
+2 restored GREEN**; all **1,343 mutation-source members** are restored.
+Production **R2 source review is CLEAN** after the P2 Save A/B rebase fix and
+external-replacement neighbor. Rebase requires full-document equality to exact
+`baseDocument` or exact authorized `saveTarget`. The causal
+`SAVED_PROJECT_CHANGED` assertion was unchanged when the explicit
+Recover-new-revision test oracle was corrected; `save-rebase-green-r2` passed
+both cases.
+
+Final **native-r10: 12/12 PASS in 191.188 s**, script `1f5ac7ce`, with its
+**R11 source review CLEAN**. The successful run uses the source-r2 archive
+(1,343 members), exact script overlay and build-r1 (33 members). It observes
+**882 Main calls, originals exactly once**, and **149 actual CPU children**
+across two Electron lifetimes: intentional dirty SIGKILL, then healthy code 0.
+Exact Main/dialog/spawn/kill/write restoration completes with zero in-flight
+calls and zero page errors; root freshly confirms recorded PID/start identities
+absent. Contract R1 is CLEAN source-only; final source/build/version mapping is retained.
+
+Root actually opened **all 10 final screenshots** under `ui-audit`: 1440×900
+and 900×620, reference cards, keyboard tooltips and recovered image states.
+This bounded self-review found no material new reference-layout defect; it is
+not independent review, full WCAG or all-compositor qualification.
+
+Native attempts **1–9 remain FAILED**. Harness source-oracle findings R7/R8
+were closed by subsequent code/reviews and successful replay; those failures
+do not establish another product bug beyond the corrected Save rebase.
+
+The OS picker result was controlled; the worker was the **actual development
+CPU worker**, with no ML/catalog injection. Installed-resource transitions,
+packaged-worker behavior, inference and frozen active work are not
+native-qualified. Transient target/Smart-preparation outputs have metadata-only
+witnesses, without raw replay. Prototype SVG/data URLs remain separate mock
+behavior and do not extend this evidence boundary.
+
+Retention **R1–R7 are CLEAN, candidate-only, READ-FINISHED**; contract **R1 is
+CLEAN, source-only**. Root freshly verified source/build bytes, physical exits,
+exact restoration, dependencies and all-reader completion, then released all
+22 exact disposable paths: 2 unit and 20 native payloads. Measured artifact-root
+allocation reduction is **216,420,352 bytes** (unit 35,950,592; native 180,469,760).
+Compact evidence and external runtime/package dependencies remain protected.
+Final source/build/version mapping is retained in the linked checkpoint.
+PP-001/007/008 remain
+**Пока не обещать**; finite qualification does not promote public readiness.
+
+Prototype SVG/multiple data URLs не являются production proof. Weights/adapters,
+conditioning/inference, admission/queue, provenance и model-policy expansion
+исключены. Публичный статус **Пока не обещать** не повышен; прежние checkpoint
+records ниже сохраняют исторические scope/evidence.
+
+Текущий [Regional Guidance owned-mask checkpoint](./engineering/phase-4-regional-guidance-masks-research.md)
+имеет **source implemented; lower-level checks и finite native-r7 qualification PASS**;
+local visuals просмотрены root; retention/release завершены. CPU tools/Transform
+Region/Clear, отдельная immutable PNG ownership и Save/shadow/recovery/resources
+интегрированы; regional bbox/Fit отсутствуют. Disabled regions редактируются, lock
+запрещает запись, selected overlay использует `overlayOpacity`. Captured command
+сохраняет revision/epoch guards и защищённое состояние соседей.
+
+Root: **869 Node / 50 files, 0 failures/skips** до lint-only production delta
+(focused 89 входят в 869); post-lint typecheck r3/focused r3 **89**, full lint r2
+(4 partitions), fresh app build r1 и prototype r2 **182 PASS**; production R2
+**CLEAN, source-only**. Final **native-r7: 12 checks PASS, 157.061 s**,
+`fullTwelveCheckQualification: true`: Save/read/reopen, dirty-PNG crash/recovery,
+all tools/whole-alpha/geometry/history/refusals/namespaces/duplicate controls.
+Both lifetimes: 95 handlers restored, in-flight/page errors 0; original IPC exactly
+once. Root просмотрел все 6 final screenshots при 1440×900/900×620, включая
+quarter-turn/recovered states, без material local finding; bounded self-review,
+не full accessibility audit. Source R4/R5 CLEAN, source-only.
+
+Ранние failures остаются failures: specific native5 hash cause не подтверждена;
+native6 menu-selector mismatch не является feature RED, native3 restoration gap
+сохраняется. Retention audits R1–R4 CLEAN/READ-FINISHED с указанной границей
+R2; contract R2 CLEAN source-only. Final harness-scoped lint PASS. Root проверил
+exit/restoration/readers и удалил только 15 exact idle paths: освобождено
+113,537,024 bytes (108.28 MiB); compact evidence/external dependencies сохранены. Exact script/process/mutation boundaries — в linked research.
+Enabled-region NEW Generate refusal сохраняется; conditioning/reference images/
+inference вне owner. Статус **Пока не обещать** сохранён.
+
+Завершённый [Regional Guidance prompt authoring](./engineering/phase-4-regional-guidance-prompts-research.md)
+реализует durable optional positive/negative blocks и явное global-negative
+inheritance. Общий compact PlainPromptEditor использует Current Canvas context,
+включая selected Smart, и Main-owned exact embedding verification. Add сохраняет
+пустой block, Clear оставляет его, последний Remove удаляет wrapper; inheritance
+сохраняет dormant local text/refs, Remove Negative очищает их. Dedicated prompt
+API и один document stream группируют live writes/ordered seals с revision/epoch
+и lock guards; unpublished input доступен для correction/retry/pending-only
+discard, без rebasing после external revision/observed Undo ABA. Metadata APIs и ordinary generation-draft target/change validation
+сохранены. Shared seal endpoint дополнительно принимает strict regional
+namespaced group IDs; ordinary draft group validation не расширена. Enabled NEW ordinary/Smart refusal, frozen Retry
+и опубликованные jobs независимы. Geometry, provenance, presets, operational cursor,
+queue/model policy, regional mask pixels/reference images и conditioning не входят в этот owner;
+Regional Guidance исключён из accepted provenance и для будущих conditioned results.
+**Finite authoring checkpoint и retention/release завершены root.**
+795 affected/neighbor Node tests в 41 files, 0 failures/skips, предшествуют
+последнему одиночному row ARIA attribute. Финальный row 20c2fb6e: typecheck r7,
+later row/script scoped lint и fresh app build r4 PASS; full lint r2 (4 partitions)
+и prototype r1 182 shared-consumer browser checks PASS, prototype source не менялся.
+Complete production R4, narrow ARIA R5 и final native-source R7 CLEAN — source-only.
+Root native-r8/script ff502357: **12/12 PASS, 97.714 s**, healthy final code 0,
+две Electron lifetimes с dirty SIGKILL/recovery и healthy close; both observer
+restorations true/inFlight0. Actual Save/loader/reopen, dirty recovery и полные
+SQL/document/PNG/mask/variant/provenance/neighbor/cursor/policy controls PASS.
+Root открыл/просмотрел все 7 screenshots при 1440×900/900×620: material layout
+findings нет в scope; bounded self-review, не independent full accessibility audit.
+Исторические failed attempts остаются failures в linked root research.
+Retention audits 1–4 CLEAN/READ-FINISHED; contract R2 CLEAN source-only. Root
+проверил exit/restoration/readers и удалил 18 exact idle paths: освобождено
+116,359,168 allocated bytes (110.97 MiB); compact evidence/external dependencies
+сохранены. Masks/reference images, conditioning, inference,
+installed embedding/autocomplete, active-work/Main-ABA qualification и full promise
+не заявлены. Root владеет final retention/release evidence; prototype остаётся
+plain textareas/mock masks/references. Статус **Пока не обещать** сохранён.
+
+Завершённый checkpoint [Regional Guidance foundation](./engineering/phase-4-regional-guidance-foundation-research.md)
+добавил отдельные пустые durable entities: add/select/rename/enable/lock/overlay
+opacity/duplicate/delete, ordinary Undo, explicit Save и local recovery. Optional
+поле не материализуется в legacy Project; owned UUIDs и соседи сохраняются.
+Каждый enabled region блокирует NEW ordinary/Smart Generate до подготовки и
+публикации с явной причиной; disabled regions инертны, уже frozen jobs и Retry
+независимы. Root подтверждает **711 Node tests / 33 test files, 0 failures/skips**:
+54 focused, 3 actual-preload и 11 generation-guard cases входят в 711.
+**182 full prototype browser tests**, typecheck r7, full lint r4 и fresh build r3
+PASS; prototype code этот owner не менял. Isolated pre-SQL mutation:
+2 GREEN → semantic RED (8 queue rows вместо 4), disabled control GREEN →
+2 restored GREEN; все 1,320 source members и shared Queue subject восстановлены.
+Final native-r5: **12 checks PASS**, 266.205 s, code 0 после intentional
+dirty-shadow crash, recovery и healthy close; actual 1440×900/900×620,
+legacy no-op Save/loader/reopen, lifecycle, meaningful Save и exact-neighbor
+recovery, post-close protected SQL/package/assets/source bytes проверены root.
+Rename focus получил causal RED → same-harness GREEN; финальные source reviews
+clean, root просмотрел normal/minimum/recovered и focused-error screenshots.
+Native не квалифицирует ML/inference или active-work execution; successful
+frozen Retry подтверждён controlled unit tests. Historical failures сохранены.
+Retention R1–R4 clean/read-finished; root независимо проверяет exit/restoration/
+readers и удаляет только 15 временных каталогов: 104.66 MiB allocated space
+освобождено, compact evidence и внешние зависимости сохранены. Prompts/inheritance/references/nonempty masks,
+painting/transforms/conditioning и full release остаются вне этого среза;
+публичный статус **Пока не обещать** сохранён.
 
 **Продуктовый статус:** принято как продуктовое направление.
 
@@ -773,6 +930,37 @@ Save/reopen. Точные существующие веса скопирован
 
 ## PP-005: Принятый результат хранит настройки генерации
 
+Текущий [Smart settings Compare](./engineering/phase-4-smart-patch-compare-research.md)
+подключён для активного принятого варианта и converted Smart Raster через strict
+`getSmartResultComparisonData`: immutable recorded settings сравниваются с текущим
+**Project Canvas**, в том числе при выбранном Patch, без Smart Size, geometry и
+layer/source/execution context. Просмотр не меняет Project; ordinary Raster Compare и прежние
+preset actions сохранены. Пройдены 852 neighbor tests (включая 103 focused),
+182 prototype tests и 18 native checks: реальные menu/preload/Main, normal/900×620,
+оба семейства × четыре recorded modes, same-pixel active switch, late success/error,
+Project recompute и immutable witnesses. Full typecheck/lint/build и actual CPU
+modes/races/retention зелёные; изолированная epoch mutation даёт semantic RED,
+control GREEN и два restored GREEN. Production R1/R2 reviews — source-only. Публичный статус — **Пока не обещать**;
+На этом Compare checkpoint Smart-target Apply, inactive direct Compare, image
+comparison и inference были вне среза. Позднейший
+[finite Smart-target Apply](./engineering/phase-4-smart-patch-preset-apply-research.md)
+реализован отдельно; его qualification ещё идёт, без native PASS, installed
+inference или release claim. Он не меняет immutable result provenance.
+
+[Smart result preset source](./engineering/phase-4-smart-patch-result-preset-research.md)
+подключает активный и точный неактивный принятый вариант, а также Raster со
+Smart provenance, к существующему detached Manager и явному Create. Копируются
+concrete frozen prompts и только записанные reusable settings; workflow всех
+Smart origins — `smartPatch`, geometry и Seed по умолчанию исключены. Чтение
+не требует runtime/catalog и не меняет Project, active variant, Undo или `.igs`.
+Пройдены 790 focused/neighbor tests, 181 prototype tests и 15 native checks:
+реальный failed Create/retry, 12 recipes после restart, Save/loader PNG readback
+и keyboard/focus при 900×620. Portable accepted fixtures не доказывают inference
+или acceptance. Smart Compare имеет отдельный checkpoint с 18 пройденными native
+checks. На этом result-source checkpoint Smart-target Apply ещё оставался
+отдельной работой; позднейшая finite реализация связана ссылкой выше.
+Публичный статус — **Пока не обещать**.
+
 Текущий [NoobAI Karras refusal](engineering/phase-2c-noobai-karras-failure-research.md): V/Karras wrong-EPS:5 qualified admissions/4 completions/1 UNet failure/2 Save-reopen packages,2 own wholeRGBA matches; raw6/5/1/3 includes one excluded observer attempt. No candidate/receipt/cursor publication on failure; independent raw PASS7754. PP statuses remain «Пока не обещать». Следующий implementation item — local thumbnails/previews installed resources. Сведения о прежних checkpoints и их «следующем gate» ниже исторические; исходный lost traceback не восстановлен.
 
 Текущий подтверждённый [Anima image cap32/prefix](engineering/phase-2c-anima-image-batch-cap-research.md): Euler256 IMG/normal mixed-alpha OUT:76 admissions/completions/accepted layers,4 Save-reopen packages,12 собственных wholeRGBA prefix matches. Два confirmed33 refusals сохраняют32 временных результата и исходный слой без новых jobs/receipts. Independent raw readback PASS85373;4 cursor/Save snapshots7/5,11 прежних SQL tables и43 worker identities сохранены;2 OUT previews/111104 protected source pixels. Только N3/CFG4/strength0.5/Myth−0.5/exact resources; quality/Invoke parity/fullMVP/release не заявлены. Следующий finite gate — NoobAI V / DPM++ 2M Karras wrong-EPS: наблюдаемый отказ и диагностика. Статус promise остаётся «Пока не обещать».
@@ -1158,7 +1346,9 @@ dirty recovery shadow до очистки staging, а явный Save перен
 `.igs`. Принятые слои проходят Save/reopen и перенос файла.
 Project-local Undo/Redo возвращают принятые Raster Layers вместе с immutable
 provenance как одну document-операцию; история остаётся только в открытой сессии.
-Read-only сравнение текущего Raster provenance подключено к production; result-to-preset остаётся в прототипе.
+Read-only ordinary Raster Compare и текущий scoped Smart Compare подключены к production;
+для Smart пройдены 18 scoped native checks. Raster и принятые Smart result sources
+подключены к detached preset creation отдельными checkpoints выше.
 
 [Typed provenance storage](./engineering/phase-2b-accepted-provenance-storage.md)
 содержит точный checkpoint/prediction type, prompts, sampling, seed и bbox без
@@ -1289,9 +1479,10 @@ pixels; count/page и strict IPC проверяются отдельно.
 Exact resource identity не заменяется именем/default version. Legacy отсутствие
 LoRA/VAE/advanced options не превращается в равные defaults. Просмотр не меняет
 документ, Undo, seed или `.igs`; strict IPC и async edit/Undo/close guards
-проверены отдельно. Полные provenance/pipeline, result-to-preset и Smart Patch
-history/comparison остаются открытыми; эти checkpoints не означают готовность
-всего PP-005.
+проверены отдельно. На этом Raster comparison checkpoint полные provenance/pipeline,
+result-to-preset и Smart Patch history/comparison оставались открытыми; последующие
+source/history/Compare срезы описаны отдельно выше. Эти checkpoints не означают
+готовность всего PP-005.
 
 [Internal outpaint provenance (06.10.2026)](./engineering/phase-2c-outpaint-execution-research.md)
 добавляет после явного Add strict portable `illustrious-outpaint` и
@@ -1406,6 +1597,59 @@ proof остаются открытыми; PP-005 остаётся неполн�
 
 ## PP-006: Настройки генерации можно сохранять и переиспользовать
 
+[Smart-target preset Apply](./engineering/phase-4-smart-patch-preset-apply-research.md)
+реализован в finite границе выбранного Patch generation draft. Dedicated
+`getSmartPatchPresetApplicationReview` / `applySmartPatchPreset` копируют только
+выбранные reusable settings из detached preview, с проверкой по текущему Patch
+model family и exact selected resources, без ML runtime. Ephemeral review token
+связывает exact coordinator, document epoch, revision и layer от fixed preview
+до staged commit; review/token никогда не сохраняется в `.igs`, preset или
+provenance. Changed Apply даёт один Undo, no-op не добавляет history; implicit
+Save, draft flush и prompt-history seal отсутствуют. Pending Project/sibling-Patch
+draft synchronization блокирует открытие/submit; hidden target допустим,
+locked target отклоняется с объяснением unlock.
+
+Все preset workflows допустимы: badge advisory, не меняет generation mode и не
+добавляет отсутствующие секции. Smart Size исключён из preview и Select all;
+selected Size отклоняется, size-only source не имеет доступных секций. Preset
+Size никогда не меняет Patch bbox/internal resolution. Seed по умолчанию не
+выбран; explicit selection копирует policy/value без resolution или движения
+cursor. Source preset, Project draft/primary bbox, other Patch drafts,
+mask/coherence/compositing, variants/active member, accepted pixels/provenance,
+queue/frozen jobs, seed cursor и library policies неизменны. Derived freshness
+может отражать authored changes. Ordinary Apply, result-preset и Compare сохранены.
+
+Пройдены **363 focused/neighbor tests** (включая 33 shared/renderer/control и
+18 real Main), **12 native checks**, typecheck, lint и свежая сборка. Native R4
+проверяет обе семьи, one Undo/Redo, actual Save/loader/reopen и layout/keyboard
+при 900×620; завершён штатно с подтверждённым physical exit и final SQLite.
+Изолированная mutation staged-review guard даёт semantic RED, соседний control
+GREEN и byte-exact restored GREEN. Ранние неудачные попытки сохранены.
+Portable fixtures не квалифицируют installed Smart Apply→inference или release.
+Публичный статус PP-006 — **Пока не обещать**.
+
+[Smart settings Compare](./engineering/phase-4-smart-patch-compare-research.md)
+реализован отдельно от preset extraction: active accepted variant и converted
+Smart Raster сравниваются с текущим Project Canvas без Smart Size/context/geometry
+и mutation. Пройдены 852 neighbor tests, 182 prototype tests и 18 native checks.
+Прежние preset actions сохранены. На этом Compare checkpoint Smart-target Apply
+ещё оставался pending; позднейшая finite реализация связана ссылкой выше;
+публичный статус PP-006 — **Пока не обещать**.
+
+[Smart result preset source](./engineering/phase-4-smart-patch-result-preset-research.md)
+подключает активный и точный неактивный принятый вариант, а также Raster со
+Smart provenance, к существующему detached Manager и явному Create. Копируются
+concrete frozen prompts и только записанные reusable settings; workflow всех
+Smart origins — `smartPatch`, geometry и Seed по умолчанию исключены. Чтение
+не требует runtime/catalog и не меняет Project, active variant, Undo или `.igs`.
+Пройдены 790 focused/neighbor tests, 181 prototype tests и 15 native checks:
+реальный failed Create/retry, 12 recipes после restart, Save/loader PNG readback
+и keyboard/focus при 900×620. Portable accepted fixtures не доказывают inference
+или acceptance. Smart Compare имеет отдельный checkpoint с 18 пройденными native
+checks. На этом result-source checkpoint Smart-target Apply ещё оставался
+отдельной работой; позднейшая finite реализация связана ссылкой выше.
+Публичный статус — **Пока не обещать**.
+
 **Продуктовый статус:** принято как обязательный MVP scope.
 
 **Публичный статус:** пока не обещать как готовую возможность — prototype flow
@@ -1417,8 +1661,36 @@ project-derived create draft в том же Manager.
 [New Project customization](./engineering/phase-3-new-project-preset-research.md)
 подключает detached TXT copy к общему редактору и first-write initialization.
 [Accepted Raster result projection](./engineering/phase-3-result-preset-research.md)
-подключает frozen portable configuration к detached create. Smart Patch
-source/target и other-context Models handoff ещё открыты.
+подключает frozen portable configuration к detached create. Принятые Smart
+источники и finite Smart-target Apply подключены отдельными checkpoints выше.
+Smart-target Apply имеет свою finite qualification. Новый
+[Smart draft Save Current](./engineering/phase-4-smart-patch-current-preset-research.md)
+синхронно копирует exact acknowledged выбранный Patch в detached Manager до
+catalog reads: authored templates, точные refs, Smart workflow для любого Smart
+origin и initial omission Size/Seed/batch/geometry/source/execution context, без
+Project mutation или flush/seal. Hidden/locked read sources допустимы без ML или
+доступного catalog; pending draft любого owner в Project блокирует capture.
+Explicit Create владеет storage. Actual failed INSERT сохраняет source/draft для
+retry; позднейшие authoring/catalog changes не меняют frozen source. Accepted
+PNG/provenance, Project, seed/library policy и package bytes остаются точными.
+Root execution: **222 neighbor tests, 0 fail / 0 skip**, typecheck r3,
+full lint r2 и fresh build PASS. Изолированная wrong-owner mutation:
+GREEN (2) → semantic RED/control GREEN → restored GREEN (2); все 1,313 archived
+source members восстановлены byte-exact. Focused owner regression: RED до fix →
+GREEN после fix с неизменным causal assertion; same-owner unpublished invalid raw
+input сохраняется. Actual `native-r2`: **12 automated checks PASS**, code 0,
+две healthy Electron lifetimes, две persisted recipes после restart; keyboard,
+focus/layout при 1440×900 и реальном минимуме 900×620. Production review R2 и
+final native-source R4 review двух `useInnerText` assertions — clean; scoped
+final-harness ESLint PASS. Root открыл шесть финальных native-r2 screenshots
+(normal, minimum-width source, scrolled, restored, SQLite failure и restart):
+material UI defect в scope не найден; `root-visual-review.json` сохранён.
+Оба retention audit clean; root завершил scoped cleanup временных данных:
+освобождено 96.59 MiB, compact byte evidence и external dependencies сохранены.
+Точные paths и lifecycle записаны в research.
+Это authoring qualification, не inference, release или полный PP-006;
+публичный статус остаётся **Пока не обещать**. Other-context Models handoff остаётся
+отдельной работой.
 [Installed Project presets EPS/V](./engineering/phase-3-installed-presets-research.md)
 проверяет finite full/partial Apply → inference → accepted Save/reopen/Compare →
 result preset: 8 actual completions, 4 wholeRGBA manual controls, 4 persisted
@@ -1471,7 +1743,9 @@ optional settings копируются, отсутствующие объясн�
 preset VAE. Seed и batch/private context исключены; edited Create сохраняет
 отдельную SQLite definition. Cancel, stale source replies и storage retry не
 меняют исходный Project или library policy. Qualification и ограничения записаны
-в checkpoint; Smart Patch и Models handoff остаются открыты, статус не повышен.
+в checkpoint. На этом Raster result-source checkpoint Smart Patch и Models
+handoff оставались открыты; позднейший finite Smart-target Apply связан ссылкой
+выше, статус не повышен.
 
 [Project Apply Models checkpoint](./engineering/phase-3-preset-model-handoff-research.md)
 подключает resource-bearing diagnostics из edited/selected copy к точной
@@ -1482,7 +1756,8 @@ settlement. Edits, raw fields, selection/expansion и source preset сохран
 Failure остаётся явным; поздний response не возобновляет отменённый source.
 Repair подтверждается новым exact catalog match, replacement остаётся явным.
 Проверки, baseline RED→GREEN и review pilot описаны в checkpoint; другие контексты,
-Smart Patch и installed Apply→inference сохраняют своих owners.
+Smart Patch и installed Apply→inference сохраняют своих owners. Позднейший finite
+Smart-target Apply связан ссылкой выше и не квалифицирует installed inference.
 
 ### Обещание
 
@@ -1530,7 +1805,213 @@ gaps, перечисленных в supporting contract, и подтвержде
 
 ## PP-007: Проект принадлежит пользователю
 
-Текущий [installed Smart Patch срез](./engineering/phase-4-smart-patch-installed-generation-research.md)
+Текущий [Regional Guidance reference-image owner](./engineering/phase-4-regional-guidance-references-research.md)
+имеет **source implemented; finite native-r10 PASS; retention/release complete** на preserved 1,331-member
+baseline. Settled contract требует optional nonempty ordered `referenceImages`:
+one PNG/JPEG/WebP per Add, cancel без записи/history, remove-last omits field,
+fresh global owned IDs, canonical PNG + full-frame 128-side WebP + optional
+original ICC. Independent Duplicate, Undo, explicit Save/reopen и dirty recovery
+должны сохранять owned bytes вне composition; runtime signed `thumbnailUrl`
+не хранится. Core storage source implemented; final lower checks и finite
+native-r10 Save/reopen/recovery PASS с указанными ниже limits; release complete.
+
+Root confirms **source implemented; lower-level checks and finite native-r10
+qualification PASS**. Final lower checks are **Python 118 PASS**, post-lint
+**typecheck-r3 PASS**, **full lint-r2 PASS**, **neighbors-r2: 952 PASS / 57 files /
+0 skips**, and **fresh build-r1 PASS**. Later changes were harness-only, each with
+syntax/format/scoped ESLint PASS. Earlier typecheck-r2 and neighbors-r1
+950/57 preceded the final checks; neighbors-r1 predates the Save fix. The earlier
+lint-r1's 196 autofixable ordering/braces errors in 16 changed files are historical,
+not the final lint outcome.
+
+The duplicate mutation records **2 GREEN → 1 semantic RED + 1 control GREEN →
+2 restored GREEN**; all **1,343 mutation-source members** are restored.
+Production **R2 source review is CLEAN** after the P2 Save A/B rebase fix and
+external-replacement neighbor. Rebase requires full-document equality to exact
+`baseDocument` or exact authorized `saveTarget`. The causal
+`SAVED_PROJECT_CHANGED` assertion was unchanged when the explicit
+Recover-new-revision test oracle was corrected; `save-rebase-green-r2` passed
+both cases.
+
+Final **native-r10: 12/12 PASS in 191.188 s**, script `1f5ac7ce`, with its
+**R11 source review CLEAN**. The successful run uses the source-r2 archive
+(1,343 members), exact script overlay and build-r1 (33 members). It observes
+**882 Main calls, originals exactly once**, and **149 actual CPU children**
+across two Electron lifetimes: intentional dirty SIGKILL, then healthy code 0.
+Exact Main/dialog/spawn/kill/write restoration completes with zero in-flight
+calls and zero page errors; root freshly confirms recorded PID/start identities
+absent. Contract R1 is CLEAN source-only; final source/build/version mapping is retained.
+
+Root actually opened **all 10 final screenshots** under `ui-audit`: 1440×900
+and 900×620, reference cards, keyboard tooltips and recovered image states.
+This bounded self-review found no material new reference-layout defect; it is
+not independent review, full WCAG or all-compositor qualification.
+
+Native attempts **1–9 remain FAILED**. Harness source-oracle findings R7/R8
+were closed by subsequent code/reviews and successful replay; those failures
+do not establish another product bug beyond the corrected Save rebase.
+
+The OS picker result was controlled; the worker was the **actual development
+CPU worker**, with no ML/catalog injection. Installed-resource transitions,
+packaged-worker behavior, inference and frozen active work are not
+native-qualified. Transient target/Smart-preparation outputs have metadata-only
+witnesses, without raw replay. Prototype SVG/data URLs remain separate mock
+behavior and do not extend this evidence boundary.
+
+Retention **R1–R7 are CLEAN, candidate-only, READ-FINISHED**; contract **R1 is
+CLEAN, source-only**. Root freshly verified source/build bytes, physical exits,
+exact restoration, dependencies and all-reader completion, then released all
+22 exact disposable paths: 2 unit and 20 native payloads. Measured artifact-root
+allocation reduction is **216,420,352 bytes** (unit 35,950,592; native 180,469,760).
+Compact evidence and external runtime/package dependencies remain protected.
+Final source/build/version mapping is retained in the linked checkpoint.
+PP-001/007/008 remain
+**Пока не обещать**; finite qualification does not promote public readiness.
+
+Current Canvas Illustrious gate, Anima/unknown reason, existing-ref repair в
+любом семействе, disabled-editable/lock refusal входят в settled authoring scope.
+Prototype SVG/multiple data URLs не являются storage proof. Conditioning,
+inference, adapters/weights, queue/provenance/model-policy expansion исключены;
+публичный статус **Пока не обещать** прежний. Предыдущие checkpoint records ниже
+сохраняют исторические scope/evidence.
+
+Текущий [Regional Guidance owned-mask checkpoint](./engineering/phase-4-regional-guidance-masks-research.md)
+имеет **source implemented; lower-level checks и finite native-r7 qualification PASS**;
+local visuals просмотрены root; retention/release завершены. CPU tools/Transform
+Region/Clear, отдельная immutable PNG ownership и Save/shadow/recovery/resources
+интегрированы; regional bbox/Fit отсутствуют. Disabled regions редактируются, lock
+запрещает запись, selected overlay использует `overlayOpacity`. Captured command
+сохраняет revision/epoch guards и защищённое состояние соседей.
+
+Root: **869 Node / 50 files, 0 failures/skips** до lint-only production delta
+(focused 89 входят в 869); post-lint typecheck r3/focused r3 **89**, full lint r2
+(4 partitions), fresh app build r1 и prototype r2 **182 PASS**; production R2
+**CLEAN, source-only**. Final **native-r7: 12 checks PASS, 157.061 s**,
+`fullTwelveCheckQualification: true`: Save/read/reopen, dirty-PNG crash/recovery,
+all tools/whole-alpha/geometry/history/refusals/namespaces/duplicate controls.
+Both lifetimes: 95 handlers restored, in-flight/page errors 0; original IPC exactly
+once. Root просмотрел все 6 final screenshots при 1440×900/900×620, включая
+quarter-turn/recovered states, без material local finding; bounded self-review,
+не full accessibility audit. Source R4/R5 CLEAN, source-only.
+
+Ранние failures остаются failures: specific native5 hash cause не подтверждена;
+native6 menu-selector mismatch не является feature RED, native3 restoration gap
+сохраняется. Retention audits R1–R4 CLEAN/READ-FINISHED с указанной границей
+R2; contract R2 CLEAN source-only. Final harness-scoped lint PASS. Root проверил
+exit/restoration/readers и удалил только 15 exact idle paths: освобождено
+113,537,024 bytes (108.28 MiB); compact evidence/external dependencies сохранены. Exact script/process/mutation boundaries — в linked research.
+Enabled-region NEW Generate refusal сохраняется; conditioning/reference images/
+inference вне owner. Статус **Пока не обещать** сохранён.
+
+Завершённый [Regional Guidance prompt authoring](./engineering/phase-4-regional-guidance-prompts-research.md)
+реализует durable optional positive/negative blocks и явное global-negative
+inheritance. Общий compact PlainPromptEditor использует Current Canvas context,
+включая selected Smart, и Main-owned exact embedding verification. Add сохраняет
+пустой block, Clear оставляет его, последний Remove удаляет wrapper; inheritance
+сохраняет dormant local text/refs, Remove Negative очищает их. Dedicated prompt
+API и один document stream группируют live writes/ordered seals с revision/epoch
+и lock guards; unpublished input доступен для correction/retry/pending-only
+discard, без rebasing после external revision/observed Undo ABA. Metadata APIs и ordinary generation-draft target/change validation
+сохранены. Shared seal endpoint дополнительно принимает strict regional
+namespaced group IDs; ordinary draft group validation не расширена. Enabled NEW ordinary/Smart refusal, frozen Retry
+и опубликованные jobs независимы. Geometry, provenance, presets, operational cursor,
+queue/model policy, regional mask pixels/reference images и conditioning не входят в этот owner;
+Regional Guidance исключён из accepted provenance и для будущих conditioned results.
+**Finite authoring checkpoint и retention/release завершены root.**
+795 affected/neighbor Node tests в 41 files, 0 failures/skips, предшествуют
+последнему одиночному row ARIA attribute. Финальный row 20c2fb6e: typecheck r7,
+later row/script scoped lint и fresh app build r4 PASS; full lint r2 (4 partitions)
+и prototype r1 182 shared-consumer browser checks PASS, prototype source не менялся.
+Complete production R4, narrow ARIA R5 и final native-source R7 CLEAN — source-only.
+Root native-r8/script ff502357: **12/12 PASS, 97.714 s**, healthy final code 0,
+две Electron lifetimes с dirty SIGKILL/recovery и healthy close; both observer
+restorations true/inFlight0. Actual Save/loader/reopen, dirty recovery и полные
+SQL/document/PNG/mask/variant/provenance/neighbor/cursor/policy controls PASS.
+Root открыл/просмотрел все 7 screenshots при 1440×900/900×620: material layout
+findings нет в scope; bounded self-review, не independent full accessibility audit.
+Исторические failed attempts остаются failures в linked root research.
+Retention audits 1–4 CLEAN/READ-FINISHED; contract R2 CLEAN source-only. Root
+проверил exit/restoration/readers и удалил 18 exact idle paths: освобождено
+116,359,168 allocated bytes (110.97 MiB); compact evidence/external dependencies
+сохранены. Masks/reference images, conditioning, inference,
+installed embedding/autocomplete, active-work/Main-ABA qualification и full promise
+не заявлены. Root владеет final retention/release evidence; prototype остаётся
+plain textareas/mock masks/references. Статус **Пока не обещать** сохранён.
+
+Завершённый checkpoint [Regional Guidance foundation](./engineering/phase-4-regional-guidance-foundation-research.md)
+добавил отдельные пустые durable entities: add/select/rename/enable/lock/overlay
+opacity/duplicate/delete, ordinary Undo, explicit Save и local recovery. Optional
+поле не материализуется в legacy Project; owned UUIDs и соседи сохраняются.
+Каждый enabled region блокирует NEW ordinary/Smart Generate до подготовки и
+публикации с явной причиной; disabled regions инертны, уже frozen jobs и Retry
+независимы. Root подтверждает **711 Node tests / 33 test files, 0 failures/skips**:
+54 focused, 3 actual-preload и 11 generation-guard cases входят в 711.
+**182 full prototype browser tests**, typecheck r7, full lint r4 и fresh build r3
+PASS; prototype code этот owner не менял. Isolated pre-SQL mutation:
+2 GREEN → semantic RED (8 queue rows вместо 4), disabled control GREEN →
+2 restored GREEN; все 1,320 source members и shared Queue subject восстановлены.
+Final native-r5: **12 checks PASS**, 266.205 s, code 0 после intentional
+dirty-shadow crash, recovery и healthy close; actual 1440×900/900×620,
+legacy no-op Save/loader/reopen, lifecycle, meaningful Save и exact-neighbor
+recovery, post-close protected SQL/package/assets/source bytes проверены root.
+Rename focus получил causal RED → same-harness GREEN; финальные source reviews
+clean, root просмотрел normal/minimum/recovered и focused-error screenshots.
+Native не квалифицирует ML/inference или active-work execution; successful
+frozen Retry подтверждён controlled unit tests. Historical failures сохранены.
+Retention R1–R4 clean/read-finished; root независимо проверяет exit/restoration/
+readers и удаляет только 15 временных каталогов: 104.66 MiB allocated space
+освобождено, compact evidence и внешние зависимости сохранены. Prompts/inheritance/references/nonempty masks,
+painting/transforms/conditioning и full release остаются вне этого среза;
+публичный статус **Пока не обещать** сохранён.
+
+Текущий [accepted Smart variant history срез](./engineering/phase-4-smart-patch-history-research.md)
+включает каждый принятый nested variant в Project history и, после явного Save,
+Saved generations. UUID принадлежит самому варианту; текущий parent определяется
+по containment, а не по историческому target в provenance. Навигация открывает
+точную сохранённую строку с меткой **From history**, включая inactive и hidden/locked,
+без активации, изменения settings/Undo/dirty state или Save. Pending drafts блокируют
+переход; missing/changed current owner сохраняет несохранённую работу. Точные
+ресурсы проверяют revision/hash/ownership, а global preview — сохранённый package.
+Native R8 проходит 16 проверок на portable accepted fixtures при 1440×900 и 900×620,
+включая Save/reopen, dirty-current refusals и переходы между проектами без mutation IPC.
+Это не квалификация inference. Smart Compare/Preset остаются вне среза; статус
+**Пока не обещать** сохранён. Проверки и границы evidence указаны в research.
+
+Текущий [явный orphan Raster Add](./engineering/phase-4-smart-patch-orphan-raster-research.md)
+принимает выбранный готовый contribution в новый Raster при отсутствии исходного
+Smart Patch в том же документе. Точные PNG/alpha, frozen bbox и полное Smart
+provenance сохраняются без текущей маски, runtime или retargeting. Общий Raster
+journal/recovery владеет отменой reviewed target-local заданий, включая новые
+Retry-сессии, одним Undo и последующим явным Save. Соседние результаты независимы.
+Converted Raster входит в Project/saved history, включая 1px и некратные восьми
+world sizes; на этом orphan checkpoint Smart Compare/Preset были явно недоступны.
+Последующие preset/Compare срезы описаны отдельно; native Compare qualification в процессе. Native R7 проходит
+15 проверок на prepared PNG: меню/подтверждение при 900×620 и 1440×900, Undo/Redo,
+crash recovery и Save/reopen. Inference в этот срез не входит. Проверки, исправления
+review и границы квалификации перечислены в research. Статус **Пока не обещать**
+сохранён; на этом checkpoint native Smart variant history ещё не квалифицирована.
+Последующий history checkpoint описан выше; остальные незакрытые flows не объявлены готовыми.
+
+Текущий [frozen Smart Patch Retry срез](./engineering/phase-4-smart-patch-retry-research.md)
+добавляет повтор одного reviewed failed/canceled задания с независимой копией
+исходных проверенных inputs, конкретными prompt/seed и прежними ресурсами.
+Общая admission/очередь сохраняет одного владельца исполнения; original document
+и coordinator, CAS и publication receipts проверяются в Main. Retry не меняет
+текущий Project, Undo, accepted variants, старые кандидаты или `.igs`; результат
+остаётся временным до явного Add. Отсутствующий текущий target остаётся orphaned,
+без автоматического retarget/conversion. Статус **Пока не обещать** сохранён; actual checks и
+границы collaborators/installed/release перечислены в research.
+
+Текущий [selected Smart Patch freshness срез](./engineering/phase-4-smart-patch-freshness-research.md)
+добавляет автоматическую read-only проверку source для выбранного stored Patch
+и общий reader браузера вариантов. Проверенный source даёт `Matches current inputs`,
+изменённые inputs — `Outdated`, недоступный source — `Unverified`. Диагностика
+не меняет `.igs`, dirty, Undo или immutable provenance; Generate/resource readiness
+проверяются отдельно. Один App-owned запрос и последний ожидающий owner сохраняют
+границу при смене вкладок. Статус **Пока не обещать** сохранён; выполненные проверки
+и ограничения указаны в research.
+
+Предыдущий [installed Smart Patch срез](./engineering/phase-4-smart-patch-installed-generation-research.md)
 прошёл 27 native checks: десять trained public completions для Illustrious
 V-prediction и Anima в TXT/IMG/INP/OUT плюс INP replay каждой семьи при processing
 256/world 128, четырёх шагах и seed 123. Все десять явных Add сохраняют точные
@@ -1546,7 +2027,7 @@ worker close: каждый reopened selected Patch предлагает Generate
 original/managed hashes сохранены; все 80 observed actors физически завершены.
 Неудачные попытки учтены отдельно от успешной матрицы. Reopened stored rows
 могут показывать `unverified`: автоматическая source-freshness re-verification
-после worker lifecycle этим срезом не квалифицирована. Retry, orphan Raster
+после worker lifecycle этим срезом не квалифицирована. Orphan Raster
 conversion, accepted-history navigation, Compare/Preset, arbitrary options,
 quality, full Invoke parity и release остаются открытыми. Статус сохраняется
 **Пока не обещать**.
@@ -1560,8 +2041,8 @@ rechecks reviewed owner/revision inside the gate and retains Save's gate/image
 lease order. Accepted variants keep immutable provenance and current authoring.
 Orphans remain visible/exportable/discardable. That checkpoint records its
 executed checks and declared inference collaborators; installed trained evidence
-is qualified above. Orphan Raster conversion, Retry, accepted-history navigation,
-Compare/Preset and release remain open. Full status stays **Пока не обещать**.
+is qualified above. At that public checkpoint, orphan Raster conversion, Retry,
+accepted-history navigation, Compare/Preset and release remained open. Full status stays **Пока не обещать**.
 
 Предыдущий [Smart Patch variant lifecycle/status](./engineering/phase-4-smart-patch-variant-lifecycle-research.md)
 adds real renderer/Main select, rename and delete for existing accepted variants,
@@ -1570,8 +2051,8 @@ Patch and retained image bytes through Delete → Save → Undo. The persistent
 browser separates current authored/actual-source freshness from resource
 availability. Historical copied ownership never rewrites provenance. Unknown
 source remains unverified; missing resources do not destroy or block stored
-variant edits. Public Generate/Results/Add, accepted-history navigation,
-Compare/Preset and installed inference remain open. Complete PP-007/008 status
+variant edits. At that lifecycle checkpoint, public Generate/Results/Add,
+accepted-history navigation, Compare/Preset and installed inference remained open. Complete PP-007/008 status
 stays «Пока не обещать». Executed evidence and finite limits belong to the linked
 research; prototype mocks are separate.
 
@@ -1591,10 +2072,11 @@ must pass actual member verification plus file/directory sync before replacing
 shadow proof. Replays do not duplicate or reactivate variants. Add never performs
 Save or rewrites completed receipts/seed cursor.
 
-Public Smart Generate/Results/IPC, variant lifecycle controls, freshness/resource
-UI, accepted-history navigation, Compare/Preset and installed inference
-qualification remain later owners. PP-007/008 remain «Пока не обещать». Next finite
-owner is variant lifecycle and current-state diagnostics before public integration.
+At that durable-acceptance checkpoint, public Smart Generate/Results/IPC, variant
+lifecycle controls, freshness/resource UI, accepted-history navigation, Compare/Preset
+and installed inference qualification remained later owners. PP-007/008 remain
+«Пока не обещать». The next finite owner at that checkpoint was variant lifecycle
+and current-state diagnostics before public integration.
 Executed evidence and finite limits belong to the linked research.
 
 Предыдущий [Smart Patch variant storage/display](./engineering/phase-4-smart-patch-variant-storage-research.md)
@@ -1617,7 +2099,7 @@ This is storage/display support for an already populated document, not the
 public acceptance command. Generate/Add, durable acceptance journal and sibling
 cancellation/reconciliation, variant lifecycle controls, accepted-history
 navigation, Smart Patch Compare/Preset and installed inference qualification
-remain later owners. PP-007/008 remain «Пока не обещать». Executed evidence and
+were later owners at that storage/display checkpoint. PP-007/008 remain «Пока не обещать». Executed evidence and
 remaining limits belong to the linked research.
 
 Предыдущий [Smart Patch acceptance plan](./engineering/phase-4-smart-patch-acceptance-plan-research.md)
@@ -2446,7 +2928,216 @@ installation и installed/release qualification остаются открыты�
 
 ## PP-008: Генерация меняет проект только по явному решению
 
-Текущий [installed Smart Patch срез](./engineering/phase-4-smart-patch-installed-generation-research.md)
+Текущий [Regional Guidance reference-image owner](./engineering/phase-4-regional-guidance-references-research.md)
+имеет **source implemented; finite native-r10 PASS; retention/release complete**; preserved baseline содержит
+1,331 source members. Это authored Project attachments с optional nonempty
+ordered state, one authorized PNG/JPEG/WebP per Add, fresh owned IDs,
+canonical PNG/full-frame 128-side WebP/original ICC и явными remove/reorder,
+Duplicate/Undo/Save/recovery semantics. Core storage source implemented;
+final lower checks и finite native-r10 authoring PASS; release ещё pending. Cancel не должен добавлять record/history;
+thumbnail error остаётся локальным UI placeholder. Current Canvas Illustrious
+определяет Add; Anima/unknown объясняются, existing refs repairable в любом
+семействе, disabled editable и lock refuses.
+
+Enabled-region NEW ordinary/Smart Generate refusal сохраняется; published jobs
+и frozen Retry независимы. Этот owner не включает conditioning/inference,
+reference weights/adapters, automatic acceptance/Save, provenance,
+queue/admission или model-policy expansion и не квалифицирует их.
+
+Root confirms **source implemented; lower-level checks and finite native-r10
+qualification PASS**. Final lower checks are **Python 118 PASS**, post-lint
+**typecheck-r3 PASS**, **full lint-r2 PASS**, **neighbors-r2: 952 PASS / 57 files /
+0 skips**, and **fresh build-r1 PASS**. Later changes were harness-only, each with
+syntax/format/scoped ESLint PASS. Earlier typecheck-r2 and neighbors-r1
+950/57 preceded the final checks; neighbors-r1 predates the Save fix. The earlier
+lint-r1's 196 autofixable ordering/braces errors in 16 changed files are historical,
+not the final lint outcome.
+
+The duplicate mutation records **2 GREEN → 1 semantic RED + 1 control GREEN →
+2 restored GREEN**; all **1,343 mutation-source members** are restored.
+Production **R2 source review is CLEAN** after the P2 Save A/B rebase fix and
+external-replacement neighbor. Rebase requires full-document equality to exact
+`baseDocument` or exact authorized `saveTarget`. The causal
+`SAVED_PROJECT_CHANGED` assertion was unchanged when the explicit
+Recover-new-revision test oracle was corrected; `save-rebase-green-r2` passed
+both cases.
+
+Final **native-r10: 12/12 PASS in 191.188 s**, script `1f5ac7ce`, with its
+**R11 source review CLEAN**. The successful run uses the source-r2 archive
+(1,343 members), exact script overlay and build-r1 (33 members). It observes
+**882 Main calls, originals exactly once**, and **149 actual CPU children**
+across two Electron lifetimes: intentional dirty SIGKILL, then healthy code 0.
+Exact Main/dialog/spawn/kill/write restoration completes with zero in-flight
+calls and zero page errors; root freshly confirms recorded PID/start identities
+absent. Contract R1 is CLEAN source-only; final source/build/version mapping is retained.
+
+Root actually opened **all 10 final screenshots** under `ui-audit`: 1440×900
+and 900×620, reference cards, keyboard tooltips and recovered image states.
+This bounded self-review found no material new reference-layout defect; it is
+not independent review, full WCAG or all-compositor qualification.
+
+Native attempts **1–9 remain FAILED**. Harness source-oracle findings R7/R8
+were closed by subsequent code/reviews and successful replay; those failures
+do not establish another product bug beyond the corrected Save rebase.
+
+The OS picker result was controlled; the worker was the **actual development
+CPU worker**, with no ML/catalog injection. Installed-resource transitions,
+packaged-worker behavior, inference and frozen active work are not
+native-qualified. Transient target/Smart-preparation outputs have metadata-only
+witnesses, without raw replay. Prototype SVG/data URLs remain separate mock
+behavior and do not extend this evidence boundary.
+
+Retention **R1–R7 are CLEAN, candidate-only, READ-FINISHED**; contract **R1 is
+CLEAN, source-only**. Root freshly verified source/build bytes, physical exits,
+exact restoration, dependencies and all-reader completion, then released all
+22 exact disposable paths: 2 unit and 20 native payloads. Measured artifact-root
+allocation reduction is **216,420,352 bytes** (unit 35,950,592; native 180,469,760).
+Compact evidence and external runtime/package dependencies remain protected.
+Final source/build/version mapping is retained in the linked checkpoint.
+PP-001/007/008 remain
+**Пока не обещать**; finite qualification does not promote public readiness.
+
+Prototype SVG/multiple data URLs не заменяют native/storage qualification.
+Публичный статус **Пока не обещать** не повышен. Прежние checkpoint records ниже
+сохраняют свои исторические scope/evidence.
+
+Текущий [Regional Guidance owned-mask checkpoint](./engineering/phase-4-regional-guidance-masks-research.md)
+имеет **source implemented; lower-level checks и finite native-r7 qualification PASS**;
+local visuals просмотрены root; retention/release завершены. CPU tools/Transform
+Region/Clear, отдельная immutable PNG ownership и Save/shadow/recovery/resources
+интегрированы; regional bbox/Fit отсутствуют. Disabled regions редактируются, lock
+запрещает запись, selected overlay использует `overlayOpacity`. Captured command
+сохраняет revision/epoch guards и защищённое состояние соседей.
+
+Root: **869 Node / 50 files, 0 failures/skips** до lint-only production delta
+(focused 89 входят в 869); post-lint typecheck r3/focused r3 **89**, full lint r2
+(4 partitions), fresh app build r1 и prototype r2 **182 PASS**; production R2
+**CLEAN, source-only**. Final **native-r7: 12 checks PASS, 157.061 s**,
+`fullTwelveCheckQualification: true`: Save/read/reopen, dirty-PNG crash/recovery,
+all tools/whole-alpha/geometry/history/refusals/namespaces/duplicate controls.
+Both lifetimes: 95 handlers restored, in-flight/page errors 0; original IPC exactly
+once. Root просмотрел все 6 final screenshots при 1440×900/900×620, включая
+quarter-turn/recovered states, без material local finding; bounded self-review,
+не full accessibility audit. Source R4/R5 CLEAN, source-only.
+
+Ранние failures остаются failures: specific native5 hash cause не подтверждена;
+native6 menu-selector mismatch не является feature RED, native3 restoration gap
+сохраняется. Retention audits R1–R4 CLEAN/READ-FINISHED с указанной границей
+R2; contract R2 CLEAN source-only. Final harness-scoped lint PASS. Root проверил
+exit/restoration/readers и удалил только 15 exact idle paths: освобождено
+113,537,024 bytes (108.28 MiB); compact evidence/external dependencies сохранены. Exact script/process/mutation boundaries — в linked research.
+Enabled-region NEW Generate refusal сохраняется; conditioning/reference images/
+inference вне owner. Статус **Пока не обещать** сохранён.
+
+Завершённый [Regional Guidance prompt authoring](./engineering/phase-4-regional-guidance-prompts-research.md)
+реализует durable optional positive/negative blocks и явное global-negative
+inheritance. Общий compact PlainPromptEditor использует Current Canvas context,
+включая selected Smart, и Main-owned exact embedding verification. Add сохраняет
+пустой block, Clear оставляет его, последний Remove удаляет wrapper; inheritance
+сохраняет dormant local text/refs, Remove Negative очищает их. Dedicated prompt
+API и один document stream группируют live writes/ordered seals с revision/epoch
+и lock guards; unpublished input доступен для correction/retry/pending-only
+discard, без rebasing после external revision/observed Undo ABA. Metadata APIs и ordinary generation-draft target/change validation
+сохранены. Shared seal endpoint дополнительно принимает strict regional
+namespaced group IDs; ordinary draft group validation не расширена. Enabled NEW ordinary/Smart refusal, frozen Retry
+и опубликованные jobs независимы. Geometry, provenance, presets, operational cursor,
+queue/model policy, regional mask pixels/reference images и conditioning не входят в этот owner;
+Regional Guidance исключён из accepted provenance и для будущих conditioned results.
+**Finite authoring checkpoint и retention/release завершены root.**
+795 affected/neighbor Node tests в 41 files, 0 failures/skips, предшествуют
+последнему одиночному row ARIA attribute. Финальный row 20c2fb6e: typecheck r7,
+later row/script scoped lint и fresh app build r4 PASS; full lint r2 (4 partitions)
+и prototype r1 182 shared-consumer browser checks PASS, prototype source не менялся.
+Complete production R4, narrow ARIA R5 и final native-source R7 CLEAN — source-only.
+Root native-r8/script ff502357: **12/12 PASS, 97.714 s**, healthy final code 0,
+две Electron lifetimes с dirty SIGKILL/recovery и healthy close; both observer
+restorations true/inFlight0. Actual Save/loader/reopen, dirty recovery и полные
+SQL/document/PNG/mask/variant/provenance/neighbor/cursor/policy controls PASS.
+Root открыл/просмотрел все 7 screenshots при 1440×900/900×620: material layout
+findings нет в scope; bounded self-review, не independent full accessibility audit.
+Исторические failed attempts остаются failures в linked root research.
+Retention audits 1–4 CLEAN/READ-FINISHED; contract R2 CLEAN source-only. Root
+проверил exit/restoration/readers и удалил 18 exact idle paths: освобождено
+116,359,168 allocated bytes (110.97 MiB); compact evidence/external dependencies
+сохранены. Masks/reference images, conditioning, inference,
+installed embedding/autocomplete, active-work/Main-ABA qualification и full promise
+не заявлены. Root владеет final retention/release evidence; prototype остаётся
+plain textareas/mock masks/references. Статус **Пока не обещать** сохранён.
+
+Завершённый checkpoint [Regional Guidance foundation](./engineering/phase-4-regional-guidance-foundation-research.md)
+добавил отдельные пустые durable entities: add/select/rename/enable/lock/overlay
+opacity/duplicate/delete, ordinary Undo, explicit Save и local recovery. Optional
+поле не материализуется в legacy Project; owned UUIDs и соседи сохраняются.
+Каждый enabled region блокирует NEW ordinary/Smart Generate до подготовки и
+публикации с явной причиной; disabled regions инертны, уже frozen jobs и Retry
+независимы. Root подтверждает **711 Node tests / 33 test files, 0 failures/skips**:
+54 focused, 3 actual-preload и 11 generation-guard cases входят в 711.
+**182 full prototype browser tests**, typecheck r7, full lint r4 и fresh build r3
+PASS; prototype code этот owner не менял. Isolated pre-SQL mutation:
+2 GREEN → semantic RED (8 queue rows вместо 4), disabled control GREEN →
+2 restored GREEN; все 1,320 source members и shared Queue subject восстановлены.
+Final native-r5: **12 checks PASS**, 266.205 s, code 0 после intentional
+dirty-shadow crash, recovery и healthy close; actual 1440×900/900×620,
+legacy no-op Save/loader/reopen, lifecycle, meaningful Save и exact-neighbor
+recovery, post-close protected SQL/package/assets/source bytes проверены root.
+Rename focus получил causal RED → same-harness GREEN; финальные source reviews
+clean, root просмотрел normal/minimum/recovered и focused-error screenshots.
+Native не квалифицирует ML/inference или active-work execution; successful
+frozen Retry подтверждён controlled unit tests. Historical failures сохранены.
+Retention R1–R4 clean/read-finished; root независимо проверяет exit/restoration/
+readers и удаляет только 15 временных каталогов: 104.66 MiB allocated space
+освобождено, compact evidence и внешние зависимости сохранены. Prompts/inheritance/references/nonempty masks,
+painting/transforms/conditioning и full release остаются вне этого среза;
+публичный статус **Пока не обещать** сохранён.
+
+Текущий [accepted Smart variant history срез](./engineering/phase-4-smart-patch-history-research.md)
+включает каждый принятый nested variant в Project history и, после явного Save,
+Saved generations. UUID принадлежит самому варианту; текущий parent определяется
+по containment, а не по историческому target в provenance. Навигация открывает
+точную сохранённую строку с меткой **From history**, включая inactive и hidden/locked,
+без активации, изменения settings/Undo/dirty state или Save. Pending drafts блокируют
+переход; missing/changed current owner сохраняет несохранённую работу. Точные
+ресурсы проверяют revision/hash/ownership, а global preview — сохранённый package.
+Native R8 проходит 16 проверок на portable accepted fixtures при 1440×900 и 900×620,
+включая Save/reopen, dirty-current refusals и переходы между проектами без mutation IPC.
+Это не квалификация inference. Smart Compare/Preset остаются вне среза; статус
+**Пока не обещать** сохранён. Проверки и границы evidence указаны в research.
+
+Текущий [явный orphan Raster Add](./engineering/phase-4-smart-patch-orphan-raster-research.md)
+принимает выбранный готовый contribution в новый Raster при отсутствии исходного
+Smart Patch в том же документе. Точные PNG/alpha, frozen bbox и полное Smart
+provenance сохраняются без текущей маски, runtime или retargeting. Общий Raster
+journal/recovery владеет отменой reviewed target-local заданий, включая новые
+Retry-сессии, одним Undo и последующим явным Save. Соседние результаты независимы.
+Converted Raster входит в Project/saved history, включая 1px и некратные восьми
+world sizes; на этом orphan checkpoint Smart Compare/Preset были явно недоступны.
+Последующие preset/Compare срезы описаны отдельно; native Compare qualification в процессе. Native R7 проходит
+15 проверок на prepared PNG: меню/подтверждение при 900×620 и 1440×900, Undo/Redo,
+crash recovery и Save/reopen. Inference в этот срез не входит. Проверки, исправления
+review и границы квалификации перечислены в research. Статус **Пока не обещать**
+сохранён; на этом checkpoint native Smart variant history ещё не квалифицирована.
+Последующий history checkpoint описан выше; остальные незакрытые flows не объявлены готовыми.
+
+Текущий [frozen Smart Patch Retry срез](./engineering/phase-4-smart-patch-retry-research.md)
+добавляет повтор одного reviewed failed/canceled задания с независимой копией
+исходных проверенных inputs, конкретными prompt/seed и прежними ресурсами.
+Общая admission/очередь сохраняет одного владельца исполнения; original document
+и coordinator, CAS и publication receipts проверяются в Main. Retry не меняет
+текущий Project, Undo, accepted variants, старые кандидаты или `.igs`; результат
+остаётся временным до явного Add. Отсутствующий текущий target остаётся orphaned,
+без автоматического retarget/conversion. Статус **Пока не обещать** сохранён; actual checks и
+границы collaborators/installed/release перечислены в research.
+
+Текущий [selected Smart Patch freshness срез](./engineering/phase-4-smart-patch-freshness-research.md)
+добавляет автоматическую read-only проверку source для выбранного stored Patch
+и общий reader браузера вариантов. Проверенный source даёт `Matches current inputs`,
+изменённые inputs — `Outdated`, недоступный source — `Unverified`. Диагностика
+не меняет `.igs`, dirty, Undo или immutable provenance; Generate/resource readiness
+проверяются отдельно. Один App-owned запрос и последний ожидающий owner сохраняют
+границу при смене вкладок. Статус **Пока не обещать** сохранён; выполненные проверки
+и ограничения указаны в research.
+
+Предыдущий [installed Smart Patch срез](./engineering/phase-4-smart-patch-installed-generation-research.md)
 прошёл 27 native checks: десять trained public completions для Illustrious
 V-prediction и Anima в TXT/IMG/INP/OUT плюс INP replay каждой семьи при processing
 256/world 128, четырёх шагах и seed 123. Все десять явных Add сохраняют точные
@@ -2462,7 +3153,7 @@ worker close: каждый reopened selected Patch предлагает Generate
 original/managed hashes сохранены; все 80 observed actors физически завершены.
 Неудачные попытки учтены отдельно от успешной матрицы. Reopened stored rows
 могут показывать `unverified`: автоматическая source-freshness re-verification
-после worker lifecycle этим срезом не квалифицирована. Retry, orphan Raster
+после worker lifecycle этим срезом не квалифицирована. Orphan Raster
 conversion, accepted-history navigation, Compare/Preset, arbitrary options,
 quality, full Invoke parity и release остаются открытыми. Статус сохраняется
 **Пока не обещать**.
@@ -2476,8 +3167,8 @@ rechecks reviewed owner/revision inside the gate and retains Save's gate/image
 lease order. Accepted variants keep immutable provenance and current authoring.
 Orphans remain visible/exportable/discardable. That checkpoint records its
 executed checks and declared inference collaborators; installed trained evidence
-is qualified above. Orphan Raster conversion, Retry, accepted-history navigation,
-Compare/Preset and release remain open. Full status stays **Пока не обещать**.
+is qualified above. At that public checkpoint, orphan Raster conversion, Retry,
+accepted-history navigation, Compare/Preset and release remained open. Full status stays **Пока не обещать**.
 
 Предыдущий [Smart Patch variant lifecycle/status](./engineering/phase-4-smart-patch-variant-lifecycle-research.md)
 adds real renderer/Main select, rename and delete for existing accepted variants,
@@ -2486,8 +3177,8 @@ Patch and retained image bytes through Delete → Save → Undo. The persistent
 browser separates current authored/actual-source freshness from resource
 availability. Historical copied ownership never rewrites provenance. Unknown
 source remains unverified; missing resources do not destroy or block stored
-variant edits. Public Generate/Results/Add, accepted-history navigation,
-Compare/Preset and installed inference remain open. Complete PP-007/008 status
+variant edits. At that lifecycle checkpoint, public Generate/Results/Add,
+accepted-history navigation, Compare/Preset and installed inference remained open. Complete PP-007/008 status
 stays «Пока не обещать». Executed evidence and finite limits belong to the linked
 research; prototype mocks are separate.
 
@@ -2507,10 +3198,11 @@ must pass actual member verification plus file/directory sync before replacing
 shadow proof. Replays do not duplicate or reactivate variants. Add never performs
 Save or rewrites completed receipts/seed cursor.
 
-Public Smart Generate/Results/IPC, variant lifecycle controls, freshness/resource
-UI, accepted-history navigation, Compare/Preset and installed inference
-qualification remain later owners. PP-007/008 remain «Пока не обещать». Next finite
-owner is variant lifecycle and current-state diagnostics before public integration.
+At that durable-acceptance checkpoint, public Smart Generate/Results/IPC, variant
+lifecycle controls, freshness/resource UI, accepted-history navigation, Compare/Preset
+and installed inference qualification remained later owners. PP-007/008 remain
+«Пока не обещать». The next finite owner at that checkpoint was variant lifecycle
+and current-state diagnostics before public integration.
 Executed evidence and finite limits belong to the linked research.
 
 Предыдущий [Smart Patch variant storage/display](./engineering/phase-4-smart-patch-variant-storage-research.md)
@@ -2533,7 +3225,7 @@ This is storage/display support for an already populated document, not the
 public acceptance command. Generate/Add, durable acceptance journal and sibling
 cancellation/reconciliation, variant lifecycle controls, accepted-history
 navigation, Smart Patch Compare/Preset and installed inference qualification
-remain later owners. PP-007/008 remain «Пока не обещать». Executed evidence and
+were later owners at that storage/display checkpoint. PP-007/008 remain «Пока не обещать». Executed evidence and
 remaining limits belong to the linked research.
 
 Предыдущий [Smart Patch acceptance plan](./engineering/phase-4-smart-patch-acceptance-plan-research.md)
@@ -2766,10 +3458,11 @@ Transform/fit не создают accepted result/provenance.
 Исходные PNG bytes сохраняются при неизменных dimensions/alpha; прочие transforms
 используют явную CPU interpolation policy, без Invoke pixel-parity claim.
 Regression1820 PASS до final terminal snapping, final affected59/native57,
-three semantic RED/GREEN и required checks PASS; chronology/limits — в checkpoint. Smart Patch
+three semantic RED/GREEN и required checks PASS; chronology/limits — в checkpoint. На этом Transform/Fit checkpoint Smart Patch
 inpaint/generation, accepted variants/staleness/compositing/comparison,
-Regional Guidance и Patch preset source/target остаются открытыми; публичный
-статус «Пока не обещать» сохранён.
+Regional Guidance и Patch preset source/target оставались открытыми; позднейший
+[finite Smart-target Apply](./engineering/phase-4-smart-patch-preset-apply-research.md)
+имеет отдельное evidence. Публичный статус «Пока не обещать» сохранён.
 
 Предыдущий [Smart Patch owned mask authoring](./engineering/phase-4-smart-patch-mask-authoring-research.md)
 добавляет реальные layer-owned mask pixels без публикации generated Raster или
@@ -2789,8 +3482,10 @@ Overlay/Clear, history, Save/reopen, corrupted Import refusal и actual crash
 recovery. Five semantic RED/neighbor GREEN pairs с exact restoration и
 typecheck/lint/build PASS; полный suite до дополнительного IDAT guard, affected
 run после него. Его evidence не включал Transform/Fit; текущая реализация
-описана выше. Smart Patch inpaint/generation, acceptance as variants, staleness,
-Regional Guidance и Patch preset Apply ещё не подключены. Публичный статус
+описана выше. На этом mask-authoring checkpoint Smart Patch inpaint/generation,
+acceptance as variants, staleness, Regional Guidance и Patch preset Apply ещё не
+были подключены. Позднейший finite Smart-target Apply имеет отдельный checkpoint
+по ссылке выше. Публичный статус
 «Пока не обещать» сохранён.
 
 Предыдущий [Smart Patch document foundation](./engineering/phase-4-smart-patch-foundation-research.md)

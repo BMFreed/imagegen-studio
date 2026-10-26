@@ -3,11 +3,11 @@ import {
   IGS_SAFETY_CEILINGS,
   type IgsMemberRefV1,
   type IgsProjectDocumentV1,
-  type IgsSmartPatchVariantV1,
   isIgsMemberPathV1,
   parseProjectDocumentV1,
   projectAssetReferences,
   projectMaskAssets,
+  projectRegionalReferenceImages,
 } from '../../shared/projects/project-schema.js'
 
 import { createHash, randomUUID } from 'node:crypto'
@@ -16,12 +16,19 @@ import { lstat, mkdir, mkdtemp, open, readdir, rename, rm } from 'node:fs/promis
 import path from 'node:path'
 import * as v from 'valibot'
 
-import { type IgsAssetSource, type IgsPackageReadResult, readIgsPackage } from './igs-package.js'
+import {
+  type IgsAssetSource,
+  type IgsPackageReadResult,
+  readIgsPackage,
+  regionalReferenceMembers,
+  verifyRegionalReferenceAssetSource,
+} from './igs-package.js'
 import { canonicalProjectPath, localProjectRecoveryKey } from './project-identity.js'
 import { readProjectMaskSource } from './project-mask.js'
 import {
+  type SmartPatchContributionImage,
+  smartPatchContributionImages,
   smartPatchVariantImageIdentity,
-  smartPatchVariants,
   verifySmartPatchVariantSource,
 } from './project-smart-patch-variant-assets.js'
 
@@ -151,6 +158,10 @@ export class ProjectShadowError extends Error {
 }
 
 const keyLocks = new Map<string, Promise<void>>()
+
+function sha256(bytes: string | Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex')
+}
 
 /**
  * App-owned dirty-document recovery. A manifest rename is the sole publication point; unlisted
@@ -289,6 +300,11 @@ export class ProjectShadowStore {
       }
       const dirtyAssets: Record<string, IgsAssetSource> = {}
       const masks = new Map(projectMaskAssets(document).map((asset) => [asset.path, asset]))
+      const regionalMembers = new Map(
+        projectRegionalReferenceImages(document)
+          .flatMap(regionalReferenceMembers)
+          .map((entry) => [entry.member.path, entry]),
+      )
       for (const member of expected) {
         const staged = manifest.dirtyAssets.find((candidate) => candidate.path === member.path)
         if (!staged || !sameAssetRef(staged, member)) {
@@ -310,9 +326,46 @@ export class ProjectShadowStore {
             return { reason: 'ASSET_MISMATCH', status: 'invalid' }
           }
         }
+        const regional = regionalMembers.get(member.path)
+        if (regional) {
+          try {
+            await verifyRegionalReferenceAssetSource(
+              { sourcePath: assetPath },
+              regional.member,
+              regional.role,
+            )
+          } catch {
+            return { reason: 'ASSET_MISMATCH', status: 'invalid' }
+          }
+        }
         dirtyAssets[member.path] = { sourcePath: assetPath }
       }
       try {
+        const savedReferences = new Map(
+          projectAssetReferences(saved).map((member) => [member.path, member]),
+        )
+        for (const { member, role } of regionalMembers.values()) {
+          if (dirtyAssets[member.path]) {
+            continue
+          }
+          const savedMember = savedReferences.get(member.path)
+          if (
+            !savedMember ||
+            savedMember.sha256 !== member.sha256 ||
+            savedMember.bytes !== member.bytes ||
+            savedMember.width !== member.width ||
+            savedMember.height !== member.height
+          ) {
+            throw new Error('Regional reference metadata differs from its saved source.')
+          }
+          if (role === 'profile') {
+            await verifyRegionalReferenceAssetSource(
+              { bytes: await input.savedPackage.readMember(member.path) },
+              member,
+              role,
+            )
+          }
+        }
         await verifyVariantImages(
           [document],
           saved,
@@ -416,6 +469,12 @@ export class ProjectShadowStore {
             ...(committingDocument ? projectMaskAssets(committingDocument) : []),
           ].map((asset) => [asset.path, asset]),
         )
+        const regionalMembers = new Map(
+          [document, ...(committingDocument ? [committingDocument] : [])]
+            .flatMap(projectRegionalReferenceImages)
+            .flatMap(regionalReferenceMembers)
+            .map((entry) => [entry.member.path, entry]),
+        )
         await writeSynced(path.join(pending, 'project.json'), serialized)
         for (const member of changed) {
           const destination = path.join(pending, member.path)
@@ -432,10 +491,58 @@ export class ProjectShadowStore {
               )
             }
           }
+          const regional = regionalMembers.get(member.path)
+          if (regional) {
+            try {
+              await verifyRegionalReferenceAssetSource(
+                { sourcePath: destination },
+                regional.member,
+                regional.role,
+              )
+            } catch {
+              throw new ProjectShadowError(
+                'SHADOW_ASSET_MISMATCH',
+                'The regional reference member is invalid.',
+              )
+            }
+          }
         }
         let savedPackage: IgsPackageReadResult | undefined
         const changedPaths = new Set(changed.map((member) => member.path))
         try {
+          const savedReferences = new Map(
+            projectAssetReferences(savedDocument).map((member) => [member.path, member]),
+          )
+          for (const { member, role } of regionalMembers.values()) {
+            if (changedPaths.has(member.path)) {
+              continue
+            }
+            const savedMember = savedReferences.get(member.path)
+            if (
+              !savedMember ||
+              savedMember.sha256 !== member.sha256 ||
+              savedMember.bytes !== member.bytes ||
+              savedMember.width !== member.width ||
+              savedMember.height !== member.height
+            ) {
+              throw new Error('Regional reference metadata differs from its saved source.')
+            }
+            if (role === 'profile') {
+              savedPackage ??= await readIgsPackage(input.projectPath)
+              const actual = sha256(documentBytes(savedPackage.project))
+              if (
+                actual !== sha256(documentBytes(savedDocument)) &&
+                (!committingDocument || actual !== sha256(documentBytes(committingDocument)))
+              ) {
+                throw new Error('The saved Project changed during regional profile validation.')
+              }
+              await verifyRegionalReferenceAssetSource(
+                { bytes: await savedPackage.readMember(member.path) },
+                member,
+                role,
+              )
+            }
+          }
           await verifyVariantImages([document], savedDocument, async (variant) => {
             if (changedPaths.has(variant.asset.path)) {
               return { sourcePath: path.join(pending, variant.asset.path) }
@@ -548,11 +655,13 @@ async function withKeyLock<T>(key: string, work: () => Promise<T>): Promise<T> {
 async function verifyVariantImages(
   documents: IgsProjectDocumentV1[],
   savedDocument: IgsProjectDocumentV1,
-  sourceFor: (variant: IgsSmartPatchVariantV1) => Promise<IgsAssetSource>,
+  sourceFor: (variant: SmartPatchContributionImage) => Promise<IgsAssetSource>,
 ): Promise<void> {
-  const verified = new Set(smartPatchVariants(savedDocument).map(smartPatchVariantImageIdentity))
+  const verified = new Set(
+    smartPatchContributionImages(savedDocument).map(smartPatchVariantImageIdentity),
+  )
   for (const document of documents) {
-    for (const variant of smartPatchVariants(document)) {
+    for (const variant of smartPatchContributionImages(document)) {
       const identity = smartPatchVariantImageIdentity(variant)
       if (!verified.has(identity)) {
         await verifySmartPatchVariantSource(variant, await sourceFor(variant))
@@ -560,10 +669,6 @@ async function verifyVariantImages(
       }
     }
   }
-}
-
-function sha256(bytes: string | Buffer): string {
-  return createHash('sha256').update(bytes).digest('hex')
 }
 
 function documentBytes(document: IgsProjectDocumentV1): Buffer {

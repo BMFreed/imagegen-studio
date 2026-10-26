@@ -5,8 +5,9 @@ import {
 } from '../../shared/projects/project-schema.js'
 
 import assert from 'node:assert/strict'
-import { createHash, randomUUID } from 'node:crypto'
+import crypto, { createHash, randomUUID } from 'node:crypto'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { syncBuiltinESMExports } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
@@ -297,6 +298,56 @@ async function createFixture(root: string) {
     },
   }
 }
+
+test('Raster acceptance skips regional entity and mask identities while preserving grouped batch allocation and authoring', async (t) => {
+  await withFixture(async (fixture) => {
+    const owner = fixture.owner!
+    const region = {
+      enabled: false,
+      id: randomUUID(),
+      locked: false,
+      mask: { asset: null, id: randomUUID(), revision: 0 as const },
+      name: 'Regional owner',
+      overlayOpacity: 0.5,
+    }
+    await owner.applyDocument({ ...owner.document, regionalGuidance: [region] })
+    const originalRandom = crypto.randomUUID
+    const firstId = originalRandom()
+    const secondId = originalRandom()
+    // The repeated firstId exercises the preexisting same-batch exclusion as well as new owners.
+    const ids = [region.id, region.mask.id, firstId, firstId, region.mask.id, secondId]
+    const mocked = t.mock.method(crypto, 'randomUUID', () => ids.shift() ?? originalRandom())
+    syncBuiltinESMExports()
+    try {
+      const result = await new ProjectGenerationAcceptance(fixture.options).accept(
+        fixture.tabId,
+        [fixture.first.candidateId, fixture.second.candidateId],
+        fixture.second.candidateId,
+        fixture.availableIds,
+      )
+      assert.equal(result.kind, 'accepted')
+      assert.equal(ids.length, 0)
+      assert.deepEqual(
+        new Set(owner.document.layers.map(({ id }) => id)),
+        new Set([firstId, secondId]),
+      )
+      assert.deepEqual(owner.document.regionalGuidance, [region])
+      assert.equal(fixture.candidates.length, 0)
+      await owner.undo()
+      assert.deepEqual(owner.document.layers, [])
+      assert.deepEqual(owner.document.regionalGuidance, [region])
+      await owner.redo()
+      assert.deepEqual(
+        new Set(owner.document.layers.map(({ id }) => id)),
+        new Set([firstId, secondId]),
+      )
+      assert.deepEqual(owner.document.regionalGuidance, [region])
+    } finally {
+      mocked.mock.restore()
+      syncBuiltinESMExports()
+    }
+  })
+})
 
 test('multi-session Add durably stores ordered Raster Layers before targeted staging discard', async () => {
   await withFixture(async (fixture) => {

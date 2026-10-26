@@ -78,6 +78,21 @@ export function createProjectScenario(id: ProjectScenarioId): ProjectSession {
   session.savedDocument = cloneDocument(session.document)
   if (id === 'smart-patch') {
     session.ui.selection = { id: 'hand-repair', kind: 'compositing-layer' }
+    const active =
+      patch?.kind === 'smart-patch'
+        ? patch.variants.find((variant) => variant.id === patch.activeVariantId)
+        : undefined
+    if (main?.kind === 'raster' && active?.provenance) {
+      // Declared converted-source fixture for the real Raster menu; no conversion is simulated.
+      session.document.layers.push({
+        ...structuredClone(main),
+        id: 'converted-smart-result',
+        name: 'Converted Smart result',
+        provenance: { ...structuredClone(active.provenance), resultId: 'converted-smart-result' },
+        visible: false,
+      })
+      session.savedDocument = cloneDocument(session.document)
+    }
   }
   if (id === 'regional-guidance') {
     session.ui.selection = { id: 'face-light', kind: 'regional-guidance' }

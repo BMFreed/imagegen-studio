@@ -2,11 +2,16 @@ import type { ProjectSmartPatchMaskEditRequest } from '../../shared/api.js'
 import {
   assertProjectMaskBounds,
   parseProjectMaskEdit,
+  type ProjectMaskEdit,
   type ProjectMaskTransform,
 } from '../../shared/projects/project-mask.js'
 import type { IgsRectV1 } from '../../shared/projects/project-schema.js'
 
 import { type MaskGestureOwner, sameMaskGestureOwner } from './project-mask-gesture.js'
+
+export type ProjectMaskTransformRequest = Omit<ProjectSmartPatchMaskEditRequest, 'edit'> & {
+  edit: Extract<ProjectMaskEdit, { kind: 'transform' }>
+}
 
 /** A local affine preview is submitted once, with the owner captured before its first move. */
 export class ProjectMaskTransformGesture {
@@ -36,7 +41,7 @@ export class ProjectMaskTransformGesture {
     this.ended = true
   }
 
-  finish(owner: MaskGestureOwner | null): ProjectSmartPatchMaskEditRequest | null {
+  finish(owner: MaskGestureOwner | null): ProjectMaskTransformRequest | null {
     if (this.ended) {
       return null
     }
@@ -57,7 +62,7 @@ export class ProjectMaskTransformGesture {
     return {
       documentId: this.owner.documentId,
       documentRevision: this.owner.documentRevision,
-      edit: parseProjectMaskEdit({ kind: 'transform', transform: { ...transform } }),
+      edit: { kind: 'transform', transform: { ...transform } },
       maskId: this.owner.maskId,
       maskRevision: this.owner.maskRevision,
     }
