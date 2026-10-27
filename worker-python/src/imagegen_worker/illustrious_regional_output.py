@@ -15,7 +15,7 @@ encoded-output byte cap. No admission, transaction or cleanup owner is added.
 from __future__ import annotations
 
 import importlib
-from dataclasses import fields
+from dataclasses import fields, replace
 from pathlib import PosixPath
 from typing import Any, Literal, cast
 
@@ -30,8 +30,10 @@ from .illustrious_regional_attention_adapter import (
 )
 from .illustrious_regional_denoising import (
     _MAX_FINITE_ELEMENTS,  # pyright: ignore[reportPrivateUsage]
+    IllustriousRegionalDenoisingError,
     _denoising_parameters,  # pyright: ignore[reportPrivateUsage]
     _DenoisingProfile,  # pyright: ignore[reportPrivateUsage]
+    _execution_profile,  # pyright: ignore[reportPrivateUsage]
     _Layout,  # pyright: ignore[reportPrivateUsage]
     _native_output,  # pyright: ignore[reportPrivateUsage]
     run_current_canvas_regional_denoising,
@@ -205,23 +207,24 @@ def generate_current_canvas_regional_txt2img(
     """Validate one frozen target, run once, and return the original publisher receipt.
 
     All keywords are required. Metadata agreement precedes filesystem/native
-    work; snapshot verification precedes encoding. The named execution profiles,
-    exact-TI 512 MiB copy ceiling and existing native preflights remain unchanged.
+    work; snapshot verification precedes encoding. V1 retains one/two steps and
+    no caller noise policy; V2 requires bounded steps and an exact detached
+    four-field policy. Exact-TI copy and existing native preflights remain unchanged.
     Native, conversion and publication errors retain their identity and cause.
     """
     parameters = _command_parameters(command)
-    tensor_profile = _encoding_tensor_profile(profile)
-    expected = (
-        "ordinary-canvas-euler-txt2img-cpu-v1"
-        if tensor_profile == "cpu-float32-v1"
-        else "ordinary-canvas-euler-txt2img-cuda-fp16-v1"
-    )
-    _require(
-        type(denoising_profile) is str and denoising_profile == expected,
-        "PROFILE_INVALID",
-        "Encoding and denoising profiles must select the same explicit CPU/CUDA lane.",
-    )
-    _denoising_parameters(parameters, tensor_profile)
+    # Preserve output's encoding-first refusal order and local execution-profile
+    # error identity while sharing the runner's complete lane/version validator.
+    _encoding_tensor_profile(profile)
+    try:
+        tensor_profile, resolved_noise = _execution_profile(denoising_profile, profile)
+    except IllustriousRegionalDenoisingError as error:
+        raise IllustriousRegionalOutputError("PROFILE_INVALID", str(error)) from error
+    if resolved_noise:
+        noise_profile = _denoising_parameters(parameters, tensor_profile, resolved_noise=True)
+        parameters = replace(parameters, noise_profile=noise_profile)
+    else:
+        _denoising_parameters(parameters, tensor_profile)
     bbox, _, parameters, _, _, _ = _recipe_inputs(
         recipe,
         parameters,

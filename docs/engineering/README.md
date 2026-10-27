@@ -1296,3 +1296,20 @@ source/config/native pins and compact reproduction bytes remain protected.
 Anima/Illustrious are the product families; private SDXL internals do not add a
 family. One/two steps at 104×72 establish mechanics, without public admission,
 Main candidate durability or visual-quality readiness.
+
+## Private Main-resolved Illustrious sampling
+
+[Main-resolved sampling](./phase-4-regional-guidance-sampling-research.md) adds
+explicit CPU/CUDA Euler v2 profiles consuming the existing strict four-field
+noise policy and 1–200 step bound; V1 keeps its fixed one/two-step experiment.
+ROOT qualified 567 distinct pytest selections, including exact Main leading
+sampling at 1024×1024/20–30 steps, ordinary-zero PT/RGB equality, separate
+resource/coverage controls, late failures and prediction/PNG-sensitive mutations.
+All 70 original attention sites are observed per step. This is bounded private
+mechanics, with regional visual quality and other trained policies still open.
+Source R2 and input/output audits are CLEAN in their stated scopes; final
+bookkeeping review is recorded separately. Exact payload archival preceded
+126,599,168 bytes of measured idle-data disposal; source/runtime/config and
+compact genuine Main inputs remain protected. Public admission, Main candidate
+durability, Add/Save and Anima regional execution are unchanged;
+PP-001/007/008 remain «Пока не обещать».

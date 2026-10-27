@@ -14,7 +14,7 @@ their guarded equal-value policy; TI permits only pinned native capture hooks.
 All pre-existing local UNet/VAE forward hooks
 and all global forward hooks refuse before encoding or owned model mutation.
 
-One native pipeline call owns the whole one/two-step loop and decode. The regional
+One native pipeline call owns the whole bounded Euler loop and decode. The regional
 adapter remains installed throughout, including equal-length conditioning and
 every repeated spatial consumption. Borrowed scheduler/call state is untouched;
 only the existing adapter, finite-output hooks and private late value guards
@@ -70,13 +70,20 @@ from .inference import (
 )
 from .inference_lora import finite_unet_outputs
 from .inference_vae import finite_vae_outputs
-from .protocol import IllustriousInferenceParameters, IllustriousNoiseProfile
+from .protocol import (
+    MAX_GENERATION_STEPS,
+    IllustriousInferenceParameters,
+    IllustriousNoiseProfile,
+)
 
 __all__ = ("IllustriousRegionalDenoisingError", "run_current_canvas_regional_denoising")
 
 _Code = Literal["INPUT_INVALID", "PROFILE_INVALID", "UNSUPPORTED", "LIMIT", "SCOPE_CONFLICT"]
 _DenoisingProfile = Literal[
-    "ordinary-canvas-euler-txt2img-cpu-v1", "ordinary-canvas-euler-txt2img-cuda-fp16-v1"
+    "ordinary-canvas-euler-txt2img-cpu-v1",
+    "ordinary-canvas-euler-txt2img-cuda-fp16-v1",
+    "ordinary-canvas-euler-txt2img-cpu-v2",
+    "ordinary-canvas-euler-txt2img-cuda-fp16-v2",
 ]
 _Layout = Literal["cfg-negative-first", "positive-only"]
 _MAX_FINITE_ELEMENTS = 8_388_608
@@ -106,19 +113,88 @@ def _finite_number(value: Any) -> bool:
         return False
 
 
+def _execution_profile(
+    denoising_profile: _DenoisingProfile, profile: _Profile
+) -> tuple[_TensorProfile, bool]:
+    """Validate the shared finite lane/version pairs before any native work."""
+    profiles: dict[_DenoisingProfile, tuple[_TensorProfile, bool]] = {
+        "ordinary-canvas-euler-txt2img-cpu-v1": ("cpu-float32-v1", False),
+        "ordinary-canvas-euler-txt2img-cuda-fp16-v1": ("cuda-float16-v1", False),
+        "ordinary-canvas-euler-txt2img-cpu-v2": ("cpu-float32-v1", True),
+        "ordinary-canvas-euler-txt2img-cuda-fp16-v2": ("cuda-float16-v1", True),
+    }
+    _require(
+        type(denoising_profile) is str and denoising_profile in profiles,
+        "PROFILE_INVALID",
+        "Unsupported private denoising profile.",
+    )
+    tensor_profile = _encoding_tensor_profile(profile)
+    expected, resolved_noise = profiles[denoising_profile]
+    _require(
+        tensor_profile == expected,
+        "PROFILE_INVALID",
+        "Encoding and denoising profiles must select the same CPU/CUDA lane.",
+    )
+    return tensor_profile, resolved_noise
+
+
+def _validated_noise_profile(value: object) -> IllustriousNoiseProfile:
+    """Require and detach exactly the four existing versioned policy fields."""
+    _require(
+        type(value) is IllustriousNoiseProfile,
+        "INPUT_INVALID",
+        "V2 requires an exact explicit IllustriousNoiseProfile record.",
+    )
+    policy = cast(IllustriousNoiseProfile, value)
+    _require(
+        vars(policy).keys()
+        == {"schema_version", "base_schedule", "rescale_betas_zero_snr", "timestep_spacing"},
+        "INPUT_INVALID",
+        "The noise policy must contain exactly its four complete fields.",
+    )
+    _require(
+        type(policy.schema_version) is int
+        and policy.schema_version == 1
+        and type(policy.base_schedule) is str
+        and policy.base_schedule == "sdxl-scaled-linear-v1"
+        and type(policy.rescale_betas_zero_snr) is bool
+        and type(policy.timestep_spacing) is str
+        and policy.timestep_spacing in ("leading", "linspace", "trailing"),
+        "INPUT_INVALID",
+        "The noise policy requires exact version 1, scaled-linear-v1, bool and spacing fields.",
+    )
+    return IllustriousNoiseProfile(
+        schema_version=policy.schema_version,
+        base_schedule=policy.base_schedule,
+        rescale_betas_zero_snr=policy.rescale_betas_zero_snr,
+        timestep_spacing=policy.timestep_spacing,
+    )
+
+
 def _denoising_parameters(
-    parameters: IllustriousInferenceParameters, tensor_profile: _TensorProfile = "cpu-float32-v1"
-) -> None:
+    parameters: IllustriousInferenceParameters,
+    tensor_profile: _TensorProfile = "cpu-float32-v1",
+    *,
+    resolved_noise: bool = False,
+) -> IllustriousNoiseProfile | None:
     _require(
         type(parameters) is IllustriousInferenceParameters,
         "INPUT_INVALID",
         "The exact base IllustriousInferenceParameters record is required.",
     )
     _require(
-        type(parameters.steps) is int and parameters.steps in (1, 2),
+        type(parameters.steps) is int
+        and (
+            1 <= parameters.steps <= MAX_GENERATION_STEPS
+            if resolved_noise
+            else parameters.steps in (1, 2)
+        ),
         "INPUT_INVALID",
-        "This private native loop requires exactly one or two Euler steps.",
+        f"V2 requires an exact integer Euler step count in [1,{MAX_GENERATION_STEPS}]."
+        if resolved_noise
+        else "This private native loop requires exactly one or two Euler steps.",
     )
+    noise_profile = _validated_noise_profile(parameters.noise_profile) if resolved_noise else None
     _require(
         _finite_number(parameters.cfg_scale) and 1 <= parameters.cfg_scale <= 30,
         "INPUT_INVALID",
@@ -134,9 +210,11 @@ def _denoising_parameters(
         and parameters.scheduler == "euler"
         and type(parameters.prediction_type) is str
         and parameters.prediction_type == "epsilon"
-        and parameters.noise_profile is None,
+        and (resolved_noise or parameters.noise_profile is None),
         "UNSUPPORTED",
-        "Only Euler/epsilon with no noise profile is supported.",
+        "Only Euler/epsilon is supported."
+        if resolved_noise
+        else "Only Euler/epsilon with no noise profile is supported.",
     )
     _require(
         parameters.vae is None
@@ -149,6 +227,7 @@ def _denoising_parameters(
         "UNSUPPORTED",
         "External VAE requests are unsupported; CPU requires Auto/FP32 and CUDA requires FP16.",
     )
+    return noise_profile
 
 
 def _reject_method_shadows(objects: tuple[Any, ...]) -> None:
@@ -247,18 +326,22 @@ def _denoising_model_preflight(
 
 
 def _fresh_pipeline(
-    pipeline: Any, parameters: IllustriousInferenceParameters, runtime: MLRuntime
+    pipeline: Any,
+    parameters: IllustriousInferenceParameters,
+    runtime: MLRuntime,
+    *,
+    resolved_noise: bool = False,
 ) -> Any:
     diffusers = cast(Any, runtime.diffusers)
-    # The explicitly selected private execution profile owns this complete
-    # scaled-linear-v1 policy. The public caller still must request None; this
-    # detached copy prevents inherited trained_betas/sigma/spacing policy and
-    # does not register config or change the borrowed scheduler/parameters.
+    # V1 retains its fixed policy and three-argument seam. V2 uses only the
+    # validated explicit four-field policy, detached again for the selector.
+    # Neither path inherits trained_betas/sigma/spacing policy or registers
+    # config on the borrowed scheduler/parameters.
     scheduler_parameters = replace(
         parameters,
-        noise_profile=IllustriousNoiseProfile(
-            rescale_betas_zero_snr=False, timestep_spacing="linspace"
-        ),
+        noise_profile=_validated_noise_profile(parameters.noise_profile)
+        if resolved_noise
+        else IllustriousNoiseProfile(rescale_betas_zero_snr=False, timestep_spacing="linspace"),
     )
     scheduler = select_inference_scheduler(scheduler_parameters, pipeline, runtime)
     _require(
@@ -519,9 +602,10 @@ def run_current_canvas_regional_denoising(
     All kwargs are required. An actual ordinary transparent target is a trusted
     Main precondition; the recipe cannot authenticate mode. No sample, timestep,
     time IDs, generator, callbacks, plan, text override or arbitrary kwargs enter.
-    Both named denoising profiles select SDXL scaled-linear-v1 betas,
-    rescale_betas_zero_snr=False and linspace spacing through a private request
-    copy. Caller noise_profile stays None and borrowed scheduler policy is unused.
+    V1 profiles require one/two steps and no caller noise profile, selecting
+    scaled-linear-v1 betas with zero-SNR false and linspace spacing. V2 profiles
+    require 1..MAX_GENERATION_STEPS and an exact explicit four-field noise
+    policy. Both use detached request policies; borrowed scheduler policy is unused.
 
     Payload arithmetic (not RSS): A=W*H <= 4,000,000; latent [1,4,H/8,W/8]
     float32 uses A/4 <= 1,000,000 bytes; CFG's doubled sample uses A/2 <=
@@ -534,21 +618,12 @@ def run_current_canvas_regional_denoising(
     and the adapter's <=32 MiB expanded Boolean mask remain separate lifetimes.
     Neither step count nor these payloads bound total RSS/VRAM.
     """
-    _require(
-        type(denoising_profile) is str
-        and denoising_profile
-        in ("ordinary-canvas-euler-txt2img-cpu-v1", "ordinary-canvas-euler-txt2img-cuda-fp16-v1"),
-        "PROFILE_INVALID",
-        "Unsupported private denoising profile.",
-    )
-    tensor_profile = _encoding_tensor_profile(profile)
-    _require(
-        (tensor_profile == "cpu-float32-v1")
-        == (denoising_profile == "ordinary-canvas-euler-txt2img-cpu-v1"),
-        "PROFILE_INVALID",
-        "Encoding and denoising profiles must select the same CPU/CUDA lane.",
-    )
-    _denoising_parameters(parameters, tensor_profile)
+    tensor_profile, resolved_noise = _execution_profile(denoising_profile, profile)
+    if resolved_noise:
+        noise_profile = _denoising_parameters(parameters, tensor_profile, resolved_noise=True)
+        parameters = replace(parameters, noise_profile=noise_profile)
+    else:
+        _denoising_parameters(parameters, tensor_profile)
     bbox, pairs, parameters, shape, global_negative, global_positive = _recipe_inputs(
         recipe,
         parameters,
@@ -599,7 +674,11 @@ def run_current_canvas_regional_denoising(
             tensor_profile,
             shared_readonly=embedding_strategy == "shared-readonly",
         )
-        fresh = _fresh_pipeline(pipeline, parameters, runtime)
+        fresh = (
+            _fresh_pipeline(pipeline, parameters, runtime, resolved_noise=True)
+            if resolved_noise
+            else _fresh_pipeline(pipeline, parameters, runtime)
+        )
         plan, negative, positive = _encode_recipe_bindings(
             bbox=bbox,
             pairs=pairs,

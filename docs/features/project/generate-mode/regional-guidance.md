@@ -812,3 +812,24 @@ refusal, frozen Retry independence, Smart target-only permissions and provenance
 exclusions preserved. Public admission, durable Main candidates, acceptance,
 trained visual quality and Anima regional execution remain separate boundaries.
 PP-001/007/008 remain «Пока не обещать».
+
+## Private Main-resolved sampling checkpoint
+
+The [Main-resolved sampling checkpoint](../../../engineering/phase-4-regional-guidance-sampling-research.md)
+adds explicit CPU/CUDA Euler v2 profiles without changing the authored recipe
+or public worker protocol. They require the existing exact versioned noise
+policy and integer steps 1–200; this admission bound is not a capacity or
+quality guarantee. V1 retains its one/two-step linspace experiment.
+
+ROOT's bounded native acceptance consumes genuine Main false-ZTSNR/leading
+policy on the exact official Illustrious checkpoint at 1024×1024 and 20/30 steps.
+All 70 attention consumers are observed on every step; encoding counts stay
+constant. Ordinary-zero PT/RGB equality, repeat/changed-seed, separate resource
+and coverage controls, late failures and prediction/PNG-sensitive mutations
+have retained evidence. Regional visual quality, other trained policies and
+maximum capacity remain unqualified.
+
+Enabled-region NEW refusal, Smart target-only permission, frozen Retry
+independence and Regional Guidance provenance exclusions remain. This adds no
+Main candidate durability, acceptance, Add/Save or Anima regional execution.
+PP-001/007/008 stay «Пока не обещать».
