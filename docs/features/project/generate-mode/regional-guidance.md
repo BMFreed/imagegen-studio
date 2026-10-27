@@ -833,3 +833,23 @@ Enabled-region NEW refusal, Smart target-only permission, frozen Retry
 independence and Regional Guidance provenance exclusions remain. This adds no
 Main candidate durability, acceptance, Add/Save or Anima regional execution.
 PP-001/007/008 stay «Пока не обещать».
+
+## Private natural-text visual experiment
+
+The [preregistered visual experiment](../../../engineering/phase-4-regional-guidance-visual-research.md)
+separates native conditioning/PNG checks from recognizable object placement. It
+compares baseline, assigned and swapped ordinary-text recipes for two fixed seeds
+without TI resources. The native mechanical checks, ordinary PT/RGB equivalence,
+repeat and association mutation/control/restoration pass. The **visual gate is
+not qualified**: four targeted images yield 0 PASS / 3 FAIL / 1 INCONCLUSIVE;
+neither seed visibly exchanges object sides for swapped regional prompts.
+Independent blinded descriptions agree on actual positions and object defects.
+Ordinary baselines also have count/coherence limitations, so their cause is not
+assigned to masking alone. These are bounded agent observations, not human
+acceptance or general quality qualification.
+
+Changed RGB and correct permission consumption do not establish useful regional
+semantics. A separate composition/support experiment remains necessary; private
+choices are not promoted to defaults. Public NEW refusal, frozen Retry,
+target-only Smart permissions, provenance exclusions and PP-001/007/008 remain
+unchanged.

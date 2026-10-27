@@ -1313,3 +1313,21 @@ bookkeeping review is recorded separately. Exact payload archival preceded
 compact genuine Main inputs remain protected. Public admission, Main candidate
 durability, Add/Save and Anima regional execution are unchanged;
 PP-001/007/008 remain «Пока не обещать».
+
+## Private natural-text Regional Guidance — visual gate not qualified
+
+The [natural-text visual experiment](./phase-4-regional-guidance-visual-research.md)
+checks recognizable object placement beyond native sampling/pixel causality.
+ROOT completed genuine Main preparation, 109 Main neighbor tests and 8 distinct
+Python mechanical passes with 12 warnings. Ordinary PT/RGB and repeat match
+exactly; the isolated association mutation is detected after PNG publication,
+with an unchanged control and exact restoration. Independent input/source
+reviews are CLEAN within their scopes; final bookkeeping review is separate.
+
+The fixed apple/mug experiment is **visually NOT_QUALIFIED**: four targeted
+images yield 0 PASS / 3 FAIL / 1 INCONCLUSIVE, and neither seed exchanges object
+sides under swapped prompts. Blinded descriptions support those observations;
+ordinary baselines also have count/coherence limitations. Cause and composition
+repair remain open. All original evidence is retained, with 46,727,168 allocated
+bytes of idle payload disposed after verified archival. No public transport,
+admission or composition default is introduced; PP-001/007/008 remain unchanged.
