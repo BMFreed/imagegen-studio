@@ -1331,3 +1331,22 @@ ordinary baselines also have count/coherence limitations. Cause and composition
 repair remain open. All original evidence is retained, with 46,727,168 allocated
 bytes of idle payload disposed after verified archival. No public transport,
 admission or composition default is introduced; PP-001/007/008 remain unchanged.
+
+## Private global-positive token-support comparison
+
+The [fixed support comparison](./phase-4-regional-guidance-global-support-research.md)
+isolates global positive token eligibility inside the two existing regions,
+preserving pooled sources, all text/seed/mask inputs and sampling. Genuine Main
+handoffs and counterexamples are reused unchanged. Six initial mechanical cases
+pass, including exact historical Everywhere assignment and regional-only repeat.
+A controlled ignored-support forwarding fault is detected after real PNG
+publication; its control and both restored cases are exact. Ten native calls
+produce nine GREEN and one intentional RED, with 18 warnings and no errors/skips.
+
+The full visual gate remains NOT_QUALIFIED: 0 PASS / 3 FAIL / 1 INCONCLUSIVE.
+Seed 124 exchanges object identities, but the mug loses its blue color and the
+subjects float; seed 123 becomes a dense mosaic. The partial placement effect
+does not select a default. Source review is CLEAN; retained-data verification
+is distinct from ROOT runtime/physical observations. All payload bytes are
+archived before 14,458,880 bytes of measured idle-data disposal. There is no
+production mechanism, public admission or promise-status change.

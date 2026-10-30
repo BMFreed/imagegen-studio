@@ -853,3 +853,20 @@ semantics. A separate composition/support experiment remains necessary; private
 choices are not promoted to defaults. Public NEW refusal, frozen Retry,
 target-only Smart permissions, provenance exclusions and PP-001/007/008 remain
 unchanged.
+
+## Private global-positive support comparison
+
+The [fixed support experiment](../../../engineering/phase-4-regional-guidance-global-support-research.md)
+tests one possible contributor to the failed visual exchange: global positive
+tokens remain eligible inside regions. Its regional-only variant excludes that
+token range while preserving both global pools, every Main recipe and sampling
+input. Fresh historical control, literal native permission checks, repeat and
+controlled forwarding-fault/control/restoration checks pass. The intervention
+affects predictions and reopened RGB for all four target cases.
+
+Visual qualification still fails: seed 124 exchanges object identities, but
+the mug becomes pink instead of blue and both objects float; seed 123 becomes
+a repeated mosaic. Full outcome is 0 PASS / 3 FAIL / 1 INCONCLUSIVE, with a
+partial object-placement improvement. Global pooled conditioning remains active
+and unisolated. These agent observations do not establish a product default,
+public admission, general quality or a promise-status change.
