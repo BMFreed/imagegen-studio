@@ -1350,3 +1350,22 @@ does not select a default. Source review is CLEAN; retained-data verification
 is distinct from ROOT runtime/physical observations. All payload bytes are
 archived before 14,458,880 bytes of measured idle-data disposal. There is no
 production mechanism, public admission or promise-status change.
+
+## Private positive pooled-source comparison
+
+The [fixed pooled-source comparison](./phase-4-regional-guidance-pooled-sources-research.md)
+keeps global token support and all Main/text/mask/seed/sampling inputs fixed,
+varying only the existing positive pooled source between global and either
+regional owner. Ten initial cases pass; four forwarding-fault/control/restored
+executions add three GREEN and one intentional post-PNG pool RED. Actual count
+is fourteen native calls, 420 UNet/Euler transitions and 28 warnings. The initial
+batch interruption before a fourth pipeline call and later controller adoption
+are separate operational diagnostics, with no extra native call or raised limit.
+
+Visual result remains NOT_QUALIFIED: 0 PASS / 6 FAIL / 2 INCONCLUSIVE. Neither
+regional pool fixes side exchange for either seed, though object details and
+unwanted utensils change. Source review is CLEAN; retained audit and ROOT native /
+physical observations have separate scopes. All temporary payload bytes survive
+verified archival before 18,812,928 bytes of measured disposal. A regional pool
+is still whole-image conditioning; no neutral-pool mechanism, product default,
+public admission or promise-status promotion is added.

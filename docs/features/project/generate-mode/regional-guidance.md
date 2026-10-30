@@ -870,3 +870,19 @@ a repeated mosaic. Full outcome is 0 PASS / 3 FAIL / 1 INCONCLUSIVE, with a
 partial object-placement improvement. Global pooled conditioning remains active
 and unisolated. These agent observations do not establish a product default,
 public admission, general quality or a promise-status change.
+
+## Private pooled-source comparison
+
+The [pooled-source experiment](../../../engineering/phase-4-regional-guidance-pooled-sources-research.md)
+holds global token support at Everywhere and selects the positive pooled vector
+from the global or either regional prompt, with the negative pool unchanged.
+The selected vector still conditions the whole image. Literal pooled-value and
+all-step native consumption checks pass; exact global control, repeat and
+forwarding-fault/control/restoration have retained evidence.
+
+The visual gate remains unqualified: 0 PASS / 6 FAIL / 2 INCONCLUSIVE across
+eight regional-pool targets. Details and unwanted objects change, but neither
+pooled owner yields the required side exchange for either seed. Global text
+tokens remained eligible throughout; their interaction with regional pools is
+not qualified. No source selection becomes a product default or changes public
+admission, provenance exclusions, frozen Retry independence or PP-001/007/008.
