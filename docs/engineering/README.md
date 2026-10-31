@@ -1369,3 +1369,21 @@ physical observations have separate scopes. All temporary payload bytes survive
 verified archival before 18,812,928 bytes of measured disposal. A regional pool
 is still whole-image conditioning; no neutral-pool mechanism, product default,
 public admission or promise-status promotion is added.
+
+## Private global text composition comparison
+
+The [fixed composition comparison](./phase-4-regional-guidance-composition-research.md)
+uses a genuine empty-mask region to hold the selected pooled vector exact while
+changing full object-bearing versus scene-only global text at K308. Eight fresh
+Main handoffs, all thirteen native calls, exact repeat/restoration and an
+intentional post-PNG wrong-handoff RED have retained evidence: 12 GREEN / 1 RED,
+27 warnings, 390 UNet/Euler and 27,300 original processor/SDPA observations.
+
+Visual qualification remains NOT_QUALIFIED: 0 PASS / 6 FAIL / 2 INCONCLUSIVE.
+Both scene-only swapped images move the apple right, but duplication, malformed
+forms or loss of the mug prevent complete exchange. The standalone record-only
+RUN-scope defect is separately corrected/replayed without Torch or extra ML;
+all native functions remain R1-exact. Source/input reviews, ROOT execution and
+retained bookkeeping have distinct scopes. Complete payload bytes are archived
+before 18,268,160 bytes of measured disposal. No production/default/public or
+promise-status change is introduced.

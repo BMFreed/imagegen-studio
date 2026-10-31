@@ -886,3 +886,20 @@ pooled owner yields the required side exchange for either seed. Global text
 tokens remained eligible throughout; their interaction with regional pools is
 not qualified. No source selection becomes a product default or changes public
 admission, provenance exclusions, frozen Retry independence or PP-001/007/008.
+
+## Private global text composition experiment
+
+The [composition experiment](../../../engineering/phase-4-regional-guidance-composition-research.md)
+compares full object-bearing and scene-only global text with an identical
+whole-image pooled vector from a genuine empty-mask carrier. Its tokens have no
+permissions; original object information remains in the selected pool. Fresh
+Main inputs and native conditioning/permission/pool/PNG checks, exact repeat and
+controlled wrong-handoff detection/restoration have retained evidence.
+
+The complete visual gate remains unqualified: 0 PASS / 6 FAIL / 2 INCONCLUSIVE.
+Scene-only swapped images move the apple right for both seeds, but duplication,
+malformed forms or a missing recognizable mug prevent the requested complete
+pair exchange. This is a bounded partial effect, not a selected product default
+or general trained quality. The record-only scope correction adds no native
+execution. Public NEW refusal, frozen Retry, Smart permissions, provenance
+exclusions and PP-001/007/008 status remain unchanged.
