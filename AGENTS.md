@@ -5,6 +5,13 @@
 - Use Vue Single File Components, TypeScript, Vite, Naive UI and pnpm.
 - Do not introduce Tailwind CSS, UnoCSS, SCSS or CSS Modules unless explicitly requested.
 
+## InvokeAI as the basis for non-UI logic
+
+- Take all non-UI application logic from InvokeAI and adapt it to ImageGen Studio's stack and product contracts. This includes inference, workers, model/resource management, storage, queues and recovery.
+- Before designing, implementing or changing non-UI behavior, read the corresponding current InvokeAI implementation and its callers. Use the local source checkout (`../sources/InvokeAI`); record the consulted revision and relevant source paths. Prior summaries or similar-looking algorithms do not replace this source check.
+- Reuse and adapt the existing InvokeAI mechanism rather than independently inventing a parallel implementation. Keep UI presentation and interaction aligned with this project's UI guidance and sources of truth.
+- If the required mechanism is absent from InvokeAI, cannot be reused, or cannot be adapted to our stack/contracts, tell the user what could not be taken and why before introducing a custom alternative. Never silently substitute an independent implementation for an InvokeAI-based one.
+
 ## Styling
 
 - Put component-specific styles in the same `.vue` file under `<style scoped>`.
