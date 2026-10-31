@@ -1403,3 +1403,17 @@ therefore persists with the source operators; ordinary noise/initialization
 differences remain a separate causal experiment. Numerical evidence does not
 promote visual acceptance.
 Public admission, product defaults and PP-001/007/008 remain unchanged.
+
+## Private noise-draw and initialization comparison
+
+The [fixed noise comparison](./phase-4-regional-guidance-noise-research.md)
+holds the now-checked regional operators and whole Main swapped recipes fixed
+while separately varying random-draw precision and initial scaling. Two pinned
+historical controls reduce the eight-cell, two-seed matrix to six fresh trained
+requests. ROOT's 33 distinct selections pass, with 40 warnings; two numeric
+branch mutations give semantic REDs with unaffected controls/restoration.
+FP32 draw improves principal placement for seed 123 and grounding for seed 124,
+which retains an extra mug. Initialization alone does not repair the scenes.
+Full swapped assessment remains NOT_QUALIFIED (0 PASS / 6 FAIL / 2 INCONCLUSIVE).
+Ordinary-generation calibration follows before another regional mechanism
+change. This test-only experiment changes no production policy or readiness.

@@ -924,3 +924,17 @@ No existing threshold, safety refusal, composition default or production path
 changes merely to match that reference. Enabled-region NEW refusal, frozen
 Retry independence, Smart permissions, provenance exclusions and PP-001/007/008
 remain unchanged.
+
+## Private noise and initialization experiment
+
+The [fixed noise experiment](../../../engineering/phase-4-regional-guidance-noise-research.md)
+separates CPU FP16 versus source-default FP32 draws from native versus original
+Invoke legacy initial scaling. Two seeds, unchanged genuine Main swapped inputs
+and the existing trained pipeline form eight cells, including two historical
+controls. ROOT's 33 distinct checks pass, including real initial-latent consumption
+and PNG publication; both numeric branch mutations are detected. FP32 draw
+improves some principal placement/grounding, but duplicates and ambiguous geometry
+remain. Fixed swapped assessment is NOT_QUALIFIED: 0 PASS / 6 FAIL / 2 INCONCLUSIVE.
+This is not a full assignment/swapped visual gate or a selected product default.
+Ordinary-generation calibration remains necessary. Public admission, frozen-work
+and provenance boundaries and PP-001/007/008 remain unchanged.
