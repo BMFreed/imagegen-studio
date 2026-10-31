@@ -1387,3 +1387,19 @@ all native functions remain R1-exact. Source/input reviews, ROOT execution and
 retained bookkeeping have distinct scopes. Complete payload bytes are archived
 before 18,268,160 bytes of measured disposal. No production/default/public or
 promise-status change is introduced.
+
+## Private Invoke regional source comparison
+
+The [Invoke comparison](./phase-4-regional-guidance-invoke-parity-research.md)
+checks pinned original graph, conditioning, mask and attention source before
+another composition change. The basic token-bank design matches. Canvas alpha,
+empty regional streams, finite attention bias and ordinary noise initialization
+have explicit differences. Original operators run on the existing common
+runtime; this is not an installed Invoke application qualification. ROOT's
+33 cases pass; 38 small numerical comparisons and the trained thirty-step
+predictions/PT/RGB are exact. A spatial-omission mutation produces two semantic
+REDs with unaffected controls and exact restoration. The fixed visual failure
+therefore persists with the source operators; ordinary noise/initialization
+differences remain a separate causal experiment. Numerical evidence does not
+promote visual acceptance.
+Public admission, product defaults and PP-001/007/008 remain unchanged.

@@ -903,3 +903,24 @@ pair exchange. This is a bounded partial effect, not a selected product default
 or general trained quality. The record-only scope correction adds no native
 execution. Public NEW refusal, frozen Retry, Smart permissions, provenance
 exclusions and PP-001/007/008 status remain unchanged.
+
+## Private Invoke source reference
+
+The [pinned Invoke source comparison](../../../engineering/phase-4-regional-guidance-invoke-parity-research.md)
+checks the real Canvas graph and original conditioning/mask/attention operators
+on a common runtime. Both paths independently encode regional text and build a
+spatially restricted token bank. Differences in alpha threshold, empty streams,
+finite mask bias and ordinary noise initialization remain explicit; source
+similarity does not establish full application or visual equivalence.
+
+ROOT's 30 small cases and 3 trained-pair selections pass. On the fixed historical
+Main swapped recipe, the common-start thirty-step predictions, native PT and
+reopened RGB are exact between our adapter and original Invoke operators. The
+spatial-omission mutation is detected with exact controls/restoration. The same
+visually failed output remains; source-default noise/initialization differences
+are measured separately, without a trained quality claim.
+
+No existing threshold, safety refusal, composition default or production path
+changes merely to match that reference. Enabled-region NEW refusal, frozen
+Retry independence, Smart permissions, provenance exclusions and PP-001/007/008
+remain unchanged.
