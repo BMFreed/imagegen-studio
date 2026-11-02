@@ -962,3 +962,11 @@ on one terminal latent. The single request/two replay experiment passes
 (1 PASS, 3 warnings); FP16 is exact to the ordinary baseline, and FP32 changes
 at most 2/255 per RGB channel while retaining the extra mug. It selects no
 production default and supplies no regional visual acceptance.
+
+## Ordinary author-sampling calibration
+
+The [Illustrious author sampling control](../../../engineering/phase-4-illustrious-author-sampling-research.md)
+compares one Euler a/28/CFG 5 candidate with retained ordinary controls using
+unchanged scene text and seeds. This is an ordinary-worker experiment with new
+test-authored sampling commands; it neither widens private regional profiles
+nor supplies regional visual acceptance. Execution is pending.

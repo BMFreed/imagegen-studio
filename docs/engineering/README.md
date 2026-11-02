@@ -1443,3 +1443,11 @@ FP16 exactly matches the retained ordinary result; full-VAE FP32 changes at
 most 2/255 per RGB channel and retains the extra white mug. This intervention
 does not repair the fixed scene or select a new default. No production or
 readiness change is introduced.
+
+## Ordinary Illustrious author sampling
+
+The [author sampling control](./phase-4-illustrious-author-sampling-research.md)
+freezes Euler a/28/CFG 5 from the exact checkpoint author's card, with the same
+two ordinary prompts/seeds. It uses the existing ordinary worker entry function;
+private regional Euler admission remains unchanged. Sampling is authored by the
+new experiment, while historical Main inputs remain intact. Execution is pending.
