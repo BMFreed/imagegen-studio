@@ -1417,3 +1417,17 @@ which retains an extra mug. Initialization alone does not repair the scenes.
 Full swapped assessment remains NOT_QUALIFIED (0 PASS / 6 FAIL / 2 INCONCLUSIVE).
 Ordinary-generation calibration follows before another regional mechanism
 change. This test-only experiment changes no production policy or readiness.
+
+## Private ordinary FP32 controls
+
+The [two ordinary controls](./phase-4-regional-guidance-ordinary-research.md)
+compare genuine disabled-region Main recipes for seeds 123/124 against the two
+already retained FP32/native regional results. Current Invoke's global-only
+conditioning and native no-mask attention path supply the mechanism through
+existing ImageGen owners. Two new trained calls and the model-free comparison
+passed (3 PASS, 4 warnings), including 60 native steps and 4,200 site observations.
+Independent anonymous PNG descriptions and ROOT's comparison found the extra
+white mug at seed 124 and distorted foreground at seed 123 already present
+without regions. These defects are not solely regional; additional regional
+effects remain possible. Ordinary-scene calibration against Invoke is the next
+diagnostic boundary. No production/default or readiness change is introduced.

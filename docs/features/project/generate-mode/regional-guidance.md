@@ -938,3 +938,18 @@ remain. Fixed swapped assessment is NOT_QUALIFIED: 0 PASS / 6 FAIL / 2 INCONCLUS
 This is not a full assignment/swapped visual gate or a selected product default.
 Ordinary-generation calibration remains necessary. Public admission, frozen-work
 and provenance boundaries and PP-001/007/008 remain unchanged.
+
+## Private ordinary-generation controls
+
+The [ordinary FP32 controls](../../../engineering/phase-4-regional-guidance-ordinary-research.md)
+use two existing genuinely authored no-region Main handoffs to distinguish
+ordinary-scene defects from changes introduced by enabled regional inputs.
+Initial noise, global conditioning/pools and sampling remain matched to the
+retained regional counterparts. Current Invoke's global-only/no-mask path is
+adapted through existing owners. Two trained calls and one model-free comparison
+passed (3 PASS, 4 warnings). The extra white mug at seed 124 and distorted
+foreground at seed 123 also occur without enabled regions, confirmed by separate
+anonymous pixel descriptions. This narrows diagnosis without excluding added
+regional effects, qualifying quality or supplying an assignment/reversal PASS.
+Ordinary-scene calibration against Invoke follows. This selects no default and
+changes no public admission, frozen-work, provenance or readiness boundary.
