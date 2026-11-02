@@ -1431,3 +1431,15 @@ white mug at seed 124 and distorted foreground at seed 123 already present
 without regions. These defects are not solely regional; additional regional
 effects remain possible. Ordinary-scene calibration against Invoke is the next
 diagnostic boundary. No production/default or readiness change is introduced.
+
+## Private VAE precision calibration
+
+The [same-terminal-latent control](./phase-4-regional-guidance-vae-calibration-research.md)
+isolates current Invoke's FP32 VAE choice from the ordinary experiment's manual
+FP16 choice. One unchanged seed124 ordinary request supplies the terminal latent;
+two original Invoke decoder replays compare precision without changing upstream
+generation. The single request and both replays pass (1 PASS, 3 warnings).
+FP16 exactly matches the retained ordinary result; full-VAE FP32 changes at
+most 2/255 per RGB channel and retains the extra white mug. This intervention
+does not repair the fixed scene or select a new default. No production or
+readiness change is introduced.

@@ -953,3 +953,12 @@ anonymous pixel descriptions. This narrows diagnosis without excluding added
 regional effects, qualifying quality or supplying an assignment/reversal PASS.
 Ordinary-scene calibration against Invoke follows. This selects no default and
 changes no public admission, frozen-work, provenance or readiness boundary.
+
+## Private same-latent VAE control
+
+The [VAE precision control](../../../engineering/phase-4-regional-guidance-vae-calibration-research.md)
+compares current Invoke's FP32 decoding with the explicit FP16 ordinary fixture
+on one terminal latent. The single request/two replay experiment passes
+(1 PASS, 3 warnings); FP16 is exact to the ordinary baseline, and FP32 changes
+at most 2/255 per RGB channel while retaining the extra mug. It selects no
+production default and supplies no regional visual acceptance.
