@@ -126,3 +126,114 @@ Public enabled-region NEW refusal, frozen Retry independence, Smart target-only
 permissions and Regional provenance/Compare/preset exclusions remain unchanged.
 PP-001/007/008 stay **«Пока не обещать»**. No Anima or generic SDXL capability,
 durable Main candidate, Add/Save or quality guarantee is added.
+
+## Completed continuation — 3 November 2026
+
+Execution resumed from clean `3b54556ab2dd62dbb9b36c38bbf343d1a6b28525`
+after the user freed VRAM. Invoke remained clean at the revision recorded above.
+The two fixed cases now pass through the actual ordinary entry point, original
+trained components, ancestral loop, VAE and exclusive RGB publication:
+**2 PASS, 10 warnings**, with 56 UNet calls, 56 Euler transitions, 3,920 original
+attention-site observations, two completed decodes and two published PNGs.
+Each case encodes one K77 pair with three CLIP forwards and zero TI loads/resizes.
+The loading journals independently connect every checkpoint-backed destination
+to the retained exact file. ROOT executed the assertions; source review alone
+does not certify these runtime results.
+
+One earlier diagnostic is excluded from acceptance: **1 failed selection,
+5 warnings**, after all 28 UNet/Euler steps but before the original VAE decode.
+The observer assumed a named `z` argument, whereas the pinned Diffusers forward
+wrapper exposes positional arguments. During unwinding, a strict tokenizer-state
+assertion masked that `KeyError`: the cold pooled Compel tokenizer had set its
+truncation configuration. No PNG was published by this attempt.
+
+The run-owned probe now observes the actual positional latent and delegates the
+unchanged original decode. Before taking its strict preserved-state baseline,
+it calls the original Compel tokenization on both tokenizers, with zero extra
+encoder forwards. Only padding/truncation changes are admitted during this
+preparation; all other serialized state must remain exact. The complete strict
+tokenizer/model/storage/graph/RNG checks remain after preparation. A CPU-only
+preflight confirms the native wrapper signature and the pooled tokenizer's
+truncation change without loading models.
+
+Before retrying, `author-sampling-recovery-contract.json` explicitly raised the
+total ceiling from two to **three actual requests**: the excluded diagnostic and
+the two unchanged acceptance seeds. It preserves the original contract and
+candidate, with no seed/prompt/settings search. Independent recovery-delta
+review is CLEAN, source-only, at probe SHA-256
+`3dee39a9a7528f49c0a2113b3ae30210e63f9d22dd6499d2d774ec19eed3fe46`
+and recovery-contract SHA-256
+`26f46dbebed3252551fb8bda2a617315819144320e2c65ecfe711a1b5c965264`.
+The corrected seed123 exactly reproduces the diagnostic's initial preparation,
+contexts, all 28 predictions/latent transitions, 1,960 sites and stochastic draws.
+Thus this observer repair introduces no measured pre-decode trajectory change.
+Total execution accounting, including the excluded diagnostic, is 84 UNet and
+84 Euler calls; completed native decode/publication remains two.
+
+Both passing cases preserve the asserted source state/storage, module and
+tokenizer graphs, global RNG, original method/observer slots and namespaces.
+Their units finish physically empty, use zero unit swap and stay within the
+declared envelope: maximum accepted host `MemoryPeak` 7,865,012,224 bytes,
+CUDA allocated peak 9,615,542,784 and reserved peak 12,176,064,512 bytes.
+These are observations for these serial requests, not a general capacity bound.
+
+## Finite visual result
+
+ROOT viewed all four original PNGs; a separate reader described four randomized
+copies without prompts, seed labels or the assignment key. Reopened candidate
+RGB changes 3,108,135 channels at seed123 and 3,114,866 at seed124 relative to
+the pinned ordinary controls. Every candidate RGB channel matches independent
+quantization of that request's original native image. Numerical change alone
+does not establish scene quality.
+
+- **Seed123: FAIL** against the frozen blue-mug criterion. The malformed empty
+  foreground recess is gone and both objects are separately supported, but the
+  mug is predominantly white, with a blue decorative band and blue contents.
+- **Seed124: bounded PASS** for the declared ordinary-scene criterion: one blue
+  mug and one red apple, separately supported, with no extra mug or fruit. The
+  previous extra white mug is absent. A large basin and a cropped metal vessel
+  remain unrequested; the criterion did not prohibit other kinds of tableware.
+
+The finite aggregate is **NOT_QUALIFIED: 1 PASS / 1 FAIL**. Independent anonymous
+descriptions support object counts and geometry; they are not a human acceptance
+decision. Human acceptance remains pending. This is partial improvement under a
+bundled sampling intervention, not a proof that sampler choice alone caused it.
+No production default changes and no regional assignment/reversal acceptance
+follow. Do not repeat a model run or tune the prompt to conceal this outcome.
+
+The next diagnostic choice concerns ordinary scene/style calibration for this
+untuned base, rather than another regional mechanism. Any continuation must
+start from current Invoke sources and predeclare its single comparison; this
+attempt supplies no basis for changing regional composition or public admission.
+
+## Retained evidence and release
+
+The same run owner retains `execution-summary.json`, both passing reports and
+their loading/JUnit/log/resource companions, the excluded diagnostic with its
+full exception chain, both original contracts, probe before/after bytes, exact
+Invoke/native source pins, CPU preflights, `visual-verdict.json`, anonymous
+descriptions/key and all four display PNGs. The record-only retained-result audit
+is CLEAN: it independently decodes the PNGs and reconciles counters, contrasts
+and diagnostic/recovery trajectories; it does not rerun the model or certify
+visual quality.
+
+ROOT's fresh release gate checks 13 recorded units/groups, 1,404 source members
+with only these three finalization documents permitted to change, completed
+reader declarations and incoming payload references. No candidate users are
+found among accessible same-UID handles; inaccessible preexisting desktop
+services are explicitly excluded in `release-gates-r2.json`, rather than claimed
+as a complete OS census. Source weights, the compatible runtime, offline config,
+historical Main/ordinary inputs and their reciprocal dependencies remain pinned.
+
+All 18 disposable payload entries (11 regular files and seven directories)
+are retained in `retained-payloads-r1.tar.gz`, SHA-256
+`840457ff907db264a75b4f3d858e48052e28cf3c49f1de96550ea7efdef70f42`.
+Full archive read-back verifies metadata/content against the inventory; a fresh
+exact live inventory and physical/reader/dependency gate precede deletion.
+Only this run's owned `payloads` tree is removed, with **14,962,688 allocated
+bytes reclaimed during the deletion-only interval**. Live report paths inside
+that tree are now historical replay pointers; required native image/terminal
+bytes survive in the archive, and display PNGs remain directly readable.
+Lifecycle is `retained`, with no live payloads. This release adds no model copy,
+environment or provisioned dependency and leaves the existing public limits
+unchanged.

@@ -1451,3 +1451,13 @@ freezes Euler a/28/CFG 5 from the exact checkpoint author's card, with the same
 two ordinary prompts/seeds. It uses the existing ordinary worker entry function;
 private regional Euler admission remains unchanged. Sampling is authored by the
 new experiment, while historical Main inputs remain intact. Execution is pending.
+
+The [completed continuation](./phase-4-illustrious-author-sampling-research.md#completed-continuation--3-november-2026)
+records two actual ordinary-worker PASS cases (10 warnings), 56 native steps and
+two PNGs. One excluded diagnostic failed in observer/tokenizer preparation before
+VAE decode; a frozen recovery contract bounds the total to three requests, and
+the corrected repeat preserves its complete pre-decode trajectory. Anonymous
+image descriptions and ROOT's bounded review find partial improvement:
+seed124 loses the extra mug; seed123 has coherent support but a predominantly
+white mug. The finite visual result remains NOT_QUALIFIED (1 PASS / 1 FAIL).
+No default, regional visual acceptance or public-readiness change follows.

@@ -970,3 +970,13 @@ compares one Euler a/28/CFG 5 candidate with retained ordinary controls using
 unchanged scene text and seeds. This is an ordinary-worker experiment with new
 test-authored sampling commands; it neither widens private regional profiles
 nor supplies regional visual acceptance. Execution is pending.
+
+The [completed ordinary control](../../../engineering/phase-4-illustrious-author-sampling-research.md#completed-continuation--3-november-2026)
+has two mechanical PASS cases and two original PNGs; an earlier observer/setup
+diagnostic is excluded and preserved. The explicit recovery ceiling is three
+requests total, without changing the seeds, text or sampling candidate. Visual
+review is partial: seed124's extra mug disappears, while seed123's mug remains
+predominantly white. The finite aggregate is NOT_QUALIFIED (1 PASS / 1 FAIL),
+with no human acceptance or regional assignment/reversal qualification. All
+public refusals, frozen-work independence, provenance exclusions and
+PP-001/007/008 statuses remain unchanged; no production default is selected.
