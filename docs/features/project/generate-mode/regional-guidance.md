@@ -1017,3 +1017,28 @@ admission, durable queue input, Main candidate receipt, frozen regional Retry,
 Add/Save or visual acceptance. Previous negative visual findings and all public,
 Smart-permission, frozen-work and provenance exclusions remain; PP-001/007/008
 stay «Пока не обещать». Durable frozen transport/recovery is the next owner.
+
+## Private durable queue and candidate recovery
+
+The subsequent [durable regional slice](../../../engineering/phase-4-regional-guidance-durable-research.md)
+closes that private ownership boundary. A distinct `illustrious-regional` job
+retains its complete recipe/masks, target and explicit sampling/composition;
+Retry copies the saved inputs into a new independent attempt. The same queue
+running-slot CAS and candidate receipt/files/completion transaction remain
+authoritative. Restart cancels unfinished computation and reconciles exact
+manifest-first completion.
+
+ROOT recorded 424 affected Main PASS and one real trained CUDA child at
+1024²/two Euler steps. After caller edits, transient target deletion, database
+reopen, Retry and source-row pruning, it reproduces the prior exact PNG. The
+private candidate survives another reopen and completed queue-history pruning.
+Controlled tests, native execution, mutation sensitivity and source review
+retain separate evidence levels in the linked report.
+
+Normal Generate/dispatcher, queue-manager discovery, Results/image reads and
+accepted-provenance parsing remain closed to this private job/candidate. Private
+callers must own/quiesce/discard their sessions; public Project lifecycle,
+global-TI ordinary-preparation admission, Results/Retry UI, explicit Add/Save,
+composition defaults, Anima and visual usefulness are not qualified here.
+PP-001/007/008 remain «Пока не обещать»; Smart permissions and frozen-work and
+provenance exclusions remain unchanged.

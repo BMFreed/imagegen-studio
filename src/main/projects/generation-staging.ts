@@ -18,6 +18,7 @@ import * as v from 'valibot'
 
 import type { DB, GenerationCandidateReceipt, GenerationQueueItem } from '../db/database.types.js'
 import type { FrozenQueuedGenerationV1 } from './generation-queue.js'
+import type { FrozenQueuedRegionalV1 } from './regional-queued-generation.js'
 
 import {
   GenerationQueueRepository,
@@ -31,6 +32,7 @@ import { frozenLoraFieldsAgree } from './illustrious-generation-loras.js'
 import { frozenVaeFieldsAgree } from './illustrious-generation-vae.js'
 import { assertOutpaintContribution } from './outpaint-contribution.js'
 import { localProjectRecoveryKey } from './project-identity.js'
+import { parseFrozenQueuedRegionalV1 } from './regional-queued-generation.js'
 
 const MAX_IMAGE_BYTES = IGS_GENERATION_PNG_MAX_BYTES
 const MAX_FROZEN_PAYLOAD_BYTES = GENERATION_STAGING_LIMITS.frozenPayloadBytes
@@ -136,8 +138,14 @@ export interface GenerationCandidatePublicationInput {
   queueItemId: string
   thumbnail?: unknown
 }
+export interface RegionalCandidatePublicationInput {
+  actualSeed: number
+  expectedStatusSequence: number
+  pngBytes: Buffer
+  queueItemId: string
+}
 type CandidateEntry = v.InferOutput<typeof CandidateEntrySchema>
-type FrozenPayload = FrozenGenerationCandidatePayloadV1
+type FrozenPayload = FrozenGenerationCandidatePayloadV1 | FrozenQueuedRegionalV1
 
 type SessionManifest = v.InferOutput<typeof SessionManifestSchema>
 
@@ -344,6 +352,18 @@ export class GenerationStagingRepository {
     )
   }
 
+  /** Private regional candidates never enter normal Results or portable accepted provenance. */
+  async listVerifiedRegionalCandidates(
+    localProjectKey: string,
+  ): Promise<VerifiedGenerationCandidate[]> {
+    if (!PROJECT_KEY_PATTERN.test(localProjectKey)) {
+      throw new GenerationStagingError('STAGING_INPUT_INVALID', 'Project identity is invalid.')
+    }
+    return await this.serialize(
+      async () => await this.listVerifiedCandidatesUnlocked(localProjectKey, true),
+    )
+  }
+
   /**
    * Check a fresh batch before its queue inputs become visible. This reserves nothing: the caller
    * must serialize admission through publication. Future completions keep the exact frozen strings
@@ -358,6 +378,11 @@ export class GenerationStagingRepository {
     input: GenerationStagingBatchCapacityInput,
   ): Promise<void> {
     return await this.preflightCapacity(input, true)
+  }
+
+  /** The same finite manifest budget, restricted to private frozen regional operations. */
+  async preflightRegionalBatchCapacity(input: GenerationStagingBatchCapacityInput): Promise<void> {
+    return await this.preflightCapacity(input, false, true)
   }
 
   /**
@@ -375,6 +400,21 @@ export class GenerationStagingRepository {
     input: GenerationCandidatePublicationInput,
   ): Promise<VerifiedGenerationCandidate> {
     return await this.publishCandidate({ ...input }, 'illustrious')
+  }
+
+  /** The transport has consumed its provisional files; own the verified result bytes now. */
+  async publishRegionalCandidate(
+    input: RegionalCandidatePublicationInput,
+  ): Promise<VerifiedGenerationCandidate> {
+    if (
+      !Buffer.isBuffer(input.pngBytes) ||
+      input.pngBytes.byteLength < 1 ||
+      input.pngBytes.byteLength > MAX_IMAGE_BYTES
+    ) {
+      throw new GenerationStagingError('STAGING_OUTPUT_INVALID', 'The regional PNG is invalid.')
+    }
+    const captured = { ...input, pngBytes: Buffer.from(input.pngBytes) }
+    return await this.publishCandidate(captured, undefined, true)
   }
 
   async readLastActualSeed(localProjectKey: string, documentId: string): Promise<number | null> {
@@ -400,33 +440,7 @@ export class GenerationStagingRepository {
     localProjectKey: string
     stagingSessionId: string
   }): Promise<Buffer | null> {
-    if (
-      !PROJECT_KEY_PATTERN.test(input.localProjectKey) ||
-      !UUID_PATTERN.test(input.candidateId) ||
-      !UUID_PATTERN.test(input.stagingSessionId) ||
-      !SHA256_PATTERN.test(input.imageSha256)
-    ) {
-      throw new GenerationStagingError('STAGING_INPUT_INVALID', 'Candidate identity is invalid.')
-    }
-    return await this.serialize(async () => {
-      const candidate = (await this.listVerifiedCandidatesUnlocked(input.localProjectKey)).find(
-        (entry) =>
-          entry.candidateId === input.candidateId &&
-          entry.stagingSessionId === input.stagingSessionId &&
-          entry.image.sha256 === input.imageSha256,
-      )
-      if (!candidate) {
-        return null
-      }
-      // The list verified the image; the second stable read prevents a changed file from being
-      // served between that verification and the byte copy returned to the protocol handler.
-      const bytes = await readStableFile(candidate.assetPath, MAX_IMAGE_BYTES).catch(() => null)
-      return bytes &&
-        bytes.length === candidate.image.byteSize &&
-        sha256(bytes) === candidate.image.sha256
-        ? bytes
-        : null
-    })
+    return await this.readCandidatePng(input, false)
   }
 
   /** A fresh cache read remains subordinate to the currently visible authoritative candidate. */
@@ -460,6 +474,16 @@ export class GenerationStagingRepository {
       const cache = await this.readThumbnailCache(candidate, sessionPath).catch(() => null)
       return cache?.metadata.sha256 === input.thumbnailSha256 ? cache.bytes : null
     })
+  }
+
+  /** Private byte access is unavailable through normal candidate protocols. */
+  async readVerifiedRegionalCandidatePng(input: {
+    candidateId: string
+    imageSha256: string
+    localProjectKey: string
+    stagingSessionId: string
+  }): Promise<Buffer | null> {
+    return await this.readCandidatePng(input, true)
   }
 
   /**
@@ -696,6 +720,7 @@ export class GenerationStagingRepository {
 
   private async listVerifiedCandidatesUnlocked(
     localProjectKey: string,
+    regional = false,
   ): Promise<VerifiedGenerationCandidate[]> {
     this.requireReconciled()
     const root = await this.ensureStagingRoot()
@@ -707,6 +732,12 @@ export class GenerationStagingRepository {
     const candidates: VerifiedGenerationCandidate[] = []
     const scanned = await this.scanEntries(root, localProjectKey)
     for (const { entry, sessionPath } of scanned.entries) {
+      if (
+        (parseFrozenOperationalPayload(entry.frozenPayloadJson).kind === 'illustrious-regional') !==
+        regional
+      ) {
+        continue
+      }
       if (await this.isDiscardedSession(entry.localProjectKey, entry.stagingSessionId)) {
         continue
       }
@@ -729,6 +760,7 @@ export class GenerationStagingRepository {
   private async preflightCapacity(
     input: GenerationStagingBatchCapacityInput,
     internalOutpaint: boolean,
+    regional = false,
   ): Promise<void> {
     this.requireReconciled()
     if (
@@ -776,17 +808,25 @@ export class GenerationStagingRepository {
             'The frozen context is too large.',
           )
         }
-        const payload = internalOutpaint
-          ? parseFrozenGenerationPayloadV1(entry.frozenPayloadJson)
-          : parseFrozenPayload(entry.frozenPayloadJson)
-        if (internalOutpaint && !isQueuedOutpaint(payload)) {
+        const payload = regional
+          ? parseFrozenQueuedRegionalV1(entry.frozenPayloadJson)
+          : internalOutpaint
+            ? parseFrozenGenerationPayloadV1(entry.frozenPayloadJson)
+            : parseFrozenPayload(entry.frozenPayloadJson)
+        if (
+          internalOutpaint &&
+          (payload.kind === 'illustrious-regional' || !isQueuedOutpaint(payload))
+        ) {
           throw new GenerationStagingError(
             'STAGING_INPUT_INVALID',
             'Internal outpaint capacity preflight requires only frozen outpaint operations.',
           )
         }
         const candidate: CandidateEntry = {
-          actualSeed: 0xff_ff_ff_ff,
+          actualSeed:
+            payload.kind === 'illustrious-regional'
+              ? payload.workerJob.sampling.seed
+              : 0xff_ff_ff_ff,
           candidateId: entry.queueItemId,
           // ECMAScript Date supports signed six-digit years: its longest ISO output is 27 bytes.
           completedAt: new Date(8_640_000_000_000_000).toISOString(),
@@ -892,9 +932,13 @@ export class GenerationStagingRepository {
   }
 
   private async publishCandidate(
-    input: GenerationCandidatePublicationInput,
+    input: GenerationCandidatePublicationInput | RegionalCandidatePublicationInput,
     requiredFamily?: 'illustrious',
+    regional = false,
   ): Promise<VerifiedGenerationCandidate> {
+    if (regional !== 'pngBytes' in input) {
+      throw new GenerationStagingError('STAGING_INPUT_INVALID', 'The publication owner is invalid.')
+    }
     assertUuid(input.queueItemId)
     if (!isUint32(input.actualSeed) || !isSafeUInt(input.expectedStatusSequence)) {
       throw new GenerationStagingError(
@@ -905,7 +949,9 @@ export class GenerationStagingRepository {
     return await this.serialize(async () => {
       this.requireReconciled()
       const queue = new GenerationQueueRepository(this.db, this.dataRoot)
-      const verified = await queue.loadVerifiedInput(input.queueItemId)
+      const verified = regional
+        ? await queue.loadVerifiedRegionalInput(input.queueItemId)
+        : await queue.loadVerifiedInput(input.queueItemId)
       if (
         requiredFamily === 'illustrious' &&
         verified.payload.kind !== 'illustrious-txt2img' &&
@@ -923,6 +969,9 @@ export class GenerationStagingRepository {
       ) {
         throw new GenerationStagingError('STAGING_STATUS_CONFLICT', 'The job is no longer running.')
       }
+      if (regional && input.actualSeed !== verified.payload.workerJob.sampling.seed) {
+        throw new GenerationStagingError('STAGING_INPUT_INVALID', 'The regional seed changed.')
+      }
       const row = await this.db
         .selectFrom('generation_queue_item')
         .selectAll()
@@ -934,19 +983,34 @@ export class GenerationStagingRepository {
       const frozenPayloadJson = row.frozen_payload_json
       if (
         Buffer.byteLength(frozenPayloadJson, 'utf8') > MAX_FROZEN_PAYLOAD_BYTES ||
-        !isDeepStrictEqual(parseFrozenPayload(frozenPayloadJson), verified.payload)
+        !isDeepStrictEqual(
+          regional
+            ? parseFrozenQueuedRegionalV1(frozenPayloadJson)
+            : parseFrozenPayload(frozenPayloadJson),
+          verified.payload,
+        )
       ) {
         throw new GenerationStagingError('STAGING_INPUT_INVALID', 'The frozen job changed.')
       }
-      const outputPath = await this.verifiedProvisionalPath(
-        input.expectedProvisionalRoot,
-        input.provisionalOutputPath,
-        verified.payload.kind,
-      )
-      const outputBytes = await readStableFile(outputPath, MAX_IMAGE_BYTES)
+      const outputPath =
+        'pngBytes' in input
+          ? null
+          : await this.verifiedProvisionalPath(
+              input.expectedProvisionalRoot,
+              input.provisionalOutputPath,
+              verified.payload.kind,
+            )
+      const outputBytes =
+        'pngBytes' in input ? input.pngBytes : await readStableFile(outputPath!, MAX_IMAGE_BYTES)
       await validateOutputPng(outputBytes, verified.payload.context.bbox)
+      if (regional && outputBytes[25] !== 2) {
+        throw new GenerationStagingError(
+          'STAGING_OUTPUT_INVALID',
+          'The regional output must be RGB.',
+        )
+      }
       let sourceBytes: Buffer | undefined
-      if (isQueuedOutpaint(verified.payload)) {
+      if (verified.payload.kind !== 'illustrious-regional' && isQueuedOutpaint(verified.payload)) {
         sourceBytes = await readStableFile(verified.targetPath, MAX_IMAGE_BYTES)
         try {
           await assertOutpaintContribution(
@@ -1002,9 +1066,11 @@ export class GenerationStagingRepository {
       await this.commitCompletion(entry, 'live')
       // A derivative failure cannot turn a durable, validated PNG completion into a failed job.
       // This stays under the session gate, so discard cannot race publication and leave a cache.
-      await this.publishThumbnailCache(entry, sessionPath, outputPath, input.thumbnail).catch(
-        () => undefined,
-      )
+      if (!('pngBytes' in input)) {
+        await this.publishThumbnailCache(entry, sessionPath, outputPath!, input.thumbnail).catch(
+          () => undefined,
+        )
+      }
       const candidate = toVerifiedCandidate(entry, sessionPath)
       const cache = await this.readThumbnailCache(candidate, sessionPath).catch(() => null)
       return cache ? { ...candidate, thumbnail: cache.metadata } : candidate
@@ -1170,6 +1236,46 @@ export class GenerationStagingRepository {
       .selectAll()
       .where('id', '=', id)
       .executeTakeFirst()
+  }
+
+  private async readCandidatePng(
+    input: {
+      candidateId: string
+      imageSha256: string
+      localProjectKey: string
+      stagingSessionId: string
+    },
+    regional: boolean,
+  ): Promise<Buffer | null> {
+    if (
+      !PROJECT_KEY_PATTERN.test(input.localProjectKey) ||
+      !UUID_PATTERN.test(input.candidateId) ||
+      !UUID_PATTERN.test(input.stagingSessionId) ||
+      !SHA256_PATTERN.test(input.imageSha256)
+    ) {
+      throw new GenerationStagingError('STAGING_INPUT_INVALID', 'Candidate identity is invalid.')
+    }
+    return await this.serialize(async () => {
+      const candidate = (
+        await this.listVerifiedCandidatesUnlocked(input.localProjectKey, regional)
+      ).find(
+        (entry) =>
+          entry.candidateId === input.candidateId &&
+          entry.stagingSessionId === input.stagingSessionId &&
+          entry.image.sha256 === input.imageSha256,
+      )
+      if (!candidate) {
+        return null
+      }
+      // The list verified the image; the second stable read prevents a changed file from being
+      // served between that verification and the byte copy returned to the protocol handler.
+      const bytes = await readStableFile(candidate.assetPath, MAX_IMAGE_BYTES).catch(() => null)
+      return bytes &&
+        bytes.length === candidate.image.byteSize &&
+        sha256(bytes) === candidate.image.sha256
+        ? bytes
+        : null
+    })
   }
 
   private async readSessionManifest(manifestPath: string): Promise<SessionManifest | null> {
@@ -1464,9 +1570,12 @@ export class GenerationStagingRepository {
     await checkPrivateDirectory(assetsRoot)
     const assetPath = path.join(assetsRoot, `${entry.candidateId}.png`)
     const bytes = await readStableFile(assetPath, MAX_IMAGE_BYTES)
-    const payload = parseFrozenPayload(entry.frozenPayloadJson)
+    const payload = parseFrozenOperationalPayload(entry.frozenPayloadJson)
     await validateOutputPng(bytes, payload.context.bbox)
-    if (isQueuedOutpaint(payload)) {
+    if (payload.kind === 'illustrious-regional' && bytes[25] !== 2) {
+      throw new GenerationStagingError('STAGING_OUTPUT_INVALID', 'The regional output must be RGB.')
+    }
+    if (payload.kind !== 'illustrious-regional' && isQueuedOutpaint(payload)) {
       try {
         const sourceBytes = await readStableFile(
           path.join(sessionPath, 'source-target.png'),
@@ -1503,7 +1612,37 @@ export function parseFrozenGenerationCandidatePayloadV1(
   return parseFrozenPayload(json)
 }
 
-function parseFrozenPayload(json: string): FrozenPayload {
+/** Recovery understands private operations without expanding accepted portable provenance. */
+function parseFrozenOperationalPayload(json: string): FrozenPayload {
+  if (Buffer.byteLength(json, 'utf8') > MAX_FROZEN_PAYLOAD_BYTES) {
+    throw new GenerationStagingError(
+      'STAGING_INPUT_INVALID',
+      'The frozen candidate context is too large.',
+    )
+  }
+  let kind: unknown
+  try {
+    kind = (JSON.parse(json) as { kind?: unknown }).kind
+  } catch {
+    throw new GenerationStagingError(
+      'STAGING_INPUT_INVALID',
+      'The frozen candidate context is invalid.',
+    )
+  }
+  if (kind === 'illustrious-regional') {
+    try {
+      return parseFrozenQueuedRegionalV1(json)
+    } catch {
+      throw new GenerationStagingError(
+        'STAGING_INPUT_INVALID',
+        'The frozen regional context is invalid.',
+      )
+    }
+  }
+  return parseFrozenPayload(json)
+}
+
+function parseFrozenPayload(json: string): FrozenGenerationCandidatePayloadV1 {
   if (Buffer.byteLength(json, 'utf8') > MAX_FROZEN_PAYLOAD_BYTES) {
     throw new GenerationStagingError(
       'STAGING_INPUT_INVALID',
@@ -1581,10 +1720,12 @@ function validateEntry(entry: CandidateEntry, internalOutpaint = false): void {
   }
   const payload = internalOutpaint
     ? parseFrozenGenerationPayloadV1(entry.frozenPayloadJson)
-    : parseFrozenPayload(entry.frozenPayloadJson)
+    : parseFrozenOperationalPayload(entry.frozenPayloadJson)
   if (
     payload.context.documentId !== entry.documentId ||
     payload.context.documentRevision !== entry.documentRevision ||
+    (payload.kind === 'illustrious-regional' &&
+      payload.workerJob.sampling.seed !== entry.actualSeed) ||
     payload.context.bbox.width !== entry.image.width ||
     payload.context.bbox.height !== entry.image.height
   ) {
@@ -1618,7 +1759,7 @@ function receiptMatches(
 function queueRowMatches(row: Selectable<GenerationQueueItem>, entry: CandidateEntry): boolean {
   return (
     row.id === entry.queueItemId &&
-    row.operation === parseFrozenPayload(entry.frozenPayloadJson).kind &&
+    row.operation === parseFrozenOperationalPayload(entry.frozenPayloadJson).kind &&
     row.local_project_key === entry.localProjectKey &&
     row.staging_session_id === entry.stagingSessionId &&
     row.canonical_project_path === entry.projectPath &&
@@ -1635,7 +1776,7 @@ function toVerifiedCandidate(
   return {
     actualSeed: entry.actualSeed,
     assetPath: path.join(sessionPath, entry.image.relativePath),
-    bbox: parseFrozenPayload(entry.frozenPayloadJson).context.bbox,
+    bbox: parseFrozenOperationalPayload(entry.frozenPayloadJson).context.bbox,
     candidateId: entry.candidateId,
     completedAt: entry.completedAt,
     completionOrder: entry.completionOrder,

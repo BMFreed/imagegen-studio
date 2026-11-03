@@ -15,8 +15,10 @@ const at = '2026-10-22T00:00:00.000Z'
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), 'igs-smart-raster-history-migration-'))
   const legacyMigrations = path.join(root, 'legacy-migrations')
-  await cp(migrations, legacyMigrations, { recursive: true })
-  await rm(path.join(legacyMigrations, migrationName))
+  await cp(migrations, legacyMigrations, {
+    filter: (source) => source === migrations || path.basename(source) < migrationName,
+    recursive: true,
+  })
   const old = openAppDatabase(root, legacyMigrations)
   const projectKey = `project-v1-${'a'.repeat(64)}`
   let prepared = false

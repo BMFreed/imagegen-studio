@@ -223,16 +223,8 @@ const inputSchema = v.strictObject({
   request: requestSchema,
 })
 
-/**
- * Detach before the first await, then own independent recipe/alpha/target snapshots. No input path
- * is renamed, retained as a capture lease, or removed. InvokeAI a61ac4fb uses captured pixels and
- * graph references; this is its bounded Node-child adapter, outside public/durable job unions. The
- * caller MUST retain the lease after a dispatched failure until physical exit is confirmed.
- */
-export async function prepareRegionalWorkerRequest(
-  input: RegionalWorkerInput,
-  scratchBasePath: string,
-): Promise<RegionalWorkerLease> {
+/** Synchronously detach and validate the shared private recipe/command contract. */
+export function captureRegionalWorkerInput(input: RegionalWorkerInput): RegionalWorkerInput {
   let detached: v.InferOutput<typeof inputSchema>
   try {
     const captured: unknown = structuredClone(input)
@@ -248,6 +240,20 @@ export async function prepareRegionalWorkerRequest(
     }
     throw invalid('The private regional request cannot be detached.')
   }
+  return detached as RegionalWorkerInput
+}
+
+/**
+ * Detach before the first await, then own independent recipe/alpha/target snapshots. No input path
+ * is renamed, retained as a capture lease, or removed. InvokeAI a61ac4fb uses captured pixels and
+ * graph references; this is its bounded Node-child adapter, outside public/durable job unions. The
+ * caller MUST retain the lease after a dispatched failure until physical exit is confirmed.
+ */
+export async function prepareRegionalWorkerRequest(
+  input: RegionalWorkerInput,
+  scratchBasePath: string,
+): Promise<RegionalWorkerLease> {
+  const detached = captureRegionalWorkerInput(input) as v.InferOutput<typeof inputSchema>
   const base = scratchBasePath
   const baseIdentity = await canonicalDirectory(base)
   const sources = [detached.request.job.checkpoint, ...embeddingResources(detached.recipe)]

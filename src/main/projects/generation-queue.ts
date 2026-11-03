@@ -60,6 +60,8 @@ import type {
 } from './project-generation-preparation.js'
 import type { SmartPatchExecutionModelResolver } from './project-smart-patch-execution.js'
 import type { SmartPatchInputBundle } from './project-smart-patch-input-bundle.js'
+import type { FrozenQueuedRegionalV1 } from './regional-queued-generation.js'
+import type { RegionalWorkerInput } from './regional-worker-request.js'
 import type { SmartPatchInputMaterial } from './smart-patch-frozen-input.js'
 import type { FrozenQueuedSmartPatchV1 } from './smart-patch-queued-generation.js'
 
@@ -110,6 +112,12 @@ import {
   reverifyFrozenSmartPatchInput,
 } from './project-smart-patch-execution.js'
 import { SmartPatchInputBundleRepository } from './project-smart-patch-input-bundle.js'
+import {
+  captureRegionalQueuedMaterial,
+  loadRegionalQueuedFiles,
+  loadRegionalQueuedInput,
+  parseFrozenQueuedRegionalV1,
+} from './regional-queued-generation.js'
 import { parseSmartPatchInputMaterial } from './smart-patch-frozen-input.js'
 import {
   assertQueuedSmartPatchBundle,
@@ -400,7 +408,7 @@ export type FrozenQueuedGenerationV1 =
   FrozenQueuedAnimaGenerationV1 | FrozenQueuedIllustriousGenerationV1 | FrozenQueuedOutpaintV1
 
 export function isQueuedOutpaint(
-  payload: FrozenQueuedGenerationV1,
+  payload: FrozenQueuedGenerationV1 | FrozenQueuedRegionalV1,
 ): payload is FrozenQueuedOutpaintV1 {
   return payload.kind === 'illustrious-outpaint' || payload.kind === 'anima-outpaint'
 }
@@ -454,6 +462,14 @@ export interface QueuedGenerationActionJob {
 }
 
 export type TerminalGenerationStatus = 'canceled' | 'completed' | 'failed'
+
+/** Private durable regional input; ordinary dispatch/provenance deliberately exclude it. */
+export interface VerifiedQueuedRegionalInput {
+  input: RegionalWorkerInput
+  item: QueuedGenerationItem
+  payload: FrozenQueuedRegionalV1
+  targetPath: string
+}
 
 export interface VerifiedQueuedInput {
   item: QueuedGenerationItem
@@ -801,6 +817,101 @@ export class GenerationQueueRepository {
     })
   }
 
+  /** Private regional claim uses the same global running-slot CAS. */
+  async claimNextPendingRegional(): Promise<VerifiedQueuedRegionalInput | null> {
+    return await this.serialize(async () => {
+      for (;;) {
+        const running = await this.db
+          .selectFrom('generation_queue_item')
+          .select('id')
+          .where('status', '=', 'running')
+          .executeTakeFirst()
+        if (running) {
+          return null
+        }
+        let pendingQuery = this.db
+          .selectFrom('generation_queue_item')
+          .selectAll()
+          .where('status', '=', 'pending')
+          .where('operation', '=', 'illustrious-regional')
+          .orderBy('created_at', 'asc')
+          .orderBy('id', 'asc')
+        if (this.fencedProjects.size > 0) {
+          pendingQuery = pendingQuery.where('local_project_key', 'not in', [...this.fencedProjects])
+        }
+        const pending = await pendingQuery.executeTakeFirst()
+        if (!pending) {
+          return null
+        }
+
+        // A fence can be raised after the read and while frozen files are verified.
+        if (this.fencedProjects.has(pending.local_project_key)) {
+          continue
+        }
+
+        let verified: VerifiedQueuedRegionalInput
+        try {
+          verified = await this.verifyRegionalRow(pending)
+        } catch (error) {
+          if (!(error instanceof GenerationQueueError) || error.code !== 'QUEUE_INPUT_INVALID') {
+            throw error
+          }
+          // A corrupt frozen input cannot be dispatched. Mark only the still-pending revision
+          // failed, preserving its files and allowing the next valid item to progress.
+          const now = new Date().toISOString()
+          await this.db
+            .updateTable('generation_queue_item')
+            .set({
+              error_code: 'QUEUE_INPUT_INVALID',
+              error_message: 'The frozen queue input is invalid.',
+              finished_at: now,
+              status: 'failed',
+              status_sequence: sql<number>`status_sequence + 1`,
+              updated_at: now,
+            })
+            .where('id', '=', pending.id)
+            .where('status', '=', 'pending')
+            .where('status_sequence', '=', pending.status_sequence)
+            .returning('id')
+            .executeTakeFirst()
+          continue
+        }
+
+        await this.testHooks.beforeClaimUpdate?.(pending.id)
+        if (this.fencedProjects.has(pending.local_project_key)) {
+          continue
+        }
+        const now = new Date().toISOString()
+        const claimed = await this.db
+          .updateTable('generation_queue_item')
+          .set({
+            error_code: null,
+            error_message: null,
+            started_at: now,
+            status: 'running',
+            status_sequence: sql<number>`status_sequence + 1`,
+            updated_at: now,
+          })
+          .where('id', '=', pending.id)
+          .where('status', '=', 'pending')
+          .where('status_sequence', '=', pending.status_sequence)
+          .where('frozen_payload_json', '=', pending.frozen_payload_json)
+          .where('operation', '=', pending.operation)
+          .where('operation', '=', 'illustrious-regional')
+          .where(
+            sql<boolean>`NOT EXISTS (
+            SELECT 1 FROM generation_queue_item AS active WHERE active.status = 'running'
+          )`,
+          )
+          .returningAll()
+          .executeTakeFirst()
+        if (claimed) {
+          return { ...verified, item: toItem(claimed) }
+        }
+      }
+    })
+  }
+
   /** Private Smart Patch claim shares the global slot while keeping ordinary readers separate. */
   async claimNextPendingSmartPatch(): Promise<VerifiedQueuedSmartPatchInput | null> {
     return await this.serialize(async () => {
@@ -929,7 +1040,25 @@ export class GenerationQueueRepository {
     })
   }
 
-  /** Call within the qualified request's scratch lease, while its target path is still valid. */
+  /** Main-only experiment; never called by public enabled-region NEW admission. */
+  async enqueueCurrentCanvasRegional(input: {
+    assertCurrent?: () => void
+    prepared: PreparedNormalTxt2Img
+    projectPath: string
+    regional: Omit<RegionalWorkerInput, 'request'>
+    request: IllustriousTxt2ImgRequestV1
+    stagingSessionId: string
+  }): Promise<QueuedGenerationItem> {
+    const regional = captureRegionalQueuedMaterial({ ...input.regional, request: input.request })
+    if (
+      input.regional.recipe.documentId !== input.prepared.context.documentId ||
+      input.regional.recipe.documentRevision !== input.prepared.context.documentRevision
+    ) {
+      throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'Regional document identity differs.')
+    }
+    return await this.enqueueIllustriousGenerationInternal(input, regional)
+  }
+
   /** Call within the qualified request's scratch lease, while its target path is still valid. */
   async enqueueIllustriousGeneration(input: {
     assertCurrent?: () => void
@@ -938,144 +1067,7 @@ export class GenerationQueueRepository {
     request: IllustriousGenerationRequestV1
     stagingSessionId: string
   }): Promise<QueuedGenerationItem> {
-    const assertCurrent = input.assertCurrent
-    if (assertCurrent !== undefined && typeof assertCurrent !== 'function') {
-      throw new GenerationQueueError(
-        'QUEUE_INPUT_INVALID',
-        'The generation owner check is invalid.',
-      )
-    }
-    // Freeze caller-owned objects before any await, including the source Project path.
-    const request = structuredClone(input.request)
-    const context = structuredClone(input.prepared.context)
-    const targetBytes = Buffer.from(input.prepared.targetPngBytes)
-    const projectPath = input.projectPath
-    const stagingSessionId = input.stagingSessionId
-    validateSnapshot(context, request, targetBytes, stagingSessionId)
-
-    return await this.serialize(async () => {
-      const canonicalPath = await canonicalProjectPath(projectPath)
-      if (canonicalPath !== projectPath) {
-        throw new GenerationQueueError(
-          'QUEUE_PROJECT_IDENTITY_CHANGED',
-          'The Project path changed before queueing.',
-        )
-      }
-      const localProjectKey = localProjectRecoveryKey(canonicalPath)
-      this.assertProjectCanEnqueue(localProjectKey)
-      const sourceBytes = await readStableFile(
-        request.job.target.path,
-        request.job.target.byteSize,
-        request.job.target.sha256,
-      )
-      if (!sourceBytes.equals(targetBytes)) {
-        throw new GenerationQueueError(
-          'QUEUE_INPUT_INVALID',
-          'The qualified request target differs from the frozen Project target.',
-        )
-      }
-      await validateTargetPng(targetBytes, context)
-
-      const id = randomUUID()
-      const batchId = randomUUID()
-      const now = new Date().toISOString()
-      const payload = frozenPayload(context, request)
-      const payloadJson = JSON.stringify(payload)
-      if (Buffer.byteLength(payloadJson, 'utf8') > MAX_PAYLOAD_BYTES) {
-        throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The frozen job is too large.')
-      }
-      parsePayload(payloadJson)
-      const manifest: InputManifestV1 = {
-        payloadSha256: sha256(Buffer.from(payloadJson, 'utf8')),
-        queueInputVersion: QUEUE_INPUT_VERSION,
-        queueItemId: id,
-        targetByteSize: targetBytes.length,
-        targetFile: 'target.png',
-        targetSha256: sha256(targetBytes),
-      }
-      const root = await this.ensureRoot()
-      const temporary = await mkdtemp(path.join(root, '.tmp-'))
-      const published = path.join(root, id)
-      let renamed = false
-      try {
-        await writeDurableFile(path.join(temporary, 'target.png'), targetBytes)
-        await writeDurableFile(
-          path.join(temporary, 'manifest.json'),
-          Buffer.from(JSON.stringify(manifest), 'utf8'),
-        )
-        await syncDirectory(temporary)
-        await rename(temporary, published)
-        renamed = true
-        await syncDirectory(root)
-        await this.testHooks.afterInputPublish?.()
-        // A close may have fenced the Project while durable input files were written. The
-        // catch path removes this unreferenced directory; no pending row becomes visible.
-        this.assertProjectCanEnqueue(localProjectKey)
-        await this.db.transaction().execute(async (transaction) => {
-          this.assertProjectCanEnqueue(localProjectKey)
-          assertCurrent?.()
-          await transaction
-            .insertInto('generation_queue_item')
-            .values({
-              batch_id: batchId,
-              canonical_project_path: canonicalPath,
-              created_at: now,
-              document_id: context.documentId,
-              document_revision: context.documentRevision,
-              error_code: null,
-              error_message: null,
-              finished_at: null,
-              frozen_payload_json: payloadJson,
-              id,
-              local_project_key: localProjectKey,
-              operation: payload.kind,
-              staging_session_id: stagingSessionId,
-              started_at: null,
-              status: 'pending',
-              status_sequence: 0,
-              updated_at: now,
-            })
-            .execute()
-          assertCurrent?.()
-          this.assertProjectCanEnqueue(localProjectKey)
-        })
-        return {
-          batchId,
-          cancelRequested: false,
-          createdAt: now,
-          id,
-          localProjectKey,
-          projectPath: canonicalPath,
-          stagingSessionId,
-          status: 'pending',
-          statusSequence: 0,
-        }
-      } catch (error) {
-        // A database error may have happened after a commit acknowledgement was lost. Never
-        // delete a published input unless a successful read proves the row was not committed.
-        let safeToRemove = !renamed
-        if (renamed) {
-          try {
-            const committed = await this.db
-              .selectFrom('generation_queue_item')
-              .select('id')
-              .where('id', '=', id)
-              .executeTakeFirst()
-            safeToRemove = !committed
-          } catch {
-            safeToRemove = false
-          }
-        }
-        if (safeToRemove) {
-          await rm(renamed ? published : temporary, { force: true, recursive: true }).catch(
-            (cleanupError: unknown) => {
-              process.emitWarning(`Generation input cleanup failed: ${String(cleanupError)}`)
-            },
-          )
-        }
-        throw error
-      }
-    })
+    return await this.enqueueIllustriousGenerationInternal(input)
   }
 
   /** Publish one fresh group of already qualified concrete jobs, with no partial visible batch. */
@@ -1976,7 +1968,7 @@ export class GenerationQueueRepository {
           .selectAll()
           .where('id', '=', id)
           .executeTakeFirst()
-        if (!row) {
+        if (!row || row.operation === 'illustrious-regional') {
           throw new GenerationQueueError('QUEUE_ITEM_NOT_FOUND', 'The queue item was not found.')
         }
         const receipt = await transaction
@@ -2081,6 +2073,7 @@ export class GenerationQueueRepository {
         const grouped = await transaction
           .selectFrom('generation_queue_item')
           .select(['status', transaction.fn.countAll<number>().as('count')])
+          .where('operation', '!=', 'illustrious-regional')
           .groupBy('status')
           .execute()
         for (const group of grouped) {
@@ -2092,6 +2085,7 @@ export class GenerationQueueRepository {
         let query = transaction
           .selectFrom('generation_queue_item')
           .selectAll()
+          .where('operation', '!=', 'illustrious-regional')
           .orderBy('created_at', 'desc')
           .orderBy('id', 'desc')
           .limit(GENERATION_QUEUE_PAGE_SIZE + 1)
@@ -2300,6 +2294,7 @@ export class GenerationQueueRepository {
         .where('local_project_key', '=', localProjectKey)
         .where('document_id', '=', documentId)
         .where('status', 'in', ['pending', 'running'])
+        .where('operation', '!=', 'illustrious-regional')
         .orderBy('created_at', 'asc')
         .orderBy('id', 'asc')
         .execute()
@@ -2496,14 +2491,23 @@ export class GenerationQueueRepository {
     return await this.serialize(async () => await this.verifyRow(await this.requireRow(id)))
   }
 
+  async loadVerifiedRegionalInput(id: string): Promise<VerifiedQueuedRegionalInput> {
+    validateQueueId(id)
+    return await this.serialize(async () => await this.verifyRegionalRow(await this.requireRow(id)))
+  }
+
   /** Recheck queue files. A dispatcher must separately force-hash the exact model and capability. */
   async loadVerifiedRetryInput(
     id: string,
   ): Promise<VerifiedQueuedInput & { targetPngBytes: Buffer }> {
     validateQueueId(id)
-    return await this.serialize(
-      async () => await this.verifyRowWithBytes(await this.requireRow(id)),
-    )
+    return await this.serialize(async () => {
+      const verified = await this.verifyRowWithBytes(await this.requireRow(id))
+      if (verified.payload.kind === 'illustrious-regional') {
+        throw statusConflict()
+      }
+      return { ...verified, payload: verified.payload }
+    })
   }
 
   async loadVerifiedSmartPatchInput(id: string): Promise<VerifiedQueuedSmartPatchInput> {
@@ -2523,6 +2527,7 @@ export class GenerationQueueRepository {
           .selectFrom('generation_queue_item')
           .select(['operation', 'local_project_key'])
           .where('status', '=', 'pending')
+          .where('operation', '!=', 'illustrious-regional')
           .where(
             sql<boolean>`NOT EXISTS (SELECT 1 FROM generation_queue_item AS active WHERE active.status = 'running')`,
           )
@@ -2659,6 +2664,14 @@ export class GenerationQueueRepository {
       throw batchPublicationUncertain()
     }
     this.fencedProjects.delete(localProjectKey)
+  }
+
+  async retryCurrentCanvasRegionalTerminal(
+    id: string,
+    expectedStatusSequence: number,
+    preflight?: (input: GenerationQueueRetryPreflightInput) => Promise<void>,
+  ): Promise<QueuedGenerationItem> {
+    return await this.retryTerminalInternal(id, expectedStatusSequence, preflight, undefined, true)
   }
 
   /** Internal Retry owns exact family/LaMa requalification; ordinary Retry cannot admit outpaint. */
@@ -3001,6 +3014,188 @@ export class GenerationQueueRepository {
     return removed
   }
 
+  private async enqueueIllustriousGenerationInternal(
+    input: {
+      assertCurrent?: () => void
+      prepared: PreparedNormalGeneration
+      projectPath: string
+      request: IllustriousGenerationRequestV1
+      stagingSessionId: string
+    },
+    regional?: ReturnType<typeof captureRegionalQueuedMaterial>,
+  ): Promise<QueuedGenerationItem> {
+    const assertCurrent = input.assertCurrent
+    if (assertCurrent !== undefined && typeof assertCurrent !== 'function') {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'The generation owner check is invalid.',
+      )
+    }
+    // Freeze caller-owned objects before any await, including the source Project path.
+    const request = structuredClone(input.request)
+    const context = structuredClone(input.prepared.context)
+    const targetBytes = Buffer.from(input.prepared.targetPngBytes)
+    const projectPath = input.projectPath
+    const stagingSessionId = input.stagingSessionId
+    validateSnapshot(context, request, targetBytes, stagingSessionId)
+
+    return await this.serialize(async () => {
+      const canonicalPath = await canonicalProjectPath(projectPath)
+      if (canonicalPath !== projectPath) {
+        throw new GenerationQueueError(
+          'QUEUE_PROJECT_IDENTITY_CHANGED',
+          'The Project path changed before queueing.',
+        )
+      }
+      const localProjectKey = localProjectRecoveryKey(canonicalPath)
+      this.assertProjectCanEnqueue(localProjectKey)
+      const sourceBytes = await readStableFile(
+        request.job.target.path,
+        request.job.target.byteSize,
+        request.job.target.sha256,
+      )
+      if (!sourceBytes.equals(targetBytes)) {
+        throw new GenerationQueueError(
+          'QUEUE_INPUT_INVALID',
+          'The qualified request target differs from the frozen Project target.',
+        )
+      }
+      await validateTargetPng(targetBytes, context)
+
+      const id = randomUUID()
+      const batchId = randomUUID()
+      const now = new Date().toISOString()
+      const basePayload = frozenPayload(context, request)
+      if (regional && basePayload.kind !== 'illustrious-txt2img') {
+        throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'Regional input requires txt2img.')
+      }
+      const payload = regional
+        ? { ...basePayload, kind: 'illustrious-regional' as const, regional: regional.regional }
+        : basePayload
+      const payloadJson = JSON.stringify(payload)
+      if (Buffer.byteLength(payloadJson, 'utf8') > MAX_PAYLOAD_BYTES) {
+        throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The frozen job is too large.')
+      }
+      if (regional) {
+        parseFrozenQueuedRegionalV1(payloadJson)
+      } else {
+        parsePayload(payloadJson)
+      }
+      const manifest: InputManifestV1 = {
+        payloadSha256: sha256(Buffer.from(payloadJson, 'utf8')),
+        queueInputVersion: QUEUE_INPUT_VERSION,
+        queueItemId: id,
+        targetByteSize: targetBytes.length,
+        targetFile: 'target.png',
+        targetSha256: sha256(targetBytes),
+      }
+      const root = await this.ensureRoot()
+      const temporary = await mkdtemp(path.join(root, '.tmp-'))
+      const published = path.join(root, id)
+      let renamed = false
+      try {
+        await writeDurableFile(path.join(temporary, 'target.png'), targetBytes)
+        for (const [name, bytes] of Object.entries(regional?.files ?? {})) {
+          await writeDurableFile(path.join(temporary, name), bytes)
+        }
+        await writeDurableFile(
+          path.join(temporary, 'manifest.json'),
+          Buffer.from(JSON.stringify(manifest), 'utf8'),
+        )
+        await syncDirectory(temporary)
+        await rename(temporary, published)
+        renamed = true
+        await syncDirectory(root)
+        await this.testHooks.afterInputPublish?.()
+        // A close may have fenced the Project while durable input files were written. The
+        // catch path removes this unreferenced directory; no pending row becomes visible.
+        this.assertProjectCanEnqueue(localProjectKey)
+        await this.db.transaction().execute(async (transaction) => {
+          this.assertProjectCanEnqueue(localProjectKey)
+          assertCurrent?.()
+          await transaction
+            .insertInto('generation_queue_item')
+            .values({
+              batch_id: batchId,
+              canonical_project_path: canonicalPath,
+              created_at: now,
+              document_id: context.documentId,
+              document_revision: context.documentRevision,
+              error_code: null,
+              error_message: null,
+              finished_at: null,
+              frozen_payload_json: payloadJson,
+              id,
+              local_project_key: localProjectKey,
+              operation: payload.kind,
+              staging_session_id: stagingSessionId,
+              started_at: null,
+              status: 'pending',
+              status_sequence: 0,
+              updated_at: now,
+            })
+            .execute()
+          assertCurrent?.()
+          this.assertProjectCanEnqueue(localProjectKey)
+        })
+        await this.testHooks.afterBatchCommit?.()
+        return {
+          batchId,
+          cancelRequested: false,
+          createdAt: now,
+          id,
+          localProjectKey,
+          projectPath: canonicalPath,
+          stagingSessionId,
+          status: 'pending',
+          statusSequence: 0,
+        }
+      } catch (error) {
+        // A database error may have happened after a commit acknowledgement was lost. Never
+        // delete a published input unless a successful read proves the row was not committed.
+        let safeToRemove = !renamed
+        if (renamed) {
+          try {
+            const committed = await this.db
+              .selectFrom('generation_queue_item')
+              .select('id')
+              .where('id', '=', id)
+              .executeTakeFirst()
+            safeToRemove = !committed
+            if (regional && committed) {
+              const row = await this.requireRow(id)
+              if (
+                row.frozen_payload_json === payloadJson &&
+                row.operation === payload.kind &&
+                row.local_project_key === localProjectKey &&
+                row.staging_session_id === stagingSessionId
+              ) {
+                return toItem(row)
+              }
+              this.publicationUncertainProjects.add(localProjectKey)
+              this.fencedProjects.add(localProjectKey)
+              throw batchPublicationUncertain()
+            }
+          } catch {
+            safeToRemove = false
+            if (regional) {
+              this.publicationUncertainProjects.add(localProjectKey)
+              this.fencedProjects.add(localProjectKey)
+            }
+          }
+        }
+        if (safeToRemove) {
+          await rm(renamed ? published : temporary, { force: true, recursive: true }).catch(
+            (cleanupError: unknown) => {
+              process.emitWarning(`Generation input cleanup failed: ${String(cleanupError)}`)
+            },
+          )
+        }
+        throw error
+      }
+    })
+  }
+
   private async ensureRoot(): Promise<string> {
     const parent = path.dirname(this.root)
     const canonicalParent = await realpath(parent)
@@ -3086,12 +3281,19 @@ export class GenerationQueueRepository {
       infillResolver: OutpaintInfillResolver
       modelService: AnimaGenerationModelResolver & GenerationModelResolver
     },
+    regional = false,
   ): Promise<QueuedGenerationItem> {
     validateQueueId(id)
     validateExpectedSequence(expectedStatusSequence)
     return await this.serialize(async () => {
       this.assertReadyForDispatch()
       const source = await this.requireRow(id)
+      if (regional !== (source.operation === 'illustrious-regional')) {
+        throw new GenerationQueueError(
+          'QUEUE_INPUT_INVALID',
+          'Retry requires its dedicated input owner.',
+        )
+      }
       if (isSmartPatchQueueOperation(source.operation)) {
         throw new GenerationQueueError(
           'QUEUE_INPUT_INVALID',
@@ -3118,7 +3320,13 @@ export class GenerationQueueRepository {
           'The Project path changed before retrying.',
         )
       }
-      const verified = await this.verifyRow(source)
+      const verified = regional
+        ? await this.verifyRegionalRow(source)
+        : await this.verifyRow(source)
+      const regionalFiles =
+        verified.payload.kind === 'illustrious-regional'
+          ? await loadRegionalQueuedFiles(path.dirname(verified.targetPath), verified.payload)
+          : {}
       if (isQueuedOutpaint(verified.payload)) {
         if (!outpaintQualification || !preflight) {
           throw new GenerationQueueError(
@@ -3176,6 +3384,9 @@ export class GenerationQueueRepository {
       let renamed = false
       try {
         await writeDurableFile(path.join(temporary, 'target.png'), targetBytes)
+        for (const [name, bytes] of Object.entries(regionalFiles)) {
+          await writeDurableFile(path.join(temporary, name), bytes)
+        }
         await writeDurableFile(
           path.join(temporary, 'manifest.json'),
           Buffer.from(JSON.stringify(manifest), 'utf8'),
@@ -3285,15 +3496,73 @@ export class GenerationQueueRepository {
     return path.join(this.dataRoot, 'generation-queued-inputs', 'smart-patch', id)
   }
 
+  private async verifyRegionalRow(
+    row: Selectable<GenerationQueueItem>,
+  ): Promise<VerifiedQueuedRegionalInput> {
+    try {
+      const verified = await this.verifyRowWithBytes(row, true)
+      if (verified.payload.kind !== 'illustrious-regional') {
+        throw statusConflict()
+      }
+      const request: IllustriousTxt2ImgRequestV1 = {
+        job: {
+          ...structuredClone(verified.payload.workerJob),
+          output: {
+            pngPath: path.join(path.dirname(verified.targetPath), 'result.png'),
+            stagingRoot: path.dirname(verified.targetPath),
+          },
+          target: { ...verified.payload.workerJob.target, path: verified.targetPath },
+        },
+        protocolVersion: '1',
+        requestId: row.id,
+        type: 'generate-illustrious-txt2img',
+      }
+      const input = await loadRegionalQueuedInput(
+        path.dirname(verified.targetPath),
+        verified.payload,
+        request,
+      )
+      if (
+        input.recipe.documentId !== row.document_id ||
+        input.recipe.documentRevision !== row.document_revision
+      ) {
+        throw new Error('Regional input document changed.')
+      }
+      return {
+        input,
+        item: verified.item,
+        payload: verified.payload,
+        targetPath: verified.targetPath,
+      }
+    } catch (error) {
+      if (error instanceof GenerationQueueError) {
+        throw error
+      }
+      throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The frozen regional input is invalid.')
+    }
+  }
+
   private async verifyRow(row: Selectable<GenerationQueueItem>): Promise<VerifiedQueuedInput> {
     const verified = await this.verifyRowWithBytes(row)
+    if (verified.payload.kind === 'illustrious-regional') {
+      throw statusConflict()
+    }
     return { item: verified.item, payload: verified.payload, targetPath: verified.targetPath }
   }
 
   private async verifyRowWithBytes(
     row: Selectable<GenerationQueueItem>,
-  ): Promise<VerifiedQueuedInput & { targetPngBytes: Buffer }> {
-    if (isSmartPatchQueueOperation(row.operation)) {
+    regional = false,
+  ): Promise<{
+    item: QueuedGenerationItem
+    payload: FrozenQueuedGenerationV1 | FrozenQueuedRegionalV1
+    targetPath: string
+    targetPngBytes: Buffer
+  }> {
+    if (
+      regional !== (row.operation === 'illustrious-regional') ||
+      isSmartPatchQueueOperation(row.operation)
+    ) {
       throw new GenerationQueueError(
         'QUEUE_INPUT_INVALID',
         'Smart Patch input is outside the ordinary generation owner.',
@@ -3313,7 +3582,9 @@ export class GenerationQueueRepository {
     if (payloadBytes.length > MAX_PAYLOAD_BYTES) {
       throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The frozen queue payload is invalid.')
     }
-    const payload = parsePayload(row.frozen_payload_json)
+    const payload = regional
+      ? parseFrozenQueuedRegionalV1(row.frozen_payload_json)
+      : parsePayload(row.frozen_payload_json)
     if (
       payload.kind !== row.operation ||
       payload.context.documentId !== row.document_id ||

@@ -1498,3 +1498,15 @@ retains resources until confirmed physical exit; successful PNG bytes survive
 cleanup. Source review and transport-mutation controls are separate evidence.
 Durable frozen regional inputs, candidate receipt/recovery, public admission and
 visual usefulness remain open; no promise status is promoted.
+
+## Private durable Regional Guidance attempts
+
+The [durable regional owner](./phase-4-regional-guidance-durable-research.md)
+adds frozen input files, a distinct private queue operation, independent Retry
+and shared Main candidate receipt/recovery. ROOT recorded 424 affected Main
+PASS and one genuine Main-recipe/production-loader CUDA child through database
+reopen, Retry, source pruning and candidate survival after queue pruning.
+Public dispatcher/Results/provenance readers exclude the private operation.
+Private callers own session quiescence/disposal; public Project submission and
+lifecycle integration remain the next owner. Previous negative visual findings
+and PP-001/007/008 readiness are unchanged.
