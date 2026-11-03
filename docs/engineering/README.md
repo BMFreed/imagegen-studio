@@ -1542,3 +1542,22 @@ RuntimeManager or renderer→IPC qualification. The linked note records final
 browser/build checks, source reviews, sensitivity, excluded attempts and retention.
 No quality, general parity, capacity or release-readiness claim follows.
 Historical negative visual results and PP-001/007/008 **«Пока не обещать»** remain.
+
+
+## Installed public regional continuation
+
+The [installed public qualification](./phase-4-regional-guidance-installed-research.md)
+closes the finite built renderer/IPC/default RuntimeManager handoff with the
+noneditable worker0.14.0: real 30-step1024² Generate/Cancel, frozen Queue Retry after
+saved authoring changes, signed Results and explicit Raster Add/Undo/Redo/Save/reopen.
+ROOT native-r6: eight checks PASS, healthy exit; 1,019 affected Main cases,
+typecheck/build and scoped checks pass. The actual startup exposed overly broad
+scratch permissions; the existing startup owner now establishes0700 through
+checked descriptors, with six regressions and semantic mutation/control/restoration.
+
+This uses the existing developer provisioner and exact original checkpoint/catalog
+setup. Release Install/Repair, model-download UI, regional numeric progress,
+optional thumbnails, quality, Anima and capacity remain separate. Earlier adapter
+results and failed harness attempts are not relabeled as installed PASS. Public
+promise statuses remain unchanged; consult the linked note for retained evidence
+and lifecycle closure.

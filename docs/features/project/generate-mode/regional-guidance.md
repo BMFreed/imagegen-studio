@@ -1102,3 +1102,23 @@ Versioned composition mutations retain legacy controls and exact restoration.
 The linked note records browser/build results, excluded attempts and lifecycle.
 Earlier negative visual findings are preserved; no quality or release-readiness
 claim follows. PP-001/007/008 remain **«Пока не обещать»**.
+
+
+## Installed public UI qualification
+
+The [installed continuation](../../../engineering/phase-4-regional-guidance-installed-research.md)
+qualifies the actual built Electron renderer → IPC → default RuntimeManager →
+noneditable worker0.14.0 path for one 1024²/30-step official Illustrious epsilon
+request. Generate/Cancel followed by frozen Queue Retry retains seed123 and the
+original enabled regions after explicit Save of current seed124/two-step/disabled
+regions. Signed Results, Raster Add, Undo/Redo and explicit Save/reopen preserve
+exact PNG bytes, world placement and base-only provenance; no implicit Save occurs.
+Opaque/partial-alpha controls admit no job. ROOT reports eight finite native-r6
+checks PASS, healthy process exit and 1,019 affected Main cases; typecheck/build pass.
+
+This is developer-provisioned installed-runtime evidence, not release Install/Repair
+or model-download UI qualification. Regional numeric step progress is not emitted;
+optional thumbnail production, quality, Anima regional execution, capacity and full
+Invoke parity remain unqualified. Earlier negative visual findings and
+PP-001/007/008 **«Пока не обещать»** remain unchanged. The linked note retains failed
+attempts, the private startup-scratch correction and separate evidence levels.
