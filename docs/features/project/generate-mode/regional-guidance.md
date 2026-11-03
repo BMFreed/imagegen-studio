@@ -1122,3 +1122,24 @@ optional thumbnail production, quality, Anima regional execution, capacity and f
 Invoke parity remain unqualified. Earlier negative visual findings and
 PP-001/007/008 **«Пока не обещать»** remain unchanged. The linked note retains failed
 attempts, the private startup-scratch correction and separate evidence levels.
+
+
+## Installed interruption and recovered Results
+
+The [installed recovery qualification](../../../engineering/phase-4-regional-guidance-installed-recovery-research.md)
+adds three real Electron lifetimes on the same installed worker/catalog. An active
+regional request is interrupted with its owned process scope; startup cancels it
+as APP_RESTART without automatic resume. After saving current seed124/two-step/
+disabled-region authoring, explicit Queue Retry consumes the original frozen
+seed123/30-step input. A second interruption preserves its completed, unaccepted
+candidate. Home Recover returns the same PNG/receipt/session before explicit
+Raster Add, Undo/Redo and Save/reopen. Previous Queue history and accepted package
+bytes remain unchanged.
+
+ROOT native-r2: 13 finite checks PASS, two original regional wires, one healthy
+completion and three confirmed lifetime exits. Lower evidence is 211 distinct
+cases plus exact diagnostic mutation/control/restoration. No production recovery
+owner changed. Whole-scope termination does not qualify Main-only/worker-only
+orphan handling or automatic scratch cleanup; quality, progress telemetry,
+Anima, capacity and release Install/Repair remain open. PP-001/007/008 stay
+**«Пока не обещать»**.

@@ -526,3 +526,63 @@ test('public candidate payload SHA and public profile failures refuse before acc
     await f.close()
   }
 })
+
+test('public running regional restart cancels with APP_RESTART once and requires exact frozen Retry', async () => {
+  const f = await createRegionalQueueFixture()
+  let reopened: ReturnType<typeof openAppDatabase> | undefined
+  try {
+    const source = await enqueuePublic(f)
+    const running = await f.queue.claimNextPendingInvokeCanvasRegional()
+    assert.equal(running?.item.id, source.id)
+    assert.ok(running)
+    const original = await f.queue.loadVerifiedRegionalInput(source.id)
+    const beforeRestart = await f.database.db
+      .selectFrom('generation_queue_item')
+      .select('frozen_payload_json')
+      .where('id', '=', source.id)
+      .executeTakeFirstOrThrow()
+    const savedProject = await readFile(f.projectPath)
+    await f.database.close()
+    reopened = openAppDatabase(f.root, migrations)
+    const queue = new GenerationQueueRepository(reopened.db, f.root)
+    const staging = new GenerationStagingRepository(reopened.db, f.root)
+    assert.equal((await queue.recoverAfterRestart()).canceledCount, 1)
+    assert.deepEqual(await staging.recoverAfterRestart(), { invalidCount: 0, reconciledCount: 0 })
+    const row = await reopened.db
+      .selectFrom('generation_queue_item')
+      .selectAll()
+      .where('id', '=', source.id)
+      .executeTakeFirstOrThrow()
+    assert.equal(row.status, 'canceled')
+    assert.equal(row.error_code, 'APP_RESTART')
+    assert.equal(row.status_sequence, running.item.statusSequence + 1)
+    assert.equal(row.frozen_payload_json, beforeRestart.frozen_payload_json)
+    assert.equal(await queue.claimNextPendingInvokeCanvasRegional(), null)
+    assert.deepEqual(await staging.listVerifiedCandidates(original.item.localProjectKey), [])
+    assert.ok((await readFile(f.projectPath)).equals(savedProject))
+    assert.equal((await queue.recoverAfterRestart()).canceledCount, 0)
+    assert.equal((await queue.getManagerEntry(source.id)).statusSequence, row.status_sequence)
+    f.regional.recipe.regions[0].positive!.text = 'later Project text'
+    f.regional.recipe.regions[0].coverage.alpha.fill(0)
+    f.prepared.context.sampling.seed = 777
+    const retry = await queue.retryInvokeCanvasRegionalTerminal(source.id, row.status_sequence)
+    const retriedRow = await reopened.db
+      .selectFrom('generation_queue_item')
+      .select('frozen_payload_json')
+      .where('id', '=', retry.id)
+      .executeTakeFirstOrThrow()
+    assert.equal(retriedRow.frozen_payload_json, beforeRestart.frozen_payload_json)
+    const copied = await queue.loadVerifiedRegionalInput(retry.id)
+    assert.notEqual(retry.id, source.id)
+    assert.notEqual(retry.stagingSessionId, source.stagingSessionId)
+    assert.notEqual(copied.targetPath, original.targetPath)
+    assert.deepEqual(copied.payload, original.payload)
+    assert.deepEqual(copied.input.recipe, original.input.recipe)
+    assert.ok((await readFile(copied.targetPath)).equals(f.prepared.targetPngBytes))
+    assert.equal((await queue.claimNextPendingInvokeCanvasRegional())?.item.id, retry.id)
+    assert.ok((await readFile(f.projectPath)).equals(savedProject))
+  } finally {
+    await reopened?.close()
+    await f.close()
+  }
+})

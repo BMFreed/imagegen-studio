@@ -82,7 +82,12 @@ assert.deepEqual(Object.keys(fixture).sort(), [
   'schemaVersion',
 ])
 assert.equal(fixture.schemaVersion, 1)
-assert.equal(fixture.profile, 'installed-regional-invoke-v1')
+assert.ok(
+  ['installed-regional-invoke-v1', 'installed-regional-invoke-recovery-v1'].includes(
+    fixture.profile,
+  ),
+)
+const recoveryProfile = fixture.profile === 'installed-regional-invoke-recovery-v1'
 assert.ok(
   Number.isSafeInteger(fixture.deadlineSeconds) &&
     fixture.deadlineSeconds > 0 &&
@@ -190,6 +195,10 @@ let application,
   catalogBefore,
   modelStat
 let sampler, closing, deadlineTimer
+let activeLifetime = null,
+  baselineSql = null,
+  recoveryProject = null
+const baselinePackages = []
 let sampling = Promise.resolve()
 const nativeChecks = []
 const projects = []
@@ -198,7 +207,13 @@ function checkpoint() {
   writeFileSync(reportFile, JSON.stringify(report, null, 2) + '\n', { mode: 0o600 })
 }
 function check(name, evidence = {}) {
-  report.checks.push({ name, ...evidence })
+  const entry = {
+    name,
+    ...(recoveryProfile && activeLifetime ? { lifetime: activeLifetime.number } : {}),
+    ...evidence,
+  }
+  report.checks.push(entry)
+  if (recoveryProfile && activeLifetime) (activeLifetime.checks ??= []).push(entry)
   checkpoint()
   console.log(`PASS ${name}`)
 }
@@ -224,6 +239,11 @@ const sourceFiles = [
   'src/main/projects/regional-queued-generation.ts',
   'src/main/projects/generation-queue.ts',
   'src/main/projects/generation-staging.ts',
+  'src/main/projects/generation-bootstrap.ts',
+  'src/main/projects/generation-app-context.ts',
+  'src/main/projects/project-generation-recovery.ts',
+  'src/main/projects/project-temporary-recovery.ts',
+  'src/main/projects/project-generation-staging-lifecycle.ts',
   'src/main/projects/project-generation-result-resource.ts',
   'src/main/projects/project-generation-acceptance.ts',
   'src/main/projects/project-generation-provenance.ts',
@@ -333,6 +353,8 @@ async function verifyProvision() {
     paths: [
       'invokeai/frontend/webv1/src/features/controlLayers/konva/CanvasEntity/CanvasEntityAdapterRegionalGuidance.ts',
       'invokeai/app/services/session_queue/session_queue_default.py',
+      'invokeai/app/services/shared/database/queries/session_queue.py',
+      'invokeai/app/api/routers/session_queue.py',
       'invokeai/app/services/session_processor/session_processor_default.py',
       'invokeai/frontend/webv1/src/features/controlLayers/components/StagingArea/StagingAreaToolbarAcceptButton.tsx',
     ],
@@ -487,8 +509,81 @@ async function prepareCatalogAndProjects() {
   assert.equal(await hashFile(fixture.checkpoint.path), fixture.checkpoint.sha256)
   await qualifySdxlCheckpoint(fixture.checkpoint.path)
   database = openAppDatabase(appDataRoot, path.resolve('src/main/db/migrations'))
+  if (recoveryProfile) {
+    baselineSql = await sqlSnapshot()
+    assert.equal(baselineSql.queue.length, 2, 'Reuse the qualified pool with two historical jobs')
+    assert.equal(baselineSql.receipts.length, 1)
+    assert.equal(baselineSql.cursors.length, 1)
+    assert.ok(
+      baselineSql.queue.every(({ operation }) => operation === 'illustrious-regional-txt2img'),
+    )
+    assert.equal(baselineSql.queue.filter(({ status }) => status === 'canceled').length, 1)
+    const priorCompleted = baselineSql.queue.filter(({ status }) => status === 'completed')
+    assert.equal(priorCompleted.length, 1)
+    assert.equal(baselineSql.receipts[0].queue_item_id, priorCompleted[0].id)
+    assert.equal(baselineSql.receipts[0].status, 'completed')
+    assert.equal(baselineSql.receipts[0].actual_seed, 123)
+    assert.equal(baselineSql.cursors[0].local_project_key, priorCompleted[0].local_project_key)
+    assert.equal(baselineSql.cursors[0].actual_seed, 123)
+    assert.ok(
+      baselineSql.queue.every(({ status }) => ['completed', 'failed', 'canceled'].includes(status)),
+      'Existing pool must be physically idle with terminal historical work',
+    )
+    const acceptedPackages = []
+    for (const record of await database.db
+      .selectFrom('project_index')
+      .selectAll()
+      .orderBy('canonical_path')
+      .execute()) {
+      if (record.file_health !== 'ready') continue
+      assert.ok(within(path.join(appDataRoot, 'workspaces'), record.canonical_path))
+      await regular(record.canonical_path)
+      baselinePackages.push({
+        path: record.canonical_path,
+        sha256: await hashFile(record.canonical_path),
+      })
+      const saved = await readZip(record.canonical_path)
+      for (const layer of saved.project.layers) {
+        const provenance = layer.generationProvenance
+        if (
+          layer.kind !== 'raster' ||
+          provenance?.executionResultContext?.queueItemId !== priorCompleted[0].id
+        )
+          continue
+        assert.equal(layer.asset.sha256, baselineSql.receipts[0].image_sha256)
+        assert.equal(digest(saved.members.get(layer.asset.path)), layer.asset.sha256)
+        assert.equal(provenance.generationConfiguration.model.fileSha256, fixture.checkpoint.sha256)
+        acceptedPackages.push({
+          path: record.canonical_path,
+          layerId: layer.id,
+          pngSha256: layer.asset.sha256,
+        })
+      }
+    }
+    assert.ok(
+      acceptedPackages.length > 0,
+      'Preservation needs a previously accepted Raster package',
+    )
+    report.baseline = { sql: baselineSql, packages: baselinePackages, acceptedPackages }
+    report.lifetimes = []
+    report.boundary.actual =
+      'Three real built Electron lifetimes using the same installed RuntimeManager/catalog: active regional wire -> owned-scope crash -> APP_RESTART/frozen Queue Retry -> completed temporary candidate -> second owned-scope crash -> real Home Recover -> signed Results/Raster Add/Undo/Redo/explicit Save/reopen.'
+    report.boundary.calls =
+      'Exactly two witnessed regional wires, one interrupted attempt, one healthy 30-step seed123 completion, two owned-scope SIGKILL events, no automatic resume or replacement Generate, and one final healthy exit. Numerical progress and image quality remain unqualified.'
+    report.boundary.exclusions +=
+      ' This profile kills a verified owned Electron scope including its execution child. Main-only SIGKILL with a surviving Python worker, worker-only faults, automatic orphan reaping, and immediate restart safety before independently confirmed exit are not qualified.'
+    report.boundary.progress =
+      'Real Running/busy state is observed; deliberate owned-scope faults do not invoke Cancel. Regional numerical denoising step telemetry remains unqualified.'
+    report.boundary.preconditions =
+      'Reuse the existing original-file ModelRepository catalog entry, installed runtime, protected model bytes and provision/config companions. Three new real portable ProjectSession fixtures and masks are setup; existing pool SQL and saved packages are immutable baseline controls. No caller-supplied worker recipe or CivitAI download/install claim.'
+  }
   const repository = new ModelRepository(database.db)
   let entry = await repository.findExactFileDuplicate({ sha256: fixture.checkpoint.sha256 })
+  if (recoveryProfile)
+    assert.ok(
+      entry,
+      'Recovery reuses the existing exact original-file catalog entry; no new model adoption',
+    )
   if (entry) {
     assert.equal(entry.status, 'ready')
     assert.equal(entry.managedPath, fixture.checkpoint.path)
@@ -709,7 +804,7 @@ async function observeMemory(label) {
 }
 async function bounds(label) {
   const value = await boundQualificationProcess(application.process().pid, {
-    deadlineSeconds: fixture.deadlineSeconds,
+    deadlineSeconds: recoveryProfile ? activeLifetime.deadlineSeconds : fixture.deadlineSeconds,
     execute: (file, args, options) =>
       exec(
         file,
@@ -729,7 +824,12 @@ async function bounds(label) {
   memoryGroups.set(launcher.group, 'launcher')
   await observeMemory(label)
   nativeChecks.push(value)
-  report.resourceLimitChecks.push({ label, ...value, aggregateUniqueMax: String(total) })
+  report.resourceLimitChecks.push({
+    label,
+    ...(activeLifetime ? { lifetime: activeLifetime.number } : {}),
+    ...value,
+    aggregateUniqueMax: String(total),
+  })
   checkpoint()
 }
 
@@ -919,6 +1019,7 @@ async function installObservers() {
       'projects:cancel-current-generation',
       'projects:cancel-generation-job',
       'projects:retry-generation-job',
+      'projects:resolve-recovery',
       'projects:accept-generation-candidates',
       'projects:save',
       'projects:open',
@@ -1046,6 +1147,18 @@ async function screenshot(name) {
   checkpoint()
 }
 async function launch() {
+  if (recoveryProfile) {
+    assert.ok(!application, 'A previous native lifetime must finish physically before relaunch')
+    assert.equal(nativeChecks.length, 0, 'Physical checks/watchdogs must be scoped to one lifetime')
+    activeLifetime = {
+      number: report.lifetimes.length + 1,
+      startedAt: new Date().toISOString(),
+      // Keep each PID/start watchdog within the original overall budget, never reset it at relaunch.
+      deadlineSeconds: Math.max(1, Math.floor(timeout(fixture.deadlineSeconds * 1000) / 1000)),
+    }
+    sampling = Promise.resolve()
+    memoryGroups.clear()
+  }
   const scratch = path.join(appDataRoot, 'scratch')
   const beforeScratch = await lstat(scratch).catch((error) => {
     if (error.code === 'ENOENT') return null
@@ -1169,8 +1282,7 @@ async function openProject(project) {
   assert.equal(tab.documentId, project.document.documentId)
   return tab
 }
-async function sqlSnapshot() {
-  const db = database.db
+async function sqlSnapshot(db = database.db) {
   return {
     queue: await db
       .selectFrom('generation_queue_item')
@@ -1598,6 +1710,585 @@ async function generateCancelEditRetry(project) {
     frozen: firstCaptured.frozen,
     edited,
   }
+}
+
+function ownRecoverySql(whole) {
+  assert.ok(recoveryProject?.id)
+  return Object.fromEntries(
+    Object.entries(whole).map(([name, rows]) => [
+      name,
+      rows.filter(({ local_project_key }) => local_project_key === recoveryProject.id),
+    ]),
+  )
+}
+function assertBaselineSql(whole) {
+  assert.ok(baselineSql && recoveryProject?.id)
+  for (const [name, rows] of Object.entries(whole))
+    assert.deepEqual(
+      rows.filter(({ local_project_key }) => local_project_key !== recoveryProject.id),
+      baselineSql[name],
+      `Historical pool ${name} must remain unchanged`,
+    )
+}
+async function recoverySql() {
+  const whole = await sqlSnapshot()
+  assertBaselineSql(whole)
+  return ownRecoverySql(whole)
+}
+async function assertLifetimePins() {
+  assert.deepEqual(await captureFiles(sourceFiles), report.sourceSha256)
+  assert.deepEqual(await captureFiles(bundleFiles), report.bundleSha256)
+  assert.deepEqual(await treeManifest(provision.installed.workerRoot), installedTree)
+  assert.deepEqual(await jsonFile(path.join(appDataRoot, 'qualification-runtime.json')), marker)
+  assert.deepEqual(await jsonFile(path.join(appDataRoot, 'runtime/current-runtime.json')), pointer)
+  assert.equal(await hashFile(fixture.provisionReport.path), fixture.provisionReport.sha256)
+  assert.deepEqual(statIdentity(await regular(fixture.checkpoint.path)), modelStat)
+  for (const file of baselinePackages) assert.equal(await hashFile(file.path), file.sha256)
+  await assertRuntimeIdle(appDataRoot, provision.installed.basePrefix)
+}
+function assertRecoveryWire(wire, captured, project) {
+  assert.equal(wire.type, 'execute-current-canvas-regional')
+  assert.equal(wire.requestId, wire.bundleJson.request.requestId)
+  assert.equal(wire.bundleJson.compositionProfile, 'invoke-canvas-v1')
+  assert.equal(wire.bundleJson.layout, 'cfg-negative-first')
+  for (const sign of ['Positive', 'Negative']) {
+    assert.deepEqual(wire.bundleJson[`global${sign}Coverage`], { kind: 'everywhere' })
+    assert.equal(wire.bundleJson[`${sign.toLowerCase()}PooledSourceId`], 'current-canvas')
+  }
+  assert.deepEqual(wire.bundleJson.request.job.bbox, bbox)
+  assert.equal(wire.bundleJson.request.job.sampling.steps, 30)
+  assert.equal(wire.bundleJson.request.job.sampling.seed, 123)
+  assert.equal(wire.bundleJson.request.job.sampling.cfgScale, 5)
+  assert.deepEqual(wire.bundleJson.request.job.sampling.noiseProfile, policy)
+  assert.equal(wire.bundleJson.request.job.checkpoint.sha256, fixture.checkpoint.sha256)
+  assert.equal(wire.target.sha256, captured.targetSha256)
+  assert.equal(wire.target.observedSha256, captured.targetSha256)
+  assert.deepEqual(
+    wire.alpha.map(({ sha256 }) => sha256),
+    project.regionAlphas,
+  )
+  assert.deepEqual(
+    wire.bundleJson.recipe.regions.map(({ regionId }) => regionId),
+    project.document.regionalGuidance.map(({ id }) => id),
+  )
+}
+async function originalIpcFinished(channel, expectedCount = 1) {
+  await expect
+    .poll(
+      async () => {
+        const calls = (await observerSnapshot()).ipc.filter((call) => call.channel === channel)
+        assert.ok(calls.length <= expectedCount)
+        for (const call of calls)
+          if (call.finished) assert.equal(call.ok, true, JSON.stringify(call))
+        return (
+          calls.length === expectedCount &&
+          calls.every(({ finished, ok }) => finished && ok === true)
+        )
+      },
+      { timeout: timeout(180_000) },
+    )
+    .toBe(true)
+}
+async function originalRegionalWire(id, captured) {
+  let evidence
+  await expect
+    .poll(
+      async () => {
+        const row = await job(id)
+        if (row.status === 'pending') return false
+        assert.equal(
+          row.status,
+          'running',
+          `The native interruption cut was missed: ${row.status}: ${row.error_message}`,
+        )
+        const sql = await recoverySql()
+        assert.equal(
+          sql.receipts.some(({ queue_item_id }) => queue_item_id === id),
+          false,
+        )
+        const observed = await observerSnapshot()
+        assert.deepEqual(observed.faults, [])
+        const wires = regionalWires(observed)
+        assert.ok(wires.length <= 1)
+        if (wires.length !== 1) return false
+        assertRecoveryWire(wires[0], captured, recoveryProject)
+        const worker = observed.workers.find(({ pid }) => pid === wires[0].pid)
+        assert.ok(worker?.identity && worker.args.includes('imagegen_worker.inference_main'))
+        for (const write of worker.writes) {
+          assert.equal(write.originalCalls, 1)
+          assert.equal(write.receiverMatches, true)
+          assert.equal(write.thrown, undefined)
+        }
+        assert.equal(worker.exit, null)
+        evidence = { row, wire: wires[0], worker: structuredClone(worker) }
+        return true
+      },
+      { timeout: timeout(240_000), intervals: [100, 250, 500] },
+    )
+    .toBe(true)
+  return evidence
+}
+async function readProcessIdentity(pid) {
+  const stat = await readFile(`/proc/${pid}/stat`, 'utf8')
+  const start = stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19]
+  assert.match(start, /^\d+$/)
+  const group = (await readFile(`/proc/${pid}/cgroup`, 'utf8'))
+    .trim()
+    .split('\n')
+    .find((line) => line.startsWith('0::'))
+    ?.slice(3)
+  assert.ok(group?.startsWith('/') && group !== '/')
+  return { pid, start, group }
+}
+/** Deliberate failure only: never invokes native.close or any production cancellation action. */
+async function crashNative(label, beforeSignal, afterExit, activeWorker = null) {
+  assert.ok(recoveryProfile && activeLifetime && application)
+  clearInterval(sampler)
+  await sampling
+  const nativeProcess = application.process()
+  await beforeSignal()
+  const observed = await retainObservers(true)
+  assert.deepEqual(observed.faults, [])
+  await database.close()
+  database = null
+  // Re-read actual bounds after removing the diagnostic connection; never reuse a previous life.
+  await bounds(`${label}-before-signal`)
+  const bounded = nativeChecks.findLast(({ processIdentities }) =>
+    processIdentities.some(({ pid }) => pid === nativeProcess.pid),
+  )
+  const identity = bounded?.processIdentities.find(({ pid }) => pid === nativeProcess.pid)
+  const scope = bounded?.groups.find(
+    ({ ownedScope, pids }) => ownedScope && pids.includes(nativeProcess.pid),
+  )
+  assert.ok(identity && scope, 'Fault requires the exact owned PID-named Electron scope')
+  assert.deepEqual(await readProcessIdentity(nativeProcess.pid), {
+    ...identity,
+    group: scope.group,
+  })
+  if (activeWorker) {
+    assert.deepEqual(
+      await readProcessIdentity(activeWorker.pid),
+      { pid: activeWorker.pid, start: activeWorker.identity.start, group: scope.group },
+      'The original wire worker must still be alive in the owned crash scope',
+    )
+  }
+  activeLifetime.crashCut = {
+    label,
+    main: identity,
+    group: scope.group,
+    activeWorker: activeWorker?.identity ?? null,
+    at: new Date().toISOString(),
+  }
+  checkpoint()
+  const signaled = await stopExpiredQualificationProcess({ ...identity, group: scope.group })
+  assert.equal(signaled.signalRequested, true)
+  const exited = await confirmQualificationProcessExit(nativeChecks)
+  assert.equal(exited.confirmed, true)
+  assert.equal(nativeProcess.signalCode, 'SIGKILL')
+  const closure = {
+    label,
+    intentional: true,
+    ...exited,
+    signal: signaled,
+    processExitCode: nativeProcess.exitCode,
+    signalCode: nativeProcess.signalCode,
+  }
+  report.nativeClosures.push(closure)
+  activeLifetime.closure = closure
+  activeLifetime.resourceChecks = structuredClone(nativeChecks)
+  activeLifetime.finishedAt = new Date().toISOString()
+  application = null
+  window = null
+  nativeChecks.length = 0
+  memoryGroups.clear()
+  database = openAppDatabase(appDataRoot, path.resolve('src/main/db/migrations'))
+  try {
+    await afterExit()
+  } finally {
+    await database.close()
+    database = null
+  }
+  await assertLifetimePins()
+  checkpoint()
+}
+async function editAndSaveRecoveryDraft(project) {
+  const steps = window.locator('input[aria-label="Steps"]')
+  await steps.fill('2')
+  await steps.press('Enter')
+  const seed = window.locator('input[aria-label="Generation seed"]')
+  await seed.fill('124')
+  await seed.press('Enter')
+  for (const region of project.document.regionalGuidance)
+    await window
+      .locator(`[data-regional-guidance-id="${region.id}"]`)
+      .getByRole('button', { name: `Hide ${region.name}`, exact: true })
+      .click()
+  await expect
+    .poll(
+      async () => {
+        const tab = await current(project)
+        return {
+          steps: tab.generationDraft.sampling.steps,
+          seed: tab.generationDraft.seed,
+          enabled: tab.regionalGuidance.map(({ enabled }) => enabled),
+        }
+      },
+      { timeout: timeout() },
+    )
+    .toEqual({ steps: 2, seed: { policy: 'fixed', value: 124 }, enabled: [false, false] })
+  await save(project)
+  await originalIpcFinished('projects:save')
+  const tab = await current(project)
+  assert.equal(tab.dirty, false)
+  assert.deepEqual(tab.layers, [])
+  const packageSha256 = await hashFile(project.file)
+  report.currentAuthoringAfterEdit = {
+    generationDraft: tab.generationDraft,
+    regionalGuidance: portableRegions(tab),
+    packageSha256,
+  }
+  await screenshot('recovery-edited-saved-current-draft')
+  return { tab, packageSha256 }
+}
+async function captureRecoveryCandidate(project, completed) {
+  await expect
+    .poll(async () => (await api('listGenerationResults', project.id)).candidates.length, {
+      timeout: timeout(120_000),
+    })
+    .toBe(1)
+  const snapshot = await api('listGenerationResults', project.id),
+    candidate = snapshot.candidates[0]
+  assert.equal(candidate.queueItemId, completed.row.id)
+  assert.equal(candidate.actualSeed, 123)
+  assert.equal(candidate.sourceDocumentMismatch, false)
+  assert.equal(snapshot.lastActualSeed, 123)
+  assert.deepEqual(snapshot.unfinishedSiblingJobIds, [])
+  const bytes = await fetchPng(candidate.imageUrl),
+    decoded = decodePng(bytes)
+  assert.equal(digest(bytes), completed.receipt.image_sha256)
+  assert.equal(bytes.length, completed.receipt.image_byte_size)
+  assert.equal(decoded.width, 1024)
+  assert.equal(decoded.height, 1024)
+  assert.equal(decoded.channels, 3)
+  assert.equal(decoded.iccSha256, IGS_SRGB_ICC_SHA256)
+  assert.equal((await browserDecode(candidate.imageUrl)).rgbaSha256, decoded.rgbaSha256)
+  return {
+    candidate,
+    bytes,
+    rgbaSha256: decoded.rgbaSha256,
+    receipt: completed.receipt,
+    cursor: (await recoverySql()).cursors[0],
+  }
+}
+function stableCandidate(candidate) {
+  const value = structuredClone(candidate)
+  delete value.imageUrl
+  delete value.thumbnailUrl
+  return value
+}
+async function recoveryThreeLifetimes() {
+  const project = projects.find(({ mode }) => mode === 'transparent')
+  recoveryProject = project
+  await openProject(project)
+  assert.deepEqual(await recoverySql(), { queue: [], receipts: [], cursors: [] })
+  const count = window.locator('input[aria-label="Images per click"]')
+  await count.fill('1')
+  await count.press('Enter')
+  await expect(count).toHaveValue('1')
+  await expect(window.locator('input[aria-label="Steps"]')).toHaveValue('30')
+  await expect(window.locator('input[aria-label="Generation seed"]')).toHaveValue('123')
+  const generate = window.getByRole('button', { name: 'Generate', exact: true })
+  await expect(generate).toBeEnabled({ timeout: timeout(120_000) })
+  await generate.click()
+  await expect
+    .poll(async () => (await recoverySql()).queue.length, { timeout: timeout(180_000) })
+    .toBe(1)
+  const first = (await recoverySql()).queue[0],
+    captured = await captureFrozen(first, project)
+  const dispatch = await originalRegionalWire(first.id, captured)
+  await originalIpcFinished('projects:generate')
+  report.recovery = {
+    interrupted: captured,
+    activeWire: dispatch,
+    initialPackageSha256: project.initialPackageSha256,
+  }
+  await crashNative(
+    'lifetime-1-active-regional-crash',
+    async () => {
+      const sql = await recoverySql()
+      assert.equal(sql.queue.length, 1)
+      assert.equal(sql.queue[0].status, 'running')
+      assert.deepEqual(sql.receipts, [])
+      assert.deepEqual(sql.cursors, [])
+      assert.equal(await hashFile(project.file), project.initialPackageSha256)
+    },
+    async () => {
+      const sql = await recoverySql()
+      assert.equal(
+        sql.queue[0].status,
+        'running',
+        'A completed or canceled pre-signal row is a missed crash cut',
+      )
+      assert.equal(sql.queue[0].frozen_payload_json, first.frozen_payload_json)
+      assert.deepEqual(sql.receipts, [])
+      assert.deepEqual(sql.cursors, [])
+      report.recovery.afterActiveCrash = sql
+    },
+    dispatch.worker,
+  )
+  check(
+    'First real regional wire interrupted by exact owned-scope SIGKILL; no receipt/cursor/Save and independent physical exit confirmed',
+  )
+
+  await launch()
+  const restarted = await recoverySql()
+  assert.equal(restarted.queue.length, 1)
+  const canceled = restarted.queue[0]
+  assert.equal(canceled.status, 'canceled')
+  assert.equal(canceled.error_code, 'APP_RESTART')
+  assert.equal(canceled.status_sequence, dispatch.row.status_sequence + 1)
+  assert.equal(canceled.frozen_payload_json, first.frozen_payload_json)
+  assert.deepEqual(restarted.receipts, [])
+  assert.deepEqual(restarted.cursors, [])
+  assert.equal(
+    regionalWires(await observerSnapshot()).length,
+    0,
+    'Startup never automatically resumes interrupted regional work',
+  )
+  await openProject(project)
+  await expect(window.getByRole('dialog', { name: 'Recovery available', exact: true })).toHaveCount(
+    0,
+  )
+  assert.equal(await hashFile(project.file), project.initialPackageSha256)
+  const edited = await editAndSaveRecoveryDraft(project)
+  await openQueue()
+  await expect(queueRow(first.id)).toContainText('Canceled')
+  await expect(queueRow(first.id)).toContainText('Seed 123')
+  await queueRow(first.id).getByRole('button', { name: 'Retry job', exact: true }).click()
+  await originalIpcFinished('projects:retry-generation-job')
+  await expect
+    .poll(async () => (await recoverySql()).queue.length, { timeout: timeout(180_000) })
+    .toBe(2)
+  const retried = (await recoverySql()).queue.find(({ id }) => id !== first.id)
+  assert.equal(retried.operation, 'illustrious-regional-txt2img')
+  assert.equal(retried.frozen_payload_json, first.frozen_payload_json)
+  const retryCaptured = await captureFrozen(retried, project)
+  assert.equal(retryCaptured.frozenPayloadSha256, captured.frozenPayloadSha256)
+  assert.equal(retryCaptured.targetSha256, captured.targetSha256)
+  report.retry = {
+    firstJobId: first.id,
+    retryJobId: retried.id,
+    originalFrozen: captured,
+    retryFrozen: retryCaptured,
+  }
+  await closeQueue()
+  await expect
+    .poll(
+      async () => {
+        const row = await job(retried.id)
+        if (['failed', 'canceled'].includes(row.status))
+          assert.fail(`Frozen regional Retry failed: ${row.error_code}: ${row.error_message}`)
+        return row.status
+      },
+      { timeout: timeout(900_000), intervals: [250, 500, 1000] },
+    )
+    .toBe('completed')
+  await expect
+    .poll(async () => (await api('getGenerationState', project.id)).phase, {
+      timeout: timeout(120_000),
+    })
+    .toBe('idle')
+  const completedSql = await recoverySql()
+  assert.equal(completedSql.queue.length, 2)
+  assert.equal(completedSql.receipts.length, 1)
+  assert.equal(completedSql.cursors.length, 1)
+  assert.equal(
+    completedSql.queue.find(({ id }) => id === first.id).status_sequence,
+    canceled.status_sequence + 1,
+  )
+  const receipt = completedSql.receipts[0]
+  assert.equal(receipt.status, 'completed')
+  assert.equal(receipt.queue_item_id, retried.id)
+  assert.equal(receipt.actual_seed, 123)
+  assert.equal(receipt.frozen_payload_sha256, captured.frozenPayloadSha256)
+  const completed = {
+    row: await job(retried.id),
+    receipt,
+    frozen: captured.frozen,
+    edited: edited.tab,
+  }
+  const survivor = await captureRecoveryCandidate(project, completed)
+  assert.equal(survivor.cursor.actual_seed, 123)
+  assert.equal(
+    await hashFile(project.file),
+    edited.packageSha256,
+    'Completion must not Save or accept the surviving candidate',
+  )
+  assert.equal((await current(project)).dirty, false)
+  assert.deepEqual((await current(project)).layers, [])
+  const secondObserved = await observerSnapshot(),
+    secondWires = regionalWires(secondObserved)
+  assert.equal(secondWires.length, 1)
+  assertRecoveryWire(secondWires[0], captured, project)
+  assert.notEqual(secondWires[0].requestId, dispatch.wire.requestId)
+  let successfulWorker
+  await expect
+    .poll(
+      async () => {
+        const observed = await observerSnapshot()
+        assert.deepEqual(observed.faults, [])
+        successfulWorker = observed.workers.find(({ pid }) => pid === secondWires[0].pid)
+        assert.ok(successfulWorker?.identity)
+        return successfulWorker.exit !== null && successfulWorker.close !== null
+      },
+      { timeout: timeout() },
+    )
+    .toBe(true)
+  const successfulWorkerExit = await confirmQualificationProcessExit([
+    {
+      processIdentities: [{ pid: successfulWorker.pid, start: successfulWorker.identity.start }],
+      groups: [],
+    },
+  ])
+  assert.equal(successfulWorkerExit.confirmed, true)
+  report.recovery.successfulExecutionExitBeforeSecondCrash = {
+    identity: successfulWorker.identity,
+    exit: successfulWorker.exit,
+    close: successfulWorker.close,
+    physicalExit: successfulWorkerExit,
+  }
+  report.recovery.survivor = {
+    candidate: stableCandidate(survivor.candidate),
+    pngSha256: digest(survivor.bytes),
+    byteSize: survivor.bytes.length,
+    rgbaSha256: survivor.rgbaSha256,
+    receipt: survivor.receipt,
+    cursor: survivor.cursor,
+    packageSha256: edited.packageSha256,
+  }
+  await screenshot('recovery-unaccepted-before-second-crash')
+  await crashNative(
+    'lifetime-2-unaccepted-candidate-crash',
+    async () => {
+      assert.deepEqual(await recoverySql(), completedSql)
+      assert.equal((await api('listGenerationResults', project.id)).candidates.length, 1)
+      assert.equal(await hashFile(project.file), edited.packageSha256)
+    },
+    async () => {
+      assert.deepEqual(await recoverySql(), completedSql)
+      assert.equal(await hashFile(project.file), edited.packageSha256)
+    },
+  )
+  check(
+    'Startup APP_RESTART and explicit frozen UI Retry preserve original 30-step/123 recipe after edited Save; completed candidate retained through a second physical crash',
+  )
+
+  await launch()
+  assert.deepEqual(await recoverySql(), completedSql)
+  assert.equal(regionalWires(await observerSnapshot()).length, 0)
+  await window.getByRole('tab', { name: 'Home', exact: true }).click()
+  await window.getByRole('button', { name: 'Refresh projects', exact: true }).click()
+  await window.getByRole('button', { name: `Open ${project.title}`, exact: true }).click()
+  const recovery = window.getByRole('dialog', { name: 'Recovery available', exact: true })
+  await expect(recovery).toBeVisible({ timeout: timeout() })
+  await recovery.getByRole('button', { name: 'Recover', exact: true }).click()
+  await originalIpcFinished('projects:resolve-recovery')
+  await expect(recovery).toHaveCount(0)
+  await expect(window.getByRole('tab', { name: project.title, exact: true })).toBeVisible()
+  await expect(window.locator('input[aria-label="Images per click"]')).toBeEnabled({
+    timeout: timeout(),
+  })
+  const recovered = await current(project)
+  assert.equal(recovered.dirty, false)
+  assert.deepEqual(recovered.layers, [])
+  assert.deepEqual(recovered.generationDraft, edited.tab.generationDraft)
+  assert.deepEqual(portableRegions(recovered), portableRegions(edited.tab))
+  assert.deepEqual(recovered.primaryBbox, bbox)
+  assert.equal(
+    await hashFile(project.file),
+    edited.packageSha256,
+    'Home Recover must not Save the portable Project',
+  )
+  const restored = await captureRecoveryCandidate(project, completed)
+  assert.deepEqual(stableCandidate(restored.candidate), stableCandidate(survivor.candidate))
+  assert.equal(restored.bytes.equals(survivor.bytes), true)
+  assert.equal(restored.rgbaSha256, survivor.rgbaSha256)
+  assert.deepEqual(restored.receipt, survivor.receipt)
+  assert.deepEqual(restored.cursor, survivor.cursor)
+  assert.deepEqual(await recoverySql(), completedSql)
+  await screenshot('recovery-surviving-results')
+  check(
+    'Third lifetime real Home Recover preserves exact temporary candidate/receipt/cursor and saved edited authoring without auto-resume, acceptance or Save',
+  )
+  await resultsAddSaveReopen(project, completed)
+}
+
+async function assertRecoveryActions() {
+  const currentObserved = await retainObservers(false)
+  const observed = [...report.lifetimes.map(({ observers }) => observers), currentObserved]
+  assert.equal(observed.length, 3)
+  const calls = observed.flatMap(({ ipc }) => ipc),
+    wires = observed.flatMap(regionalWires)
+  for (const value of observed) assert.deepEqual(value.faults, [])
+  for (const call of calls) {
+    assert.equal(call.originalCalls, 1)
+    assert.equal(call.finished, true, `Unfinished original IPC: ${call.channel}`)
+    assert.equal(call.ok, true, JSON.stringify(call))
+  }
+  const expected = {
+    'projects:generate': 1,
+    'projects:retry-generation-job': 1,
+    'projects:accept-generation-candidates': 1,
+    'projects:undo': 1,
+    'projects:redo': 1,
+    'projects:save': 2,
+    'projects:resolve-recovery': 1,
+    'projects:cancel-current-generation': 0,
+    'projects:cancel-generation-job': 0,
+  }
+  for (const [channel, count] of Object.entries(expected))
+    assert.equal(
+      calls.filter((call) => call.channel === channel).length,
+      count,
+      `Unexpected original UI ${channel} count`,
+    )
+  const generated = calls.find(({ channel }) => channel === 'projects:generate')
+  assert.deepEqual(generated.args[1], {
+    documentId: recoveryProject.document.documentId,
+    iterations: 1,
+  })
+  assert.equal(
+    calls.find(({ channel }) => channel === 'projects:retry-generation-job').args[0].id,
+    report.retry.firstJobId,
+  )
+  assert.deepEqual(calls.find(({ channel }) => channel === 'projects:resolve-recovery').args, [
+    recoveryProject.id,
+    'recover',
+  ])
+  assert.equal(wires.length, 2)
+  assert.equal(new Set(wires.map(({ requestId }) => requestId)).size, 2)
+  for (const wire of wires) assertRecoveryWire(wire, report.retry.originalFrozen, recoveryProject)
+  const ordinary = observed
+    .flatMap(({ workers }) => workers.flatMap(({ writes }) => writes.flatMap(({ lines }) => lines)))
+    .filter(({ type }) => type === 'generate-illustrious-txt2img')
+  assert.deepEqual(ordinary, [])
+  const sql = await recoverySql()
+  assert.equal(sql.queue.length, 2)
+  assert.equal(sql.receipts.length, 1)
+  assert.equal(sql.cursors.length, 1)
+  report.nativeAccounting = {
+    regionalWireCount: 2,
+    completedReceiptCount: 1,
+    canceledSqlCount: 1,
+    intentionalScopeCrashes: 2,
+    lifetimeCount: 3,
+    workerSpawnCountWholeRun: observed.reduce((sum, value) => sum + value.workers.length, 0),
+    stepCounterQualified: false,
+  }
+  check(
+    'Three real UI lifetimes retain prior pool and exact frozen request/candidate through two physical crashes, one explicit Retry and one explicit Recover',
+    report.nativeAccounting,
+  )
 }
 
 async function fetchPng(url) {
@@ -2038,6 +2729,7 @@ async function resultsAddSaveReopen(project, completed) {
 }
 
 async function retainObservers(restore) {
+  if (restore && recoveryProfile && activeLifetime?.observers) return activeLifetime.observers
   const observed = await observerSnapshot(restore)
   report.observers = observed
   assert.deepEqual(observed.faults, [])
@@ -2057,6 +2749,17 @@ async function retainObservers(restore) {
       processIdentities: identities.map(({ pid, start }) => ({ pid, start })),
       groups: [],
     })
+  if (recoveryProfile && restore) {
+    assert.ok(
+      activeLifetime && !activeLifetime.observers,
+      'Original slots can be restored only once per lifetime',
+    )
+    activeLifetime.observers = observed
+    activeLifetime.runtime = report.actualRuntime
+    activeLifetime.catalogVersion = report.actualCatalogVersion
+    activeLifetime.resourceChecks = structuredClone(nativeChecks)
+    report.lifetimes.push(activeLifetime)
+  }
   checkpoint()
   return observed
 }
@@ -2122,6 +2825,10 @@ async function closeNative(label) {
       processExitCode: nativeProcess.exitCode,
       signalCode: nativeProcess.signalCode,
     })
+    if (recoveryProfile && activeLifetime) {
+      activeLifetime.closure = report.nativeClosures.at(-1)
+      activeLifetime.finishedAt = new Date().toISOString()
+    }
     assert.equal(exit.confirmed, true)
     application = null
     window = null
@@ -2157,20 +2864,39 @@ async function finalIdentities() {
   const db = openAppDatabase(appDataRoot, path.resolve('src/main/db/migrations'))
   try {
     assert.deepEqual(await catalogSnapshot(db.db), catalogBefore)
-    const rows = await db.db.selectFrom('generation_queue_item').selectAll().execute()
+    const whole = recoveryProfile ? await sqlSnapshot(db.db) : null
+    if (recoveryProfile) assertBaselineSql(whole)
+    const rows = recoveryProfile
+      ? ownRecoverySql(whole).queue
+      : await db.db.selectFrom('generation_queue_item').selectAll().execute()
     assert.equal(rows.length, 2)
     assert.equal(rows.filter(({ status }) => status === 'canceled').length, 1)
     assert.equal(rows.filter(({ status }) => status === 'completed').length, 1)
+    if (recoveryProfile)
+      assert.equal(rows.find(({ status }) => status === 'canceled').error_code, 'APP_RESTART')
     assert.ok(rows.every(({ operation }) => operation === 'illustrious-regional-txt2img'))
     for (const row of rows)
       assert.equal(row.frozen_payload_json, report.retry.originalFrozen.row.frozen_payload_json)
-    const receipts = await db.db.selectFrom('generation_candidate_receipt').selectAll().execute()
+    const receipts = recoveryProfile
+      ? ownRecoverySql(whole).receipts
+      : await db.db.selectFrom('generation_candidate_receipt').selectAll().execute()
     assert.equal(receipts.length, 1)
     assert.equal(receipts[0].image_sha256, report.output.pngSha256)
     report.finalSql = {
       queue: rows,
       receipts,
-      cursors: await db.db.selectFrom('generation_seed_cursor').selectAll().execute(),
+      cursors: recoveryProfile
+        ? ownRecoverySql(whole).cursors
+        : await db.db.selectFrom('generation_seed_cursor').selectAll().execute(),
+    }
+    if (recoveryProfile) {
+      report.finalWholePoolSql = whole
+      for (const file of baselinePackages)
+        assert.equal(
+          await hashFile(file.path),
+          file.sha256,
+          'A previous saved Project must remain byte-identical',
+        )
     }
   } finally {
     await db.close()
@@ -2224,46 +2950,63 @@ try {
   await prepareCatalogAndProjects()
   await launch()
   await targetRefusalControls()
-  const project = projects.find(({ mode }) => mode === 'transparent')
-  const completed = await generateCancelEditRetry(project)
-  await resultsAddSaveReopen(project, completed)
-  const observed = await retainObservers(false)
-  const mutationCalls = observed.ipc.filter(({ channel }) => channel !== 'projects:open')
-  assert.ok(
-    mutationCalls.every(
-      ({ originalCalls, finished, ok }) => originalCalls === 1 && finished && ok === true,
-    ),
-  )
-  assert.equal(observed.ipc.filter(({ channel }) => channel === 'projects:generate').length, 1)
-  assert.equal(
-    observed.ipc.filter(({ channel }) => channel === 'projects:retry-generation-job').length,
-    1,
-  )
-  const generate = observed.ipc.find(({ channel }) => channel === 'projects:generate')
-  assert.deepEqual(
-    generate.args[1],
-    { documentId: project.document.documentId, iterations: 1 },
-    'Public renderer sends options without an injected recipe',
-  )
-  const retry = observed.ipc.find(({ channel }) => channel === 'projects:retry-generation-job')
-  assert.equal(retry.args[0].id, report.retry.firstJobId)
-  assert.equal(
-    observed.ipc.filter(({ channel }) => channel === 'projects:accept-generation-candidates')
-      .length,
-    1,
-  )
-  assert.equal(observed.ipc.filter(({ channel }) => channel === 'projects:undo').length, 1)
-  assert.equal(observed.ipc.filter(({ channel }) => channel === 'projects:redo').length, 1)
-  assert.equal(observed.ipc.filter(({ channel }) => channel === 'projects:save').length, 2)
-  assert.equal(
-    observed.ipc.filter(({ channel }) =>
-      ['projects:cancel-generation-job', 'projects:cancel-current-generation'].includes(channel),
-    ).length,
-    1,
-  )
+  if (recoveryProfile) {
+    await recoveryThreeLifetimes()
+    await assertRecoveryActions()
+  } else {
+    const project = projects.find(({ mode }) => mode === 'transparent')
+    const completed = await generateCancelEditRetry(project)
+    await resultsAddSaveReopen(project, completed)
+    const observed = await retainObservers(false)
+    const mutationCalls = observed.ipc.filter(({ channel }) => channel !== 'projects:open')
+    assert.ok(
+      mutationCalls.every(
+        ({ originalCalls, finished, ok }) => originalCalls === 1 && finished && ok === true,
+      ),
+    )
+    assert.equal(observed.ipc.filter(({ channel }) => channel === 'projects:generate').length, 1)
+    assert.equal(
+      observed.ipc.filter(({ channel }) => channel === 'projects:retry-generation-job').length,
+      1,
+    )
+    const generate = observed.ipc.find(({ channel }) => channel === 'projects:generate')
+    assert.deepEqual(
+      generate.args[1],
+      { documentId: project.document.documentId, iterations: 1 },
+      'Public renderer sends options without an injected recipe',
+    )
+    const retry = observed.ipc.find(({ channel }) => channel === 'projects:retry-generation-job')
+    assert.equal(retry.args[0].id, report.retry.firstJobId)
+    assert.equal(
+      observed.ipc.filter(({ channel }) => channel === 'projects:accept-generation-candidates')
+        .length,
+      1,
+    )
+    assert.equal(observed.ipc.filter(({ channel }) => channel === 'projects:undo').length, 1)
+    assert.equal(observed.ipc.filter(({ channel }) => channel === 'projects:redo').length, 1)
+    assert.equal(observed.ipc.filter(({ channel }) => channel === 'projects:save').length, 2)
+    assert.equal(
+      observed.ipc.filter(({ channel }) =>
+        ['projects:cancel-generation-job', 'projects:cancel-current-generation'].includes(channel),
+      ).length,
+      1,
+    )
+  }
   assert.deepEqual(report.pageErrors, [])
   assert.equal(report.samplerError, undefined)
   await closeNative('healthy-final')
+  if (recoveryProfile) {
+    assert.equal(report.lifetimes.length, 3)
+    assert.equal(report.nativeClosures.length, 3)
+    assert.equal(
+      report.nativeClosures.filter(
+        ({ intentional, signalCode, confirmed }) =>
+          intentional && signalCode === 'SIGKILL' && confirmed,
+      ).length,
+      2,
+    )
+    assert.equal(report.nativeClosures.at(-1).processExitCode, 0)
+  }
   await finalIdentities()
   report.outcome = 'passed'
   report.completedAt = new Date().toISOString()

@@ -1561,3 +1561,23 @@ optional thumbnails, quality, Anima and capacity remain separate. Earlier adapte
 results and failed harness attempts are not relabeled as installed PASS. Public
 promise statuses remain unchanged; consult the linked note for retained evidence
 and lifecycle closure.
+
+
+## Installed Regional restart and staged-result recovery
+
+The [recovery continuation](./phase-4-regional-guidance-installed-recovery-research.md)
+qualifies three installed Electron lifetimes: interrupted regional work becomes
+APP_RESTART; explicit frozen Retry survives saved authoring changes; a second
+interruption returns the completed candidate through real Home Recover, then
+Raster Add/Undo/Redo/Save/reopen. ROOT native-r2: 13 checks PASS in172.414s,
+2 regional wires/1 healthy completion/20 observed workers. Existing2 jobs,
+receipt/cursor and six saved packages stay unchanged. Lower checks211 PASS,
+final typecheck and semantic diagnostic mutation/control/restoration pass.
+
+The runner reuses the byte-identical previously qualified build, installed
+worker0.14.0 and original checkpoint; production recovery implementation remains
+unchanged. Failed pending-race setup and source-fixture ICC setup remain excluded.
+No automatic orphan-worker/scratch reaper, Main-only immediate restart, quality,
+Anima, capacity or release Install/Repair claim follows. PP-001/007/008 remain
+**«Пока не обещать»**. The linked note separates runtime, source/retention review,
+UI self-review and lifecycle evidence.
