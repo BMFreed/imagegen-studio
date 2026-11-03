@@ -989,3 +989,15 @@ this supplies neither full parity nor a sole model-cause conclusion. It provides
 no new basis for changing regional masks or claiming regional visual acceptance.
 Public admission, frozen work, provenance exclusions and promise statuses stay
 unchanged.
+
+## Actual Invoke assignment comparison
+
+The [installed-Invoke assignment/reversal comparison](../../../engineering/phase-4-regional-guidance-invoke-assignment-research.md)
+completes two real regional queue requests with unchanged historical Main owners
+and binary masks. Source-backed per-stream/range/mask consumption passes its
+post-publication checks, while visual reversal fails in both new images. Native
+collector order changes and the differently ordered bank's reconstruction limit
+remain explicit; this supplies no full numerical parity or sole-cause conclusion.
+No product routing/default/admission or promise status is changed. Public NEW
+refusal, frozen work, Smart target-only permissions and immutable provenance
+exclusions remain preserved.

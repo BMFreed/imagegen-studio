@@ -1473,3 +1473,16 @@ This weakens a Studio-specific-only explanation without establishing a sole mode
 cause or full numerical parity. One completed request/PNG is retained; controller
 exit90 records a residual owned process before group stop, followed by physical
 idle. No extra generation, implementation/default or readiness change follows.
+
+## Actual Invoke regional assignment/reversal
+
+The [two installed-Invoke regional requests](./phase-4-regional-guidance-invoke-assignment-research.md)
+reuse the genuine Main seed123 assignment/swapped masks and texts at Euler30/CFG5.
+Both queue items publish PNGs; the post-publication oracle passes for stream/mask
+association, selected global pools, 4,200 original cross-attention/native SDPA
+calls and 120 permission samples. Native collector ordering differs between
+cases: complete-bank reconstruction is independently exact for assignment only;
+swapped per-stream/range/mask checks and actual hashes retain their narrower
+scope. Visual reversal remains NOT_QUALIFIED (0 PASS / 2 FAIL), also in Invoke.
+Controller exit90 cleanup flags, physical idle, retained bytes and disposal remain
+explicit. No routing repair, production default or public-readiness change follows.
