@@ -933,7 +933,7 @@ provideProjectEntityRow({
         <p class="regional-status" role="status">
           {{
             region.enabled
-              ? 'Generation unavailable while this region is enabled.'
+              ? 'Enabled for Current Canvas. Generate checks model and target compatibility.'
               : 'Disabled regions do not affect generation.'
           }}
         </p>

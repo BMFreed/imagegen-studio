@@ -71,7 +71,6 @@ limits. Final byte audit is CLEAN; ROOT release gates and six-path cleanup recla
 **37,310,464 bytes**, retaining compact proof and protected dependencies. Public NEW refusal and
 PP-001/007/008 **Пока не обещать** remain unchanged.
 
-
 ## Private Regional Euler denoising — CPU qualification verified
 
 The [private native execution owner](./phase-4-regional-guidance-denoising-research.md)
@@ -1511,7 +1510,6 @@ Private callers own session quiescence/disposal; public Project submission and
 lifecycle integration remain the next owner. Previous negative visual findings
 and PP-001/007/008 readiness are unchanged.
 
-
 ## Private regional Project submission and lifecycle
 
 The [Project owner](./phase-4-regional-guidance-project-lifecycle-research.md)
@@ -1524,3 +1522,23 @@ Retry and confirmed close disposal. A source-review unconfirmed-compositor-exit
 finding was reproduced and corrected through the existing Smart retention pattern;
 the bounded correction review is CLEAN. Effective global TI, public admission/UI,
 visual usefulness and PP-001/007/008 readiness remain outside this private slice.
+
+## Public regional Invoke Canvas continuation
+
+The [public integration](./phase-4-regional-guidance-public-invoke-research.md)
+adds a versioned, finite Current Canvas route through existing admission,
+dispatch, receipts, signed Results, frozen Retry and explicit Raster Add/Save.
+New `illustrious-regional-txt2img` history and `invoke-canvas-v1` consumption stay
+separate from legacy private rows. Current Invoke supplies positive-alpha mask
+conversion, omission of literal-empty local signs, global Everywhere coverage
+and global pooled conditioning. No new queue, loader or sampler is introduced.
+
+ROOT qualified 1,013 distinct affected Main cases (1,012 broad plus one later
+error-projection case), 813 Python cases and six genuine Main-produced recipes.
+One actual public trained CUDA request passed through automatic dispatch,
+signed Results, journaled Raster Add, grouped Undo/Redo and explicit Save/reopen.
+Its runtime lease interface uses a one-client adapter; this is not installed
+RuntimeManager or renderer→IPC qualification. The linked note records final
+browser/build checks, source reviews, sensitivity, excluded attempts and retention.
+No quality, general parity, capacity or release-readiness claim follows.
+Historical negative visual results and PP-001/007/008 **«Пока не обещать»** remain.

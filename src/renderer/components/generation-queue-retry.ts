@@ -3,7 +3,11 @@ import type { ProjectGenerationActionState } from '../../shared/projects/project
 
 type RetryState = Pick<
   ProjectGenerationActionState,
-  'animaOutpaintSupported' | 'animaSupported' | 'outpaintSupported' | 'smartPatchSupported'
+  | 'animaOutpaintSupported'
+  | 'animaSupported'
+  | 'outpaintSupported'
+  | 'regionalSupported'
+  | 'smartPatchSupported'
 >
 
 /** Advisory worker gate follows the frozen operation; Main still verifies exact local resources. */
@@ -11,6 +15,14 @@ export function generationQueueRetryReason(
   operation: GenerationQueueEntry['operation'],
   state: RetryState | null,
 ): string | null {
+  if (operation === 'illustrious-regional-txt2img') {
+    if (state === null) {
+      return 'Checking image engine support for this frozen Regional Guidance job.'
+    }
+    return state.regionalSupported === true
+      ? null
+      : 'The current image engine does not support Regional Guidance. Repair or update the runtime.'
+  }
   if (operation === 'illustrious-smart-patch' || operation === 'anima-smart-patch') {
     if (state === null) {
       return 'Checking image engine support for this frozen Smart Patch job.'

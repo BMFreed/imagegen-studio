@@ -28,6 +28,7 @@ export type RegionalGlobalCoverage =
   { alpha: Uint8Array; height: number; kind: 'alpha8'; width: number } | { kind: 'everywhere' }
 
 export interface RegionalWorkerInput {
+  compositionProfile?: 'invoke-canvas-v1'
   globalNegativeCoverage: RegionalGlobalCoverage
   globalPositiveCoverage: RegionalGlobalCoverage
   layout: 'cfg-negative-first' | 'positive-only'
@@ -214,6 +215,7 @@ const recipeSchema = v.strictObject({
   ),
 })
 const inputSchema = v.strictObject({
+  compositionProfile: v.optional(v.literal('invoke-canvas-v1')),
   globalNegativeCoverage: coverageSchema,
   globalPositiveCoverage: coverageSchema,
   layout: v.picklist(['cfg-negative-first', 'positive-only']),
@@ -234,6 +236,17 @@ export function captureRegionalWorkerInput(input: RegionalWorkerInput): Regional
     }
     detached = result.output
     validateAgreement(detached)
+    if (
+      detached.compositionProfile === 'invoke-canvas-v1' &&
+      (detached.globalNegativeCoverage.kind !== 'everywhere' ||
+        detached.globalPositiveCoverage.kind !== 'everywhere' ||
+        detached.negativePooledSourceId !== 'current-canvas' ||
+        detached.positivePooledSourceId !== 'current-canvas' ||
+        detached.layout !== 'cfg-negative-first' ||
+        detached.request.job.sampling.cfgScale <= 1)
+    ) {
+      throw invalid('Invoke Canvas requires global support, global pools and CFG above one.')
+    }
   } catch (error) {
     if (error instanceof ProjectWorkerError) {
       throw error
@@ -326,6 +339,7 @@ export async function prepareRegionalWorkerRequest(
             alpha: await alphaDescriptor(coverage.alpha, `global-${sign}.alpha8`),
           }
     const bundle = {
+      ...(detached.compositionProfile ? { compositionProfile: detached.compositionProfile } : {}),
       globalNegativeCoverage: await globalCoverage(detached.globalNegativeCoverage, 'negative'),
       globalPositiveCoverage: await globalCoverage(detached.globalPositiveCoverage, 'positive'),
       layout: detached.layout,

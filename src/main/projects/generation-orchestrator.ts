@@ -270,9 +270,28 @@ export class GenerationOrchestrator {
     }
   }
 
+  async cancelFailedRegionalAdmission(tabId: string, id: string): Promise<void> {
+    try {
+      await this.cancelRegionalQueueItem(id)
+      const row = await this.queue.getRegionalQueueItem(id)
+      if (row?.status !== 'canceled') {
+        throw cancellationUncertain('The refused regional job has not stopped.')
+      }
+    } catch {
+      this.batchCleanupUnconfirmed.add(tabId)
+      this.fencedProjects.add(tabId)
+      this.queue.fenceProject(tabId)
+      throw cancellationUncertain('Regional admission cancellation needs worker/restart recovery.')
+    }
+  }
+
   /** Route cancellation by the durable operation discriminator, never by current UI selection. */
   async cancelGenerationJob(id: string): Promise<QueuedGenerationItem> {
     const entry = await this.queue.getManagerEntry(id)
+    if (entry.operation === 'illustrious-regional-txt2img') {
+      await this.cancelRegionalQueueItem(id)
+      return await this.queue.cancel(id)
+    }
     if (entry.operation === 'illustrious-smart-patch' || entry.operation === 'anima-smart-patch') {
       await this.cancelSmartPatchQueueItem(id)
       for (const processor of this.smartPatchProcessors) {
@@ -446,14 +465,19 @@ export class GenerationOrchestrator {
   }
 
   /** Register the exact private owner with the same admission and Project-close barriers. */
-  createRegionalExecution(): PrivateRegionalExecution {
+  createRegionalExecution(compositionProfile?: 'invoke-canvas-v1'): PrivateRegionalExecution {
     if (this.regionalStopping) {
       throw new GenerationOrchestratorError(
         'PROJECT_GENERATION_CLOSING',
         'Regional dispatch is stopping.',
       )
     }
-    const processor = new RegionalGenerationProcessor(this.queue, this.staging, this.models)
+    const processor = new RegionalGenerationProcessor(
+      this.queue,
+      this.staging,
+      this.models,
+      compositionProfile,
+    )
     this.regionalProcessors.add(processor)
     return {
       cancelAndWait: processor.cancelAndWait.bind(processor),
@@ -1040,7 +1064,9 @@ export class GenerationOrchestrator {
   async enqueuePreparedRegional(
     tabId: string,
     input: {
+      afterPublication?: (item: QueuedGenerationItem, assertCurrent: () => void) => Promise<void>
       assertCurrent: () => void
+      beforePublication?: () => Promise<void>
       prepared: PreparedNormalTxt2Img
       regional: Omit<RegionalWorkerInput, 'request'>
       request: IllustriousTxt2ImgRequestV1
@@ -1097,7 +1123,13 @@ export class GenerationOrchestrator {
       }
       assertCurrent()
       const stagingSessionId = randomUUID()
-      const queued = await this.queue.enqueueCurrentCanvasRegional({
+      await input.beforePublication?.()
+      assertCurrent()
+      const enqueue =
+        captured.compositionProfile === 'invoke-canvas-v1'
+          ? this.queue.enqueueInvokeCanvasRegional.bind(this.queue)
+          : this.queue.enqueueCurrentCanvasRegional.bind(this.queue)
+      const queued = await enqueue({
         assertCurrent,
         preflight: async (entries) => {
           assertCurrent()
@@ -1128,6 +1160,8 @@ export class GenerationOrchestrator {
             'The indexed Project changed after enqueue.',
           )
         }
+        await input.afterPublication?.(queued, assertCurrent)
+        assertCurrent()
         return queued
       } catch (error) {
         await this.cancelFailedRegionalAdmission(tabId, queued.id)
@@ -1252,7 +1286,7 @@ export class GenerationOrchestrator {
     return await this.queue.hasDispatchablePending()
   }
 
-  async nextDispatchableKind(): Promise<'normal' | 'smart-patch' | null> {
+  async nextDispatchableKind(): Promise<'normal' | 'regional' | 'smart-patch' | null> {
     await this.enqueueBarrier
     return await this.queue.nextDispatchableKind()
   }
@@ -1333,6 +1367,7 @@ export class GenerationOrchestrator {
     tabId: string,
     id: string,
     expectedStatusSequence: number,
+    compositionProfile?: 'invoke-canvas-v1',
   ): Promise<QueuedGenerationItem> {
     this.assertGenerationOpen(tabId)
     const owner = this.projects.getOpenDocumentForAcceptance?.(tabId)
@@ -1380,22 +1415,20 @@ export class GenerationOrchestrator {
           'The frozen Retry belongs to another document.',
         )
       }
-      const retried = await this.queue.retryCurrentCanvasRegionalTerminal(
-        id,
-        expectedStatusSequence,
-        async (input) => {
-          assertCurrent()
-          await this.staging.preflightRegionalBatchCapacity({
-            entries: [
-              { frozenPayloadJson: input.frozenPayloadJson, queueItemId: input.queueItemId },
-            ],
-            localProjectKey: tabId,
-            projectPath: project.canonicalPath,
-            stagingSessionId: input.stagingSessionId,
-          })
-          assertCurrent()
-        },
-      )
+      const retry =
+        compositionProfile === 'invoke-canvas-v1'
+          ? this.queue.retryInvokeCanvasRegionalTerminal.bind(this.queue)
+          : this.queue.retryCurrentCanvasRegionalTerminal.bind(this.queue)
+      const retried = await retry(id, expectedStatusSequence, async (input) => {
+        assertCurrent()
+        await this.staging.preflightRegionalBatchCapacity({
+          entries: [{ frozenPayloadJson: input.frozenPayloadJson, queueItemId: input.queueItemId }],
+          localProjectKey: tabId,
+          projectPath: project.canonicalPath,
+          stagingSessionId: input.stagingSessionId,
+        })
+        assertCurrent()
+      })
       try {
         assertCurrent()
         const after = await this.indexedProject(tabId)
@@ -1507,21 +1540,6 @@ export class GenerationOrchestrator {
       )
     }
     return owner
-  }
-
-  private async cancelFailedRegionalAdmission(tabId: string, id: string): Promise<void> {
-    try {
-      await this.cancelRegionalQueueItem(id)
-      const row = await this.queue.getRegionalQueueItem(id)
-      if (row?.status !== 'canceled') {
-        throw cancellationUncertain('The refused regional job has not stopped.')
-      }
-    } catch {
-      this.batchCleanupUnconfirmed.add(tabId)
-      this.fencedProjects.add(tabId)
-      this.queue.fenceProject(tabId)
-      throw cancellationUncertain('Regional admission cancellation needs worker/restart recovery.')
-    }
   }
 
   private async cancelRegionalQueueItem(id: string): Promise<void> {

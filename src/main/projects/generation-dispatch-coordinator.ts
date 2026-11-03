@@ -1,10 +1,15 @@
 import type { GenerationOrchestrator } from './generation-orchestrator.js'
 import type { PrivateSmartPatchExecution } from './generation-orchestrator.js'
+import type { PrivateRegionalExecution } from './generation-orchestrator.js'
 import type {
   GenerationProcessorResult,
   GenerationWorkerTransport,
 } from './generation-processor.js'
 import type { GenerationProcessor } from './generation-processor.js'
+import type {
+  RegionalGenerationProcessorResult,
+  RegionalGenerationTransport,
+} from './regional-generation-processor.js'
 import type {
   SmartPatchInferenceTransport,
   SmartPatchProcessorResult,
@@ -18,7 +23,8 @@ export interface GenerationWorkerLease {
   ) => Promise<T | null>
 }
 
-type DispatchResult = GenerationProcessorResult | SmartPatchProcessorResult
+type DispatchResult =
+  GenerationProcessorResult | RegionalGenerationProcessorResult | SmartPatchProcessorResult
 
 export class GenerationDispatchError extends Error {
   constructor(
@@ -42,18 +48,25 @@ export class GenerationDispatchCoordinator {
 
   constructor(
     private readonly runtime: GenerationWorkerLease,
-    private readonly orchestrator: Partial<Pick<GenerationOrchestrator, 'stopRegionalExecutions'>> &
+    private readonly orchestrator: Partial<Pick<GenerationOrchestrator, 'nextDispatchableKind'>> &
+      Partial<Pick<GenerationOrchestrator, 'stopRegionalExecutions'>> &
       Pick<GenerationOrchestrator, 'hasDispatchablePending' | 'runNext'>,
     private readonly processor: Pick<GenerationProcessor, 'stopAndCancelActive'>,
     private readonly scratchBasePath: string,
     private readonly smartPatch?: {
       execution: PrivateSmartPatchExecution
-      nextPending: () => Promise<'normal' | 'smart-patch' | null>
+      nextPending: () => Promise<'normal' | 'regional' | 'smart-patch' | null>
     },
+    private readonly regional?: Pick<PrivateRegionalExecution, 'onChanged' | 'runNext'>,
   ) {}
 
   onChanged(listener: () => void): () => void {
-    return this.smartPatch?.execution.onChanged?.(listener) ?? (() => undefined)
+    const stopSmart = this.smartPatch?.execution.onChanged?.(listener)
+    const stopRegional = this.regional?.onChanged(listener)
+    return () => {
+      stopSmart?.()
+      stopRegional?.()
+    }
   }
 
   async runNext(): Promise<DispatchResult> {
@@ -64,11 +77,15 @@ export class GenerationDispatchCoordinator {
       throw new GenerationDispatchError('BUSY', 'A generation job is already being processed.')
     }
     const operation = (async (): Promise<DispatchResult> => {
-      const kind = this.smartPatch
-        ? await this.smartPatch.nextPending()
-        : (await this.orchestrator.hasDispatchablePending())
-          ? 'normal'
-          : null
+      const nextKind = async () =>
+        this.smartPatch
+          ? await this.smartPatch.nextPending()
+          : this.regional && this.orchestrator.nextDispatchableKind
+            ? await this.orchestrator.nextDispatchableKind()
+            : (await this.orchestrator.hasDispatchablePending())
+              ? 'normal'
+              : null
+      const kind = await nextKind()
       if (!kind || this.closed) {
         return { kind: 'idle' }
       }
@@ -78,9 +95,24 @@ export class GenerationDispatchCoordinator {
           if (this.closed) {
             return { kind: 'idle' as const }
           }
-          const currentKind = this.smartPatch ? await this.smartPatch.nextPending() : kind
+          const currentKind = await nextKind()
           if (!currentKind) {
             return { kind: 'idle' as const }
+          }
+          if (currentKind === 'regional') {
+            const transport = worker as GenerationWorkerTransport &
+              Partial<RegionalGenerationTransport>
+            if (!this.regional || typeof transport.executeCurrentCanvasRegional !== 'function') {
+              throw new GenerationDispatchError(
+                'RUNTIME_UNAVAILABLE',
+                'The installed worker cannot execute Regional Guidance.',
+              )
+            }
+            return await this.regional.runNext({
+              close: transport.close.bind(transport),
+              executeCurrentCanvasRegional: transport.executeCurrentCanvasRegional.bind(transport),
+              ready: transport.ready,
+            })
           }
           if (currentKind === 'smart-patch' && this.smartPatch) {
             const transport = worker as GenerationWorkerTransport &

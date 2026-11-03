@@ -386,7 +386,13 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     let dispatched = false
     let completed = false
     try {
-      if (!this.ready.capabilities.includes('private-current-canvas-regional-v1')) {
+      if (
+        !this.ready.capabilities.includes(
+          input.compositionProfile === 'invoke-canvas-v1'
+            ? 'illustrious-regional-invoke-v1'
+            : 'private-current-canvas-regional-v1',
+        )
+      ) {
         throw new GenerationWorkerError(
           'WORKER_VERSION_MISMATCH',
           'The active worker has not qualified private regional execution.',

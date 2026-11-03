@@ -602,3 +602,33 @@ test('confirmed target failure permits queued recovery and releases both capture
     assert.deepEqual(await scratchNames(f), [])
   })
 })
+
+for (const code of ['WORKER_EXIT_UNCONFIRMED', 'CONTROL_RECOVERABLE']) {
+  test(`late preparation ${code} after composition retains only physically owned raster inputs`, async () => {
+    await withFixture(async (f) => {
+      const failure = Object.assign(new Error('Late preparation close refusal'), { code })
+      let request: Parameters<TargetWorker['composeTarget']>[0] | undefined
+      await assert.rejects(
+        f.service.withCapturedCurrentCanvasRegionalGenerationInput(f.id, async (capture) => {
+          await capture.composeTarget({
+            composeTarget: async (input) => {
+              request = structuredClone(input)
+              return await worker(f).composeTarget(input)
+            },
+          })
+          throw failure
+        }),
+        (error) => error === failure,
+      )
+      assert.ok(request)
+      if (code === 'WORKER_EXIT_UNCONFIRMED') {
+        assert.deepEqual(await readFile(request.layers[0].path), f.png)
+        assert.deepEqual(await scratchNames(f), [path.basename(request.stagingRoot)])
+        // No actual process in this fixture; settle its simulated ownership explicitly.
+        await rm(request.stagingRoot, { recursive: true })
+      } else {
+        assert.deepEqual(await scratchNames(f), [])
+      }
+    })
+  })
+}

@@ -198,6 +198,7 @@ import {
   parseProjectThumbnailImageUrl,
   readProjectThumbnail,
 } from './projects/project-preview-resource.js'
+import { ProjectRegionalGenerationCoordinator } from './projects/project-regional-generation-coordinator.js'
 import {
   parseProjectRegionalMaskImageUrl,
   streamSavedProjectRegionalMask,
@@ -685,6 +686,16 @@ if (!gotInstanceLock) {
             : [recoveredGeneration.processor]
           : [],
       )
+      const regionalGeneration = recoveredGeneration
+        ? new ProjectRegionalGenerationCoordinator({
+            compositionProfile: 'invoke-canvas-v1',
+            gate: projectGenerationGate,
+            models: modelService,
+            orchestrator: recoveredGeneration.orchestrator,
+            projects: projectService,
+            scratchBasePath: path.join(paths.dataRoot, 'scratch'),
+          })
+        : null
       const generationDispatch = recoveredGeneration
         ? new GenerationDispatchCoordinator(
             generationLease,
@@ -699,6 +710,7 @@ if (!gotInstanceLock) {
                   ),
                 }
               : undefined,
+            regionalGeneration ?? undefined,
           )
         : null
       const generationActions =
@@ -712,6 +724,7 @@ if (!gotInstanceLock) {
               processor: recoveredGeneration.processor,
               projects: projectService,
               queue: recoveredGeneration.queue,
+              regional: regionalGeneration ?? undefined,
               runtime: generationLease,
               scratchBasePath: path.join(paths.dataRoot, 'scratch'),
               staging: recoveredGeneration.staging,

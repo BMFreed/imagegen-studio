@@ -1,0 +1,490 @@
+import type { ModelCatalogItem, ProjectTab } from '../../../src/shared/api'
+import type {
+  GenerationQueueEntry,
+  GenerationQueueReview,
+} from '../../../src/shared/projects/generation-queue-manager'
+import type { ProjectGenerationActionState } from '../../../src/shared/projects/project-generation-actions'
+
+import { expect, type Page, test } from '@playwright/test'
+import path from 'node:path'
+
+interface WiringFixture {
+  epoch: number
+  generateCalls: number[]
+  queueItem: GenerationQueueEntry
+  retryCalls: GenerationQueueReview[]
+  selected: string | null
+  show: boolean
+  smartReason: string | null
+  state: ProjectGenerationActionState
+  tab: ProjectTab
+  targetMode: 'img2img' | 'outpaint' | 'txt2img' | null
+  targetReads: number
+}
+
+declare global {
+  interface Window {
+    regionalWiringFixture: WiringFixture
+  }
+}
+
+const sourceRoot = `/@fs${path.resolve(import.meta.dirname, '../../../src')}`
+
+/** Real renderer components, explicit mock IPC. These tests make no inference/runtime claim. */
+async function mountWiring(page: Page, kind: 'project' | 'queue') {
+  await page.goto('/?prototype=project')
+  await page.evaluate(
+    async ({ kind, sourceRoot }) => {
+      const loadModule = (url: string) => import(url)
+      const [{ createApp, h, reactive }, { createEmptyProjectDocumentV1 }, { default: Component }] =
+        await Promise.all([
+          loadModule('/@id/vue'),
+          loadModule(`${sourceRoot}/shared/projects/project-schema.ts`),
+          loadModule(
+            `${sourceRoot}/renderer/components/${kind === 'project' ? 'ProjectView' : 'GenerationQueueManager'}.vue`,
+          ),
+        ])
+      const documentValue = createEmptyProjectDocumentV1({ title: 'Regional wiring fixture' })
+      const model: NonNullable<ProjectTab['generationDraft']['model']> = {
+        baseModelFamily: 'illustrious',
+        civitaiFileId: null,
+        civitaiModelId: null,
+        civitaiVersionId: null,
+        displayName: 'Fixture Illustrious',
+        fileSha256: 'a'.repeat(64),
+        kind: 'checkpoint',
+        localModelId: crypto.randomUUID(),
+        localVersionId: crypto.randomUUID(),
+        predictionType: 'epsilon',
+        versionName: 'Fixture version',
+      }
+      documentValue.generationDraft.model = model
+      documentValue.generationDraft.sampling = {
+        cfgScale: 5,
+        denoisingStrength: null,
+        sampler: 'Euler',
+        scheduler: 'Normal',
+        steps: 30,
+      }
+      documentValue.generationDraft.vaePrecision = 'FP16'
+      documentValue.regionalGuidance = [
+        {
+          enabled: true,
+          id: crypto.randomUUID(),
+          locked: false,
+          mask: { asset: null, id: crypto.randomUUID(), revision: 0 },
+          name: 'Fixture region',
+          overlayOpacity: 0,
+        },
+      ]
+      const tab: ProjectTab = {
+        ...documentValue,
+        acceptedResults: [],
+        autosaveError: null,
+        canRedo: false,
+        canUndo: false,
+        dirty: false,
+        id: `project-v1-${'b'.repeat(64)}`,
+        layers: [],
+      }
+      const modelCatalog: ModelCatalogItem[] = [
+        {
+          author: null,
+          defaultVersionId: model.localVersionId,
+          description: null,
+          id: model.localModelId,
+          modelId: null,
+          name: model.displayName,
+          previewDataUrl: null,
+          resourceType: 'checkpoint',
+          sourceUrl: null,
+          trainedWords: [],
+          versions: [
+            {
+              baseModelFamily: 'illustrious',
+              civitaiFileId: null,
+              civitaiVersionId: null,
+              dependencyIssues: [],
+              fileName: 'fixture.safetensors',
+              fileSizeBytes: 1,
+              fileStatus: 'ready',
+              format: 'SafeTensor',
+              id: model.localVersionId,
+              installedAt: '2026-11-03T00:00:00.000Z',
+              name: model.versionName,
+              predictionType: 'epsilon',
+              sha256: model.fileSha256,
+              trainedWords: [],
+            },
+          ],
+        },
+      ]
+      const state: WiringFixture = reactive({
+        epoch: 0,
+        generateCalls: [],
+        queueItem: {
+          batchId: crypto.randomUUID(),
+          cancelRequested: false,
+          createdAt: '2026-11-03T00:00:00.000Z',
+          details: {
+            modelName: model.displayName,
+            modelVersion: model.versionName,
+            negativePrompt: '',
+            prompt: 'Frozen regional prompt',
+            sampling: {
+              cfgScale: 5,
+              predictionType: 'epsilon',
+              sampler: 'Euler',
+              scheduler: 'Normal',
+              seed: 42,
+              steps: 30,
+            },
+            size: { height: 1024, width: 1024 },
+          },
+          documentId: tab.documentId,
+          error: { code: 'FIXTURE_FAILURE', message: 'Mock failure' },
+          finishedAt: '2026-11-03T00:00:01.000Z',
+          id: crypto.randomUUID(),
+          operation: 'illustrious-regional-txt2img',
+          projectKey: tab.id,
+          projectName: tab.title,
+          publicationPending: false,
+          stagingSessionId: crypto.randomUUID(),
+          startedAt: '2026-11-03T00:00:00.000Z',
+          status: 'failed',
+          statusSequence: 3,
+        },
+        retryCalls: [],
+        selected: null,
+        show: true,
+        smartReason: null,
+        state: {
+          animaSupported: true,
+          cfgRescaleSupported: true,
+          documentId: tab.documentId,
+          embeddingsSupported: true,
+          error: null,
+          externalVaeSupported: true,
+          img2imgSupported: true,
+          jobs: [],
+          outpaintSupported: true,
+          phase: 'idle',
+          regionalSupported: true,
+          runningJobId: null,
+          smartPatchSupported: true,
+          vaePrecisionSupported: true,
+        },
+        tab,
+        targetMode: 'txt2img',
+        targetReads: 0,
+      })
+      globalThis.window.regionalWiringFixture = state
+      Object.defineProperty(globalThis, 'api', {
+        configurable: true,
+        value: {
+          projects: {
+            getGenerationQueue: async () => ({
+              ok: true,
+              value: {
+                counts: { canceled: 0, completed: 0, failed: 1, pending: 0, running: 0 },
+                items: [state.queueItem],
+                nextCursor: null,
+              },
+            }),
+            getGenerationTargetState: async (
+              _projectKey: string,
+              documentId: string,
+              targetKey: string,
+            ) => {
+              state.targetReads += 1
+              return {
+                ok: true,
+                value: {
+                  documentId,
+                  mode: state.targetMode,
+                  targetKey,
+                  unavailableReason:
+                    state.targetMode === null ? 'Fixture target is unavailable.' : null,
+                },
+              }
+            },
+            getSmartPatchGenerationTargetState: async (
+              _projectKey: string,
+              documentId: string,
+              documentRevision: string,
+              layerId: string,
+            ) => ({
+              ok: true,
+              value: {
+                documentId,
+                documentRevision,
+                layerId,
+                mode: state.smartReason ? null : 'inpaint',
+                unavailableReason: state.smartReason,
+              },
+            }),
+            retryGenerationJob: async (review: GenerationQueueReview) => {
+              state.retryCalls.push(review)
+              return { ok: true, value: undefined }
+            },
+          },
+        },
+      })
+      const original = document.getElementById('app') as HTMLElement & {
+        __vue_app__?: { unmount: () => void }
+      }
+      original?.__vue_app__?.unmount()
+      const host = document.createElement('div')
+      host.id = 'regional-wiring-fixture'
+      document.body.replaceChildren(host)
+      createApp({
+        render: () =>
+          kind === 'project'
+            ? h(Component, {
+                acceptedHistoryFocus: null,
+                busy: false,
+                draftPending: false,
+                error: null,
+                exportFeedback: null,
+                generationCanceling: false,
+                generationDraft: state.tab.generationDraft,
+                generationError: null,
+                generationNotice: null,
+                generationProgress: { current: null, revision: 0 },
+                generationResultFocus: null,
+                generationResults: null,
+                generationResultsError: null,
+                generationResultsLoading: false,
+                generationState: state.state,
+                generationStateLoading: false,
+                generationSubmitting: false,
+                imagesPerClick: 1,
+                modelCatalog,
+                modelCatalogError: null,
+                modelCatalogLoaded: true,
+                modelCatalogLoading: false,
+                onGenerate: (iterations: number) => state.generateCalls.push(iterations),
+                'onUpdate:selectedLayerId': (id: string | null) => {
+                  state.selected = id
+                },
+                patchFreshness: { error: null, inspection: null, loading: false, owner: null },
+                pending: null,
+                presets: [],
+                presetsError: null,
+                presetsLoading: false,
+                projectGenerationDraft: state.tab.generationDraft,
+                promptHistoryEpoch: 0,
+                reloadRequired: false,
+                runtimeUnavailableReason: null,
+                saveNotice: null,
+                selectedLayerId: state.selected,
+                smartPatchResults: null,
+                smartPatchResultsError: null,
+                smartPatchResultsLoading: false,
+                tab: state.tab,
+                variantDiagnosticsEpoch: 0,
+                variantDiagnosticsPending: false,
+              })
+            : h(Component, {
+                appBusy: false,
+                generationErrors: {},
+                generationLoading: {},
+                generationProgress: { current: null, revision: 0 },
+                generationStates: { [state.tab.id]: state.state },
+                'onUpdate:show': (value: boolean) => {
+                  state.show = value
+                },
+                projectTabs: [state.tab],
+                refreshEpoch: state.epoch,
+                reloadRequiredIds: new Set(),
+                resultErrors: {},
+                resultLoading: {},
+                resultNavigationError: null,
+                resultOpeningId: null,
+                resultSnapshots: {},
+                runtimeUnavailableReason: null,
+                show: state.show,
+                smartResultErrors: {},
+                smartResultLoading: {},
+                smartResultSnapshots: {},
+              }),
+      }).mount(host)
+    },
+    { kind, sourceRoot },
+  )
+}
+
+test('renderer Generate requires explicit regional support and retains ordinary and Smart target guards', async ({
+  page,
+}, testInfo) => {
+  const pageErrors: string[] = []
+  page.on('pageerror', (cause) => pageErrors.push(cause.message))
+  await page.setViewportSize({ height: 900, width: 1440 })
+  await mountWiring(page, 'project')
+  const generate = page.getByRole('button', { exact: true, name: 'Generate' })
+  await expect
+    .poll(() => page.evaluate(() => globalThis.window.regionalWiringFixture.targetReads))
+    .toBeGreaterThan(0)
+  await expect(generate).toBeEnabled()
+  await expect(page.getByText('Generation unavailable while this region is enabled.')).toHaveCount(
+    0,
+  )
+  await expect(
+    page.getByText('Enabled for Current Canvas. Generate checks model and target compatibility.'),
+  ).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('regional-generate.png') })
+  await generate.click()
+  await expect
+    .poll(() => page.evaluate(() => globalThis.window.regionalWiringFixture.generateCalls))
+    .toEqual([1])
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.state.embeddingsSupported = false
+    fixture.tab.generationDraft.positivePrompt.embeddingRefs = [
+      {
+        resource: {
+          ...fixture.tab.generationDraft.model!,
+          kind: 'embedding',
+          predictionType: null,
+        },
+        token: 'dormant_ti',
+      },
+    ]
+  })
+  await expect(generate).toBeEnabled()
+  await page.evaluate(() => {
+    globalThis.window.regionalWiringFixture.tab.generationDraft.positivePrompt.text = 'dormant_ti'
+  })
+  await expect(generate).toBeDisabled()
+  await expect(page.getByText(/Remove active global embedding tokens/)).toBeVisible()
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.state.embeddingsSupported = true
+    fixture.tab.generationDraft.positivePrompt = { embeddingRefs: [], text: '' }
+  })
+  await page.evaluate(() => {
+    delete globalThis.window.regionalWiringFixture.state.regionalSupported
+  })
+  await expect(generate).toBeDisabled()
+  await expect(page.getByText(/Checking image engine support for Regional Guidance/)).toBeVisible()
+  await page.evaluate(() => {
+    globalThis.window.regionalWiringFixture.state.regionalSupported = false
+  })
+  await expect(generate).toBeDisabled()
+  await expect(page.getByText(/does not support Regional Guidance/)).toBeVisible()
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.tab.regionalGuidance![0]!.enabled = false
+  })
+  await expect(generate).toBeEnabled()
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.state.regionalSupported = true
+    fixture.tab.regionalGuidance![0]!.enabled = true
+    fixture.targetMode = 'img2img'
+    fixture.tab.primaryBbox.x += 8
+  })
+  await expect(generate).toBeDisabled()
+  await expect(page.getByText(/requires an empty Current Canvas generation area/)).toBeVisible()
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    const id = crypto.randomUUID()
+    fixture.tab.layers = [
+      {
+        activeRaster: null,
+        activeRasterSubLayerId: null,
+        blendMode: 'normal',
+        boundingBox: { height: 1024, width: 1024, x: 0, y: 0 },
+        generationDraft: JSON.parse(JSON.stringify(fixture.tab.generationDraft)),
+        id,
+        internalResolution: { height: 1024, width: 1024 },
+        kind: 'smart-patch',
+        locked: false,
+        mask: { asset: null, id: crypto.randomUUID(), revision: 0 },
+        maskImageUrl: null,
+        name: 'Fixture Smart Patch',
+        opacity: 1,
+        rasterSubLayers: [],
+        status: 'empty',
+        visible: true,
+      },
+    ]
+    fixture.selected = id
+  })
+  await expect(generate).toBeDisabled()
+  await expect(
+    page.getByText(/Disable or delete all enabled regions before generating/),
+  ).toBeVisible()
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.tab.regionalGuidance![0]!.enabled = false
+    fixture.tab.layers[0]!.locked = true
+  })
+  await expect(page.getByText('Unlock and show this Smart Patch before generating.')).toBeVisible()
+  await page.evaluate(() => {
+    const patch = globalThis.window.regionalWiringFixture.tab.layers[0]!
+    patch.locked = false
+    patch.visible = false
+  })
+  await expect(generate).toBeDisabled()
+  await expect(page.getByText('Unlock and show this Smart Patch before generating.')).toBeVisible()
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.smartReason = 'Fixture Smart target is unavailable.'
+    fixture.tab.layers[0]!.visible = true
+    fixture.tab.documentRevision = crypto.randomUUID()
+  })
+  await expect(generate).toBeDisabled()
+  await expect(
+    page.getByLabel('Generation actions').getByText('Fixture Smart target is unavailable.'),
+  ).toBeVisible()
+  await expect
+    .poll(() => page.evaluate(() => globalThis.window.regionalWiringFixture.generateCalls))
+    .toEqual([1])
+  expect(pageErrors).toEqual([])
+})
+
+test('renderer frozen Retry follows regional operation even after current authoring changes', async ({
+  page,
+}, testInfo) => {
+  const pageErrors: string[] = []
+  page.on('pageerror', (cause) => pageErrors.push(cause.message))
+  await mountWiring(page, 'queue')
+  const retry = page.getByRole('button', { exact: true, name: 'Retry job' })
+  await expect(retry).toBeEnabled()
+  await page.screenshot({ path: testInfo.outputPath('regional-queue-retry.png') })
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    delete fixture.state.regionalSupported
+    fixture.tab.regionalGuidance = []
+    fixture.tab.generationDraft.model!.baseModelFamily = 'anima'
+    fixture.tab.generationDraft.positivePrompt.text = '{current|authoring}'
+  })
+  await expect(retry).toBeDisabled()
+  await expect(page.getByText(/does not support Regional Guidance/).first()).toBeVisible()
+  await page.evaluate(() => {
+    globalThis.window.regionalWiringFixture.state.regionalSupported = false
+  })
+  await expect(retry).toBeDisabled()
+  await page.evaluate(() => {
+    globalThis.window.regionalWiringFixture.state.regionalSupported = true
+  })
+  await expect(retry).toBeEnabled()
+  await retry.click()
+  await expect
+    .poll(() => page.evaluate(() => globalThis.window.regionalWiringFixture.retryCalls))
+    .toEqual([
+      await page.evaluate(() => ({
+        id: globalThis.window.regionalWiringFixture.queueItem.id,
+        statusSequence: 3,
+      })),
+    ])
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.state.regionalSupported = false
+    fixture.queueItem.operation = 'illustrious-txt2img'
+    fixture.epoch += 1
+  })
+  await expect(retry).toBeEnabled()
+  expect(pageErrors).toEqual([])
+})

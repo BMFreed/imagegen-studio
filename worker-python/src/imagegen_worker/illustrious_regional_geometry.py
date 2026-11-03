@@ -22,6 +22,7 @@ __all__ = (
 _ErrorCode = Literal["INPUT_INVALID", "PROFILE_INVALID", "LIMIT"]
 
 _PROFILE = "ordinary-canvas-origin-nearest8-v1"
+_INVOKE_PROFILE = "ordinary-canvas-invoke-alpha-positive-nearest8-v1"
 _MAX_ORIGIN = 2_147_483_647
 _MAX_SIDE = 2048
 _MAX_AREA = 4_000_000
@@ -43,7 +44,10 @@ def ordinary_canvas_coverage_to_latent(
     coverage_bounds: PreviewRect,
     bbox: PreviewRect,
     latent_shape: Shape,
-    profile: Literal["ordinary-canvas-origin-nearest8-v1"],
+    profile: Literal[
+        "ordinary-canvas-origin-nearest8-v1",
+        "ordinary-canvas-invoke-alpha-positive-nearest8-v1",
+    ],
 ) -> Alpha8:
     """Sample raw local alpha at (8*y, 8*x) into detached immutable storage.
 
@@ -54,13 +58,18 @@ def ordinary_canvas_coverage_to_latent(
 
     A covered world plane may sample to all zeroes. Its original coverage kind
     remains the recipe owner's responsibility; no unrestricted fallback is
-    inferred here. This helper selects no threshold or display-opacity policy.
+    inferred here. The legacy profile retains raw alpha. The explicit Invoke
+    profile adapts a61ac4fb app/invocations/mask.py AlphaMaskToTensorInvocation's
+    alpha>0 before sd/denoise_latents.py nearest resize. Evaluating that pointwise
+    conversion at each selected source pixel gives the identical sampled plane
+    without allocating a second full world plane; authored input bytes stay exact.
+    Display opacity is not consumed by either profile.
 
     At most 62,500 output bytes and one 62,500-byte bytearray scratch are owned
     at once, excluding input bytes and Python metadata. Main's 64 MiB aggregate
     budget and the planner/adapter limits remain separate owners.
     """
-    if type(profile) is not str or profile != _PROFILE:
+    if type(profile) is not str or profile not in (_PROFILE, _INVOKE_PROFILE):
         raise IllustriousRegionalGeometryError(
             "PROFILE_INVALID", "An explicit supported ordinary-Canvas profile is required."
         )
@@ -152,7 +161,10 @@ def ordinary_canvas_coverage_to_latent(
     samples = bytearray(latent_height * latent_width)
     for y in range(latent_height):
         for x in range(latent_width):
-            samples[y * latent_width + x] = alpha[(8 * y) * coverage_width + 8 * x]
+            sample = alpha[(8 * y) * coverage_width + 8 * x]
+            samples[y * latent_width + x] = (
+                (255 if sample > 0 else 0) if profile == _INVOKE_PROFILE else sample
+            )
     return Alpha8(
         shape=Shape(height=latent_height, width=latent_width),
         samples=bytes(samples),

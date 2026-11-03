@@ -99,6 +99,7 @@ export class RegionalGenerationProcessor {
     private readonly queue: GenerationQueueRepository,
     private readonly staging: GenerationStagingRepository,
     models: RegionalGenerationModelResolver,
+    private readonly compositionProfile?: 'invoke-canvas-v1',
   ) {
     const names = [
       'assertNoUnboundGenerationEmbeddings',
@@ -198,7 +199,7 @@ export class RegionalGenerationProcessor {
       )
     }
     const ready = structuredClone(transport.ready)
-    requireRegionalReady(ready)
+    requireRegionalReady(ready, this.compositionProfile)
     const capturedTransport: RegionalGenerationTransport = {
       close: transport.close.bind(transport),
       executeCurrentCanvasRegional: transport.executeCurrentCanvasRegional.bind(transport),
@@ -366,7 +367,10 @@ export class RegionalGenerationProcessor {
   private async runOneInternal(
     transport: RegionalGenerationTransport,
   ): Promise<RegionalGenerationProcessorResult> {
-    const claiming = this.queue.claimNextPendingRegional()
+    const claiming =
+      this.compositionProfile === 'invoke-canvas-v1'
+        ? this.queue.claimNextPendingInvokeCanvasRegional()
+        : this.queue.claimNextPendingRegional()
     this.claiming = claiming
     let claimed: VerifiedQueuedRegionalInput | null
     try {
@@ -526,10 +530,17 @@ export class RegionalGenerationProcessor {
   }
 }
 
-function requireRegionalReady(ready: InferenceWorkerReady): void {
+function requireRegionalReady(
+  ready: InferenceWorkerReady,
+  compositionProfile?: 'invoke-canvas-v1',
+): void {
   if (
     !isQualifiedInferenceWorkerReady(ready) ||
-    !ready.capabilities.includes('private-current-canvas-regional-v1')
+    !ready.capabilities.includes(
+      compositionProfile === 'invoke-canvas-v1'
+        ? 'illustrious-regional-invoke-v1'
+        : 'private-current-canvas-regional-v1',
+    )
   ) {
     throw new RegionalGenerationProcessorError(
       'INFERENCE_UNAVAILABLE',

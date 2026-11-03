@@ -30,6 +30,8 @@ export interface ProjectGenerationActionState {
   outpaintSupported?: boolean
   /** Engine admission/dispatch is app-wide; jobs and current cancellation are document-scoped. */
   phase: 'blocked' | 'closed' | 'idle' | 'preparing' | 'processing'
+  /** Explicit finite Regional Guidance support; older responses must remain unavailable. */
+  regionalSupported?: boolean
   runningJobId: string | null
   smartPatchSupported?: boolean
   vaePrecisionSupported: boolean
@@ -108,12 +110,19 @@ export function isProjectGenerationActionState(
         'runningJobId',
         'vaePrecisionSupported',
       ],
-      ['animaSupported', 'animaOutpaintSupported', 'outpaintSupported', 'smartPatchSupported'],
+      [
+        'animaSupported',
+        'animaOutpaintSupported',
+        'outpaintSupported',
+        'regionalSupported',
+        'smartPatchSupported',
+      ],
     ) ||
     (value['animaSupported'] !== undefined && typeof value['animaSupported'] !== 'boolean') ||
     (value['animaOutpaintSupported'] !== undefined &&
       typeof value['animaOutpaintSupported'] !== 'boolean') ||
     (value['outpaintSupported'] !== undefined && typeof value['outpaintSupported'] !== 'boolean') ||
+    (value['regionalSupported'] !== undefined && typeof value['regionalSupported'] !== 'boolean') ||
     (value['smartPatchSupported'] !== undefined &&
       typeof value['smartPatchSupported'] !== 'boolean') ||
     typeof value['cfgRescaleSupported'] !== 'boolean' ||

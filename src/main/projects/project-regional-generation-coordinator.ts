@@ -3,6 +3,7 @@ import { isIllustriousNoiseProfileV1 } from '../../shared/projects/illustrious-n
 import { isQualifiedInferenceWorkerReady } from '../../shared/projects/inference-worker-capabilities.js'
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 import { activePromptEmbeddingRefs } from '../../shared/projects/prompt-embeddings.js'
+import { getInvokeRegionalGenerationUnavailableReason } from '../../shared/projects/regional-invoke-generation.js'
 
 import type { GenerationOrchestrator, PrivateRegionalExecution } from './generation-orchestrator.js'
 import type { QueuedGenerationItem } from './generation-queue.js'
@@ -40,6 +41,30 @@ export interface ProjectRegionalGenerationSubmission {
   ready: InferenceWorkerReady
 }
 
+export interface ProjectRegionalGenerationPreparation {
+  inferenceReady: InferenceWorkerReady
+  targetWorker: Pick<ProjectWorkerClient, 'composeTarget'>
+}
+
+export interface ProjectRegionalInvokeGenerationSubmission {
+  afterPublication?: (item: QueuedGenerationItem, assertCurrent: () => void) => Promise<void>
+  beforePublication?: () => Promise<void>
+  documentId: string
+  documentRevision: string
+  withPreparation: <T>(
+    use: (preparation: ProjectRegionalGenerationPreparation) => Promise<T>,
+  ) => Promise<T | null>
+}
+
+type RegionalComposition = Pick<
+  ProjectRegionalGenerationSubmission,
+  | 'globalNegativeCoverage'
+  | 'globalPositiveCoverage'
+  | 'layout'
+  | 'negativePooledSourceId'
+  | 'positivePooledSourceId'
+>
+
 export class ProjectRegionalGenerationError extends Error {
   constructor(
     readonly code:
@@ -61,6 +86,7 @@ export class ProjectRegionalGenerationCoordinator {
   private readonly execution: PrivateRegionalExecution
   private readonly models: GenerationModelResolver
   private readonly options: {
+    compositionProfile?: 'invoke-canvas-v1'
     gate: ProjectGenerationOperationGate
     models: GenerationModelResolver
     orchestrator: GenerationOrchestrator
@@ -71,6 +97,7 @@ export class ProjectRegionalGenerationCoordinator {
   private shutdownPromise: Promise<void> | null = null
 
   constructor(options: {
+    compositionProfile?: 'invoke-canvas-v1'
     gate: ProjectGenerationOperationGate
     models: GenerationModelResolver
     orchestrator: GenerationOrchestrator
@@ -79,7 +106,11 @@ export class ProjectRegionalGenerationCoordinator {
   }) {
     this.options = { ...options }
     this.models = captureModels(options.models)
-    this.execution = options.orchestrator.createRegionalExecution()
+    this.execution = options.orchestrator.createRegionalExecution(options.compositionProfile)
+  }
+
+  onChanged(listener: () => void): () => void {
+    return this.execution.onChanged(listener)
   }
 
   async retry(
@@ -169,16 +200,90 @@ export class ProjectRegionalGenerationCoordinator {
     ) {
       throw invalid('The explicit regional composition is invalid.')
     }
+    const { assertOwner } = this.captureOwner(tabId, captured)
+    return await this.track(
+      this.options.gate.run(
+        tabId,
+        async () =>
+          await this.submitCaptured(tabId, {
+            assertOwner,
+            composition: {
+              globalNegativeCoverage: captured.globalNegativeCoverage,
+              globalPositiveCoverage: captured.globalPositiveCoverage,
+              layout: captured.layout,
+              negativePooledSourceId: captured.negativePooledSourceId,
+              positivePooledSourceId: captured.positivePooledSourceId,
+            },
+            withPreparation: async (use) =>
+              await use({ inferenceReady: captured.ready, targetWorker: { composeTarget } }),
+          }),
+      ),
+    )
+  }
+
+  /** Caller already owns the shared Project operation gate; never acquire it recursively. */
+  async submitInvokeUnderGate(
+    tabId: string,
+    input: ProjectRegionalInvokeGenerationSubmission,
+  ): Promise<QueuedGenerationItem> {
+    this.assertOpen()
+    if (this.options.compositionProfile !== 'invoke-canvas-v1') {
+      throw unsupported('This coordinator does not own public Invoke regional submission.')
+    }
+    if (
+      !UUID.test(input?.documentId) ||
+      !UUID.test(input?.documentRevision) ||
+      typeof input.withPreparation !== 'function' ||
+      (input.beforePublication !== undefined && typeof input.beforePublication !== 'function') ||
+      (input.afterPublication !== undefined && typeof input.afterPublication !== 'function')
+    ) {
+      throw invalid('The reviewed Project and regional preparation owner are required.')
+    }
+    const { assertOwner, document } = this.captureOwner(tabId, input)
+    validateInvokeDraft(document)
+    const { afterPublication, beforePublication, withPreparation } = input
+    // The call enters Service capture synchronously, before the runtime callback can await.
+    return await this.track(
+      this.submitCaptured(tabId, {
+        afterPublication,
+        assertOwner,
+        beforePublication,
+        composition: {
+          globalNegativeCoverage: { kind: 'everywhere' },
+          globalPositiveCoverage: { kind: 'everywhere' },
+          layout: 'cfg-negative-first',
+          negativePooledSourceId: 'current-canvas',
+          positivePooledSourceId: 'current-canvas',
+        },
+        compositionProfile: 'invoke-canvas-v1',
+        withPreparation,
+      }),
+    )
+  }
+
+  private assertOpen(): void {
+    if (this.closed) {
+      throw new ProjectRegionalGenerationError('CLOSED', 'Private regional submission has stopped.')
+    }
+  }
+
+  private captureOwner(
+    tabId: string,
+    expected: { documentId: string; documentRevision: string },
+  ): { assertOwner: () => void; document: IgsProjectDocumentV1 } {
     const owner = this.options.projects.getOpenDocumentForAcceptance(tabId)
-    const epoch = owner?.documentEpoch
+    if (!owner) {
+      throw new ProjectRegionalGenerationError('PROJECT_CHANGED', 'The Project is no longer open.')
+    }
+    const { documentId, documentRevision } = expected
+    const epoch = owner.documentEpoch
     const assertOwner = () => {
       this.assertOpen()
       if (
-        !owner ||
         this.options.projects.getOpenDocumentForAcceptance(tabId) !== owner ||
         owner.documentEpoch !== epoch ||
-        owner.document.documentId !== captured.documentId ||
-        owner.document.documentRevision !== captured.documentRevision
+        owner.document.documentId !== documentId ||
+        owner.document.documentRevision !== documentRevision
       ) {
         throw new ProjectRegionalGenerationError(
           'PROJECT_CHANGED',
@@ -187,19 +292,57 @@ export class ProjectRegionalGenerationCoordinator {
       }
     }
     assertOwner()
-    return await this.track(
-      this.options.gate.run(tabId, async () => {
-        assertOwner()
-        return await this.options.projects.withCapturedCurrentCanvasRegionalGenerationInput(
-          tabId,
-          async (capture) => {
-            const assertCurrent = () => {
-              assertOwner()
-              capture.assertCurrent()
-            }
+    return { assertOwner, document: owner.document }
+  }
+
+  private async submitCaptured(
+    tabId: string,
+    input: Pick<
+      ProjectRegionalInvokeGenerationSubmission,
+      'afterPublication' | 'beforePublication' | 'withPreparation'
+    > & {
+      assertOwner: () => void
+      composition: RegionalComposition
+      compositionProfile?: 'invoke-canvas-v1'
+    },
+  ): Promise<QueuedGenerationItem> {
+    const { assertOwner, composition, compositionProfile, withPreparation } = input
+    const publication: { admitted: QueuedGenerationItem | null } = { admitted: null }
+    assertOwner()
+    try {
+      return await this.options.projects.withCapturedCurrentCanvasRegionalGenerationInput(
+        tabId,
+        async (capture) => {
+          const assertCurrent = () => {
+            assertOwner()
+            capture.assertCurrent()
+          }
+          assertCurrent()
+          const document = structuredClone(capture.document)
+          if (compositionProfile) {
+            validateInvokeDraft(document)
+          } else {
+            validatePrivateDraft(document, composition)
+          }
+          const result = await withPreparation(async (preparation) => {
             assertCurrent()
-            const document = structuredClone(capture.document)
-            validatePrivateDraft(document, captured)
+            const ready = structuredClone(preparation.inferenceReady)
+            const capability = compositionProfile ? 'illustrious-regional-invoke-v1' : OPT_IN
+            if (
+              !isQualifiedInferenceWorkerReady(ready) ||
+              !ready.capabilities.includes(capability)
+            ) {
+              throw new ProjectRegionalGenerationError(
+                'INFERENCE_UNAVAILABLE',
+                'The image engine has not qualified this regional profile.',
+              )
+            }
+            if (typeof preparation.targetWorker?.composeTarget !== 'function') {
+              throw invalid('The target composition worker is unavailable.')
+            }
+            const composeTarget = preparation.targetWorker.composeTarget.bind(
+              preparation.targetWorker,
+            )
             const operationalSeed = await this.options.orchestrator.readRegionalOperationalSeed(
               tabId,
               document.documentId,
@@ -242,34 +385,49 @@ export class ProjectRegionalGenerationCoordinator {
             return await withIllustriousTxt2ImgRequest({
               modelService: this.models,
               prepared,
-              ready: captured.ready,
+              ready,
               scratchBasePath: this.options.scratchBasePath,
               use: async (request) => {
                 assertCurrent()
-                return await this.options.orchestrator.enqueuePreparedRegional(tabId, {
-                  assertCurrent,
-                  prepared,
-                  regional: {
-                    globalNegativeCoverage: captured.globalNegativeCoverage,
-                    globalPositiveCoverage: captured.globalPositiveCoverage,
-                    layout: captured.layout,
-                    negativePooledSourceId: captured.negativePooledSourceId,
-                    positivePooledSourceId: captured.positivePooledSourceId,
-                    recipe,
+                publication.admitted = await this.options.orchestrator.enqueuePreparedRegional(
+                  tabId,
+                  {
+                    ...(input.afterPublication ? { afterPublication: input.afterPublication } : {}),
+                    ...(input.beforePublication
+                      ? { beforePublication: input.beforePublication }
+                      : {}),
+                    assertCurrent,
+                    prepared,
+                    regional: {
+                      ...(compositionProfile ? { compositionProfile } : {}),
+                      ...composition,
+                      recipe,
+                    },
+                    request,
                   },
-                  request,
-                })
+                )
+                return publication.admitted
               },
             })
-          },
+          })
+          if (result === null) {
+            throw new ProjectRegionalGenerationError(
+              'INFERENCE_UNAVAILABLE',
+              'The regional image engine is unavailable.',
+            )
+          }
+          assertCurrent()
+          return result
+        },
+      )
+    } catch (error) {
+      if (publication.admitted) {
+        await this.options.orchestrator.cancelFailedRegionalAdmission(
+          tabId,
+          publication.admitted.id,
         )
-      }),
-    )
-  }
-
-  private assertOpen(): void {
-    if (this.closed) {
-      throw new ProjectRegionalGenerationError('CLOSED', 'Private regional submission has stopped.')
+      }
+      throw error
     }
   }
 
@@ -283,16 +441,20 @@ export class ProjectRegionalGenerationCoordinator {
   }
 }
 
+function validateInvokeDraft(document: IgsProjectDocumentV1): void {
+  const reason = getInvokeRegionalGenerationUnavailableReason({
+    document,
+    iterations: 1,
+    runtimeSupported: true,
+  })
+  if (reason) {
+    throw unsupported(reason)
+  }
+}
+
 function validatePrivateDraft(
   document: IgsProjectDocumentV1,
-  composition: Pick<
-    ProjectRegionalGenerationSubmission,
-    | 'globalNegativeCoverage'
-    | 'globalPositiveCoverage'
-    | 'layout'
-    | 'negativePooledSourceId'
-    | 'positivePooledSourceId'
-  >,
+  composition: RegionalComposition,
 ): void {
   const draft = document.generationDraft
   const bbox = document.primaryBbox

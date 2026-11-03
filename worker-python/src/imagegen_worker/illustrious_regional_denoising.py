@@ -46,6 +46,7 @@ from .illustrious_regional_conditioning import (
 )
 from .illustrious_regional_embeddings import bounded_ti_module_tree
 from .illustrious_regional_recipe import (
+    _INVOKE_PROFILES,  # pyright: ignore[reportPrivateUsage]
     _TI_PROFILES,  # pyright: ignore[reportPrivateUsage]
     _encode_recipe_bindings,  # pyright: ignore[reportPrivateUsage]
     _encoding_embedding_strategy,  # pyright: ignore[reportPrivateUsage]
@@ -130,6 +131,11 @@ def _execution_profile(
     )
     tensor_profile = _encoding_tensor_profile(profile)
     expected, resolved_noise = profiles[denoising_profile]
+    _require(
+        profile not in _INVOKE_PROFILES or resolved_noise,
+        "PROFILE_INVALID",
+        "Invoke Canvas composition requires the explicit V2 Euler noise policy.",
+    )
     _require(
         tensor_profile == expected,
         "PROFILE_INVALID",
@@ -697,6 +703,7 @@ def run_current_canvas_regional_denoising(
             layout=layout,
             tensor_profile=tensor_profile,
             embedding_strategy=embedding_strategy,
+            invoke_canvas=profile in _INVOKE_PROFILES,
         )
         context, pools = _assemble_owned_conditioning(
             torch,

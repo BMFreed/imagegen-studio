@@ -44,6 +44,10 @@ import {
   assertRegionalGuidanceGenerationAvailable,
   RegionalGuidanceGenerationError,
 } from '../../shared/projects/regional-guidance.js'
+import {
+  getInvokeRegionalGenerationUnavailableReason,
+  hasEnabledRegionalGuidance,
+} from '../../shared/projects/regional-invoke-generation.js'
 
 import { randomUUID } from 'node:crypto'
 import { realpath } from 'node:fs/promises'
@@ -92,6 +96,10 @@ import {
   prepareNormalGeneration,
   prepareNormalOutpaintGeneration,
 } from './project-generation-preparation.js'
+import {
+  type ProjectRegionalGenerationCoordinator,
+  ProjectRegionalGenerationError,
+} from './project-regional-generation-coordinator.js'
 
 type CapturedNormalInput = {
   composeTarget: (
@@ -134,7 +142,10 @@ interface GenerationActionDependencies {
   orchestrator: Partial<
     Pick<
       GenerationOrchestrator,
-      'cancelGenerationJob' | 'enqueuePreparedAnimaBatch' | 'enqueuePreparedOutpaintBatch'
+      | 'cancelGenerationJob'
+      | 'enqueuePreparedAnimaBatch'
+      | 'enqueuePreparedOutpaintBatch'
+      | 'retryRegional'
     >
   > &
     Pick<GenerationOrchestrator, 'enqueuePreparedBatch'>
@@ -162,6 +173,7 @@ interface GenerationActionDependencies {
       | 'pruneTerminal'
       | 'retryTerminal'
     >
+  regional?: Pick<ProjectRegionalGenerationCoordinator, 'submitInvokeUnderGate'>
   runtime: GenerationActionRuntime
   scratchBasePath: string
   staging: Pick<
@@ -271,6 +283,7 @@ export class ProjectGenerationActionController {
 
   async cancelJob(review: GenerationQueueReview): Promise<void> {
     this.assertOpen()
+    await this.options.queue.getManagerEntry(review.id)
     // The repository CAS rejects a pending→running race before any cancel is requested.
     const item = await this.options.queue.cancel(review.id, review.statusSequence)
     if (item.status === 'running') {
@@ -292,6 +305,7 @@ export class ProjectGenerationActionController {
 
   async deleteJob(review: GenerationQueueReview): Promise<void> {
     this.assertOpen()
+    await this.options.queue.getManagerEntry(review.id)
     await this.options.queue.deleteTerminal(review.id, review.statusSequence)
     this.emitChanged()
   }
@@ -399,6 +413,8 @@ export class ProjectGenerationActionController {
             : this.drain
               ? 'processing'
               : 'idle',
+      regionalSupported:
+        !this.blocked && !this.closed && !!this.options.regional && supportsRegional(ready),
       runningJobId: jobs.find((job) => job.status === 'running')?.id ?? null,
       smartPatchSupported:
         !this.blocked &&
@@ -563,6 +579,100 @@ export class ProjectGenerationActionController {
     }
   }
 
+  /** Invoke Canvas composition uses the same reviewed replacement and durable admission owners. */
+  private async generateInvokeUnlocked(
+    tabId: string,
+    request: ProjectGenerateOptions,
+    document: IgsProjectDocumentV1,
+  ): Promise<ProjectGenerateResult> {
+    const unavailable = getInvokeRegionalGenerationUnavailableReason({
+      document,
+      iterations: request.iterations,
+      runtimeSupported: true,
+    })
+    if (unavailable || !this.options.regional) {
+      throw new ProjectGenerationActionError(
+        'GENERATION_INVALID_REQUEST',
+        unavailable ?? 'Regional Guidance is unavailable in this application.',
+      )
+    }
+    let cleanupStarted = false
+    const assertAction = () => {
+      this.assertAdmissionOpen()
+      this.assertDocument(tabId, request.documentId)
+    }
+    const review = async (exclude: readonly string[] = []) => {
+      assertAction()
+      const impact = await this.readImpact(tabId, request.documentId, exclude)
+      assertAction()
+      if (!confirmationMatches(impact, request.confirmation)) {
+        throw new ConfirmationChanged(impact)
+      }
+      return impact
+    }
+    try {
+      const item = await this.options.regional.submitInvokeUnderGate(tabId, {
+        afterPublication: async (queued, assertCurrent) => {
+          assertCurrent()
+          const current = await review([queued.id])
+          assertCurrent()
+          if (request.confirmation && hasImpact(current)) {
+            for (const old of current.unfinished) {
+              assertAction()
+              assertCurrent()
+              cleanupStarted = true
+              const stopped = await this.cancelQueuedItem(old.id)
+              if (stopped.status !== 'canceled') {
+                throw replacementUncertain()
+              }
+            }
+            assertAction()
+            assertCurrent()
+            cleanupStarted = true
+            await this.options.staging.discardSessions(tabId, current.sessions)
+            assertCurrent()
+            this.emitChanged()
+          }
+        },
+        beforePublication: async () => {
+          await review()
+        },
+        documentId: request.documentId,
+        documentRevision: document.documentRevision,
+        withPreparation: async (use) => {
+          await review()
+          return await this.options.runtime.withGenerationPreparation(
+            this.options.scratchBasePath,
+            async (preparation) => {
+              assertAction()
+              if (!supportsRegional(preparation.inferenceReady)) {
+                throw new ProjectGenerationActionError(
+                  'GENERATION_RUNTIME_UNAVAILABLE',
+                  'Repair or update the image engine to generate with Regional Guidance. Existing jobs and results were kept.',
+                )
+              }
+              return await use(preparation)
+            },
+          )
+        },
+      })
+      assertAction()
+      return {
+        batchId: item.batchId,
+        documentId: request.documentId,
+        jobIds: [item.id],
+        kind: 'queued',
+        truncated: false,
+      }
+    } catch (error) {
+      if (cleanupStarted) {
+        this.options.queue.fenceProject(tabId)
+        throw replacementUncertain()
+      }
+      throw error
+    }
+  }
+
   private async generateUnlocked(
     tabId: string,
     request: ProjectGenerateOptions,
@@ -570,6 +680,9 @@ export class ProjectGenerationActionController {
     this.assertAdmissionOpen()
     this.assertDocument(tabId, request.documentId)
     const owner = this.options.projects.getOpenDocumentForAcceptance?.(tabId)
+    if (owner && this.options.regional && hasEnabledRegionalGuidance(owner.document)) {
+      return await this.generateInvokeUnlocked(tabId, request, owner.document)
+    }
     if (owner) {
       assertRegionalGuidanceGenerationAvailable(owner.document)
     }
@@ -1179,6 +1292,58 @@ export class ProjectGenerationActionController {
 
   private async retryUnlocked(review: GenerationQueueReview): Promise<void> {
     const source = await this.options.queue.getManagerEntry(review.id)
+    if (source.operation === 'illustrious-regional-txt2img') {
+      const retry = this.options.orchestrator.retryRegional?.bind(this.options.orchestrator)
+      if (!retry || !this.options.regional) {
+        throw new ProjectGenerationActionError(
+          'GENERATION_RUNTIME_UNAVAILABLE',
+          'Regional Retry is unavailable. The original job was kept.',
+        )
+      }
+      this.admittingTabId = source.projectKey
+      await this.options.gate.run(source.projectKey, async () => {
+        this.assertAdmissionOpen()
+        this.assertDocument(source.projectKey, source.documentId)
+        let published: QueuedGenerationItem | null = null
+        try {
+          const admitted = await this.options.runtime.withGenerationAdmission(
+            this.options.scratchBasePath,
+            async (ready) => {
+              this.assertAdmissionOpen()
+              this.assertDocument(source.projectKey, source.documentId)
+              if (!supportsRegional(ready)) {
+                throw new ProjectGenerationActionError(
+                  'GENERATION_RUNTIME_UNAVAILABLE',
+                  'Repair or update the image engine to retry Regional Guidance. The original job was kept.',
+                )
+              }
+              published = await retry(
+                source.projectKey,
+                review.id,
+                review.statusSequence,
+                'invoke-canvas-v1',
+              )
+              this.assertAdmissionOpen()
+              return true
+            },
+          )
+          this.assertAdmissionOpen()
+          this.assertDocument(source.projectKey, source.documentId)
+          if (admitted === null) {
+            throw new ProjectGenerationActionError(
+              'GENERATION_RUNTIME_UNAVAILABLE',
+              'The image runtime is unavailable. The original job was kept.',
+            )
+          }
+        } catch (error) {
+          if (published) {
+            await this.cancelPublishedJobs(source.projectKey, [published])
+          }
+          throw error
+        }
+      })
+      return
+    }
     if (
       source.operation === 'illustrious-smart-patch' ||
       source.operation === 'anima-smart-patch'
@@ -1500,6 +1665,16 @@ export function toProjectGenerationActionApiError(error: unknown): {
   code: string
   message: string
 } {
+  if (error instanceof ProjectRegionalGenerationError) {
+    const codes = {
+      CLOSED: 'GENERATION_CLOSED',
+      INFERENCE_UNAVAILABLE: 'GENERATION_RUNTIME_UNAVAILABLE',
+      INPUT_INVALID: 'GENERATION_INVALID_REQUEST',
+      PROJECT_CHANGED: 'GENERATION_DOCUMENT_CHANGED',
+      UNSUPPORTED: 'GENERATION_REGIONAL_GUIDANCE_UNSUPPORTED',
+    }
+    return { code: codes[error.code], message: error.message.slice(0, 512) }
+  }
   if (error instanceof InferenceAuxiliaryResourceError) {
     return {
       code: 'GENERATION_RESOURCE_CHANGED',
@@ -1660,5 +1835,12 @@ function replacementUncertain(): ProjectGenerationActionError {
   return new ProjectGenerationActionError(
     'GENERATION_REPLACEMENT_UNCERTAIN',
     'The replacement could not be confirmed. Save your work and restart the app before generating again.',
+  )
+}
+
+function supportsRegional(ready: InferenceWorkerReady | null): boolean {
+  return (
+    isQualifiedInferenceWorkerReady(ready) &&
+    ready.capabilities.includes('illustrious-regional-invoke-v1')
   )
 }

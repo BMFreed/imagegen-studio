@@ -55,6 +55,7 @@ _MAX_BUNDLE_BYTES = 1024 * 1024
 _MAX_RAW_BYTES = 64 * 1024 * 1024
 _MAX_RESOURCE_BYTES = 64 * 1024 * 1024
 _ENCODING_PROFILE = "ordinary-canvas-static-dualclip-exact-ti-shared-readonly-cuda-fp16-v1"
+_INVOKE_ENCODING_PROFILE = "ordinary-canvas-invoke-dualclip-exact-ti-shared-readonly-cuda-fp16-v1"
 _DENOISING_PROFILE = "ordinary-canvas-euler-txt2img-cuda-fp16-v2"
 _TOPOLOGY = {
     "down_blocks.1.attentions.0": (2, 2),
@@ -81,6 +82,7 @@ class RegionalRequest:
     negative_pooled_source_id: str
     positive_pooled_source_id: str
     layout: _Layout
+    composition_profile: str | None = None
 
 
 def _require(condition: bool, message: str) -> None:
@@ -354,8 +356,9 @@ def parse_regional_request(value: object) -> RegionalRequest:
     )
     root = _owned_root(envelope["stagingRoot"])
     bundle_descriptor = _descriptor(envelope["bundle"], root, _MAX_BUNDLE_BYTES)
+    bundle_value = _json_snapshot(_snapshot(bundle_descriptor))
     bundle = _object(
-        _json_snapshot(_snapshot(bundle_descriptor)),
+        bundle_value,
         {
             "schemaVersion",
             "request",
@@ -365,8 +368,22 @@ def parse_regional_request(value: object) -> RegionalRequest:
             "negativePooledSourceId",
             "positivePooledSourceId",
             "layout",
-        },
+        }
+        | (
+            {"compositionProfile"}
+            if type(bundle_value) is dict and "compositionProfile" in bundle_value
+            else set()
+        ),
         "Private regional bundle",
+    )
+    composition_profile = bundle.get("compositionProfile")
+    if "compositionProfile" in bundle:
+        _require(
+            type(composition_profile) is str and composition_profile == "invoke-canvas-v1",
+            "The explicit regional composition profile is unsupported.",
+        )
+    encoding_profile = (
+        _INVOKE_ENCODING_PROFILE if composition_profile is not None else _ENCODING_PROFILE
     )
     _require(
         type(bundle["schemaVersion"]) is int and bundle["schemaVersion"] == 1,
@@ -397,7 +414,7 @@ def parse_regional_request(value: object) -> RegionalRequest:
         "Regional bundle, target and output must be distinct.",
     )
     parameters = _command_parameters(command)
-    tensor_profile, _ = _execution_profile(_DENOISING_PROFILE, _ENCODING_PROFILE)
+    tensor_profile, _ = _execution_profile(_DENOISING_PROFILE, encoding_profile)
     _denoising_parameters(parameters, tensor_profile, resolved_noise=True)
     snapshots = _RawSnapshots(
         root, {bundle_descriptor[0], command.target_path, command.output_path}
@@ -413,7 +430,7 @@ def parse_regional_request(value: object) -> RegionalRequest:
     bbox, pairs, parameters, _, _, _ = _recipe_inputs(
         recipe,
         parameters,
-        _ENCODING_PROFILE,
+        encoding_profile,
         bundle["layout"],
         negative,
         positive,
@@ -441,6 +458,7 @@ def parse_regional_request(value: object) -> RegionalRequest:
         negative_pooled_source_id=bundle["negativePooledSourceId"],
         positive_pooled_source_id=bundle["positivePooledSourceId"],
         layout=bundle["layout"],
+        composition_profile=composition_profile,
     )
 
 
@@ -475,7 +493,9 @@ def execute_regional_request(
             command=request.command,
             pipeline=pipeline,
             runtime=runtime,
-            profile=_ENCODING_PROFILE,
+            profile=_INVOKE_ENCODING_PROFILE
+            if request.composition_profile == "invoke-canvas-v1"
+            else _ENCODING_PROFILE,
             denoising_profile=_DENOISING_PROFILE,
             global_negative_coverage=request.global_negative_coverage,
             global_positive_coverage=request.global_positive_coverage,

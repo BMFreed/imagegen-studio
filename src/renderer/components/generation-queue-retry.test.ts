@@ -5,6 +5,32 @@ import { test } from 'node:test'
 
 import { generationQueueRetryReason } from './generation-queue-retry.js'
 
+test('regional Retry requires its frozen operation capability, independent of all ordinary flags', () => {
+  const operation = 'illustrious-regional-txt2img'
+  assert.match(generationQueueRetryReason(operation, null)!, /Checking image engine/)
+  for (const regionalSupported of [undefined, false, true]) {
+    const result = generationQueueRetryReason(operation, {
+      animaOutpaintSupported: true,
+      animaSupported: true,
+      outpaintSupported: true,
+      regionalSupported,
+      smartPatchSupported: true,
+    })
+    assert.equal(result === null, regionalSupported === true)
+    if (result !== null) {
+      assert.match(result, /does not support Regional Guidance.*Repair or update/)
+    }
+  }
+  assert.equal(
+    generationQueueRetryReason('illustrious-txt2img', { regionalSupported: false }),
+    null,
+  )
+  assert.equal(
+    generationQueueRetryReason('illustrious-img2img', { regionalSupported: false }),
+    null,
+  )
+})
+
 test('outpaint Retry uses the frozen family and fails closed for missing or opposite capabilities', () => {
   // Boundary: renderer advisory over the typed Main state. Neighbor: the opposite family flag
   // remains true. Mutation: qualify all frozen jobs from one common flag or treat absence as ready.

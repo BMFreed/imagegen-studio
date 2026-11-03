@@ -93,6 +93,8 @@ _Profile = Literal[
     "ordinary-canvas-static-dualclip-exact-ti-cuda-fp16-v1",
     "ordinary-canvas-static-dualclip-exact-ti-shared-readonly-cpu-v1",
     "ordinary-canvas-static-dualclip-exact-ti-shared-readonly-cuda-fp16-v1",
+    "ordinary-canvas-invoke-dualclip-exact-ti-shared-readonly-cpu-v1",
+    "ordinary-canvas-invoke-dualclip-exact-ti-shared-readonly-cuda-fp16-v1",
 ]
 _Layout = Literal["cfg-negative-first", "positive-only"]
 _CoverageKind = Literal["covered", "intersecting-empty", "empty", "outside"]
@@ -104,7 +106,18 @@ _TI_SHARED_PROFILE: _Profile = "ordinary-canvas-static-dualclip-exact-ti-shared-
 _TI_SHARED_CUDA_PROFILE: _Profile = (
     "ordinary-canvas-static-dualclip-exact-ti-shared-readonly-cuda-fp16-v1"
 )
-_TI_PROFILES = (_TI_PROFILE, _TI_CUDA_PROFILE, _TI_SHARED_PROFILE, _TI_SHARED_CUDA_PROFILE)
+_INVOKE_PROFILE: _Profile = "ordinary-canvas-invoke-dualclip-exact-ti-shared-readonly-cpu-v1"
+_INVOKE_CUDA_PROFILE: _Profile = (
+    "ordinary-canvas-invoke-dualclip-exact-ti-shared-readonly-cuda-fp16-v1"
+)
+_INVOKE_PROFILES = (_INVOKE_PROFILE, _INVOKE_CUDA_PROFILE)
+_TI_PROFILES = (
+    _TI_PROFILE,
+    _TI_CUDA_PROFILE,
+    _TI_SHARED_PROFILE,
+    _TI_SHARED_CUDA_PROFILE,
+    *_INVOKE_PROFILES,
+)
 _SAFE_INTEGER = 2**53 - 1
 _MAX_TEXT_BYTES = 16 * 1024
 _MAX_PAIR_TEXT_BYTES = 128 * 1024
@@ -171,7 +184,8 @@ def _encoding_tensor_profile(profile: _Profile) -> _TensorProfile:
     )
     return (
         "cuda-float16-v1"
-        if profile in (_CUDA_PROFILE, _TI_CUDA_PROFILE, _TI_SHARED_CUDA_PROFILE)
+        if profile
+        in (_CUDA_PROFILE, _TI_CUDA_PROFILE, _TI_SHARED_CUDA_PROFILE, _INVOKE_CUDA_PROFILE)
         else "cpu-float32-v1"
     )
 
@@ -179,8 +193,23 @@ def _encoding_tensor_profile(profile: _Profile) -> _TensorProfile:
 def _encoding_embedding_strategy(profile: _Profile) -> _EmbeddingStrategy:
     return (
         "shared-readonly"
-        if profile in (_TI_SHARED_PROFILE, _TI_SHARED_CUDA_PROFILE)
+        if profile in (_TI_SHARED_PROFILE, _TI_SHARED_CUDA_PROFILE, *_INVOKE_PROFILES)
         else "independent-copy"
+    )
+
+
+def _emits(pair: _Pair, sign: Literal["positive", "negative"], *, invoke_canvas: bool) -> bool:
+    """Keep global streams; current Invoke Canvas omits only literal-empty local signs.
+
+    InvokeAI a61ac4fb, webv2 features/generation/core/canvas/addRegionalGuidance.ts:
+    JavaScript truthiness keeps whitespace and treats a missing/empty positive as absent.
+    Authored values remain in the checked recipe and exact-resource owner.
+    """
+    text = pair.positive if sign == "positive" else pair.negative
+    return (
+        (pair.coverage is None or bool(text))
+        if invoke_canvas
+        else (sign == "negative" or text is not None)
     )
 
 
@@ -960,6 +989,7 @@ def _lengths(
     *,
     commands: tuple[IllustriousInferenceParameters, ...] | None = None,
     embedding_inputs: tuple[EmbeddingConditioningInputs, ...] | None = None,
+    invoke_canvas: bool = False,
 ) -> tuple[tuple[int, int], ...]:
     builders = _builders(
         pipeline, compel, (None, None) if embedding_inputs is None else embedding_inputs[0].managers
@@ -993,11 +1023,16 @@ def _lengths(
             signed.append(length)
         lengths.append((signed[0], signed[1]))
     _require(
-        sum(length[1] for length in lengths) <= _MAX_SIGN_LENGTH
+        sum(
+            length[1]
+            for pair, length in zip(pairs, lengths, strict=True)
+            if _emits(pair, "negative", invoke_canvas=invoke_canvas)
+        )
+        <= _MAX_SIGN_LENGTH
         and sum(
             length[0]
             for pair, length in zip(pairs, lengths, strict=True)
-            if pair.positive is not None
+            if _emits(pair, "positive", invoke_canvas=invoke_canvas)
         )
         <= _MAX_SIGN_LENGTH,
         "LIMIT",
@@ -1293,6 +1328,19 @@ def _recipe_inputs(
         "PROFILE_INVALID",
         "Explicit layout must agree with ordinary SDXL's CFG predicate.",
     )
+    if profile in _INVOKE_PROFILES:
+        _require(
+            layout == "cfg-negative-first"
+            and 1 < cfg <= 30
+            and type(global_negative_coverage) is Everywhere
+            and type(global_positive_coverage) is Everywhere
+            and type(negative_pooled_source_id) is str
+            and negative_pooled_source_id == "current-canvas"
+            and type(positive_pooled_source_id) is str
+            and positive_pooled_source_id == "current-canvas",
+            "PROFILE_INVALID",
+            "Invoke Canvas requires CFG in (1,30], global Everywhere and both global pools.",
+        )
     for source, eligible in (
         (negative_pooled_source_id, {pair.binding_id for pair in pairs}),
         (
@@ -1368,6 +1416,7 @@ def _encode_recipe_bindings(
     layout: _Layout,
     tensor_profile: _TensorProfile = "cpu-float32-v1",
     embedding_strategy: _EmbeddingStrategy = "independent-copy",
+    invoke_canvas: bool = False,
 ) -> tuple[AttentionPlan, tuple[EncodedTensorBinding, ...], tuple[EncodedTensorBinding, ...]]:
     """Preflight all streams, then encode each once under the existing CLIP guards."""
     ti = None
@@ -1383,10 +1432,16 @@ def _encode_recipe_bindings(
             strategy=embedding_strategy,
         )
     lengths = (
-        _lengths(pairs, parameters, pipeline, compel)
+        _lengths(pairs, parameters, pipeline, compel, invoke_canvas=invoke_canvas)
         if ti is None
         else _lengths(
-            pairs, parameters, ti.staged, compel, commands=ti.commands, embedding_inputs=ti.inputs
+            pairs,
+            parameters,
+            ti.staged,
+            compel,
+            commands=ti.commands,
+            embedding_inputs=ti.inputs,
+            invoke_canvas=invoke_canvas,
         )
     )
     coverage: list[tuple[Everywhere | Alpha8, Everywhere | Alpha8]] = []
@@ -1400,7 +1455,9 @@ def _encode_recipe_bindings(
                 coverage_bounds=cast(Any, world.bounds.mapping()),
                 bbox=cast(Any, bbox.mapping()),
                 latent_shape=shape,
-                profile="ordinary-canvas-origin-nearest8-v1",
+                profile="ordinary-canvas-invoke-alpha-positive-nearest8-v1"
+                if invoke_canvas
+                else "ordinary-canvas-origin-nearest8-v1",
             )
             # All four world kinds stay in the detached pair. A zero latent
             # plane remains zero regardless of the original classification.
@@ -1408,11 +1465,12 @@ def _encode_recipe_bindings(
     negative_segments = tuple(
         EncodedSegment(pair.binding_id, length[1], covers[0])
         for pair, length, covers in zip(pairs, lengths, coverage, strict=True)
+        if _emits(pair, "negative", invoke_canvas=invoke_canvas)
     )
     positive_segments = tuple(
         EncodedSegment(pair.binding_id, length[0], covers[1])
         for pair, length, covers in zip(pairs, lengths, coverage, strict=True)
-        if pair.positive is not None
+        if _emits(pair, "positive", invoke_canvas=invoke_canvas)
     )
     plan = plan_illustrious_attention(
         latent_shape=shape,
@@ -1490,8 +1548,9 @@ def _encode_recipe_bindings(
                     positive_coverage=covers[1],
                     tensor_profile=tensor_profile,
                 )
-                negative_bindings.append(converted.negative)
-                if pair.positive is not None:
+                if _emits(pair, "negative", invoke_canvas=invoke_canvas):
+                    negative_bindings.append(converted.negative)
+                if _emits(pair, "positive", invoke_canvas=invoke_canvas):
                     positive_bindings.append(converted.positive)
     return plan, tuple(negative_bindings), tuple(positive_bindings)
 
@@ -1577,6 +1636,7 @@ def run_current_canvas_regional_recipe(
             layout=layout,
             tensor_profile=tensor_profile,
             embedding_strategy=embedding_strategy,
+            invoke_canvas=profile in _INVOKE_PROFILES,
         )
         return run_illustrious_regional_conditioning(
             parts[4],

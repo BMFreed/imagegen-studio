@@ -41,12 +41,13 @@ import type {
 } from './smart-patch-generation-staging.js'
 
 import { preflightGenerationAcceptanceHandoff } from './generation-acceptance-journal.js'
-import { isQueuedOutpaint, parseFrozenGenerationPayloadV1 } from './generation-queue.js'
+import { isQueuedOutpaint } from './generation-queue.js'
 import { DEFAULT_IGS_PACKAGE_LIMITS } from './igs-package.js'
 import { proveAcceptedSavedPackage } from './project-accepted-save-proof.js'
 import { provenanceFromVerifiedRasterCandidate } from './project-generation-provenance.js'
 import { canonicalProjectPath, localProjectRecoveryKey } from './project-identity.js'
 import { projectVerifiedSmartPatchVariant } from './project-smart-patch-variant-projection.js'
+import { parseAcceptedGenerationBaseV1 } from './regional-queued-generation.js'
 
 const projectKeyPattern = /^project-v1-[a-f0-9]{64}$/
 const uuidPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
@@ -421,7 +422,21 @@ export class ProjectGenerationAcceptance {
             candidateIds.includes(candidate.candidateId) &&
             candidate.documentId === owner.document.documentId &&
             candidate.projectPath === owner.filePath &&
-            isQueuedOutpaint(parseFrozenGenerationPayloadV1(candidate.frozenPayloadJson))
+            (candidate.localProjectKey !== tabId ||
+              candidate.candidateId !== candidate.queueItemId ||
+              createHash('sha256').update(candidate.frozenPayloadJson).digest('hex') !==
+                candidate.frozenPayloadSha256)
+          ) {
+            throw new ProjectGenerationAcceptanceError(
+              'ACCEPTANCE_CANDIDATE_UNAVAILABLE',
+              'The selected generation result identity or frozen context changed before Add.',
+            )
+          }
+          if (
+            candidateIds.includes(candidate.candidateId) &&
+            candidate.documentId === owner.document.documentId &&
+            candidate.projectPath === owner.filePath &&
+            isQueuedOutpaint(parseAcceptedGenerationBaseV1(candidate.frozenPayloadJson))
           ) {
             const bytes = await this.options.staging.readVerifiedCandidatePng({
               candidateId: candidate.candidateId,

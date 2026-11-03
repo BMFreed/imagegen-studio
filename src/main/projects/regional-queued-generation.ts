@@ -5,7 +5,10 @@ import path from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import * as v from 'valibot'
 
-import type { FrozenQueuedIllustriousTxt2ImgV1 } from './generation-queue.js'
+import type {
+  FrozenQueuedGenerationV1,
+  FrozenQueuedIllustriousTxt2ImgV1,
+} from './generation-queue.js'
 import type { IllustriousTxt2ImgRequestV1 } from './illustrious-txt2img-job.js'
 import type { RegionalWorkerInput } from './regional-worker-request.js'
 
@@ -18,7 +21,17 @@ export interface FrozenQueuedRegionalV1 extends Omit<FrozenQueuedIllustriousTxt2
   regional: { byteSize: number; sha256: string }
 }
 
+/** Public Invoke Canvas composition is a distinct frozen operation, never inferred from age. */
+export interface FrozenQueuedRegionalInvokeV1 extends Omit<FrozenQueuedRegionalV1, 'kind'> {
+  compositionProfile: 'invoke-canvas-v1'
+  kind: 'illustrious-regional-txt2img'
+}
+
+export type FrozenQueuedRegionalOperationalV1 =
+  FrozenQueuedRegionalInvokeV1 | FrozenQueuedRegionalV1
+
 export interface RegionalQueuedMaterial {
+  compositionProfile?: 'invoke-canvas-v1'
   files: Record<string, Buffer>
   regional: FrozenQueuedRegionalV1['regional']
 }
@@ -37,6 +50,7 @@ const alphaRef = v.strictObject({
   $alpha8: v.strictObject({ byteSize, file: v.string(), sha256: sha }),
 })
 const metadataSchema = v.strictObject({
+  compositionProfile: v.optional(v.literal('invoke-canvas-v1')),
   globalNegativeCoverage: v.unknown(),
   globalPositiveCoverage: v.unknown(),
   layout: v.picklist(['cfg-negative-first', 'positive-only']),
@@ -51,41 +65,35 @@ type Snapshot = { bytes: Buffer; identity: BigIntStats; name: string }
 
 /** Parse the private outer discriminator while retaining the existing ordinary agreement checks. */
 export function parseFrozenQueuedRegionalV1(json: string): FrozenQueuedRegionalV1 {
-  if (typeof json !== 'string' || Buffer.byteLength(json, 'utf8') > MAX_PAYLOAD_BYTES) {
-    throw invalid('The frozen regional payload exceeds its metadata limit.')
+  return parseRegionalPayload(json, false) as FrozenQueuedRegionalV1
+}
+
+export function parseFrozenQueuedRegionalInvokeV1(json: string): FrozenQueuedRegionalInvokeV1 {
+  return parseRegionalPayload(json, true) as FrozenQueuedRegionalInvokeV1
+}
+
+/** Recovery and resource reload understand both operations without making private rows public. */
+export function parseFrozenQueuedRegionalOperationalV1(
+  json: string,
+): FrozenQueuedRegionalOperationalV1 {
+  return parseRegionalPayload(json, readKind(json) === 'illustrious-regional-txt2img')
+}
+
+/**
+ * Accept only public operations. The original candidate hash is verified by the caller before
+ * projecting reusable settings; no regional conditioning or managed pathname is added to
+ * provenance.
+ */
+export function parseAcceptedGenerationBaseV1(json: string): FrozenQueuedGenerationV1 {
+  if (readKind(json) !== 'illustrious-regional-txt2img') {
+    return parseFrozenGenerationPayloadV1(json)
   }
-  let value: unknown
-  try {
-    value = JSON.parse(json)
-  } catch {
-    throw invalid('The frozen regional payload is not JSON.')
-  }
-  if (!record(value) || value.kind !== 'illustrious-regional') {
-    throw invalid('The frozen regional operation is invalid.')
-  }
-  const parsed = v.safeParse(regionalRef, value.regional)
-  if (!parsed.success) {
-    throw invalid('The frozen regional resource descriptor is invalid.')
-  }
-  const { regional: _regional, ...base } = value
-  const ordinary = parseFrozenGenerationPayloadV1(
-    JSON.stringify({ ...base, kind: 'illustrious-txt2img' }),
-  )
-  if (
-    ordinary.kind !== 'illustrious-txt2img' ||
-    ordinary.workerJob.checkpoint.predictionType !== 'epsilon' ||
-    ordinary.workerJob.sampling.scheduler !== 'euler' ||
-    ordinary.workerJob.sampling.noiseProfile === undefined ||
-    (ordinary.workerJob.sampling.cfgRescale ?? 0) !== 0 ||
-    ordinary.workerJob.vaePrecision !== 'FP16' ||
-    ordinary.workerJob.vae != null ||
-    (ordinary.workerJob.loras?.length ?? 0) !== 0 ||
-    (ordinary.workerJob.embeddings?.positive.length ?? 0) !== 0 ||
-    (ordinary.workerJob.embeddings?.negative.length ?? 0) !== 0
-  ) {
-    throw invalid('The frozen regional job differs from the private execution profile.')
-  }
-  return { ...ordinary, kind: 'illustrious-regional', regional: parsed.output }
+  const {
+    compositionProfile: _profile,
+    regional: _regional,
+    ...base
+  } = parseFrozenQueuedRegionalInvokeV1(json)
+  return { ...base, kind: 'illustrious-txt2img' }
 }
 
 /**
@@ -111,6 +119,9 @@ export function captureRegionalQueuedMaterial(input: RegionalWorkerInput): Regio
       ? coverage
       : { ...coverage, alpha: alpha(coverage.alpha, `global-${sign}.alpha8`) }
   const metadata = {
+    ...(captured.compositionProfile !== undefined
+      ? { compositionProfile: captured.compositionProfile }
+      : {}),
     globalNegativeCoverage: globalCoverage(captured.globalNegativeCoverage, 'negative'),
     globalPositiveCoverage: globalCoverage(captured.globalPositiveCoverage, 'positive'),
     layout: captured.layout,
@@ -134,13 +145,19 @@ export function captureRegionalQueuedMaterial(input: RegionalWorkerInput): Regio
     throw invalid('Frozen regional recipe metadata exceeds 1 MiB.')
   }
   files['regional.json'] = bytes
-  return { files, regional: { byteSize: bytes.length, sha256: sha256(bytes) } }
+  return {
+    ...(captured.compositionProfile !== undefined
+      ? { compositionProfile: captured.compositionProfile }
+      : {}),
+    files,
+    regional: { byteSize: bytes.length, sha256: sha256(bytes) },
+  }
 }
 
 /** Return independently verified owned sidecar bytes for an exact Retry copy. */
 export async function loadRegionalQueuedFiles(
   root: string,
-  payload: FrozenQueuedRegionalV1,
+  payload: FrozenQueuedRegionalOperationalV1,
 ): Promise<Record<string, Buffer>> {
   try {
     return await loadFiles(root, payload)
@@ -155,10 +172,10 @@ export async function loadRegionalQueuedFiles(
 /** Hydrate only owned alpha bytes, then revalidate the complete recipe/request association. */
 export async function loadRegionalQueuedInput(
   root: string,
-  payload: FrozenQueuedRegionalV1,
+  payload: FrozenQueuedRegionalOperationalV1,
   request: IllustriousTxt2ImgRequestV1,
 ): Promise<RegionalWorkerInput> {
-  const capturedPayload = parseFrozenQueuedRegionalV1(JSON.stringify(payload))
+  const capturedPayload = parseFrozenQueuedRegionalOperationalV1(JSON.stringify(payload))
   const capturedRequest = structuredClone(request)
   const files = await loadRegionalQueuedFiles(root, capturedPayload)
   const metadata = parseMetadata(files['regional.json'])
@@ -176,6 +193,10 @@ export async function loadRegionalQueuedInput(
   const { path: _targetPath, ...targetDescriptor } = target
   if (
     !isDeepStrictEqual({ ...job, target: targetDescriptor }, capturedPayload.workerJob) ||
+    captured.compositionProfile !==
+      (capturedPayload.kind === 'illustrious-regional-txt2img'
+        ? capturedPayload.compositionProfile
+        : undefined) ||
     captured.recipe.documentId !== capturedPayload.context.documentId ||
     captured.recipe.documentRevision !== capturedPayload.context.documentRevision
   ) {
@@ -184,11 +205,73 @@ export async function loadRegionalQueuedInput(
   return captured
 }
 
+function readKind(json: string): unknown {
+  if (typeof json !== 'string' || Buffer.byteLength(json, 'utf8') > MAX_PAYLOAD_BYTES) {
+    throw invalid('The frozen regional payload exceeds its metadata limit.')
+  }
+  try {
+    const value: unknown = JSON.parse(json)
+    return record(value) ? value.kind : undefined
+  } catch {
+    throw invalid('The frozen regional payload is not JSON.')
+  }
+}
+
+function parseRegionalPayload(json: string, invoke: boolean): FrozenQueuedRegionalOperationalV1 {
+  if (typeof json !== 'string' || Buffer.byteLength(json, 'utf8') > MAX_PAYLOAD_BYTES) {
+    throw invalid('The frozen regional payload exceeds its metadata limit.')
+  }
+  let value: unknown
+  try {
+    value = JSON.parse(json)
+  } catch {
+    throw invalid('The frozen regional payload is not JSON.')
+  }
+  if (
+    !record(value) ||
+    value.kind !== (invoke ? 'illustrious-regional-txt2img' : 'illustrious-regional') ||
+    (invoke ? value.compositionProfile !== 'invoke-canvas-v1' : 'compositionProfile' in value)
+  ) {
+    throw invalid('The frozen regional operation is invalid.')
+  }
+  const parsed = v.safeParse(regionalRef, value.regional)
+  if (!parsed.success) {
+    throw invalid('The frozen regional resource descriptor is invalid.')
+  }
+  const { compositionProfile: _profile, regional: _regional, ...base } = value
+  const ordinary = parseFrozenGenerationPayloadV1(
+    JSON.stringify({ ...base, kind: 'illustrious-txt2img' }),
+  )
+  if (
+    ordinary.kind !== 'illustrious-txt2img' ||
+    ordinary.workerJob.checkpoint.predictionType !== 'epsilon' ||
+    (invoke && ordinary.workerJob.sampling.cfgScale <= 1) ||
+    ordinary.workerJob.sampling.scheduler !== 'euler' ||
+    ordinary.workerJob.sampling.noiseProfile === undefined ||
+    (ordinary.workerJob.sampling.cfgRescale ?? 0) !== 0 ||
+    ordinary.workerJob.vaePrecision !== 'FP16' ||
+    ordinary.workerJob.vae != null ||
+    (ordinary.workerJob.loras?.length ?? 0) !== 0 ||
+    (ordinary.workerJob.embeddings?.positive.length ?? 0) !== 0 ||
+    (ordinary.workerJob.embeddings?.negative.length ?? 0) !== 0
+  ) {
+    throw invalid('The frozen regional job differs from the private execution profile.')
+  }
+  return invoke
+    ? {
+        ...ordinary,
+        compositionProfile: 'invoke-canvas-v1',
+        kind: 'illustrious-regional-txt2img',
+        regional: parsed.output,
+      }
+    : { ...ordinary, kind: 'illustrious-regional', regional: parsed.output }
+}
+
 async function loadFiles(
   root: string,
-  payload: FrozenQueuedRegionalV1,
+  payload: FrozenQueuedRegionalOperationalV1,
 ): Promise<Record<string, Buffer>> {
-  const captured = parseFrozenQueuedRegionalV1(JSON.stringify(payload))
+  const captured = parseFrozenQueuedRegionalOperationalV1(JSON.stringify(payload))
   const directory = await directoryIdentity(root)
   const snapshots: Snapshot[] = []
   const metadata = await readSnapshot(root, 'regional.json', captured.regional)

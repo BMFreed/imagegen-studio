@@ -60,7 +60,7 @@ import type {
 } from './project-generation-preparation.js'
 import type { SmartPatchExecutionModelResolver } from './project-smart-patch-execution.js'
 import type { SmartPatchInputBundle } from './project-smart-patch-input-bundle.js'
-import type { FrozenQueuedRegionalV1 } from './regional-queued-generation.js'
+import type { FrozenQueuedRegionalOperationalV1 } from './regional-queued-generation.js'
 import type { RegionalWorkerInput } from './regional-worker-request.js'
 import type { SmartPatchInputMaterial } from './smart-patch-frozen-input.js'
 import type { FrozenQueuedSmartPatchV1 } from './smart-patch-queued-generation.js'
@@ -116,7 +116,8 @@ import {
   captureRegionalQueuedMaterial,
   loadRegionalQueuedFiles,
   loadRegionalQueuedInput,
-  parseFrozenQueuedRegionalV1,
+  parseFrozenQueuedRegionalInvokeV1,
+  parseFrozenQueuedRegionalOperationalV1,
 } from './regional-queued-generation.js'
 import { parseSmartPatchInputMaterial } from './smart-patch-frozen-input.js'
 import {
@@ -408,7 +409,7 @@ export type FrozenQueuedGenerationV1 =
   FrozenQueuedAnimaGenerationV1 | FrozenQueuedIllustriousGenerationV1 | FrozenQueuedOutpaintV1
 
 export function isQueuedOutpaint(
-  payload: FrozenQueuedGenerationV1 | FrozenQueuedRegionalV1,
+  payload: FrozenQueuedGenerationV1 | FrozenQueuedRegionalOperationalV1,
 ): payload is FrozenQueuedOutpaintV1 {
   return payload.kind === 'illustrious-outpaint' || payload.kind === 'anima-outpaint'
 }
@@ -467,7 +468,7 @@ export type TerminalGenerationStatus = 'canceled' | 'completed' | 'failed'
 export interface VerifiedQueuedRegionalInput {
   input: RegionalWorkerInput
   item: QueuedGenerationItem
-  payload: FrozenQueuedRegionalV1
+  payload: FrozenQueuedRegionalOperationalV1
   targetPath: string
 }
 
@@ -817,99 +818,14 @@ export class GenerationQueueRepository {
     })
   }
 
+  /** Public regional claims retain the same global slot and never adopt private operations. */
+  async claimNextPendingInvokeCanvasRegional(): Promise<VerifiedQueuedRegionalInput | null> {
+    return await this.claimNextRegional('illustrious-regional-txt2img')
+  }
+
   /** Private regional claim uses the same global running-slot CAS. */
   async claimNextPendingRegional(): Promise<VerifiedQueuedRegionalInput | null> {
-    return await this.serialize(async () => {
-      for (;;) {
-        const running = await this.db
-          .selectFrom('generation_queue_item')
-          .select('id')
-          .where('status', '=', 'running')
-          .executeTakeFirst()
-        if (running) {
-          return null
-        }
-        let pendingQuery = this.db
-          .selectFrom('generation_queue_item')
-          .selectAll()
-          .where('status', '=', 'pending')
-          .where('operation', '=', 'illustrious-regional')
-          .orderBy('created_at', 'asc')
-          .orderBy('id', 'asc')
-        if (this.fencedProjects.size > 0) {
-          pendingQuery = pendingQuery.where('local_project_key', 'not in', [...this.fencedProjects])
-        }
-        const pending = await pendingQuery.executeTakeFirst()
-        if (!pending) {
-          return null
-        }
-
-        // A fence can be raised after the read and while frozen files are verified.
-        if (this.fencedProjects.has(pending.local_project_key)) {
-          continue
-        }
-
-        let verified: VerifiedQueuedRegionalInput
-        try {
-          verified = await this.verifyRegionalRow(pending)
-        } catch (error) {
-          if (!(error instanceof GenerationQueueError) || error.code !== 'QUEUE_INPUT_INVALID') {
-            throw error
-          }
-          // A corrupt frozen input cannot be dispatched. Mark only the still-pending revision
-          // failed, preserving its files and allowing the next valid item to progress.
-          const now = new Date().toISOString()
-          await this.db
-            .updateTable('generation_queue_item')
-            .set({
-              error_code: 'QUEUE_INPUT_INVALID',
-              error_message: 'The frozen queue input is invalid.',
-              finished_at: now,
-              status: 'failed',
-              status_sequence: sql<number>`status_sequence + 1`,
-              updated_at: now,
-            })
-            .where('id', '=', pending.id)
-            .where('status', '=', 'pending')
-            .where('status_sequence', '=', pending.status_sequence)
-            .returning('id')
-            .executeTakeFirst()
-          continue
-        }
-
-        await this.testHooks.beforeClaimUpdate?.(pending.id)
-        if (this.fencedProjects.has(pending.local_project_key)) {
-          continue
-        }
-        const now = new Date().toISOString()
-        const claimed = await this.db
-          .updateTable('generation_queue_item')
-          .set({
-            error_code: null,
-            error_message: null,
-            started_at: now,
-            status: 'running',
-            status_sequence: sql<number>`status_sequence + 1`,
-            updated_at: now,
-          })
-          .where('id', '=', pending.id)
-          .where('status', '=', 'pending')
-          .where('status_sequence', '=', pending.status_sequence)
-          .where('frozen_payload_json', '=', pending.frozen_payload_json)
-          .where('operation', '=', pending.operation)
-          .where('operation', '=', 'illustrious-regional')
-          .where(
-            sql<boolean>`NOT EXISTS (
-            SELECT 1 FROM generation_queue_item AS active WHERE active.status = 'running'
-          )`,
-          )
-          .returningAll()
-          .executeTakeFirst()
-        if (claimed) {
-          return { ...verified, item: toItem(claimed) }
-        }
-      }
-    })
+    return await this.claimNextRegional('illustrious-regional')
   }
 
   /** Private Smart Patch claim shares the global slot while keeping ordinary readers separate. */
@@ -1052,6 +968,12 @@ export class GenerationQueueRepository {
     request: IllustriousTxt2ImgRequestV1
     stagingSessionId: string
   }): Promise<QueuedGenerationItem> {
+    if (input.regional.compositionProfile !== undefined) {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'Private submission cannot use a public composition profile.',
+      )
+    }
     const regional = captureRegionalQueuedMaterial({ ...input.regional, request: input.request })
     if (
       input.regional.recipe.documentId !== input.prepared.context.documentId ||
@@ -1317,6 +1239,34 @@ export class GenerationQueueRepository {
       )
     }
     return await this.enqueueIllustriousGenerationBatch(input)
+  }
+
+  /** Public admission freezes an explicit versioned profile, separate from private history. */
+  async enqueueInvokeCanvasRegional(input: {
+    assertCurrent?: () => void
+    preflight?: (
+      entries: readonly { frozenPayloadJson: string; queueItemId: string }[],
+    ) => Promise<void>
+    prepared: PreparedNormalTxt2Img
+    projectPath: string
+    regional: Omit<RegionalWorkerInput, 'request'>
+    request: IllustriousTxt2ImgRequestV1
+    stagingSessionId: string
+  }): Promise<QueuedGenerationItem> {
+    if (input.regional.compositionProfile !== 'invoke-canvas-v1') {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'Public regional submission requires the Invoke Canvas composition profile.',
+      )
+    }
+    const regional = captureRegionalQueuedMaterial({ ...input.regional, request: input.request })
+    if (
+      input.regional.recipe.documentId !== input.prepared.context.documentId ||
+      input.regional.recipe.documentRevision !== input.prepared.context.documentRevision
+    ) {
+      throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'Regional document identity differs.')
+    }
+    return await this.enqueueIllustriousGenerationInternal(input, regional)
   }
 
   /** Admit one complete qualified Anima batch using the existing files-first/atomic-SQL protocol. */
@@ -2001,7 +1951,7 @@ export class GenerationQueueRepository {
         .selectFrom('generation_queue_item')
         .selectAll()
         .where('id', '=', id)
-        .where('operation', '=', 'illustrious-regional')
+        .where('operation', 'in', ['illustrious-regional', 'illustrious-regional-txt2img'])
         .executeTakeFirst()
       return row ? toItem(row) : null
     })
@@ -2340,7 +2290,10 @@ export class GenerationQueueRepository {
             'The frozen queue payload is invalid.',
           )
         }
-        const payload = parsePayload(row.frozen_payload_json)
+        const payload =
+          row.operation === 'illustrious-regional-txt2img'
+            ? parseFrozenQueuedRegionalInvokeV1(row.frozen_payload_json)
+            : parsePayload(row.frozen_payload_json)
         if (
           payload.kind !== row.operation ||
           payload.context.documentId !== row.document_id ||
@@ -2468,7 +2421,7 @@ export class GenerationQueueRepository {
         .selectAll()
         .where('local_project_key', '=', localProjectKey)
         .where('document_id', '=', documentId)
-        .where('operation', 'in', NORMAL_QUEUE_OPERATIONS)
+        .where('operation', 'in', [...NORMAL_QUEUE_OPERATIONS, 'illustrious-regional-txt2img'])
         .where('status', 'in', ['pending', 'running'])
         .orderBy('created_at', 'asc')
         .orderBy('id', 'asc')
@@ -2521,7 +2474,7 @@ export class GenerationQueueRepository {
     validateQueueId(id)
     return await this.serialize(async () => {
       const verified = await this.verifyRowWithBytes(await this.requireRow(id))
-      if (verified.payload.kind === 'illustrious-regional') {
+      if ('regional' in verified.payload) {
         throw statusConflict()
       }
       return { ...verified, payload: verified.payload }
@@ -2537,7 +2490,7 @@ export class GenerationQueueRepository {
   }
 
   /** Global FIFO routing hint; each typed processor still verifies and claims its own row. */
-  async nextDispatchableKind(): Promise<'normal' | 'smart-patch' | null> {
+  async nextDispatchableKind(): Promise<'normal' | 'regional' | 'smart-patch' | null> {
     return await this.serialize(async () => {
       for (;;) {
         this.assertReadyForDispatch()
@@ -2562,7 +2515,11 @@ export class GenerationQueueRepository {
         if (this.fencedProjects.has(row.local_project_key)) {
           continue
         }
-        return isSmartPatchQueueOperation(row.operation) ? 'smart-patch' : 'normal'
+        return row.operation === 'illustrious-regional-txt2img'
+          ? 'regional'
+          : isSmartPatchQueueOperation(row.operation)
+            ? 'smart-patch'
+            : 'normal'
       }
     })
   }
@@ -2586,12 +2543,14 @@ export class GenerationQueueRepository {
             .selectFrom('generation_queue_item')
             .selectAll()
             .where('status', 'in', selected)
+            .where('operation', '!=', 'illustrious-regional')
             .where(noReservedReceipt())
             .execute()
           const references = smartPatchCleanupRefs(candidates)
           const removed = await transaction
             .deleteFrom('generation_queue_item')
             .where('status', 'in', selected)
+            .where('operation', '!=', 'illustrious-regional')
             .where(noReservedReceipt())
             .returning('id')
             .execute()
@@ -2689,7 +2648,27 @@ export class GenerationQueueRepository {
     expectedStatusSequence: number,
     preflight?: (input: GenerationQueueRetryPreflightInput) => Promise<void>,
   ): Promise<QueuedGenerationItem> {
-    return await this.retryTerminalInternal(id, expectedStatusSequence, preflight, undefined, true)
+    return await this.retryTerminalInternal(
+      id,
+      expectedStatusSequence,
+      preflight,
+      undefined,
+      'private',
+    )
+  }
+
+  async retryInvokeCanvasRegionalTerminal(
+    id: string,
+    expectedStatusSequence: number,
+    preflight?: (input: GenerationQueueRetryPreflightInput) => Promise<void>,
+  ): Promise<QueuedGenerationItem> {
+    return await this.retryTerminalInternal(
+      id,
+      expectedStatusSequence,
+      preflight,
+      undefined,
+      'invoke',
+    )
   }
 
   /** Internal Retry owns exact family/LaMa requalification; ordinary Retry cannot admit outpaint. */
@@ -2975,6 +2954,102 @@ export class GenerationQueueRepository {
     return await this.retryTerminalInternal(id, expectedStatusSequence, preflight)
   }
 
+  private async claimNextRegional(
+    operation: 'illustrious-regional-txt2img' | 'illustrious-regional',
+  ): Promise<VerifiedQueuedRegionalInput | null> {
+    return await this.serialize(async () => {
+      for (;;) {
+        const running = await this.db
+          .selectFrom('generation_queue_item')
+          .select('id')
+          .where('status', '=', 'running')
+          .executeTakeFirst()
+        if (running) {
+          return null
+        }
+        let pendingQuery = this.db
+          .selectFrom('generation_queue_item')
+          .selectAll()
+          .where('status', '=', 'pending')
+          .where('operation', '=', operation)
+          .orderBy('created_at', 'asc')
+          .orderBy('id', 'asc')
+        if (this.fencedProjects.size > 0) {
+          pendingQuery = pendingQuery.where('local_project_key', 'not in', [...this.fencedProjects])
+        }
+        const pending = await pendingQuery.executeTakeFirst()
+        if (!pending) {
+          return null
+        }
+
+        // A fence can be raised after the read and while frozen files are verified.
+        if (this.fencedProjects.has(pending.local_project_key)) {
+          continue
+        }
+
+        let verified: VerifiedQueuedRegionalInput
+        try {
+          verified = await this.verifyRegionalRow(pending)
+        } catch (error) {
+          if (!(error instanceof GenerationQueueError) || error.code !== 'QUEUE_INPUT_INVALID') {
+            throw error
+          }
+          // A corrupt frozen input cannot be dispatched. Mark only the still-pending revision
+          // failed, preserving its files and allowing the next valid item to progress.
+          const now = new Date().toISOString()
+          await this.db
+            .updateTable('generation_queue_item')
+            .set({
+              error_code: 'QUEUE_INPUT_INVALID',
+              error_message: 'The frozen queue input is invalid.',
+              finished_at: now,
+              status: 'failed',
+              status_sequence: sql<number>`status_sequence + 1`,
+              updated_at: now,
+            })
+            .where('id', '=', pending.id)
+            .where('status', '=', 'pending')
+            .where('status_sequence', '=', pending.status_sequence)
+            .returning('id')
+            .executeTakeFirst()
+          continue
+        }
+
+        await this.testHooks.beforeClaimUpdate?.(pending.id)
+        if (this.fencedProjects.has(pending.local_project_key)) {
+          continue
+        }
+        const now = new Date().toISOString()
+        const claimed = await this.db
+          .updateTable('generation_queue_item')
+          .set({
+            error_code: null,
+            error_message: null,
+            started_at: now,
+            status: 'running',
+            status_sequence: sql<number>`status_sequence + 1`,
+            updated_at: now,
+          })
+          .where('id', '=', pending.id)
+          .where('status', '=', 'pending')
+          .where('status_sequence', '=', pending.status_sequence)
+          .where('frozen_payload_json', '=', pending.frozen_payload_json)
+          .where('operation', '=', pending.operation)
+          .where('operation', '=', operation)
+          .where(
+            sql<boolean>`NOT EXISTS (
+            SELECT 1 FROM generation_queue_item AS active WHERE active.status = 'running'
+          )`,
+          )
+          .returningAll()
+          .executeTakeFirst()
+        if (claimed) {
+          return { ...verified, item: toItem(claimed) }
+        }
+      }
+    })
+  }
+
   private async cleanupPrunedInputs(root: string, ids: readonly string[]): Promise<void> {
     try {
       await this.testHooks.beforePruneInputCleanup?.()
@@ -3095,14 +3170,23 @@ export class GenerationQueueRepository {
         throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'Regional input requires txt2img.')
       }
       const payload = regional
-        ? { ...basePayload, kind: 'illustrious-regional' as const, regional: regional.regional }
+        ? {
+            ...basePayload,
+            ...(regional.compositionProfile
+              ? { compositionProfile: regional.compositionProfile }
+              : {}),
+            kind: regional.compositionProfile
+              ? ('illustrious-regional-txt2img' as const)
+              : ('illustrious-regional' as const),
+            regional: regional.regional,
+          }
         : basePayload
       const payloadJson = JSON.stringify(payload)
       if (Buffer.byteLength(payloadJson, 'utf8') > MAX_PAYLOAD_BYTES) {
         throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The frozen job is too large.')
       }
       if (regional) {
-        parseFrozenQueuedRegionalV1(payloadJson)
+        parseFrozenQueuedRegionalOperationalV1(payloadJson)
         this.assertProjectCanEnqueue(localProjectKey)
         assertCurrent?.()
         await preflight?.(
@@ -3313,14 +3397,19 @@ export class GenerationQueueRepository {
       infillResolver: OutpaintInfillResolver
       modelService: AnimaGenerationModelResolver & GenerationModelResolver
     },
-    regional = false,
+    regional: 'invoke' | 'private' | false = false,
   ): Promise<QueuedGenerationItem> {
     validateQueueId(id)
     validateExpectedSequence(expectedStatusSequence)
     return await this.serialize(async () => {
       this.assertReadyForDispatch()
       const source = await this.requireRow(id)
-      if (regional !== (source.operation === 'illustrious-regional')) {
+      if (
+        regional
+          ? source.operation !==
+            (regional === 'invoke' ? 'illustrious-regional-txt2img' : 'illustrious-regional')
+          : isRegionalQueueOperation(source.operation)
+      ) {
         throw new GenerationQueueError(
           'QUEUE_INPUT_INVALID',
           'Retry requires its dedicated input owner.',
@@ -3356,7 +3445,7 @@ export class GenerationQueueRepository {
         ? await this.verifyRegionalRow(source)
         : await this.verifyRow(source)
       const regionalFiles =
-        verified.payload.kind === 'illustrious-regional'
+        'regional' in verified.payload
           ? await loadRegionalQueuedFiles(path.dirname(verified.targetPath), verified.payload)
           : {}
       if (isQueuedOutpaint(verified.payload)) {
@@ -3533,7 +3622,7 @@ export class GenerationQueueRepository {
   ): Promise<VerifiedQueuedRegionalInput> {
     try {
       const verified = await this.verifyRowWithBytes(row, true)
-      if (verified.payload.kind !== 'illustrious-regional') {
+      if (!('regional' in verified.payload)) {
         throw statusConflict()
       }
       const request: IllustriousTxt2ImgRequestV1 = {
@@ -3576,7 +3665,7 @@ export class GenerationQueueRepository {
 
   private async verifyRow(row: Selectable<GenerationQueueItem>): Promise<VerifiedQueuedInput> {
     const verified = await this.verifyRowWithBytes(row)
-    if (verified.payload.kind === 'illustrious-regional') {
+    if ('regional' in verified.payload) {
       throw statusConflict()
     }
     return { item: verified.item, payload: verified.payload, targetPath: verified.targetPath }
@@ -3587,12 +3676,12 @@ export class GenerationQueueRepository {
     regional = false,
   ): Promise<{
     item: QueuedGenerationItem
-    payload: FrozenQueuedGenerationV1 | FrozenQueuedRegionalV1
+    payload: FrozenQueuedGenerationV1 | FrozenQueuedRegionalOperationalV1
     targetPath: string
     targetPngBytes: Buffer
   }> {
     if (
-      regional !== (row.operation === 'illustrious-regional') ||
+      regional !== isRegionalQueueOperation(row.operation) ||
       isSmartPatchQueueOperation(row.operation)
     ) {
       throw new GenerationQueueError(
@@ -3615,7 +3704,7 @@ export class GenerationQueueRepository {
       throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The frozen queue payload is invalid.')
     }
     const payload = regional
-      ? parseFrozenQueuedRegionalV1(row.frozen_payload_json)
+      ? parseFrozenQueuedRegionalOperationalV1(row.frozen_payload_json)
       : parsePayload(row.frozen_payload_json)
     if (
       payload.kind !== row.operation ||
@@ -4592,6 +4681,7 @@ function toManagerEntry(
       'anima-txt2img',
       'illustrious-img2img',
       'illustrious-outpaint',
+      'illustrious-regional-txt2img',
       'illustrious-smart-patch',
       'illustrious-txt2img',
     ].includes(row.operation) ||
@@ -4680,7 +4770,10 @@ function managerDetails(row: Selectable<GenerationQueueItem>): GenerationQueueEn
         },
       }
     }
-    const payload = parsePayload(row.frozen_payload_json)
+    const payload =
+      row.operation === 'illustrious-regional-txt2img'
+        ? parseFrozenQueuedRegionalInvokeV1(row.frozen_payload_json)
+        : parsePayload(row.frozen_payload_json)
     if (
       payload.kind !== row.operation ||
       payload.context.documentId !== row.document_id ||
@@ -4795,4 +4888,8 @@ function toItem(row: Selectable<GenerationQueueItem>): QueuedGenerationItem {
     status: row.status,
     statusSequence: row.status_sequence,
   }
+}
+
+function isRegionalQueueOperation(operation: string): boolean {
+  return operation === 'illustrious-regional' || operation === 'illustrious-regional-txt2img'
 }

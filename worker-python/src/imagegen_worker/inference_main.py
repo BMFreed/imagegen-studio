@@ -85,6 +85,7 @@ def inference_ready_message(runtime: MLRuntime | None = None) -> dict[str, objec
             "smart-patch-execution",
             "smart-patch-seed-confirmation",
             "private-current-canvas-regional-v1",
+            "illustrious-regional-invoke-v1",
             *(
                 ANIMA_CAPABILITIES
                 if runtime is not None and supports_anima_compute(runtime)

@@ -62,6 +62,10 @@ import {
   type ProjectRegionalGuidancePromptChange,
   type ProjectRegionalGuidanceReferenceImageChange,
 } from '../../shared/projects/regional-guidance.js'
+import {
+  getInvokeRegionalGenerationUnavailableReason,
+  hasEnabledRegionalGuidance,
+} from '../../shared/projects/regional-invoke-generation.js'
 
 import {
   X as CancelIcon,
@@ -2412,7 +2416,13 @@ function commitInternalAfterUpdate() {
 }
 
 const generationBlockingReason = computed(() => {
-  const regionalReason = getRegionalGuidanceGenerationUnavailableReason(props.tab)
+  const regionalReason = activePatch.value
+    ? getRegionalGuidanceGenerationUnavailableReason(props.tab)
+    : getInvokeRegionalGenerationUnavailableReason({
+        document: { ...props.tab, generationDraft: props.generationDraft },
+        iterations: imagesPerClick.value ?? 0,
+        runtimeSupported: props.generationState?.regionalSupported,
+      })
   if (regionalReason) {
     return regionalReason
   }
@@ -2479,6 +2489,17 @@ const generationBlockingReason = computed(() => {
   }
   if (props.generationState.phase === 'preparing') {
     return 'Wait for the current batch to finish preparing.'
+  }
+  if (!activePatch.value && hasEnabledRegionalGuidance(props.tab)) {
+    if (!targetState.value) {
+      return targetError.value ?? 'Checking Current Canvas pixels for Regional Guidance…'
+    }
+    if (targetState.value.unavailableReason) {
+      return targetState.value.unavailableReason
+    }
+    if (targetState.value.mode !== 'txt2img') {
+      return 'Regional Guidance requires an empty Current Canvas generation area. Hide or move raster input before generating.'
+    }
   }
   if (activePatch.value) {
     if (
@@ -2549,6 +2570,7 @@ const generationBlockingReason = computed(() => {
     )
   }
   if (
+    !hasEnabledRegionalGuidance(props.tab) &&
     (props.generationDraft.positivePrompt.embeddingRefs.length ||
       props.generationDraft.negativePrompt.embeddingRefs.length) &&
     !props.generationState.embeddingsSupported

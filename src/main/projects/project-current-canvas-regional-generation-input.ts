@@ -168,6 +168,19 @@ export async function withFrozenCurrentCanvasRegionalGenerationInput<T>(
               document: structuredClone(document),
               regional,
             })
+          } catch (error) {
+            // The preparation owner closes its child after the callback. A late exit refusal
+            // owns the same raster inputs even when composeTarget itself already completed.
+            if (
+              typeof error === 'object' &&
+              error !== null &&
+              'code' in error &&
+              error.code === 'WORKER_EXIT_UNCONFIRMED'
+            ) {
+              cleanupAllowed = false
+              unconfirmedExit = error
+            }
+            throw error
           } finally {
             leaseOpen = false
             // Callback failure/return cannot remove files still used by a started composition.

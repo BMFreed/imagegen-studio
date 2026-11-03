@@ -18,7 +18,7 @@ import * as v from 'valibot'
 
 import type { DB, GenerationCandidateReceipt, GenerationQueueItem } from '../db/database.types.js'
 import type { FrozenQueuedGenerationV1 } from './generation-queue.js'
-import type { FrozenQueuedRegionalV1 } from './regional-queued-generation.js'
+import type { FrozenQueuedRegionalOperationalV1 } from './regional-queued-generation.js'
 
 import {
   GenerationQueueRepository,
@@ -32,7 +32,7 @@ import { frozenLoraFieldsAgree } from './illustrious-generation-loras.js'
 import { frozenVaeFieldsAgree } from './illustrious-generation-vae.js'
 import { assertOutpaintContribution } from './outpaint-contribution.js'
 import { localProjectRecoveryKey } from './project-identity.js'
-import { parseFrozenQueuedRegionalV1 } from './regional-queued-generation.js'
+import { parseFrozenQueuedRegionalOperationalV1 } from './regional-queued-generation.js'
 
 const MAX_IMAGE_BYTES = IGS_GENERATION_PNG_MAX_BYTES
 const MAX_FROZEN_PAYLOAD_BYTES = GENERATION_STAGING_LIMITS.frozenPayloadBytes
@@ -145,7 +145,7 @@ export interface RegionalCandidatePublicationInput {
   queueItemId: string
 }
 type CandidateEntry = v.InferOutput<typeof CandidateEntrySchema>
-type FrozenPayload = FrozenGenerationCandidatePayloadV1 | FrozenQueuedRegionalV1
+type FrozenPayload = FrozenGenerationCandidatePayloadV1 | FrozenQueuedRegionalOperationalV1
 
 type SessionManifest = v.InferOutput<typeof SessionManifestSchema>
 
@@ -809,24 +809,18 @@ export class GenerationStagingRepository {
           )
         }
         const payload = regional
-          ? parseFrozenQueuedRegionalV1(entry.frozenPayloadJson)
+          ? parseFrozenQueuedRegionalOperationalV1(entry.frozenPayloadJson)
           : internalOutpaint
             ? parseFrozenGenerationPayloadV1(entry.frozenPayloadJson)
             : parseFrozenPayload(entry.frozenPayloadJson)
-        if (
-          internalOutpaint &&
-          (payload.kind === 'illustrious-regional' || !isQueuedOutpaint(payload))
-        ) {
+        if (internalOutpaint && ('regional' in payload || !isQueuedOutpaint(payload))) {
           throw new GenerationStagingError(
             'STAGING_INPUT_INVALID',
             'Internal outpaint capacity preflight requires only frozen outpaint operations.',
           )
         }
         const candidate: CandidateEntry = {
-          actualSeed:
-            payload.kind === 'illustrious-regional'
-              ? payload.workerJob.sampling.seed
-              : 0xff_ff_ff_ff,
+          actualSeed: 'regional' in payload ? payload.workerJob.sampling.seed : 0xff_ff_ff_ff,
           candidateId: entry.queueItemId,
           // ECMAScript Date supports signed six-digit years: its longest ISO output is 27 bytes.
           completedAt: new Date(8_640_000_000_000_000).toISOString(),
@@ -985,7 +979,7 @@ export class GenerationStagingRepository {
         Buffer.byteLength(frozenPayloadJson, 'utf8') > MAX_FROZEN_PAYLOAD_BYTES ||
         !isDeepStrictEqual(
           regional
-            ? parseFrozenQueuedRegionalV1(frozenPayloadJson)
+            ? parseFrozenQueuedRegionalOperationalV1(frozenPayloadJson)
             : parseFrozenPayload(frozenPayloadJson),
           verified.payload,
         )
@@ -1010,7 +1004,7 @@ export class GenerationStagingRepository {
         )
       }
       let sourceBytes: Buffer | undefined
-      if (verified.payload.kind !== 'illustrious-regional' && isQueuedOutpaint(verified.payload)) {
+      if (isQueuedOutpaint(verified.payload)) {
         sourceBytes = await readStableFile(verified.targetPath, MAX_IMAGE_BYTES)
         try {
           await assertOutpaintContribution(
@@ -1572,10 +1566,10 @@ export class GenerationStagingRepository {
     const bytes = await readStableFile(assetPath, MAX_IMAGE_BYTES)
     const payload = parseFrozenOperationalPayload(entry.frozenPayloadJson)
     await validateOutputPng(bytes, payload.context.bbox)
-    if (payload.kind === 'illustrious-regional' && bytes[25] !== 2) {
+    if ('regional' in payload && bytes[25] !== 2) {
       throw new GenerationStagingError('STAGING_OUTPUT_INVALID', 'The regional output must be RGB.')
     }
-    if (payload.kind !== 'illustrious-regional' && isQueuedOutpaint(payload)) {
+    if (isQueuedOutpaint(payload)) {
       try {
         const sourceBytes = await readStableFile(
           path.join(sessionPath, 'source-target.png'),
@@ -1629,9 +1623,9 @@ function parseFrozenOperationalPayload(json: string): FrozenPayload {
       'The frozen candidate context is invalid.',
     )
   }
-  if (kind === 'illustrious-regional') {
+  if (kind === 'illustrious-regional' || kind === 'illustrious-regional-txt2img') {
     try {
-      return parseFrozenQueuedRegionalV1(json)
+      return parseFrozenQueuedRegionalOperationalV1(json)
     } catch {
       throw new GenerationStagingError(
         'STAGING_INPUT_INVALID',
@@ -1724,8 +1718,7 @@ function validateEntry(entry: CandidateEntry, internalOutpaint = false): void {
   if (
     payload.context.documentId !== entry.documentId ||
     payload.context.documentRevision !== entry.documentRevision ||
-    (payload.kind === 'illustrious-regional' &&
-      payload.workerJob.sampling.seed !== entry.actualSeed) ||
+    ('regional' in payload && payload.workerJob.sampling.seed !== entry.actualSeed) ||
     payload.context.bbox.width !== entry.image.width ||
     payload.context.bbox.height !== entry.image.height
   ) {

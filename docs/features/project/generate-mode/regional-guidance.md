@@ -77,7 +77,6 @@ readiness. Enabled-region NEW refusal, target-only Smart permission, published/
 frozen Retry independence and provenance/Compare/preset exclusions remain.
 PP-001/007/008 remain **Пока не обещать**.
 
-
 ## Private ordinary Canvas Euler denoising — CPU qualification verified
 
 The [private execution checkpoint](../../../engineering/phase-4-regional-guidance-denoising-research.md)
@@ -1043,7 +1042,6 @@ composition defaults, Anima and visual usefulness are not qualified here.
 PP-001/007/008 remain «Пока не обещать»; Smart permissions and frozen-work and
 provenance exclusions remain unchanged.
 
-
 ### Private Project submission/lifecycle continuation
 
 The [Main Project owner](../../../engineering/phase-4-regional-guidance-project-lifecycle-research.md)
@@ -1067,3 +1065,40 @@ Enabled-region public NEW refusal, Smart target-only permissions, frozen-work
 independence and provenance/Compare/result-derived-preset exclusions persist.
 PP-001/007/008 remain **«Пока не обещать»**. Public admission, composition policy,
 Generate/Results/Retry UI and explicit Add/Save remain separate owners.
+
+## Current public Invoke Canvas continuation
+
+The [versioned public integration](../../../engineering/phase-4-regional-guidance-public-invoke-research.md)
+supersedes the earlier blanket public-NEW/Results exclusion only for one static
+Current Canvas item: Illustrious epsilon, Euler/Normal, explicit FP16 Embedded
+VAE, steps 1–200, CFG `(1,30]`, rescale zero, no enabled LoRA/reference images,
+no active global TI and at most three enabled regions. Existing target/payload
+bounds remain; actual opaque/mixed-alpha targets refuse. Anima and Smart regional
+execution remain separate. Unsupported authored values receive a reason instead
+of being forced into this profile.
+
+`invoke-canvas-v1` consumes regional alpha as `alpha > 0` before nearest-eight
+projection, omits literal-empty local conditioning signs while preserving
+whitespace and authored values, keeps both global streams Everywhere and uses
+both `current-canvas` pools with negative-first CFG. Authored soft-alpha assets
+remain unchanged. New `illustrious-regional-txt2img` SQL/frozen identity and
+`illustrious-regional-invoke-v1` capability separate this path from historical
+private `illustrious-regional` work; private rows are never automatically promoted.
+
+Source connects captured Generate, exact replacement confirmation, public
+dispatch/Results/media/export, frozen Retry and existing explicit Raster Add,
+grouped Undo/Redo and Save. Accepted provenance contains only the defined base
+settings/source/output context; all regional state remains excluded from
+provenance, comparison and result-derived presets. Completion and Add do not
+implicitly Save, and the saved record cannot fully reconstruct regional inputs.
+Previously frozen ordinary/Smart work retains its independent permissions.
+
+ROOT qualified 1,013 distinct affected Main cases (1,012 broad plus one added
+error-projection case), 813 Python cases and one genuine public trained request
+through Results, Raster Add, grouped Undo/Redo and explicit Save/reopen. The
+one-client runtime adapter and renderer mocks remain explicit test boundaries;
+installed RuntimeManager/renderer→IPC, quality and capacity are not promoted.
+Versioned composition mutations retain legacy controls and exact restoration.
+The linked note records browser/build results, excluded attempts and lifecycle.
+Earlier negative visual findings are preserved; no quality or release-readiness
+claim follows. PP-001/007/008 remain **«Пока не обещать»**.

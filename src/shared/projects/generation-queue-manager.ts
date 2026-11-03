@@ -48,6 +48,7 @@ export interface GenerationQueueEntry extends GenerationQueueReview {
     | 'anima-txt2img'
     | 'illustrious-img2img'
     | 'illustrious-outpaint'
+    | 'illustrious-regional-txt2img'
     | 'illustrious-smart-patch'
     | 'illustrious-txt2img'
   projectKey: string
@@ -158,6 +159,7 @@ const EntrySchema = v.pipe(
     id: uuid,
     operation: v.picklist([
       'illustrious-txt2img',
+      'illustrious-regional-txt2img',
       'illustrious-img2img',
       'illustrious-outpaint',
       'illustrious-smart-patch',

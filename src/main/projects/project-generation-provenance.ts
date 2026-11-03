@@ -10,9 +10,9 @@ import { isDeepStrictEqual } from 'node:util'
 import type { VerifiedGenerationCandidate } from './generation-staging.js'
 
 import { isQueuedOutpaint } from './generation-queue.js'
-import { parseFrozenGenerationCandidatePayloadV1 } from './generation-staging.js'
 import { outpaintContributionAlphaIdentity } from './outpaint-contribution.js'
 import { localProjectRecoveryKey } from './project-identity.js'
+import { parseAcceptedGenerationBaseV1 } from './regional-queued-generation.js'
 
 export class ProjectGenerationProvenanceError extends Error {
   constructor(
@@ -54,9 +54,9 @@ export function provenanceFromVerifiedRasterCandidate(input: {
       'The frozen generation context changed.',
     )
   }
-  let payload: ReturnType<typeof parseFrozenGenerationCandidatePayloadV1>
+  let payload: ReturnType<typeof parseAcceptedGenerationBaseV1>
   try {
-    payload = parseFrozenGenerationCandidatePayloadV1(candidate.frozenPayloadJson)
+    payload = parseAcceptedGenerationBaseV1(candidate.frozenPayloadJson)
   } catch {
     throw new ProjectGenerationProvenanceError(
       'PROVENANCE_INPUT_INVALID',
