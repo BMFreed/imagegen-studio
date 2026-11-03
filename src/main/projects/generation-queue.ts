@@ -1043,6 +1043,9 @@ export class GenerationQueueRepository {
   /** Main-only experiment; never called by public enabled-region NEW admission. */
   async enqueueCurrentCanvasRegional(input: {
     assertCurrent?: () => void
+    preflight?: (
+      entries: readonly { frozenPayloadJson: string; queueItemId: string }[],
+    ) => Promise<void>
     prepared: PreparedNormalTxt2Img
     projectPath: string
     regional: Omit<RegionalWorkerInput, 'request'>
@@ -1986,6 +1989,21 @@ export class GenerationQueueRepository {
           .executeTakeFirst()
         return toManagerEntry(row, receipt !== undefined, indexed?.display_name)
       })
+    })
+  }
+
+  /** Private lifecycle identity remains readable even when frozen regional files are corrupt. */
+  async getRegionalQueueItem(id: string): Promise<QueuedGenerationItem | null> {
+    validateQueueId(id)
+    return await this.serialize(async () => {
+      this.assertReadyForDispatch()
+      const row = await this.db
+        .selectFrom('generation_queue_item')
+        .selectAll()
+        .where('id', '=', id)
+        .where('operation', '=', 'illustrious-regional')
+        .executeTakeFirst()
+      return row ? toItem(row) : null
     })
   }
 
@@ -3017,6 +3035,9 @@ export class GenerationQueueRepository {
   private async enqueueIllustriousGenerationInternal(
     input: {
       assertCurrent?: () => void
+      preflight?: (
+        entries: readonly { frozenPayloadJson: string; queueItemId: string }[],
+      ) => Promise<void>
       prepared: PreparedNormalGeneration
       projectPath: string
       request: IllustriousGenerationRequestV1
@@ -3030,6 +3051,10 @@ export class GenerationQueueRepository {
         'QUEUE_INPUT_INVALID',
         'The generation owner check is invalid.',
       )
+    }
+    const preflight = input.preflight
+    if (preflight !== undefined && typeof preflight !== 'function') {
+      throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The regional preflight is invalid.')
     }
     // Freeze caller-owned objects before any await, including the source Project path.
     const request = structuredClone(input.request)
@@ -3078,6 +3103,13 @@ export class GenerationQueueRepository {
       }
       if (regional) {
         parseFrozenQueuedRegionalV1(payloadJson)
+        this.assertProjectCanEnqueue(localProjectKey)
+        assertCurrent?.()
+        await preflight?.(
+          Object.freeze([Object.freeze({ frozenPayloadJson: payloadJson, queueItemId: id })]),
+        )
+        this.assertProjectCanEnqueue(localProjectKey)
+        assertCurrent?.()
       } else {
         parsePayload(payloadJson)
       }

@@ -172,6 +172,10 @@ import {
   type ProjectAutosaveOptions,
 } from './project-autosave.js'
 import {
+  type CapturedCurrentCanvasRegionalGenerationInput,
+  withFrozenCurrentCanvasRegionalGenerationInput,
+} from './project-current-canvas-regional-generation-input.js'
+import {
   prepareNormalGeneration,
   prepareNormalTxt2Img,
   validateNormalGenerationDraft,
@@ -3545,6 +3549,29 @@ export class ProjectService {
       },
     )
     return toTab(tabId, coordinator)
+  }
+
+  /** One private authored Canvas/region lease; admission and generation policy remain separate. */
+  async withCapturedCurrentCanvasRegionalGenerationInput<T>(
+    tabId: string,
+    use: (capture: CapturedCurrentCanvasRegionalGenerationInput) => Promise<T>,
+  ): Promise<T> {
+    const coordinator = this.requireTab(tabId)
+    const document = coordinator.document
+    const captured = this.captureRegionalGuidanceDocument(tabId, {
+      documentId: document.documentId,
+      documentRevision: document.documentRevision,
+    })
+    return await withFrozenCurrentCanvasRegionalGenerationInput(
+      {
+        assertCurrent: captured.assertCurrent,
+        document,
+        packagePath: coordinator.filePath,
+        pendingSource: (member) => coordinator.getCurrentAssetSource(member),
+        scratchBasePath: this.options.roots.scratchDir,
+      },
+      use,
+    )
   }
 
   /** Capture before runtime awaits and retain frozen raster files through callback admission. */

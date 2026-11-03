@@ -156,6 +156,31 @@ export class RegionalGenerationProcessor {
     return () => this.listeners.delete(listener)
   }
 
+  /** Caller fences new claims first; this joins the scoped owner without permanently stopping it. */
+  async quiesceForProject(input: {
+    localProjectKey: string
+    stagingSessionIds?: readonly string[]
+  }): Promise<void> {
+    const project = input.localProjectKey
+    const sessions = input.stagingSessionIds ? new Set(input.stagingSessionIds) : null
+    await this.claiming?.catch(() => undefined)
+    const active = this.active
+    if (
+      !active ||
+      active.item.localProjectKey !== project ||
+      (sessions !== null && !sessions.has(active.item.stagingSessionId))
+    ) {
+      return
+    }
+    await this.currentRun
+    if (active.publicationUncertain) {
+      throw publicationUncertain()
+    }
+    if (this.active === active || active.exitUnconfirmed) {
+      throw exitUnconfirmed()
+    }
+  }
+
   async runOne(transport: RegionalGenerationTransport): Promise<RegionalGenerationProcessorResult> {
     if (this.stopping) {
       throw new RegionalGenerationProcessorError('CLOSED', 'Regional dispatch is stopping.')

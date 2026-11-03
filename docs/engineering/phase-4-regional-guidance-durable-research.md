@@ -170,3 +170,13 @@ reclaimed during the deletion-only interval. Its Main DB/package, candidate PNG
 and mutation source bytes remain archived; historical absolute payload paths in
 reports refer to that retained archive. No runtime/config/model dependency was
 removed.
+
+
+## Project lifecycle continuation
+
+The later [private Project coordinator](./phase-4-regional-guidance-project-lifecycle-research.md)
+closes the earlier manual-caller lifecycle gap: genuine Service submission,
+registered regional execution, scoped close/recovery draining and operational
+close-impact enumeration now use the existing owners. Public Results/Home and
+NEW admission stay separate. The earlier native/424-case evidence above remains
+historical; the continuation records its own source, checks and native result.

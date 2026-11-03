@@ -16,6 +16,7 @@ import { assertRegionalGuidanceGenerationAvailable } from '../../shared/projects
 
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 
 import type { OutpaintInfillResolver } from '../runtime/inference-auxiliary-resources.js'
 import type { PreparedAnimaGenerationBatch } from './anima-generation-batch.js'
@@ -29,13 +30,20 @@ import type { PreparedOutpaintGeneration } from './generation-queue.js'
 import type { GenerationStagingRepository } from './generation-staging.js'
 import type { GenerationModelResolver } from './illustrious-generation-loras.js'
 import type { IllustriousGenerationRequestV1 } from './illustrious-txt2img-job.js'
+import type { IllustriousTxt2ImgRequestV1 } from './illustrious-txt2img-job.js'
 import type {
   FrozenNormalGenerationPreparationV1,
   PreparedNormalGeneration,
 } from './project-generation-preparation.js'
+import type { PreparedNormalTxt2Img } from './project-generation-preparation.js'
 import type { ProjectIndexRepository } from './project-index.js'
 import type { ProjectService } from './project-service.js'
 import type { SmartPatchExecutionModelResolver } from './project-smart-patch-execution.js'
+import type {
+  RegionalGenerationProcessorResult,
+  RegionalGenerationTransport,
+} from './regional-generation-processor.js'
+import type { RegionalWorkerInput } from './regional-worker-request.js'
 import type { SmartPatchInputMaterial } from './smart-patch-frozen-input.js'
 import type {
   SmartPatchInferenceTransport,
@@ -63,6 +71,8 @@ import {
 import { buildQueuedOutpaintWorkerRequest } from './outpaint-worker-request.js'
 import { canonicalProjectPath, localProjectRecoveryKey } from './project-identity.js'
 import { captureSmartPatchModelResolver } from './project-smart-patch-execution.js'
+import { RegionalGenerationProcessor } from './regional-generation-processor.js'
+import { captureRegionalWorkerInput } from './regional-worker-request.js'
 import { SmartPatchGenerationProcessor } from './smart-patch-generation-processor.js'
 
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
@@ -94,6 +104,15 @@ export interface PrivateSmartPatchExecution {
   quiesceForProject: SmartPatchGenerationProcessor['quiesceForProject']
   runNext: (worker: SmartPatchInferenceTransport) => Promise<SmartPatchProcessorResult>
   stopAndCancelActive: SmartPatchGenerationProcessor['stopAndCancelActive']
+}
+
+/** Explicit Main-only owner; public queue discovery and automatic dispatch remain separate. */
+export interface PrivateRegionalExecution {
+  cancelAndWait: RegionalGenerationProcessor['cancelAndWait']
+  onChanged: RegionalGenerationProcessor['onChanged']
+  quiesceForProject: RegionalGenerationProcessor['quiesceForProject']
+  runNext: (worker: RegionalGenerationTransport) => Promise<RegionalGenerationProcessorResult>
+  stopAndCancelActive: () => Promise<void>
 }
 
 export interface SmartPatchAcceptanceCancellationScope extends Omit<
@@ -152,6 +171,8 @@ export class GenerationOrchestrator {
   private readonly completedProjectCloses = new Set<string>()
   private enqueueBarrier: Promise<void> = Promise.resolve()
   private readonly fencedProjects = new Set<string>()
+  private readonly regionalProcessors = new Set<RegionalGenerationProcessor>()
+  private regionalStopping = false
   private readonly smartPatchAcceptanceCanceled = new Map<
     string,
     SmartPatchAcceptanceCancellationScope
@@ -294,13 +315,18 @@ export class GenerationOrchestrator {
           for (const processor of this.smartPatchProcessors) {
             await processor.quiesceForProject({ localProjectKey: tabId })
           }
+          for (const processor of this.regionalProcessors) {
+            await processor.quiesceForProject({ localProjectKey: tabId })
+          }
           // A confirmed whole-Project close may resolve a previous acceptance cancellation.
           this.acceptanceCanceled.delete(tabId)
           this.batchCleanupUnconfirmed.delete(tabId)
           return
         }
         for (const item of unfinished) {
-          await this.cancelGenerationJob(item.id)
+          await ((await this.queue.getRegionalQueueItem(item.id))
+            ? this.cancelRegionalQueueItem(item.id)
+            : this.cancelGenerationJob(item.id))
         }
       }
     })()
@@ -417,6 +443,38 @@ export class GenerationOrchestrator {
       )
     }
     this.completedProjectCloses.add(tabId)
+  }
+
+  /** Register the exact private owner with the same admission and Project-close barriers. */
+  createRegionalExecution(): PrivateRegionalExecution {
+    if (this.regionalStopping) {
+      throw new GenerationOrchestratorError(
+        'PROJECT_GENERATION_CLOSING',
+        'Regional dispatch is stopping.',
+      )
+    }
+    const processor = new RegionalGenerationProcessor(this.queue, this.staging, this.models)
+    this.regionalProcessors.add(processor)
+    return {
+      cancelAndWait: processor.cancelAndWait.bind(processor),
+      onChanged: processor.onChanged.bind(processor),
+      quiesceForProject: processor.quiesceForProject.bind(processor),
+      runNext: async (worker) => {
+        const captured: RegionalGenerationTransport = {
+          close: worker.close.bind(worker),
+          executeCurrentCanvasRegional: worker.executeCurrentCanvasRegional.bind(worker),
+          ready: structuredClone(worker.ready),
+        }
+        await this.enqueueBarrier
+        this.queue.assertReadyForDispatch()
+        this.staging.assertReadyForPublication()
+        return await processor.runOne(captured)
+      },
+      stopAndCancelActive: async () => {
+        await processor.stopAndCancelActive()
+        this.regionalProcessors.delete(processor)
+      },
+    }
   }
 
   /** Dedicated private composition; normal public dispatch and lifecycle remain unchanged. */
@@ -978,6 +1036,111 @@ export class GenerationOrchestrator {
     return await operation
   }
 
+  /** Consume a genuine Service-produced private job while both capture/request leases are held. */
+  async enqueuePreparedRegional(
+    tabId: string,
+    input: {
+      assertCurrent: () => void
+      prepared: PreparedNormalTxt2Img
+      regional: Omit<RegionalWorkerInput, 'request'>
+      request: IllustriousTxt2ImgRequestV1
+    },
+  ): Promise<QueuedGenerationItem> {
+    this.assertGenerationOpen(tabId)
+    if (typeof input.assertCurrent !== 'function') {
+      throw new GenerationOrchestratorError('GENERATION_BATCH_INVALID', 'Missing Project owner.')
+    }
+    const assertCaptured = input.assertCurrent
+    const captured = captureRegionalWorkerInput({ ...input.regional, request: input.request })
+    const prepared: PreparedNormalTxt2Img = {
+      context: structuredClone(input.prepared.context),
+      targetPngBytes: Buffer.from(input.prepared.targetPngBytes),
+    }
+    const { request, ...regional } = captured
+    const assertCurrent = () => {
+      this.assertGenerationOpen(tabId)
+      if (this.regionalStopping) {
+        throw new GenerationOrchestratorError(
+          'PROJECT_GENERATION_CLOSING',
+          'Regional dispatch is stopping.',
+        )
+      }
+      this.requireBatchDocument(tabId, prepared.context.documentId, [{ prepared }])
+      assertCaptured()
+    }
+    assertCurrent()
+    const operation = this.enqueueBarrier.then(async () => {
+      this.queue.assertReadyForDispatch()
+      this.staging.assertReadyForPublication()
+      assertCurrent()
+      const project = await this.indexedProject(tabId)
+      assertCurrent()
+      if (project.documentId !== prepared.context.documentId) {
+        throw new GenerationOrchestratorError(
+          'PROJECT_DOCUMENT_CHANGED',
+          'The indexed Project changed.',
+        )
+      }
+      const verified = await this.models.resolveVerifiedGenerationCheckpointForPlan(
+        structuredClone(prepared.context.model.reference),
+      )
+      if (
+        verified.managedPath !== prepared.context.model.managedPath ||
+        verified.reference.fileSha256 !== prepared.context.model.reference.fileSha256 ||
+        verified.reference.predictionType !== prepared.context.model.reference.predictionType ||
+        !isDeepStrictEqual(verified.noiseProfile, prepared.context.sampling.noiseProfile)
+      ) {
+        throw new GenerationOrchestratorError(
+          'GENERATION_BATCH_INVALID',
+          'The exact checkpoint policy changed.',
+        )
+      }
+      assertCurrent()
+      const stagingSessionId = randomUUID()
+      const queued = await this.queue.enqueueCurrentCanvasRegional({
+        assertCurrent,
+        preflight: async (entries) => {
+          assertCurrent()
+          await this.staging.preflightRegionalBatchCapacity({
+            entries,
+            localProjectKey: tabId,
+            projectPath: project.canonicalPath,
+            stagingSessionId,
+          })
+          assertCurrent()
+        },
+        prepared,
+        projectPath: project.canonicalPath,
+        regional,
+        request,
+        stagingSessionId,
+      })
+      try {
+        assertCurrent()
+        const after = await this.indexedProject(tabId)
+        assertCurrent()
+        if (
+          after.canonicalPath !== project.canonicalPath ||
+          after.documentId !== project.documentId
+        ) {
+          throw new GenerationOrchestratorError(
+            'PROJECT_IDENTITY_CHANGED',
+            'The indexed Project changed after enqueue.',
+          )
+        }
+        return queued
+      } catch (error) {
+        await this.cancelFailedRegionalAdmission(tabId, queued.id)
+        throw error
+      }
+    })
+    this.enqueueBarrier = operation.then(
+      () => undefined,
+      () => undefined,
+    )
+    return await operation
+  }
+
   /** Private durable admission only. Smart Patch execution remains outside the normal dispatcher. */
   async enqueuePreparedSmartPatchBatch(
     tabId: string,
@@ -1103,6 +1266,18 @@ export class GenerationOrchestrator {
     }
   }
 
+  /** Frozen Retry reads no current prompts, regions, masks, model choices or seed settings. */
+  async readRegionalOperationalSeed(tabId: string, documentId: string): Promise<number | null> {
+    this.assertGenerationOpen(tabId)
+    if (this.regionalStopping) {
+      throw new GenerationOrchestratorError(
+        'PROJECT_GENERATION_CLOSING',
+        'Regional dispatch is stopping.',
+      )
+    }
+    return await this.staging.readLastActualSeed(tabId, documentId)
+  }
+
   /** Only valid before destructive Project-close cancellation has begun. */
   releaseProjectGenerationFence(tabId: string): void {
     if (this.batchCleanupUnconfirmed.has(tabId)) {
@@ -1153,6 +1328,97 @@ export class GenerationOrchestrator {
     this.completedProjectCloses.delete(tabId)
   }
 
+  /** Frozen Retry reads no current prompts, regions, masks, model choices or seed settings. */
+  async retryRegional(
+    tabId: string,
+    id: string,
+    expectedStatusSequence: number,
+  ): Promise<QueuedGenerationItem> {
+    this.assertGenerationOpen(tabId)
+    const owner = this.projects.getOpenDocumentForAcceptance?.(tabId)
+    if (!owner) {
+      throw new GenerationOrchestratorError('PROJECT_NOT_OPEN', 'Open the Project before Retry.')
+    }
+    const documentId = owner.document.documentId
+    const assertCurrent = () => {
+      this.assertGenerationOpen(tabId)
+      if (this.regionalStopping) {
+        throw new GenerationOrchestratorError(
+          'PROJECT_GENERATION_CLOSING',
+          'Regional dispatch is stopping.',
+        )
+      }
+      if (
+        this.projects.getOpenDocumentForAcceptance?.(tabId) !== owner ||
+        owner.document.documentId !== documentId
+      ) {
+        throw new GenerationOrchestratorError(
+          'PROJECT_DOCUMENT_CHANGED',
+          'The Retry Project owner changed.',
+        )
+      }
+    }
+    const operation = this.enqueueBarrier.then(async () => {
+      assertCurrent()
+      const source = await this.queue.getRegionalQueueItem(id)
+      if (!source || source.localProjectKey !== tabId) {
+        throw new GenerationOrchestratorError(
+          'PROJECT_IDENTITY_CHANGED',
+          'The Retry belongs to another Project.',
+        )
+      }
+      const frozen = await this.queue.loadVerifiedRegionalInput(id)
+      const project = await this.indexedProject(tabId)
+      assertCurrent()
+      if (
+        project.documentId !== documentId ||
+        frozen.payload.context.documentId !== documentId ||
+        source.projectPath !== project.canonicalPath
+      ) {
+        throw new GenerationOrchestratorError(
+          'PROJECT_DOCUMENT_CHANGED',
+          'The frozen Retry belongs to another document.',
+        )
+      }
+      const retried = await this.queue.retryCurrentCanvasRegionalTerminal(
+        id,
+        expectedStatusSequence,
+        async (input) => {
+          assertCurrent()
+          await this.staging.preflightRegionalBatchCapacity({
+            entries: [
+              { frozenPayloadJson: input.frozenPayloadJson, queueItemId: input.queueItemId },
+            ],
+            localProjectKey: tabId,
+            projectPath: project.canonicalPath,
+            stagingSessionId: input.stagingSessionId,
+          })
+          assertCurrent()
+        },
+      )
+      try {
+        assertCurrent()
+        const after = await this.indexedProject(tabId)
+        assertCurrent()
+        if (after.canonicalPath !== project.canonicalPath || after.documentId !== documentId) {
+          throw new GenerationOrchestratorError(
+            'PROJECT_IDENTITY_CHANGED',
+            'The Retry Project changed after enqueue.',
+          )
+        }
+        return retried
+      } catch (error) {
+        await this.cancelFailedRegionalAdmission(tabId, retried.id)
+        throw error
+      }
+    })
+    this.enqueueBarrier = operation.then(
+      () => undefined,
+      () => undefined,
+    )
+    return await operation
+  }
+
   async runNext(inferenceWorker: GenerationWorkerTransport): Promise<GenerationProcessorResult> {
     await this.enqueueBarrier
     // The processor also asserts these gates before claiming. Keep them here to make this
@@ -1160,6 +1426,22 @@ export class GenerationOrchestrator {
     this.queue.assertReadyForDispatch()
     this.staging.assertReadyForPublication()
     return await this.processor.runOne(inferenceWorker)
+  }
+
+  /** App shutdown drains private owners too, without adding them to public dispatch routing. */
+  async stopRegionalExecutions(): Promise<void> {
+    this.regionalStopping = true
+    const processors = [...this.regionalProcessors]
+    const results = await Promise.allSettled(
+      processors.map(async (processor) => {
+        await processor.stopAndCancelActive()
+        this.regionalProcessors.delete(processor)
+      }),
+    )
+    const failed = results.find((result) => result.status === 'rejected')
+    if (failed?.status === 'rejected') {
+      throw failed.reason
+    }
   }
 
   private assertAcceptanceDocument(tabId: string, documentId: string): void {
@@ -1225,6 +1507,33 @@ export class GenerationOrchestrator {
       )
     }
     return owner
+  }
+
+  private async cancelFailedRegionalAdmission(tabId: string, id: string): Promise<void> {
+    try {
+      await this.cancelRegionalQueueItem(id)
+      const row = await this.queue.getRegionalQueueItem(id)
+      if (row?.status !== 'canceled') {
+        throw cancellationUncertain('The refused regional job has not stopped.')
+      }
+    } catch {
+      this.batchCleanupUnconfirmed.add(tabId)
+      this.fencedProjects.add(tabId)
+      this.queue.fenceProject(tabId)
+      throw cancellationUncertain('Regional admission cancellation needs worker/restart recovery.')
+    }
+  }
+
+  private async cancelRegionalQueueItem(id: string): Promise<void> {
+    for (const processor of this.regionalProcessors) {
+      if (await processor.cancelOwnedAndWait(id)) {
+        return
+      }
+    }
+    const settled = await this.queue.cancel(id)
+    if (settled.status === 'running') {
+      throw cancellationUncertain('The regional job has no confirmed registered local owner.')
+    }
   }
 
   private async cancelSmartPatchQueueItem(id: string): Promise<void> {

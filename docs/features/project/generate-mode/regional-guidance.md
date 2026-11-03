@@ -1042,3 +1042,28 @@ global-TI ordinary-preparation admission, Results/Retry UI, explicit Add/Save,
 composition defaults, Anima and visual usefulness are not qualified here.
 PP-001/007/008 remain «Пока не обещать»; Smart permissions and frozen-work and
 provenance exclusions remain unchanged.
+
+
+### Private Project submission/lifecycle continuation
+
+The [Main Project owner](../../../engineering/phase-4-regional-guidance-project-lifecycle-research.md)
+now produces one genuine static Current Canvas job from a coherent coordinator,
+document/revision/epoch and target/region file capture. It requires explicit private
+opt-in and uses existing preparation, exact resources, planner, request lease,
+queue, receipt and recovery. Caller-built recipes/contexts are not submission inputs.
+
+Its registered private executor is drained during Project close/recovery and app
+shutdown. Close impact counts private candidates so confirmation cannot silently
+discard them; public Results/Home discovery remains unchanged. Retry uses frozen
+settings independently of later authored regional edits. Effective global TI still
+refuses before target composition; local regional TI remains recipe-owned.
+
+ROOT's 695 Main cases and one real compositor/production-loader Python request
+passed, including restart/Retry after saved edits and candidate tombstones after
+confirmed Project close. The output matches the prior two-step control exactly.
+A source-review scratch-retention finding was reproduced/fixed and independently
+reviewed; these are separate evidence levels, with no new visual-quality finding.
+Enabled-region public NEW refusal, Smart target-only permissions, frozen-work
+independence and provenance/Compare/result-derived-preset exclusions persist.
+PP-001/007/008 remain **«Пока не обещать»**. Public admission, composition policy,
+Generate/Results/Retry UI and explicit Add/Save remain separate owners.

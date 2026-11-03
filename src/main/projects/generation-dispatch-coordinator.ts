@@ -42,10 +42,8 @@ export class GenerationDispatchCoordinator {
 
   constructor(
     private readonly runtime: GenerationWorkerLease,
-    private readonly orchestrator: Pick<
-      GenerationOrchestrator,
-      'hasDispatchablePending' | 'runNext'
-    >,
+    private readonly orchestrator: Partial<Pick<GenerationOrchestrator, 'stopRegionalExecutions'>> &
+      Pick<GenerationOrchestrator, 'hasDispatchablePending' | 'runNext'>,
     private readonly processor: Pick<GenerationProcessor, 'stopAndCancelActive'>,
     private readonly scratchBasePath: string,
     private readonly smartPatch?: {
@@ -134,6 +132,7 @@ export class GenerationDispatchCoordinator {
     const stopping = Promise.all([
       this.processor.stopAndCancelActive(),
       this.smartPatch?.execution.stopAndCancelActive(),
+      this.orchestrator.stopRegionalExecutions?.(),
     ])
     const running = this.activeRun
     await Promise.allSettled([stopping, running ?? Promise.resolve()])
@@ -147,5 +146,6 @@ export class GenerationDispatchCoordinator {
     // exit. Repeat after the active lease settles so no newly claimed row remains running.
     await this.processor.stopAndCancelActive()
     await this.smartPatch?.execution.stopAndCancelActive()
+    await this.orchestrator.stopRegionalExecutions?.()
   }
 }

@@ -1510,3 +1510,17 @@ Public dispatcher/Results/provenance readers exclude the private operation.
 Private callers own session quiescence/disposal; public Project submission and
 lifecycle integration remain the next owner. Previous negative visual findings
 and PP-001/007/008 readiness are unchanged.
+
+
+## Private regional Project submission and lifecycle
+
+The [Project owner](./phase-4-regional-guidance-project-lifecycle-research.md)
+connects one coherent Service capture and actual preparation/planner/recipe to
+private queue admission. Registered regional executors now participate in Project
+close/recovery and application shutdown; lifecycle impact includes their candidates
+without exposing them in public Results/Home. ROOT recorded 695 affected Main PASS
+and one genuine compositor/inference-child request through saved edits, restart,
+Retry and confirmed close disposal. A source-review unconfirmed-compositor-exit
+finding was reproduced and corrected through the existing Smart retention pattern;
+the bounded correction review is CLEAN. Effective global TI, public admission/UI,
+visual usefulness and PP-001/007/008 readiness remain outside this private slice.

@@ -15,6 +15,8 @@ export interface ProjectGenerationCloseServices {
   }
   staging: {
     discardProject: (tabId: string) => Promise<unknown>
+    /** Operational close impact may include private candidates hidden from Home/Results. */
+    listOwnedCandidates?: (tabId: string) => Promise<readonly unknown[]>
     listVerifiedCandidates: (tabId: string) => Promise<readonly unknown[]>
   }
 }
@@ -167,7 +169,9 @@ export class ProjectGenerationClose {
     // Queue is read first, then staging. A running row that completes between reads appears in
     // at least one snapshot; false negatives cannot silently discard a newly completed image.
     const unfinished = await services.queue.listUnfinishedByProject(tabId)
-    const completed = await services.staging.listVerifiedCandidates(tabId)
+    const completed = await (services.staging.listOwnedCandidates
+      ? services.staging.listOwnedCandidates(tabId)
+      : services.staging.listVerifiedCandidates(tabId))
     return {
       completedCandidateCount: completed.length,
       generationStorageUnavailable: false,
