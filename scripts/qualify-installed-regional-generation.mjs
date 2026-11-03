@@ -30,7 +30,9 @@ import { isolateNativeSmokeWindow } from './native-smoke-window.mjs'
 import {
   boundQualificationProcess,
   confirmQualificationProcessExit,
+  signalQualificationMain,
   stopExpiredQualificationProcess,
+  stopOwnedQualificationScope,
 } from './qualification-resource-limits.mjs'
 import {
   assertRuntimeIdle,
@@ -83,11 +85,15 @@ assert.deepEqual(Object.keys(fixture).sort(), [
 ])
 assert.equal(fixture.schemaVersion, 1)
 assert.ok(
-  ['installed-regional-invoke-v1', 'installed-regional-invoke-recovery-v1'].includes(
-    fixture.profile,
-  ),
+  [
+    'installed-regional-invoke-v1',
+    'installed-regional-invoke-recovery-v1',
+    'installed-regional-invoke-main-death-v1',
+  ].includes(fixture.profile),
 )
-const recoveryProfile = fixture.profile === 'installed-regional-invoke-recovery-v1'
+const mainDeathProfile = fixture.profile === 'installed-regional-invoke-main-death-v1'
+const recoveryProfile =
+  mainDeathProfile || fixture.profile === 'installed-regional-invoke-recovery-v1'
 assert.ok(
   Number.isSafeInteger(fixture.deadlineSeconds) &&
     fixture.deadlineSeconds > 0 &&
@@ -197,7 +203,9 @@ let application,
 let sampler, closing, deadlineTimer
 let activeLifetime = null,
   baselineSql = null,
-  recoveryProject = null
+  recoveryProject = null,
+  previousTransport = null,
+  mainDeathControls = null
 const baselinePackages = []
 let sampling = Promise.resolve()
 const nativeChecks = []
@@ -230,6 +238,7 @@ const sourceFiles = [
   'src/shared/api.ts',
   'src/main/runtime/index.ts',
   'src/main/projects/generation-worker-client.ts',
+  'src/main/projects/inference-worker-ownership.ts',
   'src/main/projects/generation-action-controller.ts',
   'src/main/projects/generation-dispatch-coordinator.ts',
   'src/main/projects/generation-orchestrator.ts',
@@ -262,6 +271,8 @@ const sourceFiles = [
   'src/renderer/components/ProjectGenerationResultsTray.vue',
   'worker-python/pyproject.toml',
   'worker-python/uv.lock',
+  'worker-python/src/imagegen_worker/inference_lifetime.py',
+  'worker-python/src/imagegen_worker/owned_inference.py',
 ]
 let bundleFiles
 async function captureFiles(files) {
@@ -300,6 +311,7 @@ async function verifyProvision() {
   assert.equal(provision.ready.workerVersion, '0.14.0')
   for (const cap of ['illustrious-regional-invoke-v1', 'private-current-canvas-regional-v1'])
     assert.ok(provision.ready.capabilities.includes(cap), `Missing installed capability ${cap}`)
+  if (mainDeathProfile) assert.ok(provision.ready.capabilities.includes('linux-owned-inference-v1'))
   assert.equal(
     await hashFile('worker-python/pyproject.toml'),
     provision.inputs.worker.pyprojectSha256,
@@ -321,7 +333,12 @@ async function verifyProvision() {
   const modules = Object.fromEntries(
     Object.entries(installedTree).filter(([name]) => name.endsWith('.py')),
   )
-  assert.equal(Object.keys(modules).length, 48)
+  const sourceModuleCount = Object.keys(checkout).filter((name) => name.endsWith('.py')).length
+  assert.equal(Object.keys(modules).length, sourceModuleCount)
+  if (mainDeathProfile) {
+    assert.equal(sourceModuleCount, 50)
+    assert.ok(modules['inference_lifetime.py'] && modules['owned_inference.py'])
+  }
   assert.deepEqual(
     await treeManifest(path.join(provision.installed.prefix, 'resources/sdxl-config')),
     provision.inputs.config.files,
@@ -363,7 +380,7 @@ async function verifyProvision() {
   assert.ok(BigInt(report.launcherBounds.memoryMax) <= 2n * 1024n ** 3n)
   await assertRuntimeIdle(appDataRoot, provision.installed.basePrefix)
   check(
-    'Pinned noneditable installed worker, 48 Python module hashes, config tree, built bundle and finite launcher agree',
+    `Pinned noneditable installed worker, ${sourceModuleCount} Python module hashes, config tree, built bundle and finite launcher agree`,
   )
 }
 
@@ -511,20 +528,29 @@ async function prepareCatalogAndProjects() {
   database = openAppDatabase(appDataRoot, path.resolve('src/main/db/migrations'))
   if (recoveryProfile) {
     baselineSql = await sqlSnapshot()
-    assert.equal(baselineSql.queue.length, 2, 'Reuse the qualified pool with two historical jobs')
-    assert.equal(baselineSql.receipts.length, 1)
-    assert.equal(baselineSql.cursors.length, 1)
+    const priorCount = mainDeathProfile ? 3 : 1
+    assert.equal(baselineSql.queue.length, priorCount * 2, 'Reuse the qualified historical pool')
+    assert.equal(baselineSql.receipts.length, priorCount)
+    assert.equal(baselineSql.cursors.length, priorCount)
     assert.ok(
       baselineSql.queue.every(({ operation }) => operation === 'illustrious-regional-txt2img'),
     )
-    assert.equal(baselineSql.queue.filter(({ status }) => status === 'canceled').length, 1)
+    assert.equal(baselineSql.queue.filter(({ status }) => status === 'canceled').length, priorCount)
     const priorCompleted = baselineSql.queue.filter(({ status }) => status === 'completed')
-    assert.equal(priorCompleted.length, 1)
-    assert.equal(baselineSql.receipts[0].queue_item_id, priorCompleted[0].id)
-    assert.equal(baselineSql.receipts[0].status, 'completed')
-    assert.equal(baselineSql.receipts[0].actual_seed, 123)
-    assert.equal(baselineSql.cursors[0].local_project_key, priorCompleted[0].local_project_key)
-    assert.equal(baselineSql.cursors[0].actual_seed, 123)
+    assert.equal(priorCompleted.length, priorCount)
+    for (const completed of priorCompleted) {
+      const receipts = baselineSql.receipts.filter(
+        ({ queue_item_id }) => queue_item_id === completed.id,
+      )
+      assert.equal(receipts.length, 1)
+      assert.equal(receipts[0].status, 'completed')
+      assert.equal(receipts[0].actual_seed, 123)
+      const cursors = baselineSql.cursors.filter(
+        ({ local_project_key }) => local_project_key === completed.local_project_key,
+      )
+      assert.equal(cursors.length, 1)
+      assert.equal(cursors[0].actual_seed, 123)
+    }
     assert.ok(
       baselineSql.queue.every(({ status }) => ['completed', 'failed', 'canceled'].includes(status)),
       'Existing pool must be physically idle with terminal historical work',
@@ -545,18 +571,19 @@ async function prepareCatalogAndProjects() {
       const saved = await readZip(record.canonical_path)
       for (const layer of saved.project.layers) {
         const provenance = layer.generationProvenance
-        if (
-          layer.kind !== 'raster' ||
-          provenance?.executionResultContext?.queueItemId !== priorCompleted[0].id
+        const prior = priorCompleted.find(
+          ({ id }) => id === provenance?.executionResultContext?.queueItemId,
         )
-          continue
-        assert.equal(layer.asset.sha256, baselineSql.receipts[0].image_sha256)
+        if (layer.kind !== 'raster' || !prior) continue
+        const receipt = baselineSql.receipts.find(({ queue_item_id }) => queue_item_id === prior.id)
+        assert.equal(layer.asset.sha256, receipt.image_sha256)
         assert.equal(digest(saved.members.get(layer.asset.path)), layer.asset.sha256)
         assert.equal(provenance.generationConfiguration.model.fileSha256, fixture.checkpoint.sha256)
         acceptedPackages.push({
           path: record.canonical_path,
           layerId: layer.id,
           pngSha256: layer.asset.sha256,
+          queueItemId: prior.id,
         })
       }
     }
@@ -564,6 +591,19 @@ async function prepareCatalogAndProjects() {
       acceptedPackages.length > 0,
       'Preservation needs a previously accepted Raster package',
     )
+    if (!mainDeathProfile)
+      assert.deepEqual(
+        new Set(acceptedPackages.map(({ queueItemId }) => queueItemId)),
+        new Set(priorCompleted.map(({ id }) => id)),
+      )
+    if (mainDeathProfile) {
+      // Nine original packages + three native-r1 setup + three native-r2 packages. R2's
+      // healthy completed candidate stays unaccepted; only the two earlier jobs have Rasters.
+      assert.equal(baselinePackages.length, 15)
+      assert.equal(acceptedPackages.length, 2)
+      assert.equal(new Set(acceptedPackages.map(({ queueItemId }) => queueItemId)).size, 2)
+      assert.equal(priorCompleted.length - acceptedPackages.length, 1)
+    }
     report.baseline = { sql: baselineSql, packages: baselinePackages, acceptedPackages }
     report.lifetimes = []
     report.boundary.actual =
@@ -576,6 +616,15 @@ async function prepareCatalogAndProjects() {
       'Real Running/busy state is observed; deliberate owned-scope faults do not invoke Cancel. Regional numerical denoising step telemetry remains unqualified.'
     report.boundary.preconditions =
       'Reuse the existing original-file ModelRepository catalog entry, installed runtime, protected model bytes and provision/config companions. Three new real portable ProjectSession fixtures and masks are setup; existing pool SQL and saved packages are immutable baseline controls. No caller-supplied worker recipe or CivitAI download/install claim.'
+    if (mainDeathProfile) {
+      report.fallbackSignals = []
+      report.boundary.actual =
+        'Three installed Electron lifetimes: actual regional wire -> pidfd Main-only SIGKILL -> independent native/Python exit -> APP_RESTART and frozen UI Retry -> completed candidate -> second Main-only SIGKILL -> real Home Recover/Add/Undo/Redo/Save/reopen.'
+      report.boundary.calls =
+        'Exactly two regional wires, two Main-only pidfd SIGKILLs, one original 30-step seed123 completion, one final healthy Electron exit and zero fallback child/scope signals. Previous journaled lease is automatically reclaimed before the next owned worker Ready; unmarked/unrelated controls survive.'
+      report.boundary.exclusions =
+        'Linux creating-parent-thread ownership only; no fork-descendant reaping, worker-only crash, quality, Anima, numeric progress, installer/Repair or capacity claim. Emergency captured-scope cleanup is failure evidence and can never satisfy this profile.'
+    }
   }
   const repository = new ModelRepository(database.db)
   let entry = await repository.findExactFileDuplicate({ sha256: fixture.checkpoint.sha256 })
@@ -802,9 +851,12 @@ async function observeMemory(label) {
     }
   }
 }
-async function bounds(label) {
+async function bounds(label, refreshMainDeathProof = false) {
   const value = await boundQualificationProcess(application.process().pid, {
     deadlineSeconds: recoveryProfile ? activeLifetime.deadlineSeconds : fixture.deadlineSeconds,
+    ...(mainDeathProfile
+      ? { surviveMainDeath: true, refreshMainDeathProof, deadlineAt: endAt }
+      : {}),
     execute: (file, args, options) =>
       exec(
         file,
@@ -835,244 +887,436 @@ async function bounds(label) {
 
 /** Pass-through observers: no IPC result, spawn option, stdin argument or worker response changes. */
 async function installObservers() {
-  await application.evaluate(({ ipcMain }) => {
-    if (globalThis.__regionalInstalledObserver) throw new Error('Observer already installed')
-    const cp = process.getBuiltinModule('child_process')
-    const fs = process.getBuiltinModule('fs')
-    const crypto = process.getBuiltinModule('crypto')
-    const p = process.getBuiltinModule('path')
-    const sha = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex')
-    const state = {
-      originalSpawn: cp.spawn,
-      spawnDescriptor: Object.getOwnPropertyDescriptor(cp, 'spawn'),
-      workers: [],
-      ipc: [],
-      faults: [],
-      originals: new Map(),
-      wrappers: new Map(),
-      restores: [],
-    }
-    globalThis.__regionalInstalledObserver = state
-    const fault = (error) => state.faults.push(String(error.stack ?? error))
-    const readIdentity = (pid) => {
-      try {
-        const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8')
-        return {
-          pid,
-          start: stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19],
-          group: fs
-            .readFileSync(`/proc/${pid}/cgroup`, 'utf8')
-            .trim()
-            .split('\n')
-            .find((line) => line.startsWith('0::'))
-            ?.slice(3),
-          executable: fs.readlinkSync(`/proc/${pid}/exe`),
-        }
-      } catch (error) {
-        if (!['ENOENT', 'ESRCH'].includes(error.code)) fault(error)
-        return null
+  await application.evaluate(
+    async ({ ipcMain }, ownership) => {
+      if (globalThis.__regionalInstalledObserver) throw new Error('Observer already installed')
+      const cp = process.getBuiltinModule('child_process')
+      const fs = process.getBuiltinModule('fs')
+      const crypto = process.getBuiltinModule('crypto')
+      const p = process.getBuiltinModule('path')
+      const sha = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex')
+      const state = {
+        originalSpawn: cp.spawn,
+        spawnDescriptor: Object.getOwnPropertyDescriptor(cp, 'spawn'),
+        workers: [],
+        ipc: [],
+        faults: [],
+        originals: new Map(),
+        wrappers: new Map(),
+        restores: [],
       }
-    }
-    const checkedBytes = (descriptor, root, maximum) => {
-      if (!descriptor || typeof descriptor.path !== 'string')
-        throw new Error('Missing owned descriptor')
-      const rel = p.relative(root, descriptor.path)
-      if (!rel || rel.startsWith('..') || p.isAbsolute(rel))
-        throw new Error('Descriptor escaped owned root')
-      const stat = fs.lstatSync(descriptor.path)
-      if (
-        !stat.isFile() ||
-        stat.isSymbolicLink() ||
-        stat.size > maximum ||
-        stat.size !== descriptor.byteSize ||
-        fs.realpathSync(descriptor.path) !== descriptor.path
-      )
-        throw new Error('Invalid observed owned file')
-      const bytes = fs.readFileSync(descriptor.path)
-      if (bytes.length !== descriptor.byteSize || sha(bytes) !== descriptor.sha256)
-        throw new Error('Observed owned bytes differ')
-      return bytes
-    }
-    const captureWire = (wire) => {
-      if (wire.type !== 'execute-current-canvas-regional')
-        return { type: wire.type ?? null, requestId: wire.requestId ?? null }
-      const bytes = checkedBytes(wire.bundle, wire.stagingRoot, 1024 * 1024)
-      const bundle = JSON.parse(bytes.toString('utf8'))
-      const target = bundle.request.job.target
-      // Target belongs to the request lease, which is a sibling of the transport bundle.
-      const targetRoot = p.dirname(target.path)
-      const targetBytes = checkedBytes(target, targetRoot, 32 * 1024 * 1024)
-      const alpha = bundle.recipe.regions.map((region) => {
-        const descriptor = region.coverage.alpha.$alpha8
-        const samples = checkedBytes(descriptor, wire.stagingRoot, 64 * 1024 * 1024)
-        let positive = 0,
-          opaque = 0
-        for (const value of samples) {
-          if (value > 0) positive++
-          if (value === 255) opaque++
+      globalThis.__regionalInstalledObserver = state
+      const fault = (error) => state.faults.push(String(error.stack ?? error))
+      const absent = (file) => {
+        try {
+          fs.lstatSync(file)
+          return false
+        } catch (error) {
+          if (error.code === 'ENOENT') return true
+          throw error
         }
-        return { ...descriptor, positive, opaque }
-      })
-      return {
-        ...wire,
-        bundleJson: bundle,
-        target: { ...target, observedSha256: sha(targetBytes) },
-        alpha,
       }
-    }
-    const spawnWrapper = function (...args) {
-      const child = Reflect.apply(state.originalSpawn, this, args)
-      try {
-        if (
-          Array.isArray(args[1]) &&
-          args[1].some((arg) => typeof arg === 'string' && arg.startsWith('imagegen_worker'))
-        ) {
-          if (state.workers.length >= 128)
-            throw new Error('Worker observation exceeds finite bound')
-          const worker = {
-            pid: child.pid ?? null,
-            identity: child.pid ? readIdentity(child.pid) : null,
-            executable: args[0],
-            args: args[1],
-            originalSpawnCalls: 1,
-            writes: [],
-            exit: null,
-            close: null,
-            writeRestored: false,
+      const readIdentity = (pid) => {
+        try {
+          const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8')
+          return {
+            pid,
+            start: stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19],
+            group: fs
+              .readFileSync(`/proc/${pid}/cgroup`, 'utf8')
+              .trim()
+              .split('\n')
+              .find((line) => line.startsWith('0::'))
+              ?.slice(3),
+            executable: fs.readlinkSync(`/proc/${pid}/exe`),
           }
-          state.workers.push(worker)
-          const originalWrite = child.stdin.write
-          const descriptor = Object.getOwnPropertyDescriptor(child.stdin, 'write')
-          let pending = ''
-          const writeWrapper = function (...writeArgs) {
-            let record
-            try {
-              const bytes =
-                typeof writeArgs[0] === 'string'
-                  ? Buffer.from(
-                      writeArgs[0],
-                      typeof writeArgs[1] === 'string' ? writeArgs[1] : 'utf8',
-                    )
-                  : Buffer.from(writeArgs[0])
-              if (bytes.length > 64 * 1024 || worker.writes.length >= 1024)
-                throw new Error('Worker request observation exceeds bound')
-              record = {
-                receiverMatches: this === child.stdin,
-                originalCalls: 1,
-                byteSize: bytes.length,
-                sha256: sha(bytes),
-                at: new Date().toISOString(),
-                lines: [],
+        } catch (error) {
+          if (!['ENOENT', 'ESRCH'].includes(error.code)) fault(error)
+          return null
+        }
+      }
+      const checkedBytes = (descriptor, root, maximum) => {
+        if (!descriptor || typeof descriptor.path !== 'string')
+          throw new Error('Missing owned descriptor')
+        const rel = p.relative(root, descriptor.path)
+        if (!rel || rel.startsWith('..') || p.isAbsolute(rel))
+          throw new Error('Descriptor escaped owned root')
+        const stat = fs.lstatSync(descriptor.path)
+        if (
+          !stat.isFile() ||
+          stat.isSymbolicLink() ||
+          stat.size > maximum ||
+          stat.size !== descriptor.byteSize ||
+          fs.realpathSync(descriptor.path) !== descriptor.path
+        )
+          throw new Error('Invalid observed owned file')
+        const bytes = fs.readFileSync(descriptor.path)
+        if (bytes.length !== descriptor.byteSize || sha(bytes) !== descriptor.sha256)
+          throw new Error('Observed owned bytes differ')
+        return bytes
+      }
+      const captureWire = (wire, workerPid) => {
+        if (wire.type !== 'execute-current-canvas-regional')
+          return { type: wire.type ?? null, requestId: wire.requestId ?? null }
+        const bytes = checkedBytes(wire.bundle, wire.stagingRoot, 1024 * 1024)
+        const bundle = JSON.parse(bytes.toString('utf8'))
+        const target = bundle.request.job.target
+        // Target belongs to the request lease, which is a sibling of the transport bundle.
+        const targetRoot = p.dirname(target.path)
+        const targetBytes = checkedBytes(target, targetRoot, 32 * 1024 * 1024)
+        const alpha = bundle.recipe.regions.map((region) => {
+          const descriptor = region.coverage.alpha.$alpha8
+          const samples = checkedBytes(descriptor, wire.stagingRoot, 64 * 1024 * 1024)
+          let positive = 0,
+            opaque = 0
+          for (const value of samples) {
+            if (value > 0) positive++
+            if (value === 255) opaque++
+          }
+          return { ...descriptor, positive, opaque }
+        })
+        let ownerMarker
+        if (ownership.required) {
+          const directory = fs.lstatSync(wire.stagingRoot, { bigint: true })
+          const file = p.join(wire.stagingRoot, '.owner-v1.json')
+          const entry = fs.lstatSync(file)
+          if (
+            !entry.isFile() ||
+            entry.isSymbolicLink() ||
+            entry.nlink !== 1 ||
+            (entry.mode & 0o777) !== 0o600 ||
+            entry.size > 4096
+          ) {
+            throw new Error('Regional transport ownership marker is unsafe')
+          }
+          const bytes = fs.readFileSync(file)
+          const value = JSON.parse(bytes.toString('utf8'))
+          const main = readIdentity(process.pid),
+            child = readIdentity(workerPid)
+          if (
+            value.schemaVersion !== 1 ||
+            value.kind !== 'regional-transport-owner-v1' ||
+            value.main.pid !== process.pid ||
+            value.main.startTicks !== main?.start ||
+            value.worker.pid !== workerPid ||
+            value.worker.startTicks !== child?.start ||
+            value.directory.device !== String(directory.dev) ||
+            value.directory.inode !== String(directory.ino) ||
+            value.bootId !== fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim()
+          ) {
+            throw new Error('Regional ownership marker differs from the real dispatch identities')
+          }
+          ownerMarker = { value, sha256: sha(bytes), capturedMainPid: process.pid }
+        }
+        return {
+          ...wire,
+          bundleJson: bundle,
+          target: { ...target, observedSha256: sha(targetBytes) },
+          alpha,
+          ...(ownerMarker ? { ownerMarker } : {}),
+        }
+      }
+      const spawnWrapper = function (...args) {
+        const child = Reflect.apply(state.originalSpawn, this, args)
+        try {
+          if (
+            Array.isArray(args[1]) &&
+            args[1].some((arg) => typeof arg === 'string' && arg.startsWith('imagegen_worker'))
+          ) {
+            if (state.workers.length >= 128)
+              throw new Error('Worker observation exceeds finite bound')
+            const worker = {
+              pid: child.pid ?? null,
+              identity: child.pid ? readIdentity(child.pid) : null,
+              executable: args[0],
+              args: args[1],
+              originalSpawnCalls: 1,
+              writes: [],
+              exit: null,
+              close: null,
+              writeRestored: false,
+              ready: null,
+              stdoutRestored: false,
+            }
+            state.workers.push(worker)
+            const originalWrite = child.stdin.write
+            const descriptor = Object.getOwnPropertyDescriptor(child.stdin, 'write')
+            let pending = ''
+            const writeWrapper = function (...writeArgs) {
+              let record
+              try {
+                const bytes =
+                  typeof writeArgs[0] === 'string'
+                    ? Buffer.from(
+                        writeArgs[0],
+                        typeof writeArgs[1] === 'string' ? writeArgs[1] : 'utf8',
+                      )
+                    : Buffer.from(writeArgs[0])
+                if (bytes.length > 64 * 1024 || worker.writes.length >= 1024)
+                  throw new Error('Worker request observation exceeds bound')
+                record = {
+                  receiverMatches: this === child.stdin,
+                  originalCalls: 1,
+                  byteSize: bytes.length,
+                  sha256: sha(bytes),
+                  at: new Date().toISOString(),
+                  lines: [],
+                }
+                worker.writes.push(record)
+                pending += bytes.toString('utf8')
+                if (pending.length > 128 * 1024)
+                  throw new Error('Incomplete JSONL observation exceeds bound')
+                let newline
+                while ((newline = pending.indexOf('\n')) >= 0) {
+                  const line = pending.slice(0, newline)
+                  pending = pending.slice(newline + 1)
+                  if (line) record.lines.push(captureWire(JSON.parse(line), child.pid))
+                }
+              } catch (error) {
+                fault(error)
               }
-              worker.writes.push(record)
-              pending += bytes.toString('utf8')
-              if (pending.length > 128 * 1024)
-                throw new Error('Incomplete JSONL observation exceeds bound')
-              let newline
-              while ((newline = pending.indexOf('\n')) >= 0) {
-                const line = pending.slice(0, newline)
-                pending = pending.slice(newline + 1)
-                if (line) record.lines.push(captureWire(JSON.parse(line)))
+              try {
+                const result = Reflect.apply(originalWrite, this, writeArgs)
+                if (record) record.returned = result
+                return result
+              } catch (error) {
+                if (record) record.thrown = { name: error.name, message: error.message }
+                throw error
+              }
+            }
+            child.stdin.write = writeWrapper
+            let response = ''
+            const onData = (chunk) => {
+              try {
+                response += chunk.toString('utf8')
+                if (response.length > 128 * 1024)
+                  throw new Error('Worker response observation exceeds bound')
+                let newline
+                while ((newline = response.indexOf('\n')) >= 0) {
+                  const line = response.slice(0, newline)
+                  response = response.slice(newline + 1)
+                  if (!line) continue
+                  const message = JSON.parse(line)
+                  if (message.type !== 'ready') continue
+                  worker.ready = message
+                  const inference =
+                    worker.args.includes('imagegen_worker.owned_inference') ||
+                    worker.args.includes('imagegen_worker.inference_main')
+                  if (!inference) continue
+                  const guarded =
+                    message.capabilities?.includes('linux-owned-inference-v1') === true
+                  const expected = guarded
+                    ? [
+                        '-I',
+                        '-m',
+                        'imagegen_worker.owned_inference',
+                        '--parent-pid',
+                        String(process.pid),
+                        '--scratch-base',
+                        ownership.scratch,
+                      ]
+                    : ['-I', '-m', 'imagegen_worker.inference_main']
+                  if (
+                    JSON.stringify(worker.args) !== JSON.stringify(expected) ||
+                    (ownership.required &&
+                      (!guarded ||
+                        message.workerVersion !== '0.14.0' ||
+                        message.protocolVersion !== '1'))
+                  ) {
+                    throw new Error(
+                      'Actual inference module/arguments disagree with lifetime capability',
+                    )
+                  }
+                  if (ownership.required) {
+                    const previous = ownership.previous
+                    if (previous && !absent(previous.path)) {
+                      throw new Error(
+                        'Journaled previous transport survived until owned worker Ready',
+                      )
+                    }
+                    if (previous) {
+                      const entries = fs.readdirSync(ownership.scratch)
+                      if (entries.length > 4096)
+                        throw new Error('Scratch recovery observation exceeds bound')
+                      for (const name of entries) {
+                        if (
+                          !name.startsWith('regional-request-') &&
+                          !name.startsWith('.regional-reclaim-v1-')
+                        )
+                          continue
+                        const entry = fs.lstatSync(p.join(ownership.scratch, name), {
+                          bigint: true,
+                        })
+                        if (
+                          String(entry.dev) === previous.marker.directory.device &&
+                          String(entry.ino) === previous.marker.directory.inode
+                        ) {
+                          throw new Error(
+                            'Previous transport inode remains under a renamed recovery entry',
+                          )
+                        }
+                      }
+                    }
+                    for (const control of ownership.controls.files) {
+                      const entry = fs.lstatSync(control.path)
+                      if (
+                        !entry.isFile() ||
+                        entry.isSymbolicLink() ||
+                        entry.nlink !== 1 ||
+                        entry.size !== control.byteSize ||
+                        (entry.mode & 0o777) !== 0o600 ||
+                        entry.uid !== process.getuid() ||
+                        entry.ino !== control.inode ||
+                        fs.realpathSync(control.path) !== control.path ||
+                        sha(fs.readFileSync(control.path)) !== control.sha256
+                      ) {
+                        throw new Error(
+                          'Unmarked or unrelated retention control changed before Ready',
+                        )
+                      }
+                    }
+                    const unmarked = fs.lstatSync(ownership.controls.unmarkedRoot)
+                    if (
+                      !unmarked.isDirectory() ||
+                      unmarked.isSymbolicLink() ||
+                      unmarked.ino !== ownership.controls.unmarkedInode
+                    ) {
+                      throw new Error('The unmarked control directory changed identity')
+                    }
+                    if (!absent(p.join(ownership.controls.unmarkedRoot, '.owner-v1.json'))) {
+                      throw new Error('The unmarked retention control acquired an ownership marker')
+                    }
+                    worker.startupRecovery = {
+                      at: new Date().toISOString(),
+                      previousTransport: previous?.path ?? null,
+                      previousAbsent: previous !== null,
+                      previousDirectoryInodeAbsent: previous !== null,
+                      controls: ownership.controls.files,
+                    }
+                  }
+                }
+              } catch (error) {
+                fault(error)
+              }
+            }
+            child.stdout.on('data', onData)
+            const onExit = (code, signal) => {
+              worker.exit = { at: new Date().toISOString(), code, signal }
+            }
+            const onClose = (code, signal) => {
+              worker.close = { at: new Date().toISOString(), code, signal }
+            }
+            child.once('exit', onExit)
+            child.once('close', onClose)
+            state.restores.push(() => {
+              if (child.stdin.write !== writeWrapper)
+                throw new Error('Observed stdin slot changed owner')
+              if (descriptor) Object.defineProperty(child.stdin, 'write', descriptor)
+              else delete child.stdin.write
+              if (child.stdin.write !== originalWrite) throw new Error('stdin restoration differs')
+              child.removeListener('exit', onExit)
+              child.removeListener('close', onClose)
+              child.stdout.removeListener('data', onData)
+              worker.writeRestored = true
+              worker.stdoutRestored = true
+            })
+          }
+        } catch (error) {
+          fault(error)
+        }
+        return child
+      }
+      state.spawnWrapper = spawnWrapper
+      cp.spawn = spawnWrapper
+      process.getBuiltinModule('module').syncBuiltinESMExports()
+      if (ownership.required) {
+        if (ownership.previous && absent(ownership.previous.path)) {
+          throw new Error('Previous lease disappeared before the Ready observer was installed')
+        }
+        const children = fs.readFileSync(`/proc/self/task/${process.pid}/children`, 'utf8').trim()
+        for (const pid of children ? children.split(/\s+/) : []) {
+          try {
+            const argv = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0')
+            if (
+              argv.includes('imagegen_worker.owned_inference') ||
+              argv.includes('imagegen_worker.inference_main')
+            ) {
+              throw new Error('An inference child predates the Main-death Ready observer')
+            }
+          } catch (error) {
+            if (!['ENOENT', 'ESRCH'].includes(error.code)) throw error
+          }
+        }
+      }
+      const channels = [
+        'projects:generate',
+        'projects:cancel-current-generation',
+        'projects:cancel-generation-job',
+        'projects:retry-generation-job',
+        'projects:resolve-recovery',
+        'projects:accept-generation-candidates',
+        'projects:save',
+        'projects:open',
+        'projects:close',
+        'projects:undo',
+        'projects:redo',
+        'projects:update-generation-draft',
+        'projects:update-regional-guidance',
+      ]
+      for (const channel of channels) {
+        const deadline = Date.now() + 15_000
+        while (ownership.required && !ipcMain._invokeHandlers.has(channel) && Date.now() < deadline)
+          await new Promise((resolve) => setTimeout(resolve, 10))
+        const original = ipcMain._invokeHandlers.get(channel)
+        if (!original) throw new Error(`Missing production IPC handler ${channel}`)
+        const wrapper = async function (...args) {
+          let record
+          try {
+            if (state.ipc.length >= 1024) throw new Error('IPC observation exceeds bound')
+            record = {
+              channel,
+              args: structuredClone(args.slice(1)),
+              originalCalls: 1,
+              startedAt: new Date().toISOString(),
+              finished: false,
+            }
+            state.ipc.push(record)
+          } catch (error) {
+            fault(error)
+          }
+          try {
+            const result = await Reflect.apply(original, this, args)
+            try {
+              if (record) {
+                record.ok = result?.ok ?? null
+                record.response = structuredClone(result)
               }
             } catch (error) {
               fault(error)
             }
-            try {
-              const result = Reflect.apply(originalWrite, this, writeArgs)
-              if (record) record.returned = result
-              return result
-            } catch (error) {
-              if (record) record.thrown = { name: error.name, message: error.message }
-              throw error
-            }
-          }
-          child.stdin.write = writeWrapper
-          const onExit = (code, signal) => {
-            worker.exit = { at: new Date().toISOString(), code, signal }
-          }
-          const onClose = (code, signal) => {
-            worker.close = { at: new Date().toISOString(), code, signal }
-          }
-          child.once('exit', onExit)
-          child.once('close', onClose)
-          state.restores.push(() => {
-            if (child.stdin.write !== writeWrapper)
-              throw new Error('Observed stdin slot changed owner')
-            if (descriptor) Object.defineProperty(child.stdin, 'write', descriptor)
-            else delete child.stdin.write
-            if (child.stdin.write !== originalWrite) throw new Error('stdin restoration differs')
-            child.removeListener('exit', onExit)
-            child.removeListener('close', onClose)
-            worker.writeRestored = true
-          })
-        }
-      } catch (error) {
-        fault(error)
-      }
-      return child
-    }
-    state.spawnWrapper = spawnWrapper
-    cp.spawn = spawnWrapper
-    process.getBuiltinModule('module').syncBuiltinESMExports()
-    const channels = [
-      'projects:generate',
-      'projects:cancel-current-generation',
-      'projects:cancel-generation-job',
-      'projects:retry-generation-job',
-      'projects:resolve-recovery',
-      'projects:accept-generation-candidates',
-      'projects:save',
-      'projects:open',
-      'projects:close',
-      'projects:undo',
-      'projects:redo',
-      'projects:update-generation-draft',
-      'projects:update-regional-guidance',
-    ]
-    for (const channel of channels) {
-      const original = ipcMain._invokeHandlers.get(channel)
-      if (!original) throw new Error(`Missing production IPC handler ${channel}`)
-      const wrapper = async function (...args) {
-        let record
-        try {
-          if (state.ipc.length >= 1024) throw new Error('IPC observation exceeds bound')
-          record = {
-            channel,
-            args: structuredClone(args.slice(1)),
-            originalCalls: 1,
-            startedAt: new Date().toISOString(),
-            finished: false,
-          }
-          state.ipc.push(record)
-        } catch (error) {
-          fault(error)
-        }
-        try {
-          const result = await Reflect.apply(original, this, args)
-          try {
-            if (record) {
-              record.ok = result?.ok ?? null
-              record.response = structuredClone(result)
-            }
+            return result
           } catch (error) {
-            fault(error)
-          }
-          return result
-        } catch (error) {
-          if (record) record.thrown = { name: error.name, message: error.message }
-          throw error
-        } finally {
-          if (record) {
-            record.finished = true
-            record.finishedAt = new Date().toISOString()
+            if (record) record.thrown = { name: error.name, message: error.message }
+            throw error
+          } finally {
+            if (record) {
+              record.finished = true
+              record.finishedAt = new Date().toISOString()
+            }
           }
         }
+        state.originals.set(channel, original)
+        state.wrappers.set(channel, wrapper)
+        ipcMain._invokeHandlers.set(channel, wrapper)
       }
-      state.originals.set(channel, original)
-      state.wrappers.set(channel, wrapper)
-      ipcMain._invokeHandlers.set(channel, wrapper)
-    }
-  })
+    },
+    {
+      required: mainDeathProfile,
+      scratch: path.join(appDataRoot, 'scratch'),
+      previous: previousTransport,
+      controls: mainDeathControls,
+    },
+  )
 }
 async function observerSnapshot(restore = false) {
   return await application.evaluate(({ ipcMain }, restore) => {
@@ -1197,7 +1441,10 @@ async function launch() {
     env,
     timeout: timeout(),
   })
+  const observing = mainDeathProfile ? installObservers() : null
+  if (observing) void observing.catch(() => {})
   await bounds('launch')
+  if (observing) await observing
   window = await isolateNativeSmokeWindow(application)
   const afterScratch = await lstat(scratch)
   assert.ok(afterScratch.isDirectory() && !afterScratch.isSymbolicLink())
@@ -1220,7 +1467,7 @@ async function launch() {
     native.focus()
   })
   await expect(window.getByRole('tab', { name: 'Home', exact: true })).toBeVisible()
-  await installObservers()
+  if (!mainDeathProfile) await installObservers()
   database = openAppDatabase(appDataRoot, path.resolve('src/main/db/migrations'))
   await expect
     .poll(
@@ -1745,6 +1992,59 @@ async function assertLifetimePins() {
   assert.deepEqual(statIdentity(await regular(fixture.checkpoint.path)), modelStat)
   for (const file of baselinePackages) assert.equal(await hashFile(file.path), file.sha256)
   await assertRuntimeIdle(appDataRoot, provision.installed.basePrefix)
+  if (mainDeathProfile) await assertMainDeathControls()
+}
+async function prepareMainDeathControls() {
+  if (!mainDeathProfile) return
+  const scratch = path.join(appDataRoot, 'scratch')
+  await directory(scratch)
+  const unmarkedRoot = path.join(
+    scratch,
+    `regional-request-${randomUUID().replaceAll('-', '').slice(0, 6)}`,
+  )
+  await mkdir(unmarkedRoot, { mode: 0o700 })
+  const descriptors = [
+    {
+      path: path.join(unmarkedRoot, 'target.png'),
+      bytes: Buffer.from('unmarked private legacy control'),
+    },
+    {
+      path: path.join(scratch, `main-death-unrelated-${randomUUID()}.txt`),
+      bytes: Buffer.from('unrelated scratch control'),
+    },
+  ]
+  const files = []
+  for (const item of descriptors) {
+    await writeFile(item.path, item.bytes, { flag: 'wx', mode: 0o600 })
+    files.push({
+      path: item.path,
+      sha256: digest(item.bytes),
+      byteSize: item.bytes.length,
+      inode: (await lstat(item.path)).ino,
+    })
+  }
+  mainDeathControls = { unmarkedRoot, unmarkedInode: (await lstat(unmarkedRoot)).ino, files }
+  report.mainDeathControls = mainDeathControls
+  checkpoint()
+}
+async function assertMainDeathControls() {
+  await directory(mainDeathControls.unmarkedRoot)
+  assert.equal((await lstat(mainDeathControls.unmarkedRoot)).ino, mainDeathControls.unmarkedInode)
+  await assertPathAbsent(path.join(mainDeathControls.unmarkedRoot, '.owner-v1.json'))
+  for (const item of mainDeathControls.files) {
+    const entry = await regular(item.path)
+    assert.equal(entry.ino, item.inode)
+    assert.equal(entry.nlink, 1)
+    assert.equal(entry.size, item.byteSize)
+    assert.equal(await hashFile(item.path), item.sha256)
+  }
+}
+async function assertPathAbsent(file) {
+  const entry = await lstat(file).catch((error) => {
+    if (error.code === 'ENOENT') return null
+    throw error
+  })
+  assert.equal(entry, null, `Expected no retained pathname: ${file}`)
 }
 function assertRecoveryWire(wire, captured, project) {
   assert.equal(wire.type, 'execute-current-canvas-regional')
@@ -1771,6 +2071,11 @@ function assertRecoveryWire(wire, captured, project) {
     wire.bundleJson.recipe.regions.map(({ regionId }) => regionId),
     project.document.regionalGuidance.map(({ id }) => id),
   )
+  if (mainDeathProfile) {
+    assert.equal(wire.ownerMarker.value.main.pid, wire.ownerMarker.capturedMainPid)
+    assert.equal(wire.ownerMarker.value.worker.pid, wire.pid)
+    assert.equal(wire.ownerMarker.value.kind, 'regional-transport-owner-v1')
+  }
 }
 async function originalIpcFinished(channel, expectedCount = 1) {
   await expect
@@ -1813,7 +2118,14 @@ async function originalRegionalWire(id, captured) {
         if (wires.length !== 1) return false
         assertRecoveryWire(wires[0], captured, recoveryProject)
         const worker = observed.workers.find(({ pid }) => pid === wires[0].pid)
-        assert.ok(worker?.identity && worker.args.includes('imagegen_worker.inference_main'))
+        assert.ok(worker?.identity)
+        const guarded = worker.ready?.capabilities?.includes('linux-owned-inference-v1') === true
+        assert.ok(
+          worker.args.includes(
+            guarded ? 'imagegen_worker.owned_inference' : 'imagegen_worker.inference_main',
+          ),
+        )
+        if (mainDeathProfile) assert.equal(guarded, true)
         for (const write of worker.writes) {
           assert.equal(write.originalCalls, 1)
           assert.equal(write.receiverMatches, true)
@@ -1840,6 +2152,25 @@ async function readProcessIdentity(pid) {
   assert.ok(group?.startsWith('/') && group !== '/')
   return { pid, start, group }
 }
+async function ownedGpuRows(pid) {
+  assert.ok(Number.isSafeInteger(pid) && pid > 1)
+  const { stdout } = await exec(
+    'nvidia-smi',
+    ['--query-compute-apps=pid,used_gpu_memory', '--format=csv,noheader,nounits'],
+    { timeout: timeout(10_000), maxBuffer: 64 * 1024 },
+  )
+  const rows = []
+  for (const line of stdout.split('\n')) {
+    const fields = line.split(',').map((value) => value.trim())
+    if (fields[0] !== String(pid)) continue
+    assert.equal(fields.length, 2)
+    assert.match(fields[1], /^\d+$/)
+    const usedGpuMemoryMiB = Number(fields[1])
+    assert.ok(Number.isSafeInteger(usedGpuMemoryMiB))
+    rows.push({ pid, usedGpuMemoryMiB })
+  }
+  return rows
+}
 /** Deliberate failure only: never invokes native.close or any production cancellation action. */
 async function crashNative(label, beforeSignal, afterExit, activeWorker = null) {
   assert.ok(recoveryProfile && activeLifetime && application)
@@ -1852,7 +2183,7 @@ async function crashNative(label, beforeSignal, afterExit, activeWorker = null) 
   await database.close()
   database = null
   // Re-read actual bounds after removing the diagnostic connection; never reuse a previous life.
-  await bounds(`${label}-before-signal`)
+  await bounds(`${label}-before-signal`, mainDeathProfile)
   const bounded = nativeChecks.findLast(({ processIdentities }) =>
     processIdentities.some(({ pid }) => pid === nativeProcess.pid),
   )
@@ -1879,15 +2210,30 @@ async function crashNative(label, beforeSignal, afterExit, activeWorker = null) 
     activeWorker: activeWorker?.identity ?? null,
     at: new Date().toISOString(),
   }
+  if (mainDeathProfile && activeWorker) {
+    activeLifetime.crashCut.ownedGpu = {
+      identity: activeWorker.identity,
+      before: await ownedGpuRows(activeWorker.pid),
+      beforeAt: new Date().toISOString(),
+    }
+  }
   checkpoint()
-  const signaled = await stopExpiredQualificationProcess({ ...identity, group: scope.group })
+  const signaled = mainDeathProfile
+    ? await signalQualificationMain({ ...identity, group: scope.group })
+    : await stopExpiredQualificationProcess({ ...identity, group: scope.group })
   assert.equal(signaled.signalRequested, true)
   const exited = await confirmQualificationProcessExit(nativeChecks)
   assert.equal(exited.confirmed, true)
+  if (mainDeathProfile && activeWorker) {
+    activeLifetime.crashCut.ownedGpu.after = await ownedGpuRows(activeWorker.pid)
+    activeLifetime.crashCut.ownedGpu.afterAt = new Date().toISOString()
+    assert.deepEqual(activeLifetime.crashCut.ownedGpu.after, [])
+  }
   assert.equal(nativeProcess.signalCode, 'SIGKILL')
   const closure = {
     label,
     intentional: true,
+    ...(mainDeathProfile ? { mainOnly: true, scopeProof: scope.scopeProof } : {}),
     ...exited,
     signal: signaled,
     processExitCode: nativeProcess.exitCode,
@@ -2012,8 +2358,20 @@ async function recoveryThreeLifetimes() {
     activeWire: dispatch,
     initialPackageSha256: project.initialPackageSha256,
   }
+  if (mainDeathProfile) {
+    previousTransport = {
+      path: dispatch.wire.stagingRoot,
+      markerSha256: dispatch.wire.ownerMarker.sha256,
+      marker: dispatch.wire.ownerMarker.value,
+    }
+    report.previousTransport = previousTransport
+    assert.equal(
+      await hashFile(path.join(previousTransport.path, '.owner-v1.json')),
+      previousTransport.markerSha256,
+    )
+  }
   await crashNative(
-    'lifetime-1-active-regional-crash',
+    mainDeathProfile ? 'lifetime-1-main-only-crash' : 'lifetime-1-active-regional-crash',
     async () => {
       const sql = await recoverySql()
       assert.equal(sql.queue.length, 1)
@@ -2033,11 +2391,20 @@ async function recoveryThreeLifetimes() {
       assert.deepEqual(sql.receipts, [])
       assert.deepEqual(sql.cursors, [])
       report.recovery.afterActiveCrash = sql
+      if (mainDeathProfile) {
+        await directory(previousTransport.path)
+        assert.equal(
+          await hashFile(path.join(previousTransport.path, '.owner-v1.json')),
+          previousTransport.markerSha256,
+        )
+      }
     },
     dispatch.worker,
   )
   check(
-    'First real regional wire interrupted by exact owned-scope SIGKILL; no receipt/cursor/Save and independent physical exit confirmed',
+    mainDeathProfile
+      ? 'First real regional wire interrupted by verified Main-only pidfd SIGKILL; Python/all observed processes exited without child or scope signals'
+      : 'First real regional wire interrupted by exact owned-scope SIGKILL; no receipt/cursor/Save and independent physical exit confirmed',
   )
 
   await launch()
@@ -2128,6 +2495,27 @@ async function recoveryThreeLifetimes() {
   assert.deepEqual((await current(project)).layers, [])
   const secondObserved = await observerSnapshot(),
     secondWires = regionalWires(secondObserved)
+  if (mainDeathProfile) {
+    const ready = secondObserved.workers.filter(({ startupRecovery }) => startupRecovery)
+    assert.ok(ready.length > 0, 'The next actual owned worker Ready must be witnessed')
+    assert.ok(
+      ready.every(
+        ({ startupRecovery }) =>
+          startupRecovery.previousAbsent &&
+          startupRecovery.previousDirectoryInodeAbsent &&
+          startupRecovery.previousTransport === previousTransport.path,
+      ),
+    )
+    await assertPathAbsent(previousTransport.path)
+    await assertMainDeathControls()
+    report.automaticLeaseRecovery = {
+      previousTransport,
+      ready: ready.map(({ pid, ready, startupRecovery }) => ({ pid, ready, startupRecovery })),
+    }
+    // This lease has now been witnessed absent before Ready. Later lifetimes retain this
+    // report, rather than incorrectly demanding the already-reclaimed lease exist again.
+    previousTransport = null
+  }
   assert.equal(secondWires.length, 1)
   assertRecoveryWire(secondWires[0], captured, project)
   assert.notEqual(secondWires[0].requestId, dispatch.wire.requestId)
@@ -2168,7 +2556,9 @@ async function recoveryThreeLifetimes() {
   }
   await screenshot('recovery-unaccepted-before-second-crash')
   await crashNative(
-    'lifetime-2-unaccepted-candidate-crash',
+    mainDeathProfile
+      ? 'lifetime-2-main-only-candidate-crash'
+      : 'lifetime-2-unaccepted-candidate-crash',
     async () => {
       assert.deepEqual(await recoverySql(), completedSql)
       assert.equal((await api('listGenerationResults', project.id)).candidates.length, 1)
@@ -2280,11 +2670,18 @@ async function assertRecoveryActions() {
     regionalWireCount: 2,
     completedReceiptCount: 1,
     canceledSqlCount: 1,
-    intentionalScopeCrashes: 2,
+    intentionalScopeCrashes: mainDeathProfile ? 0 : 2,
+    ...(mainDeathProfile
+      ? {
+          intentionalMainOnlyCrashes: 2,
+          fallbackChildOrScopeSignals: report.fallbackSignals.length,
+        }
+      : {}),
     lifetimeCount: 3,
     workerSpawnCountWholeRun: observed.reduce((sum, value) => sum + value.workers.length, 0),
     stepCounterQualified: false,
   }
+  if (mainDeathProfile) assert.deepEqual(report.fallbackSignals, [])
   check(
     'Three real UI lifetimes retain prior pool and exact frozen request/candidate through two physical crashes, one explicit Retry and one explicit Recover',
     report.nativeAccounting,
@@ -2735,7 +3132,10 @@ async function retainObservers(restore) {
   assert.deepEqual(observed.faults, [])
   if (restore) {
     assert.equal(observed.restored, true)
-    for (const worker of observed.workers) assert.equal(worker.writeRestored, true)
+    for (const worker of observed.workers) {
+      assert.equal(worker.writeRestored, true)
+      assert.equal(worker.stdoutRestored, true)
+    }
   }
   const identities = observed.workers.map(({ identity }) => identity).filter(Boolean)
   for (const worker of observed.workers)
@@ -2762,6 +3162,25 @@ async function retainObservers(restore) {
   }
   checkpoint()
   return observed
+}
+async function fallbackOwnedScope(label) {
+  assert.ok(mainDeathProfile)
+  const proof = nativeChecks
+    .flatMap(({ groups }) => groups)
+    .findLast(({ scopeProof }) => scopeProof)?.scopeProof
+  assert.ok(proof, 'Emergency cleanup requires the independently captured scope proof')
+  const record = { label, scopeProof: proof, attemptedAt: new Date().toISOString() }
+  report.fallbackSignals.push(record)
+  checkpoint()
+  try {
+    record.result = await stopOwnedQualificationScope(proof)
+    return record.result
+  } catch (error) {
+    record.error = String(error.stack ?? error)
+    throw error
+  } finally {
+    checkpoint()
+  }
 }
 async function closeNative(label) {
   if (!application) return
@@ -2791,15 +3210,19 @@ async function closeNative(label) {
     const nativeProcess = native.process()
     let closeTimer, closeError
     try {
-      await Promise.race([
-        native.close(),
-        new Promise((_, reject) => {
-          closeTimer = setTimeout(
-            () => reject(new Error('Owned Electron did not close within 10s')),
-            10_000,
-          )
-        }),
-      ])
+      if (!(
+        mainDeathProfile &&
+        (nativeProcess.exitCode !== null || nativeProcess.signalCode !== null)
+      ))
+        await Promise.race([
+          native.close(),
+          new Promise((_, reject) => {
+            closeTimer = setTimeout(
+              () => reject(new Error('Owned Electron did not close within 10s')),
+              10_000,
+            )
+          }),
+        ])
     } catch (error) {
       closeError = error
       report.closeUiError = String(error.stack ?? error)
@@ -2810,7 +3233,8 @@ async function closeNative(label) {
       const group = identityCheck?.groups.find(
         ({ ownedScope, pids }) => ownedScope && pids.includes(identity?.pid),
       )
-      if (identity && group)
+      if (mainDeathProfile) await fallbackOwnedScope(`${label}-close-error`)
+      else if (identity && group)
         report.ownedSignal = await stopExpiredQualificationProcess({
           ...identity,
           group: group.group,
@@ -2818,7 +3242,15 @@ async function closeNative(label) {
     } finally {
       clearTimeout(closeTimer)
     }
-    const exit = await confirmQualificationProcessExit(nativeChecks)
+    let exit
+    try {
+      exit = await confirmQualificationProcessExit(nativeChecks)
+    } catch (error) {
+      if (!mainDeathProfile) throw error
+      closeError ??= error
+      await fallbackOwnedScope(`${label}-unconfirmed-exit`)
+      exit = await confirmQualificationProcessExit(nativeChecks)
+    }
     report.nativeClosures.push({
       label,
       ...exit,
@@ -2948,6 +3380,7 @@ deadlineTimer = setTimeout(() => {
 try {
   await verifyProvision()
   await prepareCatalogAndProjects()
+  await prepareMainDeathControls()
   await launch()
   await targetRefusalControls()
   if (recoveryProfile) {
@@ -3006,6 +3439,14 @@ try {
       2,
     )
     assert.equal(report.nativeClosures.at(-1).processExitCode, 0)
+    if (mainDeathProfile) {
+      assert.equal(
+        report.nativeClosures.filter(({ mainOnly, signal }) => mainOnly && signal.pidfd).length,
+        2,
+      )
+      assert.deepEqual(report.fallbackSignals, [])
+      await assertMainDeathControls()
+    }
   }
   await finalIdentities()
   report.outcome = 'passed'

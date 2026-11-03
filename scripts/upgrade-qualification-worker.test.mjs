@@ -8,15 +8,18 @@
  */
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import { EventEmitter } from 'node:events'
 import * as fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { PassThrough } from 'node:stream'
 import { test } from 'node:test'
 
 import {
   argumentsFor,
   assertRuntimeIdle,
   assertUpgradeBounds,
+  qualifyLegacy,
   readUpgradeOptionsFile,
   systemdDeadlineSeconds,
   treeManifest,
@@ -45,11 +48,86 @@ const originalReady = {
 }
 const newReady = {
   ...originalReady,
-  capabilities: [...originalReady.capabilities, 'illustrious-euler', 'illustrious-noise-profile'],
+  capabilities: [
+    ...originalReady.capabilities,
+    'illustrious-euler',
+    'illustrious-noise-profile',
+    'linux-owned-inference-v1',
+  ],
   workerVersion: '0.14.0',
 }
 
-async function fixture(run) {
+test('historical rollback starts only the original bare module and confirms EOF exit before idle proof', async () => {
+  for (const invalid of [false, true]) {
+    const calls = []
+    const child = new EventEmitter()
+    child.stdout = new PassThrough()
+    child.stderr = new PassThrough()
+    child.stdin = new PassThrough()
+    child.stdin.resume()
+    child.stdin.on('finish', () => {
+      calls.push('stdin-eof')
+      setImmediate(() => {
+        calls.push('close')
+        child.emit('close', 0, null)
+      })
+    })
+    child.kill = () => assert.fail('A normally closing historical worker must not be killed.')
+    const context = {
+      pythonExecutable: '/controlled/env/bin/python',
+      runtimeDir: '/controlled/runtime',
+      appData: '/controlled/data',
+      ownedPython: '/controlled/python',
+      environment: { HF_HUB_OFFLINE: '1' },
+    }
+    const dependencies = {
+      spawn: (executable, argv, options) => {
+        assert.equal(executable, context.pythonExecutable)
+        assert.deepEqual(argv, ['-I', '-m', 'imagegen_worker.inference_main'])
+        assert.equal(options.cwd, context.runtimeDir)
+        assert.deepEqual(options.env, context.environment)
+        setImmediate(() =>
+          child.stdout.write(
+            `${JSON.stringify({
+              ...originalReady,
+              type: invalid ? 'not-ready' : 'ready',
+            })}\n`,
+          ),
+        )
+        return child
+      },
+      boundProcess: async (pid) => {
+        assert.equal(pid, process.pid)
+        return { groups: [{ group: '/controlled.service' }] }
+      },
+      assertBounds: async () => ({ group: '/controlled.service' }),
+      assertIdle: async () => {
+        assert.ok(calls.includes('close'), 'idle proof must follow physical close')
+        calls.push('idle')
+        return { noLiveRuntimeUsers: true }
+      },
+    }
+    if (invalid) {
+      await assert.rejects(qualifyLegacy(context, dependencies), (error) => {
+        assert.equal(error.confirmedWorkerExit, true)
+        return /readiness is invalid/.test(error.message)
+      })
+    } else {
+      const result = await qualifyLegacy(context, dependencies)
+      assert.deepEqual(result.ready, originalReady)
+      assert.equal(result.confirmedWorkerExit, true)
+    }
+    assert.deepEqual(calls, ['stdin-eof', 'close', 'idle'])
+  }
+})
+
+async function fixture(run, { payloadRefresh = false } = {}) {
+  const priorReady = payloadRefresh
+    ? {
+        ...newReady,
+        capabilities: newReady.capabilities.filter((cap) => cap !== 'linux-owned-inference-v1'),
+      }
+    : originalReady
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'igs-worker-upgrade-'))
   const appData = path.join(root, 'data')
   const repository = path.join(root, 'repository')
@@ -77,11 +155,13 @@ async function fixture(run) {
       path.join(ownedPython, 'bin'),
       path.join(appData, 'cache', 'runtime-downloads'),
       path.join(appData, 'logs'),
+      path.join(appData, 'scratch'),
       path.join(environmentRoot, 'resources', 'sdxl-config'),
       path.join(project, 'src', 'imagegen_worker'),
     ]) {
       await fs.mkdir(directory, { recursive: true })
     }
+    await fs.chmod(path.join(appData, 'scratch'), 0o700)
     await fs.writeFile(uv, 'controlled uv, never executed\n', { mode: 0o700 })
     await fs.writeFile(
       path.join(ownedPython, 'bin', 'python3.12'),
@@ -97,7 +177,7 @@ async function fixture(run) {
     await fs.writeFile(path.join(workerRoot, '__init__.py'), 'ORIGINAL = True\n')
     await fs.writeFile(
       path.join(workerRoot, 'inference.py'),
-      'INFERENCE_WORKER_VERSION = "0.12.0"\n',
+      `INFERENCE_WORKER_VERSION = "${priorReady.workerVersion}"\n`,
     )
     await fs.writeFile(
       path.join(distInfoRoot, 'METADATA'),
@@ -145,7 +225,7 @@ async function fixture(run) {
       runtimeId,
       pythonExecutable,
       confirmedWorkerExit: true,
-      ready: originalReady,
+      ready: priorReady,
       inputs: {
         python: { files: await treeManifest(ownedPython, { python: true }) },
         config: {
@@ -217,9 +297,11 @@ async function fixture(run) {
         }
       },
       qualify: async () => ({
-        ready: (await fs.readFile(path.join(workerRoot, 'inference.py'), 'utf8')).includes('0.14.0')
+        ready: (await fs.readFile(path.join(workerRoot, '__init__.py'), 'utf8')).includes(
+          'UPGRADED',
+        )
           ? structuredClone(newReady)
-          : structuredClone(originalReady),
+          : structuredClone(priorReady),
         confirmedWorkerExit: true,
       }),
     }
@@ -264,7 +346,12 @@ async function fixture(run) {
       pointerPath,
       original,
       previous,
-      options: { 'app-data': appData, uv, report },
+      options: {
+        'app-data': appData,
+        uv,
+        report,
+        ...(payloadRefresh ? { mode: 'payload-refresh' } : {}),
+      },
       dependencies,
       commands,
       inspection,
@@ -275,6 +362,166 @@ async function fixture(run) {
     await fs.rm(root, { recursive: true, force: true })
   }
 }
+
+test('historical0.12 upgrade creates absent private scratch after idle admission without hardening existing paths', async () => {
+  await fixture(async (f) => {
+    const scratch = path.join(f.appData, 'scratch')
+    await fs.rmdir(scratch)
+    const idle = f.dependencies.assertIdle
+    let admitted = false
+    f.dependencies.assertIdle = async (...args) => {
+      if (!admitted) {
+        await assert.rejects(fs.lstat(scratch), { code: 'ENOENT' })
+        admitted = true
+      }
+      return idle(...args)
+    }
+    const result = await upgradeQualificationWorker(f.options, f.dependencies)
+    assert.equal(admitted, true)
+    assert.equal(result.createdScratch, scratch)
+    assert.equal((await fs.lstat(scratch)).mode & 0o777, 0o700)
+    assert.ok((await fs.readFile(f.pointerPath)).equals(f.original.pointer))
+    assert.deepEqual(result.installed.packages, f.previous.installed.packages)
+  })
+})
+
+test('explicit refresh requires existing scratch and never creates it', async () => {
+  await fixture(
+    async (f) => {
+      const scratch = path.join(f.appData, 'scratch')
+      await fs.rmdir(scratch)
+      await assert.rejects(upgradeQualificationWorker(f.options, f.dependencies), {
+        code: 'ENOENT',
+      })
+      await assert.rejects(fs.lstat(scratch), { code: 'ENOENT' })
+      assert.equal(f.commands.length, 0)
+      await f.preserved()
+    },
+    { payloadRefresh: true },
+  )
+})
+
+test('explicit same-engine refresh qualifies ownership in app scratch without changing dependencies or pointer', async () => {
+  await fixture(
+    async (f) => {
+      const calls = []
+      const qualify = f.dependencies.qualify
+      f.dependencies.qualify = async (context, selection) => {
+        calls.push(selection)
+        assert.equal(context.scratchBasePath, path.join(f.appData, 'scratch'))
+        assert.notEqual(context.scratchBasePath, context.downloadsDir)
+        return qualify(context)
+      }
+      const result = await upgradeQualificationWorker(f.options, f.dependencies)
+      assert.equal(result.operation, 'worker-payload-refresh')
+      assert.equal(result.fromWorkerVersion, '0.14.0')
+      assert.equal(result.toWorkerVersion, '0.14.0')
+      assert.equal(result.ready.workerVersion, '0.14.0')
+      assert.ok(result.ready.capabilities.includes('linux-owned-inference-v1'))
+      assert.deepEqual(calls, [{ legacy: false }])
+      assert.deepEqual(result.installed.packages, f.previous.installed.packages)
+      assert.equal(result.inputs.worker.pyprojectSha256, f.previous.inputs.worker.pyprojectSha256)
+      assert.equal(result.inputs.worker.lockSha256, f.previous.inputs.worker.lockSha256)
+      assert.ok((await fs.readFile(f.pointerPath)).equals(f.original.pointer))
+      assert.ok((await fs.readFile(f.historicalReport)).equals(f.original.report))
+      assert.equal(f.commands.length, 2)
+      assert.ok(f.commands[1].includes('--no-deps'))
+    },
+    { payloadRefresh: true },
+  )
+})
+
+test('same-engine refresh requires explicit admission and never admits the old upgrade source under that mode', async () => {
+  await fixture(
+    async (f) => {
+      delete f.options.mode
+      await assert.rejects(
+        upgradeQualificationWorker(f.options, f.dependencies),
+        /worker0\.12 provision/,
+      )
+      assert.equal(f.commands.length, 0)
+      await f.preserved()
+    },
+    { payloadRefresh: true },
+  )
+  await fixture(async (f) => {
+    f.options.mode = 'payload-refresh'
+    await assert.rejects(
+      upgradeQualificationWorker(f.options, f.dependencies),
+      /worker0\.14 provision/,
+    )
+    assert.equal(f.commands.length, 0)
+    await f.preserved()
+  })
+})
+
+test('same-engine missing ownership refuses activation and qualifies exact old0.14 through its bare rollback lane', async () => {
+  await fixture(
+    async (f) => {
+      const calls = []
+      const qualify = f.dependencies.qualify
+      f.dependencies.qualify = async (context, selection) => {
+        calls.push(selection)
+        const result = await qualify(context)
+        // Both source payloads intentionally report the same engine version. Only the newly
+        // installed source is defective; restored readiness remains the original truthful value.
+        if (!selection.legacy)
+          result.ready.capabilities = result.ready.capabilities.filter(
+            (cap) => cap !== 'linux-owned-inference-v1',
+          )
+        return result
+      }
+      let failure
+      await assert.rejects(upgradeQualificationWorker(f.options, f.dependencies), (error) => {
+        failure = error.report
+        return /Linux ownership/.test(error.message)
+      })
+      assert.deepEqual(calls, [{ legacy: false }, { legacy: true }])
+      assert.equal(failure.rollback.proven, true)
+      assert.equal(failure.rollback.startup.ready.workerVersion, '0.14.0')
+      assert.deepEqual(failure.rollback.startup.ready, f.previous.ready)
+      assert.equal(
+        failure.rollback.startup.ready.capabilities.includes('linux-owned-inference-v1'),
+        false,
+      )
+      await f.preserved()
+      await assert.rejects(
+        fs.lstat(path.join(f.appData, 'runtime', '.qualification-worker-upgrade.lock')),
+        { code: 'ENOENT' },
+      )
+    },
+    { payloadRefresh: true },
+  )
+})
+
+test('refresh refuses nonprivate or aliased scratch before any install mutation', async () => {
+  await fixture(
+    async (f) => {
+      await fs.chmod(path.join(f.appData, 'scratch'), 0o775)
+      await assert.rejects(
+        upgradeQualificationWorker(f.options, f.dependencies),
+        /private app-owned/,
+      )
+      assert.equal(f.commands.length, 0)
+      await f.preserved()
+    },
+    { payloadRefresh: true },
+  )
+  await fixture(
+    async (f) => {
+      const scratch = path.join(f.appData, 'scratch')
+      await fs.rename(scratch, `${scratch}-real`)
+      await fs.symlink(`${scratch}-real`, scratch)
+      await assert.rejects(
+        upgradeQualificationWorker(f.options, f.dependencies),
+        /canonical directory/,
+      )
+      assert.equal(f.commands.length, 0)
+      await f.preserved()
+    },
+    { payloadRefresh: true },
+  )
+})
 
 test('successful worker-only update publishes fresh manifest after close and keeps historical report/pointer', async () => {
   await fixture(async (f) => {
@@ -799,6 +1046,33 @@ test('CLI requires explicit absolute arguments and rejects repeated options', ()
       ]),
     /repeated/,
   )
+  assert.equal(
+    argumentsFor([
+      '--app-data',
+      '/owned',
+      '--uv',
+      '/uv',
+      '--report',
+      '/report',
+      '--mode',
+      'payload-refresh',
+    ]).mode,
+    'payload-refresh',
+  )
+  assert.throws(
+    () =>
+      argumentsFor([
+        '--app-data',
+        '/owned',
+        '--uv',
+        '/uv',
+        '--report',
+        '/report',
+        '--mode',
+        'automatic',
+      ]),
+    /must be payload-refresh/,
+  )
 })
 
 test('protected desktop services do not hide app-data consumers or unknown inaccessible processes', async () => {
@@ -834,6 +1108,13 @@ test('external options file uses the same strict argument guard without exposing
   try {
     await fs.writeFile(file, JSON.stringify(options))
     assert.deepEqual(await readUpgradeOptionsFile(file, root), options)
+    await fs.writeFile(file, JSON.stringify({ ...options, mode: 'payload-refresh' }))
+    assert.deepEqual(await readUpgradeOptionsFile(file, root), {
+      ...options,
+      mode: 'payload-refresh',
+    })
+    await fs.writeFile(file, JSON.stringify({ ...options, mode: 'automatic' }))
+    await assert.rejects(readUpgradeOptionsFile(file, root), /must be payload-refresh/)
     await fs.writeFile(file, JSON.stringify({ ...options, unexpected: 'argument' }))
     await assert.rejects(readUpgradeOptionsFile(file, root), /Unknown or repeated/)
     await fs.writeFile(file, JSON.stringify({ ...options, uv: 1 }))

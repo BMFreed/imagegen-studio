@@ -87,7 +87,12 @@ async function withFixture(run: (fixture: Fixture) => Promise<void>): Promise<vo
   const script = String.raw`#!${process.execPath}
 const fs = require('node:fs')
 const crypto = require('node:crypto')
-if (process.argv.slice(2).join(' ') !== '-I -m imagegen_worker.inference_main') process.exit(21)
+// Explicit protocol substitute: validates the operational argv; this fake does not arm a kernel guard.
+const inferenceArgs = process.argv.slice(2)
+const inferenceArgsValid = process.platform === 'linux'
+  ? inferenceArgs.length === 7 && JSON.stringify(inferenceArgs.slice(0, 6)) === JSON.stringify(['-I', '-m', 'imagegen_worker.owned_inference', '--parent-pid', String(process.ppid), '--scratch-base']) && require('node:path').isAbsolute(inferenceArgs[6]) && require('node:path').resolve(inferenceArgs[6]) === inferenceArgs[6]
+  : inferenceArgs.join(' ') === '-I -m imagegen_worker.inference_main'
+if (!inferenceArgsValid) process.exit(21)
 if (process.env.HF_HUB_OFFLINE !== '1' || process.env.TRANSFORMERS_OFFLINE !== '1') process.exit(23)
 const fault = process.env.PEER_FAULT || ''
 if (process.env.PEER_PID_MARKER) fs.writeFileSync(process.env.PEER_PID_MARKER, String(process.pid))
@@ -95,7 +100,7 @@ process.on('SIGTERM', () => process.exit(0))
 process.stdout.write(JSON.stringify({
   type: 'ready', protocolVersion: '1', workerVersion: '0.2.0',
   runtimeProfile: 'linux-nvidia', pythonVersion: '3.12.13',
-  capabilities: ['illustrious-txt2img', ...(fault === 'no-target-capability' ? [] : ['target-composition'])]
+  capabilities: ['illustrious-txt2img', ...(process.platform === 'linux' ? ['linux-owned-inference-v1'] : []), ...(fault === 'no-target-capability' ? [] : ['target-composition'])]
 }) + '\n')
 process.stdin.setEncoding('utf8')
 let input = ''
@@ -403,7 +408,10 @@ test('an older qualified inference peer refuses target capability before send an
       peerOptions(fixture, png, 'txt2img', { PEER_FAULT: 'no-target-capability' }),
     )
     try {
-      assert.deepEqual(client.ready.capabilities, ['illustrious-txt2img'])
+      assert.deepEqual(client.ready.capabilities, [
+        'illustrious-txt2img',
+        ...(process.platform === 'linux' ? ['linux-owned-inference-v1'] : []),
+      ])
       await assert.rejects(client.composeTarget(await targetInput(fixture)), {
         code: 'WORKER_VERSION_MISMATCH',
       })

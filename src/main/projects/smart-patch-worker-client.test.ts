@@ -81,6 +81,7 @@ async function withClient(
     const marker = path.join(root, 'marker')
     const executable = path.join(runtime, 'python')
     const capabilities = [
+      ...(process.platform === 'linux' ? ['linux-owned-inference-v1'] : []),
       ...OUTPAINT_READY.capabilities,
       'illustrious-euler',
       'illustrious-noise-profile',
@@ -89,7 +90,12 @@ async function withClient(
     ]
     const script = String.raw`#!${process.execPath}
 const fs=require('node:fs'),crypto=require('node:crypto'),rl=require('node:readline');
-if(process.argv.slice(2).join(' ')!=='-I -m imagegen_worker.inference_main')process.exit(31);
+// Explicit protocol substitute: validates the operational argv; this fake does not arm a kernel guard.
+const inferenceArgs = process.argv.slice(2)
+const inferenceArgsValid = process.platform === 'linux'
+  ? inferenceArgs.length === 7 && JSON.stringify(inferenceArgs.slice(0, 6)) === JSON.stringify(['-I', '-m', 'imagegen_worker.owned_inference', '--parent-pid', String(process.ppid), '--scratch-base']) && require('node:path').isAbsolute(inferenceArgs[6]) && require('node:path').resolve(inferenceArgs[6]) === inferenceArgs[6]
+  : inferenceArgs.join(' ') === '-I -m imagegen_worker.inference_main'
+if (!inferenceArgsValid) process.exit(21)
 const mode=${JSON.stringify(mode)},marker=${JSON.stringify(marker)},rgb=Buffer.from(${JSON.stringify(rgb.toString('base64'))},'base64');
 if(mode==='hang'){process.on('SIGTERM',()=>{});setInterval(()=>{},1000);}
 process.stdout.write(JSON.stringify({type:'ready',protocolVersion:'1',runtimeProfile:'linux-nvidia',workerVersion:'0.14.0',pythonVersion:'3.12.13',capabilities:${JSON.stringify(capabilities)}})+'\n');

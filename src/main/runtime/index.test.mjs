@@ -39,6 +39,8 @@ async function temporaryRoot() {
 
 async function fixture() {
   const roots = await createRuntimeRoots(await temporaryRoot())
+  // Production resolveAppPaths establishes this private root before constructing RuntimeManager.
+  await fs.mkdir(path.join(roots.appDataDir, 'scratch'), { mode: 0o700 })
   const manager = new RuntimeManager(roots, { platform: 'linux', arch: 'x64' })
   return { roots, manager }
 }
@@ -118,7 +120,12 @@ if (process.argv.slice(2).join(' ') === '-I -m imagegen_worker') {
   })
 } else {
 fs.appendFileSync(path.join(root, 'launches'), runtimeId + '\n')
-if (process.argv.slice(2).join(' ') !== '-I -m imagegen_worker.inference_main') process.exit(21)
+// Explicit protocol substitute: validates the operational argv; this fake does not arm a kernel guard.
+const inferenceArgs = process.argv.slice(2)
+const inferenceArgsValid = process.platform === 'linux'
+  ? inferenceArgs.length === 7 && JSON.stringify(inferenceArgs.slice(0, 6)) === JSON.stringify(['-I', '-m', 'imagegen_worker.owned_inference', '--parent-pid', String(process.ppid), '--scratch-base']) && require('node:path').isAbsolute(inferenceArgs[6]) && require('node:path').resolve(inferenceArgs[6]) === inferenceArgs[6]
+  : inferenceArgs.join(' ') === '-I -m imagegen_worker.inference_main'
+if (!inferenceArgsValid) process.exit(21)
 if (process.env.IGS_SDXL_CONFIG_DIR !== config || process.env.HF_HOME !== path.join(path.dirname(root), 'cache')) process.exit(22)
 if (process.env.HF_HUB_OFFLINE !== '1' || process.env.TRANSFORMERS_OFFLINE !== '1' || process.env.HF_DATASETS_OFFLINE !== '1') process.exit(23)
 if (process.env.IGS_RUNTIME_PRIVATE_TEST) process.exit(24)
@@ -139,6 +146,7 @@ if (mode.startsWith('smart-')) {
     ...(mode === 'smart-missing-execution' ? [] : ['smart-patch-execution']),
     ...(mode === 'smart-missing-seed' ? [] : ['smart-patch-seed-confirmation'])]
 }
+if (process.platform === 'linux') ready.capabilities.push('linux-owned-inference-v1')
 process.on('SIGTERM', () => {
   process.exit(0)
 })
@@ -173,7 +181,7 @@ test('real empty dispatch does not qualify or spawn any installed inference work
   const { roots, manager } = await fixture()
   await installFakeInferenceRuntime(roots)
   const scratch = path.join(roots.appDataDir, 'scratch')
-  await fs.mkdir(scratch)
+  await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
   const database = openAppDatabase(roots.appDataDir, path.resolve('src/main/db/migrations'))
   const queue = new GenerationQueueRepository(database.db, roots.appDataDir)
   const staging = new GenerationStagingRepository(database.db, roots.appDataDir)
@@ -198,6 +206,54 @@ test('real empty dispatch does not qualify or spawn any installed inference work
     await dispatch.shutdown()
     await database.close()
   }
+})
+
+test('status qualification and advisory readiness use the same private scratch as actual inference', async () => {
+  const { roots, manager } = await fixture()
+  await installFakeInferenceRuntime(roots)
+  await fs.chmod(roots.downloadsDir, 0o755)
+  assert.equal((await fs.stat(roots.downloadsDir)).mode & 0o777, 0o755)
+  const scratch = path.join(roots.appDataDir, 'scratch')
+  const executable = path.join(roots.environmentsDir, 'worker-2-linux-nvidia', 'bin/python')
+  const source = await fs.readFile(executable, 'utf8')
+  const anchor = 'if (!inferenceArgsValid) process.exit(21)'
+  assert.equal(source.split(anchor).length, 2)
+  await fs.writeFile(
+    executable,
+    source.replace(
+      anchor,
+      `${anchor}\nif (process.argv.at(-1) !== ${JSON.stringify(scratch)} || (fs.statSync(process.argv.at(-1)).mode & 0o777) !== 0o700) process.exit(79)`,
+    ),
+  )
+  assert.equal((await manager.getStatus()).value.kind, 'ready')
+  assert.ok(await manager.readQualifiedInferenceReady())
+  assert.deepEqual(await lines(path.join(roots.runtimeDir, 'launches')), ['worker-2-linux-nvidia'])
+  assert.deepEqual(await lines(path.join(roots.runtimeDir, 'exits')), ['worker-2-linux-nvidia'])
+  assert.equal((await fs.stat(roots.downloadsDir)).mode & 0o777, 0o755)
+})
+
+test('missing operational scratch refuses status before spawn without a downloads-directory fallback', async () => {
+  const { roots, manager } = await fixture()
+  await installFakeInferenceRuntime(roots)
+  await fs.rmdir(path.join(roots.appDataDir, 'scratch'))
+  assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
+  assert.equal(await manager.readQualifiedInferenceReady(), null)
+  assert.deepEqual(await lines(path.join(roots.runtimeDir, 'launches')), [])
+  assert.ok((await fs.stat(roots.downloadsDir)).isDirectory())
+})
+
+test('cached advisory readiness is revoked when shared scratch disappears despite intact downloads', async () => {
+  const { roots, manager } = await fixture()
+  await installFakeInferenceRuntime(roots)
+  assert.equal((await manager.getStatus()).value.kind, 'ready')
+  assert.ok(await manager.readQualifiedInferenceReady())
+  const launches = await lines(path.join(roots.runtimeDir, 'launches'))
+  assert.equal(launches.length, 1)
+  await fs.rmdir(path.join(roots.appDataDir, 'scratch'))
+  assert.ok((await fs.stat(roots.downloadsDir)).isDirectory())
+  assert.equal(await manager.readQualifiedInferenceReady(), null)
+  assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
+  assert.deepEqual(await lines(path.join(roots.runtimeDir, 'launches')), launches)
 })
 
 test('creates app-owned roots and reports a missing runtime without probing system Python', async () => {
@@ -234,7 +290,7 @@ test('installed project worker resolves CPU-only offline paths without GPU quali
     throw new Error('CPU derivatives must not qualify an inference process.')
   })
   const scratch = path.join(roots.appDataDir, 'scratch')
-  await fs.mkdir(scratch)
+  await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
   assert.equal(await manager.resolveInstalledProjectWorker(scratch), null)
   const installed = await installAppOwnedProjectPointer(roots)
   assert.deepEqual(await manager.resolveInstalledProjectWorker(scratch), {
@@ -321,7 +377,7 @@ test('installed project worker requires canonical app-owned scratch, cache and r
       const { roots, manager } = await fixture()
       await installAppOwnedProjectPointer(roots)
       const scratch = path.join(roots.appDataDir, 'scratch')
-      await fs.mkdir(scratch)
+      await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
       assert.equal(
         (await manager.resolveInstalledProjectWorker(scratch))?.location.stagingBasePath,
         scratch,
@@ -447,7 +503,7 @@ test('runtime qualification and active advisory readiness share the 0.3.0 progre
   const roots = await createRuntimeRoots(await temporaryRoot())
   const installed = await installFakeInferenceRuntime(roots)
   const scratch = path.join(roots.appDataDir, 'scratch')
-  await fs.mkdir(scratch)
+  await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
   await fs.writeFile(path.join(installed.environment, 'mode'), 'progress-ready')
   const manager = new RuntimeManager(roots, { platform: 'linux', arch: 'x64' })
   assert.equal(
@@ -476,7 +532,7 @@ test('CFG Rescale readiness is a copied verified handshake, expires or fails clo
   const installed = await installFakeInferenceRuntime(roots)
   await fs.writeFile(path.join(installed.environment, 'mode'), 'rescale-ready')
   const scratch = path.join(roots.appDataDir, 'scratch')
-  await fs.mkdir(scratch)
+  await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
   const manager = new RuntimeManager(roots, { platform: 'linux', arch: 'x64' })
   assert.equal(await manager.readQualifiedInferenceReady(), null)
   assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 0)
@@ -694,7 +750,7 @@ test('qualified resolver rechecks the worker and only accepts an app-owned scrat
   const { roots, manager } = await fixture()
   await installFakeInferenceRuntime(roots)
   const scratch = path.join(roots.appDataDir, 'scratch')
-  await fs.mkdir(scratch)
+  await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
   const outside = await temporaryRoot()
   assert.equal(await manager.resolveQualifiedGenerationWorker(outside), null)
   const resolved = await manager.resolveQualifiedGenerationWorker(scratch)
@@ -716,7 +772,7 @@ test('an unconfirmed worker exit blocks every new qualification until its exit i
   const roots = await createRuntimeRoots(await temporaryRoot())
   await installFakeInferenceRuntime(roots)
   const scratch = path.join(roots.appDataDir, 'scratch')
-  await fs.mkdir(scratch)
+  await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
   const clients = []
   let blockClose = true
   const manager = new RuntimeManager(
@@ -765,7 +821,7 @@ test('generation retry does not confirm an unclosed qualification child', async 
   const roots = await createRuntimeRoots(await temporaryRoot())
   await installFakeInferenceRuntime(roots)
   const scratch = path.join(roots.appDataDir, 'scratch')
-  await fs.mkdir(scratch)
+  await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
   const clients = []
   let blockClose = true
   const manager = new RuntimeManager(
@@ -818,7 +874,7 @@ test('failed startup child blocks runtime retry and new launches until exit is c
   const roots = await createRuntimeRoots(await temporaryRoot())
   const installed = await installFakeInferenceRuntime(roots)
   const scratch = path.join(roots.appDataDir, 'scratch')
-  await fs.mkdir(scratch)
+  await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
   await fs.writeFile(path.join(installed.environment, 'mode'), 'wrong-version-keepalive')
   const actualKill = ChildProcess.prototype.kill
   const stalled = new Set()
@@ -883,7 +939,7 @@ test('a generation lease excludes status and resolver probes during qualificatio
   const installed = await installFakeInferenceRuntime(roots)
   const pointerBytes = await fs.readFile(roots.pointerFile)
   const scratch = path.join(roots.appDataDir, 'scratch')
-  await fs.mkdir(scratch)
+  await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
   let qualificationEntered
   const entered = new Promise((resolve) => {
     qualificationEntered = resolve
@@ -972,7 +1028,7 @@ test('shutdown fences late runtime probes and waits for an in-flight qualificati
   const roots = await createRuntimeRoots(await temporaryRoot())
   await installFakeInferenceRuntime(roots)
   const scratch = path.join(roots.appDataDir, 'scratch')
-  await fs.mkdir(scratch)
+  await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
   let qualificationEntered
   const entered = new Promise((resolve) => {
     qualificationEntered = resolve
@@ -1054,7 +1110,7 @@ test('a generation lease preserves callback failure and accepts an already cance
   const { roots, manager } = await fixture()
   await installFakeInferenceRuntime(roots)
   const scratch = path.join(roots.appDataDir, 'scratch')
-  await fs.mkdir(scratch)
+  await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
   const original = new Error('the processor failed')
   await assert.rejects(
     manager.withGenerationWorker(scratch, async (worker) => {
@@ -1086,7 +1142,7 @@ test('metadata-only admission reuses each qualified active peer without borrowin
       const installed = await installFakeInferenceRuntime(roots)
       await fs.writeFile(path.join(installed.environment, 'mode'), mode)
       const scratch = path.join(roots.appDataDir, 'scratch')
-      await fs.mkdir(scratch)
+      await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
       const originalFailure = new Error('metadata capture failed')
       const result = await manager.withGenerationWorker(scratch, async (worker) => {
         const actualReady = worker.ready
@@ -1095,7 +1151,10 @@ test('metadata-only admission reuses each qualified active peer without borrowin
         assert.equal(
           await manager.withGenerationAdmission(scratch, async (ready) => {
             assert.deepEqual(ready, {
-              capabilities,
+              capabilities: [
+                ...capabilities,
+                ...(process.platform === 'linux' ? ['linux-owned-inference-v1'] : []),
+              ],
               protocolVersion: '1',
               runtimeProfile: 'linux-nvidia',
               workerVersion: version,
@@ -1109,7 +1168,10 @@ test('metadata-only admission reuses each qualified active peer without borrowin
           'admitted',
         )
         assert.equal(worker.ready, actualReady)
-        assert.deepEqual(worker.ready.capabilities, capabilities)
+        assert.deepEqual(worker.ready.capabilities, [
+          ...capabilities,
+          ...(process.platform === 'linux' ? ['linux-owned-inference-v1'] : []),
+        ])
         assert.equal(worker.ready.workerVersion, version)
         await assert.rejects(
           manager.withGenerationAdmission(scratch, async () => {
@@ -1137,7 +1199,7 @@ test('metadata admission refuses a qualifying lease immediately and later admits
   const roots = await createRuntimeRoots(await temporaryRoot())
   await installFakeInferenceRuntime(roots)
   const scratch = path.join(roots.appDataDir, 'scratch')
-  await fs.mkdir(scratch)
+  await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
   let enteredQualification
   const entered = new Promise((resolve) => {
     enteredQualification = resolve
@@ -1206,7 +1268,7 @@ test('metadata admission refuses a closed running child and shutdown without rep
       const { roots, manager } = await fixture()
       await installFakeInferenceRuntime(roots)
       const scratch = path.join(roots.appDataDir, 'scratch')
-      await fs.mkdir(scratch)
+      await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
       assert.equal(
         await manager.withGenerationWorker(scratch, async (worker) => {
           assert.equal(await manager.withGenerationAdmission(scratch, async () => 'ready'), 'ready')
@@ -1242,7 +1304,7 @@ test('metadata admission refuses a closed running child and shutdown without rep
 test('idle metadata admission uses live qualification and refuses unsupported or unqualified workers', async () => {
   const { roots, manager } = await fixture()
   const scratch = path.join(roots.appDataDir, 'scratch')
-  await fs.mkdir(scratch)
+  await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
   assert.equal(
     await manager.withGenerationAdmission(scratch, async () => assert.fail('missing runtime')),
     null,
@@ -1255,7 +1317,10 @@ test('idle metadata admission uses live qualification and refuses unsupported or
   )
   assert.deepEqual(await lines(path.join(roots.runtimeDir, 'launches')), [])
   assert.deepEqual(await manager.withGenerationAdmission(scratch, async (ready) => ready), {
-    capabilities: ['illustrious-txt2img'],
+    capabilities: [
+      'illustrious-txt2img',
+      ...(process.platform === 'linux' ? ['linux-owned-inference-v1'] : []),
+    ],
     protocolVersion: '1',
     runtimeProfile: 'linux-nvidia',
     workerVersion: '0.2.0',
@@ -1276,7 +1341,7 @@ test('unconfirmed generation exit retains its lease and blocks every new CUDA pr
   const { roots, manager } = await fixture()
   await installFakeInferenceRuntime(roots)
   const scratch = path.join(roots.appDataDir, 'scratch')
-  await fs.mkdir(scratch)
+  await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
   let client
   let blockClose = true
   try {
@@ -1319,7 +1384,7 @@ test('runtime leases qualified 0.4.0 thumbnail peer and refuses missing capabili
   const roots = await createRuntimeRoots(await temporaryRoot())
   const installed = await installFakeInferenceRuntime(roots)
   const scratch = path.join(roots.appDataDir, 'scratch')
-  await fs.mkdir(scratch)
+  await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
   await fs.writeFile(path.join(installed.environment, 'mode'), 'thumbnail-ready')
   const manager = new RuntimeManager(roots, { platform: 'linux', arch: 'x64' })
   assert.equal(
@@ -1404,7 +1469,7 @@ test('Smart preparation refuses legacy and incomplete peers before CPU admission
       await fs.writeFile(path.join(installed.environment, 'mode'), mode)
       await installCpuTarget(roots)
       const scratch = path.join(roots.appDataDir, 'scratch')
-      await fs.mkdir(scratch)
+      await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
       const completed = await manager.withGenerationWorker(scratch, async (gpu) => {
         assert.equal(
           await manager.withSmartPatchGenerationPreparation(scratch, async () =>
@@ -1439,7 +1504,7 @@ test('qualified Smart preparation owns one installed CUDA-hidden CPU child throu
   await fs.writeFile(path.join(installed.environment, 'mode'), 'smart-ready')
   await installCpuTarget(roots)
   const scratch = path.join(roots.appDataDir, 'scratch')
-  await fs.mkdir(scratch)
+  await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
   const completed = await manager.withGenerationWorker(scratch, async (gpu) => {
     const snapshot = structuredClone(gpu.ready)
     const entered = deferred()
@@ -1534,7 +1599,7 @@ test('Smart preparation refuses captured readiness when its borrowed GPU exit fa
   await fs.writeFile(path.join(installed.environment, 'mode'), 'smart-ready')
   await fs.writeFile(path.join(installed.environment, 'cpu-mode'), 'startup-gate')
   const scratch = path.join(roots.appDataDir, 'scratch')
-  await fs.mkdir(scratch)
+  await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
   const gpuEntered = deferred()
   const gpuFinish = deferred()
   let blockClose = true
@@ -1597,7 +1662,7 @@ test('new-generation preparation uses one CUDA-hidden target child while the act
   await installFakeInferenceRuntime(roots)
   await installCpuTarget(roots)
   const scratch = path.join(roots.appDataDir, 'scratch')
-  await fs.mkdir(scratch)
+  await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
   await manager.withGenerationWorker(scratch, async (gpu) => {
     assert.equal(
       (await manager.resolveInstalledProjectWorker(scratch))?.environment.CUDA_VISIBLE_DEVICES,
@@ -1642,7 +1707,7 @@ test('new-generation preparation uses one CUDA-hidden target child while the act
 test('idle new-generation preparation delegates the normal GPU lease and refuses unavailable hosts', async () => {
   const { roots, manager } = await fixture()
   const scratch = path.join(roots.appDataDir, 'scratch')
-  await fs.mkdir(scratch)
+  await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
   assert.equal(
     await manager.withGenerationPreparation(scratch, async () => 'missing runtime'),
     null,
@@ -1674,7 +1739,7 @@ test('GPU completion during CPU startup retains captured qualification and never
   await installCpuTarget(roots)
   await fs.writeFile(path.join(installed.environment, 'cpu-mode'), 'startup-gate')
   const scratch = path.join(roots.appDataDir, 'scratch')
-  await fs.mkdir(scratch)
+  await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
   const entered = deferred(),
     finish = deferred()
   const generation = manager.withGenerationWorker(scratch, async () => {
@@ -1714,7 +1779,7 @@ test('busy preparation validates pointer, configuration and executable both befo
         const { roots, manager } = await fixture()
         const installed = await installFakeInferenceRuntime(roots)
         const scratch = path.join(roots.appDataDir, 'scratch')
-        await fs.mkdir(scratch)
+        await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
         await manager.withGenerationWorker(scratch, async () => {
           if (boundary === 'before') {
             if (source === 'pointer') await fs.writeFile(roots.pointerFile, '{}')
@@ -1750,7 +1815,7 @@ test('a finite derivatives qualification and target capability are required for 
       const { roots, manager } = await fixture()
       const installed = await installFakeInferenceRuntime(roots)
       const scratch = path.join(roots.appDataDir, 'scratch')
-      await fs.mkdir(scratch)
+      await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
       await fs.writeFile(path.join(installed.environment, 'cpu-mode'), mode)
       await manager.withGenerationWorker(scratch, async () => {
         const preparation = manager.withGenerationPreparation(scratch, async () =>
@@ -1773,7 +1838,7 @@ test('shutdown promptly stops both CPU startup and an active composition without
       const installed = await installFakeInferenceRuntime(roots)
       await installCpuTarget(roots)
       const scratch = path.join(roots.appDataDir, 'scratch')
-      await fs.mkdir(scratch)
+      await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
       await fs.writeFile(path.join(installed.environment, 'cpu-mode'), mode)
       const start = ProjectWorkerClient.start
       ProjectWorkerClient.start = async (location, options) =>
@@ -1812,7 +1877,7 @@ test('unconfirmed CPU close retains its owner and excludes every preparation and
   const { roots, manager } = await fixture()
   const installed = await installFakeInferenceRuntime(roots)
   const scratch = path.join(roots.appDataDir, 'scratch')
-  await fs.mkdir(scratch)
+  await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
   await fs.writeFile(path.join(installed.environment, 'cpu-mode'), 'request-hang')
   const start = ProjectWorkerClient.start
   const actualKill = ChildProcess.prototype.kill
@@ -1869,7 +1934,7 @@ test(
     await installCpuTarget(roots)
     await fs.writeFile(path.join(installed.environment, 'cpu-mode'), 'close-keepalive')
     const scratch = path.join(roots.appDataDir, 'scratch')
-    await fs.mkdir(scratch)
+    await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
     const initial = await manager.resolveInstalledProjectWorker(scratch)
     assert.notEqual(initial, null)
     const owner = new ProjectTargetInspectionOwner(async () => {
@@ -1991,7 +2056,7 @@ test(
     await installCpuTarget(roots)
     await fs.writeFile(path.join(installed.environment, 'cpu-mode'), 'close-keepalive')
     const scratch = path.join(roots.appDataDir, 'scratch')
-    await fs.mkdir(scratch)
+    await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
     const selected = await manager.resolveInstalledProjectWorker(scratch)
     assert.notEqual(selected, null)
     const owner = new ProjectTargetInspectionOwner(async () => ({
@@ -2070,7 +2135,7 @@ test('failed CPU startup remains owned and blocks new subprocesses until its phy
   const { roots, manager } = await fixture()
   const installed = await installFakeInferenceRuntime(roots)
   const scratch = path.join(roots.appDataDir, 'scratch')
-  await fs.mkdir(scratch)
+  await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
   await fs.writeFile(path.join(installed.environment, 'cpu-mode'), 'bad-version-keepalive')
   const start = ProjectWorkerClient.start
   const actualKill = ChildProcess.prototype.kill
@@ -2127,7 +2192,7 @@ test('CPU preparation cannot lend ready status after its GPU owner has an unconf
   await installFakeInferenceRuntime(roots)
   await installCpuTarget(roots)
   const scratch = path.join(roots.appDataDir, 'scratch')
-  await fs.mkdir(scratch)
+  await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
   const gpuEntered = deferred(),
     gpuFinish = deferred(),
     cpuEntered = deferred(),
@@ -2189,7 +2254,7 @@ test(
         const installed = await installFakeInferenceRuntime(roots)
         await fs.writeFile(path.join(installed.environment, 'mode'), 'smart-ready')
         const scratch = path.join(roots.appDataDir, 'scratch')
-        await fs.mkdir(scratch)
+        await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
         const closeEntered = deferred()
         const closeRelease = deferred()
         let client
@@ -2250,85 +2315,93 @@ test(
   },
 )
 
-test('unexpected worker exit cannot borrow normal-close advisory readiness', { timeout: 10_000 }, async () => {
-  const { roots, manager } = await fixture()
-  await installFakeInferenceRuntime(roots)
-  const scratch = path.join(roots.appDataDir, 'scratch')
-  await fs.mkdir(scratch)
-  const value = await manager.withGenerationWorker(scratch, async (worker) => {
-    const child = worker.child
-    const exited = new Promise((resolve) => child.once('exit', resolve))
-    child.kill('SIGKILL')
-    await exited
-    assert.throws(() => worker.ready, { code: 'CLOSED' })
-    await worker.close()
-    assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
-    assert.equal(await manager.readQualifiedInferenceReady(), null)
-    assert.equal(
-      await manager.withGenerationAdmission(scratch, async () =>
-        assert.fail('A failed child cannot lend readiness.'),
-      ),
-      null,
-    )
-    assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
-    assert.equal(child.exitCode !== null || child.signalCode !== null, true)
-    return 'observed-unexpected-exit'
-  })
-  assert.equal(value, 'observed-unexpected-exit')
-})
+test(
+  'unexpected worker exit cannot borrow normal-close advisory readiness',
+  { timeout: 10_000 },
+  async () => {
+    const { roots, manager } = await fixture()
+    await installFakeInferenceRuntime(roots)
+    const scratch = path.join(roots.appDataDir, 'scratch')
+    await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
+    const value = await manager.withGenerationWorker(scratch, async (worker) => {
+      const child = worker.child
+      const exited = new Promise((resolve) => child.once('exit', resolve))
+      child.kill('SIGKILL')
+      await exited
+      assert.throws(() => worker.ready, { code: 'CLOSED' })
+      await worker.close()
+      assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
+      assert.equal(await manager.readQualifiedInferenceReady(), null)
+      assert.equal(
+        await manager.withGenerationAdmission(scratch, async () =>
+          assert.fail('A failed child cannot lend readiness.'),
+        ),
+        null,
+      )
+      assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+      assert.equal(child.exitCode !== null || child.signalCode !== null, true)
+      return 'observed-unexpected-exit'
+    })
+    assert.equal(value, 'observed-unexpected-exit')
+  },
+)
 
-test('rejected normal close becomes unavailable immediately and retains the exit fence until explicit retry', { timeout: 10_000 }, async () => {
-  // Actual close rejects after its bounded SIGTERM/SIGKILL waits. The fixture child's
-  // open stdin and intercepted own kill method keep that exact child physically alive.
-  const { roots, manager } = await fixture()
-  await installFakeInferenceRuntime(roots)
-  const scratch = path.join(roots.appDataDir, 'scratch')
-  await fs.mkdir(scratch)
-  let client
-  let child
-  let kill
-  let end
-  try {
-    await assert.rejects(
-      manager.withGenerationWorker(scratch, async (worker) => {
-        client = worker
-        child = worker.child
-        kill = child.kill
-        end = child.stdin.end
-        child.kill = () => false
-        child.stdin.end = () => child.stdin
-        worker.shutdownWaitMs = 25
-        await assert.rejects(worker.close(), { code: 'WORKER_EXIT_UNCONFIRMED' })
-        assert.equal(child.exitCode, null)
-        assert.equal(child.signalCode, null)
-        assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
-        assert.equal(await manager.readQualifiedInferenceReady(), null)
-        assert.equal(
-          await manager.withGenerationAdmission(scratch, async () =>
-            assert.fail('Rejected normal close must immediately revoke advisory readiness.'),
-          ),
-          null,
-        )
-        return 'callback-ended-with-unconfirmed-child'
-      }),
-      { code: 'WORKER_EXIT_UNCONFIRMED' },
-    )
-    assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
-    assert.equal(await manager.retryUnconfirmedGenerationExit(), false)
-    assert.equal(await manager.withGenerationWorker(scratch, async () => 'unsafe'), null)
-    assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
-    child.kill = kill
-    child.stdin.end = end
-    assert.equal(await manager.retryUnconfirmedGenerationExit(), true)
-    assert.equal(child.exitCode !== null || child.signalCode !== null, true)
-    assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
-  } finally {
-    if (child) {
+test(
+  'rejected normal close becomes unavailable immediately and retains the exit fence until explicit retry',
+  { timeout: 10_000 },
+  async () => {
+    // Actual close rejects after its bounded SIGTERM/SIGKILL waits. The fixture child's
+    // open stdin and intercepted own kill method keep that exact child physically alive.
+    const { roots, manager } = await fixture()
+    await installFakeInferenceRuntime(roots)
+    const scratch = path.join(roots.appDataDir, 'scratch')
+    await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
+    let client
+    let child
+    let kill
+    let end
+    try {
+      await assert.rejects(
+        manager.withGenerationWorker(scratch, async (worker) => {
+          client = worker
+          child = worker.child
+          kill = child.kill
+          end = child.stdin.end
+          child.kill = () => false
+          child.stdin.end = () => child.stdin
+          worker.shutdownWaitMs = 25
+          await assert.rejects(worker.close(), { code: 'WORKER_EXIT_UNCONFIRMED' })
+          assert.equal(child.exitCode, null)
+          assert.equal(child.signalCode, null)
+          assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
+          assert.equal(await manager.readQualifiedInferenceReady(), null)
+          assert.equal(
+            await manager.withGenerationAdmission(scratch, async () =>
+              assert.fail('Rejected normal close must immediately revoke advisory readiness.'),
+            ),
+            null,
+          )
+          return 'callback-ended-with-unconfirmed-child'
+        }),
+        { code: 'WORKER_EXIT_UNCONFIRMED' },
+      )
+      assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
+      assert.equal(await manager.retryUnconfirmedGenerationExit(), false)
+      assert.equal(await manager.withGenerationWorker(scratch, async () => 'unsafe'), null)
+      assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
       child.kill = kill
       child.stdin.end = end
+      assert.equal(await manager.retryUnconfirmedGenerationExit(), true)
+      assert.equal(child.exitCode !== null || child.signalCode !== null, true)
+      assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+    } finally {
+      if (child) {
+        child.kill = kill
+        child.stdin.end = end
+      }
+      await manager.retryUnconfirmedGenerationExit()
+      await client?.close()
+      if (child) assert.equal(child.exitCode !== null || child.signalCode !== null, true)
     }
-    await manager.retryUnconfirmedGenerationExit()
-    await client?.close()
-    if (child) assert.equal(child.exitCode !== null || child.signalCode !== null, true)
-  }
-})
+  },
+)

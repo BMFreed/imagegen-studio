@@ -16,6 +16,11 @@ import {
   ExactIllustriousEmbeddingSchema,
   FrozenGenerationEmbeddingsSchema,
 } from './illustrious-generation-embeddings.js'
+import {
+  captureInferenceWorkerOwnerValue,
+  type InferenceWorkerOwner,
+  serializeRegionalTransportOwner,
+} from './inference-worker-ownership.js'
 import { classifyTargetPngAlpha } from './target-png-mode.js'
 import {
   ProjectWorkerError,
@@ -265,7 +270,9 @@ export function captureRegionalWorkerInput(input: RegionalWorkerInput): Regional
 export async function prepareRegionalWorkerRequest(
   input: RegionalWorkerInput,
   scratchBasePath: string,
+  owner?: InferenceWorkerOwner,
 ): Promise<RegionalWorkerLease> {
+  const capturedOwner = owner === undefined ? undefined : captureInferenceWorkerOwnerValue(owner)
   const detached = captureRegionalWorkerInput(input) as v.InferOutput<typeof inputSchema>
   const base = scratchBasePath
   const baseIdentity = await canonicalDirectory(base)
@@ -307,6 +314,9 @@ export async function prepareRegionalWorkerRequest(
     rootIdentity,
   }
   try {
+    if (capturedOwner) {
+      await writeOwnerMarker(state, capturedOwner)
+    }
     request.job.target.path = path.join(root, 'target.png')
     request.job.output = { pngPath: path.join(root, 'result.png'), stagingRoot: root }
     await writeFile(request.job.target.path, targetBytes, { flag: 'wx', mode: 0o600 })
@@ -519,6 +529,79 @@ async function assertStage(state: LeaseState): Promise<void> {
   const root = await canonicalDirectory(state.root)
   if (!sameIdentity(base, state.baseIdentity) || !sameIdentity(root, state.rootIdentity)) {
     throw invalidPath('Regional staging was replaced.')
+  }
+}
+
+/**
+ * InvokeAI a61ac4fb install_staging_ledger persists ownership before payload publication; its
+ * calibration store supplies the wrapper's lifetime flock. Only the Python guard reclaims old
+ * marked roots. This producer syncs one exact marker and never scans or signals old owners.
+ */
+async function writeOwnerMarker(state: LeaseState, owner: InferenceWorkerOwner): Promise<void> {
+  await assertStage(state)
+  const directory = await open(
+    state.root,
+    constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  )
+  try {
+    if (!sameIdentity(await directory.stat({ bigint: true }), state.rootIdentity)) {
+      throw invalidPath('Regional ownership directory changed.')
+    }
+    const bytes = serializeRegionalTransportOwner(owner, state.rootIdentity)
+    const markerPath = `/proc/self/fd/${directory.fd}/.owner-v1.json`
+    const marker = await open(
+      markerPath,
+      constants.O_WRONLY |
+        constants.O_CREAT |
+        constants.O_EXCL |
+        constants.O_NOFOLLOW |
+        constants.O_NONBLOCK,
+      0o600,
+    )
+    try {
+      const before = await marker.stat({ bigint: true })
+      if (
+        !before.isFile() ||
+        before.nlink !== 1n ||
+        before.uid !== BigInt(process.getuid!()) ||
+        (before.mode & 0o077n) !== 0n
+      ) {
+        throw invalidPath('Regional ownership marker is unsafe.')
+      }
+      await marker.writeFile(bytes)
+      await marker.sync()
+      const after = await marker.stat({ bigint: true })
+      const atPath = await lstat(markerPath, { bigint: true })
+      if (
+        !sameIdentity(before, after) ||
+        !sameIdentity(before, atPath) ||
+        !after.isFile() ||
+        !atPath.isFile() ||
+        atPath.isSymbolicLink() ||
+        after.nlink !== 1n ||
+        atPath.nlink !== 1n ||
+        after.uid !== before.uid ||
+        atPath.uid !== before.uid ||
+        after.mode !== before.mode ||
+        atPath.mode !== before.mode ||
+        after.size !== BigInt(bytes.length) ||
+        atPath.size !== after.size ||
+        after.ctimeNs !== atPath.ctimeNs ||
+        after.mtimeNs !== atPath.mtimeNs
+      ) {
+        throw invalidPath('Regional ownership marker changed during publication.')
+      }
+      await assertStage(state)
+      await directory.sync()
+      if (!sameIdentity(await directory.stat({ bigint: true }), state.rootIdentity)) {
+        throw invalidPath('Regional ownership directory changed during publication.')
+      }
+      await assertStage(state)
+    } finally {
+      await marker.close()
+    }
+  } finally {
+    await directory.close()
   }
 }
 

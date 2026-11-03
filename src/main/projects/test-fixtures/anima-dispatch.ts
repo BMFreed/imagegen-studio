@@ -29,7 +29,12 @@ export async function withAnimaDispatchClientFixture(
     const marker = path.join(fixture.root, 'requests.jsonl')
     const source = String.raw`#!${process.execPath}
 const fs = require('node:fs')
-if (process.argv.slice(2).join(' ') !== '-I -m imagegen_worker.inference_main') process.exit(21)
+// Protocol peer only; actual kernel ownership is covered by the lifetime subprocess suite.
+const inferenceArgs = process.argv.slice(2)
+const inferenceArgsValid = process.platform === 'linux'
+ ? inferenceArgs.length === 7 && JSON.stringify(inferenceArgs.slice(0,6)) === JSON.stringify(['-I','-m','imagegen_worker.owned_inference','--parent-pid',String(process.ppid),'--scratch-base']) && require('node:path').isAbsolute(inferenceArgs[6]) && require('node:path').resolve(inferenceArgs[6]) === inferenceArgs[6]
+ : inferenceArgs.join(' ') === '-I -m imagegen_worker.inference_main'
+if (!inferenceArgsValid) process.exit(21)
 if (process.env.HF_HUB_OFFLINE !== '1' || process.env.TRANSFORMERS_OFFLINE !== '1') process.exit(23)
 const mode = process.env.MODE || 'done'
 fs.writeFileSync(process.env.MARKER + '.pid', String(process.pid))
@@ -37,6 +42,7 @@ const ready = ${JSON.stringify(ANIMA_BATCH_READY)}
 if (mode === 'no-anima') ready.capabilities = ready.capabilities.filter(x => !x.startsWith('anima-'))
 if (mode.startsWith('missing-')) ready.capabilities = ready.capabilities.filter(x => x !== mode.slice(8))
 if (mode === 'old') { ready.workerVersion = '0.10.0'; ready.capabilities = ready.capabilities.filter(x => !x.startsWith('anima-')) }
+if (process.platform === 'linux') ready.capabilities.push('linux-owned-inference-v1')
 if (mode === 'ignore-sigterm') process.on('SIGTERM', () => {})
 process.stdout.write(JSON.stringify({...ready, type:'ready', pythonVersion:'3.12.13'}) + '\n')
 let buffer = ''; let previous = null

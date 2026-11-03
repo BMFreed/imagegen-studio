@@ -1581,3 +1581,25 @@ No automatic orphan-worker/scratch reaper, Main-only immediate restart, quality,
 Anima, capacity or release Install/Repair claim follows. PP-001/007/008 remain
 **«Пока не обещать»**. The linked note separates runtime, source/retention review,
 UI self-review and lifecycle evidence.
+
+## Linux inference child lifetime and marked transport recovery
+
+The [Main-only continuation](./phase-4-regional-guidance-main-death-research.md)
+adapts InvokeAI's lock/claim recovery to Studio's separate Linux inference child.
+A versioned owned entry/capability establishes parent-death protection before
+native imports; status and execution share the private scratch root. Startup
+reclaims only verified dead-owner journaled transport. Unmarked legacy data is
+retained; there is no unqualified PID sweep or bare-entry fallback.
+
+ROOT:407 distinct lower PASS,21 mutation executions (17 GREEN/four semantic RED
+with exact restoration), required checks and13 installed native-r3 checks across
+three actual Electron lifetimes. Main-only faults, automatic cleanup before
+Ready, frozen Retry, Recover/Results/Add/Undo/Save-reopen and previous accepted
+history pass with zero fallback child/scope signals. A separate11-check postcheck
+preserves the earlier unaccepted candidate/context. The worker is refreshed in
+place; dependencies, environment/pointer and original weights remain unchanged.
+
+The two incomplete installed attempts remain excluded. Linux direct-child
+ownership does not qualify fork descendants, Anima regional generation, image
+quality, numerical step telemetry, capacity or release Install/Repair. Earlier
+negative visual findings and PP-001/007/008 **«Пока не обещать»** remain unchanged.

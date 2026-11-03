@@ -59,7 +59,9 @@ def _emit(message: dict[str, object], output: BinaryIO) -> None:
     output.flush()
 
 
-def inference_ready_message(runtime: MLRuntime | None = None) -> dict[str, object]:
+def inference_ready_message(
+    runtime: MLRuntime | None = None, *, owner_lifetime: bool = False
+) -> dict[str, object]:
     import platform
 
     return {
@@ -86,6 +88,7 @@ def inference_ready_message(runtime: MLRuntime | None = None) -> dict[str, objec
             "smart-patch-seed-confirmation",
             "private-current-canvas-regional-v1",
             "illustrious-regional-invoke-v1",
+            *(("linux-owned-inference-v1",) if owner_lifetime else ()),
             *(
                 ANIMA_CAPABILITIES
                 if runtime is not None and supports_anima_compute(runtime)
@@ -207,7 +210,7 @@ def process_inference_request(
         )
 
 
-def main() -> int:
+def main(*, owner_lifetime: bool = False) -> int:
     # Generation redirects library stdout to stderr; protocol output keeps its original stream.
     protocol_output = sys.stdout.buffer
 
@@ -223,7 +226,7 @@ def main() -> int:
     except Exception:
         traceback.print_exc(file=sys.stderr)
         return 78
-    emit(inference_ready_message(runtime))
+    emit(inference_ready_message(runtime, owner_lifetime=owner_lifetime))
     while line := sys.stdin.buffer.readline(MAX_MESSAGE_BYTES + 1):
         if len(line) > MAX_MESSAGE_BYTES:
             while line and not line.endswith(b"\n"):

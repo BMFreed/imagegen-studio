@@ -29,11 +29,14 @@ const metadataEnvironment = { LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8', PATH: '/usr/bi
 const help = `Usage: node scripts/upgrade-qualification-worker.mjs
   --app-data ABSOLUTE_EXISTING_OWNED_APP_DATA --uv ABSOLUTE_EXECUTABLE
   --report ABSOLUTE_NEW_EXTERNAL_JSON_FILE
-Or: --options-file ABSOLUTE_OWNED_JSON_FILE (same three named fields).
+  [--mode payload-refresh]
+Or: --options-file ABSOLUTE_OWNED_JSON_FILE (same named fields).
 Use the options-file form under a waiting launcher to keep runtime paths out of
 the supervisor argv inspected by the physical-use guard.
 
 Upgrades only a verified non-editable qualification worker0.12 to repository worker0.14.
+Explicit --mode payload-refresh instead admits installed worker0.14 to the same engine0.14
+with the current worker payload and qualified Linux ownership capability.
 Requires canonical agent-owned artifact paths, the original provision manifest, identical
 pyproject/uv.lock and installed dependencies, no live runtime users, and finite inherited
 systemd RAM/swap/deadline limits. Backs up only worker source, dist-info and its launcher.
@@ -49,7 +52,11 @@ export function argumentsFor(argv) {
     const argument = argv[index]
     if (argument === '--help' && argv.length === 1) return null
     const key = argument.slice(2)
-    if (!argument.startsWith('--') || !['app-data', 'uv', 'report'].includes(key) || options[key]) {
+    if (
+      !argument.startsWith('--') ||
+      !['app-data', 'uv', 'report', 'mode'].includes(key) ||
+      options[key]
+    ) {
       throw new Error(`Unknown or repeated argument: ${argument}`)
     }
     const value = argv[++index]
@@ -62,6 +69,8 @@ export function argumentsFor(argv) {
       throw new Error(`--${key} must be an absolute normalized path.`)
     }
   }
+  if (options.mode !== undefined && options.mode !== 'payload-refresh')
+    throw new Error('--mode must be payload-refresh when supplied.')
   return options
 }
 
@@ -352,7 +361,138 @@ async function runCommand(executable, argv, cwd, env, logPath, signal) {
   }
 }
 
-async function qualify(context) {
+// The production client deliberately has no legacy-wrapper bypass. Historical rollback alone
+// needs its original bare entrypoint. Adapt the same bounded EOF/kill/wait ownership used by the
+// client and InvokeAI a61ac4fb fonts/fonts_default.py; never substitute fabricated readiness.
+export async function qualifyLegacy(context, dependencies = {}) {
+  const deps = {
+    spawn,
+    boundProcess: boundQualificationProcess,
+    assertBounds: assertUpgradeBounds,
+    assertIdle: assertRuntimeIdle,
+    ...dependencies,
+  }
+  const child = deps.spawn(
+    context.pythonExecutable,
+    ['-I', '-m', 'imagegen_worker.inference_main'],
+    {
+      cwd: context.runtimeDir,
+      env: context.environment,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    },
+  )
+  let closed = false
+  let exited = false
+  let timer
+  child.once('exit', () => {
+    exited = true
+  })
+  const exit = new Promise((resolve) => {
+    child.once('close', (code, signal) => {
+      closed = true
+      resolve({ code, signal })
+    })
+  })
+  async function waitForExit() {
+    let timeout
+    try {
+      return await Promise.race([
+        exit,
+        new Promise((resolve) => {
+          timeout = setTimeout(() => resolve(null), 5_000)
+        }),
+      ])
+    } finally {
+      clearTimeout(timeout)
+    }
+  }
+  async function close() {
+    child.stdin.end()
+    let result = await waitForExit()
+    if (!result) {
+      // Never signal a PID after the actual child exited, even if inherited stdio delays close.
+      if (!exited) child.kill('SIGKILL')
+      result = await waitForExit()
+    }
+    if (!result)
+      throw Object.assign(new Error('Historical worker physical exit is unconfirmed.'), {
+        confirmedWorkerExit: false,
+      })
+    return result
+  }
+  try {
+    const ready = await new Promise((resolve, reject) => {
+      let buffer = Buffer.alloc(0)
+      let received = false
+      timer = setTimeout(() => reject(new Error('Historical worker startup timed out.')), 120_000)
+      child.once('error', reject)
+      child.stdin.on('error', reject)
+      child.once('close', () => reject(new Error('Historical worker stopped during startup.')))
+      // Drain diagnostics without retaining arbitrary worker output.
+      child.stderr.resume()
+      child.stdout.on('data', (chunk) => {
+        if (received) return
+        buffer = Buffer.concat([buffer, chunk])
+        if (buffer.length > 1024 * 1024) {
+          received = true
+          reject(new Error('Historical worker readiness exceeded its message bound.'))
+          return
+        }
+        const newline = buffer.indexOf(10)
+        if (newline < 0) return
+        received = true
+        try {
+          const message = JSON.parse(buffer.subarray(0, newline).toString('utf8'))
+          if (
+            message?.type !== 'ready' ||
+            message.protocolVersion !== '1' ||
+            message.runtimeProfile !== 'linux-nvidia' ||
+            message.pythonVersion !== '3.12.13' ||
+            typeof message.workerVersion !== 'string' ||
+            !Array.isArray(message.capabilities) ||
+            message.capabilities.length > 128 ||
+            message.capabilities.some((value) => typeof value !== 'string' || value.length > 128)
+          )
+            throw new Error('Historical worker readiness is invalid.')
+          resolve({
+            capabilities: message.capabilities,
+            protocolVersion: message.protocolVersion,
+            pythonVersion: message.pythonVersion,
+            runtimeProfile: message.runtimeProfile,
+            workerVersion: message.workerVersion,
+          })
+        } catch (error) {
+          reject(error)
+        }
+      })
+    })
+    clearTimeout(timer)
+    const limits = await deps.boundProcess(process.pid)
+    const inherited = await deps.assertBounds()
+    if (limits.groups.some(({ group }) => group !== inherited.group))
+      throw new Error('Historical worker escaped its inherited finite systemd deadline.')
+    const result = await close()
+    if (result.code !== 0 || result.signal !== null)
+      throw new Error('Historical worker did not exit normally after readiness.')
+    const idle = await deps.assertIdle(context.appData, context.ownedPython)
+    return { ready, confirmedWorkerExit: true, limits, idle }
+  } catch (error) {
+    try {
+      if (!closed) await close()
+      await deps.assertIdle(context.appData, context.ownedPython)
+      error.confirmedWorkerExit = true
+    } catch {
+      error.confirmedWorkerExit = false
+    }
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function qualify(context, { legacy = false } = {}) {
+  if (legacy) return qualifyLegacy(context)
   const module = await tsImport('../src/main/projects/generation-worker-client.ts', import.meta.url)
   let worker
   try {
@@ -360,7 +500,7 @@ async function qualify(context) {
       {
         pythonExecutable: context.pythonExecutable,
         runtimeRoot: context.runtimeDir,
-        scratchBasePath: context.downloadsDir,
+        scratchBasePath: context.scratchBasePath,
       },
       { environment: context.environment, startupTimeoutMs: 120_000, shutdownWaitMs: 5_000 },
     )
@@ -587,6 +727,9 @@ async function restoreBackup(context, backup, manifest) {
 
 /** Dependency transports are explicit test seams; CLI always uses real uv/Python/worker/cgroups. */
 export async function upgradeQualificationWorker(options, dependencies = {}) {
+  if (options.mode !== undefined && options.mode !== 'payload-refresh')
+    throw new Error('--mode must be payload-refresh when supplied.')
+  const payloadRefresh = options.mode === 'payload-refresh'
   const deps = {
     artifactRoot,
     repository,
@@ -640,9 +783,11 @@ export async function upgradeQualificationWorker(options, dependencies = {}) {
     previous.appData !== appData ||
     previous.runtimeId !== metadata.runtimeId ||
     previous.confirmedWorkerExit !== true ||
-    previous.ready?.workerVersion !== '0.12.0'
+    previous.ready?.workerVersion !== (payloadRefresh ? '0.14.0' : '0.12.0')
   ) {
-    throw new Error('Expected the historical successful worker0.12 provision report.')
+    throw new Error(
+      `Expected the historical successful worker${payloadRefresh ? '0.14' : '0.12'} provision report${payloadRefresh ? ' for explicit payload-refresh' : ''}.`,
+    )
   }
   const runtimeDir = path.join(appData, 'runtime')
   const environmentRoot = path.join(runtimeDir, 'environments', metadata.runtimeId)
@@ -650,17 +795,32 @@ export async function upgradeQualificationWorker(options, dependencies = {}) {
   const pythonExecutable = path.join(environmentRoot, 'bin', 'python')
   const pointerPath = path.join(runtimeDir, 'current-runtime.json')
   const downloadsDir = path.join(appData, 'cache', 'runtime-downloads')
+  const scratchBasePath = path.join(appData, 'scratch')
   const config = path.join(environmentRoot, 'resources', 'sdxl-config')
   for (const directory of [
     runtimeDir,
     environmentRoot,
     ownedPython,
     downloadsDir,
+    ...(payloadRefresh ? [scratchBasePath] : []),
     config,
     path.join(appData, 'logs'),
     path.dirname(pythonExecutable),
   ])
     await canonicalDirectory(directory)
+  const checkScratch = async () => {
+    await canonicalDirectory(scratchBasePath)
+    const scratch = await fs.lstat(scratchBasePath)
+    if (scratch.uid !== process.getuid() || (scratch.mode & 0o777) !== 0o700)
+      throw new Error('Qualification scratch must be an existing private app-owned directory.')
+  }
+  let createScratch = false
+  try {
+    await checkScratch()
+  } catch (error) {
+    if (!payloadRefresh && error.code === 'ENOENT') createScratch = true
+    else throw error
+  }
   if (
     !within(ownedPython, await fs.realpath(pythonExecutable)) ||
     metadata.pythonExecutable !== pythonExecutable ||
@@ -689,6 +849,7 @@ export async function upgradeQualificationWorker(options, dependencies = {}) {
     metadataBytes,
     metadataMode: metadataEntry.mode & 0o777,
     downloadsDir,
+    scratchBasePath,
     environment: {
       ...metadataEnvironment,
       HF_DATASETS_OFFLINE: '1',
@@ -703,6 +864,9 @@ export async function upgradeQualificationWorker(options, dependencies = {}) {
       'Worker-only developer qualification upgrade in the existing canonical app-owned runtime. No release Install/Repair, relocation, model copying or trained inference qualification.',
     startedAt: new Date().toISOString(),
     status: 'preparing',
+    operation: payloadRefresh ? 'worker-payload-refresh' : 'worker-upgrade',
+    fromWorkerVersion: previous.ready.workerVersion,
+    toWorkerVersion: '0.14.0',
     activateRequested: true,
     appData,
     runtimeId: metadata.runtimeId,
@@ -776,6 +940,13 @@ export async function upgradeQualificationWorker(options, dependencies = {}) {
       { create: true },
     )
     locked = true
+    if (createScratch) {
+      // Historical provisioning predates app scratch. Create it only after bounds/idle/claim;
+      // never harden or replace an existing path, including one created by a concurrent owner.
+      await fs.mkdir(scratchBasePath, { mode: 0o700 })
+      await checkScratch()
+      report.createdScratch = scratchBasePath
+    }
     workspace = await fs.mkdtemp(path.join(downloadsDir, 'worker-upgrade-'))
     backup = path.join(workspace, 'rollback')
     await fs.mkdir(backup, { mode: 0o700 })
@@ -922,7 +1093,7 @@ export async function upgradeQualificationWorker(options, dependencies = {}) {
     report.status = 'qualifying'
     if (controller.signal.aborted)
       throw new Error('Worker upgrade interrupted before qualification.')
-    const qualified = await deps.qualify(context)
+    const qualified = await deps.qualify(context, { legacy: false })
     report.ready = qualified.ready
     report.confirmedWorkerExit = qualified.confirmedWorkerExit
     report.workerExit = qualified
@@ -940,12 +1111,13 @@ export async function upgradeQualificationWorker(options, dependencies = {}) {
       !capabilities.isQualifiedInferenceWorkerReady(report.ready) ||
       !capabilities.supportsInferenceEuler(report.ready) ||
       !capabilities.supportsInferenceIllustriousNoiseProfile(report.ready) ||
+      !report.ready.capabilities.includes('linux-owned-inference-v1') ||
       !previous.ready.capabilities.every((capability) =>
         report.ready.capabilities.includes(capability),
       )
     ) {
       throw new Error(
-        'Installed worker0.14 must retain prior capabilities and qualify Euler/noise profile after physical exit.',
+        'Installed worker0.14 must retain prior capabilities and qualify Euler/noise and Linux ownership after physical exit.',
       )
     }
     await deps.assertIdle(appData, ownedPython)
@@ -996,7 +1168,9 @@ export async function upgradeQualificationWorker(options, dependencies = {}) {
         validateInstallation(restored, context)
         equal(restored.packages, previous.installed.packages, 'Restored dependencies')
         equal(restored.workerFiles, previous.installed.workerFiles, 'Restored original worker')
-        const restoredReady = await deps.qualify(context)
+        const restoredReady = await deps.qualify(context, {
+          legacy: !previous.ready.capabilities.includes('linux-owned-inference-v1'),
+        })
         if (!restoredReady.confirmedWorkerExit)
           throw Object.assign(new Error('Restored worker did not confirm physical exit.'), {
             confirmedWorkerExit: false,

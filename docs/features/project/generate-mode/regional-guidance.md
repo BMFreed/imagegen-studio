@@ -1143,3 +1143,26 @@ owner changed. Whole-scope termination does not qualify Main-only/worker-only
 orphan handling or automatic scratch cleanup; quality, progress telemetry,
 Anima, capacity and release Install/Repair remain open. PP-001/007/008 stay
 **«Пока не обещать»**.
+
+## Linux inference ownership after Main death
+
+The [Main-only checkpoint](../../../engineering/phase-4-regional-guidance-main-death-research.md)
+adds a versioned Linux operational entry/capability while keeping compute0.14 and
+sampling unchanged. The inference child establishes parent-death protection and
+a stable exclusive scratch lock before native imports. Main journals each
+regional transport's process and directory identities before payloads. A later
+guarded worker reclaims only verified dead-owner transport; unmarked legacy or
+unverifiable data remains protected. Runtime status uses the same private scratch
+as execution, with no downloads-directory fallback.
+
+ROOT records 407 distinct lower PASS, three restored semantic mutation sequences
+(21 executions:17 GREEN/four intentional RED), required checks, and 13 installed
+checks across three real Electron lifetimes. Main-only SIGKILL ends the active
+Python worker without test assistance; its 240 MiB GPU record disappears. Before
+the next Ready, marked transport is gone and retention controls remain. Explicit
+frozen Retry, recovered Results, Raster Add/Undo/Redo and Save/reopen pass with
+zero fallback child/scope signals. Previous accepted history and an earlier
+unaccepted candidate are preserved. The scope is the Linux creating-parent
+thread/direct-child relationship; fork descendants, quality, Anima regional,
+numerical progress, capacity and release Install/Repair remain unqualified.
+PP-001/007/008 remain **«Пока не обещать»**.

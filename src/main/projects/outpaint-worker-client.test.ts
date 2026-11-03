@@ -25,6 +25,7 @@ for (const family of ['illustrious', 'anima'] as const) {
       const script = String.raw`#!${process.execPath}
 const fs = require('node:fs');
 const ready = process.env.PEER_LEGACY ? ${JSON.stringify(ANIMA_BATCH_READY)} : ${JSON.stringify(OUTPAINT_READY)};
+if (process.platform === 'linux') ready.capabilities.push('linux-owned-inference-v1');
 process.stdout.write(JSON.stringify({...ready,type:'ready',pythonVersion:'3.12.13'})+'\n');
 process.stdin.on('data', bytes=>fs.appendFileSync(${JSON.stringify(marker)},bytes));
 `
@@ -98,8 +99,14 @@ for (const family of ['illustrious', 'anima'] as const) {
             executable,
             String.raw`#!${process.execPath}
 const fs = require('node:fs');
-if (process.argv.slice(2).join(' ') !== '-I -m imagegen_worker.inference_main') process.exit(21);
+// Explicit protocol substitute: validates the operational argv; this fake does not arm a kernel guard.
+const inferenceArgs = process.argv.slice(2)
+const inferenceArgsValid = process.platform === 'linux'
+  ? inferenceArgs.length === 7 && JSON.stringify(inferenceArgs.slice(0, 6)) === JSON.stringify(['-I', '-m', 'imagegen_worker.owned_inference', '--parent-pid', String(process.ppid), '--scratch-base']) && require('node:path').isAbsolute(inferenceArgs[6]) && require('node:path').resolve(inferenceArgs[6]) === inferenceArgs[6]
+  : inferenceArgs.join(' ') === '-I -m imagegen_worker.inference_main'
+if (!inferenceArgsValid) process.exit(21)
 const ready = ${JSON.stringify(OUTPAINT_READY)};
+if (process.platform === 'linux') ready.capabilities.push('linux-owned-inference-v1');
 process.stdout.write(JSON.stringify({...ready,type:'ready',pythonVersion:'3.12.13'})+'\n');
 let buffer = '';
 process.stdin.setEncoding('utf8');

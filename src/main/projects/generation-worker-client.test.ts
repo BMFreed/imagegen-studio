@@ -40,7 +40,12 @@ async function withFixture(run: (fixture: Fixture) => Promise<void>): Promise<vo
   const executable = path.join(runtimeRoot, 'python')
   const script = String.raw`#!${process.execPath}
 const fs = require('node:fs')
-if (process.argv.slice(2).join(' ') !== '-I -m imagegen_worker.inference_main') process.exit(21)
+// Explicit protocol substitute: validates the operational argv; this fake does not arm a kernel guard.
+const inferenceArgs = process.argv.slice(2)
+const inferenceArgsValid = process.platform === 'linux'
+  ? inferenceArgs.length === 7 && JSON.stringify(inferenceArgs.slice(0, 6)) === JSON.stringify(['-I', '-m', 'imagegen_worker.owned_inference', '--parent-pid', String(process.ppid), '--scratch-base']) && require('node:path').isAbsolute(inferenceArgs[6]) && require('node:path').resolve(inferenceArgs[6]) === inferenceArgs[6]
+  : inferenceArgs.join(' ') === '-I -m imagegen_worker.inference_main'
+if (!inferenceArgsValid) process.exit(21)
 if (process.env.HF_HUB_OFFLINE !== '1' || process.env.TRANSFORMERS_OFFLINE !== '1') process.exit(23)
 const mode = process.env.FAKE_MODE || 'done'
 if (process.env.FAKE_SPAWN_MARKER) {
@@ -63,6 +68,7 @@ if (mode.startsWith('noise-')) {
   ready.capabilities = ${JSON.stringify([...OUTPAINT_READY.capabilities, 'illustrious-euler', 'illustrious-noise-profile'])}
   if (mode === 'noise-missing-capability') ready.capabilities = ready.capabilities.filter(value => value !== 'illustrious-noise-profile')
 }
+if (process.platform === 'linux' && mode !== 'missing-lifetime-capability') ready.capabilities.push('linux-owned-inference-v1')
 if (mode === 'precision-error') ready.capabilities.push('target-composition')
 if (mode === 'delayed-sigterm' || mode === 'ignore-sigterm' || mode === 'silent-ignore-sigterm') {
   process.on('SIGTERM', () => {
@@ -800,7 +806,10 @@ test('real inference subprocess requires an exact ready and returns correlated a
       options('done', { HF_HUB_OFFLINE: '0', TRANSFORMERS_OFFLINE: '0' }),
     )
     try {
-      assert.deepEqual(client.ready.capabilities, ['illustrious-txt2img'])
+      assert.deepEqual(client.ready.capabilities, [
+        'illustrious-txt2img',
+        ...(process.platform === 'linux' ? ['linux-owned-inference-v1'] : []),
+      ])
       const request = await requestFor(fixture)
       const result = await client.generate(request)
       assert.deepEqual(result, {
@@ -826,6 +835,7 @@ test('unqualified, silent, malformed, and unsolicited startup fail before a clie
       'bad-profile',
       'no-capability',
       'new-missing-progress',
+      ...(process.platform === 'linux' ? ['missing-lifetime-capability'] : []),
     ]) {
       await assert.rejects(
         GenerationWorkerClient.start(fixture.location, options(mode)),
@@ -846,6 +856,41 @@ test('unqualified, silent, malformed, and unsolicited startup fail before a clie
     )
   })
 })
+
+test(
+  'Linux never falls back to the bare entry when an old installed payload lacks the owner module',
+  { skip: process.platform !== 'linux' },
+  async () => {
+    await withFixture(async (fixture) => {
+      const marker = path.join(fixture.root, 'old-payload-attempts.jsonl')
+      await writeFile(
+        fixture.executable,
+        String.raw`#!${process.execPath}
+const fs = require('node:fs')
+fs.appendFileSync(${JSON.stringify(marker)}, JSON.stringify(process.argv.slice(2)) + '\n')
+// This peer represents a historical installation that cannot import owned_inference.
+process.exit(78)
+`,
+      )
+      await assert.rejects(GenerationWorkerClient.start(fixture.location), isCode('WORKER_EXITED'))
+      const attempts = (await readFile(marker, 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line) as string[])
+      assert.deepEqual(attempts, [
+        [
+          '-I',
+          '-m',
+          'imagegen_worker.owned_inference',
+          '--parent-pid',
+          String(process.pid),
+          '--scratch-base',
+          fixture.location.scratchBasePath,
+        ],
+      ])
+    })
+  },
+)
 
 test('qualified JSONL progress is monotonic, request-scoped, and cannot replace the terminal result', async () => {
   await withFixture(async (fixture) => {

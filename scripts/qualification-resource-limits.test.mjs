@@ -5,7 +5,9 @@ import { test } from 'node:test'
 import {
   boundQualificationProcess,
   confirmQualificationProcessExit,
+  signalQualificationMain,
   stopExpiredQualificationProcess,
+  stopOwnedQualificationScope,
 } from './qualification-resource-limits.mjs'
 
 let nextPid = 900_000
@@ -63,6 +65,282 @@ function fixture({
     },
   }
 }
+
+function mainDeathFixture() {
+  const f = fixture({ memory: '10737418240' })
+  let mainGone = false,
+    workerStart = '15256666',
+    inode = 87654321n
+  let members = [f.pid, f.pid + 100]
+  const read = f.dependencies.read
+  const dependencies = {
+    ...f.dependencies,
+    inspect: async () => ({
+      dev: 27n,
+      ino: inode,
+      isDirectory: () => true,
+      isSymbolicLink: () => false,
+    }),
+    read: async (file) => {
+      if (file === `/proc/${f.pid}/stat` && mainGone)
+        throw Object.assign(new Error('Original Main exited'), { code: 'ENOENT' })
+      if (file === `/proc/${f.pid + 100}/stat`)
+        return `${f.pid + 100} (worker) S ${'0 '.repeat(18)}${workerStart} 0`
+      if (file === `/sys/fs/cgroup${f.group}/cgroup.procs`) return members.join('\n') + '\n'
+      return read(file)
+    },
+  }
+  return {
+    ...f,
+    dependencies,
+    mainExited: () => {
+      mainGone = true
+      members = [f.pid + 100]
+    },
+    replaceScope: () => {
+      inode++
+    },
+    reuseWorker: () => {
+      workerStart = '19256666'
+    },
+    addUnknown: () => {
+      members.push(f.pid + 200)
+    },
+    empty: () => {
+      mainGone = true
+      members = []
+    },
+  }
+}
+
+test('Main-death mode captures inode and bounded independent proof timers without changing defaults', async () => {
+  const f = mainDeathFixture()
+  const options = { ...f.dependencies, surviveMainDeath: true, deadlineSeconds: 60 }
+  const first = await boundQualificationProcess(f.pid, options)
+  const proof = first.groups[0].scopeProof
+  assert.deepEqual(proof.scopeIdentity, { device: '27', inode: '87654321' })
+  assert.deepEqual(proof.members, first.processIdentities)
+  assert.equal(first.groups[0].memoryMax, '10737418240')
+  assert.ok(f.commands.some(({ args }) => args.includes('MemoryMax=10G')))
+  assert.equal(first.groups[0].deadlineTimers.length, 1)
+  let timers = f.commands.filter(({ program }) => program === 'systemd-run')
+  assert.equal(timers.length, 1)
+  assert.ok(timers[0].args.includes('--deadline-owned-scope'))
+  assert.deepEqual(JSON.parse(timers[0].args.at(-1)), proof)
+  await boundQualificationProcess(f.pid, options)
+  assert.equal(f.commands.filter(({ program }) => program === 'systemd-run').length, 1)
+  f.reuseWorker()
+  await boundQualificationProcess(f.pid, options)
+  assert.equal(
+    f.commands.filter(({ program }) => program === 'systemd-run').length,
+    1,
+    'Ordinary observations never add deadline timers',
+  )
+  const cut = await boundQualificationProcess(f.pid, { ...options, refreshMainDeathProof: true })
+  assert.equal(cut.groups[0].deadlineTimers.length, 2)
+  timers = f.commands.filter(({ program }) => program === 'systemd-run')
+  assert.equal(timers.length, 2)
+  for (const command of timers) {
+    const seconds = Number(
+      command.args.find((value) => value.startsWith('--on-active=')).match(/=(\d+)s/)[1],
+    )
+    assert.ok(seconds > 0 && seconds <= 60)
+  }
+  assert.equal(JSON.parse(timers[1].args.at(-1)).members[1].start, '19256666')
+})
+
+test('captured same-inode scope cleanup works after Main died while its known child remains', async () => {
+  const f = mainDeathFixture()
+  const bounded = await boundQualificationProcess(f.pid, {
+    ...f.dependencies,
+    surviveMainDeath: true,
+  })
+  f.mainExited()
+  f.commands.length = 0
+  const result = await stopOwnedQualificationScope(bounded.groups[0].scopeProof, f.dependencies)
+  assert.equal(result.signalRequested, true)
+  assert.equal(result.authority, 'captured-scope-inode')
+  assert.equal(Object.hasOwn(result, 'confirmed'), false)
+  assert.equal(f.commands.filter(({ args }) => args.includes('kill')).length, 1)
+  assert.equal(
+    f.commands.some(({ args }) => args.includes('stop')),
+    false,
+    'Signal acknowledgement cannot cancel a still-needed independent watchdog',
+  )
+})
+
+test('Main-death mode enforces actual ten-GiB native readback and the original overall deadline', async () => {
+  const f = mainDeathFixture(),
+    deadlineAt = Date.now() + 5000
+  const options = { ...f.dependencies, surviveMainDeath: true, deadlineSeconds: 1800, deadlineAt }
+  const first = await boundQualificationProcess(f.pid, options)
+  assert.equal(first.groups[0].deadlineAt, deadlineAt)
+  const timer = f.commands.find(({ program }) => program === 'systemd-run')
+  const seconds = Number(
+    timer.args.find((value) => value.startsWith('--on-active=')).match(/=(\d+)s/)[1],
+  )
+  assert.ok(seconds >= 1 && seconds <= 5)
+  await assert.rejects(
+    boundQualificationProcess(f.pid, { ...options, deadlineAt: deadlineAt + 1000 }),
+    /deadline cannot change/,
+  )
+  assert.equal(f.commands.filter(({ program }) => program === 'systemd-run').length, 1)
+  const other = mainDeathFixture()
+  await assert.rejects(
+    boundQualificationProcess(other.pid, {
+      ...other.dependencies,
+      surviveMainDeath: true,
+      read: async (file) =>
+        file.endsWith('/memory.max') ? '12884901888' : other.dependencies.read(file),
+    }),
+    /Unbounded qualification cgroup/,
+  )
+  assert.equal(
+    other.commands.some(({ program }) => program === 'systemd-run'),
+    false,
+  )
+})
+
+for (const fault of [
+  'scope-replaced',
+  'main-reused',
+  'worker-reused',
+  'foreign-ControlGroup',
+  'unknown-child',
+  'moved-child',
+])
+  test(`captured Main-death scope refuses ${fault} without any signal`, async () => {
+    const f = mainDeathFixture()
+    const bounded = await boundQualificationProcess(f.pid, {
+      ...f.dependencies,
+      surviveMainDeath: true,
+    })
+    if (fault === 'main-reused') f.reusePid()
+    else f.mainExited()
+    if (fault === 'scope-replaced') f.replaceScope()
+    if (fault === 'worker-reused') f.reuseWorker()
+    if (fault === 'foreign-ControlGroup') f.wrongScope()
+    if (fault === 'unknown-child') f.addUnknown()
+    if (fault === 'moved-child')
+      f.files.set(`/proc/${f.pid + 100}/cgroup`, '0::/user.slice/foreign.scope\n')
+    f.commands.length = 0
+    await assert.rejects(stopOwnedQualificationScope(bounded.groups[0].scopeProof, f.dependencies))
+    assert.equal(
+      f.commands.some(({ args }) => args.includes('kill') || args.includes('stop')),
+      false,
+    )
+  })
+
+test('captured scope replacement during final revalidation cannot authorize cleanup', async () => {
+  const f = mainDeathFixture()
+  const bounded = await boundQualificationProcess(f.pid, {
+    ...f.dependencies,
+    surviveMainDeath: true,
+  })
+  f.mainExited()
+  f.commands.length = 0
+  let inspections = 0
+  await assert.rejects(
+    stopOwnedQualificationScope(bounded.groups[0].scopeProof, {
+      ...f.dependencies,
+      inspect: async (...args) => {
+        if (++inspections === 2) f.replaceScope()
+        return f.dependencies.inspect(...args)
+      },
+    }),
+    /replaced/,
+  )
+  assert.equal(
+    f.commands.some(({ args }) => args.includes('kill')),
+    false,
+  )
+})
+
+test('a zombie Main cannot authorize an unobserved member in the captured scope', async () => {
+  const f = mainDeathFixture()
+  const bounded = await boundQualificationProcess(f.pid, {
+    ...f.dependencies,
+    surviveMainDeath: true,
+  })
+  f.addUnknown()
+  f.commands.length = 0
+  await assert.rejects(
+    stopOwnedQualificationScope(bounded.groups[0].scopeProof, {
+      ...f.dependencies,
+      read: async (file) =>
+        file === `/proc/${f.pid}/stat`
+          ? `${f.pid} (electron name) Z ${'0 '.repeat(18)}14256666 0`
+          : f.dependencies.read(file),
+    }),
+    /unobserved process/,
+  )
+  assert.equal(
+    f.commands.some(({ args }) => args.includes('kill')),
+    false,
+  )
+})
+
+test('an empty captured scope receives no signal and its timer remains until actual exit confirmation', async () => {
+  const f = mainDeathFixture()
+  const bounded = await boundQualificationProcess(f.pid, {
+    ...f.dependencies,
+    surviveMainDeath: true,
+  })
+  f.empty()
+  f.commands.length = 0
+  assert.deepEqual(
+    await stopOwnedQualificationScope(bounded.groups[0].scopeProof, f.dependencies),
+    { signalRequested: false },
+  )
+  assert.equal(
+    f.commands.some(({ args }) => args.includes('kill') || args.includes('stop')),
+    false,
+  )
+  const exited = await confirmQualificationProcessExit([bounded], {
+    ...f.dependencies,
+    read: async (file) => {
+      if (file.startsWith('/proc/')) throw Object.assign(new Error('Gone'), { code: 'ENOENT' })
+      if (file.endsWith('/cgroup.events')) return 'populated 0\nfrozen 0\n'
+      return f.dependencies.read(file)
+    },
+  })
+  assert.deepEqual(exited.stoppedDeadlineTimers, bounded.groups[0].deadlineTimers)
+})
+
+test('Main-only fault invokes the pidfd transport with exactly the captured identity', async () => {
+  const f = fixture(),
+    identity = { pid: f.pid, start: '14256666', group: f.group }
+  let calls = 0
+  const result = await signalQualificationMain(identity, {
+    execute: async (program, args) => {
+      calls++
+      assert.equal(program, '/usr/bin/python3')
+      assert.deepEqual(args.slice(0, 3), ['-I', '-B', '-c'])
+      assert.ok(args[3].includes('os.pidfd_open') && args[3].includes('signal.pidfd_send_signal'))
+      assert.deepEqual(args.slice(4), [String(identity.pid), identity.start, identity.group])
+      return {
+        stdout: JSON.stringify({
+          ...identity,
+          pidfd: true,
+          signalRequested: true,
+          signal: 'SIGKILL',
+        }),
+      }
+    },
+  })
+  assert.equal(calls, 1)
+  assert.equal(result.pidfd, true)
+  await assert.rejects(
+    signalQualificationMain(
+      { ...identity, group: '/user.slice/foreign.scope' },
+      { execute: async () => assert.fail('Foreign authority must not reach a signal transport') },
+    ),
+  )
+  await assert.rejects(
+    signalQualificationMain(identity, { execute: async () => ({ stdout: '{}' }) }),
+    /not acknowledged exactly/,
+  )
+})
 
 test('KDE-moved Main and worker are checked in their actual scope, with finite kernel readback', async () => {
   const f = fixture()

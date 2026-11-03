@@ -43,6 +43,11 @@ import type {
 import { verifyInferenceAuxiliaryFile } from '../runtime/inference-auxiliary-resources.js'
 import { validWorkerVae } from './illustrious-generation-vae.js'
 import {
+  captureInferenceWorkerOwner,
+  type InferenceWorkerOwner,
+  InferenceWorkerOwnershipError,
+} from './inference-worker-ownership.js'
+import {
   type AnimaOutpaintRequestV1,
   captureOutpaintWorkerRequest,
   isOutpaintWorkerRequest,
@@ -161,6 +166,7 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
   private readonly exitPromise: Promise<void>
   private exitResolve!: () => void
   private forcedTermination = false
+  private inferenceOwner: InferenceWorkerOwner | undefined
   private readyMessage: GenerationWorkerReady | null = null
   private readonly requestTimeoutMs: number
   // A failed kill must not release files a still-running child may consume. A late physical
@@ -272,7 +278,19 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
           'The image worker has not confirmed exit.',
         )
       }
-      const child = spawn(executable, ['-I', '-m', 'imagegen_worker.inference_main'], {
+      const args =
+        process.platform === 'linux'
+          ? [
+              '-I',
+              '-m',
+              'imagegen_worker.owned_inference',
+              '--parent-pid',
+              String(process.pid),
+              '--scratch-base',
+              scratchBasePath,
+            ]
+          : ['-I', '-m', 'imagegen_worker.inference_main']
+      const child = spawn(executable, args, {
         cwd: runtimeRoot,
         env: {
           ...(options.environment ?? { LANG: 'C.UTF-8' }),
@@ -289,9 +307,28 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
         if (client.closed) {
           throw new GenerationWorkerError('PROTOCOL_ERROR', 'The worker stopped during startup.')
         }
+        if (process.platform === 'linux') {
+          if (!ready.capabilities.includes('linux-owned-inference-v1') || child.pid === undefined) {
+            throw new GenerationWorkerError(
+              'WORKER_VERSION_MISMATCH',
+              'The inference worker lifetime guard is unavailable.',
+            )
+          }
+          client.inferenceOwner = await captureInferenceWorkerOwner(child.pid)
+          if (client.closed) {
+            throw new GenerationWorkerError(
+              'WORKER_VERSION_MISMATCH',
+              'The inference worker exited during owner verification.',
+            )
+          }
+        }
         client.readyMessage = ready
         return client
       } catch (error) {
+        const failure =
+          error instanceof InferenceWorkerOwnershipError
+            ? new GenerationWorkerError('WORKER_VERSION_MISMATCH', error.message)
+            : error
         try {
           await client.close()
         } catch (closeError) {
@@ -300,7 +337,7 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
           }
           throw closeError
         }
-        throw error
+        throw failure
       }
     } finally {
       release()
@@ -398,7 +435,13 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
           'The active worker has not qualified private regional execution.',
         )
       }
-      lease = await prepareRegionalWorkerRequest(input, this.scratchBasePath)
+      if (process.platform === 'linux' && !this.inferenceOwner) {
+        throw new GenerationWorkerError(
+          'WORKER_VERSION_MISMATCH',
+          'The inference worker lifetime owner is unavailable.',
+        )
+      }
+      lease = await prepareRegionalWorkerRequest(input, this.scratchBasePath, this.inferenceOwner)
       if (this.closed) {
         throw new GenerationWorkerError('CLOSED', 'The generation worker is unavailable.')
       }

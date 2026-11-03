@@ -197,7 +197,10 @@ export class RuntimeManager {
           profile: 'linux-nvidia',
         }
       } else {
-        const prepared = await this.prepareQualification(pointer.value, this.roots.downloadsDir)
+        const prepared = await this.prepareQualification(
+          pointer.value,
+          path.join(this.roots.appDataDir, 'scratch'),
+        )
         if (this.generationWorkPrevented) {
           return this.shuttingDownStatus()
         }
@@ -305,7 +308,10 @@ export class RuntimeManager {
       if (pointer.kind !== 'valid') {
         return null
       }
-      const prepared = await this.prepareQualification(pointer.value, this.roots.downloadsDir)
+      const prepared = await this.prepareQualification(
+        pointer.value,
+        path.join(this.roots.appDataDir, 'scratch'),
+      )
       if (
         !prepared ||
         this.generationWorkPrevented ||
