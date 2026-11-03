@@ -980,3 +980,12 @@ predominantly white. The finite aggregate is NOT_QUALIFIED (1 PASS / 1 FAIL),
 with no human acceptance or regional assignment/reversal qualification. All
 public refusals, frozen-work independence, provenance exclusions and
 PP-001/007/008 statuses remain unchanged; no production default is selected.
+
+The subsequent [actual installed InvokeAI reference](../../../engineering/phase-4-illustrious-invoke-application-research.md)
+completes one ordinary seed123 request using the same external sampling/model/text
+settings. Invoke also misses the fixed count/color criterion. Text contexts and
+timesteps match Studio, but native initial noise/initialization and runtime differ;
+this supplies neither full parity nor a sole model-cause conclusion. It provides
+no new basis for changing regional masks or claiming regional visual acceptance.
+Public admission, frozen work, provenance exclusions and promise statuses stay
+unchanged.

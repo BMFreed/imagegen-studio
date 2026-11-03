@@ -1461,3 +1461,15 @@ image descriptions and ROOT's bounded review find partial improvement:
 seed124 loses the extra mug; seed123 has coherent support but a predominantly
 white mug. The finite visual result remains NOT_QUALIFIED (1 PASS / 1 FAIL).
 No default, regional visual acceptance or public-readiness change follows.
+
+## Actual installed InvokeAI ordinary reference
+
+The [one real InvokeAI 6.14.3 request](./phase-4-illustrious-invoke-application-research.md)
+uses the same seed123/checkpoint/text/Euler a28/CFG5/geometry/FP16 VAE through its
+installed API, loader, queue, native loop and PNG service. The context and timestep
+grid match Studio; initial noise and initialization differ explicitly. Invoke's
+image also fails the fixed scene criterion, with five white drinking vessels.
+This weakens a Studio-specific-only explanation without establishing a sole model
+cause or full numerical parity. One completed request/PNG is retained; controller
+exit90 records a residual owned process before group stop, followed by physical
+idle. No extra generation, implementation/default or readiness change follows.
