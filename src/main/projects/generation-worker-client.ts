@@ -25,6 +25,7 @@ import {
   supportsInferenceImg2Img,
   supportsInferenceLora,
   supportsInferenceOutpaint,
+  supportsInferenceRegionalProgress,
   supportsInferenceVaePrecision,
 } from '../../shared/projects/inference-worker-capabilities.js'
 
@@ -411,7 +412,10 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
   }
 
   /** Private explicit experiment. Returns owned PNG bytes; it never creates a queue candidate. */
-  async executeCurrentCanvasRegional(input: RegionalWorkerInput): Promise<RegionalWorkerResult> {
+  async executeCurrentCanvasRegional(
+    input: RegionalWorkerInput,
+    onProgress?: (progress: GenerationDenoisingProgress) => void,
+  ): Promise<RegionalWorkerResult> {
     if (this.closed) {
       throw new GenerationWorkerError('CLOSED', 'The generation worker is unavailable.')
     }
@@ -445,7 +449,10 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
       if (this.closed) {
         throw new GenerationWorkerError('CLOSED', 'The generation worker is unavailable.')
       }
-      const line = Buffer.from(`${JSON.stringify(lease.wire)}\n`, 'utf8')
+      const reportProgress =
+        typeof onProgress === 'function' && supportsInferenceRegionalProgress(this.ready)
+      const wire = reportProgress ? { ...lease.wire, reportProgress: true } : lease.wire
+      const line = Buffer.from(`${JSON.stringify(wire)}\n`, 'utf8')
       if (line.byteLength > MAX_PROTOCOL_LINE_BYTES) {
         throw new GenerationWorkerError('INVALID_REQUEST', 'The regional descriptor is too large.')
       }
@@ -455,6 +462,13 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
         lease.wire.requestId,
         lease.request.job.output.pngPath,
         'generation-done',
+        reportProgress
+          ? {
+              expectedTotalSteps: lease.request.job.sampling.steps,
+              maxSteps: lease.request.job.sampling.steps,
+              onProgress,
+            }
+          : undefined,
       )
       const result = await readRegionalWorkerResult(lease, response)
       if (this.closed) {

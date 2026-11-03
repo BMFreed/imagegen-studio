@@ -365,7 +365,9 @@ def test_actual_native_published_rgb_matches_independent_oracle(
     steps: int,
 ) -> None:
     signature = inspect.signature(output.generate_current_canvas_regional_txt2img)
-    assert tuple(signature.parameters) == ("recipe", *KEYWORDS)
+    assert tuple(signature.parameters) == ("recipe", *KEYWORDS, "on_progress")
+    assert signature.parameters["on_progress"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert signature.parameters["on_progress"].default is None
     assert signature.parameters["recipe"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
     assert all(
         signature.parameters[key].kind is inspect.Parameter.KEYWORD_ONLY

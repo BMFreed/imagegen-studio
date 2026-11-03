@@ -109,8 +109,16 @@ export class ProjectRegionalGenerationCoordinator {
     this.execution = options.orchestrator.createRegionalExecution(options.compositionProfile)
   }
 
+  getProgressSnapshot(): ReturnType<PrivateRegionalExecution['getProgressSnapshot']> {
+    return this.execution.getProgressSnapshot()
+  }
+
   onChanged(listener: () => void): () => void {
     return this.execution.onChanged(listener)
+  }
+
+  onProgress(listener: Parameters<PrivateRegionalExecution['onProgress']>[0]): () => void {
+    return this.execution.onProgress(listener)
   }
 
   async retry(

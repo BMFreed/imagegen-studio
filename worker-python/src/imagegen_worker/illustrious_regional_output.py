@@ -44,7 +44,7 @@ from .illustrious_regional_recipe import (
     _Profile,  # pyright: ignore[reportPrivateUsage]
     _recipe_inputs,  # pyright: ignore[reportPrivateUsage]
 )
-from .inference import MLRuntime
+from .inference import DenoisingProgressSink, MLRuntime
 from .protocol import (
     _REQUEST_ID_PATTERN,  # pyright: ignore[reportPrivateUsage]
     _SHA256_PATTERN,  # pyright: ignore[reportPrivateUsage]
@@ -203,15 +203,22 @@ def generate_current_canvas_regional_txt2img(
     positive_pooled_source_id: str,
     bindings: tuple[TransformerBinding, ...],
     layout: _Layout,
+    on_progress: DenoisingProgressSink | None = None,
 ) -> dict[str, object]:
     """Validate one frozen target, run once, and return the original publisher receipt.
 
-    All keywords are required. Metadata agreement precedes filesystem/native
+    Semantic keywords are required; the optional trusted scalar sink reports only
+    completed native denoising steps. Metadata agreement precedes filesystem/native
     work; snapshot verification precedes encoding. V1 retains one/two steps and
     no caller noise policy; V2 requires bounded steps and an exact detached
     four-field policy. Exact-TI copy and existing native preflights remain unchanged.
     Native, conversion and publication errors retain their identity and cause.
     """
+    _require(
+        on_progress is None or callable(on_progress),
+        "INPUT_INVALID",
+        "Regional progress requires a callable sink.",
+    )
     parameters = _command_parameters(command)
     # Preserve output's encoding-first refusal order and local execution-profile
     # error identity while sharing the runner's complete lane/version validator.
@@ -264,6 +271,7 @@ def generate_current_canvas_regional_txt2img(
         positive_pooled_source_id=positive_pooled_source_id,
         bindings=bindings,
         layout=layout,
+        **({"on_progress": on_progress} if on_progress is not None else {}),
     )
     image = _rgb_image(
         result,

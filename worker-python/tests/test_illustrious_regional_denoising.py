@@ -1262,9 +1262,10 @@ def test_settled_signature_only_required_inputs_and_no_execution_overrides(denoi
         "positive_pooled_source_id",
         "bindings",
         "layout",
+        "on_progress",
     )
     for name, parameter in signature.parameters.items():
-        assert parameter.default is inspect.Parameter.empty
+        assert parameter.default is (None if name == "on_progress" else inspect.Parameter.empty)
         assert parameter.kind is (
             inspect.Parameter.POSITIONAL_OR_KEYWORD
             if name == "recipe"

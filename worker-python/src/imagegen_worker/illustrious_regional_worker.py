@@ -40,7 +40,12 @@ from .illustrious_regional_recipe import (
     _Layout,  # pyright: ignore[reportPrivateUsage]
     _recipe_inputs,  # pyright: ignore[reportPrivateUsage]
 )
-from .inference import MLRuntime, load_illustrious_pipeline, validate_generation_assets
+from .inference import (
+    DenoisingProgressSink,
+    MLRuntime,
+    load_illustrious_pipeline,
+    validate_generation_assets,
+)
 from .inference_embeddings import read_embedding_snapshot
 from .protocol import (
     _REQUEST_ID_PATTERN,  # pyright: ignore[reportPrivateUsage]
@@ -83,6 +88,7 @@ class RegionalRequest:
     positive_pooled_source_id: str
     layout: _Layout
     composition_profile: str | None = None
+    report_progress: bool = False
 
 
 def _require(condition: bool, message: str) -> None:
@@ -342,9 +348,14 @@ def parse_regional_request(value: object) -> RegionalRequest:
     """Detach and verify one complete file handoff without loading native models."""
     envelope = _object(
         value,
-        {"type", "protocolVersion", "requestId", "stagingRoot", "bundle"},
+        {"type", "protocolVersion", "requestId", "stagingRoot", "bundle"}
+        | ({"reportProgress"} if type(value) is dict and "reportProgress" in value else set()),
         "Private regional request",
     )
+    if "reportProgress" in envelope:
+        _require(
+            envelope["reportProgress"] is True, "Regional reportProgress must be true when present."
+        )
     request_id = envelope["requestId"]
     _require(
         envelope["type"] == "execute-current-canvas-regional"
@@ -459,6 +470,7 @@ def parse_regional_request(value: object) -> RegionalRequest:
         positive_pooled_source_id=bundle["positivePooledSourceId"],
         layout=bundle["layout"],
         composition_profile=composition_profile,
+        report_progress=envelope.get("reportProgress") is True,
     )
 
 
@@ -470,10 +482,21 @@ def install_capture_hooks(pipeline: Any) -> None:
 
 
 def execute_regional_request(
-    value: object, *, config_dir: Path, runtime: MLRuntime
+    value: object,
+    *,
+    config_dir: Path,
+    runtime: MLRuntime,
+    on_progress: DenoisingProgressSink | None = None,
 ) -> dict[str, object]:
     """Load once and delegate one original native provisional publication."""
+    _require(
+        on_progress is None or callable(on_progress), "Regional progress requires a callable sink."
+    )
     request = parse_regional_request(value)
+    _require(
+        not request.report_progress or on_progress is not None,
+        "Requested regional progress requires an available callable sink.",
+    )
     torch = cast(Any, runtime.torch)
     with torch.no_grad():
         pipeline, _ = load_illustrious_pipeline(
@@ -503,4 +526,9 @@ def execute_regional_request(
             positive_pooled_source_id=request.positive_pooled_source_id,
             bindings=bindings,
             layout=request.layout,
+            **(
+                {"on_progress": on_progress}
+                if request.report_progress and on_progress is not None
+                else {}
+            ),
         )

@@ -1,5 +1,13 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
-import { isQualifiedInferenceWorkerReady } from '../../shared/projects/inference-worker-capabilities.js'
+import {
+  type GenerationDenoisingProgress,
+  type GenerationProgressSnapshot,
+  isGenerationDenoisingProgress,
+} from '../../shared/projects/generation-progress.js'
+import {
+  isQualifiedInferenceWorkerReady,
+  supportsInferenceRegionalProgress,
+} from '../../shared/projects/inference-worker-capabilities.js'
 
 import { createHash, randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
@@ -30,7 +38,10 @@ export type RegionalGenerationModelResolver = Pick<
 /** The private client verifies correlation and owned PNG bytes; close confirms physical exit. */
 export interface RegionalGenerationTransport {
   close: () => Promise<void>
-  executeCurrentCanvasRegional: (input: RegionalWorkerInput) => Promise<RegionalWorkerResult>
+  executeCurrentCanvasRegional: (
+    input: RegionalWorkerInput,
+    onProgress?: (progress: GenerationDenoisingProgress) => void,
+  ) => Promise<RegionalWorkerResult>
   readonly ready: InferenceWorkerReady
 }
 
@@ -47,6 +58,7 @@ interface ActiveRegionalJob {
   item: QueuedGenerationItem
   publication: Promise<VerifiedGenerationCandidate> | null
   publicationUncertain: boolean
+  receivingProgress: boolean
   runSettled: boolean
   signalCancel: (value: { completion: Promise<QueuedGenerationItem> }) => void
   terminal: boolean
@@ -93,6 +105,8 @@ export class RegionalGenerationProcessor {
   private currentRun: Promise<RegionalGenerationProcessorResult> | null = null
   private readonly listeners = new Set<() => void>()
   private readonly models: RegionalGenerationModelResolver
+  private progress: GenerationProgressSnapshot = { current: null, revision: 0 }
+  private readonly progressListeners = new Set<(snapshot: GenerationProgressSnapshot) => void>()
   private stopping = false
 
   constructor(
@@ -152,9 +166,18 @@ export class RegionalGenerationProcessor {
     return null
   }
 
+  getProgressSnapshot(): GenerationProgressSnapshot {
+    return structuredClone(this.progress)
+  }
+
   onChanged(listener: () => void): () => void {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
+  }
+
+  onProgress(listener: (snapshot: GenerationProgressSnapshot) => void): () => void {
+    this.progressListeners.add(listener)
+    return () => this.progressListeners.delete(listener)
   }
 
   /** Caller fences new claims first; this joins the scoped owner without permanently stopping it. */
@@ -235,6 +258,7 @@ export class RegionalGenerationProcessor {
   }
 
   private cancelActive(active: ActiveRegionalJob): Promise<QueuedGenerationItem> {
+    this.clearProgress(active)
     if (active.publicationUncertain) {
       return Promise.reject(publicationUncertain())
     }
@@ -289,12 +313,30 @@ export class RegionalGenerationProcessor {
     return active.cancelPromise
   }
 
+  private clearProgress(active: ActiveRegionalJob): void {
+    active.receivingProgress = false
+    if (this.progress.current?.jobId === active.item.id) {
+      this.publishProgress(null)
+    }
+  }
+
   private emitChanged(): void {
     for (const listener of this.listeners) {
       try {
         listener()
       } catch {
         /* Presentation observers cannot change queue or worker ownership. */
+      }
+    }
+  }
+
+  private publishProgress(current: GenerationProgressSnapshot['current']): void {
+    this.progress = { current, revision: this.progress.revision + 1 }
+    for (const listener of this.progressListeners) {
+      try {
+        listener(this.getProgressSnapshot())
+      } catch {
+        /* Presentation observers cannot mutate telemetry, queue or worker ownership. */
       }
     }
   }
@@ -395,6 +437,7 @@ export class RegionalGenerationProcessor {
       item: claimed.item,
       publication: null,
       publicationUncertain: false,
+      receivingProgress: false,
       runSettled: false,
       signalCancel,
       terminal: false,
@@ -413,12 +456,44 @@ export class RegionalGenerationProcessor {
         return { kind: 'canceled', queueItemId: claimed.item.id }
       }
       active.dispatched = true
+      active.receivingProgress = true
+      const expectedTotalSteps = input.request.job.sampling.steps
+      const onProgress = (progress: GenerationDenoisingProgress): void => {
+        if (
+          this.active !== active ||
+          !active.receivingProgress ||
+          active.cancelPromise ||
+          active.exitUnconfirmed ||
+          this.stopping ||
+          !supportsInferenceRegionalProgress(transport.ready) ||
+          !isGenerationDenoisingProgress(progress) ||
+          progress.totalSteps !== expectedTotalSteps
+        ) {
+          return
+        }
+        const previous = this.progress.current
+        if (
+          previous &&
+          (previous.totalSteps !== progress.totalSteps || previous.step >= progress.step)
+        ) {
+          return
+        }
+        this.publishProgress({
+          documentId: claimed.payload.context.documentId,
+          jobId: claimed.item.id,
+          projectKey: claimed.item.localProjectKey,
+          statusSequence: claimed.item.statusSequence,
+          step: progress.step,
+          totalSteps: progress.totalSteps,
+        })
+      }
       const outcome = await Promise.race([
         transport
-          .executeCurrentCanvasRegional(input)
+          .executeCurrentCanvasRegional(input, onProgress)
           .then((result) => ({ kind: 'done' as const, result })),
         active.cancelSignal.then(({ completion }) => ({ completion, kind: 'cancel' as const })),
       ])
+      this.clearProgress(active)
       if (outcome.kind === 'cancel') {
         await outcome.completion
         return { kind: 'canceled', queueItemId: claimed.item.id }
@@ -439,6 +514,7 @@ export class RegionalGenerationProcessor {
       active.terminal = true
       return { candidate, kind: 'completed', queueItemId: claimed.item.id }
     } catch {
+      this.clearProgress(active)
       if (active.cancelPromise) {
         const canceled = await active.cancelPromise
         if (canceled.status === 'completed' && active.publication) {
@@ -494,6 +570,7 @@ export class RegionalGenerationProcessor {
       // existing worker error owner, rather than exposing arbitrary exception text as queue data.
       return { kind: 'failed', queueItemId: claimed.item.id }
     } finally {
+      this.clearProgress(active)
       active.runSettled = true
       this.releaseIfSettled(active)
     }

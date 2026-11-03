@@ -88,6 +88,7 @@ def inference_ready_message(
             "smart-patch-seed-confirmation",
             "private-current-canvas-regional-v1",
             "illustrious-regional-invoke-v1",
+            "illustrious-regional-progress-v1",
             *(("linux-owned-inference-v1",) if owner_lifetime else ()),
             *(
                 ANIMA_CAPABILITIES
@@ -125,9 +126,34 @@ def process_inference_request(
         if private_type == "execute-current-canvas-regional":
             from imagegen_worker.illustrious_regional_worker import execute_regional_request
 
+            regional_progress = None
+            if (
+                cast(dict[str, object], value).get("reportProgress") is True
+                and on_progress is not None
+            ):
+                if not callable(on_progress):
+                    raise DerivativeError(
+                        "INVALID_REQUEST", "Regional progress requires a callable sink."
+                    )
+
+                def report_regional_progress(step: int, total_steps: int) -> None:
+                    on_progress(
+                        {
+                            "type": "generation-progress",
+                            "protocolVersion": PROTOCOL_VERSION,
+                            "requestId": request_id,
+                            "step": step,
+                            "totalSteps": total_steps,
+                        }
+                    )
+
+                regional_progress = report_regional_progress
             with contextlib.redirect_stdout(sys.stderr):
                 return execute_regional_request(
-                    cast(object, value), config_dir=config_dir, runtime=runtime
+                    cast(object, value),
+                    config_dir=config_dir,
+                    runtime=runtime,
+                    **({"on_progress": regional_progress} if regional_progress is not None else {}),
                 )
         command = parse_request(cast(object, value))
         if isinstance(command, ComposeTargetCommand):

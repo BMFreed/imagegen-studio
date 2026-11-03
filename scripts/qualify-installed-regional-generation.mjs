@@ -89,9 +89,11 @@ assert.ok(
     'installed-regional-invoke-v1',
     'installed-regional-invoke-recovery-v1',
     'installed-regional-invoke-main-death-v1',
+    'installed-regional-invoke-progress-v1',
   ].includes(fixture.profile),
 )
 const mainDeathProfile = fixture.profile === 'installed-regional-invoke-main-death-v1'
+const progressProfile = fixture.profile === 'installed-regional-invoke-progress-v1'
 const recoveryProfile =
   mainDeathProfile || fixture.profile === 'installed-regional-invoke-recovery-v1'
 assert.ok(
@@ -207,6 +209,9 @@ let activeLifetime = null,
   previousTransport = null,
   mainDeathControls = null
 const baselinePackages = []
+let preservationBaseline = null,
+  progressProject = null,
+  progressDomInstalled = false
 let sampling = Promise.resolve()
 const nativeChecks = []
 const projects = []
@@ -312,6 +317,8 @@ async function verifyProvision() {
   for (const cap of ['illustrious-regional-invoke-v1', 'private-current-canvas-regional-v1'])
     assert.ok(provision.ready.capabilities.includes(cap), `Missing installed capability ${cap}`)
   if (mainDeathProfile) assert.ok(provision.ready.capabilities.includes('linux-owned-inference-v1'))
+  if (progressProfile)
+    assert.ok(provision.ready.capabilities.includes('illustrious-regional-progress-v1'))
   assert.equal(
     await hashFile('worker-python/pyproject.toml'),
     provision.inputs.worker.pyprojectSha256,
@@ -361,6 +368,17 @@ async function verifyProvision() {
       .map((name) => `dist/renderer/assets/${name}`),
   ]
   report.sourceSha256 = await captureFiles(sourceFiles)
+  if (progressProfile)
+    report.progressSourceSha256 = await captureFiles([
+      'src/main/projects/generation-progress-source.ts',
+      'src/shared/projects/generation-progress.ts',
+      'src/renderer/components/GenerationProgressIndicator.vue',
+      'worker-python/src/imagegen_worker/inference_main.py',
+      'worker-python/src/imagegen_worker/illustrious_regional_worker.py',
+      'worker-python/src/imagegen_worker/illustrious_regional_output.py',
+      'worker-python/src/imagegen_worker/illustrious_regional_denoising.py',
+      'worker-python/src/imagegen_worker/inference.py',
+    ])
   report.bundleSha256 = await captureFiles(bundleFiles)
   report.sourceRevision = (
     await exec('git', ['rev-parse', 'HEAD'], { timeout: timeout(10_000) })
@@ -374,6 +392,15 @@ async function verifyProvision() {
       'invokeai/app/api/routers/session_queue.py',
       'invokeai/app/services/session_processor/session_processor_default.py',
       'invokeai/frontend/webv1/src/features/controlLayers/components/StagingArea/StagingAreaToolbarAcceptButton.tsx',
+      ...(progressProfile
+        ? [
+            'invokeai/app/invocations/sd/denoise_latents.py',
+            'invokeai/backend/stable_diffusion/extensions/preview.py',
+            'invokeai/app/services/shared/invocation_context.py',
+            'invokeai/app/util/step_callback.py',
+            'invokeai/app/services/events/events_base.py',
+          ]
+        : []),
     ],
   }
   report.launcherBounds = await assertUpgradeBounds({ maxRuntimeSeconds: fixture.deadlineSeconds })
@@ -520,12 +547,188 @@ function statIdentity(stat) {
     ctimeMs: stat.ctimeMs,
   }
 }
+async function allSqlTables(db) {
+  const tables = await db
+    .selectFrom('sqlite_master')
+    .select(['name', 'sql'])
+    .where('type', '=', 'table')
+    .orderBy('name')
+    .execute()
+  assert.ok(tables.length > 0 && tables.length <= 128)
+  return await Promise.all(
+    tables.map(async ({ name, sql }) => {
+      assert.match(name, /^[a-zA-Z_][a-zA-Z0-9_]*$/)
+      const rows = await db.selectFrom(name).selectAll().execute()
+      assert.ok(rows.length <= 100_000)
+      rows.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))
+      return { name, sql, rows }
+    }),
+  )
+}
+async function preservedFiles(root) {
+  const result = []
+  if (!existsSync(root)) return result
+  await directory(root)
+  let total = 0
+  const visit = async (parent) => {
+    for (const name of (await readdir(parent)).sort()) {
+      const file = path.join(parent, name),
+        stat = await lstat(file)
+      assert.ok(!stat.isSymbolicLink(), 'Preservation never follows symbolic links')
+      if (stat.isDirectory()) {
+        await directory(file)
+        await visit(file)
+      } else {
+        assert.ok(stat.isFile() && stat.nlink === 1)
+        assert.ok(result.length < 8192 && stat.size <= 128 * 1024 ** 2)
+        total += stat.size
+        assert.ok(total <= 512 * 1024 ** 2, 'Existing preservation payload exceeds finite bound')
+        await regular(file)
+        result.push({ path: file, byteSize: stat.size, sha256: await hashFile(file) })
+      }
+    }
+  }
+  await visit(root)
+  return result
+}
+async function captureProgressPreservation() {
+  const sql = await sqlSnapshot(),
+    completed = sql.queue.filter(({ status }) => status === 'completed')
+  assert.ok(sql.queue.length >= 8 && sql.queue.length <= 256)
+  assert.deepEqual([sql.receipts.length, sql.cursors.length], [4, 4])
+  assert.equal(completed.length, 4)
+  assert.equal(sql.queue.filter(({ status }) => status === 'canceled').length, sql.queue.length - 4)
+  assert.ok(sql.queue.every(({ operation }) => operation === 'illustrious-regional-txt2img'))
+  const indexed = await database.db
+    .selectFrom('project_index')
+    .selectAll()
+    .orderBy('canonical_path')
+    .execute()
+  assert.ok(indexed.length >= 18 && indexed.length <= 1024)
+  const accepted = []
+  for (const record of indexed) {
+    assert.equal(record.file_health, 'ready')
+    assert.ok(within(path.join(appDataRoot, 'workspaces'), record.canonical_path))
+    await regular(record.canonical_path)
+    baselinePackages.push({
+      path: record.canonical_path,
+      sha256: await hashFile(record.canonical_path),
+    })
+    const saved = await readZip(record.canonical_path)
+    for (const layer of saved.project.layers) {
+      const id = layer.generationProvenance?.executionResultContext?.queueItemId
+      if (layer.kind !== 'raster' || !completed.some((row) => row.id === id)) continue
+      const receipt = sql.receipts.find(({ queue_item_id }) => queue_item_id === id)
+      assert.ok(receipt)
+      assert.equal(layer.asset.sha256, receipt.image_sha256)
+      assert.equal(digest(saved.members.get(layer.asset.path)), receipt.image_sha256)
+      accepted.push({ queueItemId: id, path: record.canonical_path, layerId: layer.id })
+    }
+  }
+  assert.equal(accepted.length, 3)
+  assert.equal(new Set(accepted.map(({ queueItemId }) => queueItemId)).size, 3)
+  const recoveryFiles = await preservedFiles(path.join(appDataRoot, 'recovery')),
+    inputFiles = await preservedFiles(path.join(appDataRoot, 'generation-inputs')),
+    unaccepted = completed.filter(
+      (row) => !accepted.some(({ queueItemId }) => queueItemId === row.id),
+    )
+  assert.equal(unaccepted.length, 1)
+  let controlPng
+  for (const row of completed) {
+    const receipt = sql.receipts.find(({ queue_item_id }) => queue_item_id === row.id)
+    assert.ok(receipt && receipt.status === 'completed')
+    const outputs = recoveryFiles.filter(({ path: file }) =>
+      file.endsWith(`/assets/${receipt.candidate_id}.png`),
+    )
+    if (unaccepted.some(({ id }) => id === row.id)) {
+      assert.equal(outputs.length, 1)
+      const decoded = decodePng(await readFile(outputs[0].path))
+      assert.equal(decoded.iccSha256, IGS_SRGB_ICC_SHA256)
+      controlPng = { ...outputs[0], rgbaSha256: decoded.rgbaSha256, queueItemId: row.id }
+    }
+    for (const output of outputs) {
+      assert.equal(output.sha256, receipt.image_sha256)
+      assert.equal(output.byteSize, receipt.image_byte_size)
+    }
+  }
+  preservationBaseline = {
+    sql,
+    tables: await allSqlTables(database.db),
+    packages: structuredClone(baselinePackages),
+    files: [...recoveryFiles, ...inputFiles],
+    accepted,
+    unacceptedJobIds: unaccepted.map(({ id }) => id),
+    controlPng,
+  }
+  report.preservationBaseline = preservationBaseline
+  report.boundary.calls =
+    'One original 30-step seed123 Generate canceled after genuine completed-step/UI observations >=5/30, followed by one explicit frozen Queue Retry and one healthy PNG; one Electron lifetime, exactly two regional wires.'
+  report.boundary.progress =
+    'Original numeric JSONL from the pinned unchanged native callback path -> original Main transient IPC -> existing Project/Queue counter/bar. No Python callback interception, tensor requests, previews, fabricated events or denoising loop; final30/30 precedes completion and clears on settlement.'
+  report.boundary.preconditions = `Reuse the terminal${sql.queue.length}/receipt4/cursor4/${indexed.length}-package pool, including three accepted jobs and one unaccepted candidate. Prior excluded attempts remain retained. All prior SQL/package/candidate/input bytes are dynamically pinned; three new Project fixtures are authored without resetting prior state.`
+  check('Existing terminal pool, all SQL tables, packages and candidate/input files pinned')
+}
+function ownProgressSql(whole) {
+  assert.ok(progressProject?.id && preservationBaseline)
+  for (const [name, rows] of Object.entries(whole))
+    assert.deepEqual(
+      rows.filter(({ local_project_key }) => local_project_key !== progressProject.id),
+      preservationBaseline.sql[name],
+      `Prior operational ${name} rows must remain exact`,
+    )
+  return Object.fromEntries(
+    Object.entries(whole).map(([name, rows]) => [
+      name,
+      rows.filter(({ local_project_key }) => local_project_key === progressProject.id),
+    ]),
+  )
+}
+async function progressSql() {
+  return ownProgressSql(await sqlSnapshot())
+}
+async function verifyProgressPreservation(db) {
+  const tables = await allSqlTables(db)
+  assert.deepEqual(
+    tables.map(({ name, sql }) => ({ name, sql })),
+    preservationBaseline.tables.map(({ name, sql }) => ({ name, sql })),
+  )
+  for (const before of preservationBaseline.tables) {
+    const after = tables.find(({ name }) => name === before.name)
+    const normalized = (row) => {
+      const value = { ...row }
+      // Home's rebuildable index refreshes indexed_at on a real rescan; retain raw observations.
+      if (before.name === 'project_index') delete value.indexed_at
+      return JSON.stringify(value)
+    }
+    for (const row of before.rows) {
+      if (before.name === 'sqlite_sequence') {
+        const current = after.rows.find(({ name }) => name === row.name)
+        assert.ok(current)
+        assert.equal(current.seq, row.seq + (row.name === 'generation_candidate_receipt' ? 1 : 0))
+      } else {
+        assert.ok(
+          after.rows.some((value) => normalized(value) === normalized(row)),
+          `Historical SQL row changed: ${before.name}`,
+        )
+      }
+    }
+  }
+  for (const file of [...preservationBaseline.packages, ...preservationBaseline.files]) {
+    const stat = await regular(file.path)
+    if (file.byteSize !== undefined) assert.equal(stat.size, file.byteSize)
+    assert.equal(await hashFile(file.path), file.sha256, `Historical bytes changed: ${file.path}`)
+  }
+  report.preservationAfter = { tables, sql: await sqlSnapshot(db) }
+  ownProgressSql(report.preservationAfter.sql)
+  check('All prior SQL rows, packages, accepted history and unaccepted candidate bytes preserved')
+}
 async function prepareCatalogAndProjects() {
   modelStat = statIdentity(await regular(fixture.checkpoint.path))
   assert.equal(modelStat.size, fixture.checkpoint.byteSize)
   assert.equal(await hashFile(fixture.checkpoint.path), fixture.checkpoint.sha256)
   await qualifySdxlCheckpoint(fixture.checkpoint.path)
   database = openAppDatabase(appDataRoot, path.resolve('src/main/db/migrations'))
+  if (progressProfile) await captureProgressPreservation()
   if (recoveryProfile) {
     baselineSql = await sqlSnapshot()
     const priorCount = mainDeathProfile ? 3 : 1
@@ -628,7 +831,7 @@ async function prepareCatalogAndProjects() {
   }
   const repository = new ModelRepository(database.db)
   let entry = await repository.findExactFileDuplicate({ sha256: fixture.checkpoint.sha256 })
-  if (recoveryProfile)
+  if (recoveryProfile || progressProfile)
     assert.ok(
       entry,
       'Recovery reuses the existing exact original-file catalog entry; no new model adoption',
@@ -888,7 +1091,7 @@ async function bounds(label, refreshMainDeathProof = false) {
 /** Pass-through observers: no IPC result, spawn option, stdin argument or worker response changes. */
 async function installObservers() {
   await application.evaluate(
-    async ({ ipcMain }, ownership) => {
+    async ({ ipcMain, webContents }, ownership) => {
       if (globalThis.__regionalInstalledObserver) throw new Error('Observer already installed')
       const cp = process.getBuiltinModule('child_process')
       const fs = process.getBuiltinModule('fs')
@@ -904,9 +1107,44 @@ async function installObservers() {
         originals: new Map(),
         wrappers: new Map(),
         restores: [],
+        ...(ownership.progress ? { order: 0, progress: [], terminals: [] } : {}),
       }
       globalThis.__regionalInstalledObserver = state
       const fault = (error) => state.faults.push(String(error.stack ?? error))
+      if (ownership.progress) {
+        for (const contents of webContents.getAllWebContents()) {
+          const original = contents.send,
+            descriptor = Object.getOwnPropertyDescriptor(contents, 'send')
+          const wrapper = function (channel, ...args) {
+            let record
+            try {
+              if (channel === 'projects:generation-progress') {
+                if (state.progress.length >= 2048)
+                  throw new Error('Progress IPC observation exceeds bound')
+                record = {
+                  order: ++state.order,
+                  at: new Date().toISOString(),
+                  snapshot: structuredClone(args[0]),
+                  originalCalls: 1,
+                  receiverMatches: this === contents,
+                  terminalCount: state.terminals.length,
+                }
+                state.progress.push(record)
+              }
+            } catch (error) {
+              fault(error)
+            }
+            return Reflect.apply(original, this, [channel, ...args])
+          }
+          contents.send = wrapper
+          state.restores.push(() => {
+            if (contents.send !== wrapper) throw new Error('Progress send observer changed owner')
+            if (descriptor) Object.defineProperty(contents, 'send', descriptor)
+            else delete contents.send
+            if (contents.send !== original) throw new Error('Progress send restoration differs')
+          })
+        }
+      }
       const absent = (file) => {
         try {
           fs.lstatSync(file)
@@ -1037,6 +1275,7 @@ async function installObservers() {
               writeRestored: false,
               ready: null,
               stdoutRestored: false,
+              ...(ownership.progress ? { frames: [] } : {}),
             }
             state.workers.push(worker)
             const originalWrite = child.stdin.write
@@ -1097,12 +1336,44 @@ async function installObservers() {
                   response = response.slice(newline + 1)
                   if (!line) continue
                   const message = JSON.parse(line)
+                  if (
+                    ownership.progress &&
+                    ['generation-progress', 'generation-done', 'error'].includes(message.type)
+                  ) {
+                    if (Buffer.byteLength(line) > 64 * 1024 || worker.frames.length >= 1024)
+                      throw new Error('Progress frame observation exceeds bound')
+                    if (message.type === 'generation-progress') {
+                      const expected = [
+                        'protocolVersion',
+                        'requestId',
+                        'step',
+                        'totalSteps',
+                        'type',
+                      ]
+                      if (JSON.stringify(Object.keys(message).sort()) !== JSON.stringify(expected))
+                        throw new Error('Numeric progress must not contain tensors or previews')
+                    }
+                    const record = {
+                      order: ++state.order,
+                      at: new Date().toISOString(),
+                      message,
+                      byteSize: Buffer.byteLength(line),
+                      sha256: sha(Buffer.from(line)),
+                    }
+                    worker.frames.push(record)
+                    if (message.type !== 'generation-progress') state.terminals.push(record)
+                  }
                   if (message.type !== 'ready') continue
                   worker.ready = message
                   const inference =
                     worker.args.includes('imagegen_worker.owned_inference') ||
                     worker.args.includes('imagegen_worker.inference_main')
                   if (!inference) continue
+                  if (
+                    ownership.progress &&
+                    !message.capabilities?.includes('illustrious-regional-progress-v1')
+                  )
+                    throw new Error('Original inference Ready lacks regional progress capability')
                   const guarded =
                     message.capabilities?.includes('linux-owned-inference-v1') === true
                   const expected = guarded
@@ -1201,10 +1472,20 @@ async function installObservers() {
             }
             child.stdout.on('data', onData)
             const onExit = (code, signal) => {
-              worker.exit = { at: new Date().toISOString(), code, signal }
+              worker.exit = {
+                at: new Date().toISOString(),
+                code,
+                signal,
+                ...(ownership.progress ? { order: ++state.order } : {}),
+              }
             }
             const onClose = (code, signal) => {
-              worker.close = { at: new Date().toISOString(), code, signal }
+              worker.close = {
+                at: new Date().toISOString(),
+                code,
+                signal,
+                ...(ownership.progress ? { order: ++state.order } : {}),
+              }
             }
             child.once('exit', onExit)
             child.once('close', onClose)
@@ -1279,13 +1560,28 @@ async function installObservers() {
               originalCalls: 1,
               startedAt: new Date().toISOString(),
               finished: false,
+              ...(ownership.progress
+                ? {
+                    startedOrder: ++state.order,
+                    progressBeforeInvoke: structuredClone(state.progress.at(-1) ?? null),
+                  }
+                : {}),
             }
             state.ipc.push(record)
           } catch (error) {
             fault(error)
           }
           try {
-            const result = await Reflect.apply(original, this, args)
+            const pending = Reflect.apply(original, this, args)
+            if (
+              ownership.progress &&
+              record &&
+              ['projects:cancel-generation-job', 'projects:cancel-current-generation'].includes(
+                channel,
+              )
+            )
+              record.synchronousProgressAfterInvoke = structuredClone(state.progress.at(-1) ?? null)
+            const result = await pending
             try {
               if (record) {
                 record.ok = result?.ok ?? null
@@ -1302,6 +1598,7 @@ async function installObservers() {
             if (record) {
               record.finished = true
               record.finishedAt = new Date().toISOString()
+              if (ownership.progress) record.finishedOrder = ++state.order
             }
           }
         }
@@ -1312,6 +1609,7 @@ async function installObservers() {
     },
     {
       required: mainDeathProfile,
+      progress: progressProfile,
       scratch: path.join(appDataRoot, 'scratch'),
       previous: previousTransport,
       controls: mainDeathControls,
@@ -1343,6 +1641,7 @@ async function observerSnapshot(restore = false) {
       workers: state.workers,
       ipc: state.ipc,
       faults: state.faults,
+      ...(state.progress ? { progress: state.progress, terminals: state.terminals } : {}),
     }
   }, restore)
 }
@@ -1353,6 +1652,252 @@ function regionalWires(snapshot) {
         .filter(({ type }) => type === 'execute-current-canvas-regional')
         .map((wire) => ({ pid: worker.pid, ...wire })),
     ),
+  )
+}
+
+async function installProgressDomObserver() {
+  await window.evaluate(() => {
+    if (globalThis.__regionalProgressDom) throw new Error('DOM observer already installed')
+    const state = { records: [], faults: [], last: null }
+    const observe = () => {
+      try {
+        const counters = [...document.querySelectorAll('[data-testid="generation-progress"]')]
+          .filter((node) => node.getBoundingClientRect().width > 0)
+          .map((node) => ({
+            text: node.querySelector('span')?.textContent?.trim(),
+            percentage: Number(
+              node.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow'),
+            ),
+            jobId: node.closest('[data-job-id]')?.getAttribute('data-job-id') ?? null,
+            projectFooter: node.classList.contains('generation-footer-progress'),
+          }))
+        const value = {
+          counters,
+          cancelEnabled:
+            document.querySelector('[aria-label="Cancel current generation"]')?.disabled === false,
+        }
+        const key = JSON.stringify(value)
+        if (key === state.last) return
+        if (state.records.length >= 2048) throw new Error('DOM progress observation exceeds bound')
+        state.records.push({ at: new Date().toISOString(), ...value })
+        state.last = key
+      } catch (error) {
+        state.faults.push(String(error.stack ?? error))
+      }
+    }
+    state.observer = new MutationObserver(observe)
+    state.observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+    })
+    globalThis.__regionalProgressDom = state
+    observe()
+  })
+  progressDomInstalled = true
+}
+async function retainProgressDom(restore = false) {
+  return await window.evaluate((restore) => {
+    const state = globalThis.__regionalProgressDom
+    if (!state) throw new Error('DOM progress observer missing')
+    if (restore) state.observer.disconnect()
+    return { records: state.records, faults: state.faults, restored: restore }
+  }, restore)
+}
+async function progressProbe(project, row, minimumStep) {
+  let evidence
+  await expect
+    .poll(
+      async () => {
+        const value = await api('getGenerationProgress'),
+          running = await job(row.id)
+        if (running.status === 'pending') return false
+        assert.equal(
+          running.status,
+          'running',
+          'Progress must be observed before terminal completion',
+        )
+        const current = value.current
+        if (!current || current.jobId !== row.id || current.step < minimumStep) return false
+        assert.equal(current.documentId, project.document.documentId)
+        assert.equal(current.projectKey, project.id)
+        assert.equal(current.statusSequence, running.status_sequence)
+        assert.equal(current.totalSteps, 30)
+        assert.ok(current.step < 30, 'A genuine intermediate step is required before Cancel')
+        const dom = await retainProgressDom(),
+          latest = dom.records.at(-1),
+          wanted = `Denoising step ${current.step} of 30`,
+          projectCounter = latest?.counters.find(
+            (counter) => counter.projectFooter && counter.text === wanted,
+          ),
+          queueCounter = latest?.counters.find(
+            (counter) => counter.jobId === row.id && counter.text === wanted,
+          )
+        assert.deepEqual(dom.faults, [])
+        if (!projectCounter || !queueCounter) return false
+        for (const counter of [projectCounter, queueCounter])
+          assert.ok(Math.abs(counter.percentage - (current.step / 30) * 100) < 1e-8)
+        assert.equal(latest.cancelEnabled, true)
+        evidence = {
+          snapshot: value,
+          row: running,
+          projectCounter,
+          queueCounter,
+          observedAt: latest.at,
+        }
+        return true
+      },
+      { timeout: timeout(300_000), intervals: [50, 100, 200] },
+    )
+    .toBe(true)
+  return evidence
+}
+async function progressBeforeCancel(project, row) {
+  const first = await progressProbe(project, row, 5),
+    before = await progressSql(),
+    second = await progressProbe(project, row, first.snapshot.current.step + 1)
+  assert.deepEqual(await progressSql(), before, 'Step events cannot mutate queue/receipt/seed rows')
+  const observed = await observerSnapshot(),
+    wires = regionalWires(observed)
+  assert.deepEqual(observed.faults, [])
+  assert.equal(wires.length, 1)
+  assert.equal(wires[0].reportProgress, true)
+  const worker = observed.workers.find(({ pid }) => pid === wires[0].pid)
+  assert.ok(worker.ready.capabilities.includes('illustrious-regional-progress-v1'))
+  report.progress = { beforeCancel: { first, second, sql: before, requestId: wires[0].requestId } }
+  report.cancellationBoundary =
+    'Cancel follows two genuine native-path JSONL/Main/UI step observations >=5/30; no elapsed-time estimate.'
+  check(
+    'Original scalar JSONL and Main snapshot reach existing Project/Queue counter and bar before Cancel',
+    report.progress.beforeCancel,
+  )
+}
+async function progressAfterCancel(row) {
+  assert.equal((await api('getGenerationProgress')).current, null)
+  await expect(window.getByTestId('generation-progress')).toHaveCount(0)
+  const observed = await observerSnapshot(),
+    call = observed.ipc.find(({ channel }) =>
+      ['projects:cancel-generation-job', 'projects:cancel-current-generation'].includes(channel),
+    ),
+    before = call?.progressBeforeInvoke,
+    cleared = observed.progress.find(
+      ({ order, snapshot }) => order > call.startedOrder && snapshot.current === null,
+    ),
+    wire = regionalWires(observed)[0],
+    worker = observed.workers.find(({ pid }) => pid === wire.pid)
+  assert.ok(call?.finished && call.ok === true)
+  assert.equal(before.snapshot.current.jobId, row.id)
+  assert.ok(cleared && cleared.snapshot.revision > before.snapshot.revision)
+  assert.ok(worker.exit && worker.close, 'Cancel acknowledgment follows physical child exit')
+  assert.ok(cleared.order < worker.exit.order && worker.close.order < call.finishedOrder)
+  assert.ok(
+    observed.progress
+      .filter(({ order }) => order > cleared.order)
+      .every(({ snapshot }) => snapshot.current?.jobId !== row.id),
+  )
+  report.progress.cancel = { call, cleared, workerExit: worker.exit, workerClose: worker.close }
+  check(
+    'Cancel invalidates progress before child exit and acknowledgment, without stale-owner repaint',
+    report.progress.cancel,
+  )
+}
+async function verifyInstalledProgress(project, retryRow) {
+  const observed = await observerSnapshot(),
+    wires = regionalWires(observed),
+    framesFor = (id) =>
+      observed.workers
+        .flatMap(({ frames }) => frames ?? [])
+        .filter(({ message }) => message.requestId === id),
+    firstFrames = framesFor(wires[0].requestId),
+    retryFrames = framesFor(wires[1].requestId)
+  assert.deepEqual(observed.faults, [])
+  assert.equal(wires.length, 2)
+  assert.notEqual(wires[0].requestId, wires[1].requestId)
+  for (const wire of wires) assert.equal(wire.reportProgress, true)
+  const numeric = (frames) => frames.filter(({ message }) => message.type === 'generation-progress')
+  const first = numeric(firstFrames),
+    retry = numeric(retryFrames)
+  assert.ok(first.length >= 5 && first.length < 30)
+  assert.deepEqual(
+    first.map(({ message }) => message.step),
+    Array.from({ length: first.length }, (_, index) => index + 1),
+  )
+  assert.deepEqual(
+    retry.map(({ message }) => message.step),
+    Array.from({ length: 30 }, (_, index) => index + 1),
+  )
+  for (const frame of [...first, ...retry]) {
+    assert.deepEqual(Object.keys(frame.message).sort(), [
+      'protocolVersion',
+      'requestId',
+      'step',
+      'totalSteps',
+      'type',
+    ])
+    assert.equal(frame.message.protocolVersion, '1')
+    assert.equal(frame.message.totalSteps, 30)
+  }
+  assert.equal(
+    firstFrames.filter(({ message }) => message.type !== 'generation-progress').length,
+    0,
+  )
+  const done = retryFrames.filter(({ message }) => message.type === 'generation-done')
+  assert.equal(done.length, 1)
+  assert.equal(retryFrames.filter(({ message }) => message.type === 'error').length, 0)
+  assert.ok(
+    retry.at(-1).order < done[0].order,
+    '30/30 is a denoising event before terminal PNG completion',
+  )
+  const main = observed.progress.filter(({ snapshot }) => snapshot.current?.jobId === retryRow.id)
+  assert.ok(
+    observed.progress
+      .filter(({ order }) => order > report.progress.cancel.cleared.order)
+      .every(({ snapshot }) => snapshot.current?.jobId !== report.retry.firstJobId),
+  )
+  assert.deepEqual(
+    main.map(({ snapshot }) => snapshot.current.step),
+    Array.from({ length: 30 }, (_, index) => index + 1),
+  )
+  for (const record of main) {
+    assert.equal(record.originalCalls, 1)
+    assert.equal(record.receiverMatches, true)
+    assert.equal(record.snapshot.current.documentId, project.document.documentId)
+    assert.equal(record.snapshot.current.projectKey, project.id)
+    assert.equal(record.snapshot.current.totalSteps, 30)
+  }
+  // The transparent stdout listener can see several lines before the production
+  // parser consumes the same chunk. Compare wire order within that stream and
+  // Main order within its stream; cross-listener callback order is not a fence.
+  assert.ok(
+    observed.progress.some(
+      ({ order, snapshot }) => order > main.at(-1).order && snapshot.current === null,
+    ),
+  )
+  assert.equal((await api('getGenerationProgress')).current, null)
+  await expect(window.getByTestId('generation-progress')).toHaveCount(0)
+  const dom = await retainProgressDom()
+  assert.deepEqual(dom.faults, [])
+  assert.ok(
+    dom.records.some(
+      ({ counters, cancelEnabled }) =>
+        cancelEnabled &&
+        counters.some(
+          ({ text, projectFooter }) => projectFooter && text === 'Denoising step 30 of 30',
+        ),
+    ),
+    'Final denoising counter remains Running before decode/publication',
+  )
+  report.progress.completed = {
+    firstFrames,
+    retryFrames,
+    main,
+    dom,
+    final: await api('getGenerationProgress'),
+  }
+  check(
+    'Frozen Retry restarts at1, reports original1..30, retains denoising30/30 before terminal PNG, then clears',
+    { originalFrameCount: retry.length, mainEventCount: main.length },
   )
 }
 
@@ -1441,6 +1986,19 @@ async function launch() {
     env,
     timeout: timeout(),
   })
+  if (progressProfile) {
+    const child = application.process(),
+      trace = { pid: child.pid, stdout: '', stderr: '', exit: null }
+    report.startupTrace = trace
+    for (const name of ['stdout', 'stderr'])
+      child[name]?.on('data', (bytes) => {
+        trace[name] = (trace[name] + bytes.toString('utf8')).slice(-64 * 1024)
+      })
+    child.once('exit', (code, signal) => {
+      trace.exit = { code, signal, at: new Date().toISOString() }
+      checkpoint()
+    })
+  }
   const observing = mainDeathProfile ? installObservers() : null
   if (observing) void observing.catch(() => {})
   await bounds('launch')
@@ -1706,6 +2264,7 @@ async function save(project) {
     .toBe(false)
 }
 async function generateCancelEditRetry(project) {
+  const scenarioSql = progressProfile ? progressSql : sqlSnapshot
   await openProject(project)
   const beforeGeneratePackageSha256 = await hashFile(project.file)
   assert.equal(beforeGeneratePackageSha256, project.initialPackageSha256)
@@ -1721,7 +2280,7 @@ async function generateCancelEditRetry(project) {
   await expect(count).toHaveValue('1')
   const generate = window.getByRole('button', { name: 'Generate', exact: true })
   await expect(generate).toBeEnabled({ timeout: timeout(120_000) })
-  const baseline = await sqlSnapshot()
+  const baseline = await scenarioSql()
   assert.deepEqual(
     baseline,
     { queue: [], receipts: [], cursors: [] },
@@ -1729,9 +2288,9 @@ async function generateCancelEditRetry(project) {
   )
   await generate.click()
   await expect
-    .poll(async () => (await sqlSnapshot()).queue.length, { timeout: timeout(180_000) })
+    .poll(async () => (await scenarioSql()).queue.length, { timeout: timeout(180_000) })
     .toBe(1)
-  const first = (await sqlSnapshot()).queue[0]
+  const first = (await scenarioSql()).queue[0]
   await expect
     .poll(async () => (await job(first.id)).status, { timeout: timeout(180_000) })
     .toBe('running')
@@ -1771,6 +2330,7 @@ async function generateCancelEditRetry(project) {
     captured: firstCaptured,
     observedRegionalWires: regionalWires(snapshot),
   }
+  if (progressProfile) await progressBeforeCancel(project, first)
   await screenshot('running-before-cancel')
   await queueRow(first.id).getByRole('button', { name: 'Cancel job', exact: true }).click()
   await expect
@@ -1782,7 +2342,7 @@ async function generateCancelEditRetry(project) {
       timeout: timeout(120_000),
     })
     .toBe('idle')
-  const canceled = await sqlSnapshot()
+  const canceled = await scenarioSql()
   assert.equal(canceled.queue.length, 1)
   assert.deepEqual(canceled.receipts, [])
   assert.deepEqual(canceled.cursors, [])
@@ -1797,6 +2357,7 @@ async function generateCancelEditRetry(project) {
     afterCancelPackageSha256: await hashFile(project.file),
   }
   report.canceled = canceled.queue[0]
+  if (progressProfile) await progressAfterCancel(first)
   await closeQueue()
   // These are renderer-owned edits delivered by original IPC, deliberately differing from Retry.
   const steps = window.locator('input[aria-label="Steps"]')
@@ -1847,9 +2408,9 @@ async function generateCancelEditRetry(project) {
   await expect(retry).toBeEnabled({ timeout: timeout(120_000) })
   await retry.click()
   await expect
-    .poll(async () => (await sqlSnapshot()).queue.length, { timeout: timeout(180_000) })
+    .poll(async () => (await scenarioSql()).queue.length, { timeout: timeout(180_000) })
     .toBe(2)
-  const retried = (await sqlSnapshot()).queue.find(({ id }) => id !== first.id)
+  const retried = (await scenarioSql()).queue.find(({ id }) => id !== first.id)
   assert.ok(retried)
   assert.equal(retried.operation, 'illustrious-regional-txt2img')
   assert.equal(
@@ -1866,6 +2427,7 @@ async function generateCancelEditRetry(project) {
     originalFrozen: firstCaptured,
     retryFrozen: secondCaptured,
   }
+  if (progressProfile) report.progress.retryIntermediate = await progressProbe(project, retried, 1)
   await closeQueue()
   await expect
     .poll(
@@ -1892,7 +2454,7 @@ async function generateCancelEditRetry(project) {
   report.noImplicitSave.afterRetryCompletionPackageSha256 = await hashFile(project.file)
   assert.equal((await current(project)).generationDraft.sampling.steps, 2)
   assert.deepEqual((await current(project)).generationDraft.seed, { policy: 'fixed', value: 124 })
-  const final = await sqlSnapshot()
+  const final = await scenarioSql()
   assert.equal(final.queue.length, 2)
   assert.equal(final.receipts.length, 1)
   assert.equal(final.cursors.length, 1)
@@ -1903,6 +2465,7 @@ async function generateCancelEditRetry(project) {
   assert.equal(final.cursors[0].actual_seed, 123)
   const observed = await observerSnapshot()
   assert.deepEqual(observed.faults, [])
+  if (progressProfile) await verifyInstalledProgress(project, retried)
   const wires = regionalWires(observed)
   assert.ok(wires.length <= 2, 'No extra regional inference requests are authorized')
   assert.equal(new Set(wires.map(({ requestId }) => requestId)).size, wires.length)
@@ -1945,7 +2508,7 @@ async function generateCancelEditRetry(project) {
     canceledSqlCount: final.queue.filter(({ status }) => status === 'canceled').length,
     workerSpawnCount: observed.workers.length,
     observerUnavailable: observed.workers.length === 0,
-    stepCounterQualified: false,
+    stepCounterQualified: progressProfile,
   }
   check(
     'UI Generate/Cancel and original-op frozen Queue Retry preserve 30-step seed123 policies after saved steps2/seed124 and disabled regions',
@@ -3196,6 +3759,12 @@ async function closeNative(label) {
       report.finalBoundsError = String(error.stack ?? error)
     }
     try {
+      if (progressProfile && progressDomInstalled) {
+        report.progress ??= {}
+        report.progress.finalDom = await retainProgressDom(true)
+        assert.deepEqual(report.progress.finalDom.faults, [])
+        progressDomInstalled = false
+      }
       await retainObservers(true)
     } catch (error) {
       originalError ??= error
@@ -3293,14 +3862,22 @@ async function finalIdentities() {
   assert.equal(await hashFile(fixturePath), report.fixtureSha256)
   assert.deepEqual(statIdentity(await regular(fixture.checkpoint.path)), modelStat)
   assert.equal(await hashFile(fixture.checkpoint.path), fixture.checkpoint.sha256)
+  if (progressProfile)
+    assert.deepEqual(
+      await captureFiles(Object.keys(report.progressSourceSha256)),
+      report.progressSourceSha256,
+    )
   const db = openAppDatabase(appDataRoot, path.resolve('src/main/db/migrations'))
   try {
     assert.deepEqual(await catalogSnapshot(db.db), catalogBefore)
-    const whole = recoveryProfile ? await sqlSnapshot(db.db) : null
+    const whole = recoveryProfile || progressProfile ? await sqlSnapshot(db.db) : null
     if (recoveryProfile) assertBaselineSql(whole)
-    const rows = recoveryProfile
-      ? ownRecoverySql(whole).queue
-      : await db.db.selectFrom('generation_queue_item').selectAll().execute()
+    if (progressProfile) await verifyProgressPreservation(db.db)
+    const rows = progressProfile
+      ? ownProgressSql(whole).queue
+      : recoveryProfile
+        ? ownRecoverySql(whole).queue
+        : await db.db.selectFrom('generation_queue_item').selectAll().execute()
     assert.equal(rows.length, 2)
     assert.equal(rows.filter(({ status }) => status === 'canceled').length, 1)
     assert.equal(rows.filter(({ status }) => status === 'completed').length, 1)
@@ -3309,17 +3886,21 @@ async function finalIdentities() {
     assert.ok(rows.every(({ operation }) => operation === 'illustrious-regional-txt2img'))
     for (const row of rows)
       assert.equal(row.frozen_payload_json, report.retry.originalFrozen.row.frozen_payload_json)
-    const receipts = recoveryProfile
-      ? ownRecoverySql(whole).receipts
-      : await db.db.selectFrom('generation_candidate_receipt').selectAll().execute()
+    const receipts = progressProfile
+      ? ownProgressSql(whole).receipts
+      : recoveryProfile
+        ? ownRecoverySql(whole).receipts
+        : await db.db.selectFrom('generation_candidate_receipt').selectAll().execute()
     assert.equal(receipts.length, 1)
     assert.equal(receipts[0].image_sha256, report.output.pngSha256)
     report.finalSql = {
       queue: rows,
       receipts,
-      cursors: recoveryProfile
-        ? ownRecoverySql(whole).cursors
-        : await db.db.selectFrom('generation_seed_cursor').selectAll().execute(),
+      cursors: progressProfile
+        ? ownProgressSql(whole).cursors
+        : recoveryProfile
+          ? ownRecoverySql(whole).cursors
+          : await db.db.selectFrom('generation_seed_cursor').selectAll().execute(),
     }
     if (recoveryProfile) {
       report.finalWholePoolSql = whole
@@ -3388,8 +3969,23 @@ try {
     await assertRecoveryActions()
   } else {
     const project = projects.find(({ mode }) => mode === 'transparent')
+    if (progressProfile) {
+      progressProject = project
+      await installProgressDomObserver()
+    }
     const completed = await generateCancelEditRetry(project)
     await resultsAddSaveReopen(project, completed)
+    if (progressProfile) {
+      assert.equal(
+        report.output.pngSha256,
+        preservationBaseline.controlPng.sha256,
+        'Progress must preserve the prior healthy original PNG bytes',
+      )
+      assert.equal(report.output.rgbaSha256, preservationBaseline.controlPng.rgbaSha256)
+      check(
+        'Telemetry preserves the independently decoded prior healthy control PNG and existing Results/Add/Undo/Save path',
+      )
+    }
     const observed = await retainObservers(false)
     const mutationCalls = observed.ipc.filter(({ channel }) => channel !== 'projects:open')
     assert.ok(
@@ -3453,7 +4049,9 @@ try {
   report.completedAt = new Date().toISOString()
   report.elapsedSeconds = (Date.now() - started) / 1000
   check(
-    'Finite installed public UI Regional qualification completed; evidence supports this exact matrix and no visual-quality or numerical-step claim',
+    progressProfile
+      ? 'Finite installed original scalar progress/Cancel/frozen Retry qualification completed; no visual-quality or capacity claim'
+      : 'Finite installed public UI Regional qualification completed; evidence supports this exact matrix and no visual-quality or numerical-step claim',
   )
 } catch (error) {
   report.outcome = 'failed'

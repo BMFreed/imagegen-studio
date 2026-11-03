@@ -29,7 +29,7 @@ import math
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import replace
-from typing import Any, Literal, cast
+from typing import Any, Literal, TypedDict, cast
 
 from .illustrious_regional_attention import Alpha8, AttentionPlan, Everywhere
 from .illustrious_regional_attention_adapter import (
@@ -64,6 +64,7 @@ from .illustrious_regional_recipe import (
 )
 from .inference import (
     _SDXL_MICRO_CONDITIONING_SIZE,  # pyright: ignore[reportPrivateUsage]
+    DenoisingProgressSink,
     MLRuntime,
     SdxlConditioning,
     run_sdxl_pipeline,
@@ -88,6 +89,10 @@ _DenoisingProfile = Literal[
 ]
 _Layout = Literal["cfg-negative-first", "positive-only"]
 _MAX_FINITE_ELEMENTS = 8_388_608
+
+
+class _ProgressOptions(TypedDict, total=False):
+    on_progress: DenoisingProgressSink
 
 
 class IllustriousRegionalDenoisingError(ValueError):
@@ -602,12 +607,15 @@ def run_current_canvas_regional_denoising(
     positive_pooled_source_id: str,
     bindings: tuple[TransformerBinding, ...],
     layout: _Layout,
+    on_progress: DenoisingProgressSink | None = None,
 ) -> Any:
     """Return the original native pipeline output after all owned state restores.
 
-    All kwargs are required. An actual ordinary transparent target is a trusted
+    Semantic kwargs are required. An actual ordinary transparent target is a trusted
     Main precondition; the recipe cannot authenticate mode. No sample, timestep,
-    time IDs, generator, callbacks, plan, text override or arbitrary kwargs enter.
+    time IDs, generator, native callbacks, plan, text override or arbitrary kwargs enter.
+    The optional trusted scalar sink observes completed native denoising steps only;
+    it must preserve the cooperative borrowed-state and RNG contract.
     V1 profiles require one/two steps and no caller noise profile, selecting
     scaled-linear-v1 betas with zero-SNR false and linspace spacing. V2 profiles
     require 1..MAX_GENERATION_STEPS and an exact explicit four-field noise
@@ -624,6 +632,11 @@ def run_current_canvas_regional_denoising(
     and the adapter's <=32 MiB expanded Boolean mask remain separate lifetimes.
     Neither step count nor these payloads bound total RSS/VRAM.
     """
+    _require(
+        on_progress is None or callable(on_progress),
+        "INPUT_INVALID",
+        "Regional progress requires a callable sink.",
+    )
     tensor_profile, resolved_noise = _execution_profile(denoising_profile, profile)
     if resolved_noise:
         noise_profile = _denoising_parameters(parameters, tensor_profile, resolved_noise=True)
@@ -744,6 +757,9 @@ def run_current_canvas_regional_denoising(
                 tensor_profile=tensor_profile,
             ),
         ):
+            progress_options: _ProgressOptions = (
+                {"on_progress": on_progress} if on_progress is not None else {}
+            )
             result = run_sdxl_pipeline(
                 fresh,
                 conditioning,
@@ -755,6 +771,7 @@ def run_current_canvas_regional_denoising(
                 torch=torch,
                 cfg_rescale=0.0,
                 output_type="pt",
+                **progress_options,
             )
             _native_output(
                 result,

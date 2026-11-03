@@ -1,4 +1,5 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
+import type { GenerationDenoisingProgress } from '../../shared/projects/generation-progress.js'
 
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 
@@ -23,6 +24,8 @@ const sha = (bytes: Uint8Array): string => createHash('sha256').update(bytes).di
 interface ChildMarker {
   bundlePath: string
   pid: number
+  reportProgress?: boolean
+  requestId: string
   stagingRoot: string
   wireBytes: number
   wireKeys: string[]
@@ -240,6 +243,9 @@ async function withClient(
       'illustrious-euler',
       'illustrious-noise-profile',
       ...(mode === 'old' ? [] : ['private-current-canvas-regional-v1']),
+      ...(mode.startsWith('progress-') && mode !== 'progress-no-capability'
+        ? ['illustrious-regional-progress-v1']
+        : []),
     ]
     const script = String.raw`#!${process.execPath}
 const fs=require('node:fs'),crypto=require('node:crypto'),rl=require('node:readline'),path=require('node:path');
@@ -254,7 +260,7 @@ const output=Buffer.from(${JSON.stringify(output.toString('base64'))},'base64');
 const digest=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
 const writeRecord=(file,value)=>{fs.writeFileSync(file+'.tmp',JSON.stringify(value),{flag:'wx'});fs.renameSync(file+'.tmp',file);};
 const expectedAlpha=${JSON.stringify([sha(regionAlpha), sha(globalAlpha)].sort())};
-let active=null;
+let active=null,previousProgressRequestId=null;
 if(mode.startsWith('hang')){
  process.on('SIGTERM',()=>writeRecord(term,{bundleAlive:!!active&&fs.existsSync(active.bundle.path),stageAlive:!!active&&fs.existsSync(active.stagingRoot)}));
  setInterval(()=>{},1000);
@@ -276,17 +282,40 @@ function consume(r){
  if(bundle.request.job.target.path===originalTarget)throw Error('target was not detached');
  writeRecord(observation,{alphaHashes,bundle,sourceAbsent:!fs.existsSync(originalTarget),targetSha256:digest(target)});
  if(mode.startsWith('hang'))return;
+ if(mode.startsWith('progress-')){
+  if(mode==='progress-no-capability'||mode==='progress-no-callback'){
+   if(Object.hasOwn(r,'reportProgress'))throw Error('legacy regional wire was changed');
+  }else{
+   if(r.reportProgress!==true)throw Error('regional progress was not explicitly requested');
+   const progress=(step,totalSteps=2,extra={})=>process.stdout.write(JSON.stringify({type:'generation-progress',protocolVersion:'1',requestId:r.requestId,step,totalSteps,...extra})+'\n');
+   if(mode==='progress-wrong-id')progress(1,2,{requestId:crypto.randomUUID()});
+   else if(mode==='progress-zero')progress(0);
+   else if(mode==='progress-over-total')progress(3);
+   else if(mode==='progress-wrong-total')progress(1,1);
+   else if(mode==='progress-changed-total'){progress(1);progress(1,1);}
+   else if(mode==='progress-extra-field')progress(1,2,{outputPath:'/not-progress'});
+   else{
+    if(mode==='progress-stale'&&previousProgressRequestId)progress(2,2,{requestId:previousProgressRequestId});
+    progress(1);progress(1);progress(2);progress(1);
+   }
+   if(mode==='progress-held'||mode==='progress-no-done')return;
+  }
+ }
  fs.writeFileSync(bundle.request.job.output.pngPath,output,{flag:'wx'});
  const response={type:'generation-done',protocolVersion:'1',requestId:r.requestId,outputPath:bundle.request.job.output.pngPath,seed:bundle.request.job.sampling.seed};
  if(mode==='wrong-id')response.requestId='00000000-0000-4000-8000-000000000001';
  if(mode==='wrong-output')response.outputPath=path.join(r.stagingRoot,'other.png');
  if(mode==='wrong-seed')response.seed=(response.seed+1)%4294967296;
  process.stdout.write(JSON.stringify(response)+'\n');
+ if(mode==='progress-stale'){
+  process.stdout.write(JSON.stringify({type:'generation-progress',protocolVersion:'1',requestId:r.requestId,step:2,totalSteps:2})+'\n');
+  previousProgressRequestId=r.requestId;
+ }
 }
 rl.createInterface({input:process.stdin}).on('line',line=>{
  const r=JSON.parse(line);active=r;
  if(r.type!=='execute-current-canvas-regional')throw Error('not the private regional dispatch');
- writeRecord(marker,{bundlePath:r.bundle.path,pid:process.pid,stagingRoot:r.stagingRoot,wireBytes:Buffer.byteLength(line+'\n'),wireKeys:Object.keys(r).sort(),wireType:r.type});
+ writeRecord(marker,{bundlePath:r.bundle.path,pid:process.pid,reportProgress:r.reportProgress,requestId:r.requestId,stagingRoot:r.stagingRoot,wireBytes:Buffer.byteLength(line+'\n'),wireKeys:Object.keys(r).sort(),wireType:r.type});
  if(mode==='detached'){
   const poll=setInterval(()=>{if(fs.existsSync(gate)){clearInterval(poll);consume(r);}},5);
  }else consume(r);
@@ -522,4 +551,180 @@ test('a fresh regional client succeeds after a prior peer failed actual PNG veri
     assert.equal(result.seed, f.input.request.job.sampling.seed)
     await assertStageReleased(await record<ChildMarker>(f.marker))
   })
+})
+
+test('qualified regional progress opts in only on the local JSONL header and preserves native completion ownership', async () => {
+  await withClient('progress-done', async (f) => {
+    const before = structuredClone(f.input)
+    const seen: GenerationDenoisingProgress[] = []
+    const result = await f.client.executeCurrentCanvasRegional(f.input, (progress) => {
+      assert.equal(Object.isFrozen(progress), true)
+      seen.push(progress)
+      throw new Error('A presentation subscriber cannot reject valid regional completion.')
+    })
+    assert.deepEqual(seen, [
+      { step: 1, totalSteps: 2 },
+      { step: 2, totalSteps: 2 },
+    ])
+    assert.deepEqual(f.input, before)
+    const marker = await record<ChildMarker>(f.marker)
+    assert.equal(marker.reportProgress, true)
+    assert.equal(marker.requestId, before.request.requestId)
+    assert.deepEqual(marker.wireKeys, [
+      'bundle',
+      'protocolVersion',
+      'reportProgress',
+      'requestId',
+      'stagingRoot',
+      'type',
+    ])
+    const consumed = await record<Observation>(f.observation)
+    assert.equal(Object.hasOwn(consumed.bundle, 'reportProgress'), false)
+    assert.equal(Object.hasOwn(consumed.bundle.request, 'reportProgress'), false)
+    assert.deepEqual(result.pngBytes, f.rgb)
+    assert.equal(result.seed, before.request.job.sampling.seed)
+    await assertStageReleased(marker)
+  })
+})
+
+for (const mode of ['progress-no-capability', 'progress-no-callback']) {
+  test(`${mode} retains the exact legacy regional header and emits no telemetry`, async () => {
+    await withClient(mode, async (f) => {
+      const seen: GenerationDenoisingProgress[] = []
+      const result = await f.client.executeCurrentCanvasRegional(
+        f.input,
+        mode === 'progress-no-callback' ? undefined : (progress) => seen.push(progress),
+      )
+      const marker = await record<ChildMarker>(f.marker)
+      assert.equal(Object.hasOwn(marker, 'reportProgress'), false)
+      assert.deepEqual(marker.wireKeys, [
+        'bundle',
+        'protocolVersion',
+        'requestId',
+        'stagingRoot',
+        'type',
+      ])
+      assert.deepEqual(seen, [])
+      assert.deepEqual(result.pngBytes, f.rgb)
+      await assertStageReleased(marker)
+    })
+  })
+}
+
+test('settled regional progress cannot cross into a second active request or move its counter backwards', async () => {
+  await withClient('progress-stale', async (f) => {
+    const first: GenerationDenoisingProgress[] = []
+    const second: GenerationDenoisingProgress[] = []
+    const firstResult = await f.client.executeCurrentCanvasRegional(f.input, (progress) =>
+      first.push(progress),
+    )
+    const next = structuredClone(f.input)
+    next.request.requestId = randomUUID()
+    const secondResult = await f.client.executeCurrentCanvasRegional(next, (progress) =>
+      second.push(progress),
+    )
+    const expected = [
+      { step: 1, totalSteps: 2 },
+      { step: 2, totalSteps: 2 },
+    ]
+    assert.deepEqual(first, expected)
+    assert.deepEqual(second, expected)
+    assert.deepEqual(firstResult.pngBytes, f.rgb)
+    assert.deepEqual(secondResult.pngBytes, f.rgb)
+    assert.equal((await record<ChildMarker>(f.marker)).requestId, next.request.requestId)
+    await assertStageReleased(await record<ChildMarker>(f.marker))
+  })
+})
+
+for (const mode of [
+  'progress-wrong-id',
+  'progress-zero',
+  'progress-over-total',
+  'progress-wrong-total',
+  'progress-changed-total',
+  'progress-extra-field',
+]) {
+  test(`regional opted-in JSONL rejects ${mode} through the actual exchange`, async () => {
+    await withClient(mode, async (f) => {
+      const seen: GenerationDenoisingProgress[] = []
+      await assert.rejects(
+        f.client.executeCurrentCanvasRegional(f.input, (progress) => seen.push(progress)),
+        { code: 'PROTOCOL_ERROR' },
+      )
+      assert.deepEqual(seen, mode === 'progress-changed-total' ? [{ step: 1, totalSteps: 2 }] : [])
+      const marker = await record<ChildMarker>(f.marker)
+      assert.equal(marker.reportProgress, true)
+      assert.throws(() => process.kill(marker.pid, 0), { code: 'ESRCH' })
+      await assertStageReleased(marker)
+      assert.ok(await readFile(f.input.request.job.target.path))
+    })
+  })
+}
+
+test('regional N/N progress retains the request slot until completion or confirmed close', async () => {
+  await withClient('progress-held', async (f) => {
+    let atLastStep!: () => void
+    const lastStep = new Promise<void>((resolve) => {
+      atLastStep = resolve
+    })
+    let settled = false
+    const pending = f.client.executeCurrentCanvasRegional(f.input, (progress) => {
+      if (progress.step === progress.totalSteps) {
+        atLastStep()
+      }
+    })
+    void pending.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      },
+    )
+    await Promise.race([
+      lastStep,
+      pending.then(() => assert.fail('Progress must precede any regional completion.')),
+    ])
+    const marker = await record<ChildMarker>(f.marker)
+    assert.equal(settled, false)
+    assert.ok(await readFile(marker.bundlePath))
+    await assert.rejects(
+      f.client.executeCurrentCanvasRegional(f.input, () => {}),
+      {
+        code: 'BUSY',
+      },
+    )
+    await assert.rejects(
+      lstat((await record<Observation>(f.observation)).bundle.request.job.output.pngPath),
+      {
+        code: 'ENOENT',
+      },
+    )
+    const closing = f.client.close()
+    await assert.rejects(pending, { code: 'CLOSED' })
+    await closing
+    assert.throws(() => process.kill(marker.pid, 0), { code: 'ESRCH' })
+    await assertStageReleased(marker)
+  })
+})
+
+test('regional N/N without a terminal response still reaches the original request deadline', async () => {
+  await withClient(
+    'progress-no-done',
+    async (f) => {
+      const seen: GenerationDenoisingProgress[] = []
+      await assert.rejects(
+        f.client.executeCurrentCanvasRegional(f.input, (progress) => seen.push(progress)),
+        { code: 'REQUEST_TIMEOUT' },
+      )
+      assert.deepEqual(seen, [
+        { step: 1, totalSteps: 2 },
+        { step: 2, totalSteps: 2 },
+      ])
+      const marker = await record<ChildMarker>(f.marker)
+      assert.throws(() => process.kill(marker.pid, 0), { code: 'ESRCH' })
+      await assertStageReleased(marker)
+    },
+    150,
+  )
 })

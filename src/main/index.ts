@@ -679,13 +679,6 @@ if (!gotInstanceLock) {
             },
           )
         : null
-      const generationProgress = new GenerationProgressSource(
-        recoveredGeneration
-          ? smartPatchExecution
-            ? [recoveredGeneration.processor, smartPatchExecution]
-            : [recoveredGeneration.processor]
-          : [],
-      )
       const regionalGeneration = recoveredGeneration
         ? new ProjectRegionalGenerationCoordinator({
             compositionProfile: 'invoke-canvas-v1',
@@ -696,6 +689,11 @@ if (!gotInstanceLock) {
             scratchBasePath: path.join(paths.dataRoot, 'scratch'),
           })
         : null
+      const generationProgress = new GenerationProgressSource([
+        ...(recoveredGeneration ? [recoveredGeneration.processor] : []),
+        ...(smartPatchExecution ? [smartPatchExecution] : []),
+        ...(regionalGeneration ? [regionalGeneration] : []),
+      ])
       const generationDispatch = recoveredGeneration
         ? new GenerationDispatchCoordinator(
             generationLease,

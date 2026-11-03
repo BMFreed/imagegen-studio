@@ -1,5 +1,20 @@
 # Engineering Workflow
 
+## Regional numeric denoising progress — installed boundary verified
+
+[Regional progress](./phase-4-regional-guidance-progress-research.md) adapts
+InvokeAI completed-step callbacks through the existing scalar native helper,
+opt-in private JSONL and shared Main progress feed. Old peers remain quiet.
+ROOT confirms 477 distinct lower PASS (243 Main/234 Python), strict typing,
+fresh build and 14 installed checks in 179.005 seconds: actual 5/30 and 6/30,
+Cancel clearing before worker exit, frozen Retry 1..30 after saved draft edits,
+control-identical PNG, Results/Add/Undo/Save/reopen and prior-state preservation.
+The isolated drop-progress mutation gives ten GREEN/two semantic RED with exact
+restoration. `N/N` does not certify candidate publication. Source review is CLEAN;
+final evidence closure is recorded in the linked note. PP-001/007/008 remain
+**«Пока не обещать»**; quality, Anima, capacity and release Install/Repair remain
+separate. The checkpoint notes below retain their historical scopes.
+
 ## Private Regional shared-readonly text components — native qualification verified
 
 The [shared text owner](./phase-4-regional-guidance-shared-text-research.md) admits the full pinned CLIP text architecture

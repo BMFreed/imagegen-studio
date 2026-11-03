@@ -1,5 +1,26 @@
 # Regional Guidance
 
+## Regional numeric progress — installed boundary verified
+
+The [numeric progress checkpoint](../../../engineering/phase-4-regional-guidance-progress-research.md)
+connects actual completed native steps to the existing Project/Queue counter.
+A qualified worker advertises `illustrious-regional-progress-v1`; only an explicit
+private `reportProgress: true` request emits scalar frames. Old clients and peers
+retain quiet execution. No recipe, document, queue payload or renderer schema is
+added. Progress carries exact running ownership, is transient and clears on
+Cancel/stop, error and settlement. Late callbacks cannot revive another job;
+`N/N` leaves decode and durable publication pending.
+
+ROOT: 477 distinct lower PASS, 14 installed checks, actual 5/30 and 6/30 before
+Cancel, then fresh frozen Retry 1..30 with original seed/settings despite saved
+authoring edits. The published PNG matches the retained control exactly; explicit
+Results/Add/Undo/Save/reopen and prior accepted/unaccepted data are preserved.
+A drop-forwarding mutation turns both CPU/CUDA progress targets RED while quiet
+controls stay GREEN, then exact restoration returns GREEN. This is operational
+telemetry, without quality, Anima regional, capacity or release Install/Repair
+promotion. PP-001/007/008 remain **«Пока не обещать»**. Older checkpoint entries
+below retain their historical evidence boundaries.
+
 ## Private Regional shared-readonly text components — native qualification verified
 
 The [shared text owner](../../../engineering/phase-4-regional-guidance-shared-text-research.md) admits the full pinned CLIP text architecture

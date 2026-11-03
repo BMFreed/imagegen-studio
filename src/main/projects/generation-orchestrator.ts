@@ -109,7 +109,9 @@ export interface PrivateSmartPatchExecution {
 /** Explicit Main-only owner; public queue discovery and automatic dispatch remain separate. */
 export interface PrivateRegionalExecution {
   cancelAndWait: RegionalGenerationProcessor['cancelAndWait']
+  getProgressSnapshot: RegionalGenerationProcessor['getProgressSnapshot']
   onChanged: RegionalGenerationProcessor['onChanged']
+  onProgress: RegionalGenerationProcessor['onProgress']
   quiesceForProject: RegionalGenerationProcessor['quiesceForProject']
   runNext: (worker: RegionalGenerationTransport) => Promise<RegionalGenerationProcessorResult>
   stopAndCancelActive: () => Promise<void>
@@ -481,7 +483,9 @@ export class GenerationOrchestrator {
     this.regionalProcessors.add(processor)
     return {
       cancelAndWait: processor.cancelAndWait.bind(processor),
+      getProgressSnapshot: processor.getProgressSnapshot.bind(processor),
       onChanged: processor.onChanged.bind(processor),
+      onProgress: processor.onProgress.bind(processor),
       quiesceForProject: processor.quiesceForProject.bind(processor),
       runNext: async (worker) => {
         const captured: RegionalGenerationTransport = {
