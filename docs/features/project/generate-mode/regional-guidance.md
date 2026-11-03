@@ -1001,3 +1001,19 @@ remain explicit; this supplies no full numerical parity or sole-cause conclusion
 No product routing/default/admission or promise status is changed. Public NEW
 refusal, frozen work, Smart target-only permissions and immutable provenance
 exclusions remain preserved.
+
+## Private Main-to-worker resource handoff
+
+The [file-backed worker adapter](../../../engineering/phase-4-regional-guidance-worker-research.md)
+now transports a complete detached recipe and verified target/alpha files through
+the existing inference child to the existing regional PNG output. Invoke's owned
+resource references supply the mechanism; file descriptors adapt it to Studio's
+Node/Python protocol. One genuine trained CUDA child request at 1024²/two steps
+passed, separately from 178 Main and 134 Python lower-level cases. Returned PNG
+bytes survive staging cleanup; failure/cancel holds files until physical exit.
+
+This remains a private explicit CUDA/Euler experiment. It adds no public NEW
+admission, durable queue input, Main candidate receipt, frozen regional Retry,
+Add/Save or visual acceptance. Previous negative visual findings and all public,
+Smart-permission, frozen-work and provenance exclusions remain; PP-001/007/008
+stay «Пока не обещать». Durable frozen transport/recovery is the next owner.

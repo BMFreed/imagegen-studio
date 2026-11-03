@@ -10,7 +10,7 @@ import sys
 import traceback
 from collections.abc import Callable
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, cast
 
 from imagegen_worker import PROTOCOL_VERSION
 from imagegen_worker.anima_worker import generate_anima, supports_anima_compute
@@ -84,6 +84,7 @@ def inference_ready_message(runtime: MLRuntime | None = None) -> dict[str, objec
             INFERENCE_NOISE_PROFILE_CAPABILITY,
             "smart-patch-execution",
             "smart-patch-seed-confirmation",
+            "private-current-canvas-regional-v1",
             *(
                 ANIMA_CAPABILITIES
                 if runtime is not None and supports_anima_compute(runtime)
@@ -114,7 +115,17 @@ def process_inference_request(
 ) -> dict[str, object]:
     request_id = request_id_hint(value)
     try:
-        command = parse_request(value)
+        private_type = (
+            cast(dict[str, object], value).get("type") if isinstance(value, dict) else None
+        )
+        if private_type == "execute-current-canvas-regional":
+            from imagegen_worker.illustrious_regional_worker import execute_regional_request
+
+            with contextlib.redirect_stdout(sys.stderr):
+                return execute_regional_request(
+                    cast(object, value), config_dir=config_dir, runtime=runtime
+                )
+        command = parse_request(cast(object, value))
         if isinstance(command, ComposeTargetCommand):
             with contextlib.redirect_stdout(sys.stderr):
                 result = compose_target(command.target)

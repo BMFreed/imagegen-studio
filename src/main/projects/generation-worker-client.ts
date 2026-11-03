@@ -48,6 +48,13 @@ import {
   isOutpaintWorkerRequest,
 } from './outpaint-worker-request.js'
 import {
+  prepareRegionalWorkerRequest,
+  readRegionalWorkerResult,
+  type RegionalWorkerInput,
+  type RegionalWorkerLease,
+  type RegionalWorkerResult,
+} from './regional-worker-request.js'
+import {
   captureSmartPatchExecutionRequest,
   executeSmartPatchWithTransport,
   type SmartPatchExecutionRequest,
@@ -156,6 +163,9 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
   private forcedTermination = false
   private readyMessage: GenerationWorkerReady | null = null
   private readonly requestTimeoutMs: number
+  // A failed kill must not release files a still-running child may consume. A late physical
+  // exit, or close() retry, releases these request-owned stages.
+  private readonly retainedRegionalLeases = new Set<RegionalWorkerLease>()
   private readonly scratchBasePath: string
   // The worker executes synchronous requests serially. Retain the previous generation's ID to
   // discard its trailing progress without accepting unknown/crossed request IDs.
@@ -311,6 +321,7 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
       throw error
     })
     await this.closePromise
+    await this.releaseRegionalLeases()
   }
 
   async composeTarget(input: ComposeTargetInput): Promise<ComposeTargetResult> {
@@ -359,6 +370,83 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
       throw error
     } finally {
       this.busy = false
+    }
+  }
+
+  /** Private explicit experiment. Returns owned PNG bytes; it never creates a queue candidate. */
+  async executeCurrentCanvasRegional(input: RegionalWorkerInput): Promise<RegionalWorkerResult> {
+    if (this.closed) {
+      throw new GenerationWorkerError('CLOSED', 'The generation worker is unavailable.')
+    }
+    if (this.busy) {
+      throw new GenerationWorkerError('BUSY', 'The generation worker is already processing a job.')
+    }
+    this.busy = true
+    let lease: RegionalWorkerLease | undefined
+    let dispatched = false
+    let completed = false
+    try {
+      if (!this.ready.capabilities.includes('private-current-canvas-regional-v1')) {
+        throw new GenerationWorkerError(
+          'WORKER_VERSION_MISMATCH',
+          'The active worker has not qualified private regional execution.',
+        )
+      }
+      lease = await prepareRegionalWorkerRequest(input, this.scratchBasePath)
+      if (this.closed) {
+        throw new GenerationWorkerError('CLOSED', 'The generation worker is unavailable.')
+      }
+      const line = Buffer.from(`${JSON.stringify(lease.wire)}\n`, 'utf8')
+      if (line.byteLength > MAX_PROTOCOL_LINE_BYTES) {
+        throw new GenerationWorkerError('INVALID_REQUEST', 'The regional descriptor is too large.')
+      }
+      dispatched = true
+      const response = await this.exchange(
+        line,
+        lease.wire.requestId,
+        lease.request.job.output.pngPath,
+        'generation-done',
+      )
+      const result = await readRegionalWorkerResult(lease, response)
+      if (this.closed) {
+        throw new GenerationWorkerError('CLOSED', 'The generation worker is unavailable.')
+      }
+      completed = true
+      return result
+    } catch (error) {
+      const mapped =
+        error instanceof ProjectWorkerError
+          ? new GenerationWorkerError(error.code, error.message, error.workerCode)
+          : error
+      if (dispatched) {
+        // A rejected promise alone is not an input-lifetime fence. Confirm physical exit even
+        // when the invalid completion was discovered by the PNG consumer after JSONL dispatch.
+        try {
+          await this.close()
+        } catch (closeError) {
+          GenerationWorkerClient.unconfirmedStartChildren.add(this)
+          throw closeError
+        }
+      }
+      throw mapped
+    } finally {
+      try {
+        if (lease) {
+          if (!dispatched || completed || this.exitObserved) {
+            try {
+              await lease.dispose()
+            } catch (cleanupError) {
+              this.retainedRegionalLeases.add(lease)
+              GenerationWorkerClient.unconfirmedStartChildren.add(this)
+              throw cleanupError
+            }
+          } else {
+            this.retainedRegionalLeases.add(lease)
+          }
+        }
+      } finally {
+        this.busy = false
+      }
     }
   }
 
@@ -704,6 +792,10 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
       this.exitObserved = true
       this.exitResolve()
       GenerationWorkerClient.unconfirmedStartChildren.delete(this)
+      void this.releaseRegionalLeases().catch(() => {
+        // Keep a retryable owner if filesystem cleanup itself fails after a late exit.
+        GenerationWorkerClient.unconfirmedStartChildren.add(this)
+      })
     }
   }
 
@@ -876,6 +968,16 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
         return
       }
       start = newline + 1
+    }
+  }
+
+  private async releaseRegionalLeases(): Promise<void> {
+    if (!this.exitObserved) {
+      return
+    }
+    for (const lease of this.retainedRegionalLeases) {
+      await lease.dispose()
+      this.retainedRegionalLeases.delete(lease)
     }
   }
 

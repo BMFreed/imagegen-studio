@@ -1486,3 +1486,15 @@ swapped per-stream/range/mask checks and actual hashes retain their narrower
 scope. Visual reversal remains NOT_QUALIFIED (0 PASS / 2 FAIL), also in Invoke.
 Controller exit90 cleanup flags, physical idle, retained bytes and disposal remain
 explicit. No routing repair, production default or public-readiness change follows.
+
+## Private Regional Guidance worker handoff
+
+The [Main → child → PNG slice](./phase-4-regional-guidance-worker-research.md)
+adapts current Invoke resource ownership through bounded hash-checked files,
+without extending the public/durable generation union. ROOT recorded 178 Main
+and 134 Python PASS plus one genuine production-loader CUDA child request.
+Two 1024² masks stay outside the 556-byte IPC descriptor. Cancellation/failure
+retains resources until confirmed physical exit; successful PNG bytes survive
+cleanup. Source review and transport-mutation controls are separate evidence.
+Durable frozen regional inputs, candidate receipt/recovery, public admission and
+visual usefulness remain open; no promise status is promoted.
