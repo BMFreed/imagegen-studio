@@ -120,10 +120,32 @@ const ORDINARY_SPEC = {
     '.codex/artifacts/imagegen-studio/runs/illustrious-ordinary-character/20261105-count-tag',
   ),
 } as const
+const TAGGED_REGIONAL_LABELS = [
+  'seed123-assignment',
+  'seed123-swapped',
+  'seed124-assignment',
+  'seed124-swapped',
+] as const
+const TAGGED_REGIONAL_SPEC = {
+  base: '9befdf893b382d9bdc880b9b6bd29613acc8559b',
+  caseLabels: TAGGED_REGIONAL_LABELS,
+  conditions: ['assignment', 'swapped'],
+  contractProfile: 'regional-two-character-tags-v1',
+  contractSchema: 'regional-two-character-tags-experiment-v1',
+  contractSha256: 'a016a617f39362568aa122ab06aab5a25c1a3adad7341bc875b8be78c4fa990e',
+  globalPositive: `2girls, ${GLOBAL}`,
+  manifestName: 'main-regional-two-character-tags.json',
+  nativeRequestCeiling: 4,
+  run: path.join(
+    os.homedir(),
+    '.codex/artifacts/imagegen-studio/runs/regional-guidance-tagged-visual/20261105-red-blue',
+  ),
+} as const
 
 export type CharacterVisualCondition = (typeof CONDITIONS)[number]
 export type CharacterVisualLabel = (typeof LABELS)[number]
 export type OrdinaryCharacterCalibrationLabel = (typeof ORDINARY_LABELS)[number]
+export type RegionalCharacterTagsLabel = (typeof TAGGED_REGIONAL_LABELS)[number]
 export type CharacterVisualProbeLabel = CharacterVisualLabel | OrdinaryCharacterCalibrationLabel
 export interface CharacterVisualProbeUseCase {
   condition: CharacterVisualCondition
@@ -146,6 +168,12 @@ export interface OrdinaryCharacterCalibrationProbeOptions<T> extends Omit<
   'profile'
 > {
   profile: 'ordinary-two-character-tags-v1'
+}
+export interface RegionalCharacterTagsProbeOptions<T> extends Omit<
+  CharacterVisualProbeOptions<T>,
+  'profile'
+> {
+  profile: 'regional-two-character-tags-v1'
 }
 export interface CharacterVisualFile {
   byteSize: number
@@ -188,6 +216,23 @@ export interface OrdinaryCharacterCalibrationManifest<T> extends Omit<
   nativeRequestCeiling: 3
   orderedCaseLabels: readonly OrdinaryCharacterCalibrationLabel[]
   profile: 'main-ordinary-two-character-tags-v1'
+}
+export interface RegionalCharacterTagsCase<T> extends Omit<
+  CharacterVisualCase<T>,
+  'capture' | 'condition' | 'label'
+> {
+  capture: 'saved-reopened-current-canvas'
+  condition: 'assignment' | 'swapped'
+  label: RegionalCharacterTagsLabel
+}
+export interface RegionalCharacterTagsManifest<T> extends Omit<
+  CharacterVisualManifest<T>,
+  'cases' | 'nativeRequestCeiling' | 'orderedCaseLabels' | 'profile'
+> {
+  cases: Record<RegionalCharacterTagsLabel, RegionalCharacterTagsCase<T>>
+  nativeRequestCeiling: 4
+  orderedCaseLabels: readonly RegionalCharacterTagsLabel[]
+  profile: 'main-regional-two-character-tags-v1'
 }
 type ProbeCase<T> = Omit<CharacterVisualCase<T>, 'capture' | 'label'> & {
   capture: 'owned-baseline123-repeat' | CharacterVisualCase<T>['capture']
@@ -268,8 +313,9 @@ const writeJson = (filePath: string, value: unknown): Promise<CharacterVisualFil
 
 /**
  * The omitted profile keeps six fresh handoffs and the owned assignment123 replay. The fixed
- * ordinary profile makes two fresh baseline handoffs and the owned baseline123 replay instead. Both
- * use the same Main owners; runtime execution occurs only when ROOT calls this.
+ * ordinary profile makes two fresh baseline handoffs and the owned baseline123 replay instead. The
+ * tagged regional profile makes four fresh assignment/swapped handoffs without a repeat. All use
+ * the same Main owners; runtime execution occurs only when ROOT calls this.
  */
 export function produceCharacterVisualProbe<T>(
   options: CharacterVisualProbeOptions<T>,
@@ -277,18 +323,30 @@ export function produceCharacterVisualProbe<T>(
 export function produceCharacterVisualProbe<T>(
   options: OrdinaryCharacterCalibrationProbeOptions<T>,
 ): Promise<OrdinaryCharacterCalibrationManifest<T>>
+export function produceCharacterVisualProbe<T>(
+  options: RegionalCharacterTagsProbeOptions<T>,
+): Promise<RegionalCharacterTagsManifest<T>>
 export async function produceCharacterVisualProbe<T>(
-  options: CharacterVisualProbeOptions<T> | OrdinaryCharacterCalibrationProbeOptions<T>,
-): Promise<CharacterVisualManifest<T> | OrdinaryCharacterCalibrationManifest<T>> {
+  options:
+    | CharacterVisualProbeOptions<T>
+    | OrdinaryCharacterCalibrationProbeOptions<T>
+    | RegionalCharacterTagsProbeOptions<T>,
+): Promise<
+  | CharacterVisualManifest<T>
+  | OrdinaryCharacterCalibrationManifest<T>
+  | RegionalCharacterTagsManifest<T>
+> {
   const ordinary = options.profile === 'ordinary-two-character-tags-v1'
+  const taggedRegional = options.profile === 'regional-two-character-tags-v1'
   const optionKeys = ['pythonExecutable', 'run', 'runtimeRoot', 'source', 'useCase']
-  if (ordinary) {
+  if (ordinary || taggedRegional) {
     optionKeys.push('profile')
     optionKeys.sort()
   }
   assert.deepEqual(Object.keys(options).sort(), optionKeys)
-  assert.ok(options.profile === undefined || ordinary)
-  const spec = ordinary ? ORDINARY_SPEC : LEGACY_SPEC
+  assert.ok(options.profile === undefined || ordinary || taggedRegional)
+  const spec = taggedRegional ? TAGGED_REGIONAL_SPEC : ordinary ? ORDINARY_SPEC : LEGACY_SPEC
+  const repeatSpec = taggedRegional ? undefined : ordinary ? ORDINARY_SPEC : LEGACY_SPEC
   const run = spec.run
   assert.equal(options.run, run)
   assert.equal(options.source, SOURCE)
@@ -313,7 +371,7 @@ export async function produceCharacterVisualProbe<T>(
   assert.equal(contract.nativeRequestCeiling, spec.nativeRequestCeiling)
   assert.equal(contract.noResources, true)
   assert.equal(contract.compositionProfile, 'invoke-canvas-v1')
-  if (ordinary) {
+  if (ordinary || taggedRegional) {
     assert.deepEqual(contract.sampling, {
       cfgRescale: 0,
       cfgScale: 5,
@@ -654,7 +712,7 @@ export async function produceCharacterVisualProbe<T>(
             target: retainedTarget,
           })
           const inputHash = sha(serialized({ prepared: ownedPrepared, recipe: ownedRecipe }))
-          if (label === spec.repeatSourceLabel) {
+          if (repeatSpec && label === repeatSpec.repeatSourceLabel) {
             repeat = {
               authoredDocument: structuredClone(authoredDocument),
               package: { ...retainedPackage },
@@ -693,61 +751,65 @@ export async function produceCharacterVisualProbe<T>(
         assert.deepEqual(await state(), before)
       }
     }
-    assert.ok(repeat)
-    assert.equal(callbacks, spec.nativeRequestCeiling - 1)
-    const label = spec.repeatLabel
-    const ownedRecipe = structuredClone(repeat.recipe)
-    const ownedPrepared = clonePrepared(repeat.prepared)
-    assertRecipe(
-      ownedRecipe,
-      ownedPrepared,
-      repeat.authoredDocument,
-      spec.repeatCondition,
-      123,
-      spec.globalPositive,
-      ordinary,
-    )
-    const inputHash = sha(serialized({ prepared: ownedPrepared, recipe: ownedRecipe }))
-    assert.equal(inputHash, sha(serialized({ prepared: repeat.prepared, recipe: repeat.recipe })))
-    const beforeRepeat = await state()
-    const handoff = await writeJson(path.join(run, 'handoffs', `${label}.json`), {
-      authoredDocument: repeat.authoredDocument,
-      capture: spec.repeatCapture,
-      checkpoint: { byteSize: SOURCE_BYTES, resolved: repeat.resolved, sha256: SOURCE_SHA256 },
-      condition: spec.repeatCondition,
-      contractSha256: spec.contractSha256,
-      label,
-      originalHandoff: cases[spec.repeatSourceLabel]!.handoff,
-      package: repeat.package,
-      prepared: ownedPrepared,
-      recipe: ownedRecipe,
-      seed: 123,
-      stateBefore: beforeRepeat,
-      target: repeat.target,
-    })
-    callbacks++
-    const result = await options.useCase({
-      condition: spec.repeatCondition,
-      label,
-      models,
-      prepared: ownedPrepared,
-      recipe: ownedRecipe,
-      seed: 123,
-    })
-    serialized(result)
-    assert.equal(sha(serialized({ prepared: ownedPrepared, recipe: ownedRecipe })), inputHash)
-    assert.deepEqual(await state(), beforeRepeat)
-    cases[label] = {
-      capture: spec.repeatCapture,
-      condition: spec.repeatCondition,
-      handoff,
-      label,
-      package: repeat.package,
-      result,
-      seed: 123,
-      target: repeat.target,
+    if (repeatSpec) {
+      assert.ok(repeat)
+      assert.equal(callbacks, spec.nativeRequestCeiling - 1)
+      const label = repeatSpec.repeatLabel
+      const ownedRecipe = structuredClone(repeat.recipe)
+      const ownedPrepared = clonePrepared(repeat.prepared)
+      assertRecipe(
+        ownedRecipe,
+        ownedPrepared,
+        repeat.authoredDocument,
+        repeatSpec.repeatCondition,
+        123,
+        spec.globalPositive,
+        ordinary,
+      )
+      const inputHash = sha(serialized({ prepared: ownedPrepared, recipe: ownedRecipe }))
+      assert.equal(inputHash, sha(serialized({ prepared: repeat.prepared, recipe: repeat.recipe })))
+      const beforeRepeat = await state()
+      const handoff = await writeJson(path.join(run, 'handoffs', `${label}.json`), {
+        authoredDocument: repeat.authoredDocument,
+        capture: repeatSpec.repeatCapture,
+        checkpoint: { byteSize: SOURCE_BYTES, resolved: repeat.resolved, sha256: SOURCE_SHA256 },
+        condition: repeatSpec.repeatCondition,
+        contractSha256: spec.contractSha256,
+        label,
+        originalHandoff: cases[repeatSpec.repeatSourceLabel]!.handoff,
+        package: repeat.package,
+        prepared: ownedPrepared,
+        recipe: ownedRecipe,
+        seed: 123,
+        stateBefore: beforeRepeat,
+        target: repeat.target,
+      })
+      callbacks++
+      const result = await options.useCase({
+        condition: repeatSpec.repeatCondition,
+        label,
+        models,
+        prepared: ownedPrepared,
+        recipe: ownedRecipe,
+        seed: 123,
+      })
+      serialized(result)
+      assert.equal(sha(serialized({ prepared: ownedPrepared, recipe: ownedRecipe })), inputHash)
+      assert.deepEqual(await state(), beforeRepeat)
+      cases[label] = {
+        capture: repeatSpec.repeatCapture,
+        condition: repeatSpec.repeatCondition,
+        handoff,
+        label,
+        package: repeat.package,
+        result,
+        seed: 123,
+        target: repeat.target,
+      }
+      await writeJson(path.join(run, 'handoffs', `${label}-result.json`), cases[label])
+    } else {
+      assert.equal(repeat, undefined)
     }
-    await writeJson(path.join(run, 'handoffs', `${label}-result.json`), cases[label])
     assert.equal(callbacks, spec.nativeRequestCeiling)
     assert.equal(networkAttempts, 0)
     assert.deepEqual(Object.keys(cases), spec.caseLabels)
@@ -757,24 +819,35 @@ export async function produceCharacterVisualProbe<T>(
       source: { byteSize: SOURCE_BYTES, path: SOURCE, sha256: SOURCE_SHA256 },
       visualAcceptance: 'pending' as const,
     }
-    const manifest: CharacterVisualManifest<T> | OrdinaryCharacterCalibrationManifest<T> = ordinary
+    const manifest:
+      | CharacterVisualManifest<T>
+      | OrdinaryCharacterCalibrationManifest<T>
+      | RegionalCharacterTagsManifest<T> = taggedRegional
       ? {
           ...commonManifest,
-          cases: cases as Record<
-            OrdinaryCharacterCalibrationLabel,
-            OrdinaryCharacterCalibrationCase<T>
-          >,
-          nativeRequestCeiling: 3,
-          orderedCaseLabels: ORDINARY_LABELS,
-          profile: 'main-ordinary-two-character-tags-v1',
+          cases: cases as Record<RegionalCharacterTagsLabel, RegionalCharacterTagsCase<T>>,
+          nativeRequestCeiling: 4,
+          orderedCaseLabels: TAGGED_REGIONAL_LABELS,
+          profile: 'main-regional-two-character-tags-v1',
         }
-      : {
-          ...commonManifest,
-          cases: cases as Record<CharacterVisualLabel, CharacterVisualCase<T>>,
-          nativeRequestCeiling: 7,
-          orderedCaseLabels: LABELS,
-          profile: 'main-character-visual-v1',
-        }
+      : ordinary
+        ? {
+            ...commonManifest,
+            cases: cases as Record<
+              OrdinaryCharacterCalibrationLabel,
+              OrdinaryCharacterCalibrationCase<T>
+            >,
+            nativeRequestCeiling: 3,
+            orderedCaseLabels: ORDINARY_LABELS,
+            profile: 'main-ordinary-two-character-tags-v1',
+          }
+        : {
+            ...commonManifest,
+            cases: cases as Record<CharacterVisualLabel, CharacterVisualCase<T>>,
+            nativeRequestCeiling: 7,
+            orderedCaseLabels: LABELS,
+            profile: 'main-character-visual-v1',
+          }
     await writeJson(path.join(run, spec.manifestName), manifest)
     return manifest
   } finally {

@@ -3,11 +3,12 @@ import type { GenerationDenoisingProgress } from '../src/shared/projects/generat
 import { isQualifiedInferenceWorkerReady } from '../src/shared/projects/inference-worker-capabilities.js'
 
 /**
- * ROOT-only character visual experiments: the legacy seven-request regional profile and a fixed
- * three-request ordinary count-tag control. Importing this module runs nothing. Existing Main
- * capture/preparation, installed worker0.14, native regional execution and owned PNG readers remain
- * authoritative. This direct backend probe does not qualify UI, queue durability, independent
- * native PT-to-RGB lineage, trained quality, Anima or a generic SDXL product family.
+ * ROOT-only character visual experiments: the legacy seven-request regional profile, a fixed
+ * three-request ordinary count-tag control and a four-request regional count-tag continuation.
+ * Importing this module runs nothing. Existing Main capture/preparation, installed worker0.14,
+ * native regional execution and owned PNG readers remain authoritative. This direct backend probe
+ * does not qualify UI, queue durability, independent native PT-to-RGB lineage, trained quality,
+ * Anima or a generic SDXL product family.
  *
  * InvokeAI basis: a61ac4fb75bec78d92885bf39bcf3ed3900a9bdd, graph.ts,
  * core/canvas/addRegionalGuidance.ts and compileCanvasGraph.ts, text_encoder/compel.py and
@@ -64,6 +65,19 @@ const ORDINARY_RUN = path.join(
 const ORDINARY_GLOBAL =
   '2girls, anime illustration of two women standing apart side by side, waist-up, simple clothing, plain light gray background, coherent daylight'
 const ORDINARY_LABELS = ['seed123-baseline', 'seed124-baseline', 'seed123-baseline-repeat'] as const
+const TAGGED_PROFILE = 'regional-two-character-tags-v1'
+const TAGGED_BASE = '9befdf893b382d9bdc880b9b6bd29613acc8559b'
+const TAGGED_CONTRACT_SHA256 = 'a016a617f39362568aa122ab06aab5a25c1a3adad7341bc875b8be78c4fa990e'
+const TAGGED_RUN = path.join(
+  ARTIFACT_ROOT,
+  'runs/regional-guidance-tagged-visual/20261105-red-blue',
+)
+const TAGGED_LABELS = [
+  'seed123-assignment',
+  'seed123-swapped',
+  'seed124-assignment',
+  'seed124-swapped',
+] as const
 const LABELS = [
   'seed123-baseline',
   'seed123-assignment',
@@ -94,7 +108,7 @@ interface Fixture {
   checkpoint: Checkpoint
   contract: Descriptor
   deadlineSeconds: 1800
-  profile: typeof ORDINARY_PROFILE | typeof PROFILE
+  profile: typeof ORDINARY_PROFILE | typeof PROFILE | typeof TAGGED_PROFILE
   provisionReport: Descriptor
   schemaVersion: 1
 }
@@ -120,12 +134,21 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
   const fixtureFile = await json(fixturePath, 64 * 1024)
   const fixture = fixtureFrom(fixtureFile.value)
   const ordinary = fixture.profile === ORDINARY_PROFILE
-  const base = ordinary ? ORDINARY_BASE : BASE
-  const contractSha256 = ordinary ? ORDINARY_CONTRACT_SHA256 : CONTRACT_SHA256
-  const labels = ordinary ? ORDINARY_LABELS : LABELS
-  const nativeRequestCeiling = ordinary ? 3 : 7
-  const originalLabel = ordinary ? 'seed123-baseline' : 'seed123-assignment'
-  const repeatLabel = ordinary ? 'seed123-baseline-repeat' : 'seed123-assignment-repeat'
+  const tagged = fixture.profile === TAGGED_PROFILE
+  const base = tagged ? TAGGED_BASE : ordinary ? ORDINARY_BASE : BASE
+  const contractSha256 = tagged
+    ? TAGGED_CONTRACT_SHA256
+    : ordinary
+      ? ORDINARY_CONTRACT_SHA256
+      : CONTRACT_SHA256
+  const labels = tagged ? TAGGED_LABELS : ordinary ? ORDINARY_LABELS : LABELS
+  const nativeRequestCeiling = tagged ? 4 : ordinary ? 3 : 7
+  const originalLabel = tagged ? null : ordinary ? 'seed123-baseline' : 'seed123-assignment'
+  const repeatLabel = tagged
+    ? null
+    : ordinary
+      ? 'seed123-baseline-repeat'
+      : 'seed123-assignment-repeat'
   for (const target of [
     fixture.artifacts,
     fixture.appData,
@@ -151,13 +174,18 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
   assert.equal(contract.fixedBeforeNativeExecution, true)
   assert.deepEqual(contract.caseLabels, labels)
   assert.equal(contract.nativeRequestCeiling, nativeRequestCeiling)
-  if (ordinary) {
-    assert.equal(contract.schema, 'ordinary-two-character-tags-experiment-v1')
+  if (ordinary || tagged) {
+    assert.equal(
+      contract.schema,
+      tagged
+        ? 'regional-two-character-tags-experiment-v1'
+        : 'ordinary-two-character-tags-experiment-v1',
+    )
     assert.equal(contract.globalPositive, ORDINARY_GLOBAL)
     assert.equal(contract.globalNegative, '')
     assert.deepEqual(contract.bbox, { height: 1024, width: 1024, x: -13, y: 5 })
     assert.deepEqual(contract.seeds, [123, 124])
-    assert.deepEqual(contract.conditions, ['baseline'])
+    assert.deepEqual(contract.conditions, tagged ? ['assignment', 'swapped'] : ['baseline'])
     assert.equal(contract.noResources, true)
   }
   const startedAt = Date.now()
@@ -211,7 +239,11 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
       'GPU capacity/allocator ceilings and independent per-case PT-to-RGB lineage are unqualified; actual installed readiness and original owned PNG readers are observed.',
     mainGroup,
     profile: fixture.profile,
-    schema: ordinary ? 'ordinary-two-character-backend-v1' : 'regional-character-visual-backend-v1',
+    schema: tagged
+      ? 'regional-two-character-backend-v1'
+      : ordinary
+        ? 'ordinary-two-character-backend-v1'
+        : 'regional-character-visual-backend-v1',
     source: { files: initialSources, invokeRevision, revision },
     startedAt: new Date(startedAt).toISOString(),
     visualStatus: 'pending',
@@ -229,9 +261,27 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
       assert.equal(recipeSha256, originalRepeat.recipeSha256)
       assert.equal(preparedSha256, originalRepeat.preparedSha256)
     }
-    if (ordinary) {
-      assert.equal(condition, 'baseline')
-      assert.deepEqual(recipe.regions, [])
+    if (ordinary || tagged) {
+      if (ordinary) {
+        assert.equal(condition, 'baseline')
+        assert.deepEqual(recipe.regions, [])
+      } else {
+        assert.ok(condition === 'assignment' || condition === 'swapped')
+        assert.equal(recipe.regions.length, 2)
+        const texts = ['one woman with long red hair', 'one woman with long blue hair']
+        for (const [index, region] of recipe.regions.entries()) {
+          assert.deepEqual(region.positive, {
+            embeddingRefs: [],
+            text: texts[condition === 'assignment' ? index : 1 - index],
+          })
+          assert.deepEqual(region.negative, {
+            prompt: { embeddingRefs: [], text: '' },
+            source: 'regional',
+          })
+          assert.deepEqual(region.embeddings, { negative: [], positive: [] })
+          assert.equal(region.referenceImages?.length ?? 0, 0)
+        }
+      }
       assert.deepEqual(recipe.globalPrompts, {
         negative: { embeddingRefs: [], text: '' },
         positive: { embeddingRefs: [], text: ORDINARY_GLOBAL },
@@ -255,9 +305,11 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
       recipeSha256,
       requestDeadlineMilliseconds: 600_000,
       route: condition === 'baseline' ? 'ordinary-client-generate' : 'invoke-canvas-v1',
-      schema: ordinary
-        ? 'ordinary-two-character-native-intent-v1'
-        : 'regional-character-native-intent-v1',
+      schema: tagged
+        ? 'regional-two-character-native-intent-v1'
+        : ordinary
+          ? 'ordinary-two-character-native-intent-v1'
+          : 'regional-character-native-intent-v1',
       seed,
       sourceSha256: digest(encoded(initialSources)),
       time: new Date().toISOString(),
@@ -514,12 +566,17 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
       source: fixture.checkpoint.path,
       useCase,
     }
-    producer = ordinary
+    producer = tagged
       ? await produceCharacterVisualProbe<CaseOutcome>({
           ...producerOptions,
-          profile: ORDINARY_PROFILE,
+          profile: TAGGED_PROFILE,
         })
-      : await produceCharacterVisualProbe<CaseOutcome>(producerOptions)
+      : ordinary
+        ? await produceCharacterVisualProbe<CaseOutcome>({
+            ...producerOptions,
+            profile: ORDINARY_PROFILE,
+          })
+        : await produceCharacterVisualProbe<CaseOutcome>(producerOptions)
     assert.equal(attemptedCalls, nativeRequestCeiling)
     assert.equal(submittedNativeRequests, nativeRequestCeiling)
     assert.equal(outcomes.length, nativeRequestCeiling)
@@ -718,9 +775,16 @@ function fixtureFrom(value: Record<string, unknown>): Fixture {
     'deadlineSeconds',
   ])
   assert.equal(value.schemaVersion, 1)
-  assert.ok(value.profile === PROFILE || value.profile === ORDINARY_PROFILE)
+  assert.ok(
+    value.profile === PROFILE ||
+      value.profile === ORDINARY_PROFILE ||
+      value.profile === TAGGED_PROFILE,
+  )
   if (value.profile === ORDINARY_PROFILE) {
     assert.equal(value.artifacts, ORDINARY_RUN)
+  }
+  if (value.profile === TAGGED_PROFILE) {
+    assert.equal(value.artifacts, TAGGED_RUN)
   }
   assert.equal(value.deadlineSeconds, 1800)
   const source = record(value.checkpoint, 'checkpoint')

@@ -1232,3 +1232,17 @@ the complete preregistered gate remains inconclusive: stylized appearance does
 not establish its adult-age criterion. Human acceptance is pending. This does
 not establish regional assignment, quality or new public readiness.
 PP-001/007/008 remain **«Пока не обещать»**.
+
+## Count-tag regional reversal control
+
+The [four-case continuation](../../../engineering/phase-4-regional-guidance-tagged-visual-research.md)
+reuses the same count-tag text and retained ordinary controls for fresh
+assignment/swapped Main recipes at seeds123/124. Fixed masks, texts, model,
+sampling and the existing Invoke-based regional mechanism are preserved.
+ROOT completes four native requests/120 scalar progress events without extra
+baseline or repeat calls. All four show two separate figures; the conservative
+blind count/color/association assessment gives 1 PASS / 3 INCONCLUSIVE, overall
+NOT_QUALIFIED. Red/pink and blue/lavender-gray ambiguity prevents confirmed
+reversal at both seeds. All originals and descriptions remain retained. No
+new adult-age, general quality, public or human-acceptance claim follows;
+PP-001/007/008 remain **«Пока не обещать»**.

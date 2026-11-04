@@ -1668,3 +1668,16 @@ The full preregistered gate stays inconclusive because stylized appearance does
 not establish its adult-age criterion. This is a bounded count observation,
 not quality or regional-assignment acceptance. Types, scoped checks, 62 Main
 tests and source review pass. No production behavior or readiness changes.
+
+## Count-tag regional assignment and reversal
+
+The [four-request continuation](./phase-4-regional-guidance-tagged-visual-research.md)
+keeps the count-tag global text and earlier ordinary controls. Fresh Main
+assignment/swapped states at seeds123/124 reuse the existing Invoke-based
+regional owner. Its fixed narrow count/color/side-exchange rubric precedes
+execution. ROOT completes four native requests/120 scalar progress events in
+216.200s, with no extra baseline or repeat. Blind descriptions find two figures
+in all four, but the conservative color gate is 1 PASS/3 INCONCLUSIVE:
+unambiguous reversal across both seeds is not qualified. Exact inputs, all PNGs
+and observations remain retained; 344,064 B of byte-archived idle scratch are
+removed. Types/scoped checks pass. No mechanism or readiness change follows.
