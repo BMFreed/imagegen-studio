@@ -77,7 +77,7 @@ substitutions: controlled inference is not CUDA/release evidence.
 ## Evidence
 
 Original diagnosis and causal control are retained under
-`/home/user/.codex/artifacts/imagegen-studio/result-sessions-2026-10-01/sqlite-visibility-readonly/`.
+`~/.codex/artifacts/imagegen-studio/result-sessions-2026-10-01/sqlite-visibility-readonly/`.
 Actual production `database.test.ts`: **9/9 pass**, including the two new
 acknowledged cross-process visibility and overlapping same-process write-lock
 checks. The helper uses migrated `app_metadata`, production `openAppDatabase`,

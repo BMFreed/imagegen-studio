@@ -32,7 +32,7 @@ External VAE selection, CLIP Skip, Anima and other pipeline work remain open.
   VAE finiteness checks are necessary before publishing a successful result.
 
 The probe script, log and JSON are retained at
-`/home/user/.codex/artifacts/imagegen-studio/vae-precision-2026-10-04/research/`.
+`~/.codex/artifacts/imagegen-studio/vae-precision-2026-10-04/research/`.
 These probes establish component semantics, not release installation or quality.
 
 ## Owned path and invariants
@@ -83,7 +83,7 @@ This is a verification plan; completed evidence will be added after execution.
 ## Executed evidence
 
 Artifacts are retained at
-`/home/user/.codex/artifacts/imagegen-studio/vae-precision-2026-10-04/`.
+`~/.codex/artifacts/imagegen-studio/vae-precision-2026-10-04/`.
 This is implementation self-review by the implementation team, not a blind audit.
 Final source, report and built-file hashes are recorded in `delivery-evidence.json`.
 

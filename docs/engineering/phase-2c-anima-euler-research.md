@@ -254,9 +254,9 @@ The new inference-extra torchvision pin is 0.22.1; default Pillow-only runtime a
 existing installed Invoke packages/model files remain unchanged.
 
 Local artifacts (not shipped application files):
-`/home/user/.codex/artifacts/imagegen-studio/anima-euler-2026-10-05/`
+`~/.codex/artifacts/imagegen-studio/anima-euler-2026-10-05/`
 contains TS plans/mutations/source-AST evidence, native RED/green logs, aggregate
 checks, isolated Python mutation artifacts, RoPE review evidence and trained GPU
 probe/report/PNGs (`trained-gpu` initial, `trained-gpu-final` after the fix).
 The independent original/native numerical probe is in
-`/home/user/.codex/artifacts/imagegen-studio/anima-denoising-2026-10-05/`.
+`~/.codex/artifacts/imagegen-studio/anima-denoising-2026-10-05/`.

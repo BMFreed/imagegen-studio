@@ -120,7 +120,7 @@ Record actual executed/skipped counts and source hashes. Synthetic scheduler
 controls, tiny native models and trained GPU evidence are separate boundaries.
 
 Artifacts:
-`/home/user/.codex/artifacts/imagegen-studio/anima-flow-sampling-2026-10-05/`.
+`~/.codex/artifacts/imagegen-studio/anima-flow-sampling-2026-10-05/`.
 
 ## Executed verification
 

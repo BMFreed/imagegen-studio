@@ -187,7 +187,7 @@ still failing. Final Results/acceptance run passed with no renderer page errors.
 The new native harness is included in `pnpm run app:smoke` and is available alone
 as `pnpm run app:smoke:generation`. It defaults to portable temporary artifacts;
 this session's reports, logs, commands, screenshots and source hashes are retained
-at `/home/user/.codex/artifacts/imagegen-studio/generate-actions-2026-09-30/`.
+at `~/.codex/artifacts/imagegen-studio/generate-actions-2026-09-30/`.
 
 ## Remaining delivery boundary
 

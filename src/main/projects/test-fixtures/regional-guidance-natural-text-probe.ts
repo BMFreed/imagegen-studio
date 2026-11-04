@@ -28,6 +28,7 @@ import { sql } from 'kysely'
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, readdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { inflateSync } from 'node:zlib'
@@ -52,10 +53,14 @@ import { classifyTargetPngAlpha } from '../target-png-mode.js'
 import { ProjectWorkerClient } from '../worker-client.js'
 
 const REPO = fileURLToPath(new URL('../../../../', import.meta.url)).replace(/\/$/, '')
-const EXACT_RUN =
-  '/home/user/.codex/artifacts/imagegen-studio/runs/regional-guidance-visual/20261027-apple-mug'
-const EXACT_SOURCE =
-  '/home/user/.codex/artifacts/imagegen-studio/shared/illustrious-epsilon-source-20261026/Illustrious-XL-v0.1.safetensors'
+const EXACT_RUN = path.join(
+  os.homedir(),
+  '.codex/artifacts/imagegen-studio/runs/regional-guidance-visual/20261027-apple-mug',
+)
+const EXACT_SOURCE = path.join(
+  os.homedir(),
+  '.codex/artifacts/imagegen-studio/shared/illustrious-epsilon-source-20261026/Illustrious-XL-v0.1.safetensors',
+)
 const BASE = '166ecdd4ceaedbe0905e1a2ce310141707c9df5c'
 const CONTRACT_SHA256 = 'd97bfe4944659c956be0c30d66f5e77ce533026192836d6f4aa3578917b4495c'
 const CHECKPOINT_SHA256 = '3e15ba00387db678ab4a099f75771c4f5ac67fda9e7100a01d263eaf30145aa9'

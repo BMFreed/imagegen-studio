@@ -221,7 +221,7 @@ Regional prompt принимает ввод, затем после blur возв
 
 Сравнение не даёт основания объявить весь InvokeAI удобнее. В проверенном default layout у него тоже очень плотная правая сторона с Boards/Gallery/Layers, несколько уровней навигации и множество иконок. Для ImageGen Studio сохраняются Home, документы и один Project Canvas. Полный docking, Boards/Assets/Gallery hierarchy, отдельные Launchpad/Viewer и размещение denoising над слоями переносить не следует.
 
-Проверенные reference-файлы в `/home/user/Work/sources/InvokeAI/`:
+Проверенные reference-файлы в `~/Work/sources/InvokeAI/`:
 
 - `invokeai/frontend/web/src/features/ui/layouts/CanvasTabLeftPanel.tsx`
 - `invokeai/frontend/web/src/features/ui/components/ParametersPanels/ParametersPanelCanvas.tsx`
@@ -256,12 +256,12 @@ Regional prompt принимает ввод, затем после blur возв
 
 Переходы к основным источникам:
 
-- [Product scope](/home/user/Work/imagegen-studio/docs/specs/00-product-scope.md:5)
-- [Матрица обещаний](/home/user/Work/imagegen-studio/docs/product-promises.md:26)
-- [Generate и Cancel](/home/user/Work/imagegen-studio/docs/prototype-app/src/prototypes/project/ProjectPrototype.vue:90)
-- [Integrated Apply](/home/user/Work/imagegen-studio/docs/prototype-app/src/prototypes/presets/ApplyPresetModal.vue:33)
-- [Fit View](/home/user/Work/imagegen-studio/docs/prototype-app/src/prototypes/project/ProjectCanvasWorkspace.vue:144)
-- [Размер рамки canvas](/home/user/Work/imagegen-studio/docs/prototype-app/src/prototypes/project/ProjectCanvasWorkspace.vue:422)
-- [Контекст draft](/home/user/Work/imagegen-studio/docs/prototype-app/src/prototypes/project/project.utils.ts:21)
-- [Контракт provenance](/home/user/Work/imagegen-studio/docs/features/project/generate-mode/generation-provenance.md:178)
-- [InvokeAI fitRect](/home/user/Work/sources/InvokeAI/invokeai/frontend/web/src/features/controlLayers/konva/CanvasStageModule.ts:231)
+- [Product scope](~/Work/imagegen-studio/docs/specs/00-product-scope.md:5)
+- [Матрица обещаний](~/Work/imagegen-studio/docs/product-promises.md:26)
+- [Generate и Cancel](~/Work/imagegen-studio/docs/prototype-app/src/prototypes/project/ProjectPrototype.vue:90)
+- [Integrated Apply](~/Work/imagegen-studio/docs/prototype-app/src/prototypes/presets/ApplyPresetModal.vue:33)
+- [Fit View](~/Work/imagegen-studio/docs/prototype-app/src/prototypes/project/ProjectCanvasWorkspace.vue:144)
+- [Размер рамки canvas](~/Work/imagegen-studio/docs/prototype-app/src/prototypes/project/ProjectCanvasWorkspace.vue:422)
+- [Контекст draft](~/Work/imagegen-studio/docs/prototype-app/src/prototypes/project/project.utils.ts:21)
+- [Контракт provenance](~/Work/imagegen-studio/docs/features/project/generate-mode/generation-provenance.md:178)
+- [InvokeAI fitRect](~/Work/sources/InvokeAI/invokeai/frontend/web/src/features/controlLayers/konva/CanvasStageModule.ts:231)

@@ -158,7 +158,7 @@ reviewer read current code. The retained staging-only Home decision gap above is
 recorded separately from this corrected behavior.
 
 Artifacts are under
-`/home/user/.codex/artifacts/imagegen-studio/result-sessions-2026-10-01/`:
+`~/.codex/artifacts/imagegen-studio/result-sessions-2026-10-01/`:
 final command logs, `tested-source-sha256.json`, isolated mutations and independent
 `recovery-discard-review/` red/green reproductions. Executed mutation and native
 results are recorded below.

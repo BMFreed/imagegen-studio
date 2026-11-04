@@ -118,7 +118,7 @@ remain open; update their evidence and matrix row together after actual runs.
 
 ## Results
 
-Artifacts: `/home/user/.codex/artifacts/imagegen-studio/installed-external-vae-2026-10-07/`.
+Artifacts: `~/.codex/artifacts/imagegen-studio/installed-external-vae-2026-10-07/`.
 Source and installed worker match in all 43 payload files. Streaming verification
 confirms all three historical fixture hashes/sizes. A fresh tensor-byte check
 finds exactly 248 matching native/control tensor descriptors: 246 unchanged

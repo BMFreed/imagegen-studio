@@ -74,7 +74,7 @@
   лицензия Base 1.0 не присваивается ему только по имени семейства.
 - Setup/status/repair Python runtime встроены в основное окно ImageGen Studio;
   отдельного приложения или окна лаунчера нет. Код Invoke launcher из
-  `/home/user/Work/sources/launcher/` можно использовать как reference для
+  `~/Work/sources/launcher/` можно использовать как reference для
   отдельных механизмов установки, сохраняя наше staged/rollback поведение.
 - Если ML Worker отсутствует или упал, Project Save всё равно сохраняет полный
   `.igs` с обязательными статическими preview placeholders и manifest state

@@ -73,7 +73,7 @@ review, not a blind audit.
 
 ## Executed evidence
 
-Artifact root: `/home/user/.codex/artifacts/imagegen-studio/public-outpaint-2026-10-07/`.
+Artifact root: `~/.codex/artifacts/imagegen-studio/public-outpaint-2026-10-07/`.
 
 - Focused final queue/controller/storage regressions: 48 executed/passed, zero
   failures or skips (`focused-final.log`). Both family queue child probes enumerate

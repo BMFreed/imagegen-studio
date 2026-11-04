@@ -2,7 +2,7 @@
 
 Date: 06.10.2026. Research base: `795b6f3529628d0dcfbb5a118837f16da1e7880e`.
 Invoke source: `9e1540962bcca7f8fa668d7d8e02cf79d75fda3b`, local checkout
-`/home/user/Work/sources/InvokeAI`. Diffusers0.40.0/Torch2.7.1.
+`~/Work/sources/InvokeAI`. Diffusers0.40.0/Torch2.7.1.
 
 ## Scope, risk and invariant
 
@@ -99,7 +99,7 @@ and RGB-only publication. Small target/few steps and one model bundle cannot
 qualify visual quality, installed runtime, public acceptance or persistence.
 
 Artifact root:
-`/home/user/.codex/artifacts/imagegen-studio/anima-outpaint-2026-10-06/`.
+`~/.codex/artifacts/imagegen-studio/anima-outpaint-2026-10-06/`.
 Checks inspect the source tree based on the research commit. The final delivery
 manifest pins delivered sources, logs and commit.
 

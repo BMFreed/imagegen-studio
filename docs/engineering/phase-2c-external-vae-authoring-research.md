@@ -79,7 +79,7 @@ counts, bundle freshness and the explicit inference gap below before commit.
 ## Execution evidence
 
 Artifacts are retained under
-`/home/user/.codex/artifacts/imagegen-studio/external-vae-authoring-2026-10-04/`.
+`~/.codex/artifacts/imagegen-studio/external-vae-authoring-2026-10-04/`.
 The delivery seal records changed source, scripts, compiled bundles and executed
 commands. This is a scoped implementation/self-review, not a blind whole-product
 audit.

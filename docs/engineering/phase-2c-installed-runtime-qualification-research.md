@@ -42,7 +42,7 @@ Research inspected clean commit
 
 | Observation                     | Status and boundary                                                                                                                                                                                                                                                                                                                                                                       |
 | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Normal app-data root            | **Confirmed:** `resolveAppPaths()` resolves this session to `/home/user/.local/share/imagegen-studio`. Its `runtime/` directory exists; `current-runtime.json` is absent and `runtime/environments/` has no entries. This does not prove absence in an independently chosen test app-data root.                                                                                         |
+| Normal app-data root            | **Confirmed:** `resolveAppPaths()` resolves this session to `~/.local/share/imagegen-studio`. Its `runtime/` directory exists; `current-runtime.json` is absent and `runtime/environments/` has no entries. This does not prove absence in an independently chosen test app-data root.                                                                                         |
 | Current runtime install/repair  | **Confirmed:** `RuntimeManager.install()` and `repair()` return `RUNTIME_INSTALL_UNAVAILABLE`. Renderer/preload/IPC expose the actions, but do not implement their lifecycle.                                                                                                                                                                                                             |
 | Development interpreter         | **Confirmed by filesystem inspection:** `worker-python/.python-version` is `3.12.13`; development `.venv/bin/python` resolves into the user's uv-managed Python tree, outside ImageGen Studio app data. `pyvenv.cfg` excludes system site packages and records uv `0.11.11`. This environment is not an app-owned installed runtime.                                                      |
 | Dependency graph                | **Confirmed:** `pyproject.toml` and `uv.lock` pin an optional inference extra. The lock records the project itself as editable; a release or this qualification must explicitly build/install a non-editable wheel. The distribution version is `0.1.0`, distinct from inference protocol worker version `0.11.0`; record both instead of inferring wheel identity from the handshake.    |
@@ -266,7 +266,7 @@ gate is required between research and the already authorized implementation.
 **Confirmed installed development runtime and all four trained public UI paths.**
 The opt-in provisioner completed on 2026-10-05 from `19:45:15.457Z` to
 `19:52:37.089Z`; its
-[provision report](/home/user/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/provision-report.json)
+[provision report](~/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/provision-report.json)
 records `activated-qualified` and confirmed worker exit for
 `qualified-linux-nvidia-20261005` in the isolated artifact app-data root.
 CPython `3.12.13`, its base prefix, the environment prefix and non-editable
@@ -285,9 +285,9 @@ artifacts, release readiness and completed public promises are not claimed.
 ### Final trained native run
 
 The normal final command was
-`pnpm exec tsx scripts/qualify-installed-generation.mjs --fixture /home/user/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/fixture-qualified-v5.json --resume`.
+`pnpm exec tsx scripts/qualify-installed-generation.mjs --fixture ~/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/fixture-qualified-v5.json --resume`.
 Its fresh
-[native report](/home/user/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/native-qualified-v5/report.json)
+[native report](~/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/native-qualified-v5/report.json)
 is **passed**, with **9 checks, 4 trained generations, zero renderer page errors**
 and actual Electron exit **0** at `2026-10-05T21:40:40.876Z`.
 `--resume` reuses only the exact isolated model catalog; it does not reuse an
@@ -351,9 +351,9 @@ available for HTTP inspection, but cannot supply this native Electron/child-proc
 boundary. The helper's Main `net.fetch` and renderer Image/canvas observations
 respect the existing protocol/CSP rules described in the retained attempts below.
 
-[Native framework facts](/home/user/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/native-framework-facts.json)
+[Native framework facts](~/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/native-framework-facts.json)
 record owned Python `3.12.13`, Torch `2.7.1+cu126` and CUDA build `12.6`.
-[Observed child/resource summary](/home/user/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/native-qualified-v5-resource-summary.json)
+[Observed child/resource summary](~/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/native-qualified-v5-resource-summary.json)
 filters approximately one-second process/GPU samples to the observed app-owned
 worker PIDs: maximum sampled single-child VRAM is **12,780 MiB**, GPU-worker RSS
 **8,722,580 KiB**, and CPU-worker RSS **47,628 KiB**. Observed executables/import
@@ -382,7 +382,7 @@ boundary and controlled JSONL failed-start/runtime-lease peers remain real; no
 trained GPU job or installed derivatives invocation is claimed by these tests.
 Whole `pnpm run typecheck` and owned-file ESLint passed.
 
-[CPU routing mutation report](/home/user/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/cpu-routing/final-source/mutation-report.json)
+[CPU routing mutation report](~/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/cpu-routing/final-source/mutation-report.json)
 records **9/9** semantic mutants killed by behavioral `AssertionError`, with
 17/17 baseline and restored runs and unchanged live runtime source hash. The
 mutants cover accidental ML-config dependence, external interpreter containment,
@@ -411,7 +411,7 @@ result remains successful; another placeholder Save stays within the Main owner
 lease and launches no child. Shutdown retries the retained child before storage
 closes. Legacy failed-start query/retry names are aliases to the complete fence.
 
-[Global exit review and evidence](/home/user/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/global-image-exit/research-and-review.md)
+[Global exit review and evidence](~/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/global-image-exit/research-and-review.md)
 records 121 focused passing cases and five executed behavioral mutation kills,
 with restored controls and unchanged production hashes. Controlled protocol
 peers induce close/path races; they do not prove trained inference. Peer review
@@ -434,8 +434,8 @@ SQLite claim CAS remain authoritative, including cancellation between the
 preflight and claim. Fenced Projects and an already running row must not appear
 as dispatchable work. The existing enqueue barrier, drain wake/detach race and
 shutdown barriers survive. The combined focused run passed **321/321** cases.
-The [queue mutation report](/home/user/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/empty-drain-preflight/queue/mutation-report.json)
-and [dispatch mutation report](/home/user/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/empty-dispatch/mutation-report.json)
+The [queue mutation report](~/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/empty-drain-preflight/queue/mutation-report.json)
+and [dispatch mutation report](~/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/empty-dispatch/mutation-report.json)
 record **5 + 5** behavioral kills and green restored controls. The actual old
 RuntimeManager regression launched two physical protocol peers for an empty
 queue; the corrected production path launches zero. Source-aware peer review
@@ -453,16 +453,16 @@ parent. Canonical directory checks now run before directory creation; the report
 is exclusively reserved and every checkpoint writes through that owned file
 descriptor. Existing evidence is never silently reused as a new result.
 
-[Provisioner final-source mutations](/home/user/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/provision-mutations/final-format/report.json)
+[Provisioner final-source mutations](~/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/provision-mutations/final-format/report.json)
 record **4/4** behavioral kills, with six green baseline/restored controls.
-[Native CLI path/evidence mutations](/home/user/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/harness-path-safety/final-source-v5/report.json)
+[Native CLI path/evidence mutations](~/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/harness-path-safety/final-source-v5/report.json)
 record **4/4** filesystem kills and six green controls. These tests stop before
 model copying, Electron or CUDA; they qualify the declared setup/refusal
 boundary, not trained inference. Earlier error-text-only pilots and the wrong
 pointer mutation anchor are retained but excluded from the successful count.
 
 The Main CPU owner additionally has
-[4/4 executed ownership mutations](/home/user/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/image-owner-mutations/report.json),
+[4/4 executed ownership mutations](~/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/image-owner-mutations/report.json),
 with eight green baseline/restored cases. Together with CPU resolution (9),
 global confirmed-exit fencing (5), and queue/dispatch (5 + 5), this checkpoint
 has **36** executed semantic mutations detected by observable behavior. The
@@ -492,7 +492,7 @@ fetches current AFTER capabilities and compares encoded/pixel SHA, status,
 dimensions and every non-URL layer property. Import uses the same preservation
 check; immutable package assets/provenance are still compared in full.
 
-[Source-aware capability review](/home/user/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/harness-path-safety/final-source-v3/layer-capability-source-review.md)
+[Source-aware capability review](~/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/harness-path-safety/final-source-v3/layer-capability-source-review.md)
 confirms the correction changes the observation of temporary URLs, not the
 production contract or layer/pixel assertions. All four setup/evidence mutants
 were rerun on this final harness SHA and killed again; repeated campaigns are
@@ -502,7 +502,7 @@ The subsequent `native-qualified-v2` stopped before a second Generate because
 its observer attempted renderer Fetch for `igs-layer`, which the unchanged CSP
 and protocol privileges intentionally forbid. This was another harness defect,
 not evidence that the layer image was broken. The
-[read-only real Electron probe](/home/user/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/layer-access-probe/report.json)
+[read-only real Electron probe](~/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/layer-access-probe/report.json)
 then opened that same saved Project and verified Main `net.fetch` through the
 registered handler returned exact package PNG bytes, while renderer anonymous
 Image/canvas decoding returned the exact recorded full RGBA hash. No Generate,
@@ -531,7 +531,7 @@ Save button to become enabled again, then verifies Home `aria-selected=true`
 before asking for the Rebuild control. Increasing its timeout or bypassing the
 renderer busy guard would not test the intended interaction. This harness-only
 correction was first verified on the existing real accepted Project in a
-[derived tail-only probe](/home/user/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/tail-probe-v4/evidence/report.json).
+[derived tail-only probe](~/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/tail-probe-v4/evidence/report.json).
 That probe did not generate new trained results; normal final v5 then repeated
 the complete four-case command and all derivative controls successfully.
 
@@ -549,12 +549,12 @@ the complete four-case command and all derivative controls successfully.
 The smoke chain includes desktop, generation results/actions, accepted history,
 both Illustrious and Anima comparison invocations, Project VAE, embeddings,
 Anima authoring and Anima queue. Its
-[actual log](/home/user/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/final-app-smoke-all.log)
+[actual log](~/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/final-app-smoke-all.log)
 contains all ten completed commands; the successful sequential `&&` chain is
 not inferred merely from the presence of script files. The rebuilt Main,
 preload, renderer HTML/JS/CSS hashes still equal the five native-v5 bundle hashes.
 Final source identities, command logs and mutation reports are indexed in the
-[evidence manifest](/home/user/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/final-evidence.json).
+[evidence manifest](~/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/final-evidence.json).
 
 Source-aware peer review inspected the actual final diff, schemas, native report,
 mutation failures/restored controls and build identities. It found no remaining

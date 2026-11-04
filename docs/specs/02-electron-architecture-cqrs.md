@@ -10,7 +10,7 @@ ImageGen Studio не запускает отдельное приложение-
 launcher-окно перед основным UI. Если worker ещё не установлен или неисправен,
 основное окно всё равно открывается и показывает доступное действие setup/repair.
 Python worker — фоновый subprocess без собственного пользовательского окна.
-Исходники Invoke launcher в `/home/user/Work/sources/launcher/` служат
+Исходники Invoke launcher в `~/Work/sources/launcher/` служат
 reference для отдельных install mechanisms, а не шаблоном композиции окон.
 
 Renderer не импортирует:

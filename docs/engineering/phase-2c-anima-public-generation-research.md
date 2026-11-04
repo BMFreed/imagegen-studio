@@ -6,7 +6,7 @@ Continue the authorized roadmap on `master`, base
 `a264bc711d1f30153ba3e69e0b9b417e1efb631e`, 2026-10-05, after
 [durable Anima jobs](./phase-2c-anima-durable-jobs-research.md).
 Baseline `pnpm run app:test`: 1491 passed, zero failures, cancellations or skips.
-Artifacts: `/home/user/.codex/artifacts/imagegen-studio/anima-public-generation-2026-10-05/`.
+Artifacts: `~/.codex/artifacts/imagegen-studio/anima-public-generation-2026-10-05/`.
 
 This change opens public Project Generate for the existing original Anima bundle,
 accepts verified temporary Anima candidates through the existing Add owner,

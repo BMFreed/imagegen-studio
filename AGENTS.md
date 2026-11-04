@@ -74,4 +74,4 @@
 - Treat `.igs` persistence/recovery, resource lifecycle, worker/queue persistence, immutable provenance and destructive filesystem/IPC behavior as high risk when those boundaries change.
 - Research and implementation are phases within an authorized change; do not insert an automatic approval gate between them. Analysis-only requests remain read-only. Explicit user scope and tool permissions govern mutations, delegation, commits and publication.
 - Report actual evidence and boundaries: prototype mocks do not prove production persistence, and a test file does not prove a successful run. Update promise status and its matrix row together when evidence changes readiness.
-- Integration notes and pending process pilots live in `docs/engineering/README.md`; no work project stand or imported MR-review skill is required.
+- Integration notes and pending process pilots live in `docs/engineering/README.md`; no test environment or imported review skill from the work project is required.

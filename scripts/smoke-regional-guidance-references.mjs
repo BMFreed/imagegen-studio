@@ -43,31 +43,31 @@ import { isProxy } from 'node:util/types'
 import { serialize } from 'node:v8'
 import { crc32, deflateSync, inflateSync } from 'node:zlib'
 
-const require = createRequire('/home/user/Work/imagegen-studio/package.json')
+const require = createRequire(import.meta.url)
 const { _electron: electron, expect } = require('@playwright/test')
 const Database = require('better-sqlite3')
 
-import { openAppDatabase } from '/home/user/Work/imagegen-studio/src/main/db/database.ts'
-import { readIgsPackage } from '/home/user/Work/imagegen-studio/src/main/projects/igs-package.ts'
-import { encodeProjectMaskPng } from '/home/user/Work/imagegen-studio/src/main/projects/project-mask.ts'
-import { ProjectSession } from '/home/user/Work/imagegen-studio/src/main/projects/project-session.ts'
-import { ProjectShadowStore } from '/home/user/Work/imagegen-studio/src/main/projects/project-shadow.ts'
-import { acceptedRasterProvenanceFixture } from '/home/user/Work/imagegen-studio/src/main/projects/test-fixtures/accepted-provenance.ts'
-import { literalSmartPatchColorPng } from '/home/user/Work/imagegen-studio/src/main/projects/test-fixtures/smart-patch-input-material.ts'
-import { smartPatchVariantMetadataFixture } from '/home/user/Work/imagegen-studio/src/main/projects/test-fixtures/smart-patch-variant.ts'
-import { ipcChannels } from '/home/user/Work/imagegen-studio/src/shared/api.ts'
-import { isolateNativeSmokeWindow } from '/home/user/Work/imagegen-studio/scripts/native-smoke-window.mjs'
+import { openAppDatabase } from '../src/main/db/database.ts'
+import { readIgsPackage } from '../src/main/projects/igs-package.ts'
+import { encodeProjectMaskPng } from '../src/main/projects/project-mask.ts'
+import { ProjectSession } from '../src/main/projects/project-session.ts'
+import { ProjectShadowStore } from '../src/main/projects/project-shadow.ts'
+import { acceptedRasterProvenanceFixture } from '../src/main/projects/test-fixtures/accepted-provenance.ts'
+import { literalSmartPatchColorPng } from '../src/main/projects/test-fixtures/smart-patch-input-material.ts'
+import { smartPatchVariantMetadataFixture } from '../src/main/projects/test-fixtures/smart-patch-variant.ts'
+import { ipcChannels } from '../src/shared/api.ts'
+import { isolateNativeSmokeWindow } from './native-smoke-window.mjs'
 import {
   boundQualificationProcess,
   confirmQualificationProcessExit,
   stopExpiredQualificationProcess,
-} from '/home/user/Work/imagegen-studio/scripts/qualification-resource-limits.mjs'
+} from './qualification-resource-limits.mjs'
 
 const startedMono = Number(process.hrtime.bigint() / 1_000_000n)
 const root = realpathSync(process.cwd())
 assert.equal(
   root,
-  '/home/user/Work/imagegen-studio',
+  realpathSync(fileURLToPath(new URL('..', import.meta.url))),
   'Run this external draft from its repository',
 )
 assert.equal(process.argv.length, 4, 'Use --report-file ABSOLUTE_NEW_REPORT')

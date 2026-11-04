@@ -184,8 +184,8 @@ pnpm exec tsx scripts/measure-generation-batch-capacity.ts --artifact-dir /absol
 Existing directories and tmpfs are refused. The script creates only private
 fixture data and removes its own bulky paths; evidence is retained. Per-case
 JSON/logs, system information, source SHA-256 manifests, commands and summaries
-are in `/home/user/.codex/artifacts/imagegen-studio/batch-capacity-matrix-2026-09-30/`
-and `/home/user/.codex/artifacts/imagegen-studio/batch-capacity-stress32-2026-09-30/`.
+are in `~/.codex/artifacts/imagegen-studio/batch-capacity-matrix-2026-09-30/`
+and `~/.codex/artifacts/imagegen-studio/batch-capacity-stress32-2026-09-30/`.
 Both runs used the dirty slice over `3aba5f8`, with stable core hashes during
 each run and provisional policy 64. The harness exercises the existing storage
 ceiling directly; policy changed to 32 only after measurements finished. The
@@ -247,6 +247,6 @@ The capacity harness's own semantic mutation changed reported seed `index` to
 child and parent exited 1, and owned bulky data was removed. Restoring it gave
 two passing outcomes: one completed case and the count-65 refusal control.
 Its commands, patch and structured failure/restored results are in
-`/home/user/.codex/artifacts/imagegen-studio/batch-capacity-harness-mutation-2026-09-30/`.
+`~/.codex/artifacts/imagegen-studio/batch-capacity-harness-mutation-2026-09-30/`.
 Production test logs and planner/provenance red/green/mutation artifacts are
-collected in `/home/user/.codex/artifacts/imagegen-studio/phase-2b-batch-planning-2026-09-30/`.
+collected in `~/.codex/artifacts/imagegen-studio/phase-2b-batch-planning-2026-09-30/`.

@@ -130,7 +130,7 @@ fresh production build and relevant existing production smoke; no prototype or
 GPU evidence is claimed without corresponding changes and actual runs.
 
 Artifacts:
-`/home/user/.codex/artifacts/imagegen-studio/anima-main-preparation-2026-10-05/`.
+`~/.codex/artifacts/imagegen-studio/anima-main-preparation-2026-10-05/`.
 Update promise matrix/body and supporting roadmap together, retaining public
 readiness and the queue/Retry/accepted/release gaps.
 

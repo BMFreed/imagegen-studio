@@ -127,7 +127,7 @@ native smoke and actual screenshot inspection. Prototype components are unchange
 
 Implementation is complete for this bounded Illustrious slice. Research artifacts
 are retained locally under
-`/home/user/.codex/artifacts/imagegen-studio/embedding-inference-2026-10-04/`.
+`~/.codex/artifacts/imagegen-studio/embedding-inference-2026-10-04/`.
 The preceding read-only token-source question was resolved by authoring; trained
 embedding quality and broad file/profile compatibility remain separate limits.
 

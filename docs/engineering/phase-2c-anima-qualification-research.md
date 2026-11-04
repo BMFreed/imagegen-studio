@@ -96,7 +96,7 @@ No `anima-*` ready capability or public promise completion is claimed here.
 ## Execution evidence and remaining gaps
 
 Local evidence is retained under
-`/home/user/.codex/artifacts/imagegen-studio/anima-qualification-2026-10-05/`.
+`~/.codex/artifacts/imagegen-studio/anima-qualification-2026-10-05/`.
 The independent code review was informed by this foundation scope, not a blind
 user-flow audit. It reproduced acceptance of an unknown branch ending in
 `.inv_freq`; Main and Python now exclude exact known rotary/position keys instead
@@ -162,7 +162,7 @@ confirms no generation/readiness route was added.
   over all 31 worker source/test files. Auxiliary profile generator Ruff checks
   and affected-file Prettier checks pass. CPU checks do not qualify the release
   runtime or GPU inference. Python loader/mutation artifacts are retained in
-  `/home/user/.codex/artifacts/imagegen-studio/anima-loader-2026-10-05/`;
+  `~/.codex/artifacts/imagegen-studio/anima-loader-2026-10-05/`;
   full regression/environment reports are in this slice's `worker-checks/`.
 
 The native environment also has torchvision. Diffusers Cosmos forward calls its

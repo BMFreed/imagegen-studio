@@ -385,7 +385,11 @@ class _StripAnnotations(ast.NodeTransformer):
 
 def _upstream_fade(mask: Image.Image, radius: int, native: tuple[Any, Any]) -> Image.Image:
     """Execute pinned numerical body, replacing invocation storage/types only."""
-    root = Path(os.environ.get("IGS_INVOKE_SOURCE_ROOT", "/home/user/Work/sources/InvokeAI"))
+    root = Path(
+        os.environ.get(
+            "IGS_INVOKE_SOURCE_ROOT", str(Path(__file__).resolve().parents[3] / "sources/InvokeAI")
+        )
+    )
     source = root / "invokeai/app/invocations/image.py"
     if not source.is_file():
         pytest.skip("Independent fade oracle requires pinned external Invoke source.")

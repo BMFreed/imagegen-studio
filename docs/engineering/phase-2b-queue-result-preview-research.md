@@ -131,7 +131,7 @@ this infrastructure failure is not counted as a product finding or mutation.
 
 Retained final commands, logs, source/build hashes, native screenshots and mutation
 evidence:
-`/home/user/.codex/artifacts/imagegen-studio/queue-result-preview-2026-10-01/`.
+`~/.codex/artifacts/imagegen-studio/queue-result-preview-2026-10-01/`.
 
 Full session filtering, automatically completing navigation after Open Project or
 recovery decisions, accepted-result/history navigation, automatic cache rebuild,

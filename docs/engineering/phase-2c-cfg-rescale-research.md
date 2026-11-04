@@ -16,7 +16,7 @@ production has no control or draft IPC action, Prepare rejects any presence
 correctly labels historical absence `Unavailable`.
 
 Reference behavior was checked in local InvokeAI
-`/home/user/Work/sources/InvokeAI/invokeai/backend/stable_diffusion/extensions/rescale_cfg.py`
+`~/Work/sources/InvokeAI/invokeai/backend/stable_diffusion/extensions/rescale_cfg.py`
 and `invokeai/app/invocations/denoise_latents.py`: default zero, nonnegative
 multiplier below one, noise-standard-deviation rescaling after combining CFG
 predictions. The existing pinned Diffusers SDXL pipeline is the ML adapter;
@@ -75,7 +75,7 @@ corrected. Reset removes the optional field without touching result provenance.
 ## Executed evidence
 
 Artifacts:
-`/home/user/.codex/artifacts/imagegen-studio/cfg-rescale-2026-10-02/`.
+`~/.codex/artifacts/imagegen-studio/cfg-rescale-2026-10-02/`.
 Tests and screenshots below inspect this implementation working tree; the
 delivery manifest records its final file hashes and commit. This is self-review
 with separate agents reviewing the implementation, not a blind experiment.

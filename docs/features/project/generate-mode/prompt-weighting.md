@@ -167,7 +167,7 @@ The historical 02.10.2026 checkpoint changed documentation only. Direct probes o
 editor helper and the referenced PR parser confirmed suffix/nesting behavior;
 these were not tokenizer, conditioning or GPU tests. Results and the fetched
 PR source/status are retained in
-`/home/user/.codex/artifacts/imagegen-studio/anima-prompt-weighting-2026-10-02/`.
+`~/.codex/artifacts/imagegen-studio/anima-prompt-weighting-2026-10-02/`.
 No ImageGen Studio Anima inference tests were executed at that checkpoint.
 The subsequent conditioning research note records executed compiler/native
 tests, isolated mutations, bundled-wheel verification and trained CPU evidence.

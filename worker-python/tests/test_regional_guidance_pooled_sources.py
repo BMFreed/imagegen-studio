@@ -44,8 +44,9 @@ import pytest
 import test_illustrious_regional_visual_acceptance as _visual_helpers
 
 old: Any = cast(Any, _visual_helpers)
-RUN = Path(
-    "/home/user/.codex/artifacts/imagegen-studio/runs/regional-guidance-pools/20261031-signed-source"
+RUN = (
+    Path.home()
+    / ".codex/artifacts/imagegen-studio/runs/regional-guidance-pools/20261031-signed-source"
 )
 OLD_RUN: Path = old.RUN
 BASE = "33c5619caf474879eb77e56a535db4824d9ef087"

@@ -103,7 +103,7 @@ fixture; any new trained embedding download keeps exact author/source credit.
 Record native loading separately from source admission, trained inference and
 future combined component matrix. Root owns writes/cleanup under artifact policy.
 
-Reference inspection used local `/home/user/Work/sources/InvokeAI/` at
+Reference inspection used local `~/Work/sources/InvokeAI/` at
 `9e1540962bcca7f8fa668d7d8e02cf79d75fda3b`: ordinary LoRA shape handling in
 `invokeai/backend/model_manager/configs/lora.py`, paired textual inversion in
 `configs/textual_inversion.py` and `backend/textual_inversion.py`, and VAE

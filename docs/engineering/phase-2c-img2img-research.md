@@ -28,7 +28,7 @@ embeddings, other Advanced Options and release runtime installation remain open.
   null. The prototype's displayed 0.75 is an unpersisted presentation fallback;
   the contract does not establish it as a production default.
 - Invoke reference checkout is
-  `/home/user/Work/sources/InvokeAI/` at
+  `~/Work/sources/InvokeAI/` at
   `9e1540962bcca7f8fa668d7d8e02cf79d75fda3b`. Its denoising scheduler slices using
   a rounded training-timestep threshold. Pinned Diffusers 0.40.0's native img2img
   strength instead floors `steps * strength`. A simple forwarded argument would
@@ -107,7 +107,7 @@ verifies its input. Unknown CPU mode is explained rather than guessed.
 ## Executed evidence
 
 Artifacts:
-`/home/user/.codex/artifacts/imagegen-studio/img2img-2026-10-02/`.
+`~/.codex/artifacts/imagegen-studio/img2img-2026-10-02/`.
 The delivery manifest records final source/build/report hashes and commit. This
 is implementation self-review with a separate focused backend review, not a
 blind audit of the entire application.

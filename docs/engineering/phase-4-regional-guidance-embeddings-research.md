@@ -242,7 +242,7 @@ commit, publication or external-runtime replay is claimed.
 ## Retention and release
 
 Compact evidence lives at
-`/home/user/.codex/artifacts/imagegen-studio/runs/regional-guidance-embeddings/20261026-exact`.
+`~/.codex/artifacts/imagegen-studio/runs/regional-guidance-embeddings/20261026-exact`.
 It retains source/review archives and manifests, all sixteen primary source
 files, complete Main recipes, twelve Main fixture originals in a verified
 archive, raw causal plans/patches/logs/JUnit/observations, and

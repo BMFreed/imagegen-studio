@@ -21,6 +21,7 @@ import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { lstat, mkdir, readdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -47,10 +48,14 @@ import { classifyTargetPngAlpha, decodeTargetPngAlpha } from '../target-png-mode
 import { ProjectWorkerClient } from '../worker-client.js'
 
 const REPO = fileURLToPath(new URL('../../../../', import.meta.url)).replace(/\/$/, '')
-const RUN =
-  '/home/user/.codex/artifacts/imagegen-studio/runs/regional-guidance-character-visual/20261104-red-blue'
-const SOURCE =
-  '/home/user/.codex/artifacts/imagegen-studio/shared/illustrious-epsilon-source-20261026/Illustrious-XL-v0.1.safetensors'
+const RUN = path.join(
+  os.homedir(),
+  '.codex/artifacts/imagegen-studio/runs/regional-guidance-character-visual/20261104-red-blue',
+)
+const SOURCE = path.join(
+  os.homedir(),
+  '.codex/artifacts/imagegen-studio/shared/illustrious-epsilon-source-20261026/Illustrious-XL-v0.1.safetensors',
+)
 const SOURCE_SHA256 = '3e15ba00387db678ab4a099f75771c4f5ac67fda9e7100a01d263eaf30145aa9'
 const SOURCE_BYTES = 6_938_040_760
 const CONTRACT_SHA256 = 'aaa2c64d59e6e1ab5f90e4e739d3a556a9ff346efb1d0b3f6aafd6e3a625d733'

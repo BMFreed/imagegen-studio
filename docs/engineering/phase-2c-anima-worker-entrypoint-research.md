@@ -132,7 +132,7 @@ record imported source hashes. Run relevant full TS/Python checks, offline wheel
 contents, local links and source-aware review. Update PP matrix/body and roadmap
 together without increasing the public readiness status.
 
-Artifacts: `/home/user/.codex/artifacts/imagegen-studio/anima-worker-entrypoint-2026-10-05/`.
+Artifacts: `~/.codex/artifacts/imagegen-studio/anima-worker-entrypoint-2026-10-05/`.
 
 ## Remaining boundaries
 

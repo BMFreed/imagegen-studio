@@ -141,9 +141,9 @@ scope distinction and separate interrupted-run accounting.
 ## Evidence, checks and handoff
 
 Compact evidence root:
-`/home/user/.codex/artifacts/imagegen-studio/runs/illustrious-dynamic-embeddings/20261009-checks`.
+`~/.codex/artifacts/imagegen-studio/runs/illustrious-dynamic-embeddings/20261009-checks`.
 One reusable pool:
-`/home/user/.codex/artifacts/imagegen-studio/shared/illustrious-vpred-worker-012-20261007`.
+`~/.codex/artifacts/imagegen-studio/shared/illustrious-vpred-worker-012-20261007`.
 The strict prior Anima sampling fixture provides the9/14 closure; actual local
 owners are bound by exact SHA before its guard. It does not establish new Anima ML.
 

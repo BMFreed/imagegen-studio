@@ -109,7 +109,7 @@ silently retarget frozen preparation.
 
 ## Source pin and deliberate adaptations
 
-Local Invoke root:`/home/user/Work/sources/InvokeAI`,pin
+Local Invoke root:`~/Work/sources/InvokeAI`,pin
 `9e1540962bcca7f8fa668d7d8e02cf79d75fda3b`.
 
 - `invokeai/app/invocations/create_gradient_mask.py:47-169` defines the three

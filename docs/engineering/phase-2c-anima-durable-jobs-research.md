@@ -144,7 +144,7 @@ Update PP matrix/body and supporting contracts together without promoting public
 Anima Generate, accepted storage or release readiness.
 
 Artifacts:
-`/home/user/.codex/artifacts/imagegen-studio/anima-durable-jobs-2026-10-05/`.
+`~/.codex/artifacts/imagegen-studio/anima-durable-jobs-2026-10-05/`.
 
 ## Outcome
 

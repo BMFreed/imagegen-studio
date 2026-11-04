@@ -141,7 +141,7 @@ reused. No additional environment, trained weights or network use is planned.
 ## Retention and release
 
 Compact evidence is under
-`/home/user/.codex/artifacts/imagegen-studio/runs/regional-guidance-publication/20261026-rgb`.
+`~/.codex/artifacts/imagegen-studio/runs/regional-guidance-publication/20261026-rgb`.
 It retains the full source/version/review archives, unchanged native primary
 source dependencies, twelve Main originals in a verified archive, all raw
 execution/mutation observations and **221 fixture mappings → 83 CAS blobs /

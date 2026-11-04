@@ -98,10 +98,10 @@ Native smoke is registered as `pnpm run app:smoke:comparison` and included in th
 aggregate `app:smoke`. Reports capture SHA-256 of the canonical native helper,
 fixture sources and compiled Main/preload/renderer/migrations. Local evidence:
 
-- `/home/user/.codex/artifacts/imagegen-studio/raster-settings-comparison-2026-10-02/`:
+- `~/.codex/artifacts/imagegen-studio/raster-settings-comparison-2026-10-02/`:
   backend mutations, retained old bundle, native RED/GREEN, isolated compiled UI
   mutation and restored native control;
-- `/home/user/.codex/artifacts/imagegen-studio/generation-settings-comparison-2026-10-02/projection/`:
+- `~/.codex/artifacts/imagegen-studio/generation-settings-comparison-2026-10-02/projection/`:
   exact final projection/test identities, 10 mutant logs and restored control;
 - `docs/prototype-app/screenshots/generation-comparison-{1440,900,missing,error}.png`:
   locally generated, ignored screenshots inspected by the projection agent; root

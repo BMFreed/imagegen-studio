@@ -133,7 +133,7 @@ self-review, not a blind independent product audit.
 ## Evidence and remaining boundary
 
 Artifacts are retained under
-`/home/user/.codex/artifacts/imagegen-studio/model-catalog-races-2026-10-06/`.
+`~/.codex/artifacts/imagegen-studio/model-catalog-races-2026-10-06/`.
 `red-final/report.json` records the final eleven-check baseline, genuine response
 gates, screenshots and source/bundle SHA-256. Earlier three-failure and expanded
 seven-failure captures are retained separately; only matching assertions/helper

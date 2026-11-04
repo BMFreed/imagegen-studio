@@ -31,7 +31,7 @@ cannot establish that boundary.
 - `GenerationDraftSchema` is separate from frozen accepted-result configuration.
   The optional native choice belongs only to the authored draft in this slice.
   Existing model switching preserves other authored settings.
-- Pinned Invoke at `/home/user/Work/sources/InvokeAI` has one native Anima
+- Pinned Invoke at `~/Work/sources/InvokeAI` has one native Anima
   Scheduler with Euler, Heun, DPM++ 2M, DPM++ 2M SDE, ER-SDE and LCM. The existing
   IGS typed flow scheduler is the exhaustive key source. Invoke defaults Euler;
   IGS starts new sampling settings unset, so that default must not be imported.
@@ -49,7 +49,7 @@ cannot establish that boundary.
   text to the user.
 
 Read-only evidence is under
-`/home/user/.codex/artifacts/imagegen-studio/anima-authoring-2026-10-05/`:
+`~/.codex/artifacts/imagegen-studio/anima-authoring-2026-10-05/`:
 `main/authoring-sampling-map.json`, `main/current-boundary-probe.json`,
 `editor/research-map.md`, `editor/current-behavior.json`,
 `editor/current-red.log`, and

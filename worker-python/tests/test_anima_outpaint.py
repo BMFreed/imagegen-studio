@@ -66,7 +66,11 @@ def _invoke_mask_class() -> Any:
     """Execute external numerical methods, never a worker-shaped mock oracle."""
     import torch
 
-    root = Path(os.environ.get("IGS_INVOKE_SOURCE_ROOT", "/home/user/Work/sources/InvokeAI"))
+    root = Path(
+        os.environ.get(
+            "IGS_INVOKE_SOURCE_ROOT", str(Path(__file__).resolve().parents[3] / "sources/InvokeAI")
+        )
+    )
     nodes: list[ast.stmt] = []
     for relative, (digest, names) in _SOURCES.items():
         path = root / relative
@@ -560,7 +564,12 @@ def test_real_request_factory_inverts_float32_before_bfloat16_cast(
     # The expected preparation is taken from the external Invoke invocation,
     # including its real resize and invert-before-placement ordering.
     path = (
-        Path(os.environ.get("IGS_INVOKE_SOURCE_ROOT", "/home/user/Work/sources/InvokeAI"))
+        Path(
+            os.environ.get(
+                "IGS_INVOKE_SOURCE_ROOT",
+                str(Path(__file__).resolve().parents[3] / "sources/InvokeAI"),
+            )
+        )
         / "invokeai/app/invocations/anima_denoise.py"
     )
     assert (

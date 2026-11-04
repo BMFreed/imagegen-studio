@@ -69,7 +69,7 @@ public readiness. Record source/bundle identity and executed outcomes below.
 
 ## Evidence
 
-Artifacts: `/home/user/.codex/artifacts/imagegen-studio/saved-accepted-index-2026-10-02/`.
+Artifacts: `~/.codex/artifacts/imagegen-studio/saved-accepted-index-2026-10-02/`.
 
 Behavior RED preceded the implementation: real ProjectService Import/edit/Save
 completed but the saved-history owner was absent (`backend/red-service-save.log`).

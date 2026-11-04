@@ -82,7 +82,7 @@ and pixels must both validate; failure leaves old document/history/files intact.
 Executed 14.10.2026 on the working tree over `cd07cee`. Compact evidence is at
 `~/.codex/artifacts/imagegen-studio/runs/smart-patch-transform/20261014-transform/`.
 Invoke source was inspected locally at
-`/home/user/Work/sources/InvokeAI/`, revision
+`~/Work/sources/InvokeAI/`, revision
 `9e1540962bcca7f8fa668d7d8e02cf79d75fda3b`:
 `useAutoFitBBoxToMasks.ts` (blur16/padding8), `optimalDimension.ts` (grid8),
 `konva/util.ts` (inward fit, intentionally adapted), and

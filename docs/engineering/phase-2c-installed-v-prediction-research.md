@@ -196,7 +196,7 @@ No prototype UI changed. Self-review and delegated source/raw-evidence review
 are not a blind audit. PP-004/005/008 and phase 2C remain open.
 
 Local evidence root:
-`/home/user/.codex/artifacts/imagegen-studio/runs/v-prediction/`:
+`~/.codex/artifacts/imagegen-studio/runs/v-prediction/`:
 
 - `20261007-green/report.json`: four trained cases, numerical pairs, genuine
   Retry, UI authoring/comparison screenshots and process/cgroup closure;

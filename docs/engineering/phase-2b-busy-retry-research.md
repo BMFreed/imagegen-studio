@@ -142,4 +142,4 @@ as new evidence. No release install, actual GPU throughput/model loading or full
 MVP readiness is implied; PP-007/008 public statuses remain unchanged.
 
 Artifacts, executed commands, before/after native hashes and final source hashes:
-`/home/user/.codex/artifacts/imagegen-studio/busy-frozen-retry-2026-10-01/`.
+`~/.codex/artifacts/imagegen-studio/busy-frozen-retry-2026-10-01/`.

@@ -94,7 +94,7 @@ the actual local adapters and baseline restoration without claiming release
 readiness. Record commands, source hashes, executed/skipped counts and remaining
 gaps after implementation.
 
-Artifacts: `/home/user/.codex/artifacts/imagegen-studio/anima-lora-2026-10-05/`.
+Artifacts: `~/.codex/artifacts/imagegen-studio/anima-lora-2026-10-05/`.
 
 ## Remaining boundaries
 

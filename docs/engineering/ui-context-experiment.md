@@ -146,7 +146,7 @@ Browser — независимый зафиксированный измерит
 
 ## Воспроизводимость
 
-Полный локальный [стенд и индекс артефактов](/home/user/Work/ui-context-study-20260922/README.md): `/home/user/Work/ui-context-study-20260922`.
+Полный локальный [стенд и индекс артефактов](~/Work/ui-context-study-20260922/README.md): `~/Work/ui-context-study-20260922`.
 
 Среда: Naive UI 2.44.1, Vue 3.5.39, Vite 8.1.3, Playwright 1.61.1, Node 24.16.0, Chromium 153.0.8010.52. Условия среды сохранены в `environment.json`.
 

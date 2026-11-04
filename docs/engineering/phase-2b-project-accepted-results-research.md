@@ -190,9 +190,9 @@ An additional source-aware read-only reviewer checked projection/IPC/selection,
 dimension ownership and supporting-document boundaries. This was not a blind
 behavioral review and did not independently execute GUI/tests.
 
-Evidence artifacts: `/home/user/.codex/artifacts/imagegen-studio/project-accepted-results-2026-10-01/`
+Evidence artifacts: `~/.codex/artifacts/imagegen-studio/project-accepted-results-2026-10-01/`
 holds root logs, old-bundle baseline, final native report/screenshots and delivery
-identity. `/home/user/.codex/artifacts/imagegen-studio/accepted-results-2026-10-01/backend/`
+identity. `~/.codex/artifacts/imagegen-studio/accepted-results-2026-10-01/backend/`
 holds the service red log, focused log, replayable isolated mutation runner and
 hash/count report. Native script/helper/bundle hashes are checked before and
 after the run; shared native-window isolation was unchanged.

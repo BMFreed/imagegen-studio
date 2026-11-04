@@ -41,13 +41,13 @@ seed можно принять без миграции; отказ по неко
 ## Вкладки standalone Project prototype
 
 Риск средний: выбранная вкладка должна однозначно определять документ.
-`?prototype=project` показывал фиксированную ProjectB session при выборе ProjectA,
+`?prototype=project` показывал фиксированную Project B session при выборе Project A,
 а выбор Home оставлял Project. Используется общая композиция Home/Project и
 сессия выбранного документа. Уже посещённые Project-компоненты сохраняются
 для независимого undo и локального состояния.
 
 Browser regressions проходят одинаковые действия на standalone и integrated
-маршрутах: правка ProjectA помечает только ProjectA, ProjectB сохраняет свой prompt,
+маршрутах: правка Project A помечает только Project A, Project B сохраняет свой prompt,
 Home отображается при выборе Home, возвращение сохраняет Project state.
 Это UI/mock evidence; оно не доказывает production persistence.
 
@@ -132,12 +132,12 @@ Semantic mutations выполнены только в изолированных
 size controls подтвердили, что маленькая estimate не ограничивает реальные
 bytes и что repair отказывает неверному точному размеру. Блокеров не найдено.
 
-Visual pass включал просмотр actual before/after screenshots: standalone ProjectA
+Visual pass включал просмотр actual before/after screenshots: standalone Project A
 и Home в 1280×800/1440×900; production Model Manager с неизвестным/известным
 размером в 1280×900 и отказный dialog в 900×620. Диагностика читается, Install
 отключён только при недопустимом выборе, footer остаётся в viewport. Проверка
 Model Manager использовала настоящий Vue/Naive renderer с fixture `window.api`,
-не native IPC. T3 browser подтвердил ProjectA dirty ownership и Home navigation;
+не native IPC. T3 browser подтвердил Project A dirty ownership и Home navigation;
 его snapshot endpoint отказал, поэтому appearance проверен сохранёнными PNG
 из browser harness. В Model Manager одинаковый Naive slot warning присутствовал
 до/после, page errors отсутствовали. Сохранённый Project screenshot pass также
@@ -153,4 +153,4 @@ autosave owner: это проверяет serialization, но не отдель�
 normal renderer Generate и оставшиеся MVP gaps этим исправлением не закрыты.
 
 Логи, mutation recipes и PNG сохранены отдельно от исходного неизменяемого
-аудита: `/home/user/.codex/artifacts/imagegen-studio/audits/2026-09-30-fixes/`.
+аудита: `~/.codex/artifacts/imagegen-studio/audits/2026-09-30-fixes/`.

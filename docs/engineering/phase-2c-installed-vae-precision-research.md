@@ -98,7 +98,7 @@ or whole-MVP readiness is claimed.
 
 ## Executed evidence
 
-Artifacts: `/home/user/.codex/artifacts/imagegen-studio/installed-vae-precision-2026-10-07/`.
+Artifacts: `~/.codex/artifacts/imagegen-studio/installed-vae-precision-2026-10-07/`.
 Native `native-v2/report.json` is `passed`. The built Electron process used
 unmodified production Main and the same six-resource catalog; the two selected
 exact checkpoint/LoRA files were reused without copies. Installed worker 0.12.0

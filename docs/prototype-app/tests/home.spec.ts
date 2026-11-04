@@ -60,10 +60,7 @@ test.describe('Home prototype', () => {
     await page.getByRole('button', { name: 'New Project' }).first().click()
     const newProjectDialog = page.getByRole('dialog', { name: 'New Project' })
     await newProjectDialog.getByLabel('Generation preset').click()
-    await page
-      .locator('.n-base-select-option')
-      .filter({ hasText: 'Texture Detailer' })
-      .click()
+    await page.locator('.n-base-select-option').filter({ hasText: 'Texture Detailer' }).click()
     await expect(page.locator('.n-base-select-menu').last()).toBeHidden()
     await page.screenshot({ path: path.join(screenshotsDir, 'home-new-project-dialog.png') })
     await newProjectDialog.getByRole('button', { name: 'Cancel' }).click()
@@ -184,10 +181,7 @@ test.describe('Home prototype', () => {
     await expect(dialog.getByLabel('Canvas width')).toHaveValue('1024')
     await dialog.getByLabel('Project name').fill('Prototype Project')
     await dialog.getByLabel('Generation preset').click()
-    await page
-      .locator('.n-base-select-option')
-      .filter({ hasText: 'Texture Detailer' })
-      .click()
+    await page.locator('.n-base-select-option').filter({ hasText: 'Texture Detailer' }).click()
     await expect(dialog.getByText(/missing resource/)).toBeVisible()
     await expect(dialog.getByText(/saved preset will not change/)).toBeVisible()
     await dialog

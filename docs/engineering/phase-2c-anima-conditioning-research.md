@@ -102,7 +102,7 @@ audit. Authored prompts, current capabilities, queue/Retry, storage, seed,
 Project Save and `.igs` are unchanged.
 
 Evidence directory:
-`/home/user/.codex/artifacts/imagegen-studio/anima-conditioning-2026-10-05/`.
+`~/.codex/artifacts/imagegen-studio/anima-conditioning-2026-10-05/`.
 
 | Boundary                            | Executed evidence                                                                                                                                                | Practical limit                                                 |
 | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |

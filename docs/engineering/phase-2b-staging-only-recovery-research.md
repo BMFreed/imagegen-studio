@@ -241,7 +241,7 @@ the native windows and compositor screenshots remain visible rather than hidden
 browser substitutes.
 
 Artifacts are under
-`/home/user/.codex/artifacts/imagegen-studio/staging-only-recovery-2026-10-01/`:
+`~/.codex/artifacts/imagegen-studio/staging-only-recovery-2026-10-01/`:
 backend baselines/final logs and `backend/mutations.json`; old-bundle native red
 log/identity; full application checks; and
 `native-results-attempt-2/native-results-navigation-report.json` with actual

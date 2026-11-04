@@ -145,7 +145,7 @@ short selection-only observation deadline, and supplies the DOM/IPC reproduction
 
 The full installed ML matrix and all three semantic sensitivity checks passed;
 executed evidence and restoration are recorded below. Artifacts are owned exclusively by this slice at
-`/home/user/.codex/artifacts/imagegen-studio/installed-embeddings-2026-10-07/`.
+`~/.codex/artifacts/imagegen-studio/installed-embeddings-2026-10-07/`.
 All 43 current installed/source payload hashes match before any experiment.
 
 The native authoring regression was RED on the original bundle: two Ambiguity A

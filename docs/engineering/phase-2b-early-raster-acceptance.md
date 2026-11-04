@@ -90,7 +90,7 @@ Generate is implemented or claimed here.
 Revision: dirty working tree based on `f6e57c3`, including the new note, shared
 snapshot/IPC contract, main cancellation/acceptance and renderer confirmation.
 Raw evidence and mutation patches are retained outside the checkout at
-`/home/user/.codex/artifacts/imagegen-studio/phase-2b-early-add-2026-09-30/`.
+`~/.codex/artifacts/imagegen-studio/phase-2b-early-add-2026-09-30/`.
 
 - Acceptance regressions before implementation: 6 executed, 1 neighboring
   control passed and 5 failed on the old unfinished-job/refusal behavior.

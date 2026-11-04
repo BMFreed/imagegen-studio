@@ -116,7 +116,7 @@ scenarios. Record actual worker substitutions and remaining readiness gaps.
 Validated on the final working tree based on `a87866d`; no production source
 changed after the successful bundle build. Source/bundle SHA-256, exact commands,
 raw logs, mutation patches and PNGs are retained in
-`/home/user/.codex/artifacts/imagegen-studio/busy-generate-2026-10-01/`.
+`~/.codex/artifacts/imagegen-studio/busy-generate-2026-10-01/`.
 
 | Boundary                       | Executed evidence                                                                                                                                                                                                                                             | Limits                                                                                                                                        |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |

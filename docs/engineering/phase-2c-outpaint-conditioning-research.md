@@ -12,7 +12,7 @@ means txt2img, all alpha255 means img2img, everything else means outpaint.
 Uniform alpha128, layer opacity and resampling retain this approved rule,
 which is stricter than Invoke's current zero/nonzero classification.
 
-Reference: `/home/user/Work/sources/InvokeAI`, exact commit
+Reference: `~/Work/sources/InvokeAI`, exact commit
 `9e1540962bcca7f8fa668d7d8e02cf79d75fda3b`. Shared Canvas graph
 `features/nodes/util/graph/generation/addOutpaint.ts` is called by both SDXL
 and Anima builders. SDXL denotes the Illustrious architecture, not a new
@@ -122,7 +122,7 @@ Executed results are recorded below after verification.
 ## Executed evidence
 
 Artifact root:
-`/home/user/.codex/artifacts/imagegen-studio/outpaint-conditioning-2026-10-06/`.
+`~/.codex/artifacts/imagegen-studio/outpaint-conditioning-2026-10-06/`.
 These checks inspect the implementation tree based on the research commit;
 the final evidence manifest records delivered source hashes and commit.
 

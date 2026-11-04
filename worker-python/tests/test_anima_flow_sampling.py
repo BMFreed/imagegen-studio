@@ -85,7 +85,11 @@ def run(data: dict[str, Any], fixture: Any, **options: Any) -> Any:
 @lru_cache(maxsize=1)
 def _independent_er_class() -> Any:
     """Load pinned external Invoke bytes, never the worker's copied implementation."""
-    root = Path(os.environ.get("IGS_INVOKE_SOURCE_ROOT", "/home/user/Work/sources/InvokeAI"))
+    root = Path(
+        os.environ.get(
+            "IGS_INVOKE_SOURCE_ROOT", str(Path(__file__).resolve().parents[3] / "sources/InvokeAI")
+        )
+    )
     source = root / "invokeai/backend/rectified_flow/er_sde_scheduler.py"
     if not source.is_file():
         pytest.skip("Independent ER oracle requires the pinned local Invoke source checkout.")

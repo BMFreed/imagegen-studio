@@ -112,7 +112,7 @@ longest-first ranges while diagnostics keep every warning, so overlap cannot
 hide a missing saved ref. Self-review is not an independent blind audit.
 
 Evidence, source hashes, isolated mutation logs and screenshots live locally at
-`/home/user/.codex/artifacts/imagegen-studio/embedding-authoring-2026-10-04/`:
+`~/.codex/artifacts/imagegen-studio/embedding-authoring-2026-10-04/`:
 `root-app-test.log`, `root-typecheck-final.log`, `root-lint-final.log`,
 `resources/resource-report.json`, `project/delivery-evidence.json`,
 `root-mutations/mutation-report.json`, `root-mutation-seal.json`,

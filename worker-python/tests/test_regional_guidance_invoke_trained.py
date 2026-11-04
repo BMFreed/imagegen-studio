@@ -45,9 +45,10 @@ import pytest
 import test_illustrious_regional_visual_acceptance as _visual_helpers
 
 old: Any = cast(Any, _visual_helpers)
-RUN = Path(
-    "/home/user/.codex/artifacts/imagegen-studio/runs/"
-    "regional-guidance-invoke-parity/20261031-source-operators"
+RUN = (
+    Path.home()
+    / ".codex/artifacts/imagegen-studio/runs/regional-guidance-invoke-parity"
+    / "20261031-source-operators"
 )
 OLD_RUN = old.RUN
 BASE = "a88a58321ce5a9261024d50369d3056fb6388c07"

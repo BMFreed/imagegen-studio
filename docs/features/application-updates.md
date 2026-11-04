@@ -8,7 +8,7 @@ ML runtime.
 
 ## Reference
 
-Invoke launcher: `/home/user/Work/sources/launcher/`, проверенный commit
+Invoke launcher: `~/Work/sources/launcher/`, проверенный commit
 `c267bdb439519216b277a7a8c6ad408b9d79efce`. Его
 `src/main/updater.ts` последовательно вызывает check, download и install, но
 `src/main/main-process-manager.ts` запускает check при старте окна. ImageGen

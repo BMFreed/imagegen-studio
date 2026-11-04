@@ -61,8 +61,9 @@ import test_illustrious_regional_trained as _trained_helpers
 sampling: Any = cast(Any, _sampling_helpers)
 trained: Any = cast(Any, _trained_helpers)
 
-RUN = Path(
-    "/home/user/.codex/artifacts/imagegen-studio/runs/regional-guidance-visual/20261027-apple-mug"
+RUN = (
+    Path.home()
+    / ".codex/artifacts/imagegen-studio/runs/regional-guidance-visual/20261027-apple-mug"
 )
 BASE = "166ecdd4ceaedbe0905e1a2ce310141707c9df5c"
 CONTRACT_SHA = "d97bfe4944659c956be0c30d66f5e77ce533026192836d6f4aa3578917b4495c"

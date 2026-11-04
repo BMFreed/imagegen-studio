@@ -132,7 +132,7 @@ Commands and results:
   errors were empty.
 - Focused queue/staging/orchestrator commands, red logs, mutation patches and
   restored logs are preserved outside the checkout at
-  `/home/user/.codex/artifacts/imagegen-studio/phase-2b-batch-grouping-2026-09-30/`.
+  `~/.codex/artifacts/imagegen-studio/phase-2b-batch-grouping-2026-09-30/`.
 
 Existing Vite chunk-size and desktop Wayland/Vulkan messages did not fail the
 smoke. They are not evidence of model inference qualification. No new public

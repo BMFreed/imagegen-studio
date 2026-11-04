@@ -128,7 +128,7 @@ operations remain admitted and ordinary paths retain their existing tests.
 ## Executed evidence
 
 Artifact root:
-`/home/user/.codex/artifacts/imagegen-studio/outpaint-jobs-2026-10-06/`.
+`~/.codex/artifacts/imagegen-studio/outpaint-jobs-2026-10-06/`.
 
 The real local LaMa qualification copies the previously pinned artifact into an
 isolated application resource root and enters the production resolver. Exact

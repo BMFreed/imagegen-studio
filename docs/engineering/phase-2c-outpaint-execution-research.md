@@ -124,7 +124,7 @@ The original interrupted trained run is not counted as successful evidence.
 ## Evidence and remaining boundaries
 
 Artifacts:
-`/home/user/.codex/artifacts/imagegen-studio/outpaint-execution-2026-10-06/`.
+`~/.codex/artifacts/imagegen-studio/outpaint-execution-2026-10-06/`.
 The OOM report records kernel evidence, the small probe and confidence limits.
 Focused real SQLite/filesystem/Add/Save/reopen cases use explicit tiny-model and
 transport collaborators; they do not establish trained model or installed runtime

@@ -117,7 +117,7 @@ the assertion was corrected while preserving the no-publication/source-revision
 invariants.
 
 Evidence retained under
-`/home/user/.codex/artifacts/imagegen-studio/queue-manager-2026-10-01/`, including
+`~/.codex/artifacts/imagegen-studio/queue-manager-2026-10-01/`, including
 command logs, native reports/screenshots and final source hashes. The native
 report identifies the exact built main/preload/renderer JS/CSS/script hashes and
 rechecks them after execution. No CI or packaged-release result is claimed.

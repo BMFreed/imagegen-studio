@@ -97,12 +97,12 @@ AGENTS.md и skills в этом запуске не менялись. Практ
 
 ## Артефакты
 
-Полный стенд: `/home/user/Work/ui-kit-study-20260922`.
+Полный стенд: `~/Work/ui-kit-study-20260922`.
 
-- [Протокол](/home/user/Work/ui-kit-study-20260922/protocol.md), `materials/`, `preregistration-sha256.json`, `allocation.json`.
-- [Неизменяемый оценщик](/home/user/Work/ui-kit-study-20260922/judge/FREEZE.json), [поправка hover](/home/user/Work/ui-kit-study-20260922/judge/sensitivity/SENSITIVITY-v1.json).
-- [Сводка](/home/user/Work/ui-kit-study-20260922/results-summary.json), [CSV](/home/user/Work/ui-kit-study-20260922/run-results.csv), [журнал проверок](/home/user/Work/ui-kit-study-20260922/verification-summary.json), [объём кода](/home/user/Work/ui-kit-study-20260922/code-size.json), [контроль целостности](/home/user/Work/ui-kit-study-20260922/integrity.json).
-- [Независимый source review](/home/user/Work/ui-kit-study-20260922/judge/FINAL-SOURCE-AUDIT.md), [дополнительный аудит подписей](/home/user/Work/ui-kit-study-20260922/supplemental/label-summary.json), [геометрия спиннера](/home/user/Work/ui-kit-study-20260922/supplemental/busy-K10-first-inspection.json).
+- [Протокол](~/Work/ui-kit-study-20260922/protocol.md), `materials/`, `preregistration-sha256.json`, `allocation.json`.
+- [Неизменяемый оценщик](~/Work/ui-kit-study-20260922/judge/FREEZE.json), [поправка hover](~/Work/ui-kit-study-20260922/judge/sensitivity/SENSITIVITY-v1.json).
+- [Сводка](~/Work/ui-kit-study-20260922/results-summary.json), [CSV](~/Work/ui-kit-study-20260922/run-results.csv), [журнал проверок](~/Work/ui-kit-study-20260922/verification-summary.json), [объём кода](~/Work/ui-kit-study-20260922/code-size.json), [контроль целостности](~/Work/ui-kit-study-20260922/integrity.json).
+- [Независимый source review](~/Work/ui-kit-study-20260922/judge/FINAL-SOURCE-AUDIT.md), [дополнительный аудит подписей](~/Work/ui-kit-study-20260922/supplemental/label-summary.json), [геометрия спиннера](~/Work/ui-kit-study-20260922/supplemental/busy-K10-first-inspection.json).
 - `artifacts/Kxx/`: независимые first/final результаты, source patch, participant report, verification logs. `runs/Kxx/.study-artifacts/`: архивы и manifests точных снимков.
 
 ## Приложение: исходные показатели

@@ -126,7 +126,7 @@ Fresh enhanced native GREEN passed **23 checks**, zero page errors, including:
   900×620. The new actions use existing secondary text/compact icon primitives.
 
 Artifacts are retained under
-`/home/user/.codex/artifacts/imagegen-studio/model-resource-handoff-2026-10-06/`.
+`~/.codex/artifacts/imagegen-studio/model-resource-handoff-2026-10-06/`.
 Intermediate `green/report.json` retains the focus regression; `green-2` records
 its 23-check resolution. `final-green-3/report.json` first recorded **24/24 passed**, zero page errors
 and 12 screenshots, including restoration of the original empty draft and

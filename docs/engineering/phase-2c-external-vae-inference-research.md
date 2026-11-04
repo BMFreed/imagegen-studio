@@ -85,7 +85,7 @@ green baselines, required typecheck/lint/build and the relevant app checks.
 ## Execution evidence
 
 Artifacts are retained under
-`/home/user/.codex/artifacts/imagegen-studio/external-vae-inference-2026-10-04/`.
+`~/.codex/artifacts/imagegen-studio/external-vae-inference-2026-10-04/`.
 This is scoped implementation/self-review; no blind product audit or release
 runtime certification is claimed. The final delivery seal records source,
 bundle and command hashes.

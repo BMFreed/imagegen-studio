@@ -121,7 +121,7 @@ RGB PNGs. This qualifies full CLIP architecture mechanics with small UNet/VAE
 consumers; trained weights/quality and full production SDXL capacity remain open.
 
 ROOT evidence is under
-`/home/user/.codex/artifacts/imagegen-studio/runs/regional-guidance-shared-text/20261026-final-table`.
+`~/.codex/artifacts/imagegen-studio/runs/regional-guidance-shared-text/20261026-final-table`.
 Final ROOT runtime qualification and R3 source review are complete. Scoped
 retained-byte closure and ROOT idle payload release are also complete. Public NEW refusal, target-only Smart permission,
 published/frozen Retry independence and provenance/Compare/preset exclusions

@@ -167,7 +167,11 @@ class _StripAnnotations(ast.NodeTransformer):
 
 
 def _upstream_guidance(torch: Any) -> Any:
-    root = Path(os.environ.get("IGS_INVOKE_SOURCE_ROOT", "/home/user/Work/sources/InvokeAI"))
+    root = Path(
+        os.environ.get(
+            "IGS_INVOKE_SOURCE_ROOT", str(Path(__file__).resolve().parents[3] / "sources/InvokeAI")
+        )
+    )
     path = root / "invokeai/backend/stable_diffusion/diffusers_pipeline.py"
     if not path.is_file():
         pytest.skip("External default Invoke guidance oracle requires the pinned source.")

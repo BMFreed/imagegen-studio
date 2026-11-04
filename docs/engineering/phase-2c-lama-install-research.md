@@ -152,7 +152,7 @@ wrap real opened handles; an early-publication mutant can replace the destinatio
 with a FIFO, so tests check its regular-file kind before reading. The blocked
 mutation run was stopped as a whole cgroup and was not counted as detection.
 
-Artifacts: `/home/user/.codex/artifacts/imagegen-studio/lama-install-2026-10-06/`.
+Artifacts: `~/.codex/artifacts/imagegen-studio/lama-install-2026-10-06/`.
 `mutations.json` contains commands, selected scenarios, counts, logs and production
 source hashes; `qualification.json` distinguishes real filesystem/weights from
 substituted network. Final general checks and hashes are in `delivery.json` after

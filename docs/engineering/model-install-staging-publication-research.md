@@ -79,7 +79,7 @@ The original production coordinator failed all three new install/repair/unlink
 refusal controls with executed assertions: own `.part` remained at the pre-SQLite
 boundary, or an actual unlink permission failure still published `completed`.
 These results are saved in `main/staging-publication-red.log` under
-`/home/user/.codex/artifacts/imagegen-studio/anima-flow-sampling-2026-10-05/`.
+`~/.codex/artifacts/imagegen-studio/anima-flow-sampling-2026-10-05/`.
 
 After the fix, the same three controls and the prepared-link cancellation neighbor
 passed: **4 executed, 0 failures, 0 skips**. The observing wrappers snapshot

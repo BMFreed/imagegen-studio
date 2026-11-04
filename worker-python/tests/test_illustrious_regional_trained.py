@@ -60,17 +60,18 @@ from typing import Any, cast
 
 import pytest
 
-RUN = Path(
-    "/home/user/.codex/artifacts/imagegen-studio/runs/"
-    "regional-guidance-trained-illustrious/20261026-epsilon"
+RUN = (
+    Path.home()
+    / ".codex/artifacts/imagegen-studio/runs/regional-guidance-trained-illustrious/20261026-epsilon"
 )
-OLD = Path(
-    "/home/user/.codex/artifacts/imagegen-studio/runs/"
-    "regional-guidance-shared-text/20261026-final-table"
+OLD = (
+    Path.home()
+    / ".codex/artifacts/imagegen-studio/runs/regional-guidance-shared-text/20261026-final-table"
 )
-SOURCE = Path(
-    "/home/user/.codex/artifacts/imagegen-studio/shared/"
-    "illustrious-epsilon-source-20261026/Illustrious-XL-v0.1.safetensors"
+SOURCE = (
+    Path.home()
+    / ".codex/artifacts/imagegen-studio/shared/illustrious-epsilon-source-20261026"
+    / "Illustrious-XL-v0.1.safetensors"
 )
 SOURCE_SHA = "3e15ba00387db678ab4a099f75771c4f5ac67fda9e7100a01d263eaf30145aa9"
 SOURCE_BYTES = 6_938_040_760

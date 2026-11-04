@@ -38,8 +38,9 @@ import pytest
 import test_illustrious_regional_visual_acceptance as _visual_helpers
 
 old: Any = cast(Any, _visual_helpers)
-RUN = Path(
-    "/home/user/.codex/artifacts/imagegen-studio/runs/regional-guidance-support/20261030-global-tokens"
+RUN = (
+    Path.home()
+    / ".codex/artifacts/imagegen-studio/runs/regional-guidance-support/20261030-global-tokens"
 )
 OLD_RUN: Path = old.RUN
 BASE = "b6b2cba1d3799a51da163b2151262f8ae26f3b51"

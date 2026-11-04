@@ -133,7 +133,7 @@ Implemented in the production worker/main/renderer boundary. Verified:
   source-PNG replacement assertion was also included in the final full suite.
 
 Retained logs, commands, source hashes, mutation evidence and native screenshots:
-`/home/user/.codex/artifacts/imagegen-studio/result-thumbnails-2026-10-01/`.
+`~/.codex/artifacts/imagegen-studio/result-thumbnails-2026-10-01/`.
 The full PNG remains subject to existing fresh candidate verification. Each
 thumbnail GET currently rereads/verifies the Project's staged candidates, including
 full PNG hashes; this slice does not measure or claim faster main/storage reads,

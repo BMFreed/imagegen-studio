@@ -39,8 +39,8 @@ import test_regional_guidance_invoke_trained as _previous
 
 old: Any = cast(Any, _visual)
 previous: Any = cast(Any, _previous)
-RUN = Path(
-    "/home/user/.codex/artifacts/imagegen-studio/runs/regional-guidance-noise/20261031-factorial"
+RUN = (
+    Path.home() / ".codex/artifacts/imagegen-studio/runs/regional-guidance-noise/20261031-factorial"
 )
 OLD_RUN = old.RUN
 BASE = "4f1088aa90d7547d6e5a46b2b93f987303769b94"

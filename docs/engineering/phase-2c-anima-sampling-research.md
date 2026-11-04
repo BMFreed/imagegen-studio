@@ -86,7 +86,7 @@ initial blend, cast policy and progress. Run required TS/Python checks and bound
 trained NVIDIA probes. Record all actual executed/skipped counts and limitations.
 
 Artifacts:
-`/home/user/.codex/artifacts/imagegen-studio/anima-sampling-2026-10-05/`.
+`~/.codex/artifacts/imagegen-studio/anima-sampling-2026-10-05/`.
 
 ## Remaining boundaries
 

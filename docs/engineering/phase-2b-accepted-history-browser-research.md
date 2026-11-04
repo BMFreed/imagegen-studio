@@ -142,7 +142,7 @@ Executed against the dirty implementation based on `588f19f`, 02.10.2026:
 
 Final aggregate check counts, native async controls, exact source/bundle/helper
 hashes and commit/upstream identity are recorded in the retained delivery manifest
-under `/home/user/.codex/artifacts/imagegen-studio/accepted-history-browser-2026-10-02/`.
+under `~/.codex/artifacts/imagegen-studio/accepted-history-browser-2026-10-02/`.
 Prototype mocks and fixture inference metadata do not qualify CUDA or release
 runtime. Public statuses of PP-005/007/008 stay `Пока не обещать`; full pipelines,
 Smart Patch history, comparison/result-to-preset and thumbnail optimization remain

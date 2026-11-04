@@ -86,7 +86,7 @@ checkpoint. Public UI and prototype are unchanged.
 
 ## Reference implementation and deliberate adaptations
 
-Local Invoke source is `/home/user/Work/sources/InvokeAI`, pinned at
+Local Invoke source is `~/Work/sources/InvokeAI`, pinned at
 `9e1540962bcca7f8fa668d7d8e02cf79d75fda3b`.
 
 - `invokeai/frontend/web/src/features/nodes/util/graph/generation/addInpaint.ts`

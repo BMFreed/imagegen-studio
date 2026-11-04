@@ -149,7 +149,7 @@ before awaits, immutable provenance scope and existing Save/tab/window flush
 paths. It identified the pending-Save native coverage limit recorded above.
 
 Logs, mutation README and final native images are stored outside the checkout at
-`/home/user/.codex/artifacts/imagegen-studio/dynamic-preview-2026-09-30/`.
+`~/.codex/artifacts/imagegen-studio/dynamic-preview-2026-09-30/`.
 Scoped formatting, diff whitespace and local Markdown targets are checked before
 commit. Promise matrix rows and bodies, storage/dynamic contracts and the roadmap
 are updated together; public readiness remains **not yet promised**.

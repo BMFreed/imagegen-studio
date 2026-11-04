@@ -105,7 +105,7 @@ delivery. This section is a plan; it is not evidence that these checks passed.
 ## Executed evidence
 
 Artifacts:
-/home/user/.codex/artifacts/imagegen-studio/lora-2026-10-02/.
+~/.codex/artifacts/imagegen-studio/lora-2026-10-02/.
 This is implementation self-review with a separate focused TS handoff review,
 not a blind audit of the application. The delivery manifest records final source,
 report and built Electron hashes.
@@ -190,7 +190,7 @@ Patch remain open. PP-005/PP-008 readiness and Phase 2B/2C completion are unchan
 
 ## Sources
 
-Reference checkout /home/user/Work/sources/InvokeAI/ was rechecked at
+Reference checkout ~/Work/sources/InvokeAI/ was rechecked at
 9e1540962bcca7f8fa668d7d8e02cf79d75fda3b; its adapter algorithms are broader than
 this first slice. API decisions were verified against local Diffusers 0.40.0 /
 PEFT 0.21.2 source and executed components, with

@@ -161,7 +161,7 @@ qualification,not an Electron workflow or accepted result.
 ### Independent trained Invoke comparison
 
 `worker-python/.venv/bin/python -B scripts/smoke-smart-patch-model-source.py --lama
-<existing-shared-big-lama.pt> --invoke-source /home/user/Work/sources/InvokeAI
+<existing-shared-big-lama.pt> --invoke-source ~/Work/sources/InvokeAI
 --output <new-owned-dir>` passed four cases in `trained-invoke-r2/report.json`.
 The external source argument is the checkout directory. The script verifies
 Invoke HEAD `9e1540962bcca7f8fa668d7d8e02cf79d75fda3b` and the exact upstream

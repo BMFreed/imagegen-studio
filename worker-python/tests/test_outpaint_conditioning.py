@@ -60,7 +60,11 @@ class _StripAnnotations(ast.NodeTransformer):
 
 def _upstream_class(path: str, name: str, namespace: dict[str, Any]) -> Any:
     """Execute upstream numerical method bodies; replace only graph storage/types."""
-    root = Path(os.environ.get("IGS_INVOKE_SOURCE_ROOT", "/home/user/Work/sources/InvokeAI"))
+    root = Path(
+        os.environ.get(
+            "IGS_INVOKE_SOURCE_ROOT", str(Path(__file__).resolve().parents[3] / "sources/InvokeAI")
+        )
+    )
     source = root / path
     if not source.is_file():
         pytest.skip("Independent outpaint oracle requires pinned external Invoke source.")

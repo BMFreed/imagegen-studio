@@ -1,5 +1,13 @@
 # Engineering Workflow
 
+## Repository privacy preparation
+
+[Privacy maintenance](./repository-privacy.md) replaces identifying demo data and
+machine paths with neutral examples. Historical evidence stays historical: the
+anonymized source bytes have not been rerun through earlier ML qualification.
+The cleaned publication history is prepared separately; no remote history is
+replaced as part of source preparation.
+
 ## Fixed two-character visual experiment — not qualified
 
 [Character visual check](./phase-4-regional-guidance-character-visual-research.md)
@@ -1225,6 +1233,9 @@ Older checkpoint successor labels retain their historical meaning.
   Renderer Set up/Install/Repair and release manifests remain open; public outpaint is covered by the newer admission checkpoint.
 
 ## Источник и адаптация
+
+Названия рабочего проекта, приватные пути и идентификаторы источника здесь
+обобщены для публикации; они не являются точными публичными ссылками.
 
 Подход изучен по локальному репозиторию work project (`work-project`):
 

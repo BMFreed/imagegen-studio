@@ -84,7 +84,7 @@ timeout promises.
 
 The existing app-owned qualification environment and marker/pointer were
 inspected at
-`/home/user/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/data/imagegen-studio/`.
+`~/.codex/artifacts/imagegen-studio/installed-runtime-2026-10-05/data/imagegen-studio/`.
 It contains managed CPython 3.12.13, noneditable worker distribution 0.1.0 /
 protocol 0.11.0, pinned inference dependencies and the previously verified
 Bismuth Illustrious epsilon checkpoint plus ordinary LoRA. The existing
@@ -130,7 +130,7 @@ to obtain green. Source review/self-review is not a blind product audit.
 ## Execution record
 
 Evidence root:
-`/home/user/.codex/artifacts/imagegen-studio/installed-cfg-rescale-2026-10-06/`.
+`~/.codex/artifacts/imagegen-studio/installed-cfg-rescale-2026-10-06/`.
 
 ### Installed green and numerical controls
 
@@ -138,10 +138,10 @@ The primary command used the fresh unmodified production build and actual
 qualified installed environment:
 
 ```bash
-pnpm exec tsx scripts/qualify-installed-generation.mjs --fixture /home/user/.codex/artifacts/imagegen-studio/installed-cfg-rescale-2026-10-06/fixture-green.json --resume
+pnpm exec tsx scripts/qualify-installed-generation.mjs --fixture ~/.codex/artifacts/imagegen-studio/installed-cfg-rescale-2026-10-06/fixture-green.json --resume
 ```
 
-[Primary report](/home/user/.codex/artifacts/imagegen-studio/installed-cfg-rescale-2026-10-06/green/report.json)
+[Primary report](~/.codex/artifacts/imagegen-studio/installed-cfg-rescale-2026-10-06/green/report.json)
 passed seven checks and all four trained jobs, with zero page errors and native
 Electron exit 0. Each output traversed explicit UI Add, real rendered Save,
 actual `.igs` loader, close/reopen and read-only settings comparison. Later draft
@@ -176,7 +176,7 @@ GenerationWorkerClient then confirmed CUDA readiness and exit before exclusively
 publishing the new derivative pointer/marker. Startup readiness alone was not
 counted as CFG numerical evidence.
 
-[Main mutation outcome](/home/user/.codex/artifacts/imagegen-studio/installed-cfg-rescale-2026-10-06/main-mutant-outcome.json)
+[Main mutation outcome](~/.codex/artifacts/imagegen-studio/installed-cfg-rescale-2026-10-06/main-mutant-outcome.json)
 records CLI exit 1 at the exact invariant: UI-authored 0.7 versus actual durable
 frozen sampling 0 (`0 !== 0.7`). Both neighboring neutral trained cases completed
 Add/Save/reopen/comparison. The third job was canceled on native close; Electron
@@ -187,11 +187,11 @@ The restored private Main source equals root production bytes. Private and root
 bundle SHA-256 differ because esbuild labels the shared node_modules relative
 to each checkout. Replacing only that module-label prefix makes each full
 Main/preload bundle equal; the
-[identity record](/home/user/.codex/artifacts/imagegen-studio/installed-cfg-rescale-2026-10-06/restored-main-build-identity.json)
+[identity record](~/.codex/artifacts/imagegen-studio/installed-cfg-rescale-2026-10-06/restored-main-build-identity.json)
 preserves both raw hashes and the narrowly scoped comparison. Distinct bundles
 are not reported as raw byte-identical.
 
-[Installed worker mutation outcome](/home/user/.codex/artifacts/imagegen-studio/installed-cfg-rescale-2026-10-06/worker-mutant-outcome.json)
+[Installed worker mutation outcome](~/.codex/artifacts/imagegen-studio/installed-cfg-rescale-2026-10-06/worker-mutant-outcome.json)
 records a second behavioral kill: CLI exit 1 because all three actual trained
 txt2img outputs have the neutral `c142e300…` decoded RGBA SHA. Frozen requests,
 accepted provenance, rendered Save/reopen and visible comparison still correctly
@@ -204,7 +204,7 @@ private installed module was restored to baseline SHA `ee0d356a…` before the
 final native control. Original runtime identities and full byte manifests
 remained unchanged.
 
-[CLI profile mutation report](/home/user/.codex/artifacts/imagegen-studio/installed-cfg-rescale-2026-10-06/cli-profile-mutations/report.json)
+[CLI profile mutation report](~/.codex/artifacts/imagegen-studio/installed-cfg-rescale-2026-10-06/cli-profile-mutations/report.json)
 separately detects all three guard mutations: omitted explicit-profile validation
 reaches the wrong size refusal; rejecting the supported profile refuses too
 early; omitted three-step validation reaches the wrong missing-model refusal.
@@ -216,7 +216,7 @@ Main/installed-ML inference mutations.
 
 ### Restored control and final visual checks
 
-[Final restored report](/home/user/.codex/artifacts/imagegen-studio/installed-cfg-rescale-2026-10-06/isolated-restored-green/report.json)
+[Final restored report](~/.codex/artifacts/imagegen-studio/installed-cfg-rescale-2026-10-06/isolated-restored-green/report.json)
 passes seven checks and all four trained jobs again, zero page errors, Electron
 exit 0. It uses the same final v2 script as both native mutation campaigns:
 SHA `64a6129a83fd7688a037f009f9cd3f170ade544b24073f21848b8a43d2aa0e57`.

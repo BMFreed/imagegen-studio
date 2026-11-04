@@ -74,7 +74,7 @@ future schema/compositor owner.
 Invoke source anchors at the local checkout are:
 `features/controlLayers/konva/CanvasCompositorModule.ts:662-724` for mode;
 `features/nodes/util/graph/generation/addInpaint.ts:127-247` for scaled processing.
-The checkout root is `/home/user/Work/sources/InvokeAI/invokeai/frontend/web/src/`.
+The checkout root is `~/Work/sources/InvokeAI/invokeai/frontend/web/src/`.
 The latter expands/fades at processing size before resizing its mask back. Our
 explicit project-pixel blur therefore needs a deliberate future scale adaptation,
 including nonuniform internal resolution. Capture records values and geometry;

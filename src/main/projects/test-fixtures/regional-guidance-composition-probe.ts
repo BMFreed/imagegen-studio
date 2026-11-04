@@ -30,6 +30,7 @@ import { sql } from 'kysely'
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, readdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { inflateSync } from 'node:zlib'
@@ -54,10 +55,14 @@ import { classifyTargetPngAlpha } from '../target-png-mode.js'
 import { ProjectWorkerClient } from '../worker-client.js'
 
 const REPO = fileURLToPath(new URL('../../../../', import.meta.url)).replace(/\/$/, '')
-const EXACT_RUN =
-  '/home/user/.codex/artifacts/imagegen-studio/runs/regional-guidance-composition/20261031-scene-bank'
-const EXACT_SOURCE =
-  '/home/user/.codex/artifacts/imagegen-studio/shared/illustrious-epsilon-source-20261026/Illustrious-XL-v0.1.safetensors'
+const EXACT_RUN = path.join(
+  os.homedir(),
+  '.codex/artifacts/imagegen-studio/runs/regional-guidance-composition/20261031-scene-bank',
+)
+const EXACT_SOURCE = path.join(
+  os.homedir(),
+  '.codex/artifacts/imagegen-studio/shared/illustrious-epsilon-source-20261026/Illustrious-XL-v0.1.safetensors',
+)
 const BASE = '2ae588d7911ae611790c7264ef832fdbd9d7e2b6'
 const CHECKPOINT_SHA256 = '3e15ba00387db678ab4a099f75771c4f5ac67fda9e7100a01d263eaf30145aa9'
 const CHECKPOINT_BYTES = 6_938_040_760

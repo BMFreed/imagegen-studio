@@ -65,8 +65,9 @@ from test_illustrious_regional_trained import (
 
 prior: Any = cast(Any, _trained_helpers)
 
-RUN = Path(
-    "/home/user/.codex/artifacts/imagegen-studio/runs/regional-guidance-sampling/20261027-leading"
+RUN = (
+    Path.home()
+    / ".codex/artifacts/imagegen-studio/runs/regional-guidance-sampling/20261027-leading"
 )
 PREFIX = "IGS_REGIONAL_SAMPLING_"
 JOURNAL = prior.RUN / "trained_loading_journal.py"

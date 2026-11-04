@@ -56,8 +56,9 @@ import pytest
 import test_illustrious_regional_visual_acceptance as _visual_helpers
 
 old: Any = cast(Any, _visual_helpers)
-RUN = Path(
-    "/home/user/.codex/artifacts/imagegen-studio/runs/regional-guidance-composition/20261031-scene-bank"
+RUN = (
+    Path.home()
+    / ".codex/artifacts/imagegen-studio/runs/regional-guidance-composition/20261031-scene-bank"
 )
 BASE = "2ae588d7911ae611790c7264ef832fdbd9d7e2b6"
 SELF = Path(__file__).resolve()

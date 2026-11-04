@@ -2,7 +2,7 @@
 
 Date: 06.10.2026. Research base: `9d43f539e67b479b4af4c13427343f3c7ee14c19`.
 Invoke source: `9e1540962bcca7f8fa668d7d8e02cf79d75fda3b`, local checkout
-`/home/user/Work/sources/InvokeAI`. Numerical dependency: Diffusers0.40.0.
+`~/Work/sources/InvokeAI`. Numerical dependency: Diffusers0.40.0.
 
 ## Scope and invariant
 
@@ -74,7 +74,7 @@ finite VAE hooks and contribution alpha remain the caller's responsibilities.
 ## Evidence and limits
 
 Artifact root:
-`/home/user/.codex/artifacts/imagegen-studio/illustrious-outpaint-2026-10-06/`.
+`~/.codex/artifacts/imagegen-studio/illustrious-outpaint-2026-10-06/`.
 The checks below inspect the implementation tree based on the research commit.
 The delivery manifest records final source identities and the delivered commit.
 

@@ -263,13 +263,13 @@ Exact successful command (PATH uses the Node24.16.0/pnpm11.9.0 installation):
 
 ```bash
 systemd-run --user --unit=igs-noob-outpaint-native3-20261007 \
-  --wait --pipe --working-directory=/home/user/Work/imagegen-studio \
-  --setenv=PATH=/home/user/.nvm/versions/node/v24.16.0/bin:/usr/bin:/bin \
+  --wait --pipe --working-directory=~/Work/imagegen-studio \
+  --setenv=PATH=~/.nvm/versions/node/v24.16.0/bin:/usr/bin:/bin \
   --setenv=NODE_OPTIONS=--max-old-space-size=512 \
   -p MemoryMax=12G -p MemorySwapMax=0 -p RuntimeMaxSec=1200 -p LimitCORE=0 \
-  /home/user/.nvm/versions/node/v24.16.0/bin/node --import tsx \
+  ~/.nvm/versions/node/v24.16.0/bin/node --import tsx \
   scripts/qualify-installed-generation.mjs \
-  --fixture /home/user/.codex/artifacts/imagegen-studio/runs/noobai-outpaint/20261007-checks/fixture-outpaint3.json \
+  --fixture ~/.codex/artifacts/imagegen-studio/runs/noobai-outpaint/20261007-checks/fixture-outpaint3.json \
   --resume
 ```
 

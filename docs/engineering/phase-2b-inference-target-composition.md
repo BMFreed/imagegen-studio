@@ -143,7 +143,7 @@ fixture, the required false-alpha assertion is the observed failure.
 
 Local logs, mutation patch, baseline/source hashes and provenance of substituted
 boundaries are archived under
-`/home/user/.codex/artifacts/imagegen-studio/inference-target-2026-09-30/`.
+`~/.codex/artifacts/imagegen-studio/inference-target-2026-09-30/`.
 This directory is outside the repository; see its README and command logs rather
 than treating the presence of test files as run evidence.
 

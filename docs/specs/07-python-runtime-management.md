@@ -33,7 +33,7 @@ Runtime status, setup, progress, repair и diagnostics показываются 
 app-package lifecycle; они не заменяют и не переустанавливают worker runtime.
 
 Локальный reference checkout Invoke launcher:
-`/home/user/Work/sources/launcher/`, проверенный `main` —
+`~/Work/sources/launcher/`, проверенный `main` —
 `c267bdb439519216b277a7a8c6ad408b9d79efce` (25.09.2026). Для Linux/NVIDIA
 полезны `download_uv.ts` (download/checksum), `src/main/gpu-detection.ts`
 (advisory GPU probe), `src/main/install-manager.ts` (progress/error lifecycle)

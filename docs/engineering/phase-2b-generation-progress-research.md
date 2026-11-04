@@ -128,7 +128,7 @@ none of those substitutions implement the transport, processor or storage SUT.
   baseline 8/8 → red 6 failures plus 2 controls → restored 8/8.
 
 Retained evidence, commands, source hashes and screenshots:
-`/home/user/.codex/artifacts/imagegen-studio/denoising-progress-2026-10-01/`.
+`~/.codex/artifacts/imagegen-studio/denoising-progress-2026-10-01/`.
 Infrastructure failures are retained separately and are not counted as mutations.
 
 ## Remaining scope

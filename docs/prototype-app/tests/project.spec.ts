@@ -120,7 +120,7 @@ test.describe('Project prototype', () => {
     expect((await prompt.boundingBox())!.height).toBeGreaterThan(
       (await negative.boundingBox())!.height,
     )
-    await expect(settings.locator('.prompt-meta').first()).toContainText('14 tokens')
+    await expect(settings.locator('.prompt-meta').first()).toContainText('11 tokens')
 
     const promptBox = await prompt.boundingBox()
     const actionRail = await settings.locator('.prompt-actions').first().boundingBox()
