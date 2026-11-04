@@ -1203,3 +1203,18 @@ unaccepted candidate are preserved. The scope is the Linux creating-parent
 thread/direct-child relationship; fork descendants, quality, Anima regional,
 numerical progress, capacity and release Install/Repair remain unqualified.
 PP-001/007/008 remain **«Пока не обещать»**.
+
+
+## Fixed two-character visual check
+
+The [character experiment](../../../engineering/phase-4-regional-guidance-character-visual-research.md)
+retains a negative visual result without changing the Invoke-based mechanism.
+Seven genuine Main/backend 1024²/30-step requests complete with exact RGB repeat;
+two earlier native requests are separately excluded for a harness path assertion.
+Across six blind originals, bounded AI assessment gives 1 PASS / 4 FAIL / 1 INCONCLUSIVE.
+Both ordinary controls draw one figure instead of the requested two, blocking
+whole-scene qualification. One regional image meets the narrow side/color/count
+criterion; it does not establish full prompt compliance or general quality.
+Human acceptance remains pending. No new public Queue/UI/durability, Anima,
+capacity or release claim follows; existing permissions, frozen work and
+provenance exclusions remain exact. PP-001/007/008 stay **«Пока не обещать»**.

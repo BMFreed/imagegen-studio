@@ -1,5 +1,19 @@
 # Engineering Workflow
 
+## Fixed two-character visual experiment — not qualified
+
+[Character visual check](./phase-4-regional-guidance-character-visual-research.md)
+uses genuine Main recipes and the unchanged installed Invoke-based worker.
+ROOT completes seven qualified 1024²/30-step requests in 325.336 s, exact RGB repeat,
+plus two separately excluded harness requests. AI-only blind descriptions and
+ROOT rubric give 1 PASS / 4 FAIL / 1 INCONCLUSIVE across six originals; both ordinary
+baselines contain one figure instead of two. Human acceptance remains pending.
+No scene/settings search or production repair is justified by this result.
+All images and excluded attempts remain retained; source/typing/lint checks and
+byte closure have separate evidence levels. Public readiness, Anima, capacity
+and release Install/Repair remain open; PP-001/007/008 stay **«Пока не обещать»**.
+Older checkpoints below retain their historical scopes.
+
 ## Regional worker-only failure — installed boundary verified
 
 [Worker-only failure](./phase-4-regional-guidance-worker-fault-research.md)
