@@ -3,10 +3,11 @@ import type { GenerationDenoisingProgress } from '../src/shared/projects/generat
 import { isQualifiedInferenceWorkerReady } from '../src/shared/projects/inference-worker-capabilities.js'
 
 /**
- * ROOT-only seven-request character visual experiment. Importing this module runs nothing. Existing
- * Main capture/preparation, installed worker0.14, native regional execution and owned PNG readers
- * remain authoritative. This direct backend probe does not qualify UI, queue durability,
- * independent native PT-to-RGB lineage, trained quality, Anima or a generic SDXL product family.
+ * ROOT-only character visual experiments: the legacy seven-request regional profile and a fixed
+ * three-request ordinary count-tag control. Importing this module runs nothing. Existing Main
+ * capture/preparation, installed worker0.14, native regional execution and owned PNG readers remain
+ * authoritative. This direct backend probe does not qualify UI, queue durability, independent
+ * native PT-to-RGB lineage, trained quality, Anima or a generic SDXL product family.
  *
  * InvokeAI basis: a61ac4fb75bec78d92885bf39bcf3ed3900a9bdd, graph.ts,
  * core/canvas/addRegionalGuidance.ts and compileCanvasGraph.ts, text_encoder/compel.py and
@@ -28,7 +29,10 @@ import { inflateSync } from 'node:zlib'
 import { GenerationWorkerClient } from '../src/main/projects/generation-worker-client.js'
 import { withIllustriousTxt2ImgRequest } from '../src/main/projects/illustrious-txt2img-job.js'
 import { captureInferenceWorkerOwner } from '../src/main/projects/inference-worker-ownership.js'
-import { produceCharacterVisualProbe } from '../src/main/projects/test-fixtures/regional-guidance-character-visual-probe.js'
+import {
+  type CharacterVisualProbeUseCase,
+  produceCharacterVisualProbe,
+} from '../src/main/projects/test-fixtures/regional-guidance-character-visual-probe.js'
 import { readSmartPatchModelSourceOutput } from '../src/main/projects/worker-client.js'
 
 interface QualificationHelpers {
@@ -50,6 +54,16 @@ const CONTRACT_SHA256 = 'aaa2c64d59e6e1ab5f90e4e739d3a556a9ff346efb1d0b3f6aafd6e
 const CHECKPOINT_SHA256 = '3e15ba00387db678ab4a099f75771c4f5ac67fda9e7100a01d263eaf30145aa9'
 const CHECKPOINT_BYTES = 6_938_040_760
 const PROFILE = 'regional-character-visual-v1'
+const ORDINARY_PROFILE = 'ordinary-two-character-tags-v1'
+const ORDINARY_BASE = '474aa1bc17a2637a85b94e9749f9e798af36a3fc'
+const ORDINARY_CONTRACT_SHA256 = '12512a2ca955cce7326471cdc66001a74781eb2d511a4858ceb5c50a327e41a9'
+const ORDINARY_RUN = path.join(
+  ARTIFACT_ROOT,
+  'runs/illustrious-ordinary-character/20261105-count-tag',
+)
+const ORDINARY_GLOBAL =
+  '2girls, anime illustration of two women standing apart side by side, waist-up, simple clothing, plain light gray background, coherent daylight'
+const ORDINARY_LABELS = ['seed123-baseline', 'seed124-baseline', 'seed123-baseline-repeat'] as const
 const LABELS = [
   'seed123-baseline',
   'seed123-assignment',
@@ -80,7 +94,7 @@ interface Fixture {
   checkpoint: Checkpoint
   contract: Descriptor
   deadlineSeconds: 1800
-  profile: typeof PROFILE
+  profile: typeof ORDINARY_PROFILE | typeof PROFILE
   provisionReport: Descriptor
   schemaVersion: 1
 }
@@ -99,15 +113,19 @@ interface CaseOutcome {
   visualStatus: 'pending'
   worker: unknown
 }
-type ProbeOptions = Parameters<typeof produceCharacterVisualProbe<CaseOutcome>>[0]
-type ProbeCase = Parameters<ProbeOptions['useCase']>[0]
-
 export async function qualifyRegionalCharacterVisual(fixturePath: string): Promise<unknown> {
   assert.equal(process.platform, 'linux')
   assert.equal(process.arch, 'x64')
   assert.ok(within(ARTIFACT_ROOT, canonicalPath(fixturePath)))
   const fixtureFile = await json(fixturePath, 64 * 1024)
   const fixture = fixtureFrom(fixtureFile.value)
+  const ordinary = fixture.profile === ORDINARY_PROFILE
+  const base = ordinary ? ORDINARY_BASE : BASE
+  const contractSha256 = ordinary ? ORDINARY_CONTRACT_SHA256 : CONTRACT_SHA256
+  const labels = ordinary ? ORDINARY_LABELS : LABELS
+  const nativeRequestCeiling = ordinary ? 3 : 7
+  const originalLabel = ordinary ? 'seed123-baseline' : 'seed123-assignment'
+  const repeatLabel = ordinary ? 'seed123-baseline-repeat' : 'seed123-assignment-repeat'
   for (const target of [
     fixture.artifacts,
     fixture.appData,
@@ -125,14 +143,23 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
   await directory(fixture.artifacts)
   await directory(fixture.appData)
   const contractFile = await json(fixture.contract.path, 64 * 1024)
-  assert.equal(fixture.contract.sha256, CONTRACT_SHA256)
-  assert.equal(contractFile.sha256, CONTRACT_SHA256)
+  assert.equal(fixture.contract.sha256, contractSha256)
+  assert.equal(contractFile.sha256, contractSha256)
   const contract = contractFile.value
-  assert.equal(contract.base, BASE)
-  assert.equal(contract.profile, PROFILE)
+  assert.equal(contract.base, base)
+  assert.equal(contract.profile, fixture.profile)
   assert.equal(contract.fixedBeforeNativeExecution, true)
-  assert.deepEqual(contract.caseLabels, LABELS)
-  assert.equal(contract.nativeRequestCeiling, 7)
+  assert.deepEqual(contract.caseLabels, labels)
+  assert.equal(contract.nativeRequestCeiling, nativeRequestCeiling)
+  if (ordinary) {
+    assert.equal(contract.schema, 'ordinary-two-character-tags-experiment-v1')
+    assert.equal(contract.globalPositive, ORDINARY_GLOBAL)
+    assert.equal(contract.globalNegative, '')
+    assert.deepEqual(contract.bbox, { height: 1024, width: 1024, x: -13, y: 5 })
+    assert.deepEqual(contract.seeds, [123, 124])
+    assert.deepEqual(contract.conditions, ['baseline'])
+    assert.equal(contract.noResources, true)
+  }
   const startedAt = Date.now()
   const bounds = await assertUpgradeBounds({ maxRuntimeSeconds: fixture.deadlineSeconds })
   const mainGroup = groupFrom(await readFile(`/proc/${process.pid}/cgroup`, 'utf8'))
@@ -143,7 +170,7 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
       timeout: 10_000,
     })
   ).stdout.trim()
-  assert.equal(revision, BASE)
+  assert.equal(revision, base)
   const invokeRevision = (
     await execute('git', ['rev-parse', 'HEAD'], {
       cwd: path.resolve(REPOSITORY, '../sources/InvokeAI'),
@@ -171,7 +198,7 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
   const outcomes: CaseOutcome[] = []
   let attemptedCalls = 0
   let submittedNativeRequests = 0
-  let originalAssignment: { preparedSha256: string; recipeSha256: string; rgb: Buffer } | undefined
+  let originalRepeat: { preparedSha256: string; recipeSha256: string; rgb: Buffer } | undefined
   let failure: unknown
   const initialReport = {
     bounds,
@@ -183,35 +210,44 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
     limits:
       'GPU capacity/allocator ceilings and independent per-case PT-to-RGB lineage are unqualified; actual installed readiness and original owned PNG readers are observed.',
     mainGroup,
-    profile: PROFILE,
-    schema: 'regional-character-visual-backend-v1',
+    profile: fixture.profile,
+    schema: ordinary ? 'ordinary-two-character-backend-v1' : 'regional-character-visual-backend-v1',
     source: { files: initialSources, invokeRevision, revision },
     startedAt: new Date(startedAt).toISOString(),
     visualStatus: 'pending',
   }
   await exclusive(path.join(fixture.artifacts, 'character-run-start.json'), initialReport)
-  const useCase = async (input: ProbeCase): Promise<CaseOutcome> => {
+  const useCase = async (input: CharacterVisualProbeUseCase): Promise<CaseOutcome> => {
     assert.ok(Date.now() - startedAt < fixture.deadlineSeconds * 1000)
     const { condition, label, models, prepared, recipe, seed } = input
-    assert.equal(label, LABELS[attemptedCalls])
-    assert.ok(attemptedCalls < 7)
+    assert.equal(label, labels[attemptedCalls])
+    assert.ok(attemptedCalls < nativeRequestCeiling)
     const recipeSha256 = digest(encoded(recipe))
     const preparedSha256 = digest(encoded(prepared))
-    if (label === 'seed123-assignment-repeat') {
-      assert.ok(originalAssignment)
-      assert.equal(recipeSha256, originalAssignment.recipeSha256)
-      assert.equal(preparedSha256, originalAssignment.preparedSha256)
+    if (label === repeatLabel) {
+      assert.ok(originalRepeat)
+      assert.equal(recipeSha256, originalRepeat.recipeSha256)
+      assert.equal(preparedSha256, originalRepeat.preparedSha256)
+    }
+    if (ordinary) {
+      assert.equal(condition, 'baseline')
+      assert.deepEqual(recipe.regions, [])
+      assert.deepEqual(recipe.globalPrompts, {
+        negative: { embeddingRefs: [], text: '' },
+        positive: { embeddingRefs: [], text: ORDINARY_GLOBAL },
+      })
+      assert.deepEqual(recipe.globalEmbeddings, { negative: [], positive: [] })
     }
     assert.equal(recipe.regions.length, condition === 'baseline' ? 0 : 2)
     assert.equal(seed, label.includes('124') ? 124 : 123)
     assert.deepEqual(await sourceCensus(), initialSources)
-    assert.deepEqual((await json(fixture.contract.path, 64 * 1024)).sha256, CONTRACT_SHA256)
+    assert.deepEqual((await json(fixture.contract.path, 64 * 1024)).sha256, contractSha256)
     await assertUpgradeBounds({ maxRuntimeSeconds: fixture.deadlineSeconds })
     await assertRuntimeIdle(fixture.appData, installed.basePrefix)
     // Create-only intent precedes worker startup. No failed case is retried or relabelled.
     await exclusive(path.join(fixture.artifacts, `${label}.intent.json`), {
       condition,
-      contractSha256: CONTRACT_SHA256,
+      contractSha256,
       index: attemptedCalls + 1,
       label,
       maximumNativeRequests: 1,
@@ -219,7 +255,9 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
       recipeSha256,
       requestDeadlineMilliseconds: 600_000,
       route: condition === 'baseline' ? 'ordinary-client-generate' : 'invoke-canvas-v1',
-      schema: 'regional-character-native-intent-v1',
+      schema: ordinary
+        ? 'ordinary-two-character-native-intent-v1'
+        : 'regional-character-native-intent-v1',
       seed,
       sourceSha256: digest(encoded(initialSources)),
       time: new Date().toISOString(),
@@ -317,7 +355,7 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
           })
           let pngBytes: Buffer
           let response: unknown
-          assert.ok(submittedNativeRequests < 7)
+          assert.ok(submittedNativeRequests < nativeRequestCeiling)
           submittedNativeRequests++
           submitted = true
           if (condition === 'baseline') {
@@ -369,13 +407,15 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
           }
           assert.equal(progress.length, 30)
           const decoded = decodedRgb(pngBytes)
-          if (label === 'seed123-assignment') {
-            originalAssignment = { preparedSha256, recipeSha256, rgb: Buffer.from(decoded.rgb) }
+          if (label === originalLabel) {
+            originalRepeat = { preparedSha256, recipeSha256, rgb: Buffer.from(decoded.rgb) }
           }
-          if (label === 'seed123-assignment-repeat') {
+          if (label === repeatLabel) {
             assert.ok(
-              decoded.rgb.equals(originalAssignment!.rgb),
-              'Frozen assignment repeat must reproduce every decoded RGB byte',
+              decoded.rgb.equals(originalRepeat!.rgb),
+              ordinary
+                ? 'Frozen ordinary repeat must reproduce every decoded RGB byte'
+                : 'Frozen assignment repeat must reproduce every decoded RGB byte',
             )
           }
           const outputPath = path.join(outputRoot, `${label}.png`)
@@ -467,22 +507,28 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
   }
   let producer: unknown
   try {
-    producer = await produceCharacterVisualProbe<CaseOutcome>({
+    const producerOptions = {
       pythonExecutable: installed.pythonExecutable,
       run: fixture.artifacts,
       runtimeRoot: installed.runtimeRoot,
       source: fixture.checkpoint.path,
       useCase,
-    })
-    assert.equal(attemptedCalls, 7)
-    assert.equal(submittedNativeRequests, 7)
-    assert.equal(outcomes.length, 7)
+    }
+    producer = ordinary
+      ? await produceCharacterVisualProbe<CaseOutcome>({
+          ...producerOptions,
+          profile: ORDINARY_PROFILE,
+        })
+      : await produceCharacterVisualProbe<CaseOutcome>(producerOptions)
+    assert.equal(attemptedCalls, nativeRequestCeiling)
+    assert.equal(submittedNativeRequests, nativeRequestCeiling)
+    assert.equal(outcomes.length, nativeRequestCeiling)
     assert.deepEqual(
       outcomes.map((entry) => entry.label),
-      LABELS,
+      labels,
     )
     assert.deepEqual(await sourceCensus(), initialSources)
-    assert.deepEqual((await json(fixture.contract.path, 64 * 1024)).sha256, CONTRACT_SHA256)
+    assert.deepEqual((await json(fixture.contract.path, 64 * 1024)).sha256, contractSha256)
     await installation(fixture)
     const finalCheckpoint = await snapshot(fixture.checkpoint.path, CHECKPOINT_BYTES, false)
     assert.equal(finalCheckpoint.sha256, CHECKPOINT_SHA256)
@@ -501,7 +547,7 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
       producer,
       status: failure
         ? 'failed'
-        : outcomes.length === 7
+        : outcomes.length === nativeRequestCeiling
           ? 'mechanical-pass-visual-pending'
           : 'incomplete',
       submittedNativeRequests,
@@ -672,7 +718,10 @@ function fixtureFrom(value: Record<string, unknown>): Fixture {
     'deadlineSeconds',
   ])
   assert.equal(value.schemaVersion, 1)
-  assert.equal(value.profile, PROFILE)
+  assert.ok(value.profile === PROFILE || value.profile === ORDINARY_PROFILE)
+  if (value.profile === ORDINARY_PROFILE) {
+    assert.equal(value.artifacts, ORDINARY_RUN)
+  }
   assert.equal(value.deadlineSeconds, 1800)
   const source = record(value.checkpoint, 'checkpoint')
   keys(source, [
@@ -702,7 +751,7 @@ function fixtureFrom(value: Record<string, unknown>): Fixture {
     checkpoint: { ...source, path: canonicalPath(source.path) } as unknown as Checkpoint,
     contract: descriptor(value.contract),
     deadlineSeconds: 1800,
-    profile: PROFILE,
+    profile: value.profile,
     provisionReport: descriptor(value.provisionReport),
     schemaVersion: 1,
   }

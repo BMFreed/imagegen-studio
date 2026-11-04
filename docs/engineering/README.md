@@ -1655,3 +1655,16 @@ The two incomplete installed attempts remain excluded. Linux direct-child
 ownership does not qualify fork descendants, Anima regional generation, image
 quality, numerical step telemetry, capacity or release Install/Repair. Earlier
 negative visual findings and PP-001/007/008 **«Пока не обещать»** remain unchanged.
+
+## Ordinary two-character count-tag control
+
+The [finite ordinary control](./phase-4-illustrious-ordinary-count-tag-research.md)
+adds only `2girls, ` to the preceding character prompt. Two seeds and one exact
+repeat reuse genuine Main inputs and the existing ordinary worker. ROOT records
+three mechanical completions, 90 scalar progress events and exact owned-input
+and RGB repeat. Blind observers count two separate figures at both new seeds;
+the retained prior controls each show one. Seed123 remains faint/unfinished.
+The full preregistered gate stays inconclusive because stylized appearance does
+not establish its adult-age criterion. This is a bounded count observation,
+not quality or regional-assignment acceptance. Types, scoped checks, 62 Main
+tests and source review pass. No production behavior or readiness changes.

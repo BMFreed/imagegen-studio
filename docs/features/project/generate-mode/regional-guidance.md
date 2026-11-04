@@ -1218,3 +1218,17 @@ criterion; it does not establish full prompt compliance or general quality.
 Human acceptance remains pending. No new public Queue/UI/durability, Anima,
 capacity or release claim follows; existing permissions, frozen work and
 provenance exclusions remain exact. PP-001/007/008 stay **«Пока не обещать»**.
+
+## Ordinary count-tag calibration
+
+The [next bounded control](../../../engineering/phase-4-illustrious-ordinary-count-tag-research.md)
+tests the literal `2girls, ` prefix with the previous ordinary settings and two
+seeds, plus an exact repeat. Every consumed recipe has no enabled regions.
+Three requests complete with 90 scalar progress events and exact owned-input
+and RGB repeat. Independent blind AI descriptions and ROOT count two distinct
+figures at both seeds, compared with one in each retained earlier control.
+Seed123 is faint and unfinished. Count/separation subcriteria pass 2/2, while
+the complete preregistered gate remains inconclusive: stylized appearance does
+not establish its adult-age criterion. Human acceptance is pending. This does
+not establish regional assignment, quality or new public readiness.
+PP-001/007/008 remain **«Пока не обещать»**.

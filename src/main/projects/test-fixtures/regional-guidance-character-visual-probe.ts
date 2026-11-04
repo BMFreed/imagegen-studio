@@ -1,10 +1,13 @@
 /**
- * ROOT-only, import-safe Main producer for the preregistered red/blue-haired character scene. This
- * adapts existing Main owners; it adds no inference, queue, admission or publication policy.
- * InvokeAI basis: a61ac4fb75bec78d92885bf39bcf3ed3900a9bdd, addRegionalGuidance.ts and its
- * compileCanvasGraph.ts caller. Their existing conditioning association is consumed unchanged. ROOT
- * owns execution, the installed derivatives/inference workers, supervision and cleanup. A completed
- * mechanical report leaves visual and human acceptance pending.
+ * ROOT-only, import-safe Main producer for fixed character-scene experiments. This adapts existing
+ * Main owners; it adds no inference, queue, admission or publication policy. InvokeAI basis:
+ * a61ac4fb75bec78d92885bf39bcf3ed3900a9bdd, addRegionalGuidance.ts and its compileCanvasGraph.ts
+ * caller. Their existing conditioning association is consumed unchanged. ROOT owns execution, the
+ * installed derivatives/inference workers, supervision and cleanup. A completed mechanical report
+ * leaves visual and human acceptance pending. The additive ordinary count-tag profile uses InvokeAI
+ * a61ac4fb's graph.ts ordinary SDXL path: identical literal text reaches prompt/style and the
+ * original text_encoder/compel.py consumer. Its fixed prompt is experimental content, not an
+ * InvokeAI or model-author successful recipe.
  */
 import { IGS_SRGB_ICC_SHA256 } from '../../../shared/projects/color-profile.js'
 import { planGenerationBatch } from '../../../shared/projects/generation-batch-plan.js'
@@ -81,23 +84,68 @@ const NOISE = {
   schemaVersion: 1,
   timestepSpacing: 'leading',
 } as const
+const ORDINARY_LABELS = ['seed123-baseline', 'seed124-baseline', 'seed123-baseline-repeat'] as const
+const LEGACY_SPEC = {
+  base: 'cf0171be3e8261d5b1f17252cc47d770142b6a07',
+  caseLabels: LABELS,
+  conditions: CONDITIONS,
+  contractProfile: 'regional-character-visual-v1',
+  contractSchema: 'regional-character-visual-experiment-v1',
+  contractSha256: CONTRACT_SHA256,
+  globalPositive: GLOBAL,
+  manifestName: 'main-character-visual.json',
+  nativeRequestCeiling: 7,
+  repeatCapture: 'owned-assignment123-repeat',
+  repeatCondition: 'assignment',
+  repeatLabel: 'seed123-assignment-repeat',
+  repeatSourceLabel: 'seed123-assignment',
+  run: RUN,
+} as const
+const ORDINARY_SPEC = {
+  base: '474aa1bc17a2637a85b94e9749f9e798af36a3fc',
+  caseLabels: ORDINARY_LABELS,
+  conditions: ['baseline'],
+  contractProfile: 'ordinary-two-character-tags-v1',
+  contractSchema: 'ordinary-two-character-tags-experiment-v1',
+  contractSha256: '12512a2ca955cce7326471cdc66001a74781eb2d511a4858ceb5c50a327e41a9',
+  globalPositive: `2girls, ${GLOBAL}`,
+  manifestName: 'main-ordinary-two-character-tags.json',
+  nativeRequestCeiling: 3,
+  repeatCapture: 'owned-baseline123-repeat',
+  repeatCondition: 'baseline',
+  repeatLabel: 'seed123-baseline-repeat',
+  repeatSourceLabel: 'seed123-baseline',
+  run: path.join(
+    os.homedir(),
+    '.codex/artifacts/imagegen-studio/runs/illustrious-ordinary-character/20261105-count-tag',
+  ),
+} as const
 
 export type CharacterVisualCondition = (typeof CONDITIONS)[number]
 export type CharacterVisualLabel = (typeof LABELS)[number]
+export type OrdinaryCharacterCalibrationLabel = (typeof ORDINARY_LABELS)[number]
+export type CharacterVisualProbeLabel = CharacterVisualLabel | OrdinaryCharacterCalibrationLabel
 export interface CharacterVisualProbeUseCase {
   condition: CharacterVisualCondition
-  label: CharacterVisualLabel
+  label: CharacterVisualProbeLabel
   models: ModelService
   prepared: PreparedNormalTxt2Img
   recipe: CurrentCanvasRegionalRecipe
   seed: (typeof SEEDS)[number]
 }
 export interface CharacterVisualProbeOptions<T> {
+  profile?: never
   pythonExecutable: string
   run: string
   runtimeRoot: string
   source: string
   useCase: (input: CharacterVisualProbeUseCase) => Promise<T>
+}
+export interface OrdinaryCharacterCalibrationProbeOptions<T> extends Omit<
+  CharacterVisualProbeOptions<T>,
+  'profile'
+> {
+  profile: 'ordinary-two-character-tags-v1'
 }
 export interface CharacterVisualFile {
   byteSize: number
@@ -123,6 +171,27 @@ export interface CharacterVisualManifest<T> {
   schemaVersion: 1
   source: CharacterVisualFile
   visualAcceptance: 'pending'
+}
+export interface OrdinaryCharacterCalibrationCase<T> extends Omit<
+  CharacterVisualCase<T>,
+  'capture' | 'condition' | 'label'
+> {
+  capture: 'owned-baseline123-repeat' | 'saved-reopened-current-canvas'
+  condition: 'baseline'
+  label: OrdinaryCharacterCalibrationLabel
+}
+export interface OrdinaryCharacterCalibrationManifest<T> extends Omit<
+  CharacterVisualManifest<T>,
+  'cases' | 'nativeRequestCeiling' | 'orderedCaseLabels' | 'profile'
+> {
+  cases: Record<OrdinaryCharacterCalibrationLabel, OrdinaryCharacterCalibrationCase<T>>
+  nativeRequestCeiling: 3
+  orderedCaseLabels: readonly OrdinaryCharacterCalibrationLabel[]
+  profile: 'main-ordinary-two-character-tags-v1'
+}
+type ProbeCase<T> = Omit<CharacterVisualCase<T>, 'capture' | 'label'> & {
+  capture: 'owned-baseline123-repeat' | CharacterVisualCase<T>['capture']
+  label: CharacterVisualProbeLabel
 }
 type ResolvedCheckpoint = Awaited<
   ReturnType<ModelService['resolveVerifiedGenerationCheckpointForPlan']>
@@ -198,42 +267,64 @@ const writeJson = (filePath: string, value: unknown): Promise<CharacterVisualFil
   writeOwned(filePath, Buffer.from(serialized(value)))
 
 /**
- * Six fresh Save/reopen/capture handoffs, then one exact owned assignment123 replay. No model or
- * environment copies are created. Runtime execution occurs only when ROOT calls this.
+ * The omitted profile keeps six fresh handoffs and the owned assignment123 replay. The fixed
+ * ordinary profile makes two fresh baseline handoffs and the owned baseline123 replay instead. Both
+ * use the same Main owners; runtime execution occurs only when ROOT calls this.
  */
-export async function produceCharacterVisualProbe<T>(
+export function produceCharacterVisualProbe<T>(
   options: CharacterVisualProbeOptions<T>,
-): Promise<CharacterVisualManifest<T>> {
-  assert.deepEqual(Object.keys(options).sort(), [
-    'pythonExecutable',
-    'run',
-    'runtimeRoot',
-    'source',
-    'useCase',
-  ])
-  assert.equal(options.run, RUN)
+): Promise<CharacterVisualManifest<T>>
+export function produceCharacterVisualProbe<T>(
+  options: OrdinaryCharacterCalibrationProbeOptions<T>,
+): Promise<OrdinaryCharacterCalibrationManifest<T>>
+export async function produceCharacterVisualProbe<T>(
+  options: CharacterVisualProbeOptions<T> | OrdinaryCharacterCalibrationProbeOptions<T>,
+): Promise<CharacterVisualManifest<T> | OrdinaryCharacterCalibrationManifest<T>> {
+  const ordinary = options.profile === 'ordinary-two-character-tags-v1'
+  const optionKeys = ['pythonExecutable', 'run', 'runtimeRoot', 'source', 'useCase']
+  if (ordinary) {
+    optionKeys.push('profile')
+    optionKeys.sort()
+  }
+  assert.deepEqual(Object.keys(options).sort(), optionKeys)
+  assert.ok(options.profile === undefined || ordinary)
+  const spec = ordinary ? ORDINARY_SPEC : LEGACY_SPEC
+  const run = spec.run
+  assert.equal(options.run, run)
   assert.equal(options.source, SOURCE)
   assert.equal(typeof options.useCase, 'function')
   assert.ok(path.isAbsolute(options.pythonExecutable) && path.isAbsolute(options.runtimeRoot))
-  await directory(RUN)
-  const contractBytes = await readFile(path.join(RUN, 'experiment-contract.json'))
-  assert.equal(sha(contractBytes), CONTRACT_SHA256)
+  await directory(run)
+  const contractBytes = await readFile(path.join(run, 'experiment-contract.json'))
+  assert.equal(sha(contractBytes), spec.contractSha256)
   const contract = JSON.parse(contractBytes.toString('utf8')) as Record<string, unknown>
-  assert.equal(contract.schema, 'regional-character-visual-experiment-v1')
-  assert.equal(contract.base, 'cf0171be3e8261d5b1f17252cc47d770142b6a07')
-  assert.equal(contract.profile, 'regional-character-visual-v1')
+  assert.equal(contract.schema, spec.contractSchema)
+  assert.equal(contract.base, spec.base)
+  assert.equal(contract.profile, spec.contractProfile)
   assert.equal(contract.fixedBeforeNativeExecution, true)
-  assert.equal(contract.globalPositive, GLOBAL)
+  assert.equal(contract.globalPositive, spec.globalPositive)
   assert.equal(contract.globalNegative, '')
   assert.equal(contract.leftPositive, RED)
   assert.equal(contract.rightPositive, BLUE)
   assert.deepEqual(contract.bbox, BBOX)
   assert.deepEqual(contract.seeds, SEEDS)
-  assert.deepEqual(contract.conditions, CONDITIONS)
-  assert.deepEqual(contract.caseLabels, LABELS)
-  assert.equal(contract.nativeRequestCeiling, 7)
+  assert.deepEqual(contract.conditions, spec.conditions)
+  assert.deepEqual(contract.caseLabels, spec.caseLabels)
+  assert.equal(contract.nativeRequestCeiling, spec.nativeRequestCeiling)
   assert.equal(contract.noResources, true)
   assert.equal(contract.compositionProfile, 'invoke-canvas-v1')
+  if (ordinary) {
+    assert.deepEqual(contract.sampling, {
+      cfgRescale: 0,
+      cfgScale: 5,
+      noiseProfile: NOISE,
+      sampler: 'Euler',
+      scheduler: 'Normal',
+      steps: 30,
+      workerScheduler: 'euler',
+    })
+    assert.equal(contract.vaePrecision, 'FP16')
+  }
   const sourceStat = await lstat(SOURCE)
   assert.ok(sourceStat.isFile() && !sourceStat.isSymbolicLink())
   assert.equal(await realpath(SOURCE), SOURCE)
@@ -244,14 +335,14 @@ export async function produceCharacterVisualProbe<T>(
   }
   assert.equal(sourceHash.digest('hex'), SOURCE_SHA256)
   // ROOT has inventoried the run and created only this parent. Refuse reusing producer output.
-  await directory(path.join(RUN, 'payloads'))
-  const data = path.join(RUN, 'payloads', 'main')
+  await directory(path.join(run, 'payloads'))
+  const data = path.join(run, 'payloads', 'main')
   await freshDirectory(data)
   const scratch = path.join(data, 'scratch')
   const shadowRoot = path.join(data, 'autosave')
   await freshDirectory(scratch)
   for (const name of ['handoffs', 'packages', 'targets']) {
-    await freshDirectory(path.join(RUN, name))
+    await freshDirectory(path.join(run, name))
   }
   const database = openAppDatabase(data, path.join(REPO, 'src/main/db/migrations'))
   const service = new ProjectService({
@@ -284,7 +375,7 @@ export async function produceCharacterVisualProbe<T>(
     data,
   )
   const models = new ModelService(repository, new CivitaiClient(offline), tokenStore)
-  const cases: Partial<Record<CharacterVisualLabel, CharacterVisualCase<T>>> = {}
+  const cases: Partial<Record<CharacterVisualProbeLabel, ProbeCase<T>>> = {}
   let worker: ProjectWorkerClient | undefined
   let repeat:
     | {
@@ -378,7 +469,7 @@ export async function produceCharacterVisualProbe<T>(
         loras: [],
         model: reference,
         negativePrompt: prompt(''),
-        positivePrompt: prompt(GLOBAL),
+        positivePrompt: prompt(spec.globalPositive),
         sampling: {
           cfgScale: 5,
           denoisingStrength: null,
@@ -449,7 +540,7 @@ export async function produceCharacterVisualProbe<T>(
     }
 
     for (const seed of SEEDS) {
-      for (const condition of CONDITIONS) {
+      for (const condition of spec.conditions) {
         const label: CharacterVisualLabel = `seed${seed}-${condition}`
         const desired = structuredClone(template)
         desired.documentRevision = co().document.documentRevision
@@ -475,7 +566,7 @@ export async function produceCharacterVisualProbe<T>(
         const before = await state()
         const authoredDocument = structuredClone(co().document)
         const retainedPackage = await writeOwned(
-          path.join(RUN, 'packages', `${label}.igs`),
+          path.join(run, 'packages', `${label}.igs`),
           await readFile(packagePath),
         )
         await service.withCapturedCurrentCanvasRegionalGenerationInput(id, async (capture) => {
@@ -530,22 +621,30 @@ export async function produceCharacterVisualProbe<T>(
             },
             models,
           })
-          assertRecipe(recipe, prepared, authoredDocument, condition, seed)
+          assertRecipe(
+            recipe,
+            prepared,
+            authoredDocument,
+            condition,
+            seed,
+            spec.globalPositive,
+            ordinary,
+          )
           capture.assertCurrent()
           const ownedRecipe = structuredClone(recipe)
           const ownedPrepared = clonePrepared(prepared)
           const retainedTarget = await writeOwned(
-            path.join(RUN, 'targets', `${label}.png`),
+            path.join(run, 'targets', `${label}.png`),
             ownedPrepared.targetPngBytes,
           )
           const beforeUse = await state()
           assert.deepEqual(beforeUse, before)
-          const handoff = await writeJson(path.join(RUN, 'handoffs', `${label}.json`), {
+          const handoff = await writeJson(path.join(run, 'handoffs', `${label}.json`), {
             authoredDocument,
             capture: 'saved-reopened-current-canvas',
             checkpoint: { byteSize: SOURCE_BYTES, resolved, sha256: SOURCE_SHA256 },
             condition,
-            contractSha256: CONTRACT_SHA256,
+            contractSha256: spec.contractSha256,
             label,
             package: retainedPackage,
             prepared: ownedPrepared,
@@ -555,7 +654,7 @@ export async function produceCharacterVisualProbe<T>(
             target: retainedTarget,
           })
           const inputHash = sha(serialized({ prepared: ownedPrepared, recipe: ownedRecipe }))
-          if (label === 'seed123-assignment') {
+          if (label === spec.repeatSourceLabel) {
             repeat = {
               authoredDocument: structuredClone(authoredDocument),
               package: { ...retainedPackage },
@@ -565,7 +664,7 @@ export async function produceCharacterVisualProbe<T>(
               target: { ...retainedTarget },
             }
           }
-          assert.ok(callbacks < 7)
+          assert.ok(callbacks < spec.nativeRequestCeiling)
           callbacks++
           const result = await options.useCase({
             condition,
@@ -589,28 +688,36 @@ export async function produceCharacterVisualProbe<T>(
             seed,
             target: retainedTarget,
           }
-          await writeJson(path.join(RUN, 'handoffs', `${label}-result.json`), cases[label])
+          await writeJson(path.join(run, 'handoffs', `${label}-result.json`), cases[label])
         })
         assert.deepEqual(await state(), before)
       }
     }
     assert.ok(repeat)
-    assert.equal(callbacks, 6)
-    const label = 'seed123-assignment-repeat'
+    assert.equal(callbacks, spec.nativeRequestCeiling - 1)
+    const label = spec.repeatLabel
     const ownedRecipe = structuredClone(repeat.recipe)
     const ownedPrepared = clonePrepared(repeat.prepared)
-    assertRecipe(ownedRecipe, ownedPrepared, repeat.authoredDocument, 'assignment', 123)
+    assertRecipe(
+      ownedRecipe,
+      ownedPrepared,
+      repeat.authoredDocument,
+      spec.repeatCondition,
+      123,
+      spec.globalPositive,
+      ordinary,
+    )
     const inputHash = sha(serialized({ prepared: ownedPrepared, recipe: ownedRecipe }))
     assert.equal(inputHash, sha(serialized({ prepared: repeat.prepared, recipe: repeat.recipe })))
     const beforeRepeat = await state()
-    const handoff = await writeJson(path.join(RUN, 'handoffs', `${label}.json`), {
+    const handoff = await writeJson(path.join(run, 'handoffs', `${label}.json`), {
       authoredDocument: repeat.authoredDocument,
-      capture: 'owned-assignment123-repeat',
+      capture: spec.repeatCapture,
       checkpoint: { byteSize: SOURCE_BYTES, resolved: repeat.resolved, sha256: SOURCE_SHA256 },
-      condition: 'assignment',
-      contractSha256: CONTRACT_SHA256,
+      condition: spec.repeatCondition,
+      contractSha256: spec.contractSha256,
       label,
-      originalHandoff: cases['seed123-assignment']!.handoff,
+      originalHandoff: cases[spec.repeatSourceLabel]!.handoff,
       package: repeat.package,
       prepared: ownedPrepared,
       recipe: ownedRecipe,
@@ -620,7 +727,7 @@ export async function produceCharacterVisualProbe<T>(
     })
     callbacks++
     const result = await options.useCase({
-      condition: 'assignment',
+      condition: spec.repeatCondition,
       label,
       models,
       prepared: ownedPrepared,
@@ -631,8 +738,8 @@ export async function produceCharacterVisualProbe<T>(
     assert.equal(sha(serialized({ prepared: ownedPrepared, recipe: ownedRecipe })), inputHash)
     assert.deepEqual(await state(), beforeRepeat)
     cases[label] = {
-      capture: 'owned-assignment123-repeat',
-      condition: 'assignment',
+      capture: spec.repeatCapture,
+      condition: spec.repeatCondition,
       handoff,
       label,
       package: repeat.package,
@@ -640,21 +747,35 @@ export async function produceCharacterVisualProbe<T>(
       seed: 123,
       target: repeat.target,
     }
-    await writeJson(path.join(RUN, 'handoffs', `${label}-result.json`), cases[label])
-    assert.equal(callbacks, 7)
+    await writeJson(path.join(run, 'handoffs', `${label}-result.json`), cases[label])
+    assert.equal(callbacks, spec.nativeRequestCeiling)
     assert.equal(networkAttempts, 0)
-    assert.deepEqual(Object.keys(cases), LABELS)
-    const manifest: CharacterVisualManifest<T> = {
-      cases: cases as Record<CharacterVisualLabel, CharacterVisualCase<T>>,
-      contractSha256: CONTRACT_SHA256,
-      nativeRequestCeiling: 7,
-      orderedCaseLabels: LABELS,
-      profile: 'main-character-visual-v1',
-      schemaVersion: 1,
+    assert.deepEqual(Object.keys(cases), spec.caseLabels)
+    const commonManifest = {
+      contractSha256: spec.contractSha256,
+      schemaVersion: 1 as const,
       source: { byteSize: SOURCE_BYTES, path: SOURCE, sha256: SOURCE_SHA256 },
-      visualAcceptance: 'pending',
+      visualAcceptance: 'pending' as const,
     }
-    await writeJson(path.join(RUN, 'main-character-visual.json'), manifest)
+    const manifest: CharacterVisualManifest<T> | OrdinaryCharacterCalibrationManifest<T> = ordinary
+      ? {
+          ...commonManifest,
+          cases: cases as Record<
+            OrdinaryCharacterCalibrationLabel,
+            OrdinaryCharacterCalibrationCase<T>
+          >,
+          nativeRequestCeiling: 3,
+          orderedCaseLabels: ORDINARY_LABELS,
+          profile: 'main-ordinary-two-character-tags-v1',
+        }
+      : {
+          ...commonManifest,
+          cases: cases as Record<CharacterVisualLabel, CharacterVisualCase<T>>,
+          nativeRequestCeiling: 7,
+          orderedCaseLabels: LABELS,
+          profile: 'main-character-visual-v1',
+        }
+    await writeJson(path.join(run, spec.manifestName), manifest)
     return manifest
   } finally {
     // Preserve all payloads on failure. ROOT separately proves physical exit before any cleanup.
@@ -718,15 +839,29 @@ function assertRecipe(
   authored: IgsProjectDocumentV1,
   condition: CharacterVisualCondition,
   seed: (typeof SEEDS)[number],
+  globalPositive = GLOBAL,
+  ordinaryOnly = false,
 ): void {
   assert.equal(recipe.family, 'illustrious')
   assert.equal(recipe.documentId, authored.documentId)
   assert.equal(recipe.documentRevision, authored.documentRevision)
   assert.deepEqual(recipe.bbox, BBOX)
   assert.equal(recipe.item.seed, seed)
-  assert.deepEqual(recipe.globalPrompts, { negative: prompt(''), positive: prompt(GLOBAL) })
+  assert.deepEqual(recipe.globalPrompts, { negative: prompt(''), positive: prompt(globalPositive) })
   assert.deepEqual(recipe.globalEmbeddings, { negative: [], positive: [] })
   assert.equal(recipe.regions.length, condition === 'baseline' ? 0 : 2)
+  if (ordinaryOnly) {
+    assert.equal(condition, 'baseline')
+    assert.equal(authored.regionalGuidance?.length, 2)
+    for (const [index, owner] of authored.regionalGuidance.entries()) {
+      assert.equal(owner.enabled, false)
+      assert.deepEqual(owner.prompts, {
+        negative: prompt(''),
+        positive: prompt([RED, BLUE][index]),
+        useGlobalNegativePrompt: false,
+      })
+    }
+  }
   for (const [index, region] of recipe.regions.entries()) {
     const owner = authored.regionalGuidance![index]
     assert.equal(region.regionId, owner.id)
@@ -750,7 +885,7 @@ function assertRecipe(
   assert.equal(context.documentId, recipe.documentId)
   assert.equal(context.documentRevision, recipe.documentRevision)
   assert.deepEqual(context.bbox, BBOX)
-  assert.deepEqual(context.prompts, { negative: '', positive: GLOBAL })
+  assert.deepEqual(context.prompts, { negative: '', positive: globalPositive })
   assert.equal(context.model.managedPath, SOURCE)
   assert.equal(context.model.reference.fileSha256, SOURCE_SHA256)
   assert.equal(context.model.reference.predictionType, 'epsilon')
