@@ -431,3 +431,126 @@ test('regional transport methods and ready capability state are detached before 
     await fixture.close()
   }
 })
+
+test('regional worker death after N/N holds failure until physical exit and frozen Retry owns fresh progress', async () => {
+  // The migrated queue/staging are real; this transport models an unconfirmed OS-exit interval.
+  // Actual SIGKILL behavior belongs to the real-child transport tests and installed qualification.
+  const fixture = await createRegionalQueueFixture()
+  const closing = deferred()
+  const physicalExit = deferred()
+  const order: string[] = []
+  let work: ReturnType<typeof beginRun> | undefined
+  const originalFail = fixture.queue.failRunning
+  const boundFail = originalFail.bind(fixture.queue)
+  fixture.queue.failRunning = (...args) => {
+    order.push('durable-failure-entry')
+    return boundFail(...args)
+  }
+  try {
+    const queued = await enqueueRegionalFixture(fixture)
+    const frozen = await row(fixture, queued.id)
+    const processor = processorFor(fixture)
+    work = beginRun(fixture, processor, {
+      close: async () => {
+        order.push('physical-close-enter')
+        closing.resolve()
+        await physicalExit.promise
+        order.push('physical-close-confirmed')
+      },
+    })
+    const first = await work.started
+    first.send({ step: 1, totalSteps: 2 })
+    first.send({ step: 2, totalSteps: 2 })
+    assert.equal(processor.getProgressSnapshot().current?.step, 2)
+    assert.equal((await row(fixture, queued.id)).status, 'running')
+    assert.equal(await fixture.staging.hasPublicationReceipt(queued.id), false)
+    assert.equal(
+      await fixture.staging.readLastActualSeed(queued.localProjectKey, frozen.document_id),
+      null,
+    )
+    work.completion.reject(
+      new Error('Explicit transport substitute: native worker died after N/N.'),
+    )
+    await Promise.race([
+      closing.promise,
+      work.run.then(() => assert.fail('Worker failure must enter physical close before settling.')),
+    ])
+    assert.equal(processor.getProgressSnapshot().current, null)
+    first.send({ step: 2, totalSteps: 2 })
+    assert.equal(processor.getProgressSnapshot().current, null)
+    assert.equal((await row(fixture, queued.id)).status, 'running')
+    await assert.rejects(
+      processor.runOne({
+        close: async () => assert.fail('The failed worker still owns its slot.'),
+        executeCurrentCanvasRegional: async () =>
+          assert.fail('No second worker before physical exit.'),
+        ready: PROGRESS_READY,
+      }),
+      { code: 'WORKER_EXIT_UNCONFIRMED' },
+    )
+    assert.equal(await fixture.staging.hasPublicationReceipt(queued.id), false)
+    assert.equal(
+      await fixture.staging.readLastActualSeed(queued.localProjectKey, frozen.document_id),
+      null,
+    )
+    physicalExit.resolve()
+    assert.deepEqual(await work.run, { kind: 'failed', queueItemId: queued.id })
+    assert.deepEqual(order, [
+      'physical-close-enter',
+      'physical-close-confirmed',
+      'durable-failure-entry',
+    ])
+    const failed = await row(fixture, queued.id)
+    assert.equal(failed.status, 'failed')
+    assert.equal(failed.error_code, 'GENERATION_WORKER_FAILED')
+    assert.equal(failed.frozen_payload_json, frozen.frozen_payload_json)
+    assert.equal(
+      (await fixture.staging.listVerifiedRegionalCandidates(queued.localProjectKey)).length,
+      0,
+    )
+
+    // A terminal Retry reads its owned snapshot, independently of this mutable fixture input.
+    fixture.regional.recipe.regions[0].positive!.text = 'later mutable source prompt'
+    fixture.regional.recipe.regions[0].coverage.alpha.fill(17)
+    fixture.request.job.sampling.seed = 124
+    fixture.request.job.sampling.steps = 1
+    const retry = await fixture.queue.retryCurrentCanvasRegionalTerminal(
+      queued.id,
+      failed.status_sequence,
+    )
+    assert.notEqual(retry.id, queued.id)
+    assert.equal((await row(fixture, retry.id)).frozen_payload_json, frozen.frozen_payload_json)
+    const recovered = beginRun(fixture, processor)
+    try {
+      const second = await recovered.started
+      assert.notEqual(second.input.request.requestId, first.input.request.requestId)
+      assert.equal(second.input.request.job.sampling.seed, 123)
+      assert.equal(second.input.request.job.sampling.steps, 2)
+      assert.deepEqual(second.input.recipe, first.input.recipe)
+      second.send({ step: 1, totalSteps: 2 })
+      const snapshot = processor.getProgressSnapshot()
+      assert.equal(snapshot.current?.jobId, retry.id)
+      assert.equal(snapshot.current?.step, 1)
+      first.send({ step: 2, totalSteps: 2 })
+      assert.deepEqual(processor.getProgressSnapshot(), snapshot)
+      recovered.complete(second.input)
+      assert.equal((await recovered.run).kind, 'completed')
+      assert.equal(processor.getProgressSnapshot().current, null)
+      assert.equal(await fixture.staging.hasPublicationReceipt(queued.id), false)
+      assert.equal(await fixture.staging.hasPublicationReceipt(retry.id), true)
+      assert.equal(
+        await fixture.staging.readLastActualSeed(queued.localProjectKey, frozen.document_id),
+        123,
+      )
+    } finally {
+      recovered.completion.reject(new Error('Join the fixture transport if an assertion failed.'))
+      await recovered.run.catch(() => undefined)
+    }
+  } finally {
+    physicalExit.resolve()
+    work?.completion.reject(new Error('Join the fixture transport if an earlier assertion failed.'))
+    await work?.run.catch(() => undefined)
+    fixture.queue.failRunning = originalFail
+    await fixture.close()
+  }
+})

@@ -1,5 +1,17 @@
 # Engineering Workflow
 
+## Regional worker-only failure — installed boundary verified
+
+[Worker-only failure](./phase-4-regional-guidance-worker-fault-research.md)
+qualifies the existing error owner with Main alive. ROOT:126 distinct lower PASS,
+14 installed checks/186.959 seconds, verified pidfd SIGKILL after actual progress,
+normal failed row/cleared counter/no candidate, explicit frozen Retry and exact
+control PNG through Results/Add/Undo/Save/reopen. The isolated missing-exit-wait
+mutation gives five GREEN/one semantic RED with exact restoration. Production,
+installed worker and dependencies remain unchanged. Quality, Anima, driver-poison
+recovery, capacity and release Install/Repair remain separate; PP-001/007/008
+stay **«Пока не обещать»**. Older notes retain their historical scopes.
+
 ## Regional numeric denoising progress — installed boundary verified
 
 [Regional progress](./phase-4-regional-guidance-progress-research.md) adapts

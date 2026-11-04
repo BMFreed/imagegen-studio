@@ -90,10 +90,13 @@ assert.ok(
     'installed-regional-invoke-recovery-v1',
     'installed-regional-invoke-main-death-v1',
     'installed-regional-invoke-progress-v1',
+    'installed-regional-invoke-worker-fault-v1',
   ].includes(fixture.profile),
 )
 const mainDeathProfile = fixture.profile === 'installed-regional-invoke-main-death-v1'
-const progressProfile = fixture.profile === 'installed-regional-invoke-progress-v1'
+const workerFaultProfile = fixture.profile === 'installed-regional-invoke-worker-fault-v1'
+const progressProfile =
+  workerFaultProfile || fixture.profile === 'installed-regional-invoke-progress-v1'
 const recoveryProfile =
   mainDeathProfile || fixture.profile === 'installed-regional-invoke-recovery-v1'
 assert.ok(
@@ -316,7 +319,8 @@ async function verifyProvision() {
   assert.equal(provision.ready.workerVersion, '0.14.0')
   for (const cap of ['illustrious-regional-invoke-v1', 'private-current-canvas-regional-v1'])
     assert.ok(provision.ready.capabilities.includes(cap), `Missing installed capability ${cap}`)
-  if (mainDeathProfile) assert.ok(provision.ready.capabilities.includes('linux-owned-inference-v1'))
+  if (mainDeathProfile || workerFaultProfile)
+    assert.ok(provision.ready.capabilities.includes('linux-owned-inference-v1'))
   if (progressProfile)
     assert.ok(provision.ready.capabilities.includes('illustrious-regional-progress-v1'))
   assert.equal(
@@ -342,7 +346,7 @@ async function verifyProvision() {
   )
   const sourceModuleCount = Object.keys(checkout).filter((name) => name.endsWith('.py')).length
   assert.equal(Object.keys(modules).length, sourceModuleCount)
-  if (mainDeathProfile) {
+  if (mainDeathProfile || workerFaultProfile) {
     assert.equal(sourceModuleCount, 50)
     assert.ok(modules['inference_lifetime.py'] && modules['owned_inference.py'])
   }
@@ -594,17 +598,29 @@ async function preservedFiles(root) {
 async function captureProgressPreservation() {
   const sql = await sqlSnapshot(),
     completed = sql.queue.filter(({ status }) => status === 'completed')
-  assert.ok(sql.queue.length >= 8 && sql.queue.length <= 256)
-  assert.deepEqual([sql.receipts.length, sql.cursors.length], [4, 4])
-  assert.equal(completed.length, 4)
-  assert.equal(sql.queue.filter(({ status }) => status === 'canceled').length, sql.queue.length - 4)
+  assert.ok(sql.queue.length >= (workerFaultProfile ? 12 : 8) && sql.queue.length <= 256)
+  if (workerFaultProfile) {
+    assert.ok(completed.length >= 5 && completed.length <= 128)
+    assert.deepEqual(
+      [sql.receipts.length, sql.cursors.length],
+      [completed.length, completed.length],
+    )
+    assert.ok(sql.queue.every(({ status }) => ['completed', 'canceled', 'failed'].includes(status)))
+  } else {
+    assert.deepEqual([sql.receipts.length, sql.cursors.length], [4, 4])
+    assert.equal(completed.length, 4)
+    assert.equal(
+      sql.queue.filter(({ status }) => status === 'canceled').length,
+      sql.queue.length - 4,
+    )
+  }
   assert.ok(sql.queue.every(({ operation }) => operation === 'illustrious-regional-txt2img'))
   const indexed = await database.db
     .selectFrom('project_index')
     .selectAll()
     .orderBy('canonical_path')
     .execute()
-  assert.ok(indexed.length >= 18 && indexed.length <= 1024)
+  assert.ok(indexed.length >= (workerFaultProfile ? 27 : 18) && indexed.length <= 1024)
   const accepted = []
   for (const record of indexed) {
     assert.equal(record.file_health, 'ready')
@@ -625,8 +641,8 @@ async function captureProgressPreservation() {
       accepted.push({ queueItemId: id, path: record.canonical_path, layerId: layer.id })
     }
   }
-  assert.equal(accepted.length, 3)
-  assert.equal(new Set(accepted.map(({ queueItemId }) => queueItemId)).size, 3)
+  assert.equal(accepted.length, workerFaultProfile ? completed.length - 1 : 3)
+  assert.equal(new Set(accepted.map(({ queueItemId }) => queueItemId)).size, accepted.length)
   const recoveryFiles = await preservedFiles(path.join(appDataRoot, 'recovery')),
     inputFiles = await preservedFiles(path.join(appDataRoot, 'generation-inputs')),
     unaccepted = completed.filter(
@@ -665,7 +681,13 @@ async function captureProgressPreservation() {
     'One original 30-step seed123 Generate canceled after genuine completed-step/UI observations >=5/30, followed by one explicit frozen Queue Retry and one healthy PNG; one Electron lifetime, exactly two regional wires.'
   report.boundary.progress =
     'Original numeric JSONL from the pinned unchanged native callback path -> original Main transient IPC -> existing Project/Queue counter/bar. No Python callback interception, tensor requests, previews, fabricated events or denoising loop; final30/30 precedes completion and clears on settlement.'
-  report.boundary.preconditions = `Reuse the terminal${sql.queue.length}/receipt4/cursor4/${indexed.length}-package pool, including three accepted jobs and one unaccepted candidate. Prior excluded attempts remain retained. All prior SQL/package/candidate/input bytes are dynamically pinned; three new Project fixtures are authored without resetting prior state.`
+  report.boundary.preconditions = `Reuse the terminal${sql.queue.length}/receipt${sql.receipts.length}/cursor${sql.cursors.length}/${indexed.length}-package pool, including ${accepted.length} accepted jobs and one unaccepted candidate. Prior excluded attempts remain retained. All prior SQL/package/candidate/input bytes are dynamically pinned; three new Project fixtures are authored without resetting prior state.`
+  if (workerFaultProfile) {
+    report.boundary.calls =
+      'One original 30-step seed123 Generate faulted after completed-step/UI observations >=5/30 by a verified worker-only pidfd SIGKILL while Main stays alive, followed by explicit frozen Queue Retry and one healthy PNG. One Electron lifetime and exactly two regional wires.'
+    report.boundary.exclusions +=
+      ' Worker-only SIGKILL qualifies this finite failure/retry path, not arbitrary GPU-context poisoning or automatic retry. Production error/completion/queue/result owners remain unchanged.'
+  }
   check('Existing terminal pool, all SQL tables, packages and candidate/input files pinned')
 }
 function ownProgressSql(whole) {
@@ -1214,7 +1236,7 @@ async function installObservers() {
           return { ...descriptor, positive, opaque }
         })
         let ownerMarker
-        if (ownership.required) {
+        if (ownership.required || ownership.workerFault) {
           const directory = fs.lstatSync(wire.stagingRoot, { bigint: true })
           const file = p.join(wire.stagingRoot, '.owner-v1.json')
           const entry = fs.lstatSync(file)
@@ -1276,6 +1298,7 @@ async function installObservers() {
               ready: null,
               stdoutRestored: false,
               ...(ownership.progress ? { frames: [] } : {}),
+              ...(ownership.workerFault ? { stderrTail: '', stderrRestored: false } : {}),
             }
             state.workers.push(worker)
             const originalWrite = child.stdin.write
@@ -1376,6 +1399,8 @@ async function installObservers() {
                     throw new Error('Original inference Ready lacks regional progress capability')
                   const guarded =
                     message.capabilities?.includes('linux-owned-inference-v1') === true
+                  if (ownership.workerFault && !guarded)
+                    throw new Error('Worker-only fault requires actual Linux ownership capability')
                   const expected = guarded
                     ? [
                         '-I',
@@ -1471,6 +1496,12 @@ async function installObservers() {
               }
             }
             child.stdout.on('data', onData)
+            const onStderr = ownership.workerFault
+              ? (bytes) => {
+                  worker.stderrTail = (worker.stderrTail + bytes.toString('utf8')).slice(-64 * 1024)
+                }
+              : null
+            if (onStderr) child.stderr.on('data', onStderr)
             const onExit = (code, signal) => {
               worker.exit = {
                 at: new Date().toISOString(),
@@ -1498,6 +1529,10 @@ async function installObservers() {
               child.removeListener('exit', onExit)
               child.removeListener('close', onClose)
               child.stdout.removeListener('data', onData)
+              if (onStderr) {
+                child.stderr.removeListener('data', onStderr)
+                worker.stderrRestored = true
+              }
               worker.writeRestored = true
               worker.stdoutRestored = true
             })
@@ -1610,6 +1645,7 @@ async function installObservers() {
     {
       required: mainDeathProfile,
       progress: progressProfile,
+      workerFault: workerFaultProfile,
       scratch: path.join(appDataRoot, 'scratch'),
       previous: previousTransport,
       controls: mainDeathControls,
@@ -1766,11 +1802,203 @@ async function progressBeforeCancel(project, row) {
   const worker = observed.workers.find(({ pid }) => pid === wires[0].pid)
   assert.ok(worker.ready.capabilities.includes('illustrious-regional-progress-v1'))
   report.progress = { beforeCancel: { first, second, sql: before, requestId: wires[0].requestId } }
-  report.cancellationBoundary =
-    'Cancel follows two genuine native-path JSONL/Main/UI step observations >=5/30; no elapsed-time estimate.'
+  report.cancellationBoundary = workerFaultProfile
+    ? 'Worker-only SIGKILL follows two genuine native-path JSONL/Main/UI step observations >=5/30; no elapsed-time estimate or Cancel action.'
+    : 'Cancel follows two genuine native-path JSONL/Main/UI step observations >=5/30; no elapsed-time estimate.'
   check(
-    'Original scalar JSONL and Main snapshot reach existing Project/Queue counter and bar before Cancel',
+    workerFaultProfile
+      ? 'Original scalar JSONL and Main snapshot reach existing Project/Queue counter and bar before worker-only fault'
+      : 'Original scalar JSONL and Main snapshot reach existing Project/Queue counter and bar before Cancel',
     report.progress.beforeCancel,
+  )
+}
+/** Developer fault only: reuse the Main-only pidfd pattern, validating the actual wire child. */
+async function signalRegionalWorkerOnly(worker, wire) {
+  assert.ok(workerFaultProfile && application && worker && wire.ownerMarker)
+  const mainPid = application.process().pid,
+    main = await readProcessIdentity(mainPid),
+    child = await readProcessIdentity(worker.pid),
+    expectedArgs = [
+      '-I',
+      '-m',
+      'imagegen_worker.owned_inference',
+      '--parent-pid',
+      String(mainPid),
+      '--scratch-base',
+      path.join(appDataRoot, 'scratch'),
+    ],
+    owner = wire.ownerMarker.value,
+    bootId = (await readFile('/proc/sys/kernel/random/boot_id', 'utf8')).trim(),
+    canonicalPython = await realpath(pointer.pythonExecutable)
+  assert.equal(wire.ownerMarker.capturedMainPid, mainPid)
+  assert.equal(owner.bootId, bootId)
+  assert.equal(owner.main.pid, mainPid)
+  assert.equal(owner.main.startTicks, main.start)
+  assert.equal(owner.worker.pid, worker.pid)
+  assert.equal(owner.worker.startTicks, child.start)
+  assert.equal(worker.identity.start, child.start)
+  assert.equal(worker.executable, pointer.pythonExecutable)
+  assert.deepEqual(worker.args, expectedArgs)
+  assert.equal(await realpath(worker.executable), canonicalPython)
+  assert.equal(child.group, main.group)
+  assert.equal(nativeChecks[0].nativeIdentity.pid, mainPid)
+  assert.equal(nativeChecks[0].nativeIdentity.start, main.start)
+  const expected = { main, child, bootId, canonicalPython, argv: expectedArgs }
+  report.workerFault = { before: expected, requestId: wire.requestId, signalRequested: false }
+  checkpoint()
+  const script = `import json,os,signal,sys
+expected=json.loads(sys.argv[1]);main=expected['main'];child=expected['child']
+assert main['pid']!=child['pid'] and main['pid']>1 and child['pid']>1
+mainfd=os.pidfd_open(main['pid'],0);fd=os.pidfd_open(child['pid'],0)
+def identity(pid):
+ with open('/proc/'+str(pid)+'/stat') as stream: text=stream.read()
+ fields=text[text.rfind(')')+2:].split()
+ assert fields[0] not in ('Z','X'), 'Owner already exited'
+ return {'start':fields[19],'ppid':int(fields[1])}
+try:
+ with open('/proc/sys/kernel/random/boot_id') as stream: assert stream.read().strip()==expected['bootId']
+ assert identity(main['pid'])['start']==main['start'], 'Main birth changed'
+ value=identity(child['pid'])
+ assert value['start']==child['start'] and value['ppid']==main['pid'], 'Wire child or parent changed'
+ for item in (main,child):
+  with open('/proc/'+str(item['pid'])+'/cgroup') as stream: assert '0::'+item['group'] in stream.read().splitlines()
+ with open('/proc/'+str(child['pid'])+'/cmdline','rb') as stream: argv=stream.read().decode().rstrip('\\0').split('\\0')
+ assert argv[1:]==expected['argv'] and os.path.realpath(argv[0])==expected['canonicalPython'], 'Native module arguments changed'
+ assert os.readlink('/proc/'+str(child['pid'])+'/exe')==expected['canonicalPython'], 'Native interpreter changed'
+ signal.pidfd_send_signal(mainfd,0)
+ signal.pidfd_send_signal(fd,signal.SIGKILL)
+ signal.pidfd_send_signal(mainfd,0)
+ print(json.dumps({'signalRequested':True,'pidfd':True,'pid':child['pid'],'start':child['start'],'mainPid':main['pid'],'mainStart':main['start'],'bootId':expected['bootId'],'signal':'SIGKILL','mainAliveAtSignal':True}))
+finally:
+ os.close(fd);os.close(mainfd)
+`
+  const result = await exec(
+      '/usr/bin/python3',
+      ['-I', '-B', '-c', script, JSON.stringify(expected)],
+      {
+        timeout: timeout(10_000),
+        maxBuffer: 32 * 1024,
+      },
+    ),
+    signaled = JSON.parse(result.stdout)
+  assert.deepEqual(signaled, {
+    signalRequested: true,
+    pidfd: true,
+    pid: child.pid,
+    start: child.start,
+    mainPid: main.pid,
+    mainStart: main.start,
+    bootId,
+    signal: 'SIGKILL',
+    mainAliveAtSignal: true,
+  })
+  report.workerFault.signalRequested = true
+  report.workerFault.signal = signaled
+  checkpoint()
+}
+async function faultRegionalWorker(project, row) {
+  assert.ok(workerFaultProfile)
+  await bounds('before-worker-only-fault')
+  const before = await observerSnapshot(),
+    wire = regionalWires(before)[0],
+    worker = before.workers.find(({ pid }) => pid === wire.pid),
+    gpu = await ownedGpuRows(worker.pid)
+  assert.deepEqual(before.faults, [])
+  assert.ok(worker.ready.capabilities.includes('linux-owned-inference-v1'))
+  assert.equal(worker.exit, null)
+  assert.equal(worker.close, null)
+  assert.equal(gpu.length, 1)
+  assert.ok(gpu[0].usedGpuMemoryMiB > 0)
+  assert.equal(
+    worker.frames.some(({ message }) => message.type === 'generation-done'),
+    false,
+  )
+  await signalRegionalWorkerOnly(worker, wire)
+  report.workerFault.gpuBefore = gpu
+  await expect
+    .poll(
+      async () => {
+        const current = await job(row.id)
+        assert.notEqual(current.status, 'completed', 'Killed worker cannot publish a completion')
+        assert.notEqual(current.status, 'canceled', 'Worker-only fault must not use cancellation')
+        if (current.status !== 'failed') return false
+        const observed = await observerSnapshot(),
+          exited = observed.workers.find(({ pid }) => pid === worker.pid)
+        assert.ok(
+          exited.exit && exited.close,
+          'First observed failed row follows physical worker close',
+        )
+        report.workerFault.firstFailedObservation = {
+          at: new Date().toISOString(),
+          row: current,
+          exit: exited.exit,
+          close: exited.close,
+        }
+        return true
+      },
+      { timeout: timeout(120_000), intervals: [20, 50, 100] },
+    )
+    .toBe(true)
+  const failed = await job(row.id),
+    observed = await observerSnapshot(),
+    exited = observed.workers.find(({ pid }) => pid === worker.pid),
+    previous = report.progress.beforeCancel.second.snapshot,
+    cleared = observed.progress.find(
+      ({ order, snapshot }) => order > exited.exit.order && snapshot.current === null,
+    )
+  assert.equal(failed.error_code, 'GENERATION_WORKER_FAILED')
+  assert.equal(failed.frozen_payload_json, row.frozen_payload_json)
+  assert.equal(exited.exit.signal, 'SIGKILL')
+  assert.equal(exited.close.signal, 'SIGKILL')
+  assert.ok(cleared && cleared.snapshot.revision > previous.revision)
+  assert.ok(
+    observed.progress
+      .filter(({ order }) => order > cleared.order)
+      .every(({ snapshot }) => snapshot.current?.jobId !== row.id),
+  )
+  assert.equal(
+    exited.frames.some(({ message }) => message.type !== 'generation-progress'),
+    false,
+  )
+  assert.equal((await api('getGenerationProgress')).current, null)
+  await expect(window.getByTestId('generation-progress')).toHaveCount(0)
+  await expect(queueRow(row.id)).toContainText('Failed')
+  await expect
+    .poll(async () => (await api('getGenerationState', project.id)).phase, {
+      timeout: timeout(120_000),
+    })
+    .toBe('idle')
+  assert.deepEqual((await progressSql()).receipts, [])
+  assert.deepEqual((await progressSql()).cursors, [])
+  assert.deepEqual((await api('listGenerationResults', project.id)).candidates, [])
+  await assertPathAbsent(wire.stagingRoot)
+  await assertPathAbsent(wire.bundleJson.request.job.output.pngPath)
+  await expect
+    .poll(async () => await ownedGpuRows(worker.pid), { timeout: timeout(30_000) })
+    .toEqual([])
+  const sameMain = await readProcessIdentity(application.process().pid)
+  assert.deepEqual(sameMain, report.workerFault.before.main)
+  assert.equal(report.startupTrace.exit, null)
+  assert.equal(await application.evaluate(() => process.pid), sameMain.pid)
+  report.workerFault = {
+    ...report.workerFault,
+    cleared,
+    failed,
+    workerExit: exited.exit,
+    workerClose: exited.close,
+    sameMainAfterFailure: sameMain,
+    gpuAfter: [],
+    stageAbsent: true,
+    outputAbsent: true,
+    progressAfterFailure: await api('getGenerationProgress'),
+    noCandidates: true,
+    stderrTail: exited.stderrTail,
+  }
+  report.failureBoundary =
+    'Only the verified original native wire child receives pidfd SIGKILL after completed-step/UI progress; normal production close/failure handling runs while the same Main stays alive. No Cancel or injected error.'
+  check(
+    'Verified worker-only SIGKILL fails the original job, clears progress and releases its native resources while Main survives',
+    report.workerFault,
   )
 }
 async function progressAfterCancel(row) {
@@ -1852,7 +2080,13 @@ async function verifyInstalledProgress(project, retryRow) {
   const main = observed.progress.filter(({ snapshot }) => snapshot.current?.jobId === retryRow.id)
   assert.ok(
     observed.progress
-      .filter(({ order }) => order > report.progress.cancel.cleared.order)
+      .filter(
+        ({ order }) =>
+          order >
+          (workerFaultProfile
+            ? report.workerFault.cleared.order
+            : report.progress.cancel.cleared.order),
+      )
       .every(({ snapshot }) => snapshot.current?.jobId !== report.retry.firstJobId),
   )
   assert.deepEqual(
@@ -2331,12 +2565,16 @@ async function generateCancelEditRetry(project) {
     observedRegionalWires: regionalWires(snapshot),
   }
   if (progressProfile) await progressBeforeCancel(project, first)
-  await screenshot('running-before-cancel')
-  await queueRow(first.id).getByRole('button', { name: 'Cancel job', exact: true }).click()
-  await expect
-    .poll(async () => (await job(first.id)).status, { timeout: timeout(120_000) })
-    .toBe('canceled')
-  await expect(queueRow(first.id)).toContainText('Canceled')
+  await screenshot(workerFaultProfile ? 'running-before-worker-fault' : 'running-before-cancel')
+  if (workerFaultProfile) {
+    await faultRegionalWorker(project, first)
+  } else {
+    await queueRow(first.id).getByRole('button', { name: 'Cancel job', exact: true }).click()
+    await expect
+      .poll(async () => (await job(first.id)).status, { timeout: timeout(120_000) })
+      .toBe('canceled')
+    await expect(queueRow(first.id)).toContainText('Canceled')
+  }
   await expect
     .poll(async () => (await api('getGenerationState', project.id)).phase, {
       timeout: timeout(120_000),
@@ -2350,14 +2588,19 @@ async function generateCancelEditRetry(project) {
   assert.equal(
     await hashFile(project.file),
     beforeGeneratePackageSha256,
-    'Generate and Cancel must not implicitly Save the portable Project',
+    workerFaultProfile
+      ? 'Generate and worker failure must not implicitly Save the portable Project'
+      : 'Generate and Cancel must not implicitly Save the portable Project',
   )
   report.noImplicitSave = {
     beforeGeneratePackageSha256,
-    afterCancelPackageSha256: await hashFile(project.file),
+    ...(workerFaultProfile
+      ? { afterFailurePackageSha256: await hashFile(project.file) }
+      : { afterCancelPackageSha256: await hashFile(project.file) }),
   }
-  report.canceled = canceled.queue[0]
-  if (progressProfile) await progressAfterCancel(first)
+  if (workerFaultProfile) report.failed = canceled.queue[0]
+  else report.canceled = canceled.queue[0]
+  if (progressProfile && !workerFaultProfile) await progressAfterCancel(first)
   await closeQueue()
   // These are renderer-owned edits delivered by original IPC, deliberately differing from Retry.
   const steps = window.locator('input[aria-label="Steps"]')
@@ -2509,9 +2752,18 @@ async function generateCancelEditRetry(project) {
     workerSpawnCount: observed.workers.length,
     observerUnavailable: observed.workers.length === 0,
     stepCounterQualified: progressProfile,
+    ...(workerFaultProfile
+      ? {
+          failedSqlCount: final.queue.filter(({ status }) => status === 'failed').length,
+          workerCountBoundary:
+            'Through generation completion; final observers include later derivative workers',
+        }
+      : {}),
   }
   check(
-    'UI Generate/Cancel and original-op frozen Queue Retry preserve 30-step seed123 policies after saved steps2/seed124 and disabled regions',
+    workerFaultProfile
+      ? 'UI Generate/worker-only failure and original-op frozen Queue Retry preserve 30-step seed123 policies after saved steps2/seed124 and disabled regions'
+      : 'UI Generate/Cancel and original-op frozen Queue Retry preserve 30-step seed123 policies after saved steps2/seed124 and disabled regions',
     report.nativeAccounting,
   )
   return {
@@ -3879,8 +4131,18 @@ async function finalIdentities() {
         ? ownRecoverySql(whole).queue
         : await db.db.selectFrom('generation_queue_item').selectAll().execute()
     assert.equal(rows.length, 2)
-    assert.equal(rows.filter(({ status }) => status === 'canceled').length, 1)
+    assert.equal(
+      rows.filter(({ status }) => status === (workerFaultProfile ? 'failed' : 'canceled')).length,
+      1,
+    )
     assert.equal(rows.filter(({ status }) => status === 'completed').length, 1)
+    if (workerFaultProfile) {
+      assert.equal(
+        rows.find(({ status }) => status === 'failed').error_code,
+        'GENERATION_WORKER_FAILED',
+      )
+      assert.equal(rows.filter(({ status }) => status === 'canceled').length, 0)
+    }
     if (recoveryProfile)
       assert.equal(rows.find(({ status }) => status === 'canceled').error_code, 'APP_RESTART')
     assert.ok(rows.every(({ operation }) => operation === 'illustrious-regional-txt2img'))
@@ -4018,12 +4280,46 @@ try {
       observed.ipc.filter(({ channel }) =>
         ['projects:cancel-generation-job', 'projects:cancel-current-generation'].includes(channel),
       ).length,
-      1,
+      workerFaultProfile ? 0 : 1,
     )
+    if (workerFaultProfile) {
+      assert.equal(report.startupTrace.exit, null)
+      assert.deepEqual(
+        await readProcessIdentity(application.process().pid),
+        report.workerFault.before.main,
+      )
+      const originalWorker = observed.workers.find(
+        ({ pid }) => pid === report.workerFault.before.child.pid,
+      )
+      const retryWire = regionalWires(observed)[1]
+      assert.ok(originalWorker.exit && originalWorker.close)
+      assert.notEqual(retryWire.pid, originalWorker.pid)
+      assert.equal(
+        observed.workers.find(({ pid }) => pid === retryWire.pid).ready.workerVersion,
+        '0.14.0',
+      )
+      report.workerFault.finalSameMain = await readProcessIdentity(application.process().pid)
+      report.workerFault.noCancelCalls = true
+    }
   }
   assert.deepEqual(report.pageErrors, [])
   assert.equal(report.samplerError, undefined)
   await closeNative('healthy-final')
+  if (workerFaultProfile) {
+    assert.equal(report.nativeClosures.length, 1)
+    assert.equal(report.nativeClosures[0].label, 'healthy-final')
+    assert.equal(report.nativeClosures[0].confirmed, true)
+    assert.equal(report.nativeClosures[0].processExitCode, 0)
+    assert.equal(report.nativeClosures[0].signalCode, null)
+    assert.equal(report.startupTrace.exit.code, 0)
+    assert.equal(report.startupTrace.exit.signal, null)
+    report.workerFault.finalWorkerSubprocessCount = report.observers.workers.length
+    report.workerFault.workerCountBoundaries = {
+      throughGenerationCompletion: report.nativeAccounting.workerSpawnCount,
+      finalRestoredObserverSnapshot: report.observers.workers.length,
+    }
+    for (const worker of report.observers.workers) assert.equal(worker.stderrRestored, true)
+  }
   if (recoveryProfile) {
     assert.equal(report.lifetimes.length, 3)
     assert.equal(report.nativeClosures.length, 3)
@@ -4049,9 +4345,11 @@ try {
   report.completedAt = new Date().toISOString()
   report.elapsedSeconds = (Date.now() - started) / 1000
   check(
-    progressProfile
-      ? 'Finite installed original scalar progress/Cancel/frozen Retry qualification completed; no visual-quality or capacity claim'
-      : 'Finite installed public UI Regional qualification completed; evidence supports this exact matrix and no visual-quality or numerical-step claim',
+    workerFaultProfile
+      ? 'Finite installed worker-only fault/normal failure/progress clearing/frozen Retry qualification completed with the same live Main; no visual-quality or capacity claim'
+      : progressProfile
+        ? 'Finite installed original scalar progress/Cancel/frozen Retry qualification completed; no visual-quality or capacity claim'
+        : 'Finite installed public UI Regional qualification completed; evidence supports this exact matrix and no visual-quality or numerical-step claim',
   )
 } catch (error) {
   report.outcome = 'failed'

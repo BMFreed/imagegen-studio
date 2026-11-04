@@ -61,6 +61,7 @@ interface Fixture {
   marker: string
   observation: string
   regionAlpha: Uint8Array
+  restart: () => Promise<GenerationWorkerClient>
   rgb: Buffer
   scratch: string
   sourceStage: string
@@ -288,6 +289,11 @@ function consume(r){
   }else{
    if(r.reportProgress!==true)throw Error('regional progress was not explicitly requested');
    const progress=(step,totalSteps=2,extra={})=>process.stdout.write(JSON.stringify({type:'generation-progress',protocolVersion:'1',requestId:r.requestId,step,totalSteps,...extra})+'\n');
+   if(mode.startsWith('progress-worker-fault-')&&!fs.existsSync(gate)){
+    progress(1);
+    if(mode==='progress-worker-fault-final')progress(2);
+    return;
+   }
    if(mode==='progress-wrong-id')progress(1,2,{requestId:crypto.randomUUID()});
    else if(mode==='progress-zero')progress(0);
    else if(mode==='progress-over-total')progress(3);
@@ -323,10 +329,12 @@ rl.createInterface({input:process.stdin}).on('line',line=>{
 `
     await writeFile(executable, script)
     await chmod(executable, 0o700)
-    client = await GenerationWorkerClient.start(
-      { pythonExecutable: executable, runtimeRoot: runtime, scratchBasePath: scratch },
-      { requestTimeoutMs, shutdownWaitMs: 60 },
-    )
+    const startClient = () =>
+      GenerationWorkerClient.start(
+        { pythonExecutable: executable, runtimeRoot: runtime, scratchBasePath: scratch },
+        { requestTimeoutMs, shutdownWaitMs: 60 },
+      )
+    client = await startClient()
     await run({
       client,
       gate,
@@ -335,6 +343,11 @@ rl.createInterface({input:process.stdin}).on('line',line=>{
       marker,
       observation,
       regionAlpha,
+      restart: async () => {
+        await client?.close()
+        client = await startClient()
+        return client
+      },
       rgb,
       scratch,
       sourceStage,
@@ -728,3 +741,102 @@ test('regional N/N without a terminal response still reaches the original reques
     150,
   )
 })
+
+// A genuine OS child is killed; only its ML computation is a declared protocol substitute.
+// Native installed qualification separately establishes the trained-worker consumer boundary.
+for (const step of [1, 2]) {
+  test(`regional worker SIGKILL after ${step}/2 clears the real exchange and a fresh client keeps the frozen input`, async () => {
+    await withClient(
+      step === 1 ? 'progress-worker-fault-intermediate' : 'progress-worker-fault-final',
+      async (f) => {
+        const before = structuredClone(f.input)
+        const child = (f.client as unknown as { child: ChildProcessWithoutNullStreams }).child
+        const seen: GenerationDenoisingProgress[] = []
+        let reached!: () => void
+        const atProgress = new Promise<void>((resolve) => {
+          reached = resolve
+        })
+        const pending = f.client.executeCurrentCanvasRegional(f.input, (progress) => {
+          seen.push(progress)
+          if (progress.step === step) {
+            reached()
+          }
+        })
+        void pending.catch(() => undefined)
+        await Promise.race([
+          atProgress,
+          pending.then(() => assert.fail('Completed-step evidence must precede worker death.')),
+        ])
+        const marker = await record<ChildMarker>(f.marker)
+        const first = await record<Observation>(f.observation)
+        assert.equal(marker.pid, child.pid)
+        assert.equal(marker.requestId, before.request.requestId)
+        assert.equal(marker.reportProgress, true)
+        assert.equal(child.exitCode, null)
+        assert.equal(child.signalCode, null)
+        assert.ok(await readFile(marker.bundlePath))
+        await assert.rejects(lstat(first.bundle.request.job.output.pngPath), { code: 'ENOENT' })
+        const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+          (resolve) => child.once('close', (code, signal) => resolve({ code, signal })),
+        )
+        assert.equal(child.kill('SIGKILL'), true)
+        await assert.rejects(pending, { code: 'WORKER_EXITED' })
+        assert.deepEqual(await closed, { code: null, signal: 'SIGKILL' })
+        assert.throws(() => process.kill(marker.pid, 0), { code: 'ESRCH' })
+        await assertStageReleased(marker)
+        assert.deepEqual(
+          seen,
+          Array.from({ length: step }, (_, index) => ({ step: index + 1, totalSteps: 2 })),
+        )
+        assert.deepEqual(f.input, before)
+        assert.ok(await readFile(before.request.job.target.path))
+        await assert.rejects(f.client.executeCurrentCanvasRegional(f.input), { code: 'CLOSED' })
+
+        // Release only the fake peer's fault condition; transport/PNG consumers remain original.
+        await writeFile(f.gate, 'explicit healthy peer after confirmed physical exit')
+        const recovered = await f.restart()
+        const next = structuredClone(before)
+        next.request.requestId = randomUUID()
+        assert.notEqual(next.request.requestId, marker.requestId)
+        const nextProgress: GenerationDenoisingProgress[] = []
+        const done = await recovered.executeCurrentCanvasRegional(next, (progress) =>
+          nextProgress.push(progress),
+        )
+        const second = await record<Observation>(f.observation)
+        const fresh = await record<ChildMarker>(f.marker)
+        assert.notEqual(fresh.pid, marker.pid)
+        assert.equal(fresh.requestId, next.request.requestId)
+        const recipeForLease = (
+          recipe: Observation['bundle']['recipe'],
+          stagingRoot: string,
+        ): unknown =>
+          JSON.parse(
+            JSON.stringify(recipe, (key, value: unknown) =>
+              key === 'path' && typeof value === 'string' && path.dirname(value) === stagingRoot
+                ? `$lease/${path.basename(value)}`
+                : value,
+            ),
+          )
+        assert.notEqual(fresh.stagingRoot, marker.stagingRoot)
+        assert.deepEqual(
+          recipeForLease(second.bundle.recipe, fresh.stagingRoot),
+          recipeForLease(first.bundle.recipe, marker.stagingRoot),
+        )
+        assert.deepEqual(second.bundle.request.job.sampling, first.bundle.request.job.sampling)
+        assert.deepEqual(second.alphaHashes, first.alphaHashes)
+        assert.equal(second.targetSha256, first.targetSha256)
+        assert.deepEqual(nextProgress, [
+          { step: 1, totalSteps: 2 },
+          { step: 2, totalSteps: 2 },
+        ])
+        assert.deepEqual(
+          seen,
+          Array.from({ length: step }, (_, index) => ({ step: index + 1, totalSteps: 2 })),
+        )
+        assert.deepEqual(done.pngBytes, f.rgb)
+        assert.equal(done.seed, before.request.job.sampling.seed)
+        await assertStageReleased(fresh)
+      },
+    )
+  })
+}

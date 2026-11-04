@@ -1,5 +1,21 @@
 # Regional Guidance
 
+## Regional worker failure with Main alive — installed boundary verified
+
+The [worker-only qualification](../../../engineering/phase-4-regional-guidance-worker-fault-research.md)
+confirms the existing failure path after an actual native step: progress clears,
+the original attempt becomes failed, no incomplete candidate is published, and
+its slot remains owned until physical exit. Main stays alive. Explicit Queue
+Retry uses a fresh worker/request and the original frozen inputs despite saved
+authoring changes. No automatic Retry or Cancel substitutes for failure.
+
+ROOT:126 distinct lower PASS and14 installed checks. The restored healthy output
+matches the retained PNG/RGBA exactly through Results, Raster Add, Undo/Redo and
+Save/reopen; all previous state is preserved. A removed physical-exit wait gives
+semantic RED while healthy completion stays GREEN, then exact restoration returns
+GREEN. No production repair, worker update, quality/capacity promotion or Anima
+regional qualification follows. PP-001/007/008 stay **«Пока не обещать»**.
+
 ## Regional numeric progress — installed boundary verified
 
 The [numeric progress checkpoint](../../../engineering/phase-4-regional-guidance-progress-research.md)
