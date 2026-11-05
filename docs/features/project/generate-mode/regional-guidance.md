@@ -1369,3 +1369,17 @@ strict typing and causal identity/dispatch controls/restoration. Source review
 CLEAN is separate from runtime evidence. Installed integration, visual/human
 acceptance and Anima remain open; provenance exclusions and PP-001/007/008
 **«Пока не обещать»** are unchanged.
+
+## Installed private initialization and Retry
+
+The [installed-worker continuation](../../../engineering/phase-4-regional-guidance-init-installed-research.md)
+uses genuine Main capture and the default RuntimeManager with a worker-only
+payload refresh. The private initialization identity survives bootstrap recovery
+and explicit frozen Retry despite saved authoring edits, producing one durable
+private candidate. A second identical installed request matches every PNG/RGB
+byte; both report all 28 steps. ROOT native-r3 passes four grouped checks/two
+requests; 84 helper/regression cases and configured/targeted typing pass.
+This does not expose private Euler-a through public UI/IPC or change defaults.
+In-flight process failure, independent initializer observation, fresh trained
+census, visual/human acceptance and Anima remain outside this slice. Existing
+provenance exclusions, NOT_QUALIFIED and PP-001/007/008 **«Пока не обещать»** remain.

@@ -1805,3 +1805,14 @@ two real queue/Retry-to-Python-parser bridge cases, strict typing and semantic
 identity/dispatch mutations with controls and exact restoration. Independent
 source review CLEAN; installed trained integration and default promotion stay
 separate. Visual NOT_QUALIFIED and PP-001/007/008 remain unchanged.
+
+## Installed private Invoke initialization
+
+The [Main/default RuntimeManager qualification](./phase-4-regional-guidance-init-installed-research.md)
+refreshes only the reusable installed worker and exercises real capture,
+bootstrap recovery, frozen Retry and private durable candidate publication.
+ROOT native-r3: two 28-step requests, four grouped checks, exact whole PNG/RGB
+control and physical exit; 82 helper plus two fingerprint regression cases PASS.
+Two pre-inference diagnostic failures remain excluded. No Electron renderer/IPC,
+public Euler-a/default, visual quality or release-install qualification is added;
+the existing NOT_QUALIFIED finding and PP-001/007/008 remain unchanged.
