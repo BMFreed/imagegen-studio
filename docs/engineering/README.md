@@ -1766,3 +1766,17 @@ raw-draw/cast and all-PNG checks pass. The two targeted swapped candidates give
 limits retained. The full four-case reversal gate remains NOT_QUALIFIED until
 direct assignments use this same fixed candidate. No search, production default
 or readiness promotion follows; PP-001/007/008 remain unchanged.
+
+## Fixed FP32 direct-assignment continuation
+
+The [two-request direct check](./phase-4-regional-guidance-fp32-direct-research.md)
+keeps the prior Invoke FP32 CPU draw/cast and original `add_noise` unchanged.
+Only metadata guards adapt to genuine direct Main inputs; previous swapped
+reports remain RNG-only witnesses. Two native completions give 56 UNet/ancestral
+steps and exact independent PNG checks, with same-seed noise/initialization/
+step RNG/global pools preserved against pinned swapped candidates. Direct
+seed124 passes the narrow red-left/blue-right observation; seed123 is
+inconclusive, with a smaller red/rose figure largely behind a central blue one.
+Combined matrix 3 PASS/1INCONCLUSIVE remains NOT_QUALIFIED. No extra search,
+production default or readiness promotion; full quality/human acceptance and
+PP-001/007/008 remain unchanged.

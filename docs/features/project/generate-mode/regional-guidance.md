@@ -1329,3 +1329,17 @@ the complete four-case reversal gate, full-prompt/age/human quality and Anima
 remain unqualified. Direct assignment must use the same fixed candidate before
 claiming the full gate. No production profile/default, public permissions,
 persistence or provenance change; PP-001/007/008 remain **«Пока не обещать»**.
+
+## Fixed FP32 four-case reversal check
+
+The [direct-assignment continuation](../../../engineering/phase-4-regional-guidance-fp32-direct-research.md)
+adds exactly two private requests under the unchanged candidate, reusing the two
+pinned swapped originals. Actual Main direct text, masks, model and settings
+remain owned; same-seed noise, initialization and ancestral RNG match the
+swapped cases. Two completions and independent output checks pass. Narrow
+direct result 1 PASS/1INCONCLUSIVE gives 3 PASS/1INCONCLUSIVE across the four cases:
+seed123's smaller red/rose figure is largely hidden behind the blue foreground
+figure. Overall NOT_QUALIFIED; general quality, age/full-prompt and human
+acceptance remain open. No additional search, production/default, public
+permission, persistence or provenance change. PP-001/007/008 remain
+**«Пока не обещать»**.
