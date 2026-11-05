@@ -1696,3 +1696,17 @@ gate, with no Studio-only routing defect established. All original images and
 source/data evidence remain;61,153,280B of verified archived payloads are removed.
 Controllers' exit90 residual-PID flags remain separate from successful app
 completion and later empty owned groups. No mechanism/readiness change follows.
+
+## Fixed regional tag-form prompt control
+
+The [single new input candidate](./phase-4-regional-guidance-regional-tags-research.md)
+keeps the model/global text/settings and changes only the two regional strings
+to comma-separated tags. Four genuine Main assignment/swapped requests will be
+compared with retained natural-form originals; no ordinary/repeat/Invoke
+generation or production mechanism change is added. The fixed criterion and
+request ceiling precede execution. Four native completions/120 scalar progress
+events finish in217.733s. Blind count/color assessment stays1PASS/3INCONCLUSIVE;
+hair/pose change does not qualify reversal, and a bright central band is retained
+in one image. Types/scoped checks pass; original images and source/Main evidence
+remain. The user keeps officialv0.1 as the target. No model substitution or
+mechanism/readiness promotion follows;344,064B of archived own scratch removed.

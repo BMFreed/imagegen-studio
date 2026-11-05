@@ -1259,3 +1259,16 @@ routing defect. Cross-application runtime/initialization and collector-order
 differences, absent fresh Studio numerical oracles and human-pending quality
 remain explicit. No new Studio generation, mechanism or readiness change
 follows; PP-001/007/008 remain **«Пока не обещать»**.
+
+## Regional tag-form input control
+
+The [fixed prompt experiment](../../../engineering/phase-4-regional-guidance-regional-tags-research.md)
+changes only the two regional positive strings to tag form through existing
+Main/Invoke-based worker owners. Model, global text, masks, sampling and seeds
+stay fixed. Four new cases and retained natural-form controls use the same
+conservative count/color/side-exchange rubric. Four native requests complete
+with120 scalar progress events. The narrow outcome remains1PASS/3INCONCLUSIVE,
+NOT_QUALIFIED; visible hair/pose differences and one bright central light band
+are retained without a general quality claim. The user keeps officialv0.1 as
+the visual target; no model replacement, production prompt rewrite or mechanism
+change follows. Human acceptance and PP-001/007/008 **«Пока не обещать»** remain.

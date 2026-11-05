@@ -141,6 +141,19 @@ const TAGGED_REGIONAL_SPEC = {
     '.codex/artifacts/imagegen-studio/runs/regional-guidance-tagged-visual/20261105-red-blue',
   ),
 } as const
+const REGIONAL_PROMPT_TAGS_SPEC = {
+  ...TAGGED_REGIONAL_SPEC,
+  base: '51396c51cc7051bdfe83b6cd528bb40280e3f310',
+  contractProfile: 'regional-prompt-tags-v1',
+  contractSchema: 'regional-prompt-tags-experiment-v1',
+  contractSha256: '2012779e26e304aa22440de7d2d13ff4b4c812c04bc2ed03404a977c65cf51ef',
+  manifestName: 'main-regional-prompt-tags.json',
+  regionalTexts: ['1girl, long hair, red hair', '1girl, long hair, blue hair'],
+  run: path.join(
+    os.homedir(),
+    '.codex/artifacts/imagegen-studio/runs/regional-guidance-regional-tags/20261105-red-blue',
+  ),
+} as const
 
 export type CharacterVisualCondition = (typeof CONDITIONS)[number]
 export type CharacterVisualLabel = (typeof LABELS)[number]
@@ -174,6 +187,12 @@ export interface RegionalCharacterTagsProbeOptions<T> extends Omit<
   'profile'
 > {
   profile: 'regional-two-character-tags-v1'
+}
+export interface RegionalPromptTagsProbeOptions<T> extends Omit<
+  CharacterVisualProbeOptions<T>,
+  'profile'
+> {
+  profile: 'regional-prompt-tags-v1'
 }
 export interface CharacterVisualFile {
   byteSize: number
@@ -233,6 +252,12 @@ export interface RegionalCharacterTagsManifest<T> extends Omit<
   nativeRequestCeiling: 4
   orderedCaseLabels: readonly RegionalCharacterTagsLabel[]
   profile: 'main-regional-two-character-tags-v1'
+}
+export interface RegionalPromptTagsManifest<T> extends Omit<
+  RegionalCharacterTagsManifest<T>,
+  'profile'
+> {
+  profile: 'main-regional-prompt-tags-v1'
 }
 type ProbeCase<T> = Omit<CharacterVisualCase<T>, 'capture' | 'label'> & {
   capture: 'owned-baseline123-repeat' | CharacterVisualCase<T>['capture']
@@ -314,8 +339,9 @@ const writeJson = (filePath: string, value: unknown): Promise<CharacterVisualFil
 /**
  * The omitted profile keeps six fresh handoffs and the owned assignment123 replay. The fixed
  * ordinary profile makes two fresh baseline handoffs and the owned baseline123 replay instead. The
- * tagged regional profile makes four fresh assignment/swapped handoffs without a repeat. All use
- * the same Main owners; runtime execution occurs only when ROOT calls this.
+ * tagged regional profiles make four fresh assignment/swapped handoffs without a repeat. The
+ * regional-prompt-tag profile changes only its two fixed regional positive texts. All use the same
+ * Main owners; runtime execution occurs only when ROOT calls this.
  */
 export function produceCharacterVisualProbe<T>(
   options: CharacterVisualProbeOptions<T>,
@@ -326,27 +352,41 @@ export function produceCharacterVisualProbe<T>(
 export function produceCharacterVisualProbe<T>(
   options: RegionalCharacterTagsProbeOptions<T>,
 ): Promise<RegionalCharacterTagsManifest<T>>
+export function produceCharacterVisualProbe<T>(
+  options: RegionalPromptTagsProbeOptions<T>,
+): Promise<RegionalPromptTagsManifest<T>>
 export async function produceCharacterVisualProbe<T>(
   options:
     | CharacterVisualProbeOptions<T>
     | OrdinaryCharacterCalibrationProbeOptions<T>
-    | RegionalCharacterTagsProbeOptions<T>,
+    | RegionalCharacterTagsProbeOptions<T>
+    | RegionalPromptTagsProbeOptions<T>,
 ): Promise<
   | CharacterVisualManifest<T>
   | OrdinaryCharacterCalibrationManifest<T>
   | RegionalCharacterTagsManifest<T>
+  | RegionalPromptTagsManifest<T>
 > {
   const ordinary = options.profile === 'ordinary-two-character-tags-v1'
   const taggedRegional = options.profile === 'regional-two-character-tags-v1'
+  const regionalPromptTags = options.profile === 'regional-prompt-tags-v1'
+  const regional = taggedRegional || regionalPromptTags
   const optionKeys = ['pythonExecutable', 'run', 'runtimeRoot', 'source', 'useCase']
-  if (ordinary || taggedRegional) {
+  if (ordinary || regional) {
     optionKeys.push('profile')
     optionKeys.sort()
   }
   assert.deepEqual(Object.keys(options).sort(), optionKeys)
-  assert.ok(options.profile === undefined || ordinary || taggedRegional)
-  const spec = taggedRegional ? TAGGED_REGIONAL_SPEC : ordinary ? ORDINARY_SPEC : LEGACY_SPEC
-  const repeatSpec = taggedRegional ? undefined : ordinary ? ORDINARY_SPEC : LEGACY_SPEC
+  assert.ok(options.profile === undefined || ordinary || regional)
+  const spec = regionalPromptTags
+    ? REGIONAL_PROMPT_TAGS_SPEC
+    : taggedRegional
+      ? TAGGED_REGIONAL_SPEC
+      : ordinary
+        ? ORDINARY_SPEC
+        : LEGACY_SPEC
+  const repeatSpec = regional ? undefined : ordinary ? ORDINARY_SPEC : LEGACY_SPEC
+  const regionalTexts = 'regionalTexts' in spec ? spec.regionalTexts : [RED, BLUE]
   const run = spec.run
   assert.equal(options.run, run)
   assert.equal(options.source, SOURCE)
@@ -362,8 +402,8 @@ export async function produceCharacterVisualProbe<T>(
   assert.equal(contract.fixedBeforeNativeExecution, true)
   assert.equal(contract.globalPositive, spec.globalPositive)
   assert.equal(contract.globalNegative, '')
-  assert.equal(contract.leftPositive, RED)
-  assert.equal(contract.rightPositive, BLUE)
+  assert.equal(contract.leftPositive, regionalTexts[0])
+  assert.equal(contract.rightPositive, regionalTexts[1])
   assert.deepEqual(contract.bbox, BBOX)
   assert.deepEqual(contract.seeds, SEEDS)
   assert.deepEqual(contract.conditions, spec.conditions)
@@ -371,7 +411,7 @@ export async function produceCharacterVisualProbe<T>(
   assert.equal(contract.nativeRequestCeiling, spec.nativeRequestCeiling)
   assert.equal(contract.noResources, true)
   assert.equal(contract.compositionProfile, 'invoke-canvas-v1')
-  if (ordinary || taggedRegional) {
+  if (ordinary || regional) {
     assert.deepEqual(contract.sampling, {
       cfgRescale: 0,
       cfgScale: 5,
@@ -499,7 +539,7 @@ export async function produceCharacterVisualProbe<T>(
     const initial = structuredClone(co().document)
     assert.deepEqual(initial.layers, [])
     const sources: Record<string, IgsAssetSource> = {}
-    const regions: IgsRegionalGuidanceV1[] = [RED, BLUE].map((text, index) => {
+    const regions: IgsRegionalGuidanceV1[] = regionalTexts.map((text, index) => {
       const maskId = randomUUID()
       const png = encodeProjectMaskPng(new Uint8Array(512 * 1024).fill(255), 512, 1024)
       const member = `assets/masks/${maskId}/${sha(png)}.png`
@@ -605,9 +645,9 @@ export async function produceCharacterVisualProbe<T>(
         desired.generationDraft.seed = { policy: 'fixed', value: seed }
         for (const [index, region] of desired.regionalGuidance!.entries()) {
           region.enabled = condition !== 'baseline'
-          region.prompts!.positive!.text = (condition === 'swapped' ? [BLUE, RED] : [RED, BLUE])[
-            index
-          ]!
+          region.prompts!.positive!.text = (
+            condition === 'swapped' ? [regionalTexts[1], regionalTexts[0]] : regionalTexts
+          )[index]!
         }
         await co().applyDocument(parseProjectDocumentV1(desired), sources, {
           expectedDocumentEpoch: co().documentEpoch,
@@ -822,13 +862,16 @@ export async function produceCharacterVisualProbe<T>(
     const manifest:
       | CharacterVisualManifest<T>
       | OrdinaryCharacterCalibrationManifest<T>
-      | RegionalCharacterTagsManifest<T> = taggedRegional
+      | RegionalCharacterTagsManifest<T>
+      | RegionalPromptTagsManifest<T> = regional
       ? {
           ...commonManifest,
           cases: cases as Record<RegionalCharacterTagsLabel, RegionalCharacterTagsCase<T>>,
           nativeRequestCeiling: 4,
           orderedCaseLabels: TAGGED_REGIONAL_LABELS,
-          profile: 'main-regional-two-character-tags-v1',
+          profile: regionalPromptTags
+            ? 'main-regional-prompt-tags-v1'
+            : 'main-regional-two-character-tags-v1',
         }
       : ordinary
         ? {
