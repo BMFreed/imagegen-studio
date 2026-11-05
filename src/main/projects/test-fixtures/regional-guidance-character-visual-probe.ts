@@ -155,6 +155,30 @@ const REGIONAL_PROMPT_TAGS_SPEC = {
   ),
 } as const
 
+const ANCESTRAL_LABELS = [
+  'seed123-baseline',
+  'seed123-assignment',
+  'seed123-swapped',
+  'seed124-baseline',
+  'seed124-assignment',
+  'seed124-swapped',
+] as const
+const ANCESTRAL_SPEC = {
+  ...REGIONAL_PROMPT_TAGS_SPEC,
+  base: '6500046b7136324ebdc6d622b7d73ffc7379d7df',
+  caseLabels: ANCESTRAL_LABELS,
+  conditions: CONDITIONS,
+  contractProfile: 'regional-euler-ancestral-v1',
+  contractSchema: 'regional-euler-ancestral-experiment-v1',
+  contractSha256: 'a9af03b7349041046bca3e28ad77bc529f063ca2709795d17dcda35936d96efb',
+  manifestName: 'main-regional-euler-ancestral.json',
+  nativeRequestCeiling: 6,
+  run: path.join(
+    os.homedir(),
+    '.codex/artifacts/imagegen-studio/runs/regional-guidance-euler-ancestral/20261105-red-blue',
+  ),
+} as const
+
 export type CharacterVisualCondition = (typeof CONDITIONS)[number]
 export type CharacterVisualLabel = (typeof LABELS)[number]
 export type OrdinaryCharacterCalibrationLabel = (typeof ORDINARY_LABELS)[number]
@@ -193,6 +217,24 @@ export interface RegionalPromptTagsProbeOptions<T> extends Omit<
   'profile'
 > {
   profile: 'regional-prompt-tags-v1'
+}
+export interface RegionalAncestralProbeOptions<T> extends Omit<
+  CharacterVisualProbeOptions<T>,
+  'profile'
+> {
+  profile: 'regional-euler-ancestral-v1'
+}
+export interface RegionalAncestralManifest<T> extends Omit<
+  CharacterVisualManifest<T>,
+  'cases' | 'nativeRequestCeiling' | 'orderedCaseLabels' | 'profile'
+> {
+  cases: Record<
+    (typeof ANCESTRAL_LABELS)[number],
+    Omit<CharacterVisualCase<T>, 'capture'> & { capture: 'saved-reopened-current-canvas' }
+  >
+  nativeRequestCeiling: 6
+  orderedCaseLabels: typeof ANCESTRAL_LABELS
+  profile: 'main-regional-euler-ancestral-v1'
 }
 export interface CharacterVisualFile {
   byteSize: number
@@ -341,7 +383,9 @@ const writeJson = (filePath: string, value: unknown): Promise<CharacterVisualFil
  * ordinary profile makes two fresh baseline handoffs and the owned baseline123 replay instead. The
  * tagged regional profiles make four fresh assignment/swapped handoffs without a repeat. The
  * regional-prompt-tag profile changes only its two fixed regional positive texts. All use the same
- * Main owners; runtime execution occurs only when ROOT calls this.
+ * Main owners; runtime execution occurs only when ROOT calls this. The fixed ancestral profile
+ * authors six fresh baseline/assignment/swapped handoffs with Euler a/28; no repeat or prompt
+ * change.
  */
 export function produceCharacterVisualProbe<T>(
   options: CharacterVisualProbeOptions<T>,
@@ -355,22 +399,28 @@ export function produceCharacterVisualProbe<T>(
 export function produceCharacterVisualProbe<T>(
   options: RegionalPromptTagsProbeOptions<T>,
 ): Promise<RegionalPromptTagsManifest<T>>
+export function produceCharacterVisualProbe<T>(
+  options: RegionalAncestralProbeOptions<T>,
+): Promise<RegionalAncestralManifest<T>>
 export async function produceCharacterVisualProbe<T>(
   options:
     | CharacterVisualProbeOptions<T>
     | OrdinaryCharacterCalibrationProbeOptions<T>
+    | RegionalAncestralProbeOptions<T>
     | RegionalCharacterTagsProbeOptions<T>
     | RegionalPromptTagsProbeOptions<T>,
 ): Promise<
   | CharacterVisualManifest<T>
   | OrdinaryCharacterCalibrationManifest<T>
+  | RegionalAncestralManifest<T>
   | RegionalCharacterTagsManifest<T>
   | RegionalPromptTagsManifest<T>
 > {
+  const ancestral = options.profile === 'regional-euler-ancestral-v1'
   const ordinary = options.profile === 'ordinary-two-character-tags-v1'
   const taggedRegional = options.profile === 'regional-two-character-tags-v1'
   const regionalPromptTags = options.profile === 'regional-prompt-tags-v1'
-  const regional = taggedRegional || regionalPromptTags
+  const regional = taggedRegional || regionalPromptTags || ancestral
   const optionKeys = ['pythonExecutable', 'run', 'runtimeRoot', 'source', 'useCase']
   if (ordinary || regional) {
     optionKeys.push('profile')
@@ -378,15 +428,22 @@ export async function produceCharacterVisualProbe<T>(
   }
   assert.deepEqual(Object.keys(options).sort(), optionKeys)
   assert.ok(options.profile === undefined || ordinary || regional)
-  const spec = regionalPromptTags
-    ? REGIONAL_PROMPT_TAGS_SPEC
-    : taggedRegional
-      ? TAGGED_REGIONAL_SPEC
-      : ordinary
-        ? ORDINARY_SPEC
-        : LEGACY_SPEC
+  const spec = ancestral
+    ? ANCESTRAL_SPEC
+    : regionalPromptTags
+      ? REGIONAL_PROMPT_TAGS_SPEC
+      : taggedRegional
+        ? TAGGED_REGIONAL_SPEC
+        : ordinary
+          ? ORDINARY_SPEC
+          : LEGACY_SPEC
   const repeatSpec = regional ? undefined : ordinary ? ORDINARY_SPEC : LEGACY_SPEC
   const regionalTexts = 'regionalTexts' in spec ? spec.regionalTexts : [RED, BLUE]
+  const sampling = {
+    sampler: ancestral ? ('Euler a' as const) : ('Euler' as const),
+    steps: ancestral ? 28 : 30,
+    workerScheduler: ancestral ? ('euler_a' as const) : ('euler' as const),
+  }
   const run = spec.run
   assert.equal(options.run, run)
   assert.equal(options.source, SOURCE)
@@ -416,10 +473,10 @@ export async function produceCharacterVisualProbe<T>(
       cfgRescale: 0,
       cfgScale: 5,
       noiseProfile: NOISE,
-      sampler: 'Euler',
+      sampler: sampling.sampler,
       scheduler: 'Normal',
-      steps: 30,
-      workerScheduler: 'euler',
+      steps: sampling.steps,
+      workerScheduler: sampling.workerScheduler,
     })
     assert.equal(contract.vaePrecision, 'FP16')
   }
@@ -571,9 +628,9 @@ export async function produceCharacterVisualProbe<T>(
         sampling: {
           cfgScale: 5,
           denoisingStrength: null,
-          sampler: 'Euler',
+          sampler: sampling.sampler,
           scheduler: 'Normal',
-          steps: 30,
+          steps: sampling.steps,
         },
         seed: { policy: 'fixed', value: 123 },
         vae: null,
@@ -727,6 +784,7 @@ export async function produceCharacterVisualProbe<T>(
             seed,
             spec.globalPositive,
             ordinary,
+            sampling,
           )
           capture.assertCurrent()
           const ownedRecipe = structuredClone(recipe)
@@ -862,35 +920,44 @@ export async function produceCharacterVisualProbe<T>(
     const manifest:
       | CharacterVisualManifest<T>
       | OrdinaryCharacterCalibrationManifest<T>
+      | RegionalAncestralManifest<T>
       | RegionalCharacterTagsManifest<T>
-      | RegionalPromptTagsManifest<T> = regional
+      | RegionalPromptTagsManifest<T> = ancestral
       ? {
           ...commonManifest,
-          cases: cases as Record<RegionalCharacterTagsLabel, RegionalCharacterTagsCase<T>>,
-          nativeRequestCeiling: 4,
-          orderedCaseLabels: TAGGED_REGIONAL_LABELS,
-          profile: regionalPromptTags
-            ? 'main-regional-prompt-tags-v1'
-            : 'main-regional-two-character-tags-v1',
+          cases: cases as RegionalAncestralManifest<T>['cases'],
+          nativeRequestCeiling: 6,
+          orderedCaseLabels: ANCESTRAL_LABELS,
+          profile: 'main-regional-euler-ancestral-v1',
         }
-      : ordinary
+      : regional
         ? {
             ...commonManifest,
-            cases: cases as Record<
-              OrdinaryCharacterCalibrationLabel,
-              OrdinaryCharacterCalibrationCase<T>
-            >,
-            nativeRequestCeiling: 3,
-            orderedCaseLabels: ORDINARY_LABELS,
-            profile: 'main-ordinary-two-character-tags-v1',
+            cases: cases as Record<RegionalCharacterTagsLabel, RegionalCharacterTagsCase<T>>,
+            nativeRequestCeiling: 4,
+            orderedCaseLabels: TAGGED_REGIONAL_LABELS,
+            profile: regionalPromptTags
+              ? 'main-regional-prompt-tags-v1'
+              : 'main-regional-two-character-tags-v1',
           }
-        : {
-            ...commonManifest,
-            cases: cases as Record<CharacterVisualLabel, CharacterVisualCase<T>>,
-            nativeRequestCeiling: 7,
-            orderedCaseLabels: LABELS,
-            profile: 'main-character-visual-v1',
-          }
+        : ordinary
+          ? {
+              ...commonManifest,
+              cases: cases as Record<
+                OrdinaryCharacterCalibrationLabel,
+                OrdinaryCharacterCalibrationCase<T>
+              >,
+              nativeRequestCeiling: 3,
+              orderedCaseLabels: ORDINARY_LABELS,
+              profile: 'main-ordinary-two-character-tags-v1',
+            }
+          : {
+              ...commonManifest,
+              cases: cases as Record<CharacterVisualLabel, CharacterVisualCase<T>>,
+              nativeRequestCeiling: 7,
+              orderedCaseLabels: LABELS,
+              profile: 'main-character-visual-v1',
+            }
     await writeJson(path.join(run, spec.manifestName), manifest)
     return manifest
   } finally {
@@ -957,6 +1024,11 @@ function assertRecipe(
   seed: (typeof SEEDS)[number],
   globalPositive = GLOBAL,
   ordinaryOnly = false,
+  sampling: {
+    sampler: 'Euler' | 'Euler a'
+    steps: number
+    workerScheduler: 'euler_a' | 'euler'
+  } = { sampler: 'Euler', steps: 30, workerScheduler: 'euler' },
 ): void {
   assert.equal(recipe.family, 'illustrious')
   assert.equal(recipe.documentId, authored.documentId)
@@ -1011,12 +1083,12 @@ function assertRecipe(
   assert.equal(context.loraStack?.length ?? 0, 0)
   assert.deepEqual(context.embeddings, { negative: [], positive: [] })
   assert.equal(context.sampling.seed, seed)
-  assert.equal(context.sampling.steps, 30)
+  assert.equal(context.sampling.steps, sampling.steps)
   assert.equal(context.sampling.cfgScale, 5)
   assert.equal(context.sampling.cfgRescale, 0)
-  assert.equal(context.sampling.sampler, 'Euler')
+  assert.equal(context.sampling.sampler, sampling.sampler)
   assert.equal(context.sampling.scheduler, 'Normal')
-  assert.equal(context.sampling.invokeScheduler, 'euler')
+  assert.equal(context.sampling.invokeScheduler, sampling.workerScheduler)
   assert.deepEqual(context.sampling.noiseProfile, NOISE)
   assert.equal(context.target.iccSha256, IGS_SRGB_ICC_SHA256)
   assert.equal(context.target.sha256, sha(prepared.targetPngBytes))

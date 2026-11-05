@@ -351,3 +351,21 @@ def test_zero_region_snapshot_control_green(tmp_path: Path) -> None:
     assert parsed.command.seed == 42
     assert parsed.parameters.noise_profile is not None
     assert parsed.parameters.noise_profile.timestep_spacing == "leading"
+
+
+@pytest.mark.parametrize("scheduler", ("euler", "euler_a"))
+def test_private_sampler_is_preserved_and_selects_its_exact_execution_profile(
+    tmp_path: Path, scheduler: str
+) -> None:
+    case = _case(tmp_path)
+    case.request["job"]["sampling"]["scheduler"] = scheduler
+    case.request["job"]["sampling"]["steps"] = 28
+    _seal(case)
+    parsed = worker.parse_regional_request(case.wire)
+    assert parsed.command.scheduler == parsed.parameters.scheduler == scheduler
+    assert parsed.parameters.steps == 28
+    assert worker._denoising_profile(parsed.parameters) == (  # pyright: ignore[reportPrivateUsage]
+        "ordinary-canvas-euler-ancestral-txt2img-cuda-fp16-v1"
+        if scheduler == "euler_a"
+        else "ordinary-canvas-euler-txt2img-cuda-fp16-v2"
+    )

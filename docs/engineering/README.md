@@ -1710,3 +1710,17 @@ hair/pose change does not qualify reversal, and a bright central band is retaine
 in one image. Types/scoped checks pass; original images and source/Main evidence
 remain. The user keeps officialv0.1 as the target. No model substitution or
 mechanism/readiness promotion follows;344,064B of archived own scratch removed.
+
+## Private regional Euler ancestral control
+
+The [fixed Euler-a28 slice](./phase-4-regional-guidance-euler-ancestral-research.md)
+reuses Invoke's native ancestral scheduler and independent xor-seeded step
+RNG through existing owners. Old Euler profiles and public admission remain
+unchanged. Six genuinely authored Main cases keep v0.1 and tag-form prompts;
+zero-region baselines use the same private RNG contract. This bundles sampler,
+steps and stochastic-step policy. ROOT final checks:130 Python/119 Main PASS; isolated RNG mutation2 semanticRED
+with unchanged Euler controls/restoration. Six native completions/168 progress
+events finish in299.789s. Narrow visual result2PASS/1FAIL/1INCONCLUSIVE remains
+NOT_QUALIFIED: one swapped image has three figures, another has ambiguous pale
+hair. Human acceptance remains pending; no readiness or quality promotion. All82 own
+payload entries are byte-archived;4,411,392B of idle own scratch removed.

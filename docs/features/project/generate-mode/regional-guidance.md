@@ -1272,3 +1272,19 @@ NOT_QUALIFIED; visible hair/pose differences and one bright central light band
 are retained without a general quality claim. The user keeps officialv0.1 as
 the visual target; no model replacement, production prompt rewrite or mechanism
 change follows. Human acceptance and PP-001/007/008 **«Пока не обещать»** remain.
+
+## Private Euler ancestral sampling control
+
+The [bounded author-sampling experiment](../../../engineering/phase-4-regional-guidance-euler-ancestral-research.md)
+adds explicit private Euler-a profiles using Invoke's separate compute-device
+xor-seeded step generator. Existing Euler profiles, public Generate/queue
+permissions and ordinary sampling remain unchanged. Six saved/reopened Main
+cases compare Euler a/28 with retained Euler/30 tag-form controls on the same
+user-selected official v0.1. Prompts and masks remain fixed; the comparison
+bundles sampler, steps and stochastic-step policy. ROOT records130 Python/119 Main PASS and six native completions. Narrow visual
+assessment remains NOT_QUALIFIED at2PASS/1FAIL/1INCONCLUSIVE: swappedseed123 has
+three figures, swappedseed124 has silver-white/verypale-blue hair ambiguity.
+Both baseline count controls pass; full quality/age/framing is not accepted.
+Mechanical success and stronger assignment colors do not qualify reversal.
+Human acceptance remains pending and
+PP-001/007/008 remain **«Пока не обещать»**.

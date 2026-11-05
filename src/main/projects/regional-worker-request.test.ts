@@ -645,3 +645,34 @@ test('regional disposal does not follow an unexpected linked worker entry', asyn
     await lease.dispose()
   })
 })
+
+for (const scheduler of ['euler', 'euler_a'] as const) {
+  test(`private regional wire preserves exact ${scheduler} sampling without changing its caller`, async () => {
+    await withFixture(async ({ input, scratch }) => {
+      input.request.job.sampling.scheduler = scheduler
+      input.request.job.sampling.steps = 28
+      const original = structuredClone(input)
+      const lease = await prepareRegionalWorkerRequest(input, scratch)
+      try {
+        const bundle = await bundleOf(lease)
+        assert.equal(bundle.request.job.sampling.scheduler, scheduler)
+        assert.equal(bundle.request.job.sampling.steps, 28)
+        assert.deepEqual(
+          bundle.request.job.sampling.noiseProfile,
+          original.request.job.sampling.noiseProfile,
+        )
+        assert.deepEqual(input, original)
+      } finally {
+        await lease.dispose()
+      }
+    })
+  })
+}
+
+test('private regional wire still refuses a different ordinary sampler before creating a lease', async () => {
+  await withFixture(async ({ input, scratch }) => {
+    input.request.job.sampling.scheduler = 'dpmpp_2m'
+    await assert.rejects(prepareRegionalWorkerRequest(input, scratch))
+    assert.deepEqual(await readdir(scratch), [])
+  })
+})

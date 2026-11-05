@@ -14,7 +14,7 @@ their guarded equal-value policy; TI permits only pinned native capture hooks.
 All pre-existing local UNet/VAE forward hooks
 and all global forward hooks refuse before encoding or owned model mutation.
 
-One native pipeline call owns the whole bounded Euler loop and decode. The regional
+One native pipeline call owns the whole bounded Euler-family loop and decode. The regional
 adapter remains installed throughout, including equal-length conditioning and
 every repeated spatial consumption. Borrowed scheduler/call state is untouched;
 only the existing adapter, finite-output hooks and private late value guards
@@ -27,8 +27,9 @@ import importlib
 import inspect
 import math
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import replace
+from functools import wraps
 from typing import Any, Literal, TypedDict, cast
 
 from .illustrious_regional_attention import Alpha8, AttentionPlan, Everywhere
@@ -86,6 +87,8 @@ _DenoisingProfile = Literal[
     "ordinary-canvas-euler-txt2img-cuda-fp16-v1",
     "ordinary-canvas-euler-txt2img-cpu-v2",
     "ordinary-canvas-euler-txt2img-cuda-fp16-v2",
+    "ordinary-canvas-euler-ancestral-txt2img-cpu-v1",
+    "ordinary-canvas-euler-ancestral-txt2img-cuda-fp16-v1",
 ]
 _Layout = Literal["cfg-negative-first", "positive-only"]
 _MAX_FINITE_ELEMENTS = 8_388_608
@@ -128,6 +131,8 @@ def _execution_profile(
         "ordinary-canvas-euler-txt2img-cuda-fp16-v1": ("cuda-float16-v1", False),
         "ordinary-canvas-euler-txt2img-cpu-v2": ("cpu-float32-v1", True),
         "ordinary-canvas-euler-txt2img-cuda-fp16-v2": ("cuda-float16-v1", True),
+        "ordinary-canvas-euler-ancestral-txt2img-cpu-v1": ("cpu-float32-v1", True),
+        "ordinary-canvas-euler-ancestral-txt2img-cuda-fp16-v1": ("cuda-float16-v1", True),
     }
     _require(
         type(denoising_profile) is str and denoising_profile in profiles,
@@ -147,6 +152,13 @@ def _execution_profile(
         "Encoding and denoising profiles must select the same CPU/CUDA lane.",
     )
     return tensor_profile, resolved_noise
+
+
+def _ancestral_profile(denoising_profile: _DenoisingProfile) -> bool:
+    return denoising_profile in (
+        "ordinary-canvas-euler-ancestral-txt2img-cpu-v1",
+        "ordinary-canvas-euler-ancestral-txt2img-cuda-fp16-v1",
+    )
 
 
 def _validated_noise_profile(value: object) -> IllustriousNoiseProfile:
@@ -187,11 +199,17 @@ def _denoising_parameters(
     tensor_profile: _TensorProfile = "cpu-float32-v1",
     *,
     resolved_noise: bool = False,
+    ancestral: bool = False,
 ) -> IllustriousNoiseProfile | None:
     _require(
         type(parameters) is IllustriousInferenceParameters,
         "INPUT_INVALID",
         "The exact base IllustriousInferenceParameters record is required.",
+    )
+    _require(
+        not ancestral or resolved_noise,
+        "PROFILE_INVALID",
+        "Euler ancestral requires an explicit resolved noise policy.",
     )
     _require(
         type(parameters.steps) is int
@@ -218,14 +236,18 @@ def _denoising_parameters(
     )
     _require(
         type(parameters.scheduler) is str
-        and parameters.scheduler == "euler"
+        and parameters.scheduler == ("euler_a" if ancestral else "euler")
         and type(parameters.prediction_type) is str
         and parameters.prediction_type == "epsilon"
         and (resolved_noise or parameters.noise_profile is None),
         "UNSUPPORTED",
-        "Only Euler/epsilon is supported."
-        if resolved_noise
-        else "Only Euler/epsilon with no noise profile is supported.",
+        "Only Euler ancestral/epsilon is supported."
+        if ancestral
+        else (
+            "Only Euler/epsilon is supported."
+            if resolved_noise
+            else "Only Euler/epsilon with no noise profile is supported."
+        ),
     )
     _require(
         parameters.vae is None
@@ -342,6 +364,7 @@ def _fresh_pipeline(
     runtime: MLRuntime,
     *,
     resolved_noise: bool = False,
+    ancestral: bool = False,
 ) -> Any:
     diffusers = cast(Any, runtime.diffusers)
     # V1 retains its fixed policy and three-argument seam. V2 uses only the
@@ -356,11 +379,18 @@ def _fresh_pipeline(
     )
     scheduler = select_inference_scheduler(scheduler_parameters, pipeline, runtime)
     _require(
-        type(scheduler) is diffusers.EulerDiscreteScheduler
+        type(scheduler)
+        is (
+            diffusers.EulerAncestralDiscreteScheduler
+            if ancestral
+            else diffusers.EulerDiscreteScheduler
+        )
         and scheduler is not pipeline.scheduler
         and scheduler.config.prediction_type == "epsilon",
         "PROFILE_INVALID",
-        "Scheduler selection must create a fresh native epsilon Euler instance.",
+        "Scheduler selection must create a fresh native epsilon Euler ancestral instance."
+        if ancestral
+        else "Scheduler selection must create a fresh native epsilon Euler instance.",
     )
     fresh = diffusers.StableDiffusionXLPipeline(
         vae=pipeline.vae,
@@ -377,6 +407,49 @@ def _fresh_pipeline(
     )
     fresh.set_progress_bar_config(disable=True)
     return fresh
+
+
+@contextmanager
+def _scoped_ancestral_generator(
+    fresh: Any, torch: Any, seed: int, tensor_profile: _TensorProfile
+) -> Generator[None]:
+    """Adapt Invoke's independent step RNG through the original native kwargs owner.
+
+    InvokeAI a61ac4fb, app/invocations/sd/denoise_latents.py: init_scheduler
+    creates a compute-device generator with all seed bits flipped; the original
+    diffusion backend forwards it to scheduler.step. Only this fresh wrapper's
+    kwargs method is scoped here. Initial-noise generation and the native loop
+    remain unchanged, and no borrowed object receives a method shadow.
+    """
+    original = fresh.prepare_extra_step_kwargs
+    _require(
+        callable(original) and "generator" in inspect.signature(fresh.scheduler.step).parameters,
+        "PROFILE_INVALID",
+        "Native Euler ancestral must accept the independent step generator.",
+    )
+    policy = _tensor_policy(torch, tensor_profile)
+    step_generator = torch.Generator(device=policy.device).manual_seed(seed ^ 0xFFFFFFFF)
+    missing = object()
+    previous = fresh.__dict__.get("prepare_extra_step_kwargs", missing)
+
+    @wraps(original)
+    def prepare_extra_step_kwargs(generator: Any, eta: Any) -> dict[str, Any]:
+        options = original(generator, eta)
+        _require(
+            type(options) is dict and "generator" in options and options["generator"] is generator,
+            "PROFILE_INVALID",
+            "Native step kwargs must preserve the supplied generator before adaptation.",
+        )
+        return {**cast(dict[str, Any], options), "generator": step_generator}
+
+    try:
+        fresh.prepare_extra_step_kwargs = prepare_extra_step_kwargs
+        yield
+    finally:
+        if previous is missing:
+            fresh.__dict__.pop("prepare_extra_step_kwargs", None)
+        else:
+            fresh.prepare_extra_step_kwargs = previous
 
 
 def _effective_padding_mask(
@@ -619,7 +692,10 @@ def run_current_canvas_regional_denoising(
     V1 profiles require one/two steps and no caller noise profile, selecting
     scaled-linear-v1 betas with zero-SNR false and linspace spacing. V2 profiles
     require 1..MAX_GENERATION_STEPS and an exact explicit four-field noise
-    policy. Both use detached request policies; borrowed scheduler policy is unused.
+    policy. The separately selected Euler-ancestral V1 profiles require the same
+    explicit bounded policy with euler_a/epsilon and Invoke's independent,
+    compute-device xor-seeded step generator. Initial-noise generation is unchanged.
+    All use detached request policies; borrowed scheduler policy is unused.
 
     Payload arithmetic (not RSS): A=W*H <= 4,000,000; latent [1,4,H/8,W/8]
     float32 uses A/4 <= 1,000,000 bytes; CFG's doubled sample uses A/2 <=
@@ -638,8 +714,13 @@ def run_current_canvas_regional_denoising(
         "Regional progress requires a callable sink.",
     )
     tensor_profile, resolved_noise = _execution_profile(denoising_profile, profile)
+    ancestral = _ancestral_profile(denoising_profile)
     if resolved_noise:
-        noise_profile = _denoising_parameters(parameters, tensor_profile, resolved_noise=True)
+        noise_profile = (
+            _denoising_parameters(parameters, tensor_profile, resolved_noise=True, ancestral=True)
+            if ancestral
+            else _denoising_parameters(parameters, tensor_profile, resolved_noise=True)
+        )
         parameters = replace(parameters, noise_profile=noise_profile)
     else:
         _denoising_parameters(parameters, tensor_profile)
@@ -693,11 +774,16 @@ def run_current_canvas_regional_denoising(
             tensor_profile,
             shared_readonly=embedding_strategy == "shared-readonly",
         )
-        fresh = (
-            _fresh_pipeline(pipeline, parameters, runtime, resolved_noise=True)
-            if resolved_noise
-            else _fresh_pipeline(pipeline, parameters, runtime)
-        )
+        if ancestral:
+            fresh = _fresh_pipeline(
+                pipeline, parameters, runtime, resolved_noise=True, ancestral=True
+            )
+        else:
+            fresh = (
+                _fresh_pipeline(pipeline, parameters, runtime, resolved_noise=True)
+                if resolved_noise
+                else _fresh_pipeline(pipeline, parameters, runtime)
+            )
         plan, negative, positive = _encode_recipe_bindings(
             bbox=bbox,
             pairs=pairs,
@@ -740,6 +826,9 @@ def run_current_canvas_regional_denoising(
         )
         generator = torch.Generator(device="cpu").manual_seed(parameters.seed)
         with (
+            _scoped_ancestral_generator(fresh, torch, parameters.seed, tensor_profile)
+            if ancestral
+            else nullcontext(),
             scoped_illustrious_regional_attention(
                 parts[4], bindings=bindings, plan=plan, tensor_profile=tensor_profile
             ),

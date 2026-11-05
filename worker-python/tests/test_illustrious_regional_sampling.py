@@ -807,7 +807,10 @@ def test_high_level_signatures_remain_required_and_have_no_sampling_side_channel
         ),
     ):
         signature = inspect.signature(entry)
-        assert tuple(signature.parameters) == ("recipe", *keywords)
+        # The existing progress owner added this optional observer before this sampler change.
+        assert tuple(signature.parameters) == ("recipe", *keywords, "on_progress")
+        assert signature.parameters["on_progress"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert signature.parameters["on_progress"].default is None
         assert signature.parameters["recipe"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
         for name in keywords:
             parameter = signature.parameters[name]

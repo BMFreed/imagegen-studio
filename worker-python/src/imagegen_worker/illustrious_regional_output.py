@@ -31,6 +31,7 @@ from .illustrious_regional_attention_adapter import (
 from .illustrious_regional_denoising import (
     _MAX_FINITE_ELEMENTS,  # pyright: ignore[reportPrivateUsage]
     IllustriousRegionalDenoisingError,
+    _ancestral_profile,  # pyright: ignore[reportPrivateUsage]
     _denoising_parameters,  # pyright: ignore[reportPrivateUsage]
     _DenoisingProfile,  # pyright: ignore[reportPrivateUsage]
     _execution_profile,  # pyright: ignore[reportPrivateUsage]
@@ -211,7 +212,9 @@ def generate_current_canvas_regional_txt2img(
     completed native denoising steps. Metadata agreement precedes filesystem/native
     work; snapshot verification precedes encoding. V1 retains one/two steps and
     no caller noise policy; V2 requires bounded steps and an exact detached
-    four-field policy. Exact-TI copy and existing native preflights remain unchanged.
+    four-field policy. Separate Euler-ancestral profiles use the same explicit
+    policy bounds and the runner's independent Invoke step generator. Exact-TI
+    copy and existing native preflights remain unchanged.
     Native, conversion and publication errors retain their identity and cause.
     """
     _require(
@@ -228,7 +231,11 @@ def generate_current_canvas_regional_txt2img(
     except IllustriousRegionalDenoisingError as error:
         raise IllustriousRegionalOutputError("PROFILE_INVALID", str(error)) from error
     if resolved_noise:
-        noise_profile = _denoising_parameters(parameters, tensor_profile, resolved_noise=True)
+        noise_profile = (
+            _denoising_parameters(parameters, tensor_profile, resolved_noise=True, ancestral=True)
+            if _ancestral_profile(denoising_profile)
+            else _denoising_parameters(parameters, tensor_profile, resolved_noise=True)
+        )
         parameters = replace(parameters, noise_profile=noise_profile)
     else:
         _denoising_parameters(parameters, tensor_profile)

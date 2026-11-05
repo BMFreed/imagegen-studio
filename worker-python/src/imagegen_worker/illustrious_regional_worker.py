@@ -29,6 +29,7 @@ from .illustrious_regional_attention import Alpha8, Everywhere, Shape
 from .illustrious_regional_attention_adapter import TransformerBinding
 from .illustrious_regional_denoising import (
     _denoising_parameters,  # pyright: ignore[reportPrivateUsage]
+    _DenoisingProfile,  # pyright: ignore[reportPrivateUsage]
     _execution_profile,  # pyright: ignore[reportPrivateUsage]
 )
 from .illustrious_regional_output import (
@@ -75,6 +76,14 @@ _TOPOLOGY = {
     "up_blocks.1.attentions.1": (2, 2),
     "up_blocks.1.attentions.2": (2, 2),
 }
+
+
+def _denoising_profile(parameters: IllustriousInferenceParameters) -> _DenoisingProfile:
+    return (
+        "ordinary-canvas-euler-ancestral-txt2img-cuda-fp16-v1"
+        if parameters.scheduler == "euler_a"
+        else _DENOISING_PROFILE
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -425,8 +434,11 @@ def parse_regional_request(value: object) -> RegionalRequest:
         "Regional bundle, target and output must be distinct.",
     )
     parameters = _command_parameters(command)
-    tensor_profile, _ = _execution_profile(_DENOISING_PROFILE, encoding_profile)
-    _denoising_parameters(parameters, tensor_profile, resolved_noise=True)
+    tensor_profile, _ = _execution_profile(_denoising_profile(parameters), encoding_profile)
+    if parameters.scheduler == "euler_a":
+        _denoising_parameters(parameters, tensor_profile, resolved_noise=True, ancestral=True)
+    else:
+        _denoising_parameters(parameters, tensor_profile, resolved_noise=True)
     snapshots = _RawSnapshots(
         root, {bundle_descriptor[0], command.target_path, command.output_path}
     )
@@ -519,7 +531,7 @@ def execute_regional_request(
             profile=_INVOKE_ENCODING_PROFILE
             if request.composition_profile == "invoke-canvas-v1"
             else _ENCODING_PROFILE,
-            denoising_profile=_DENOISING_PROFILE,
+            denoising_profile=_denoising_profile(request.parameters),
             global_negative_coverage=request.global_negative_coverage,
             global_positive_coverage=request.global_positive_coverage,
             negative_pooled_source_id=request.negative_pooled_source_id,

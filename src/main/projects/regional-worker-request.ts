@@ -152,7 +152,8 @@ const requestSchema = v.strictObject({
       cfgRescale: v.optional(v.literal(0)),
       cfgScale: v.pipe(v.number(), v.finite(), v.minValue(1), v.maxValue(30)),
       noiseProfile: IllustriousNoiseProfileV1Schema,
-      scheduler: v.literal('euler'),
+      // Private qualification also admits native Euler a; public draft/queue guards stay Euler-only.
+      scheduler: v.picklist(['euler', 'euler_a']),
       seed: integer(0, 0xff_ff_ff_ff),
       steps: integer(1, 200),
     }),
