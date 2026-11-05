@@ -89,6 +89,8 @@ _DenoisingProfile = Literal[
     "ordinary-canvas-euler-txt2img-cuda-fp16-v2",
     "ordinary-canvas-euler-ancestral-txt2img-cpu-v1",
     "ordinary-canvas-euler-ancestral-txt2img-cuda-fp16-v1",
+    "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cpu-v1",
+    "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cuda-fp16-v1",
 ]
 _Layout = Literal["cfg-negative-first", "positive-only"]
 _MAX_FINITE_ELEMENTS = 8_388_608
@@ -133,6 +135,11 @@ def _execution_profile(
         "ordinary-canvas-euler-txt2img-cuda-fp16-v2": ("cuda-float16-v1", True),
         "ordinary-canvas-euler-ancestral-txt2img-cpu-v1": ("cpu-float32-v1", True),
         "ordinary-canvas-euler-ancestral-txt2img-cuda-fp16-v1": ("cuda-float16-v1", True),
+        "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cpu-v1": ("cpu-float32-v1", True),
+        "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cuda-fp16-v1": (
+            "cuda-float16-v1",
+            True,
+        ),
     }
     _require(
         type(denoising_profile) is str and denoising_profile in profiles,
@@ -158,6 +165,15 @@ def _ancestral_profile(denoising_profile: _DenoisingProfile) -> bool:
     return denoising_profile in (
         "ordinary-canvas-euler-ancestral-txt2img-cpu-v1",
         "ordinary-canvas-euler-ancestral-txt2img-cuda-fp16-v1",
+        "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cpu-v1",
+        "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cuda-fp16-v1",
+    )
+
+
+def _invoke_initialization_profile(denoising_profile: _DenoisingProfile) -> bool:
+    return denoising_profile in (
+        "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cpu-v1",
+        "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cuda-fp16-v1",
     )
 
 
@@ -450,6 +466,120 @@ def _scoped_ancestral_generator(
             fresh.__dict__.pop("prepare_extra_step_kwargs", None)
         else:
             fresh.prepare_extra_step_kwargs = previous
+
+
+@contextmanager
+def _scoped_invoke_initialization(
+    fresh: Any, torch: Any, seed: int, tensor_profile: _TensorProfile
+) -> Generator[None]:
+    """Adapt InvokeAI a61ac4fb's txt2img initialization on one owned wrapper.
+
+    latent_noise.generate_noise_tensor draws FP32 on CPU then casts on CPU;
+    denoise_latents transfers noise and uses zero txt2img latents, followed by
+    diffusion_backend's original scheduler.add_noise. The existing native
+    pipeline owns schedule creation, begin-index setup, the loop and decoding.
+    No borrowed module or global random function receives a shadow.
+    """
+    policy = _tensor_policy(torch, tensor_profile)
+    _require(type(seed) is int and 0 <= seed <= 0xFFFFFFFF, "INPUT_INVALID", "Invalid seed.")
+    _require(
+        "prepare_latents" not in vars(fresh),
+        "SCOPE_CONFLICT",
+        "The owned initialization slot is already in use.",
+    )
+    original = fresh.prepare_latents
+    _require(
+        callable(original) and getattr(original, "__self__", None) is fresh,
+        "PROFILE_INVALID",
+        "Initialization requires the owned native bound preparation method.",
+    )
+    started = completed = False
+
+    @wraps(original)
+    def prepare_latents(*args: Any, **kwargs: Any) -> Any:
+        nonlocal started, completed
+        _require(not started, "SCOPE_CONFLICT", "Initial preparation cannot repeat or reenter.")
+        started = True
+        values = inspect.signature(original).bind(*args, **kwargs)
+        values.apply_defaults()
+        call = values.arguments
+        height, width = call["height"], call["width"]
+        _require(
+            type(call["batch_size"]) is int
+            and call["batch_size"] == 1
+            and type(call["num_channels_latents"]) is int
+            and call["num_channels_latents"] == 4
+            and type(height) is int
+            and type(width) is int
+            and 8 <= height <= 2048
+            and 8 <= width <= 2048
+            and height % 8 == width % 8 == 0
+            and height * width <= 4_000_000
+            and type(fresh.vae_scale_factor) is int
+            and fresh.vae_scale_factor == 8,
+            "INPUT_INVALID",
+            "Initialization requires one bounded native four-channel latent.",
+        )
+        _require(
+            call["latents"] is None
+            and call["dtype"] == policy.dtype
+            and torch.device(call["device"]) == policy.device,
+            "INPUT_INVALID",
+            "Initialization requires native noise and the selected dtype/device.",
+        )
+        generator = call["generator"]
+        _require(
+            type(generator) is torch.Generator
+            and str(generator.device) == "cpu"
+            and generator.initial_seed() == seed,
+            "INPUT_INVALID",
+            "Initialization requires the seeded CPU generator.",
+        )
+        expected = torch.Generator(device="cpu").manual_seed(seed)
+        _require(
+            torch.equal(generator.get_state(), expected.get_state()),
+            "INPUT_INVALID",
+            "The initial CPU generator must be unconsumed.",
+        )
+        scheduler = fresh.scheduler
+        _require(
+            scheduler.step_index is None
+            and scheduler.begin_index is None
+            and scheduler.is_scale_input_called is False
+            and scheduler.timesteps.ndim == 1
+            and scheduler.timesteps.numel() > 0,
+            "PROFILE_INVALID",
+            "Native schedule creation must precede unconsumed initialization.",
+        )
+        shape = (1, 4, height // 8, width // 8)
+        # Keep Invoke's cast-before-transfer order, including the FP32 CPU lane.
+        noise = torch.randn(*shape, device="cpu", dtype=torch.float32, generator=generator)
+        noise = noise.to(device="cpu", dtype=policy.dtype).to(device=policy.device)
+        latent = scheduler.add_noise(
+            torch.zeros_like(noise), noise, scheduler.timesteps[:1].expand(shape[0])
+        )
+        _require(
+            tuple(latent.shape) == shape
+            and latent.dtype == policy.dtype
+            and latent.device == policy.device
+            and bool(torch.isfinite(latent).all())
+            and scheduler.step_index is None
+            and scheduler.begin_index is None
+            and scheduler.is_scale_input_called is False,
+            "PROFILE_INVALID",
+            "Native initialization must return finite latents without advancing the scheduler.",
+        )
+        completed = True
+        return latent
+
+    try:
+        fresh.prepare_latents = prepare_latents
+        yield
+        _require(
+            completed, "PROFILE_INVALID", "The native pipeline did not prepare initial latents."
+        )
+    finally:
+        fresh.__dict__.pop("prepare_latents", None)
 
 
 def _effective_padding_mask(
@@ -826,6 +956,9 @@ def run_current_canvas_regional_denoising(
         )
         generator = torch.Generator(device="cpu").manual_seed(parameters.seed)
         with (
+            _scoped_invoke_initialization(fresh, torch, parameters.seed, tensor_profile)
+            if _invoke_initialization_profile(denoising_profile)
+            else nullcontext(),
             _scoped_ancestral_generator(fresh, torch, parameters.seed, tensor_profile)
             if ancestral
             else nullcontext(),

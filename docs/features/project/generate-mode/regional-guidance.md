@@ -1343,3 +1343,15 @@ figure. Overall NOT_QUALIFIED; general quality, age/full-prompt and human
 acceptance remain open. No additional search, production/default, public
 permission, persistence or provenance change. PP-001/007/008 remain
 **«Пока не обещать»**.
+
+## Explicit private Invoke initialization profiles
+
+The [worker-only implementation](../../../engineering/phase-4-regional-guidance-invoke-init-profile-research.md)
+moves the measured CPU FP32/cast/transfer/`add_noise` mechanism into two explicit
+private Euler-a profiles. Existing Euler/Euler-a meanings, automatic selection
+and frozen public requests remain unchanged. ROOT: 296 lower PASS, strict
+typing 0/0, semantic mutation with unchanged legacy controls/restoration and four
+trained source replays matching every original PNG byte. The installed worker
+is unchanged. Visual 3 PASS/1INCONCLUSIVE remains NOT_QUALIFIED; human/full-prompt/
+age/general quality and Anima remain open. Public routing requires separately
+frozen initialization identity and compatibility; no default/readiness change.

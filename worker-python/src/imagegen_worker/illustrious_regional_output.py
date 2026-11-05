@@ -213,7 +213,10 @@ def generate_current_canvas_regional_txt2img(
     work; snapshot verification precedes encoding. V1 retains one/two steps and
     no caller noise policy; V2 requires bounded steps and an exact detached
     four-field policy. Separate Euler-ancestral profiles use the same explicit
-    policy bounds and the runner's independent Invoke step generator. Exact-TI
+    policy bounds and the runner's independent Invoke step generator.
+    Separately selected invoke-init profiles also use Invoke's CPU FP32 draw,
+    CPU compute-dtype cast and original scheduler.add_noise initialization.
+    Existing profiles retain their native initial preparation. Exact-TI
     copy and existing native preflights remain unchanged.
     Native, conversion and publication errors retain their identity and cause.
     """

@@ -1780,3 +1780,16 @@ inconclusive, with a smaller red/rose figure largely behind a central blue one.
 Combined matrix 3 PASS/1INCONCLUSIVE remains NOT_QUALIFIED. No extra search,
 production default or readiness promotion; full quality/human acceptance and
 PP-001/007/008 remain unchanged.
+
+## Opt-in worker Invoke initialization
+
+The [private profile implementation](./phase-4-regional-guidance-invoke-init-profile-research.md)
+adds explicitly named CPU/CUDA Euler-a profiles with current Invoke's CPU FP32
+draw, CPU cast-before-transfer and native `add_noise`. Old profile semantics and
+automatic worker selection remain exact. ROOT records 296 distinct lower PASS,
+strict typing 0/0, isolated 4 GREEN→2semanticRED+2oldcontrolsGREEN→4restoredGREEN,
+and four current-source trained replays with exact prior traces/whole PNG bytes.
+An initial wrong-import mutation attempt remains excluded. This uses the pinned
+dependency runtime without updating the installed worker. Existing 3 PASS/1INC
+visual evidence is unchanged; Main frozen initialization identity and public
+routing remain separate. No default or readiness promotion.
