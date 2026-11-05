@@ -45,9 +45,14 @@ function document(): IgsProjectDocumentV1 {
   return value
 }
 
-function reason(value: IgsProjectDocumentV1, runtimeSupported: boolean | null | undefined = true) {
+function reason(
+  value: IgsProjectDocumentV1,
+  runtimeSupported: boolean | null | undefined = true,
+  embeddingsSupported?: boolean | null,
+) {
   return getInvokeRegionalGenerationUnavailableReason({
     document: value,
+    embeddingsSupported,
     iterations: 1,
     runtimeSupported,
   })
@@ -121,17 +126,20 @@ test('finite regional settings refuse unsupported families, predictions, samplin
   }
 })
 
-test('enabled LoRAs, reference images and active global TI refuse; disabled or dormant data remains inert', () => {
+test('enabled LoRAs and references refuse while active global TI requires support and dormant data stays inert', () => {
   const value = document()
   const resource = { ...value.generationDraft.model!, kind: 'embedding' as const }
   value.generationDraft.positivePrompt.embeddingRefs = [{ resource, token: 'exact_ti' }]
   value.generationDraft.negativePrompt.embeddingRefs = [{ resource, token: 'negative_ti' }]
   assert.equal(reason(value), null)
   value.generationDraft.positivePrompt.text = 'an exact_ti portrait'
-  assert.match(reason(value)!, /active global embedding/)
+  assert.match(reason(value)!, /global embeddings/)
+  assert.equal(reason(value, true, true), null)
+  assert.match(reason(value, true, false)!, /does not support global embeddings/)
   value.generationDraft.positivePrompt.text = 'inactive_exact_ti'
   value.generationDraft.negativePrompt.text = 'negative_ti'
-  assert.match(reason(value)!, /active global embedding/)
+  assert.match(reason(value)!, /global embeddings/)
+  assert.equal(reason(value, true, true), null)
   value.generationDraft.negativePrompt.text = ''
   value.generationDraft.loras = [
     { enabled: true, resource: { ...resource, kind: 'lora' }, weight: 0 },
@@ -320,4 +328,26 @@ test('Euler a initialization support cannot grant missing regional engine suppor
   }
   value.regionalGuidance![0].enabled = false
   assert.equal(reason(value, false), null)
+})
+
+test('global embedding support is required only for active refs and cannot grant regional support', () => {
+  const value = document()
+  value.generationDraft.positivePrompt = {
+    embeddingRefs: [
+      { resource: { ...value.generationDraft.model!, kind: 'embedding' }, token: '<shared>' },
+    ],
+    text: 'a scene <shared>',
+  }
+  for (const embeddingsSupported of [undefined, null, false]) {
+    assert.match(reason(value, true, embeddingsSupported)!, /global embeddings/)
+  }
+  assert.equal(reason(value, true, true), null)
+  for (const runtimeSupported of [null, false]) {
+    assert.notEqual(reason(value, runtimeSupported, true), null)
+  }
+  value.generationDraft.positivePrompt.text = 'ordinary text without the saved trigger'
+  assert.equal(reason(value, true, false), null)
+  value.generationDraft.positivePrompt.text = '<shared>'
+  value.regionalGuidance![0].enabled = false
+  assert.equal(reason(value, false, false), null)
 })

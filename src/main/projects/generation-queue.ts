@@ -974,7 +974,10 @@ export class GenerationQueueRepository {
         'Private submission cannot use a public composition profile.',
       )
     }
-    const regional = captureRegionalQueuedMaterial({ ...input.regional, request: input.request })
+    const regional = captureRegionalQueuedMaterial(
+      { ...input.regional, request: input.request },
+      input.prepared.context,
+    )
     if (
       input.regional.recipe.documentId !== input.prepared.context.documentId ||
       input.regional.recipe.documentRevision !== input.prepared.context.documentRevision
@@ -1081,7 +1084,10 @@ export class GenerationQueueRepository {
         'Public regional submission requires the matching Invoke Canvas sampler and initialization profile.',
       )
     }
-    const regional = captureRegionalQueuedMaterial({ ...input.regional, request: input.request })
+    const regional = captureRegionalQueuedMaterial(
+      { ...input.regional, request: input.request },
+      input.prepared.context,
+    )
     if (
       input.regional.recipe.documentId !== input.prepared.context.documentId ||
       input.regional.recipe.documentRevision !== input.prepared.context.documentRevision
@@ -1131,7 +1137,10 @@ export class GenerationQueueRepository {
       }
       const prepared = { context: structuredClone(item.prepared.context), targetPngBytes }
       const request = structuredClone(item.request)
-      const regional = captureRegionalQueuedMaterial({ ...item.regional, request })
+      const regional = captureRegionalQueuedMaterial(
+        { ...item.regional, request },
+        prepared.context,
+      )
       if (
         regional.compositionProfile !== 'invoke-canvas-v1' ||
         (regional.initializationProfile === undefined

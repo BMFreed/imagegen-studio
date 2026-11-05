@@ -369,3 +369,275 @@ def test_private_sampler_is_preserved_and_selects_its_exact_execution_profile(
         if scheduler == "euler_a"
         else "ordinary-canvas-euler-txt2img-cuda-fp16-v2"
     )
+
+
+def _global_ti_case(tmp_path: Path) -> Any:
+    """Real paired F32 safetensors; same literal has distinct signed/stream owners."""
+    case = _case(tmp_path)
+    resources: list[dict[str, Any]] = []
+    for marker, value in ((1, b"\x00\x00\x80\x3f"), (2, b"\x00\x00\x00\x40")):
+        path = tmp_path / f"global-{marker}.safetensors"
+        header = json.dumps(
+            {
+                "clip_l": {"dtype": "F32", "shape": [1, 768], "data_offsets": [0, 3072]},
+                "clip_g": {"dtype": "F32", "shape": [1, 1280], "data_offsets": [3072, 8192]},
+            },
+            separators=(",", ":"),
+        ).encode()
+        header += b" " * (-len(header) % 8)
+        data = len(header).to_bytes(8, "little") + header + value * (768 + 1280)
+        path.write_bytes(data)
+        resources.append(
+            {
+                "token": "<shared>",
+                "managedPath": str(path),
+                "byteSize": len(data),
+                "reference": {
+                    "baseModelFamily": "illustrious",
+                    "civitaiFileId": 100 + marker,
+                    "civitaiModelId": 200 + marker,
+                    "civitaiVersionId": 300 + marker,
+                    "displayName": f"nontrained global fixture {marker}",
+                    "fileSha256": hashlib.sha256(data).hexdigest(),
+                    "kind": "embedding",
+                    "localModelId": f"global-model-{marker}",
+                    "localVersionId": f"global-version-{marker}",
+                    "predictionType": None,
+                    "versionName": "tiny paired F32 fixture",
+                },
+            }
+        )
+    recipe = case.bundle["recipe"]
+    region = recipe["regions"][0]
+    for prompt, pair, sign, resource in (
+        (recipe["globalPrompts"]["positive"], recipe["globalEmbeddings"], "positive", resources[0]),
+        (recipe["globalPrompts"]["negative"], recipe["globalEmbeddings"], "negative", resources[1]),
+        (region["positive"], region["embeddings"], "positive", resources[1]),
+        (region["negative"]["prompt"], region["embeddings"], "negative", resources[0]),
+    ):
+        prompt["text"] += " <shared>"
+        prompt["embeddingRefs"] = [
+            {"token": resource["token"], "resource": copy.deepcopy(resource["reference"])}
+        ]
+        pair[sign] = [copy.deepcopy(resource)]
+    for sign in ("positive", "negative"):
+        text = recipe["globalPrompts"][sign]["text"]
+        recipe["item"]["prompts"][sign] = text
+        case.request["job"]["prompts"][sign] = text
+    region["authoredPrompts"]["positive"] = copy.deepcopy(region["positive"])
+    region["authoredPrompts"]["negative"] = copy.deepcopy(region["negative"]["prompt"])
+    case.resource_files = tuple(Path(resource["managedPath"]) for resource in resources)
+    _seal(case)
+    return case
+
+
+def _assert_loader_only_prompt_neutralization(
+    case: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    composition_profile: str | None,
+    exact_ti: bool,
+) -> None:
+    """Real snapshots/parser/dispatcher; fake native loader, hooks, topology and output.
+
+    InvokeAI a61ac4fb's text_encoder/compel.py owns TI application during
+    conditioning, separately from model_loaders/stable_diffusion.py acquisition.
+    This checks the Studio handoff only; it does not load or consume TI natively.
+    """
+    if composition_profile is not None:
+        case.bundle["compositionProfile"] = composition_profile
+    _seal(case)
+    before_wire, before_bundle = copy.deepcopy(case.wire), copy.deepcopy(case.bundle)
+    expected_recipe = copy.deepcopy(case.bundle["recipe"])
+    expected_recipe["regions"][0]["coverage"]["alpha"] = case.alpha.read_bytes()
+    expected_command = parse_request(case.request)
+    files = (case.checkpoint, case.target, case.alpha, case.manifest) + getattr(
+        case, "resource_files", ()
+    )
+    before_files = {path: path.read_bytes() for path in files}
+    calls: list[str] = []
+    captured: dict[str, Any] = {}
+    loader_inputs: list[Any] = []
+    real_parse = worker.parse_regional_request
+
+    def observe_parse(value: object) -> worker.RegionalRequest:
+        calls.append("parse")
+        request = real_parse(value)
+        captured["request"] = request
+        captured["before"] = copy.deepcopy(request)
+        assert request.recipe == expected_recipe
+        assert request.command == expected_command
+        return request
+
+    component = SimpleNamespace(eval=lambda: calls.append("eval"))
+    pipeline = SimpleNamespace(
+        text_encoder=component, text_encoder_2=component, unet=component, vae=component
+    )
+    runtime = cast(
+        MLRuntime, SimpleNamespace(torch=SimpleNamespace(no_grad=contextlib.nullcontext))
+    )
+
+    def load(parameters: Any, **kwargs: Any) -> tuple[Any, Any]:
+        calls.append("load")
+        loader_inputs.append(parameters)
+        assert kwargs == {"config_dir": tmp_path, "runtime": runtime, "mode": "txt2img"}
+        return pipeline, None
+
+    def hooks(value: Any) -> None:
+        calls.append("hooks")
+        assert value is pipeline
+
+    def bindings(value: Any, actual_runtime: Any) -> tuple[()]:
+        calls.append("bindings")
+        assert value is pipeline and actual_runtime is runtime
+        return ()
+
+    def publish(recipe: Any, **kwargs: Any) -> dict[str, object]:
+        calls.append("output")
+        request = captured["request"]
+        assert recipe is request.recipe and recipe == expected_recipe
+        assert kwargs["command"] is request.command and request.command == expected_command
+        assert kwargs["pipeline"] is pipeline and kwargs["runtime"] is runtime
+        assert kwargs["profile"] == (
+            "ordinary-canvas-invoke-dualclip-exact-ti-shared-readonly-cuda-fp16-v1"
+            if composition_profile is not None
+            else "ordinary-canvas-static-dualclip-exact-ti-shared-readonly-cuda-fp16-v1"
+        )
+        assert (
+            request.parameters.positive_prompt,
+            request.parameters.negative_prompt,
+        ) == (
+            expected_recipe["globalPrompts"]["positive"]["text"],
+            expected_recipe["globalPrompts"]["negative"]["text"],
+        )
+        assert request == captured["before"]
+        return {
+            "type": "generation-done",
+            "protocolVersion": "1",
+            "requestId": "private-1",
+            "outputPath": str(case.root / "result.png"),
+            "seed": 42,
+        }
+
+    monkeypatch.setattr(worker, "parse_regional_request", observe_parse)
+    monkeypatch.setattr(worker, "load_illustrious_pipeline", load)
+    monkeypatch.setattr(worker, "install_capture_hooks", hooks)
+    monkeypatch.setattr(worker, "qualify_bindings", bindings)
+    monkeypatch.setattr(worker, "generate_current_canvas_regional_txt2img", publish)
+    response = inference_main.process_inference_request(
+        case.wire, config_dir=tmp_path, runtime=runtime
+    )
+    assert response["type"] == "generation-done"
+    assert calls == ["parse", "load", "eval", "eval", "eval", "eval", "hooks", "bindings", "output"]
+    assert len(loader_inputs) == 1
+    parameters = loader_inputs[0]
+    original = captured["request"].parameters
+    assert type(parameters) is type(original)
+    assert parameters.positive_embeddings == parameters.negative_embeddings == ()
+    expected_fields = cast(dict[str, object], vars(original)).copy()
+    if exact_ti:
+        assert parameters is not original, (
+            "Loader neutralization must use a detached parameter copy."
+        )
+        assert (parameters.positive_prompt, parameters.negative_prompt) == ("", ""), (
+            "Recipe-owned global TI must bypass ordinary loader prompt validation."
+        )
+        expected_fields.update(positive_prompt="", negative_prompt="")
+    else:
+        # The old ordinary text path remains a GREEN neighbor before the fix.
+        assert (parameters.positive_prompt, parameters.negative_prompt) in (
+            (original.positive_prompt, original.negative_prompt),
+            ("", ""),
+        )
+        expected_fields.update(
+            positive_prompt=parameters.positive_prompt, negative_prompt=parameters.negative_prompt
+        )
+    assert vars(parameters) == expected_fields, "Loading must preserve every other inference field."
+    assert captured["request"] == captured["before"]
+    assert case.wire == before_wire and case.bundle == before_bundle
+    assert {path: path.read_bytes() for path in files} == before_files
+    assert not (case.root / "result.png").exists()  # Publication above is explicitly fake.
+
+
+@pytest.mark.parametrize(
+    "composition_profile", (None, "invoke-canvas-v1"), ids=("private", "invoke")
+)
+def test_global_ti_is_recipe_owned_and_only_loader_prompts_are_neutralized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, composition_profile: str | None
+) -> None:
+    _assert_loader_only_prompt_neutralization(
+        _global_ti_case(tmp_path),
+        tmp_path,
+        monkeypatch,
+        composition_profile=composition_profile,
+        exact_ti=True,
+    )
+
+
+@pytest.mark.parametrize(
+    "composition_profile", (None, "invoke-canvas-v1"), ids=("private", "invoke")
+)
+def test_plain_global_text_reaches_output_unchanged_through_loader_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, composition_profile: str | None
+) -> None:
+    _assert_loader_only_prompt_neutralization(
+        _case(tmp_path),
+        tmp_path,
+        monkeypatch,
+        composition_profile=composition_profile,
+        exact_ti=False,
+    )
+
+
+@pytest.mark.parametrize(
+    "composition_profile", (None, "invoke-canvas-v1"), ids=("private", "invoke")
+)
+@pytest.mark.parametrize("sign", ("positive", "negative"))
+@pytest.mark.parametrize("fault", ("unbound", "malformed-ref"))
+def test_invalid_global_ti_still_refuses_before_loader(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    composition_profile: str | None,
+    sign: str,
+    fault: str,
+) -> None:
+    """Real owned files/parser/dispatcher; loader and output are refusal tripwires."""
+    case = _global_ti_case(tmp_path)
+    if composition_profile is not None:
+        case.bundle["compositionProfile"] = composition_profile
+    prompt = case.bundle["recipe"]["globalPrompts"][sign]
+    if fault == "unbound":
+        prompt["embeddingRefs"] = []
+        case.bundle["recipe"]["globalEmbeddings"][sign] = []
+    else:
+        prompt["embeddingRefs"][0]["token"] = ""
+        case.bundle["recipe"]["globalEmbeddings"][sign][0]["token"] = ""
+    _seal(case)
+    files = (case.checkpoint, case.target, case.alpha, case.manifest, *case.resource_files)
+    before_files = {path: path.read_bytes() for path in files}
+    before_wire, before_bundle = copy.deepcopy(case.wire), copy.deepcopy(case.bundle)
+    calls: list[str] = []
+
+    def load(*args: Any, **kwargs: Any) -> Any:
+        calls.append("load")
+        pytest.fail("Invalid global TI reached native loading.")
+
+    def publish(*args: Any, **kwargs: Any) -> Any:
+        calls.append("output")
+        pytest.fail("Invalid global TI reached output.")
+
+    monkeypatch.setattr(worker, "load_illustrious_pipeline", load)
+    monkeypatch.setattr(worker, "generate_current_canvas_regional_txt2img", publish)
+    response = inference_main.process_inference_request(
+        case.wire,
+        config_dir=tmp_path,
+        runtime=cast(
+            MLRuntime, SimpleNamespace(torch=SimpleNamespace(no_grad=contextlib.nullcontext))
+        ),
+    )
+    assert response["type"] == "error"
+    assert calls == []
+    assert case.wire == before_wire and case.bundle == before_bundle
+    assert {path: path.read_bytes() for path in files} == before_files
+    assert not (case.root / "result.png").exists()

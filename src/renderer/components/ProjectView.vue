@@ -2420,6 +2420,7 @@ const generationBlockingReason = computed(() => {
     ? getRegionalGuidanceGenerationUnavailableReason(props.tab)
     : getInvokeRegionalGenerationUnavailableReason({
         document: { ...props.tab, generationDraft: props.generationDraft },
+        embeddingsSupported: props.generationState?.embeddingsSupported,
         initializationSupported: props.generationState?.regionalInvokeInitializationSupported,
         iterations: imagesPerClick.value ?? 0,
         runtimeSupported: props.generationState?.regionalSupported,

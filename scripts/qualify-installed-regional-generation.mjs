@@ -23,7 +23,10 @@ import { _electron as electron, expect } from '@playwright/test'
 import yauzl from 'yauzl'
 
 import { openAppDatabase } from '../src/main/db/database.ts'
+import { CivitaiClient } from '../src/main/models/civitai-client.ts'
+import { CivitaiTokenStore } from '../src/main/models/civitai-token-store.ts'
 import { ModelRepository } from '../src/main/models/model-repository.ts'
+import { ModelService } from '../src/main/models/model-service.ts'
 import { qualifySdxlCheckpoint } from '../src/main/models/sdxl-checkpoint-qualification.ts'
 import { encodeProjectMaskPng } from '../src/main/projects/project-mask.ts'
 import { ProjectSession } from '../src/main/projects/project-session.ts'
@@ -97,13 +100,16 @@ assert.ok(
     'installed-regional-invoke-worker-fault-v1',
     'installed-regional-invoke-initialization-v1',
     'installed-regional-invoke-static-batch-v1',
+    'installed-regional-invoke-global-embeddings-v1',
   ].includes(fixture.profile),
 )
 const mainDeathProfile = fixture.profile === 'installed-regional-invoke-main-death-v1'
 const workerFaultProfile = fixture.profile === 'installed-regional-invoke-worker-fault-v1'
 const staticBatchProfile = fixture.profile === 'installed-regional-invoke-static-batch-v1'
+const globalTiProfile = fixture.profile === 'installed-regional-invoke-global-embeddings-v1'
+const multipleResultsProfile = staticBatchProfile || globalTiProfile
 const initializationProfile =
-  staticBatchProfile || fixture.profile === 'installed-regional-invoke-initialization-v1'
+  multipleResultsProfile || fixture.profile === 'installed-regional-invoke-initialization-v1'
 const progressProfile =
   initializationProfile ||
   workerFaultProfile ||
@@ -170,9 +176,14 @@ const timeout = (maximum = 30_000) => {
   return Math.min(maximum, left)
 }
 const bbox = { height: 1024, width: 1024, x: -13, y: 5 }
-const globalPrompt =
+const baseGlobalPrompt =
   'a still life of a red apple and a blue ceramic mug on a plain table, two separate objects, soft studio lighting'
-const localPrompts = ['a single red apple', 'a single blue ceramic mug']
+const globalPrompt = globalTiProfile ? `${baseGlobalPrompt} <shared>` : baseGlobalPrompt
+const globalNegativePrompt = globalTiProfile ? '<shared>' : ''
+const localPrompts = [
+  globalTiProfile ? globalPrompt : 'a single red apple',
+  'a single blue ceramic mug',
+]
 const policy = {
   schemaVersion: 1,
   baseSchedule: 'sdxl-scaled-linear-v1',
@@ -229,6 +240,7 @@ const baselinePackages = []
 let preservationBaseline = null,
   progressProject = null,
   progressDomInstalled = false
+let globalTi = null
 let sampling = Promise.resolve()
 const nativeChecks = []
 const projects = []
@@ -304,12 +316,19 @@ if (initializationProfile)
     'src/shared/projects/regional-invoke-generation.ts',
     'src/renderer/components/generation-queue-retry.ts',
   )
-if (staticBatchProfile)
+if (multipleResultsProfile)
   sourceFiles.push(
     'src/shared/projects/generation-batch-plan.ts',
     'src/shared/projects/generation-batch-policy.ts',
     'src/main/projects/project-current-canvas-regional-recipe.ts',
     'src/main/projects/generation-staging-limits.ts',
+  )
+if (globalTiProfile)
+  sourceFiles.push(
+    'src/main/models/civitai-client.ts',
+    'src/main/models/civitai-token-store.ts',
+    'src/main/models/illustrious-embedding-qualification.ts',
+    'src/main/projects/illustrious-generation-embeddings.ts',
   )
 let bundleFiles
 async function captureFiles(files) {
@@ -350,6 +369,7 @@ async function verifyProvision() {
     assert.ok(provision.ready.capabilities.includes(cap), `Missing installed capability ${cap}`)
   if (initializationProfile)
     assert.ok(provision.ready.capabilities.includes('illustrious-regional-invoke-init-v1'))
+  if (globalTiProfile) assert.ok(provision.ready.capabilities.includes('illustrious-embeddings'))
   if (mainDeathProfile || workerFaultProfile)
     assert.ok(provision.ready.capabilities.includes('linux-owned-inference-v1'))
   if (progressProfile)
@@ -427,13 +447,20 @@ async function verifyProvision() {
       'invokeai/app/api/routers/session_queue.py',
       'invokeai/app/services/session_processor/session_processor_default.py',
       'invokeai/frontend/webv1/src/features/controlLayers/components/StagingArea/StagingAreaToolbarAcceptButton.tsx',
-      ...(staticBatchProfile
+      ...(multipleResultsProfile
         ? [
             'invokeai/frontend/webv2/src/features/queue/core/promptBatch.ts',
             'invokeai/frontend/webv2/src/features/queue/data/submissionApi.ts',
             'invokeai/frontend/webv2/src/features/generation/core/graph.ts',
             'invokeai/frontend/webv2/src/features/generation/core/canvas/addRegionalGuidance.ts',
             'invokeai/app/services/session_queue/session_queue_common.py',
+          ]
+        : []),
+      ...(globalTiProfile
+        ? [
+            'invokeai/app/invocations/text_encoder/compel.py',
+            'invokeai/app/util/ti_utils.py',
+            'invokeai/backend/model_patcher.py',
           ]
         : []),
       ...(progressProfile
@@ -702,7 +729,7 @@ async function captureProgressPreservation() {
   assert.ok(sql.queue.length >= (workerFaultProfile ? 12 : 8) && sql.queue.length <= 256)
   if (workerFaultProfile || initializationProfile) {
     assert.ok(completed.length >= (initializationProfile ? 4 : 5) && completed.length <= 128)
-    if (staticBatchProfile) {
+    if (multipleResultsProfile) {
       assert.equal(sql.receipts.length, completed.length)
       assert.equal(
         sql.cursors.length,
@@ -772,9 +799,10 @@ async function captureProgressPreservation() {
       }
     }
   }
-  if (staticBatchProfile) {
+  if (multipleResultsProfile) {
     assert.ok(accepted.length > 0 && accepted.length <= completed.length)
-    assert.ok(initializationControl, 'A verified prior same-policy seed123 output is required')
+    if (staticBatchProfile)
+      assert.ok(initializationControl, 'A verified prior same-policy seed123 output is required')
   } else {
     assert.equal(
       accepted.length,
@@ -787,10 +815,10 @@ async function captureProgressPreservation() {
     unaccepted = completed.filter(
       (row) => !accepted.some(({ queueItemId }) => queueItemId === row.id),
     )
-  const tombstones = staticBatchProfile
+  const tombstones = multipleResultsProfile
     ? await database.db.selectFrom('generation_staging_discarded_session').selectAll().execute()
     : []
-  if (staticBatchProfile) assert.ok(unaccepted.length >= 1 && unaccepted.length <= 128)
+  if (multipleResultsProfile) assert.ok(unaccepted.length >= 1 && unaccepted.length <= 128)
   else assert.equal(unaccepted.length, 1)
   let controlPng
   for (const row of completed) {
@@ -801,7 +829,7 @@ async function captureProgressPreservation() {
     )
     if (unaccepted.some(({ id }) => id === row.id)) {
       if (
-        staticBatchProfile &&
+        multipleResultsProfile &&
         tombstones.some(
           (entry) =>
             entry.local_project_key === row.local_project_key &&
@@ -829,7 +857,7 @@ async function captureProgressPreservation() {
     accepted,
     unacceptedJobIds: unaccepted.map(({ id }) => id),
     controlPng,
-    ...(staticBatchProfile ? { initializationControl, tombstones } : {}),
+    ...(multipleResultsProfile ? { initializationControl, tombstones } : {}),
   }
   report.preservationBaseline = preservationBaseline
   report.boundary.calls =
@@ -858,6 +886,14 @@ async function captureProgressPreservation() {
       'Both original requests emit scalar1..30 frames before their terminal output. No tensor or initializer interception, fabricated events, numeric quality or GPU-throughput claim.'
     report.boundary.exclusions =
       'No visual quality PASS, full Invoke parity, generic SDXL, Anima, LoRA, regional reference/TI, installer/Repair, raw initializer observation or capacity claim. Existing Add closes the shared session: both PNGs are retained first, one selected output becomes a Raster and the other is explicitly discarded. Prior external candidates are unchanged.'
+  }
+  if (globalTiProfile) {
+    report.boundary.calls =
+      'One real UI Generate admits Euler-a30 seeds123/124. First completes; second is canceled only after original native steps >=5 and >=6, then original frozen Queue Retry124 completes after saved global prompt/ref, sampler/seed/region edits. Exactly three regional wires and two healthy PNGs.'
+    report.boundary.preconditions =
+      'Reuse all pinned historical SQL/packages/candidates and the installed runtime/checkpoint. Before the preservation baseline, register four deterministic real paired F32 TI files at stable catalog-owned SHARED paths and resolve them using real ModelService. No downloads, model/runtime copies or catalog fallback.'
+    report.boundary.exclusions =
+      'No new native vector/context observer, numerical TI-causality claim, quality PASS, generic SDXL, Anima, LoRA, references, installer/Repair or capacity qualification. Existing zero-TI controls remain preserved and are not output-equality oracles for this distinct resource input. Accepted base provenance keeps only global A/B refs; regional C/D stays excluded.'
   }
   if (workerFaultProfile) {
     report.boundary.calls =
@@ -906,7 +942,7 @@ async function verifyProgressPreservation(db) {
         assert.equal(
           current.seq,
           row.seq +
-            (row.name === 'generation_candidate_receipt' ? (staticBatchProfile ? 2 : 1) : 0),
+            (row.name === 'generation_candidate_receipt' ? (multipleResultsProfile ? 2 : 1) : 0),
         )
       } else {
         assert.ok(
@@ -925,12 +961,295 @@ async function verifyProgressPreservation(db) {
   ownProgressSql(report.preservationAfter.sql)
   check('All prior SQL rows, packages, accepted history and unaccepted candidate bytes preserved')
 }
+// InvokeAI's Compel/TI owner is shared by global and regional streams. These fixtures exercise
+// Studio's saved exact identities at that existing owner, without a name/default fallback.
+function pairedGlobalTiBytes(salt) {
+  const widths = [768, 1280],
+    payload = Buffer.alloc(2 * (768 + 1280) * 4)
+  let offset = 0
+  for (const width of widths)
+    for (let row = 0; row < 2; row++)
+      for (let column = 0; column < width; column++, offset += 4)
+        payload.writeFloatLE(
+          (((row * 37 + column * 17 + salt * 13) % 257) - 128) / 256 + row / 32,
+          offset,
+        )
+  const json = Buffer.from(
+    JSON.stringify({
+      clip_l: { dtype: 'F32', shape: [2, 768], data_offsets: [0, 6144] },
+      clip_g: { dtype: 'F32', shape: [2, 1280], data_offsets: [6144, 16384] },
+    }),
+  )
+  const header = Buffer.alloc(Math.ceil(json.length / 8) * 8, 32)
+  json.copy(header)
+  const length = Buffer.alloc(8)
+  length.writeBigUInt64LE(BigInt(header.length))
+  return Buffer.concat([length, header, payload])
+}
+function globalTiRef(key) {
+  assert.ok(globalTiProfile && globalTi?.[key])
+  return { resource: structuredClone(globalTi[key].reference), token: '<shared>' }
+}
+function globalTiDescriptor(key) {
+  const { byteSize, managedPath, reference } = globalTi[key]
+  return { byteSize, managedPath, reference: structuredClone(reference), token: '<shared>' }
+}
+function globalTiPair(positive, negative) {
+  return {
+    positive: positive ? [globalTiDescriptor(positive)] : [],
+    negative: negative ? [globalTiDescriptor(negative)] : [],
+  }
+}
+function globalTiWirePair() {
+  const project = (key) => {
+    const { byteSize, managedPath, reference } = globalTi[key]
+    return { byteSize, path: managedPath, sha256: reference.fileSha256, token: '<shared>' }
+  }
+  return { positive: [project('A')], negative: [project('B')] }
+}
+function assertGlobalEmbeddingRecipe(recipe) {
+  assert.deepEqual(recipe.globalPrompts, {
+    positive: { text: globalPrompt, embeddingRefs: [globalTiRef('A')] },
+    negative: { text: '<shared>', embeddingRefs: [globalTiRef('B')] },
+  })
+  assert.deepEqual(recipe.globalEmbeddings, globalTiPair('A', 'B'))
+  const [first, second] = recipe.regions
+  assert.deepEqual(first.positive, { text: globalPrompt, embeddingRefs: [globalTiRef('C')] })
+  assert.deepEqual(first.negative, {
+    source: 'current-canvas',
+    prompt: recipe.globalPrompts.negative,
+  })
+  assert.deepEqual(first.embeddings, globalTiPair('C', 'B'))
+  assert.deepEqual(second.positive, { text: localPrompts[1], embeddingRefs: [] })
+  assert.deepEqual(second.negative, {
+    source: 'regional',
+    prompt: { text: '<shared>', embeddingRefs: [globalTiRef('D')] },
+  })
+  assert.deepEqual(second.embeddings, globalTiPair(null, 'D'))
+  assert.equal(first.positive.text, recipe.globalPrompts.positive.text)
+  assert.notEqual(
+    first.positive.embeddingRefs[0].resource.localVersionId,
+    globalTi.A.reference.localVersionId,
+  )
+  assert.equal(
+    [recipe.globalEmbeddings, first.embeddings, second.embeddings].reduce(
+      (count, pair) => count + pair.positive.length + pair.negative.length,
+      0,
+    ),
+    5,
+  )
+}
+async function verifyGlobalEmbeddingFiles() {
+  assert.ok(globalTiProfile && globalTi)
+  for (const resource of Object.values(globalTi)) {
+    assert.deepEqual(statIdentity(await regular(resource.managedPath)), resource.stat)
+    assert.equal(await realpath(resource.managedPath), resource.managedPath)
+    assert.equal((await regular(resource.managedPath)).size, resource.byteSize)
+    assert.equal(await hashFile(resource.managedPath), resource.reference.fileSha256)
+    assert.equal(resource.reference.fileSha256, digest(pairedGlobalTiBytes(resource.salt)))
+    assert.ok(
+      within(fixtureRoot, resource.managedPath) && !within(evidenceRoot, resource.managedPath),
+    )
+  }
+}
+async function prepareGlobalEmbeddingCatalog(repository) {
+  const before = await allSqlTables(database.db)
+  const prior = await repository.listInstalled()
+  const root = path.join(fixtureRoot, 'global-embedding-fixtures-v1')
+  await mkdir(root, { recursive: true, mode: 0o700 })
+  await directory(root)
+  const definitions = [
+    { key: 'A', salt: 1, modelId: 900000101, versionId: 900001001, fileId: 900002001 },
+    { key: 'B', salt: 7, modelId: 900000102, versionId: 900001002, fileId: 900002002 },
+    { key: 'C', salt: 19, modelId: 900000101, versionId: 900001003, fileId: 900002003 },
+    { key: 'D', salt: 37, modelId: 900000103, versionId: 900001004, fileId: 900002004 },
+  ]
+  // A reserved synthetic identity may be reused only as the already complete exact fixture.
+  // Refuse namespace collisions before publishing; never repair or overwrite historical rows.
+  for (const resource of prior.filter(
+    ({ source }) =>
+      source.kind === 'civitai' && definitions.some(({ modelId }) => modelId === source.modelId),
+  )) {
+    const expected = definitions.filter(({ modelId }) => modelId === resource.source.modelId)
+    assert.equal(resource.type, 'embedding')
+    assert.equal(resource.versions.length, expected.length)
+    for (const definition of expected) {
+      const version = resource.versions.find(
+        ({ civitaiVersionId }) => civitaiVersionId === definition.versionId,
+      )
+      assert.ok(version, 'Reserved fixture identity is incomplete; preserve the existing catalog')
+      const sha256 = digest(pairedGlobalTiBytes(definition.salt))
+      assert.equal(version.civitaiFileId, definition.fileId)
+      assert.equal(version.file.sha256, sha256)
+      assert.equal(
+        version.file.managedPath,
+        path.join(root, `${definition.key.toLowerCase()}-${sha256}.safetensors`),
+      )
+      assert.equal(version.file.status, 'ready')
+    }
+    if (expected.some(({ key }) => key === 'C'))
+      assert.equal(
+        resource.defaultVersionId,
+        resource.versions.find(({ civitaiVersionId }) => civitaiVersionId === 900001003).id,
+      )
+  }
+  globalTi = {}
+  for (const definition of definitions) {
+    const { key, salt, modelId, versionId, fileId } = definition
+    const bytes = pairedGlobalTiBytes(salt),
+      sha256 = digest(bytes)
+    const managedPath = path.join(root, `${key.toLowerCase()}-${sha256}.safetensors`)
+    if (existsSync(managedPath)) {
+      await regular(managedPath)
+      assert.ok((await readFile(managedPath)).equals(bytes), 'Never replace an existing fixture')
+    } else await writeFile(managedPath, bytes, { flag: 'wx', mode: 0o600 })
+    let installed = await repository.findExactFileDuplicate({ sha256 })
+    if (!installed)
+      installed = await repository.publishVerifiedInstallation({
+        primary: {
+          file: {
+            managedPath,
+            originalFilename: path.basename(managedPath),
+            sha256,
+            sizeBytes: bytes.length,
+            verifiedAt: new Date().toISOString(),
+          },
+          resource: {
+            type: 'embedding',
+            displayName: `Qualification exact TI ${modelId}`,
+            source: { kind: 'civitai', modelId },
+            sourceMetadata: { qualificationPrecondition: true },
+          },
+          version: {
+            baseModelFamily: 'illustrious',
+            format: 'safetensors',
+            name: `Qualification ${key}`,
+            predictionType: null,
+            source: { kind: 'civitai', expectedSha256: sha256, versionId, fileId },
+            sourceMetadata: { qualificationPrecondition: true, trainedWords: ['shared'] },
+          },
+        },
+      })
+    const catalog = await repository.listInstalled()
+    const resource = catalog.find(({ id }) => id === installed.resourceId)
+    const version = resource?.versions.find(({ id }) => id === installed.versionId)
+    assert.ok(resource && version)
+    assert.deepEqual(resource.source, { kind: 'civitai', modelId })
+    assert.equal(resource.type, 'embedding')
+    assert.equal(version.civitaiVersionId, versionId)
+    assert.equal(version.civitaiFileId, fileId)
+    assert.equal(version.predictionType, null)
+    assert.equal(version.baseModelFamily, 'illustrious')
+    assert.equal(version.file.status, 'ready')
+    assert.equal(version.file.managedPath, managedPath)
+    assert.equal(version.file.sha256, sha256)
+    assert.equal(version.file.sizeBytes, bytes.length)
+    globalTi[key] = {
+      salt,
+      managedPath,
+      byteSize: bytes.length,
+      stat: statIdentity(await regular(managedPath)),
+      reference: {
+        kind: 'embedding',
+        baseModelFamily: 'illustrious',
+        predictionType: null,
+        civitaiModelId: modelId,
+        civitaiVersionId: versionId,
+        civitaiFileId: fileId,
+        displayName: resource.displayName,
+        versionName: version.name,
+        fileSha256: sha256,
+        localModelId: resource.id,
+        localVersionId: version.id,
+      },
+    }
+  }
+  assert.equal(globalTi.A.reference.localModelId, globalTi.C.reference.localModelId)
+  assert.notEqual(globalTi.A.reference.localVersionId, globalTi.C.reference.localVersionId)
+  const sameResource = (await repository.listInstalled()).find(
+    ({ id }) => id === globalTi.A.reference.localModelId,
+  )
+  if (prior.some(({ id }) => id === sameResource.id))
+    assert.equal(
+      sameResource.defaultVersionId,
+      globalTi.C.reference.localVersionId,
+      'A reused fixture must already have its pinned C Default',
+    )
+  else await repository.setDefaultVersion(sameResource.id, globalTi.C.reference.localVersionId)
+  let networkAttempts = 0,
+    secretAttempts = 0
+  const forbiddenSecret = async () => {
+    secretAttempts++
+    throw new Error('No credential operation belongs to fixture resolution')
+  }
+  const models = new ModelService(
+    repository,
+    new CivitaiClient(async () => {
+      networkAttempts++
+      throw new Error('No download belongs to fixture resolution')
+    }),
+    new CivitaiTokenStore(
+      {
+        decryptStringAsync: forbiddenSecret,
+        encryptStringAsync: forbiddenSecret,
+        getSelectedStorageBackend: () => 'qualification-only',
+        isAsyncEncryptionAvailable: async () => false,
+      },
+      appDataRoot,
+    ),
+  )
+  for (const resource of Object.values(globalTi)) {
+    const verified = await models.resolveVerifiedGenerationEmbeddingForPlan(resource.reference)
+    assert.deepEqual(verified, {
+      byteSize: resource.byteSize,
+      managedPath: resource.managedPath,
+      reference: resource.reference,
+    })
+  }
+  assert.equal(networkAttempts, 0)
+  assert.equal(secretAttempts, 0)
+  assert.equal(
+    (await repository.listInstalled()).find(({ id }) => id === sameResource.id).defaultVersionId,
+    globalTi.C.reference.localVersionId,
+  )
+  await verifyGlobalEmbeddingFiles()
+  const after = await allSqlTables(database.db)
+  for (const table of before) {
+    const current = after.find(({ name }) => name === table.name)
+    assert.equal(current.sql, table.sql)
+    for (const row of table.rows)
+      assert.ok(
+        current.rows.some((value) => JSON.stringify(value) === JSON.stringify(row)),
+        `Fixture registration changed historical SQL: ${table.name}`,
+      )
+  }
+  report.globalEmbeddingFixtures = {
+    root,
+    formula: '(((row*37 + column*17 + salt*13) % 257) - 128)/256 + row/32',
+    tensorShapes: { clip_l: [2, 768], clip_g: [2, 1280] },
+    dtype: 'F32',
+    resources: structuredClone(globalTi),
+    defaultVersionId: globalTi.C.reference.localVersionId,
+    savedGlobalVersionId: globalTi.A.reference.localVersionId,
+    modelServiceStructuralQualification: true,
+    networkAttempts,
+    secretAttempts,
+    retainedForFutureFrozenRetry: true,
+    historicalRowsPreservedBeforeBaseline: true,
+  }
+  check(
+    'Four real paired F32 TI files are registered and exactly qualified; Default C does not replace saved A',
+    report.globalEmbeddingFixtures,
+  )
+}
+
 async function prepareCatalogAndProjects() {
   modelStat = statIdentity(await regular(fixture.checkpoint.path))
   assert.equal(modelStat.size, fixture.checkpoint.byteSize)
   assert.equal(await hashFile(fixture.checkpoint.path), fixture.checkpoint.sha256)
   await qualifySdxlCheckpoint(fixture.checkpoint.path)
   database = openAppDatabase(appDataRoot, path.resolve('src/main/db/migrations'))
+  if (globalTiProfile) await prepareGlobalEmbeddingCatalog(new ModelRepository(database.db))
   if (progressProfile) await captureProgressPreservation()
   if (recoveryProfile) {
     baselineSql = await sqlSnapshot()
@@ -1121,8 +1440,14 @@ async function prepareCatalogAndProjects() {
     doc.generationDraft = {
       ...doc.generationDraft,
       model: reference,
-      positivePrompt: { text: globalPrompt, embeddingRefs: [] },
-      negativePrompt: { text: '', embeddingRefs: [] },
+      positivePrompt: {
+        text: globalPrompt,
+        embeddingRefs: globalTiProfile ? [globalTiRef('A')] : [],
+      },
+      negativePrompt: {
+        text: globalNegativePrompt,
+        embeddingRefs: globalTiProfile ? [globalTiRef('B')] : [],
+      },
       dynamicPrompt: { maxPrompts: 1, seedBehavior: 'per-iteration' },
       seed: { policy: 'fixed', value: 123 },
       loras: [],
@@ -1167,9 +1492,15 @@ async function prepareCatalogAndProjects() {
         name: index === 0 ? 'Left subject' : 'Right subject',
         overlayOpacity: 0,
         prompts: {
-          positive: { text, embeddingRefs: [] },
-          negative: { text: '', embeddingRefs: [] },
-          useGlobalNegativePrompt: false,
+          positive: {
+            text,
+            embeddingRefs: globalTiProfile && index === 0 ? [globalTiRef('C')] : [],
+          },
+          negative: {
+            text: globalTiProfile && index === 1 ? '<shared>' : '',
+            embeddingRefs: globalTiProfile && index === 1 ? [globalTiRef('D')] : [],
+          },
+          useGlobalNegativePrompt: globalTiProfile && index === 0,
         },
       }
     })
@@ -1978,11 +2309,12 @@ async function progressBeforeCancel(project, row) {
   const observed = await observerSnapshot(),
     wires = regionalWires(observed)
   assert.deepEqual(observed.faults, [])
-  assert.equal(wires.length, 1)
-  assert.equal(wires[0].reportProgress, true)
-  const worker = observed.workers.find(({ pid }) => pid === wires[0].pid)
+  assert.equal(wires.length, globalTiProfile ? 2 : 1)
+  const wire = wires[globalTiProfile ? 1 : 0]
+  assert.equal(wire.reportProgress, true)
+  const worker = observed.workers.find(({ pid }) => pid === wire.pid)
   assert.ok(worker.ready.capabilities.includes('illustrious-regional-progress-v1'))
-  report.progress = { beforeCancel: { first, second, sql: before, requestId: wires[0].requestId } }
+  report.progress = { beforeCancel: { first, second, sql: before, requestId: wire.requestId } }
   report.cancellationBoundary = workerFaultProfile
     ? 'Worker-only SIGKILL follows two genuine native-path JSONL/Main/UI step observations >=5/30; no elapsed-time estimate or Cancel action.'
     : 'Cancel follows two genuine native-path JSONL/Main/UI step observations >=5/30; no elapsed-time estimate.'
@@ -2193,7 +2525,11 @@ async function progressAfterCancel(row) {
     cleared = observed.progress.find(
       ({ order, snapshot }) => order > call.startedOrder && snapshot.current === null,
     ),
-    wire = regionalWires(observed)[0],
+    wire = globalTiProfile
+      ? regionalWires(observed).find(
+          ({ requestId }) => requestId === report.progress.beforeCancel.requestId,
+        )
+      : regionalWires(observed)[0],
     worker = observed.workers.find(({ pid }) => pid === wire.pid)
   assert.ok(call?.finished && call.ok === true)
   assert.equal(before.snapshot.current.jobId, row.id)
@@ -2490,7 +2826,9 @@ async function openProject(project) {
   await window.getByRole('tab', { name: 'Home', exact: true }).click()
   await window.getByRole('button', { name: 'Refresh projects', exact: true }).click()
   await window.getByRole('button', { name: `Open ${project.title}`, exact: true }).click()
-  await expect(window.getByRole('tab', { name: project.title, exact: true })).toBeVisible()
+  await expect(window.getByRole('tab', { name: project.title, exact: true })).toBeVisible({
+    timeout: timeout(),
+  })
   await expect(window.locator('input[aria-label="Images per click"]')).toBeEnabled({
     timeout: timeout(),
   })
@@ -2599,7 +2937,7 @@ function assertFrozen(frozen, project, expectedSeed = 123) {
   assert.equal(frozen.context.documentId, project.document.documentId)
   assert.deepEqual(frozen.context.bbox, bbox)
   assert.equal(frozen.context.prompts.positive, globalPrompt)
-  assert.equal(frozen.context.prompts.negative, '')
+  assert.equal(frozen.context.prompts.negative, globalNegativePrompt)
   assert.equal(frozen.workerJob.checkpoint.sha256, fixture.checkpoint.sha256)
   assert.equal(frozen.workerJob.checkpoint.predictionType, 'epsilon')
   assert.equal(frozen.context.model.managedPath, fixture.checkpoint.path)
@@ -2641,9 +2979,12 @@ async function captureFrozen(row, project, expectedSeed = 123) {
   assert.equal(regional.negativePooledSourceId, 'current-canvas')
   assert.equal(regional.positivePooledSourceId, 'current-canvas')
   assert.equal(regional.recipe.regions.length, 2)
-  if (staticBatchProfile) {
+  if (multipleResultsProfile) {
     assert.equal(regional.recipe.item.seed, expectedSeed)
-    assert.deepEqual(regional.recipe.item.prompts, { positive: globalPrompt, negative: '' })
+    assert.deepEqual(regional.recipe.item.prompts, {
+      positive: globalPrompt,
+      negative: globalNegativePrompt,
+    })
     assert.equal(regional.recipe.item.promptPairIndex, 0)
   }
   assert.deepEqual(regional.recipe.bbox, bbox)
@@ -2652,7 +2993,7 @@ async function captureFrozen(row, project, expectedSeed = 123) {
   for (const [index, region] of regional.recipe.regions.entries()) {
     assert.equal(region.regionId, project.document.regionalGuidance[index].id)
     assert.equal(region.positive.text, localPrompts[index])
-    assert.equal(region.negative.prompt.text, '')
+    assert.equal(region.negative.prompt.text, globalTiProfile ? '<shared>' : '')
     const descriptor = region.coverage.alpha.$alpha8
     assert.match(descriptor.file, /^region-[01]\.alpha8$/)
     const bytes = await readFile(path.join(root, descriptor.file))
@@ -2664,6 +3005,16 @@ async function captureFrozen(row, project, expectedSeed = 123) {
     for (let i = 0; i < bytes.length; i++)
       assert.equal(bytes[i], i % 1024 < 512 === (index === 0) ? 255 : 0)
     alphas.push(descriptor)
+  }
+  if (globalTiProfile) {
+    assertGlobalEmbeddingRecipe(regional.recipe)
+    assert.deepEqual(frozen.context.embeddingRefs, {
+      positive: [globalTiRef('A')],
+      negative: [globalTiRef('B')],
+    })
+    assert.deepEqual(frozen.context.embeddings, globalTiPair('A', 'B'))
+    assert.deepEqual(frozen.workerJob.embeddings, globalTiWirePair())
+    await verifyGlobalEmbeddingFiles()
   }
   return {
     row,
@@ -3222,6 +3573,403 @@ async function generateStaticBatchEdit(project) {
   )
   return {
     row: final.queue[0],
+    receipt: final.receipts[0],
+    frozen: captured[0].frozen,
+    edited,
+  }
+}
+
+async function generateGlobalEmbeddingBatchRetry(project) {
+  assert.ok(globalTiProfile && globalTi && preservationBaseline)
+  await openProject(project)
+  assert.equal(await hashFile(project.file), project.initialPackageSha256)
+  assert.equal((await targetState(project)).mode, 'txt2img')
+  const advisory = await api('getGenerationState', project.id)
+  assert.equal(advisory.regionalSupported, true)
+  assert.equal(advisory.regionalInvokeInitializationSupported, true)
+  assert.equal(advisory.embeddingsSupported, true)
+  assert.deepEqual((await current(project)).generationDraft.positivePrompt, {
+    text: globalPrompt,
+    embeddingRefs: [globalTiRef('A')],
+  })
+  assert.deepEqual((await current(project)).generationDraft.negativePrompt, {
+    text: '<shared>',
+    embeddingRefs: [globalTiRef('B')],
+  })
+  await expect(window.locator('input[aria-label="Steps"]')).toHaveValue('30')
+  await expect(window.locator('input[aria-label="CFG scale"]')).toHaveValue('5')
+  await expect(window.locator('input[aria-label="Generation seed"]')).toHaveValue('123')
+  const count = window.locator('input[aria-label="Images per click"]')
+  await count.fill('2')
+  await count.press('Enter')
+  await expect(count).toHaveValue('2')
+  const generate = window.getByRole('button', { name: 'Generate', exact: true })
+  await expect(generate).toBeEnabled({ timeout: timeout(120_000) })
+  assert.deepEqual(await progressSql(), { queue: [], receipts: [], cursors: [] })
+  await generate.click()
+  await originalIpcFinished('projects:generate')
+  const admitted = (await progressSql()).queue
+  assert.equal(admitted.length, 2)
+  assert.equal(new Set(admitted.map(({ batch_id }) => batch_id)).size, 1)
+  assert.equal(new Set(admitted.map(({ staging_session_id }) => staging_session_id)).size, 1)
+  assert.deepEqual(
+    admitted.map(
+      ({ frozen_payload_json }) => JSON.parse(frozen_payload_json).workerJob.sampling.seed,
+    ),
+    [123, 124],
+  )
+  const captured = []
+  for (const [index, row] of admitted.entries()) {
+    captured.push(await captureFrozen(row, project, 123 + index))
+    assert.equal(captured[index].regional.recipe.item.iteration, index)
+  }
+  assert.equal(captured[0].targetSha256, captured[1].targetSha256)
+  assert.deepEqual(captured[0].alphas, captured[1].alphas)
+  const generateCall = (await observerSnapshot()).ipc.find(
+    ({ channel }) => channel === 'projects:generate',
+  )
+  assert.equal(generateCall.response.ok, true)
+  assert.equal(generateCall.response.value.kind, 'queued')
+  assert.equal(generateCall.response.value.batchId, admitted[0].batch_id)
+  assert.deepEqual(
+    generateCall.response.value.jobIds,
+    admitted.map(({ id }) => id),
+  )
+  assert.equal(generateCall.response.value.truncated, false)
+  await openQueue()
+  await expect
+    .poll(
+      async () => {
+        const row = await job(admitted[0].id)
+        assert.ok(
+          ['pending', 'running', 'completed'].includes(row.status),
+          `${row.error_code}: ${row.error_message}`,
+        )
+        return row.status
+      },
+      { timeout: timeout(900_000), intervals: [250, 500, 1000] },
+    )
+    .toBe('completed')
+  await expect
+    .poll(async () => (await job(admitted[1].id)).status, { timeout: timeout(180_000) })
+    .toBe('running')
+  await expect
+    .poll(
+      async () => {
+        const observed = await observerSnapshot()
+        assert.deepEqual(observed.faults, [])
+        return regionalWires(observed).length
+      },
+      { timeout: timeout(240_000), intervals: [100, 250, 500] },
+    )
+    .toBe(2)
+  const firstHealthy = await progressSql()
+  assert.equal(firstHealthy.receipts.length, 1)
+  assert.equal(firstHealthy.receipts[0].queue_item_id, admitted[0].id)
+  assert.equal(firstHealthy.receipts[0].actual_seed, 123)
+  assert.equal(firstHealthy.cursors[0].actual_seed, 123)
+  await progressBeforeCancel(project, admitted[1])
+  await screenshot('global-ti-second-item-before-cancel')
+  await queueRow(admitted[1].id).getByRole('button', { name: 'Cancel job', exact: true }).click()
+  await expect
+    .poll(async () => (await job(admitted[1].id)).status, { timeout: timeout(120_000) })
+    .toBe('canceled')
+  await expect
+    .poll(async () => (await api('getGenerationState', project.id)).phase, {
+      timeout: timeout(120_000),
+    })
+    .toBe('idle')
+  await progressAfterCancel(admitted[1])
+  const canceled = await progressSql()
+  assert.deepEqual(canceled.receipts, firstHealthy.receipts)
+  assert.deepEqual(canceled.cursors, firstHealthy.cursors)
+  assert.equal(
+    canceled.queue.find(({ id }) => id === admitted[1].id).frozen_payload_json,
+    admitted[1].frozen_payload_json,
+  )
+  assert.equal(await hashFile(project.file), project.initialPackageSha256)
+  await closeQueue()
+
+  // Original Project IPC reconciliation removes authored refs when their literals disappear.
+  // No frozen context, descriptor, command or recipe is rewritten by this harness.
+  await api('updateGenerationDraft', project.id, {
+    kind: 'positive-prompt',
+    text: 'later ordinary authoring without activation literals',
+  })
+  await api('updateGenerationDraft', project.id, {
+    kind: 'negative-prompt',
+    text: 'later local authoring',
+  })
+  const steps = window.locator('input[aria-label="Steps"]')
+  await steps.fill('2')
+  await steps.press('Enter')
+  const seed = window.locator('input[aria-label="Generation seed"]')
+  await seed.fill('999')
+  await seed.press('Enter')
+  await window.locator('[aria-label="Sampler"]').click()
+  await window.getByText('Euler', { exact: true }).last().click()
+  for (const region of project.document.regionalGuidance)
+    await window
+      .locator(`[data-regional-guidance-id="${region.id}"]`)
+      .getByRole('button', { name: `Hide ${region.name}`, exact: true })
+      .click()
+  await expect
+    .poll(
+      async () => {
+        const tab = await current(project)
+        return {
+          steps: tab.generationDraft.sampling.steps,
+          seed: tab.generationDraft.seed,
+          sampler: tab.generationDraft.sampling.sampler,
+          enabled: tab.regionalGuidance.map(({ enabled }) => enabled),
+          positive: tab.generationDraft.positivePrompt,
+          negative: tab.generationDraft.negativePrompt,
+        }
+      },
+      { timeout: timeout() },
+    )
+    .toEqual({
+      steps: 2,
+      seed: { policy: 'fixed', value: 999 },
+      sampler: 'Euler',
+      enabled: [false, false],
+      positive: { text: 'later ordinary authoring without activation literals', embeddingRefs: [] },
+      negative: { text: 'later local authoring', embeddingRefs: [] },
+    })
+  await save(project)
+  const edited = await current(project),
+    editedPackageSha256 = await hashFile(project.file)
+  assert.deepEqual(edited.layers, project.document.layers)
+  assert.deepEqual(edited.primaryBbox, bbox)
+  report.currentAuthoringAfterEdit = {
+    generationDraft: edited.generationDraft,
+    regionalGuidance: edited.regionalGuidance,
+    packageSha256: editedPackageSha256,
+  }
+  report.noImplicitSave = {
+    beforeGeneratePackageSha256: project.initialPackageSha256,
+    afterAdmissionPackageSha256: project.initialPackageSha256,
+    afterCancelPackageSha256: project.initialPackageSha256,
+    afterExplicitEditSavePackageSha256: editedPackageSha256,
+  }
+  await screenshot('global-ti-edited-saved-before-frozen-retry')
+  await openQueue()
+  await expect(queueRow(admitted[1].id)).toContainText('Seed 124')
+  const retry = queueRow(admitted[1].id).getByRole('button', { name: 'Retry job', exact: true })
+  await expect(retry).toBeEnabled({ timeout: timeout(120_000) })
+  await retry.click()
+  await expect
+    .poll(async () => (await progressSql()).queue.length, { timeout: timeout(180_000) })
+    .toBe(3)
+  const retried = (await progressSql()).queue.find(
+    ({ id }) => !admitted.some((row) => row.id === id),
+  )
+  assert.ok(retried)
+  assert.equal(retried.frozen_payload_json, admitted[1].frozen_payload_json)
+  assert.notEqual(retried.batch_id, admitted[1].batch_id)
+  assert.notEqual(retried.staging_session_id, admitted[1].staging_session_id)
+  const retryCaptured = await captureFrozen(retried, project, 124)
+  assert.equal(retryCaptured.frozenPayloadSha256, captured[1].frozenPayloadSha256)
+  assert.equal(retryCaptured.targetSha256, captured[1].targetSha256)
+  assert.deepEqual(retryCaptured.alphas, captured[1].alphas)
+  captured.push(retryCaptured)
+  report.retry = {
+    firstJobId: admitted[1].id,
+    retryJobId: retried.id,
+    originalFrozen: captured[1],
+    retryFrozen: retryCaptured,
+  }
+  report.progress.retryIntermediate = await progressProbe(project, retried, 1)
+  await closeQueue()
+  await expect
+    .poll(
+      async () => {
+        const row = await job(retried.id)
+        assert.ok(
+          !['failed', 'canceled'].includes(row.status),
+          `${row.error_code}: ${row.error_message}`,
+        )
+        return row.status
+      },
+      { timeout: timeout(900_000), intervals: [250, 500, 1000] },
+    )
+    .toBe('completed')
+  await expect
+    .poll(async () => (await api('getGenerationState', project.id)).phase, {
+      timeout: timeout(120_000),
+    })
+    .toBe('idle')
+  assert.equal(await hashFile(project.file), editedPackageSha256)
+  assert.deepEqual((await current(project)).generationDraft, edited.generationDraft)
+  report.noImplicitSave.afterRetryCompletionPackageSha256 = await hashFile(project.file)
+  const final = await progressSql()
+  assert.equal(final.queue.length, 3)
+  assert.equal(final.queue.filter(({ status }) => status === 'canceled').length, 1)
+  assert.equal(final.queue.find(({ id }) => id === admitted[1].id).status, 'canceled')
+  assert.deepEqual(
+    final.receipts.map(({ queue_item_id, actual_seed }) => ({ queue_item_id, actual_seed })),
+    [
+      { queue_item_id: admitted[0].id, actual_seed: 123 },
+      { queue_item_id: retried.id, actual_seed: 124 },
+    ],
+  )
+  assert.equal(final.cursors.length, 1)
+  assert.equal(final.cursors[0].actual_seed, 124)
+  assert.deepEqual(final.receipts[0], firstHealthy.receipts[0])
+  for (const row of final.queue) {
+    const frozen = captured.find(({ row: source }) => source.id === row.id)
+    assert.equal(row.frozen_payload_json, frozen.row.frozen_payload_json)
+    const receipt = final.receipts.find(({ queue_item_id }) => queue_item_id === row.id)
+    if (row.status === 'completed') {
+      assert.equal(receipt.status, 'completed')
+      assert.equal(receipt.frozen_payload_sha256, frozen.frozenPayloadSha256)
+    } else assert.equal(receipt, undefined)
+  }
+  const observed = await observerSnapshot(),
+    wires = regionalWires(observed)
+  assert.deepEqual(observed.faults, [])
+  assert.equal(wires.length, 3)
+  assert.equal(new Set(wires.map(({ requestId }) => requestId)).size, 3)
+  let scalarCount = 0
+  for (const [index, wire] of wires.entries()) {
+    const bundle = wire.bundleJson,
+      frozen = captured[index]
+    assert.equal(bundle.compositionProfile, 'invoke-canvas-v1')
+    assert.equal(bundle.initializationProfile, initialization)
+    assert.equal(bundle.layout, 'cfg-negative-first')
+    assert.deepEqual(bundle.globalPositiveCoverage, { kind: 'everywhere' })
+    assert.deepEqual(bundle.globalNegativeCoverage, { kind: 'everywhere' })
+    assert.equal(bundle.positivePooledSourceId, 'current-canvas')
+    assert.equal(bundle.negativePooledSourceId, 'current-canvas')
+    assertGlobalEmbeddingRecipe(bundle.recipe)
+    assert.deepEqual(bundle.recipe.item, frozen.regional.recipe.item)
+    assert.deepEqual(bundle.recipe.bbox, bbox)
+    assert.deepEqual(
+      bundle.recipe.regions.map(({ regionId }) => regionId),
+      project.document.regionalGuidance.map(({ id }) => id),
+    )
+    // Logical frozen command retains A/B. Only detached native serialization clears resources.
+    const {
+      output: _output,
+      target,
+      embeddings: executionEmbeddings,
+      ...execution
+    } = bundle.request.job
+    assert.ok(
+      executionEmbeddings === undefined ||
+        (executionEmbeddings.positive.length === 0 && executionEmbeddings.negative.length === 0),
+    )
+    const { embeddings: logicalEmbeddings, ...logical } = frozen.frozen.workerJob
+    assert.deepEqual(logicalEmbeddings, globalTiWirePair())
+    const { path: _targetPath, ...descriptor } = target
+    assert.deepEqual({ ...execution, target: descriptor }, logical)
+    assert.equal(wire.target.observedSha256, frozen.targetSha256)
+    assert.deepEqual(
+      wire.alpha.map(({ sha256 }) => sha256),
+      project.regionAlphas,
+    )
+    for (const alpha of wire.alpha) {
+      assert.equal(alpha.positive, 1024 ** 2 / 2)
+      assert.equal(alpha.opaque, alpha.positive)
+    }
+    const worker = observed.workers.find(({ pid }) => pid === wire.pid)
+    for (const cap of [
+      'illustrious-regional-invoke-init-v1',
+      'illustrious-embeddings',
+      'illustrious-regional-progress-v1',
+    ])
+      assert.ok(worker.ready.capabilities.includes(cap))
+    assert.equal(wire.reportProgress, true)
+    const frames = worker.frames.filter(({ message }) => message.requestId === wire.requestId)
+    const numeric = frames.filter(({ message }) => message.type === 'generation-progress')
+    assert.deepEqual(
+      numeric.map(({ message }) => message.step),
+      Array.from({ length: numeric.length }, (_, i) => i + 1),
+    )
+    if (index === 1) {
+      assert.ok(numeric.length >= 6 && numeric.length < 30)
+      assert.ok(frames.every(({ message }) => message.type === 'generation-progress'))
+    } else {
+      assert.equal(numeric.length, 30)
+      const done = frames.filter(({ message }) => message.type === 'generation-done')
+      assert.equal(done.length, 1)
+      assert.ok(numeric.at(-1).order < done[0].order)
+      assert.equal(frames.filter(({ message }) => message.type === 'error').length, 0)
+    }
+    for (const { message } of numeric) {
+      assert.deepEqual(Object.keys(message).sort(), [
+        'protocolVersion',
+        'requestId',
+        'step',
+        'totalSteps',
+        'type',
+      ])
+      assert.equal(message.protocolVersion, '1')
+      assert.equal(message.totalSteps, 30)
+    }
+    const main = observed.progress.filter(
+      ({ snapshot }) => snapshot.current?.jobId === frozen.row.id,
+    )
+    assert.deepEqual(
+      main.map(({ snapshot }) => snapshot.current.step),
+      numeric.map(({ message }) => message.step),
+    )
+    for (const record of main) {
+      assert.equal(record.originalCalls, 1)
+      assert.equal(record.receiverMatches, true)
+      assert.equal(record.snapshot.current.documentId, project.document.documentId)
+      assert.equal(record.snapshot.current.projectKey, project.id)
+      assert.equal(record.snapshot.current.totalSteps, 30)
+    }
+    scalarCount += numeric.length
+  }
+  assert.equal((await api('getGenerationProgress')).current, null)
+  assert.equal(
+    observed.workers
+      .flatMap(({ writes }) => writes.flatMap(({ lines }) => lines))
+      .filter(({ type }) => type === 'generate-illustrious-txt2img').length,
+    0,
+  )
+  await verifyGlobalEmbeddingFiles()
+  report.globalEmbeddingFlow = {
+    priorZeroTiControlsPreserved: {
+      packages: preservationBaseline.packages,
+      controlPng: preservationBaseline.controlPng,
+      comparedForEquality: false,
+    },
+    generateResponse: generateCall.response,
+    originalBatchJobIds: admitted.map(({ id }) => id),
+    canceledJobId: admitted[1].id,
+    retryJobId: retried.id,
+    stagingSessionIds: [admitted[0].staging_session_id, retried.staging_session_id],
+    captured,
+    finalQueue: final.queue,
+    savedGlobalRefsRemovedOnlyFromCurrentDraft: true,
+    originalBindingsPreservedForRetry: true,
+    noNativeVectorOrContextObserver: true,
+  }
+  report.staticBatch = {
+    captured: [captured[0], retryCaptured],
+    orderedJobIds: [admitted[0].id, retried.id],
+    stagingSessionId: admitted[0].staging_session_id,
+    completedRows: final.queue.filter(({ status }) => status === 'completed'),
+    receipts: final.receipts,
+  }
+  report.nativeAccounting = {
+    regionalWireCount: 3,
+    completedReceiptCount: 2,
+    canceledSqlCount: 1,
+    workerSpawnCount: observed.workers.length,
+    originalScalarProgressEvents: scalarCount,
+    stepCounterQualified: true,
+    extraGenerateOrRetryRequested: false,
+  }
+  check(
+    'Original global A/B and regional C/inherited B/local D survive the real batch, observed Cancel and frozen Retry after saved authoring edits',
+    report.nativeAccounting,
+  )
+  return {
+    row: final.queue.find(({ id }) => id === admitted[0].id),
     receipt: final.receipts[0],
     frozen: captured[0].frozen,
     edited,
@@ -4170,8 +4918,14 @@ function assertBaseProvenance(provenance, candidate, frozen) {
       localVersionId: model.versionId,
       predictionType: 'epsilon',
     },
-    negativePrompt: { text: '', embeddingRefs: [] },
-    positivePrompt: { text: globalPrompt, embeddingRefs: [] },
+    negativePrompt: {
+      text: globalNegativePrompt,
+      embeddingRefs: globalTiProfile ? [globalTiRef('B')] : [],
+    },
+    positivePrompt: {
+      text: globalPrompt,
+      embeddingRefs: globalTiProfile ? [globalTiRef('A')] : [],
+    },
     sampling: {
       actualSeed: 123,
       cfgScale: 5,
@@ -4181,7 +4935,7 @@ function assertBaseProvenance(provenance, candidate, frozen) {
       sampler: generationSampler,
       scheduler: 'Normal',
       steps: 30,
-      ...(staticBatchProfile && frozen.context.sampling.seedBehavior !== undefined
+      ...(multipleResultsProfile && frozen.context.sampling.seedBehavior !== undefined
         ? { seedBehavior: frozen.context.sampling.seedBehavior }
         : {}),
     },
@@ -4190,7 +4944,7 @@ function assertBaseProvenance(provenance, candidate, frozen) {
     vaePrecision: 'FP16',
   })
   assert.equal(config.positivePrompt.text, globalPrompt)
-  assert.equal(config.negativePrompt.text, '')
+  assert.equal(config.negativePrompt.text, globalNegativePrompt)
   assert.equal(config.sampling.actualSeed, 123)
   assert.equal(config.sampling.steps, 30)
   assert.equal(config.sampling.cfgScale, 5)
@@ -4209,7 +4963,13 @@ function assertBaseProvenance(provenance, candidate, frozen) {
     ...(initializationProfile ? ['initializationProfile', initialization] : []),
     fixture.checkpoint.path,
     appDataRoot,
-    ...localPrompts,
+    ...(globalTiProfile
+      ? [
+          globalTi.C.reference.localVersionId,
+          globalTi.D.reference.localVersionId,
+          ...Object.values(globalTi).map(({ managedPath }) => managedPath),
+        ]
+      : localPrompts),
   ])
     assert.equal(
       json.includes(forbidden),
@@ -4251,16 +5011,16 @@ async function resultsAddSaveReopen(project, completed) {
     .poll(async () => (await api('listGenerationResults', project.id)).candidates.length, {
       timeout: timeout(120_000),
     })
-    .toBe(staticBatchProfile ? 2 : 1)
+    .toBe(multipleResultsProfile ? 2 : 1)
   const results = await api('listGenerationResults', project.id),
     candidate = results.candidates[0]
   assert.equal(candidate.queueItemId, completed.row.id)
   assert.equal(candidate.actualSeed, 123)
   assert.equal(candidate.sourceDocumentMismatch, false)
   assert.deepEqual(candidate.bbox, bbox)
-  assert.equal(results.lastActualSeed, staticBatchProfile ? 124 : 123)
+  assert.equal(results.lastActualSeed, multipleResultsProfile ? 124 : 123)
   assert.deepEqual(results.unfinishedSiblingJobIds, [])
-  if (staticBatchProfile) {
+  if (multipleResultsProfile) {
     assert.deepEqual(
       results.candidates.map(({ queueItemId }) => queueItemId),
       report.staticBatch.orderedJobIds,
@@ -4302,11 +5062,15 @@ async function resultsAddSaveReopen(project, completed) {
       outputs[1].pngSha256,
       'Fixed seed neighbors must discriminate output association',
     )
-    assert.equal(outputs[0].pngSha256, preservationBaseline.initializationControl.pngSha256)
-    assert.equal(outputs[0].rgbaSha256, preservationBaseline.initializationControl.rgbaSha256)
+    if (staticBatchProfile) {
+      assert.equal(outputs[0].pngSha256, preservationBaseline.initializationControl.pngSha256)
+      assert.equal(outputs[0].rgbaSha256, preservationBaseline.initializationControl.rgbaSha256)
+    }
     report.staticBatch.outputs = outputs
     check(
-      'Both signed Results independently decode to their own receipts; seed123 exactly matches the predeclared same-policy control',
+      globalTiProfile
+        ? 'Both TI Results independently decode to their own receipts; historical zero-TI controls remain preserved without cross-resource PNG equality'
+        : 'Both signed Results independently decode to their own receipts; seed123 exactly matches the predeclared same-policy control',
       { outputs },
     )
   }
@@ -4343,10 +5107,10 @@ async function resultsAddSaveReopen(project, completed) {
   assert.equal(before.dirty, false)
   assert.equal(before.layers.length, 0)
   await tray().getByRole('checkbox', { name: 'Select candidate 1', exact: true }).check()
-  if (staticBatchProfile)
+  if (multipleResultsProfile)
     await tray().getByRole('checkbox', { name: 'Select candidate 2', exact: true }).uncheck()
   await tray().getByRole('button', { name: 'Add 1 as Layer', exact: true }).click()
-  if (staticBatchProfile) {
+  if (multipleResultsProfile) {
     const review = window.getByRole('dialog', { name: 'Accept generation results', exact: true })
     await expect(review).toBeVisible({ timeout: timeout() })
     await expect(review).toContainText('1 unchecked temporary result will be discarded.')
@@ -4374,24 +5138,32 @@ async function resultsAddSaveReopen(project, completed) {
   assertRasterGeometry(layer)
   assert.equal(added.dirty, true)
   assert.equal((await api('listGenerationResults', project.id)).candidates.length, 0)
-  if (staticBatchProfile) {
+  if (multipleResultsProfile) {
     const sql = await progressSql()
     assert.deepEqual(sql.receipts, report.staticBatch.receipts)
     assert.equal(sql.cursors.length, 1)
     assert.equal(sql.cursors[0].actual_seed, 124)
+    const sessionIds = globalTiProfile
+      ? report.globalEmbeddingFlow.stagingSessionIds
+      : [report.staticBatch.stagingSessionId]
     const tombstones = await database.db
       .selectFrom('generation_staging_discarded_session')
       .selectAll()
       .where('local_project_key', '=', project.id)
-      .where('staging_session_id', '=', report.staticBatch.stagingSessionId)
+      .where('staging_session_id', 'in', sessionIds)
+      .orderBy('staging_session_id')
       .execute()
-    assert.equal(tombstones.length, 1)
+    assert.equal(tombstones.length, sessionIds.length)
+    assert.deepEqual(
+      tombstones.map(({ staging_session_id }) => staging_session_id),
+      [...sessionIds].sort(),
+    )
     report.staticBatch.acceptanceDecision = {
       selectedJobId: completed.row.id,
       discardedUnselectedJobId: report.staticBatch.orderedJobIds[1],
       bothPngsRetainedBeforeAdd: true,
       bothReceiptsPreserved: true,
-      tombstone: tombstones[0],
+      ...(globalTiProfile ? { tombstones } : { tombstone: tombstones[0] }),
     }
   }
   assert.equal(await hashFile(project.file), packageBefore, 'Add must not implicitly Save')
@@ -4432,7 +5204,7 @@ async function resultsAddSaveReopen(project, completed) {
   }
   assert.deepEqual(saved.project.regionalGuidance, portableRegions(before))
   assertBaseProvenance(accepted.generationProvenance, report.output, completed.frozen)
-  assert.equal(saved.project.lastActualSeedSnapshot, staticBatchProfile ? 124 : 123)
+  assert.equal(saved.project.lastActualSeedSnapshot, multipleResultsProfile ? 124 : 123)
   assert.deepEqual(
     await database.db
       .selectFrom('generation_acceptance_journal')
@@ -4663,7 +5435,42 @@ async function finalIdentities() {
     const whole = recoveryProfile || progressProfile ? await sqlSnapshot(db.db) : null
     if (recoveryProfile) assertBaselineSql(whole)
     if (progressProfile) await verifyProgressPreservation(db.db)
-    if (staticBatchProfile) {
+    if (globalTiProfile) {
+      await verifyGlobalEmbeddingFiles()
+      const own = ownProgressSql(whole)
+      assert.equal(own.queue.length, 3)
+      assert.deepEqual(
+        own.queue.map(({ id, status }) => ({ id, status })),
+        report.globalEmbeddingFlow.finalQueue.map(({ id, status }) => ({ id, status })),
+      )
+      for (const row of own.queue)
+        assert.equal(
+          row.frozen_payload_json,
+          report.globalEmbeddingFlow.captured.find(
+            ({ row: capturedRow }) => capturedRow.id === row.id,
+          ).row.frozen_payload_json,
+        )
+      assert.deepEqual(own.receipts, report.staticBatch.receipts)
+      assert.equal(own.receipts.length, 2)
+      for (const [index, receipt] of own.receipts.entries()) {
+        assert.equal(receipt.queue_item_id, report.staticBatch.outputs[index].queueItemId)
+        assert.equal(receipt.image_sha256, report.staticBatch.outputs[index].pngSha256)
+        assert.equal(receipt.image_byte_size, report.staticBatch.outputs[index].byteSize)
+        assert.equal(receipt.actual_seed, 123 + index)
+      }
+      assert.equal(own.cursors.length, 1)
+      assert.equal(own.cursors[0].actual_seed, 124)
+      assert.equal(own.cursors[0].candidate_id, own.receipts[1].candidate_id)
+      const discarded = await db.db
+        .selectFrom('generation_staging_discarded_session')
+        .selectAll()
+        .where('local_project_key', '=', progressProject.id)
+        .where('staging_session_id', 'in', report.globalEmbeddingFlow.stagingSessionIds)
+        .orderBy('staging_session_id')
+        .execute()
+      assert.deepEqual(discarded, report.staticBatch.acceptanceDecision.tombstones)
+      report.finalSql = own
+    } else if (staticBatchProfile) {
       const own = ownProgressSql(whole)
       assert.equal(own.queue.length, 2)
       assert.ok(
@@ -4822,6 +5629,55 @@ async function assertStaticBatchActions(project) {
   )
 }
 
+async function assertGlobalEmbeddingActions(project) {
+  const observed = await retainObservers(false)
+  assert.ok(
+    observed.ipc
+      .filter(({ channel }) => channel !== 'projects:open')
+      .every(({ originalCalls, finished, ok }) => originalCalls === 1 && finished && ok === true),
+  )
+  const generate = observed.ipc.filter(({ channel }) => channel === 'projects:generate')
+  assert.equal(generate.length, 1)
+  assert.deepEqual(generate[0].args[1], { documentId: project.document.documentId, iterations: 2 })
+  assert.deepEqual(
+    generate[0].response.value.jobIds,
+    report.globalEmbeddingFlow.originalBatchJobIds,
+  )
+  const cancel = observed.ipc.filter(({ channel }) =>
+    ['projects:cancel-generation-job', 'projects:cancel-current-generation'].includes(channel),
+  )
+  assert.equal(cancel.length, 1)
+  assert.equal(cancel[0].channel, 'projects:cancel-generation-job')
+  assert.equal(cancel[0].args[0].id, report.globalEmbeddingFlow.canceledJobId)
+  const retry = observed.ipc.filter(({ channel }) => channel === 'projects:retry-generation-job')
+  assert.equal(retry.length, 1)
+  assert.equal(retry[0].args[0].id, report.globalEmbeddingFlow.canceledJobId)
+  const accepts = observed.ipc.filter(
+    ({ channel }) => channel === 'projects:accept-generation-candidates',
+  )
+  assert.equal(accepts.length, 1)
+  assert.deepEqual(accepts[0].args[1], [report.staticBatch.orderedJobIds[0]])
+  assert.deepEqual(accepts[0].args[3], report.staticBatch.orderedJobIds)
+  assert.deepEqual(accepts[0].args[4], [])
+  for (const [channel, count] of [
+    ['projects:undo', 1],
+    ['projects:redo', 1],
+    ['projects:save', 2],
+  ])
+    assert.equal(observed.ipc.filter((call) => call.channel === channel).length, count)
+  assert.equal(regionalWires(observed).length, 3)
+  report.globalEmbeddingFlow.originalActions = {
+    generate: generate[0],
+    cancel: cancel[0],
+    retry: retry[0],
+    accept: accepts[0],
+    noExtraGenerate: true,
+  }
+  check(
+    'Exactly one original UI Generate, one observed Cancel, one original frozen Retry and reviewed Add/Discard/Undo/Redo/two Save actions',
+  )
+}
+
 checkpoint()
 // Independent inherited systemd and native owned-scope watchdogs survive this launcher.
 // This local guard also closes the owned app and retains a report if a UI/IPC wait stalls.
@@ -4845,6 +5701,13 @@ try {
   if (recoveryProfile) {
     await recoveryThreeLifetimes()
     await assertRecoveryActions()
+  } else if (globalTiProfile) {
+    const project = projects.find(({ mode }) => mode === 'transparent')
+    progressProject = project
+    await installProgressDomObserver()
+    const completed = await generateGlobalEmbeddingBatchRetry(project)
+    await resultsAddSaveReopen(project, completed)
+    await assertGlobalEmbeddingActions(project)
   } else if (staticBatchProfile) {
     const project = projects.find(({ mode }) => mode === 'transparent')
     progressProject = project
@@ -4979,13 +5842,15 @@ try {
   report.completedAt = new Date().toISOString()
   report.elapsedSeconds = (Date.now() - started) / 1000
   check(
-    staticBatchProfile
-      ? 'Finite installed two-image static batch, exact frozen identity, distinct Results and reviewed Add/Discard/Undo/Save qualification completed; no quality or throughput claim'
-      : workerFaultProfile
-        ? 'Finite installed worker-only fault/normal failure/progress clearing/frozen Retry qualification completed with the same live Main; no visual-quality or capacity claim'
-        : progressProfile
-          ? 'Finite installed original scalar progress/Cancel/frozen Retry qualification completed; no visual-quality or capacity claim'
-          : 'Finite installed public UI Regional qualification completed; evidence supports this exact matrix and no visual-quality or numerical-step claim',
+    globalTiProfile
+      ? 'Finite installed global/region exact TI batch, observed Cancel, frozen Retry, two Results and global-only accepted provenance completed; no new native TI-causality or quality claim'
+      : staticBatchProfile
+        ? 'Finite installed two-image static batch, exact frozen identity, distinct Results and reviewed Add/Discard/Undo/Save qualification completed; no quality or throughput claim'
+        : workerFaultProfile
+          ? 'Finite installed worker-only fault/normal failure/progress clearing/frozen Retry qualification completed with the same live Main; no visual-quality or capacity claim'
+          : progressProfile
+            ? 'Finite installed original scalar progress/Cancel/frozen Retry qualification completed; no visual-quality or capacity claim'
+            : 'Finite installed public UI Regional qualification completed; evidence supports this exact matrix and no visual-quality or numerical-step claim',
   )
 } catch (error) {
   report.outcome = 'failed'

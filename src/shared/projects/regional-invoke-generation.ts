@@ -14,6 +14,19 @@ export function hasEnabledRegionalGuidance(
   return input.regionalGuidance?.some((region) => region.enabled) ?? false
 }
 
+/** Use the existing literal/ref resolver for both plain Main values and renderer proxies. */
+export function hasActiveGlobalPromptEmbeddings(
+  input: Pick<IgsProjectDocumentV1, 'generationDraft'>,
+): boolean {
+  return [input.generationDraft.positivePrompt, input.generationDraft.negativePrompt].some(
+    (prompt) =>
+      activePromptEmbeddingRefs(
+        prompt.text,
+        prompt.embeddingRefs.map((ref) => ({ resource: { ...ref.resource }, token: ref.token })),
+      ).length > 0,
+  )
+}
+
 /**
  * Advisory for the finite Current Canvas route; Main verifies pixels, exact local resources and
  * runtime again. InvokeAI a61ac4fb75bec78d92885bf39bcf3ed3900a9bdd sources consulted:
@@ -24,6 +37,7 @@ export function hasEnabledRegionalGuidance(
  */
 export function getInvokeRegionalGenerationUnavailableReason(input: {
   document: RegionalDocument
+  embeddingsSupported?: boolean | null
   initializationSupported?: boolean | null
   iterations: number
   runtimeSupported?: boolean | null
@@ -82,19 +96,6 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
     return 'Regional Guidance requires static global and regional prompts without braces.'
   }
   if (
-    globalPrompts.some(
-      (prompt) =>
-        // Renderer drafts can be Vue proxies; the existing active-ref resolver returns a detached
-        // structured clone. Project primitive exact-ref records before crossing that boundary.
-        activePromptEmbeddingRefs(
-          prompt.text,
-          prompt.embeddingRefs.map((ref) => ({ resource: { ...ref.resource }, token: ref.token })),
-        ).length,
-    )
-  ) {
-    return 'Remove active global embedding tokens before generating with Regional Guidance.'
-  }
-  if (
     !Number.isSafeInteger(input.iterations) ||
     input.iterations < 1 ||
     input.iterations > GENERATION_BATCH_JOB_LIMIT
@@ -126,6 +127,14 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
     }
     if (input.initializationSupported !== true) {
       return 'The current image engine does not support Regional Guidance with Euler a. Repair or update the runtime.'
+    }
+  }
+  if (hasActiveGlobalPromptEmbeddings(input.document)) {
+    if (input.embeddingsSupported === undefined || input.embeddingsSupported === null) {
+      return 'Checking image engine support for global embeddings with Regional Guidance. Repair or update the runtime if support remains unavailable.'
+    }
+    if (input.embeddingsSupported !== true) {
+      return 'The current image engine does not support global embeddings with Regional Guidance. Repair or update the runtime.'
     }
   }
   return null

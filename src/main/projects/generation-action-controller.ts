@@ -47,6 +47,7 @@ import {
 } from '../../shared/projects/regional-guidance.js'
 import {
   getInvokeRegionalGenerationUnavailableReason,
+  hasActiveGlobalPromptEmbeddings,
   hasEnabledRegionalGuidance,
 } from '../../shared/projects/regional-invoke-generation.js'
 
@@ -595,6 +596,7 @@ export class ProjectGenerationActionController {
   ): Promise<ProjectGenerateResult> {
     const unavailable = getInvokeRegionalGenerationUnavailableReason({
       document,
+      embeddingsSupported: true,
       initializationSupported: true,
       iterations: request.iterations,
       runtimeSupported: true,
@@ -657,6 +659,8 @@ export class ProjectGenerationActionController {
               assertAction()
               if (
                 !supportsRegional(preparation.inferenceReady) ||
+                (hasActiveGlobalPromptEmbeddings(document) &&
+                  !supportsInferenceEmbeddings(preparation.inferenceReady)) ||
                 (document.generationDraft.sampling.sampler === 'Euler a' &&
                   !supportsInferenceRegionalInvokeInitialization(preparation.inferenceReady))
               ) {
@@ -1347,6 +1351,9 @@ export class ProjectGenerationActionController {
               this.assertDocument(source.projectKey, source.documentId)
               if (
                 !supportsRegional(ready) ||
+                (((frozen.payload.workerJob.embeddings?.positive.length ?? 0) > 0 ||
+                  (frozen.payload.workerJob.embeddings?.negative.length ?? 0) > 0) &&
+                  !supportsInferenceEmbeddings(ready)) ||
                 (frozen.payload.initializationProfile !== undefined &&
                   !supportsInferenceRegionalInvokeInitialization(ready))
               ) {

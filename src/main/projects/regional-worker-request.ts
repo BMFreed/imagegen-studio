@@ -18,7 +18,9 @@ import type { VerifiedWorkerImage } from './worker-client.js'
 
 import {
   ExactIllustriousEmbeddingSchema,
+  frozenEmbeddingFieldsAgree,
   FrozenGenerationEmbeddingsSchema,
+  IllustriousWorkerEmbeddingsSchema,
 } from './illustrious-generation-embeddings.js'
 import {
   captureInferenceWorkerOwnerValue,
@@ -147,9 +149,7 @@ const requestSchema = v.strictObject({
       predictionType: v.literal('epsilon'),
       sha256: digest,
     }),
-    embeddings: v.optional(
-      v.strictObject({ negative: v.strictTuple([]), positive: v.strictTuple([]) }),
-    ),
+    embeddings: v.optional(IllustriousWorkerEmbeddingsSchema),
     loras: v.optional(v.strictTuple([])),
     output: v.strictObject({ pngPath: filePath, stagingRoot: filePath }),
     prompts: v.strictObject({ negative: text, positive: text }),
@@ -157,7 +157,7 @@ const requestSchema = v.strictObject({
       cfgRescale: v.optional(v.literal(0)),
       cfgScale: v.pipe(v.number(), v.finite(), v.minValue(1), v.maxValue(30)),
       noiseProfile: IllustriousNoiseProfileV1Schema,
-      // Private qualification also admits native Euler a; public draft/queue guards stay Euler-only.
+      // Main freezes the matching public/private sampler and initialization policy separately.
       scheduler: v.picklist(['euler', 'euler_a']),
       seed: integer(0, 0xff_ff_ff_ff),
       steps: integer(1, 200),
@@ -361,6 +361,16 @@ export async function prepareRegionalWorkerRequest(
             ...coverage,
             alpha: await alphaDescriptor(coverage.alpha, `global-${sign}.alpha8`),
           }
+    // Invoke applies TI while building each prompt's conditioning. The recipe owns that loading
+    // here; the ordinary command remains intact for frozen agreement, provenance and Retry.
+    const nativeRequest = structuredClone(request)
+    if (
+      detached.compositionProfile === 'invoke-canvas-v1' &&
+      ((nativeRequest.job.embeddings?.positive.length ?? 0) > 0 ||
+        (nativeRequest.job.embeddings?.negative.length ?? 0) > 0)
+    ) {
+      delete nativeRequest.job.embeddings
+    }
     const bundle = {
       ...(detached.compositionProfile ? { compositionProfile: detached.compositionProfile } : {}),
       ...(detached.initializationProfile !== undefined
@@ -372,7 +382,7 @@ export async function prepareRegionalWorkerRequest(
       negativePooledSourceId: detached.negativePooledSourceId,
       positivePooledSourceId: detached.positivePooledSourceId,
       recipe: { ...detached.recipe, regions },
-      request,
+      request: nativeRequest,
       schemaVersion: 1,
     }
     assertJsonTree(bundle)
@@ -464,6 +474,30 @@ function validateAgreement(input: v.InferOutput<typeof inputSchema>): void {
     (input.layout === 'positive-only') !== (sampling.cfgScale === 1)
   ) {
     throw invalid('Regional recipe, command, layout or geometry disagree.')
+  }
+  const embeddings = request.job.embeddings
+  const effectiveWire =
+    embeddings && (embeddings.positive.length > 0 || embeddings.negative.length > 0)
+      ? embeddings
+      : undefined
+  if (input.compositionProfile === 'invoke-canvas-v1') {
+    if (
+      !frozenEmbeddingFieldsAgree(
+        {
+          embeddingRefs: {
+            negative: recipe.globalPrompts.negative.embeddingRefs,
+            positive: recipe.globalPrompts.positive.embeddingRefs,
+          },
+          embeddings: recipe.globalEmbeddings,
+          prompts,
+        },
+        effectiveWire,
+      )
+    ) {
+      throw invalid('Public global embedding bindings differ from their recipe and command.')
+    }
+  } else if (effectiveWire !== undefined) {
+    throw invalid('Private regional resources must remain owned by the recipe.')
   }
   const allPrompts = [recipe.globalPrompts.negative, recipe.globalPrompts.positive]
   const ids = new Set(['current-canvas'])

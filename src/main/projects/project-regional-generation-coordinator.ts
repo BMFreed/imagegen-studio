@@ -3,11 +3,15 @@ import { GENERATION_BATCH_JOB_LIMIT } from '../../shared/projects/generation-bat
 import { isIllustriousNoiseProfileV1 } from '../../shared/projects/illustrious-noise-profile.js'
 import {
   isQualifiedInferenceWorkerReady,
+  supportsInferenceEmbeddings,
   supportsInferenceRegionalInvokeInitialization,
 } from '../../shared/projects/inference-worker-capabilities.js'
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 import { activePromptEmbeddingRefs } from '../../shared/projects/prompt-embeddings.js'
-import { getInvokeRegionalGenerationUnavailableReason } from '../../shared/projects/regional-invoke-generation.js'
+import {
+  getInvokeRegionalGenerationUnavailableReason,
+  hasActiveGlobalPromptEmbeddings,
+} from '../../shared/projects/regional-invoke-generation.js'
 
 import { randomUUID } from 'node:crypto'
 
@@ -412,6 +416,9 @@ export class ProjectRegionalGenerationCoordinator {
             if (
               !isQualifiedInferenceWorkerReady(ready) ||
               !ready.capabilities.includes(capability) ||
+              (compositionProfile &&
+                hasActiveGlobalPromptEmbeddings(document) &&
+                !supportsInferenceEmbeddings(ready)) ||
               (initializationProfile !== undefined &&
                 !supportsInferenceRegionalInvokeInitialization(ready))
             ) {
@@ -438,11 +445,31 @@ export class ProjectRegionalGenerationCoordinator {
             )
             const target = await capture.composeTarget({ composeTarget })
             assertCurrent()
+            const authoredEmbeddingRefs = {
+              negative: structuredClone(target.generationDraft.negativePrompt.embeddingRefs),
+              positive: structuredClone(target.generationDraft.positivePrompt.embeddingRefs),
+            }
+            const preparationTarget = compositionProfile
+              ? { ...target, generationDraft: structuredClone(target.generationDraft) }
+              : target
+            if (compositionProfile) {
+              // Public regional prompts are already static. Resolve only their effective refs;
+              // ordinary dynamic preparation still owns its broader authored resource pool.
+              for (const prompt of [
+                preparationTarget.generationDraft.negativePrompt,
+                preparationTarget.generationDraft.positivePrompt,
+              ]) {
+                prompt.embeddingRefs = activePromptEmbeddingRefs(prompt.text, prompt.embeddingRefs)
+              }
+            }
             const prepared = await prepareNormalTxt2Img({
               lastActualSeed: operationalSeed,
               modelService: this.models,
-              target,
+              target: preparationTarget,
             })
+            if (compositionProfile) {
+              prepared.context.embeddingRefs = authoredEmbeddingRefs
+            }
             assertCurrent()
             const plan = planGenerationBatch({
               baseSeed: prepared.context.sampling.seed,
@@ -569,6 +596,7 @@ export class ProjectRegionalGenerationCoordinator {
 function validateInvokeDraft(document: IgsProjectDocumentV1, iterations = 1): void {
   const reason = getInvokeRegionalGenerationUnavailableReason({
     document,
+    embeddingsSupported: true,
     initializationSupported: true,
     iterations,
     runtimeSupported: true,

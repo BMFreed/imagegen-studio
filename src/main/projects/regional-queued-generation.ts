@@ -18,6 +18,7 @@ import type { IllustriousTxt2ImgRequestV1 } from './illustrious-txt2img-job.js'
 import type { RegionalWorkerInput } from './regional-worker-request.js'
 
 import { GenerationQueueError, parseFrozenGenerationPayloadV1 } from './generation-queue.js'
+import { frozenEmbeddingFieldsAgree } from './illustrious-generation-embeddings.js'
 import { captureRegionalWorkerInput } from './regional-worker-request.js'
 
 /** Private operational identity, outside normal Generate and accepted-result provenance. */
@@ -110,8 +111,12 @@ export function parseAcceptedGenerationBaseV1(json: string): FrozenQueuedGenerat
  * freezes the same input ownership as bounded fixed-role files in Studio's existing queue folder.
  * The queue owner writes/fsyncs the returned bytes before publishing its SQLite row.
  */
-export function captureRegionalQueuedMaterial(input: RegionalWorkerInput): RegionalQueuedMaterial {
+export function captureRegionalQueuedMaterial(
+  input: RegionalWorkerInput,
+  context?: FrozenQueuedIllustriousTxt2ImgV1['context'],
+): RegionalQueuedMaterial {
   const captured = captureRegionalWorkerInput(input)
+  assertPublicRegionalGlobalEmbeddingsAgree(captured, context)
   const files: Record<string, Buffer> = {}
   let aggregate = 0
   const alpha = (samples: Uint8Array, file: string): AlphaRef => {
@@ -169,6 +174,60 @@ export function captureRegionalQueuedMaterial(input: RegionalWorkerInput): Regio
   }
 }
 
+/** Public global refs belong to the ordinary frozen context as well as the conditioning recipe. */
+export function assertPublicRegionalGlobalEmbeddingsAgree(
+  input: RegionalWorkerInput,
+  context?: FrozenQueuedIllustriousTxt2ImgV1['context'],
+): void {
+  if (input.compositionProfile !== 'invoke-canvas-v1') {
+    return
+  }
+  try {
+    const capturedContext = context === undefined ? undefined : structuredClone(context)
+    const { recipe } = input
+    const embeddings = input.request.job.embeddings
+    const effectiveWire =
+      embeddings && (embeddings.positive.length > 0 || embeddings.negative.length > 0)
+        ? embeddings
+        : undefined
+    const globals = {
+      embeddingRefs: {
+        negative: recipe.globalPrompts.negative.embeddingRefs,
+        positive: recipe.globalPrompts.positive.embeddingRefs,
+      },
+      embeddings: recipe.globalEmbeddings,
+      prompts: {
+        negative: recipe.globalPrompts.negative.text,
+        positive: recipe.globalPrompts.positive.text,
+      },
+    }
+    if (!frozenEmbeddingFieldsAgree(globals, effectiveWire)) {
+      throw invalid('Public global embedding bindings differ from the recipe.')
+    }
+    if (capturedContext === undefined) {
+      if (effectiveWire !== undefined) {
+        throw invalid('Public global embeddings require their full frozen context.')
+      }
+      return
+    }
+    if (
+      !frozenEmbeddingFieldsAgree(capturedContext, effectiveWire) ||
+      !isDeepStrictEqual(capturedContext.prompts, globals.prompts) ||
+      !isDeepStrictEqual(
+        capturedContext.embeddings ?? { negative: [], positive: [] },
+        globals.embeddings,
+      )
+    ) {
+      throw invalid('Public global embeddings differ from the full frozen context.')
+    }
+  } catch (error) {
+    if (error instanceof GenerationQueueError) {
+      throw error
+    }
+    throw invalid('The public global embedding context is invalid.')
+  }
+}
+
 /** Return independently verified owned sidecar bytes for an exact Retry copy. */
 export async function loadRegionalQueuedFiles(
   root: string,
@@ -204,6 +263,7 @@ export async function loadRegionalQueuedInput(
   } catch {
     throw invalid('The frozen regional recipe/request association is invalid.')
   }
+  assertPublicRegionalGlobalEmbeddingsAgree(captured, capturedPayload.context)
   const { output: _output, target, ...job } = captured.request.job
   const { path: _targetPath, ...targetDescriptor } = target
   if (
@@ -280,8 +340,9 @@ function parseRegionalPayload(json: string, invoke: boolean): FrozenQueuedRegion
     ordinary.workerJob.vaePrecision !== 'FP16' ||
     ordinary.workerJob.vae != null ||
     (ordinary.workerJob.loras?.length ?? 0) !== 0 ||
-    (ordinary.workerJob.embeddings?.positive.length ?? 0) !== 0 ||
-    (ordinary.workerJob.embeddings?.negative.length ?? 0) !== 0
+    (!invoke &&
+      ((ordinary.workerJob.embeddings?.positive.length ?? 0) !== 0 ||
+        (ordinary.workerJob.embeddings?.negative.length ?? 0) !== 0))
   ) {
     throw invalid('The frozen regional job differs from the private execution profile.')
   }

@@ -1595,7 +1595,6 @@ browser/build checks, source reviews, sensitivity, excluded attempts and retenti
 No quality, general parity, capacity or release-readiness claim follows.
 Historical negative visual results and PP-001/007/008 **«Пока не обещать»** remain.
 
-
 ## Installed public regional continuation
 
 The [installed public qualification](./phase-4-regional-guidance-installed-research.md)
@@ -1613,7 +1612,6 @@ optional thumbnails, quality, Anima and capacity remain separate. Earlier adapte
 results and failed harness attempts are not relabeled as installed PASS. Public
 promise statuses remain unchanged; consult the linked note for retained evidence
 and lifecycle closure.
-
 
 ## Installed Regional restart and staged-result recovery
 
@@ -1861,3 +1859,25 @@ payload entries are archived;46,342,144 allocated bytes of idle own scratch are
 removed after exit/restoration/reader gates. Shared runtime/model and durable
 data remain protected. Defaults, visual NOT_QUALIFIED and PP-001/007/008 stay
 unchanged; no capacity/release or Anima qualification follows.
+
+## Global TI with public Regional Guidance
+
+The [exact-global continuation](./phase-4-regional-guidance-global-embeddings-research.md)
+connects global embeddings to the existing recipe TI owner for static public
+batches and frozen Retry. Full context/recipe/logical-command identity is checked
+before admission and on reload; native serialization has one loader owner.
+Dormant refs remain authored without resolving them, and accepted provenance
+projects consumed global refs only. A discovered loader seam is corrected by a
+neutral-prompt model-loading copy, preserving original verified conditioning.
+
+ROOT:418 distinct Main and164 Python PASS; typecheck, scoped checks, strict Python
+typing and build PASS. Two Main mutations give10GREEN/2semanticRED with exact
+restoration. Installed native-r3 passes15 grouped checks in271.781s: three wires,
+two PNGs, batch/Cancel/frozen Retry after edits, Results/Add/Discard/Undo/Save-reopen.
+Prior business data stays preserved, with normal Home index timestamps and two
+receipt-counter increments explicit. Earlier loader and tab-wait attempts remain
+excluded. Independent source reviews are CLEAN; runtime observations remain ROOT
+execution. All4,725 own/input entries are archived;112,029,696 allocated bytes of
+idle own payloads are removed. The one refreshed runtime/catalog/model and four
+managed TI originals remain protected. No visual/human, Anima, capacity/release
+or PP-001/007/008 promotion follows.

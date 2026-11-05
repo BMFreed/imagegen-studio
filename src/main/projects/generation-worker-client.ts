@@ -19,6 +19,7 @@ import {
   supportsInferenceAnimaOutpaint,
   supportsInferenceCFGRescale,
   supportsInferenceDenoisingProgress,
+  supportsInferenceEmbeddings,
   supportsInferenceEuler,
   supportsInferenceExternalVae,
   supportsInferenceIllustriousNoiseProfile,
@@ -428,6 +429,17 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     let dispatched = false
     let completed = false
     try {
+      if (
+        input.compositionProfile === 'invoke-canvas-v1' &&
+        ((input.request.job.embeddings?.positive.length ?? 0) > 0 ||
+          (input.request.job.embeddings?.negative.length ?? 0) > 0) &&
+        !supportsInferenceEmbeddings(this.ready)
+      ) {
+        throw new GenerationWorkerError(
+          'WORKER_VERSION_MISMATCH',
+          'The active worker has not qualified the frozen global embedding resources.',
+        )
+      }
       if (
         input.initializationProfile !== undefined &&
         !supportsInferenceRegionalInvokeInitialization(this.ready)

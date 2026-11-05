@@ -1110,7 +1110,8 @@ supersedes the earlier blanket public-NEW/Results exclusion only for one static
 Current Canvas item: Illustrious epsilon, Euler/Normal (plus the explicit
 [Euler-a extension below](#public-authored-euler-a-with-frozen-initialization)), explicit FP16 Embedded
 VAE, steps 1–200, CFG `(1,30]`, rescale zero, no enabled LoRA/reference images,
-no active global TI and at most three enabled regions. Existing target/payload
+exact global TI through the [later extension](#global-exact-embeddings-with-regional-guidance)
+and at most three enabled regions. Existing target/payload
 bounds remain; actual opaque/mixed-alpha targets refuse. Anima and Smart regional
 execution remain separate. Unsupported authored values receive a reason instead
 of being forced into this profile.
@@ -1144,7 +1145,6 @@ The linked note records browser/build results, excluded attempts and lifecycle.
 Earlier negative visual findings are preserved; no quality or release-readiness
 claim follows. PP-001/007/008 remain **«Пока не обещать»**.
 
-
 ## Installed public UI qualification
 
 The [installed continuation](../../../engineering/phase-4-regional-guidance-installed-research.md)
@@ -1163,7 +1163,6 @@ optional thumbnail production, quality, Anima regional execution, capacity and f
 Invoke parity remain unqualified. Earlier negative visual findings and
 PP-001/007/008 **«Пока не обещать»** remain unchanged. The linked note retains failed
 attempts, the private startup-scratch correction and separate evidence levels.
-
 
 ## Installed interruption and recovered Results
 
@@ -1207,7 +1206,6 @@ unaccepted candidate are preserved. The scope is the Linux creating-parent
 thread/direct-child relationship; fork descendants, quality, Anima regional,
 numerical progress, capacity and release Install/Repair remain unqualified.
 PP-001/007/008 remain **«Пока не обещать»**.
-
 
 ## Fixed two-character visual check
 
@@ -1439,3 +1437,30 @@ Raster and drops the unselected candidate under the existing session rule;
 Undo/Redo, Save ZIP/reopen and both receipt/history records pass. The saved
 completed-seed snapshot stays124. No GPU-throughput, visual/human, Anima or
 release promotion follows; NOT_QUALIFIED and PP-001/007/008 **«Пока не обещать»** remain.
+
+## Global exact embeddings with Regional Guidance
+
+The [global-TI extension](../../../engineering/phase-4-regional-guidance-global-embeddings-research.md)
+allows active static global embeddings with public Invoke Canvas regional jobs,
+including batches and frozen Retry. Ordinary frozen context retains authored
+refs and effective exact resources; recipe, context and logical command must
+agree by full signed identity, even when distinct catalog resources share bytes.
+Inactive refs are retained without resolving them. Default does not select a
+replacement. The recipe alone loads TI; only its detached native command omits
+global embedding tuples. Model loading uses a separate neutral-prompt parameter
+copy while actual conditioning receives the unchanged verified text and recipe.
+
+Existing capability, resource/vector/row, geometry, batch and memory bounds stay
+unchanged. Missing or changed frozen global files refuse Retry before its SQL
+transition. Accepted base provenance includes consumed global refs only;
+regional refs/masks/prompts and operational identities remain excluded.
+
+ROOT:418 distinct Main PASS,164 Python PASS, typecheck/build/scoped checks and
+12 Main mutation selections (10GREEN/2semanticRED with controls/restoration).
+Installed native-r3 passes15 grouped checks: batch123/124, observed Cancel124,
+saved authoring edits then frozen Retry124, two PNG/Results, reviewed cross-session
+Add/Discard, Undo/Redo and Save ZIP/reopen. Earlier loader failure and tab-wait
+attempt remain excluded. Four tiny synthetic TI resources establish binding
+ownership, not trained TI quality or new native vector causality. The existing
+runtime0.14 is refreshed in place; no model/environment copy or new protocol.
+Visual/human, Anima, capacity/release and PP-001/007/008 remain unchanged.

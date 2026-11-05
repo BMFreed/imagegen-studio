@@ -6,6 +6,7 @@ import {
 } from '../../shared/projects/generation-progress.js'
 import {
   isQualifiedInferenceWorkerReady,
+  supportsInferenceEmbeddings,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalProgress,
 } from '../../shared/projects/inference-worker-capabilities.js'
@@ -451,6 +452,17 @@ export class RegionalGenerationProcessor {
         return { kind: 'canceled', queueItemId: claimed.item.id }
       }
       const input = captureRegionalWorkerInput(claimed.input)
+      if (
+        input.compositionProfile === 'invoke-canvas-v1' &&
+        ((input.request.job.embeddings?.positive.length ?? 0) > 0 ||
+          (input.request.job.embeddings?.negative.length ?? 0) > 0) &&
+        !supportsInferenceEmbeddings(transport.ready)
+      ) {
+        throw new RegionalGenerationProcessorError(
+          'INFERENCE_UNAVAILABLE',
+          'The worker has not qualified the frozen global embedding resources.',
+        )
+      }
       if (
         input.initializationProfile !== undefined &&
         !supportsInferenceRegionalInvokeInitialization(transport.ready)

@@ -22,7 +22,7 @@ import importlib
 import json
 import os
 import stat
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -542,8 +542,13 @@ def execute_regional_request(
     )
     torch = cast(Any, runtime.torch)
     with torch.no_grad():
+        # Invoke acquires model components before per-prompt TI/Compel conditioning.
+        # This loader must not parse recipe-owned TI as ordinary resource-free text or
+        # install it on the borrowed originals. The checked recipe/command below keeps
+        # every authored prompt and exact binding for the single conditioning owner.
+        loading_parameters = replace(request.parameters, positive_prompt="", negative_prompt="")
         pipeline, _ = load_illustrious_pipeline(
-            request.parameters, config_dir=config_dir, runtime=runtime, mode="txt2img"
+            loading_parameters, config_dir=config_dir, runtime=runtime, mode="txt2img"
         )
         for component in (
             pipeline.text_encoder,

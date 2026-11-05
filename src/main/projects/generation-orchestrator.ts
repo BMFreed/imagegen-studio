@@ -1361,6 +1361,10 @@ export class GenerationOrchestrator {
         compositionProfile === 'invoke-canvas-v1'
           ? this.queue.retryInvokeCanvasRegionalTerminal.bind(this.queue)
           : this.queue.retryCurrentCanvasRegionalTerminal.bind(this.queue)
+      if (compositionProfile === 'invoke-canvas-v1' && workerEmbeddings(frozen.payload.context)) {
+        await reverifyFrozenGenerationEmbeddings(frozen.payload.context, this.models)
+        assertCurrent()
+      }
       const retried = await retry(id, expectedStatusSequence, async (input) => {
         assertCurrent()
         await this.staging.preflightRegionalBatchCapacity({

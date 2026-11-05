@@ -21,8 +21,10 @@ const CAPABILITY = 'illustrious-regional-invoke-init-v1'
 const BASE_CAPABILITY = 'private-current-canvas-regional-v1'
 
 interface Observation {
+  bundleHasCommandEmbeddings: boolean
   bundleHasInitialization: boolean
   initializationProfile?: unknown
+  recipeGlobalPositiveSha256?: string
   requestId: string
   scheduler: string
   stagingRoot: string
@@ -79,9 +81,11 @@ require('node:readline').createInterface({input: process.stdin}).on('line', line
   const target = fs.readFileSync(bundle.request.job.target.path);
   if (sha(target) !== bundle.request.job.target.sha256) throw Error('Target snapshot differs');
   fs.appendFileSync(received, JSON.stringify({
+    bundleHasCommandEmbeddings: Object.hasOwn(bundle.request.job, 'embeddings'),
     bundleHasInitialization: Object.hasOwn(bundle, 'initializationProfile'),
     initializationProfile: bundle.initializationProfile,
     requestId: wire.requestId,
+    recipeGlobalPositiveSha256: bundle.recipe.globalEmbeddings.positive[0]?.reference.fileSha256,
     scheduler: bundle.request.job.sampling.scheduler,
     stagingRoot: wire.stagingRoot,
     wireKeys: Object.keys(wire).sort(),
@@ -219,6 +223,77 @@ test('initialization advertisement alone cannot replace the regional execution c
       code: 'WORKER_VERSION_MISMATCH',
     })
     await assert.rejects(readFile(received), { code: 'ENOENT' })
+    assert.deepEqual(await readdir(scratch), [])
+  })
+})
+
+async function bindPublicGlobal(input: RegionalWorkerInput, fixture: RegionalQueueFixture) {
+  // Real file/JSONL ownership only; this peer deliberately substitutes native TI computation.
+  const bytes = Buffer.from('explicit global TI client ownership fixture')
+  const file = path.join(fixture.root, 'global-ti.safetensors')
+  await writeFile(file, bytes)
+  const reference = {
+    ...fixture.prepared.context.model.reference,
+    fileSha256: regionalFixtureSha256(bytes),
+    kind: 'embedding' as const,
+    predictionType: null,
+  }
+  const token = '<global-ti>'
+  const text = `global positive ${token}`
+  input.compositionProfile = 'invoke-canvas-v1'
+  input.request.job.prompts.positive = text
+  input.recipe.item = {
+    ...input.recipe.item,
+    prompts: { ...input.recipe.item.prompts, positive: text },
+  }
+  input.recipe.globalPrompts = {
+    ...input.recipe.globalPrompts,
+    positive: { embeddingRefs: [{ resource: reference, token }], text },
+  }
+  input.recipe.globalEmbeddings = {
+    negative: [],
+    positive: [{ byteSize: bytes.length, managedPath: file, reference, token }],
+  }
+  input.request.job.embeddings = {
+    negative: [],
+    positive: [{ byteSize: bytes.length, path: file, sha256: reference.fileSha256, token }],
+  }
+  return reference
+}
+
+test('a current regional peer without the required embeddings capability refuses at startup', async () => {
+  const capabilities = [
+    ...new Set([
+      ...REGIONAL_QUEUE_READY.capabilities,
+      CAPABILITY,
+      'illustrious-regional-invoke-v1',
+    ]),
+  ].filter((entry) => entry !== 'illustrious-embeddings')
+  await assert.rejects(
+    withClient(capabilities, async () => assert.fail('An incompatible peer cannot execute.')),
+    { code: 'WORKER_VERSION_MISMATCH' },
+  )
+})
+
+test('public global TI client keeps logical input and sends recipe-owned resources only', async () => {
+  const capabilities = [
+    ...new Set([
+      ...REGIONAL_QUEUE_READY.capabilities,
+      CAPABILITY,
+      'illustrious-embeddings',
+      'illustrious-regional-invoke-v1',
+    ]),
+  ]
+  await withClient(capabilities, async ({ client, fixture, input, observations, scratch }) => {
+    const reference = await bindPublicGlobal(input, fixture)
+    const before = structuredClone(input)
+    const result = await client.executeCurrentCanvasRegional(input)
+    assert.ok(result.pngBytes.equals(fixture.outputBytes))
+    assert.deepEqual(input, before)
+    const seen = await observations()
+    assert.equal(seen.length, 1)
+    assert.equal(seen[0].bundleHasCommandEmbeddings, false)
+    assert.equal(seen[0].recipeGlobalPositiveSha256, reference.fileSha256)
     assert.deepEqual(await readdir(scratch), [])
   })
 })
