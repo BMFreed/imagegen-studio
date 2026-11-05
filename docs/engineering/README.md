@@ -1881,3 +1881,27 @@ execution. All4,725 own/input entries are archived;112,029,696 allocated bytes o
 idle own payloads are removed. The one refreshed runtime/catalog/model and four
 managed TI originals remain protected. No visual/human, Anima, capacity/release
 or PP-001/007/008 promotion follows.
+
+## Global LoRA stack with public Regional Guidance
+
+The [global-LoRA continuation](./phase-4-regional-guidance-global-loras-research.md)
+adapts current Invoke direct FP32 fusion to each fresh worker-owned pipeline
+before regional borrowing. Exact ordered signed/zero LoRAs remain logical/frozen;
+disabled unavailable rows remain authoring/provenance. Public capability checks
+and exact-file reverification cover admission, frozen Retry and dispatch. Ordinary
+PEFT application and private nonempty-LoRA refusal remain unchanged.
+
+ROOT:460 Main and247 Python PASS, typecheck/scoped checks/build PASS. Four isolated
+mutations yield30GREEN/6semanticRED with controls and exact restoration, including
+actual native CLIP2 contexts and UNet predictions on CPU/CUDA. Installed native-r1
+passes16 grouped checks in277.961s: three wires, batch/Cancel/frozen Retry after
+saved stack/TI edits, two PNG/Results, reviewed Add/Discard/Undo and Save ZIP/reopen.
+Accepted provenance retains the original full configured stack; later saved draft
+edits stay independent. Tiny synthetic LoRAs qualify finite mechanics, not trained
+adapter quality. Separate512MiB serialized/workspace safety bounds do not raise
+TI limits or establish capacity. Visual/human, Anima, release and PP-001/005/007/008
+remain unchanged; details and excluded oracle failures are in the research note.
+Independent source/retained-byte reviews are CLEAN within their stated limits.
+All1,599 own/input entries are archived;43,130,880 allocated bytes of exact idle
+scratch are reclaimed after ROOT exit/restoration/dependency/reader gates. Shared
+runtime/catalog/model, four LoRAs, four TI files and refresh companion remain pinned.

@@ -49,11 +49,13 @@ function reason(
   value: IgsProjectDocumentV1,
   runtimeSupported: boolean | null | undefined = true,
   embeddingsSupported?: boolean | null,
+  loraSupported?: boolean | null,
 ) {
   return getInvokeRegionalGenerationUnavailableReason({
     document: value,
     embeddingsSupported,
     iterations: 1,
+    loraSupported,
     runtimeSupported,
   })
 }
@@ -126,7 +128,7 @@ test('finite regional settings refuse unsupported families, predictions, samplin
   }
 })
 
-test('enabled LoRAs and references refuse while active global TI requires support and dormant data stays inert', () => {
+test('global LoRAs and TI require their support while references refuse and dormant data stays inert', () => {
   const value = document()
   const resource = { ...value.generationDraft.model!, kind: 'embedding' as const }
   value.generationDraft.positivePrompt.embeddingRefs = [{ resource, token: 'exact_ti' }]
@@ -144,7 +146,10 @@ test('enabled LoRAs and references refuse while active global TI requires suppor
   value.generationDraft.loras = [
     { enabled: true, resource: { ...resource, kind: 'lora' }, weight: 0 },
   ]
-  assert.match(reason(value)!, /Disable all LoRAs/)
+  assert.match(reason(value)!, /Checking image engine support for global LoRAs/)
+  assert.match(reason(value, true, true, false)!, /does not support global LoRAs/)
+  assert.equal(reason(value, true, true, true), null)
+  assert.match(reason(value, false, true, true)!, /does not support Regional Guidance/)
   value.generationDraft.loras[0].enabled = false
   assert.equal(reason(value), null)
   const region = value.regionalGuidance![0]
@@ -271,7 +276,11 @@ test('regional capability is an optional strict boolean in preload action respon
     vaePrecisionSupported: true,
   }
   assert.equal(isProjectGenerationActionState(state), true)
-  for (const field of ['regionalSupported', 'regionalInvokeInitializationSupported']) {
+  for (const field of [
+    'regionalSupported',
+    'regionalInvokeInitializationSupported',
+    'regionalLoraSupported',
+  ]) {
     for (const supported of [false, true]) {
       assert.equal(isProjectGenerationActionState({ ...state, [field]: supported }), true)
     }

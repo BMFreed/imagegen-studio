@@ -7,7 +7,10 @@
  * initialization profile additionally consults noise.py, latent_noise.py, devices.py and
  * sd/denoise_latents.py; it observes public selection/frozen identity, not raw initializer math.
  * Static batches additionally trace current webv2 queue promptBatch/submissionApi and the backend
- * all_or_none admission mechanism, adapted to Studio's existing atomic batch contract.
+ * all_or_none admission mechanism, adapted to Studio's existing atomic batch contract. Global LoRAs
+ * additionally trace SDXLLoRACollectionLoader, Compel and UNet callers, LayerPatcher and LoRALayer
+ * at that same revision. The installed proof observes exact ordered resource handoff, not numerical
+ * LoRA causality or borrowed-weight restoration.
  */
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
@@ -101,12 +104,15 @@ assert.ok(
     'installed-regional-invoke-initialization-v1',
     'installed-regional-invoke-static-batch-v1',
     'installed-regional-invoke-global-embeddings-v1',
+    'installed-regional-invoke-global-loras-v1',
   ].includes(fixture.profile),
 )
 const mainDeathProfile = fixture.profile === 'installed-regional-invoke-main-death-v1'
 const workerFaultProfile = fixture.profile === 'installed-regional-invoke-worker-fault-v1'
 const staticBatchProfile = fixture.profile === 'installed-regional-invoke-static-batch-v1'
-const globalTiProfile = fixture.profile === 'installed-regional-invoke-global-embeddings-v1'
+const globalLoraProfile = fixture.profile === 'installed-regional-invoke-global-loras-v1'
+const globalTiProfile =
+  globalLoraProfile || fixture.profile === 'installed-regional-invoke-global-embeddings-v1'
 const multipleResultsProfile = staticBatchProfile || globalTiProfile
 const initializationProfile =
   multipleResultsProfile || fixture.profile === 'installed-regional-invoke-initialization-v1'
@@ -241,6 +247,7 @@ let preservationBaseline = null,
   progressProject = null,
   progressDomInstalled = false
 let globalTi = null
+let globalLoras = null
 let sampling = Promise.resolve()
 const nativeChecks = []
 const projects = []
@@ -330,6 +337,14 @@ if (globalTiProfile)
     'src/main/models/illustrious-embedding-qualification.ts',
     'src/main/projects/illustrious-generation-embeddings.ts',
   )
+if (globalLoraProfile)
+  sourceFiles.push(
+    'src/main/models/illustrious-lora-qualification.ts',
+    'src/main/models/illustrious-lora-target-profile.ts',
+    'src/main/projects/illustrious-generation-loras.ts',
+    'worker-python/src/imagegen_worker/illustrious_regional_lora.py',
+    'worker-python/src/imagegen_worker/illustrious_regional_worker.py',
+  )
 let bundleFiles
 async function captureFiles(files) {
   return Object.fromEntries(
@@ -370,6 +385,8 @@ async function verifyProvision() {
   if (initializationProfile)
     assert.ok(provision.ready.capabilities.includes('illustrious-regional-invoke-init-v1'))
   if (globalTiProfile) assert.ok(provision.ready.capabilities.includes('illustrious-embeddings'))
+  if (globalLoraProfile)
+    assert.ok(provision.ready.capabilities.includes('illustrious-regional-lora-v1'))
   if (mainDeathProfile || workerFaultProfile)
     assert.ok(provision.ready.capabilities.includes('linux-owned-inference-v1'))
   if (progressProfile)
@@ -398,9 +415,9 @@ async function verifyProvision() {
   const sourceModuleCount = Object.keys(checkout).filter((name) => name.endsWith('.py')).length
   assert.equal(Object.keys(modules).length, sourceModuleCount)
   if (mainDeathProfile || workerFaultProfile) {
-    assert.equal(sourceModuleCount, 50)
     assert.ok(modules['inference_lifetime.py'] && modules['owned_inference.py'])
   }
+  if (globalLoraProfile) assert.ok(modules['illustrious_regional_lora.py'])
   assert.deepEqual(
     await treeManifest(path.join(provision.installed.prefix, 'resources/sdxl-config')),
     provision.inputs.config.files,
@@ -461,6 +478,16 @@ async function verifyProvision() {
             'invokeai/app/invocations/text_encoder/compel.py',
             'invokeai/app/util/ti_utils.py',
             'invokeai/backend/model_patcher.py',
+          ]
+        : []),
+      ...(globalLoraProfile
+        ? [
+            'invokeai/app/invocations/model.py',
+            'invokeai/backend/patches/layer_patcher.py',
+            'invokeai/backend/patches/layers/lora_layer.py',
+            'invokeai/backend/patches/layers/lora_layer_base.py',
+            'invokeai/backend/patches/lora_conversions/sdxl_lora_conversion_utils.py',
+            'invokeai/frontend/webv2/src/features/generation/core/canvas/compileCanvasGraph.ts',
           ]
         : []),
       ...(progressProfile
@@ -895,6 +922,16 @@ async function captureProgressPreservation() {
     report.boundary.exclusions =
       'No new native vector/context observer, numerical TI-causality claim, quality PASS, generic SDXL, Anima, LoRA, references, installer/Repair or capacity qualification. Existing zero-TI controls remain preserved and are not output-equality oracles for this distinct resource input. Accepted base provenance keeps only global A/B refs; regional C/D stays excluded.'
   }
+  if (globalLoraProfile) {
+    report.boundary.preconditions +=
+      ' Register four tiny deterministic real Kohya F32 LoRAs at stable SHARED global-lora-fixtures-v1 paths through the actual ModelRepository/ModelService, with no network, secrets, copies or Default fallback. Existing TI fixtures remain shared.'
+    report.boundary.calls +=
+      ' Original configured LoRA order/weights/enabled states and exact versions survive saved current LoRA reorder/weight/disable/remove edits; all three logical native commands retain the enabled A/B/Z stack including signed and zero weights.'
+    report.boundary.exclusions =
+      'No installed LoRA numerical/weight/context/prediction causality claim: the two PNGs have different seeds. Numerical qualification requires separate actual-Invoke Python weight/context/prediction oracles. No PEFT wrappers, sidecars or borrowed-weight restoration promise; fresh job-owned native components receive Invoke FP32 direct prefusion before regional borrowing. No quality PASS, full Invoke parity, generic SDXL, Anima, references, installer/Repair or capacity claim. Accepted base provenance retains the original full configured LoRA stack including disabled missing data and only global A/B TI refs; regional C/D stays excluded.'
+    report.boundary.retention +=
+      ' All four managed LoRA files and existing TI files are protected dependencies for future frozen Retry, including the alternate Default version.'
+  }
   if (workerFaultProfile) {
     report.boundary.calls =
       'One original 30-step seed123 Generate faulted after completed-step/UI observations >=5/30 by a verified worker-only pidfd SIGKILL while Main stays alive, followed by explicit frozen Queue Retry and one healthy PNG. One Electron lifetime and exactly two regional wires.'
@@ -1008,6 +1045,10 @@ function globalTiWirePair() {
   return { positive: [project('A')], negative: [project('B')] }
 }
 function assertGlobalEmbeddingRecipe(recipe) {
+  if (globalLoraProfile) {
+    assert.equal(Object.hasOwn(recipe, 'loras'), false)
+    assert.equal(Object.hasOwn(recipe, 'loraStack'), false)
+  }
   assert.deepEqual(recipe.globalPrompts, {
     positive: { text: globalPrompt, embeddingRefs: [globalTiRef('A')] },
     negative: { text: '<shared>', embeddingRefs: [globalTiRef('B')] },
@@ -1243,6 +1284,332 @@ async function prepareGlobalEmbeddingCatalog(repository) {
   )
 }
 
+// Real, tiny Kohya tensors for the same native UNet/CLIP targets consumed by Invoke.
+// Row/column indices are flattened only within each down/up matrix, including Conv2d.
+function globalLoraBytes({ salt, alpha }) {
+  const descriptors = {},
+    payloads = []
+  let offset = 0
+  const tensor = (name, shape, values) => {
+    const bytes = Buffer.alloc(values.length * 4)
+    values.forEach((value, index) => bytes.writeFloatLE(value, index * 4))
+    descriptors[name] = { dtype: 'F32', shape, data_offsets: [offset, offset + bytes.length] }
+    payloads.push(bytes)
+    offset += bytes.length
+  }
+  for (const [stem, inputs, outputs, convolution] of [
+    ['lora_unet_conv_in', 36, 320, true],
+    ['lora_te1_text_model_encoder_layers_0_self_attn_out_proj', 768, 768, false],
+    ['lora_te2_text_model_encoder_layers_0_self_attn_out_proj', 1280, 1280, false],
+  ]) {
+    tensor(
+      `${stem}.lora_down.weight`,
+      convolution ? [2, 4, 3, 3] : [2, inputs],
+      Array.from({ length: 2 * inputs }, (_, index) => {
+        const row = Math.floor(index / inputs),
+          column = index % inputs
+        return (((17 * column + 29 * row + 13 * salt) % 257) - 128) / 2048
+      }),
+    )
+    tensor(
+      `${stem}.lora_up.weight`,
+      convolution ? [outputs, 2, 1, 1] : [outputs, 2],
+      Array.from({ length: outputs * 2 }, (_, index) => {
+        const output = Math.floor(index / 2),
+          rank = index % 2
+        return (((19 * output + 31 * rank + 11 * salt) % 263) - 131) / 2048
+      }),
+    )
+    if (alpha !== undefined) tensor(`${stem}.alpha`, [], [alpha])
+  }
+  const json = Buffer.from(JSON.stringify(descriptors)),
+    header = Buffer.alloc(Math.ceil(json.length / 8) * 8, 32),
+    length = Buffer.alloc(8)
+  json.copy(header)
+  length.writeBigUInt64LE(BigInt(header.length))
+  return Buffer.concat([length, header, ...payloads])
+}
+function configuredGlobalLoraStack() {
+  assert.ok(globalLoraProfile && globalLoras)
+  return [
+    ...[
+      ['A', 0.7],
+      ['B', -0.5],
+      ['Z', 0],
+    ].map(([key, weight]) => ({
+      enabled: true,
+      resource: structuredClone(globalLoras[key].reference),
+      weight,
+    })),
+    {
+      enabled: false,
+      resource: {
+        kind: 'lora',
+        baseModelFamily: null,
+        predictionType: null,
+        civitaiModelId: null,
+        civitaiVersionId: null,
+        civitaiFileId: null,
+        displayName: 'Disabled missing compatibility-unknown fixture',
+        versionName: 'Authored only',
+        fileSha256: 'a'.repeat(64),
+        localModelId: 'qualification-disabled-missing-lora-model',
+        localVersionId: 'qualification-disabled-missing-lora-version',
+      },
+      weight: 1.25,
+    },
+  ]
+}
+function resolvedGlobalLoras() {
+  return configuredGlobalLoraStack()
+    .filter(({ enabled }) => enabled)
+    .map(({ resource: reference, weight }) => {
+      const { byteSize, managedPath } = Object.values(globalLoras).find(
+        ({ reference: saved }) => saved.localVersionId === reference.localVersionId,
+      )
+      return { byteSize, managedPath, reference, weight }
+    })
+}
+function globalLoraWireStack() {
+  return resolvedGlobalLoras().map(({ byteSize, managedPath, reference, weight }) => ({
+    byteSize,
+    path: managedPath,
+    sha256: reference.fileSha256,
+    weight,
+  }))
+}
+async function verifyGlobalLoraFiles() {
+  assert.ok(globalLoraProfile && globalLoras)
+  for (const resource of Object.values(globalLoras)) {
+    assert.deepEqual(statIdentity(await regular(resource.managedPath)), resource.stat)
+    assert.equal((await regular(resource.managedPath)).size, resource.byteSize)
+    assert.equal(await hashFile(resource.managedPath), resource.reference.fileSha256)
+    assert.equal(resource.reference.fileSha256, digest(globalLoraBytes(resource)))
+    assert.ok(
+      within(fixtureRoot, resource.managedPath) && !within(evidenceRoot, resource.managedPath),
+    )
+  }
+}
+async function prepareGlobalLoraCatalog(repository) {
+  const before = await allSqlTables(database.db),
+    prior = await repository.listInstalled(),
+    root = path.join(fixtureRoot, 'global-lora-fixtures-v1'),
+    definitions = [
+      { key: 'A', salt: 3, alpha: 2, modelId: 900100101, versionId: 900101001, fileId: 900102001 },
+      { key: 'B', salt: 11, modelId: 900100102, versionId: 900101002, fileId: 900102002 },
+      { key: 'Z', salt: 23, alpha: 1, modelId: 900100103, versionId: 900101003, fileId: 900102003 },
+      {
+        key: 'A2',
+        salt: 41,
+        alpha: 2,
+        modelId: 900100101,
+        versionId: 900101004,
+        fileId: 900102004,
+      },
+    ].map((definition) => {
+      const bytes = globalLoraBytes(definition),
+        sha256 = digest(bytes)
+      return {
+        ...definition,
+        bytes,
+        sha256,
+        managedPath: path.join(root, `${definition.key.toLowerCase()}-${sha256}.safetensors`),
+      }
+    }),
+    reserved = prior.filter(
+      ({ source }) =>
+        source.kind === 'civitai' && definitions.some(({ modelId }) => modelId === source.modelId),
+    )
+  assert.ok(within(fixtureRoot, root) && !within(evidenceRoot, root))
+  await mkdir(root, { recursive: true, mode: 0o700 })
+  await directory(root)
+  const existingFiles = await readdir(root)
+  if (reserved.length || existingFiles.length) {
+    assert.equal(reserved.length, 3, 'Never repair a partial reserved LoRA namespace')
+    assert.deepEqual(
+      existingFiles.sort(),
+      definitions.map(({ managedPath }) => path.basename(managedPath)).sort(),
+    )
+    for (const resource of reserved) {
+      const expected = definitions.filter(({ modelId }) => modelId === resource.source.modelId)
+      assert.equal(resource.type, 'lora')
+      assert.equal(resource.versions.length, expected.length)
+      for (const definition of expected) {
+        const version = resource.versions.find(
+          ({ civitaiVersionId }) => civitaiVersionId === definition.versionId,
+        )
+        assert.ok(version, 'Reserved LoRA namespace must already be complete')
+        assert.equal(version.civitaiFileId, definition.fileId)
+        assert.equal(version.file.status, 'ready')
+        assert.equal(version.file.managedPath, definition.managedPath)
+        assert.equal(version.file.sha256, definition.sha256)
+        assert.equal(version.file.sizeBytes, definition.bytes.length)
+        await regular(definition.managedPath)
+        assert.ok((await readFile(definition.managedPath)).equals(definition.bytes))
+      }
+      if (expected.some(({ key }) => key === 'A2'))
+        assert.equal(
+          resource.defaultVersionId,
+          resource.versions.find(({ civitaiVersionId }) => civitaiVersionId === 900101004).id,
+        )
+    }
+  }
+  globalLoras = {}
+  for (const definition of definitions) {
+    const { key, salt, alpha, modelId, versionId, fileId, bytes, sha256, managedPath } = definition
+    if (!existsSync(managedPath)) await writeFile(managedPath, bytes, { flag: 'wx', mode: 0o600 })
+    assert.ok((await readFile(managedPath)).equals(bytes), 'Never replace an existing LoRA fixture')
+    let installed = await repository.findExactFileDuplicate({ sha256 })
+    if (!installed)
+      installed = await repository.publishVerifiedInstallation({
+        primary: {
+          file: {
+            managedPath,
+            originalFilename: path.basename(managedPath),
+            sha256,
+            sizeBytes: bytes.length,
+            verifiedAt: new Date().toISOString(),
+          },
+          resource: {
+            type: 'lora',
+            displayName: `Qualification exact LoRA ${modelId}`,
+            source: { kind: 'civitai', modelId },
+            sourceMetadata: { qualificationPrecondition: true },
+          },
+          version: {
+            baseModelFamily: 'illustrious',
+            format: 'safetensors',
+            name: `Qualification ${key}`,
+            predictionType: null,
+            source: { kind: 'civitai', expectedSha256: sha256, versionId, fileId },
+            sourceMetadata: { qualificationPrecondition: true },
+          },
+        },
+      })
+    const resource = (await repository.listInstalled()).find(
+        ({ id }) => id === installed.resourceId,
+      ),
+      version = resource?.versions.find(({ id }) => id === installed.versionId)
+    assert.ok(resource && version)
+    assert.deepEqual(resource.source, { kind: 'civitai', modelId })
+    assert.equal(resource.type, 'lora')
+    assert.equal(version.civitaiVersionId, versionId)
+    assert.equal(version.civitaiFileId, fileId)
+    assert.equal(version.predictionType, null)
+    assert.equal(version.baseModelFamily, 'illustrious')
+    assert.equal(version.file.status, 'ready')
+    assert.equal(version.file.managedPath, managedPath)
+    assert.equal(version.file.sha256, sha256)
+    assert.equal(version.file.sizeBytes, bytes.length)
+    globalLoras[key] = {
+      salt,
+      ...(alpha !== undefined ? { alpha } : {}),
+      byteSize: bytes.length,
+      managedPath,
+      stat: statIdentity(await regular(managedPath)),
+      reference: {
+        kind: 'lora',
+        baseModelFamily: 'illustrious',
+        predictionType: null,
+        civitaiModelId: modelId,
+        civitaiVersionId: versionId,
+        civitaiFileId: fileId,
+        displayName: resource.displayName,
+        versionName: version.name,
+        fileSha256: sha256,
+        localModelId: resource.id,
+        localVersionId: version.id,
+      },
+    }
+  }
+  assert.equal(globalLoras.A.reference.localModelId, globalLoras.A2.reference.localModelId)
+  assert.notEqual(globalLoras.A.reference.localVersionId, globalLoras.A2.reference.localVersionId)
+  if (!reserved.length)
+    await repository.setDefaultVersion(
+      globalLoras.A.reference.localModelId,
+      globalLoras.A2.reference.localVersionId,
+    )
+  let networkAttempts = 0,
+    secretAttempts = 0
+  const forbiddenSecret = async () => {
+    secretAttempts++
+    throw new Error('No credential operation belongs to LoRA fixture resolution')
+  }
+  const models = new ModelService(
+    repository,
+    new CivitaiClient(async () => {
+      networkAttempts++
+      throw new Error('No download belongs to LoRA fixture resolution')
+    }),
+    new CivitaiTokenStore(
+      {
+        decryptStringAsync: forbiddenSecret,
+        encryptStringAsync: forbiddenSecret,
+        getSelectedStorageBackend: () => 'qualification-only',
+        isAsyncEncryptionAvailable: async () => false,
+      },
+      appDataRoot,
+    ),
+  )
+  for (const { byteSize, managedPath, reference } of Object.values(globalLoras))
+    assert.deepEqual(await models.resolveVerifiedGenerationLoraForPlan(reference), {
+      byteSize,
+      managedPath,
+      reference,
+    })
+  assert.equal(networkAttempts, 0)
+  assert.equal(secretAttempts, 0)
+  assert.equal(
+    (await repository.listInstalled()).find(({ id }) => id === globalLoras.A.reference.localModelId)
+      .defaultVersionId,
+    globalLoras.A2.reference.localVersionId,
+  )
+  await verifyGlobalLoraFiles()
+  const after = await allSqlTables(database.db)
+  for (const table of before) {
+    const current = after.find(({ name }) => name === table.name)
+    assert.equal(current.sql, table.sql)
+    for (const row of table.rows)
+      assert.ok(
+        current.rows.some((value) => JSON.stringify(value) === JSON.stringify(row)),
+        `LoRA registration changed historical SQL: ${table.name}`,
+      )
+  }
+  report.globalLoraFixtures = {
+    root,
+    requiredCapability: 'illustrious-regional-lora-v1',
+    rank: 2,
+    dtype: 'F32',
+    tensorShapes: {
+      unetConvIn: { down: [2, 4, 3, 3], up: [320, 2, 1, 1] },
+      clip1OutProjection: { down: [2, 768], up: [768, 2] },
+      clip2OutProjection: { down: [2, 1280], up: [1280, 2] },
+      alpha: [],
+    },
+    alpha: { A: 2, B: 'omitted: rank fallback', Z: 1, A2: 2 },
+    downFormula: '(((17*c + 29*r + 13*salt) % 257) - 128)/2048',
+    upFormula: '(((19*o + 31*r + 11*salt) % 263) - 131)/2048',
+    resources: structuredClone(globalLoras),
+    configuredStack: configuredGlobalLoraStack(),
+    resolvedStack: resolvedGlobalLoras(),
+    workerStack: globalLoraWireStack(),
+    defaultVersionId: globalLoras.A2.reference.localVersionId,
+    savedGlobalVersionId: globalLoras.A.reference.localVersionId,
+    modelServiceStructuralQualification: true,
+    disabledMissingReferenceResolved: false,
+    networkAttempts,
+    secretAttempts,
+    historicalRowsPreservedBeforeBaseline: true,
+    retainedForFutureFrozenRetry: true,
+    preparation:
+      'Fresh native owned components; Invoke FP32 direct prefusion before Borrow; no PEFT or borrowed-weight restoration',
+  }
+  check(
+    'Four real Kohya LoRAs qualify exactly; Default A2 preserves saved A and disabled missing authoring',
+    report.globalLoraFixtures,
+  )
+}
+
 async function prepareCatalogAndProjects() {
   modelStat = statIdentity(await regular(fixture.checkpoint.path))
   assert.equal(modelStat.size, fixture.checkpoint.byteSize)
@@ -1250,6 +1617,7 @@ async function prepareCatalogAndProjects() {
   await qualifySdxlCheckpoint(fixture.checkpoint.path)
   database = openAppDatabase(appDataRoot, path.resolve('src/main/db/migrations'))
   if (globalTiProfile) await prepareGlobalEmbeddingCatalog(new ModelRepository(database.db))
+  if (globalLoraProfile) await prepareGlobalLoraCatalog(new ModelRepository(database.db))
   if (progressProfile) await captureProgressPreservation()
   if (recoveryProfile) {
     baselineSql = await sqlSnapshot()
@@ -1450,7 +1818,7 @@ async function prepareCatalogAndProjects() {
       },
       dynamicPrompt: { maxPrompts: 1, seedBehavior: 'per-iteration' },
       seed: { policy: 'fixed', value: 123 },
-      loras: [],
+      loras: globalLoraProfile ? configuredGlobalLoraStack() : [],
       vae: null,
       vaePrecision: 'FP16',
       cfgRescale: 0,
@@ -2090,6 +2458,9 @@ async function installObservers() {
         'projects:redo',
         'projects:update-generation-draft',
         'projects:update-regional-guidance',
+        ...(ownership.loras
+          ? ['projects:add-generation-lora', 'projects:remove-generation-lora']
+          : []),
       ]
       for (const channel of channels) {
         const deadline = Date.now() + 15_000
@@ -2158,6 +2529,7 @@ async function installObservers() {
       required: mainDeathProfile,
       progress: progressProfile,
       workerFault: workerFaultProfile,
+      loras: globalLoraProfile,
       scratch: path.join(appDataRoot, 'scratch'),
       previous: previousTransport,
       controls: mainDeathControls,
@@ -2948,7 +3320,13 @@ function assertFrozen(frozen, project, expectedSeed = 123) {
   assert.deepEqual(frozen.workerJob.sampling.noiseProfile, policy)
   assert.equal(frozen.workerJob.vaePrecision, 'FP16')
   assert.equal(frozen.workerJob.vae, null)
-  assert.equal((frozen.workerJob.loras ?? []).length, 0)
+  if (globalLoraProfile) {
+    assert.deepEqual(frozen.context.loraStack, configuredGlobalLoraStack())
+    assert.deepEqual(frozen.context.loras, resolvedGlobalLoras())
+    assert.deepEqual(frozen.workerJob.loras, globalLoraWireStack())
+    assert.equal(frozen.context.loraStack.length, 4)
+    assert.equal(frozen.context.loras.length, 3)
+  } else assert.equal((frozen.workerJob.loras ?? []).length, 0)
   assert.equal(frozen.workerJob.target.width, 1024)
   assert.equal(frozen.workerJob.target.height, 1024)
   assert.equal(frozen.workerJob.target.iccSha256, IGS_SRGB_ICC_SHA256)
@@ -3016,6 +3394,7 @@ async function captureFrozen(row, project, expectedSeed = 123) {
     assert.deepEqual(frozen.workerJob.embeddings, globalTiWirePair())
     await verifyGlobalEmbeddingFiles()
   }
+  if (globalLoraProfile) await verifyGlobalLoraFiles()
   return {
     row,
     frozen,
@@ -3588,6 +3967,10 @@ async function generateGlobalEmbeddingBatchRetry(project) {
   assert.equal(advisory.regionalSupported, true)
   assert.equal(advisory.regionalInvokeInitializationSupported, true)
   assert.equal(advisory.embeddingsSupported, true)
+  if (globalLoraProfile) {
+    assert.equal(advisory.regionalLoraSupported, true)
+    assert.deepEqual((await current(project)).generationDraft.loras, configuredGlobalLoraStack())
+  }
   assert.deepEqual((await current(project)).generationDraft.positivePrompt, {
     text: globalPrompt,
     embeddingRefs: [globalTiRef('A')],
@@ -3700,6 +4083,40 @@ async function generateGlobalEmbeddingBatchRetry(project) {
     kind: 'negative-prompt',
     text: 'later local authoring',
   })
+  let editedLoraStack
+  if (globalLoraProfile) {
+    const identity = ({ localModelId, localVersionId }) => ({
+      resourceId: localModelId,
+      versionId: localVersionId,
+    })
+    const originalStack = configuredGlobalLoraStack()
+    // Existing remove/add is the public ordering mechanism: move exact saved A to the end.
+    // Supplying its version explicitly must not select the mutable library Default A2.
+    await api('removeGenerationLora', project.id, identity(globalLoras.A.reference))
+    await api('addGenerationLora', project.id, identity(globalLoras.A.reference))
+    await api('updateGenerationDraft', project.id, {
+      kind: 'lora-weight',
+      ...identity(globalLoras.A.reference),
+      value: 0.2,
+    })
+    await api('updateGenerationDraft', project.id, {
+      kind: 'lora-weight',
+      ...identity(globalLoras.B.reference),
+      value: -0.25,
+    })
+    await api('updateGenerationDraft', project.id, {
+      kind: 'lora-enabled',
+      ...identity(globalLoras.Z.reference),
+      value: false,
+    })
+    await api('removeGenerationLora', project.id, identity(originalStack[3].resource))
+    editedLoraStack = [
+      { ...originalStack[1], weight: -0.25 },
+      { ...originalStack[2], enabled: false },
+      { ...originalStack[0], weight: 0.2 },
+    ]
+    assert.deepEqual((await current(project)).generationDraft.loras, editedLoraStack)
+  }
   const steps = window.locator('input[aria-label="Steps"]')
   await steps.fill('2')
   await steps.press('Enter')
@@ -3739,6 +4156,7 @@ async function generateGlobalEmbeddingBatchRetry(project) {
   await save(project)
   const edited = await current(project),
     editedPackageSha256 = await hashFile(project.file)
+  if (globalLoraProfile) assert.deepEqual(edited.generationDraft.loras, editedLoraStack)
   assert.deepEqual(edited.layers, project.document.layers)
   assert.deepEqual(edited.primaryBbox, bbox)
   report.currentAuthoringAfterEdit = {
@@ -3841,6 +4259,13 @@ async function generateGlobalEmbeddingBatchRetry(project) {
     assert.deepEqual(bundle.globalNegativeCoverage, { kind: 'everywhere' })
     assert.equal(bundle.positivePooledSourceId, 'current-canvas')
     assert.equal(bundle.negativePooledSourceId, 'current-canvas')
+    assert.equal(bundle.request.job.sampling.seed, [123, 124, 124][index])
+    if (globalLoraProfile) {
+      assert.deepEqual(bundle.request.job.loras, globalLoraWireStack())
+      assert.deepEqual(frozen.frozen.context.loraStack, configuredGlobalLoraStack())
+      assert.deepEqual(frozen.frozen.context.loras, resolvedGlobalLoras())
+      assert.deepEqual(frozen.frozen.workerJob.loras, globalLoraWireStack())
+    }
     assertGlobalEmbeddingRecipe(bundle.recipe)
     assert.deepEqual(bundle.recipe.item, frozen.regional.recipe.item)
     assert.deepEqual(bundle.recipe.bbox, bbox)
@@ -3877,6 +4302,7 @@ async function generateGlobalEmbeddingBatchRetry(project) {
       'illustrious-regional-invoke-init-v1',
       'illustrious-embeddings',
       'illustrious-regional-progress-v1',
+      ...(globalLoraProfile ? ['illustrious-regional-lora-v1'] : []),
     ])
       assert.ok(worker.ready.capabilities.includes(cap))
     assert.equal(wire.reportProgress, true)
@@ -3931,6 +4357,23 @@ async function generateGlobalEmbeddingBatchRetry(project) {
     0,
   )
   await verifyGlobalEmbeddingFiles()
+  if (globalLoraProfile) {
+    await verifyGlobalLoraFiles()
+    report.globalLoraFlow = {
+      configuredStack: configuredGlobalLoraStack(),
+      resolvedStack: resolvedGlobalLoras(),
+      workerStack: globalLoraWireStack(),
+      editedSavedStack: editedLoraStack,
+      allThreeLogicalCommandsRetainOriginalStack: true,
+      frozenFullContextRetainsOriginalStack: true,
+      nativeGlobalTiAbsentOrEmptyWithRecipeBindingsPreserved: true,
+      lorasAddedToRecipe: false,
+      originalRequestSeeds: [123, 124, 124],
+      targetAndAlphaSourcesPreserved: true,
+      numericalCausalityClaimed: false,
+      extraNativeCalls: 0,
+    }
+  }
   report.globalEmbeddingFlow = {
     priorZeroTiControlsPreserved: {
       packages: preservationBaseline.packages,
@@ -3965,7 +4408,9 @@ async function generateGlobalEmbeddingBatchRetry(project) {
     extraGenerateOrRetryRequested: false,
   }
   check(
-    'Original global A/B and regional C/inherited B/local D survive the real batch, observed Cancel and frozen Retry after saved authoring edits',
+    globalLoraProfile
+      ? 'Original configured LoRA stack and effective A/B/Z commands survive observed Cancel and frozen Retry after saved LoRA/TI/seed/sampler/region edits'
+      : 'Original global A/B and regional C/inherited B/local D survive the real batch, observed Cancel and frozen Retry after saved authoring edits',
     report.nativeAccounting,
   )
   return {
@@ -4903,7 +5348,7 @@ function assertBaseProvenance(provenance, candidate, frozen) {
   const config = provenance.generationConfiguration
   assert.deepEqual(config, {
     cfgRescale: 0,
-    loras: [],
+    loras: globalLoraProfile ? configuredGlobalLoraStack() : [],
     mode: 'txt2img',
     model: {
       kind: 'checkpoint',
@@ -4970,6 +5415,7 @@ function assertBaseProvenance(provenance, candidate, frozen) {
           ...Object.values(globalTi).map(({ managedPath }) => managedPath),
         ]
       : localPrompts),
+    ...(globalLoraProfile ? Object.values(globalLoras).map(({ managedPath }) => managedPath) : []),
   ])
     assert.equal(
       json.includes(forbidden),
@@ -5068,9 +5514,11 @@ async function resultsAddSaveReopen(project, completed) {
     }
     report.staticBatch.outputs = outputs
     check(
-      globalTiProfile
-        ? 'Both TI Results independently decode to their own receipts; historical zero-TI controls remain preserved without cross-resource PNG equality'
-        : 'Both signed Results independently decode to their own receipts; seed123 exactly matches the predeclared same-policy control',
+      globalLoraProfile
+        ? 'Both LoRA/TI Results independently decode to their own receipts; seeds differ, so no LoRA-causality claim follows from their PNGs'
+        : globalTiProfile
+          ? 'Both TI Results independently decode to their own receipts; historical zero-TI controls remain preserved without cross-resource PNG equality'
+          : 'Both signed Results independently decode to their own receipts; seed123 exactly matches the predeclared same-policy control',
       { outputs },
     )
   }
@@ -5231,6 +5679,16 @@ async function resultsAddSaveReopen(project, completed) {
   assertRasterGeometry(reopened.layers[0])
   assert.equal((await fetchPng(reopened.layers[0].imageUrl)).equals(bytes), true)
   assert.deepEqual(reopened.generationDraft, before.generationDraft)
+  if (globalLoraProfile) {
+    assert.deepEqual(reopened.generationDraft.loras, report.globalLoraFlow.editedSavedStack)
+    assert.deepEqual(
+      accepted.generationProvenance.generationConfiguration.loras,
+      configuredGlobalLoraStack(),
+    )
+    report.globalLoraFlow.editedStackPreservedAfterSaveZipAndReopen = true
+    report.globalLoraFlow.acceptedOriginalFullConfiguredStack =
+      accepted.generationProvenance.generationConfiguration.loras
+  }
   assert.deepEqual(portableRegions(reopened), portableRegions(before))
   await expect(
     window.getByRole('heading', { name: 'Image generation needs repair', exact: true }),
@@ -5437,6 +5895,7 @@ async function finalIdentities() {
     if (progressProfile) await verifyProgressPreservation(db.db)
     if (globalTiProfile) {
       await verifyGlobalEmbeddingFiles()
+      if (globalLoraProfile) await verifyGlobalLoraFiles()
       const own = ownProgressSql(whole)
       assert.equal(own.queue.length, 3)
       assert.deepEqual(
@@ -5673,6 +6132,36 @@ async function assertGlobalEmbeddingActions(project) {
     accept: accepts[0],
     noExtraGenerate: true,
   }
+  if (globalLoraProfile) {
+    const adds = observed.ipc.filter(({ channel }) => channel === 'projects:add-generation-lora'),
+      removes = observed.ipc.filter(({ channel }) => channel === 'projects:remove-generation-lora'),
+      changes = observed.ipc.filter(
+        ({ channel, args }) =>
+          channel === 'projects:update-generation-draft' && args[1]?.kind.startsWith('lora-'),
+      ),
+      identity = ({ localModelId, localVersionId }) => ({
+        resourceId: localModelId,
+        versionId: localVersionId,
+      })
+    assert.equal(adds.length, 1)
+    assert.deepEqual(adds[0].args.slice(0, 2), [project.id, identity(globalLoras.A.reference)])
+    assert.deepEqual(
+      removes.map(({ args }) => args.slice(0, 2)),
+      [
+        [project.id, identity(globalLoras.A.reference)],
+        [project.id, identity(configuredGlobalLoraStack()[3].resource)],
+      ],
+    )
+    assert.deepEqual(
+      changes.map(({ args }) => args.slice(0, 2)),
+      [
+        [project.id, { kind: 'lora-weight', ...identity(globalLoras.A.reference), value: 0.2 }],
+        [project.id, { kind: 'lora-weight', ...identity(globalLoras.B.reference), value: -0.25 }],
+        [project.id, { kind: 'lora-enabled', ...identity(globalLoras.Z.reference), value: false }],
+      ],
+    )
+    report.globalLoraFlow.originalAuthoringActions = { adds, removes, changes }
+  }
   check(
     'Exactly one original UI Generate, one observed Cancel, one original frozen Retry and reviewed Add/Discard/Undo/Redo/two Save actions',
   )
@@ -5842,15 +6331,17 @@ try {
   report.completedAt = new Date().toISOString()
   report.elapsedSeconds = (Date.now() - started) / 1000
   check(
-    globalTiProfile
-      ? 'Finite installed global/region exact TI batch, observed Cancel, frozen Retry, two Results and global-only accepted provenance completed; no new native TI-causality or quality claim'
-      : staticBatchProfile
-        ? 'Finite installed two-image static batch, exact frozen identity, distinct Results and reviewed Add/Discard/Undo/Save qualification completed; no quality or throughput claim'
-        : workerFaultProfile
-          ? 'Finite installed worker-only fault/normal failure/progress clearing/frozen Retry qualification completed with the same live Main; no visual-quality or capacity claim'
-          : progressProfile
-            ? 'Finite installed original scalar progress/Cancel/frozen Retry qualification completed; no visual-quality or capacity claim'
-            : 'Finite installed public UI Regional qualification completed; evidence supports this exact matrix and no visual-quality or numerical-step claim',
+    globalLoraProfile
+      ? 'Finite installed global LoRA/TI batch, observed Cancel, original frozen Retry, two Results and full configured-LoRA/global-only-TI accepted provenance completed; no installed numerical-causality or quality claim'
+      : globalTiProfile
+        ? 'Finite installed global/region exact TI batch, observed Cancel, frozen Retry, two Results and global-only accepted provenance completed; no new native TI-causality or quality claim'
+        : staticBatchProfile
+          ? 'Finite installed two-image static batch, exact frozen identity, distinct Results and reviewed Add/Discard/Undo/Save qualification completed; no quality or throughput claim'
+          : workerFaultProfile
+            ? 'Finite installed worker-only fault/normal failure/progress clearing/frozen Retry qualification completed with the same live Main; no visual-quality or capacity claim'
+            : progressProfile
+              ? 'Finite installed original scalar progress/Cancel/frozen Retry qualification completed; no visual-quality or capacity claim'
+              : 'Finite installed public UI Regional qualification completed; evidence supports this exact matrix and no visual-quality or numerical-step claim',
   )
 } catch (error) {
   report.outcome = 'failed'

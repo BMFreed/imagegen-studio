@@ -81,6 +81,8 @@ export interface RegionalWorkerResult {
 
 const MAX_BUNDLE_BYTES = 1024 * 1024
 const MAX_ALPHA_BYTES = 64 * 1024 * 1024
+// Serialized LoRA files have their own worker bound; TI/alpha budgets remain independent.
+const MAX_LORA_BYTES = 512 * 1024 * 1024
 const MAX_TARGET_BYTES = 32 * 1024 * 1024
 const MAX_LINE_BYTES = 64 * 1024
 const SHA256 = /^[a-f0-9]{64}$/
@@ -150,7 +152,24 @@ const requestSchema = v.strictObject({
       sha256: digest,
     }),
     embeddings: v.optional(IllustriousWorkerEmbeddingsSchema),
-    loras: v.optional(v.strictTuple([])),
+    loras: v.optional(
+      v.pipe(
+        v.array(
+          v.strictObject({
+            byteSize: integer(1),
+            path: filePath,
+            sha256: digest,
+            weight: v.pipe(v.number(), v.finite()),
+          }),
+        ),
+        v.maxLength(10_000),
+        v.check(
+          (entries) =>
+            new Set(entries.map((entry) => entry.path)).size === entries.length &&
+            entries.reduce((total, entry) => total + entry.byteSize, 0) <= MAX_LORA_BYTES,
+        ),
+      ),
+    ),
     output: v.strictObject({ pngPath: filePath, stagingRoot: filePath }),
     prompts: v.strictObject({ negative: text, positive: text }),
     sampling: v.strictObject({
@@ -289,7 +308,11 @@ export async function prepareRegionalWorkerRequest(
   const detached = captureRegionalWorkerInput(input) as v.InferOutput<typeof inputSchema>
   const base = scratchBasePath
   const baseIdentity = await canonicalDirectory(base)
-  const sources = [detached.request.job.checkpoint, ...embeddingResources(detached.recipe)]
+  const sources = [
+    detached.request.job.checkpoint,
+    ...(detached.request.job.loras ?? []),
+    ...embeddingResources(detached.recipe),
+  ]
   for (const resource of sources) {
     const file = 'managedPath' in resource ? resource.managedPath : resource.path
     if (!v.is(filePath, file) || within(base, file) || file === base) {
@@ -363,6 +386,8 @@ export async function prepareRegionalWorkerRequest(
           }
     // Invoke applies TI while building each prompt's conditioning. The recipe owns that loading
     // here; the ordinary command remains intact for frozen agreement, provenance and Retry.
+    // Its graph.ts SDXL LoRA collection targets both CLIPs and UNet. Retain that logical stack
+    // for the regional worker's single application scope before its components are borrowed.
     const nativeRequest = structuredClone(request)
     if (
       detached.compositionProfile === 'invoke-canvas-v1' &&
@@ -459,6 +484,9 @@ export async function readRegionalWorkerResult(
 
 function validateAgreement(input: v.InferOutput<typeof inputSchema>): void {
   const { recipe, request } = input
+  if (input.compositionProfile !== 'invoke-canvas-v1' && (request.job.loras?.length ?? 0) > 0) {
+    throw invalid('Private regional execution does not support global LoRAs.')
+  }
   const { bbox, prompts, sampling } = request.job
   if (
     bbox.width % 8 !== 0 ||

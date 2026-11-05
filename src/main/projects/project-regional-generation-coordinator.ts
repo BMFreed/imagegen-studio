@@ -5,6 +5,7 @@ import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceEmbeddings,
   supportsInferenceRegionalInvokeInitialization,
+  supportsInferenceRegionalLoras,
 } from '../../shared/projects/inference-worker-capabilities.js'
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 import { activePromptEmbeddingRefs } from '../../shared/projects/prompt-embeddings.js'
@@ -417,6 +418,9 @@ export class ProjectRegionalGenerationCoordinator {
               !isQualifiedInferenceWorkerReady(ready) ||
               !ready.capabilities.includes(capability) ||
               (compositionProfile &&
+                document.generationDraft.loras.some((entry) => entry.enabled) &&
+                !supportsInferenceRegionalLoras(ready)) ||
+              (compositionProfile &&
                 hasActiveGlobalPromptEmbeddings(document) &&
                 !supportsInferenceEmbeddings(ready)) ||
               (initializationProfile !== undefined &&
@@ -599,6 +603,7 @@ function validateInvokeDraft(document: IgsProjectDocumentV1, iterations = 1): vo
     embeddingsSupported: true,
     initializationSupported: true,
     iterations,
+    loraSupported: true,
     runtimeSupported: true,
   })
   if (reason) {

@@ -2423,6 +2423,7 @@ const generationBlockingReason = computed(() => {
         embeddingsSupported: props.generationState?.embeddingsSupported,
         initializationSupported: props.generationState?.regionalInvokeInitializationSupported,
         iterations: imagesPerClick.value ?? 0,
+        loraSupported: props.generationState?.regionalLoraSupported,
         runtimeSupported: props.generationState?.regionalSupported,
       })
   if (regionalReason) {

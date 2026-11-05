@@ -62,7 +62,10 @@ import {
   reverifyFrozenGenerationEmbeddings,
   workerEmbeddings,
 } from './illustrious-generation-embeddings.js'
-import { reverifyFrozenGenerationLoras } from './illustrious-generation-loras.js'
+import {
+  frozenLoraFieldsAgree,
+  reverifyFrozenGenerationLoras,
+} from './illustrious-generation-loras.js'
 import { reverifyFrozenGenerationVae } from './illustrious-generation-vae.js'
 import {
   assertIllustriousTxt2ImgRequestFitsTransport,
@@ -1365,6 +1368,10 @@ export class GenerationOrchestrator {
         await reverifyFrozenGenerationEmbeddings(frozen.payload.context, this.models)
         assertCurrent()
       }
+      if (compositionProfile === 'invoke-canvas-v1') {
+        await reverifyFrozenGenerationLoras(frozen.payload.context, this.models)
+        assertCurrent()
+      }
       const retried = await retry(id, expectedStatusSequence, async (input) => {
         assertCurrent()
         await this.staging.preflightRegionalBatchCapacity({
@@ -1759,6 +1766,12 @@ export class GenerationOrchestrator {
         )
       }
       const captured = captureRegionalWorkerInput({ ...item.regional, request: item.request })
+      if (!frozenLoraFieldsAgree(item.prepared.context, captured.request.job.loras)) {
+        throw new GenerationOrchestratorError(
+          'GENERATION_BATCH_INVALID',
+          'The regional LoRA stack differs from its prepared context.',
+        )
+      }
       if (publicBatch && captured.compositionProfile !== 'invoke-canvas-v1') {
         throw new GenerationOrchestratorError(
           'GENERATION_BATCH_INVALID',
@@ -1815,6 +1828,12 @@ export class GenerationOrchestrator {
       const stagingSessionId = randomUUID()
       await beforePublication?.()
       assertCurrent()
+      for (const item of items) {
+        if (item.regional.compositionProfile === 'invoke-canvas-v1') {
+          await reverifyFrozenGenerationLoras(item.prepared.context, this.models)
+          assertCurrent()
+        }
+      }
       const admission = {
         assertCurrent,
         preflight: async (

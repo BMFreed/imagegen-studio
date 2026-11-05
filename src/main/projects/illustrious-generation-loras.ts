@@ -121,7 +121,7 @@ export function workerLoras(context: FrozenLoraFields): IllustriousWorkerLora[] 
 /** Reverification is deliberately independent of the mutable Project draft and library Default. */
 export async function reverifyFrozenGenerationLoras(
   context: FrozenLoraFields,
-  models: GenerationModelResolver,
+  models: Pick<GenerationModelResolver, 'resolveVerifiedGenerationLoraForPlan'>,
 ): Promise<void> {
   if (!frozenLoraFieldsAgree(context, workerLoras(context))) {
     throw new Error('The frozen LoRA configuration is invalid.')

@@ -36,6 +36,7 @@ from .illustrious_regional_denoising import (
     _DenoisingProfile,  # pyright: ignore[reportPrivateUsage]
     _execution_profile,  # pyright: ignore[reportPrivateUsage]
 )
+from .illustrious_regional_lora import prepare_regional_loras, verify_regional_lora_resources
 from .illustrious_regional_output import (
     _command_parameters,  # pyright: ignore[reportPrivateUsage]
     generate_current_canvas_regional_txt2img,
@@ -462,13 +463,22 @@ def parse_regional_request(value: object) -> RegionalRequest:
         "Regional bundle, target and output must be distinct.",
     )
     parameters = _command_parameters(command)
+    _require(
+        not parameters.loras or composition_profile == "invoke-canvas-v1",
+        "Regional LoRAs require the explicit Invoke Canvas composition profile.",
+    )
+    # Keep complete logical parameters for resource identity and loading ownership.
+    # The existing recipe/denoising owners consume an already prepared native model.
+    execution_parameters = replace(parameters, loras=())
     tensor_profile, _ = _execution_profile(
         _denoising_profile(parameters, initialization_profile), encoding_profile
     )
     if parameters.scheduler == "euler_a":
-        _denoising_parameters(parameters, tensor_profile, resolved_noise=True, ancestral=True)
+        _denoising_parameters(
+            execution_parameters, tensor_profile, resolved_noise=True, ancestral=True
+        )
     else:
-        _denoising_parameters(parameters, tensor_profile, resolved_noise=True)
+        _denoising_parameters(execution_parameters, tensor_profile, resolved_noise=True)
     snapshots = _RawSnapshots(
         root, {bundle_descriptor[0], command.target_path, command.output_path}
     )
@@ -480,9 +490,9 @@ def parse_regional_request(value: object) -> RegionalRequest:
     positive = _global_coverage(
         bundle["globalPositiveCoverage"], snapshots, width=bbox.width // 8, height=bbox.height // 8
     )
-    bbox, pairs, parameters, _, _, _ = _recipe_inputs(
+    bbox, pairs, _, _, _, _ = _recipe_inputs(
         recipe,
-        parameters,
+        execution_parameters,
         encoding_profile,
         bundle["layout"],
         negative,
@@ -501,6 +511,7 @@ def parse_regional_request(value: object) -> RegionalRequest:
         "Checkpoint must be outside private regional staging.",
     )
     _verify_resources(pairs, root, checkpoint)
+    verify_regional_lora_resources(parameters.loras, root, checkpoint)
     validate_generation_assets(command)
     return RegionalRequest(
         command=command,
@@ -546,9 +557,17 @@ def execute_regional_request(
         # This loader must not parse recipe-owned TI as ordinary resource-free text or
         # install it on the borrowed originals. The checked recipe/command below keeps
         # every authored prompt and exact binding for the single conditioning owner.
-        loading_parameters = replace(request.parameters, positive_prompt="", negative_prompt="")
+        loading_parameters = replace(
+            request.parameters, positive_prompt="", negative_prompt="", loras=()
+        )
         pipeline, _ = load_illustrious_pipeline(
             loading_parameters, config_dir=config_dir, runtime=runtime, mode="txt2img"
+        )
+        prepare_regional_loras(pipeline, request.parameters.loras, torch)
+        # Only a successfully prepared, owned pipeline permits the native output
+        # command to lose its stack. The logical request retains every descriptor.
+        execution_command = (
+            replace(request.command, loras=()) if request.parameters.loras else request.command
         )
         for component in (
             pipeline.text_encoder,
@@ -561,7 +580,7 @@ def execute_regional_request(
         bindings = qualify_bindings(pipeline, runtime)
         return generate_current_canvas_regional_txt2img(
             request.recipe,
-            command=request.command,
+            command=execution_command,
             pipeline=pipeline,
             runtime=runtime,
             profile=_INVOKE_ENCODING_PROFILE

@@ -8,6 +8,7 @@ import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceEmbeddings,
   supportsInferenceRegionalInvokeInitialization,
+  supportsInferenceRegionalLoras,
   supportsInferenceRegionalProgress,
 } from '../../shared/projects/inference-worker-capabilities.js'
 
@@ -28,14 +29,21 @@ import type { InferenceWorkerReady } from './illustrious-txt2img-job.js'
 import type { RegionalWorkerInput, RegionalWorkerResult } from './regional-worker-request.js'
 
 import { reverifyFrozenGenerationEmbeddings } from './illustrious-generation-embeddings.js'
+import {
+  frozenLoraFieldsAgree,
+  reverifyFrozenGenerationLoras,
+} from './illustrious-generation-loras.js'
 import { captureRegionalWorkerInput } from './regional-worker-request.js'
 
-export type RegionalGenerationModelResolver = Pick<
-  GenerationModelResolver,
-  | 'assertNoUnboundGenerationEmbeddings'
-  | 'resolveVerifiedGenerationCheckpointForPlan'
-  | 'resolveVerifiedGenerationEmbeddingForPlan'
->
+export type RegionalGenerationModelResolver = Partial<
+  Pick<GenerationModelResolver, 'resolveVerifiedGenerationLoraForPlan'>
+> &
+  Pick<
+    GenerationModelResolver,
+    | 'assertNoUnboundGenerationEmbeddings'
+    | 'resolveVerifiedGenerationCheckpointForPlan'
+    | 'resolveVerifiedGenerationEmbeddingForPlan'
+  >
 
 /** The private client verifies correlation and owned PNG bytes; close confirms physical exit. */
 export interface RegionalGenerationTransport {
@@ -131,6 +139,12 @@ export class RegionalGenerationProcessor {
         models.resolveVerifiedGenerationCheckpointForPlan.bind(models),
       resolveVerifiedGenerationEmbeddingForPlan:
         models.resolveVerifiedGenerationEmbeddingForPlan.bind(models),
+      ...(typeof models.resolveVerifiedGenerationLoraForPlan === 'function'
+        ? {
+            resolveVerifiedGenerationLoraForPlan:
+              models.resolveVerifiedGenerationLoraForPlan.bind(models),
+          }
+        : {}),
     }
   }
 
@@ -360,6 +374,9 @@ export class RegionalGenerationProcessor {
     input: RegionalWorkerInput,
   ): Promise<void> {
     const { context, workerJob } = claimed.payload
+    if (!frozenLoraFieldsAgree(context, input.request.job.loras)) {
+      throw new Error('The frozen regional LoRA stack differs from its command.')
+    }
     const verified = await this.models.resolveVerifiedGenerationCheckpointForPlan(
       structuredClone(context.model.reference),
     )
@@ -371,6 +388,13 @@ export class RegionalGenerationProcessor {
       !isDeepStrictEqual(verified.noiseProfile, workerJob.sampling.noiseProfile)
     ) {
       throw new Error('The exact regional checkpoint or resolved policy changed.')
+    }
+    if ((context.loras?.length ?? 0) > 0) {
+      const resolveVerifiedGenerationLoraForPlan = this.models.resolveVerifiedGenerationLoraForPlan
+      if (!resolveVerifiedGenerationLoraForPlan) {
+        throw new Error('The frozen regional LoRA resource verifier is unavailable.')
+      }
+      await reverifyFrozenGenerationLoras(context, { resolveVerifiedGenerationLoraForPlan })
     }
     const recipe = input.recipe
     const pairs = [
@@ -452,6 +476,16 @@ export class RegionalGenerationProcessor {
         return { kind: 'canceled', queueItemId: claimed.item.id }
       }
       const input = captureRegionalWorkerInput(claimed.input)
+      if (
+        input.compositionProfile === 'invoke-canvas-v1' &&
+        (input.request.job.loras?.length ?? 0) > 0 &&
+        !supportsInferenceRegionalLoras(transport.ready)
+      ) {
+        throw new RegionalGenerationProcessorError(
+          'INFERENCE_UNAVAILABLE',
+          'The worker has not qualified the frozen global LoRA stack.',
+        )
+      }
       if (
         input.compositionProfile === 'invoke-canvas-v1' &&
         ((input.request.job.embeddings?.positive.length ?? 0) > 0 ||

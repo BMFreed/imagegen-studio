@@ -1109,7 +1109,8 @@ The [versioned public integration](../../../engineering/phase-4-regional-guidanc
 supersedes the earlier blanket public-NEW/Results exclusion only for one static
 Current Canvas item: Illustrious epsilon, Euler/Normal (plus the explicit
 [Euler-a extension below](#public-authored-euler-a-with-frozen-initialization)), explicit FP16 Embedded
-VAE, steps 1–200, CFG `(1,30]`, rescale zero, no enabled LoRA/reference images,
+VAE, steps 1–200, CFG `(1,30]`, rescale zero, no reference images,
+global LoRA through the [later extension](#global-lora-stack-with-regional-guidance),
 exact global TI through the [later extension](#global-exact-embeddings-with-regional-guidance)
 and at most three enabled regions. Existing target/payload
 bounds remain; actual opaque/mixed-alpha targets refuse. Anima and Smart regional
@@ -1464,3 +1465,34 @@ attempt remain excluded. Four tiny synthetic TI resources establish binding
 ownership, not trained TI quality or new native vector causality. The existing
 runtime0.14 is refreshed in place; no model/environment copy or new protocol.
 Visual/human, Anima, capacity/release and PP-001/007/008 remain unchanged.
+
+## Global LoRA stack with Regional Guidance
+
+The [global-LoRA extension](../../../engineering/phase-4-regional-guidance-global-loras-research.md)
+admits the existing ordered Current Canvas stack through public regional static
+batches and frozen Retry. Full configured authoring, including disabled unavailable
+rows, remains in context and accepted base provenance. Enabled rows retain exact
+saved identities and signed weights, including zero; Default and later Project
+edits do not replace them. No per-region LoRA assignment is introduced.
+
+Current InvokeAI's direct FP32 residual arithmetic is adapted to each fresh
+worker-owned pipeline before regional borrowing, CLIP conditioning and denoising.
+Existing ordinary PEFT loading and private nonempty-LoRA refusal remain unchanged.
+Logical/frozen descriptors retain LoRAs; a detached native command clears them
+only after successful preparation. LoRA and recipe-owned TI have separate owners.
+
+The additive `illustrious-regional-lora-v1` capability gates enabled rows before
+composition, frozen Retry and dispatch; old peers retain empty/disabled-only
+compatibility. Exact frozen files are reverified before admission and Retry SQL.
+Separate defensive ceilings are 512 MiB aggregate serialized LoRAs and 512 MiB
+per-target patch workspace. Existing TI, geometry, row and batch limits remain.
+
+ROOT:460 distinct Main and247 Python PASS; typing, build and scoped checks PASS.
+Four isolated mutations yield30GREEN/6semanticRED across36 selections, with
+CPU/CUDA native-context/prediction sensitivity, unaffected controls and exact
+restoration. Installed native-r1 passes16 grouped checks: batch123/124, witnessed
+Cancel, frozen Retry after saved LoRA/TI/sampling/region edits, two PNG/Results,
+cross-session Add/Discard, Undo/Redo and Save ZIP/reopen. Four tiny synthetic
+LoRAs establish finite mechanism/ownership, not trained-adapter quality or broad
+adapter-format support. Visual/human, Anima, capacity/release, provenance exclusions
+and PP-001/005/007/008 **«Пока не обещать»** remain unchanged.

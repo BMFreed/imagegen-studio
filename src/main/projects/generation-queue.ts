@@ -4987,6 +4987,10 @@ function managerDetails(row: Selectable<GenerationQueueItem>): GenerationQueueEn
       modelVersion: context.model.reference.versionName,
       negativePrompt: context.prompts.negative,
       prompt: context.prompts.positive,
+      ...(payload.kind === 'illustrious-regional-txt2img' &&
+      (payload.workerJob.loras?.length ?? 0) > 0
+        ? { requiresRegionalLora: true }
+        : {}),
       sampling: {
         ...(context.sampling.cfgRescale !== undefined
           ? { cfgRescale: context.sampling.cfgRescale }

@@ -112,6 +112,16 @@ export function supportsInferenceRegionalInvokeInitialization(value: unknown): b
   )
 }
 
+/** Global LoRAs require the qualified public regional owner and its explicit adapter opt-in. */
+export function supportsInferenceRegionalLoras(value: unknown): boolean {
+  return (
+    isQualifiedInferenceWorkerReady(value) &&
+    value.workerVersion === '0.14.0' &&
+    value.capabilities.includes('illustrious-regional-invoke-v1') &&
+    value.capabilities.includes('illustrious-regional-lora-v1')
+  )
+}
+
 /** Only explicitly qualified peers may nominate a best-effort thumbnail sidecar. */
 export function supportsInferenceCandidateThumbnails(value: unknown): boolean {
   return (

@@ -19,6 +19,7 @@ import type { RegionalWorkerInput } from './regional-worker-request.js'
 
 import { GenerationQueueError, parseFrozenGenerationPayloadV1 } from './generation-queue.js'
 import { frozenEmbeddingFieldsAgree } from './illustrious-generation-embeddings.js'
+import { frozenLoraFieldsAgree } from './illustrious-generation-loras.js'
 import { captureRegionalWorkerInput } from './regional-worker-request.js'
 
 /** Private operational identity, outside normal Generate and accepted-result provenance. */
@@ -174,7 +175,7 @@ export function captureRegionalQueuedMaterial(
   }
 }
 
-/** Public global refs belong to the ordinary frozen context as well as the conditioning recipe. */
+/** Global TI agrees with the recipe; global LoRAs retain their ordinary frozen stack owner. */
 export function assertPublicRegionalGlobalEmbeddingsAgree(
   input: RegionalWorkerInput,
   context?: FrozenQueuedIllustriousTxt2ImgV1['context'],
@@ -184,6 +185,13 @@ export function assertPublicRegionalGlobalEmbeddingsAgree(
   }
   try {
     const capturedContext = context === undefined ? undefined : structuredClone(context)
+    if (
+      capturedContext === undefined
+        ? (input.request.job.loras?.length ?? 0) > 0
+        : !frozenLoraFieldsAgree(capturedContext, input.request.job.loras)
+    ) {
+      throw invalid('Public global LoRAs differ from the full frozen context.')
+    }
     const { recipe } = input
     const embeddings = input.request.job.embeddings
     const effectiveWire =
@@ -339,7 +347,7 @@ function parseRegionalPayload(json: string, invoke: boolean): FrozenQueuedRegion
     (ordinary.workerJob.sampling.cfgRescale ?? 0) !== 0 ||
     ordinary.workerJob.vaePrecision !== 'FP16' ||
     ordinary.workerJob.vae != null ||
-    (ordinary.workerJob.loras?.length ?? 0) !== 0 ||
+    (!invoke && (ordinary.workerJob.loras?.length ?? 0) !== 0) ||
     (!invoke &&
       ((ordinary.workerJob.embeddings?.positive.length ?? 0) !== 0 ||
         (ordinary.workerJob.embeddings?.negative.length ?? 0) !== 0))

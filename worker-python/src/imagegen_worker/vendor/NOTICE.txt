@@ -103,3 +103,28 @@ guards. Inverse-shift threshold, shifted noise mixture, low-precision operation
 ordering and Heun completion gating are preserved. Existing IGS authored/clipped
 LCM schedules and zero-strength VAE-only execution remain intentional differences.
 No public command, auxiliary download or persistent model mask state is added.
+
+InvokeAI direct ordinary LoRA preparation for Regional Guidance
+
+ImageGen Studio's ../illustrious_regional_lora.py adapts:
+invokeai/backend/patches/layers/lora_layer.py (LoRALayer.get_weight)
+SHA-256: 331d7a5b01a4a640dd6937ab1a32fd5de5a2cbab87b91d1cd426da26b469aaba
+invokeai/backend/patches/layers/lora_layer_base.py (scale/get_parameters)
+SHA-256: 5aaee663e31bc243034135e38bbb90a8a8a166e9d393bd5e3810c41c01ba9987
+invokeai/backend/patches/layer_patcher.py (_apply_model_layer_patch)
+SHA-256: 8c8174c1013bf31ec1e22ab3ecb39d59f346883bf62ce0752fdb138876ef437a
+All from InvokeAI commit a61ac4fb75bec78d92885bf39bcf3ed3900a9bdd,
+https://github.com/invoke-ai/InvokeAI/tree/a61ac4fb75bec78d92885bf39bcf3ed3900a9bdd
+Attribution: InvokeAI contributors, Apache License 2.0 (LICENSE-InvokeAI.txt).
+
+Consulted callers at that revision:
+invokeai/app/invocations/text_encoder/compel.py (SDXLPromptInvocationBase.run_clip_compel)
+invokeai/app/invocations/sd/denoise_latents.py (DenoiseLatentsInvocation LoRA scope).
+The ordered stack prepares both CLIPs and UNet before their original consumers.
+Modifications: existing exact safe Kohya snapshots/native target qualification,
+whole-stack preflight, serialized/workspace bounds and finite-value refusals.
+Equal-rank bias-free FP32 residuals, signed alpha/rank scaling, model-dtype cast
+and sequential out-of-place Parameter.data addition preserve the direct path.
+Only a fresh job-owned pipeline is mutated before regional borrowing; no cached
+originals, restoration scope, sidecar modules or PEFT adapter is introduced.
+Failure discards that owned pipeline and makes no borrowed-caller rollback promise.

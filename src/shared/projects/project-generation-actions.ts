@@ -32,6 +32,8 @@ export interface ProjectGenerationActionState {
   phase: 'blocked' | 'closed' | 'idle' | 'preparing' | 'processing'
   /** Separate opt-in initialization capability; absence never enables regional Euler a. */
   regionalInvokeInitializationSupported?: boolean
+  /** Explicit public regional LoRA support; absence never enables an active global stack. */
+  regionalLoraSupported?: boolean
   /** Explicit finite Regional Guidance support; older responses must remain unavailable. */
   regionalSupported?: boolean
   runningJobId: string | null
@@ -118,6 +120,7 @@ export function isProjectGenerationActionState(
         'outpaintSupported',
         'regionalSupported',
         'regionalInvokeInitializationSupported',
+        'regionalLoraSupported',
         'smartPatchSupported',
       ],
     ) ||
@@ -128,6 +131,8 @@ export function isProjectGenerationActionState(
     (value['regionalSupported'] !== undefined && typeof value['regionalSupported'] !== 'boolean') ||
     (value['regionalInvokeInitializationSupported'] !== undefined &&
       typeof value['regionalInvokeInitializationSupported'] !== 'boolean') ||
+    (value['regionalLoraSupported'] !== undefined &&
+      typeof value['regionalLoraSupported'] !== 'boolean') ||
     (value['smartPatchSupported'] !== undefined &&
       typeof value['smartPatchSupported'] !== 'boolean') ||
     typeof value['cfgRescaleSupported'] !== 'boolean' ||

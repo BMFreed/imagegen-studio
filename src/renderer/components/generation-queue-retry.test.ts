@@ -5,6 +5,31 @@ import { test } from 'node:test'
 
 import { generationQueueRetryReason } from './generation-queue-retry.js'
 
+test('regional LoRA Retry advisory follows the frozen stack and its separate capability', () => {
+  for (const regionalLoraSupported of [undefined, false, true]) {
+    const state = { regionalLoraSupported, regionalSupported: true }
+    const reason = generationQueueRetryReason('illustrious-regional-txt2img', state, 'Euler', true)
+    assert.equal(reason === null, regionalLoraSupported === true)
+    if (reason) {
+      assert.match(reason, /global LoRAs.*Repair or update/)
+    }
+    assert.equal(
+      generationQueueRetryReason('illustrious-regional-txt2img', state, 'Euler', false),
+      null,
+    )
+    assert.equal(generationQueueRetryReason('illustrious-txt2img', state, 'Euler', true), null)
+  }
+  assert.match(
+    generationQueueRetryReason(
+      'illustrious-regional-txt2img',
+      { regionalLoraSupported: true, regionalSupported: false },
+      'Euler',
+      true,
+    )!,
+    /does not support Regional Guidance/,
+  )
+})
+
 test('regional Retry advisory follows the frozen sampler and requires a separate Euler a capability', () => {
   for (const regionalInvokeInitializationSupported of [undefined, false, true]) {
     const state = { regionalInvokeInitializationSupported, regionalSupported: true }

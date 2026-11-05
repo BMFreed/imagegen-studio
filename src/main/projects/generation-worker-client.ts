@@ -27,6 +27,7 @@ import {
   supportsInferenceLora,
   supportsInferenceOutpaint,
   supportsInferenceRegionalInvokeInitialization,
+  supportsInferenceRegionalLoras,
   supportsInferenceRegionalProgress,
   supportsInferenceVaePrecision,
 } from '../../shared/projects/inference-worker-capabilities.js'
@@ -429,6 +430,16 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     let dispatched = false
     let completed = false
     try {
+      if (
+        input.compositionProfile === 'invoke-canvas-v1' &&
+        (input.request.job.loras?.length ?? 0) > 0 &&
+        !supportsInferenceRegionalLoras(this.ready)
+      ) {
+        throw new GenerationWorkerError(
+          'WORKER_VERSION_MISMATCH',
+          'The active worker has not qualified the frozen global LoRA stack.',
+        )
+      }
       if (
         input.compositionProfile === 'invoke-canvas-v1' &&
         ((input.request.job.embeddings?.positive.length ?? 0) > 0 ||

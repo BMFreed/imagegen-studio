@@ -35,6 +35,8 @@ export interface GenerationQueueEntry extends GenerationQueueReview {
     modelVersion: string
     negativePrompt: string
     prompt: string
+    /** Derived from the frozen public regional worker stack, including enabled zero weights. */
+    requiresRegionalLora?: boolean
     sampling: GenerationQueueSamplingDetails
     size: { height: number; width: number }
   } | null
@@ -116,6 +118,7 @@ const EntrySchema = v.pipe(
         modelVersion: text,
         negativePrompt: text,
         prompt: text,
+        requiresRegionalLora: v.optional(v.boolean()),
         sampling: v.union([
           v.strictObject({
             cfgRescale: v.optional(v.pipe(v.number(), v.finite(), v.minValue(0), v.maxValue(0.99))),

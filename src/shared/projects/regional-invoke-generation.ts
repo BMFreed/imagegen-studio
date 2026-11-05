@@ -40,6 +40,7 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   embeddingsSupported?: boolean | null
   initializationSupported?: boolean | null
   iterations: number
+  loraSupported?: boolean | null
   runtimeSupported?: boolean | null
 }): string | null {
   const regions = input.document.regionalGuidance?.filter((region) => region.enabled) ?? []
@@ -62,9 +63,6 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   }
   if (draft.vae !== null || draft.vaePrecision !== 'FP16') {
     return 'Regional Guidance requires the Embedded VAE with explicit FP16 precision.'
-  }
-  if (draft.loras.some((lora) => lora.enabled)) {
-    return 'Disable all LoRAs before generating with Regional Guidance.'
   }
   if (regions.some((region) => (region.referenceImages?.length ?? 0) > 0)) {
     return 'Remove reference images from enabled regions before generating with Regional Guidance.'
@@ -120,6 +118,14 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   }
   if (input.runtimeSupported !== true) {
     return 'The current image engine does not support Regional Guidance. Repair or update the runtime.'
+  }
+  if (draft.loras.some((lora) => lora.enabled)) {
+    if (input.loraSupported === undefined || input.loraSupported === null) {
+      return 'Checking image engine support for global LoRAs with Regional Guidance. Repair or update the runtime if support remains unavailable.'
+    }
+    if (input.loraSupported !== true) {
+      return 'The current image engine does not support global LoRAs with Regional Guidance. Repair or update the runtime.'
+    }
   }
   if (draft.sampling.sampler === 'Euler a') {
     if (input.initializationSupported === undefined || input.initializationSupported === null) {
