@@ -1681,3 +1681,18 @@ in all four, but the conservative color gate is 1 PASS/3 INCONCLUSIVE:
 unambiguous reversal across both seeds is not qualified. Exact inputs, all PNGs
 and observations remain retained; 344,064 B of byte-archived idle scratch are
 removed. Types/scoped checks pass. No mechanism or readiness change follows.
+
+## Installed InvokeAI tagged comparison
+
+The [same-input reference](./phase-4-regional-guidance-invoke-tagged-research.md)
+reuses all four tagged Main handoffs through the installed InvokeAI 6.14.3 API,
+queue and original native implementation. Independent app roots and an offline
+configuration-only cache preserve the user's catalog/history. The fixed
+four-request comparison completes through the real app:120UNet/120Euler/4VAE,
+8,400 original cross-attention/SDPA calls,240 permission samples and exact
+decode-to-PNG quantization. No new Studio request or numerical parity claim is
+introduced. Both apps retain1PASS/3INCONCLUSIVE in the same conservative color
+gate, with no Studio-only routing defect established. All original images and
+source/data evidence remain;61,153,280B of verified archived payloads are removed.
+Controllers' exit90 residual-PID flags remain separate from successful app
+completion and later empty owned groups. No mechanism/readiness change follows.

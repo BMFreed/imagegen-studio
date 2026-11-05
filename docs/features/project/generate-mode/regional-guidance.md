@@ -1246,3 +1246,16 @@ NOT_QUALIFIED. Red/pink and blue/lavender-gray ambiguity prevents confirmed
 reversal at both seeds. All originals and descriptions remain retained. No
 new adult-age, general quality, public or human-acceptance claim follows;
 PP-001/007/008 remain **«Пока не обещать»**.
+
+## Installed InvokeAI tagged reference
+
+The [installed-application comparison](../../../engineering/phase-4-regional-guidance-invoke-tagged-research.md)
+uses the four retained tagged Main inputs unchanged through real InvokeAI 6.14.3
+API/queue/native owners, with isolated app data. Four queue items complete;
+native consumption and exact decode-to-PNG quantization pass. The same
+conservative AI gate gives1PASS/3INCONCLUSIVE in each application, with two
+figures but no fully confirmed reversal pair. This establishes no Studio-only
+routing defect. Cross-application runtime/initialization and collector-order
+differences, absent fresh Studio numerical oracles and human-pending quality
+remain explicit. No new Studio generation, mechanism or readiness change
+follows; PP-001/007/008 remain **«Пока не обещать»**.
