@@ -23,6 +23,7 @@ export function hasEnabledRegionalGuidance(
  */
 export function getInvokeRegionalGenerationUnavailableReason(input: {
   document: RegionalDocument
+  initializationSupported?: boolean | null
   iterations: number
   runtimeSupported?: boolean | null
 }): string | null {
@@ -38,8 +39,11 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   ) {
     return 'Regional Guidance requires an Illustrious epsilon model on Current Canvas.'
   }
-  if (draft.sampling.sampler !== 'Euler' || draft.sampling.scheduler !== 'Normal') {
-    return 'Regional Guidance requires Euler with the Normal scheduler.'
+  if (
+    (draft.sampling.sampler !== 'Euler' && draft.sampling.sampler !== 'Euler a') ||
+    draft.sampling.scheduler !== 'Normal'
+  ) {
+    return 'Regional Guidance requires Euler or Euler a with the Normal scheduler.'
   }
   if (draft.vae !== null || draft.vaePrecision !== 'FP16') {
     return 'Regional Guidance requires the Embedded VAE with explicit FP16 precision.'
@@ -108,7 +112,16 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   if (input.runtimeSupported === undefined || input.runtimeSupported === null) {
     return 'Checking image engine support for Regional Guidance. Repair or update the runtime if support remains unavailable.'
   }
-  return input.runtimeSupported === true
-    ? null
-    : 'The current image engine does not support Regional Guidance. Repair or update the runtime.'
+  if (input.runtimeSupported !== true) {
+    return 'The current image engine does not support Regional Guidance. Repair or update the runtime.'
+  }
+  if (draft.sampling.sampler === 'Euler a') {
+    if (input.initializationSupported === undefined || input.initializationSupported === null) {
+      return 'Checking image engine support for Regional Guidance with Euler a. Repair or update the runtime if support remains unavailable.'
+    }
+    if (input.initializationSupported !== true) {
+      return 'The current image engine does not support Regional Guidance with Euler a. Repair or update the runtime.'
+    }
+  }
+  return null
 }

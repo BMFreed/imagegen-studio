@@ -6,6 +6,7 @@ type RetryState = Pick<
   | 'animaOutpaintSupported'
   | 'animaSupported'
   | 'outpaintSupported'
+  | 'regionalInvokeInitializationSupported'
   | 'regionalSupported'
   | 'smartPatchSupported'
 >
@@ -14,14 +15,18 @@ type RetryState = Pick<
 export function generationQueueRetryReason(
   operation: GenerationQueueEntry['operation'],
   state: RetryState | null,
+  frozenSampler?: string | null,
 ): string | null {
   if (operation === 'illustrious-regional-txt2img') {
     if (state === null) {
       return 'Checking image engine support for this frozen Regional Guidance job.'
     }
-    return state.regionalSupported === true
-      ? null
-      : 'The current image engine does not support Regional Guidance. Repair or update the runtime.'
+    if (state.regionalSupported !== true) {
+      return 'The current image engine does not support Regional Guidance. Repair or update the runtime.'
+    }
+    return frozenSampler === 'Euler a' && state.regionalInvokeInitializationSupported !== true
+      ? 'The current image engine does not support Regional Guidance with Euler a. Repair or update the runtime.'
+      : null
   }
   if (operation === 'illustrious-smart-patch' || operation === 'anima-smart-patch') {
     if (state === null) {

@@ -301,37 +301,30 @@ test('private frozen parser distinguishes explicit ancestral initialization from
   }
 })
 
-test('new initialization remains private and does not broaden public regional admission', async () => {
+test('public Euler a requires explicit operation while private initialization rows stay private', async () => {
   const fixture = await createRegionalQueueFixture()
   try {
     const source = await enqueue(fixture, selectInvokeInitialization(fixture))
     const loaded = await fixture.queue.loadVerifiedRegionalInput(source.id)
-    assert.throws(
-      () =>
-        parseFrozenQueuedRegionalInvokeV1(
-          JSON.stringify({
-            ...loaded.payload,
-            compositionProfile: 'invoke-canvas-v1',
-            kind: 'illustrious-regional-txt2img',
-          }),
-        ),
-      { code: 'QUEUE_INPUT_INVALID' },
-    )
-    await assert.rejects(
-      fixture.queue.enqueueInvokeCanvasRegional({
-        prepared: fixture.prepared,
-        projectPath: fixture.projectPath,
-        regional: {
-          ...fixture.regional,
-          compositionProfile: 'invoke-canvas-v1',
-          initializationProfile: INITIALIZATION,
-        },
-        request: fixture.request,
-        stagingSessionId: randomUUID(),
-      }),
-      { code: 'QUEUE_INPUT_INVALID' },
-    )
-    assert.equal((await fixture.queue.listManagerPage()).items.length, 0)
+    assert.throws(() => parseFrozenQueuedRegionalInvokeV1(JSON.stringify(loaded.payload)), {
+      code: 'QUEUE_INPUT_INVALID',
+    })
+    const publicJob = await fixture.queue.enqueueInvokeCanvasRegional({
+      prepared: fixture.prepared,
+      projectPath: fixture.projectPath,
+      regional: {
+        ...fixture.regional,
+        compositionProfile: 'invoke-canvas-v1',
+        initializationProfile: INITIALIZATION,
+      },
+      request: fixture.request,
+      stagingSessionId: randomUUID(),
+    })
+    const publicInput = await fixture.queue.loadVerifiedRegionalInput(publicJob.id)
+    assert.equal(publicInput.payload.kind, 'illustrious-regional-txt2img')
+    assert.equal(publicInput.input.initializationProfile, INITIALIZATION)
+    assert.equal(publicInput.input.request.job.sampling.scheduler, 'euler_a')
+    assert.equal((await fixture.queue.listManagerPage()).items.length, 1)
     assert.equal(
       (await fixture.queue.loadVerifiedRegionalInput(source.id)).payload.kind,
       'illustrious-regional',

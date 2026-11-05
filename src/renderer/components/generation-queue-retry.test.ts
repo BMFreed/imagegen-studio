@@ -5,6 +5,30 @@ import { test } from 'node:test'
 
 import { generationQueueRetryReason } from './generation-queue-retry.js'
 
+test('regional Retry advisory follows the frozen sampler and requires a separate Euler a capability', () => {
+  for (const regionalInvokeInitializationSupported of [undefined, false, true]) {
+    const state = { regionalInvokeInitializationSupported, regionalSupported: true }
+    assert.equal(generationQueueRetryReason('illustrious-regional-txt2img', state, 'Euler'), null)
+    const result = generationQueueRetryReason('illustrious-regional-txt2img', state, 'Euler a')
+    assert.equal(result === null, regionalInvokeInitializationSupported === true)
+    if (result) {
+      assert.match(result, /Euler a.*Repair or update/)
+    }
+  }
+  assert.notEqual(
+    generationQueueRetryReason(
+      'illustrious-regional-txt2img',
+      { regionalInvokeInitializationSupported: true, regionalSupported: false },
+      'Euler a',
+    ),
+    null,
+  )
+  assert.equal(
+    generationQueueRetryReason('illustrious-txt2img', { regionalSupported: false }, 'Euler a'),
+    null,
+  )
+})
+
 test('regional Retry requires its frozen operation capability, independent of all ordinary flags', () => {
   const operation = 'illustrious-regional-txt2img'
   assert.match(generationQueueRetryReason(operation, null)!, /Checking image engine/)

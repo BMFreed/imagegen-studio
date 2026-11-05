@@ -1107,7 +1107,8 @@ Generate/Results/Retry UI and explicit Add/Save remain separate owners.
 
 The [versioned public integration](../../../engineering/phase-4-regional-guidance-public-invoke-research.md)
 supersedes the earlier blanket public-NEW/Results exclusion only for one static
-Current Canvas item: Illustrious epsilon, Euler/Normal, explicit FP16 Embedded
+Current Canvas item: Illustrious epsilon, Euler/Normal (plus the explicit
+[Euler-a extension below](#public-authored-euler-a-with-frozen-initialization)), explicit FP16 Embedded
 VAE, steps 1–200, CFG `(1,30]`, rescale zero, no enabled LoRA/reference images,
 no active global TI and at most three enabled regions. Existing target/payload
 bounds remain; actual opaque/mixed-alpha targets refuse. Anima and Smart regional
@@ -1383,3 +1384,28 @@ This does not expose private Euler-a through public UI/IPC or change defaults.
 In-flight process failure, independent initializer observation, fresh trained
 census, visual/human acceptance and Anima remain outside this slice. Existing
 provenance exclusions, NOT_QUALIFIED and PP-001/007/008 **«Пока не обещать»** remain.
+
+## Public authored Euler a with frozen initialization
+
+The [additive public continuation](../../../engineering/phase-4-regional-guidance-public-initialization-research.md)
+admits explicitly authored Euler a/Normal through the existing Current Canvas
+Generate/Queue/Results/Add/Save path. Main derives and freezes the known Invoke
+CPU-FP32/add_noise initialization identity; actual worker capability is required
+before composition/publication. Frozen Retry checks its original policy even
+after current sampler edits. Older workers refuse this route while retaining
+legacy public Euler and existing work. Absence retains historical Euler meaning;
+no Project default, new UI control or automatic private-row promotion is added.
+
+ROOT: 312 lower PASS, configured typecheck/build/scoped checks, two semantic
+mutations with legacy controls/restoration, and 14 installed UI-to-Save grouped
+checks. One real Generate is canceled after witnessed steps5/6; explicit Retry
+uses the original Euler-a30/seed123 despite saved Euler2/seed124/disabled-region
+edits. Results, Raster Add/Undo/Redo, Save ZIP/reopen and base-only provenance pass.
+The preceding identical workflow failed only the historical index-cache guard;
+its output and the qualified replay match every PNG/RGBA byte. The cache failure
+and earlier pre-launch budget refusal remain excluded, not relabelled PASS.
+Prior Euler outputs, portable projects, queue/receipt history and unaccepted
+candidates remain preserved. Regional/initialization/composition operational data
+stay excluded from accepted provenance, Compare and result-derived presets.
+No new visual/human, Anima, capacity or release qualification follows;
+NOT_QUALIFIED and PP-001/007/008 **«Пока не обещать»** remain.

@@ -404,3 +404,208 @@ test('public regional owned refusals retain actionable renderer diagnostics with
     'Generation could not continue. Review the settings and try again.',
   )
 })
+
+/**
+ * InvokeAI a61ac4fb graph.ts forwards the authored scheduler; addRegionalGuidance.ts preserves it.
+ * latent_noise.py/devices.py own the CPU draw; session_queue_default.py retries the saved graph.
+ * These cases observe Studio's real admission/queue/staging owners; fixture ML stays controlled.
+ */
+test('public authored Euler a freezes Invoke initialization and keeps accepted projection base-only', async () => {
+  await withActions(async (f) => {
+    const { parseAcceptedGenerationBaseV1 } = await import('./regional-queued-generation.js')
+    ;(f.controls.ready.capabilities as string[]).push('illustrious-regional-invoke-init-v1')
+    await f.edit((document) => {
+      document.generationDraft.sampling.sampler = 'Euler a'
+    })
+    const authored = structuredClone(f.document())
+    const packageBefore = await readFile(f.packagePath)
+    const state = await f.actions.getState(f.tabId)
+    assert.equal(state.regionalSupported, true)
+    assert.equal(state.regionalInvokeInitializationSupported, true)
+    const id = await queued(f)
+    assert.equal((await settled(f, id)).status, 'completed')
+    assert.equal(f.consumed.length, 1)
+    const consumed = f.consumed[0]
+    assert.equal(consumed.compositionProfile, 'invoke-canvas-v1')
+    assert.equal(consumed.initializationProfile, 'invoke-cpu-f32-add-noise-v1')
+    assert.equal(consumed.request.job.sampling.scheduler, 'euler_a')
+    assert.equal(consumed.request.job.sampling.seed, 123)
+    const frozen = await f.queue.loadVerifiedRegionalInput(id)
+    assert.equal(frozen.payload.kind, 'illustrious-regional-txt2img')
+    assert.equal(frozen.payload.initializationProfile, 'invoke-cpu-f32-add-noise-v1')
+    assert.equal(frozen.payload.workerJob.sampling.scheduler, 'euler_a')
+    assert.equal((await f.queue.getManagerEntry(id)).details?.sampling.sampler, 'Euler a')
+    const candidates = await f.staging.listVerifiedCandidates(f.tabId)
+    assert.equal(candidates.length, 1)
+    assert.equal(candidates[0].queueItemId, id)
+    const base = parseAcceptedGenerationBaseV1(candidates[0].frozenPayloadJson)
+    assert.equal(base.kind, 'illustrious-txt2img')
+    assert.equal(Object.hasOwn(base, 'initializationProfile'), false)
+    assert.equal(Object.hasOwn(base, 'compositionProfile'), false)
+    assert.equal(Object.hasOwn(base, 'regional'), false)
+    if (base.kind !== 'illustrious-txt2img') {
+      assert.fail('Public regional accepted projection must retain the ordinary txt2img base.')
+    }
+    assert.equal(base.context.sampling.sampler, 'Euler a')
+    assert.equal(base.workerJob.sampling.scheduler, 'euler_a')
+    assert.deepEqual(f.document(), authored)
+    assert.ok((await readFile(f.packagePath)).equals(packageBefore))
+    assert.equal((await f.staging.listVerifiedRegionalCandidates(f.tabId)).length, 0)
+  })
+})
+
+test('public Euler a capability refusal preserves existing candidate and pending control before composition or publication', async () => {
+  await withActions(async (f) => {
+    const originalId = await queued(f)
+    assert.equal((await settled(f, originalId)).status, 'completed')
+    const originalCandidate = (await f.staging.listVerifiedCandidates(f.tabId))[0]
+    const privateControl = await f.coordinator.submit(f.tabId, f.input())
+    const review = await f.actions.generate(f.tabId, options(f))
+    assert.equal(review.kind, 'confirmation-required')
+    if (review.kind !== 'confirmation-required') {
+      assert.fail('An existing candidate must retain the original replacement review.')
+    }
+    await f.edit((document) => {
+      document.generationDraft.sampling.sampler = 'Euler a'
+    })
+    const beforeRows = await rows(f)
+    const beforeCompose = f.calls.compose.length
+    const beforeCheckpoint = f.calls.checkpoint
+    const authored = structuredClone(f.document())
+    await assert.rejects(
+      f.actions.generate(f.tabId, {
+        ...options(f),
+        confirmation: {
+          candidateIds: review.candidateIds,
+          unfinishedJobIds: review.unfinishedJobIds,
+        },
+      }),
+      { code: 'GENERATION_RUNTIME_UNAVAILABLE' },
+    )
+    assert.equal(f.calls.compose.length, beforeCompose)
+    assert.equal(f.calls.checkpoint, beforeCheckpoint)
+    assert.deepEqual(await rows(f), beforeRows)
+    assert.deepEqual(await f.staging.listVerifiedCandidates(f.tabId), [originalCandidate])
+    assert.equal((await f.queue.getRegionalQueueItem(privateControl.id))?.status, 'pending')
+    assert.deepEqual(f.document(), authored)
+    assert.equal(f.consumed.length, 1)
+    assert.equal((await f.actions.getState(f.tabId)).regionalInvokeInitializationSupported, false)
+    await f.edit((document) => {
+      document.generationDraft.sampling.sampler = 'Euler'
+    })
+    const nextId = await queued(f, {
+      ...options(f),
+      confirmation: {
+        candidateIds: review.candidateIds,
+        unfinishedJobIds: review.unfinishedJobIds,
+      },
+    })
+    assert.equal((await settled(f, nextId)).status, 'completed')
+    assert.equal(f.consumed[1].request.job.sampling.scheduler, 'euler')
+    assert.equal(Object.hasOwn(f.consumed[1], 'initializationProfile'), false)
+  })
+})
+
+test('public frozen Euler a Retry refuses an old engine before SQL and replays after capability recovery despite current Euler edits', async () => {
+  await withActions(async (f) => {
+    ;(f.controls.ready.capabilities as string[]).push('illustrious-regional-invoke-init-v1')
+    await f.edit((document) => {
+      document.generationDraft.sampling.sampler = 'Euler a'
+    })
+    f.controls.failInference = true
+    const sourceId = await queued(f)
+    const source = await settled(f, sourceId)
+    assert.equal(source.status, 'failed')
+    const original = await f.queue.loadVerifiedRegionalInput(sourceId)
+    const originalInput = structuredClone(f.consumed[0])
+    await f.edit((document) => {
+      document.generationDraft.sampling.sampler = 'Euler'
+      document.generationDraft.seed.value = 999
+      document.generationDraft.positivePrompt.text = 'Current authoring is not a Retry policy'
+      document.regionalGuidance = []
+    })
+    await f.projects.save(f.tabId)
+    f.controls.ready.capabilities = f.controls.ready.capabilities.filter(
+      (capability) => capability !== 'illustrious-regional-invoke-init-v1',
+    )
+    const beforeRows = await rows(f)
+    const beforeCompose = f.calls.compose.length
+    const beforeCheckpoint = f.calls.checkpoint
+    const authored = structuredClone(f.document())
+    await assert.rejects(
+      f.actions.retryJob({ id: sourceId, statusSequence: source.statusSequence }),
+      { code: 'GENERATION_RUNTIME_UNAVAILABLE' },
+    )
+    assert.deepEqual(await rows(f), beforeRows)
+    assert.equal(f.calls.compose.length, beforeCompose)
+    assert.equal(f.calls.checkpoint, beforeCheckpoint)
+    assert.equal(f.consumed.length, 1)
+    assert.deepEqual(await f.staging.listVerifiedCandidates(f.tabId), [])
+    ;(f.controls.ready.capabilities as string[]).push('illustrious-regional-invoke-init-v1')
+    f.controls.failInference = false
+    await f.actions.retryJob({ id: sourceId, statusSequence: source.statusSequence })
+    const retry = (await rows(f)).find(({ id }) => id !== sourceId)
+    assert.ok(retry)
+    assert.equal((await settled(f, retry.id)).status, 'completed')
+    assert.deepEqual((await f.queue.loadVerifiedRegionalInput(retry.id)).payload, original.payload)
+    assert.equal(f.consumed[1].initializationProfile, 'invoke-cpu-f32-add-noise-v1')
+    assert.equal(f.consumed[1].request.job.sampling.scheduler, 'euler_a')
+    assert.equal(f.consumed[1].request.job.sampling.seed, 123)
+    assert.deepEqual(f.consumed[1].recipe, originalInput.recipe)
+    assert.equal(f.calls.compose.length, beforeCompose)
+    assert.deepEqual(f.document(), authored)
+    assert.equal(
+      (await rows(f)).find(({ id }) => id === sourceId)?.frozen_payload_json,
+      beforeRows.find(({ id }) => id === sourceId)?.frozen_payload_json,
+    )
+  })
+})
+
+test('public legacy Euler Retry stays available without initialization capability after current Euler a edits', async () => {
+  await withActions(async (f) => {
+    f.controls.failInference = true
+    const sourceId = await queued(f)
+    const source = await settled(f, sourceId)
+    assert.equal(source.status, 'failed')
+    const original = await f.queue.loadVerifiedRegionalInput(sourceId)
+    assert.equal(Object.hasOwn(original.payload, 'initializationProfile'), false)
+    await f.edit((document) => {
+      document.generationDraft.sampling.sampler = 'Euler a'
+      document.generationDraft.seed.value = 999
+      document.regionalGuidance = []
+    })
+    await f.projects.save(f.tabId)
+    assert.equal((await f.actions.getState(f.tabId)).regionalInvokeInitializationSupported, false)
+    const beforeCompose = f.calls.compose.length
+    const authored = structuredClone(f.document())
+    f.controls.failInference = false
+    await f.actions.retryJob({ id: sourceId, statusSequence: source.statusSequence })
+    const retry = (await rows(f)).find(({ id }) => id !== sourceId)
+    assert.ok(retry)
+    assert.equal((await settled(f, retry.id)).status, 'completed')
+    assert.deepEqual((await f.queue.loadVerifiedRegionalInput(retry.id)).payload, original.payload)
+    assert.equal(Object.hasOwn(f.consumed[1], 'initializationProfile'), false)
+    assert.equal(f.consumed[1].request.job.sampling.scheduler, 'euler')
+    assert.equal(f.consumed[1].request.job.sampling.seed, 123)
+    assert.equal(f.calls.compose.length, beforeCompose)
+    assert.deepEqual(f.document(), authored)
+  })
+})
+
+test('public initialization advisory requires both the new capability and its public regional owner', async () => {
+  await withActions(async (f) => {
+    const legacy = await f.actions.getState(f.tabId)
+    assert.equal(legacy.regionalSupported, true)
+    assert.equal(legacy.regionalInvokeInitializationSupported, false)
+    ;(f.controls.ready.capabilities as string[]).push('illustrious-regional-invoke-init-v1')
+    const upgraded = await f.actions.getState(f.tabId)
+    assert.equal(upgraded.regionalSupported, true)
+    assert.equal(upgraded.regionalInvokeInitializationSupported, true)
+    f.controls.ready.capabilities = f.controls.ready.capabilities.filter(
+      (capability) => capability !== 'illustrious-regional-invoke-v1',
+    )
+    const incomplete = await f.actions.getState(f.tabId)
+    assert.equal(incomplete.regionalSupported, false)
+    assert.equal(incomplete.regionalInvokeInitializationSupported, false)
+  })
+})

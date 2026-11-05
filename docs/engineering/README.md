@@ -1816,3 +1816,22 @@ control and physical exit; 82 helper plus two fingerprint regression cases PASS.
 Two pre-inference diagnostic failures remain excluded. No Electron renderer/IPC,
 public Euler-a/default, visual quality or release-install qualification is added;
 the existing NOT_QUALIFIED finding and PP-001/007/008 remain unchanged.
+
+## Public opt-in Invoke initialization
+
+The [public Euler-a continuation](./phase-4-regional-guidance-public-initialization-research.md)
+uses the existing authored sampler choice and installed Invoke initialization,
+without changing defaults or the legacy Euler route. Main freezes the identity;
+Generate and frozen Retry require the separate worker capability, independent of
+later authoring edits. ROOT:312 distinct lower PASS, typecheck/build/scoped checks,
+two semantic RED mutations with old-Euler controls and exact restoration.
+Installed native-r3 passes14 grouped checks: actual UI Generate/progress/Cancel,
+frozen Euler-a30 Retry after Euler2 edits, Results/Raster Add/Undo/Redo and
+Save ZIP/reopen with base-only provenance. An earlier identical run fails only
+the historical cached device-ID guard; all prior bytes remain exact, and its
+completed PNG/RGBA matches the final replay. The initial launcher-budget refusal
+and that failed guard remain excluded. Four total regional wires/two completed
+PNGs are recorded, with no prompt/seed search. Prior shared durable data and the
+runtime/model remain protected. All1,571 own payload entries are verified in the
+retained archive;41,771,008 allocated bytes of idle own scratch are reclaimed.
+No quality/readiness promotion follows.

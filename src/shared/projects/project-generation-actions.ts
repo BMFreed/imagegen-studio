@@ -30,6 +30,8 @@ export interface ProjectGenerationActionState {
   outpaintSupported?: boolean
   /** Engine admission/dispatch is app-wide; jobs and current cancellation are document-scoped. */
   phase: 'blocked' | 'closed' | 'idle' | 'preparing' | 'processing'
+  /** Separate opt-in initialization capability; absence never enables regional Euler a. */
+  regionalInvokeInitializationSupported?: boolean
   /** Explicit finite Regional Guidance support; older responses must remain unavailable. */
   regionalSupported?: boolean
   runningJobId: string | null
@@ -115,6 +117,7 @@ export function isProjectGenerationActionState(
         'animaOutpaintSupported',
         'outpaintSupported',
         'regionalSupported',
+        'regionalInvokeInitializationSupported',
         'smartPatchSupported',
       ],
     ) ||
@@ -123,6 +126,8 @@ export function isProjectGenerationActionState(
       typeof value['animaOutpaintSupported'] !== 'boolean') ||
     (value['outpaintSupported'] !== undefined && typeof value['outpaintSupported'] !== 'boolean') ||
     (value['regionalSupported'] !== undefined && typeof value['regionalSupported'] !== 'boolean') ||
+    (value['regionalInvokeInitializationSupported'] !== undefined &&
+      typeof value['regionalInvokeInitializationSupported'] !== 'boolean') ||
     (value['smartPatchSupported'] !== undefined &&
       typeof value['smartPatchSupported'] !== 'boolean') ||
     typeof value['cfgRescaleSupported'] !== 'boolean' ||

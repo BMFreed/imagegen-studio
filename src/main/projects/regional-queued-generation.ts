@@ -28,12 +28,8 @@ export interface FrozenQueuedRegionalV1 extends Omit<FrozenQueuedIllustriousTxt2
 }
 
 /** Public Invoke Canvas composition is a distinct frozen operation, never inferred from age. */
-export interface FrozenQueuedRegionalInvokeV1 extends Omit<
-  FrozenQueuedRegionalV1,
-  'initializationProfile' | 'kind'
-> {
+export interface FrozenQueuedRegionalInvokeV1 extends Omit<FrozenQueuedRegionalV1, 'kind'> {
   compositionProfile: 'invoke-canvas-v1'
-  initializationProfile?: never
   kind: 'illustrious-regional-txt2img'
 }
 
@@ -260,7 +256,7 @@ function parseRegionalPayload(json: string, invoke: boolean): FrozenQueuedRegion
   }
   if (
     'initializationProfile' in value &&
-    (invoke || !v.is(RegionalInitializationProfileSchema, value.initializationProfile))
+    !v.is(RegionalInitializationProfileSchema, value.initializationProfile)
   ) {
     throw invalid('The frozen regional initialization profile is unsupported.')
   }
@@ -289,23 +285,26 @@ function parseRegionalPayload(json: string, invoke: boolean): FrozenQueuedRegion
   ) {
     throw invalid('The frozen regional job differs from the private execution profile.')
   }
+  const initialization =
+    initializationProfile === undefined
+      ? {}
+      : {
+          initializationProfile: v.parse(
+            RegionalInitializationProfileSchema,
+            initializationProfile,
+          ),
+        }
   return invoke
     ? {
         ...ordinary,
         compositionProfile: 'invoke-canvas-v1',
+        ...initialization,
         kind: 'illustrious-regional-txt2img',
         regional: parsed.output,
       }
     : {
         ...ordinary,
-        ...(initializationProfile !== undefined
-          ? {
-              initializationProfile: v.parse(
-                RegionalInitializationProfileSchema,
-                initializationProfile,
-              ),
-            }
-          : {}),
+        ...initialization,
         kind: 'illustrious-regional',
         regional: parsed.output,
       }

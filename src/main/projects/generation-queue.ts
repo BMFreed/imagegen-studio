@@ -1253,13 +1253,21 @@ export class GenerationQueueRepository {
     request: IllustriousTxt2ImgRequestV1
     stagingSessionId: string
   }): Promise<QueuedGenerationItem> {
-    if (
-      input.regional.compositionProfile !== 'invoke-canvas-v1' ||
-      input.regional.initializationProfile !== undefined
-    ) {
+    if (input.regional.compositionProfile !== 'invoke-canvas-v1') {
       throw new GenerationQueueError(
         'QUEUE_INPUT_INVALID',
         'Public regional submission requires the Invoke Canvas composition profile.',
+      )
+    }
+    if (
+      input.regional.initializationProfile === undefined
+        ? input.request.job.sampling.scheduler !== 'euler'
+        : input.regional.initializationProfile !== 'invoke-cpu-f32-add-noise-v1' ||
+          input.request.job.sampling.scheduler !== 'euler_a'
+    ) {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'Public regional submission requires the matching Invoke Canvas sampler and initialization profile.',
       )
     }
     const regional = captureRegionalQueuedMaterial({ ...input.regional, request: input.request })

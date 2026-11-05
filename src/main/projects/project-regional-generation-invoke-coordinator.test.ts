@@ -290,3 +290,94 @@ test('unconfirmed cancellation after late runtime failure retains the admission 
     }
   })
 })
+
+/**
+ * Current InvokeAI a61ac4fb keeps the authored scheduler on the denoise graph while adding regions.
+ * Studio derives the frozen initialization identity from that owned capture, never a caller field.
+ */
+test('public Euler a derives the exact initialization from capture and ignores a caller substitution', async () => {
+  await withPublic(async (f, coordinator) => {
+    await f.edit((document) => {
+      document.generationDraft.sampling.sampler = 'Euler a'
+    })
+    const authored = structuredClone(f.document())
+    const input = Object.assign(submission(f), {
+      initializationProfile: 'caller-selected initialization is not authority',
+    })
+    input.withPreparation = async (use) => {
+      const original = f.input().ready
+      return await use({
+        inferenceReady: {
+          ...original,
+          capabilities: [
+            ...original.capabilities,
+            'illustrious-regional-invoke-v1',
+            'illustrious-regional-invoke-init-v1',
+          ],
+        },
+        targetWorker: f.compositionWorker,
+      })
+    }
+    const queued = await coordinator.submitInvokeUnderGate(f.tabId, input)
+    const frozen = await f.queue.loadVerifiedRegionalInput(queued.id)
+    assert.equal(frozen.payload.kind, 'illustrious-regional-txt2img')
+    assert.equal(frozen.payload.initializationProfile, 'invoke-cpu-f32-add-noise-v1')
+    assert.equal(frozen.input.initializationProfile, 'invoke-cpu-f32-add-noise-v1')
+    assert.equal(frozen.input.compositionProfile, 'invoke-canvas-v1')
+    assert.equal(frozen.input.request.job.sampling.scheduler, 'euler_a')
+    assert.equal(frozen.input.request.job.sampling.seed, 123)
+    assert.equal(frozen.payload.context.sampling.sampler, 'Euler a')
+    assert.equal(f.calls.compose.length, 1)
+    assert.deepEqual(f.document(), authored)
+  })
+})
+
+test('public Euler a capability gate precedes target checkpoint and publication while legacy Euler remains available', async () => {
+  await withPublic(async (f, coordinator) => {
+    await f.edit((document) => {
+      document.generationDraft.sampling.sampler = 'Euler a'
+    })
+    const authored = structuredClone(f.document())
+    const input = submission(f)
+    let beforePublication = 0
+    let afterPublication = 0
+    input.beforePublication = async () => {
+      beforePublication++
+    }
+    input.afterPublication = async () => {
+      afterPublication++
+    }
+    await assert.rejects(coordinator.submitInvokeUnderGate(f.tabId, input), {
+      code: 'INFERENCE_UNAVAILABLE',
+    })
+    assert.equal(f.calls.compose.length, 0)
+    assert.equal(f.calls.checkpoint, 0)
+    assert.deepEqual(await rows(f), [])
+    assert.equal(beforePublication, 0)
+    assert.equal(afterPublication, 0)
+    assert.deepEqual(f.document(), authored)
+    await f.edit((document) => {
+      document.generationDraft.sampling.sampler = 'Euler'
+    })
+    const legacy = await coordinator.submitInvokeUnderGate(f.tabId, submission(f))
+    const saved = await f.queue.loadVerifiedRegionalInput(legacy.id)
+    assert.equal(saved.input.request.job.sampling.scheduler, 'euler')
+    assert.equal(Object.hasOwn(saved.input, 'initializationProfile'), false)
+    assert.equal(Object.hasOwn(saved.payload, 'initializationProfile'), false)
+    assert.equal(f.calls.compose.length, 1)
+  })
+})
+
+test('public legacy Euler capture cannot acquire initialization from an extra caller field', async () => {
+  await withPublic(async (f, coordinator) => {
+    const input = Object.assign(submission(f), {
+      initializationProfile: 'invoke-cpu-f32-add-noise-v1',
+    })
+    const queued = await coordinator.submitInvokeUnderGate(f.tabId, input)
+    const frozen = await f.queue.loadVerifiedRegionalInput(queued.id)
+    assert.equal(frozen.input.request.job.sampling.scheduler, 'euler')
+    assert.equal(Object.hasOwn(frozen.input, 'initializationProfile'), false)
+    assert.equal(Object.hasOwn(frozen.payload, 'initializationProfile'), false)
+    assert.equal(frozen.input.compositionProfile, 'invoke-canvas-v1')
+  })
+})

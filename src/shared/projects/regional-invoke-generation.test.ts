@@ -85,7 +85,11 @@ test('finite regional settings refuse unsupported families, predictions, samplin
       /Illustrious epsilon/,
     ],
     ['v-prediction', (v) => (v.generationDraft.model!.predictionType = 'v_prediction'), /epsilon/],
-    ['Euler a', (v) => (v.generationDraft.sampling.sampler = 'Euler a'), /Euler.*Normal/],
+    [
+      'unsupported sampler',
+      (v) => (v.generationDraft.sampling.sampler = 'DPM++ 2M'),
+      /Euler.*Normal/,
+    ],
     ['missing scheduler', (v) => (v.generationDraft.sampling.scheduler = null), /Euler.*Normal/],
     ['Auto VAE', (v) => (v.generationDraft.vaePrecision = 'Auto'), /Embedded VAE.*FP16/],
     ['unset VAE precision', (v) => delete v.generationDraft.vaePrecision, /Embedded VAE.*FP16/],
@@ -259,10 +263,61 @@ test('regional capability is an optional strict boolean in preload action respon
     vaePrecisionSupported: true,
   }
   assert.equal(isProjectGenerationActionState(state), true)
-  for (const regionalSupported of [false, true]) {
-    assert.equal(isProjectGenerationActionState({ ...state, regionalSupported }), true)
+  for (const field of ['regionalSupported', 'regionalInvokeInitializationSupported']) {
+    for (const supported of [false, true]) {
+      assert.equal(isProjectGenerationActionState({ ...state, [field]: supported }), true)
+    }
+    for (const unsupported of [null, 0, 1, 'true', {}]) {
+      assert.equal(isProjectGenerationActionState({ ...state, [field]: unsupported }), false)
+    }
   }
-  for (const regionalSupported of [null, 0, 1, 'true', {}]) {
-    assert.equal(isProjectGenerationActionState({ ...state, regionalSupported }), false)
+})
+
+test('explicit regional Euler a requires its own capability and never changes authored settings', () => {
+  const value = document()
+  value.generationDraft.sampling.sampler = 'Euler a'
+  const before = structuredClone(value)
+  for (const initializationSupported of [undefined, null, false, true]) {
+    const result = getInvokeRegionalGenerationUnavailableReason({
+      document: value,
+      initializationSupported,
+      iterations: 1,
+      runtimeSupported: true,
+    })
+    assert.equal(result === null, initializationSupported === true)
+    if (result) {
+      assert.match(result, /Euler a.*Repair or update/)
+    }
   }
+  assert.deepEqual(value, before)
+  value.generationDraft.sampling.sampler = 'Euler'
+  for (const initializationSupported of [undefined, null, false, true]) {
+    assert.equal(
+      getInvokeRegionalGenerationUnavailableReason({
+        document: value,
+        initializationSupported,
+        iterations: 1,
+        runtimeSupported: true,
+      }),
+      null,
+    )
+  }
+})
+
+test('Euler a initialization support cannot grant missing regional engine support or affect ordinary drafts', () => {
+  const value = document()
+  value.generationDraft.sampling.sampler = 'Euler a'
+  for (const runtimeSupported of [undefined, null, false]) {
+    assert.notEqual(
+      getInvokeRegionalGenerationUnavailableReason({
+        document: value,
+        initializationSupported: true,
+        iterations: 1,
+        runtimeSupported,
+      }),
+      null,
+    )
+  }
+  value.regionalGuidance![0].enabled = false
+  assert.equal(reason(value, false), null)
 })

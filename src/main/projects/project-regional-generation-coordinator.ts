@@ -1,6 +1,9 @@
 import { planGenerationBatch } from '../../shared/projects/generation-batch-plan.js'
 import { isIllustriousNoiseProfileV1 } from '../../shared/projects/illustrious-noise-profile.js'
-import { isQualifiedInferenceWorkerReady } from '../../shared/projects/inference-worker-capabilities.js'
+import {
+  isQualifiedInferenceWorkerReady,
+  supportsInferenceRegionalInvokeInitialization,
+} from '../../shared/projects/inference-worker-capabilities.js'
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 import { activePromptEmbeddingRefs } from '../../shared/projects/prompt-embeddings.js'
 import { getInvokeRegionalGenerationUnavailableReason } from '../../shared/projects/regional-invoke-generation.js'
@@ -332,13 +335,19 @@ export class ProjectRegionalGenerationCoordinator {
           } else {
             validatePrivateDraft(document, composition)
           }
+          const initializationProfile =
+            compositionProfile && document.generationDraft.sampling.sampler === 'Euler a'
+              ? ('invoke-cpu-f32-add-noise-v1' as const)
+              : undefined
           const result = await withPreparation(async (preparation) => {
             assertCurrent()
             const ready = structuredClone(preparation.inferenceReady)
             const capability = compositionProfile ? 'illustrious-regional-invoke-v1' : OPT_IN
             if (
               !isQualifiedInferenceWorkerReady(ready) ||
-              !ready.capabilities.includes(capability)
+              !ready.capabilities.includes(capability) ||
+              (initializationProfile !== undefined &&
+                !supportsInferenceRegionalInvokeInitialization(ready))
             ) {
               throw new ProjectRegionalGenerationError(
                 'INFERENCE_UNAVAILABLE',
@@ -409,6 +418,7 @@ export class ProjectRegionalGenerationCoordinator {
                     regional: {
                       ...(compositionProfile ? { compositionProfile } : {}),
                       ...composition,
+                      ...(initializationProfile !== undefined ? { initializationProfile } : {}),
                       recipe,
                     },
                     request,
@@ -452,6 +462,7 @@ export class ProjectRegionalGenerationCoordinator {
 function validateInvokeDraft(document: IgsProjectDocumentV1): void {
   const reason = getInvokeRegionalGenerationUnavailableReason({
     document,
+    initializationSupported: true,
     iterations: 1,
     runtimeSupported: true,
   })

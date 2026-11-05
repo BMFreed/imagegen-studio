@@ -414,7 +414,11 @@ function retryReason(item: GenerationQueueEntry): string | null {
   if (state.phase !== 'idle' && state.phase !== 'processing') {
     return 'Wait for the current queue request to finish.'
   }
-  const operationReason = generationQueueRetryReason(item.operation, state)
+  const operationReason = generationQueueRetryReason(
+    item.operation,
+    state,
+    item.details?.sampling.sampler,
+  )
   if (operationReason) {
     return operationReason
   }

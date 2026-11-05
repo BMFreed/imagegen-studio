@@ -3,7 +3,9 @@
  * not provision, repair, copy weights, inject a runtime, or clean up retained evidence. InvokeAI
  * source: a61ac4fb75bec78d92885bf39bcf3ed3900a9bdd, canvas graph regional conditioning,
  * session_queue_default.py, session_processor_default.py, and staging-area acceptance callers.
- * Resource/physical-exit and UI patterns adapt qualify-installed-smart-patch.mjs.
+ * Resource/physical-exit and UI patterns adapt qualify-installed-smart-patch.mjs. The
+ * initialization profile additionally consults noise.py, latent_noise.py, devices.py and
+ * sd/denoise_latents.py; it observes public selection/frozen identity, not raw initializer math.
  */
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
@@ -91,14 +93,21 @@ assert.ok(
     'installed-regional-invoke-main-death-v1',
     'installed-regional-invoke-progress-v1',
     'installed-regional-invoke-worker-fault-v1',
+    'installed-regional-invoke-initialization-v1',
   ].includes(fixture.profile),
 )
 const mainDeathProfile = fixture.profile === 'installed-regional-invoke-main-death-v1'
 const workerFaultProfile = fixture.profile === 'installed-regional-invoke-worker-fault-v1'
+const initializationProfile = fixture.profile === 'installed-regional-invoke-initialization-v1'
 const progressProfile =
-  workerFaultProfile || fixture.profile === 'installed-regional-invoke-progress-v1'
+  initializationProfile ||
+  workerFaultProfile ||
+  fixture.profile === 'installed-regional-invoke-progress-v1'
 const recoveryProfile =
   mainDeathProfile || fixture.profile === 'installed-regional-invoke-recovery-v1'
+const initialization = 'invoke-cpu-f32-add-noise-v1'
+const generationSampler = initializationProfile ? 'Euler a' : 'Euler'
+const generationScheduler = initializationProfile ? 'euler_a' : 'euler'
 assert.ok(
   Number.isSafeInteger(fixture.deadlineSeconds) &&
     fixture.deadlineSeconds > 0 &&
@@ -282,6 +291,14 @@ const sourceFiles = [
   'worker-python/src/imagegen_worker/inference_lifetime.py',
   'worker-python/src/imagegen_worker/owned_inference.py',
 ]
+if (initializationProfile)
+  sourceFiles.push(
+    'src/shared/projects/inference-worker-capabilities.ts',
+    'src/shared/projects/project-generation-actions.ts',
+    'src/shared/projects/regional-initialization-profile.ts',
+    'src/shared/projects/regional-invoke-generation.ts',
+    'src/renderer/components/generation-queue-retry.ts',
+  )
 let bundleFiles
 async function captureFiles(files) {
   return Object.fromEntries(
@@ -319,6 +336,8 @@ async function verifyProvision() {
   assert.equal(provision.ready.workerVersion, '0.14.0')
   for (const cap of ['illustrious-regional-invoke-v1', 'private-current-canvas-regional-v1'])
     assert.ok(provision.ready.capabilities.includes(cap), `Missing installed capability ${cap}`)
+  if (initializationProfile)
+    assert.ok(provision.ready.capabilities.includes('illustrious-regional-invoke-init-v1'))
   if (mainDeathProfile || workerFaultProfile)
     assert.ok(provision.ready.capabilities.includes('linux-owned-inference-v1'))
   if (progressProfile)
@@ -599,8 +618,8 @@ async function captureProgressPreservation() {
   const sql = await sqlSnapshot(),
     completed = sql.queue.filter(({ status }) => status === 'completed')
   assert.ok(sql.queue.length >= (workerFaultProfile ? 12 : 8) && sql.queue.length <= 256)
-  if (workerFaultProfile) {
-    assert.ok(completed.length >= 5 && completed.length <= 128)
+  if (workerFaultProfile || initializationProfile) {
+    assert.ok(completed.length >= (initializationProfile ? 4 : 5) && completed.length <= 128)
     assert.deepEqual(
       [sql.receipts.length, sql.cursors.length],
       [completed.length, completed.length],
@@ -641,7 +660,10 @@ async function captureProgressPreservation() {
       accepted.push({ queueItemId: id, path: record.canonical_path, layerId: layer.id })
     }
   }
-  assert.equal(accepted.length, workerFaultProfile ? completed.length - 1 : 3)
+  assert.equal(
+    accepted.length,
+    workerFaultProfile || initializationProfile ? completed.length - 1 : 3,
+  )
   assert.equal(new Set(accepted.map(({ queueItemId }) => queueItemId)).size, accepted.length)
   const recoveryFiles = await preservedFiles(path.join(appDataRoot, 'recovery')),
     inputFiles = await preservedFiles(path.join(appDataRoot, 'generation-inputs')),
@@ -682,6 +704,19 @@ async function captureProgressPreservation() {
   report.boundary.progress =
     'Original numeric JSONL from the pinned unchanged native callback path -> original Main transient IPC -> existing Project/Queue counter/bar. No Python callback interception, tensor requests, previews, fabricated events or denoising loop; final30/30 precedes completion and clears on settlement.'
   report.boundary.preconditions = `Reuse the terminal${sql.queue.length}/receipt${sql.receipts.length}/cursor${sql.cursors.length}/${indexed.length}-package pool, including ${accepted.length} accepted jobs and one unaccepted candidate. Prior excluded attempts remain retained. All prior SQL/package/candidate/input bytes are dynamically pinned; three new Project fixtures are authored without resetting prior state.`
+  if (initializationProfile) {
+    report.boundary.calls =
+      'One original public Euler-a/30-step/seed123 Generate canceled after genuine completed-step/UI observations >=5/30, followed by explicit frozen Queue Retry and one healthy PNG. One Electron lifetime and exactly two regional wires; current authoring changes to Euler before Retry.'
+    report.boundary.initialization = {
+      profile: initialization,
+      sampler: generationSampler,
+      scheduler: generationScheduler,
+      unchangedLegacyEuler: true,
+      independentInitializerObservation: false,
+    }
+    report.boundary.exclusions +=
+      ' The prior Euler control remains immutable baseline data, not a byte-equality oracle for this different Euler-a initialization. No raw-noise/initial-sample observation, independent healthy Euler-a replay, default change or new visual qualification is claimed.'
+  }
   if (workerFaultProfile) {
     report.boundary.calls =
       'One original 30-step seed123 Generate faulted after completed-step/UI observations >=5/30 by a verified worker-only pidfd SIGKILL while Main stays alive, followed by explicit frozen Queue Retry and one healthy PNG. One Electron lifetime and exactly two regional wires.'
@@ -952,7 +987,7 @@ async function prepareCatalogAndProjects() {
         cfgScale: 5,
         denoisingStrength: null,
         steps: 30,
-        sampler: 'Euler',
+        sampler: generationSampler,
         scheduler: 'Normal',
       },
     }
@@ -2410,6 +2445,11 @@ function assertFrozen(frozen, project) {
   assert.equal(frozen.schemaVersion, 1)
   assert.equal(frozen.kind, 'illustrious-regional-txt2img')
   assert.equal(frozen.compositionProfile, 'invoke-canvas-v1')
+  if (initializationProfile) {
+    assert.equal(frozen.initializationProfile, initialization)
+    assert.equal(frozen.context.sampling.sampler, 'Euler a')
+    assert.equal(frozen.context.sampling.invokeScheduler, 'euler_a')
+  }
   assert.equal(frozen.context.documentId, project.document.documentId)
   assert.deepEqual(frozen.context.bbox, bbox)
   assert.equal(frozen.context.prompts.positive, globalPrompt)
@@ -2420,7 +2460,7 @@ function assertFrozen(frozen, project) {
   assert.equal(frozen.workerJob.sampling.steps, 30)
   assert.equal(frozen.workerJob.sampling.seed, 123)
   assert.equal(frozen.workerJob.sampling.cfgScale, 5)
-  assert.equal(frozen.workerJob.sampling.scheduler, 'euler')
+  assert.equal(frozen.workerJob.sampling.scheduler, generationScheduler)
   assert.deepEqual(frozen.workerJob.sampling.noiseProfile, policy)
   assert.equal(frozen.workerJob.vaePrecision, 'FP16')
   assert.equal(frozen.workerJob.vae, null)
@@ -2448,6 +2488,7 @@ async function captureFrozen(row, project) {
   assert.equal(digest(regionalBytes), frozen.regional.sha256)
   const regional = JSON.parse(regionalBytes.toString('utf8'))
   assert.equal(regional.compositionProfile, 'invoke-canvas-v1')
+  if (initializationProfile) assert.equal(regional.initializationProfile, initialization)
   assert.equal(regional.layout, 'cfg-negative-first')
   assert.deepEqual(regional.globalNegativeCoverage, { kind: 'everywhere' })
   assert.deepEqual(regional.globalPositiveCoverage, { kind: 'everywhere' })
@@ -2505,6 +2546,10 @@ async function generateCancelEditRetry(project) {
   assert.equal((await targetState(project)).mode, 'txt2img')
   const advisory = await api('getGenerationState', project.id)
   assert.equal(advisory.regionalSupported, true)
+  if (initializationProfile) {
+    assert.equal(advisory.regionalInvokeInitializationSupported, true)
+    assert.equal((await current(project)).generationDraft.sampling.sampler, 'Euler a')
+  }
   await expect(window.locator('input[aria-label="Steps"]')).toHaveValue('30')
   await expect(window.locator('input[aria-label="CFG scale"]')).toHaveValue('5')
   await expect(window.locator('input[aria-label="Generation seed"]')).toHaveValue('123')
@@ -2609,6 +2654,12 @@ async function generateCancelEditRetry(project) {
   const seed = window.locator('input[aria-label="Generation seed"]')
   await seed.fill('124')
   await seed.press('Enter')
+  if (initializationProfile) {
+    // Reuse the original Sampler UI interaction from qualify-installed-generation.mjs.
+    // The frozen Retry must keep Euler a and its initialization after this authored change.
+    await window.locator('[aria-label="Sampler"]').click()
+    await window.getByText('Euler', { exact: true }).last().click()
+  }
   for (const region of project.document.regionalGuidance)
     await window
       .locator(`[data-regional-guidance-id="${region.id}"]`)
@@ -2622,11 +2673,17 @@ async function generateCancelEditRetry(project) {
           steps: tab.generationDraft.sampling.steps,
           seed: tab.generationDraft.seed,
           enabled: tab.regionalGuidance.map(({ enabled }) => enabled),
+          ...(initializationProfile ? { sampler: tab.generationDraft.sampling.sampler } : {}),
         }
       },
       { timeout: timeout() },
     )
-    .toEqual({ steps: 2, seed: { policy: 'fixed', value: 124 }, enabled: [false, false] })
+    .toEqual({
+      steps: 2,
+      seed: { policy: 'fixed', value: 124 },
+      enabled: [false, false],
+      ...(initializationProfile ? { sampler: 'Euler' } : {}),
+    })
   await expect(generate).toBeEnabled({ timeout: timeout(120_000) })
   report.ordinaryNeighbor = {
     regionsDisabled: true,
@@ -2647,6 +2704,12 @@ async function generateCancelEditRetry(project) {
   await screenshot('edited-saved-current-draft')
   await openQueue()
   await expect(queueRow(first.id)).toContainText('Seed 123')
+  if (initializationProfile) {
+    await queueRow(first.id).getByRole('button', { name: 'Show job details', exact: true }).click()
+    await expect(
+      window.getByTestId('queue-job-details').getByText('Euler a', { exact: true }),
+    ).toBeVisible()
+  }
   const retry = queueRow(first.id).getByRole('button', { name: 'Retry job', exact: true })
   await expect(retry).toBeEnabled({ timeout: timeout(120_000) })
   await retry.click()
@@ -2697,6 +2760,8 @@ async function generateCancelEditRetry(project) {
   report.noImplicitSave.afterRetryCompletionPackageSha256 = await hashFile(project.file)
   assert.equal((await current(project)).generationDraft.sampling.steps, 2)
   assert.deepEqual((await current(project)).generationDraft.seed, { policy: 'fixed', value: 124 })
+  if (initializationProfile)
+    assert.equal((await current(project)).generationDraft.sampling.sampler, 'Euler')
   const final = await scenarioSql()
   assert.equal(final.queue.length, 2)
   assert.equal(final.receipts.length, 1)
@@ -2714,6 +2779,12 @@ async function generateCancelEditRetry(project) {
   assert.equal(new Set(wires.map(({ requestId }) => requestId)).size, wires.length)
   for (const wire of wires) {
     assert.equal(wire.bundleJson.compositionProfile, 'invoke-canvas-v1')
+    if (initializationProfile) {
+      assert.equal(wire.bundleJson.initializationProfile, initialization)
+      const worker = observed.workers.find(({ pid }) => pid === wire.pid)
+      assert.ok(worker.ready.capabilities.includes('illustrious-regional-invoke-init-v1'))
+      assert.equal(wire.bundleJson.request.job.sampling.scheduler, 'euler_a')
+    }
     assert.equal(wire.bundleJson.layout, 'cfg-negative-first')
     assert.deepEqual(wire.bundleJson.globalPositiveCoverage, { kind: 'everywhere' })
     assert.deepEqual(wire.bundleJson.globalNegativeCoverage, { kind: 'everywhere' })
@@ -3721,10 +3792,10 @@ function assertBaseProvenance(provenance, candidate, frozen) {
     sampling: {
       actualSeed: 123,
       cfgScale: 5,
-      invokeScheduler: 'euler',
+      invokeScheduler: generationScheduler,
       noiseProfile: policy,
       requestedSeedPolicy: 'fixed',
-      sampler: 'Euler',
+      sampler: generationSampler,
       scheduler: 'Normal',
       steps: 30,
     },
@@ -3749,6 +3820,7 @@ function assertBaseProvenance(provenance, candidate, frozen) {
     'maskId',
     'regionId',
     'compositionProfile',
+    ...(initializationProfile ? ['initializationProfile', initialization] : []),
     fixture.checkpoint.path,
     appDataRoot,
     ...localPrompts,
@@ -4237,7 +4309,19 @@ try {
     }
     const completed = await generateCancelEditRetry(project)
     await resultsAddSaveReopen(project, completed)
-    if (progressProfile) {
+    if (initializationProfile) {
+      report.initializationControl = {
+        priorEulerControlPreserved: preservationBaseline.controlPng,
+        newOutputPngSha256: report.output.pngSha256,
+        newOutputRgbaSha256: report.output.rgbaSha256,
+        comparedForEquality: false,
+        reason:
+          'The authored Euler-a initialization is a different execution policy. The existing Euler control is pinned and independently preserved, not used as a new-output byte oracle.',
+      }
+      check(
+        'Public Euler-a frozen identity survives authored sampler edits and Results/Add/Undo/Save; the prior Euler control remains immutable without an invalid cross-policy output comparison',
+      )
+    } else if (progressProfile) {
       assert.equal(
         report.output.pngSha256,
         preservationBaseline.controlPng.sha256,

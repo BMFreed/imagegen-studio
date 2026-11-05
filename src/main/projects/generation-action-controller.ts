@@ -32,6 +32,7 @@ import {
   supportsInferenceImg2Img,
   supportsInferenceLora,
   supportsInferenceOutpaint,
+  supportsInferenceRegionalInvokeInitialization,
   supportsInferenceVaePrecision,
 } from '../../shared/projects/inference-worker-capabilities.js'
 import type {
@@ -155,6 +156,7 @@ interface GenerationActionDependencies {
     Pick<
       GenerationQueueRepository,
       | 'listUnfinishedNormalByProjectDocument'
+      | 'loadVerifiedRegionalInput'
       | 'loadVerifiedSmartPatchInput'
       | 'retryPreparedOutpaintTerminal'
       | 'retryPreparedSmartPatchTerminal'
@@ -413,6 +415,12 @@ export class ProjectGenerationActionController {
             : this.drain
               ? 'processing'
               : 'idle',
+      regionalInvokeInitializationSupported:
+        !this.blocked &&
+        !this.closed &&
+        !!this.options.regional &&
+        supportsRegional(ready) &&
+        supportsInferenceRegionalInvokeInitialization(ready),
       regionalSupported:
         !this.blocked && !this.closed && !!this.options.regional && supportsRegional(ready),
       runningJobId: jobs.find((job) => job.status === 'running')?.id ?? null,
@@ -587,6 +595,7 @@ export class ProjectGenerationActionController {
   ): Promise<ProjectGenerateResult> {
     const unavailable = getInvokeRegionalGenerationUnavailableReason({
       document,
+      initializationSupported: true,
       iterations: request.iterations,
       runtimeSupported: true,
     })
@@ -645,7 +654,11 @@ export class ProjectGenerationActionController {
             this.options.scratchBasePath,
             async (preparation) => {
               assertAction()
-              if (!supportsRegional(preparation.inferenceReady)) {
+              if (
+                !supportsRegional(preparation.inferenceReady) ||
+                (document.generationDraft.sampling.sampler === 'Euler a' &&
+                  !supportsInferenceRegionalInvokeInitialization(preparation.inferenceReady))
+              ) {
                 throw new ProjectGenerationActionError(
                   'GENERATION_RUNTIME_UNAVAILABLE',
                   'Repair or update the image engine to generate with Regional Guidance. Existing jobs and results were kept.',
@@ -1304,6 +1317,26 @@ export class ProjectGenerationActionController {
       await this.options.gate.run(source.projectKey, async () => {
         this.assertAdmissionOpen()
         this.assertDocument(source.projectKey, source.documentId)
+        const loadFrozen = this.options.queue.loadVerifiedRegionalInput?.bind(this.options.queue)
+        if (!loadFrozen) {
+          throw new ProjectGenerationActionError(
+            'GENERATION_RUNTIME_UNAVAILABLE',
+            'The frozen Regional Guidance job cannot be verified. The original job was kept.',
+          )
+        }
+        const frozen = await loadFrozen(review.id)
+        this.assertAdmissionOpen()
+        this.assertDocument(source.projectKey, source.documentId)
+        if (
+          frozen.payload.kind !== 'illustrious-regional-txt2img' ||
+          frozen.payload.context.documentId !== source.documentId ||
+          frozen.item.localProjectKey !== source.projectKey
+        ) {
+          throw new ProjectGenerationActionError(
+            'GENERATION_INVALID_REQUEST',
+            'The frozen Regional Guidance identity differs from the reviewed job.',
+          )
+        }
         let published: QueuedGenerationItem | null = null
         try {
           const admitted = await this.options.runtime.withGenerationAdmission(
@@ -1311,7 +1344,11 @@ export class ProjectGenerationActionController {
             async (ready) => {
               this.assertAdmissionOpen()
               this.assertDocument(source.projectKey, source.documentId)
-              if (!supportsRegional(ready)) {
+              if (
+                !supportsRegional(ready) ||
+                (frozen.payload.initializationProfile !== undefined &&
+                  !supportsInferenceRegionalInvokeInitialization(ready))
+              ) {
                 throw new ProjectGenerationActionError(
                   'GENERATION_RUNTIME_UNAVAILABLE',
                   'Repair or update the image engine to retry Regional Guidance. The original job was kept.',
