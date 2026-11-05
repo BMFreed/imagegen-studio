@@ -1301,3 +1301,18 @@ Noise initialization, CUDA and collector-order differences prevent a unique
 cross-app cause or pixel-parity claim. This comparison changes no production
 mechanism, default or public admission. Human and general quality acceptance
 remain open; PP-001/007/008 remain **«Пока не обещать»**.
+
+## Same-runtime initialization diagnosis
+
+The [fixed initial-latent control](../../../engineering/phase-4-regional-guidance-initial-latent-research.md)
+reuses two swapped Main inputs on official v0.1 in the same Studio runtime. Raw
+noise, conditioning and all 28 ancestral step RNG states match; the only changed
+operation is Invoke-style original `add_noise` initialization. Four completions
+reproduce both native baseline RGBs exactly and verify all output RGB bytes.
+Seed123 loses its extra third figure; scale/framing defects and red/magenta
+uncertainty remain. Seed124's pale left hair remains ambiguous. Both candidates
+are INCONCLUSIVE under the strict color gate; overall NOT_QUALIFIED. This is a
+bounded causal finding, not a production repair/default or full Invoke parity.
+Human/age/general quality and the complete four-case reversal gate remain open.
+No production, admission, persistence or provenance change follows;
+PP-001/007/008 remain **«Пока не обещать»**.

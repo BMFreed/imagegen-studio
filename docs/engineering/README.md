@@ -1738,3 +1738,18 @@ next diagnostic, not changed here. Controllers 90/90/90/0 stay distinct from
 healthy driver exits and empty owned groups. All 275 own payload entries are
 archived; 59,412,480 B of idle own scratch removed. Human/quality/readiness and
 public boundaries remain unchanged.
+
+## Same-runtime initial-latent control
+
+The [four-request initialization control](./phase-4-regional-guidance-initial-latent-research.md)
+keeps official v0.1, retained swapped Main inputs and the installed Studio runtime.
+Only initial preparation switches from native sigma scaling to Invoke's original
+`add_noise(zero, raw, first timestep)`; raw CPU noise and every ancestral step RNG
+state remain exact. Six small native checks pass; four trained completions give
+112 UNet/ancestral transitions and exact retained native baselines/PNG oracles.
+Initialization changes all 28 predictions per seed and removes seed123's third
+figure. Strict candidate colors remain 2 INCONCLUSIVE, NOT_QUALIFIED, with severe
+scale mismatch and pale-hair ambiguity retained. This supports a bounded causal
+finding, no universal repair, Invoke parity or production-default promotion.
+The setup staging-mode refusal and one-line private correction remain separate
+from completed requests. Human/quality/readiness and PP-001/007/008 stay unchanged.
