@@ -1288,3 +1288,16 @@ Both baseline count controls pass; full quality/age/framing is not accepted.
 Mechanical success and stronger assignment colors do not qualify reversal.
 Human acceptance remains pending and
 PP-001/007/008 remain **«Пока не обещать»**.
+
+## Installed Invoke Euler-a reference
+
+The [actual installed application comparison](../../../engineering/phase-4-regional-guidance-invoke-ancestral-research.md)
+consumes the same retained Main regional tag-form inputs at Euler a/28 on the
+user-selected official v0.1. Four real queue completions and native consumption/
+PNG checks pass, while the narrow visual gate stays NOT_QUALIFIED:
+2 PASS / 2 INCONCLUSIVE. Unlike Studio, Invoke does not add the third figure in
+seed123-swapped; swapped hair ambiguity and scale/framing defects remain.
+Noise initialization, CUDA and collector-order differences prevent a unique
+cross-app cause or pixel-parity claim. This comparison changes no production
+mechanism, default or public admission. Human and general quality acceptance
+remain open; PP-001/007/008 remain **«Пока не обещать»**.

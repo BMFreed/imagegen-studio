@@ -1724,3 +1724,17 @@ events finish in299.789s. Narrow visual result2PASS/1FAIL/1INCONCLUSIVE remains
 NOT_QUALIFIED: one swapped image has three figures, another has ambiguous pale
 hair. Human acceptance remains pending; no readiness or quality promotion. All82 own
 payload entries are byte-archived;4,411,392B of idle own scratch removed.
+
+## Installed Invoke Euler ancestral comparison
+
+The [four-case actual Invoke reference](./phase-4-regional-guidance-invoke-ancestral-research.md)
+reuses retained genuine Main Euler-a28 inputs on official v0.1, through isolated
+Invoke6.14.3 API/queue roots. Four completions, 112 UNet/ancestral transitions,
+7,840 cross-attention/SDPA calls and exact native-decode-to-PNG checks pass.
+Narrow visual outcome 2 PASS / 2 INCONCLUSIVE remains NOT_QUALIFIED. Studio's third
+figure is absent in Invoke, but swapped color ambiguity and composition issues
+remain; no unique cause or attention repair follows. Initialization is a bounded
+next diagnostic, not changed here. Controllers 90/90/90/0 stay distinct from
+healthy driver exits and empty owned groups. All 275 own payload entries are
+archived; 59,412,480 B of idle own scratch removed. Human/quality/readiness and
+public boundaries remain unchanged.
