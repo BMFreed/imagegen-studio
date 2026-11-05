@@ -101,6 +101,17 @@ export function supportsInferenceRegionalProgress(value: unknown): boolean {
   )
 }
 
+/** Opt-in identity support never follows from a sampler name or a historical ready message. */
+export function supportsInferenceRegionalInvokeInitialization(value: unknown): boolean {
+  return (
+    isQualifiedInferenceWorkerReady(value) &&
+    value.workerVersion === '0.14.0' &&
+    value.capabilities.includes('illustrious-regional-invoke-init-v1') &&
+    (value.capabilities.includes('private-current-canvas-regional-v1') ||
+      value.capabilities.includes('illustrious-regional-invoke-v1'))
+  )
+}
+
 /** Only explicitly qualified peers may nominate a best-effort thumbnail sidecar. */
 export function supportsInferenceCandidateThumbnails(value: unknown): boolean {
   return (

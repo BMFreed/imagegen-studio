@@ -1793,3 +1793,15 @@ An initial wrong-import mutation attempt remains excluded. This uses the pinned
 dependency runtime without updating the installed worker. Existing 3 PASS/1INC
 visual evidence is unchanged; Main frozen initialization identity and public
 routing remain separate. No default or readiness promotion.
+
+## Frozen private initialization identity
+
+The [transport/Retry continuation](./phase-4-regional-guidance-init-transport-research.md)
+binds an explicit Invoke initialization literal to private bundles, frozen
+sidecars and queue payloads; absence preserves historical execution. Client
+and processor independently require worker capability. Public Euler admission
+and installed runtime remain unchanged. ROOT: 377 Main + 132 Python PASS,
+two real queue/Retry-to-Python-parser bridge cases, strict typing and semantic
+identity/dispatch mutations with controls and exact restoration. Independent
+source review CLEAN; installed trained integration and default promotion stay
+separate. Visual NOT_QUALIFIED and PP-001/007/008 remain unchanged.

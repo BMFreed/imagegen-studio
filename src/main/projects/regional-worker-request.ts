@@ -1,5 +1,9 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
 import { IllustriousNoiseProfileV1Schema } from '../../shared/projects/illustrious-noise-profile.js'
+import {
+  type RegionalInitializationProfile,
+  RegionalInitializationProfileSchema,
+} from '../../shared/projects/regional-initialization-profile.js'
 
 import { createHash } from 'node:crypto'
 import { type BigIntStats, constants } from 'node:fs'
@@ -36,6 +40,7 @@ export interface RegionalWorkerInput {
   compositionProfile?: 'invoke-canvas-v1'
   globalNegativeCoverage: RegionalGlobalCoverage
   globalPositiveCoverage: RegionalGlobalCoverage
+  initializationProfile?: RegionalInitializationProfile
   layout: 'cfg-negative-first' | 'positive-only'
   negativePooledSourceId: string
   positivePooledSourceId: string
@@ -224,6 +229,7 @@ const inputSchema = v.strictObject({
   compositionProfile: v.optional(v.literal('invoke-canvas-v1')),
   globalNegativeCoverage: coverageSchema,
   globalPositiveCoverage: coverageSchema,
+  initializationProfile: v.optional(RegionalInitializationProfileSchema),
   layout: v.picklist(['cfg-negative-first', 'positive-only']),
   negativePooledSourceId: v.string(),
   positivePooledSourceId: v.string(),
@@ -242,6 +248,12 @@ export function captureRegionalWorkerInput(input: RegionalWorkerInput): Regional
     }
     detached = result.output
     validateAgreement(detached)
+    if (
+      detached.initializationProfile !== undefined &&
+      detached.request.job.sampling.scheduler !== 'euler_a'
+    ) {
+      throw invalid('Invoke initialization requires the explicit Euler a execution lane.')
+    }
     if (
       detached.compositionProfile === 'invoke-canvas-v1' &&
       (detached.globalNegativeCoverage.kind !== 'everywhere' ||
@@ -351,6 +363,9 @@ export async function prepareRegionalWorkerRequest(
           }
     const bundle = {
       ...(detached.compositionProfile ? { compositionProfile: detached.compositionProfile } : {}),
+      ...(detached.initializationProfile !== undefined
+        ? { initializationProfile: detached.initializationProfile }
+        : {}),
       globalNegativeCoverage: await globalCoverage(detached.globalNegativeCoverage, 'negative'),
       globalPositiveCoverage: await globalCoverage(detached.globalPositiveCoverage, 'positive'),
       layout: detached.layout,

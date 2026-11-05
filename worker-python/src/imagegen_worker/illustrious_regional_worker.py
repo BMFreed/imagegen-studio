@@ -10,6 +10,10 @@ Main owns staging until completion is consumed, or physical child exit on failur
 worker consumes hash-bound snapshots and never removes inputs or their parent.
 Checkpoint/catalog provenance remains Main's responsibility; the production
 single-file loader owns checkpoint-to-live-component construction.
+
+Invoke's queue freezes invocation graphs for Retry, but noise dtype remains a
+runtime setting. Studio transports an explicit optional initialization identity
+so frozen jobs never inherit a later runtime default.
 """
 
 from __future__ import annotations
@@ -78,7 +82,17 @@ _TOPOLOGY = {
 }
 
 
-def _denoising_profile(parameters: IllustriousInferenceParameters) -> _DenoisingProfile:
+def _denoising_profile(
+    parameters: IllustriousInferenceParameters, initialization_profile: str | None = None
+) -> _DenoisingProfile:
+    if initialization_profile is not None:
+        _require(
+            type(initialization_profile) is str
+            and initialization_profile == "invoke-cpu-f32-add-noise-v1"
+            and parameters.scheduler == "euler_a",
+            "The explicit regional initialization profile requires supported Euler a execution.",
+        )
+        return "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cuda-fp16-v1"
     return (
         "ordinary-canvas-euler-ancestral-txt2img-cuda-fp16-v1"
         if parameters.scheduler == "euler_a"
@@ -98,6 +112,7 @@ class RegionalRequest:
     layout: _Layout
     composition_profile: str | None = None
     report_progress: bool = False
+    initialization_profile: str | None = None
 
 
 def _require(condition: bool, message: str) -> None:
@@ -392,7 +407,13 @@ def parse_regional_request(value: object) -> RegionalRequest:
         | (
             {"compositionProfile"}
             if type(bundle_value) is dict and "compositionProfile" in bundle_value
-            else set()
+            else set[str]()
+        )
+        | (
+            {"initializationProfile"}
+            if type(cast(object, bundle_value)) is dict
+            and "initializationProfile" in cast(dict[str, Any], bundle_value)
+            else set[str]()
         ),
         "Private regional bundle",
     )
@@ -401,6 +422,13 @@ def parse_regional_request(value: object) -> RegionalRequest:
         _require(
             type(composition_profile) is str and composition_profile == "invoke-canvas-v1",
             "The explicit regional composition profile is unsupported.",
+        )
+    initialization_profile = bundle.get("initializationProfile")
+    if "initializationProfile" in bundle:
+        _require(
+            type(initialization_profile) is str
+            and initialization_profile == "invoke-cpu-f32-add-noise-v1",
+            "The explicit regional initialization profile is unsupported.",
         )
     encoding_profile = (
         _INVOKE_ENCODING_PROFILE if composition_profile is not None else _ENCODING_PROFILE
@@ -434,7 +462,9 @@ def parse_regional_request(value: object) -> RegionalRequest:
         "Regional bundle, target and output must be distinct.",
     )
     parameters = _command_parameters(command)
-    tensor_profile, _ = _execution_profile(_denoising_profile(parameters), encoding_profile)
+    tensor_profile, _ = _execution_profile(
+        _denoising_profile(parameters, initialization_profile), encoding_profile
+    )
     if parameters.scheduler == "euler_a":
         _denoising_parameters(parameters, tensor_profile, resolved_noise=True, ancestral=True)
     else:
@@ -483,6 +513,7 @@ def parse_regional_request(value: object) -> RegionalRequest:
         layout=bundle["layout"],
         composition_profile=composition_profile,
         report_progress=envelope.get("reportProgress") is True,
+        initialization_profile=initialization_profile,
     )
 
 
@@ -531,7 +562,9 @@ def execute_regional_request(
             profile=_INVOKE_ENCODING_PROFILE
             if request.composition_profile == "invoke-canvas-v1"
             else _ENCODING_PROFILE,
-            denoising_profile=_denoising_profile(request.parameters),
+            denoising_profile=_denoising_profile(
+                request.parameters, request.initialization_profile
+            ),
             global_negative_coverage=request.global_negative_coverage,
             global_positive_coverage=request.global_positive_coverage,
             negative_pooled_source_id=request.negative_pooled_source_id,

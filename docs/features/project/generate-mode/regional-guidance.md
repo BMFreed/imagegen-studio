@@ -1355,3 +1355,17 @@ trained source replays matching every original PNG byte. The installed worker
 is unchanged. Visual 3 PASS/1INCONCLUSIVE remains NOT_QUALIFIED; human/full-prompt/
 age/general quality and Anima remain open. Public routing requires separately
 frozen initialization identity and compatibility; no default/readiness change.
+
+## Private frozen initialization transport
+
+The [explicit identity continuation](../../../engineering/phase-4-regional-guidance-init-transport-research.md)
+freezes `initializationProfile: "invoke-cpu-f32-add-noise-v1"` independently of
+schedule policy. Private Euler-a requests preserve it through owned transport,
+restart/recovery and exact Retry, with separate worker capability admission.
+Historical absence retains historical profiles. Public Invoke Canvas jobs
+reject this field and remain Euler-only; no renderer choice/default is added.
+ROOT: 377 Main + 132 Python PASS, two real Main/Retry-to-Python-parser cases,
+strict typing and causal identity/dispatch controls/restoration. Source review
+CLEAN is separate from runtime evidence. Installed integration, visual/human
+acceptance and Anima remain open; provenance exclusions and PP-001/007/008
+**«Пока не обещать»** are unchanged.

@@ -1,3 +1,8 @@
+import {
+  type RegionalInitializationProfile,
+  RegionalInitializationProfileSchema,
+} from '../../shared/projects/regional-initialization-profile.js'
+
 import { createHash } from 'node:crypto'
 import { type BigIntStats, constants } from 'node:fs'
 import { lstat, open, readdir, realpath } from 'node:fs/promises'
@@ -17,13 +22,18 @@ import { captureRegionalWorkerInput } from './regional-worker-request.js'
 
 /** Private operational identity, outside normal Generate and accepted-result provenance. */
 export interface FrozenQueuedRegionalV1 extends Omit<FrozenQueuedIllustriousTxt2ImgV1, 'kind'> {
+  initializationProfile?: RegionalInitializationProfile
   kind: 'illustrious-regional'
   regional: { byteSize: number; sha256: string }
 }
 
 /** Public Invoke Canvas composition is a distinct frozen operation, never inferred from age. */
-export interface FrozenQueuedRegionalInvokeV1 extends Omit<FrozenQueuedRegionalV1, 'kind'> {
+export interface FrozenQueuedRegionalInvokeV1 extends Omit<
+  FrozenQueuedRegionalV1,
+  'initializationProfile' | 'kind'
+> {
   compositionProfile: 'invoke-canvas-v1'
+  initializationProfile?: never
   kind: 'illustrious-regional-txt2img'
 }
 
@@ -33,6 +43,7 @@ export type FrozenQueuedRegionalOperationalV1 =
 export interface RegionalQueuedMaterial {
   compositionProfile?: 'invoke-canvas-v1'
   files: Record<string, Buffer>
+  initializationProfile?: RegionalInitializationProfile
   regional: FrozenQueuedRegionalV1['regional']
 }
 
@@ -53,6 +64,7 @@ const metadataSchema = v.strictObject({
   compositionProfile: v.optional(v.literal('invoke-canvas-v1')),
   globalNegativeCoverage: v.unknown(),
   globalPositiveCoverage: v.unknown(),
+  initializationProfile: v.optional(RegionalInitializationProfileSchema),
   layout: v.picklist(['cfg-negative-first', 'positive-only']),
   negativePooledSourceId: v.string(),
   positivePooledSourceId: v.string(),
@@ -90,6 +102,7 @@ export function parseAcceptedGenerationBaseV1(json: string): FrozenQueuedGenerat
   }
   const {
     compositionProfile: _profile,
+    initializationProfile: _initialization,
     regional: _regional,
     ...base
   } = parseFrozenQueuedRegionalInvokeV1(json)
@@ -122,6 +135,9 @@ export function captureRegionalQueuedMaterial(input: RegionalWorkerInput): Regio
     ...(captured.compositionProfile !== undefined
       ? { compositionProfile: captured.compositionProfile }
       : {}),
+    ...(captured.initializationProfile !== undefined
+      ? { initializationProfile: captured.initializationProfile }
+      : {}),
     globalNegativeCoverage: globalCoverage(captured.globalNegativeCoverage, 'negative'),
     globalPositiveCoverage: globalCoverage(captured.globalPositiveCoverage, 'positive'),
     layout: captured.layout,
@@ -148,6 +164,9 @@ export function captureRegionalQueuedMaterial(input: RegionalWorkerInput): Regio
   return {
     ...(captured.compositionProfile !== undefined
       ? { compositionProfile: captured.compositionProfile }
+      : {}),
+    ...(captured.initializationProfile !== undefined
+      ? { initializationProfile: captured.initializationProfile }
       : {}),
     files,
     regional: { byteSize: bytes.length, sha256: sha256(bytes) },
@@ -197,6 +216,7 @@ export async function loadRegionalQueuedInput(
       (capturedPayload.kind === 'illustrious-regional-txt2img'
         ? capturedPayload.compositionProfile
         : undefined) ||
+    captured.initializationProfile !== capturedPayload.initializationProfile ||
     captured.recipe.documentId !== capturedPayload.context.documentId ||
     captured.recipe.documentRevision !== capturedPayload.context.documentRevision
   ) {
@@ -238,7 +258,18 @@ function parseRegionalPayload(json: string, invoke: boolean): FrozenQueuedRegion
   if (!parsed.success) {
     throw invalid('The frozen regional resource descriptor is invalid.')
   }
-  const { compositionProfile: _profile, regional: _regional, ...base } = value
+  if (
+    'initializationProfile' in value &&
+    (invoke || !v.is(RegionalInitializationProfileSchema, value.initializationProfile))
+  ) {
+    throw invalid('The frozen regional initialization profile is unsupported.')
+  }
+  const {
+    compositionProfile: _profile,
+    initializationProfile,
+    regional: _regional,
+    ...base
+  } = value
   const ordinary = parseFrozenGenerationPayloadV1(
     JSON.stringify({ ...base, kind: 'illustrious-txt2img' }),
   )
@@ -246,7 +277,8 @@ function parseRegionalPayload(json: string, invoke: boolean): FrozenQueuedRegion
     ordinary.kind !== 'illustrious-txt2img' ||
     ordinary.workerJob.checkpoint.predictionType !== 'epsilon' ||
     (invoke && ordinary.workerJob.sampling.cfgScale <= 1) ||
-    ordinary.workerJob.sampling.scheduler !== 'euler' ||
+    ordinary.workerJob.sampling.scheduler !==
+      (initializationProfile === undefined ? 'euler' : 'euler_a') ||
     ordinary.workerJob.sampling.noiseProfile === undefined ||
     (ordinary.workerJob.sampling.cfgRescale ?? 0) !== 0 ||
     ordinary.workerJob.vaePrecision !== 'FP16' ||
@@ -264,7 +296,19 @@ function parseRegionalPayload(json: string, invoke: boolean): FrozenQueuedRegion
         kind: 'illustrious-regional-txt2img',
         regional: parsed.output,
       }
-    : { ...ordinary, kind: 'illustrious-regional', regional: parsed.output }
+    : {
+        ...ordinary,
+        ...(initializationProfile !== undefined
+          ? {
+              initializationProfile: v.parse(
+                RegionalInitializationProfileSchema,
+                initializationProfile,
+              ),
+            }
+          : {}),
+        kind: 'illustrious-regional',
+        regional: parsed.output,
+      }
 }
 
 async function loadFiles(

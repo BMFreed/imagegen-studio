@@ -6,6 +6,7 @@ import {
 } from '../../shared/projects/generation-progress.js'
 import {
   isQualifiedInferenceWorkerReady,
+  supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalProgress,
 } from '../../shared/projects/inference-worker-capabilities.js'
 
@@ -450,6 +451,15 @@ export class RegionalGenerationProcessor {
         return { kind: 'canceled', queueItemId: claimed.item.id }
       }
       const input = captureRegionalWorkerInput(claimed.input)
+      if (
+        input.initializationProfile !== undefined &&
+        !supportsInferenceRegionalInvokeInitialization(transport.ready)
+      ) {
+        throw new RegionalGenerationProcessorError(
+          'INFERENCE_UNAVAILABLE',
+          'The worker has not qualified the frozen regional initialization policy.',
+        )
+      }
       input.request.requestId = randomUUID()
       await this.reverifyResources(claimed, input)
       if (!(await this.stillRunning(active))) {

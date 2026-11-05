@@ -25,6 +25,7 @@ import {
   supportsInferenceImg2Img,
   supportsInferenceLora,
   supportsInferenceOutpaint,
+  supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalProgress,
   supportsInferenceVaePrecision,
 } from '../../shared/projects/inference-worker-capabilities.js'
@@ -427,6 +428,15 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     let dispatched = false
     let completed = false
     try {
+      if (
+        input.initializationProfile !== undefined &&
+        !supportsInferenceRegionalInvokeInitialization(this.ready)
+      ) {
+        throw new GenerationWorkerError(
+          'WORKER_VERSION_MISMATCH',
+          'The active worker has not qualified the explicit regional initialization policy.',
+        )
+      }
       if (
         !this.ready.capabilities.includes(
           input.compositionProfile === 'invoke-canvas-v1'

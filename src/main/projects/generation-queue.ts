@@ -1253,7 +1253,10 @@ export class GenerationQueueRepository {
     request: IllustriousTxt2ImgRequestV1
     stagingSessionId: string
   }): Promise<QueuedGenerationItem> {
-    if (input.regional.compositionProfile !== 'invoke-canvas-v1') {
+    if (
+      input.regional.compositionProfile !== 'invoke-canvas-v1' ||
+      input.regional.initializationProfile !== undefined
+    ) {
       throw new GenerationQueueError(
         'QUEUE_INPUT_INVALID',
         'Public regional submission requires the Invoke Canvas composition profile.',
@@ -3174,6 +3177,9 @@ export class GenerationQueueRepository {
             ...basePayload,
             ...(regional.compositionProfile
               ? { compositionProfile: regional.compositionProfile }
+              : {}),
+            ...(regional.initializationProfile !== undefined
+              ? { initializationProfile: regional.initializationProfile }
               : {}),
             kind: regional.compositionProfile
               ? ('illustrious-regional-txt2img' as const)
