@@ -1008,196 +1008,7 @@ export class GenerationQueueRepository {
     projectPath: string
     stagingSessionId: string
   }): Promise<QueuedGenerationItem[]> {
-    if (
-      !Array.isArray(input.items) ||
-      input.items.length < 1 ||
-      input.items.length > GENERATION_STAGING_LIMITS.candidates ||
-      typeof input.preflight !== 'function' ||
-      (input.assertCurrent !== undefined && typeof input.assertCurrent !== 'function')
-    ) {
-      throw new GenerationQueueError(
-        'QUEUE_INPUT_INVALID',
-        'The qualified batch selection is invalid.',
-      )
-    }
-    const projectPath = input.projectPath
-    const stagingSessionId = input.stagingSessionId
-    const preflight = input.preflight
-    const assertCurrent = input.assertCurrent
-    if (!Buffer.isBuffer(input.items[0]?.prepared?.targetPngBytes)) {
-      throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The batch target is unavailable.')
-    }
-    // One shared target snapshot bounds memory independently of the number of jobs. All mutable
-    // metadata and caller buffers are consumed before the first await, including the item order.
-    const targetBytes = Buffer.from(input.items[0].prepared.targetPngBytes)
-    const items = input.items.map((item) => {
-      if (
-        !Buffer.isBuffer(item?.prepared?.targetPngBytes) ||
-        !item.prepared.targetPngBytes.equals(targetBytes)
-      ) {
-        throw new GenerationQueueError(
-          'QUEUE_INPUT_INVALID',
-          'A batch must share one frozen target.',
-        )
-      }
-      const context = structuredClone(item.prepared.context)
-      const request = structuredClone(item.request)
-      validateSnapshot(context, request, targetBytes, stagingSessionId)
-      return { context, request }
-    })
-    const group = comparableBatchContext(items[0].context)
-    if (
-      new Set(items.map((item) => item.request.requestId)).size !== items.length ||
-      !batchEmbeddingFilesAgree(items.map((item) => item.context)) ||
-      items.some((item) => !isDeepStrictEqual(comparableBatchContext(item.context), group))
-    ) {
-      throw new GenerationQueueError(
-        'QUEUE_INPUT_INVALID',
-        'The batch contains mixed frozen inputs.',
-      )
-    }
-
-    return await this.serialize(async () => {
-      this.assertReadyForDispatch()
-      const canonicalPath = await canonicalProjectPath(projectPath)
-      if (canonicalPath !== projectPath) {
-        throw new GenerationQueueError(
-          'QUEUE_PROJECT_IDENTITY_CHANGED',
-          'The Project path changed before queueing.',
-        )
-      }
-      const localProjectKey = localProjectRecoveryKey(canonicalPath)
-      this.assertProjectCanEnqueue(localProjectKey)
-      for (const item of items) {
-        const source = await readStableFile(
-          item.request.job.target.path,
-          item.context.target.byteSize,
-          item.context.target.sha256,
-        )
-        if (!source.equals(targetBytes)) {
-          throw new GenerationQueueError(
-            'QUEUE_INPUT_INVALID',
-            'The qualified batch target changed.',
-          )
-        }
-      }
-      await validateTargetPng(targetBytes, items[0].context)
-      const batchId = randomUUID()
-      // IDs remain opaque random UUIDs. Canonical assignment to plan slots preserves supplied
-      // order through the existing created_at/id query without synthetic timestamps or migration.
-      const ids = items.map(() => randomUUID()).sort()
-      const now = new Date().toISOString()
-      const rows: Selectable<GenerationQueueItem>[] = items.map((item, index) => ({
-        batch_id: batchId,
-        canonical_project_path: canonicalPath,
-        created_at: now,
-        document_id: item.context.documentId,
-        document_revision: item.context.documentRevision,
-        error_code: null,
-        error_message: null,
-        finished_at: null,
-        frozen_payload_json: frozenBatchPayloadJson(item.context, item.request),
-        id: ids[index],
-        local_project_key: localProjectKey,
-        operation:
-          item.context.kind === 'normal-img2img-preparation'
-            ? 'illustrious-img2img'
-            : 'illustrious-txt2img',
-        staging_session_id: stagingSessionId,
-        started_at: null,
-        status: 'pending',
-        status_sequence: 0,
-        updated_at: now,
-      }))
-      await preflight(
-        Object.freeze(
-          rows.map((row) =>
-            Object.freeze({
-              frozenPayloadJson: row.frozen_payload_json,
-              queueItemId: row.id,
-            }),
-          ),
-        ),
-      )
-      this.assertProjectCanEnqueue(localProjectKey)
-      const root = await this.ensureRoot()
-      const directories: { path: string; published: boolean }[] = []
-      try {
-        for (const row of rows) {
-          const temporary = await mkdtemp(path.join(root, '.tmp-'))
-          const directory = { path: temporary, published: false }
-          directories.push(directory)
-          const manifest: InputManifestV1 = {
-            payloadSha256: sha256(Buffer.from(row.frozen_payload_json, 'utf8')),
-            queueInputVersion: QUEUE_INPUT_VERSION,
-            queueItemId: row.id,
-            targetByteSize: targetBytes.length,
-            targetFile: 'target.png',
-            targetSha256: sha256(targetBytes),
-          }
-          await writeDurableFile(path.join(temporary, 'target.png'), targetBytes)
-          await writeDurableFile(
-            path.join(temporary, 'manifest.json'),
-            Buffer.from(JSON.stringify(manifest), 'utf8'),
-          )
-          await syncDirectory(temporary)
-          const published = path.join(root, row.id)
-          await rename(temporary, published)
-          directory.path = published
-          directory.published = true
-          await syncDirectory(root)
-          await this.testHooks.afterInputPublish?.()
-          this.assertProjectCanEnqueue(localProjectKey)
-        }
-        await this.db.transaction().execute(async (transaction) => {
-          this.assertProjectCanEnqueue(localProjectKey)
-          assertCurrent?.()
-          // Separate small INSERTs share one transaction; SQLite binding counts stay bounded.
-          for (const row of rows) {
-            await transaction.insertInto('generation_queue_item').values(row).execute()
-            this.assertProjectCanEnqueue(localProjectKey)
-          }
-          await this.testHooks.beforeBatchCommit?.()
-          assertCurrent?.()
-          this.assertProjectCanEnqueue(localProjectKey)
-        })
-        await this.testHooks.afterBatchCommit?.()
-        return rows.map(toItem)
-      } catch (error) {
-        if (!directories.some((directory) => directory.published)) {
-          await removeUnregisteredBatchDirectories(
-            directories.map((directory) => directory.path),
-            root,
-          )
-          throw error
-        }
-        let committed: Selectable<GenerationQueueItem>[]
-        try {
-          committed = await this.db
-            .selectFrom('generation_queue_item')
-            .selectAll()
-            .where('id', 'in', ids)
-            .execute()
-        } catch {
-          this.publicationUncertainProjects.add(localProjectKey)
-          this.fencedProjects.add(localProjectKey)
-          throw batchPublicationUncertain()
-        }
-        if (batchRowsMatch(committed, rows)) {
-          return rows.map((expected) => toItem(committed.find((row) => row.id === expected.id)!))
-        }
-        if (committed.length !== 0) {
-          this.publicationUncertainProjects.add(localProjectKey)
-          this.fencedProjects.add(localProjectKey)
-          throw batchPublicationUncertain()
-        }
-        await removeUnregisteredBatchDirectories(
-          directories.map((directory) => directory.path),
-          root,
-        )
-        throw error
-      }
-    })
+    return await this.enqueueIllustriousGenerationBatchInternal(input)
   }
 
   async enqueueIllustriousTxt2Img(input: {
@@ -1278,6 +1089,89 @@ export class GenerationQueueRepository {
       throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'Regional document identity differs.')
     }
     return await this.enqueueIllustriousGenerationInternal(input, regional)
+  }
+
+  /** Invoke's all-or-none admission uses the same files-first batch owner as ordinary jobs. */
+  async enqueueInvokeCanvasRegionalBatch(input: {
+    assertCurrent?: () => void
+    items: readonly {
+      prepared: PreparedNormalTxt2Img
+      regional: Omit<RegionalWorkerInput, 'request'>
+      request: IllustriousTxt2ImgRequestV1
+    }[]
+    preflight: (
+      entries: readonly { frozenPayloadJson: string; queueItemId: string }[],
+    ) => Promise<void>
+    projectPath: string
+    stagingSessionId: string
+  }): Promise<QueuedGenerationItem[]> {
+    if (
+      !Array.isArray(input.items) ||
+      input.items.length < 1 ||
+      input.items.length > GENERATION_BATCH_JOB_LIMIT
+    ) {
+      throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The regional batch count is invalid.')
+    }
+    if (!Buffer.isBuffer(input.items[0]?.prepared?.targetPngBytes)) {
+      throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The batch target is unavailable.')
+    }
+    const targetPngBytes = Buffer.from(input.items[0].prepared.targetPngBytes)
+    const materials: ReturnType<typeof captureRegionalQueuedMaterial>[] = []
+    const items = input.items.map((item) => {
+      if (
+        item?.prepared?.context?.kind !== 'normal-txt2img-preparation' ||
+        !Buffer.isBuffer(item.prepared.targetPngBytes) ||
+        !item.prepared.targetPngBytes.equals(targetPngBytes) ||
+        item.request?.type !== 'generate-illustrious-txt2img'
+      ) {
+        throw new GenerationQueueError(
+          'QUEUE_INPUT_INVALID',
+          'Regional batches require one transparent target.',
+        )
+      }
+      const prepared = { context: structuredClone(item.prepared.context), targetPngBytes }
+      const request = structuredClone(item.request)
+      const regional = captureRegionalQueuedMaterial({ ...item.regional, request })
+      if (
+        regional.compositionProfile !== 'invoke-canvas-v1' ||
+        (regional.initializationProfile === undefined
+          ? request.job.sampling.scheduler !== 'euler'
+          : regional.initializationProfile !== 'invoke-cpu-f32-add-noise-v1' ||
+            request.job.sampling.scheduler !== 'euler_a')
+      ) {
+        throw new GenerationQueueError(
+          'QUEUE_INPUT_INVALID',
+          'Public regional batches require the matching Invoke Canvas sampler and initialization profile.',
+        )
+      }
+      const metadata = JSON.parse(regional.files['regional.json'].toString('utf8')) as {
+        recipe: Pick<RegionalWorkerInput['recipe'], 'documentId' | 'documentRevision'>
+      }
+      if (
+        metadata.recipe.documentId !== prepared.context.documentId ||
+        metadata.recipe.documentRevision !== prepared.context.documentRevision
+      ) {
+        throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'Regional document identity differs.')
+      }
+      materials.push(regional)
+      return { prepared, request }
+    })
+    const common = comparableStaticRegionalMaterial(materials[0])
+    if (
+      items.some(
+        (item) =>
+          !isDeepStrictEqual(item.prepared.context.prompts, items[0].prepared.context.prompts),
+      ) ||
+      materials.some(
+        (material) => !isDeepStrictEqual(comparableStaticRegionalMaterial(material), common),
+      )
+    ) {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'The regional batch contains mixed frozen inputs.',
+      )
+    }
+    return await this.enqueueIllustriousGenerationBatchInternal({ ...input, items }, materials)
   }
 
   /** Admit one complete qualified Anima batch using the existing files-first/atomic-SQL protocol. */
@@ -3118,6 +3012,223 @@ export class GenerationQueueRepository {
     return removed
   }
 
+  private async enqueueIllustriousGenerationBatchInternal(
+    input: {
+      assertCurrent?: () => void
+      items: readonly {
+        prepared: PreparedNormalGeneration
+        request: IllustriousGenerationRequestV1
+      }[]
+      preflight: (
+        entries: readonly { frozenPayloadJson: string; queueItemId: string }[],
+      ) => Promise<void>
+      projectPath: string
+      stagingSessionId: string
+    },
+    regional?: readonly ReturnType<typeof captureRegionalQueuedMaterial>[],
+  ): Promise<QueuedGenerationItem[]> {
+    if (
+      !Array.isArray(input.items) ||
+      input.items.length < 1 ||
+      input.items.length > GENERATION_STAGING_LIMITS.candidates ||
+      typeof input.preflight !== 'function' ||
+      (input.assertCurrent !== undefined && typeof input.assertCurrent !== 'function')
+    ) {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'The qualified batch selection is invalid.',
+      )
+    }
+    const projectPath = input.projectPath
+    const stagingSessionId = input.stagingSessionId
+    const preflight = input.preflight
+    const assertCurrent = input.assertCurrent
+    if (!Buffer.isBuffer(input.items[0]?.prepared?.targetPngBytes)) {
+      throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The batch target is unavailable.')
+    }
+    // One shared target snapshot bounds memory independently of the number of jobs. All mutable
+    // metadata and caller buffers are consumed before the first await, including the item order.
+    const targetBytes = Buffer.from(input.items[0].prepared.targetPngBytes)
+    const items = input.items.map((item, index) => {
+      if (
+        !Buffer.isBuffer(item?.prepared?.targetPngBytes) ||
+        !item.prepared.targetPngBytes.equals(targetBytes)
+      ) {
+        throw new GenerationQueueError(
+          'QUEUE_INPUT_INVALID',
+          'A batch must share one frozen target.',
+        )
+      }
+      const context = structuredClone(item.prepared.context)
+      const request = structuredClone(item.request)
+      validateSnapshot(context, request, targetBytes, stagingSessionId)
+      return { context, regional: regional?.[index], request }
+    })
+    const group = comparableBatchContext(items[0].context)
+    if (
+      new Set(items.map((item) => item.request.requestId)).size !== items.length ||
+      !batchEmbeddingFilesAgree(items.map((item) => item.context)) ||
+      items.some((item) => !isDeepStrictEqual(comparableBatchContext(item.context), group))
+    ) {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'The batch contains mixed frozen inputs.',
+      )
+    }
+
+    return await this.serialize(async () => {
+      this.assertReadyForDispatch()
+      const canonicalPath = await canonicalProjectPath(projectPath)
+      if (canonicalPath !== projectPath) {
+        throw new GenerationQueueError(
+          'QUEUE_PROJECT_IDENTITY_CHANGED',
+          'The Project path changed before queueing.',
+        )
+      }
+      const localProjectKey = localProjectRecoveryKey(canonicalPath)
+      this.assertProjectCanEnqueue(localProjectKey)
+      for (const item of items) {
+        const source = await readStableFile(
+          item.request.job.target.path,
+          item.context.target.byteSize,
+          item.context.target.sha256,
+        )
+        if (!source.equals(targetBytes)) {
+          throw new GenerationQueueError(
+            'QUEUE_INPUT_INVALID',
+            'The qualified batch target changed.',
+          )
+        }
+      }
+      await validateTargetPng(targetBytes, items[0].context)
+      const batchId = randomUUID()
+      // IDs remain opaque random UUIDs. Canonical assignment to plan slots preserves supplied
+      // order through the existing created_at/id query without synthetic timestamps or migration.
+      const ids = items.map(() => randomUUID()).sort()
+      const now = new Date().toISOString()
+      const rows: Selectable<GenerationQueueItem>[] = items.map((item, index) => ({
+        batch_id: batchId,
+        canonical_project_path: canonicalPath,
+        created_at: now,
+        document_id: item.context.documentId,
+        document_revision: item.context.documentRevision,
+        error_code: null,
+        error_message: null,
+        finished_at: null,
+        frozen_payload_json: frozenBatchPayloadJson(item.context, item.request, item.regional),
+        id: ids[index],
+        local_project_key: localProjectKey,
+        operation: item.regional
+          ? 'illustrious-regional-txt2img'
+          : item.context.kind === 'normal-img2img-preparation'
+            ? 'illustrious-img2img'
+            : 'illustrious-txt2img',
+        staging_session_id: stagingSessionId,
+        started_at: null,
+        status: 'pending',
+        status_sequence: 0,
+        updated_at: now,
+      }))
+      if (regional) {
+        assertCurrent?.()
+      }
+      await preflight(
+        Object.freeze(
+          rows.map((row) =>
+            Object.freeze({
+              frozenPayloadJson: row.frozen_payload_json,
+              queueItemId: row.id,
+            }),
+          ),
+        ),
+      )
+      if (regional) {
+        assertCurrent?.()
+      }
+      this.assertProjectCanEnqueue(localProjectKey)
+      const root = await this.ensureRoot()
+      const directories: { path: string; published: boolean }[] = []
+      try {
+        for (const [index, row] of rows.entries()) {
+          const temporary = await mkdtemp(path.join(root, '.tmp-'))
+          const directory = { path: temporary, published: false }
+          directories.push(directory)
+          const manifest: InputManifestV1 = {
+            payloadSha256: sha256(Buffer.from(row.frozen_payload_json, 'utf8')),
+            queueInputVersion: QUEUE_INPUT_VERSION,
+            queueItemId: row.id,
+            targetByteSize: targetBytes.length,
+            targetFile: 'target.png',
+            targetSha256: sha256(targetBytes),
+          }
+          await writeDurableFile(path.join(temporary, 'target.png'), targetBytes)
+          for (const [name, bytes] of Object.entries(items[index].regional?.files ?? {})) {
+            await writeDurableFile(path.join(temporary, name), bytes)
+          }
+          await writeDurableFile(
+            path.join(temporary, 'manifest.json'),
+            Buffer.from(JSON.stringify(manifest), 'utf8'),
+          )
+          await syncDirectory(temporary)
+          const published = path.join(root, row.id)
+          await rename(temporary, published)
+          directory.path = published
+          directory.published = true
+          await syncDirectory(root)
+          await this.testHooks.afterInputPublish?.()
+          this.assertProjectCanEnqueue(localProjectKey)
+        }
+        await this.db.transaction().execute(async (transaction) => {
+          this.assertProjectCanEnqueue(localProjectKey)
+          assertCurrent?.()
+          // Separate small INSERTs share one transaction; SQLite binding counts stay bounded.
+          for (const row of rows) {
+            await transaction.insertInto('generation_queue_item').values(row).execute()
+            this.assertProjectCanEnqueue(localProjectKey)
+          }
+          await this.testHooks.beforeBatchCommit?.()
+          assertCurrent?.()
+          this.assertProjectCanEnqueue(localProjectKey)
+        })
+        await this.testHooks.afterBatchCommit?.()
+        return rows.map(toItem)
+      } catch (error) {
+        if (!directories.some((directory) => directory.published)) {
+          await removeUnregisteredBatchDirectories(
+            directories.map((directory) => directory.path),
+            root,
+          )
+          throw error
+        }
+        let committed: Selectable<GenerationQueueItem>[]
+        try {
+          committed = await this.db
+            .selectFrom('generation_queue_item')
+            .selectAll()
+            .where('id', 'in', ids)
+            .execute()
+        } catch {
+          this.publicationUncertainProjects.add(localProjectKey)
+          this.fencedProjects.add(localProjectKey)
+          throw batchPublicationUncertain()
+        }
+        if (batchRowsMatch(committed, rows)) {
+          return rows.map((expected) => toItem(committed.find((row) => row.id === expected.id)!))
+        }
+        if (committed.length !== 0) {
+          this.publicationUncertainProjects.add(localProjectKey)
+          this.fencedProjects.add(localProjectKey)
+          throw batchPublicationUncertain()
+        }
+        await removeUnregisteredBatchDirectories(
+          directories.map((directory) => directory.path),
+          root,
+        )
+        throw error
+      }
+    })
+  }
+
   private async enqueueIllustriousGenerationInternal(
     input: {
       assertCurrent?: () => void
@@ -4086,6 +4197,26 @@ function comparableBatchContext(context: FrozenNormalGenerationPreparationV1) {
   }
 }
 
+/** Static regional jobs vary only their planned seed/iteration and ordinary request identity. */
+function comparableStaticRegionalMaterial(
+  material: ReturnType<typeof captureRegionalQueuedMaterial>,
+) {
+  const metadata = JSON.parse(material.files['regional.json'].toString('utf8')) as {
+    [key: string]: unknown
+    recipe: {
+      [key: string]: unknown
+      item: { [key: string]: unknown; iteration: number; seed: number }
+    }
+  }
+  const { iteration: _iteration, seed: _seed, ...item } = metadata.recipe.item
+  return {
+    files: Object.fromEntries(
+      Object.entries(material.files).filter(([name]) => name !== 'regional.json'),
+    ),
+    metadata: { ...metadata, recipe: { ...metadata.recipe, item } },
+  }
+}
+
 /** Active subsets vary by branch, but a captured literal cannot change files within one batch. */
 function batchEmbeddingFilesAgree(
   contexts: readonly (FrozenNormalGenerationPreparationV1 | FrozenNormalOutpaintPreparationV1)[],
@@ -4259,13 +4390,29 @@ function comparableOutpaintBatchContext(payload: FrozenQueuedOutpaintV1) {
 function frozenBatchPayloadJson(
   context: FrozenNormalGenerationPreparationV1,
   request: IllustriousGenerationRequestV1,
+  regional?: ReturnType<typeof captureRegionalQueuedMaterial>,
 ): string {
-  const payload = frozenPayload(context, request)
+  const base = frozenPayload(context, request)
+  const payload = regional
+    ? {
+        ...base,
+        compositionProfile: regional.compositionProfile,
+        ...(regional.initializationProfile !== undefined
+          ? { initializationProfile: regional.initializationProfile }
+          : {}),
+        kind: 'illustrious-regional-txt2img' as const,
+        regional: regional.regional,
+      }
+    : base
   const json = JSON.stringify(payload)
   if (Buffer.byteLength(json, 'utf8') > MAX_PAYLOAD_BYTES) {
     throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The frozen job is too large.')
   }
-  parsePayload(json)
+  if (regional) {
+    parseFrozenQueuedRegionalInvokeV1(json)
+  } else {
+    parsePayload(json)
+  }
   return json
 }
 

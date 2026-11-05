@@ -6,6 +6,8 @@
  * Resource/physical-exit and UI patterns adapt qualify-installed-smart-patch.mjs. The
  * initialization profile additionally consults noise.py, latent_noise.py, devices.py and
  * sd/denoise_latents.py; it observes public selection/frozen identity, not raw initializer math.
+ * Static batches additionally trace current webv2 queue promptBatch/submissionApi and the backend
+ * all_or_none admission mechanism, adapted to Studio's existing atomic batch contract.
  */
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
@@ -94,11 +96,14 @@ assert.ok(
     'installed-regional-invoke-progress-v1',
     'installed-regional-invoke-worker-fault-v1',
     'installed-regional-invoke-initialization-v1',
+    'installed-regional-invoke-static-batch-v1',
   ].includes(fixture.profile),
 )
 const mainDeathProfile = fixture.profile === 'installed-regional-invoke-main-death-v1'
 const workerFaultProfile = fixture.profile === 'installed-regional-invoke-worker-fault-v1'
-const initializationProfile = fixture.profile === 'installed-regional-invoke-initialization-v1'
+const staticBatchProfile = fixture.profile === 'installed-regional-invoke-static-batch-v1'
+const initializationProfile =
+  staticBatchProfile || fixture.profile === 'installed-regional-invoke-initialization-v1'
 const progressProfile =
   initializationProfile ||
   workerFaultProfile ||
@@ -299,6 +304,13 @@ if (initializationProfile)
     'src/shared/projects/regional-invoke-generation.ts',
     'src/renderer/components/generation-queue-retry.ts',
   )
+if (staticBatchProfile)
+  sourceFiles.push(
+    'src/shared/projects/generation-batch-plan.ts',
+    'src/shared/projects/generation-batch-policy.ts',
+    'src/main/projects/project-current-canvas-regional-recipe.ts',
+    'src/main/projects/generation-staging-limits.ts',
+  )
 let bundleFiles
 async function captureFiles(files) {
   return Object.fromEntries(
@@ -415,6 +427,15 @@ async function verifyProvision() {
       'invokeai/app/api/routers/session_queue.py',
       'invokeai/app/services/session_processor/session_processor_default.py',
       'invokeai/frontend/webv1/src/features/controlLayers/components/StagingArea/StagingAreaToolbarAcceptButton.tsx',
+      ...(staticBatchProfile
+        ? [
+            'invokeai/frontend/webv2/src/features/queue/core/promptBatch.ts',
+            'invokeai/frontend/webv2/src/features/queue/data/submissionApi.ts',
+            'invokeai/frontend/webv2/src/features/generation/core/graph.ts',
+            'invokeai/frontend/webv2/src/features/generation/core/canvas/addRegionalGuidance.ts',
+            'invokeai/app/services/session_queue/session_queue_common.py',
+          ]
+        : []),
       ...(progressProfile
         ? [
             'invokeai/app/invocations/sd/denoise_latents.py',
@@ -614,16 +635,94 @@ async function preservedFiles(root) {
   await visit(root)
   return result
 }
+async function staticBatchControl(row, saved, layer) {
+  const frozen = JSON.parse(row.frozen_payload_json)
+  if (
+    frozen.initializationProfile !== initialization ||
+    frozen.context.sampling.sampler !== 'Euler a' ||
+    frozen.workerJob.sampling.scheduler !== 'euler_a' ||
+    frozen.workerJob.sampling.steps !== 30 ||
+    frozen.workerJob.sampling.seed !== 123 ||
+    frozen.context.prompts.positive !== globalPrompt ||
+    frozen.context.prompts.negative !== ''
+  )
+    return null
+  const file = path.join(appDataRoot, 'generation-inputs', row.id, 'regional.json')
+  if (!existsSync(file)) return null
+  const metadata = await jsonFile(file, 1024 ** 2)
+  const expectedAlpha = [0, 1].map((index) =>
+    digest(
+      Buffer.from(
+        Array.from({ length: 1024 ** 2 }, (_, i) => (i % 1024 < 512 === (index === 0) ? 255 : 0)),
+      ),
+    ),
+  )
+  if (
+    metadata.recipe.family !== 'illustrious' ||
+    [metadata.recipe.globalPrompts.positive, metadata.recipe.globalPrompts.negative].some(
+      ({ embeddingRefs }) => embeddingRefs.length !== 0,
+    ) ||
+    ['positive', 'negative'].some(
+      (sign) => (metadata.recipe.globalEmbeddings?.[sign]?.length ?? 0) !== 0,
+    ) ||
+    metadata.recipe.regions.length !== 2 ||
+    metadata.recipe.regions.some(
+      (region, index) =>
+        region.positive?.text !== localPrompts[index] ||
+        region.negative.prompt.text !== '' ||
+        (region.positive?.embeddingRefs.length ?? 0) !== 0 ||
+        region.negative.prompt.embeddingRefs.length !== 0 ||
+        ['positive', 'negative'].some((sign) => (region.embeddings?.[sign]?.length ?? 0) !== 0) ||
+        (region.referenceImages?.length ?? 0) !== 0 ||
+        region.coverage.alpha.$alpha8.sha256 !== expectedAlpha[index],
+    )
+  )
+    return null
+  const captured = await captureFrozen(row, {
+    document: saved.project,
+    regionAlphas: expectedAlpha,
+  })
+  const bytes = saved.members.get(layer.asset.path)
+  assert.ok(bytes)
+  const decoded = decodePng(bytes)
+  assert.equal(digest(bytes), layer.asset.sha256)
+  return {
+    queueItemId: row.id,
+    pngSha256: digest(bytes),
+    rgbaSha256: decoded.rgbaSha256,
+    byteSize: bytes.length,
+    frozenPayloadSha256: captured.frozenPayloadSha256,
+    regionAlphas: expectedAlpha,
+    predeclaredBeforeGenerate: true,
+  }
+}
 async function captureProgressPreservation() {
   const sql = await sqlSnapshot(),
     completed = sql.queue.filter(({ status }) => status === 'completed')
   assert.ok(sql.queue.length >= (workerFaultProfile ? 12 : 8) && sql.queue.length <= 256)
   if (workerFaultProfile || initializationProfile) {
     assert.ok(completed.length >= (initializationProfile ? 4 : 5) && completed.length <= 128)
-    assert.deepEqual(
-      [sql.receipts.length, sql.cursors.length],
-      [completed.length, completed.length],
-    )
+    if (staticBatchProfile) {
+      assert.equal(sql.receipts.length, completed.length)
+      assert.equal(
+        sql.cursors.length,
+        new Set(completed.map(({ local_project_key }) => local_project_key)).size,
+      )
+      for (const cursor of sql.cursors) {
+        const latest = sql.receipts
+          .filter(({ local_project_key }) => local_project_key === cursor.local_project_key)
+          .at(-1)
+        assert.ok(latest)
+        assert.equal(cursor.completion_order, latest.completion_order)
+        assert.equal(cursor.candidate_id, latest.candidate_id)
+        assert.equal(cursor.actual_seed, latest.actual_seed)
+      }
+    } else {
+      assert.deepEqual(
+        [sql.receipts.length, sql.cursors.length],
+        [completed.length, completed.length],
+      )
+    }
     assert.ok(sql.queue.every(({ status }) => ['completed', 'canceled', 'failed'].includes(status)))
   } else {
     assert.deepEqual([sql.receipts.length, sql.cursors.length], [4, 4])
@@ -641,6 +740,7 @@ async function captureProgressPreservation() {
     .execute()
   assert.ok(indexed.length >= (workerFaultProfile ? 27 : 18) && indexed.length <= 1024)
   const accepted = []
+  let initializationControl = null
   for (const record of indexed) {
     assert.equal(record.file_health, 'ready')
     assert.ok(within(path.join(appDataRoot, 'workspaces'), record.canonical_path))
@@ -658,19 +758,40 @@ async function captureProgressPreservation() {
       assert.equal(layer.asset.sha256, receipt.image_sha256)
       assert.equal(digest(saved.members.get(layer.asset.path)), receipt.image_sha256)
       accepted.push({ queueItemId: id, path: record.canonical_path, layerId: layer.id })
+      if (staticBatchProfile) {
+        const candidate = await staticBatchControl(
+          completed.find((row) => row.id === id),
+          saved,
+          layer,
+        )
+        if (candidate) {
+          if (initializationControl)
+            assert.equal(candidate.pngSha256, initializationControl.pngSha256)
+          initializationControl = { ...candidate, sourcePackage: record.canonical_path }
+        }
+      }
     }
   }
-  assert.equal(
-    accepted.length,
-    workerFaultProfile || initializationProfile ? completed.length - 1 : 3,
-  )
+  if (staticBatchProfile) {
+    assert.ok(accepted.length > 0 && accepted.length <= completed.length)
+    assert.ok(initializationControl, 'A verified prior same-policy seed123 output is required')
+  } else {
+    assert.equal(
+      accepted.length,
+      workerFaultProfile || initializationProfile ? completed.length - 1 : 3,
+    )
+  }
   assert.equal(new Set(accepted.map(({ queueItemId }) => queueItemId)).size, accepted.length)
   const recoveryFiles = await preservedFiles(path.join(appDataRoot, 'recovery')),
     inputFiles = await preservedFiles(path.join(appDataRoot, 'generation-inputs')),
     unaccepted = completed.filter(
       (row) => !accepted.some(({ queueItemId }) => queueItemId === row.id),
     )
-  assert.equal(unaccepted.length, 1)
+  const tombstones = staticBatchProfile
+    ? await database.db.selectFrom('generation_staging_discarded_session').selectAll().execute()
+    : []
+  if (staticBatchProfile) assert.ok(unaccepted.length >= 1 && unaccepted.length <= 128)
+  else assert.equal(unaccepted.length, 1)
   let controlPng
   for (const row of completed) {
     const receipt = sql.receipts.find(({ queue_item_id }) => queue_item_id === row.id)
@@ -679,6 +800,17 @@ async function captureProgressPreservation() {
       file.endsWith(`/assets/${receipt.candidate_id}.png`),
     )
     if (unaccepted.some(({ id }) => id === row.id)) {
+      if (
+        staticBatchProfile &&
+        tombstones.some(
+          (entry) =>
+            entry.local_project_key === row.local_project_key &&
+            entry.staging_session_id === row.staging_session_id,
+        )
+      ) {
+        assert.equal(outputs.length, 0, 'Discarded historical sessions must have no candidate')
+        continue
+      }
       assert.equal(outputs.length, 1)
       const decoded = decodePng(await readFile(outputs[0].path))
       assert.equal(decoded.iccSha256, IGS_SRGB_ICC_SHA256)
@@ -697,6 +829,7 @@ async function captureProgressPreservation() {
     accepted,
     unacceptedJobIds: unaccepted.map(({ id }) => id),
     controlPng,
+    ...(staticBatchProfile ? { initializationControl, tombstones } : {}),
   }
   report.preservationBaseline = preservationBaseline
   report.boundary.calls =
@@ -716,6 +849,15 @@ async function captureProgressPreservation() {
     }
     report.boundary.exclusions +=
       ' The prior Euler control remains immutable baseline data, not a byte-equality oracle for this different Euler-a initialization. No raw-noise/initial-sample observation, independent healthy Euler-a replay, default change or new visual qualification is claimed.'
+  }
+  if (staticBatchProfile) {
+    report.boundary.calls =
+      'One actual UI Generate with Images per click2 publishes one ordered batch/session and exactly two original Euler-a30 requests, seeds123/124. Both complete; no Cancel, Retry, repeat or additional baseline generation.'
+    report.boundary.preconditions = `Reuse terminal${sql.queue.length}/receipt${sql.receipts.length}/cursor${sql.cursors.length}/${indexed.length}-package pool. Every prior SQL row, package, accepted history and live or discarded unaccepted result is pinned; no reset. Same-policy seed123 control is verified before Generate.`
+    report.boundary.progress =
+      'Both original requests emit scalar1..30 frames before their terminal output. No tensor or initializer interception, fabricated events, numeric quality or GPU-throughput claim.'
+    report.boundary.exclusions =
+      'No visual quality PASS, full Invoke parity, generic SDXL, Anima, LoRA, regional reference/TI, installer/Repair, raw initializer observation or capacity claim. Existing Add closes the shared session: both PNGs are retained first, one selected output becomes a Raster and the other is explicitly discarded. Prior external candidates are unchanged.'
   }
   if (workerFaultProfile) {
     report.boundary.calls =
@@ -761,7 +903,11 @@ async function verifyProgressPreservation(db) {
       if (before.name === 'sqlite_sequence') {
         const current = after.rows.find(({ name }) => name === row.name)
         assert.ok(current)
-        assert.equal(current.seq, row.seq + (row.name === 'generation_candidate_receipt' ? 1 : 0))
+        assert.equal(
+          current.seq,
+          row.seq +
+            (row.name === 'generation_candidate_receipt' ? (staticBatchProfile ? 2 : 1) : 0),
+        )
       } else {
         assert.ok(
           after.rows.some((value) => normalized(value) === normalized(row)),
@@ -2441,7 +2587,7 @@ async function targetRefusalControls() {
   )
 }
 
-function assertFrozen(frozen, project) {
+function assertFrozen(frozen, project, expectedSeed = 123) {
   assert.equal(frozen.schemaVersion, 1)
   assert.equal(frozen.kind, 'illustrious-regional-txt2img')
   assert.equal(frozen.compositionProfile, 'invoke-canvas-v1')
@@ -2458,7 +2604,7 @@ function assertFrozen(frozen, project) {
   assert.equal(frozen.workerJob.checkpoint.predictionType, 'epsilon')
   assert.equal(frozen.context.model.managedPath, fixture.checkpoint.path)
   assert.equal(frozen.workerJob.sampling.steps, 30)
-  assert.equal(frozen.workerJob.sampling.seed, 123)
+  assert.equal(frozen.workerJob.sampling.seed, expectedSeed)
   assert.equal(frozen.workerJob.sampling.cfgScale, 5)
   assert.equal(frozen.workerJob.sampling.scheduler, generationScheduler)
   assert.deepEqual(frozen.workerJob.sampling.noiseProfile, policy)
@@ -2469,10 +2615,10 @@ function assertFrozen(frozen, project) {
   assert.equal(frozen.workerJob.target.height, 1024)
   assert.equal(frozen.workerJob.target.iccSha256, IGS_SRGB_ICC_SHA256)
 }
-async function captureFrozen(row, project) {
+async function captureFrozen(row, project, expectedSeed = 123) {
   assert.equal(row.operation, 'illustrious-regional-txt2img')
   const frozen = JSON.parse(row.frozen_payload_json)
-  assertFrozen(frozen, project)
+  assertFrozen(frozen, project, expectedSeed)
   const root = path.join(appDataRoot, 'generation-inputs', row.id)
   await directory(root)
   const targetBytes = await readFile(path.join(root, 'target.png'))
@@ -2495,6 +2641,11 @@ async function captureFrozen(row, project) {
   assert.equal(regional.negativePooledSourceId, 'current-canvas')
   assert.equal(regional.positivePooledSourceId, 'current-canvas')
   assert.equal(regional.recipe.regions.length, 2)
+  if (staticBatchProfile) {
+    assert.equal(regional.recipe.item.seed, expectedSeed)
+    assert.deepEqual(regional.recipe.item.prompts, { positive: globalPrompt, negative: '' })
+    assert.equal(regional.recipe.item.promptPairIndex, 0)
+  }
   assert.deepEqual(regional.recipe.bbox, bbox)
   assert.equal(regional.recipe.globalPrompts.positive.text, globalPrompt)
   const alphas = []
@@ -2841,6 +2992,238 @@ async function generateCancelEditRetry(project) {
     row: await job(retried.id),
     receipt: final.receipts[0],
     frozen: firstCaptured.frozen,
+    edited,
+  }
+}
+
+async function generateStaticBatchEdit(project) {
+  assert.ok(staticBatchProfile && preservationBaseline.initializationControl)
+  await openProject(project)
+  assert.equal(await hashFile(project.file), project.initialPackageSha256)
+  assert.equal((await targetState(project)).mode, 'txt2img')
+  const advisory = await api('getGenerationState', project.id)
+  assert.equal(advisory.regionalSupported, true)
+  assert.equal(advisory.regionalInvokeInitializationSupported, true)
+  assert.equal((await current(project)).generationDraft.sampling.sampler, 'Euler a')
+  await expect(window.locator('input[aria-label="Steps"]')).toHaveValue('30')
+  await expect(window.locator('input[aria-label="CFG scale"]')).toHaveValue('5')
+  await expect(window.locator('input[aria-label="Generation seed"]')).toHaveValue('123')
+  const count = window.locator('input[aria-label="Images per click"]')
+  await count.fill('2')
+  await count.press('Enter')
+  await expect(count).toHaveValue('2')
+  const generate = window.getByRole('button', { name: 'Generate', exact: true })
+  await expect(generate).toBeEnabled({ timeout: timeout(120_000) })
+  assert.deepEqual(await progressSql(), { queue: [], receipts: [], cursors: [] })
+  await generate.click()
+  await originalIpcFinished('projects:generate')
+  const admitted = (await progressSql()).queue
+  assert.equal(admitted.length, 2, 'One UI Generate must publish both planned items')
+  assert.equal(new Set(admitted.map(({ batch_id }) => batch_id)).size, 1)
+  assert.equal(new Set(admitted.map(({ staging_session_id }) => staging_session_id)).size, 1)
+  assert.ok(admitted[0].id.localeCompare(admitted[1].id) < 0)
+  assert.deepEqual(
+    admitted.map(
+      ({ frozen_payload_json }) => JSON.parse(frozen_payload_json).workerJob.sampling.seed,
+    ),
+    [123, 124],
+  )
+  const captured = []
+  for (const [index, row] of admitted.entries()) {
+    captured.push(await captureFrozen(row, project, 123 + index))
+    assert.equal(captured[index].regional.recipe.item.iteration, index)
+  }
+  assert.equal(captured[0].targetSha256, captured[1].targetSha256)
+  assert.deepEqual(captured[0].alphas, captured[1].alphas)
+  assert.equal(await hashFile(project.file), project.initialPackageSha256)
+  const generateCall = (await observerSnapshot()).ipc.find(
+    ({ channel }) => channel === 'projects:generate',
+  )
+  assert.equal(generateCall.response.ok, true)
+  assert.equal(generateCall.response.value.kind, 'queued')
+  assert.equal(generateCall.response.value.batchId, admitted[0].batch_id)
+  assert.deepEqual(
+    generateCall.response.value.jobIds,
+    admitted.map(({ id }) => id),
+  )
+  assert.equal(generateCall.response.value.truncated, false)
+  report.staticBatch = {
+    initializationControl: preservationBaseline.initializationControl,
+    captured,
+    batchId: admitted[0].batch_id,
+    stagingSessionId: admitted[0].staging_session_id,
+    orderedJobIds: admitted.map(({ id }) => id),
+    generateResponse: generateCall.response,
+  }
+  check(
+    'One real UI Generate atomically returns two ordered seed123/124 jobs in one frozen batch/session',
+  )
+
+  // Authored edits follow durable admission, not a delay or interception of the second worker.
+  const steps = window.locator('input[aria-label="Steps"]')
+  await steps.fill('2')
+  await steps.press('Enter')
+  const seed = window.locator('input[aria-label="Generation seed"]')
+  await seed.fill('999')
+  await seed.press('Enter')
+  await window.locator('[aria-label="Sampler"]').click()
+  await window.getByText('Euler', { exact: true }).last().click()
+  for (const region of project.document.regionalGuidance)
+    await window
+      .locator(`[data-regional-guidance-id="${region.id}"]`)
+      .getByRole('button', { name: `Hide ${region.name}`, exact: true })
+      .click()
+  await expect
+    .poll(
+      async () => {
+        const tab = await current(project)
+        return {
+          steps: tab.generationDraft.sampling.steps,
+          seed: tab.generationDraft.seed,
+          sampler: tab.generationDraft.sampling.sampler,
+          enabled: tab.regionalGuidance.map(({ enabled }) => enabled),
+        }
+      },
+      { timeout: timeout() },
+    )
+    .toEqual({
+      steps: 2,
+      seed: { policy: 'fixed', value: 999 },
+      sampler: 'Euler',
+      enabled: [false, false],
+    })
+  await save(project)
+  const edited = await current(project)
+  assert.deepEqual(edited.layers, project.document.layers)
+  assert.deepEqual(edited.primaryBbox, bbox)
+  const editedPackageSha256 = await hashFile(project.file)
+  report.currentAuthoringAfterEdit = {
+    generationDraft: edited.generationDraft,
+    regionalGuidance: edited.regionalGuidance,
+    packageSha256: editedPackageSha256,
+  }
+  report.noImplicitSave = {
+    beforeGeneratePackageSha256: project.initialPackageSha256,
+    afterAdmissionPackageSha256: project.initialPackageSha256,
+    afterExplicitEditSavePackageSha256: editedPackageSha256,
+  }
+  await screenshot('batch-edited-saved-current-draft')
+  await openQueue()
+  for (const [index, row] of admitted.entries())
+    await expect(queueRow(row.id)).toContainText(`Seed ${123 + index}`)
+  await closeQueue()
+  await expect
+    .poll(
+      async () => {
+        const rows = (await progressSql()).queue
+        assert.equal(rows.length, 2)
+        for (const row of rows)
+          assert.ok(
+            ['pending', 'running', 'completed'].includes(row.status),
+            `Planned batch item failed: ${row.error_code}: ${row.error_message}`,
+          )
+        return rows.filter(({ status }) => status === 'completed').length
+      },
+      { timeout: timeout(900_000), intervals: [250, 500, 1000] },
+    )
+    .toBe(2)
+  await expect
+    .poll(async () => (await api('getGenerationState', project.id)).phase, {
+      timeout: timeout(120_000),
+    })
+    .toBe('idle')
+  assert.equal(await hashFile(project.file), editedPackageSha256)
+  report.noImplicitSave.afterNativeCompletionsPackageSha256 = await hashFile(project.file)
+  const final = await progressSql()
+  assert.equal(final.queue.length, 2)
+  assert.equal(final.receipts.length, 2)
+  assert.equal(final.cursors.length, 1)
+  assert.deepEqual(
+    final.receipts.map(({ queue_item_id }) => queue_item_id),
+    admitted.map(({ id }) => id),
+  )
+  assert.deepEqual(
+    final.receipts.map(({ actual_seed }) => actual_seed),
+    [123, 124],
+  )
+  assert.equal(final.cursors[0].actual_seed, 124)
+  for (const [index, row] of final.queue.entries()) {
+    assert.equal(row.frozen_payload_json, admitted[index].frozen_payload_json)
+    assert.equal(final.receipts[index].status, 'completed')
+    assert.equal(final.receipts[index].frozen_payload_sha256, captured[index].frozenPayloadSha256)
+  }
+  const observed = await observerSnapshot()
+  assert.deepEqual(observed.faults, [])
+  const wires = regionalWires(observed)
+  assert.equal(wires.length, 2, 'Only the two original batch requests are authorized')
+  assert.equal(new Set(wires.map(({ requestId }) => requestId)).size, 2)
+  for (const [index, wire] of wires.entries()) {
+    const bundle = wire.bundleJson
+    assert.equal(bundle.compositionProfile, 'invoke-canvas-v1')
+    assert.equal(bundle.initializationProfile, initialization)
+    assert.equal(bundle.layout, 'cfg-negative-first')
+    assert.deepEqual(bundle.globalPositiveCoverage, { kind: 'everywhere' })
+    assert.deepEqual(bundle.globalNegativeCoverage, { kind: 'everywhere' })
+    assert.equal(bundle.positivePooledSourceId, 'current-canvas')
+    assert.equal(bundle.negativePooledSourceId, 'current-canvas')
+    assert.deepEqual(bundle.recipe.item, captured[index].regional.recipe.item)
+    assert.deepEqual(
+      bundle.recipe.regions.map(({ regionId }) => regionId),
+      project.document.regionalGuidance.map(({ id }) => id),
+    )
+    const { output: _output, target, ...job } = bundle.request.job
+    const { path: _targetPath, ...descriptor } = target
+    assert.deepEqual({ ...job, target: descriptor }, captured[index].frozen.workerJob)
+    assert.equal(wire.target.observedSha256, captured[index].targetSha256)
+    assert.deepEqual(
+      wire.alpha.map(({ sha256 }) => sha256),
+      project.regionAlphas,
+    )
+    for (const alpha of wire.alpha) {
+      assert.equal(alpha.positive, 1024 ** 2 / 2)
+      assert.equal(alpha.opaque, alpha.positive)
+    }
+    const worker = observed.workers.find(({ pid }) => pid === wire.pid)
+    assert.ok(worker.ready.capabilities.includes('illustrious-regional-invoke-init-v1'))
+    assert.equal(wire.reportProgress, true)
+    const frames = worker.frames.filter(({ message }) => message.requestId === wire.requestId)
+    const numeric = frames.filter(({ message }) => message.type === 'generation-progress')
+    assert.deepEqual(
+      numeric.map(({ message }) => message.step),
+      Array.from({ length: 30 }, (_, i) => i + 1),
+    )
+    assert.ok(numeric.every(({ message }) => message.totalSteps === 30))
+    const done = frames.filter(({ message }) => message.type === 'generation-done')
+    assert.equal(done.length, 1)
+    assert.equal(frames.filter(({ message }) => message.type === 'error').length, 0)
+    assert.ok(numeric.at(-1).order < done[0].order)
+  }
+  assert.equal(
+    observed.workers
+      .flatMap(({ writes }) => writes.flatMap(({ lines }) => lines))
+      .filter(({ type }) => type === 'generate-illustrious-txt2img').length,
+    0,
+  )
+  report.staticBatch.completedRows = final.queue
+  report.staticBatch.receipts = final.receipts
+  report.nativeAccounting = {
+    regionalWireCount: 2,
+    completedReceiptCount: 2,
+    canceledSqlCount: 0,
+    workerSpawnCount: observed.workers.length,
+    observerUnavailable: false,
+    stepCounterQualified: true,
+    originalScalarProgressEvents: 60,
+    extraGenerateOrRetryRequested: false,
+  }
+  check(
+    'Both original Euler-a batch jobs complete in order with individual frozen inputs despite saved Euler2/seed999/disabled-region edits',
+    report.nativeAccounting,
+  )
+  return {
+    row: final.queue[0],
+    receipt: final.receipts[0],
+    frozen: captured[0].frozen,
     edited,
   }
 }
@@ -3798,6 +4181,9 @@ function assertBaseProvenance(provenance, candidate, frozen) {
       sampler: generationSampler,
       scheduler: 'Normal',
       steps: 30,
+      ...(staticBatchProfile && frozen.context.sampling.seedBehavior !== undefined
+        ? { seedBehavior: frozen.context.sampling.seedBehavior }
+        : {}),
     },
     size: { height: 1024, width: 1024 },
     vae: null,
@@ -3865,15 +4251,65 @@ async function resultsAddSaveReopen(project, completed) {
     .poll(async () => (await api('listGenerationResults', project.id)).candidates.length, {
       timeout: timeout(120_000),
     })
-    .toBe(1)
+    .toBe(staticBatchProfile ? 2 : 1)
   const results = await api('listGenerationResults', project.id),
     candidate = results.candidates[0]
   assert.equal(candidate.queueItemId, completed.row.id)
   assert.equal(candidate.actualSeed, 123)
   assert.equal(candidate.sourceDocumentMismatch, false)
   assert.deepEqual(candidate.bbox, bbox)
-  assert.equal(results.lastActualSeed, 123)
+  assert.equal(results.lastActualSeed, staticBatchProfile ? 124 : 123)
   assert.deepEqual(results.unfinishedSiblingJobIds, [])
+  if (staticBatchProfile) {
+    assert.deepEqual(
+      results.candidates.map(({ queueItemId }) => queueItemId),
+      report.staticBatch.orderedJobIds,
+    )
+    assert.deepEqual(
+      results.candidates.map(({ actualSeed }) => actualSeed),
+      [123, 124],
+    )
+    const outputs = []
+    for (const [index, item] of results.candidates.entries()) {
+      const receipt = report.staticBatch.receipts[index]
+      const bytes = await fetchPng(item.imageUrl)
+      const decoded = decodePng(bytes)
+      assert.equal(item.queueItemId, receipt.queue_item_id)
+      assert.equal(item.actualSeed, receipt.actual_seed)
+      assert.equal(item.sourceDocumentMismatch, false)
+      assert.deepEqual(item.bbox, bbox)
+      assert.equal(digest(bytes), receipt.image_sha256)
+      assert.equal(bytes.length, receipt.image_byte_size)
+      assert.equal(decoded.width, 1024)
+      assert.equal(decoded.height, 1024)
+      assert.equal(decoded.channels, 3)
+      assert.equal(decoded.iccSha256, IGS_SRGB_ICC_SHA256)
+      const browser = await browserDecode(item.imageUrl)
+      assert.equal(browser.rgbaSha256, decoded.rgbaSha256)
+      const file = path.join(evidenceRoot, `batch-seed-${item.actualSeed}.png`)
+      await writeFile(file, bytes, { flag: 'wx', mode: 0o600 })
+      outputs.push({
+        ...item,
+        file,
+        byteSize: bytes.length,
+        pngSha256: digest(bytes),
+        rgbaSha256: decoded.rgbaSha256,
+        browser,
+      })
+    }
+    assert.notEqual(
+      outputs[0].pngSha256,
+      outputs[1].pngSha256,
+      'Fixed seed neighbors must discriminate output association',
+    )
+    assert.equal(outputs[0].pngSha256, preservationBaseline.initializationControl.pngSha256)
+    assert.equal(outputs[0].rgbaSha256, preservationBaseline.initializationControl.rgbaSha256)
+    report.staticBatch.outputs = outputs
+    check(
+      'Both signed Results independently decode to their own receipts; seed123 exactly matches the predeclared same-policy control',
+      { outputs },
+    )
+  }
   await tray().getByRole('button', { name: 'Preview candidate 1', exact: true }).click()
   await expect(
     tray().getByRole('button', { name: 'Preview candidate 1', exact: true }),
@@ -3907,7 +4343,17 @@ async function resultsAddSaveReopen(project, completed) {
   assert.equal(before.dirty, false)
   assert.equal(before.layers.length, 0)
   await tray().getByRole('checkbox', { name: 'Select candidate 1', exact: true }).check()
+  if (staticBatchProfile)
+    await tray().getByRole('checkbox', { name: 'Select candidate 2', exact: true }).uncheck()
   await tray().getByRole('button', { name: 'Add 1 as Layer', exact: true }).click()
+  if (staticBatchProfile) {
+    const review = window.getByRole('dialog', { name: 'Accept generation results', exact: true })
+    await expect(review).toBeVisible({ timeout: timeout() })
+    await expect(review).toContainText('1 unchecked temporary result will be discarded.')
+    assert.equal((await api('listGenerationResults', project.id)).candidates.length, 2)
+    assert.equal((await current(project)).layers.length, 0)
+    await review.getByRole('button', { name: 'Add 1, Discard 1', exact: true }).click()
+  }
   await expect
     .poll(
       async () => {
@@ -3928,6 +4374,26 @@ async function resultsAddSaveReopen(project, completed) {
   assertRasterGeometry(layer)
   assert.equal(added.dirty, true)
   assert.equal((await api('listGenerationResults', project.id)).candidates.length, 0)
+  if (staticBatchProfile) {
+    const sql = await progressSql()
+    assert.deepEqual(sql.receipts, report.staticBatch.receipts)
+    assert.equal(sql.cursors.length, 1)
+    assert.equal(sql.cursors[0].actual_seed, 124)
+    const tombstones = await database.db
+      .selectFrom('generation_staging_discarded_session')
+      .selectAll()
+      .where('local_project_key', '=', project.id)
+      .where('staging_session_id', '=', report.staticBatch.stagingSessionId)
+      .execute()
+    assert.equal(tombstones.length, 1)
+    report.staticBatch.acceptanceDecision = {
+      selectedJobId: completed.row.id,
+      discardedUnselectedJobId: report.staticBatch.orderedJobIds[1],
+      bothPngsRetainedBeforeAdd: true,
+      bothReceiptsPreserved: true,
+      tombstone: tombstones[0],
+    }
+  }
   assert.equal(await hashFile(project.file), packageBefore, 'Add must not implicitly Save')
   assert.deepEqual(added.generationDraft, before.generationDraft)
   assert.deepEqual(portableRegions(added), portableRegions(before))
@@ -3966,7 +4432,7 @@ async function resultsAddSaveReopen(project, completed) {
   }
   assert.deepEqual(saved.project.regionalGuidance, portableRegions(before))
   assertBaseProvenance(accepted.generationProvenance, report.output, completed.frozen)
-  assert.equal(saved.project.lastActualSeedSnapshot, 123)
+  assert.equal(saved.project.lastActualSeedSnapshot, staticBatchProfile ? 124 : 123)
   assert.deepEqual(
     await database.db
       .selectFrom('generation_acceptance_journal')
@@ -4197,44 +4663,83 @@ async function finalIdentities() {
     const whole = recoveryProfile || progressProfile ? await sqlSnapshot(db.db) : null
     if (recoveryProfile) assertBaselineSql(whole)
     if (progressProfile) await verifyProgressPreservation(db.db)
-    const rows = progressProfile
-      ? ownProgressSql(whole).queue
-      : recoveryProfile
-        ? ownRecoverySql(whole).queue
-        : await db.db.selectFrom('generation_queue_item').selectAll().execute()
-    assert.equal(rows.length, 2)
-    assert.equal(
-      rows.filter(({ status }) => status === (workerFaultProfile ? 'failed' : 'canceled')).length,
-      1,
-    )
-    assert.equal(rows.filter(({ status }) => status === 'completed').length, 1)
-    if (workerFaultProfile) {
-      assert.equal(
-        rows.find(({ status }) => status === 'failed').error_code,
-        'GENERATION_WORKER_FAILED',
+    if (staticBatchProfile) {
+      const own = ownProgressSql(whole)
+      assert.equal(own.queue.length, 2)
+      assert.ok(
+        own.queue.every(
+          ({ status, operation }) =>
+            status === 'completed' && operation === 'illustrious-regional-txt2img',
+        ),
       )
-      assert.equal(rows.filter(({ status }) => status === 'canceled').length, 0)
-    }
-    if (recoveryProfile)
-      assert.equal(rows.find(({ status }) => status === 'canceled').error_code, 'APP_RESTART')
-    assert.ok(rows.every(({ operation }) => operation === 'illustrious-regional-txt2img'))
-    for (const row of rows)
-      assert.equal(row.frozen_payload_json, report.retry.originalFrozen.row.frozen_payload_json)
-    const receipts = progressProfile
-      ? ownProgressSql(whole).receipts
-      : recoveryProfile
-        ? ownRecoverySql(whole).receipts
-        : await db.db.selectFrom('generation_candidate_receipt').selectAll().execute()
-    assert.equal(receipts.length, 1)
-    assert.equal(receipts[0].image_sha256, report.output.pngSha256)
-    report.finalSql = {
-      queue: rows,
-      receipts,
-      cursors: progressProfile
-        ? ownProgressSql(whole).cursors
+      assert.deepEqual(
+        own.queue.map(({ id }) => id),
+        report.staticBatch.orderedJobIds,
+      )
+      for (const [index, row] of own.queue.entries())
+        assert.equal(
+          row.frozen_payload_json,
+          report.staticBatch.captured[index].row.frozen_payload_json,
+        )
+      assert.deepEqual(own.receipts, report.staticBatch.receipts)
+      assert.equal(own.receipts.length, 2)
+      for (const [index, receipt] of own.receipts.entries()) {
+        assert.equal(receipt.queue_item_id, report.staticBatch.outputs[index].queueItemId)
+        assert.equal(receipt.image_sha256, report.staticBatch.outputs[index].pngSha256)
+        assert.equal(receipt.image_byte_size, report.staticBatch.outputs[index].byteSize)
+        assert.equal(receipt.actual_seed, 123 + index)
+      }
+      assert.equal(own.cursors.length, 1)
+      assert.equal(own.cursors[0].actual_seed, 124)
+      assert.equal(own.cursors[0].candidate_id, own.receipts[1].candidate_id)
+      const discarded = await db.db
+        .selectFrom('generation_staging_discarded_session')
+        .selectAll()
+        .where('local_project_key', '=', progressProject.id)
+        .where('staging_session_id', '=', report.staticBatch.stagingSessionId)
+        .execute()
+      assert.deepEqual(discarded, [report.staticBatch.acceptanceDecision.tombstone])
+      report.finalSql = own
+    } else {
+      const rows = progressProfile
+        ? ownProgressSql(whole).queue
         : recoveryProfile
-          ? ownRecoverySql(whole).cursors
-          : await db.db.selectFrom('generation_seed_cursor').selectAll().execute(),
+          ? ownRecoverySql(whole).queue
+          : await db.db.selectFrom('generation_queue_item').selectAll().execute()
+      assert.equal(rows.length, 2)
+      assert.equal(
+        rows.filter(({ status }) => status === (workerFaultProfile ? 'failed' : 'canceled')).length,
+        1,
+      )
+      assert.equal(rows.filter(({ status }) => status === 'completed').length, 1)
+      if (workerFaultProfile) {
+        assert.equal(
+          rows.find(({ status }) => status === 'failed').error_code,
+          'GENERATION_WORKER_FAILED',
+        )
+        assert.equal(rows.filter(({ status }) => status === 'canceled').length, 0)
+      }
+      if (recoveryProfile)
+        assert.equal(rows.find(({ status }) => status === 'canceled').error_code, 'APP_RESTART')
+      assert.ok(rows.every(({ operation }) => operation === 'illustrious-regional-txt2img'))
+      for (const row of rows)
+        assert.equal(row.frozen_payload_json, report.retry.originalFrozen.row.frozen_payload_json)
+      const receipts = progressProfile
+        ? ownProgressSql(whole).receipts
+        : recoveryProfile
+          ? ownRecoverySql(whole).receipts
+          : await db.db.selectFrom('generation_candidate_receipt').selectAll().execute()
+      assert.equal(receipts.length, 1)
+      assert.equal(receipts[0].image_sha256, report.output.pngSha256)
+      report.finalSql = {
+        queue: rows,
+        receipts,
+        cursors: progressProfile
+          ? ownProgressSql(whole).cursors
+          : recoveryProfile
+            ? ownRecoverySql(whole).cursors
+            : await db.db.selectFrom('generation_seed_cursor').selectAll().execute(),
+      }
     }
     if (recoveryProfile) {
       report.finalWholePoolSql = whole
@@ -4278,6 +4783,45 @@ async function failureContext() {
   await screenshot('failure-retained')
 }
 
+async function assertStaticBatchActions(project) {
+  const observed = await retainObservers(false)
+  const mutationCalls = observed.ipc.filter(({ channel }) => channel !== 'projects:open')
+  assert.ok(
+    mutationCalls.every(
+      ({ originalCalls, finished, ok }) => originalCalls === 1 && finished && ok === true,
+    ),
+  )
+  const generate = observed.ipc.filter(({ channel }) => channel === 'projects:generate')
+  assert.equal(generate.length, 1)
+  assert.deepEqual(generate[0].args[1], { documentId: project.document.documentId, iterations: 2 })
+  assert.deepEqual(generate[0].response.value.jobIds, report.staticBatch.orderedJobIds)
+  for (const channel of [
+    'projects:retry-generation-job',
+    'projects:cancel-generation-job',
+    'projects:cancel-current-generation',
+  ])
+    assert.equal(observed.ipc.filter((call) => call.channel === channel).length, 0)
+  const accepts = observed.ipc.filter(
+    ({ channel }) => channel === 'projects:accept-generation-candidates',
+  )
+  assert.equal(accepts.length, 1)
+  assert.deepEqual(accepts[0].args[1], [report.staticBatch.orderedJobIds[0]])
+  assert.deepEqual(accepts[0].args[3], report.staticBatch.orderedJobIds)
+  assert.deepEqual(accepts[0].args[4], [])
+  assert.equal(observed.ipc.filter(({ channel }) => channel === 'projects:undo').length, 1)
+  assert.equal(observed.ipc.filter(({ channel }) => channel === 'projects:redo').length, 1)
+  assert.equal(observed.ipc.filter(({ channel }) => channel === 'projects:save').length, 2)
+  assert.equal(regionalWires(observed).length, 2)
+  report.staticBatch.originalActions = {
+    generate: generate[0],
+    accept: accepts[0],
+    noCancelOrRetry: true,
+  }
+  check(
+    'One original UI Generate and reviewed Add/Discard use unchanged IPC owners; no extra Generate, Cancel or Retry occurs',
+  )
+}
+
 checkpoint()
 // Independent inherited systemd and native owned-scope watchdogs survive this launcher.
 // This local guard also closes the owned app and retains a report if a UI/IPC wait stalls.
@@ -4301,6 +4845,12 @@ try {
   if (recoveryProfile) {
     await recoveryThreeLifetimes()
     await assertRecoveryActions()
+  } else if (staticBatchProfile) {
+    const project = projects.find(({ mode }) => mode === 'transparent')
+    progressProject = project
+    const completed = await generateStaticBatchEdit(project)
+    await resultsAddSaveReopen(project, completed)
+    await assertStaticBatchActions(project)
   } else {
     const project = projects.find(({ mode }) => mode === 'transparent')
     if (progressProfile) {
@@ -4429,11 +4979,13 @@ try {
   report.completedAt = new Date().toISOString()
   report.elapsedSeconds = (Date.now() - started) / 1000
   check(
-    workerFaultProfile
-      ? 'Finite installed worker-only fault/normal failure/progress clearing/frozen Retry qualification completed with the same live Main; no visual-quality or capacity claim'
-      : progressProfile
-        ? 'Finite installed original scalar progress/Cancel/frozen Retry qualification completed; no visual-quality or capacity claim'
-        : 'Finite installed public UI Regional qualification completed; evidence supports this exact matrix and no visual-quality or numerical-step claim',
+    staticBatchProfile
+      ? 'Finite installed two-image static batch, exact frozen identity, distinct Results and reviewed Add/Discard/Undo/Save qualification completed; no quality or throughput claim'
+      : workerFaultProfile
+        ? 'Finite installed worker-only fault/normal failure/progress clearing/frozen Retry qualification completed with the same live Main; no visual-quality or capacity claim'
+        : progressProfile
+          ? 'Finite installed original scalar progress/Cancel/frozen Retry qualification completed; no visual-quality or capacity claim'
+          : 'Finite installed public UI Regional qualification completed; evidence supports this exact matrix and no visual-quality or numerical-step claim',
   )
 } catch (error) {
   report.outcome = 'failed'

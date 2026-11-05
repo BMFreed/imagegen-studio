@@ -1835,3 +1835,29 @@ PNGs are recorded, with no prompt/seed search. Prior shared durable data and the
 runtime/model remain protected. All1,571 own payload entries are verified in the
 retained archive;41,771,008 allocated bytes of idle own scratch are reclaimed.
 No quality/readiness promotion follows.
+
+## Static regional Images per click
+
+The [static-batch owner](./phase-4-regional-guidance-static-batch-research.md)
+reuses current Invoke's concrete batching/all-or-none mechanism through Studio's
+existing shared-target, aggregate-preflight, files-first/one-transaction owner.
+Public regional counts1..32 admit atomically;33 refuses before composition.
+Per-item planner seed/recipe identity, all-ID replacement exclusion, whole-set
+admission cleanup and independent frozen Retry remain owned by existing flows.
+ROOT:351 distinct lower PASS, typecheck/build/scoped checks; two targeted semantic
+RED with single-item controls and exact source restoration. The first32-job
+fixture's polling deadline and initial mutation-driver anchor refusal remain
+excluded diagnostics, not production/native failures.
+
+Installed native-r1 passes13 grouped checks in198.359s: exactly one UI Generate,
+two Euler-a30 requests/seeds123/124, two receipts/Results and60 scalar events.
+Saved authoring edits cannot change the frozen series. Seed123 repeats the
+predeclared same-policy PNG/RGBA; both outputs are independently reopened.
+Existing Add-one/Discard-one, Raster Undo/Redo, Save ZIP/reopen and last completed
+seed124 pass. Prior business records/packages and128 file pins remain exact;
+normal Home index timestamps refresh and the receipt allocation counter advances
+by two. All1,578 own
+payload entries are archived;46,342,144 allocated bytes of idle own scratch are
+removed after exit/restoration/reader gates. Shared runtime/model and durable
+data remain protected. Defaults, visual NOT_QUALIFIED and PP-001/007/008 stay
+unchanged; no capacity/release or Anima qualification follows.

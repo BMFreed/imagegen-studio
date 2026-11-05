@@ -1,5 +1,6 @@
 import type { IgsProjectDocumentV1 } from './project-schema.js'
 
+import { GENERATION_BATCH_JOB_LIMIT } from './generation-batch-policy.js'
 import { activePromptEmbeddingRefs } from './prompt-embeddings.js'
 
 type RegionalDocument = Pick<
@@ -93,8 +94,12 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   ) {
     return 'Remove active global embedding tokens before generating with Regional Guidance.'
   }
-  if (input.iterations !== 1) {
-    return 'Regional Guidance requires Images per click set to 1.'
+  if (
+    !Number.isSafeInteger(input.iterations) ||
+    input.iterations < 1 ||
+    input.iterations > GENERATION_BATCH_JOB_LIMIT
+  ) {
+    return `Regional Guidance supports from 1 to ${GENERATION_BATCH_JOB_LIMIT} images per click.`
   }
   const { height, width } = input.document.primaryBbox
   if (

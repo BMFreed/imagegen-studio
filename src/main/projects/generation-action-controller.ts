@@ -175,7 +175,7 @@ interface GenerationActionDependencies {
       | 'pruneTerminal'
       | 'retryTerminal'
     >
-  regional?: Pick<ProjectRegionalGenerationCoordinator, 'submitInvokeUnderGate'>
+  regional?: Pick<ProjectRegionalGenerationCoordinator, 'submitInvokeBatchUnderGate'>
   runtime: GenerationActionRuntime
   scratchBasePath: string
   staging: Pick<
@@ -620,10 +620,10 @@ export class ProjectGenerationActionController {
       return impact
     }
     try {
-      const item = await this.options.regional.submitInvokeUnderGate(tabId, {
+      const items = await this.options.regional.submitInvokeBatchUnderGate(tabId, {
         afterPublication: async (queued, assertCurrent) => {
           assertCurrent()
-          const current = await review([queued.id])
+          const current = await review(queued.map((item) => item.id))
           assertCurrent()
           if (request.confirmation && hasImpact(current)) {
             for (const old of current.unfinished) {
@@ -648,6 +648,7 @@ export class ProjectGenerationActionController {
         },
         documentId: request.documentId,
         documentRevision: document.documentRevision,
+        iterations: request.iterations,
         withPreparation: async (use) => {
           await review()
           return await this.options.runtime.withGenerationPreparation(
@@ -671,9 +672,9 @@ export class ProjectGenerationActionController {
       })
       assertAction()
       return {
-        batchId: item.batchId,
+        batchId: items[0].batchId,
         documentId: request.documentId,
-        jobIds: [item.id],
+        jobIds: items.map((item) => item.id),
         kind: 'queued',
         truncated: false,
       }

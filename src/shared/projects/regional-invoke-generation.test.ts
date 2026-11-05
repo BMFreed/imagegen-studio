@@ -219,14 +219,14 @@ test('regional count, one-image batching and target dimensions enforce finite bo
   assert.match(reason(value)!, /at most 3/)
   value.regionalGuidance[3].enabled = false
   assert.equal(reason(value), null)
-  for (const iterations of [0, 2, 1.5, 100]) {
+  for (const iterations of [0, 33, 1.5, 100]) {
     assert.match(
       getInvokeRegionalGenerationUnavailableReason({
         document: value,
         iterations,
         runtimeSupported: true,
       })!,
-      /Images per click set to 1/,
+      /from 1 to 32 images per click/,
     )
   }
   for (const [width, height] of [

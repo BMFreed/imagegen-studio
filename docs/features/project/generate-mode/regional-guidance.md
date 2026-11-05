@@ -1115,6 +1115,9 @@ bounds remain; actual opaque/mixed-alpha targets refuse. Anima and Smart regiona
 execution remain separate. Unsupported authored values receive a reason instead
 of being forced into this profile.
 
+The later [static-batch extension](#static-regional-generate-batches) admits
+1..32 jobs from that same captured input under the existing prepared-job limit.
+
 `invoke-canvas-v1` consumes regional alpha as `alpha > 0` before nearest-eight
 projection, omits literal-empty local conditioning signs while preserving
 whitespace and authored values, keeps both global streams Everywhere and uses
@@ -1409,3 +1412,30 @@ candidates remain preserved. Regional/initialization/composition operational dat
 stay excluded from accepted provenance, Compare and result-derived presets.
 No new visual/human, Anima, capacity or release qualification follows;
 NOT_QUALIFIED and PP-001/007/008 **«Пока не обещать»** remain.
+
+## Static Regional Generate batches
+
+The [static-batch continuation](../../../engineering/phase-4-regional-guidance-static-batch-research.md)
+lets Images per click submit 1..32 static regional jobs through the existing
+atomic prepared-batch owner. The count control remains 1..100; higher regional
+counts receive an explicit reason before composition/publication. One captured
+Project/target/mask/resource snapshot supplies the existing concrete planner;
+individual seeds advance per iteration with uint32 wrap. Euler and explicit
+Invoke-initialized Euler a retain their policies. Dynamics and other existing
+regional exclusions remain. No new IPC, worker protocol, schema or layout is added.
+
+All requests and aggregate capacity qualify before old work is replaced. A late
+admission failure cannot return a successful partial series; uncertainty retains
+existing fences. After admission, outcomes and frozen Retry are independent per
+job. Replacement excludes every newly admitted ID. Existing single/private work
+and accepted-result provenance exclusions remain unchanged.
+
+ROOT: 351 distinct lower PASS, typecheck/build/scoped checks, two semantic
+mutations with single-item controls/restoration, and 13 installed grouped checks.
+One real UI batch completes two Euler-a30/CFG5 requests at seeds123/124 despite
+saved current-authoring edits. Both Results map to their own receipt/PNG; seed123
+matches the predeclared same-policy control exactly. Add/Discard selects one
+Raster and drops the unselected candidate under the existing session rule;
+Undo/Redo, Save ZIP/reopen and both receipt/history records pass. The saved
+completed-seed snapshot stays124. No GPU-throughput, visual/human, Anima or
+release promotion follows; NOT_QUALIFIED and PP-001/007/008 **«Пока не обещать»** remain.

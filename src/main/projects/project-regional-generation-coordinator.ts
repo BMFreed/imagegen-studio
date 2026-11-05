@@ -1,4 +1,5 @@
 import { planGenerationBatch } from '../../shared/projects/generation-batch-plan.js'
+import { GENERATION_BATCH_JOB_LIMIT } from '../../shared/projects/generation-batch-policy.js'
 import { isIllustriousNoiseProfileV1 } from '../../shared/projects/illustrious-noise-profile.js'
 import {
   isQualifiedInferenceWorkerReady,
@@ -7,6 +8,8 @@ import {
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 import { activePromptEmbeddingRefs } from '../../shared/projects/prompt-embeddings.js'
 import { getInvokeRegionalGenerationUnavailableReason } from '../../shared/projects/regional-invoke-generation.js'
+
+import { randomUUID } from 'node:crypto'
 
 import type { GenerationOrchestrator, PrivateRegionalExecution } from './generation-orchestrator.js'
 import type { QueuedGenerationItem } from './generation-queue.js'
@@ -21,7 +24,10 @@ import type {
 import type { RegionalGlobalCoverage } from './regional-worker-request.js'
 import type { ProjectWorkerClient } from './worker-client.js'
 
-import { withIllustriousTxt2ImgRequest } from './illustrious-txt2img-job.js'
+import {
+  assertIllustriousTxt2ImgRequestFitsTransport,
+  withIllustriousTxt2ImgRequest,
+} from './illustrious-txt2img-job.js'
 import { prepareCurrentCanvasRegionalRecipe } from './project-current-canvas-regional-recipe.js'
 import {
   prepareNormalTxt2Img,
@@ -57,6 +63,17 @@ export interface ProjectRegionalInvokeGenerationSubmission {
   withPreparation: <T>(
     use: (preparation: ProjectRegionalGenerationPreparation) => Promise<T>,
   ) => Promise<T | null>
+}
+
+export interface ProjectRegionalInvokeGenerationBatchSubmission extends Omit<
+  ProjectRegionalInvokeGenerationSubmission,
+  'afterPublication'
+> {
+  afterPublication?: (
+    items: readonly QueuedGenerationItem[],
+    assertCurrent: () => void,
+  ) => Promise<void>
+  iterations: number
 }
 
 type RegionalComposition = Pick<
@@ -232,11 +249,11 @@ export class ProjectRegionalGenerationCoordinator {
     )
   }
 
-  /** Caller already owns the shared Project operation gate; never acquire it recursively. */
-  async submitInvokeUnderGate(
+  /** One captured static batch; the caller already holds the Project operation gate. */
+  async submitInvokeBatchUnderGate(
     tabId: string,
-    input: ProjectRegionalInvokeGenerationSubmission,
-  ): Promise<QueuedGenerationItem> {
+    input: ProjectRegionalInvokeGenerationBatchSubmission,
+  ): Promise<QueuedGenerationItem[]> {
     this.assertOpen()
     if (this.options.compositionProfile !== 'invoke-canvas-v1') {
       throw unsupported('This coordinator does not own public Invoke regional submission.')
@@ -244,6 +261,9 @@ export class ProjectRegionalGenerationCoordinator {
     if (
       !UUID.test(input?.documentId) ||
       !UUID.test(input?.documentRevision) ||
+      !Number.isSafeInteger(input.iterations) ||
+      input.iterations < 1 ||
+      input.iterations > GENERATION_BATCH_JOB_LIMIT ||
       typeof input.withPreparation !== 'function' ||
       (input.beforePublication !== undefined && typeof input.beforePublication !== 'function') ||
       (input.afterPublication !== undefined && typeof input.afterPublication !== 'function')
@@ -251,11 +271,11 @@ export class ProjectRegionalGenerationCoordinator {
       throw invalid('The reviewed Project and regional preparation owner are required.')
     }
     const { assertOwner, document } = this.captureOwner(tabId, input)
-    validateInvokeDraft(document)
-    const { afterPublication, beforePublication, withPreparation } = input
+    validateInvokeDraft(document, input.iterations)
+    const { afterPublication, beforePublication, iterations, withPreparation } = input
     // The call enters Service capture synchronously, before the runtime callback can await.
     return await this.track(
-      this.submitCaptured(tabId, {
+      this.submitCapturedBatch(tabId, {
         afterPublication,
         assertOwner,
         beforePublication,
@@ -267,9 +287,33 @@ export class ProjectRegionalGenerationCoordinator {
           positivePooledSourceId: 'current-canvas',
         },
         compositionProfile: 'invoke-canvas-v1',
+        iterations,
         withPreparation,
       }),
     )
+  }
+
+  /** Caller already owns the shared Project operation gate; never acquire it recursively. */
+  async submitInvokeUnderGate(
+    tabId: string,
+    input: ProjectRegionalInvokeGenerationSubmission,
+  ): Promise<QueuedGenerationItem> {
+    this.assertOpen()
+    if (this.options.compositionProfile !== 'invoke-canvas-v1') {
+      throw unsupported('This coordinator does not own public Invoke regional submission.')
+    }
+    const afterPublication = input?.afterPublication
+    if (afterPublication !== undefined && typeof afterPublication !== 'function') {
+      throw invalid('The reviewed Project and regional preparation owner are required.')
+    }
+    const items = await this.submitInvokeBatchUnderGate(tabId, {
+      ...input,
+      afterPublication: afterPublication
+        ? async (items, assertCurrent) => await afterPublication(items[0], assertCurrent)
+        : undefined,
+      iterations: 1,
+    })
+    return items[0]
   }
 
   private assertOpen(): void {
@@ -317,8 +361,30 @@ export class ProjectRegionalGenerationCoordinator {
       compositionProfile?: 'invoke-canvas-v1'
     },
   ): Promise<QueuedGenerationItem> {
+    const afterPublication = input.afterPublication
+    const items = await this.submitCapturedBatch(tabId, {
+      ...input,
+      afterPublication: afterPublication
+        ? async (items, assertCurrent) => await afterPublication(items[0], assertCurrent)
+        : undefined,
+      iterations: 1,
+    })
+    return items[0]
+  }
+
+  private async submitCapturedBatch(
+    tabId: string,
+    input: Pick<
+      ProjectRegionalInvokeGenerationBatchSubmission,
+      'afterPublication' | 'beforePublication' | 'iterations' | 'withPreparation'
+    > & {
+      assertOwner: () => void
+      composition: RegionalComposition
+      compositionProfile?: 'invoke-canvas-v1'
+    },
+  ): Promise<QueuedGenerationItem[]> {
     const { assertOwner, composition, compositionProfile, withPreparation } = input
-    const publication: { admitted: QueuedGenerationItem | null } = { admitted: null }
+    const publication: { admitted: QueuedGenerationItem[] } = { admitted: [] }
     assertOwner()
     try {
       return await this.options.projects.withCapturedCurrentCanvasRegionalGenerationInput(
@@ -331,7 +397,7 @@ export class ProjectRegionalGenerationCoordinator {
           assertCurrent()
           const document = structuredClone(capture.document)
           if (compositionProfile) {
-            validateInvokeDraft(document)
+            validateInvokeDraft(document, input.iterations)
           } else {
             validatePrivateDraft(document, composition)
           }
@@ -380,8 +446,8 @@ export class ProjectRegionalGenerationCoordinator {
             assertCurrent()
             const plan = planGenerationBatch({
               baseSeed: prepared.context.sampling.seed,
-              iterations: 1,
-              maxJobs: 1,
+              iterations: input.iterations,
+              maxJobs: compositionProfile ? GENERATION_BATCH_JOB_LIMIT : 1,
               maxPrompts: 1,
               negativePrompt: prepared.context.prompts.negative,
               positivePrompt: prepared.context.prompts.positive,
@@ -406,24 +472,60 @@ export class ProjectRegionalGenerationCoordinator {
               scratchBasePath: this.options.scratchBasePath,
               use: async (request) => {
                 assertCurrent()
-                publication.admitted = await this.options.orchestrator.enqueuePreparedRegional(
-                  tabId,
-                  {
-                    ...(input.afterPublication ? { afterPublication: input.afterPublication } : {}),
-                    ...(input.beforePublication
-                      ? { beforePublication: input.beforePublication }
-                      : {}),
-                    assertCurrent,
-                    prepared,
+                const items = plan.items.map((item, index) => {
+                  const context = structuredClone(prepared.context)
+                  context.prompts = { ...item.prompts }
+                  context.sampling.seed = item.seed
+                  if (plan.items.length > 1) {
+                    context.sampling.seedBehavior = 'per-iteration'
+                  }
+                  const concreteRequest = structuredClone(request)
+                  if (index > 0) {
+                    concreteRequest.requestId = randomUUID()
+                  }
+                  concreteRequest.job.prompts = { ...item.prompts }
+                  concreteRequest.job.sampling.seed = item.seed
+                  assertIllustriousTxt2ImgRequestFitsTransport(concreteRequest)
+                  const concreteRecipe = structuredClone(recipe)
+                  concreteRecipe.item = structuredClone(item)
+                  return {
+                    prepared: { context, targetPngBytes: prepared.targetPngBytes },
                     regional: {
                       ...(compositionProfile ? { compositionProfile } : {}),
                       ...composition,
                       ...(initializationProfile !== undefined ? { initializationProfile } : {}),
-                      recipe,
+                      recipe: concreteRecipe,
                     },
-                    request,
-                  },
-                )
+                    request: concreteRequest,
+                  }
+                })
+                const callbacks = {
+                  ...(input.beforePublication
+                    ? { beforePublication: input.beforePublication }
+                    : {}),
+                  assertCurrent,
+                }
+                publication.admitted =
+                  items.length === 1
+                    ? [
+                        await this.options.orchestrator.enqueuePreparedRegional(tabId, {
+                          ...callbacks,
+                          ...items[0],
+                          ...(input.afterPublication
+                            ? {
+                                afterPublication: async (queued, current) =>
+                                  await input.afterPublication!([queued], current),
+                              }
+                            : {}),
+                        }),
+                      ]
+                    : await this.options.orchestrator.enqueuePreparedRegionalBatch(tabId, {
+                        ...callbacks,
+                        ...(input.afterPublication
+                          ? { afterPublication: input.afterPublication }
+                          : {}),
+                        items,
+                      })
                 return publication.admitted
               },
             })
@@ -439,11 +541,16 @@ export class ProjectRegionalGenerationCoordinator {
         },
       )
     } catch (error) {
-      if (publication.admitted) {
-        await this.options.orchestrator.cancelFailedRegionalAdmission(
-          tabId,
-          publication.admitted.id,
-        )
+      let cleanupError: unknown
+      for (const item of publication.admitted) {
+        try {
+          await this.options.orchestrator.cancelFailedRegionalAdmission(tabId, item.id)
+        } catch (failure) {
+          cleanupError ??= failure
+        }
+      }
+      if (cleanupError !== undefined) {
+        throw cleanupError
       }
       throw error
     }
@@ -459,11 +566,11 @@ export class ProjectRegionalGenerationCoordinator {
   }
 }
 
-function validateInvokeDraft(document: IgsProjectDocumentV1): void {
+function validateInvokeDraft(document: IgsProjectDocumentV1, iterations = 1): void {
   const reason = getInvokeRegionalGenerationUnavailableReason({
     document,
     initializationSupported: true,
-    iterations: 1,
+    iterations,
     runtimeSupported: true,
   })
   if (reason) {

@@ -1076,107 +1076,45 @@ export class GenerationOrchestrator {
       request: IllustriousTxt2ImgRequestV1
     },
   ): Promise<QueuedGenerationItem> {
-    this.assertGenerationOpen(tabId)
-    if (typeof input.assertCurrent !== 'function') {
-      throw new GenerationOrchestratorError('GENERATION_BATCH_INVALID', 'Missing Project owner.')
-    }
-    const assertCaptured = input.assertCurrent
-    const captured = captureRegionalWorkerInput({ ...input.regional, request: input.request })
-    const prepared: PreparedNormalTxt2Img = {
-      context: structuredClone(input.prepared.context),
-      targetPngBytes: Buffer.from(input.prepared.targetPngBytes),
-    }
-    const { request, ...regional } = captured
-    const assertCurrent = () => {
-      this.assertGenerationOpen(tabId)
-      if (this.regionalStopping) {
-        throw new GenerationOrchestratorError(
-          'PROJECT_GENERATION_CLOSING',
-          'Regional dispatch is stopping.',
-        )
-      }
-      this.requireBatchDocument(tabId, prepared.context.documentId, [{ prepared }])
-      assertCaptured()
-    }
-    assertCurrent()
-    const operation = this.enqueueBarrier.then(async () => {
-      this.queue.assertReadyForDispatch()
-      this.staging.assertReadyForPublication()
-      assertCurrent()
-      const project = await this.indexedProject(tabId)
-      assertCurrent()
-      if (project.documentId !== prepared.context.documentId) {
-        throw new GenerationOrchestratorError(
-          'PROJECT_DOCUMENT_CHANGED',
-          'The indexed Project changed.',
-        )
-      }
-      const verified = await this.models.resolveVerifiedGenerationCheckpointForPlan(
-        structuredClone(prepared.context.model.reference),
-      )
-      if (
-        verified.managedPath !== prepared.context.model.managedPath ||
-        verified.reference.fileSha256 !== prepared.context.model.reference.fileSha256 ||
-        verified.reference.predictionType !== prepared.context.model.reference.predictionType ||
-        !isDeepStrictEqual(verified.noiseProfile, prepared.context.sampling.noiseProfile)
-      ) {
-        throw new GenerationOrchestratorError(
-          'GENERATION_BATCH_INVALID',
-          'The exact checkpoint policy changed.',
-        )
-      }
-      assertCurrent()
-      const stagingSessionId = randomUUID()
-      await input.beforePublication?.()
-      assertCurrent()
-      const enqueue =
-        captured.compositionProfile === 'invoke-canvas-v1'
-          ? this.queue.enqueueInvokeCanvasRegional.bind(this.queue)
-          : this.queue.enqueueCurrentCanvasRegional.bind(this.queue)
-      const queued = await enqueue({
-        assertCurrent,
-        preflight: async (entries) => {
-          assertCurrent()
-          await this.staging.preflightRegionalBatchCapacity({
-            entries,
-            localProjectKey: tabId,
-            projectPath: project.canonicalPath,
-            stagingSessionId,
-          })
-          assertCurrent()
-        },
-        prepared,
-        projectPath: project.canonicalPath,
-        regional,
-        request,
-        stagingSessionId,
-      })
-      try {
-        assertCurrent()
-        const after = await this.indexedProject(tabId)
-        assertCurrent()
-        if (
-          after.canonicalPath !== project.canonicalPath ||
-          after.documentId !== project.documentId
-        ) {
-          throw new GenerationOrchestratorError(
-            'PROJECT_IDENTITY_CHANGED',
-            'The indexed Project changed after enqueue.',
-          )
-        }
-        await input.afterPublication?.(queued, assertCurrent)
-        assertCurrent()
-        return queued
-      } catch (error) {
-        await this.cancelFailedRegionalAdmission(tabId, queued.id)
-        throw error
-      }
-    })
-    this.enqueueBarrier = operation.then(
-      () => undefined,
-      () => undefined,
+    const afterPublication = input.afterPublication
+    const items = await this.enqueuePreparedRegionalGroup(
+      tabId,
+      {
+        ...(afterPublication
+          ? {
+              afterPublication: async (
+                items: readonly QueuedGenerationItem[],
+                assertCurrent: () => void,
+              ) => await afterPublication(items[0], assertCurrent),
+            }
+          : {}),
+        assertCurrent: input.assertCurrent,
+        beforePublication: input.beforePublication,
+        items: [{ prepared: input.prepared, regional: input.regional, request: input.request }],
+      },
+      false,
     )
-    return await operation
+    return items[0]
+  }
+
+  /** A public static batch adapts Invoke's all-or-none enqueue to our existing admission owner. */
+  async enqueuePreparedRegionalBatch(
+    tabId: string,
+    input: {
+      afterPublication?: (
+        items: readonly QueuedGenerationItem[],
+        assertCurrent: () => void,
+      ) => Promise<void>
+      assertCurrent: () => void
+      beforePublication?: () => Promise<void>
+      items: readonly {
+        prepared: PreparedNormalTxt2Img
+        regional: Omit<RegionalWorkerInput, 'request'>
+        request: IllustriousTxt2ImgRequestV1
+      }[]
+    },
+  ): Promise<QueuedGenerationItem[]> {
+    return await this.enqueuePreparedRegionalGroup(tabId, input, true)
   }
 
   /** Private durable admission only. Smart Patch execution remains outside the normal dispatcher. */
@@ -1770,6 +1708,170 @@ export class GenerationOrchestrator {
         }
       },
     })
+  }
+
+  private async enqueuePreparedRegionalGroup(
+    tabId: string,
+    input: {
+      afterPublication?: (
+        items: readonly QueuedGenerationItem[],
+        assertCurrent: () => void,
+      ) => Promise<void>
+      assertCurrent: () => void
+      beforePublication?: () => Promise<void>
+      items: readonly {
+        prepared: PreparedNormalTxt2Img
+        regional: Omit<RegionalWorkerInput, 'request'>
+        request: IllustriousTxt2ImgRequestV1
+      }[]
+    },
+    publicBatch: boolean,
+  ): Promise<QueuedGenerationItem[]> {
+    this.assertGenerationOpen(tabId)
+    if (
+      typeof input.assertCurrent !== 'function' ||
+      !Array.isArray(input.items) ||
+      input.items.length < 1 ||
+      input.items.length > (publicBatch ? GENERATION_BATCH_JOB_LIMIT : 1) ||
+      !Buffer.isBuffer(input.items[0]?.prepared?.targetPngBytes)
+    ) {
+      throw new GenerationOrchestratorError(
+        'GENERATION_BATCH_INVALID',
+        'The regional batch owner or count is invalid.',
+      )
+    }
+    const assertCaptured = input.assertCurrent
+    const afterPublication = input.afterPublication
+    const beforePublication = input.beforePublication
+    const targetPngBytes = Buffer.from(input.items[0].prepared.targetPngBytes)
+    const items = input.items.map((item) => {
+      if (
+        !Buffer.isBuffer(item.prepared.targetPngBytes) ||
+        !item.prepared.targetPngBytes.equals(targetPngBytes)
+      ) {
+        throw new GenerationOrchestratorError(
+          'GENERATION_BATCH_INVALID',
+          'The regional batch target differs.',
+        )
+      }
+      const captured = captureRegionalWorkerInput({ ...item.regional, request: item.request })
+      if (publicBatch && captured.compositionProfile !== 'invoke-canvas-v1') {
+        throw new GenerationOrchestratorError(
+          'GENERATION_BATCH_INVALID',
+          'Regional batches require public Invoke composition.',
+        )
+      }
+      const { request, ...regional } = captured
+      return {
+        prepared: { context: structuredClone(item.prepared.context), targetPngBytes },
+        regional,
+        request,
+      }
+    })
+    const prepared = items[0].prepared
+    const assertCurrent = () => {
+      this.assertGenerationOpen(tabId)
+      if (this.regionalStopping) {
+        throw new GenerationOrchestratorError(
+          'PROJECT_GENERATION_CLOSING',
+          'Regional dispatch is stopping.',
+        )
+      }
+      this.requireBatchDocument(tabId, prepared.context.documentId, items)
+      assertCaptured()
+    }
+    assertCurrent()
+    const operation = this.enqueueBarrier.then(async () => {
+      this.queue.assertReadyForDispatch()
+      this.staging.assertReadyForPublication()
+      assertCurrent()
+      const project = await this.indexedProject(tabId)
+      assertCurrent()
+      if (project.documentId !== prepared.context.documentId) {
+        throw new GenerationOrchestratorError(
+          'PROJECT_DOCUMENT_CHANGED',
+          'The indexed Project changed.',
+        )
+      }
+      const verified = await this.models.resolveVerifiedGenerationCheckpointForPlan(
+        structuredClone(prepared.context.model.reference),
+      )
+      if (
+        verified.managedPath !== prepared.context.model.managedPath ||
+        verified.reference.fileSha256 !== prepared.context.model.reference.fileSha256 ||
+        verified.reference.predictionType !== prepared.context.model.reference.predictionType ||
+        !isDeepStrictEqual(verified.noiseProfile, prepared.context.sampling.noiseProfile)
+      ) {
+        throw new GenerationOrchestratorError(
+          'GENERATION_BATCH_INVALID',
+          'The exact checkpoint policy changed.',
+        )
+      }
+      assertCurrent()
+      const stagingSessionId = randomUUID()
+      await beforePublication?.()
+      assertCurrent()
+      const admission = {
+        assertCurrent,
+        preflight: async (
+          entries: readonly { frozenPayloadJson: string; queueItemId: string }[],
+        ) => {
+          assertCurrent()
+          await this.staging.preflightRegionalBatchCapacity({
+            entries,
+            localProjectKey: tabId,
+            projectPath: project.canonicalPath,
+            stagingSessionId,
+          })
+          assertCurrent()
+        },
+        projectPath: project.canonicalPath,
+        stagingSessionId,
+      }
+      const first = items[0]
+      const queued = publicBatch
+        ? await this.queue.enqueueInvokeCanvasRegionalBatch({ ...admission, items })
+        : [
+            await (first.regional.compositionProfile === 'invoke-canvas-v1'
+              ? this.queue.enqueueInvokeCanvasRegional({ ...admission, ...first })
+              : this.queue.enqueueCurrentCanvasRegional({ ...admission, ...first })),
+          ]
+      try {
+        assertCurrent()
+        const after = await this.indexedProject(tabId)
+        assertCurrent()
+        if (
+          after.canonicalPath !== project.canonicalPath ||
+          after.documentId !== project.documentId
+        ) {
+          throw new GenerationOrchestratorError(
+            'PROJECT_IDENTITY_CHANGED',
+            'The indexed Project changed after enqueue.',
+          )
+        }
+        await afterPublication?.(queued, assertCurrent)
+        assertCurrent()
+        return queued
+      } catch (error) {
+        const cleanupErrors: unknown[] = []
+        for (const item of queued) {
+          try {
+            await this.cancelFailedRegionalAdmission(tabId, item.id)
+          } catch (cleanupError) {
+            cleanupErrors.push(cleanupError)
+          }
+        }
+        if (cleanupErrors.length > 0) {
+          throw cleanupErrors[0]
+        }
+        throw error
+      }
+    })
+    this.enqueueBarrier = operation.then(
+      () => undefined,
+      () => undefined,
+    )
+    return await operation
   }
 
   private async indexedProject(tabId: string): Promise<{
