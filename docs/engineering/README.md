@@ -1753,3 +1753,16 @@ scale mismatch and pale-hair ambiguity retained. This supports a bounded causal
 finding, no universal repair, Invoke parity or production-default promotion.
 The setup staging-mode refusal and one-line private correction remain separate
 from completed requests. Human/quality/readiness and PP-001/007/008 stay unchanged.
+
+## FP32 CPU noise with fixed Invoke initialization
+
+The [four-request draw control](./phase-4-regional-guidance-fp32-ancestral-research.md)
+holds original `add_noise` fixed and follows current Invoke's FP32 CPU draw,
+CPU FP16 cast, then GPU transfer. Six small native checks and four trained
+completions pass. Both compute controls exactly repeat previous traces/PNG;
+conditioning, schedule and every ancestral RNG state remain fixed. Independent
+raw-draw/cast and all-PNG checks pass. The two targeted swapped candidates give
+2 narrow PASS against 2 INCONCLUSIVE controls, with full prompt/framing/anatomy
+limits retained. The full four-case reversal gate remains NOT_QUALIFIED until
+direct assignments use this same fixed candidate. No search, production default
+or readiness promotion follows; PP-001/007/008 remain unchanged.

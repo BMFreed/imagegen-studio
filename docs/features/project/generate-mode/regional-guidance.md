@@ -1316,3 +1316,16 @@ bounded causal finding, not a production repair/default or full Invoke parity.
 Human/age/general quality and the complete four-case reversal gate remain open.
 No production, admission, persistence or provenance change follows;
 PP-001/007/008 remain **«Пока не обещать»**.
+
+## Fixed-initializer FP32 noise control
+
+The [same-runtime four-call control](../../../engineering/phase-4-regional-guidance-fp32-ancestral-research.md)
+uses Invoke's current CPU FP32 draw and CPU cast-before-transfer ordering, while
+keeping original `add_noise`, model, inputs and ancestral step RNG fixed. Both
+old controls exactly reproduce prior PNGs. The two swapped candidates show
+two distinct figures with blue hair left and red right: 2 narrow PASS, versus
+2 INCONCLUSIVE controls. This covers only those two predetermined cases;
+the complete four-case reversal gate, full-prompt/age/human quality and Anima
+remain unqualified. Direct assignment must use the same fixed candidate before
+claiming the full gate. No production profile/default, public permissions,
+persistence or provenance change; PP-001/007/008 remain **«Пока не обещать»**.
