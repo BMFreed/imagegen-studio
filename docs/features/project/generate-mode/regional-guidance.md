@@ -1692,3 +1692,31 @@ own source/package/output bytes in a verified archive before fresh exit,
 restoration, reader and dependency checks; only two idle scratch roots are
 released, reclaiming53,264,384 allocated bytes. Canonical runtime/resources and
 current qualification companions remain protected.
+
+## Installed opaque regional img2img UI
+
+The [installed UI continuation](../../../engineering/phase-4-regional-guidance-img2img-installed-research.md)
+connects the qualified opaque backend to Generate using actual target pixels,
+explicit strength and the IMG capability. The obsolete empty-Canvas refusal is
+removed. Euler/Normal, Embedded FP16 and zero CFG Rescale remain required;
+partial alpha refuses. TXT options and Smart guards remain unchanged.
+
+ROOT: 100 Main/188 full browser PASS, 10 supporting oracle checks, typecheck,
+scoped checks and build PASS. One real default RuntimeManager/Electron cycle
+passes 16 checks in 353.406 seconds: UI import/Generate, actual progress/Cancel,
+saved source/text/strength edits, frozen Retry with exact control RGB, explicit
+Add/Undo/Redo/Save and genuine reopen. Three original requests produce two PNG
+receipts. Source Raster and edited draft persist; layer counts 1→2→1→2 retain the
+accepted ID and bytes. Applied ordinary IMG provenance records strength 0.5 while
+current authored strength 0.8 remains; Regional operational fields stay excluded.
+
+The independent control is retained, then explicitly discarded through normal
+Close Project UI before healthy app exit. Earlier incomplete harness attempts
+and their recoverable unsaved Add shadows remain protected and are not counted
+as completed cycles. R4 source review and independent retained-data audit are
+CLEAN within their separate limits. ROOT confirms idle/restored/dependency/reader
+gates, retains source/output/package bytes in the verified archive and releases
+two scratch roots, reclaiming 112,263,168 allocated bytes. Canonical runtime,
+model and unsaved Add shadows remain protected. This does not qualify
+visual quality, Anima, broader image modes, capacity or release
+Install/Repair; PP-001/005/007/008 remain unchanged.

@@ -288,6 +288,7 @@ test('regional capability is an optional strict boolean in preload action respon
   for (const field of [
     'regionalSupported',
     'regionalInvokeInitializationSupported',
+    'regionalImg2ImgSupported',
     'regionalLoraSupported',
     'regionalVaeSupported',
   ]) {
@@ -369,4 +370,166 @@ test('global embedding support is required only for active refs and cannot grant
   value.generationDraft.positivePrompt.text = '<shared>'
   value.regionalGuidance![0].enabled = false
   assert.equal(reason(value, false, false), null)
+})
+
+function imageReason(
+  value: IgsProjectDocumentV1,
+  overrides: Partial<Parameters<typeof getInvokeRegionalGenerationUnavailableReason>[0]> = {},
+) {
+  return getInvokeRegionalGenerationUnavailableReason({
+    document: value,
+    img2imgSupported: true,
+    iterations: 1,
+    runtimeSupported: true,
+    targetMode: 'img2img',
+    ...overrides,
+  })
+}
+
+test('opaque regional img2img requires its specific capability as well as generic regional support', () => {
+  const value = document()
+  value.generationDraft.sampling.denoisingStrength = 0.5
+  const before = structuredClone(value)
+  assert.equal(imageReason(value), null)
+  for (const img2imgSupported of [undefined, null, false]) {
+    assert.match(imageReason(value, { img2imgSupported })!, /opaque img2img.*Regional Guidance/)
+  }
+  for (const runtimeSupported of [undefined, null, false]) {
+    assert.match(imageReason(value, { runtimeSupported })!, /support.*Regional Guidance/)
+  }
+  assert.deepEqual(value, before)
+})
+
+test('opaque regional img2img requires explicit finite strength including admitted zero and one', () => {
+  const value = document()
+  for (const strength of [0, 0.5, 1]) {
+    value.generationDraft.sampling.denoisingStrength = strength
+    assert.equal(imageReason(value), null)
+  }
+  for (const strength of [null, -0.01, 1.01, NaN, Infinity, -Infinity]) {
+    value.generationDraft.sampling.denoisingStrength = strength
+    const before = structuredClone(value)
+    assert.match(imageReason(value)!, /Set Denoising Strength from 0 to 1/)
+    assert.deepEqual(value, before)
+  }
+  for (const strength of [undefined, false, true, '0.5']) {
+    value.generationDraft.sampling.denoisingStrength = strength as unknown as number
+    assert.match(imageReason(value)!, /Set Denoising Strength from 0 to 1/)
+  }
+})
+
+test('opaque regional img2img refuses TXT-only sampling and VAE choices without rewriting them', () => {
+  const cases: [string, (value: IgsProjectDocumentV1) => void][] = [
+    ['Euler a', (v) => (v.generationDraft.sampling.sampler = 'Euler a')],
+    ['DPM++ 2M', (v) => (v.generationDraft.sampling.sampler = 'DPM++ 2M')],
+    ['Karras', (v) => (v.generationDraft.sampling.scheduler = 'Karras')],
+    ['Auto', (v) => (v.generationDraft.vaePrecision = 'Auto')],
+    ['FP32', (v) => (v.generationDraft.vaePrecision = 'FP32')],
+    ['unset precision', (v) => delete v.generationDraft.vaePrecision],
+    ['selected VAE', (v) => (v.generationDraft.vae = { ...v.generationDraft.model!, kind: 'vae' })],
+    ['nonzero CFG Rescale', (v) => (v.generationDraft.cfgRescale = 0.7)],
+  ]
+  for (const [name, change] of cases) {
+    const value = document()
+    value.generationDraft.sampling.denoisingStrength = 0.5
+    change(value)
+    const before = structuredClone(value)
+    assert.match(
+      imageReason(value, {
+        cfgRescaleSupported: true,
+        dpmSupported: true,
+        initializationSupported: true,
+        vaeSupported: true,
+      })!,
+      /Regional img2img requires Euler\/Normal, Embedded FP16 VAE and CFG Rescale zero/,
+      name,
+    )
+    assert.deepEqual(value, before)
+  }
+})
+
+test('IMG-only advisory guards preserve omitted-mode Main and explicit TXT behavior', () => {
+  const value = document()
+  value.generationDraft.sampling.sampler = 'DPM++ 2M'
+  value.generationDraft.sampling.scheduler = 'Karras'
+  value.generationDraft.vaePrecision = 'FP32'
+  value.generationDraft.vae = { ...value.generationDraft.model!, kind: 'vae' }
+  value.generationDraft.cfgRescale = 0.7
+  for (const targetMode of [undefined, null, 'txt2img'] as const) {
+    assert.equal(
+      imageReason(value, {
+        cfgRescaleSupported: true,
+        dpmSupported: true,
+        img2imgSupported: false,
+        targetMode,
+        vaeSupported: true,
+      }),
+      null,
+    )
+  }
+  value.generationDraft.sampling.sampler = 'Euler a'
+  value.generationDraft.sampling.scheduler = 'Normal'
+  assert.equal(
+    imageReason(value, {
+      cfgRescaleSupported: true,
+      img2imgSupported: false,
+      initializationSupported: true,
+      targetMode: 'txt2img',
+      vaeSupported: true,
+    }),
+    null,
+  )
+})
+
+test('partial alpha never becomes regional IMG and disabled regions leave ordinary modes untouched', () => {
+  const value = document()
+  value.generationDraft.sampling.denoisingStrength = 0.5
+  assert.match(
+    imageReason(value, { targetMode: 'outpaint' })!,
+    /partially transparent Current Canvas/,
+  )
+  assert.equal(imageReason(value), null)
+  value.regionalGuidance![0].enabled = false
+  value.generationDraft.model = null
+  for (const targetMode of ['img2img', 'outpaint', 'txt2img'] as const) {
+    assert.equal(
+      imageReason(value, { img2imgSupported: false, runtimeSupported: false, targetMode }),
+      null,
+    )
+  }
+})
+
+test('opaque regional img2img retains active global resource gates and exact authored data', () => {
+  const value = document()
+  value.generationDraft.sampling.denoisingStrength = 0.5
+  value.generationDraft.positivePrompt = {
+    embeddingRefs: [
+      { resource: { ...value.generationDraft.model!, kind: 'embedding' }, token: '<exact>' },
+    ],
+    text: 'a scene <exact>',
+  }
+  const before = structuredClone(value)
+  assert.match(imageReason(value, { embeddingsSupported: false })!, /global embeddings/)
+  assert.equal(imageReason(value, { embeddingsSupported: true }), null)
+  assert.deepEqual(value, before)
+  value.generationDraft.loras = [
+    {
+      enabled: true,
+      resource: { ...value.generationDraft.model!, kind: 'lora' },
+      weight: 0.5,
+    },
+  ]
+  assert.match(
+    imageReason(value, { embeddingsSupported: true, loraSupported: false })!,
+    /global LoRAs/,
+  )
+  assert.equal(imageReason(value, { embeddingsSupported: true, loraSupported: true }), null)
+  assert.match(
+    imageReason(value, {
+      embeddingsSupported: true,
+      img2imgSupported: false,
+      loraSupported: true,
+    })!,
+    /does not support opaque img2img/,
+  )
 })

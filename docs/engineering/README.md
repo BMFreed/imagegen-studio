@@ -8,6 +8,25 @@ anonymized source bytes have not been rerun through earlier ML qualification.
 The cleaned publication history is prepared separately; no remote history is
 replaced as part of source preparation.
 
+## Installed opaque Regional Guidance UI
+
+[Installed image UI](./phase-4-regional-guidance-img2img-installed-research.md)
+removes the old renderer empty-Canvas refusal for the qualified opaque subset,
+using actual target classification, explicit strength and the separate IMG
+capability. ROOT: 100 Main/188 browser PASS, 10 supporting oracle checks,
+typing/scoped checks/build PASS. The real default RuntimeManager/native cycle
+passes 16 checks in 353.406 seconds: Generate, actual progress/Cancel, saved edits,
+exact frozen Retry RGB, explicit Add/Undo/Redo/Save/ZIP/reopen with original source
+and ordinary IMG provenance. Three native requests produce two PNG receipts;
+the own healthy control is explicitly discarded through normal Close Project
+before healthy app shutdown. R4 source review is CLEAN; excluded harness attempts
+and protected autosaves are retained separately. Independent retained-data audit
+is CLEAN; ROOT confirms fresh exit/restoration/reader/dependency gates, archives
+required bytes and releases two scratch roots (112,263,168 bytes reclaimed).
+Canonical runtime/model/autosave dependencies remain protected.
+No quality, broader IMG/Anima, capacity or Install/Repair claim;
+PP-001/005/007/008 stay unchanged.
+
 ## Public opaque Regional Guidance backend
 
 [Public image continuation](./phase-4-regional-guidance-public-img2img-research.md)

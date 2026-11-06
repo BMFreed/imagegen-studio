@@ -95,17 +95,21 @@ export function hasActiveGlobalPromptEmbeddings(
  * backend/stable_diffusion/schedulers/schedulers.py. Selected VAE/precision follows graph.ts,
  * app/invocations/model.py and app/invocations/vae/latents_to_image.py at that same revision. These
  * bounds describe our qualified adapter, not the full set of configurations Invoke supports. No
- * masks or pooled text are chosen here.
+ * masks or pooled text are chosen here. Opaque input follows compileCanvasGraph.ts's
+ * getCanvasValidationReasons → graftImageToImage → addRegionalGuidance order, with Studio's
+ * separately qualified image subset; omitted target mode preserves pre-composition Main checks.
  */
 export function getInvokeRegionalGenerationUnavailableReason(input: {
   cfgRescaleSupported?: boolean | null
   document: RegionalDocument
   dpmSupported?: boolean | null
   embeddingsSupported?: boolean | null
+  img2imgSupported?: boolean | null
   initializationSupported?: boolean | null
   iterations: number
   loraSupported?: boolean | null
   runtimeSupported?: boolean | null
+  targetMode?: 'img2img' | 'outpaint' | 'txt2img' | null
   vaeSupported?: boolean | null
 }): string | null {
   const regions = input.document.regionalGuidance?.filter((region) => region.enabled) ?? []
@@ -119,6 +123,20 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
     draft.model.predictionType !== 'epsilon'
   ) {
     return 'Regional Guidance requires an Illustrious epsilon model on Current Canvas.'
+  }
+  if (input.targetMode === 'outpaint') {
+    return 'Regional Guidance does not support partially transparent Current Canvas input. Use an empty or fully opaque generation area.'
+  }
+  const img2img = input.targetMode === 'img2img'
+  if (
+    img2img &&
+    (draft.sampling.sampler !== 'Euler' ||
+      draft.sampling.scheduler !== 'Normal' ||
+      draft.vae !== null ||
+      draft.vaePrecision !== 'FP16' ||
+      (draft.cfgRescale ?? 0) !== 0)
+  ) {
+    return 'Regional img2img requires Euler/Normal, Embedded FP16 VAE and CFG Rescale zero.'
   }
   if (!(
     ((draft.sampling.sampler === 'Euler' || draft.sampling.sampler === 'Euler a') &&
@@ -146,6 +164,13 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   }
   if (steps === null || !Number.isSafeInteger(steps) || steps < 1 || steps > 200) {
     return 'Regional Guidance requires an integer from 1 to 200 for Steps.'
+  }
+  const strength = draft.sampling.denoisingStrength
+  if (
+    img2img &&
+    (typeof strength !== 'number' || !Number.isFinite(strength) || strength < 0 || strength > 1)
+  ) {
+    return 'Set Denoising Strength from 0 to 1 before generating with Regional Guidance from this raster input.'
   }
   if (regions.length > 3) {
     return 'Regional Guidance supports at most 3 enabled regions per generation.'
@@ -184,6 +209,14 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   }
   if (input.runtimeSupported !== true) {
     return 'The current image engine does not support Regional Guidance. Repair or update the runtime.'
+  }
+  if (img2img) {
+    if (input.img2imgSupported === undefined || input.img2imgSupported === null) {
+      return 'Checking image engine support for opaque img2img with Regional Guidance. Repair or update the runtime if support remains unavailable.'
+    }
+    if (input.img2imgSupported !== true) {
+      return 'The current image engine does not support opaque img2img with Regional Guidance. Repair or update the runtime.'
+    }
   }
   if (cfgRescale !== 0) {
     if (input.cfgRescaleSupported === undefined || input.cfgRescaleSupported === null) {

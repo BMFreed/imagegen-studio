@@ -11,7 +11,9 @@ import path from 'node:path'
 interface WiringFixture {
   epoch: number
   generateCalls: number[]
+  holdTarget: boolean
   queueItem: GenerationQueueEntry
+  releaseTarget: (() => void) | null
   retryCalls: GenerationQueueReview[]
   selected: string | null
   show: boolean
@@ -122,6 +124,7 @@ async function mountWiring(page: Page, kind: 'project' | 'queue') {
       const state: WiringFixture = reactive({
         epoch: 0,
         generateCalls: [],
+        holdTarget: false,
         queueItem: {
           batchId: crypto.randomUUID(),
           cancelRequested: false,
@@ -154,6 +157,7 @@ async function mountWiring(page: Page, kind: 'project' | 'queue') {
           status: 'failed',
           statusSequence: 3,
         },
+        releaseTarget: null,
         retryCalls: [],
         selected: null,
         show: true,
@@ -197,6 +201,11 @@ async function mountWiring(page: Page, kind: 'project' | 'queue') {
               targetKey: string,
             ) => {
               state.targetReads += 1
+              if (state.holdTarget) {
+                await new Promise<void>((resolve) => {
+                  state.releaseTarget = resolve
+                })
+              }
               return {
                 ok: true,
                 value: {
@@ -356,7 +365,12 @@ test('renderer Generate requires explicit regional support and retains ordinary 
     globalThis.window.regionalWiringFixture.tab.generationDraft.positivePrompt.text = 'dormant_ti'
   })
   await expect(generate).toBeDisabled()
-  await expect(page.getByText(/Remove active global embedding tokens/)).toBeVisible()
+  await expect(
+    page.getByText(
+      'The current image engine does not support global embeddings with Regional Guidance. Repair or update the runtime.',
+      { exact: true },
+    ),
+  ).toBeVisible()
   await page.evaluate(() => {
     const fixture = globalThis.window.regionalWiringFixture
     fixture.state.embeddingsSupported = true
@@ -385,7 +399,7 @@ test('renderer Generate requires explicit regional support and retains ordinary 
     fixture.tab.primaryBbox.x += 8
   })
   await expect(generate).toBeDisabled()
-  await expect(page.getByText(/requires an empty Current Canvas generation area/)).toBeVisible()
+  await expect(page.getByText(/Set Denoising Strength from 0 to 1/)).toBeVisible()
   await page.evaluate(() => {
     const fixture = globalThis.window.regionalWiringFixture
     const id = crypto.randomUUID()
@@ -487,4 +501,204 @@ test('renderer frozen Retry follows regional operation even after current author
   })
   await expect(retry).toBeEnabled()
   expect(pageErrors).toEqual([])
+})
+
+test('renderer opaque regional img2img uses actual target and explicit strength', async ({
+  page,
+}, testInfo) => {
+  const pageErrors: string[] = []
+  page.on('pageerror', (cause) => pageErrors.push(cause.message))
+  await page.setViewportSize({ height: 900, width: 1440 })
+  await mountWiring(page, 'project')
+  const generate = page.getByRole('button', { exact: true, name: 'Generate' })
+  await expect(generate).toBeEnabled()
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.state.regionalImg2ImgSupported = true
+    fixture.tab.generationDraft.sampling.denoisingStrength = 0.5
+    fixture.targetMode = 'img2img'
+    fixture.tab.primaryBbox.x += 8
+  })
+  await expect
+    .poll(() => page.evaluate(() => globalThis.window.regionalWiringFixture.targetReads))
+    .toBeGreaterThan(1)
+  await expect(page.getByRole('textbox', { exact: true, name: 'Denoising Strength' })).toBeEnabled()
+  await page.screenshot({ path: testInfo.outputPath('opaque-regional-generate.png') })
+  await expect(generate).toBeEnabled()
+  await generate.click()
+  await expect
+    .poll(() => page.evaluate(() => globalThis.window.regionalWiringFixture.generateCalls))
+    .toEqual([1])
+
+  await page.evaluate(() => {
+    delete globalThis.window.regionalWiringFixture.state.regionalImg2ImgSupported
+  })
+  await expect(generate).toBeDisabled()
+  await expect(page.getByText(/Checking image engine support for opaque img2img/)).toBeVisible()
+  await page.evaluate(() => {
+    globalThis.window.regionalWiringFixture.state.regionalImg2ImgSupported = false
+  })
+  await expect(generate).toBeDisabled()
+  await expect(
+    page.getByText(/does not support opaque img2img with Regional Guidance/),
+  ).toBeVisible()
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.state.regionalImg2ImgSupported = true
+    fixture.tab.generationDraft.sampling.denoisingStrength = null
+  })
+  await expect(generate).toBeDisabled()
+  await expect(page.getByText(/Set Denoising Strength from 0 to 1/)).toBeVisible()
+  for (const strength of [0, 1, 0.5]) {
+    await page.evaluate((value) => {
+      globalThis.window.regionalWiringFixture.tab.generationDraft.sampling.denoisingStrength = value
+    }, strength)
+    await expect(generate).toBeEnabled()
+  }
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.state.regionalCfgRescaleSupported = true
+    fixture.state.regionalInvokeInitializationSupported = true
+    fixture.state.regionalDpmSupported = true
+    fixture.state.regionalVaeSupported = true
+  })
+  for (const sampler of ['Euler a', 'DPM++ 2M'] as const) {
+    await page.evaluate((value) => {
+      globalThis.window.regionalWiringFixture.tab.generationDraft.sampling.sampler = value
+    }, sampler)
+    await expect(generate).toBeDisabled()
+    await expect(page.getByText(/Regional img2img requires Euler\/Normal/)).toBeVisible()
+  }
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.tab.generationDraft.sampling.sampler = 'Euler'
+    fixture.tab.generationDraft.cfgRescale = 0.7
+  })
+  await expect(generate).toBeDisabled()
+  await expect(page.getByText(/Regional img2img requires Euler\/Normal/)).toBeVisible()
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.tab.generationDraft.cfgRescale = 0
+    fixture.tab.generationDraft.vaePrecision = 'FP32'
+  })
+  await expect(generate).toBeDisabled()
+  await expect(page.getByText(/Regional img2img requires Euler\/Normal/)).toBeVisible()
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.tab.generationDraft.vaePrecision = 'FP16'
+    fixture.targetMode = 'outpaint'
+    fixture.tab.primaryBbox.x += 8
+  })
+  await expect(page.getByText(/partially transparent Current Canvas input/)).toBeVisible()
+  await expect(generate).toBeDisabled()
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.targetMode = null
+    fixture.tab.primaryBbox.x += 8
+  })
+  await expect(
+    page.getByLabel('Generation actions').getByText('Fixture target is unavailable.'),
+  ).toBeVisible()
+  await expect(generate).toBeDisabled()
+  expect(await page.evaluate(() => globalThis.window.regionalWiringFixture.generateCalls)).toEqual([
+    1,
+  ])
+  expect(pageErrors).toEqual([])
+})
+
+test('renderer regional img2img waits for actual target inspection before enabling Generate', async ({
+  page,
+}) => {
+  await mountWiring(page, 'project')
+  const generate = page.getByRole('button', { exact: true, name: 'Generate' })
+  await expect(generate).toBeEnabled()
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.holdTarget = true
+    fixture.targetMode = 'img2img'
+    fixture.state.regionalImg2ImgSupported = true
+    fixture.tab.generationDraft.sampling.denoisingStrength = 0.5
+    fixture.tab.primaryBbox.x += 8
+  })
+  await expect
+    .poll(() => page.evaluate(() => globalThis.window.regionalWiringFixture.releaseTarget !== null))
+    .toBe(true)
+  await expect(generate).toBeDisabled()
+  await expect(
+    page.getByText('Checking Current Canvas pixels for Regional Guidance…'),
+  ).toBeVisible()
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.holdTarget = false
+    fixture.releaseTarget!()
+    fixture.releaseTarget = null
+  })
+  await expect(page.getByRole('textbox', { exact: true, name: 'Denoising Strength' })).toBeEnabled()
+  await expect(generate).toBeEnabled()
+  expect(await page.evaluate(() => globalThis.window.regionalWiringFixture.generateCalls)).toEqual(
+    [],
+  )
+})
+
+test('renderer TXT regional options remain independent of opaque image capability', async ({
+  page,
+}) => {
+  await mountWiring(page, 'project')
+  const generate = page.getByRole('button', { exact: true, name: 'Generate' })
+  await expect(generate).toBeEnabled()
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.state.regionalImg2ImgSupported = false
+    fixture.state.regionalInvokeInitializationSupported = true
+    fixture.state.regionalDpmSupported = true
+    fixture.state.regionalVaeSupported = true
+    fixture.state.regionalCfgRescaleSupported = true
+    fixture.tab.generationDraft.cfgRescale = 0.7
+    fixture.tab.generationDraft.vaePrecision = 'FP32'
+    fixture.tab.generationDraft.sampling.sampler = 'Euler a'
+  })
+  await expect(generate).toBeEnabled()
+  await page.evaluate(() => {
+    const sampling = globalThis.window.regionalWiringFixture.tab.generationDraft.sampling
+    sampling.sampler = 'DPM++ 2M'
+    sampling.scheduler = 'Karras'
+  })
+  await expect(generate).toBeEnabled()
+  await generate.click()
+  expect(await page.evaluate(() => globalThis.window.regionalWiringFixture.generateCalls)).toEqual([
+    1,
+  ])
+})
+
+test('renderer frozen IMG Retry requires image capability despite current TXT authoring', async ({
+  page,
+}) => {
+  await mountWiring(page, 'queue')
+  const retry = page.getByRole('button', { exact: true, name: 'Retry job' })
+  await expect(retry).toBeEnabled()
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.queueItem.operation = 'illustrious-regional-img2img'
+    fixture.queueItem.details!.sampling.denoisingStrength = 0.5
+    fixture.tab.regionalGuidance = []
+    fixture.tab.generationDraft.sampling.denoisingStrength = null
+    fixture.epoch += 1
+  })
+  await expect(retry).toBeDisabled()
+  await expect(
+    page
+      .getByTestId('queue-job-row')
+      .getByText(/does not support opaque img2img with Regional Guidance/),
+  ).toBeVisible()
+  await page.evaluate(() => {
+    globalThis.window.regionalWiringFixture.state.regionalImg2ImgSupported = true
+  })
+  await expect(retry).toBeEnabled()
+  await retry.click()
+  expect(await page.evaluate(() => globalThis.window.regionalWiringFixture.retryCalls)).toEqual([
+    await page.evaluate(() => ({
+      id: globalThis.window.regionalWiringFixture.queueItem.id,
+      statusSequence: 3,
+    })),
+  ])
 })

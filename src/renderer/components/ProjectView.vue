@@ -2423,10 +2423,12 @@ const generationBlockingReason = computed(() => {
         document: { ...props.tab, generationDraft: props.generationDraft },
         dpmSupported: props.generationState?.regionalDpmSupported,
         embeddingsSupported: props.generationState?.embeddingsSupported,
+        img2imgSupported: props.generationState?.regionalImg2ImgSupported,
         initializationSupported: props.generationState?.regionalInvokeInitializationSupported,
         iterations: imagesPerClick.value ?? 0,
         loraSupported: props.generationState?.regionalLoraSupported,
         runtimeSupported: props.generationState?.regionalSupported,
+        targetMode: targetState.value?.mode,
         vaeSupported: props.generationState?.regionalVaeSupported,
       })
   if (regionalReason) {
@@ -2502,9 +2504,6 @@ const generationBlockingReason = computed(() => {
     }
     if (targetState.value.unavailableReason) {
       return targetState.value.unavailableReason
-    }
-    if (targetState.value.mode !== 'txt2img') {
-      return 'Regional Guidance requires an empty Current Canvas generation area. Hide or move raster input before generating.'
     }
   }
   if (activePatch.value) {
