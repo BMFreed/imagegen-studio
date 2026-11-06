@@ -12,9 +12,10 @@ import * as v from 'valibot'
 
 import type {
   FrozenQueuedGenerationV1,
+  FrozenQueuedIllustriousImg2ImgV1,
   FrozenQueuedIllustriousTxt2ImgV1,
 } from './generation-queue.js'
-import type { IllustriousTxt2ImgRequestV1 } from './illustrious-txt2img-job.js'
+import type { IllustriousGenerationRequestV1 } from './illustrious-txt2img-job.js'
 import type { RegionalWorkerInput } from './regional-worker-request.js'
 
 import { GenerationQueueError, parseFrozenGenerationPayloadV1 } from './generation-queue.js'
@@ -31,10 +32,23 @@ export interface FrozenQueuedRegionalV1 extends Omit<FrozenQueuedIllustriousTxt2
 }
 
 /** Public Invoke Canvas composition is a distinct frozen operation, never inferred from age. */
-export interface FrozenQueuedRegionalInvokeV1 extends Omit<FrozenQueuedRegionalV1, 'kind'> {
+export interface FrozenQueuedRegionalInvokeTxt2ImgV1 extends Omit<FrozenQueuedRegionalV1, 'kind'> {
   compositionProfile: 'invoke-canvas-v1'
   kind: 'illustrious-regional-txt2img'
 }
+
+export interface FrozenQueuedRegionalInvokeImg2ImgV1 extends Omit<
+  FrozenQueuedIllustriousImg2ImgV1,
+  'kind'
+> {
+  compositionProfile: 'invoke-canvas-v1'
+  initializationProfile?: never
+  kind: 'illustrious-regional-img2img'
+  regional: FrozenQueuedRegionalV1['regional']
+}
+
+export type FrozenQueuedRegionalInvokeV1 =
+  FrozenQueuedRegionalInvokeImg2ImgV1 | FrozenQueuedRegionalInvokeTxt2ImgV1
 
 export type FrozenQueuedRegionalOperationalV1 =
   FrozenQueuedRegionalInvokeV1 | FrozenQueuedRegionalV1
@@ -45,6 +59,9 @@ export interface RegionalQueuedMaterial {
   initializationProfile?: RegionalInitializationProfile
   regional: FrozenQueuedRegionalV1['regional']
 }
+
+type RegionalFrozenContext =
+  FrozenQueuedIllustriousImg2ImgV1['context'] | FrozenQueuedIllustriousTxt2ImgV1['context']
 
 const MAX_PAYLOAD_BYTES = 128 * 1024
 const MAX_METADATA_BYTES = 1024 * 1024
@@ -87,7 +104,12 @@ export function parseFrozenQueuedRegionalInvokeV1(json: string): FrozenQueuedReg
 export function parseFrozenQueuedRegionalOperationalV1(
   json: string,
 ): FrozenQueuedRegionalOperationalV1 {
-  return parseRegionalPayload(json, readKind(json) === 'illustrious-regional-txt2img')
+  return parseRegionalPayload(
+    json,
+    ['illustrious-regional-img2img', 'illustrious-regional-txt2img'].includes(
+      String(readKind(json)),
+    ),
+  )
 }
 
 /**
@@ -96,15 +118,29 @@ export function parseFrozenQueuedRegionalOperationalV1(
  * provenance.
  */
 export function parseAcceptedGenerationBaseV1(json: string): FrozenQueuedGenerationV1 {
-  if (readKind(json) !== 'illustrious-regional-txt2img') {
+  if (
+    !['illustrious-regional-img2img', 'illustrious-regional-txt2img'].includes(
+      String(readKind(json)),
+    )
+  ) {
     return parseFrozenGenerationPayloadV1(json)
+  }
+  const payload = parseFrozenQueuedRegionalInvokeV1(json)
+  if (payload.kind === 'illustrious-regional-img2img') {
+    const {
+      compositionProfile: _profile,
+      initializationProfile: _init,
+      regional: _regional,
+      ...base
+    } = payload
+    return { ...base, kind: 'illustrious-img2img' }
   }
   const {
     compositionProfile: _profile,
-    initializationProfile: _initialization,
+    initializationProfile: _init,
     regional: _regional,
     ...base
-  } = parseFrozenQueuedRegionalInvokeV1(json)
+  } = payload
   return { ...base, kind: 'illustrious-txt2img' }
 }
 
@@ -115,7 +151,7 @@ export function parseAcceptedGenerationBaseV1(json: string): FrozenQueuedGenerat
  */
 export function captureRegionalQueuedMaterial(
   input: RegionalWorkerInput,
-  context?: FrozenQueuedIllustriousTxt2ImgV1['context'],
+  context?: RegionalFrozenContext,
 ): RegionalQueuedMaterial {
   const captured = captureRegionalWorkerInput(input)
   assertPublicRegionalGlobalEmbeddingsAgree(captured, context)
@@ -179,7 +215,7 @@ export function captureRegionalQueuedMaterial(
 /** TI agrees with the recipe; LoRAs and selected VAE retain their ordinary frozen owners. */
 export function assertPublicRegionalGlobalEmbeddingsAgree(
   input: RegionalWorkerInput,
-  context?: FrozenQueuedIllustriousTxt2ImgV1['context'],
+  context?: RegionalFrozenContext,
 ): void {
   if (input.compositionProfile !== 'invoke-canvas-v1') {
     return
@@ -264,7 +300,7 @@ export async function loadRegionalQueuedFiles(
 export async function loadRegionalQueuedInput(
   root: string,
   payload: FrozenQueuedRegionalOperationalV1,
-  request: IllustriousTxt2ImgRequestV1,
+  request: IllustriousGenerationRequestV1,
 ): Promise<RegionalWorkerInput> {
   const capturedPayload = parseFrozenQueuedRegionalOperationalV1(JSON.stringify(payload))
   const capturedRequest = structuredClone(request)
@@ -286,7 +322,7 @@ export async function loadRegionalQueuedInput(
   if (
     !isDeepStrictEqual({ ...job, target: targetDescriptor }, capturedPayload.workerJob) ||
     captured.compositionProfile !==
-      (capturedPayload.kind === 'illustrious-regional-txt2img'
+      (capturedPayload.kind !== 'illustrious-regional'
         ? capturedPayload.compositionProfile
         : undefined) ||
     captured.initializationProfile !== capturedPayload.initializationProfile ||
@@ -322,7 +358,11 @@ function parseRegionalPayload(json: string, invoke: boolean): FrozenQueuedRegion
   }
   if (
     !record(value) ||
-    value.kind !== (invoke ? 'illustrious-regional-txt2img' : 'illustrious-regional') ||
+    (invoke
+      ? !['illustrious-regional-img2img', 'illustrious-regional-txt2img'].includes(
+          String(value.kind),
+        )
+      : value.kind !== 'illustrious-regional') ||
     (invoke ? value.compositionProfile !== 'invoke-canvas-v1' : 'compositionProfile' in value)
   ) {
     throw invalid('The frozen regional operation is invalid.')
@@ -344,10 +384,17 @@ function parseRegionalPayload(json: string, invoke: boolean): FrozenQueuedRegion
     ...base
   } = value
   const ordinary = parseFrozenGenerationPayloadV1(
-    JSON.stringify({ ...base, kind: 'illustrious-txt2img' }),
+    JSON.stringify({
+      ...base,
+      kind:
+        value.kind === 'illustrious-regional-img2img'
+          ? 'illustrious-img2img'
+          : 'illustrious-txt2img',
+    }),
   )
+  const image = value.kind === 'illustrious-regional-img2img'
   const samplerMatchesInitialization =
-    ordinary.kind === 'illustrious-txt2img' &&
+    (ordinary.kind === 'illustrious-txt2img' || ordinary.kind === 'illustrious-img2img') &&
     (initializationProfile === undefined
       ? ordinary.workerJob.sampling.scheduler === 'euler'
       : ordinary.workerJob.sampling.scheduler === 'euler_a' ||
@@ -355,13 +402,16 @@ function parseRegionalPayload(json: string, invoke: boolean): FrozenQueuedRegion
           (ordinary.workerJob.sampling.scheduler === 'dpmpp_2m' ||
             ordinary.workerJob.sampling.scheduler === 'dpmpp_2m_k')))
   if (
-    ordinary.kind !== 'illustrious-txt2img' ||
+    (ordinary.kind !== 'illustrious-txt2img' && ordinary.kind !== 'illustrious-img2img') ||
     ordinary.workerJob.checkpoint.predictionType !== 'epsilon' ||
     (invoke && ordinary.workerJob.sampling.cfgScale <= 1) ||
     !samplerMatchesInitialization ||
     ordinary.workerJob.sampling.noiseProfile === undefined ||
-    (!invoke && (ordinary.workerJob.sampling.cfgRescale ?? 0) !== 0) ||
-    (!invoke && (ordinary.workerJob.vaePrecision !== 'FP16' || ordinary.workerJob.vae != null)) ||
+    ((!invoke || image) && (ordinary.workerJob.sampling.cfgRescale ?? 0) !== 0) ||
+    ((!invoke || image) &&
+      (ordinary.workerJob.vaePrecision !== 'FP16' || ordinary.workerJob.vae != null)) ||
+    (image &&
+      (initializationProfile !== undefined || ordinary.workerJob.sampling.scheduler !== 'euler')) ||
     (!invoke && (ordinary.workerJob.loras?.length ?? 0) !== 0) ||
     (!invoke &&
       ((ordinary.workerJob.embeddings?.positive.length ?? 0) !== 0 ||
@@ -378,6 +428,20 @@ function parseRegionalPayload(json: string, invoke: boolean): FrozenQueuedRegion
             initializationProfile,
           ),
         }
+  if (image) {
+    if (!invoke || ordinary.kind !== 'illustrious-img2img') {
+      throw invalid('Regional img2img requires its exact opaque-image operation.')
+    }
+    return {
+      ...ordinary,
+      compositionProfile: 'invoke-canvas-v1',
+      kind: 'illustrious-regional-img2img',
+      regional: parsed.output,
+    }
+  }
+  if (ordinary.kind !== 'illustrious-txt2img') {
+    throw invalid('Regional txt2img requires its exact transparent operation.')
+  }
   return invoke
     ? {
         ...ordinary,
@@ -386,12 +450,7 @@ function parseRegionalPayload(json: string, invoke: boolean): FrozenQueuedRegion
         kind: 'illustrious-regional-txt2img',
         regional: parsed.output,
       }
-    : {
-        ...ordinary,
-        ...initialization,
-        kind: 'illustrious-regional',
-        regional: parsed.output,
-      }
+    : { ...ordinary, ...initialization, kind: 'illustrious-regional', regional: parsed.output }
 }
 
 async function loadFiles(

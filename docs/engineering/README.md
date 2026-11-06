@@ -8,6 +8,24 @@ anonymized source bytes have not been rerun through earlier ML qualification.
 The cleaned publication history is prepared separately; no remote history is
 replaced as part of source preparation.
 
+## Public opaque Regional Guidance backend
+
+[Public image continuation](./phase-4-regional-guidance-public-img2img-research.md)
+adds an explicit Euler/Normal, Embedded FP16, zero-rescale opaque mode with frozen
+strength/source ownership and a separate worker capability. Migration0022
+preserves prior queue data; TXT behavior and provenance exclusions persist.
+ROOT:810 Main/200 Python PASS, typing/scoped checks/build PASS; two isolated
+mutations give12 GREEN/three semantic RED. A225.359second installed backend probe
+makes four admissions/three native requests/receipts with real Raster import,
+ModelService and composition: pending Cancel, saved edits, exact frozen Retry
+RGB and strength0 without fake progress. Runtime availability is controlled;
+this qualifies no UI interaction, Add/result-Save cycle, manager lease, quality
+or release. Source/probe/retained-byte reviews are CLEAN within scope. ROOT
+archives all own fixture/output bytes, then confirms physical exit and releases
+only two idle scratch roots, reclaiming53,264,384 allocated bytes. Canonical
+runtime/resources and qualification companions remain protected.
+PP-001/005/007/008 stay unchanged.
+
 ## Private opaque Regional Guidance img2img
 
 [Opaque image consumer](./phase-4-regional-guidance-img2img-research.md) reuses the

@@ -7,6 +7,7 @@ import {
   supportsInferenceEmbeddings,
   supportsInferenceRegionalCFGRescale,
   supportsInferenceRegionalDpm,
+  supportsInferenceRegionalImg2Img,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
   supportsInferenceRegionalVae,
@@ -41,11 +42,13 @@ import {
 } from './illustrious-generation-embeddings.js'
 import {
   assertIllustriousTxt2ImgRequestFitsTransport,
-  withIllustriousTxt2ImgRequest,
+  withIllustriousGenerationRequest,
 } from './illustrious-txt2img-job.js'
 import { prepareCurrentCanvasRegionalRecipe } from './project-current-canvas-regional-recipe.js'
 import {
+  prepareNormalGeneration,
   prepareNormalTxt2Img,
+  validateNormalGenerationDraft,
   validateNormalTxt2ImgDraft,
 } from './project-generation-preparation.js'
 
@@ -484,13 +487,37 @@ export class ProjectRegionalGenerationCoordinator {
               document.documentId,
             )
             assertCurrent()
-            validateNormalTxt2ImgDraft(
+            const validateDraft = compositionProfile
+              ? validateNormalGenerationDraft
+              : validateNormalTxt2ImgDraft
+            validateDraft(
               document.generationDraft,
               operationalSeed,
               document.lastActualSeedSnapshot,
             )
             const target = await capture.composeTarget({ composeTarget })
             assertCurrent()
+            if (compositionProfile && target.mode === 'img2img') {
+              const draft = document.generationDraft
+              if (!supportsInferenceRegionalImg2Img(ready)) {
+                throw new ProjectRegionalGenerationError(
+                  'INFERENCE_UNAVAILABLE',
+                  'The image engine has not qualified opaque img2img with Regional Guidance.',
+                )
+              }
+              if (
+                draft.sampling.sampler !== 'Euler' ||
+                draft.sampling.scheduler !== 'Normal' ||
+                draft.vae !== null ||
+                draft.vaePrecision !== 'FP16' ||
+                (draft.cfgRescale ?? 0) !== 0 ||
+                initializationProfile !== undefined
+              ) {
+                throw unsupported(
+                  'Regional img2img requires Euler/Normal, Embedded FP16 VAE and CFG Rescale zero.',
+                )
+              }
+            }
             const authoredEmbeddingRefs = {
               negative: structuredClone(target.generationDraft.negativePrompt.embeddingRefs),
               positive: structuredClone(target.generationDraft.positivePrompt.embeddingRefs),
@@ -522,7 +549,9 @@ export class ProjectRegionalGenerationCoordinator {
                 authoredEmbeddingRefs.negative,
               )
             }
-            const prepared = await prepareNormalTxt2Img({
+            const prepared = await (
+              compositionProfile ? prepareNormalGeneration : prepareNormalTxt2Img
+            )({
               lastActualSeed: operationalSeed,
               modelService: this.models,
               target: preparationTarget,
@@ -576,13 +605,18 @@ export class ProjectRegionalGenerationCoordinator {
               assertCurrent()
               materials.push({ context, item, recipe })
             }
-            return await withIllustriousTxt2ImgRequest({
+            return await withIllustriousGenerationRequest({
               modelService: this.models,
               prepared,
               ready,
               scratchBasePath: this.options.scratchBasePath,
               use: async (request) => {
                 assertCurrent()
+                if (!compositionProfile && request.type !== 'generate-illustrious-txt2img') {
+                  throw unsupported(
+                    'Private regional transport requires a transparent txt2img target.',
+                  )
+                }
                 const items = materials.map(({ context, item, recipe }, index) => {
                   const concreteRequest = structuredClone(request)
                   if (index > 0) {

@@ -30,12 +30,10 @@ import type { PreparedOutpaintGeneration } from './generation-queue.js'
 import type { GenerationStagingRepository } from './generation-staging.js'
 import type { GenerationModelResolver } from './illustrious-generation-loras.js'
 import type { IllustriousGenerationRequestV1 } from './illustrious-txt2img-job.js'
-import type { IllustriousTxt2ImgRequestV1 } from './illustrious-txt2img-job.js'
 import type {
   FrozenNormalGenerationPreparationV1,
   PreparedNormalGeneration,
 } from './project-generation-preparation.js'
-import type { PreparedNormalTxt2Img } from './project-generation-preparation.js'
 import type { ProjectIndexRepository } from './project-index.js'
 import type { ProjectService } from './project-service.js'
 import type { SmartPatchExecutionModelResolver } from './project-smart-patch-execution.js'
@@ -293,7 +291,10 @@ export class GenerationOrchestrator {
   /** Route cancellation by the durable operation discriminator, never by current UI selection. */
   async cancelGenerationJob(id: string): Promise<QueuedGenerationItem> {
     const entry = await this.queue.getManagerEntry(id)
-    if (entry.operation === 'illustrious-regional-txt2img') {
+    if (
+      entry.operation === 'illustrious-regional-txt2img' ||
+      entry.operation === 'illustrious-regional-img2img'
+    ) {
       await this.cancelRegionalQueueItem(id)
       return await this.queue.cancel(id)
     }
@@ -1074,9 +1075,9 @@ export class GenerationOrchestrator {
       afterPublication?: (item: QueuedGenerationItem, assertCurrent: () => void) => Promise<void>
       assertCurrent: () => void
       beforePublication?: () => Promise<void>
-      prepared: PreparedNormalTxt2Img
+      prepared: PreparedNormalGeneration
       regional: Omit<RegionalWorkerInput, 'request'>
-      request: IllustriousTxt2ImgRequestV1
+      request: IllustriousGenerationRequestV1
     },
   ): Promise<QueuedGenerationItem> {
     const afterPublication = input.afterPublication
@@ -1111,9 +1112,9 @@ export class GenerationOrchestrator {
       assertCurrent: () => void
       beforePublication?: () => Promise<void>
       items: readonly {
-        prepared: PreparedNormalTxt2Img
+        prepared: PreparedNormalGeneration
         regional: Omit<RegionalWorkerInput, 'request'>
-        request: IllustriousTxt2ImgRequestV1
+        request: IllustriousGenerationRequestV1
       }[]
     },
   ): Promise<QueuedGenerationItem[]> {
@@ -1733,9 +1734,9 @@ export class GenerationOrchestrator {
       assertCurrent: () => void
       beforePublication?: () => Promise<void>
       items: readonly {
-        prepared: PreparedNormalTxt2Img
+        prepared: PreparedNormalGeneration
         regional: Omit<RegionalWorkerInput, 'request'>
-        request: IllustriousTxt2ImgRequestV1
+        request: IllustriousGenerationRequestV1
       }[]
     },
     publicBatch: boolean,
@@ -1866,13 +1867,31 @@ export class GenerationOrchestrator {
         stagingSessionId,
       }
       const first = items[0]
-      const queued = publicBatch
-        ? await this.queue.enqueueInvokeCanvasRegionalBatch({ ...admission, items })
-        : [
-            await (first.regional.compositionProfile === 'invoke-canvas-v1'
-              ? this.queue.enqueueInvokeCanvasRegional({ ...admission, ...first })
-              : this.queue.enqueueCurrentCanvasRegional({ ...admission, ...first })),
-          ]
+      let queued: QueuedGenerationItem[]
+      if (publicBatch) {
+        queued = await this.queue.enqueueInvokeCanvasRegionalBatch({ ...admission, items })
+      } else if (first.regional.compositionProfile === 'invoke-canvas-v1') {
+        queued = [await this.queue.enqueueInvokeCanvasRegional({ ...admission, ...first })]
+      } else {
+        if (
+          first.prepared.context.kind !== 'normal-txt2img-preparation' ||
+          first.request.type !== 'generate-illustrious-txt2img'
+        ) {
+          throw new GenerationOrchestratorError(
+            'GENERATION_BATCH_INVALID',
+            'Private regional admission requires its unchanged txt2img owner.',
+          )
+        }
+        queued = [
+          await this.queue.enqueueCurrentCanvasRegional({
+            ...admission,
+            ...first,
+            prepared: { ...first.prepared, context: first.prepared.context },
+            request: first.request,
+          }),
+        ]
+      }
+
       try {
         assertCurrent()
         const after = await this.indexedProject(tabId)

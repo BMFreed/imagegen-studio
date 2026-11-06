@@ -34,6 +34,7 @@ import {
   supportsInferenceOutpaint,
   supportsInferenceRegionalCFGRescale,
   supportsInferenceRegionalDpm,
+  supportsInferenceRegionalImg2Img,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
   supportsInferenceRegionalVae,
@@ -430,6 +431,11 @@ export class ProjectGenerationActionController {
         !this.closed &&
         !!this.options.regional &&
         supportsInferenceRegionalDpm(ready),
+      regionalImg2ImgSupported:
+        !this.blocked &&
+        !this.closed &&
+        !!this.options.regional &&
+        supportsInferenceRegionalImg2Img(ready),
       regionalInvokeInitializationSupported:
         !this.blocked &&
         !this.closed &&
@@ -1351,7 +1357,10 @@ export class ProjectGenerationActionController {
 
   private async retryUnlocked(review: GenerationQueueReview): Promise<void> {
     const source = await this.options.queue.getManagerEntry(review.id)
-    if (source.operation === 'illustrious-regional-txt2img') {
+    if (
+      source.operation === 'illustrious-regional-txt2img' ||
+      source.operation === 'illustrious-regional-img2img'
+    ) {
       const retry = this.options.orchestrator.retryRegional?.bind(this.options.orchestrator)
       if (!retry || !this.options.regional) {
         throw new ProjectGenerationActionError(
@@ -1374,7 +1383,7 @@ export class ProjectGenerationActionController {
         this.assertAdmissionOpen()
         this.assertDocument(source.projectKey, source.documentId)
         if (
-          frozen.payload.kind !== 'illustrious-regional-txt2img' ||
+          frozen.payload.kind !== source.operation ||
           frozen.payload.context.documentId !== source.documentId ||
           frozen.item.localProjectKey !== source.projectKey
         ) {
@@ -1392,6 +1401,8 @@ export class ProjectGenerationActionController {
               this.assertDocument(source.projectKey, source.documentId)
               if (
                 !supportsRegional(ready) ||
+                (source.operation === 'illustrious-regional-img2img' &&
+                  !supportsInferenceRegionalImg2Img(ready)) ||
                 ((frozen.payload.workerJob.sampling.cfgRescale ?? 0) !== 0 &&
                   !supportsInferenceRegionalCFGRescale(ready)) ||
                 ((frozen.payload.workerJob.sampling.scheduler === 'dpmpp_2m' ||

@@ -41,6 +41,7 @@ from .illustrious_regional_denoising import (
 from .illustrious_regional_lora import prepare_regional_loras, verify_regional_lora_resources
 from .illustrious_regional_output import (
     _command_parameters,  # pyright: ignore[reportPrivateUsage]
+    generate_current_canvas_regional_img2img,
     generate_current_canvas_regional_txt2img,
 )
 from .illustrious_regional_recipe import (
@@ -64,6 +65,7 @@ from .protocol import (
     _REQUEST_ID_PATTERN,  # pyright: ignore[reportPrivateUsage]
     _SHA256_PATTERN,  # pyright: ignore[reportPrivateUsage]
     MAX_GENERATION_TARGET_BYTES,
+    GenerateIllustriousImg2ImgCommand,
     GenerateIllustriousTxt2ImgCommand,
     IllustriousInferenceParameters,
     parse_request,
@@ -94,7 +96,21 @@ def _denoising_profile(
     parameters: IllustriousInferenceParameters,
     initialization_profile: str | None = None,
     composition_profile: str | None = None,
+    *,
+    img2img: bool = False,
 ) -> _DenoisingProfile:
+    if img2img:
+        _require(
+            composition_profile == "invoke-canvas-v1"
+            and initialization_profile is None
+            and parameters.scheduler == "euler"
+            and parameters.vae is None
+            and parameters.vae_precision == "FP16"
+            and parameters.cfg_rescale == 0,
+            "Regional img2img requires Invoke Canvas, Euler, Embedded FP16 VAE, zero CFG Rescale "
+            "and no txt2img initialization.",
+        )
+        return "ordinary-canvas-euler-img2img-cuda-fp16-v1"
     prepared_vae = composition_profile == "invoke-canvas-v1" and (
         parameters.vae is not None or parameters.vae_precision != "FP16"
     )
@@ -477,10 +493,11 @@ def parse_regional_request(value: object) -> RegionalRequest:
     )
     command = parse_request(bundle["request"])
     _require(
-        type(command) is GenerateIllustriousTxt2ImgCommand,
-        "Private regional loading requires exact ordinary Illustrious txt2img.",
+        type(command) in (GenerateIllustriousTxt2ImgCommand, GenerateIllustriousImg2ImgCommand),
+        "Regional loading requires an exact ordinary Illustrious txt2img or img2img command.",
     )
     command = cast(GenerateIllustriousTxt2ImgCommand, command)
+    img2img = type(command) is GenerateIllustriousImg2ImgCommand
     _require(
         command.request_id == request_id and command.staging_root == root,
         "Regional command identity/staging must agree with its transport.",
@@ -499,7 +516,9 @@ def parse_regional_request(value: object) -> RegionalRequest:
         bundle_descriptor[0] not in (command.target_path, command.output_path),
         "Regional bundle, target and output must be distinct.",
     )
-    parameters = _command_parameters(command)
+    parameters = (
+        _command_parameters(command, img2img=True) if img2img else _command_parameters(command)
+    )
     _require(
         not parameters.loras or composition_profile == "invoke-canvas-v1",
         "Regional LoRAs require the explicit Invoke Canvas composition profile.",
@@ -507,10 +526,14 @@ def parse_regional_request(value: object) -> RegionalRequest:
     # Keep complete logical parameters for resource identity and loading ownership.
     # The existing recipe/denoising owners consume an already prepared native model.
     execution_parameters = replace(parameters, loras=())
-    denoising_profile = _denoising_profile(parameters, initialization_profile, composition_profile)
+    denoising_profile = (
+        _denoising_profile(parameters, initialization_profile, composition_profile, img2img=True)
+        if img2img
+        else _denoising_profile(parameters, initialization_profile, composition_profile)
+    )
     tensor_profile, _ = _execution_profile(denoising_profile, encoding_profile)
     prepared_vae = _vae_profile(denoising_profile)
-    invoke_cfg_rescale = encoding_profile in _INVOKE_PROFILES
+    invoke_cfg_rescale = encoding_profile in _INVOKE_PROFILES and not img2img
     if _dpmpp_2m_profile(denoising_profile):
         _denoising_parameters(
             execution_parameters,
@@ -624,8 +647,18 @@ def execute_regional_request(
             loading_parameters, config_dir=config_dir, runtime=runtime, mode="txt2img"
         )
         prepare_regional_loras(pipeline, request.parameters.loras, torch)
-        denoising_profile = _denoising_profile(
-            request.parameters, request.initialization_profile, request.composition_profile
+        img2img = type(request.command) is GenerateIllustriousImg2ImgCommand
+        denoising_profile = (
+            _denoising_profile(
+                request.parameters,
+                request.initialization_profile,
+                request.composition_profile,
+                img2img=True,
+            )
+            if img2img
+            else _denoising_profile(
+                request.parameters, request.initialization_profile, request.composition_profile
+            )
         )
         if _vae_profile(denoising_profile):
             prepare_owned_regional_vae(pipeline, request.parameters, torch)
@@ -643,24 +676,32 @@ def execute_regional_request(
             component.eval()
         install_capture_hooks(pipeline)
         bindings = qualify_bindings(pipeline, runtime)
-        return generate_current_canvas_regional_txt2img(
-            request.recipe,
-            command=execution_command,
-            pipeline=pipeline,
-            runtime=runtime,
-            profile=_INVOKE_ENCODING_PROFILE
-            if request.composition_profile == "invoke-canvas-v1"
-            else _ENCODING_PROFILE,
-            denoising_profile=denoising_profile,
-            global_negative_coverage=request.global_negative_coverage,
-            global_positive_coverage=request.global_positive_coverage,
-            negative_pooled_source_id=request.negative_pooled_source_id,
-            positive_pooled_source_id=request.positive_pooled_source_id,
-            bindings=bindings,
-            layout=request.layout,
-            **(
-                {"on_progress": on_progress}
-                if request.report_progress and on_progress is not None
-                else {}
+        publish: Any = (
+            generate_current_canvas_regional_img2img
+            if img2img
+            else generate_current_canvas_regional_txt2img
+        )
+        return cast(
+            dict[str, object],
+            publish(
+                request.recipe,
+                command=execution_command,
+                pipeline=pipeline,
+                runtime=runtime,
+                profile=_INVOKE_ENCODING_PROFILE
+                if request.composition_profile == "invoke-canvas-v1"
+                else _ENCODING_PROFILE,
+                denoising_profile=denoising_profile,
+                global_negative_coverage=request.global_negative_coverage,
+                global_positive_coverage=request.global_positive_coverage,
+                negative_pooled_source_id=request.negative_pooled_source_id,
+                positive_pooled_source_id=request.positive_pooled_source_id,
+                bindings=bindings,
+                layout=request.layout,
+                **(
+                    {"on_progress": on_progress}
+                    if request.report_progress and on_progress is not None
+                    else {}
+                ),
             ),
         )

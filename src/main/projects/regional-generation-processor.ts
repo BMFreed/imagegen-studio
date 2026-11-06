@@ -7,6 +7,7 @@ import {
 import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceEmbeddings,
+  supportsInferenceRegionalImg2Img,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
   supportsInferenceRegionalProgress,
@@ -502,6 +503,15 @@ export class RegionalGenerationProcessor {
       }
       const input = captureRegionalWorkerInput(claimed.input)
       if (
+        input.request.type === 'generate-illustrious-img2img' &&
+        !supportsInferenceRegionalImg2Img(transport.ready)
+      ) {
+        throw new RegionalGenerationProcessorError(
+          'INFERENCE_UNAVAILABLE',
+          'The worker has not qualified opaque Regional Guidance img2img.',
+        )
+      }
+      if (
         input.compositionProfile === 'invoke-canvas-v1' &&
         (input.request.job.vae != null || (input.request.job.vaePrecision ?? 'Auto') !== 'FP16') &&
         !supportsInferenceRegionalVae(transport.ready)
@@ -558,7 +568,10 @@ export class RegionalGenerationProcessor {
           this.stopping ||
           !supportsInferenceRegionalProgress(transport.ready) ||
           !isGenerationDenoisingProgress(progress) ||
-          progress.totalSteps !== expectedTotalSteps
+          (input.request.type === 'generate-illustrious-img2img'
+            ? input.request.job.sampling.denoisingStrength === 0 ||
+              progress.totalSteps > expectedTotalSteps
+            : progress.totalSteps !== expectedTotalSteps)
         ) {
           return
         }

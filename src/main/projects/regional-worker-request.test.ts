@@ -676,3 +676,120 @@ test('private regional wire still refuses a different ordinary sampler before cr
     assert.deepEqual(await readdir(scratch), [])
   })
 })
+
+async function useOpaqueImgFixture(fixture: Fixture, strength = 0.5): Promise<void> {
+  const { input, profile } = fixture
+  input.compositionProfile = 'invoke-canvas-v1'
+  input.globalNegativeCoverage = { kind: 'everywhere' }
+  input.globalPositiveCoverage = { kind: 'everywhere' }
+  const bytes = png(64, 64, profile, 255)
+  await writeFile(input.request.job.target.path, bytes)
+  input.request = {
+    ...input.request,
+    job: {
+      ...input.request.job,
+      sampling: { ...input.request.job.sampling, denoisingStrength: strength },
+      target: { ...input.request.job.target, byteSize: bytes.length, sha256: sha(bytes) },
+    },
+    type: 'generate-illustrious-img2img',
+  }
+}
+
+for (const strength of [0, 0.5, 1]) {
+  test(`public regional image bundle owns opaque pixels and explicit strength ${strength}`, async () => {
+    await withFixture(async (fixture) => {
+      await useOpaqueImgFixture(fixture, strength)
+      const before = structuredClone(fixture.input)
+      const source = await readFile(fixture.input.request.job.target.path)
+      const lease = await prepareRegionalWorkerRequest(fixture.input, fixture.scratch)
+      try {
+        const bundle = await bundleOf(lease)
+        assert.equal(bundle.request.type, 'generate-illustrious-img2img')
+        assert.equal(lease.request.type, 'generate-illustrious-img2img')
+        assert.ok(bundle.request.type === 'generate-illustrious-img2img')
+        assert.equal(bundle.request.job.sampling.denoisingStrength, strength)
+        assert.deepEqual(fixture.input, before)
+        assert.ok((await readFile(lease.request.job.target.path)).equals(source))
+        await rm(fixture.input.request.job.target.path)
+        assert.ok((await readFile(lease.request.job.target.path)).equals(source))
+      } finally {
+        await lease.dispose()
+      }
+      assert.deepEqual(await readdir(fixture.scratch), [])
+    })
+  })
+}
+
+for (const fault of [
+  'private',
+  'init',
+  'ancestral',
+  'dpm',
+  'rescale',
+  'auto',
+  'fp32',
+  'missing-strength',
+  'bool-strength',
+  'overflow-strength',
+]) {
+  test(`regional img2img refuses ${fault} before creating its transport lease`, async () => {
+    await withFixture(async (fixture) => {
+      await useOpaqueImgFixture(fixture)
+      const { input } = fixture
+      assert.ok(input.request.type === 'generate-illustrious-img2img')
+      switch (fault) {
+        case 'ancestral': {
+          input.request.job.sampling.scheduler = 'euler_a'
+          break
+        }
+        case 'auto':
+        case 'fp32': {
+          input.request.job.vaePrecision = fault === 'auto' ? 'Auto' : 'FP32'
+          break
+        }
+        case 'dpm': {
+          input.request.job.sampling.scheduler = 'dpmpp_2m'
+          break
+        }
+        case 'init': {
+          input.initializationProfile = 'invoke-cpu-f32-add-noise-v1'
+          break
+        }
+        case 'missing-strength': {
+          Reflect.deleteProperty(input.request.job.sampling, 'denoisingStrength')
+          break
+        }
+        case 'private': {
+          delete input.compositionProfile
+          break
+        }
+        case 'rescale': {
+          input.request.job.sampling.cfgRescale = 0.7
+          break
+        }
+        default: {
+          Object.assign(input.request.job.sampling, {
+            denoisingStrength: fault === 'bool-strength' ? true : 1.1,
+          })
+        }
+      }
+      await assert.rejects(prepareRegionalWorkerRequest(input, fixture.scratch))
+      assert.deepEqual(await readdir(fixture.scratch), [])
+    })
+  })
+}
+
+for (const alpha of [0, 127]) {
+  test(`regional img2img refuses alpha ${alpha} despite matching declared PNG identity`, async () => {
+    await withFixture(async (fixture) => {
+      await useOpaqueImgFixture(fixture)
+      const target = fixture.input.request.job.target
+      const bytes = png(64, 64, fixture.profile, alpha)
+      await writeFile(target.path, bytes)
+      target.sha256 = sha(bytes)
+      target.byteSize = bytes.length
+      await assert.rejects(prepareRegionalWorkerRequest(fixture.input, fixture.scratch))
+      assert.deepEqual(await readdir(fixture.scratch), [])
+    })
+  })
+}

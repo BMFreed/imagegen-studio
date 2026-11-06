@@ -28,6 +28,7 @@ import {
   supportsInferenceOutpaint,
   supportsInferenceRegionalCFGRescale,
   supportsInferenceRegionalDpm,
+  supportsInferenceRegionalImg2Img,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
   supportsInferenceRegionalProgress,
@@ -434,6 +435,15 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     let completed = false
     try {
       if (
+        input.request.type === 'generate-illustrious-img2img' &&
+        !supportsInferenceRegionalImg2Img(this.ready)
+      ) {
+        throw new GenerationWorkerError(
+          'WORKER_VERSION_MISMATCH',
+          'The active worker has not qualified opaque img2img with Regional Guidance.',
+        )
+      }
+      if (
         input.compositionProfile === 'invoke-canvas-v1' &&
         (input.request.job.sampling.cfgRescale ?? 0) !== 0 &&
         !supportsInferenceRegionalCFGRescale(this.ready)
@@ -531,7 +541,10 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
         'generation-done',
         reportProgress
           ? {
-              expectedTotalSteps: lease.request.job.sampling.steps,
+              expectedTotalSteps:
+                lease.request.type === 'generate-illustrious-img2img'
+                  ? null
+                  : lease.request.job.sampling.steps,
               maxSteps: lease.request.job.sampling.steps,
               onProgress,
             }

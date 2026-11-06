@@ -12,7 +12,7 @@ import path from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import * as v from 'valibot'
 
-import type { IllustriousTxt2ImgRequestV1 } from './illustrious-txt2img-job.js'
+import type { IllustriousGenerationRequestV1 } from './illustrious-txt2img-job.js'
 import type { CurrentCanvasRegionalRecipe } from './project-current-canvas-regional-recipe.js'
 import type { VerifiedWorkerImage } from './worker-client.js'
 
@@ -48,7 +48,7 @@ export interface RegionalWorkerInput {
   negativePooledSourceId: string
   positivePooledSourceId: string
   recipe: CurrentCanvasRegionalRecipe
-  request: IllustriousTxt2ImgRequestV1
+  request: IllustriousGenerationRequestV1
 }
 
 export interface RegionalWorkerFile {
@@ -68,7 +68,7 @@ export interface RegionalWorkerWire {
 /** The transport owns this lease after dispatch, including an unconfirmed physical child exit. */
 export interface RegionalWorkerLease {
   dispose: () => Promise<void>
-  request: IllustriousTxt2ImgRequestV1
+  request: IllustriousGenerationRequestV1
   wire: RegionalWorkerWire
 }
 
@@ -94,7 +94,7 @@ interface LeaseState {
   baseIdentity: BigIntStats
   disposal: Promise<void> | null
   disposed: boolean
-  request: IllustriousTxt2ImgRequestV1
+  request: IllustriousGenerationRequestV1
   root: string
   rootIdentity: BigIntStats
 }
@@ -144,7 +144,7 @@ const target = v.strictObject({
   sha256: digest,
   width: integer(8, 2048),
 })
-const requestSchema = v.strictObject({
+const txtRequestSchema = v.strictObject({
   job: v.strictObject({
     bbox: rect,
     checkpoint: v.strictObject({
@@ -191,6 +191,18 @@ const requestSchema = v.strictObject({
   requestId: v.pipe(v.string(), v.uuid()),
   type: v.literal('generate-illustrious-txt2img'),
 })
+const imgRequestSchema = v.strictObject({
+  ...txtRequestSchema.entries,
+  job: v.strictObject({
+    ...txtRequestSchema.entries.job.entries,
+    sampling: v.strictObject({
+      ...txtRequestSchema.entries.job.entries.sampling.entries,
+      denoisingStrength: v.pipe(v.number(), v.finite(), v.minValue(0), v.maxValue(1)),
+    }),
+  }),
+  type: v.literal('generate-illustrious-img2img'),
+})
+const requestSchema = v.variant('type', [txtRequestSchema, imgRequestSchema])
 const coverageSchema = v.variant('kind', [
   v.strictObject({ kind: v.literal('everywhere') }),
   v.strictObject({
@@ -343,15 +355,20 @@ export async function prepareRegionalWorkerRequest(
       throw invalidPath('A regional model resource is unsafe or changed.')
     }
   }
-  const request = detached.request as IllustriousTxt2ImgRequestV1
+  const request = detached.request as IllustriousGenerationRequestV1
   const sourceTarget = request.job.target
   const targetBytes = await readSmartPatchPreparationOutput(
     sourceTarget.path,
     { ...sourceTarget, colorSpace: 'srgb' },
     'source',
   )
-  if (classifyTargetPngAlpha(targetBytes, sourceTarget.width, sourceTarget.height) !== 'txt2img') {
-    throw invalid('Regional txt2img requires a wholly transparent target.')
+  const targetMode = request.type === 'generate-illustrious-img2img' ? 'img2img' : 'txt2img'
+  if (classifyTargetPngAlpha(targetBytes, sourceTarget.width, sourceTarget.height) !== targetMode) {
+    throw invalid(
+      targetMode === 'img2img'
+        ? 'Regional img2img requires a wholly opaque target.'
+        : 'Regional txt2img requires a wholly transparent target.',
+    )
   }
   const root = await mkdtemp(path.join(base, 'regional-request-'))
   const rootIdentity = await canonicalDirectory(root)
@@ -500,6 +517,19 @@ export async function readRegionalWorkerResult(
 
 function validateAgreement(input: v.InferOutput<typeof inputSchema>): void {
   const { recipe, request } = input
+  if (
+    request.type === 'generate-illustrious-img2img' &&
+    (input.compositionProfile !== 'invoke-canvas-v1' ||
+      input.initializationProfile !== undefined ||
+      request.job.sampling.scheduler !== 'euler' ||
+      (request.job.sampling.cfgRescale ?? 0) !== 0 ||
+      request.job.vae != null ||
+      request.job.vaePrecision !== 'FP16')
+  ) {
+    throw invalid(
+      'Regional img2img requires public Invoke Canvas, Euler, Embedded FP16 VAE, zero CFG Rescale and no txt2img initialization.',
+    )
+  }
   if (
     input.compositionProfile !== 'invoke-canvas-v1' &&
     (request.job.sampling.cfgRescale ?? 0) !== 0

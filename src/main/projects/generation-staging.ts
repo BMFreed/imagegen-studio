@@ -1623,7 +1623,11 @@ function parseFrozenOperationalPayload(json: string): FrozenPayload {
       'The frozen candidate context is invalid.',
     )
   }
-  if (kind === 'illustrious-regional' || kind === 'illustrious-regional-txt2img') {
+  if (
+    kind === 'illustrious-regional' ||
+    kind === 'illustrious-regional-txt2img' ||
+    kind === 'illustrious-regional-img2img'
+  ) {
     try {
       return parseFrozenQueuedRegionalOperationalV1(json)
     } catch {

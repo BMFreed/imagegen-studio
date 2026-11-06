@@ -69,7 +69,7 @@ interface Fixture {
 }
 
 /** Literal PNGs and a real OS child with a fake native peer: these tests prove IPC, not ML. */
-function png(width: number, height: number, rgb: boolean, profile: Buffer): Buffer {
+function png(width: number, height: number, rgb: boolean, profile: Buffer, alpha = 0): Buffer {
   const chunk = (name: string, data: Buffer): Buffer => {
     const bytes = Buffer.alloc(data.length + 12)
     bytes.writeUInt32BE(data.length)
@@ -88,7 +88,7 @@ function png(width: number, height: number, rgb: boolean, profile: Buffer): Buff
   const rows = Buffer.alloc(height * (stride + 1))
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      rows.set(rgb ? [32, 64, 96] : [17, 59, 133, 0], y * (stride + 1) + 1 + x * channels)
+      rows.set(rgb ? [32, 64, 96] : [17, 59, 133, alpha], y * (stride + 1) + 1 + x * channels)
     }
   }
   return Buffer.concat([
@@ -135,7 +135,8 @@ async function withClient(
       new URL('../../../worker-python/src/imagegen_worker/srgb.icc', import.meta.url),
     )
     assert.equal(sha(profile), IGS_SRGB_ICC_SHA256)
-    const target = png(64, 64, false, profile)
+    const imageMode = mode.startsWith('img-')
+    const target = png(64, 64, false, profile, imageMode ? 255 : 0)
     const rgb = png(64, 64, true, profile)
     const checkpoint = path.join(root, 'checkpoint.safetensors')
     const targetPath = path.join(sourceStage, 'target.png')
@@ -224,6 +225,24 @@ async function withClient(
         type: 'generate-illustrious-txt2img',
       },
     }
+    if (imageMode) {
+      input.compositionProfile = 'invoke-canvas-v1'
+      input.globalNegativeCoverage = { kind: 'everywhere' }
+      input.globalPositiveCoverage = { kind: 'everywhere' }
+      input.positivePooledSourceId = 'current-canvas'
+      input.request = {
+        ...input.request,
+        job: {
+          ...input.request.job,
+          sampling: {
+            ...input.request.job.sampling,
+            denoisingStrength: mode === 'img-zero' ? 0 : 0.5,
+            steps: 30,
+          },
+        },
+        type: 'generate-illustrious-img2img',
+      }
+    }
     const marker = path.join(root, 'received.json')
     const observation = path.join(root, 'consumed.json')
     const termObservation = path.join(root, 'term.json')
@@ -243,6 +262,10 @@ async function withClient(
       ...OUTPAINT_READY.capabilities,
       'illustrious-euler',
       'illustrious-noise-profile',
+      ...(imageMode ? ['illustrious-regional-invoke-v1'] : []),
+      ...(imageMode && mode !== 'img-old'
+        ? ['illustrious-regional-img2img-v1', 'illustrious-regional-progress-v1']
+        : []),
       ...(mode === 'old' ? [] : ['private-current-canvas-regional-v1']),
       ...(mode.startsWith('progress-') && mode !== 'progress-no-capability'
         ? ['illustrious-regional-progress-v1']
@@ -260,7 +283,7 @@ const mode=${JSON.stringify(mode)},marker=${JSON.stringify(marker)},observation=
 const output=Buffer.from(${JSON.stringify(output.toString('base64'))},'base64');
 const digest=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
 const writeRecord=(file,value)=>{fs.writeFileSync(file+'.tmp',JSON.stringify(value),{flag:'wx'});fs.renameSync(file+'.tmp',file);};
-const expectedAlpha=${JSON.stringify([sha(regionAlpha), sha(globalAlpha)].sort())};
+const expectedAlpha=${JSON.stringify([sha(regionAlpha), ...(imageMode ? [] : [sha(globalAlpha)])].sort())};
 let active=null,previousProgressRequestId=null;
 if(mode.startsWith('hang')){
  process.on('SIGTERM',()=>writeRecord(term,{bundleAlive:!!active&&fs.existsSync(active.bundle.path),stageAlive:!!active&&fs.existsSync(active.stagingRoot)}));
@@ -283,6 +306,11 @@ function consume(r){
  if(bundle.request.job.target.path===originalTarget)throw Error('target was not detached');
  writeRecord(observation,{alphaHashes,bundle,sourceAbsent:!fs.existsSync(originalTarget),targetSha256:digest(target)});
  if(mode.startsWith('hang'))return;
+ if(mode==='img-progress'){
+  if(r.reportProgress!==true)throw Error('image progress was not explicitly requested');
+  for(let step=1;step<=16;step++)process.stdout.write(JSON.stringify({type:'generation-progress',protocolVersion:'1',requestId:r.requestId,step,totalSteps:16})+'\n');
+ }
+ if(mode==='img-zero'&&r.reportProgress!==true)throw Error('zero image lost progress opt-in');
  if(mode.startsWith('progress-')){
   if(mode==='progress-no-capability'||mode==='progress-no-callback'){
    if(Object.hasOwn(r,'reportProgress'))throw Error('legacy regional wire was changed');
@@ -840,3 +868,46 @@ for (const step of [1, 2]) {
     )
   })
 }
+
+for (const mode of ['img-progress', 'img-zero']) {
+  test(`regional opaque ${mode} retains selected-window progress and completion ownership`, async () => {
+    await withClient(mode, async (f) => {
+      const progress: GenerationDenoisingProgress[] = []
+      const before = structuredClone(f.input)
+      const result = await f.client.executeCurrentCanvasRegional(f.input, (value) =>
+        progress.push(value),
+      )
+      assert.equal(f.input.request.type, 'generate-illustrious-img2img')
+      assert.deepEqual(f.input, before)
+      assert.ok(result.pngBytes.equals(f.rgb))
+      const observation = await record<Observation>(f.observation)
+      assert.equal(observation.bundle.request.type, 'generate-illustrious-img2img')
+      assert.ok(observation.bundle.request.type === 'generate-illustrious-img2img')
+      assert.equal(
+        observation.bundle.request.job.sampling.denoisingStrength,
+        mode === 'img-zero' ? 0 : 0.5,
+      )
+      assert.equal(observation.bundle.request.job.sampling.steps, 30)
+      assert.deepEqual(
+        progress,
+        mode === 'img-zero'
+          ? []
+          : Array.from({ length: 16 }, (_, i) => ({ step: i + 1, totalSteps: 16 })),
+      )
+      await assertStageReleased(await record<ChildMarker>(f.marker))
+      assert.deepEqual(await readdir(f.scratch), ['source-lease'])
+    })
+  })
+}
+
+test('ordinary img2img capability never admits regional image work before source I/O', async () => {
+  await withClient('img-old', async (f) => {
+    await rm(f.input.request.job.target.path)
+    const before = await readdir(f.scratch)
+    await assert.rejects(f.client.executeCurrentCanvasRegional(f.input), {
+      code: 'WORKER_VERSION_MISMATCH',
+    })
+    await assert.rejects(readFile(f.marker), { code: 'ENOENT' })
+    assert.deepEqual(await readdir(f.scratch), before)
+  })
+})

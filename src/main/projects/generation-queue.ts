@@ -820,7 +820,7 @@ export class GenerationQueueRepository {
 
   /** Public regional claims retain the same global slot and never adopt private operations. */
   async claimNextPendingInvokeCanvasRegional(): Promise<VerifiedQueuedRegionalInput | null> {
-    return await this.claimNextRegional('illustrious-regional-txt2img')
+    return await this.claimNextRegional('invoke')
   }
 
   /** Private regional claim uses the same global running-slot CAS. */
@@ -1061,10 +1061,10 @@ export class GenerationQueueRepository {
     preflight?: (
       entries: readonly { frozenPayloadJson: string; queueItemId: string }[],
     ) => Promise<void>
-    prepared: PreparedNormalTxt2Img
+    prepared: PreparedNormalGeneration
     projectPath: string
     regional: Omit<RegionalWorkerInput, 'request'>
-    request: IllustriousTxt2ImgRequestV1
+    request: IllustriousGenerationRequestV1
     stagingSessionId: string
   }): Promise<QueuedGenerationItem> {
     if (input.regional.compositionProfile !== 'invoke-canvas-v1') {
@@ -1101,9 +1101,9 @@ export class GenerationQueueRepository {
   async enqueueInvokeCanvasRegionalBatch(input: {
     assertCurrent?: () => void
     items: readonly {
-      prepared: PreparedNormalTxt2Img
+      prepared: PreparedNormalGeneration
       regional: Omit<RegionalWorkerInput, 'request'>
-      request: IllustriousTxt2ImgRequestV1
+      request: IllustriousGenerationRequestV1
     }[]
     preflight: (
       entries: readonly { frozenPayloadJson: string; queueItemId: string }[],
@@ -1125,14 +1125,19 @@ export class GenerationQueueRepository {
     const materials: ReturnType<typeof captureRegionalQueuedMaterial>[] = []
     const items = input.items.map((item) => {
       if (
-        item?.prepared?.context?.kind !== 'normal-txt2img-preparation' ||
+        !['normal-img2img-preparation', 'normal-txt2img-preparation'].includes(
+          item?.prepared?.context?.kind,
+        ) ||
         !Buffer.isBuffer(item.prepared.targetPngBytes) ||
         !item.prepared.targetPngBytes.equals(targetPngBytes) ||
-        item.request?.type !== 'generate-illustrious-txt2img'
+        item.request?.type !==
+          (item.prepared.context.kind === 'normal-img2img-preparation'
+            ? 'generate-illustrious-img2img'
+            : 'generate-illustrious-txt2img')
       ) {
         throw new GenerationQueueError(
           'QUEUE_INPUT_INVALID',
-          'Regional batches require one transparent target.',
+          'Regional batches require one exact alpha-derived target mode.',
         )
       }
       const prepared = { context: structuredClone(item.prepared.context), targetPngBytes }
@@ -1870,7 +1875,11 @@ export class GenerationQueueRepository {
         .selectFrom('generation_queue_item')
         .selectAll()
         .where('id', '=', id)
-        .where('operation', 'in', ['illustrious-regional', 'illustrious-regional-txt2img'])
+        .where('operation', 'in', [
+          'illustrious-regional',
+          'illustrious-regional-txt2img',
+          'illustrious-regional-img2img',
+        ])
         .executeTakeFirst()
       return row ? toItem(row) : null
     })
@@ -2209,10 +2218,9 @@ export class GenerationQueueRepository {
             'The frozen queue payload is invalid.',
           )
         }
-        const payload =
-          row.operation === 'illustrious-regional-txt2img'
-            ? parseFrozenQueuedRegionalInvokeV1(row.frozen_payload_json)
-            : parsePayload(row.frozen_payload_json)
+        const payload = isInvokeRegionalQueueOperation(row.operation)
+          ? parseFrozenQueuedRegionalInvokeV1(row.frozen_payload_json)
+          : parsePayload(row.frozen_payload_json)
         if (
           payload.kind !== row.operation ||
           payload.context.documentId !== row.document_id ||
@@ -2340,7 +2348,11 @@ export class GenerationQueueRepository {
         .selectAll()
         .where('local_project_key', '=', localProjectKey)
         .where('document_id', '=', documentId)
-        .where('operation', 'in', [...NORMAL_QUEUE_OPERATIONS, 'illustrious-regional-txt2img'])
+        .where('operation', 'in', [
+          ...NORMAL_QUEUE_OPERATIONS,
+          'illustrious-regional-txt2img',
+          'illustrious-regional-img2img',
+        ])
         .where('status', 'in', ['pending', 'running'])
         .orderBy('created_at', 'asc')
         .orderBy('id', 'asc')
@@ -2434,7 +2446,7 @@ export class GenerationQueueRepository {
         if (this.fencedProjects.has(row.local_project_key)) {
           continue
         }
-        return row.operation === 'illustrious-regional-txt2img'
+        return isInvokeRegionalQueueOperation(row.operation)
           ? 'regional'
           : isSmartPatchQueueOperation(row.operation)
             ? 'smart-patch'
@@ -2874,7 +2886,7 @@ export class GenerationQueueRepository {
   }
 
   private async claimNextRegional(
-    operation: 'illustrious-regional-txt2img' | 'illustrious-regional',
+    operation: 'illustrious-regional' | 'invoke',
   ): Promise<VerifiedQueuedRegionalInput | null> {
     return await this.serialize(async () => {
       for (;;) {
@@ -2890,7 +2902,13 @@ export class GenerationQueueRepository {
           .selectFrom('generation_queue_item')
           .selectAll()
           .where('status', '=', 'pending')
-          .where('operation', '=', operation)
+          .where(
+            'operation',
+            'in',
+            operation === 'invoke'
+              ? ['illustrious-regional-txt2img', 'illustrious-regional-img2img']
+              : ['illustrious-regional'],
+          )
           .orderBy('created_at', 'asc')
           .orderBy('id', 'asc')
         if (this.fencedProjects.size > 0) {
@@ -2954,7 +2972,13 @@ export class GenerationQueueRepository {
           .where('status_sequence', '=', pending.status_sequence)
           .where('frozen_payload_json', '=', pending.frozen_payload_json)
           .where('operation', '=', pending.operation)
-          .where('operation', '=', operation)
+          .where(
+            'operation',
+            'in',
+            operation === 'invoke'
+              ? ['illustrious-regional-txt2img', 'illustrious-regional-img2img']
+              : ['illustrious-regional'],
+          )
           .where(
             sql<boolean>`NOT EXISTS (
             SELECT 1 FROM generation_queue_item AS active WHERE active.status = 'running'
@@ -3133,7 +3157,9 @@ export class GenerationQueueRepository {
         id: ids[index],
         local_project_key: localProjectKey,
         operation: item.regional
-          ? 'illustrious-regional-txt2img'
+          ? item.context.kind === 'normal-img2img-preparation'
+            ? 'illustrious-regional-img2img'
+            : 'illustrious-regional-txt2img'
           : item.context.kind === 'normal-img2img-preparation'
             ? 'illustrious-img2img'
             : 'illustrious-txt2img',
@@ -3302,7 +3328,7 @@ export class GenerationQueueRepository {
       const batchId = randomUUID()
       const now = new Date().toISOString()
       const basePayload = frozenPayload(context, request)
-      if (regional && basePayload.kind !== 'illustrious-txt2img') {
+      if (regional && !regional.compositionProfile && basePayload.kind !== 'illustrious-txt2img') {
         throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'Regional input requires txt2img.')
       }
       const payload = regional
@@ -3315,7 +3341,9 @@ export class GenerationQueueRepository {
               ? { initializationProfile: regional.initializationProfile }
               : {}),
             kind: regional.compositionProfile
-              ? ('illustrious-regional-txt2img' as const)
+              ? basePayload.kind === 'illustrious-img2img'
+                ? ('illustrious-regional-img2img' as const)
+                : ('illustrious-regional-txt2img' as const)
               : ('illustrious-regional' as const),
             regional: regional.regional,
           }
@@ -3545,8 +3573,9 @@ export class GenerationQueueRepository {
       const source = await this.requireRow(id)
       if (
         regional
-          ? source.operation !==
-            (regional === 'invoke' ? 'illustrious-regional-txt2img' : 'illustrious-regional')
+          ? regional === 'invoke'
+            ? !isInvokeRegionalQueueOperation(source.operation)
+            : source.operation !== 'illustrious-regional'
           : isRegionalQueueOperation(source.operation)
       ) {
         throw new GenerationQueueError(
@@ -3764,19 +3793,35 @@ export class GenerationQueueRepository {
       if (!('regional' in verified.payload)) {
         throw statusConflict()
       }
-      const request: IllustriousTxt2ImgRequestV1 = {
-        job: {
-          ...structuredClone(verified.payload.workerJob),
-          output: {
-            pngPath: path.join(path.dirname(verified.targetPath), 'result.png'),
-            stagingRoot: path.dirname(verified.targetPath),
-          },
-          target: { ...verified.payload.workerJob.target, path: verified.targetPath },
-        },
-        protocolVersion: '1',
-        requestId: row.id,
-        type: 'generate-illustrious-txt2img',
-      }
+      const request: IllustriousGenerationRequestV1 =
+        verified.payload.kind === 'illustrious-regional-img2img'
+          ? {
+              job: {
+                ...structuredClone(verified.payload.workerJob),
+                output: {
+                  pngPath: path.join(path.dirname(verified.targetPath), 'result.png'),
+                  stagingRoot: path.dirname(verified.targetPath),
+                },
+                target: { ...verified.payload.workerJob.target, path: verified.targetPath },
+              },
+              protocolVersion: '1',
+              requestId: row.id,
+              type: 'generate-illustrious-img2img',
+            }
+          : {
+              job: {
+                ...structuredClone(verified.payload.workerJob),
+                output: {
+                  pngPath: path.join(path.dirname(verified.targetPath), 'result.png'),
+                  stagingRoot: path.dirname(verified.targetPath),
+                },
+                target: { ...verified.payload.workerJob.target, path: verified.targetPath },
+              },
+              protocolVersion: '1',
+              requestId: row.id,
+              type: 'generate-illustrious-txt2img',
+            }
+
       const input = await loadRegionalQueuedInput(
         path.dirname(verified.targetPath),
         verified.payload,
@@ -4437,7 +4482,10 @@ function frozenBatchPayloadJson(
         ...(regional.initializationProfile !== undefined
           ? { initializationProfile: regional.initializationProfile }
           : {}),
-        kind: 'illustrious-regional-txt2img' as const,
+        kind:
+          base.kind === 'illustrious-img2img'
+            ? ('illustrious-regional-img2img' as const)
+            : ('illustrious-regional-txt2img' as const),
         regional: regional.regional,
       }
     : base
@@ -4879,6 +4927,7 @@ function toManagerEntry(
       'anima-txt2img',
       'illustrious-img2img',
       'illustrious-outpaint',
+      'illustrious-regional-img2img',
       'illustrious-regional-txt2img',
       'illustrious-smart-patch',
       'illustrious-txt2img',
@@ -4968,10 +5017,9 @@ function managerDetails(row: Selectable<GenerationQueueItem>): GenerationQueueEn
         },
       }
     }
-    const payload =
-      row.operation === 'illustrious-regional-txt2img'
-        ? parseFrozenQueuedRegionalInvokeV1(row.frozen_payload_json)
-        : parsePayload(row.frozen_payload_json)
+    const payload = isInvokeRegionalQueueOperation(row.operation)
+      ? parseFrozenQueuedRegionalInvokeV1(row.frozen_payload_json)
+      : parsePayload(row.frozen_payload_json)
     if (
       payload.kind !== row.operation ||
       payload.context.documentId !== row.document_id ||
@@ -5015,11 +5063,10 @@ function managerDetails(row: Selectable<GenerationQueueItem>): GenerationQueueEn
       modelVersion: context.model.reference.versionName,
       negativePrompt: context.prompts.negative,
       prompt: context.prompts.positive,
-      ...(payload.kind === 'illustrious-regional-txt2img' &&
-      (payload.workerJob.loras?.length ?? 0) > 0
+      ...(isInvokeRegionalQueueOperation(payload.kind) && (payload.workerJob.loras?.length ?? 0) > 0
         ? { requiresRegionalLora: true }
         : {}),
-      ...(payload.kind === 'illustrious-regional-txt2img' &&
+      ...(isInvokeRegionalQueueOperation(payload.kind) &&
       (payload.workerJob.vae != null || (payload.workerJob.vaePrecision ?? 'Auto') !== 'FP16')
         ? { requiresRegionalVae: true }
         : {}),
@@ -5097,5 +5144,11 @@ function toItem(row: Selectable<GenerationQueueItem>): QueuedGenerationItem {
 }
 
 function isRegionalQueueOperation(operation: string): boolean {
-  return operation === 'illustrious-regional' || operation === 'illustrious-regional-txt2img'
+  return operation === 'illustrious-regional' || isInvokeRegionalQueueOperation(operation)
+}
+
+function isInvokeRegionalQueueOperation(operation: string): boolean {
+  return (
+    operation === 'illustrious-regional-txt2img' || operation === 'illustrious-regional-img2img'
+  )
 }

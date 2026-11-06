@@ -134,6 +134,17 @@ export function supportsInferenceRegionalCFGRescale(value: unknown): boolean {
   )
 }
 
+/** Ordinary img2img alone does not qualify regional image conditioning or its frozen replay. */
+export function supportsInferenceRegionalImg2Img(value: unknown): boolean {
+  return (
+    isQualifiedInferenceWorkerReady(value) &&
+    value.workerVersion === '0.14.0' &&
+    value.capabilities.includes('illustrious-regional-invoke-v1') &&
+    value.capabilities.includes('illustrious-regional-img2img-v1') &&
+    supportsInferenceImg2Img(value)
+  )
+}
+
 /** Global LoRAs require the qualified public regional owner and its explicit adapter opt-in. */
 export function supportsInferenceRegionalLoras(value: unknown): boolean {
   return (

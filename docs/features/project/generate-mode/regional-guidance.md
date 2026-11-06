@@ -1114,7 +1114,9 @@ steps 1–200, CFG `(1,30]`, rescale zero, no reference images,
 global LoRA through the [later extension](#global-lora-stack-with-regional-guidance),
 exact global TI through the [later extension](#global-exact-embeddings-with-regional-guidance)
 and at most three enabled regions. Existing target/payload
-bounds remain; actual opaque/mixed-alpha targets refuse. Anima and Smart regional
+bounds remain; that TXT checkpoint refused opaque/mixed-alpha targets. The later
+[opaque IMG continuation](#public-opaque-regional-img2img) admits only its explicit
+finite image subset. Mixed alpha still refuses. Anima and Smart regional
 execution remain separate. Unsupported authored values receive a reason instead
 of being forced into this profile.
 
@@ -1657,3 +1659,36 @@ ROOT preserves all raw source/output bytes in a verified no-follow archive and,
 after fresh exit/restoration/dependency gates, releases only two idle scratch
 roots, reclaiming116,465,664 allocated bytes. Runtime/resources and prior
 companions remain protected; no broader readiness follows.
+
+## Public opaque regional img2img
+
+The [public image continuation](../../../engineering/phase-4-regional-guidance-public-img2img-research.md)
+connects actual opaque Current Canvas input to the existing native image owner.
+It requires an explicitly qualified `illustrious-regional-img2img-v1` peer,
+Illustrious epsilon, Euler/Normal, Embedded/manual FP16 VAE, CFG Rescale0 and a
+chosen finite strength0..1. No default or mode toggle is introduced. Strength0
+performs VAE encode/decode without denoising progress; it is not source identity.
+TXT keeps its existing options; selected VAE/Auto/FP32, other image samplers,
+partial alpha and Anima remain outside this image slice.
+
+Migration0022 adds a distinct frozen IMG operation while preserving all prior
+attempts, receipts and cursors. Generate derives mode from actual pixels; Retry
+uses frozen source/strength/resources after later saved edits. Older peers refuse
+explicitly. Existing ordinary IMG provenance records mode/strength; regional
+operational data stays excluded from provenance, Compare and result-derived presets.
+
+ROOT:810 Main/200 Python PASS; typing/scoped checks/build PASS. Two isolated
+admission/routing mutations give12 GREEN/three semantic RED with controls and
+exact restoration. The installed backend probe makes four admissions/three
+native requests/three receipts at64x64: genuine imported/composed Raster,
+pending Cancel, saved edits, frozen Retry with exact original RGB and a strength0
+control with no artificial progress. Runtime availability is controlled; actual
+workers, ModelService, Main/queue/staging/files remain real. No UI/Add/Save-result,
+quality, release or broader readiness qualification follows. PP-001/005/007/008
+remain unchanged. Detailed evidence and limits are in the linked note.
+
+Source/probe/retained-byte reviews are CLEAN within scope. ROOT preserves all
+own source/package/output bytes in a verified archive before fresh exit,
+restoration, reader and dependency checks; only two idle scratch roots are
+released, reclaiming53,264,384 allocated bytes. Canonical runtime/resources and
+current qualification companions remain protected.

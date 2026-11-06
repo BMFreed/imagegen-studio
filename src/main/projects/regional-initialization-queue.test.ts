@@ -35,6 +35,7 @@ function selectInvokeInitialization(fixture: RegionalQueueFixture): RegionalWork
 
 async function enqueue(fixture: RegionalQueueFixture, input: RegionalWorkerInput) {
   const { request, ...regional } = input
+  assert.ok(request.type === 'generate-illustrious-txt2img')
   return await fixture.queue.enqueueCurrentCanvasRegional({
     prepared: fixture.prepared,
     projectPath: fixture.projectPath,

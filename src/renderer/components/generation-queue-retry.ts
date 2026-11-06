@@ -8,6 +8,7 @@ type RetryState = Pick<
   | 'outpaintSupported'
   | 'regionalCfgRescaleSupported'
   | 'regionalDpmSupported'
+  | 'regionalImg2ImgSupported'
   | 'regionalInvokeInitializationSupported'
   | 'regionalLoraSupported'
   | 'regionalSupported'
@@ -24,12 +25,18 @@ export function generationQueueRetryReason(
   requiresRegionalVae = false,
   frozenCfgRescale = 0,
 ): string | null {
-  if (operation === 'illustrious-regional-txt2img') {
+  if (
+    operation === 'illustrious-regional-txt2img' ||
+    operation === 'illustrious-regional-img2img'
+  ) {
     if (state === null) {
       return 'Checking image engine support for this frozen Regional Guidance job.'
     }
     if (state.regionalSupported !== true) {
       return 'The current image engine does not support Regional Guidance. Repair or update the runtime.'
+    }
+    if (operation === 'illustrious-regional-img2img' && state.regionalImg2ImgSupported !== true) {
+      return 'The current image engine does not support opaque img2img with Regional Guidance. Repair or update the runtime.'
     }
     if (frozenCfgRescale !== 0 && state.regionalCfgRescaleSupported !== true) {
       return 'The current image engine does not support CFG Rescale with Regional Guidance. Repair or update the runtime.'
