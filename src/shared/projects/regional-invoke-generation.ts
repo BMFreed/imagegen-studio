@@ -1,6 +1,12 @@
 import type { IgsProjectDocumentV1 } from './project-schema.js'
 
+import {
+  type GenerationBatchPlan,
+  GenerationBatchPlanError,
+  planGenerationBatch,
+} from './generation-batch-plan.js'
 import { GENERATION_BATCH_JOB_LIMIT } from './generation-batch-policy.js'
+import { getEffectiveDynamicPromptSettings } from './generation-dynamic-settings.js'
 import { activePromptEmbeddingRefs } from './prompt-embeddings.js'
 
 type RegionalDocument = Pick<
@@ -14,11 +20,65 @@ export function hasEnabledRegionalGuidance(
   return input.regionalGuidance?.some((region) => region.enabled) ?? false
 }
 
-/** Use the existing literal/ref resolver for both plain Main values and renderer proxies. */
+/**
+ * InvokeAI a61ac4fb's invocationSubmit → submissionApi → promptBatch expands global positive before
+ * batching; addRegionalGuidance keeps regional texts static. Reuse Studio's planner and its
+ * prefix/seed policies, retaining the existing aggregate admission bound.
+ */
+export function planInvokeRegionalGenerationBatch(
+  input: Pick<IgsProjectDocumentV1, 'generationDraft' | 'regionalGuidance'>,
+  iterations: number,
+  baseSeed = 0,
+): GenerationBatchPlan {
+  const draft = input.generationDraft
+  const staticTexts = [
+    draft.negativePrompt.text,
+    ...(input.regionalGuidance ?? [])
+      .filter((region) => region.enabled)
+      .flatMap((region) => [
+        region.prompts?.positive?.text ?? '',
+        region.prompts?.useGlobalNegativePrompt === false
+          ? (region.prompts.negative?.text ?? '')
+          : draft.negativePrompt.text,
+      ]),
+  ]
+  if (staticTexts.some((text) => /[{}]/u.test(text))) {
+    throw new GenerationBatchPlanError(
+      'PROMPT_INVALID',
+      'Regional Guidance requires static global negative and regional prompts without braces.',
+    )
+  }
+  const dynamic = getEffectiveDynamicPromptSettings(draft.dynamicPrompt)
+  const plan = planGenerationBatch({
+    baseSeed,
+    iterations,
+    maxJobs: GENERATION_BATCH_JOB_LIMIT,
+    maxPrompts: dynamic.maxPrompts,
+    negativePrompt: draft.negativePrompt.text,
+    positivePrompt: draft.positivePrompt.text,
+    seedBehavior: dynamic.seedBehavior,
+  })
+  if (plan.items.some((item) => /[{}]/u.test(item.prompts.positive))) {
+    throw new GenerationBatchPlanError(
+      'PROMPT_INVALID',
+      'Regional Guidance requires concrete global positive prompts without literal braces.',
+    )
+  }
+  return plan
+}
+
+/** Use concrete selected text and the existing literal/ref resolver, including renderer proxies. */
 export function hasActiveGlobalPromptEmbeddings(
   input: Pick<IgsProjectDocumentV1, 'generationDraft'>,
+  concretePositiveTexts?: readonly string[],
 ): boolean {
-  return [input.generationDraft.positivePrompt, input.generationDraft.negativePrompt].some(
+  const positives =
+    concretePositiveTexts ??
+    planInvokeRegionalGenerationBatch(input, 1).items.map((item) => item.prompts.positive)
+  return [
+    ...positives.map((text) => ({ ...input.generationDraft.positivePrompt, text })),
+    input.generationDraft.negativePrompt,
+  ].some(
     (prompt) =>
       activePromptEmbeddingRefs(
         prompt.text,
@@ -80,25 +140,21 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   if (regions.length > 3) {
     return 'Regional Guidance supports at most 3 enabled regions per generation.'
   }
-  const globalPrompts = [draft.positivePrompt, draft.negativePrompt]
-  const effectiveTexts = [
-    ...globalPrompts.map((prompt) => prompt.text),
-    ...regions.flatMap((region) => [
-      region.prompts?.positive?.text ?? '',
-      region.prompts?.useGlobalNegativePrompt === false
-        ? (region.prompts.negative?.text ?? '')
-        : draft.negativePrompt.text,
-    ]),
-  ]
-  if (effectiveTexts.some((text) => /[{}]/u.test(text))) {
-    return 'Regional Guidance requires static global and regional prompts without braces.'
-  }
   if (
     !Number.isSafeInteger(input.iterations) ||
     input.iterations < 1 ||
     input.iterations > GENERATION_BATCH_JOB_LIMIT
   ) {
     return `Regional Guidance supports from 1 to ${GENERATION_BATCH_JOB_LIMIT} images per click.`
+  }
+  let plan: GenerationBatchPlan
+  try {
+    plan = planInvokeRegionalGenerationBatch(input.document, input.iterations)
+  } catch (error) {
+    if (error instanceof GenerationBatchPlanError) {
+      return error.message
+    }
+    throw error
   }
   const { height, width } = input.document.primaryBbox
   if (
@@ -143,7 +199,12 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
       return 'The current image engine does not support Regional Guidance with Euler a. Repair or update the runtime.'
     }
   }
-  if (hasActiveGlobalPromptEmbeddings(input.document)) {
+  if (
+    hasActiveGlobalPromptEmbeddings(
+      input.document,
+      plan.items.map((item) => item.prompts.positive),
+    )
+  ) {
     if (input.embeddingsSupported === undefined || input.embeddingsSupported === null) {
       return 'Checking image engine support for global embeddings with Regional Guidance. Repair or update the runtime if support remains unavailable.'
     }

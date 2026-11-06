@@ -1928,3 +1928,27 @@ their limits. All1,655 own/input entries are archived;44,277,760 allocated bytes
 of three exact idle payloads are reclaimed after ROOT exit/restoration/dependency/
 reader gates. The two full VAE originals remain protected cross-run dependencies,
 with no duplicate model/environment. Details and exclusions are in the note.
+
+## Dynamic global positive with public Regional Guidance
+
+The [dynamic-positive continuation](./phase-4-regional-guidance-dynamic-positive-research.md)
+reuses current Invoke's expansion-before-batch path through Studio's existing
+planner. Each selected global-positive/seed item owns its concrete recipe and
+effective TI subset; negative/regional prompts and other captured materials stay
+static. Queue comparison retains those static invariants while permitting the
+concrete positive differences. Existing prefix, aggregate32, atomic replacement,
+frozen Retry and provenance owners remain.
+
+ROOT:458 Main PASS including42 new cases; typecheck/scoped checks/build PASS.
+Two Main mutations give10GREEN/2semanticRED with controls and exact restoration.
+Installed native-r2 passes17 grouped checks/285.157s: actual UI prefix2of3,
+per-prompt A123/C124, Cancel then frozen C124 Retry after saved template/options/
+TI/mask/LoRA/VAE edits, three wires/two PNGs, Results/Add/Discard/Undo/Redo and
+Save ZIP/reopen. Initial diagnostic/capability-fixture and installed structural-
+brace oracle failures stay excluded. One unchanged runtime/52-module worker and
+existing exact resources are reused. Source review is CLEAN within its limits;
+complementary retained/source-delta review is CLEAN without a native rerun.
+All1,626 owned/input entries are retained; ROOT exit/restoration/reader/incoming
+gates precede deletion of three exact scratch paths, reclaiming46,166,016 allocated
+bytes. Shared runtime/resources/companions and saved business data remain pinned.
+Visual/human, Anima, capacity/release and promise statuses remain unchanged.

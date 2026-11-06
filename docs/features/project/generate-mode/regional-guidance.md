@@ -1120,6 +1120,8 @@ of being forced into this profile.
 
 The later [static-batch extension](#static-regional-generate-batches) admits
 1..32 jobs from that same captured input under the existing prepared-job limit.
+The [dynamic-positive extension](#dynamic-global-positive-with-regional-guidance)
+adds concrete global-positive variants under that same aggregate limit.
 
 `invoke-canvas-v1` consumes regional alpha as `alpha > 0` before nearest-eight
 projection, omits literal-empty local conditioning signs while preserving
@@ -1527,3 +1529,41 @@ checkpoint-extracted; the alternate is an explicitly artificial control.
 This qualifies finite ownership and precision mechanics, not VAE image quality,
 arbitrary architecture compatibility, Anima, capacity or release readiness.
 Regional provenance exclusions and PP-001/005/007/008 remain unchanged.
+
+## Dynamic global positive with Regional Guidance
+
+The [dynamic-positive continuation](../../../engineering/phase-4-regional-guidance-dynamic-positive-research.md)
+adapts current Invoke's global-positive expansion before concrete batching. It
+reuses Studio's existing deterministic grammar, maxPrompts prefix, prompt-major
+ordering and per-iteration/per-prompt seed rules. Global negative and effective
+regional prompts stay static. Existing maxPrompts1..100 and aggregate32-job
+bounds remain distinct; overflow refuses the complete submission, while prefix
+selection reports the actual truncation through the existing response.
+
+One capture supplies the whole plan. Every selected item receives its own
+concrete context, logical command, active global TI subset and full recipe.
+Only refs active in selected positives resolve; discarded and dormant refs stay
+authored. Static negatives, regions, mask bytes, pools and other frozen settings
+must still agree across the atomic batch. Every later selected resource must
+validate before publication or replacement. No new worker capability, protocol,
+Python loop or persistence schema is introduced.
+
+Frozen Retry/reload retains that item's concrete text, exact resources and seed
+despite later template/settings/TI/LoRA/VAE/mask edits. Accepted provenance keeps
+concrete prompts and consumed global refs; raw template, dynamic limits and
+regional operational state remain excluded.
+
+ROOT:458 Main PASS,42 new cases, typecheck/scoped checks/build PASS. Two isolated
+mutations give10GREEN/2semanticRED with controls and exact source restoration.
+Installed native-r2 passes17 checks: actual UI prefix2of3/per-prompt seeds123/124,
+Cancel/frozen Retry after saved template/options/TI/mask/LoRA/VAE edits, three
+wires/two PNGs, Results/Add/Discard/Undo/Redo and Save ZIP/reopen. The first
+installed attempt is an excluded harness-oracle failure, not a successful native
+case. No worker refresh, new capability or model/environment copy was needed.
+No visual/human, Anima, capacity/release or promise-status promotion follows;
+PP-001/005/007/008 remain unchanged. Detailed evidence/limits are in the note.
+
+Independent source/retained-byte reviews are CLEAN within their stated limits;
+ROOT execution remains separate. All1,626 owned/input entries are retained,
+46,166,016 allocated bytes of exact idle scratch reclaimed, and shared resources,
+saved projects and durable histories preserved. No broader readiness follows.

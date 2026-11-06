@@ -1,5 +1,6 @@
 import { planGenerationBatch } from '../../shared/projects/generation-batch-plan.js'
 import { GENERATION_BATCH_JOB_LIMIT } from '../../shared/projects/generation-batch-policy.js'
+import { getEffectiveDynamicPromptSettings } from '../../shared/projects/generation-dynamic-settings.js'
 import { isIllustriousNoiseProfileV1 } from '../../shared/projects/illustrious-noise-profile.js'
 import {
   isQualifiedInferenceWorkerReady,
@@ -13,6 +14,7 @@ import { activePromptEmbeddingRefs } from '../../shared/projects/prompt-embeddin
 import {
   getInvokeRegionalGenerationUnavailableReason,
   hasActiveGlobalPromptEmbeddings,
+  planInvokeRegionalGenerationBatch,
 } from '../../shared/projects/regional-invoke-generation.js'
 
 import { randomUUID } from 'node:crypto'
@@ -31,6 +33,10 @@ import type {
 import type { RegionalGlobalCoverage } from './regional-worker-request.js'
 import type { ProjectWorkerClient } from './worker-client.js'
 
+import {
+  effectiveGenerationEmbeddings,
+  workerEmbeddings,
+} from './illustrious-generation-embeddings.js'
 import {
   assertIllustriousTxt2ImgRequestFitsTransport,
   withIllustriousTxt2ImgRequest,
@@ -81,6 +87,7 @@ export interface ProjectRegionalInvokeGenerationBatchSubmission extends Omit<
     assertCurrent: () => void,
   ) => Promise<void>
   iterations: number
+  onPlanned?: (info: { truncated: boolean }) => void
 }
 
 type RegionalComposition = Pick<
@@ -256,7 +263,7 @@ export class ProjectRegionalGenerationCoordinator {
     )
   }
 
-  /** One captured static batch; the caller already holds the Project operation gate. */
+  /** One captured concrete batch; the caller already holds the Project operation gate. */
   async submitInvokeBatchUnderGate(
     tabId: string,
     input: ProjectRegionalInvokeGenerationBatchSubmission,
@@ -273,13 +280,14 @@ export class ProjectRegionalGenerationCoordinator {
       input.iterations > GENERATION_BATCH_JOB_LIMIT ||
       typeof input.withPreparation !== 'function' ||
       (input.beforePublication !== undefined && typeof input.beforePublication !== 'function') ||
-      (input.afterPublication !== undefined && typeof input.afterPublication !== 'function')
+      (input.afterPublication !== undefined && typeof input.afterPublication !== 'function') ||
+      (input.onPlanned !== undefined && typeof input.onPlanned !== 'function')
     ) {
       throw invalid('The reviewed Project and regional preparation owner are required.')
     }
     const { assertOwner, document } = this.captureOwner(tabId, input)
     validateInvokeDraft(document, input.iterations)
-    const { afterPublication, beforePublication, iterations, withPreparation } = input
+    const { afterPublication, beforePublication, iterations, onPlanned, withPreparation } = input
     // The call enters Service capture synchronously, before the runtime callback can await.
     return await this.track(
       this.submitCapturedBatch(tabId, {
@@ -295,6 +303,7 @@ export class ProjectRegionalGenerationCoordinator {
         },
         compositionProfile: 'invoke-canvas-v1',
         iterations,
+        onPlanned,
         withPreparation,
       }),
     )
@@ -383,7 +392,7 @@ export class ProjectRegionalGenerationCoordinator {
     tabId: string,
     input: Pick<
       ProjectRegionalInvokeGenerationBatchSubmission,
-      'afterPublication' | 'beforePublication' | 'iterations' | 'withPreparation'
+      'afterPublication' | 'beforePublication' | 'iterations' | 'onPlanned' | 'withPreparation'
     > & {
       assertOwner: () => void
       composition: RegionalComposition
@@ -408,6 +417,20 @@ export class ProjectRegionalGenerationCoordinator {
           } else {
             validatePrivateDraft(document, composition)
           }
+          const dynamic = compositionProfile
+            ? getEffectiveDynamicPromptSettings(document.generationDraft.dynamicPrompt)
+            : { maxPrompts: 1, seedBehavior: 'per-iteration' as const }
+          const authoredPrompts = {
+            negative: document.generationDraft.negativePrompt.text,
+            positive: document.generationDraft.positivePrompt.text,
+          }
+          // Expand and validate the complete authored grammar before target/model work. The
+          // operational seed remains unresolved until ordinary preparation chooses it once.
+          const preflight = compositionProfile
+            ? planInvokeRegionalGenerationBatch(document, input.iterations)
+            : null
+          input.onPlanned?.({ truncated: preflight?.truncated ?? false })
+          assertCurrent()
           const initializationProfile =
             compositionProfile && document.generationDraft.sampling.sampler === 'Euler a'
               ? ('invoke-cpu-f32-add-noise-v1' as const)
@@ -427,7 +450,10 @@ export class ProjectRegionalGenerationCoordinator {
                   (document.generationDraft.vaePrecision ?? 'Auto') !== 'FP16') &&
                 !supportsInferenceRegionalVae(ready)) ||
               (compositionProfile &&
-                hasActiveGlobalPromptEmbeddings(document) &&
+                hasActiveGlobalPromptEmbeddings(
+                  document,
+                  preflight!.items.map((item) => item.prompts.positive),
+                ) &&
                 !supportsInferenceEmbeddings(ready)) ||
               (initializationProfile !== undefined &&
                 !supportsInferenceRegionalInvokeInitialization(ready))
@@ -463,14 +489,28 @@ export class ProjectRegionalGenerationCoordinator {
               ? { ...target, generationDraft: structuredClone(target.generationDraft) }
               : target
             if (compositionProfile) {
-              // Public regional prompts are already static. Resolve only their effective refs;
-              // ordinary dynamic preparation still owns its broader authored resource pool.
-              for (const prompt of [
-                preparationTarget.generationDraft.negativePrompt,
-                preparationTarget.generationDraft.positivePrompt,
-              ]) {
-                prompt.embeddingRefs = activePromptEmbeddingRefs(prompt.text, prompt.embeddingRefs)
+              // Select by concrete boundaries: expansion can activate a literal absent from the
+              // template, while excluded branches remain dormant. Ordinary preparation resolves
+              // this selected union once; each concrete item later consumes only its own subset.
+              const selectedTokens = new Set(
+                preflight!.items.flatMap((item) =>
+                  activePromptEmbeddingRefs(
+                    item.prompts.positive,
+                    authoredEmbeddingRefs.positive,
+                  ).map((ref) => ref.token),
+                ),
+              )
+              preparationTarget.generationDraft.positivePrompt = {
+                embeddingRefs: authoredEmbeddingRefs.positive.filter((ref) =>
+                  selectedTokens.has(ref.token),
+                ),
+                text: preflight!.items[0].prompts.positive,
               }
+              const negative = preparationTarget.generationDraft.negativePrompt
+              negative.embeddingRefs = activePromptEmbeddingRefs(
+                negative.text,
+                authoredEmbeddingRefs.negative,
+              )
             }
             const prepared = await prepareNormalTxt2Img({
               lastActualSeed: operationalSeed,
@@ -485,23 +525,47 @@ export class ProjectRegionalGenerationCoordinator {
               baseSeed: prepared.context.sampling.seed,
               iterations: input.iterations,
               maxJobs: compositionProfile ? GENERATION_BATCH_JOB_LIMIT : 1,
-              maxPrompts: 1,
-              negativePrompt: prepared.context.prompts.negative,
-              positivePrompt: prepared.context.prompts.positive,
-              seedBehavior: 'per-iteration',
+              maxPrompts: dynamic.maxPrompts,
+              negativePrompt: authoredPrompts.negative,
+              positivePrompt: authoredPrompts.positive,
+              seedBehavior: dynamic.seedBehavior,
             })
-            const recipe = await prepareCurrentCanvasRegionalRecipe({
-              capture: capture.regional,
-              job: {
-                bbox: prepared.context.bbox,
-                documentId: prepared.context.documentId,
-                documentRevision: prepared.context.documentRevision,
-                family: 'illustrious',
-                item: plan.items[0],
-              },
-              models: this.models,
-            })
-            assertCurrent()
+            const materials: {
+              context: typeof prepared.context
+              item: (typeof plan.items)[number]
+              recipe: Awaited<ReturnType<typeof prepareCurrentCanvasRegionalRecipe>>
+            }[] = []
+            for (const item of plan.items) {
+              const context = structuredClone(prepared.context)
+              context.prompts = { ...item.prompts }
+              context.sampling.seed = item.seed
+              if (
+                plan.items.length > 1 ||
+                (compositionProfile && authoredPrompts.positive !== item.prompts.positive)
+              ) {
+                context.sampling.seedBehavior = dynamic.seedBehavior
+              }
+              if (context.embeddingRefs && prepared.embeddingPool) {
+                context.embeddings = effectiveGenerationEmbeddings(
+                  context.prompts,
+                  context.embeddingRefs,
+                  prepared.embeddingPool,
+                )
+              }
+              const recipe = await prepareCurrentCanvasRegionalRecipe({
+                capture: capture.regional,
+                job: {
+                  bbox: context.bbox,
+                  documentId: context.documentId,
+                  documentRevision: context.documentRevision,
+                  family: 'illustrious',
+                  item,
+                },
+                models: this.models,
+              })
+              assertCurrent()
+              materials.push({ context, item, recipe })
+            }
             return await withIllustriousTxt2ImgRequest({
               modelService: this.models,
               prepared,
@@ -509,29 +573,26 @@ export class ProjectRegionalGenerationCoordinator {
               scratchBasePath: this.options.scratchBasePath,
               use: async (request) => {
                 assertCurrent()
-                const items = plan.items.map((item, index) => {
-                  const context = structuredClone(prepared.context)
-                  context.prompts = { ...item.prompts }
-                  context.sampling.seed = item.seed
-                  if (plan.items.length > 1) {
-                    context.sampling.seedBehavior = 'per-iteration'
-                  }
+                const items = materials.map(({ context, item, recipe }, index) => {
                   const concreteRequest = structuredClone(request)
                   if (index > 0) {
                     concreteRequest.requestId = randomUUID()
                   }
                   concreteRequest.job.prompts = { ...item.prompts }
                   concreteRequest.job.sampling.seed = item.seed
+                  delete concreteRequest.job.embeddings
+                  const embeddings = workerEmbeddings(context)
+                  if (embeddings) {
+                    concreteRequest.job.embeddings = embeddings
+                  }
                   assertIllustriousTxt2ImgRequestFitsTransport(concreteRequest)
-                  const concreteRecipe = structuredClone(recipe)
-                  concreteRecipe.item = structuredClone(item)
                   return {
                     prepared: { context, targetPngBytes: prepared.targetPngBytes },
                     regional: {
                       ...(compositionProfile ? { compositionProfile } : {}),
                       ...composition,
                       ...(initializationProfile !== undefined ? { initializationProfile } : {}),
-                      recipe: concreteRecipe,
+                      recipe,
                     },
                     request: concreteRequest,
                   }

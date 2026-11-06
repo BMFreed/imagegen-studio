@@ -1165,14 +1165,19 @@ export class GenerationQueueRepository {
       materials.push(regional)
       return { prepared, request }
     })
-    const common = comparableStaticRegionalMaterial(materials[0])
+    const firstContext = items[0].prepared.context
+    const common = comparableRegionalBatchMaterial(materials[0])
     if (
       items.some(
         (item) =>
-          !isDeepStrictEqual(item.prepared.context.prompts, items[0].prepared.context.prompts),
+          item.prepared.context.prompts.negative !== firstContext.prompts.negative ||
+          !isDeepStrictEqual(
+            item.prepared.context.embeddings?.negative,
+            firstContext.embeddings?.negative,
+          ),
       ) ||
       materials.some(
-        (material) => !isDeepStrictEqual(comparableStaticRegionalMaterial(material), common),
+        (material) => !isDeepStrictEqual(comparableRegionalBatchMaterial(material), common),
       )
     ) {
       throw new GenerationQueueError(
@@ -4206,23 +4211,46 @@ function comparableBatchContext(context: FrozenNormalGenerationPreparationV1) {
   }
 }
 
-/** Static regional jobs vary only their planned seed/iteration and ordinary request identity. */
-function comparableStaticRegionalMaterial(
+/**
+ * InvokeAI a61ac4fb submissionApi/promptBatch varies concrete global positive while retaining one
+ * negative and graph. Compare our frozen regional graph after normalizing only those concrete
+ * positive bindings and planned coordinates; the ordinary owner still checks full authored refs,
+ * shared preparation settings and each exact active resource before its atomic publication.
+ */
+function comparableRegionalBatchMaterial(
   material: ReturnType<typeof captureRegionalQueuedMaterial>,
 ) {
   const metadata = JSON.parse(material.files['regional.json'].toString('utf8')) as {
     [key: string]: unknown
-    recipe: {
-      [key: string]: unknown
-      item: { [key: string]: unknown; iteration: number; seed: number }
-    }
+    recipe: Pick<RegionalWorkerInput['recipe'], 'globalEmbeddings' | 'globalPrompts' | 'item'> &
+      Record<string, unknown>
   }
-  const { iteration: _iteration, seed: _seed, ...item } = metadata.recipe.item
+  const recipe = metadata.recipe
+  const item = {
+    ...recipe.item,
+    iteration: 0,
+    promptPairIndex: 0,
+    prompts: { ...recipe.item.prompts, positive: '' },
+    seed: 0,
+  }
   return {
     files: Object.fromEntries(
       Object.entries(material.files).filter(([name]) => name !== 'regional.json'),
     ),
-    metadata: { ...metadata, recipe: { ...metadata.recipe, item } },
+    metadata: {
+      ...metadata,
+      recipe: {
+        ...recipe,
+        ...(recipe.globalEmbeddings
+          ? { globalEmbeddings: { ...recipe.globalEmbeddings, positive: [] } }
+          : {}),
+        globalPrompts: {
+          ...recipe.globalPrompts,
+          positive: { ...recipe.globalPrompts.positive, embeddingRefs: [], text: '' },
+        },
+        item,
+      },
+    },
   }
 }
 

@@ -12,7 +12,10 @@
  * at that same revision. The installed proof observes exact ordered resource handoff, not numerical
  * LoRA causality or borrowed-weight restoration. Selected VAE/precision additionally follows
  * current Invoke graph.ts, VAELoaderInvocation and vae/latents_to_image.py; UI helper patterns
- * adapt qualify-installed-generation.mjs.
+ * adapt qualify-installed-generation.mjs. Dynamic global positive additionally follows current
+ * workbench/invocationSubmit.ts and queue promptBatch/submissionApi; only selected concrete
+ * positives reach the unchanged static regional worker. Its preparation pool is the selected-plan
+ * union, while ordinary preparation retains its broader authored-resource contract.
  */
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
@@ -108,12 +111,15 @@ assert.ok(
     'installed-regional-invoke-global-embeddings-v1',
     'installed-regional-invoke-global-loras-v1',
     'installed-regional-invoke-vae-v1',
+    'installed-regional-invoke-dynamic-positive-v1',
   ].includes(fixture.profile),
 )
 const mainDeathProfile = fixture.profile === 'installed-regional-invoke-main-death-v1'
 const workerFaultProfile = fixture.profile === 'installed-regional-invoke-worker-fault-v1'
 const staticBatchProfile = fixture.profile === 'installed-regional-invoke-static-batch-v1'
-const globalVaeProfile = fixture.profile === 'installed-regional-invoke-vae-v1'
+const dynamicPositiveProfile = fixture.profile === 'installed-regional-invoke-dynamic-positive-v1'
+const globalVaeProfile =
+  dynamicPositiveProfile || fixture.profile === 'installed-regional-invoke-vae-v1'
 const globalLoraProfile =
   globalVaeProfile || fixture.profile === 'installed-regional-invoke-global-loras-v1'
 const globalTiProfile =
@@ -189,10 +195,14 @@ const timeout = (maximum = 30_000) => {
 const bbox = { height: 1024, width: 1024, x: -13, y: 5 }
 const baseGlobalPrompt =
   'a still life of a red apple and a blue ceramic mug on a plain table, two separate objects, soft studio lighting'
-const globalPrompt = globalTiProfile ? `${baseGlobalPrompt} <shared>` : baseGlobalPrompt
+const globalPrompt = dynamicPositiveProfile
+  ? `${baseGlobalPrompt} {<variant-a>|<variant-c>|unused ordinary detail}`
+  : globalTiProfile
+    ? `${baseGlobalPrompt} <shared>`
+    : baseGlobalPrompt
 const globalNegativePrompt = globalTiProfile ? '<shared>' : ''
 const localPrompts = [
-  globalTiProfile ? globalPrompt : 'a single red apple',
+  globalTiProfile ? `${baseGlobalPrompt} <shared>` : 'a single red apple',
   'a single blue ceramic mug',
 ]
 const policy = {
@@ -362,6 +372,12 @@ if (globalVaeProfile)
     'worker-python/src/imagegen_worker/inference_external_vae.py',
     'worker-python/src/imagegen_worker/inference_vae.py',
   )
+if (dynamicPositiveProfile)
+  sourceFiles.push(
+    'src/shared/projects/generation-dynamic-settings.ts',
+    'src/renderer/components/DynamicPromptPreview.vue',
+    'src/renderer/components/project-draft-sync.ts',
+  )
 let bundleFiles
 async function captureFiles(files) {
   return Object.fromEntries(
@@ -510,6 +526,9 @@ async function verifyProvision() {
           ]
         : []),
       ...(globalVaeProfile ? ['invokeai/app/invocations/vae/latents_to_image.py'] : []),
+      ...(dynamicPositiveProfile
+        ? ['invokeai/frontend/webv2/src/workbench/invocationSubmit.ts']
+        : []),
       ...(progressProfile
         ? [
             'invokeai/app/invocations/sd/denoise_latents.py',
@@ -962,6 +981,14 @@ async function captureProgressPreservation() {
     report.boundary.retention +=
       ' Both original VAE files, their historical source dependencies and exact catalog entries remain protected beyond this RUN; preserve complete descriptors, stat/hash pins and accepted A/FP32 provenance.'
   }
+  if (dynamicPositiveProfile) {
+    report.boundary.calls =
+      'One real UI Generate with Images per click1, Max prompts2 and Per prompt seeds admits only the first two of three global-positive alternatives: pair0/iteration0/A123 and pair1/iteration0/C124. A123 completes; C124 is canceled after genuine native steps5/6, then frozen Retry C124 completes after saved template/options/TI/mask/LoRA/VAE edits. Exactly three original regional wires and two healthy PNGs; the third alternative is truncated.'
+    report.boundary.preconditions +=
+      ' Reuse the same four existing TI files with distinct authored global literals <variant-a>/<variant-c>, the same four LoRAs, both original VAE files and unchanged installed worker/runtime. Global negative and regional texts/resources remain static. The new regional route verifies the selected-plan resource union; discarded alternatives stay authored without being resolved or consumed, while ordinary preparation is unchanged.'
+    report.boundary.exclusions +=
+      ' No dynamic regional/negative prompting, wildcard packs, additional worker capability, runtime refresh, resource/model copy, extra generation or numerical/visual causality claim. Accepted provenance contains only concrete A123 and its active global A/B refs, never the source template, maxPrompts, inactive global C or regional owners.'
+  }
   if (workerFaultProfile) {
     report.boundary.calls =
       'One original 30-step seed123 Generate faulted after completed-step/UI observations >=5/30 by a verified worker-only pidfd SIGKILL while Main stays alive, followed by explicit frozen Queue Retry and one healthy PNG. One Electron lifetime and exactly two regional wires.'
@@ -1053,28 +1080,42 @@ function pairedGlobalTiBytes(salt) {
   length.writeBigUInt64LE(BigInt(header.length))
   return Buffer.concat([length, header, payload])
 }
-function globalTiRef(key) {
+function globalPositiveInput(seed = 123) {
+  if (!dynamicPositiveProfile) return { key: 'A', text: globalPrompt, token: '<shared>' }
+  assert.ok(seed === 123 || seed === 124)
+  const key = seed === 123 ? 'A' : 'C',
+    token = key === 'A' ? '<variant-a>' : '<variant-c>'
+  return { key, text: `${baseGlobalPrompt} ${token}`, token }
+}
+function authoredGlobalPositiveRefs() {
+  return dynamicPositiveProfile
+    ? [globalTiRef('A', '<variant-a>'), globalTiRef('C', '<variant-c>')]
+    : [globalTiRef('A')]
+}
+function globalTiRef(key, token = '<shared>') {
   assert.ok(globalTiProfile && globalTi?.[key])
-  return { resource: structuredClone(globalTi[key].reference), token: '<shared>' }
+  return { resource: structuredClone(globalTi[key].reference), token }
 }
-function globalTiDescriptor(key) {
+function globalTiDescriptor(key, token = '<shared>') {
   const { byteSize, managedPath, reference } = globalTi[key]
-  return { byteSize, managedPath, reference: structuredClone(reference), token: '<shared>' }
+  return { byteSize, managedPath, reference: structuredClone(reference), token }
 }
-function globalTiPair(positive, negative) {
+function globalTiPair(positive, negative, positiveToken = '<shared>') {
   return {
-    positive: positive ? [globalTiDescriptor(positive)] : [],
+    positive: positive ? [globalTiDescriptor(positive, positiveToken)] : [],
     negative: negative ? [globalTiDescriptor(negative)] : [],
   }
 }
-function globalTiWirePair() {
-  const project = (key) => {
+function globalTiWirePair(seed = 123) {
+  const positive = globalPositiveInput(seed)
+  const project = (key, token = '<shared>') => {
     const { byteSize, managedPath, reference } = globalTi[key]
-    return { byteSize, path: managedPath, sha256: reference.fileSha256, token: '<shared>' }
+    return { byteSize, path: managedPath, sha256: reference.fileSha256, token }
   }
-  return { positive: [project('A')], negative: [project('B')] }
+  return { positive: [project(positive.key, positive.token)], negative: [project('B')] }
 }
-function assertGlobalEmbeddingRecipe(recipe) {
+function assertGlobalEmbeddingRecipe(recipe, seed = recipe.item.seed) {
+  const positive = globalPositiveInput(seed)
   if (globalVaeProfile) {
     assert.equal(Object.hasOwn(recipe, 'vae'), false)
     assert.equal(Object.hasOwn(recipe, 'vaePrecision'), false)
@@ -1084,12 +1125,15 @@ function assertGlobalEmbeddingRecipe(recipe) {
     assert.equal(Object.hasOwn(recipe, 'loraStack'), false)
   }
   assert.deepEqual(recipe.globalPrompts, {
-    positive: { text: globalPrompt, embeddingRefs: [globalTiRef('A')] },
+    positive: {
+      text: positive.text,
+      embeddingRefs: [globalTiRef(positive.key, positive.token)],
+    },
     negative: { text: '<shared>', embeddingRefs: [globalTiRef('B')] },
   })
-  assert.deepEqual(recipe.globalEmbeddings, globalTiPair('A', 'B'))
+  assert.deepEqual(recipe.globalEmbeddings, globalTiPair(positive.key, 'B', positive.token))
   const [first, second] = recipe.regions
-  assert.deepEqual(first.positive, { text: globalPrompt, embeddingRefs: [globalTiRef('C')] })
+  assert.deepEqual(first.positive, { text: localPrompts[0], embeddingRefs: [globalTiRef('C')] })
   assert.deepEqual(first.negative, {
     source: 'current-canvas',
     prompt: recipe.globalPrompts.negative,
@@ -1101,7 +1145,13 @@ function assertGlobalEmbeddingRecipe(recipe) {
     prompt: { text: '<shared>', embeddingRefs: [globalTiRef('D')] },
   })
   assert.deepEqual(second.embeddings, globalTiPair(null, 'D'))
-  assert.equal(first.positive.text, recipe.globalPrompts.positive.text)
+  if (dynamicPositiveProfile) {
+    assert.notEqual(first.positive.text, recipe.globalPrompts.positive.text)
+    assert.equal(
+      Object.values(recipe.item.prompts).some((text) => /[{}]/.test(text)),
+      false,
+    )
+  } else assert.equal(first.positive.text, recipe.globalPrompts.positive.text)
   assert.notEqual(
     first.positive.embeddingRefs[0].resource.localVersionId,
     globalTi.A.reference.localVersionId,
@@ -2086,7 +2136,7 @@ async function prepareCatalogAndProjects() {
       model: reference,
       positivePrompt: {
         text: globalPrompt,
-        embeddingRefs: globalTiProfile ? [globalTiRef('A')] : [],
+        embeddingRefs: globalTiProfile ? authoredGlobalPositiveRefs() : [],
       },
       negativePrompt: {
         text: globalNegativePrompt,
@@ -2734,6 +2784,7 @@ async function installObservers() {
         'projects:redo',
         'projects:update-generation-draft',
         'projects:update-regional-guidance',
+        ...(ownership.dynamicPositive ? ['projects:edit-regional-guidance-mask'] : []),
         ...(ownership.loras
           ? ['projects:add-generation-lora', 'projects:remove-generation-lora']
           : []),
@@ -2808,6 +2859,7 @@ async function installObservers() {
       workerFault: workerFaultProfile,
       loras: globalLoraProfile,
       vae: globalVaeProfile,
+      dynamicPositive: dynamicPositiveProfile,
       scratch: path.join(appDataRoot, 'scratch'),
       previous: previousTransport,
       controls: mainDeathControls,
@@ -3576,6 +3628,7 @@ async function targetRefusalControls() {
 }
 
 function assertFrozen(frozen, project, expectedSeed = 123) {
+  const positive = globalPositiveInput(expectedSeed)
   assert.equal(frozen.schemaVersion, 1)
   assert.equal(frozen.kind, 'illustrious-regional-txt2img')
   assert.equal(frozen.compositionProfile, 'invoke-canvas-v1')
@@ -3586,8 +3639,17 @@ function assertFrozen(frozen, project, expectedSeed = 123) {
   }
   assert.equal(frozen.context.documentId, project.document.documentId)
   assert.deepEqual(frozen.context.bbox, bbox)
-  assert.equal(frozen.context.prompts.positive, globalPrompt)
+  assert.equal(frozen.context.prompts.positive, positive.text)
   assert.equal(frozen.context.prompts.negative, globalNegativePrompt)
+  if (dynamicPositiveProfile) {
+    assert.equal(frozen.context.sampling.seedBehavior, 'per-prompt')
+    assert.deepEqual(frozen.workerJob.prompts, {
+      positive: positive.text,
+      negative: globalNegativePrompt,
+    })
+    assert.equal(/[{}]/.test(frozen.context.prompts.positive), false)
+    assert.equal(frozen.context.prompts.positive.includes('unused ordinary detail'), false)
+  }
   assert.equal(frozen.workerJob.checkpoint.sha256, fixture.checkpoint.sha256)
   assert.equal(frozen.workerJob.checkpoint.predictionType, 'epsilon')
   assert.equal(frozen.context.model.managedPath, fixture.checkpoint.path)
@@ -3625,6 +3687,7 @@ function assertFrozen(frozen, project, expectedSeed = 123) {
   assert.equal(frozen.workerJob.target.iccSha256, IGS_SRGB_ICC_SHA256)
 }
 async function captureFrozen(row, project, expectedSeed = 123) {
+  const positive = globalPositiveInput(expectedSeed)
   assert.equal(row.operation, 'illustrious-regional-txt2img')
   const frozen = JSON.parse(row.frozen_payload_json)
   assertFrozen(frozen, project, expectedSeed)
@@ -3653,13 +3716,17 @@ async function captureFrozen(row, project, expectedSeed = 123) {
   if (multipleResultsProfile) {
     assert.equal(regional.recipe.item.seed, expectedSeed)
     assert.deepEqual(regional.recipe.item.prompts, {
-      positive: globalPrompt,
+      positive: positive.text,
       negative: globalNegativePrompt,
     })
-    assert.equal(regional.recipe.item.promptPairIndex, 0)
+    assert.equal(
+      regional.recipe.item.promptPairIndex,
+      dynamicPositiveProfile ? expectedSeed - 123 : 0,
+    )
+    if (dynamicPositiveProfile) assert.equal(regional.recipe.item.iteration, 0)
   }
   assert.deepEqual(regional.recipe.bbox, bbox)
-  assert.equal(regional.recipe.globalPrompts.positive.text, globalPrompt)
+  assert.equal(regional.recipe.globalPrompts.positive.text, positive.text)
   const alphas = []
   for (const [index, region] of regional.recipe.regions.entries()) {
     assert.equal(region.regionId, project.document.regionalGuidance[index].id)
@@ -3678,13 +3745,13 @@ async function captureFrozen(row, project, expectedSeed = 123) {
     alphas.push(descriptor)
   }
   if (globalTiProfile) {
-    assertGlobalEmbeddingRecipe(regional.recipe)
+    assertGlobalEmbeddingRecipe(regional.recipe, expectedSeed)
     assert.deepEqual(frozen.context.embeddingRefs, {
-      positive: [globalTiRef('A')],
+      positive: authoredGlobalPositiveRefs(),
       negative: [globalTiRef('B')],
     })
-    assert.deepEqual(frozen.context.embeddings, globalTiPair('A', 'B'))
-    assert.deepEqual(frozen.workerJob.embeddings, globalTiWirePair())
+    assert.deepEqual(frozen.context.embeddings, globalTiPair(positive.key, 'B', positive.token))
+    assert.deepEqual(frozen.workerJob.embeddings, globalTiWirePair(expectedSeed))
     await verifyGlobalEmbeddingFiles()
   }
   if (globalLoraProfile) await verifyGlobalLoraFiles()
@@ -4309,6 +4376,51 @@ async function setVaePrecisionUi(project, value) {
   ).toContainText(value)
 }
 
+// Use the same existing preview/settings controls as installed-dynamic-batch-driver.mjs.
+// This observes ordinary renderer -> draft IPC, never a harness-only planning argument.
+async function setDynamicPositiveUi(project, maxPrompts, seedBehavior, purpose) {
+  assert.ok(dynamicPositiveProfile)
+  await window
+    .getByRole('region', { name: 'Positive prompt editor', exact: true })
+    .getByRole('button', { name: 'Preview dynamic prompt' })
+    .click()
+  const dialog = window.getByRole('dialog', { name: 'Dynamic Prompt Preview', exact: true })
+  await expect(dialog).toBeVisible()
+  const maximum = dialog.locator('input[aria-label="Maximum dynamic prompts"]')
+  await maximum.fill(String(maxPrompts))
+  await maximum.press('Enter')
+  await expect(maximum).toHaveValue(String(maxPrompts))
+  await dialog.locator('[aria-label="Dynamic prompt seed behavior"]').click()
+  await window
+    .getByText(seedBehavior === 'per-prompt' ? 'Per prompt' : 'Per iteration', { exact: true })
+    .last()
+    .click()
+  await expect
+    .poll(async () => (await current(project)).generationDraft.dynamicPrompt, {
+      timeout: timeout(),
+    })
+    .toEqual({ maxPrompts, seedBehavior })
+  if (purpose === 'before-generate') {
+    await expect(
+      dialog.getByRole('region', { name: 'Expanded prompt pairs' }).locator('article'),
+    ).toHaveCount(2)
+    for (const [index, seed] of [123, 124].entries()) {
+      const article = dialog
+        .getByRole('region', { name: 'Expanded prompt pairs' })
+        .locator('article')
+        .nth(index)
+      await expect(article).toContainText(globalPositiveInput(seed).text)
+      await expect(article).toContainText(globalNegativePrompt)
+      await expect(article).not.toContainText('unused ordinary detail')
+    }
+    await expect(dialog).toContainText('Preview truncated at the configured maximum')
+  }
+  report.dynamicPositiveUi ??= []
+  report.dynamicPositiveUi.push({ purpose, maxPrompts, seedBehavior, actualControls: true })
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+  await expect(dialog).toBeHidden()
+}
+
 async function generateGlobalEmbeddingBatchRetry(project) {
   assert.ok(globalTiProfile && globalTi && preservationBaseline)
   await openProject(project)
@@ -4350,7 +4462,7 @@ async function generateGlobalEmbeddingBatchRetry(project) {
   }
   assert.deepEqual((await current(project)).generationDraft.positivePrompt, {
     text: globalPrompt,
-    embeddingRefs: [globalTiRef('A')],
+    embeddingRefs: authoredGlobalPositiveRefs(),
   })
   assert.deepEqual((await current(project)).generationDraft.negativePrompt, {
     text: '<shared>',
@@ -4359,10 +4471,22 @@ async function generateGlobalEmbeddingBatchRetry(project) {
   await expect(window.locator('input[aria-label="Steps"]')).toHaveValue('30')
   await expect(window.locator('input[aria-label="CFG scale"]')).toHaveValue('5')
   await expect(window.locator('input[aria-label="Generation seed"]')).toHaveValue('123')
+  if (dynamicPositiveProfile) {
+    assert.deepEqual((await current(project)).generationDraft.dynamicPrompt, {
+      maxPrompts: 1,
+      seedBehavior: 'per-iteration',
+    })
+    await setDynamicPositiveUi(project, 2, 'per-prompt', 'before-generate')
+    assert.deepEqual((await current(project)).generationDraft.positivePrompt, {
+      text: globalPrompt,
+      embeddingRefs: authoredGlobalPositiveRefs(),
+    })
+    assert.equal(await hashFile(project.file), project.initialPackageSha256)
+  }
   const count = window.locator('input[aria-label="Images per click"]')
-  await count.fill('2')
+  await count.fill(dynamicPositiveProfile ? '1' : '2')
   await count.press('Enter')
-  await expect(count).toHaveValue('2')
+  await expect(count).toHaveValue(dynamicPositiveProfile ? '1' : '2')
   const generate = window.getByRole('button', { name: 'Generate', exact: true })
   await expect(generate).toBeEnabled({ timeout: timeout(120_000) })
   assert.deepEqual(await progressSql(), { queue: [], receipts: [], cursors: [] })
@@ -4381,7 +4505,7 @@ async function generateGlobalEmbeddingBatchRetry(project) {
   const captured = []
   for (const [index, row] of admitted.entries()) {
     captured.push(await captureFrozen(row, project, 123 + index))
-    assert.equal(captured[index].regional.recipe.item.iteration, index)
+    assert.equal(captured[index].regional.recipe.item.iteration, dynamicPositiveProfile ? 0 : index)
   }
   assert.equal(captured[0].targetSha256, captured[1].targetSha256)
   assert.deepEqual(captured[0].alphas, captured[1].alphas)
@@ -4395,7 +4519,32 @@ async function generateGlobalEmbeddingBatchRetry(project) {
     generateCall.response.value.jobIds,
     admitted.map(({ id }) => id),
   )
-  assert.equal(generateCall.response.value.truncated, false)
+  assert.equal(generateCall.response.value.truncated, dynamicPositiveProfile)
+  if (dynamicPositiveProfile) {
+    assert.deepEqual(generateCall.args[1], {
+      documentId: project.document.documentId,
+      iterations: 1,
+    })
+    assert.deepEqual(
+      captured.map(({ regional }) => ({
+        text: regional.recipe.globalPrompts.positive.text,
+        pair: regional.recipe.item.promptPairIndex,
+        iteration: regional.recipe.item.iteration,
+        seed: regional.recipe.item.seed,
+        resources: regional.recipe.globalEmbeddings.positive,
+      })),
+      [123, 124].map((seed, pair) => {
+        const positive = globalPositiveInput(seed)
+        return {
+          text: positive.text,
+          pair,
+          iteration: 0,
+          seed,
+          resources: [globalTiDescriptor(positive.key, positive.token)],
+        }
+      }),
+    )
+  }
   await openQueue()
   await expect
     .poll(
@@ -4458,12 +4607,34 @@ async function generateGlobalEmbeddingBatchRetry(project) {
   // No frozen context, descriptor, command or recipe is rewritten by this harness.
   await api('updateGenerationDraft', project.id, {
     kind: 'positive-prompt',
-    text: 'later ordinary authoring without activation literals',
+    text: dynamicPositiveProfile
+      ? 'later {ordinary|alternative|third} authoring without activation literals'
+      : 'later ordinary authoring without activation literals',
   })
   await api('updateGenerationDraft', project.id, {
     kind: 'negative-prompt',
     text: 'later local authoring',
   })
+  if (dynamicPositiveProfile) {
+    await setDynamicPositiveUi(project, 1, 'per-iteration', 'saved-after-cancel')
+    const tab = await current(project),
+      region = tab.regionalGuidance[0]
+    await api('editRegionalGuidanceMask', project.id, region.id, {
+      documentId: tab.documentId,
+      documentRevision: tab.documentRevision,
+      maskId: region.mask.id,
+      maskRevision: region.mask.revision,
+      edit: { kind: 'clear' },
+    })
+    const editedMask = (await current(project)).regionalGuidance[0].mask
+    assert.equal(editedMask.asset, null)
+    assert.equal(editedMask.revision, region.mask.revision + 1)
+    report.dynamicPositiveMaskEdit = {
+      regionId: region.id,
+      before: region.mask,
+      after: editedMask,
+    }
+  }
   let editedLoraStack
   if (globalLoraProfile) {
     const identity = ({ localModelId, localVersionId }) => ({
@@ -4531,7 +4702,12 @@ async function generateGlobalEmbeddingBatchRetry(project) {
       seed: { policy: 'fixed', value: 999 },
       sampler: 'Euler',
       enabled: [false, false],
-      positive: { text: 'later ordinary authoring without activation literals', embeddingRefs: [] },
+      positive: {
+        text: dynamicPositiveProfile
+          ? 'later {ordinary|alternative|third} authoring without activation literals'
+          : 'later ordinary authoring without activation literals',
+        embeddingRefs: [],
+      },
       negative: { text: 'later local authoring', embeddingRefs: [] },
     })
   await save(project)
@@ -4541,6 +4717,15 @@ async function generateGlobalEmbeddingBatchRetry(project) {
   if (globalVaeProfile) {
     assert.equal(edited.generationDraft.vae, null)
     assert.equal(edited.generationDraft.vaePrecision, 'FP16')
+  }
+  if (dynamicPositiveProfile) {
+    assert.deepEqual(edited.generationDraft.dynamicPrompt, {
+      maxPrompts: 1,
+      seedBehavior: 'per-iteration',
+    })
+    assert.notEqual(edited.generationDraft.positivePrompt.text, globalPrompt)
+    assert.deepEqual(edited.generationDraft.positivePrompt.embeddingRefs, [])
+    assert.equal(edited.regionalGuidance[0].mask.asset, null)
   }
   assert.deepEqual(edited.layers, project.document.layers)
   assert.deepEqual(edited.primaryBbox, bbox)
@@ -4659,14 +4844,14 @@ async function generateGlobalEmbeddingBatchRetry(project) {
       assert.deepEqual(frozen.frozen.context.vae.reference, selectedVaeReference())
       assert.equal(frozen.frozen.context.vaePrecision, 'FP32')
     }
-    assertGlobalEmbeddingRecipe(bundle.recipe)
+    assertGlobalEmbeddingRecipe(bundle.recipe, [123, 124, 124][index])
     assert.deepEqual(bundle.recipe.item, frozen.regional.recipe.item)
     assert.deepEqual(bundle.recipe.bbox, bbox)
     assert.deepEqual(
       bundle.recipe.regions.map(({ regionId }) => regionId),
       project.document.regionalGuidance.map(({ id }) => id),
     )
-    // Logical frozen command retains A/B. Only detached native serialization clears resources.
+    // Logical frozen command retains its concrete pair. Only native serialization clears resources.
     const {
       output: _output,
       target,
@@ -4678,7 +4863,7 @@ async function generateGlobalEmbeddingBatchRetry(project) {
         (executionEmbeddings.positive.length === 0 && executionEmbeddings.negative.length === 0),
     )
     const { embeddings: logicalEmbeddings, ...logical } = frozen.frozen.workerJob
-    assert.deepEqual(logicalEmbeddings, globalTiWirePair())
+    assert.deepEqual(logicalEmbeddings, globalTiWirePair([123, 124, 124][index]))
     const { path: _targetPath, ...descriptor } = target
     assert.deepEqual({ ...execution, target: descriptor }, logical)
     assert.equal(wire.target.observedSha256, frozen.targetSha256)
@@ -4804,6 +4989,41 @@ async function generateGlobalEmbeddingBatchRetry(project) {
     originalBindingsPreservedForRetry: true,
     noNativeVectorOrContextObserver: true,
   }
+  if (dynamicPositiveProfile) {
+    report.dynamicPositiveFlow = {
+      authoredPositive: { text: globalPrompt, embeddingRefs: authoredGlobalPositiveRefs() },
+      selectedSettings: { maxPrompts: 2, seedBehavior: 'per-prompt' },
+      iterations: 1,
+      truncated: generateCall.response.value.truncated,
+      discardedPositive: `${baseGlobalPrompt} unused ordinary detail`,
+      selectedPlanResourceUnion: ['A', 'C'].map((key, index) =>
+        globalTiDescriptor(key, index === 0 ? '<variant-a>' : '<variant-c>'),
+      ),
+      originalWirePositives: wires.map(({ bundleJson }) => ({
+        text: bundleJson.recipe.globalPrompts.positive.text,
+        item: bundleJson.recipe.item,
+        resources: bundleJson.recipe.globalEmbeddings.positive,
+      })),
+      staticRegionalPrompts: localPrompts,
+      savedEditedSettings: edited.generationDraft.dynamicPrompt,
+      savedEditedPositive: edited.generationDraft.positivePrompt,
+      originalMaskCoveragePreservedForRetry: true,
+      authoredRefsRetainedButOnlyItemEffectiveGlobalsConsumed: true,
+      exactFrozenRetryPreserved: true,
+      noAdditionalCapabilityOrWorkerRefresh: true,
+      extraNativeCalls: 0,
+    }
+    assert.deepEqual(
+      wires.map(({ bundleJson }) => bundleJson.recipe.globalEmbeddings.positive[0].token),
+      ['<variant-a>', '<variant-c>', '<variant-c>'],
+    )
+    assert.ok(
+      wires.every(
+        ({ bundleJson }) =>
+          !bundleJson.recipe.globalPrompts.positive.text.includes('unused ordinary detail'),
+      ),
+    )
+  }
   report.staticBatch = {
     captured: [captured[0], retryCaptured],
     orderedJobIds: [admitted[0].id, retried.id],
@@ -4821,11 +5041,13 @@ async function generateGlobalEmbeddingBatchRetry(project) {
     extraGenerateOrRetryRequested: false,
   }
   check(
-    globalVaeProfile
-      ? 'Original exact VAE A/FP32 with LoRA/TI survives observed Cancel and frozen Retry after real UI Embedded/FP16 and other saved authoring edits'
-      : globalLoraProfile
-        ? 'Original configured LoRA stack and effective A/B/Z commands survive observed Cancel and frozen Retry after saved LoRA/TI/seed/sampler/region edits'
-        : 'Original global A/B and regional C/inherited B/local D survive the real batch, observed Cancel and frozen Retry after saved authoring edits',
+    dynamicPositiveProfile
+      ? 'Two selected global-positive expansions retain A/C-specific resources, static regions and exact frozen C124 Retry after saved template/options/mask/LoRA/VAE edits; third alternative is truncated'
+      : globalVaeProfile
+        ? 'Original exact VAE A/FP32 with LoRA/TI survives observed Cancel and frozen Retry after real UI Embedded/FP16 and other saved authoring edits'
+        : globalLoraProfile
+          ? 'Original configured LoRA stack and effective A/B/Z commands survive observed Cancel and frozen Retry after saved LoRA/TI/seed/sampler/region edits'
+          : 'Original global A/B and regional C/inherited B/local D survive the real batch, observed Cancel and frozen Retry after saved authoring edits',
     report.nativeAccounting,
   )
   return {
@@ -5739,6 +5961,7 @@ async function readZip(file) {
   return { project: JSON.parse(members.get('project.json').toString('utf8')), members }
 }
 function assertBaseProvenance(provenance, candidate, frozen) {
+  const positive = globalPositiveInput(123)
   assert.equal(provenance.schemaVersion, 1)
   assert.equal(provenance.kind, 'illustrious-txt2img')
   assert.equal(provenance.executionResultContext.candidateId, candidate.candidateId)
@@ -5783,8 +6006,8 @@ function assertBaseProvenance(provenance, candidate, frozen) {
       embeddingRefs: globalTiProfile ? [globalTiRef('B')] : [],
     },
     positivePrompt: {
-      text: globalPrompt,
-      embeddingRefs: globalTiProfile ? [globalTiRef('A')] : [],
+      text: positive.text,
+      embeddingRefs: globalTiProfile ? [globalTiRef(positive.key, positive.token)] : [],
     },
     sampling: {
       actualSeed: 123,
@@ -5803,7 +6026,7 @@ function assertBaseProvenance(provenance, candidate, frozen) {
     vae: globalVaeProfile ? selectedVaeReference() : null,
     vaePrecision: globalVaeProfile ? 'FP32' : 'FP16',
   })
-  assert.equal(config.positivePrompt.text, globalPrompt)
+  assert.equal(config.positivePrompt.text, positive.text)
   assert.equal(config.negativePrompt.text, globalNegativePrompt)
   assert.equal(config.sampling.actualSeed, 123)
   assert.equal(config.sampling.steps, 30)
@@ -5823,6 +6046,9 @@ function assertBaseProvenance(provenance, candidate, frozen) {
     ...(initializationProfile ? ['initializationProfile', initialization] : []),
     fixture.checkpoint.path,
     appDataRoot,
+    ...(dynamicPositiveProfile
+      ? ['dynamicPrompt', 'maxPrompts', globalPrompt, '<variant-c>', 'unused ordinary detail']
+      : []),
     ...(globalTiProfile
       ? [
           globalTi.C.reference.localVersionId,
@@ -6067,9 +6293,17 @@ async function resultsAddSaveReopen(project, completed) {
   // ProjectTab region views contain resource URLs; compare portable authoring against the saved draft.
   for (const [index, region] of saved.project.regionalGuidance.entries()) {
     assert.equal(region.enabled, false)
-    assert.deepEqual(region.mask, project.document.regionalGuidance[index].mask)
+    assert.deepEqual(
+      region.mask,
+      dynamicPositiveProfile
+        ? portableRegions(before)[index].mask
+        : project.document.regionalGuidance[index].mask,
+    )
     assert.deepEqual(region.prompts, project.document.regionalGuidance[index].prompts)
-    assert.equal(digest(saved.members.get(region.mask.asset.path)), region.mask.asset.sha256)
+    if (dynamicPositiveProfile && index === 0) {
+      assert.equal(region.mask.asset, null)
+      assert.equal(region.mask.revision, project.document.regionalGuidance[index].mask.revision + 1)
+    } else assert.equal(digest(saved.members.get(region.mask.asset.path)), region.mask.asset.sha256)
   }
   assert.deepEqual(saved.project.regionalGuidance, portableRegions(before))
   assertBaseProvenance(accepted.generationProvenance, report.output, completed.frozen)
@@ -6122,6 +6356,28 @@ async function resultsAddSaveReopen(project, completed) {
     report.globalVaeFlow.acceptedOriginalReference =
       accepted.generationProvenance.generationConfiguration.vae
     report.globalVaeFlow.acceptedOriginalPrecision = 'FP32'
+  }
+  if (dynamicPositiveProfile) {
+    assert.deepEqual(reopened.generationDraft.dynamicPrompt, {
+      maxPrompts: 1,
+      seedBehavior: 'per-iteration',
+    })
+    assert.deepEqual(reopened.generationDraft.positivePrompt, {
+      text: 'later {ordinary|alternative|third} authoring without activation literals',
+      embeddingRefs: [],
+    })
+    assert.equal(reopened.regionalGuidance[0].mask.asset, null)
+    assert.deepEqual(accepted.generationProvenance.generationConfiguration.positivePrompt, {
+      text: globalPositiveInput(123).text,
+      embeddingRefs: [globalTiRef('A', '<variant-a>')],
+    })
+    assert.equal(
+      accepted.generationProvenance.generationConfiguration.sampling.seedBehavior,
+      'per-prompt',
+    )
+    report.dynamicPositiveFlow.editedTemplateOptionsAndMaskPreservedAfterSaveZipAndReopen = true
+    report.dynamicPositiveFlow.acceptedConcretePositive =
+      accepted.generationProvenance.generationConfiguration.positivePrompt
   }
   assert.deepEqual(portableRegions(reopened), portableRegions(before))
   await expect(
@@ -6532,7 +6788,11 @@ async function assertGlobalEmbeddingActions(project) {
   )
   const generate = observed.ipc.filter(({ channel }) => channel === 'projects:generate')
   assert.equal(generate.length, 1)
-  assert.deepEqual(generate[0].args[1], { documentId: project.document.documentId, iterations: 2 })
+  assert.deepEqual(generate[0].args[1], {
+    documentId: project.document.documentId,
+    iterations: dynamicPositiveProfile ? 1 : 2,
+  })
+  assert.equal(generate[0].response.value.truncated, dynamicPositiveProfile)
   assert.deepEqual(
     generate[0].response.value.jobIds,
     report.globalEmbeddingFlow.originalBatchJobIds,
@@ -6566,6 +6826,37 @@ async function assertGlobalEmbeddingActions(project) {
     retry: retry[0],
     accept: accepts[0],
     noExtraGenerate: true,
+  }
+  if (dynamicPositiveProfile) {
+    const dynamicChanges = observed.ipc.filter(
+        ({ channel, args }) =>
+          channel === 'projects:update-generation-draft' && args[1]?.kind === 'dynamic-prompt',
+      ),
+      maskEdits = observed.ipc.filter(
+        ({ channel }) => channel === 'projects:edit-regional-guidance-mask',
+      )
+    assert.deepEqual(
+      dynamicChanges.map(({ args }) => args.slice(0, 2)),
+      [
+        { maxPrompts: 2, seedBehavior: 'per-iteration' },
+        { maxPrompts: 2, seedBehavior: 'per-prompt' },
+        { maxPrompts: 1, seedBehavior: 'per-prompt' },
+        { maxPrompts: 1, seedBehavior: 'per-iteration' },
+      ].map((value) => [project.id, { kind: 'dynamic-prompt', value }]),
+    )
+    assert.ok(dynamicChanges[1].finishedOrder < generate[0].startedOrder)
+    assert.ok(cancel[0].finishedOrder < dynamicChanges[2].startedOrder)
+    assert.ok(dynamicChanges[3].finishedOrder < retry[0].startedOrder)
+    assert.equal(maskEdits.length, 1)
+    assert.equal(maskEdits[0].args[0], project.id)
+    assert.equal(maskEdits[0].args[1], report.dynamicPositiveMaskEdit.regionId)
+    assert.equal(maskEdits[0].args[2].documentId, project.document.documentId)
+    assert.equal(maskEdits[0].args[2].maskId, report.dynamicPositiveMaskEdit.before.id)
+    assert.equal(maskEdits[0].args[2].maskRevision, report.dynamicPositiveMaskEdit.before.revision)
+    assert.deepEqual(maskEdits[0].args[2].edit, { kind: 'clear' })
+    assert.ok(cancel[0].finishedOrder < maskEdits[0].startedOrder)
+    assert.ok(maskEdits[0].finishedOrder < retry[0].startedOrder)
+    report.dynamicPositiveFlow.originalAuthoringActions = { dynamicChanges, maskEdits }
   }
   if (globalLoraProfile) {
     const adds = observed.ipc.filter(({ channel }) => channel === 'projects:add-generation-lora'),
@@ -6806,19 +7097,21 @@ try {
   report.completedAt = new Date().toISOString()
   report.elapsedSeconds = (Date.now() - started) / 1000
   check(
-    globalVaeProfile
-      ? 'Finite installed exact VAE A/FP32 with LoRA/TI, observed Cancel, original frozen Retry, two Results and base VAE/precision provenance completed after saved Embedded/FP16 edits; no installed pixel-causality or quality claim'
-      : globalLoraProfile
-        ? 'Finite installed global LoRA/TI batch, observed Cancel, original frozen Retry, two Results and full configured-LoRA/global-only-TI accepted provenance completed; no installed numerical-causality or quality claim'
-        : globalTiProfile
-          ? 'Finite installed global/region exact TI batch, observed Cancel, frozen Retry, two Results and global-only accepted provenance completed; no new native TI-causality or quality claim'
-          : staticBatchProfile
-            ? 'Finite installed two-image static batch, exact frozen identity, distinct Results and reviewed Add/Discard/Undo/Save qualification completed; no quality or throughput claim'
-            : workerFaultProfile
-              ? 'Finite installed worker-only fault/normal failure/progress clearing/frozen Retry qualification completed with the same live Main; no visual-quality or capacity claim'
-              : progressProfile
-                ? 'Finite installed original scalar progress/Cancel/frozen Retry qualification completed; no visual-quality or capacity claim'
-                : 'Finite installed public UI Regional qualification completed; evidence supports this exact matrix and no visual-quality or numerical-step claim',
+    dynamicPositiveProfile
+      ? 'Finite installed two-expansion global-positive prefix, exact per-item TI, original Cancel/frozen Retry and concrete accepted provenance completed after saved template/options/mask/LoRA/VAE edits; same runtime and three wires/two PNGs'
+      : globalVaeProfile
+        ? 'Finite installed exact VAE A/FP32 with LoRA/TI, observed Cancel, original frozen Retry, two Results and base VAE/precision provenance completed after saved Embedded/FP16 edits; no installed pixel-causality or quality claim'
+        : globalLoraProfile
+          ? 'Finite installed global LoRA/TI batch, observed Cancel, original frozen Retry, two Results and full configured-LoRA/global-only-TI accepted provenance completed; no installed numerical-causality or quality claim'
+          : globalTiProfile
+            ? 'Finite installed global/region exact TI batch, observed Cancel, frozen Retry, two Results and global-only accepted provenance completed; no new native TI-causality or quality claim'
+            : staticBatchProfile
+              ? 'Finite installed two-image static batch, exact frozen identity, distinct Results and reviewed Add/Discard/Undo/Save qualification completed; no quality or throughput claim'
+              : workerFaultProfile
+                ? 'Finite installed worker-only fault/normal failure/progress clearing/frozen Retry qualification completed with the same live Main; no visual-quality or capacity claim'
+                : progressProfile
+                  ? 'Finite installed original scalar progress/Cancel/frozen Retry qualification completed; no visual-quality or capacity claim'
+                  : 'Finite installed public UI Regional qualification completed; evidence supports this exact matrix and no visual-quality or numerical-step claim',
   )
 } catch (error) {
   report.outcome = 'failed'

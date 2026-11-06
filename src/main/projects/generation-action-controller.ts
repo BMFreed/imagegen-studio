@@ -622,6 +622,7 @@ export class ProjectGenerationActionController {
       )
     }
     let cleanupStarted = false
+    let truncated = false
     const assertAction = () => {
       this.assertAdmissionOpen()
       this.assertDocument(tabId, request.documentId)
@@ -665,6 +666,9 @@ export class ProjectGenerationActionController {
         documentId: request.documentId,
         documentRevision: document.documentRevision,
         iterations: request.iterations,
+        onPlanned: (info) => {
+          truncated = info.truncated
+        },
         withPreparation: async (use) => {
           await review()
           return await this.options.runtime.withGenerationPreparation(
@@ -699,7 +703,7 @@ export class ProjectGenerationActionController {
         documentId: request.documentId,
         jobIds: items.map((item) => item.id),
         kind: 'queued',
-        truncated: false,
+        truncated,
       }
     } catch (error) {
       if (cleanupStarted) {

@@ -194,7 +194,7 @@ test('effective regional text respects negative inheritance and admits empty str
   }
   assert.equal(reason(value), null)
   region.prompts.useGlobalNegativePrompt = false
-  assert.match(reason(value)!, /static global and regional prompts/)
+  assert.match(reason(value)!, /static global negative and regional prompts/)
   region.prompts.negative!.text = ''
   region.prompts.positive = {
     embeddingRefs: [
@@ -209,11 +209,16 @@ test('effective regional text respects negative inheritance and admits empty str
   }
   for (const polarity of ['negativePrompt', 'positivePrompt'] as const) {
     value.generationDraft[polarity].text = 'unmatched {'
-    assert.match(reason(value)!, /static global and regional prompts/)
+    assert.match(
+      reason(value)!,
+      polarity === 'negativePrompt'
+        ? /static global negative and regional prompts/
+        : /dynamic group needs a closing brace/,
+    )
     value.generationDraft[polarity].text = ''
   }
   region.prompts.positive.text = 'unmatched }'
-  assert.match(reason(value)!, /static global and regional prompts/)
+  assert.match(reason(value)!, /static global negative and regional prompts/)
   region.enabled = false
   value.regionalGuidance!.push({
     ...structuredClone(region),
