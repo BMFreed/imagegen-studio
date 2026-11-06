@@ -1,6 +1,6 @@
-"""Private ordinary transparent Canvas, native Euler/DPM++ 2M txt2img execution.
+"""Private ordinary Canvas, native regional txt2img and opaque img2img execution.
 
-The caller must supply an actual ordinary transparent target. The acknowledged
+The caller must supply the actual ordinary target for the selected mode. The acknowledged
 recipe cannot authenticate that mode, job membership or checkpoint identity;
 these remain trusted Main caller preconditions, without another DTO or admission
 API. Exact-TI encoding uses the shared private text-copy owner. This module does
@@ -29,11 +29,13 @@ from __future__ import annotations
 import importlib
 import inspect
 import math
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from functools import wraps
 from typing import Any, Literal, TypedDict, cast
+
+from PIL import Image
 
 from .illustrious_regional_attention import Alpha8, AttentionPlan, Everywhere
 from .illustrious_regional_attention_adapter import (
@@ -77,6 +79,7 @@ from .inference import (
     DenoisingProgressSink,
     MLRuntime,
     SdxlConditioning,
+    img2img_pipeline_class,
     run_sdxl_pipeline,
     select_inference_scheduler,
 )
@@ -107,6 +110,8 @@ _DenoisingProfile = Literal[
     "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cpu-v1",
     "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cuda-fp16-v1",
     "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cuda-vae-v1",
+    "ordinary-canvas-euler-img2img-cpu-v1",
+    "ordinary-canvas-euler-img2img-cuda-fp16-v1",
 ]
 _Layout = Literal["cfg-negative-first", "positive-only"]
 _MAX_FINITE_ELEMENTS = 8_388_608
@@ -114,6 +119,11 @@ _MAX_FINITE_ELEMENTS = 8_388_608
 
 class _ProgressOptions(TypedDict, total=False):
     on_progress: DenoisingProgressSink
+
+
+class _ImageOptions(TypedDict, total=False):
+    image: Image.Image
+    denoising_strength: float
 
 
 class IllustriousRegionalDenoisingError(ValueError):
@@ -171,6 +181,8 @@ def _execution_profile(
             "cuda-float16-v1",
             True,
         ),
+        "ordinary-canvas-euler-img2img-cpu-v1": ("cpu-float32-v1", True),
+        "ordinary-canvas-euler-img2img-cuda-fp16-v1": ("cuda-float16-v1", True),
     }
     _require(
         type(denoising_profile) is str and denoising_profile in profiles,
@@ -200,6 +212,22 @@ def _execution_profile(
         "DPM++ 2M requires the explicit Invoke Canvas encoding profile.",
     )
     return tensor_profile, resolved_noise
+
+
+def _img2img_profile(denoising_profile: _DenoisingProfile) -> bool:
+    return denoising_profile in (
+        "ordinary-canvas-euler-img2img-cpu-v1",
+        "ordinary-canvas-euler-img2img-cuda-fp16-v1",
+    )
+
+
+def _img2img_strength(value: object) -> float:
+    _require(
+        _finite_number(value) and 0 <= cast(float, value) <= 1,
+        "INPUT_INVALID",
+        "Img2img strength must be finite in [0,1], excluding bool.",
+    )
+    return cast(float, value)
 
 
 def _vae_profile(denoising_profile: _DenoisingProfile) -> bool:
@@ -399,6 +427,40 @@ def _reject_local_forward_hooks(modules: tuple[Any, ...]) -> None:
     )
 
 
+def _img2img_vae_preflight(torch: Any, modules: tuple[Any, ...]) -> None:
+    """Admit the finite native VAE graph whose forward preserves borrowed state.
+
+    Invoke owns its loaded VAE; this private consumer instead borrows it. An
+    arbitrary native eval module is insufficient: InstanceNorm can still update
+    existing running buffers. Keep this restriction local to the new image lane.
+    """
+    native_types = (
+        ("diffusers.models.autoencoders.autoencoder_kl", "AutoencoderKL"),
+        ("diffusers.models.autoencoders.vae", "Encoder"),
+        ("diffusers.models.autoencoders.vae", "Decoder"),
+        ("diffusers.models.unets.unet_2d_blocks", "DownEncoderBlock2D"),
+        ("diffusers.models.unets.unet_2d_blocks", "UpDecoderBlock2D"),
+        ("diffusers.models.unets.unet_2d_blocks", "UNetMidBlock2D"),
+        ("diffusers.models.resnet", "ResnetBlock2D"),
+        ("diffusers.models.downsampling", "Downsample2D"),
+        ("diffusers.models.upsampling", "Upsample2D"),
+        ("diffusers.models.attention_processor", "Attention"),
+    )
+    allowed = {getattr(importlib.import_module(module), name) for module, name in native_types} | {
+        torch.nn.Conv2d,
+        torch.nn.ModuleList,
+        torch.nn.GroupNorm,
+        torch.nn.Dropout,
+        torch.nn.SiLU,
+        torch.nn.Linear,
+    }
+    _require(
+        all(type(module) in allowed for module in modules),
+        "PROFILE_INVALID",
+        "Img2img requires the qualified native VAE module classes without stateful substitutes.",
+    )
+
+
 def _denoising_model_preflight(
     pipeline: Any,
     *,
@@ -493,6 +555,7 @@ def _fresh_pipeline(
     resolved_noise: bool = False,
     ancestral: bool = False,
     dpmpp_2m: bool = False,
+    img2img: bool = False,
 ) -> Any:
     diffusers = cast(Any, runtime.diffusers)
     # V1 retains its fixed policy and three-argument seam. V2 uses only the
@@ -545,7 +608,15 @@ def _fresh_pipeline(
             if ancestral
             else "Scheduler selection must create a fresh native epsilon Euler instance.",
         )
-    fresh = diffusers.StableDiffusionXLPipeline(
+    # InvokeAI a61ac4fb grafts image-to-latents onto the same denoising graph.
+    # Reuse the ordinary worker's training-cutoff/replayable-posterior adaptation
+    # and the original native loop; only this fresh wrapper changes class.
+    pipeline_class = (
+        img2img_pipeline_class(diffusers, runtime.torch)
+        if img2img
+        else diffusers.StableDiffusionXLPipeline
+    )
+    fresh = pipeline_class(
         vae=pipeline.vae,
         text_encoder=pipeline.text_encoder,
         text_encoder_2=pipeline.text_encoder_2,
@@ -851,6 +922,7 @@ def _scoped_denoising_value_guards(
     steps: int,
     tensor_profile: _TensorProfile = "cpu-float32-v1",
     dpmpp_2m: bool = False,
+    expected_steps: Callable[[], object] | None = None,
 ) -> Generator[None]:
     """Observe final native arguments after the helper's later-installed padding hook.
 
@@ -880,12 +952,34 @@ def _scoped_denoising_value_guards(
     handles: list[Any] = []
     completed = 0
     active: set[int] | None = None
+    actual_steps: int | None = None
+
+    def step_limit() -> int:
+        nonlocal actual_steps
+        if expected_steps is None:
+            return steps
+        current = expected_steps()
+        _require(
+            type(current) is int and 0 <= current <= steps,
+            "INPUT_INVALID",
+            "Native img2img schedule must contain an exact bounded step count.",
+        )
+        count = cast(int, current)
+        _require(
+            actual_steps is None or actual_steps == count,
+            "INPUT_INVALID",
+            "Native img2img step count changed during execution.",
+        )
+        actual_steps = count
+        return count
 
     def native_forward(*args: Any, **kwargs: Any) -> Any:
         nonlocal active, completed
         _require(active is None, "SCOPE_CONFLICT", "Reentrant denoising forward is unsupported.")
         _require(
-            completed < steps, "INPUT_INVALID", "Native loop exceeded its declared step count."
+            completed < step_limit(),
+            "INPUT_INVALID",
+            "Native loop exceeded its declared step count.",
         )
         try:
             bound = signature.bind(root, *args, **kwargs)
@@ -962,7 +1056,9 @@ def _scoped_denoising_value_guards(
             install(site)
         yield
         _require(
-            completed == steps, "INPUT_INVALID", "Native loop did not complete its declared steps."
+            completed == step_limit(),
+            "INPUT_INVALID",
+            "Native loop did not complete its declared steps.",
         )
     finally:
         for handle in reversed(handles):
@@ -1025,11 +1121,18 @@ def run_current_canvas_regional_denoising(
     bindings: tuple[TransformerBinding, ...],
     layout: _Layout,
     on_progress: DenoisingProgressSink | None = None,
+    image: Image.Image | None = None,
+    denoising_strength: float | None = None,
 ) -> Any:
     """Return the original native pipeline output after all owned state restores.
 
-    Semantic kwargs are required. An actual ordinary transparent target is a trusted
-    Main precondition; the recipe cannot authenticate mode. No sample, timestep,
+    Semantic kwargs are required. The actual ordinary target mode is a trusted
+    Main precondition; the recipe cannot authenticate it. Only explicit img2img
+    profiles accept the paired owned RGB image and finite strength in [0,1].
+    They reuse the ordinary native factory, including its replayable posterior
+    and compute-dtype initial noise; no txt2img initializer is applied. Strength
+    zero performs native VAE encode/decode with zero denoising steps.
+    No sample, timestep,
     time IDs, generator, native callbacks, plan, text override or arbitrary kwargs enter.
     The optional trusted scalar sink observes completed native denoising steps only;
     it must preserve the cooperative borrowed-state and RNG contract.
@@ -1064,10 +1167,11 @@ def run_current_canvas_regional_denoising(
         "Regional progress requires a callable sink.",
     )
     tensor_profile, resolved_noise = _execution_profile(denoising_profile, profile)
+    img2img = _img2img_profile(denoising_profile)
     ancestral = _ancestral_profile(denoising_profile)
     dpmpp_2m = _dpmpp_2m_profile(denoising_profile)
     prepared_vae = _vae_profile(denoising_profile)
-    invoke_cfg_rescale = profile in _INVOKE_PROFILES
+    invoke_cfg_rescale = profile in _INVOKE_PROFILES and not img2img
     if dpmpp_2m:
         noise_profile = _denoising_parameters(
             parameters,
@@ -1100,6 +1204,19 @@ def run_current_canvas_regional_denoising(
         parameters = replace(parameters, noise_profile=noise_profile)
     else:
         _denoising_parameters(parameters, tensor_profile, invoke_cfg_rescale=invoke_cfg_rescale)
+    if img2img:
+        _img2img_strength(denoising_strength)
+        _require(
+            type(image) is Image.Image and image.mode == "RGB",
+            "INPUT_INVALID",
+            "Img2img requires one owned RGB PIL image.",
+        )
+    else:
+        _require(
+            image is None and denoising_strength is None,
+            "INPUT_INVALID",
+            "Txt2img profiles do not accept image or strength inputs.",
+        )
     bbox, pairs, parameters, shape, global_negative, global_positive = _recipe_inputs(
         recipe,
         parameters,
@@ -1110,6 +1227,12 @@ def run_current_canvas_regional_denoising(
         negative_pooled_source_id,
         positive_pooled_source_id,
     )
+    if img2img:
+        _require(
+            cast(Image.Image, image).size == (bbox.width, bbox.height),
+            "INPUT_INVALID",
+            "Img2img source dimensions must exactly match the complete recipe.",
+        )
     torch, diffusers, compel, transformers = _native_runtime(runtime, tensor_profile)
     _reject_global_forward_hooks()
     parts = _pipeline_parts(pipeline, diffusers, transformers)
@@ -1142,6 +1265,13 @@ def run_current_canvas_regional_denoising(
             tensor_profile=tensor_profile,
             **({"vae_parameters": parameters} if prepared_vae else {}),
         )
+        if img2img:
+            _require(
+                pipeline.vae.config.force_upcast is False,
+                "PROFILE_INVALID",
+                "Img2img requires force_upcast exactly False before borrowing the VAE.",
+            )
+            _img2img_vae_preflight(torch, vae_modules)
         _recipe_model_preflight(
             pipeline,
             torch,
@@ -1151,7 +1281,11 @@ def run_current_canvas_regional_denoising(
             tensor_profile,
             shared_readonly=embedding_strategy == "shared-readonly",
         )
-        if dpmpp_2m:
+        if img2img:
+            fresh = _fresh_pipeline(
+                pipeline, parameters, runtime, resolved_noise=True, img2img=True
+            )
+        elif dpmpp_2m:
             fresh = _fresh_pipeline(
                 pipeline, parameters, runtime, resolved_noise=True, dpmpp_2m=True
             )
@@ -1220,7 +1354,19 @@ def run_current_canvas_regional_denoising(
             if ancestral or dpmpp_2m
             else nullcontext(),
             scoped_illustrious_regional_attention(
-                parts[4], bindings=bindings, plan=plan, tensor_profile=tensor_profile
+                parts[4],
+                bindings=bindings,
+                plan=plan,
+                tensor_profile=tensor_profile,
+                **(
+                    {
+                        "_allow_empty": lambda: (
+                            type(fresh.num_timesteps) is int and fresh.num_timesteps == 0
+                        )
+                    }
+                    if img2img
+                    else {}
+                ),
             ),
             finite_unet_outputs(fresh, torch),
             finite_vae_outputs(fresh, torch),
@@ -1235,10 +1381,19 @@ def run_current_canvas_regional_denoising(
                 steps=parameters.steps,
                 tensor_profile=tensor_profile,
                 **({"dpmpp_2m": True} if dpmpp_2m else {}),
+                **cast(Any, {"expected_steps": lambda: fresh.num_timesteps} if img2img else {}),
             ),
         ):
             progress_options: _ProgressOptions = (
                 {"on_progress": on_progress} if on_progress is not None else {}
+            )
+            image_options: _ImageOptions = (
+                {
+                    "image": cast(Image.Image, image),
+                    "denoising_strength": cast(float, denoising_strength),
+                }
+                if img2img
+                else {}
             )
             result = run_sdxl_pipeline(
                 fresh,
@@ -1252,6 +1407,7 @@ def run_current_canvas_regional_denoising(
                 cfg_rescale=parameters.cfg_rescale,
                 output_type="latent" if prepared_vae else "pt",
                 **progress_options,
+                **image_options,
             )
             if prepared_vae:
                 result = decode_regional_latents(

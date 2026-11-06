@@ -8,6 +8,22 @@ anonymized source bytes have not been rerun through earlier ML qualification.
 The cleaned publication history is prepared separately; no remote history is
 replaced as part of source preparation.
 
+## Private opaque Regional Guidance img2img
+
+[Opaque image consumer](./phase-4-regional-guidance-img2img-research.md) reuses the
+ordinary Invoke-adapted img2img factory and native VAE/Euler loop. ROOT:369 distinct
+PASS, including85 new native cases and7 trained selections; strict Python typing
+and scoped checks pass. Seven official Illustrious104x72 PNGs preserve source,
+strength/window, repeat and exact zero-region ordinary PT/RGB association.
+Two isolated mutations give20 GREEN/four semantic RED after PNG publication,
+with exact controls/restoration. A reproduced stateful encoder admission defect
+is closed by an IMG-only finite native-class guard. Source/retained-byte reviews
+are CLEAN within scope; ROOT separately confirms exit/restoration/dependencies
+and reclaims116,465,664 bytes from two archived idle roots. Runtime/resources and
+companions stay protected. Public image admission/transport,
+installed worker, selected-VAE encoder, other samplers/modes, Anima and visual
+quality remain outside this private checkpoint. PP-001/005/007/008 stay unchanged.
+
 ## Fixed two-character visual experiment — not qualified
 
 [Character visual check](./phase-4-regional-guidance-character-visual-research.md)

@@ -36,6 +36,8 @@ from .illustrious_regional_denoising import (
     _DenoisingProfile,  # pyright: ignore[reportPrivateUsage]
     _dpmpp_2m_profile,  # pyright: ignore[reportPrivateUsage]
     _execution_profile,  # pyright: ignore[reportPrivateUsage]
+    _img2img_profile,  # pyright: ignore[reportPrivateUsage]
+    _img2img_strength,  # pyright: ignore[reportPrivateUsage]
     _Layout,  # pyright: ignore[reportPrivateUsage]
     _native_output,  # pyright: ignore[reportPrivateUsage]
     _vae_profile,  # pyright: ignore[reportPrivateUsage]
@@ -54,11 +56,16 @@ from .protocol import (
     _REQUEST_ID_PATTERN,  # pyright: ignore[reportPrivateUsage]
     _SHA256_PATTERN,  # pyright: ignore[reportPrivateUsage]
     MAX_GENERATION_TARGET_BYTES,
+    GenerateIllustriousImg2ImgCommand,
     GenerateIllustriousTxt2ImgCommand,
     IllustriousInferenceParameters,
 )
 
-__all__ = ("IllustriousRegionalOutputError", "generate_current_canvas_regional_txt2img")
+__all__ = (
+    "IllustriousRegionalOutputError",
+    "generate_current_canvas_regional_txt2img",
+    "generate_current_canvas_regional_img2img",
+)
 
 _Code = Literal["INPUT_INVALID", "PROFILE_INVALID", "LIMIT", "UNSUPPORTED"]
 
@@ -94,21 +101,30 @@ def _safe_path(value: object, label: str) -> PosixPath:
 
 def _command_parameters(
     command: GenerateIllustriousTxt2ImgCommand,
+    *,
+    img2img: bool = False,
 ) -> IllustriousInferenceParameters:
+    command_class = (
+        GenerateIllustriousImg2ImgCommand if img2img else GenerateIllustriousTxt2ImgCommand
+    )
     _require(
-        type(command) is GenerateIllustriousTxt2ImgCommand,
+        type(command) is command_class,
         "INPUT_INVALID",
-        "Only the exact ordinary txt2img command record is supported.",
+        "Only the exact ordinary img2img command record is supported."
+        if img2img
+        else "Only the exact ordinary txt2img command record is supported.",
     )
     values = vars(command)
     _require(
-        values.keys() == {field.name for field in fields(GenerateIllustriousTxt2ImgCommand)},
+        values.keys() == {field.name for field in fields(command_class)},
         "INPUT_INVALID",
         "The command must contain exactly its complete dataclass fields.",
     )
     parameters = IllustriousInferenceParameters(
         **{field.name: values[field.name] for field in fields(IllustriousInferenceParameters)}
     )
+    if img2img:
+        _img2img_strength(cast(GenerateIllustriousImg2ImgCommand, command).denoising_strength)
     _require(
         type(command.request_id) is str
         and _REQUEST_ID_PATTERN.fullmatch(command.request_id) is not None,
@@ -208,7 +224,7 @@ def _rgb_image(
     return cast(Image.Image, rgb)
 
 
-def generate_current_canvas_regional_txt2img(
+def _generate_current_canvas_regional(
     recipe: object,
     *,
     command: GenerateIllustriousTxt2ImgCommand,
@@ -223,6 +239,7 @@ def generate_current_canvas_regional_txt2img(
     bindings: tuple[TransformerBinding, ...],
     layout: _Layout,
     on_progress: DenoisingProgressSink | None = None,
+    img2img: bool = False,
 ) -> dict[str, object]:
     """Validate one frozen target, run once, and return the original publisher receipt.
 
@@ -247,7 +264,9 @@ def generate_current_canvas_regional_txt2img(
         "INPUT_INVALID",
         "Regional progress requires a callable sink.",
     )
-    parameters = _command_parameters(command)
+    parameters = (
+        _command_parameters(command, img2img=True) if img2img else _command_parameters(command)
+    )
     # Preserve output's encoding-first refusal order and local execution-profile
     # error identity while sharing the runner's complete lane/version validator.
     _encoding_tensor_profile(profile)
@@ -255,8 +274,13 @@ def generate_current_canvas_regional_txt2img(
         tensor_profile, resolved_noise = _execution_profile(denoising_profile, profile)
     except IllustriousRegionalDenoisingError as error:
         raise IllustriousRegionalOutputError("PROFILE_INVALID", str(error)) from error
+    _require(
+        _img2img_profile(denoising_profile) is img2img,
+        "PROFILE_INVALID",
+        "The output mode must match its explicit txt2img or img2img execution profile.",
+    )
     prepared_vae = _vae_profile(denoising_profile)
-    invoke_cfg_rescale = profile in _INVOKE_PROFILES
+    invoke_cfg_rescale = profile in _INVOKE_PROFILES and not img2img
     if _dpmpp_2m_profile(denoising_profile):
         noise_profile = _denoising_parameters(
             parameters,
@@ -305,7 +329,7 @@ def generate_current_canvas_regional_txt2img(
         "INPUT_INVALID",
         "Command bbox position and dimensions must exactly match the complete recipe.",
     )
-    validate_generation_target(
+    source = validate_generation_target(
         staging_root=command.staging_root,
         target_path=command.target_path,
         output_path=command.output_path,
@@ -313,7 +337,7 @@ def generate_current_canvas_regional_txt2img(
         target_byte_size=command.target_byte_size,
         width=command.width,
         height=command.height,
-        img2img=False,
+        img2img=img2img,
     )
     result = run_current_canvas_regional_denoising(
         recipe,
@@ -329,6 +353,17 @@ def generate_current_canvas_regional_txt2img(
         bindings=bindings,
         layout=layout,
         **({"on_progress": on_progress} if on_progress is not None else {}),
+        **cast(
+            Any,
+            {
+                "image": source,
+                "denoising_strength": cast(
+                    GenerateIllustriousImg2ImgCommand, command
+                ).denoising_strength,
+            }
+            if img2img
+            else {},
+        ),
     )
     image = _rgb_image(
         result,
@@ -347,4 +382,81 @@ def generate_current_canvas_regional_txt2img(
         request_id=command.request_id,
         seed=parameters.seed,
         output_mode="RGB",
+    )
+
+
+def generate_current_canvas_regional_txt2img(
+    recipe: object,
+    *,
+    command: GenerateIllustriousTxt2ImgCommand,
+    pipeline: Any,
+    runtime: MLRuntime,
+    profile: _Profile,
+    denoising_profile: _DenoisingProfile,
+    global_negative_coverage: Everywhere | Alpha8,
+    global_positive_coverage: Everywhere | Alpha8,
+    negative_pooled_source_id: str,
+    positive_pooled_source_id: str,
+    bindings: tuple[TransformerBinding, ...],
+    layout: _Layout,
+    on_progress: DenoisingProgressSink | None = None,
+) -> dict[str, object]:
+    """Verify a transparent target, run once, and return the original PNG receipt."""
+    return _generate_current_canvas_regional(
+        recipe,
+        command=command,
+        pipeline=pipeline,
+        runtime=runtime,
+        profile=profile,
+        denoising_profile=denoising_profile,
+        global_negative_coverage=global_negative_coverage,
+        global_positive_coverage=global_positive_coverage,
+        negative_pooled_source_id=negative_pooled_source_id,
+        positive_pooled_source_id=positive_pooled_source_id,
+        bindings=bindings,
+        layout=layout,
+        on_progress=on_progress,
+    )
+
+
+def generate_current_canvas_regional_img2img(
+    recipe: object,
+    *,
+    command: GenerateIllustriousImg2ImgCommand,
+    pipeline: Any,
+    runtime: MLRuntime,
+    profile: _Profile,
+    denoising_profile: _DenoisingProfile,
+    global_negative_coverage: Everywhere | Alpha8,
+    global_positive_coverage: Everywhere | Alpha8,
+    negative_pooled_source_id: str,
+    positive_pooled_source_id: str,
+    bindings: tuple[TransformerBinding, ...],
+    layout: _Layout,
+    on_progress: DenoisingProgressSink | None = None,
+) -> dict[str, object]:
+    """Consume one verified opaque RGB snapshot through the ordinary native image path.
+
+    Only the exact img2img command and explicit Euler image profiles are admitted.
+    The unchanged ordinary factory owns training-timestep cutoff and independent
+    replayable posterior sampling; its existing compute-dtype noise policy is
+    retained. Strength zero encodes/decodes without a denoising step. VAE selection,
+    ancestral/DPM image sampling, partial alpha and public transport remain outside
+    this private frontend. All output/restoration/publication owners are shared.
+    """
+    return _generate_current_canvas_regional(
+        recipe,
+        command=command,
+        pipeline=pipeline,
+        runtime=runtime,
+        profile=profile,
+        denoising_profile=denoising_profile,
+        global_negative_coverage=global_negative_coverage,
+        global_positive_coverage=global_positive_coverage,
+        negative_pooled_source_id=negative_pooled_source_id,
+        positive_pooled_source_id=positive_pooled_source_id,
+        bindings=bindings,
+        layout=layout,
+        on_progress=on_progress,
+        img2img=True,
     )

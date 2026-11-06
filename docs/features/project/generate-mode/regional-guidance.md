@@ -1626,3 +1626,34 @@ ROOT releases only five archived idle scratch paths, preserving runtime/resource
 current companion, saved projects and durable business state. Visual/human, Anima, release and
 PP-001/005/007/008 remain unchanged. Regional provenance, Compare and result-derived
 preset exclusions persist.
+
+## Private opaque regional img2img
+
+The [private image consumer](../../../engineering/phase-4-regional-guidance-img2img-research.md)
+adds an exact opaque-image frontend beside the existing private TXT frontend.
+It reuses the ordinary Invoke-adapted image factory, verified snapshot, seeded
+VAE posterior, native Euler loop and PNG publisher. New CPU-FP32/CUDA-manual-FP16
+profiles require explicit noise policy, finite strength0..1 and zero CFG Rescale.
+Strength0 is VAE encode/decode without UNet, not a source-pixel identity promise.
+Only the qualified finite native VAE graph is borrowed; no precision repair occurs.
+
+ROOT:369 distinct PASS, including85 new native cases and7 trained selections.
+Official Illustrious at104x72 produces seven PNGs,83 steps and5,810 original
+attention calls. Source-only changes affect pixels; repeat and the zero-region
+ordinary PT/RGB control are exact. Two isolated mutations give20 GREEN/four
+post-publication semantic RED with exact controls/restoration. Source review,
+execution and retained-byte/release gates remain separate evidence levels.
+
+Public opaque regional admission, worker transport, queue/Retry durability and
+installed worker support remain unchanged and unqualified by this private slice.
+Canonical Python fixtures are not genuine Main handoffs. Partial-alpha modes,
+selected-VAE encoding, ancestral/DPM image sampling and Anima remain separate.
+Historical visual3 narrow PASS/1 INCONCLUSIVE remains NOT_QUALIFIED; human quality,
+release and PP-001/005/007/008 status do not change. Regional provenance, Compare
+and result-derived-preset exclusions persist.
+
+Independent source/retained-byte reviews are CLEAN within their stated limits.
+ROOT preserves all raw source/output bytes in a verified no-follow archive and,
+after fresh exit/restoration/dependency gates, releases only two idle scratch
+roots, reclaiming116,465,664 allocated bytes. Runtime/resources and prior
+companions remain protected; no broader readiness follows.

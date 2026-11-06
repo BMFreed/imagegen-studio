@@ -954,12 +954,15 @@ def scoped_illustrious_regional_attention(
     bindings: tuple[TransformerBinding, ...],
     plan: AttentionPlan,
     tensor_profile: _TensorProfile = "cpu-float32-v1",
+    _allow_empty: Callable[[], bool] | None = None,
 ) -> Generator[None]:
     """Temporarily mask every native cross-attention site of one complete root.
 
     All validation and mask-size preflight precede the first model mutation.
     A normal exit requires at least one successful original cross-attention call;
     catching a failed forward inside the body does not make the scope successful.
+    The private img2img owner may attest its validated zero-step native schedule
+    at exit; only an exact True permits an otherwise unused, fully validated scope.
     """
     native = _load_native()
     _require(
@@ -976,6 +979,11 @@ def scoped_illustrious_regional_attention(
             "An overlapping root/module already belongs to another scope.",
         )
         cross = _preflight(root, modules, bindings, plan, native, tensor_profile)
+        _require(
+            _allow_empty is None or callable(_allow_empty),
+            "INPUT_INVALID",
+            "An empty-scope attestation must be callable.",
+        )
         scope = _Scope(root, modules, cross, plan, native, tensor_profile)
         for module in modules:
             _OWNERS[id(module)] = owner
@@ -985,7 +993,9 @@ def scoped_illustrious_regional_attention(
         if scope.failure is not None:
             raise scope.failure
         _require(
-            scope.consumed > 0, "INPUT_INVALID", "Scope exited without consuming cross attention."
+            scope.consumed > 0 or (_allow_empty is not None and _allow_empty() is True),
+            "INPUT_INVALID",
+            "Scope exited without consuming cross attention.",
         )
     finally:
         try:

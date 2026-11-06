@@ -807,8 +807,16 @@ def test_high_level_signatures_remain_required_and_have_no_sampling_side_channel
         ),
     ):
         signature = inspect.signature(entry)
-        # The existing progress owner added this optional observer before this sampler change.
-        assert tuple(signature.parameters) == ("recipe", *keywords, "on_progress")
+        # IMG adds a paired internal source seam; TXT has no image side channel.
+        image_keywords = (
+            ("image", "denoising_strength")
+            if entry is cpu.denoising.run_current_canvas_regional_denoising
+            else ()
+        )
+        assert tuple(signature.parameters) == ("recipe", *keywords, "on_progress", *image_keywords)
+        for name in image_keywords:
+            assert signature.parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
+            assert signature.parameters[name].default is None
         assert signature.parameters["on_progress"].kind is inspect.Parameter.KEYWORD_ONLY
         assert signature.parameters["on_progress"].default is None
         assert signature.parameters["recipe"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
