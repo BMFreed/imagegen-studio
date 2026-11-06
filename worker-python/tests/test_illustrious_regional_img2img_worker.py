@@ -50,25 +50,29 @@ def _target(case: Any, *, alpha: int) -> None:
 
 @pytest.mark.parametrize("strength", (0.0, 0.5, 1.0))
 @pytest.mark.parametrize("cfg_rescale", (0.0, 0.7, 0.99))
+@pytest.mark.parametrize("scheduler", ("euler", "euler_a"))
 def test_real_opaque_bundle_preserves_exact_img_command_and_explicit_strength(
-    tmp_path: Path, strength: float, cfg_rescale: float
+    tmp_path: Path, strength: float, cfg_rescale: float, scheduler: str
 ) -> None:
     case = _case(tmp_path, strength=strength)
     case.request["job"]["sampling"]["cfgRescale"] = cfg_rescale
+    case.request["job"]["sampling"]["scheduler"] = scheduler
     _seal(case)
     parsed = worker.parse_regional_request(case.wire)
     assert type(parsed.command) is GenerateIllustriousImg2ImgCommand
     assert parsed.command.denoising_strength == strength
     assert parsed.command.cfg_rescale == cfg_rescale
     assert parsed.parameters.cfg_rescale == cfg_rescale
+    assert parsed.command.scheduler == parsed.parameters.scheduler == scheduler
     assert parsed.command.target_sha256 == _descriptor(case.target)["sha256"]
     assert parsed.composition_profile == "invoke-canvas-v1"
     assert parsed.initialization_profile is None
-    assert (
-        worker._denoising_profile(  # pyright: ignore[reportPrivateUsage]
-            parsed.parameters, None, parsed.composition_profile, img2img=True
-        )
-        == "ordinary-canvas-euler-img2img-cuda-fp16-v1"
+    assert worker._denoising_profile(  # pyright: ignore[reportPrivateUsage]
+        parsed.parameters, None, parsed.composition_profile, img2img=True
+    ) == (
+        "ordinary-canvas-euler-ancestral-img2img-cuda-fp16-v1"
+        if scheduler == "euler_a"
+        else "ordinary-canvas-euler-img2img-cuda-fp16-v1"
     )
     expected = case.alpha.read_bytes()
     case.alpha.unlink()
@@ -82,7 +86,7 @@ def test_real_opaque_bundle_preserves_exact_img_command_and_explicit_strength(
     (
         "no-public-profile",
         "initialization",
-        "ancestral",
+        "dpm-karras",
         "dpm",
         "rescale",
         "auto-vae",
@@ -110,8 +114,10 @@ def test_invalid_img_bundle_refuses_before_any_native_loader(
         del case.bundle["compositionProfile"]
     elif fault == "initialization":
         case.bundle["initializationProfile"] = "invoke-cpu-f32-add-noise-v1"
-    elif fault == "ancestral":
-        job["sampling"]["scheduler"] = "euler_a"
+    elif fault == "dpm-karras":
+        # Euler a now has its own IMG execution profile. DPM remains outside
+        # this image subset, with or without Karras scheduling.
+        job["sampling"]["scheduler"] = "dpmpp_2m_k"
     elif fault == "dpm":
         job["sampling"]["scheduler"] = "dpmpp_2m"
     elif fault == "rescale":
@@ -164,11 +170,17 @@ def test_invalid_img_bundle_refuses_before_any_native_loader(
 
 @pytest.mark.parametrize("strength", (0.0, 0.5))
 @pytest.mark.parametrize("cfg_rescale", (0.0, 0.7, 0.99))
+@pytest.mark.parametrize("scheduler", ("euler", "euler_a"))
 def test_real_dispatch_routes_img_once_without_prepared_vae_or_txt_output(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, strength: float, cfg_rescale: float
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    strength: float,
+    cfg_rescale: float,
+    scheduler: str,
 ) -> None:
     case = _case(tmp_path, strength=strength)
     case.request["job"]["sampling"]["cfgRescale"] = cfg_rescale
+    case.request["job"]["sampling"]["scheduler"] = scheduler
     _seal(case)
     case.wire["reportProgress"] = True
     calls: list[str] = []
@@ -186,6 +198,7 @@ def test_real_dispatch_routes_img_once_without_prepared_vae_or_txt_output(
         assert kwargs["mode"] == "txt2img"  # exact original borrowed pipeline remains standard
         assert parameters.positive_prompt == parameters.negative_prompt == ""
         assert parameters.vae is None and parameters.vae_precision == "FP16"
+        assert parameters.scheduler == scheduler
         return pipeline, None
 
     def forbidden(*_args: Any, **_kwargs: Any) -> Any:
@@ -196,8 +209,13 @@ def test_real_dispatch_routes_img_once_without_prepared_vae_or_txt_output(
         assert type(kwargs["command"]) is GenerateIllustriousImg2ImgCommand
         assert kwargs["command"].denoising_strength == strength
         assert kwargs["command"].cfg_rescale == cfg_rescale
+        assert kwargs["command"].scheduler == scheduler
         assert kwargs["pipeline"] is pipeline
-        assert kwargs["denoising_profile"] == "ordinary-canvas-euler-img2img-cuda-fp16-v1"
+        assert kwargs["denoising_profile"] == (
+            "ordinary-canvas-euler-ancestral-img2img-cuda-fp16-v1"
+            if scheduler == "euler_a"
+            else "ordinary-canvas-euler-img2img-cuda-fp16-v1"
+        )
         assert (
             kwargs["profile"]
             == "ordinary-canvas-invoke-dualclip-exact-ti-shared-readonly-cuda-fp16-v1"

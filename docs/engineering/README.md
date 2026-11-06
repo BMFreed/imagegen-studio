@@ -8,6 +8,27 @@ anonymized source bytes have not been rerun through earlier ML qualification.
 The cleaned publication history is prepared separately; no remote history is
 replaced as part of source preparation.
 
+## Euler a for opaque regional img2img
+
+[Ancestral image continuation](./phase-4-regional-guidance-img2img-euler-ancestral-research.md)
+adapts Invoke's existing scheduler and independent step RNG to the opaque
+regional image owner. A separate combination capability protects old peers;
+Euler/TXT/private neighbors and zero defaults remain. ROOT:520 Main /332 Python /
+192 browser PASS, strict typing/scoped checks/build; isolated mutations18 GREEN /
+three semantic RED with exact restoration. Installed native-r2 passes18 checks
+through real Sampler/Generate/Cancel, saved Euler/.2 edits, frozen Euler-a/.7
+Retry, exact control RGB and Add/Undo/Redo/Save/reopen. Two direct read-only
+controls preserve SQL/packages; Euler-a matches UI and Euler changes765,621 RGB
+channels. The Canvas observer uses the exact backing transform at fractional CSS
+bounds, keeping its tolerance unchanged; incomplete attempts are excluded.
+Source reviews are CLEAN within their scopes; final retained-byte/release gates
+are separately closed: independent retained-data audit is CLEAN, and ROOT
+confirms fresh exit/restoration/reader/dependency gates. All 2,972 entries survive
+in the verified archive; exact idle scratch disposal reclaims 55,685,120 bytes.
+Canonical runtime/model/autosave dependencies remain protected. No quality,
+Anima, broader image samplers/VAE/partial-alpha or release Install/Repair claim;
+PP-001/005/007/008 stay unchanged.
+
 ## CFG Rescale for opaque regional img2img
 
 [IMG rescale continuation](./phase-4-regional-guidance-img2img-cfg-rescale-research.md)

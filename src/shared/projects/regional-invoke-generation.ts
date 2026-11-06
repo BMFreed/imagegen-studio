@@ -105,6 +105,7 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   dpmSupported?: boolean | null
   embeddingsSupported?: boolean | null
   img2imgCfgRescaleSupported?: boolean | null
+  img2imgEulerASupported?: boolean | null
   img2imgSupported?: boolean | null
   initializationSupported?: boolean | null
   iterations: number
@@ -131,12 +132,12 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   const img2img = input.targetMode === 'img2img'
   if (
     img2img &&
-    (draft.sampling.sampler !== 'Euler' ||
+    ((draft.sampling.sampler !== 'Euler' && draft.sampling.sampler !== 'Euler a') ||
       draft.sampling.scheduler !== 'Normal' ||
       draft.vae !== null ||
       draft.vaePrecision !== 'FP16')
   ) {
-    return 'Regional img2img requires Euler/Normal and Embedded FP16 VAE.'
+    return 'Regional img2img requires Euler or Euler a with Normal and Embedded FP16 VAE.'
   }
   if (!(
     ((draft.sampling.sampler === 'Euler' || draft.sampling.sampler === 'Euler a') &&
@@ -216,6 +217,14 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
     }
     if (input.img2imgSupported !== true) {
       return 'The current image engine does not support opaque img2img with Regional Guidance. Repair or update the runtime.'
+    }
+  }
+  if (img2img && draft.sampling.sampler === 'Euler a') {
+    if (input.img2imgEulerASupported === undefined || input.img2imgEulerASupported === null) {
+      return 'Checking image engine support for Euler a with opaque regional img2img. Repair or update the runtime if support remains unavailable.'
+    }
+    if (input.img2imgEulerASupported !== true) {
+      return 'The current image engine does not support Euler a with opaque regional img2img. Repair or update the runtime.'
     }
   }
   if (cfgRescale !== 0) {

@@ -155,6 +155,16 @@ export function supportsInferenceRegionalImg2ImgCFGRescale(value: unknown): bool
   )
 }
 
+/** Opaque IMG plus TXT Euler a alone does not qualify their separate native combination. */
+export function supportsInferenceRegionalImg2ImgEulerAncestral(value: unknown): boolean {
+  return (
+    isQualifiedInferenceWorkerReady(value) &&
+    supportsInferenceRegionalImg2Img(value) &&
+    supportsInferenceRegionalInvokeInitialization(value) &&
+    value.capabilities.includes('illustrious-regional-img2img-euler-a-v1')
+  )
+}
+
 /** Global LoRAs require the qualified public regional owner and its explicit adapter opt-in. */
 export function supportsInferenceRegionalLoras(value: unknown): boolean {
   return (

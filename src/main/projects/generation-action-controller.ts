@@ -36,6 +36,7 @@ import {
   supportsInferenceRegionalDpm,
   supportsInferenceRegionalImg2Img,
   supportsInferenceRegionalImg2ImgCFGRescale,
+  supportsInferenceRegionalImg2ImgEulerAncestral,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
   supportsInferenceRegionalVae,
@@ -437,6 +438,11 @@ export class ProjectGenerationActionController {
         !this.closed &&
         !!this.options.regional &&
         supportsInferenceRegionalImg2ImgCFGRescale(ready),
+      regionalImg2ImgEulerASupported:
+        !this.blocked &&
+        !this.closed &&
+        !!this.options.regional &&
+        supportsInferenceRegionalImg2ImgEulerAncestral(ready),
       regionalImg2ImgSupported:
         !this.blocked &&
         !this.closed &&
@@ -1409,6 +1415,9 @@ export class ProjectGenerationActionController {
                 !supportsRegional(ready) ||
                 (source.operation === 'illustrious-regional-img2img' &&
                   !supportsInferenceRegionalImg2Img(ready)) ||
+                (source.operation === 'illustrious-regional-img2img' &&
+                  frozen.payload.workerJob.sampling.scheduler === 'euler_a' &&
+                  !supportsInferenceRegionalImg2ImgEulerAncestral(ready)) ||
                 ((frozen.payload.workerJob.sampling.cfgRescale ?? 0) !== 0 &&
                   !supportsInferenceRegionalCFGRescale(ready)) ||
                 (source.operation === 'illustrious-regional-img2img' &&

@@ -9,6 +9,7 @@ import {
   supportsInferenceEmbeddings,
   supportsInferenceRegionalImg2Img,
   supportsInferenceRegionalImg2ImgCFGRescale,
+  supportsInferenceRegionalImg2ImgEulerAncestral,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
   supportsInferenceRegionalProgress,
@@ -510,6 +511,16 @@ export class RegionalGenerationProcessor {
         throw new RegionalGenerationProcessorError(
           'INFERENCE_UNAVAILABLE',
           'The worker has not qualified opaque Regional Guidance img2img.',
+        )
+      }
+      if (
+        input.request.type === 'generate-illustrious-img2img' &&
+        input.request.job.sampling.scheduler === 'euler_a' &&
+        !supportsInferenceRegionalImg2ImgEulerAncestral(transport.ready)
+      ) {
+        throw new RegionalGenerationProcessorError(
+          'INFERENCE_UNAVAILABLE',
+          'The worker has not qualified Euler a with opaque regional img2img.',
         )
       }
       if (

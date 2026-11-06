@@ -123,9 +123,12 @@ assert.ok(
     'installed-regional-invoke-cfg-rescale-v1',
     'installed-regional-invoke-img2img-v1',
     'installed-regional-invoke-img2img-cfg-rescale-v1',
+    'installed-regional-invoke-img2img-euler-a-v1',
   ].includes(fixture.profile),
 )
-const imgCfgRescaleProfile = fixture.profile === 'installed-regional-invoke-img2img-cfg-rescale-v1'
+const imgEulerAProfile = fixture.profile === 'installed-regional-invoke-img2img-euler-a-v1'
+const imgCfgRescaleProfile =
+  imgEulerAProfile || fixture.profile === 'installed-regional-invoke-img2img-cfg-rescale-v1'
 const img2imgProfile =
   imgCfgRescaleProfile || fixture.profile === 'installed-regional-invoke-img2img-v1'
 const mainDeathProfile = fixture.profile === 'installed-regional-invoke-main-death-v1'
@@ -153,10 +156,14 @@ const progressProfile =
 const recoveryProfile =
   mainDeathProfile || fixture.profile === 'installed-regional-invoke-recovery-v1'
 const initialization = 'invoke-cpu-f32-add-noise-v1'
-const generationSampler = dpmpp2mProfile ? 'DPM++ 2M' : initializationProfile ? 'Euler a' : 'Euler'
+const generationSampler = dpmpp2mProfile
+  ? 'DPM++ 2M'
+  : initializationProfile || imgEulerAProfile
+    ? 'Euler a'
+    : 'Euler'
 const generationScheduler = dpmpp2mProfile
   ? 'dpmpp_2m_k'
-  : initializationProfile
+  : initializationProfile || imgEulerAProfile
     ? 'euler_a'
     : 'euler'
 const generationScheduleLabel = dpmpp2mProfile ? 'Karras' : 'Normal'
@@ -470,6 +477,12 @@ async function verifyProvision() {
     for (const capability of [
       'illustrious-regional-img2img-cfg-rescale-v1',
       'illustrious-regional-cfg-rescale-v1',
+    ])
+      assert.ok(provision.ready.capabilities.includes(capability))
+  if (imgEulerAProfile)
+    for (const capability of [
+      'illustrious-regional-img2img-euler-a-v1',
+      'illustrious-regional-invoke-init-v1',
     ])
       assert.ok(provision.ready.capabilities.includes(capability))
   if (initializationProfile)
@@ -916,6 +929,12 @@ async function captureImagePreservation() {
       nativeFormulaCopied: false,
       numericalCausalityClaimed: false,
     }
+  }
+  if (imgEulerAProfile) {
+    report.boundary.calls +=
+      ' The Sampler UI explicitly changes Euler to Euler a for both requests. After Cancel, saved current authoring returns to Euler; frozen Retry and accepted ordinary IMG provenance retain Euler a.'
+    report.boundary.exclusions +=
+      ' This profile additionally qualifies only Euler a/Normal for opaque IMG; DPM image sampling remains excluded.'
   }
   check('Existing mixed-operation terminal SQL/package/candidate/input pool pinned without reset')
 }
@@ -2325,7 +2344,7 @@ async function prepareCatalogAndProjects() {
         cfgScale: 5,
         denoisingStrength: img2imgProfile ? imageStrength : null,
         steps: 30,
-        sampler: generationSampler,
+        sampler: imgEulerAProfile ? 'Euler' : generationSampler,
         scheduler: 'Normal',
       },
     }
@@ -3875,6 +3894,9 @@ function assertFrozen(frozen, project, expectedSeed = 123) {
     assert.equal(frozen.context.kind, 'normal-img2img-preparation')
     assert.equal(frozen.context.sampling.denoisingStrength, imageStrength)
     assert.equal(frozen.workerJob.sampling.denoisingStrength, imageStrength)
+    assert.equal(frozen.context.sampling.sampler, generationSampler)
+    assert.equal(frozen.context.sampling.scheduler, 'Normal')
+    assert.equal(frozen.context.sampling.invokeScheduler, generationScheduler)
     assert.equal(Object.hasOwn(frozen, 'initializationProfile'), false)
   }
   assert.equal(frozen.compositionProfile, 'invoke-canvas-v1')
@@ -4085,6 +4107,14 @@ async function prepareImageProject(project) {
     assert.equal((await current(project)).generationDraft.cfgRescale, 0)
     await setCfgRescaleUi(project, generationCfgRescale)
   }
+  if (imgEulerAProfile) {
+    assert.equal((await current(project)).generationDraft.sampling.sampler, 'Euler')
+    await window.locator('[aria-label="Sampler"]').click()
+    await window.getByText('Euler a', { exact: true }).last().click()
+    await expect
+      .poll(async () => (await current(project)).generationDraft.sampling.sampler)
+      .toBe('Euler a')
+  }
   assert.equal((await targetState(project)).mode, 'img2img')
   await save(project)
   const saved = await readZip(project.file)
@@ -4110,6 +4140,7 @@ async function imageHealthyControl(project) {
     advisory = await api('getGenerationState', project.id)
   assert.equal(state.mode, 'img2img')
   assert.equal(advisory.regionalImg2ImgSupported, true)
+  if (imgEulerAProfile) assert.equal(advisory.regionalImg2ImgEulerASupported, true)
   if (imgCfgRescaleProfile) {
     assert.equal(advisory.regionalImg2ImgCfgRescaleSupported, true)
     assert.equal(advisory.regionalCfgRescaleSupported, true)
@@ -4265,6 +4296,13 @@ async function editImageCurrentUi(project) {
     await input.fill(value)
     await input.press('Tab')
   }
+  if (imgEulerAProfile) {
+    await window.locator('[aria-label="Sampler"]').click()
+    await window.getByText('Euler', { exact: true }).last().click()
+    await expect
+      .poll(async () => (await current(project)).generationDraft.sampling.sampler)
+      .toBe('Euler')
+  }
   if (imgCfgRescaleProfile) await setCfgRescaleUi(project, 0.2)
   await expect
     .poll(async () => {
@@ -4278,6 +4316,7 @@ async function editImageCurrentUi(project) {
         seed: value.generationDraft.seed,
         enabled: value.regionalGuidance.map(({ enabled }) => enabled),
         ...(imgCfgRescaleProfile ? { cfgRescale: value.generationDraft.cfgRescale } : {}),
+        ...(imgEulerAProfile ? { sampler: value.generationDraft.sampling.sampler } : {}),
       }
     })
     .toEqual({
@@ -4289,6 +4328,7 @@ async function editImageCurrentUi(project) {
       seed: { policy: 'fixed', value: 124 },
       enabled: [false, false],
       ...(imgCfgRescaleProfile ? { cfgRescale: 0.2 } : {}),
+      ...(imgEulerAProfile ? { sampler: 'Euler' } : {}),
     })
   const target = await targetState(project)
   assert.equal(
@@ -4313,6 +4353,10 @@ async function generateCancelEditRetry(project) {
   const advisory = await api('getGenerationState', project.id)
   assert.equal(advisory.regionalSupported, true)
   if (img2imgProfile) assert.equal(advisory.regionalImg2ImgSupported, true)
+  if (imgEulerAProfile) {
+    assert.equal(advisory.regionalImg2ImgEulerASupported, true)
+    assert.equal((await current(project)).generationDraft.sampling.sampler, 'Euler a')
+  }
   if (imgCfgRescaleProfile) {
     assert.equal(advisory.regionalImg2ImgCfgRescaleSupported, true)
     assert.equal((await current(project)).generationDraft.cfgRescale, generationCfgRescale)
@@ -4576,6 +4620,12 @@ async function generateCancelEditRetry(project) {
           .find(({ pid }) => pid === wire.pid)
           .ready.capabilities.includes('illustrious-regional-img2img-v1'),
       )
+      if (imgEulerAProfile) {
+        const ready = observed.workers.find(({ pid }) => pid === wire.pid).ready
+        assert.ok(ready.capabilities.includes('illustrious-regional-img2img-euler-a-v1'))
+        assert.ok(ready.capabilities.includes('illustrious-regional-invoke-init-v1'))
+        assert.equal(wire.bundleJson.request.job.sampling.scheduler, 'euler_a')
+      }
       if (imgCfgRescaleProfile) {
         const ready = observed.workers.find(({ pid }) => pid === wire.pid).ready
         for (const capability of [
@@ -4625,6 +4675,23 @@ async function generateCancelEditRetry(project) {
     check(
       'Actual IMG CFG Rescale0.7 reaches all three native wires and frozen Retry after a saved0.2 edit; every executing peer advertises the separate combination capability',
       report.cfgRescaleFlow,
+    )
+  }
+  if (imgEulerAProfile) {
+    assert.equal(edited.generationDraft.sampling.sampler, 'Euler')
+    report.imgEulerAFlow = {
+      originalSampler: 'Euler a',
+      editedSavedSampler: 'Euler',
+      actualWireSchedulers: wires.map(
+        ({ bundleJson }) => bundleJson.request.job.sampling.scheduler,
+      ),
+      newCapability: 'illustrious-regional-img2img-euler-a-v1',
+      noTxtInitialization: true,
+      noExtraNativeRequests: true,
+    }
+    check(
+      'Actual opaque IMG Euler a reaches all three native wires and frozen Retry after saved Euler edits; every executing peer advertises the separate combination capability',
+      report.imgEulerAFlow,
     )
   }
   assert.equal(
@@ -6523,11 +6590,29 @@ async function observeCanvas(label, decoded, imageUrl) {
         samples = await canvas()
           .locator('.canvas-area')
           .evaluate(
-            async (host, { bbox, imageUrl }) => {
+            async (host, { bbox, imageUrl, exactBackingScale }) => {
               const bitmap = host.querySelector('.konvajs-content canvas')
               if (!(bitmap instanceof HTMLCanvasElement))
                 throw new Error('Actual Konva scene is absent')
               const rect = bitmap.getBoundingClientRect()
+              // Konva retains its backing-store transform; integer canvas dimensions
+              // and fractional CSS bounds need not recover that exact transform.
+              const surface = bitmap.getContext('2d').getTransform()
+              if (
+                exactBackingScale &&
+                (surface.b !== 0 ||
+                  surface.c !== 0 ||
+                  surface.e !== 0 ||
+                  surface.f !== 0 ||
+                  !Number.isFinite(surface.a) ||
+                  surface.a <= 0 ||
+                  surface.a !== surface.d ||
+                  Math.abs(bitmap.width - rect.width * surface.a) >= 1 ||
+                  Math.abs(bitmap.height - rect.height * surface.d) >= 1)
+              )
+                throw new Error('Unexpected native Canvas backing-store transform')
+              const scaleX = exactBackingScale ? surface.a : bitmap.width / rect.width
+              const scaleY = exactBackingScale ? surface.d : bitmap.height / rect.height
               const camera = {
                 x: Number(host.dataset.cameraX),
                 y: Number(host.dataset.cameraY),
@@ -6541,19 +6626,27 @@ async function observeCanvas(label, decoded, imageUrl) {
               reference.width = bitmap.width
               reference.height = bitmap.height
               const context = reference.getContext('2d', { willReadFrequently: true })
-              context.scale(bitmap.width / rect.width, bitmap.height / rect.height)
+              context.scale(scaleX, scaleY)
               context.translate(camera.x, camera.y)
               context.scale(camera.scale, camera.scale)
               context.drawImage(image, bbox.x, bbox.y, bbox.width, bbox.height)
               return {
                 camera,
                 bitmap: { width: bitmap.width, height: bitmap.height },
+                backingScale: exactBackingScale
+                  ? {
+                      x: scaleX,
+                      y: scaleY,
+                      legacyX: bitmap.width / rect.width,
+                      legacyY: bitmap.height / rect.height,
+                      cssWidth: rect.width,
+                      cssHeight: rect.height,
+                      devicePixelRatio: window.devicePixelRatio,
+                    }
+                  : undefined,
                 samples: [bbox.width / 4, bbox.width / 2, (bbox.width * 3) / 4].map((position) => {
-                  const x =
-                    ((camera.x + (bbox.x + position) * camera.scale) * bitmap.width) / rect.width
-                  const y =
-                    ((camera.y + (bbox.y + bbox.height / 2) * camera.scale) * bitmap.height) /
-                    rect.height
+                  const x = (camera.x + (bbox.x + position) * camera.scale) * scaleX
+                  const y = (camera.y + (bbox.y + bbox.height / 2) * camera.scale) * scaleY
                   if (x < 0 || y < 0 || x >= bitmap.width || y >= bitmap.height)
                     throw new Error('Frozen world location is outside actual Canvas')
                   const actual = Array.from(
@@ -6573,8 +6666,13 @@ async function observeCanvas(label, decoded, imageUrl) {
                 }),
               }
             },
-            { bbox, imageUrl },
+            { bbox, imageUrl, exactBackingScale: imgEulerAProfile },
           )
+        if (imgEulerAProfile) {
+          report.canvasDiagnostics ??= {}
+          report.canvasDiagnostics[label] = samples
+          checkpoint()
+        }
         return Math.max(...samples.samples.map(({ maxChannelDifference }) => maxChannelDifference))
       },
       { timeout: timeout(), intervals: [100, 250, 500] },
@@ -7136,6 +7234,15 @@ async function resultsAddSaveReopen(project, completed) {
       'dpmpp_2m_k',
     )
     report.dpmpp2mFlow.savedReopenedAssociationVerified = true
+  }
+  if (imgEulerAProfile) {
+    assert.equal(reopened.generationDraft.sampling.sampler, 'Euler')
+    assert.equal(accepted.generationProvenance.generationConfiguration.sampling.sampler, 'Euler a')
+    assert.equal(
+      accepted.generationProvenance.generationConfiguration.sampling.invokeScheduler,
+      'euler_a',
+    )
+    report.imgEulerAFlow.savedReopenedAssociationVerified = true
   }
   if (cfgRescaleProfile || imgCfgRescaleProfile) {
     assert.equal(reopened.generationDraft.cfgRescale, 0.2)
@@ -7829,6 +7936,29 @@ async function assertImageActions(project) {
     assert.ok(cancel.finishedOrder < changes[2].startedOrder)
     assert.ok(changes[2].finishedOrder < retry.startedOrder)
     report.cfgRescaleFlow.originalAuthoringActions = changes
+  }
+  if (imgEulerAProfile) {
+    const changes = observed.ipc.filter(
+      ({ channel, args }) =>
+        channel === 'projects:update-generation-draft' && args[1]?.kind === 'sampling-pair',
+    )
+    assert.deepEqual(
+      changes.map(({ args }) => args.slice(0, 2)),
+      [
+        [
+          report.img2img.controlProjectKey,
+          { kind: 'sampling-pair', sampler: 'Euler a', scheduler: 'Normal' },
+        ],
+        [project.id, { kind: 'sampling-pair', sampler: 'Euler a', scheduler: 'Normal' }],
+        [project.id, { kind: 'sampling-pair', sampler: 'Euler', scheduler: 'Normal' }],
+      ],
+    )
+    assert.ok(changes[0].finishedOrder < generates[0].startedOrder)
+    assert.ok(changes[1].finishedOrder < generates[1].startedOrder)
+    const cancel = observed.ipc.find(({ channel }) => channel === 'projects:cancel-generation-job')
+    assert.ok(cancel.finishedOrder < changes[2].startedOrder)
+    assert.ok(changes[2].finishedOrder < retry.startedOrder)
+    report.imgEulerAFlow.originalAuthoringActions = changes
   }
   const rasterEdits = observed.ipc.filter(
     ({ channel }) => channel === 'projects:update-raster-layer',

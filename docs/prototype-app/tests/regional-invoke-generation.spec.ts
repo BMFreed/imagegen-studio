@@ -127,6 +127,116 @@ test('renderer frozen IMG rescale Retry follows frozen settings and the combinat
   expect(errors).toEqual([])
 })
 
+test('renderer opaque IMG Euler a requires the combination capability and keeps CFG Rescale separate', async ({
+  page,
+}, testInfo) => {
+  const errors: string[] = []
+  page.on('pageerror', (cause) => errors.push(cause.message))
+  await mountWiring(page, 'project')
+  const generate = page.getByRole('button', { exact: true, name: 'Generate' })
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.targetMode = 'img2img'
+    fixture.tab.primaryBbox.x += 8
+    fixture.tab.generationDraft.sampling.sampler = 'Euler a'
+    fixture.tab.generationDraft.sampling.denoisingStrength = 0.5
+    fixture.state.regionalImg2ImgSupported = true
+    fixture.state.regionalInvokeInitializationSupported = true
+  })
+  await expect(generate).toBeDisabled()
+  await expect(
+    page.getByText(/Checking image engine support for Euler a with opaque regional img2img/),
+  ).toBeVisible()
+  await page.evaluate(() => {
+    globalThis.window.regionalWiringFixture.state.regionalImg2ImgEulerASupported = false
+  })
+  await expect(generate).toBeDisabled()
+  await expect(
+    page.getByText(
+      'The current image engine does not support Euler a with opaque regional img2img. Repair or update the runtime.',
+    ),
+  ).toBeVisible()
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.state.regionalImg2ImgEulerASupported = true
+  })
+  await expect(generate).toBeEnabled()
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.tab.generationDraft.cfgRescale = 0.7
+    fixture.state.regionalCfgRescaleSupported = true
+    fixture.state.regionalImg2ImgCfgRescaleSupported = false
+  })
+  await expect(generate).toBeDisabled()
+  await expect(
+    page.getByText(/does not support CFG Rescale with opaque regional img2img/),
+  ).toBeVisible()
+  await page.evaluate(() => {
+    globalThis.window.regionalWiringFixture.state.regionalImg2ImgCfgRescaleSupported = true
+  })
+  await expect(generate).toBeEnabled()
+  expect(
+    await page.evaluate(
+      () => globalThis.window.regionalWiringFixture.tab.generationDraft.sampling.sampler,
+    ),
+  ).toBe('Euler a')
+  await page.screenshot({ path: testInfo.outputPath('opaque-img-euler-a-enabled.png') })
+  await generate.click()
+  expect(await page.evaluate(() => globalThis.window.regionalWiringFixture.generateCalls)).toEqual([
+    1,
+  ])
+  expect(errors).toEqual([])
+})
+
+test('renderer frozen IMG Euler a Retry follows frozen sampler rather than saved Euler draft', async ({
+  page,
+}) => {
+  const errors: string[] = []
+  page.on('pageerror', (cause) => errors.push(cause.message))
+  await mountWiring(page, 'queue')
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.queueItem.operation = 'illustrious-regional-img2img'
+    fixture.queueItem.details!.sampling.sampler = 'Euler a'
+    fixture.queueItem.details!.sampling.denoisingStrength = 0.5
+    fixture.state.regionalImg2ImgSupported = true
+    fixture.state.regionalInvokeInitializationSupported = true
+    fixture.state.regionalImg2ImgEulerASupported = false
+    fixture.tab.regionalGuidance = []
+    fixture.tab.generationDraft.sampling.sampler = 'Euler'
+    fixture.tab.generationDraft.model!.baseModelFamily = 'anima'
+    fixture.epoch += 1
+  })
+  const retry = page.getByRole('button', { exact: true, name: 'Retry job' })
+  await expect(retry).toBeDisabled()
+  await page.evaluate(() => {
+    globalThis.window.regionalWiringFixture.state.regionalImg2ImgEulerASupported = true
+  })
+  await expect(retry).toBeEnabled()
+  await retry.click()
+  expect(await page.evaluate(() => globalThis.window.regionalWiringFixture.retryCalls)).toEqual([
+    await page.evaluate(() => ({
+      id: globalThis.window.regionalWiringFixture.queueItem.id,
+      statusSequence: 3,
+    })),
+  ])
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.queueItem.details!.sampling.sampler = 'Euler'
+    delete fixture.state.regionalImg2ImgEulerASupported
+    fixture.epoch += 1
+  })
+  await expect(retry).toBeEnabled()
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.queueItem.operation = 'illustrious-regional-txt2img'
+    fixture.queueItem.details!.sampling.sampler = 'Euler a'
+    fixture.epoch += 1
+  })
+  await expect(retry).toBeEnabled()
+  expect(errors).toEqual([])
+})
+
 const sourceRoot = `/@fs${path.resolve(import.meta.dirname, '../../../src')}`
 
 /** Real renderer components, explicit mock IPC. These tests make no inference/runtime claim. */
@@ -659,12 +769,14 @@ test('renderer opaque regional img2img uses actual target and explicit strength'
     fixture.state.regionalDpmSupported = true
     fixture.state.regionalVaeSupported = true
   })
-  for (const sampler of ['Euler a', 'DPM++ 2M'] as const) {
+  for (const sampler of ['DPM++ 2M'] as const) {
     await page.evaluate((value) => {
       globalThis.window.regionalWiringFixture.tab.generationDraft.sampling.sampler = value
     }, sampler)
     await expect(generate).toBeDisabled()
-    await expect(page.getByText(/Regional img2img requires Euler\/Normal/)).toBeVisible()
+    await expect(
+      page.getByText(/Regional img2img requires Euler or Euler a with Normal/),
+    ).toBeVisible()
   }
   await page.evaluate(() => {
     const fixture = globalThis.window.regionalWiringFixture
@@ -681,7 +793,9 @@ test('renderer opaque regional img2img uses actual target and explicit strength'
     fixture.tab.generationDraft.vaePrecision = 'FP32'
   })
   await expect(generate).toBeDisabled()
-  await expect(page.getByText(/Regional img2img requires Euler\/Normal/)).toBeVisible()
+  await expect(
+    page.getByText(/Regional img2img requires Euler or Euler a with Normal/),
+  ).toBeVisible()
   await page.evaluate(() => {
     const fixture = globalThis.window.regionalWiringFixture
     fixture.tab.generationDraft.vaePrecision = 'FP16'

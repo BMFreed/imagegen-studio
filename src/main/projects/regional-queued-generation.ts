@@ -396,7 +396,8 @@ function parseRegionalPayload(json: string, invoke: boolean): FrozenQueuedRegion
   const samplerMatchesInitialization =
     (ordinary.kind === 'illustrious-txt2img' || ordinary.kind === 'illustrious-img2img') &&
     (initializationProfile === undefined
-      ? ordinary.workerJob.sampling.scheduler === 'euler'
+      ? ordinary.workerJob.sampling.scheduler === 'euler' ||
+        (image && invoke && ordinary.workerJob.sampling.scheduler === 'euler_a')
       : ordinary.workerJob.sampling.scheduler === 'euler_a' ||
         (invoke &&
           (ordinary.workerJob.sampling.scheduler === 'dpmpp_2m' ||
@@ -411,7 +412,9 @@ function parseRegionalPayload(json: string, invoke: boolean): FrozenQueuedRegion
     ((!invoke || image) &&
       (ordinary.workerJob.vaePrecision !== 'FP16' || ordinary.workerJob.vae != null)) ||
     (image &&
-      (initializationProfile !== undefined || ordinary.workerJob.sampling.scheduler !== 'euler')) ||
+      (initializationProfile !== undefined ||
+        (ordinary.workerJob.sampling.scheduler !== 'euler' &&
+          ordinary.workerJob.sampling.scheduler !== 'euler_a'))) ||
     (!invoke && (ordinary.workerJob.loras?.length ?? 0) !== 0) ||
     (!invoke &&
       ((ordinary.workerJob.embeddings?.positive.length ?? 0) !== 0 ||

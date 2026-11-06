@@ -1075,7 +1075,12 @@ export class GenerationQueueRepository {
     }
     if (
       input.regional.initializationProfile === undefined
-        ? input.request.job.sampling.scheduler !== 'euler'
+        ? input.request.job.sampling.scheduler !== 'euler' &&
+          !(
+            input.request.type === 'generate-illustrious-img2img' &&
+            input.prepared.context.kind === 'normal-img2img-preparation' &&
+            input.request.job.sampling.scheduler === 'euler_a'
+          )
         : input.regional.initializationProfile !== 'invoke-cpu-f32-add-noise-v1' ||
           !['dpmpp_2m', 'dpmpp_2m_k', 'euler_a'].includes(input.request.job.sampling.scheduler)
     ) {
@@ -1149,7 +1154,12 @@ export class GenerationQueueRepository {
       if (
         regional.compositionProfile !== 'invoke-canvas-v1' ||
         (regional.initializationProfile === undefined
-          ? request.job.sampling.scheduler !== 'euler'
+          ? request.job.sampling.scheduler !== 'euler' &&
+            !(
+              request.type === 'generate-illustrious-img2img' &&
+              prepared.context.kind === 'normal-img2img-preparation' &&
+              request.job.sampling.scheduler === 'euler_a'
+            )
           : regional.initializationProfile !== 'invoke-cpu-f32-add-noise-v1' ||
             !['dpmpp_2m', 'dpmpp_2m_k', 'euler_a'].includes(request.job.sampling.scheduler))
       ) {

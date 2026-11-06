@@ -421,7 +421,13 @@ test('opaque regional img2img requires explicit finite strength including admitt
 
 test('opaque regional img2img refuses TXT-only sampling and VAE choices without rewriting them', () => {
   const cases: [string, (value: IgsProjectDocumentV1) => void][] = [
-    ['Euler a', (v) => (v.generationDraft.sampling.sampler = 'Euler a')],
+    [
+      'Euler a with Karras',
+      (v) => {
+        v.generationDraft.sampling.sampler = 'Euler a'
+        v.generationDraft.sampling.scheduler = 'Karras'
+      },
+    ],
     ['DPM++ 2M', (v) => (v.generationDraft.sampling.sampler = 'DPM++ 2M')],
     ['Karras', (v) => (v.generationDraft.sampling.scheduler = 'Karras')],
     ['Auto', (v) => (v.generationDraft.vaePrecision = 'Auto')],
@@ -441,7 +447,7 @@ test('opaque regional img2img refuses TXT-only sampling and VAE choices without 
         initializationSupported: true,
         vaeSupported: true,
       })!,
-      /Regional img2img requires Euler\/Normal and Embedded FP16 VAE/,
+      /Regional img2img requires Euler or Euler a with Normal and Embedded FP16 VAE/,
       name,
     )
     assert.deepEqual(value, before)
@@ -560,6 +566,67 @@ test('opaque nonzero rescale requires its combination capability while zero and 
   value.generationDraft.cfgRescale = 0
   assert.equal(
     imageReason(value, { cfgRescaleSupported: false, img2imgCfgRescaleSupported: false }),
+    null,
+  )
+})
+
+test('opaque Euler a requires its own combination capability while Euler and TXT stay independent', () => {
+  const value = document()
+  value.generationDraft.sampling.sampler = 'Euler a'
+  value.generationDraft.sampling.denoisingStrength = 0.5
+  const before = structuredClone(value)
+  for (const img2imgEulerASupported of [undefined, null, false]) {
+    assert.match(
+      imageReason(value, { img2imgEulerASupported, initializationSupported: true })!,
+      /Euler a with opaque regional img2img/,
+    )
+  }
+  assert.equal(
+    imageReason(value, { img2imgEulerASupported: true, initializationSupported: true }),
+    null,
+  )
+  assert.match(
+    imageReason(value, { img2imgEulerASupported: true, initializationSupported: false })!,
+    /Regional Guidance with Euler a/,
+  )
+  assert.match(
+    imageReason(value, {
+      img2imgEulerASupported: true,
+      img2imgSupported: false,
+      initializationSupported: true,
+    })!,
+    /opaque img2img with Regional Guidance/,
+  )
+  assert.equal(
+    imageReason(value, {
+      img2imgEulerASupported: false,
+      img2imgSupported: false,
+      initializationSupported: true,
+      targetMode: 'txt2img',
+    }),
+    null,
+  )
+  assert.deepEqual(value, before)
+  value.generationDraft.sampling.sampler = 'Euler'
+  assert.equal(imageReason(value, { img2imgEulerASupported: false }), null)
+  value.generationDraft.sampling.sampler = 'Euler a'
+  value.generationDraft.cfgRescale = 0.7
+  assert.match(
+    imageReason(value, {
+      cfgRescaleSupported: true,
+      img2imgCfgRescaleSupported: false,
+      img2imgEulerASupported: true,
+      initializationSupported: true,
+    })!,
+    /CFG Rescale with opaque regional img2img/,
+  )
+  assert.equal(
+    imageReason(value, {
+      cfgRescaleSupported: true,
+      img2imgCfgRescaleSupported: true,
+      img2imgEulerASupported: true,
+      initializationSupported: true,
+    }),
     null,
   )
 })

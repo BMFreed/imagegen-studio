@@ -46,6 +46,7 @@ type Bundle = {
     width?: number
   }
   globalPositiveCoverage: { kind: string }
+  initializationProfile?: RegionalWorkerInput['initializationProfile']
   recipe: RegionalWorkerInput['recipe'] & {
     regions: {
       coverage: { alpha: { $alpha8: { byteSize: number; path: string; sha256: string } } }
@@ -720,10 +721,37 @@ for (const strength of [0, 0.5, 1]) {
   })
 }
 
+for (const strength of [0, 0.5, 1]) {
+  test(`public regional Euler a image transport preserves strength ${strength} without TXT initialization`, async () => {
+    await withFixture(async (fixture) => {
+      await useOpaqueImgFixture(fixture, strength)
+      fixture.input.request.job.sampling.scheduler = 'euler_a'
+      fixture.input.request.job.sampling.cfgRescale = 0.7
+      const before = structuredClone(fixture.input)
+      const source = await readFile(fixture.input.request.job.target.path)
+      const lease = await prepareRegionalWorkerRequest(fixture.input, fixture.scratch)
+      try {
+        const bundle = await bundleOf(lease)
+        assert.ok(bundle.request.type === 'generate-illustrious-img2img')
+        assert.equal(bundle.request.job.sampling.scheduler, 'euler_a')
+        assert.equal(bundle.request.job.sampling.denoisingStrength, strength)
+        assert.equal(bundle.request.job.sampling.cfgRescale, 0.7)
+        assert.equal(bundle.initializationProfile, undefined)
+        assert.equal('initializationProfile' in lease.wire, false)
+        assert.deepEqual(fixture.input, before)
+        assert.ok((await readFile(lease.request.job.target.path)).equals(source))
+      } finally {
+        await lease.dispose()
+      }
+      assert.deepEqual(await readdir(fixture.scratch), [])
+    })
+  })
+}
+
 for (const fault of [
   'private',
   'init',
-  'ancestral',
+  'ancestral-txt-init',
   'dpm',
   'rescale',
   'auto',
@@ -738,8 +766,9 @@ for (const fault of [
       const { input } = fixture
       assert.ok(input.request.type === 'generate-illustrious-img2img')
       switch (fault) {
-        case 'ancestral': {
+        case 'ancestral-txt-init': {
           input.request.job.sampling.scheduler = 'euler_a'
+          input.initializationProfile = 'invoke-cpu-f32-add-noise-v1'
           break
         }
         case 'auto':

@@ -9,6 +9,7 @@ import {
   supportsInferenceRegionalDpm,
   supportsInferenceRegionalImg2Img,
   supportsInferenceRegionalImg2ImgCFGRescale,
+  supportsInferenceRegionalImg2ImgEulerAncestral,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
   supportsInferenceRegionalVae,
@@ -437,7 +438,7 @@ export class ProjectRegionalGenerationCoordinator {
             : null
           input.onPlanned?.({ truncated: preflight?.truncated ?? false })
           assertCurrent()
-          const initializationProfile =
+          const txtInitializationProfile =
             compositionProfile &&
             (document.generationDraft.sampling.sampler === 'Euler a' ||
               document.generationDraft.sampling.sampler === 'DPM++ 2M')
@@ -469,7 +470,7 @@ export class ProjectRegionalGenerationCoordinator {
                   preflight!.items.map((item) => item.prompts.positive),
                 ) &&
                 !supportsInferenceEmbeddings(ready)) ||
-              (initializationProfile !== undefined &&
+              (txtInitializationProfile !== undefined &&
                 !supportsInferenceRegionalInvokeInitialization(ready))
             ) {
               throw new ProjectRegionalGenerationError(
@@ -498,12 +499,25 @@ export class ProjectRegionalGenerationCoordinator {
             )
             const target = await capture.composeTarget({ composeTarget })
             assertCurrent()
+            // Invoke grafts image latents into the ordinary denoiser. IMG uses its own
+            // frozen source/posterior owner and must never inherit the TXT initializer.
+            const initializationProfile =
+              target.mode === 'img2img' ? undefined : txtInitializationProfile
             if (compositionProfile && target.mode === 'img2img') {
               const draft = document.generationDraft
               if (!supportsInferenceRegionalImg2Img(ready)) {
                 throw new ProjectRegionalGenerationError(
                   'INFERENCE_UNAVAILABLE',
                   'The image engine has not qualified opaque img2img with Regional Guidance.',
+                )
+              }
+              if (
+                draft.sampling.sampler === 'Euler a' &&
+                !supportsInferenceRegionalImg2ImgEulerAncestral(ready)
+              ) {
+                throw new ProjectRegionalGenerationError(
+                  'INFERENCE_UNAVAILABLE',
+                  'The image engine has not qualified Euler a with opaque regional img2img.',
                 )
               }
               if (
@@ -516,13 +530,15 @@ export class ProjectRegionalGenerationCoordinator {
                 )
               }
               if (
-                draft.sampling.sampler !== 'Euler' ||
+                (draft.sampling.sampler !== 'Euler' && draft.sampling.sampler !== 'Euler a') ||
                 draft.sampling.scheduler !== 'Normal' ||
                 draft.vae !== null ||
                 draft.vaePrecision !== 'FP16' ||
                 initializationProfile !== undefined
               ) {
-                throw unsupported('Regional img2img requires Euler/Normal and Embedded FP16 VAE.')
+                throw unsupported(
+                  'Regional img2img requires Euler or Euler a with Normal and Embedded FP16 VAE.',
+                )
               }
             }
             const authoredEmbeddingRefs = {

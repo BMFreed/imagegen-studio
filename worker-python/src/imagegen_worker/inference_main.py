@@ -96,6 +96,7 @@ def inference_ready_message(
             "illustrious-regional-cfg-rescale-v1",
             "illustrious-regional-img2img-v1",
             "illustrious-regional-img2img-cfg-rescale-v1",
+            "illustrious-regional-img2img-euler-a-v1",
             *(("linux-owned-inference-v1",) if owner_lifetime else ()),
             *(
                 ANIMA_CAPABILITIES

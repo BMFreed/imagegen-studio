@@ -103,13 +103,17 @@ def _denoising_profile(
         _require(
             composition_profile == "invoke-canvas-v1"
             and initialization_profile is None
-            and parameters.scheduler == "euler"
+            and parameters.scheduler in ("euler", "euler_a")
             and parameters.vae is None
             and parameters.vae_precision == "FP16",
-            "Regional img2img requires Invoke Canvas, Euler, Embedded FP16 VAE "
+            "Regional img2img requires Invoke Canvas, Euler or Euler a, Embedded FP16 VAE "
             "and no txt2img initialization.",
         )
-        return "ordinary-canvas-euler-img2img-cuda-fp16-v1"
+        return (
+            "ordinary-canvas-euler-ancestral-img2img-cuda-fp16-v1"
+            if parameters.scheduler == "euler_a"
+            else "ordinary-canvas-euler-img2img-cuda-fp16-v1"
+        )
     prepared_vae = composition_profile == "invoke-canvas-v1" and (
         parameters.vae is not None or parameters.vae_precision != "FP16"
     )

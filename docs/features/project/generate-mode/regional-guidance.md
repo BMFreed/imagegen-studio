@@ -1750,3 +1750,34 @@ allocated bytes. Canonical runtime/model/autosave dependencies remain protected.
 Earlier incomplete attempts are retained and excluded. Anima, partial alpha,
 selected-VAE encoding, additional image samplers, visual/human and release
 Install/Repair remain separate; PP-001/005/007/008 stay unchanged.
+
+## Euler a for opaque regional img2img
+
+The [ancestral image continuation](../../../engineering/phase-4-regional-guidance-img2img-euler-ancestral-research.md)
+extends the preceding image subset to Euler a / Normal with the explicit
+`illustrious-regional-img2img-euler-a-v1` capability in addition to qualified
+image/Invoke support. Embedded manual-FP16 VAE, opaque pixels, explicit strength
+and all existing bounds remain required. Nonzero CFG Rescale still requires its
+separate image-rescale capability. No default, numeric control, migration or
+worker-command field is added; image requests have no TXT initializer.
+
+ROOT:520 Main /332 Python /192 browser PASS, strict typing/scoped checks/build;
+21 mutation selections give18 GREEN /three semantic RED with restoration.
+Installed native-r2 passes18 grouped checks: real Euler-a Sampler/Generate/
+Cancel, saved Euler/source/text/strength/.2 edits, frozen Euler-a/.7 Retry and
+exact healthy-control RGB through Results/Add/Undo/Redo/Save/ZIP/reopen. Ordinary
+IMG provenance retains applied Euler a while current authoring retains Euler;
+Regional operational fields remain excluded from provenance/Compare/presets.
+
+Two direct installed-client requests create no queue admissions/receipts and
+preserve SQL/input/package/resource state. Euler-a matches every original UI
+RGBA channel; Euler changes765,621 RGB channels. This proves finite numerical
+influence, not better images. The display observer corrects backing-scale
+measurement without raising its existing tolerance; earlier incomplete attempts
+are retained and excluded. Source reviews are CLEAN within source-only limits;
+independent retained-byte audit is CLEAN. ROOT confirms fresh exit/restoration/
+reader/dependency gates, preserves all 2,972 entries in the verified archive and
+releases only idle own scratch, reclaiming 55,685,120 allocated bytes. Canonical
+runtime/model/autosave dependencies stay protected. Selected VAE/FP32 image
+encoding, DPM image sampling, partial alpha, Anima, visual/human and release
+Install/Repair remain separate. PP-001/005/007/008 stay **«Пока не обещать»**.

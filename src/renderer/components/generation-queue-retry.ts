@@ -9,6 +9,7 @@ type RetryState = Pick<
   | 'regionalCfgRescaleSupported'
   | 'regionalDpmSupported'
   | 'regionalImg2ImgCfgRescaleSupported'
+  | 'regionalImg2ImgEulerASupported'
   | 'regionalImg2ImgSupported'
   | 'regionalInvokeInitializationSupported'
   | 'regionalLoraSupported'
@@ -38,6 +39,13 @@ export function generationQueueRetryReason(
     }
     if (operation === 'illustrious-regional-img2img' && state.regionalImg2ImgSupported !== true) {
       return 'The current image engine does not support opaque img2img with Regional Guidance. Repair or update the runtime.'
+    }
+    if (
+      operation === 'illustrious-regional-img2img' &&
+      frozenSampler === 'Euler a' &&
+      state.regionalImg2ImgEulerASupported !== true
+    ) {
+      return 'The current image engine does not support Euler a with opaque regional img2img. Repair or update the runtime.'
     }
     if (frozenCfgRescale !== 0 && state.regionalCfgRescaleSupported !== true) {
       return 'The current image engine does not support CFG Rescale with Regional Guidance. Repair or update the runtime.'

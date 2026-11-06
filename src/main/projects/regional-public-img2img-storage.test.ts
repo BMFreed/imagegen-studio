@@ -282,6 +282,93 @@ test('IMG candidate publication preserves ordinary IMG base and independent tran
   }
 })
 
+test('Euler a IMG batch admission freezes each image sampler without TXT initialization', async () => {
+  const f = await createRegionalQueueFixture()
+  try {
+    const inputs = [await imageInput(f), await imageInput(f)]
+    for (const input of inputs) {
+      input.prepared.context.sampling.sampler = 'Euler a'
+      input.prepared.context.sampling.invokeScheduler = 'euler_a'
+      input.prepared.context.sampling.cfgRescale = 0.7
+      input.request.job.sampling.scheduler = 'euler_a'
+      input.request.job.sampling.cfgRescale = 0.7
+    }
+    const stagingSessionId = randomUUID()
+    const items = await f.queue.enqueueInvokeCanvasRegionalBatch({
+      items: inputs,
+      preflight: async (entries) =>
+        await f.staging.preflightRegionalBatchCapacity({
+          entries,
+          localProjectKey: localProjectRecoveryKey(f.projectPath),
+          projectPath: f.projectPath,
+          stagingSessionId,
+        }),
+      projectPath: f.projectPath,
+      stagingSessionId,
+    })
+    assert.equal(items.length, 2)
+    assert.notEqual(items[0].id, items[1].id)
+    for (const [index, item] of items.entries()) {
+      const loaded = await f.queue.loadVerifiedRegionalInput(item.id)
+      assert.equal(loaded.payload.kind, 'illustrious-regional-img2img')
+      assert.equal(loaded.payload.initializationProfile, undefined)
+      assert.equal(loaded.input.initializationProfile, undefined)
+      assert.equal(loaded.input.request.job.sampling.scheduler, 'euler_a')
+      assert.equal(loaded.input.request.job.sampling.cfgRescale, 0.7)
+      assert.ok((await readFile(loaded.targetPath)).equals(inputs[index].prepared.targetPngBytes))
+    }
+    assert.equal((await f.queue.listManagerPage()).items.length, 2)
+    assert.deepEqual(
+      await f.db.selectFrom('generation_candidate_receipt').selectAll().execute(),
+      [],
+    )
+  } finally {
+    await f.close()
+  }
+})
+
+test('Euler a IMG frozen reload Retry and ordinary accepted base retain sampler without TXT initialization', async () => {
+  const f = await createRegionalQueueFixture()
+  try {
+    const input = await imageInput(f, 0.5)
+    input.prepared.context.sampling.sampler = 'Euler a'
+    input.prepared.context.sampling.invokeScheduler = 'euler_a'
+    input.prepared.context.sampling.cfgRescale = 0.7
+    input.request.job.sampling.scheduler = 'euler_a'
+    input.request.job.sampling.cfgRescale = 0.7
+    const item = await enqueue(f, input)
+    const before = await f.queue.loadVerifiedRegionalInput(item.id)
+    assert.equal(before.payload.kind, 'illustrious-regional-img2img')
+    assert.equal(before.payload.initializationProfile, undefined)
+    assert.equal(before.input.initializationProfile, undefined)
+    const reloaded = new GenerationQueueRepository(f.db, f.dataRoot)
+    assert.deepEqual((await reloaded.loadVerifiedRegionalInput(item.id)).payload, before.payload)
+    const canceled = await f.queue.cancel(item.id)
+    await reloaded.recoverAfterRestart()
+    input.prepared.context.sampling.sampler = 'Euler'
+    input.prepared.context.sampling.invokeScheduler = 'euler'
+    input.prepared.context.sampling.cfgRescale = 0.2
+    input.request.job.sampling.scheduler = 'euler'
+    input.request.job.sampling.cfgRescale = 0.2
+    input.request.job.sampling.denoisingStrength = 0.8
+    const retry = await reloaded.retryInvokeCanvasRegionalTerminal(item.id, canceled.statusSequence)
+    const after = await reloaded.loadVerifiedRegionalInput(retry.id)
+    assert.deepEqual(after.payload, before.payload)
+    assert.equal(after.input.request.job.sampling.scheduler, 'euler_a')
+    assert.equal(after.input.initializationProfile, undefined)
+    assert.ok((await readFile(after.targetPath)).equals(await readFile(before.targetPath)))
+    const base = parseAcceptedGenerationBaseV1(JSON.stringify(after.payload))
+    assert.ok(base.kind === 'illustrious-img2img')
+    assert.equal(base.context.sampling.sampler, 'Euler a')
+    assert.equal(base.context.sampling.cfgRescale, 0.7)
+    assert.equal(base.workerJob.sampling.scheduler, 'euler_a')
+    assert.equal(base.workerJob.sampling.denoisingStrength, 0.5)
+    assert.ok(!('initializationProfile' in base) && !('regional' in base))
+  } finally {
+    await f.close()
+  }
+})
+
 for (const invalid of [
   'rescale',
   'precision',
@@ -312,9 +399,10 @@ for (const invalid of [
         bad.initializationProfile = 'invoke-cpu-f32-add-noise-v1'
       }
       if (invalid === 'sampler') {
-        context.sampling.sampler = 'Euler a'
-        context.sampling.invokeScheduler = 'euler_a'
-        job.sampling.scheduler = 'euler_a'
+        // Euler a is now supported; DPM without its TXT initializer still refuses.
+        context.sampling.sampler = 'DPM++ 2M'
+        context.sampling.invokeScheduler = 'dpmpp_2m'
+        job.sampling.scheduler = 'dpmpp_2m'
       }
       if (invalid === 'strength-mismatch') {
         job.sampling.denoisingStrength = 0.9
