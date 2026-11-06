@@ -1122,6 +1122,8 @@ The later [static-batch extension](#static-regional-generate-batches) admits
 1..32 jobs from that same captured input under the existing prepared-job limit.
 The [dynamic-positive extension](#dynamic-global-positive-with-regional-guidance)
 adds concrete global-positive variants under that same aggregate limit.
+The [DPM++ 2M extension](#dpm-2m-with-regional-guidance) adds Normal/Karras through
+the existing native scheduler and explicit Invoke initialization owner.
 
 `invoke-canvas-v1` consumes regional alpha as `alpha > 0` before nearest-eight
 projection, omits literal-empty local conditioning signs while preserving
@@ -1567,3 +1569,34 @@ Independent source/retained-byte reviews are CLEAN within their stated limits;
 ROOT execution remains separate. All1,626 owned/input entries are retained,
 46,166,016 allocated bytes of exact idle scratch reclaimed, and shared resources,
 saved projects and durable histories preserved. No broader readiness follows.
+
+## DPM++ 2M with Regional Guidance
+
+The [DPM continuation](../../../engineering/phase-4-regional-guidance-dpmpp-2m-research.md)
+adds DPM++ 2M with Normal/Karras on the existing Illustrious epsilon Current Canvas
+path. It reuses current Invoke's native multistep scheduler, CPU FP32 noise/cast
+and original add_noise initialization. The original pipeline owns every step,
+history and decode. Existing Euler/Euler-a histories and defaults remain valid.
+
+The separate `illustrious-regional-dpmpp-2m-v1` capability gates Generate,
+composition, frozen Retry and dispatch. Public DPM material requires existing
+`invoke-cpu-f32-add-noise-v1`; private legacy DPM still refuses. A missing
+capability cannot enable a fallback sampler. Frozen sampling and concrete
+TI/LoRA/VAE/seed associations survive later saved changes and enter existing
+base provenance; regional inputs remain excluded. No persisted field, migration
+or new worker-command field is added. Existing safety and batch bounds remain.
+
+ROOT:576 Main/352 distinct Python PASS; typing/scoped checks/build PASS. Three
+isolated mutations give20GREEN/4semanticRED, with CPU/CUDA native PNG sensitivity,
+controls and exact restoration. Installed native-r1 passes18 checks: dynamic
+batch/Cancel, frozen DPM++2M/Karras30 Retry after saved Euler/Normal2 and other
+edits, three wires/two Results, reviewed Add/Discard/Undo/Redo and Save ZIP/reopen.
+The existing runtime/catalog/resources are reused with an in-place worker refresh.
+Six fixed visual controls pass mechanics; blinded descriptions plus ROOT's fixed
+rubric give3 narrow color/side PASS and1 INCONCLUSIVE, overall NOT_QUALIFIED.
+Human/general-quality acceptance remains pending. All original outputs and
+reproduction inputs are retained; excluded diagnostics are separate in the note.
+Independent source/retained-byte reviews are CLEAN within their stated limits;
+ROOT's qualified execution and scratch release remain separate evidence.
+No SDE, v-prediction, image-mode, Anima, reference, product-default or promise-status
+extension follows automatically; PP-001/005/007/008 remain unchanged.

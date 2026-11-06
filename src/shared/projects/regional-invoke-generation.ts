@@ -99,6 +99,7 @@ export function hasActiveGlobalPromptEmbeddings(
  */
 export function getInvokeRegionalGenerationUnavailableReason(input: {
   document: RegionalDocument
+  dpmSupported?: boolean | null
   embeddingsSupported?: boolean | null
   initializationSupported?: boolean | null
   iterations: number
@@ -118,11 +119,13 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   ) {
     return 'Regional Guidance requires an Illustrious epsilon model on Current Canvas.'
   }
-  if (
-    (draft.sampling.sampler !== 'Euler' && draft.sampling.sampler !== 'Euler a') ||
-    draft.sampling.scheduler !== 'Normal'
-  ) {
-    return 'Regional Guidance requires Euler or Euler a with the Normal scheduler.'
+  if (!(
+    ((draft.sampling.sampler === 'Euler' || draft.sampling.sampler === 'Euler a') &&
+      draft.sampling.scheduler === 'Normal') ||
+    (draft.sampling.sampler === 'DPM++ 2M' &&
+      (draft.sampling.scheduler === 'Normal' || draft.sampling.scheduler === 'Karras'))
+  )) {
+    return 'Regional Guidance requires Euler or Euler a with the Normal scheduler, or DPM++ 2M with Normal or Karras.'
   }
   if (regions.some((region) => (region.referenceImages?.length ?? 0) > 0)) {
     return 'Remove reference images from enabled regions before generating with Regional Guidance.'
@@ -174,6 +177,14 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   }
   if (input.runtimeSupported !== true) {
     return 'The current image engine does not support Regional Guidance. Repair or update the runtime.'
+  }
+  if (draft.sampling.sampler === 'DPM++ 2M') {
+    if (input.dpmSupported === undefined || input.dpmSupported === null) {
+      return 'Checking image engine support for Regional Guidance with DPM++ 2M. Repair or update the runtime if support remains unavailable.'
+    }
+    if (input.dpmSupported !== true) {
+      return 'The current image engine does not support Regional Guidance with DPM++ 2M. Repair or update the runtime.'
+    }
   }
   if (draft.vae !== null || (draft.vaePrecision ?? 'Auto') !== 'FP16') {
     if (input.vaeSupported === undefined || input.vaeSupported === null) {

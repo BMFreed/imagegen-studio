@@ -1150,6 +1150,7 @@ def test_separate_entrypoint_refuses_ready_without_offline_config() -> None:
         "illustrious-regional-progress-v1",
         "illustrious-regional-lora-v1",
         "illustrious-regional-vae-v1",
+        "illustrious-regional-dpmpp-2m-v1",
     ]
     assert inference_ready_message(owner_lifetime=True)["capabilities"] == [
         *cast(list[str], inference_ready_message()["capabilities"]),

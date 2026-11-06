@@ -178,6 +178,18 @@ const ANCESTRAL_SPEC = {
     '.codex/artifacts/imagegen-studio/runs/regional-guidance-euler-ancestral/20261105-red-blue',
   ),
 } as const
+const DPM_2M_SPEC = {
+  ...ANCESTRAL_SPEC,
+  base: '25d2338462d2a38d6719ebecff41e3697f82a9ce',
+  contractProfile: 'regional-dpmpp-2m-karras-v1',
+  contractSchema: 'regional-dpmpp-2m-experiment-v1',
+  contractSha256: '61b46004c99a7e0664d5706731ac14478be11222dd71811a5dc7a3dac587d073',
+  manifestName: 'main-regional-dpmpp-2m-karras.json',
+  run: path.join(
+    os.homedir(),
+    '.codex/artifacts/imagegen-studio/runs/regional-guidance-dpmpp-2m/20261106-normal-karras/visual',
+  ),
+} as const
 
 export type CharacterVisualCondition = (typeof CONDITIONS)[number]
 export type CharacterVisualLabel = (typeof LABELS)[number]
@@ -224,6 +236,12 @@ export interface RegionalAncestralProbeOptions<T> extends Omit<
 > {
   profile: 'regional-euler-ancestral-v1'
 }
+export interface RegionalDpmpp2mProbeOptions<T> extends Omit<
+  CharacterVisualProbeOptions<T>,
+  'profile'
+> {
+  profile: 'regional-dpmpp-2m-karras-v1'
+}
 export interface RegionalAncestralManifest<T> extends Omit<
   CharacterVisualManifest<T>,
   'cases' | 'nativeRequestCeiling' | 'orderedCaseLabels' | 'profile'
@@ -235,6 +253,9 @@ export interface RegionalAncestralManifest<T> extends Omit<
   nativeRequestCeiling: 6
   orderedCaseLabels: typeof ANCESTRAL_LABELS
   profile: 'main-regional-euler-ancestral-v1'
+}
+export interface RegionalDpmpp2mManifest<T> extends Omit<RegionalAncestralManifest<T>, 'profile'> {
+  profile: 'main-regional-dpmpp-2m-karras-v1'
 }
 export interface CharacterVisualFile {
   byteSize: number
@@ -385,7 +406,8 @@ const writeJson = (filePath: string, value: unknown): Promise<CharacterVisualFil
  * regional-prompt-tag profile changes only its two fixed regional positive texts. All use the same
  * Main owners; runtime execution occurs only when ROOT calls this. The fixed ancestral profile
  * authors six fresh baseline/assignment/swapped handoffs with Euler a/28; no repeat or prompt
- * change.
+ * change. The additive DPM++ 2M/Karras profile retains that six-case scene at28 steps without a
+ * repeat.
  */
 export function produceCharacterVisualProbe<T>(
   options: CharacterVisualProbeOptions<T>,
@@ -402,25 +424,31 @@ export function produceCharacterVisualProbe<T>(
 export function produceCharacterVisualProbe<T>(
   options: RegionalAncestralProbeOptions<T>,
 ): Promise<RegionalAncestralManifest<T>>
+export function produceCharacterVisualProbe<T>(
+  options: RegionalDpmpp2mProbeOptions<T>,
+): Promise<RegionalDpmpp2mManifest<T>>
 export async function produceCharacterVisualProbe<T>(
   options:
     | CharacterVisualProbeOptions<T>
     | OrdinaryCharacterCalibrationProbeOptions<T>
     | RegionalAncestralProbeOptions<T>
     | RegionalCharacterTagsProbeOptions<T>
+    | RegionalDpmpp2mProbeOptions<T>
     | RegionalPromptTagsProbeOptions<T>,
 ): Promise<
   | CharacterVisualManifest<T>
   | OrdinaryCharacterCalibrationManifest<T>
   | RegionalAncestralManifest<T>
   | RegionalCharacterTagsManifest<T>
+  | RegionalDpmpp2mManifest<T>
   | RegionalPromptTagsManifest<T>
 > {
   const ancestral = options.profile === 'regional-euler-ancestral-v1'
+  const dpmpp2m = options.profile === 'regional-dpmpp-2m-karras-v1'
   const ordinary = options.profile === 'ordinary-two-character-tags-v1'
   const taggedRegional = options.profile === 'regional-two-character-tags-v1'
   const regionalPromptTags = options.profile === 'regional-prompt-tags-v1'
-  const regional = taggedRegional || regionalPromptTags || ancestral
+  const regional = taggedRegional || regionalPromptTags || ancestral || dpmpp2m
   const optionKeys = ['pythonExecutable', 'run', 'runtimeRoot', 'source', 'useCase']
   if (ordinary || regional) {
     optionKeys.push('profile')
@@ -428,22 +456,31 @@ export async function produceCharacterVisualProbe<T>(
   }
   assert.deepEqual(Object.keys(options).sort(), optionKeys)
   assert.ok(options.profile === undefined || ordinary || regional)
-  const spec = ancestral
-    ? ANCESTRAL_SPEC
-    : regionalPromptTags
-      ? REGIONAL_PROMPT_TAGS_SPEC
-      : taggedRegional
-        ? TAGGED_REGIONAL_SPEC
-        : ordinary
-          ? ORDINARY_SPEC
-          : LEGACY_SPEC
+  const spec = dpmpp2m
+    ? DPM_2M_SPEC
+    : ancestral
+      ? ANCESTRAL_SPEC
+      : regionalPromptTags
+        ? REGIONAL_PROMPT_TAGS_SPEC
+        : taggedRegional
+          ? TAGGED_REGIONAL_SPEC
+          : ordinary
+            ? ORDINARY_SPEC
+            : LEGACY_SPEC
   const repeatSpec = regional ? undefined : ordinary ? ORDINARY_SPEC : LEGACY_SPEC
   const regionalTexts = 'regionalTexts' in spec ? spec.regionalTexts : [RED, BLUE]
-  const sampling = {
-    sampler: ancestral ? ('Euler a' as const) : ('Euler' as const),
-    steps: ancestral ? 28 : 30,
-    workerScheduler: ancestral ? ('euler_a' as const) : ('euler' as const),
-  }
+  const sampling = dpmpp2m
+    ? {
+        sampler: 'DPM++ 2M' as const,
+        scheduler: 'Karras' as const,
+        steps: 28,
+        workerScheduler: 'dpmpp_2m_k' as const,
+      }
+    : {
+        sampler: ancestral ? ('Euler a' as const) : ('Euler' as const),
+        steps: ancestral ? 28 : 30,
+        workerScheduler: ancestral ? ('euler_a' as const) : ('euler' as const),
+      }
   const run = spec.run
   assert.equal(options.run, run)
   assert.equal(options.source, SOURCE)
@@ -468,13 +505,17 @@ export async function produceCharacterVisualProbe<T>(
   assert.equal(contract.nativeRequestCeiling, spec.nativeRequestCeiling)
   assert.equal(contract.noResources, true)
   assert.equal(contract.compositionProfile, 'invoke-canvas-v1')
+  if (dpmpp2m) {
+    assert.equal(contract.initializationProfile, 'invoke-cpu-f32-add-noise-v1')
+    assert.deepEqual(contract.comparators, [])
+  }
   if (ordinary || regional) {
     assert.deepEqual(contract.sampling, {
       cfgRescale: 0,
       cfgScale: 5,
       noiseProfile: NOISE,
       sampler: sampling.sampler,
-      scheduler: 'Normal',
+      scheduler: dpmpp2m ? 'Karras' : 'Normal',
       steps: sampling.steps,
       workerScheduler: sampling.workerScheduler,
     })
@@ -629,7 +670,7 @@ export async function produceCharacterVisualProbe<T>(
           cfgScale: 5,
           denoisingStrength: null,
           sampler: sampling.sampler,
-          scheduler: 'Normal',
+          scheduler: dpmpp2m ? 'Karras' : 'Normal',
           steps: sampling.steps,
         },
         seed: { policy: 'fixed', value: 123 },
@@ -922,42 +963,51 @@ export async function produceCharacterVisualProbe<T>(
       | OrdinaryCharacterCalibrationManifest<T>
       | RegionalAncestralManifest<T>
       | RegionalCharacterTagsManifest<T>
-      | RegionalPromptTagsManifest<T> = ancestral
+      | RegionalDpmpp2mManifest<T>
+      | RegionalPromptTagsManifest<T> = dpmpp2m
       ? {
           ...commonManifest,
-          cases: cases as RegionalAncestralManifest<T>['cases'],
+          cases: cases as RegionalDpmpp2mManifest<T>['cases'],
           nativeRequestCeiling: 6,
           orderedCaseLabels: ANCESTRAL_LABELS,
-          profile: 'main-regional-euler-ancestral-v1',
+          profile: 'main-regional-dpmpp-2m-karras-v1',
         }
-      : regional
+      : ancestral
         ? {
             ...commonManifest,
-            cases: cases as Record<RegionalCharacterTagsLabel, RegionalCharacterTagsCase<T>>,
-            nativeRequestCeiling: 4,
-            orderedCaseLabels: TAGGED_REGIONAL_LABELS,
-            profile: regionalPromptTags
-              ? 'main-regional-prompt-tags-v1'
-              : 'main-regional-two-character-tags-v1',
+            cases: cases as RegionalAncestralManifest<T>['cases'],
+            nativeRequestCeiling: 6,
+            orderedCaseLabels: ANCESTRAL_LABELS,
+            profile: 'main-regional-euler-ancestral-v1',
           }
-        : ordinary
+        : regional
           ? {
               ...commonManifest,
-              cases: cases as Record<
-                OrdinaryCharacterCalibrationLabel,
-                OrdinaryCharacterCalibrationCase<T>
-              >,
-              nativeRequestCeiling: 3,
-              orderedCaseLabels: ORDINARY_LABELS,
-              profile: 'main-ordinary-two-character-tags-v1',
+              cases: cases as Record<RegionalCharacterTagsLabel, RegionalCharacterTagsCase<T>>,
+              nativeRequestCeiling: 4,
+              orderedCaseLabels: TAGGED_REGIONAL_LABELS,
+              profile: regionalPromptTags
+                ? 'main-regional-prompt-tags-v1'
+                : 'main-regional-two-character-tags-v1',
             }
-          : {
-              ...commonManifest,
-              cases: cases as Record<CharacterVisualLabel, CharacterVisualCase<T>>,
-              nativeRequestCeiling: 7,
-              orderedCaseLabels: LABELS,
-              profile: 'main-character-visual-v1',
-            }
+          : ordinary
+            ? {
+                ...commonManifest,
+                cases: cases as Record<
+                  OrdinaryCharacterCalibrationLabel,
+                  OrdinaryCharacterCalibrationCase<T>
+                >,
+                nativeRequestCeiling: 3,
+                orderedCaseLabels: ORDINARY_LABELS,
+                profile: 'main-ordinary-two-character-tags-v1',
+              }
+            : {
+                ...commonManifest,
+                cases: cases as Record<CharacterVisualLabel, CharacterVisualCase<T>>,
+                nativeRequestCeiling: 7,
+                orderedCaseLabels: LABELS,
+                profile: 'main-character-visual-v1',
+              }
     await writeJson(path.join(run, spec.manifestName), manifest)
     return manifest
   } finally {
@@ -1025,9 +1075,10 @@ function assertRecipe(
   globalPositive = GLOBAL,
   ordinaryOnly = false,
   sampling: {
-    sampler: 'Euler' | 'Euler a'
+    sampler: 'DPM++ 2M' | 'Euler' | 'Euler a'
+    scheduler?: 'Karras' | 'Normal'
     steps: number
-    workerScheduler: 'euler_a' | 'euler'
+    workerScheduler: 'dpmpp_2m_k' | 'euler_a' | 'euler'
   } = { sampler: 'Euler', steps: 30, workerScheduler: 'euler' },
 ): void {
   assert.equal(recipe.family, 'illustrious')
@@ -1087,7 +1138,7 @@ function assertRecipe(
   assert.equal(context.sampling.cfgScale, 5)
   assert.equal(context.sampling.cfgRescale, 0)
   assert.equal(context.sampling.sampler, sampling.sampler)
-  assert.equal(context.sampling.scheduler, 'Normal')
+  assert.equal(context.sampling.scheduler, sampling.scheduler ?? 'Normal')
   assert.equal(context.sampling.invokeScheduler, sampling.workerScheduler)
   assert.deepEqual(context.sampling.noiseProfile, NOISE)
   assert.equal(context.target.iccSha256, IGS_SRGB_ICC_SHA256)

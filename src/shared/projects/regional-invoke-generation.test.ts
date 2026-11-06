@@ -94,7 +94,7 @@ test('finite regional settings refuse unsupported families, predictions, samplin
     ['v-prediction', (v) => (v.generationDraft.model!.predictionType = 'v_prediction'), /epsilon/],
     [
       'unsupported sampler',
-      (v) => (v.generationDraft.sampling.sampler = 'DPM++ 2M'),
+      (v) => (v.generationDraft.sampling.sampler = 'DPM++ SDE'),
       /Euler.*Normal/,
     ],
     ['missing scheduler', (v) => (v.generationDraft.sampling.scheduler = null), /Euler.*Normal/],

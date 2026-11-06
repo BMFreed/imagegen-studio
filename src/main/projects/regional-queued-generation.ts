@@ -346,12 +346,19 @@ function parseRegionalPayload(json: string, invoke: boolean): FrozenQueuedRegion
   const ordinary = parseFrozenGenerationPayloadV1(
     JSON.stringify({ ...base, kind: 'illustrious-txt2img' }),
   )
+  const samplerMatchesInitialization =
+    ordinary.kind === 'illustrious-txt2img' &&
+    (initializationProfile === undefined
+      ? ordinary.workerJob.sampling.scheduler === 'euler'
+      : ordinary.workerJob.sampling.scheduler === 'euler_a' ||
+        (invoke &&
+          (ordinary.workerJob.sampling.scheduler === 'dpmpp_2m' ||
+            ordinary.workerJob.sampling.scheduler === 'dpmpp_2m_k')))
   if (
     ordinary.kind !== 'illustrious-txt2img' ||
     ordinary.workerJob.checkpoint.predictionType !== 'epsilon' ||
     (invoke && ordinary.workerJob.sampling.cfgScale <= 1) ||
-    ordinary.workerJob.sampling.scheduler !==
-      (initializationProfile === undefined ? 'euler' : 'euler_a') ||
+    !samplerMatchesInitialization ||
     ordinary.workerJob.sampling.noiseProfile === undefined ||
     (ordinary.workerJob.sampling.cfgRescale ?? 0) !== 0 ||
     (!invoke && (ordinary.workerJob.vaePrecision !== 'FP16' || ordinary.workerJob.vae != null)) ||

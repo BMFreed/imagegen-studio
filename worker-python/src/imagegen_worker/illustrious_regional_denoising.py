@@ -1,4 +1,4 @@
-"""Private ordinary transparent Canvas, native Euler txt2img execution.
+"""Private ordinary transparent Canvas, native Euler/DPM++ 2M txt2img execution.
 
 The caller must supply an actual ordinary transparent target. The acknowledged
 recipe cannot authenticate that mode, job membership or checkpoint identity;
@@ -14,7 +14,7 @@ their guarded equal-value policy; TI permits only pinned native capture hooks.
 All pre-existing local UNet/VAE forward hooks
 and all global forward hooks refuse before encoding or owned model mutation.
 
-One native pipeline call owns the whole bounded Euler-family loop. Historical
+One native pipeline call owns the whole bounded scheduler loop. Historical
 profiles retain its decode. Explicit public VAE profiles return native latents,
 then run Invoke's dtype-before-scaling VAE decode under the same reservation;
 the job-owned VAE has already received its compute dtype before borrowing. The regional
@@ -103,6 +103,9 @@ _DenoisingProfile = Literal[
     "ordinary-canvas-euler-txt2img-cuda-vae-v1",
     "ordinary-canvas-euler-ancestral-txt2img-cuda-vae-v1",
     "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cuda-vae-v1",
+    "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cpu-v1",
+    "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cuda-fp16-v1",
+    "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cuda-vae-v1",
 ]
 _Layout = Literal["cfg-negative-first", "positive-only"]
 _MAX_FINITE_ELEMENTS = 8_388_608
@@ -158,6 +161,15 @@ def _execution_profile(
             "cuda-float16-v1",
             True,
         ),
+        "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cpu-v1": ("cpu-float32-v1", True),
+        "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cuda-fp16-v1": (
+            "cuda-float16-v1",
+            True,
+        ),
+        "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cuda-vae-v1": (
+            "cuda-float16-v1",
+            True,
+        ),
     }
     _require(
         type(denoising_profile) is str and denoising_profile in profiles,
@@ -181,6 +193,11 @@ def _execution_profile(
         "PROFILE_INVALID",
         "Prepared VAE decode requires the public Invoke Canvas encoding profile.",
     )
+    _require(
+        not _dpmpp_2m_profile(denoising_profile) or profile in _INVOKE_PROFILES,
+        "PROFILE_INVALID",
+        "DPM++ 2M requires the explicit Invoke Canvas encoding profile.",
+    )
     return tensor_profile, resolved_noise
 
 
@@ -189,6 +206,7 @@ def _vae_profile(denoising_profile: _DenoisingProfile) -> bool:
         "ordinary-canvas-euler-txt2img-cuda-vae-v1",
         "ordinary-canvas-euler-ancestral-txt2img-cuda-vae-v1",
         "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cuda-vae-v1",
+        "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cuda-vae-v1",
     )
 
 
@@ -208,6 +226,17 @@ def _invoke_initialization_profile(denoising_profile: _DenoisingProfile) -> bool
         "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cpu-v1",
         "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cuda-fp16-v1",
         "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cuda-vae-v1",
+        "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cpu-v1",
+        "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cuda-fp16-v1",
+        "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cuda-vae-v1",
+    )
+
+
+def _dpmpp_2m_profile(denoising_profile: _DenoisingProfile) -> bool:
+    return denoising_profile in (
+        "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cpu-v1",
+        "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cuda-fp16-v1",
+        "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cuda-vae-v1",
     )
 
 
@@ -251,6 +280,7 @@ def _denoising_parameters(
     resolved_noise: bool = False,
     ancestral: bool = False,
     prepared_vae: bool = False,
+    dpmpp_2m: bool = False,
 ) -> IllustriousNoiseProfile | None:
     _require(
         type(parameters) is IllustriousInferenceParameters,
@@ -263,6 +293,11 @@ def _denoising_parameters(
         "Euler ancestral requires an explicit resolved noise policy.",
     )
     _require(
+        not dpmpp_2m or (resolved_noise and not ancestral),
+        "PROFILE_INVALID",
+        "DPM++ 2M requires its own explicit resolved noise policy.",
+    )
+    _require(
         type(parameters.steps) is int
         and (
             1 <= parameters.steps <= MAX_GENERATION_STEPS
@@ -270,9 +305,13 @@ def _denoising_parameters(
             else parameters.steps in (1, 2)
         ),
         "INPUT_INVALID",
-        f"V2 requires an exact integer Euler step count in [1,{MAX_GENERATION_STEPS}]."
-        if resolved_noise
-        else "This private native loop requires exactly one or two Euler steps.",
+        f"DPM++ 2M requires an exact integer step count in [1,{MAX_GENERATION_STEPS}]."
+        if dpmpp_2m
+        else (
+            f"V2 requires an exact integer Euler step count in [1,{MAX_GENERATION_STEPS}]."
+            if resolved_noise
+            else "This private native loop requires exactly one or two Euler steps."
+        ),
     )
     noise_profile = _validated_noise_profile(parameters.noise_profile) if resolved_noise else None
     _require(
@@ -287,17 +326,25 @@ def _denoising_parameters(
     )
     _require(
         type(parameters.scheduler) is str
-        and parameters.scheduler == ("euler_a" if ancestral else "euler")
+        and (
+            parameters.scheduler in ("dpmpp_2m", "dpmpp_2m_k")
+            if dpmpp_2m
+            else parameters.scheduler == ("euler_a" if ancestral else "euler")
+        )
         and type(parameters.prediction_type) is str
         and parameters.prediction_type == "epsilon"
         and (resolved_noise or parameters.noise_profile is None),
         "UNSUPPORTED",
-        "Only Euler ancestral/epsilon is supported."
-        if ancestral
+        "Only deterministic DPM++ 2M/epsilon is supported."
+        if dpmpp_2m
         else (
-            "Only Euler/epsilon is supported."
-            if resolved_noise
-            else "Only Euler/epsilon with no noise profile is supported."
+            "Only Euler ancestral/epsilon is supported."
+            if ancestral
+            else (
+                "Only Euler/epsilon is supported."
+                if resolved_noise
+                else "Only Euler/epsilon with no noise profile is supported."
+            )
         ),
     )
     if prepared_vae:
@@ -433,6 +480,7 @@ def _fresh_pipeline(
     *,
     resolved_noise: bool = False,
     ancestral: bool = False,
+    dpmpp_2m: bool = False,
 ) -> Any:
     diffusers = cast(Any, runtime.diffusers)
     # V1 retains its fixed policy and three-argument seam. V2 uses only the
@@ -446,20 +494,45 @@ def _fresh_pipeline(
         else IllustriousNoiseProfile(rescale_betas_zero_snr=False, timestep_spacing="linspace"),
     )
     scheduler = select_inference_scheduler(scheduler_parameters, pipeline, runtime)
-    _require(
-        type(scheduler)
-        is (
-            diffusers.EulerAncestralDiscreteScheduler
-            if ancestral
-            else diffusers.EulerDiscreteScheduler
+    if dpmpp_2m:
+        _require(
+            resolved_noise
+            and not ancestral
+            and type(scheduler) is diffusers.DPMSolverMultistepScheduler
+            and scheduler is not pipeline.scheduler
+            and scheduler.config.prediction_type == "epsilon"
+            and scheduler.config.algorithm_type == "dpmsolver++"
+            and type(scheduler.config.solver_order) is int
+            and scheduler.config.solver_order == 2
+            and scheduler.order == 1
+            and scheduler.config.solver_type == "midpoint"
+            and scheduler.config.use_karras_sigmas is (parameters.scheduler == "dpmpp_2m_k")
+            and scheduler.config.thresholding is False
+            and scheduler.config.lower_order_final is True
+            and scheduler.config.euler_at_final is False
+            and scheduler.config.final_sigmas_type == "zero"
+            and scheduler.config.use_exponential_sigmas is False
+            and scheduler.config.use_beta_sigmas is False
+            and scheduler.config.use_lu_lambdas is False
+            and scheduler.config.use_flow_sigmas is False,
+            "PROFILE_INVALID",
+            "Scheduler selection must create the exact fresh native epsilon DPM++ 2M policy.",
         )
-        and scheduler is not pipeline.scheduler
-        and scheduler.config.prediction_type == "epsilon",
-        "PROFILE_INVALID",
-        "Scheduler selection must create a fresh native epsilon Euler ancestral instance."
-        if ancestral
-        else "Scheduler selection must create a fresh native epsilon Euler instance.",
-    )
+    else:
+        _require(
+            type(scheduler)
+            is (
+                diffusers.EulerAncestralDiscreteScheduler
+                if ancestral
+                else diffusers.EulerDiscreteScheduler
+            )
+            and scheduler is not pipeline.scheduler
+            and scheduler.config.prediction_type == "epsilon",
+            "PROFILE_INVALID",
+            "Scheduler selection must create a fresh native epsilon Euler ancestral instance."
+            if ancestral
+            else "Scheduler selection must create a fresh native epsilon Euler instance.",
+        )
     fresh = diffusers.StableDiffusionXLPipeline(
         vae=pipeline.vae,
         text_encoder=pipeline.text_encoder,
@@ -520,9 +593,52 @@ def _scoped_ancestral_generator(
             fresh.prepare_extra_step_kwargs = previous
 
 
+def _dpmpp_2m_initial_state(scheduler: Any, torch: Any, tensor_profile: _TensorProfile) -> None:
+    """Admit native 2M state without manufacturing Euler-specific attributes."""
+    policy = _tensor_policy(torch, tensor_profile)
+    count = scheduler.num_inference_steps
+    _require(
+        type(count) is int
+        and 1 <= count <= MAX_GENERATION_STEPS
+        and scheduler.step_index is None
+        and scheduler.begin_index is None
+        and type(scheduler.lower_order_nums) is int
+        and scheduler.lower_order_nums == 0
+        and type(scheduler.model_outputs) is list
+        and len(scheduler.model_outputs) == 2
+        and all(value is None for value in scheduler.model_outputs)
+        and type(scheduler.timesteps) is torch.Tensor
+        and scheduler.timesteps.layout == torch.strided
+        and scheduler.timesteps.dtype == torch.int64
+        and scheduler.timesteps.device == policy.device
+        and scheduler.timesteps.requires_grad is False
+        and tuple(scheduler.timesteps.shape) == (count,)
+        and type(scheduler.sigmas) is torch.Tensor
+        and scheduler.sigmas.layout == torch.strided
+        and scheduler.sigmas.dtype == torch.float32
+        and scheduler.sigmas.device == torch.device("cpu")
+        and scheduler.sigmas.requires_grad is False
+        and tuple(scheduler.sigmas.shape) == (count + 1,),
+        "PROFILE_INVALID",
+        "DPM++ 2M requires its bounded unconsumed native schedule and empty history.",
+    )
+    _require(
+        bool(((scheduler.timesteps >= 0) & (scheduler.timesteps < 1000)).all().item())
+        and bool(torch.isfinite(scheduler.sigmas).all().item())
+        and bool((scheduler.sigmas >= 0).all().item()),
+        "PROFILE_INVALID",
+        "DPM++ 2M requires finite nonnegative native sigmas and training timesteps.",
+    )
+
+
 @contextmanager
 def _scoped_invoke_initialization(
-    fresh: Any, torch: Any, seed: int, tensor_profile: _TensorProfile
+    fresh: Any,
+    torch: Any,
+    seed: int,
+    tensor_profile: _TensorProfile,
+    *,
+    dpmpp_2m: bool = False,
 ) -> Generator[None]:
     """Adapt InvokeAI a61ac4fb's txt2img initialization on one owned wrapper.
 
@@ -594,15 +710,27 @@ def _scoped_invoke_initialization(
             "The initial CPU generator must be unconsumed.",
         )
         scheduler = fresh.scheduler
-        _require(
-            scheduler.step_index is None
-            and scheduler.begin_index is None
-            and scheduler.is_scale_input_called is False
-            and scheduler.timesteps.ndim == 1
-            and scheduler.timesteps.numel() > 0,
-            "PROFILE_INVALID",
-            "Native schedule creation must precede unconsumed initialization.",
-        )
+        schedule = sigmas = history = schedule_values = sigma_values = None
+        if dpmpp_2m:
+            _dpmpp_2m_initial_state(scheduler, torch, tensor_profile)
+            # At most 200 int64 timesteps and 201 FP32 sigmas. These bounded
+            # witnesses are released before the first native UNet forward.
+            schedule, sigmas, history = (
+                scheduler.timesteps,
+                scheduler.sigmas,
+                scheduler.model_outputs,
+            )
+            schedule_values, sigma_values = schedule.clone(), sigmas.clone()
+        else:
+            _require(
+                scheduler.step_index is None
+                and scheduler.begin_index is None
+                and scheduler.is_scale_input_called is False
+                and scheduler.timesteps.ndim == 1
+                and scheduler.timesteps.numel() > 0,
+                "PROFILE_INVALID",
+                "Native schedule creation must precede unconsumed initialization.",
+            )
         shape = (1, 4, height // 8, width // 8)
         # Keep Invoke's cast-before-transfer order, including the FP32 CPU lane.
         noise = torch.randn(*shape, device="cpu", dtype=torch.float32, generator=generator)
@@ -617,10 +745,21 @@ def _scoped_invoke_initialization(
             and bool(torch.isfinite(latent).all())
             and scheduler.step_index is None
             and scheduler.begin_index is None
-            and scheduler.is_scale_input_called is False,
+            and (dpmpp_2m or scheduler.is_scale_input_called is False),
             "PROFILE_INVALID",
             "Native initialization must return finite latents without advancing the scheduler.",
         )
+        if dpmpp_2m:
+            _dpmpp_2m_initial_state(scheduler, torch, tensor_profile)
+            _require(
+                scheduler.timesteps is schedule
+                and scheduler.sigmas is sigmas
+                and scheduler.model_outputs is history
+                and torch.equal(schedule, schedule_values)
+                and torch.equal(sigmas, sigma_values),
+                "PROFILE_INVALID",
+                "DPM++ 2M initialization must preserve its native schedule and history.",
+            )
         completed = True
         return latent
 
@@ -665,17 +804,21 @@ def _dynamic_tensor(
     tensor_profile: _TensorProfile = "cpu-float32-v1",
     *,
     timestep: bool = False,
+    dpmpp_2m: bool = False,
 ) -> None:
     policy = _tensor_policy(torch, tensor_profile)
     _require(
         type(value) is torch.Tensor
         and value.device == policy.device
         and value.layout == torch.strided
-        and value.dtype == (torch.float32 if timestep else policy.dtype)
+        and value.dtype
+        == ((torch.int64 if dpmpp_2m else torch.float32) if timestep else policy.dtype)
         and value.requires_grad is False
         and tuple(value.shape) == shape,
         "INPUT_INVALID",
-        f"Each native {name} must retain its selected shape/profile (timestep is float32).",
+        f"Each native {name} must retain its selected shape/profile (timestep is int64)."
+        if dpmpp_2m
+        else f"Each native {name} must retain its selected shape/profile (timestep is float32).",
     )
     _require(
         value.numel() <= _MAX_FINITE_ELEMENTS, "LIMIT", f"{name} exceeds its finite-check bound."
@@ -695,6 +838,7 @@ def _scoped_denoising_value_guards(
     mask: Any,
     steps: int,
     tensor_profile: _TensorProfile = "cpu-float32-v1",
+    dpmpp_2m: bool = False,
 ) -> Generator[None]:
     """Observe final native arguments after the helper's later-installed padding hook.
 
@@ -741,7 +885,13 @@ def _scoped_denoising_value_guards(
             torch, values.get("sample"), (batch, 4, height, width), "sample", tensor_profile
         )
         _dynamic_tensor(
-            torch, values.get("timestep"), (), "timestep", tensor_profile, timestep=True
+            torch,
+            values.get("timestep"),
+            (),
+            "timestep",
+            tensor_profile,
+            timestep=True,
+            **({"dpmpp_2m": True} if dpmpp_2m else {}),
         )
         _owned_value(torch, values.get("encoder_hidden_states"), context, "encoder_hidden_states")
         _owned_value(torch, values.get("encoder_attention_mask"), mask, "encoder_attention_mask")
@@ -877,6 +1027,9 @@ def run_current_canvas_regional_denoising(
     policy. The separately selected Euler-ancestral V1 profiles require the same
     explicit bounded policy with euler_a/epsilon and Invoke's independent,
     compute-device xor-seeded step generator. Initial-noise generation is unchanged.
+    Additive DPM++ 2M profiles require Invoke composition/initialization, the same
+    explicit policy, native int64 timesteps and independent xor step kwargs.
+    The original deterministic multistep scheduler retains its own history.
     All use detached request policies; borrowed scheduler policy is unused.
 
     Payload arithmetic (not RSS): A=W*H <= 4,000,000; latent [1,4,H/8,W/8]
@@ -897,8 +1050,18 @@ def run_current_canvas_regional_denoising(
     )
     tensor_profile, resolved_noise = _execution_profile(denoising_profile, profile)
     ancestral = _ancestral_profile(denoising_profile)
+    dpmpp_2m = _dpmpp_2m_profile(denoising_profile)
     prepared_vae = _vae_profile(denoising_profile)
-    if resolved_noise:
+    if dpmpp_2m:
+        noise_profile = _denoising_parameters(
+            parameters,
+            tensor_profile,
+            resolved_noise=True,
+            prepared_vae=prepared_vae,
+            dpmpp_2m=True,
+        )
+        parameters = replace(parameters, noise_profile=noise_profile)
+    elif resolved_noise:
         noise_profile = (
             _denoising_parameters(
                 parameters,
@@ -966,7 +1129,11 @@ def run_current_canvas_regional_denoising(
             tensor_profile,
             shared_readonly=embedding_strategy == "shared-readonly",
         )
-        if ancestral:
+        if dpmpp_2m:
+            fresh = _fresh_pipeline(
+                pipeline, parameters, runtime, resolved_noise=True, dpmpp_2m=True
+            )
+        elif ancestral:
             fresh = _fresh_pipeline(
                 pipeline, parameters, runtime, resolved_noise=True, ancestral=True
             )
@@ -1018,11 +1185,17 @@ def run_current_canvas_regional_denoising(
         )
         generator = torch.Generator(device="cpu").manual_seed(parameters.seed)
         with (
-            _scoped_invoke_initialization(fresh, torch, parameters.seed, tensor_profile)
+            _scoped_invoke_initialization(
+                fresh,
+                torch,
+                parameters.seed,
+                tensor_profile,
+                **({"dpmpp_2m": True} if dpmpp_2m else {}),
+            )
             if _invoke_initialization_profile(denoising_profile)
             else nullcontext(),
             _scoped_ancestral_generator(fresh, torch, parameters.seed, tensor_profile)
-            if ancestral
+            if ancestral or dpmpp_2m
             else nullcontext(),
             scoped_illustrious_regional_attention(
                 parts[4], bindings=bindings, plan=plan, tensor_profile=tensor_profile
@@ -1039,6 +1212,7 @@ def run_current_canvas_regional_denoising(
                 mask=_effective_padding_mask(torch, conditioning, layout, tensor_profile),
                 steps=parameters.steps,
                 tensor_profile=tensor_profile,
+                **({"dpmpp_2m": True} if dpmpp_2m else {}),
             ),
         ):
             progress_options: _ProgressOptions = (

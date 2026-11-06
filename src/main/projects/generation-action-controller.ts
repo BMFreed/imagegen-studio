@@ -32,6 +32,7 @@ import {
   supportsInferenceImg2Img,
   supportsInferenceLora,
   supportsInferenceOutpaint,
+  supportsInferenceRegionalDpm,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
   supportsInferenceRegionalVae,
@@ -418,6 +419,11 @@ export class ProjectGenerationActionController {
             : this.drain
               ? 'processing'
               : 'idle',
+      regionalDpmSupported:
+        !this.blocked &&
+        !this.closed &&
+        !!this.options.regional &&
+        supportsInferenceRegionalDpm(ready),
       regionalInvokeInitializationSupported:
         !this.blocked &&
         !this.closed &&
@@ -608,6 +614,7 @@ export class ProjectGenerationActionController {
   ): Promise<ProjectGenerateResult> {
     const unavailable = getInvokeRegionalGenerationUnavailableReason({
       document,
+      dpmSupported: true,
       embeddingsSupported: true,
       initializationSupported: true,
       iterations: request.iterations,
@@ -677,6 +684,8 @@ export class ProjectGenerationActionController {
               assertAction()
               if (
                 !supportsRegional(preparation.inferenceReady) ||
+                (document.generationDraft.sampling.sampler === 'DPM++ 2M' &&
+                  !supportsInferenceRegionalDpm(preparation.inferenceReady)) ||
                 (document.generationDraft.loras.some((entry) => entry.enabled) &&
                   !supportsInferenceRegionalLoras(preparation.inferenceReady)) ||
                 ((document.generationDraft.vae !== null ||
@@ -1374,6 +1383,9 @@ export class ProjectGenerationActionController {
               this.assertDocument(source.projectKey, source.documentId)
               if (
                 !supportsRegional(ready) ||
+                ((frozen.payload.workerJob.sampling.scheduler === 'dpmpp_2m' ||
+                  frozen.payload.workerJob.sampling.scheduler === 'dpmpp_2m_k') &&
+                  !supportsInferenceRegionalDpm(ready)) ||
                 ((frozen.payload.workerJob.loras?.length ?? 0) > 0 &&
                   !supportsInferenceRegionalLoras(ready)) ||
                 ((frozen.payload.workerJob.vae != null ||

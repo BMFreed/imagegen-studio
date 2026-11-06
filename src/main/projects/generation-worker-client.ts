@@ -26,6 +26,7 @@ import {
   supportsInferenceImg2Img,
   supportsInferenceLora,
   supportsInferenceOutpaint,
+  supportsInferenceRegionalDpm,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
   supportsInferenceRegionalProgress,
@@ -431,6 +432,17 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     let dispatched = false
     let completed = false
     try {
+      if (
+        input.compositionProfile === 'invoke-canvas-v1' &&
+        (input.request.job.sampling.scheduler === 'dpmpp_2m' ||
+          input.request.job.sampling.scheduler === 'dpmpp_2m_k') &&
+        !supportsInferenceRegionalDpm(this.ready)
+      ) {
+        throw new GenerationWorkerError(
+          'WORKER_VERSION_MISMATCH',
+          'The active worker has not qualified frozen Regional Guidance with DPM++ 2M.',
+        )
+      }
       if (
         input.compositionProfile === 'invoke-canvas-v1' &&
         (input.request.job.vae != null || (input.request.job.vaePrecision ?? 'Auto') !== 'FP16') &&

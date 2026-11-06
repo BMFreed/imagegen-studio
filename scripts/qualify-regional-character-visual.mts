@@ -16,6 +16,9 @@ import { isQualifiedInferenceWorkerReady } from '../src/shared/projects/inferenc
  * Readiness/installation/resource guards reuse upgrade-qualification-worker.mjs; the small RGB
  * observation decoder follows qualify-installed-regional-generation.mjs. No custom publisher,
  * replacement sampling loop, model/environment copy, allocator patch or automatic retry is used.
+ * The additive DPM++ 2M/Karras profile freezes six fresh Main cases and the same explicit Invoke
+ * initialization, including zero-region controls. Mechanical completion leaves visual status
+ * pending.
  */
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
@@ -101,6 +104,46 @@ const ANCESTRAL_LABELS = [
   'seed124-assignment',
   'seed124-swapped',
 ] as const
+const DPM_2M_PROFILE = 'regional-dpmpp-2m-karras-v1'
+const DPM_2M_BASE = '25d2338462d2a38d6719ebecff41e3697f82a9ce'
+const DPM_2M_CONTRACT_SHA256 = '61b46004c99a7e0664d5706731ac14478be11222dd71811a5dc7a3dac587d073'
+const DPM_2M_RUN = path.join(
+  ARTIFACT_ROOT,
+  'runs/regional-guidance-dpmpp-2m/20261106-normal-karras/visual',
+)
+// New-profile-only pins: legacy source/refusal policies remain unchanged.
+const DPM_2M_SOURCE_PINS = {
+  'src/main/projects/generation-action-controller.ts':
+    '87a12ba9d3906cee7ede81008605e073986d0dd6589bfe1a9dd654f3a881e850',
+  'src/main/projects/generation-queue.ts':
+    '162120496a2f0692b46e33ee473899494bb0e82454393cc23b3ee9dd5b1930a9',
+  'src/main/projects/generation-worker-client.ts':
+    'dd9b62dd76f1b01f339aa94f2ff6d4cf1ee705c89545edabf39ac3581747ae07',
+  'src/main/projects/project-regional-generation-coordinator.ts':
+    'ff35224b3a73fab459dda06911a430bc1fb73f3a3ae9a49e78bee616489e99d7',
+  'src/main/projects/regional-queued-generation.ts':
+    '9f04530aecad43c3fc49bf74d90048d805fc9f8a7446fd1d697938e8d4319399',
+  'src/main/projects/regional-worker-request.ts':
+    '6b98756a3efd95e2679208ae294e989d9247b58fef11d30e02d10f3e5f8dae21',
+  'src/renderer/components/generation-queue-retry.ts':
+    'f25a0890483b1b9d1e8f1ca55a7a22bfc914a6e37da507ca14c9dc04aa8d382f',
+  'src/renderer/components/ProjectView.vue':
+    '62ef2949194cc85e294b68f04409578d01bc26399b413a6678223ed6d84a5290',
+  'src/shared/projects/inference-worker-capabilities.ts':
+    'b25fe6dbb6bfedb1ecad538ca6fe18f0f22d3e7d08dd67e89fbc573d64279d0e',
+  'src/shared/projects/project-generation-actions.ts':
+    '16f4c6b943dacdc3b41a06435a9962a488382f402c1721e761238067dda12b6a',
+  'src/shared/projects/regional-invoke-generation.ts':
+    '73895c0d9c5fa37dfe2d721dc6e5f02a44705bd178ab1c7d0c5678fa0fd7614b',
+  'worker-python/src/imagegen_worker/illustrious_regional_denoising.py':
+    '97910962aba132b822d0ae7cf753223ccb7f055606975b7fd4307ea26f06f965',
+  'worker-python/src/imagegen_worker/illustrious_regional_output.py':
+    '0d4133e01101c0297585b1e42596daa863cfd19245632eef9168d34adfa0ed3d',
+  'worker-python/src/imagegen_worker/illustrious_regional_worker.py':
+    '299592b0e065bfd6d7bd7320fa1f009d9212832794e203d60e3f89a9f8f94144',
+  'worker-python/src/imagegen_worker/inference_main.py':
+    '32ca79ac5c5ca7a5edc0de3efa699d8fc90163ca5e93b1835226c4cac4cf5a69',
+} as const
 const LABELS = [
   'seed123-baseline',
   'seed123-assignment',
@@ -130,9 +173,10 @@ interface Fixture {
   artifacts: string
   checkpoint: Checkpoint
   contract: Descriptor
-  deadlineSeconds: 1800
+  deadlineSeconds: 1800 | 600
   profile:
     | typeof ANCESTRAL_PROFILE
+    | typeof DPM_2M_PROFILE
     | typeof ORDINARY_PROFILE
     | typeof PROFILE
     | typeof REGIONAL_PROMPT_TAGS_PROFILE
@@ -162,38 +206,44 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
   const fixtureFile = await json(fixturePath, 64 * 1024)
   const fixture = fixtureFrom(fixtureFile.value)
   const ancestral = fixture.profile === ANCESTRAL_PROFILE
-  const steps = ancestral ? 28 : 30
-  const workerScheduler = ancestral ? 'euler_a' : 'euler'
+  const dpmpp2m = fixture.profile === DPM_2M_PROFILE
+  const steps = ancestral || dpmpp2m ? 28 : 30
+  const workerScheduler = dpmpp2m ? 'dpmpp_2m_k' : ancestral ? 'euler_a' : 'euler'
   const ordinary = fixture.profile === ORDINARY_PROFILE
   const tagged = fixture.profile === TAGGED_PROFILE
   const regionalPromptTags = fixture.profile === REGIONAL_PROMPT_TAGS_PROFILE
-  const regional = tagged || regionalPromptTags || ancestral
-  const base = ancestral
-    ? ANCESTRAL_BASE
-    : regionalPromptTags
-      ? REGIONAL_PROMPT_TAGS_BASE
-      : tagged
-        ? TAGGED_BASE
+  const regional = tagged || regionalPromptTags || ancestral || dpmpp2m
+  const base = dpmpp2m
+    ? DPM_2M_BASE
+    : ancestral
+      ? ANCESTRAL_BASE
+      : regionalPromptTags
+        ? REGIONAL_PROMPT_TAGS_BASE
+        : tagged
+          ? TAGGED_BASE
+          : ordinary
+            ? ORDINARY_BASE
+            : BASE
+  const contractSha256 = dpmpp2m
+    ? DPM_2M_CONTRACT_SHA256
+    : ancestral
+      ? ANCESTRAL_CONTRACT_SHA256
+      : regionalPromptTags
+        ? REGIONAL_PROMPT_TAGS_CONTRACT_SHA256
+        : tagged
+          ? TAGGED_CONTRACT_SHA256
+          : ordinary
+            ? ORDINARY_CONTRACT_SHA256
+            : CONTRACT_SHA256
+  const labels =
+    ancestral || dpmpp2m
+      ? ANCESTRAL_LABELS
+      : regional
+        ? TAGGED_LABELS
         : ordinary
-          ? ORDINARY_BASE
-          : BASE
-  const contractSha256 = ancestral
-    ? ANCESTRAL_CONTRACT_SHA256
-    : regionalPromptTags
-      ? REGIONAL_PROMPT_TAGS_CONTRACT_SHA256
-      : tagged
-        ? TAGGED_CONTRACT_SHA256
-        : ordinary
-          ? ORDINARY_CONTRACT_SHA256
-          : CONTRACT_SHA256
-  const labels = ancestral
-    ? ANCESTRAL_LABELS
-    : regional
-      ? TAGGED_LABELS
-      : ordinary
-        ? ORDINARY_LABELS
-        : LABELS
-  const nativeRequestCeiling = ancestral ? 6 : regional ? 4 : ordinary ? 3 : 7
+          ? ORDINARY_LABELS
+          : LABELS
+  const nativeRequestCeiling = ancestral || dpmpp2m ? 6 : regional ? 4 : ordinary ? 3 : 7
   const originalLabel = regional ? null : ordinary ? 'seed123-baseline' : 'seed123-assignment'
   const repeatLabel = regional
     ? null
@@ -228,13 +278,15 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
   if (ordinary || regional) {
     assert.equal(
       contract.schema,
-      ancestral
-        ? 'regional-euler-ancestral-experiment-v1'
-        : regionalPromptTags
-          ? 'regional-prompt-tags-experiment-v1'
-          : tagged
-            ? 'regional-two-character-tags-experiment-v1'
-            : 'ordinary-two-character-tags-experiment-v1',
+      dpmpp2m
+        ? 'regional-dpmpp-2m-experiment-v1'
+        : ancestral
+          ? 'regional-euler-ancestral-experiment-v1'
+          : regionalPromptTags
+            ? 'regional-prompt-tags-experiment-v1'
+            : tagged
+              ? 'regional-two-character-tags-experiment-v1'
+              : 'ordinary-two-character-tags-experiment-v1',
     )
     assert.equal(contract.globalPositive, ORDINARY_GLOBAL)
     assert.equal(contract.globalNegative, '')
@@ -242,13 +294,35 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
     assert.deepEqual(contract.seeds, [123, 124])
     assert.deepEqual(
       contract.conditions,
-      ancestral
+      ancestral || dpmpp2m
         ? ['baseline', 'assignment', 'swapped']
         : regional
           ? ['assignment', 'swapped']
           : ['baseline'],
     )
     assert.equal(contract.noResources, true)
+  }
+  if (dpmpp2m) {
+    assert.equal(contract.initializationProfile, 'invoke-cpu-f32-add-noise-v1')
+    assert.equal(contract.compositionProfile, 'invoke-canvas-v1')
+    assert.equal(contract.leftPositive, '1girl, long hair, red hair')
+    assert.equal(contract.rightPositive, '1girl, long hair, blue hair')
+    assert.equal(contract.vaePrecision, 'FP16')
+    assert.deepEqual(contract.comparators, [])
+    assert.deepEqual(contract.sampling, {
+      cfgRescale: 0,
+      cfgScale: 5,
+      noiseProfile: {
+        baseSchedule: 'sdxl-scaled-linear-v1',
+        rescaleBetasZeroSnr: false,
+        schemaVersion: 1,
+        timestepSpacing: 'leading',
+      },
+      sampler: 'DPM++ 2M',
+      scheduler: 'Karras',
+      steps: 28,
+      workerScheduler: 'dpmpp_2m_k',
+    })
   }
   const startedAt = Date.now()
   const bounds = await assertUpgradeBounds({ maxRuntimeSeconds: fixture.deadlineSeconds })
@@ -269,7 +343,12 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
     })
   ).stdout.trim()
   assert.equal(invokeRevision, INVOKE_BASE)
-  const initialSources = await sourceCensus()
+  const initialSources = await sourceCensus(dpmpp2m)
+  if (dpmpp2m) {
+    for (const [name, expected] of Object.entries(DPM_2M_SOURCE_PINS)) {
+      assert.equal(initialSources[name]?.sha256, expected, name)
+    }
+  }
   const checkpoint = await snapshot(fixture.checkpoint.path, CHECKPOINT_BYTES, false)
   assert.equal(checkpoint.byteSize, CHECKPOINT_BYTES)
   assert.equal(checkpoint.sha256, CHECKPOINT_SHA256)
@@ -297,17 +376,20 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
     cudaAllocatorFraction: null,
     fixture: { path: fixturePath, sha256: fixtureFile.sha256 },
     installation: installed,
+    ...(dpmpp2m ? { initializationProfile: 'invoke-cpu-f32-add-noise-v1' } : {}),
     limits:
       'GPU capacity/allocator ceilings and independent per-case PT-to-RGB lineage are unqualified; actual installed readiness and original owned PNG readers are observed.',
     mainGroup,
     profile: fixture.profile,
-    schema: regionalPromptTags
-      ? 'regional-prompt-tags-backend-v1'
-      : tagged
-        ? 'regional-two-character-backend-v1'
-        : ordinary
-          ? 'ordinary-two-character-backend-v1'
-          : 'regional-character-visual-backend-v1',
+    schema: dpmpp2m
+      ? 'regional-dpmpp-2m-backend-v1'
+      : regionalPromptTags
+        ? 'regional-prompt-tags-backend-v1'
+        : tagged
+          ? 'regional-two-character-backend-v1'
+          : ordinary
+            ? 'ordinary-two-character-backend-v1'
+            : 'regional-character-visual-backend-v1',
     source: { files: initialSources, invokeRevision, revision },
     startedAt: new Date(startedAt).toISOString(),
     visualStatus: 'pending',
@@ -326,14 +408,14 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
       assert.equal(preparedSha256, originalRepeat.preparedSha256)
     }
     if (ordinary || regional) {
-      if (ordinary || (ancestral && condition === 'baseline')) {
+      if (ordinary || ((ancestral || dpmpp2m) && condition === 'baseline')) {
         assert.equal(condition, 'baseline')
         assert.deepEqual(recipe.regions, [])
       } else {
         assert.ok(condition === 'assignment' || condition === 'swapped')
         assert.equal(recipe.regions.length, 2)
         const texts =
-          regionalPromptTags || ancestral
+          regionalPromptTags || ancestral || dpmpp2m
             ? ['1girl, long hair, red hair', '1girl, long hair, blue hair']
             : ['one woman with long red hair', 'one woman with long blue hair']
         for (const [index, region] of recipe.regions.entries()) {
@@ -357,7 +439,7 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
     }
     assert.equal(recipe.regions.length, condition === 'baseline' ? 0 : 2)
     assert.equal(seed, label.includes('124') ? 124 : 123)
-    assert.deepEqual(await sourceCensus(), initialSources)
+    assert.deepEqual(await sourceCensus(dpmpp2m), initialSources)
     assert.deepEqual((await json(fixture.contract.path, 64 * 1024)).sha256, contractSha256)
     await assertUpgradeBounds({ maxRuntimeSeconds: fixture.deadlineSeconds })
     await assertRuntimeIdle(fixture.appData, installed.basePrefix)
@@ -368,20 +450,25 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
       index: attemptedCalls + 1,
       label,
       maximumNativeRequests: 1,
+      ...(dpmpp2m ? { initializationProfile: 'invoke-cpu-f32-add-noise-v1' } : {}),
       preparedSha256,
       recipeSha256,
       requestDeadlineMilliseconds: 600_000,
       route:
-        condition === 'baseline' && !ancestral ? 'ordinary-client-generate' : 'invoke-canvas-v1',
-      schema: ancestral
-        ? 'regional-euler-ancestral-native-intent-v1'
-        : regionalPromptTags
-          ? 'regional-prompt-tags-native-intent-v1'
-          : tagged
-            ? 'regional-two-character-native-intent-v1'
-            : ordinary
-              ? 'ordinary-two-character-native-intent-v1'
-              : 'regional-character-native-intent-v1',
+        condition === 'baseline' && !ancestral && !dpmpp2m
+          ? 'ordinary-client-generate'
+          : 'invoke-canvas-v1',
+      schema: dpmpp2m
+        ? 'regional-dpmpp-2m-native-intent-v1'
+        : ancestral
+          ? 'regional-euler-ancestral-native-intent-v1'
+          : regionalPromptTags
+            ? 'regional-prompt-tags-native-intent-v1'
+            : tagged
+              ? 'regional-two-character-native-intent-v1'
+              : ordinary
+                ? 'ordinary-two-character-native-intent-v1'
+                : 'regional-character-native-intent-v1',
       seed,
       sourceSha256: digest(encoded(initialSources)),
       time: new Date().toISOString(),
@@ -469,6 +556,7 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
           )
           requestSha256 = digest(encoded(request))
           await exclusive(path.join(fixture.artifacts, `${label}.request.json`), {
+            ...(dpmpp2m ? { initializationProfile: 'invoke-cpu-f32-add-noise-v1' } : {}),
             preparedSha256,
             ready,
             recipe,
@@ -482,7 +570,7 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
           assert.ok(submittedNativeRequests < nativeRequestCeiling)
           submittedNativeRequests++
           submitted = true
-          if (condition === 'baseline' && !ancestral) {
+          if (condition === 'baseline' && !ancestral && !dpmpp2m) {
             response = await activeClient.generate(request, onProgress)
             const completed = record(response, 'ordinary completion')
             assert.equal(completed.type, 'generation-done')
@@ -504,6 +592,9 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
             const regional = await activeClient.executeCurrentCanvasRegional(
               {
                 compositionProfile: 'invoke-canvas-v1',
+                ...(dpmpp2m
+                  ? { initializationProfile: 'invoke-cpu-f32-add-noise-v1' as const }
+                  : {}),
                 globalNegativeCoverage: { kind: 'everywhere' },
                 globalPositiveCoverage: { kind: 'everywhere' },
                 layout: 'cfg-negative-first',
@@ -638,27 +729,32 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
       source: fixture.checkpoint.path,
       useCase,
     }
-    producer = ancestral
+    producer = dpmpp2m
       ? await produceCharacterVisualProbe<CaseOutcome>({
           ...producerOptions,
-          profile: ANCESTRAL_PROFILE,
+          profile: DPM_2M_PROFILE,
         })
-      : regionalPromptTags
+      : ancestral
         ? await produceCharacterVisualProbe<CaseOutcome>({
             ...producerOptions,
-            profile: REGIONAL_PROMPT_TAGS_PROFILE,
+            profile: ANCESTRAL_PROFILE,
           })
-        : tagged
+        : regionalPromptTags
           ? await produceCharacterVisualProbe<CaseOutcome>({
               ...producerOptions,
-              profile: TAGGED_PROFILE,
+              profile: REGIONAL_PROMPT_TAGS_PROFILE,
             })
-          : ordinary
+          : tagged
             ? await produceCharacterVisualProbe<CaseOutcome>({
                 ...producerOptions,
-                profile: ORDINARY_PROFILE,
+                profile: TAGGED_PROFILE,
               })
-            : await produceCharacterVisualProbe<CaseOutcome>(producerOptions)
+            : ordinary
+              ? await produceCharacterVisualProbe<CaseOutcome>({
+                  ...producerOptions,
+                  profile: ORDINARY_PROFILE,
+                })
+              : await produceCharacterVisualProbe<CaseOutcome>(producerOptions)
     assert.equal(attemptedCalls, nativeRequestCeiling)
     assert.equal(submittedNativeRequests, nativeRequestCeiling)
     assert.equal(outcomes.length, nativeRequestCeiling)
@@ -666,7 +762,7 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
       outcomes.map((entry) => entry.label),
       labels,
     )
-    assert.deepEqual(await sourceCensus(), initialSources)
+    assert.deepEqual(await sourceCensus(dpmpp2m), initialSources)
     assert.deepEqual((await json(fixture.contract.path, 64 * 1024)).sha256, contractSha256)
     await installation(fixture)
     const finalCheckpoint = await snapshot(fixture.checkpoint.path, CHECKPOINT_BYTES, false)
@@ -859,6 +955,7 @@ function fixtureFrom(value: Record<string, unknown>): Fixture {
   assert.equal(value.schemaVersion, 1)
   assert.ok(
     value.profile === ANCESTRAL_PROFILE ||
+      value.profile === DPM_2M_PROFILE ||
       value.profile === PROFILE ||
       value.profile === ORDINARY_PROFILE ||
       value.profile === REGIONAL_PROMPT_TAGS_PROFILE ||
@@ -866,6 +963,9 @@ function fixtureFrom(value: Record<string, unknown>): Fixture {
   )
   if (value.profile === ANCESTRAL_PROFILE) {
     assert.equal(value.artifacts, ANCESTRAL_RUN)
+  }
+  if (value.profile === DPM_2M_PROFILE) {
+    assert.equal(value.artifacts, DPM_2M_RUN)
   }
   if (value.profile === ORDINARY_PROFILE) {
     assert.equal(value.artifacts, ORDINARY_RUN)
@@ -876,7 +976,7 @@ function fixtureFrom(value: Record<string, unknown>): Fixture {
   if (value.profile === REGIONAL_PROMPT_TAGS_PROFILE) {
     assert.equal(value.artifacts, REGIONAL_PROMPT_TAGS_RUN)
   }
-  assert.equal(value.deadlineSeconds, 1800)
+  assert.equal(value.deadlineSeconds, value.profile === DPM_2M_PROFILE ? 600 : 1800)
   const source = record(value.checkpoint, 'checkpoint')
   keys(source, [
     'path',
@@ -904,14 +1004,16 @@ function fixtureFrom(value: Record<string, unknown>): Fixture {
     artifacts: canonicalPath(value.artifacts),
     checkpoint: { ...source, path: canonicalPath(source.path) } as unknown as Checkpoint,
     contract: descriptor(value.contract),
-    deadlineSeconds: 1800,
+    deadlineSeconds: value.profile === DPM_2M_PROFILE ? 600 : 1800,
     profile: value.profile,
     provisionReport: descriptor(value.provisionReport),
     schemaVersion: 1,
   }
 }
 
-async function sourceCensus(): Promise<Record<string, { bytes: number; sha256: string }>> {
+async function sourceCensus(
+  dpmpp2m = false,
+): Promise<Record<string, { bytes: number; sha256: string }>> {
   // Includes the entire current Python payload, producer and direct Main/output ownership seams.
   const python = await treeManifest(path.join(REPOSITORY, 'worker-python/src/imagegen_worker'))
   const files = [
@@ -934,6 +1036,7 @@ async function sourceCensus(): Promise<Record<string, { bytes: number; sha256: s
     'src/shared/projects/inference-worker-capabilities.ts',
     'worker-python/pyproject.toml',
     'worker-python/uv.lock',
+    ...(dpmpp2m ? Object.keys(DPM_2M_SOURCE_PINS) : []),
   ]
   const result: Record<string, { bytes: number; sha256: string }> = {}
   for (const name of files) {
@@ -995,6 +1098,14 @@ async function installation(fixture: Fixture) {
     'denoising-progress',
   ]) {
     assert.ok((ready.capabilities as string[]).includes(capability))
+  }
+  if (fixture.profile === DPM_2M_PROFILE) {
+    for (const capability of [
+      'illustrious-regional-dpmpp-2m-v1',
+      'illustrious-regional-invoke-init-v1',
+    ]) {
+      assert.ok((ready.capabilities as string[]).includes(capability))
+    }
   }
   assert.equal(
     (await snapshot(path.join(REPOSITORY, 'worker-python/pyproject.toml'), 1024 ** 2, false))

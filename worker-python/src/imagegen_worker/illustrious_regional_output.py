@@ -34,6 +34,7 @@ from .illustrious_regional_denoising import (
     _ancestral_profile,  # pyright: ignore[reportPrivateUsage]
     _denoising_parameters,  # pyright: ignore[reportPrivateUsage]
     _DenoisingProfile,  # pyright: ignore[reportPrivateUsage]
+    _dpmpp_2m_profile,  # pyright: ignore[reportPrivateUsage]
     _execution_profile,  # pyright: ignore[reportPrivateUsage]
     _Layout,  # pyright: ignore[reportPrivateUsage]
     _native_output,  # pyright: ignore[reportPrivateUsage]
@@ -232,6 +233,8 @@ def generate_current_canvas_regional_txt2img(
     policy bounds and the runner's independent Invoke step generator.
     Separately selected invoke-init profiles also use Invoke's CPU FP32 draw,
     CPU compute-dtype cast and original scheduler.add_noise initialization.
+    DPM++ 2M profiles require that initialization and Invoke composition, selecting
+    the existing deterministic Normal/Karras native scheduler and int64 timesteps.
     Existing profiles retain their native initial preparation. Exact-TI
     copy and existing native preflights remain unchanged.
     Native, conversion and publication errors retain their identity and cause.
@@ -250,7 +253,16 @@ def generate_current_canvas_regional_txt2img(
     except IllustriousRegionalDenoisingError as error:
         raise IllustriousRegionalOutputError("PROFILE_INVALID", str(error)) from error
     prepared_vae = _vae_profile(denoising_profile)
-    if resolved_noise:
+    if _dpmpp_2m_profile(denoising_profile):
+        noise_profile = _denoising_parameters(
+            parameters,
+            tensor_profile,
+            resolved_noise=True,
+            prepared_vae=prepared_vae,
+            dpmpp_2m=True,
+        )
+        parameters = replace(parameters, noise_profile=noise_profile)
+    elif resolved_noise:
         noise_profile = (
             _denoising_parameters(
                 parameters,

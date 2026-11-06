@@ -34,6 +34,7 @@ from .illustrious_regional_attention_adapter import TransformerBinding
 from .illustrious_regional_denoising import (
     _denoising_parameters,  # pyright: ignore[reportPrivateUsage]
     _DenoisingProfile,  # pyright: ignore[reportPrivateUsage]
+    _dpmpp_2m_profile,  # pyright: ignore[reportPrivateUsage]
     _execution_profile,  # pyright: ignore[reportPrivateUsage]
     _vae_profile,  # pyright: ignore[reportPrivateUsage]
 )
@@ -96,6 +97,21 @@ def _denoising_profile(
     prepared_vae = composition_profile == "invoke-canvas-v1" and (
         parameters.vae is not None or parameters.vae_precision != "FP16"
     )
+    if composition_profile == "invoke-canvas-v1" and parameters.scheduler in (
+        "dpmpp_2m",
+        "dpmpp_2m_k",
+    ):
+        _require(
+            composition_profile == "invoke-canvas-v1"
+            and type(initialization_profile) is str
+            and initialization_profile == "invoke-cpu-f32-add-noise-v1",
+            "DPM++ 2M requires explicit Invoke Canvas composition and initialization profiles.",
+        )
+        return (
+            "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cuda-vae-v1"
+            if prepared_vae
+            else "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cuda-fp16-v1"
+        )
     if initialization_profile is not None:
         _require(
             type(initialization_profile) is str
@@ -493,7 +509,15 @@ def parse_regional_request(value: object) -> RegionalRequest:
     denoising_profile = _denoising_profile(parameters, initialization_profile, composition_profile)
     tensor_profile, _ = _execution_profile(denoising_profile, encoding_profile)
     prepared_vae = _vae_profile(denoising_profile)
-    if parameters.scheduler == "euler_a":
+    if _dpmpp_2m_profile(denoising_profile):
+        _denoising_parameters(
+            execution_parameters,
+            tensor_profile,
+            resolved_noise=True,
+            prepared_vae=prepared_vae,
+            dpmpp_2m=True,
+        )
+    elif parameters.scheduler == "euler_a":
         _denoising_parameters(
             execution_parameters,
             tensor_profile,

@@ -5,6 +5,7 @@ import { isIllustriousNoiseProfileV1 } from '../../shared/projects/illustrious-n
 import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceEmbeddings,
+  supportsInferenceRegionalDpm,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
   supportsInferenceRegionalVae,
@@ -432,7 +433,9 @@ export class ProjectRegionalGenerationCoordinator {
           input.onPlanned?.({ truncated: preflight?.truncated ?? false })
           assertCurrent()
           const initializationProfile =
-            compositionProfile && document.generationDraft.sampling.sampler === 'Euler a'
+            compositionProfile &&
+            (document.generationDraft.sampling.sampler === 'Euler a' ||
+              document.generationDraft.sampling.sampler === 'DPM++ 2M')
               ? ('invoke-cpu-f32-add-noise-v1' as const)
               : undefined
           const result = await withPreparation(async (preparation) => {
@@ -442,6 +445,9 @@ export class ProjectRegionalGenerationCoordinator {
             if (
               !isQualifiedInferenceWorkerReady(ready) ||
               !ready.capabilities.includes(capability) ||
+              (compositionProfile &&
+                document.generationDraft.sampling.sampler === 'DPM++ 2M' &&
+                !supportsInferenceRegionalDpm(ready)) ||
               (compositionProfile &&
                 document.generationDraft.loras.some((entry) => entry.enabled) &&
                 !supportsInferenceRegionalLoras(ready)) ||
@@ -667,6 +673,7 @@ export class ProjectRegionalGenerationCoordinator {
 function validateInvokeDraft(document: IgsProjectDocumentV1, iterations = 1): void {
   const reason = getInvokeRegionalGenerationUnavailableReason({
     document,
+    dpmSupported: true,
     embeddingsSupported: true,
     initializationSupported: true,
     iterations,

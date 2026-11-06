@@ -112,6 +112,17 @@ export function supportsInferenceRegionalInvokeInitialization(value: unknown): b
   )
 }
 
+/** DPM++ 2M requires its public opt-in and the already qualified Invoke initialization owner. */
+export function supportsInferenceRegionalDpm(value: unknown): boolean {
+  return (
+    isQualifiedInferenceWorkerReady(value) &&
+    value.workerVersion === '0.14.0' &&
+    value.capabilities.includes('illustrious-regional-invoke-v1') &&
+    value.capabilities.includes('illustrious-regional-dpmpp-2m-v1') &&
+    supportsInferenceRegionalInvokeInitialization(value)
+  )
+}
+
 /** Global LoRAs require the qualified public regional owner and its explicit adapter opt-in. */
 export function supportsInferenceRegionalLoras(value: unknown): boolean {
   return (

@@ -178,7 +178,7 @@ const requestSchema = v.strictObject({
       cfgScale: v.pipe(v.number(), v.finite(), v.minValue(1), v.maxValue(30)),
       noiseProfile: IllustriousNoiseProfileV1Schema,
       // Main freezes the matching public/private sampler and initialization policy separately.
-      scheduler: v.picklist(['euler', 'euler_a']),
+      scheduler: v.picklist(['euler', 'euler_a', 'dpmpp_2m', 'dpmpp_2m_k']),
       seed: integer(0, 0xff_ff_ff_ff),
       steps: integer(1, 200),
     }),
@@ -268,9 +268,22 @@ export function captureRegionalWorkerInput(input: RegionalWorkerInput): Regional
     }
     detached = result.output
     validateAgreement(detached)
+    const dpm =
+      detached.request.job.sampling.scheduler === 'dpmpp_2m' ||
+      detached.request.job.sampling.scheduler === 'dpmpp_2m_k'
+    if (
+      dpm &&
+      (detached.compositionProfile !== 'invoke-canvas-v1' ||
+        detached.initializationProfile !== 'invoke-cpu-f32-add-noise-v1')
+    ) {
+      throw invalid(
+        'DPM++ 2M requires public Invoke Canvas and its explicit initialization policy.',
+      )
+    }
     if (
       detached.initializationProfile !== undefined &&
-      detached.request.job.sampling.scheduler !== 'euler_a'
+      detached.request.job.sampling.scheduler !== 'euler_a' &&
+      !(detached.compositionProfile === 'invoke-canvas-v1' && dpm)
     ) {
       throw invalid('Invoke initialization requires the explicit Euler a execution lane.')
     }

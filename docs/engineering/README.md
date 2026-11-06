@@ -1952,3 +1952,26 @@ All1,626 owned/input entries are retained; ROOT exit/restoration/reader/incoming
 gates precede deletion of three exact scratch paths, reclaiming46,166,016 allocated
 bytes. Shared runtime/resources/companions and saved business data remain pinned.
 Visual/human, Anima, capacity/release and promise statuses remain unchanged.
+
+## DPM++ 2M with public Regional Guidance
+
+The [DPM continuation](./phase-4-regional-guidance-dpmpp-2m-research.md) adapts
+current Invoke scheduler selection and initialization through the existing
+native loop. Normal/Karras use one explicit family, native integer timesteps
+and retained multistep history. Existing capability/advisory/frozen queue owners
+gate the new path separately; Euler/Euler-a and other historical lanes retain
+their meanings. ROOT:576 Main/352 distinct Python PASS; typing/scoped checks/build
+PASS. Three isolated mutations yield20GREEN/4semanticRED, including CPU/CUDA PNG
+initialization sensitivity, with controls and exact restoration. Installed native-r1
+passes18 grouped checks in402.399s: dynamic batch/Cancel/frozen Retry after saved
+Euler/Normal/resource edits, three original DPM wires, two Results, reviewed
+Add/Discard/Undo/Redo and Save ZIP/reopen. The canonical worker is refreshed in
+place; one runtime/catalog and original resources remain protected. Fixed visual
+controls complete six mechanical PASS/280.713s. Blinded descriptions plus ROOT
+rubric adjudication give3 narrow color/side PASS and1 INCONCLUSIVE, overall
+NOT_QUALIFIED; human/general-quality acceptance remains pending. All4,751 owned/
+external-input entries are retained and independently audited CLEAN within the
+stated scope. ROOT's fresh exit/restoration/readers/dependency gates precede
+disposal of six exact scratch paths, reclaiming117,637,120 allocated bytes.
+Shared runtime/resources/companion and saved business data remain protected.
+Defaults and promise statuses remain unchanged.

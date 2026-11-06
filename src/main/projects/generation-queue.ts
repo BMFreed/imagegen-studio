@@ -1077,7 +1077,7 @@ export class GenerationQueueRepository {
       input.regional.initializationProfile === undefined
         ? input.request.job.sampling.scheduler !== 'euler'
         : input.regional.initializationProfile !== 'invoke-cpu-f32-add-noise-v1' ||
-          input.request.job.sampling.scheduler !== 'euler_a'
+          !['dpmpp_2m', 'dpmpp_2m_k', 'euler_a'].includes(input.request.job.sampling.scheduler)
     ) {
       throw new GenerationQueueError(
         'QUEUE_INPUT_INVALID',
@@ -1146,7 +1146,7 @@ export class GenerationQueueRepository {
         (regional.initializationProfile === undefined
           ? request.job.sampling.scheduler !== 'euler'
           : regional.initializationProfile !== 'invoke-cpu-f32-add-noise-v1' ||
-            request.job.sampling.scheduler !== 'euler_a')
+            !['dpmpp_2m', 'dpmpp_2m_k', 'euler_a'].includes(request.job.sampling.scheduler))
       ) {
         throw new GenerationQueueError(
           'QUEUE_INPUT_INVALID',

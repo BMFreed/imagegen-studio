@@ -30,6 +30,8 @@ export interface ProjectGenerationActionState {
   outpaintSupported?: boolean
   /** Engine admission/dispatch is app-wide; jobs and current cancellation are document-scoped. */
   phase: 'blocked' | 'closed' | 'idle' | 'preparing' | 'processing'
+  /** Explicit DPM++ 2M/public Invoke initialization support; absence never grants it. */
+  regionalDpmSupported?: boolean
   /** Separate opt-in initialization capability; absence never enables regional Euler a. */
   regionalInvokeInitializationSupported?: boolean
   /** Explicit public regional LoRA support; absence never enables an active global stack. */
@@ -121,6 +123,7 @@ export function isProjectGenerationActionState(
         'animaOutpaintSupported',
         'outpaintSupported',
         'regionalSupported',
+        'regionalDpmSupported',
         'regionalInvokeInitializationSupported',
         'regionalLoraSupported',
         'regionalVaeSupported',
@@ -131,6 +134,8 @@ export function isProjectGenerationActionState(
     (value['animaOutpaintSupported'] !== undefined &&
       typeof value['animaOutpaintSupported'] !== 'boolean') ||
     (value['outpaintSupported'] !== undefined && typeof value['outpaintSupported'] !== 'boolean') ||
+    (value['regionalDpmSupported'] !== undefined &&
+      typeof value['regionalDpmSupported'] !== 'boolean') ||
     (value['regionalVaeSupported'] !== undefined &&
       typeof value['regionalVaeSupported'] !== 'boolean') ||
     (value['regionalSupported'] !== undefined && typeof value['regionalSupported'] !== 'boolean') ||

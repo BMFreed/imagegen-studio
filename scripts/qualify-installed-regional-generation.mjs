@@ -112,12 +112,15 @@ assert.ok(
     'installed-regional-invoke-global-loras-v1',
     'installed-regional-invoke-vae-v1',
     'installed-regional-invoke-dynamic-positive-v1',
+    'installed-regional-invoke-dpmpp-2m-v1',
   ].includes(fixture.profile),
 )
 const mainDeathProfile = fixture.profile === 'installed-regional-invoke-main-death-v1'
 const workerFaultProfile = fixture.profile === 'installed-regional-invoke-worker-fault-v1'
 const staticBatchProfile = fixture.profile === 'installed-regional-invoke-static-batch-v1'
-const dynamicPositiveProfile = fixture.profile === 'installed-regional-invoke-dynamic-positive-v1'
+const dpmpp2mProfile = fixture.profile === 'installed-regional-invoke-dpmpp-2m-v1'
+const dynamicPositiveProfile =
+  dpmpp2mProfile || fixture.profile === 'installed-regional-invoke-dynamic-positive-v1'
 const globalVaeProfile =
   dynamicPositiveProfile || fixture.profile === 'installed-regional-invoke-vae-v1'
 const globalLoraProfile =
@@ -134,8 +137,13 @@ const progressProfile =
 const recoveryProfile =
   mainDeathProfile || fixture.profile === 'installed-regional-invoke-recovery-v1'
 const initialization = 'invoke-cpu-f32-add-noise-v1'
-const generationSampler = initializationProfile ? 'Euler a' : 'Euler'
-const generationScheduler = initializationProfile ? 'euler_a' : 'euler'
+const generationSampler = dpmpp2mProfile ? 'DPM++ 2M' : initializationProfile ? 'Euler a' : 'Euler'
+const generationScheduler = dpmpp2mProfile
+  ? 'dpmpp_2m_k'
+  : initializationProfile
+    ? 'euler_a'
+    : 'euler'
+const generationScheduleLabel = dpmpp2mProfile ? 'Karras' : 'Normal'
 assert.ok(
   Number.isSafeInteger(fixture.deadlineSeconds) &&
     fixture.deadlineSeconds > 0 &&
@@ -422,6 +430,8 @@ async function verifyProvision() {
     assert.ok(provision.ready.capabilities.includes('illustrious-regional-lora-v1'))
   if (globalVaeProfile)
     assert.ok(provision.ready.capabilities.includes('illustrious-regional-vae-v1'))
+  if (dpmpp2mProfile)
+    assert.ok(provision.ready.capabilities.includes('illustrious-regional-dpmpp-2m-v1'))
   if (mainDeathProfile || workerFaultProfile)
     assert.ok(provision.ready.capabilities.includes('linux-owned-inference-v1'))
   if (progressProfile)
@@ -988,6 +998,26 @@ async function captureProgressPreservation() {
       ' Reuse the same four existing TI files with distinct authored global literals <variant-a>/<variant-c>, the same four LoRAs, both original VAE files and unchanged installed worker/runtime. Global negative and regional texts/resources remain static. The new regional route verifies the selected-plan resource union; discarded alternatives stay authored without being resolved or consumed, while ordinary preparation is unchanged.'
     report.boundary.exclusions +=
       ' No dynamic regional/negative prompting, wildcard packs, additional worker capability, runtime refresh, resource/model copy, extra generation or numerical/visual causality claim. Accepted provenance contains only concrete A123 and its active global A/B refs, never the source template, maxPrompts, inactive global C or regional owners.'
+  }
+  if (dpmpp2mProfile) {
+    report.boundary.calls +=
+      ' Both original requests and frozen Retry use DPM++2M/Karras30 despite saved Euler/Normal2. Actual sampler/scheduler UI controls select the original policy. Normal native mechanics are qualified separately by the focused CPU/CUDA suite.'
+    report.boundary.preconditions = report.boundary.preconditions.replace(
+      'unchanged installed worker/runtime',
+      'the same installed runtime with a verified in-place DPM worker payload refresh',
+    )
+    report.boundary.exclusions = report.boundary.exclusions
+      .replace('additional worker capability, runtime refresh, ', '')
+      .replace('different Euler-a initialization', 'different DPM++2M/Karras initialization')
+      .replace('independent healthy Euler-a replay', 'independent healthy DPM++2M replay')
+    report.boundary.dpmpp2m = {
+      sampler: generationSampler,
+      scheduler: generationScheduleLabel,
+      invokeScheduler: generationScheduler,
+      initialization,
+      newCapability: 'illustrious-regional-dpmpp-2m-v1',
+      numericCausalityClaimed: false,
+    }
   }
   if (workerFaultProfile) {
     report.boundary.calls =
@@ -3634,8 +3664,9 @@ function assertFrozen(frozen, project, expectedSeed = 123) {
   assert.equal(frozen.compositionProfile, 'invoke-canvas-v1')
   if (initializationProfile) {
     assert.equal(frozen.initializationProfile, initialization)
-    assert.equal(frozen.context.sampling.sampler, 'Euler a')
-    assert.equal(frozen.context.sampling.invokeScheduler, 'euler_a')
+    assert.equal(frozen.context.sampling.sampler, generationSampler)
+    assert.equal(frozen.context.sampling.scheduler, generationScheduleLabel)
+    assert.equal(frozen.context.sampling.invokeScheduler, generationScheduler)
   }
   assert.equal(frozen.context.documentId, project.document.documentId)
   assert.deepEqual(frozen.context.bbox, bbox)
@@ -4430,6 +4461,37 @@ async function generateGlobalEmbeddingBatchRetry(project) {
   assert.equal(advisory.regionalSupported, true)
   assert.equal(advisory.regionalInvokeInitializationSupported, true)
   assert.equal(advisory.embeddingsSupported, true)
+  if (dpmpp2mProfile) {
+    assert.equal(advisory.regionalDpmSupported, true)
+    assert.equal((await current(project)).generationDraft.sampling.sampler, 'DPM++ 2M')
+    assert.equal((await current(project)).generationDraft.sampling.scheduler, 'Normal')
+    // Exercise original renderer -> draft IPC, without a qualification-only sampling override.
+    for (const sampler of ['Euler', 'DPM++ 2M']) {
+      await window.locator('[aria-label="Sampler"]').click()
+      await window.getByText(sampler, { exact: true }).last().click()
+      await expect
+        .poll(async () => (await current(project)).generationDraft.sampling.sampler)
+        .toBe(sampler)
+    }
+    await window.locator('[aria-label="Scheduler"]').click()
+    await window.getByText('Karras', { exact: true }).last().click()
+    await expect
+      .poll(async () => (await current(project)).generationDraft.sampling)
+      .toEqual({
+        cfgScale: 5,
+        denoisingStrength: null,
+        sampler: 'DPM++ 2M',
+        scheduler: 'Karras',
+        steps: 30,
+      })
+    assert.equal(await hashFile(project.file), project.initialPackageSha256)
+    report.dpmpp2mAuthoringBeforeGenerate = {
+      initialScheduler: 'Normal',
+      actualUiSamplers: ['Euler', 'DPM++ 2M'],
+      selectedScheduler: 'Karras',
+      savedPackageUnchanged: true,
+    }
+  }
   if (globalLoraProfile) {
     assert.equal(advisory.regionalLoraSupported, true)
     assert.deepEqual((await current(project)).generationDraft.loras, configuredGlobalLoraStack())
@@ -4710,6 +4772,13 @@ async function generateGlobalEmbeddingBatchRetry(project) {
       },
       negative: { text: 'later local authoring', embeddingRefs: [] },
     })
+  if (dpmpp2mProfile) {
+    await window.locator('[aria-label="Scheduler"]').click()
+    await window.getByText('Normal', { exact: true }).last().click()
+    await expect
+      .poll(async () => (await current(project)).generationDraft.sampling.scheduler)
+      .toBe('Normal')
+  }
   await save(project)
   const edited = await current(project),
     editedPackageSha256 = await hashFile(project.file)
@@ -4882,6 +4951,7 @@ async function generateGlobalEmbeddingBatchRetry(project) {
       'illustrious-regional-progress-v1',
       ...(globalLoraProfile ? ['illustrious-regional-lora-v1'] : []),
       ...(globalVaeProfile ? ['illustrious-regional-vae-v1'] : []),
+      ...(dpmpp2mProfile ? ['illustrious-regional-dpmpp-2m-v1'] : []),
     ])
       assert.ok(worker.ready.capabilities.includes(cap))
     assert.equal(wire.reportProgress, true)
@@ -5039,6 +5109,29 @@ async function generateGlobalEmbeddingBatchRetry(project) {
     originalScalarProgressEvents: scalarCount,
     stepCounterQualified: true,
     extraGenerateOrRetryRequested: false,
+  }
+  if (dpmpp2mProfile) {
+    assert.equal(edited.generationDraft.sampling.sampler, 'Euler')
+    assert.equal(edited.generationDraft.sampling.scheduler, 'Normal')
+    assert.equal(edited.generationDraft.sampling.steps, 2)
+    assert.ok(
+      wires.every(({ bundleJson }) => bundleJson.request.job.sampling.scheduler === 'dpmpp_2m_k'),
+    )
+    report.dpmpp2mFlow = {
+      originalSampler: 'DPM++ 2M',
+      originalScheduler: 'Karras',
+      originalSteps: 30,
+      originalWireKeys: wires.map(({ bundleJson }) => bundleJson.request.job.sampling.scheduler),
+      editedSavedSampling: edited.generationDraft.sampling,
+      requiredInitialization: initialization,
+      requiredCapability: 'illustrious-regional-dpmpp-2m-v1',
+      nativeLoopCopied: false,
+      numericalOrVisualCausalityClaimed: false,
+    }
+    check(
+      'Original DPM++2M/Karras30 and explicit Invoke initialization survive saved Euler/Normal2 and frozen Retry; every executing peer advertises DPM support',
+      report.dpmpp2mFlow,
+    )
   }
   check(
     dynamicPositiveProfile
@@ -6016,7 +6109,7 @@ function assertBaseProvenance(provenance, candidate, frozen) {
       noiseProfile: policy,
       requestedSeedPolicy: 'fixed',
       sampler: generationSampler,
-      scheduler: 'Normal',
+      scheduler: generationScheduleLabel,
       steps: 30,
       ...(multipleResultsProfile && frozen.context.sampling.seedBehavior !== undefined
         ? { seedBehavior: frozen.context.sampling.seedBehavior }
@@ -6356,6 +6449,18 @@ async function resultsAddSaveReopen(project, completed) {
     report.globalVaeFlow.acceptedOriginalReference =
       accepted.generationProvenance.generationConfiguration.vae
     report.globalVaeFlow.acceptedOriginalPrecision = 'FP32'
+  }
+  if (dpmpp2mProfile) {
+    assert.equal(reopened.generationDraft.sampling.sampler, 'Euler')
+    assert.equal(reopened.generationDraft.sampling.scheduler, 'Normal')
+    assert.equal(reopened.generationDraft.sampling.steps, 2)
+    assert.equal(accepted.generationProvenance.generationConfiguration.sampling.sampler, 'DPM++ 2M')
+    assert.equal(accepted.generationProvenance.generationConfiguration.sampling.scheduler, 'Karras')
+    assert.equal(
+      accepted.generationProvenance.generationConfiguration.sampling.invokeScheduler,
+      'dpmpp_2m_k',
+    )
+    report.dpmpp2mFlow.savedReopenedAssociationVerified = true
   }
   if (dynamicPositiveProfile) {
     assert.deepEqual(reopened.generationDraft.dynamicPrompt, {

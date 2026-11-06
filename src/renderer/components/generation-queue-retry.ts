@@ -6,6 +6,7 @@ type RetryState = Pick<
   | 'animaOutpaintSupported'
   | 'animaSupported'
   | 'outpaintSupported'
+  | 'regionalDpmSupported'
   | 'regionalInvokeInitializationSupported'
   | 'regionalLoraSupported'
   | 'regionalSupported'
@@ -33,6 +34,9 @@ export function generationQueueRetryReason(
     }
     if (requiresRegionalVae && state.regionalVaeSupported !== true) {
       return 'The current image engine does not support selected VAE and precision with Regional Guidance. Repair or update the runtime.'
+    }
+    if (frozenSampler === 'DPM++ 2M' && state.regionalDpmSupported !== true) {
+      return 'The current image engine does not support Regional Guidance with DPM++ 2M. Repair or update the runtime.'
     }
     return frozenSampler === 'Euler a' && state.regionalInvokeInitializationSupported !== true
       ? 'The current image engine does not support Regional Guidance with Euler a. Repair or update the runtime.'
