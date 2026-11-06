@@ -83,6 +83,7 @@ from .inference import (
 from .inference_lora import finite_unet_outputs
 from .inference_vae import finite_vae_outputs
 from .protocol import (
+    MAX_GENERATION_CFG_RESCALE,
     MAX_GENERATION_STEPS,
     IllustriousInferenceParameters,
     IllustriousNoiseProfile,
@@ -281,6 +282,7 @@ def _denoising_parameters(
     ancestral: bool = False,
     prepared_vae: bool = False,
     dpmpp_2m: bool = False,
+    invoke_cfg_rescale: bool = False,
 ) -> IllustriousNoiseProfile | None:
     _require(
         type(parameters) is IllustriousInferenceParameters,
@@ -319,11 +321,21 @@ def _denoising_parameters(
         "INPUT_INVALID",
         "CFG must be finite in [1,30], excluding bool.",
     )
-    _require(
-        _finite_number(parameters.cfg_rescale) and parameters.cfg_rescale == 0,
-        "UNSUPPORTED",
-        "This first denoising profile requires CFG rescale zero.",
-    )
+    if invoke_cfg_rescale:
+        # InvokeAI a61ac4fb: RescaleCFGExt runs its std-ratio/blend after CFG.
+        # The existing run_sdxl_pipeline/native SDXL owner performs that same operation.
+        _require(
+            _finite_number(parameters.cfg_rescale)
+            and 0 <= parameters.cfg_rescale <= MAX_GENERATION_CFG_RESCALE,
+            "INPUT_INVALID",
+            "Invoke Canvas requires finite CFG rescale in [0,0.99], excluding bool.",
+        )
+    else:
+        _require(
+            _finite_number(parameters.cfg_rescale) and parameters.cfg_rescale == 0,
+            "UNSUPPORTED",
+            "This first denoising profile requires CFG rescale zero.",
+        )
     _require(
         type(parameters.scheduler) is str
         and (
@@ -1031,6 +1043,9 @@ def run_current_canvas_regional_denoising(
     explicit policy, native int64 timesteps and independent xor step kwargs.
     The original deterministic multistep scheduler retains its own history.
     All use detached request policies; borrowed scheduler policy is unused.
+    Invoke Canvas profiles admit the existing bounded CFG Rescale value. The
+    unchanged native pipeline applies Invoke's standard-deviation ratio/blend
+    after CFG and before the scheduler step; historical private profiles require zero.
 
     Payload arithmetic (not RSS): A=W*H <= 4,000,000; latent [1,4,H/8,W/8]
     float32 uses A/4 <= 1,000,000 bytes; CFG's doubled sample uses A/2 <=
@@ -1052,6 +1067,7 @@ def run_current_canvas_regional_denoising(
     ancestral = _ancestral_profile(denoising_profile)
     dpmpp_2m = _dpmpp_2m_profile(denoising_profile)
     prepared_vae = _vae_profile(denoising_profile)
+    invoke_cfg_rescale = profile in _INVOKE_PROFILES
     if dpmpp_2m:
         noise_profile = _denoising_parameters(
             parameters,
@@ -1059,6 +1075,7 @@ def run_current_canvas_regional_denoising(
             resolved_noise=True,
             prepared_vae=prepared_vae,
             dpmpp_2m=True,
+            invoke_cfg_rescale=invoke_cfg_rescale,
         )
         parameters = replace(parameters, noise_profile=noise_profile)
     elif resolved_noise:
@@ -1069,15 +1086,20 @@ def run_current_canvas_regional_denoising(
                 resolved_noise=True,
                 ancestral=True,
                 prepared_vae=prepared_vae,
+                invoke_cfg_rescale=invoke_cfg_rescale,
             )
             if ancestral
             else _denoising_parameters(
-                parameters, tensor_profile, resolved_noise=True, prepared_vae=prepared_vae
+                parameters,
+                tensor_profile,
+                resolved_noise=True,
+                prepared_vae=prepared_vae,
+                invoke_cfg_rescale=invoke_cfg_rescale,
             )
         )
         parameters = replace(parameters, noise_profile=noise_profile)
     else:
-        _denoising_parameters(parameters, tensor_profile)
+        _denoising_parameters(parameters, tensor_profile, invoke_cfg_rescale=invoke_cfg_rescale)
     bbox, pairs, parameters, shape, global_negative, global_positive = _recipe_inputs(
         recipe,
         parameters,
@@ -1227,7 +1249,7 @@ def run_current_canvas_regional_denoising(
                 cfg_scale=parameters.cfg_scale,
                 generator=generator,
                 torch=torch,
-                cfg_rescale=0.0,
+                cfg_rescale=parameters.cfg_rescale,
                 output_type="latent" if prepared_vae else "pt",
                 **progress_options,
             )

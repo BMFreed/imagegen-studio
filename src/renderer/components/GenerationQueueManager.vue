@@ -420,6 +420,7 @@ function retryReason(item: GenerationQueueEntry): string | null {
     item.details?.sampling.sampler,
     item.details?.requiresRegionalLora,
     item.details?.requiresRegionalVae,
+    item.details?.sampling.cfgRescale,
   )
   if (operationReason) {
     return operationReason

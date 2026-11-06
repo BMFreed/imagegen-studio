@@ -6,6 +6,7 @@ type RetryState = Pick<
   | 'animaOutpaintSupported'
   | 'animaSupported'
   | 'outpaintSupported'
+  | 'regionalCfgRescaleSupported'
   | 'regionalDpmSupported'
   | 'regionalInvokeInitializationSupported'
   | 'regionalLoraSupported'
@@ -21,6 +22,7 @@ export function generationQueueRetryReason(
   frozenSampler?: string | null,
   requiresRegionalLora = false,
   requiresRegionalVae = false,
+  frozenCfgRescale = 0,
 ): string | null {
   if (operation === 'illustrious-regional-txt2img') {
     if (state === null) {
@@ -28,6 +30,9 @@ export function generationQueueRetryReason(
     }
     if (state.regionalSupported !== true) {
       return 'The current image engine does not support Regional Guidance. Repair or update the runtime.'
+    }
+    if (frozenCfgRescale !== 0 && state.regionalCfgRescaleSupported !== true) {
+      return 'The current image engine does not support CFG Rescale with Regional Guidance. Repair or update the runtime.'
     }
     if (requiresRegionalLora && state.regionalLoraSupported !== true) {
       return 'The current image engine does not support global LoRAs with Regional Guidance. Repair or update the runtime.'

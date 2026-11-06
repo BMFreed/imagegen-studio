@@ -26,6 +26,7 @@ import {
   supportsInferenceImg2Img,
   supportsInferenceLora,
   supportsInferenceOutpaint,
+  supportsInferenceRegionalCFGRescale,
   supportsInferenceRegionalDpm,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
@@ -432,6 +433,16 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     let dispatched = false
     let completed = false
     try {
+      if (
+        input.compositionProfile === 'invoke-canvas-v1' &&
+        (input.request.job.sampling.cfgRescale ?? 0) !== 0 &&
+        !supportsInferenceRegionalCFGRescale(this.ready)
+      ) {
+        throw new GenerationWorkerError(
+          'WORKER_VERSION_MISMATCH',
+          'The active worker has not qualified frozen CFG Rescale with Regional Guidance.',
+        )
+      }
       if (
         input.compositionProfile === 'invoke-canvas-v1' &&
         (input.request.job.sampling.scheduler === 'dpmpp_2m' ||

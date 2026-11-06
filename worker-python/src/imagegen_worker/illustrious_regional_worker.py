@@ -44,6 +44,7 @@ from .illustrious_regional_output import (
     generate_current_canvas_regional_txt2img,
 )
 from .illustrious_regional_recipe import (
+    _INVOKE_PROFILES,  # pyright: ignore[reportPrivateUsage]
     _bbox,  # pyright: ignore[reportPrivateUsage]
     _Layout,  # pyright: ignore[reportPrivateUsage]
     _recipe_inputs,  # pyright: ignore[reportPrivateUsage]
@@ -509,6 +510,7 @@ def parse_regional_request(value: object) -> RegionalRequest:
     denoising_profile = _denoising_profile(parameters, initialization_profile, composition_profile)
     tensor_profile, _ = _execution_profile(denoising_profile, encoding_profile)
     prepared_vae = _vae_profile(denoising_profile)
+    invoke_cfg_rescale = encoding_profile in _INVOKE_PROFILES
     if _dpmpp_2m_profile(denoising_profile):
         _denoising_parameters(
             execution_parameters,
@@ -516,6 +518,7 @@ def parse_regional_request(value: object) -> RegionalRequest:
             resolved_noise=True,
             prepared_vae=prepared_vae,
             dpmpp_2m=True,
+            invoke_cfg_rescale=invoke_cfg_rescale,
         )
     elif parameters.scheduler == "euler_a":
         _denoising_parameters(
@@ -524,10 +527,15 @@ def parse_regional_request(value: object) -> RegionalRequest:
             resolved_noise=True,
             ancestral=True,
             prepared_vae=prepared_vae,
+            invoke_cfg_rescale=invoke_cfg_rescale,
         )
     else:
         _denoising_parameters(
-            execution_parameters, tensor_profile, resolved_noise=True, prepared_vae=prepared_vae
+            execution_parameters,
+            tensor_profile,
+            resolved_noise=True,
+            prepared_vae=prepared_vae,
+            invoke_cfg_rescale=invoke_cfg_rescale,
         )
     snapshots = _RawSnapshots(
         root, {bundle_descriptor[0], command.target_path, command.output_path}

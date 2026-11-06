@@ -1124,6 +1124,8 @@ The [dynamic-positive extension](#dynamic-global-positive-with-regional-guidance
 adds concrete global-positive variants under that same aggregate limit.
 The [DPM++ 2M extension](#dpm-2m-with-regional-guidance) adds Normal/Karras through
 the existing native scheduler and explicit Invoke initialization owner.
+The [CFG Rescale extension](#cfg-rescale-with-regional-guidance) adds qualified
+nonzero rescaling through that same native loop.
 
 `invoke-canvas-v1` consumes regional alpha as `alpha > 0` before nearest-eight
 projection, omits literal-empty local conditioning signs while preserving
@@ -1600,3 +1602,27 @@ Independent source/retained-byte reviews are CLEAN within their stated limits;
 ROOT's qualified execution and scratch release remain separate evidence.
 No SDE, v-prediction, image-mode, Anima, reference, product-default or promise-status
 extension follows automatically; PP-001/005/007/008 remain unchanged.
+
+## CFG Rescale with Regional Guidance
+
+The [CFG Rescale extension](../../../engineering/phase-4-regional-guidance-cfg-rescale-research.md)
+admits the existing0..0.99 setting on the qualified public Illustrious epsilon
+regional route. Invoke's post-CFG standard-deviation ratio/blend remains inside
+the original native loop. Default is still zero; historical private profiles
+continue to require zero. Nonzero values require the separate
+`illustrious-regional-cfg-rescale-v1` capability before preparation, frozen Retry
+and dispatch. Ordinary rescale support alone does not grant regional support.
+
+Existing draft/command/queue/provenance fields preserve the frozen value despite
+later edits; no schema, migration or control is added. ROOT:623 Main/392 Python
+PASS and15GREEN/3semanticRED with controls/restoration. Installed native-r1 passes
+19 grouped checks: actual.7, Cancel, saved.2, frozen Retry.7, two Results and
+reviewed Add/Discard/Undo/Redo/Save-reopen. Two separate backend controls add no
+queue rows/receipts: same-input replay.7 matches UI RGBA exactly, while zero
+changes2,835,194 RGB channels. This proves finite numerical influence/association,
+not visual quality. Source reviews are CLEAN within their stated limits; runtime
+and release evidence remain separate. Complementary retained-byte audit is CLEAN;
+ROOT releases only five archived idle scratch paths, preserving runtime/resources,
+current companion, saved projects and durable business state. Visual/human, Anima, release and
+PP-001/005/007/008 remain unchanged. Regional provenance, Compare and result-derived
+preset exclusions persist.

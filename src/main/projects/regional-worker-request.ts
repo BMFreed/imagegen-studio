@@ -174,7 +174,7 @@ const requestSchema = v.strictObject({
     output: v.strictObject({ pngPath: filePath, stagingRoot: filePath }),
     prompts: v.strictObject({ negative: text, positive: text }),
     sampling: v.strictObject({
-      cfgRescale: v.optional(v.literal(0)),
+      cfgRescale: v.optional(v.pipe(v.number(), v.finite(), v.minValue(0), v.maxValue(0.99))),
       cfgScale: v.pipe(v.number(), v.finite(), v.minValue(1), v.maxValue(30)),
       noiseProfile: IllustriousNoiseProfileV1Schema,
       // Main freezes the matching public/private sampler and initialization policy separately.
@@ -500,6 +500,12 @@ export async function readRegionalWorkerResult(
 
 function validateAgreement(input: v.InferOutput<typeof inputSchema>): void {
   const { recipe, request } = input
+  if (
+    input.compositionProfile !== 'invoke-canvas-v1' &&
+    (request.job.sampling.cfgRescale ?? 0) !== 0
+  ) {
+    throw invalid('Private regional execution requires CFG Rescale zero.')
+  }
   if (!validWorkerVae(request.job.vae)) {
     throw invalid('The regional VAE descriptor is invalid.')
   }

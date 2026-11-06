@@ -5,6 +5,7 @@ import { isIllustriousNoiseProfileV1 } from '../../shared/projects/illustrious-n
 import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceEmbeddings,
+  supportsInferenceRegionalCFGRescale,
   supportsInferenceRegionalDpm,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
@@ -446,6 +447,9 @@ export class ProjectRegionalGenerationCoordinator {
               !isQualifiedInferenceWorkerReady(ready) ||
               !ready.capabilities.includes(capability) ||
               (compositionProfile &&
+                (document.generationDraft.cfgRescale ?? 0) !== 0 &&
+                !supportsInferenceRegionalCFGRescale(ready)) ||
+              (compositionProfile &&
                 document.generationDraft.sampling.sampler === 'DPM++ 2M' &&
                 !supportsInferenceRegionalDpm(ready)) ||
               (compositionProfile &&
@@ -672,6 +676,7 @@ export class ProjectRegionalGenerationCoordinator {
 
 function validateInvokeDraft(document: IgsProjectDocumentV1, iterations = 1): void {
   const reason = getInvokeRegionalGenerationUnavailableReason({
+    cfgRescaleSupported: true,
     document,
     dpmSupported: true,
     embeddingsSupported: true,

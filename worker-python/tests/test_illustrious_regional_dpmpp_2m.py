@@ -569,7 +569,7 @@ _INVALID = (
     ("prediction", "UNSUPPORTED"),
     ("euler-command", "UNSUPPORTED"),
     ("sde-command", "UNSUPPORTED"),
-    ("rescale", "UNSUPPORTED"),
+    ("rescale", "INPUT_INVALID"),
     ("noninvoke-encoding", "PROFILE_INVALID"),
     ("crossed-lane", "PROFILE_INVALID"),
     ("private-profile", "UNSUPPORTED"),
@@ -595,7 +595,7 @@ def test_dpmpp_2m_refusal_precedes_model_work(
         "prediction": {"prediction_type": "v_prediction"},
         "euler-command": {"scheduler": "euler"},
         "sde-command": {"scheduler": "dpmpp_sde"},
-        "rescale": {"cfg_rescale": 0.25},
+        "rescale": {"cfg_rescale": 1.0},
         "string-step": {"steps": "4"},
     }.get(invalid, {})
     if invalid in {

@@ -15,7 +15,9 @@
  * adapt qualify-installed-generation.mjs. Dynamic global positive additionally follows current
  * workbench/invocationSubmit.ts and queue promptBatch/submissionApi; only selected concrete
  * positives reach the unchanged static regional worker. Its preparation pool is the selected-plan
- * union, while ordinary preparation retains its broader authored-resource contract.
+ * union, while ordinary preparation retains its broader authored-resource contract. CFG Rescale
+ * additionally follows Invoke's RescaleCFGExt after CFG combination and before the native scheduler
+ * step. It uses the existing Advanced Options control and frozen base field.
  */
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
@@ -113,12 +115,15 @@ assert.ok(
     'installed-regional-invoke-vae-v1',
     'installed-regional-invoke-dynamic-positive-v1',
     'installed-regional-invoke-dpmpp-2m-v1',
+    'installed-regional-invoke-cfg-rescale-v1',
   ].includes(fixture.profile),
 )
 const mainDeathProfile = fixture.profile === 'installed-regional-invoke-main-death-v1'
 const workerFaultProfile = fixture.profile === 'installed-regional-invoke-worker-fault-v1'
 const staticBatchProfile = fixture.profile === 'installed-regional-invoke-static-batch-v1'
-const dpmpp2mProfile = fixture.profile === 'installed-regional-invoke-dpmpp-2m-v1'
+const cfgRescaleProfile = fixture.profile === 'installed-regional-invoke-cfg-rescale-v1'
+const dpmpp2mProfile =
+  cfgRescaleProfile || fixture.profile === 'installed-regional-invoke-dpmpp-2m-v1'
 const dynamicPositiveProfile =
   dpmpp2mProfile || fixture.profile === 'installed-regional-invoke-dynamic-positive-v1'
 const globalVaeProfile =
@@ -144,6 +149,7 @@ const generationScheduler = dpmpp2mProfile
     ? 'euler_a'
     : 'euler'
 const generationScheduleLabel = dpmpp2mProfile ? 'Karras' : 'Normal'
+const generationCfgRescale = cfgRescaleProfile ? 0.7 : 0
 assert.ok(
   Number.isSafeInteger(fixture.deadlineSeconds) &&
     fixture.deadlineSeconds > 0 &&
@@ -432,6 +438,8 @@ async function verifyProvision() {
     assert.ok(provision.ready.capabilities.includes('illustrious-regional-vae-v1'))
   if (dpmpp2mProfile)
     assert.ok(provision.ready.capabilities.includes('illustrious-regional-dpmpp-2m-v1'))
+  if (cfgRescaleProfile)
+    assert.ok(provision.ready.capabilities.includes('illustrious-regional-cfg-rescale-v1'))
   if (mainDeathProfile || workerFaultProfile)
     assert.ok(provision.ready.capabilities.includes('linux-owned-inference-v1'))
   if (progressProfile)
@@ -1017,6 +1025,21 @@ async function captureProgressPreservation() {
       initialization,
       newCapability: 'illustrious-regional-dpmpp-2m-v1',
       numericCausalityClaimed: false,
+    }
+  }
+  if (cfgRescaleProfile) {
+    report.boundary.calls +=
+      ' Actual Advanced Options sets CFG Rescale0.7 before Generate and0.2 after Cancel. All three original wires and accepted base provenance must retain0.7 after the saved edit.'
+    report.boundary.preconditions = report.boundary.preconditions.replace(
+      'in-place DPM worker payload refresh',
+      'in-place regional CFG Rescale worker payload refresh',
+    )
+    report.boundary.cfgRescale = {
+      original: generationCfgRescale,
+      edited: 0.2,
+      newCapability: 'illustrious-regional-cfg-rescale-v1',
+      nativeFormulaCopied: false,
+      numericalCausalityClaimed: false,
     }
   }
   if (workerFaultProfile) {
@@ -4407,6 +4430,22 @@ async function setVaePrecisionUi(project, value) {
   ).toContainText(value)
 }
 
+// Reuse the installed-generation Advanced Options helper; real input/change owns the edit.
+async function setCfgRescaleUi(project, value) {
+  assert.ok(cfgRescaleProfile && [0.2, 0.7].includes(value))
+  const input = window.locator('input[aria-label="CFG Rescale"]')
+  if (!(await input.isVisible()))
+    await window.getByText('Advanced Options', { exact: true }).click()
+  await expect(input).toBeEnabled({ timeout: timeout() })
+  await input.scrollIntoViewIfNeeded()
+  await input.fill(String(value))
+  await input.press('Tab')
+  await expect
+    .poll(async () => (await current(project)).generationDraft.cfgRescale, { timeout: timeout() })
+    .toBe(value)
+  await expect(input).toHaveValue(String(value))
+}
+
 // Use the same existing preview/settings controls as installed-dynamic-batch-driver.mjs.
 // This observes ordinary renderer -> draft IPC, never a harness-only planning argument.
 async function setDynamicPositiveUi(project, maxPrompts, seedBehavior, purpose) {
@@ -4461,6 +4500,18 @@ async function generateGlobalEmbeddingBatchRetry(project) {
   assert.equal(advisory.regionalSupported, true)
   assert.equal(advisory.regionalInvokeInitializationSupported, true)
   assert.equal(advisory.embeddingsSupported, true)
+  if (cfgRescaleProfile) {
+    assert.equal(advisory.regionalCfgRescaleSupported, true)
+    assert.equal(advisory.cfgRescaleSupported, true)
+    assert.equal((await current(project)).generationDraft.cfgRescale, 0)
+    await setCfgRescaleUi(project, generationCfgRescale)
+    assert.equal(await hashFile(project.file), project.initialPackageSha256)
+    report.cfgRescaleAuthoringBeforeGenerate = {
+      original: generationCfgRescale,
+      realAdvancedOptionsInput: true,
+      savedPackageUnchanged: true,
+    }
+  }
   if (dpmpp2mProfile) {
     assert.equal(advisory.regionalDpmSupported, true)
     assert.equal((await current(project)).generationDraft.sampling.sampler, 'DPM++ 2M')
@@ -4779,6 +4830,7 @@ async function generateGlobalEmbeddingBatchRetry(project) {
       .poll(async () => (await current(project)).generationDraft.sampling.scheduler)
       .toBe('Normal')
   }
+  if (cfgRescaleProfile) await setCfgRescaleUi(project, 0.2)
   await save(project)
   const edited = await current(project),
     editedPackageSha256 = await hashFile(project.file)
@@ -4952,6 +5004,7 @@ async function generateGlobalEmbeddingBatchRetry(project) {
       ...(globalLoraProfile ? ['illustrious-regional-lora-v1'] : []),
       ...(globalVaeProfile ? ['illustrious-regional-vae-v1'] : []),
       ...(dpmpp2mProfile ? ['illustrious-regional-dpmpp-2m-v1'] : []),
+      ...(cfgRescaleProfile ? ['illustrious-regional-cfg-rescale-v1'] : []),
     ])
       assert.ok(worker.ready.capabilities.includes(cap))
     assert.equal(wire.reportProgress, true)
@@ -5131,6 +5184,22 @@ async function generateGlobalEmbeddingBatchRetry(project) {
     check(
       'Original DPM++2M/Karras30 and explicit Invoke initialization survive saved Euler/Normal2 and frozen Retry; every executing peer advertises DPM support',
       report.dpmpp2mFlow,
+    )
+  }
+  if (cfgRescaleProfile) {
+    assert.equal(edited.generationDraft.cfgRescale, 0.2)
+    assert.ok(wires.every(({ bundleJson }) => bundleJson.request.job.sampling.cfgRescale === 0.7))
+    report.cfgRescaleFlow = {
+      original: generationCfgRescale,
+      editedSavedValue: edited.generationDraft.cfgRescale,
+      actualWireValues: wires.map(({ bundleJson }) => bundleJson.request.job.sampling.cfgRescale),
+      frozenRetryPreserved: true,
+      newCapability: 'illustrious-regional-cfg-rescale-v1',
+      numericalOrVisualCausalityClaimed: false,
+    }
+    check(
+      'Actual CFG Rescale0.7 reaches all three native wires and frozen Retry after a real saved0.2 edit; executing peers advertise the regional capability',
+      report.cfgRescaleFlow,
     )
   }
   check(
@@ -6078,7 +6147,7 @@ function assertBaseProvenance(provenance, candidate, frozen) {
   assert.deepEqual(provenance.layerSourceContext.bbox, bbox)
   const config = provenance.generationConfiguration
   assert.deepEqual(config, {
-    cfgRescale: 0,
+    cfgRescale: generationCfgRescale,
     loras: globalLoraProfile ? configuredGlobalLoraStack() : [],
     mode: 'txt2img',
     model: {
@@ -6461,6 +6530,11 @@ async function resultsAddSaveReopen(project, completed) {
       'dpmpp_2m_k',
     )
     report.dpmpp2mFlow.savedReopenedAssociationVerified = true
+  }
+  if (cfgRescaleProfile) {
+    assert.equal(reopened.generationDraft.cfgRescale, 0.2)
+    assert.equal(accepted.generationProvenance.generationConfiguration.cfgRescale, 0.7)
+    report.cfgRescaleFlow.savedReopenedAssociationVerified = true
   }
   if (dynamicPositiveProfile) {
     assert.deepEqual(reopened.generationDraft.dynamicPrompt, {
@@ -6931,6 +7005,23 @@ async function assertGlobalEmbeddingActions(project) {
     retry: retry[0],
     accept: accepts[0],
     noExtraGenerate: true,
+  }
+  if (cfgRescaleProfile) {
+    const changes = observed.ipc.filter(
+      ({ channel, args }) =>
+        channel === 'projects:update-generation-draft' && args[1]?.kind === 'cfg-rescale',
+    )
+    assert.deepEqual(
+      changes.map(({ args }) => args.slice(0, 2)),
+      [
+        [project.id, { kind: 'cfg-rescale', value: 0.7 }],
+        [project.id, { kind: 'cfg-rescale', value: 0.2 }],
+      ],
+    )
+    assert.ok(changes[0].finishedOrder < generate[0].startedOrder)
+    assert.ok(cancel[0].finishedOrder < changes[1].startedOrder)
+    assert.ok(changes[1].finishedOrder < retry[0].startedOrder)
+    report.cfgRescaleFlow.originalAuthoringActions = changes
   }
   if (dynamicPositiveProfile) {
     const dynamicChanges = observed.ipc.filter(

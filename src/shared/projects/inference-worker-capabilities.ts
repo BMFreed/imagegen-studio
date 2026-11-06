@@ -123,6 +123,17 @@ export function supportsInferenceRegionalDpm(value: unknown): boolean {
   )
 }
 
+/** Ordinary rescale support alone never qualifies the separate regional execution owner. */
+export function supportsInferenceRegionalCFGRescale(value: unknown): boolean {
+  return (
+    isQualifiedInferenceWorkerReady(value) &&
+    value.workerVersion === '0.14.0' &&
+    value.capabilities.includes('illustrious-regional-invoke-v1') &&
+    value.capabilities.includes('illustrious-regional-cfg-rescale-v1') &&
+    supportsInferenceCFGRescale(value)
+  )
+}
+
 /** Global LoRAs require the qualified public regional owner and its explicit adapter opt-in. */
 export function supportsInferenceRegionalLoras(value: unknown): boolean {
   return (

@@ -32,6 +32,7 @@ import {
   supportsInferenceImg2Img,
   supportsInferenceLora,
   supportsInferenceOutpaint,
+  supportsInferenceRegionalCFGRescale,
   supportsInferenceRegionalDpm,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
@@ -419,6 +420,11 @@ export class ProjectGenerationActionController {
             : this.drain
               ? 'processing'
               : 'idle',
+      regionalCfgRescaleSupported:
+        !this.blocked &&
+        !this.closed &&
+        !!this.options.regional &&
+        supportsInferenceRegionalCFGRescale(ready),
       regionalDpmSupported:
         !this.blocked &&
         !this.closed &&
@@ -613,6 +619,7 @@ export class ProjectGenerationActionController {
     document: IgsProjectDocumentV1,
   ): Promise<ProjectGenerateResult> {
     const unavailable = getInvokeRegionalGenerationUnavailableReason({
+      cfgRescaleSupported: true,
       document,
       dpmSupported: true,
       embeddingsSupported: true,
@@ -684,6 +691,8 @@ export class ProjectGenerationActionController {
               assertAction()
               if (
                 !supportsRegional(preparation.inferenceReady) ||
+                ((document.generationDraft.cfgRescale ?? 0) !== 0 &&
+                  !supportsInferenceRegionalCFGRescale(preparation.inferenceReady)) ||
                 (document.generationDraft.sampling.sampler === 'DPM++ 2M' &&
                   !supportsInferenceRegionalDpm(preparation.inferenceReady)) ||
                 (document.generationDraft.loras.some((entry) => entry.enabled) &&
@@ -1383,6 +1392,8 @@ export class ProjectGenerationActionController {
               this.assertDocument(source.projectKey, source.documentId)
               if (
                 !supportsRegional(ready) ||
+                ((frozen.payload.workerJob.sampling.cfgRescale ?? 0) !== 0 &&
+                  !supportsInferenceRegionalCFGRescale(ready)) ||
                 ((frozen.payload.workerJob.sampling.scheduler === 'dpmpp_2m' ||
                   frozen.payload.workerJob.sampling.scheduler === 'dpmpp_2m_k') &&
                   !supportsInferenceRegionalDpm(ready)) ||

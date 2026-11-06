@@ -1975,3 +1975,21 @@ stated scope. ROOT's fresh exit/restoration/readers/dependency gates precede
 disposal of six exact scratch paths, reclaiming117,637,120 allocated bytes.
 Shared runtime/resources/companion and saved business data remain protected.
 Defaults and promise statuses remain unchanged.
+
+## CFG Rescale with public Regional Guidance
+
+The [CFG Rescale continuation](./phase-4-regional-guidance-cfg-rescale-research.md)
+connects the existing authored0..0.99 value to Invoke's post-CFG/pre-scheduler
+operation through the unchanged ordinary native adapter. A separate regional
+capability gates nonzero values; historical private zero-only profiles and defaults
+remain. ROOT:623 Main/392 Python PASS, typing/scoped checks/build PASS; isolated
+mutations yield15GREEN/3semanticRED with exact controls/restoration. Installed
+native-r1 passes19 grouped checks/413.080s (414.220s bounded unit): actual.7, Cancel, saved.2 and original
+frozen Retry.7 through Results/Add/Save-reopen. Two separate controlled backend
+requests add no queue rows/receipts: replay.7 exactly matches UI RGBA; zero differs
+by2,835,194 RGB channels. Independent source and control-helper reviews are CLEAN
+within their source-only limits. All2,927 owned/external-input entries are retained
+and independently audited CLEAN within scope. ROOT's exit/restoration/readers/
+dependency gates precede disposal of five exact scratch paths, reclaiming53,858,304
+allocated bytes. Shared runtime/resources/companion and saved business data remain
+protected. No quality, visual, Anima, capacity or promise promotion.

@@ -42,6 +42,7 @@ from .illustrious_regional_denoising import (
     run_current_canvas_regional_denoising,
 )
 from .illustrious_regional_recipe import (
+    _INVOKE_PROFILES,  # pyright: ignore[reportPrivateUsage]
     _bbox,  # pyright: ignore[reportPrivateUsage]
     _encoding_tensor_profile,  # pyright: ignore[reportPrivateUsage]
     _Profile,  # pyright: ignore[reportPrivateUsage]
@@ -237,6 +238,8 @@ def generate_current_canvas_regional_txt2img(
     the existing deterministic Normal/Karras native scheduler and int64 timesteps.
     Existing profiles retain their native initial preparation. Exact-TI
     copy and existing native preflights remain unchanged.
+    Invoke Canvas profiles consume bounded CFG Rescale through the original
+    native pipeline; historical private profiles retain the zero-only contract.
     Native, conversion and publication errors retain their identity and cause.
     """
     _require(
@@ -253,6 +256,7 @@ def generate_current_canvas_regional_txt2img(
     except IllustriousRegionalDenoisingError as error:
         raise IllustriousRegionalOutputError("PROFILE_INVALID", str(error)) from error
     prepared_vae = _vae_profile(denoising_profile)
+    invoke_cfg_rescale = profile in _INVOKE_PROFILES
     if _dpmpp_2m_profile(denoising_profile):
         noise_profile = _denoising_parameters(
             parameters,
@@ -260,6 +264,7 @@ def generate_current_canvas_regional_txt2img(
             resolved_noise=True,
             prepared_vae=prepared_vae,
             dpmpp_2m=True,
+            invoke_cfg_rescale=invoke_cfg_rescale,
         )
         parameters = replace(parameters, noise_profile=noise_profile)
     elif resolved_noise:
@@ -270,15 +275,20 @@ def generate_current_canvas_regional_txt2img(
                 resolved_noise=True,
                 ancestral=True,
                 prepared_vae=prepared_vae,
+                invoke_cfg_rescale=invoke_cfg_rescale,
             )
             if _ancestral_profile(denoising_profile)
             else _denoising_parameters(
-                parameters, tensor_profile, resolved_noise=True, prepared_vae=prepared_vae
+                parameters,
+                tensor_profile,
+                resolved_noise=True,
+                prepared_vae=prepared_vae,
+                invoke_cfg_rescale=invoke_cfg_rescale,
             )
         )
         parameters = replace(parameters, noise_profile=noise_profile)
     else:
-        _denoising_parameters(parameters, tensor_profile)
+        _denoising_parameters(parameters, tensor_profile, invoke_cfg_rescale=invoke_cfg_rescale)
     bbox, _, parameters, _, _, _ = _recipe_inputs(
         recipe,
         parameters,

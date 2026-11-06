@@ -98,6 +98,7 @@ export function hasActiveGlobalPromptEmbeddings(
  * masks or pooled text are chosen here.
  */
 export function getInvokeRegionalGenerationUnavailableReason(input: {
+  cfgRescaleSupported?: boolean | null
   document: RegionalDocument
   dpmSupported?: boolean | null
   embeddingsSupported?: boolean | null
@@ -134,8 +135,14 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   if (cfgScale === null || !Number.isFinite(cfgScale) || cfgScale <= 1 || cfgScale > 30) {
     return 'Regional Guidance requires CFG greater than 1 and no greater than 30.'
   }
-  if ((draft.cfgRescale ?? 0) !== 0) {
-    return 'Regional Guidance requires CFG Rescale set to 0.'
+  const cfgRescale = draft.cfgRescale ?? 0
+  if (
+    typeof cfgRescale !== 'number' ||
+    !Number.isFinite(cfgRescale) ||
+    cfgRescale < 0 ||
+    cfgRescale > 0.99
+  ) {
+    return 'Regional Guidance requires CFG Rescale from 0 to 0.99.'
   }
   if (steps === null || !Number.isSafeInteger(steps) || steps < 1 || steps > 200) {
     return 'Regional Guidance requires an integer from 1 to 200 for Steps.'
@@ -177,6 +184,14 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   }
   if (input.runtimeSupported !== true) {
     return 'The current image engine does not support Regional Guidance. Repair or update the runtime.'
+  }
+  if (cfgRescale !== 0) {
+    if (input.cfgRescaleSupported === undefined || input.cfgRescaleSupported === null) {
+      return 'Checking image engine support for CFG Rescale with Regional Guidance. Repair or update the runtime if support remains unavailable.'
+    }
+    if (input.cfgRescaleSupported !== true) {
+      return 'The current image engine does not support CFG Rescale with Regional Guidance. Repair or update the runtime.'
+    }
   }
   if (draft.sampling.sampler === 'DPM++ 2M') {
     if (input.dpmSupported === undefined || input.dpmSupported === null) {
