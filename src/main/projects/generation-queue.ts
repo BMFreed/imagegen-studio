@@ -4991,6 +4991,10 @@ function managerDetails(row: Selectable<GenerationQueueItem>): GenerationQueueEn
       (payload.workerJob.loras?.length ?? 0) > 0
         ? { requiresRegionalLora: true }
         : {}),
+      ...(payload.kind === 'illustrious-regional-txt2img' &&
+      (payload.workerJob.vae != null || (payload.workerJob.vaePrecision ?? 'Auto') !== 'FP16')
+        ? { requiresRegionalVae: true }
+        : {}),
       sampling: {
         ...(context.sampling.cfgRescale !== undefined
           ? { cfgRescale: context.sampling.cfgRescale }

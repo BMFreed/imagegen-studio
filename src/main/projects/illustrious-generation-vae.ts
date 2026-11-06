@@ -93,7 +93,7 @@ export function validWorkerVae(value: unknown): boolean {
 /** Never replace a captured exact selection with the current Project choice or library Default. */
 export async function reverifyFrozenGenerationVae(
   context: FrozenVaeFields,
-  models: GenerationModelResolver,
+  models: Pick<GenerationModelResolver, 'resolveVerifiedGenerationVaeForPlan'>,
 ): Promise<void> {
   if (!frozenVaeFieldsAgree(context, workerVae(context))) {
     throw new Error('The frozen VAE configuration is invalid.')

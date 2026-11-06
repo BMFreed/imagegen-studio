@@ -35,6 +35,7 @@ from .illustrious_regional_denoising import (
     _denoising_parameters,  # pyright: ignore[reportPrivateUsage]
     _DenoisingProfile,  # pyright: ignore[reportPrivateUsage]
     _execution_profile,  # pyright: ignore[reportPrivateUsage]
+    _vae_profile,  # pyright: ignore[reportPrivateUsage]
 )
 from .illustrious_regional_lora import prepare_regional_loras, verify_regional_lora_resources
 from .illustrious_regional_output import (
@@ -45,6 +46,10 @@ from .illustrious_regional_recipe import (
     _bbox,  # pyright: ignore[reportPrivateUsage]
     _Layout,  # pyright: ignore[reportPrivateUsage]
     _recipe_inputs,  # pyright: ignore[reportPrivateUsage]
+)
+from .illustrious_regional_vae import (
+    prepare_owned_regional_vae,
+    verify_regional_vae_resource,
 )
 from .inference import (
     DenoisingProgressSink,
@@ -84,8 +89,13 @@ _TOPOLOGY = {
 
 
 def _denoising_profile(
-    parameters: IllustriousInferenceParameters, initialization_profile: str | None = None
+    parameters: IllustriousInferenceParameters,
+    initialization_profile: str | None = None,
+    composition_profile: str | None = None,
 ) -> _DenoisingProfile:
+    prepared_vae = composition_profile == "invoke-canvas-v1" and (
+        parameters.vae is not None or parameters.vae_precision != "FP16"
+    )
     if initialization_profile is not None:
         _require(
             type(initialization_profile) is str
@@ -93,7 +103,17 @@ def _denoising_profile(
             and parameters.scheduler == "euler_a",
             "The explicit regional initialization profile requires supported Euler a execution.",
         )
-        return "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cuda-fp16-v1"
+        return (
+            "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cuda-vae-v1"
+            if prepared_vae
+            else "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cuda-fp16-v1"
+        )
+    if prepared_vae:
+        return (
+            "ordinary-canvas-euler-ancestral-txt2img-cuda-vae-v1"
+            if parameters.scheduler == "euler_a"
+            else "ordinary-canvas-euler-txt2img-cuda-vae-v1"
+        )
     return (
         "ordinary-canvas-euler-ancestral-txt2img-cuda-fp16-v1"
         if parameters.scheduler == "euler_a"
@@ -470,15 +490,21 @@ def parse_regional_request(value: object) -> RegionalRequest:
     # Keep complete logical parameters for resource identity and loading ownership.
     # The existing recipe/denoising owners consume an already prepared native model.
     execution_parameters = replace(parameters, loras=())
-    tensor_profile, _ = _execution_profile(
-        _denoising_profile(parameters, initialization_profile), encoding_profile
-    )
+    denoising_profile = _denoising_profile(parameters, initialization_profile, composition_profile)
+    tensor_profile, _ = _execution_profile(denoising_profile, encoding_profile)
+    prepared_vae = _vae_profile(denoising_profile)
     if parameters.scheduler == "euler_a":
         _denoising_parameters(
-            execution_parameters, tensor_profile, resolved_noise=True, ancestral=True
+            execution_parameters,
+            tensor_profile,
+            resolved_noise=True,
+            ancestral=True,
+            prepared_vae=prepared_vae,
         )
     else:
-        _denoising_parameters(execution_parameters, tensor_profile, resolved_noise=True)
+        _denoising_parameters(
+            execution_parameters, tensor_profile, resolved_noise=True, prepared_vae=prepared_vae
+        )
     snapshots = _RawSnapshots(
         root, {bundle_descriptor[0], command.target_path, command.output_path}
     )
@@ -512,6 +538,8 @@ def parse_regional_request(value: object) -> RegionalRequest:
     )
     _verify_resources(pairs, root, checkpoint)
     verify_regional_lora_resources(parameters.loras, root, checkpoint)
+    if prepared_vae:
+        verify_regional_vae_resource(parameters.vae, root, checkpoint)
     validate_generation_assets(command)
     return RegionalRequest(
         command=command,
@@ -564,6 +592,11 @@ def execute_regional_request(
             loading_parameters, config_dir=config_dir, runtime=runtime, mode="txt2img"
         )
         prepare_regional_loras(pipeline, request.parameters.loras, torch)
+        denoising_profile = _denoising_profile(
+            request.parameters, request.initialization_profile, request.composition_profile
+        )
+        if _vae_profile(denoising_profile):
+            prepare_owned_regional_vae(pipeline, request.parameters, torch)
         # Only a successfully prepared, owned pipeline permits the native output
         # command to lose its stack. The logical request retains every descriptor.
         execution_command = (
@@ -586,9 +619,7 @@ def execute_regional_request(
             profile=_INVOKE_ENCODING_PROFILE
             if request.composition_profile == "invoke-canvas-v1"
             else _ENCODING_PROFILE,
-            denoising_profile=_denoising_profile(
-                request.parameters, request.initialization_profile
-            ),
+            denoising_profile=denoising_profile,
             global_negative_coverage=request.global_negative_coverage,
             global_positive_coverage=request.global_positive_coverage,
             negative_pooled_source_id=request.negative_pooled_source_id,

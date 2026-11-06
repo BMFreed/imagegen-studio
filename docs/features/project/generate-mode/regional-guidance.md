@@ -1108,8 +1108,9 @@ Generate/Results/Retry UI and explicit Add/Save remain separate owners.
 The [versioned public integration](../../../engineering/phase-4-regional-guidance-public-invoke-research.md)
 supersedes the earlier blanket public-NEW/Results exclusion only for one static
 Current Canvas item: Illustrious epsilon, Euler/Normal (plus the explicit
-[Euler-a extension below](#public-authored-euler-a-with-frozen-initialization)), explicit FP16 Embedded
-VAE, steps 1–200, CFG `(1,30]`, rescale zero, no reference images,
+[Euler-a extension below](#public-authored-euler-a-with-frozen-initialization)),
+VAE selection/precision through the [later extension](#selected-vae-and-precision-with-regional-guidance),
+steps 1–200, CFG `(1,30]`, rescale zero, no reference images,
 global LoRA through the [later extension](#global-lora-stack-with-regional-guidance),
 exact global TI through the [later extension](#global-exact-embeddings-with-regional-guidance)
 and at most three enabled regions. Existing target/payload
@@ -1496,3 +1497,33 @@ cross-session Add/Discard, Undo/Redo and Save ZIP/reopen. Four tiny synthetic
 LoRAs establish finite mechanism/ownership, not trained-adapter quality or broad
 adapter-format support. Visual/human, Anima, capacity/release, provenance exclusions
 and PP-001/005/007/008 **«Пока не обещать»** remain unchanged.
+
+## Selected VAE and precision with Regional Guidance
+
+The [VAE extension](../../../engineering/phase-4-regional-guidance-vae-research.md)
+connects the existing Embedded/external VAE choice and Auto/FP16/FP32 policies to
+public Illustrious regional generation. Auto retains the actual native upcast
+policy; it is not an alias for a fixed dtype. Exact saved VAE references and
+precision remain in existing context, native transport, frozen Retry and accepted
+base provenance. Current Default and later saved authoring edits do not replace
+them. No new recipe field, persistence schema or UI control is introduced.
+
+New modes require `illustrious-regional-vae-v1`; public Embedded/FP16 retains its
+legacy path and peer compatibility. Private histories retain their earlier
+refusals. Exact resources reverify before publication and Retry SQL. Following
+current Invoke, the selected fresh owned VAE is prepared before borrowing and
+decodes the original native loop's terminal latents separately, under the same
+reservation. VAE/input dtype changes never repair borrowed state. UNet/CLIP remain
+FP16; decoded images can be FP32. Ordinary generation behavior is unchanged.
+
+ROOT:484 Main and409 Python PASS, including51 new native cases in two fresh
+bounded processes; typing/build/scoped checks PASS. Three isolated mutations
+give15GREEN/3semanticRED with controls/restoration, including actual decoder input
+after PNG publication. Installed native-r1 passes17 grouped checks: selected
+external A/FP32 despite Default B, LoRA/TI batch/Cancel, original frozen Retry
+after saved Embedded/FP16 edits, two Results, Add/Discard/Undo/Redo/Save ZIP/reopen.
+The existing full VAE originals are reused without copies/downloads. One is
+checkpoint-extracted; the alternate is an explicitly artificial control.
+This qualifies finite ownership and precision mechanics, not VAE image quality,
+arbitrary architecture compatibility, Anima, capacity or release readiness.
+Regional provenance exclusions and PP-001/005/007/008 remain unchanged.

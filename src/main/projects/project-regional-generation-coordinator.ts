@@ -6,6 +6,7 @@ import {
   supportsInferenceEmbeddings,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
+  supportsInferenceRegionalVae,
 } from '../../shared/projects/inference-worker-capabilities.js'
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 import { activePromptEmbeddingRefs } from '../../shared/projects/prompt-embeddings.js'
@@ -15,6 +16,7 @@ import {
 } from '../../shared/projects/regional-invoke-generation.js'
 
 import { randomUUID } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 
 import type { GenerationOrchestrator, PrivateRegionalExecution } from './generation-orchestrator.js'
 import type { QueuedGenerationItem } from './generation-queue.js'
@@ -421,6 +423,10 @@ export class ProjectRegionalGenerationCoordinator {
                 document.generationDraft.loras.some((entry) => entry.enabled) &&
                 !supportsInferenceRegionalLoras(ready)) ||
               (compositionProfile &&
+                (document.generationDraft.vae !== null ||
+                  (document.generationDraft.vaePrecision ?? 'Auto') !== 'FP16') &&
+                !supportsInferenceRegionalVae(ready)) ||
+              (compositionProfile &&
                 hasActiveGlobalPromptEmbeddings(document) &&
                 !supportsInferenceEmbeddings(ready)) ||
               (initializationProfile !== undefined &&
@@ -605,6 +611,7 @@ function validateInvokeDraft(document: IgsProjectDocumentV1, iterations = 1): vo
     iterations,
     loraSupported: true,
     runtimeSupported: true,
+    vaeSupported: true,
   })
   if (reason) {
     throw unsupported(reason)
@@ -751,8 +758,14 @@ function captureModels(models: GenerationModelResolver): GenerationModelResolver
       structuredClone(await embedding(...structuredClone(args))),
     resolveVerifiedGenerationLoraForPlan: async (...args) =>
       structuredClone(await lora(...structuredClone(args))),
-    resolveVerifiedGenerationVaeForPlan: async (...args) =>
-      structuredClone(await vae(...structuredClone(args))),
+    resolveVerifiedGenerationVaeForPlan: async (...args) => {
+      const saved = structuredClone(args)
+      const resolved = structuredClone(await vae(...structuredClone(saved)))
+      if (!isDeepStrictEqual(resolved.reference, saved[0])) {
+        throw invalid('The resolved VAE must preserve the exact saved reference.')
+      }
+      return resolved
+    },
   }
 }
 

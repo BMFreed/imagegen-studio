@@ -10,6 +10,7 @@ import {
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
   supportsInferenceRegionalProgress,
+  supportsInferenceRegionalVae,
 } from '../../shared/projects/inference-worker-capabilities.js'
 
 import { createHash, randomUUID } from 'node:crypto'
@@ -33,10 +34,14 @@ import {
   frozenLoraFieldsAgree,
   reverifyFrozenGenerationLoras,
 } from './illustrious-generation-loras.js'
+import { frozenVaeFieldsAgree, reverifyFrozenGenerationVae } from './illustrious-generation-vae.js'
 import { captureRegionalWorkerInput } from './regional-worker-request.js'
 
 export type RegionalGenerationModelResolver = Partial<
-  Pick<GenerationModelResolver, 'resolveVerifiedGenerationLoraForPlan'>
+  Pick<
+    GenerationModelResolver,
+    'resolveVerifiedGenerationLoraForPlan' | 'resolveVerifiedGenerationVaeForPlan'
+  >
 > &
   Pick<
     GenerationModelResolver,
@@ -143,6 +148,12 @@ export class RegionalGenerationProcessor {
         ? {
             resolveVerifiedGenerationLoraForPlan:
               models.resolveVerifiedGenerationLoraForPlan.bind(models),
+          }
+        : {}),
+      ...(typeof models.resolveVerifiedGenerationVaeForPlan === 'function'
+        ? {
+            resolveVerifiedGenerationVaeForPlan:
+              models.resolveVerifiedGenerationVaeForPlan.bind(models),
           }
         : {}),
     }
@@ -377,6 +388,13 @@ export class RegionalGenerationProcessor {
     if (!frozenLoraFieldsAgree(context, input.request.job.loras)) {
       throw new Error('The frozen regional LoRA stack differs from its command.')
     }
+    if (
+      input.compositionProfile === 'invoke-canvas-v1' &&
+      (!frozenVaeFieldsAgree(context, input.request.job.vae) ||
+        context.vaePrecision !== input.request.job.vaePrecision)
+    ) {
+      throw new Error('The frozen regional VAE or precision differs from its command.')
+    }
     const verified = await this.models.resolveVerifiedGenerationCheckpointForPlan(
       structuredClone(context.model.reference),
     )
@@ -395,6 +413,13 @@ export class RegionalGenerationProcessor {
         throw new Error('The frozen regional LoRA resource verifier is unavailable.')
       }
       await reverifyFrozenGenerationLoras(context, { resolveVerifiedGenerationLoraForPlan })
+    }
+    if (input.compositionProfile === 'invoke-canvas-v1' && context.vae) {
+      const resolveVerifiedGenerationVaeForPlan = this.models.resolveVerifiedGenerationVaeForPlan
+      if (!resolveVerifiedGenerationVaeForPlan) {
+        throw new Error('The frozen regional VAE resource verifier is unavailable.')
+      }
+      await reverifyFrozenGenerationVae(context, { resolveVerifiedGenerationVaeForPlan })
     }
     const recipe = input.recipe
     const pairs = [
@@ -476,6 +501,16 @@ export class RegionalGenerationProcessor {
         return { kind: 'canceled', queueItemId: claimed.item.id }
       }
       const input = captureRegionalWorkerInput(claimed.input)
+      if (
+        input.compositionProfile === 'invoke-canvas-v1' &&
+        (input.request.job.vae != null || (input.request.job.vaePrecision ?? 'Auto') !== 'FP16') &&
+        !supportsInferenceRegionalVae(transport.ready)
+      ) {
+        throw new RegionalGenerationProcessorError(
+          'INFERENCE_UNAVAILABLE',
+          'The worker has not qualified the frozen regional VAE or precision.',
+        )
+      }
       if (
         input.compositionProfile === 'invoke-canvas-v1' &&
         (input.request.job.loras?.length ?? 0) > 0 &&

@@ -32,8 +32,10 @@ export function hasActiveGlobalPromptEmbeddings(
  * runtime again. InvokeAI a61ac4fb75bec78d92885bf39bcf3ed3900a9bdd sources consulted:
  * app/invocations/text_encoder/compel.py, app/invocations/sd/denoise_latents.py,
  * backend/stable_diffusion/diffusion/{shared_invokeai_diffusion,regional_prompt_data}.py and
- * backend/stable_diffusion/schedulers/schedulers.py. These bounds describe our qualified adapter,
- * not the full set of configurations Invoke supports. No masks or pooled text are chosen here.
+ * backend/stable_diffusion/schedulers/schedulers.py. Selected VAE/precision follows graph.ts,
+ * app/invocations/model.py and app/invocations/vae/latents_to_image.py at that same revision. These
+ * bounds describe our qualified adapter, not the full set of configurations Invoke supports. No
+ * masks or pooled text are chosen here.
  */
 export function getInvokeRegionalGenerationUnavailableReason(input: {
   document: RegionalDocument
@@ -42,6 +44,7 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   iterations: number
   loraSupported?: boolean | null
   runtimeSupported?: boolean | null
+  vaeSupported?: boolean | null
 }): string | null {
   const regions = input.document.regionalGuidance?.filter((region) => region.enabled) ?? []
   if (regions.length === 0) {
@@ -60,9 +63,6 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
     draft.sampling.scheduler !== 'Normal'
   ) {
     return 'Regional Guidance requires Euler or Euler a with the Normal scheduler.'
-  }
-  if (draft.vae !== null || draft.vaePrecision !== 'FP16') {
-    return 'Regional Guidance requires the Embedded VAE with explicit FP16 precision.'
   }
   if (regions.some((region) => (region.referenceImages?.length ?? 0) > 0)) {
     return 'Remove reference images from enabled regions before generating with Regional Guidance.'
@@ -118,6 +118,14 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   }
   if (input.runtimeSupported !== true) {
     return 'The current image engine does not support Regional Guidance. Repair or update the runtime.'
+  }
+  if (draft.vae !== null || (draft.vaePrecision ?? 'Auto') !== 'FP16') {
+    if (input.vaeSupported === undefined || input.vaeSupported === null) {
+      return 'Checking image engine support for selected VAE and precision with Regional Guidance. Repair or update the runtime if support remains unavailable.'
+    }
+    if (input.vaeSupported !== true) {
+      return 'The current image engine does not support selected VAE and precision with Regional Guidance. Repair or update the runtime.'
+    }
   }
   if (draft.loras.some((lora) => lora.enabled)) {
     if (input.loraSupported === undefined || input.loraSupported === null) {

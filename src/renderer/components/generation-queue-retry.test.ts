@@ -157,3 +157,28 @@ test('Smart Patch Retry requires its own capability and the frozen family, inclu
     null,
   )
 })
+
+test('regional VAE Retry advisory follows frozen selection and precision independently of LoRA', () => {
+  for (const regionalVaeSupported of [undefined, false, true]) {
+    const state = { regionalSupported: true, regionalVaeSupported }
+    const reason = generationQueueRetryReason(
+      'illustrious-regional-txt2img',
+      state,
+      'Euler',
+      false,
+      true,
+    )
+    assert.equal(reason === null, regionalVaeSupported === true)
+    if (reason) {
+      assert.match(reason, /selected VAE.*Repair or update/)
+    }
+    assert.equal(
+      generationQueueRetryReason('illustrious-regional-txt2img', state, 'Euler', false, false),
+      null,
+    )
+    assert.equal(
+      generationQueueRetryReason('illustrious-txt2img', state, 'Euler', false, true),
+      null,
+    )
+  }
+})

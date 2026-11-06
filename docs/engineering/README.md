@@ -1905,3 +1905,26 @@ Independent source/retained-byte reviews are CLEAN within their stated limits.
 All1,599 own/input entries are archived;43,130,880 allocated bytes of exact idle
 scratch are reclaimed after ROOT exit/restoration/dependency/reader gates. Shared
 runtime/catalog/model, four LoRAs, four TI files and refresh companion remain pinned.
+
+## Selected VAE and precision with public Regional Guidance
+
+The [VAE continuation](./phase-4-regional-guidance-vae-research.md) reuses exact
+ordinary resource loading and current Invoke's separate latent-to-image decoder.
+Fresh owned VAE preparation precedes regional borrowing; native denoising remains
+unchanged. Auto preserves native policy, manual precision stays explicit, and
+full saved identity/precision survive frozen Retry and accepted provenance.
+Public Embedded/FP16 and private histories keep their existing behavior.
+
+ROOT:484 Main/409 Python PASS, typing/build/scoped checks PASS; three isolated
+mutations give15GREEN/3semanticRED with controls and source restoration. New51
+native cases pass as18+33 in fresh3GiB units. An earlier grouped OOM and missing
+ancestral-step observer remain excluded, with no higher memory cap or weakened
+assertion. Installed native-r1 passes17 checks in282.788s: original A/FP32 with
+LoRA/TI, batch/Cancel/Retry after saved Embedded/FP16 edits, two PNG/Results,
+Add/Discard/Undo/Redo and Save ZIP/reopen. Full VAE sources and one current runtime
+are reused, not copied. No visual/human, Anima, capacity/release or promise-status
+promotion follows. Independent source/retained-byte reviews are CLEAN within
+their limits. All1,655 own/input entries are archived;44,277,760 allocated bytes
+of three exact idle payloads are reclaimed after ROOT exit/restoration/dependency/
+reader gates. The two full VAE originals remain protected cross-run dependencies,
+with no duplicate model/environment. Details and exclusions are in the note.

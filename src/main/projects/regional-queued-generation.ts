@@ -20,6 +20,7 @@ import type { RegionalWorkerInput } from './regional-worker-request.js'
 import { GenerationQueueError, parseFrozenGenerationPayloadV1 } from './generation-queue.js'
 import { frozenEmbeddingFieldsAgree } from './illustrious-generation-embeddings.js'
 import { frozenLoraFieldsAgree } from './illustrious-generation-loras.js'
+import { frozenVaeFieldsAgree } from './illustrious-generation-vae.js'
 import { captureRegionalWorkerInput } from './regional-worker-request.js'
 
 /** Private operational identity, outside normal Generate and accepted-result provenance. */
@@ -175,7 +176,7 @@ export function captureRegionalQueuedMaterial(
   }
 }
 
-/** Global TI agrees with the recipe; global LoRAs retain their ordinary frozen stack owner. */
+/** TI agrees with the recipe; LoRAs and selected VAE retain their ordinary frozen owners. */
 export function assertPublicRegionalGlobalEmbeddingsAgree(
   input: RegionalWorkerInput,
   context?: FrozenQueuedIllustriousTxt2ImgV1['context'],
@@ -191,6 +192,14 @@ export function assertPublicRegionalGlobalEmbeddingsAgree(
         : !frozenLoraFieldsAgree(capturedContext, input.request.job.loras)
     ) {
       throw invalid('Public global LoRAs differ from the full frozen context.')
+    }
+    if (
+      capturedContext === undefined
+        ? input.request.job.vae != null || input.request.job.vaePrecision !== 'FP16'
+        : !frozenVaeFieldsAgree(capturedContext, input.request.job.vae) ||
+          capturedContext.vaePrecision !== input.request.job.vaePrecision
+    ) {
+      throw invalid('Public VAE or precision differs from the full frozen context.')
     }
     const { recipe } = input
     const embeddings = input.request.job.embeddings
@@ -345,8 +354,7 @@ function parseRegionalPayload(json: string, invoke: boolean): FrozenQueuedRegion
       (initializationProfile === undefined ? 'euler' : 'euler_a') ||
     ordinary.workerJob.sampling.noiseProfile === undefined ||
     (ordinary.workerJob.sampling.cfgRescale ?? 0) !== 0 ||
-    ordinary.workerJob.vaePrecision !== 'FP16' ||
-    ordinary.workerJob.vae != null ||
+    (!invoke && (ordinary.workerJob.vaePrecision !== 'FP16' || ordinary.workerJob.vae != null)) ||
     (!invoke && (ordinary.workerJob.loras?.length ?? 0) !== 0) ||
     (!invoke &&
       ((ordinary.workerJob.embeddings?.positive.length ?? 0) !== 0 ||

@@ -91,6 +91,7 @@ def inference_ready_message(
             "illustrious-regional-invoke-init-v1",
             "illustrious-regional-progress-v1",
             "illustrious-regional-lora-v1",
+            "illustrious-regional-vae-v1",
             *(("linux-owned-inference-v1",) if owner_lifetime else ()),
             *(
                 ANIMA_CAPABILITIES

@@ -34,6 +34,7 @@ import {
   supportsInferenceOutpaint,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
+  supportsInferenceRegionalVae,
   supportsInferenceVaePrecision,
 } from '../../shared/projects/inference-worker-capabilities.js'
 import type {
@@ -430,6 +431,11 @@ export class ProjectGenerationActionController {
         supportsInferenceRegionalLoras(ready),
       regionalSupported:
         !this.blocked && !this.closed && !!this.options.regional && supportsRegional(ready),
+      regionalVaeSupported:
+        !this.blocked &&
+        !this.closed &&
+        !!this.options.regional &&
+        supportsInferenceRegionalVae(ready),
       runningJobId: jobs.find((job) => job.status === 'running')?.id ?? null,
       smartPatchSupported:
         !this.blocked &&
@@ -607,6 +613,7 @@ export class ProjectGenerationActionController {
       iterations: request.iterations,
       loraSupported: true,
       runtimeSupported: true,
+      vaeSupported: true,
     })
     if (unavailable || !this.options.regional) {
       throw new ProjectGenerationActionError(
@@ -668,6 +675,9 @@ export class ProjectGenerationActionController {
                 !supportsRegional(preparation.inferenceReady) ||
                 (document.generationDraft.loras.some((entry) => entry.enabled) &&
                   !supportsInferenceRegionalLoras(preparation.inferenceReady)) ||
+                ((document.generationDraft.vae !== null ||
+                  (document.generationDraft.vaePrecision ?? 'Auto') !== 'FP16') &&
+                  !supportsInferenceRegionalVae(preparation.inferenceReady)) ||
                 (hasActiveGlobalPromptEmbeddings(document) &&
                   !supportsInferenceEmbeddings(preparation.inferenceReady)) ||
                 (document.generationDraft.sampling.sampler === 'Euler a' &&
@@ -1362,6 +1372,9 @@ export class ProjectGenerationActionController {
                 !supportsRegional(ready) ||
                 ((frozen.payload.workerJob.loras?.length ?? 0) > 0 &&
                   !supportsInferenceRegionalLoras(ready)) ||
+                ((frozen.payload.workerJob.vae != null ||
+                  (frozen.payload.workerJob.vaePrecision ?? 'Auto') !== 'FP16') &&
+                  !supportsInferenceRegionalVae(ready)) ||
                 (((frozen.payload.workerJob.embeddings?.positive.length ?? 0) > 0 ||
                   (frozen.payload.workerJob.embeddings?.negative.length ?? 0) > 0) &&
                   !supportsInferenceEmbeddings(ready)) ||

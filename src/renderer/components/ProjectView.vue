@@ -2425,6 +2425,7 @@ const generationBlockingReason = computed(() => {
         iterations: imagesPerClick.value ?? 0,
         loraSupported: props.generationState?.regionalLoraSupported,
         runtimeSupported: props.generationState?.regionalSupported,
+        vaeSupported: props.generationState?.regionalVaeSupported,
       })
   if (regionalReason) {
     return regionalReason

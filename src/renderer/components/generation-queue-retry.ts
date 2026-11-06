@@ -9,6 +9,7 @@ type RetryState = Pick<
   | 'regionalInvokeInitializationSupported'
   | 'regionalLoraSupported'
   | 'regionalSupported'
+  | 'regionalVaeSupported'
   | 'smartPatchSupported'
 >
 
@@ -18,6 +19,7 @@ export function generationQueueRetryReason(
   state: RetryState | null,
   frozenSampler?: string | null,
   requiresRegionalLora = false,
+  requiresRegionalVae = false,
 ): string | null {
   if (operation === 'illustrious-regional-txt2img') {
     if (state === null) {
@@ -28,6 +30,9 @@ export function generationQueueRetryReason(
     }
     if (requiresRegionalLora && state.regionalLoraSupported !== true) {
       return 'The current image engine does not support global LoRAs with Regional Guidance. Repair or update the runtime.'
+    }
+    if (requiresRegionalVae && state.regionalVaeSupported !== true) {
+      return 'The current image engine does not support selected VAE and precision with Regional Guidance. Repair or update the runtime.'
     }
     return frozenSampler === 'Euler a' && state.regionalInvokeInitializationSupported !== true
       ? 'The current image engine does not support Regional Guidance with Euler a. Repair or update the runtime.'

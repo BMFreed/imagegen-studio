@@ -10,7 +10,9 @@
  * all_or_none admission mechanism, adapted to Studio's existing atomic batch contract. Global LoRAs
  * additionally trace SDXLLoRACollectionLoader, Compel and UNet callers, LayerPatcher and LoRALayer
  * at that same revision. The installed proof observes exact ordered resource handoff, not numerical
- * LoRA causality or borrowed-weight restoration.
+ * LoRA causality or borrowed-weight restoration. Selected VAE/precision additionally follows
+ * current Invoke graph.ts, VAELoaderInvocation and vae/latents_to_image.py; UI helper patterns
+ * adapt qualify-installed-generation.mjs.
  */
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
@@ -105,12 +107,15 @@ assert.ok(
     'installed-regional-invoke-static-batch-v1',
     'installed-regional-invoke-global-embeddings-v1',
     'installed-regional-invoke-global-loras-v1',
+    'installed-regional-invoke-vae-v1',
   ].includes(fixture.profile),
 )
 const mainDeathProfile = fixture.profile === 'installed-regional-invoke-main-death-v1'
 const workerFaultProfile = fixture.profile === 'installed-regional-invoke-worker-fault-v1'
 const staticBatchProfile = fixture.profile === 'installed-regional-invoke-static-batch-v1'
-const globalLoraProfile = fixture.profile === 'installed-regional-invoke-global-loras-v1'
+const globalVaeProfile = fixture.profile === 'installed-regional-invoke-vae-v1'
+const globalLoraProfile =
+  globalVaeProfile || fixture.profile === 'installed-regional-invoke-global-loras-v1'
 const globalTiProfile =
   globalLoraProfile || fixture.profile === 'installed-regional-invoke-global-embeddings-v1'
 const multipleResultsProfile = staticBatchProfile || globalTiProfile
@@ -248,6 +253,7 @@ let preservationBaseline = null,
   progressDomInstalled = false
 let globalTi = null
 let globalLoras = null
+let globalVae = null
 let sampling = Promise.resolve()
 const nativeChecks = []
 const projects = []
@@ -345,6 +351,17 @@ if (globalLoraProfile)
     'worker-python/src/imagegen_worker/illustrious_regional_lora.py',
     'worker-python/src/imagegen_worker/illustrious_regional_worker.py',
   )
+if (globalVaeProfile)
+  sourceFiles.push(
+    'src/main/models/illustrious-vae-qualification.ts',
+    'src/main/projects/illustrious-generation-vae.ts',
+    'src/renderer/components/ProjectVaePicker.vue',
+    'src/renderer/components/project-vae-picker.ts',
+    'src/renderer/components/ProjectGenerationAdvancedOptions.vue',
+    'src/renderer/components/vae-precision-control.ts',
+    'worker-python/src/imagegen_worker/inference_external_vae.py',
+    'worker-python/src/imagegen_worker/inference_vae.py',
+  )
 let bundleFiles
 async function captureFiles(files) {
   return Object.fromEntries(
@@ -387,6 +404,8 @@ async function verifyProvision() {
   if (globalTiProfile) assert.ok(provision.ready.capabilities.includes('illustrious-embeddings'))
   if (globalLoraProfile)
     assert.ok(provision.ready.capabilities.includes('illustrious-regional-lora-v1'))
+  if (globalVaeProfile)
+    assert.ok(provision.ready.capabilities.includes('illustrious-regional-vae-v1'))
   if (mainDeathProfile || workerFaultProfile)
     assert.ok(provision.ready.capabilities.includes('linux-owned-inference-v1'))
   if (progressProfile)
@@ -490,6 +509,7 @@ async function verifyProvision() {
             'invokeai/frontend/webv2/src/features/generation/core/canvas/compileCanvasGraph.ts',
           ]
         : []),
+      ...(globalVaeProfile ? ['invokeai/app/invocations/vae/latents_to_image.py'] : []),
       ...(progressProfile
         ? [
             'invokeai/app/invocations/sd/denoise_latents.py',
@@ -932,6 +952,16 @@ async function captureProgressPreservation() {
     report.boundary.retention +=
       ' All four managed LoRA files and existing TI files are protected dependencies for future frozen Retry, including the alternate Default version.'
   }
+  if (globalVaeProfile) {
+    report.boundary.preconditions +=
+      ' Register the two existing immutable complete native VAE files from the historical NoobAI epsilon component fixture, without copying, extraction or download. A is the trained extracted component; B is an artificial decoder-bias control. Synthetic catalog IDs declare applicability, not CivitAI download/training attestation; Default B never replaces saved A.'
+    report.boundary.calls +=
+      ' Actual VAE picker and precision controls select exact A/FP32 before Generate. After observed Cancel the UI resets to Embedded and selects FP16, then saves with the other authoring edits. Both outputs retain original frozen A/FP32; the one accepted Raster records that original base provenance.'
+    report.boundary.exclusions +=
+      ' No installed VAE pixel-causality, full loader-key census, precision-quality or maximum-memory claim. Other VAE precision modes require separate lower/native evidence. Original selected VAE preparation occurs before borrowed regional execution.'
+    report.boundary.retention +=
+      ' Both original VAE files, their historical source dependencies and exact catalog entries remain protected beyond this RUN; preserve complete descriptors, stat/hash pins and accepted A/FP32 provenance.'
+  }
   if (workerFaultProfile) {
     report.boundary.calls =
       'One original 30-step seed123 Generate faulted after completed-step/UI observations >=5/30 by a verified worker-only pidfd SIGKILL while Main stays alive, followed by explicit frozen Queue Retry and one healthy PNG. One Electron lifetime and exactly two regional wires.'
@@ -1045,6 +1075,10 @@ function globalTiWirePair() {
   return { positive: [project('A')], negative: [project('B')] }
 }
 function assertGlobalEmbeddingRecipe(recipe) {
+  if (globalVaeProfile) {
+    assert.equal(Object.hasOwn(recipe, 'vae'), false)
+    assert.equal(Object.hasOwn(recipe, 'vaePrecision'), false)
+  }
   if (globalLoraProfile) {
     assert.equal(Object.hasOwn(recipe, 'loras'), false)
     assert.equal(Object.hasOwn(recipe, 'loraStack'), false)
@@ -1610,6 +1644,247 @@ async function prepareGlobalLoraCatalog(repository) {
   )
 }
 
+function selectedVaeReference() {
+  assert.ok(globalVaeProfile && globalVae)
+  return structuredClone(globalVae.A.reference)
+}
+function selectedVaeWire() {
+  assert.ok(globalVaeProfile && globalVae)
+  return {
+    byteSize: globalVae.A.byteSize,
+    path: globalVae.A.managedPath,
+    sha256: globalVae.A.reference.fileSha256,
+  }
+}
+async function verifyGlobalVaeFiles() {
+  assert.ok(globalVaeProfile && globalVae)
+  for (const resource of Object.values(globalVae)) {
+    assert.deepEqual(statIdentity(await regular(resource.managedPath)), resource.stat)
+    assert.equal((await regular(resource.managedPath)).size, resource.byteSize)
+    assert.equal(await hashFile(resource.managedPath), resource.reference.fileSha256)
+    assert.ok(within(artifactRoot, resource.managedPath))
+    assert.equal(within(evidenceRoot, resource.managedPath), false)
+    assert.equal(within(fixtureRoot, resource.managedPath), false)
+  }
+}
+async function prepareGlobalVaeCatalog(repository) {
+  const before = await allSqlTables(database.db),
+    prior = await repository.listInstalled(),
+    root = path.join(
+      path.dirname(fixtureRoot),
+      'illustrious-vpred-worker-012-20261007/component-sources',
+    ),
+    modelId = 900200101,
+    definitions = [
+      {
+        key: 'A',
+        versionId: 900201001,
+        fileId: 900202001,
+        versionName: 'Qualification native VAE A',
+        filename: 'noobai-epsilon-vae-native.safetensors',
+        sha256: 'f09b42f799d82812ef38461205c4764ecb3e10384bb6ee198321124dbc59e9b7',
+        byteSize: 167335542,
+        source:
+          'Existing trained NoobAI epsilon embedded VAE extracted in the historical component fixture',
+      },
+      {
+        key: 'B',
+        versionId: 900201002,
+        fileId: 900202002,
+        versionName: 'Qualification decoder control B',
+        filename: 'noobai-epsilon-vae-decoder-control.safetensors',
+        sha256: '3ba90e86a596d52f3000cd5bd586034dddd016b94d466bda2cf53348d9f54b21',
+        byteSize: 167335598,
+        source: 'Existing artificial decoder-bias control; not a trained VAE quality claim',
+      },
+    ].map((definition) => ({
+      ...definition,
+      managedPath: path.join(root, definition.filename),
+    })),
+    reserved = prior.filter(({ source }) => source.kind === 'civitai' && source.modelId === modelId)
+  assert.ok(within(artifactRoot, root) && !within(evidenceRoot, root))
+  await directory(root)
+  for (const definition of definitions) {
+    assert.equal((await regular(definition.managedPath)).size, definition.byteSize)
+    assert.equal(await hashFile(definition.managedPath), definition.sha256)
+  }
+  if (reserved.length) {
+    assert.equal(reserved.length, 1)
+    const resource = reserved[0]
+    assert.equal(resource.type, 'vae')
+    assert.equal(resource.versions.length, 2, 'Never repair a partial reserved VAE namespace')
+    for (const definition of definitions) {
+      const version = resource.versions.find(
+        ({ civitaiVersionId }) => civitaiVersionId === definition.versionId,
+      )
+      assert.ok(version, 'Reserved VAE namespace must already be complete')
+      assert.equal(version.civitaiFileId, definition.fileId)
+      assert.equal(version.name, definition.versionName)
+      assert.equal(version.baseModelFamily, 'illustrious')
+      assert.equal(version.predictionType, null)
+      assert.equal(version.file.status, 'ready')
+      assert.equal(version.file.managedPath, definition.managedPath)
+      assert.equal(version.file.sha256, definition.sha256)
+      assert.equal(version.file.sizeBytes, definition.byteSize)
+    }
+    assert.equal(
+      resource.defaultVersionId,
+      resource.versions.find(({ civitaiVersionId }) => civitaiVersionId === 900201002).id,
+    )
+  }
+  globalVae = {}
+  for (const definition of definitions) {
+    const { key, versionId, fileId, managedPath, sha256, byteSize, versionName } = definition
+    // Existing immutable component paths are registered directly: no copy, download or extraction.
+    const installed = reserved.length
+      ? await repository.findExactFileDuplicate({ civitai: { modelId, versionId, fileId } })
+      : await repository.publishVerifiedInstallation({
+          primary: {
+            file: {
+              managedPath,
+              originalFilename: path.basename(managedPath),
+              sha256,
+              sizeBytes: byteSize,
+              verifiedAt: new Date().toISOString(),
+            },
+            resource: {
+              type: 'vae',
+              displayName: 'Qualification exact VAE 900200101',
+              source: { kind: 'civitai', modelId },
+              sourceMetadata: { qualificationPrecondition: true, syntheticCatalogIdentity: true },
+            },
+            version: {
+              baseModelFamily: 'illustrious',
+              format: 'safetensors',
+              name: versionName,
+              predictionType: null,
+              source: { kind: 'civitai', expectedSha256: sha256, versionId, fileId },
+              sourceMetadata: {
+                qualificationPrecondition: true,
+                historicalSource: definition.source,
+                ...(key === 'A'
+                  ? {
+                      parentCheckpointSha256:
+                        'ff827fc34584853257d6de64b8bc3e34156814f6b0cfd1a5112a5e9164806df1',
+                    }
+                  : { artificialControl: 'decoder-bias' }),
+              },
+            },
+          },
+        })
+    assert.ok(installed)
+    const resource = (await repository.listInstalled()).find(
+        ({ id }) => id === installed.resourceId,
+      ),
+      version = resource?.versions.find(({ id }) => id === installed.versionId)
+    assert.ok(resource && version)
+    assert.equal(resource.type, 'vae')
+    assert.deepEqual(resource.source, { kind: 'civitai', modelId })
+    assert.equal(version.civitaiVersionId, versionId)
+    assert.equal(version.civitaiFileId, fileId)
+    assert.equal(version.name, versionName)
+    assert.equal(version.baseModelFamily, 'illustrious')
+    assert.equal(version.predictionType, null)
+    assert.equal(version.file.status, 'ready')
+    assert.equal(version.file.managedPath, managedPath)
+    assert.equal(version.file.sha256, sha256)
+    assert.equal(version.file.sizeBytes, byteSize)
+    globalVae[key] = {
+      byteSize,
+      managedPath,
+      stat: statIdentity(await regular(managedPath)),
+      source: definition.source,
+      reference: {
+        kind: 'vae',
+        baseModelFamily: 'illustrious',
+        predictionType: null,
+        civitaiModelId: modelId,
+        civitaiVersionId: versionId,
+        civitaiFileId: fileId,
+        displayName: resource.displayName,
+        versionName: version.name,
+        fileSha256: sha256,
+        localModelId: resource.id,
+        localVersionId: version.id,
+      },
+    }
+  }
+  assert.equal(globalVae.A.reference.localModelId, globalVae.B.reference.localModelId)
+  assert.notEqual(globalVae.A.reference.localVersionId, globalVae.B.reference.localVersionId)
+  if (!reserved.length)
+    await repository.setDefaultVersion(
+      globalVae.A.reference.localModelId,
+      globalVae.B.reference.localVersionId,
+    )
+  let networkAttempts = 0,
+    secretAttempts = 0
+  const forbiddenSecret = async () => {
+    secretAttempts++
+    throw new Error('No credential operation belongs to VAE fixture resolution')
+  }
+  const models = new ModelService(
+    repository,
+    new CivitaiClient(async () => {
+      networkAttempts++
+      throw new Error('No download belongs to VAE fixture resolution')
+    }),
+    new CivitaiTokenStore(
+      {
+        decryptStringAsync: forbiddenSecret,
+        encryptStringAsync: forbiddenSecret,
+        getSelectedStorageBackend: () => 'qualification-only',
+        isAsyncEncryptionAvailable: async () => false,
+      },
+      appDataRoot,
+    ),
+  )
+  for (const { byteSize, managedPath, reference } of Object.values(globalVae))
+    assert.deepEqual(await models.resolveVerifiedGenerationVaeForPlan(reference), {
+      byteSize,
+      managedPath,
+      reference,
+    })
+  assert.equal(networkAttempts, 0)
+  assert.equal(secretAttempts, 0)
+  assert.equal(
+    (await repository.listInstalled()).find(({ id }) => id === globalVae.A.reference.localModelId)
+      .defaultVersionId,
+    globalVae.B.reference.localVersionId,
+  )
+  await verifyGlobalVaeFiles()
+  const after = await allSqlTables(database.db)
+  for (const table of before) {
+    const current = after.find(({ name }) => name === table.name)
+    assert.equal(current.sql, table.sql)
+    for (const row of table.rows)
+      assert.ok(
+        current.rows.some((value) => JSON.stringify(value) === JSON.stringify(row)),
+        `VAE registration changed historical SQL: ${table.name}`,
+      )
+  }
+  report.globalVaeFixtures = {
+    root,
+    resources: structuredClone(globalVae),
+    declaredNativeTensorCountPerFile: 248,
+    requiredCapability: 'illustrious-regional-vae-v1',
+    savedVersionId: globalVae.A.reference.localVersionId,
+    defaultVersionId: globalVae.B.reference.localVersionId,
+    selectedPrecision: 'FP32',
+    sourceFilesRegisteredWithoutCopies: true,
+    syntheticCatalogIdentity: true,
+    modelServiceStructuralQualification: true,
+    networkAttempts,
+    secretAttempts,
+    historicalRowsPreservedBeforeBaseline: true,
+    retainedForFutureFrozenRetry: true,
+    numericalCausalityClaimed: false,
+  }
+  check(
+    'Existing full native VAE A and artificial decoder control B qualify exactly without copies; saved A differs from Default B',
+    report.globalVaeFixtures,
+  )
+}
+
 async function prepareCatalogAndProjects() {
   modelStat = statIdentity(await regular(fixture.checkpoint.path))
   assert.equal(modelStat.size, fixture.checkpoint.byteSize)
@@ -1618,6 +1893,7 @@ async function prepareCatalogAndProjects() {
   database = openAppDatabase(appDataRoot, path.resolve('src/main/db/migrations'))
   if (globalTiProfile) await prepareGlobalEmbeddingCatalog(new ModelRepository(database.db))
   if (globalLoraProfile) await prepareGlobalLoraCatalog(new ModelRepository(database.db))
+  if (globalVaeProfile) await prepareGlobalVaeCatalog(new ModelRepository(database.db))
   if (progressProfile) await captureProgressPreservation()
   if (recoveryProfile) {
     baselineSql = await sqlSnapshot()
@@ -1819,8 +2095,8 @@ async function prepareCatalogAndProjects() {
       dynamicPrompt: { maxPrompts: 1, seedBehavior: 'per-iteration' },
       seed: { policy: 'fixed', value: 123 },
       loras: globalLoraProfile ? configuredGlobalLoraStack() : [],
-      vae: null,
-      vaePrecision: 'FP16',
+      vae: globalVaeProfile ? selectedVaeReference() : null,
+      vaePrecision: globalVaeProfile ? 'FP32' : 'FP16',
       cfgRescale: 0,
       sampling: {
         cfgScale: 5,
@@ -2461,6 +2737,7 @@ async function installObservers() {
         ...(ownership.loras
           ? ['projects:add-generation-lora', 'projects:remove-generation-lora']
           : []),
+        ...(ownership.vae ? ['projects:set-generation-vae'] : []),
       ]
       for (const channel of channels) {
         const deadline = Date.now() + 15_000
@@ -2530,6 +2807,7 @@ async function installObservers() {
       progress: progressProfile,
       workerFault: workerFaultProfile,
       loras: globalLoraProfile,
+      vae: globalVaeProfile,
       scratch: path.join(appDataRoot, 'scratch'),
       previous: previousTransport,
       controls: mainDeathControls,
@@ -3318,8 +3596,23 @@ function assertFrozen(frozen, project, expectedSeed = 123) {
   assert.equal(frozen.workerJob.sampling.cfgScale, 5)
   assert.equal(frozen.workerJob.sampling.scheduler, generationScheduler)
   assert.deepEqual(frozen.workerJob.sampling.noiseProfile, policy)
-  assert.equal(frozen.workerJob.vaePrecision, 'FP16')
-  assert.equal(frozen.workerJob.vae, null)
+  if (globalVaeProfile) {
+    assert.deepEqual(frozen.context.vae, {
+      byteSize: globalVae.A.byteSize,
+      managedPath: globalVae.A.managedPath,
+      reference: selectedVaeReference(),
+    })
+    assert.equal(frozen.context.vaePrecision, 'FP32')
+    assert.deepEqual(frozen.workerJob.vae, selectedVaeWire())
+    assert.equal(frozen.workerJob.vaePrecision, 'FP32')
+    assert.notEqual(
+      frozen.context.vae.reference.localVersionId,
+      globalVae.B.reference.localVersionId,
+    )
+  } else {
+    assert.equal(frozen.workerJob.vaePrecision, 'FP16')
+    assert.equal(frozen.workerJob.vae, null)
+  }
   if (globalLoraProfile) {
     assert.deepEqual(frozen.context.loraStack, configuredGlobalLoraStack())
     assert.deepEqual(frozen.context.loras, resolvedGlobalLoras())
@@ -3395,6 +3688,7 @@ async function captureFrozen(row, project, expectedSeed = 123) {
     await verifyGlobalEmbeddingFiles()
   }
   if (globalLoraProfile) await verifyGlobalLoraFiles()
+  if (globalVaeProfile) await verifyGlobalVaeFiles()
   return {
     row,
     frozen,
@@ -3958,6 +4252,63 @@ async function generateStaticBatchEdit(project) {
   }
 }
 
+// Adapt the existing installed-generation VAE helpers; every edit enters the real rendered controls.
+async function setSelectedVaeUi(project, key) {
+  assert.ok(globalVaeProfile && (key === null || key === 'A'))
+  const input = window.locator('input[aria-label="VAE"]')
+  if (!(await input.isVisible()))
+    await window.getByText('Advanced Options', { exact: true }).click()
+  await expect(input).toBeEnabled({ timeout: timeout() })
+  await input.scrollIntoViewIfNeeded()
+  if (key === null && (await current(project)).generationDraft.vae !== null) {
+    await window.getByRole('button', { name: 'Reset VAE', exact: true }).click()
+  } else {
+    await input.click()
+    if (key === null) await window.getByText('Embedded', { exact: true }).last().click()
+    else {
+      const option = window
+        .locator('.model-option')
+        .filter({ hasText: globalVae.A.reference.displayName })
+        .filter({ hasText: `· ${globalVae.A.reference.versionName} ·` })
+      await expect(option).toHaveCount(1)
+      await option.click()
+    }
+  }
+  await expect
+    .poll(async () => (await current(project)).generationDraft.vae ?? null, { timeout: timeout() })
+    .toEqual(key === null ? null : selectedVaeReference())
+  await expect(
+    window.getByText(
+      key === null ? 'Uses the VAE included in the checkpoint.' : 'Uses the selected external VAE.',
+      { exact: true },
+    ),
+  ).toBeVisible()
+}
+async function setVaePrecisionUi(project, value) {
+  assert.ok(globalVaeProfile && ['Auto', 'FP16', 'FP32'].includes(value))
+  const input = window.locator('input[aria-label="VAE precision"]')
+  if (!(await input.isVisible()))
+    await window.getByText('Advanced Options', { exact: true }).click()
+  await expect(input).toBeEnabled({ timeout: timeout() })
+  await input.scrollIntoViewIfNeeded()
+  if ((await current(project)).generationDraft.vaePrecision !== value) {
+    await input.click()
+    const option = window
+      .locator('.n-base-select-option:visible')
+      .filter({ has: window.getByText(value, { exact: true }) })
+    await expect(option).toHaveCount(1)
+    await option.click()
+  }
+  await expect
+    .poll(async () => (await current(project)).generationDraft.vaePrecision, { timeout: timeout() })
+    .toBe(value)
+  await expect(
+    input.locator(
+      'xpath=ancestor::div[contains(concat(" ", normalize-space(@class), " "), " n-base-selection ")]',
+    ),
+  ).toContainText(value)
+}
+
 async function generateGlobalEmbeddingBatchRetry(project) {
   assert.ok(globalTiProfile && globalTi && preservationBaseline)
   await openProject(project)
@@ -3970,6 +4321,32 @@ async function generateGlobalEmbeddingBatchRetry(project) {
   if (globalLoraProfile) {
     assert.equal(advisory.regionalLoraSupported, true)
     assert.deepEqual((await current(project)).generationDraft.loras, configuredGlobalLoraStack())
+  }
+  if (globalVaeProfile) {
+    assert.equal(advisory.regionalVaeSupported, true)
+    assert.equal(advisory.externalVaeSupported, true)
+    assert.equal(advisory.vaePrecisionSupported, true)
+    const initial = await current(project)
+    assert.deepEqual(initial.generationDraft.vae, selectedVaeReference())
+    assert.equal(initial.generationDraft.vaePrecision, 'FP32')
+    // Move away and select exact A through the actual picker; the library Default is B.
+    await setSelectedVaeUi(project, null)
+    await setSelectedVaeUi(project, 'A')
+    await setVaePrecisionUi(project, 'Auto')
+    await setVaePrecisionUi(project, 'FP32')
+    assert.equal(await hashFile(project.file), project.initialPackageSha256)
+    report.globalVaeAuthoringBeforeGenerate = {
+      initial: {
+        vae: initial.generationDraft.vae,
+        precision: initial.generationDraft.vaePrecision,
+      },
+      selected: selectedVaeReference(),
+      precision: 'FP32',
+      defaultVersionId: globalVae.B.reference.localVersionId,
+      realPickerResetAndExactReselection: true,
+      realPrecisionAutoThenFp32: true,
+      packageUnchangedUntilExplicitSave: true,
+    }
   }
   assert.deepEqual((await current(project)).generationDraft.positivePrompt, {
     text: globalPrompt,
@@ -4073,6 +4450,10 @@ async function generateGlobalEmbeddingBatchRetry(project) {
   assert.equal(await hashFile(project.file), project.initialPackageSha256)
   await closeQueue()
 
+  if (globalVaeProfile) {
+    await setSelectedVaeUi(project, null)
+    await setVaePrecisionUi(project, 'FP16')
+  }
   // Original Project IPC reconciliation removes authored refs when their literals disappear.
   // No frozen context, descriptor, command or recipe is rewritten by this harness.
   await api('updateGenerationDraft', project.id, {
@@ -4157,6 +4538,10 @@ async function generateGlobalEmbeddingBatchRetry(project) {
   const edited = await current(project),
     editedPackageSha256 = await hashFile(project.file)
   if (globalLoraProfile) assert.deepEqual(edited.generationDraft.loras, editedLoraStack)
+  if (globalVaeProfile) {
+    assert.equal(edited.generationDraft.vae, null)
+    assert.equal(edited.generationDraft.vaePrecision, 'FP16')
+  }
   assert.deepEqual(edited.layers, project.document.layers)
   assert.deepEqual(edited.primaryBbox, bbox)
   report.currentAuthoringAfterEdit = {
@@ -4266,6 +4651,14 @@ async function generateGlobalEmbeddingBatchRetry(project) {
       assert.deepEqual(frozen.frozen.context.loras, resolvedGlobalLoras())
       assert.deepEqual(frozen.frozen.workerJob.loras, globalLoraWireStack())
     }
+    if (globalVaeProfile) {
+      assert.deepEqual(bundle.request.job.vae, selectedVaeWire())
+      assert.equal(bundle.request.job.vaePrecision, 'FP32')
+      assert.deepEqual(frozen.frozen.workerJob.vae, selectedVaeWire())
+      assert.equal(frozen.frozen.workerJob.vaePrecision, 'FP32')
+      assert.deepEqual(frozen.frozen.context.vae.reference, selectedVaeReference())
+      assert.equal(frozen.frozen.context.vaePrecision, 'FP32')
+    }
     assertGlobalEmbeddingRecipe(bundle.recipe)
     assert.deepEqual(bundle.recipe.item, frozen.regional.recipe.item)
     assert.deepEqual(bundle.recipe.bbox, bbox)
@@ -4303,6 +4696,7 @@ async function generateGlobalEmbeddingBatchRetry(project) {
       'illustrious-embeddings',
       'illustrious-regional-progress-v1',
       ...(globalLoraProfile ? ['illustrious-regional-lora-v1'] : []),
+      ...(globalVaeProfile ? ['illustrious-regional-vae-v1'] : []),
     ])
       assert.ok(worker.ready.capabilities.includes(cap))
     assert.equal(wire.reportProgress, true)
@@ -4374,6 +4768,25 @@ async function generateGlobalEmbeddingBatchRetry(project) {
       extraNativeCalls: 0,
     }
   }
+  if (globalVaeProfile) {
+    await verifyGlobalVaeFiles()
+    report.globalVaeFlow = {
+      selectedReference: selectedVaeReference(),
+      selectedWorkerDescriptor: selectedVaeWire(),
+      selectedPrecision: 'FP32',
+      defaultVersionId: globalVae.B.reference.localVersionId,
+      editedSavedVae: edited.generationDraft.vae,
+      editedSavedPrecision: edited.generationDraft.vaePrecision,
+      originalRequestSeeds: [123, 124, 124],
+      allThreeLogicalAndNativeCommandsRetainOriginalVaeAndPrecision: true,
+      originalFrozenRetryPreserved: true,
+      vaeAddedToRecipe: false,
+      precisionAddedToRecipe: false,
+      sourceFilesUnchanged: true,
+      numericalCausalityClaimed: false,
+      extraNativeCalls: 0,
+    }
+  }
   report.globalEmbeddingFlow = {
     priorZeroTiControlsPreserved: {
       packages: preservationBaseline.packages,
@@ -4408,9 +4821,11 @@ async function generateGlobalEmbeddingBatchRetry(project) {
     extraGenerateOrRetryRequested: false,
   }
   check(
-    globalLoraProfile
-      ? 'Original configured LoRA stack and effective A/B/Z commands survive observed Cancel and frozen Retry after saved LoRA/TI/seed/sampler/region edits'
-      : 'Original global A/B and regional C/inherited B/local D survive the real batch, observed Cancel and frozen Retry after saved authoring edits',
+    globalVaeProfile
+      ? 'Original exact VAE A/FP32 with LoRA/TI survives observed Cancel and frozen Retry after real UI Embedded/FP16 and other saved authoring edits'
+      : globalLoraProfile
+        ? 'Original configured LoRA stack and effective A/B/Z commands survive observed Cancel and frozen Retry after saved LoRA/TI/seed/sampler/region edits'
+        : 'Original global A/B and regional C/inherited B/local D survive the real batch, observed Cancel and frozen Retry after saved authoring edits',
     report.nativeAccounting,
   )
   return {
@@ -5385,8 +5800,8 @@ function assertBaseProvenance(provenance, candidate, frozen) {
         : {}),
     },
     size: { height: 1024, width: 1024 },
-    vae: null,
-    vaePrecision: 'FP16',
+    vae: globalVaeProfile ? selectedVaeReference() : null,
+    vaePrecision: globalVaeProfile ? 'FP32' : 'FP16',
   })
   assert.equal(config.positivePrompt.text, globalPrompt)
   assert.equal(config.negativePrompt.text, globalNegativePrompt)
@@ -5394,8 +5809,8 @@ function assertBaseProvenance(provenance, candidate, frozen) {
   assert.equal(config.sampling.steps, 30)
   assert.equal(config.sampling.cfgScale, 5)
   assert.deepEqual(config.sampling.noiseProfile, policy)
-  assert.equal(config.vaePrecision, 'FP16')
-  assert.equal(config.vae, null)
+  assert.equal(config.vaePrecision, globalVaeProfile ? 'FP32' : 'FP16')
+  assert.deepEqual(config.vae, globalVaeProfile ? selectedVaeReference() : null)
   assert.equal(config.model.fileSha256, fixture.checkpoint.sha256)
   const json = JSON.stringify(provenance)
   for (const forbidden of [
@@ -5416,6 +5831,12 @@ function assertBaseProvenance(provenance, candidate, frozen) {
         ]
       : localPrompts),
     ...(globalLoraProfile ? Object.values(globalLoras).map(({ managedPath }) => managedPath) : []),
+    ...(globalVaeProfile
+      ? [
+          globalVae.B.reference.localVersionId,
+          ...Object.values(globalVae).map(({ managedPath }) => managedPath),
+        ]
+      : []),
   ])
     assert.equal(
       json.includes(forbidden),
@@ -5689,6 +6110,19 @@ async function resultsAddSaveReopen(project, completed) {
     report.globalLoraFlow.acceptedOriginalFullConfiguredStack =
       accepted.generationProvenance.generationConfiguration.loras
   }
+  if (globalVaeProfile) {
+    assert.equal(reopened.generationDraft.vae, null)
+    assert.equal(reopened.generationDraft.vaePrecision, 'FP16')
+    assert.deepEqual(
+      accepted.generationProvenance.generationConfiguration.vae,
+      selectedVaeReference(),
+    )
+    assert.equal(accepted.generationProvenance.generationConfiguration.vaePrecision, 'FP32')
+    report.globalVaeFlow.editedVaePreservedAfterSaveZipAndReopen = true
+    report.globalVaeFlow.acceptedOriginalReference =
+      accepted.generationProvenance.generationConfiguration.vae
+    report.globalVaeFlow.acceptedOriginalPrecision = 'FP32'
+  }
   assert.deepEqual(portableRegions(reopened), portableRegions(before))
   await expect(
     window.getByRole('heading', { name: 'Image generation needs repair', exact: true }),
@@ -5896,6 +6330,7 @@ async function finalIdentities() {
     if (globalTiProfile) {
       await verifyGlobalEmbeddingFiles()
       if (globalLoraProfile) await verifyGlobalLoraFiles()
+      if (globalVaeProfile) await verifyGlobalVaeFiles()
       const own = ownProgressSql(whole)
       assert.equal(own.queue.length, 3)
       assert.deepEqual(
@@ -6162,6 +6597,46 @@ async function assertGlobalEmbeddingActions(project) {
     )
     report.globalLoraFlow.originalAuthoringActions = { adds, removes, changes }
   }
+  if (globalVaeProfile) {
+    const selections = observed.ipc.filter(
+        ({ channel }) => channel === 'projects:set-generation-vae',
+      ),
+      precisionChanges = observed.ipc.filter(
+        ({ channel, args }) =>
+          channel === 'projects:update-generation-draft' && args[1]?.kind === 'vae-precision',
+      ),
+      selectedIdentity = {
+        resourceId: globalVae.A.reference.localModelId,
+        versionId: globalVae.A.reference.localVersionId,
+      }
+    assert.deepEqual(
+      selections.map(({ args }) => args.slice(0, 2)),
+      [
+        [project.id, null],
+        [project.id, selectedIdentity],
+        [project.id, null],
+      ],
+    )
+    assert.deepEqual(
+      precisionChanges.map(({ args }) => args.slice(0, 2)),
+      ['Auto', 'FP32', 'FP16'].map((value) => [project.id, { kind: 'vae-precision', value }]),
+    )
+    assert.ok(
+      selections.every(({ finished, originalCalls, ok }) => finished && originalCalls === 1 && ok),
+    )
+    assert.ok(
+      precisionChanges.every(
+        ({ finished, originalCalls, ok }) => finished && originalCalls === 1 && ok,
+      ),
+    )
+    assert.ok(selections[0].startedOrder < generate[0].startedOrder)
+    assert.ok(selections[1].finishedOrder < generate[0].startedOrder)
+    assert.ok(precisionChanges[1].finishedOrder < generate[0].startedOrder)
+    assert.ok(cancel[0].finishedOrder < selections[2].startedOrder)
+    assert.ok(selections[2].finishedOrder < retry[0].startedOrder)
+    assert.ok(precisionChanges[2].finishedOrder < retry[0].startedOrder)
+    report.globalVaeFlow.originalAuthoringActions = { selections, precisionChanges }
+  }
   check(
     'Exactly one original UI Generate, one observed Cancel, one original frozen Retry and reviewed Add/Discard/Undo/Redo/two Save actions',
   )
@@ -6331,17 +6806,19 @@ try {
   report.completedAt = new Date().toISOString()
   report.elapsedSeconds = (Date.now() - started) / 1000
   check(
-    globalLoraProfile
-      ? 'Finite installed global LoRA/TI batch, observed Cancel, original frozen Retry, two Results and full configured-LoRA/global-only-TI accepted provenance completed; no installed numerical-causality or quality claim'
-      : globalTiProfile
-        ? 'Finite installed global/region exact TI batch, observed Cancel, frozen Retry, two Results and global-only accepted provenance completed; no new native TI-causality or quality claim'
-        : staticBatchProfile
-          ? 'Finite installed two-image static batch, exact frozen identity, distinct Results and reviewed Add/Discard/Undo/Save qualification completed; no quality or throughput claim'
-          : workerFaultProfile
-            ? 'Finite installed worker-only fault/normal failure/progress clearing/frozen Retry qualification completed with the same live Main; no visual-quality or capacity claim'
-            : progressProfile
-              ? 'Finite installed original scalar progress/Cancel/frozen Retry qualification completed; no visual-quality or capacity claim'
-              : 'Finite installed public UI Regional qualification completed; evidence supports this exact matrix and no visual-quality or numerical-step claim',
+    globalVaeProfile
+      ? 'Finite installed exact VAE A/FP32 with LoRA/TI, observed Cancel, original frozen Retry, two Results and base VAE/precision provenance completed after saved Embedded/FP16 edits; no installed pixel-causality or quality claim'
+      : globalLoraProfile
+        ? 'Finite installed global LoRA/TI batch, observed Cancel, original frozen Retry, two Results and full configured-LoRA/global-only-TI accepted provenance completed; no installed numerical-causality or quality claim'
+        : globalTiProfile
+          ? 'Finite installed global/region exact TI batch, observed Cancel, frozen Retry, two Results and global-only accepted provenance completed; no new native TI-causality or quality claim'
+          : staticBatchProfile
+            ? 'Finite installed two-image static batch, exact frozen identity, distinct Results and reviewed Add/Discard/Undo/Save qualification completed; no quality or throughput claim'
+            : workerFaultProfile
+              ? 'Finite installed worker-only fault/normal failure/progress clearing/frozen Retry qualification completed with the same live Main; no visual-quality or capacity claim'
+              : progressProfile
+                ? 'Finite installed original scalar progress/Cancel/frozen Retry qualification completed; no visual-quality or capacity claim'
+                : 'Finite installed public UI Regional qualification completed; evidence supports this exact matrix and no visual-quality or numerical-step claim',
   )
 } catch (error) {
   report.outcome = 'failed'

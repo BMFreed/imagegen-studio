@@ -22,6 +22,7 @@ import {
   FrozenGenerationEmbeddingsSchema,
   IllustriousWorkerEmbeddingsSchema,
 } from './illustrious-generation-embeddings.js'
+import { IllustriousWorkerVaeSchema, validWorkerVae } from './illustrious-generation-vae.js'
 import {
   captureInferenceWorkerOwnerValue,
   type InferenceWorkerOwner,
@@ -183,8 +184,8 @@ const requestSchema = v.strictObject({
     }),
     schemaVersion: v.literal(1),
     target,
-    vae: v.optional(v.null()),
-    vaePrecision: v.literal('FP16'),
+    vae: v.optional(v.nullable(IllustriousWorkerVaeSchema)),
+    vaePrecision: v.picklist(['Auto', 'FP16', 'FP32']),
   }),
   protocolVersion: v.literal('1'),
   requestId: v.pipe(v.string(), v.uuid()),
@@ -311,6 +312,7 @@ export async function prepareRegionalWorkerRequest(
   const sources = [
     detached.request.job.checkpoint,
     ...(detached.request.job.loras ?? []),
+    ...(detached.request.job.vae ? [detached.request.job.vae] : []),
     ...embeddingResources(detached.recipe),
   ]
   for (const resource of sources) {
@@ -388,6 +390,7 @@ export async function prepareRegionalWorkerRequest(
     // here; the ordinary command remains intact for frozen agreement, provenance and Retry.
     // Its graph.ts SDXL LoRA collection targets both CLIPs and UNet. Retain that logical stack
     // for the regional worker's single application scope before its components are borrowed.
+    // The selected VAE and precision remain intact for that same pre-borrow preparation owner.
     const nativeRequest = structuredClone(request)
     if (
       detached.compositionProfile === 'invoke-canvas-v1' &&
@@ -484,6 +487,15 @@ export async function readRegionalWorkerResult(
 
 function validateAgreement(input: v.InferOutput<typeof inputSchema>): void {
   const { recipe, request } = input
+  if (!validWorkerVae(request.job.vae)) {
+    throw invalid('The regional VAE descriptor is invalid.')
+  }
+  if (
+    input.compositionProfile !== 'invoke-canvas-v1' &&
+    (request.job.vae != null || request.job.vaePrecision !== 'FP16')
+  ) {
+    throw invalid('Private regional execution requires Embedded VAE and explicit FP16 precision.')
+  }
   if (input.compositionProfile !== 'invoke-canvas-v1' && (request.job.loras?.length ?? 0) > 0) {
     throw invalid('Private regional execution does not support global LoRAs.')
   }

@@ -128,3 +128,25 @@ and sequential out-of-place Parameter.data addition preserve the direct path.
 Only a fresh job-owned pipeline is mutated before regional borrowing; no cached
 originals, restoration scope, sidecar modules or PEFT adapter is introduced.
 Failure discards that owned pipeline and makes no borrowed-caller rollback promise.
+
+InvokeAI selected VAE decode for public Regional Guidance
+
+ImageGen Studio's ../illustrious_regional_vae.py adapts:
+invokeai/app/invocations/vae/latents_to_image.py (LatentsToImageInvocation.invoke)
+SHA-256: 723eba65b4de7845414bd9766b88e518c5be9d502bfbaf4ba09a52f3a7bcd70c
+Consulted selection and callers:
+invokeai/app/invocations/model.py (VAELoaderInvocation)
+SHA-256: 0e367aa05c300bf1a7792566cce675bf20b110f6a4114b83c1e31943d4ca078f
+invokeai/frontend/webv2/src/features/generation/core/graph.ts (compatible VAE/decode)
+SHA-256: 71215d274b359b823dc1c186ac262bbf59b77a0616de6e959654d4907ebcb795
+All from InvokeAI commit a61ac4fb75bec78d92885bf39bcf3ed3900a9bdd,
+https://github.com/invoke-ai/InvokeAI/tree/a61ac4fb75bec78d92885bf39bcf3ed3900a9bdd
+Attribution: InvokeAI contributors, Apache License 2.0 (LICENSE-InvokeAI.txt).
+
+Modifications: ordinary exact external loading and Auto/manual policy retain
+their owners. Compute dtype is applied to the fresh job-owned VAE before regional
+borrowing. The original native pipeline supplies terminal latents, then this
+adaptation casts latents before scaling and calls the original native VAE once.
+Finite guards precede normalization/clamp and existing RGB publication. Native
+upcast/restore is not applied to borrowed VAE storage. No copied diffusion loop,
+model copy, fallback, tiling, default change or private-profile promotion is added.

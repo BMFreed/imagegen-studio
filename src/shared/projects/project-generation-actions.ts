@@ -36,6 +36,8 @@ export interface ProjectGenerationActionState {
   regionalLoraSupported?: boolean
   /** Explicit finite Regional Guidance support; older responses must remain unavailable. */
   regionalSupported?: boolean
+  /** Explicit selected-VAE/precision support; legacy Embedded/FP16 needs no new opt-in. */
+  regionalVaeSupported?: boolean
   runningJobId: string | null
   smartPatchSupported?: boolean
   vaePrecisionSupported: boolean
@@ -121,6 +123,7 @@ export function isProjectGenerationActionState(
         'regionalSupported',
         'regionalInvokeInitializationSupported',
         'regionalLoraSupported',
+        'regionalVaeSupported',
         'smartPatchSupported',
       ],
     ) ||
@@ -128,6 +131,8 @@ export function isProjectGenerationActionState(
     (value['animaOutpaintSupported'] !== undefined &&
       typeof value['animaOutpaintSupported'] !== 'boolean') ||
     (value['outpaintSupported'] !== undefined && typeof value['outpaintSupported'] !== 'boolean') ||
+    (value['regionalVaeSupported'] !== undefined &&
+      typeof value['regionalVaeSupported'] !== 'boolean') ||
     (value['regionalSupported'] !== undefined && typeof value['regionalSupported'] !== 'boolean') ||
     (value['regionalInvokeInitializationSupported'] !== undefined &&
       typeof value['regionalInvokeInitializationSupported'] !== 'boolean') ||

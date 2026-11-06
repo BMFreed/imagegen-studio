@@ -66,7 +66,7 @@ import {
   frozenLoraFieldsAgree,
   reverifyFrozenGenerationLoras,
 } from './illustrious-generation-loras.js'
-import { reverifyFrozenGenerationVae } from './illustrious-generation-vae.js'
+import { frozenVaeFieldsAgree, reverifyFrozenGenerationVae } from './illustrious-generation-vae.js'
 import {
   assertIllustriousTxt2ImgRequestFitsTransport,
   withIllustriousGenerationRequest,
@@ -1371,6 +1371,8 @@ export class GenerationOrchestrator {
       if (compositionProfile === 'invoke-canvas-v1') {
         await reverifyFrozenGenerationLoras(frozen.payload.context, this.models)
         assertCurrent()
+        await reverifyFrozenGenerationVae(frozen.payload.context, this.models)
+        assertCurrent()
       }
       const retried = await retry(id, expectedStatusSequence, async (input) => {
         assertCurrent()
@@ -1772,6 +1774,16 @@ export class GenerationOrchestrator {
           'The regional LoRA stack differs from its prepared context.',
         )
       }
+      if (
+        captured.compositionProfile === 'invoke-canvas-v1' &&
+        (!frozenVaeFieldsAgree(item.prepared.context, captured.request.job.vae) ||
+          item.prepared.context.vaePrecision !== captured.request.job.vaePrecision)
+      ) {
+        throw new GenerationOrchestratorError(
+          'GENERATION_BATCH_INVALID',
+          'The regional VAE or precision differs from its prepared context.',
+        )
+      }
       if (publicBatch && captured.compositionProfile !== 'invoke-canvas-v1') {
         throw new GenerationOrchestratorError(
           'GENERATION_BATCH_INVALID',
@@ -1831,6 +1843,8 @@ export class GenerationOrchestrator {
       for (const item of items) {
         if (item.regional.compositionProfile === 'invoke-canvas-v1') {
           await reverifyFrozenGenerationLoras(item.prepared.context, this.models)
+          assertCurrent()
+          await reverifyFrozenGenerationVae(item.prepared.context, this.models)
           assertCurrent()
         }
       }

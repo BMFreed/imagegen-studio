@@ -29,6 +29,7 @@ import {
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
   supportsInferenceRegionalProgress,
+  supportsInferenceRegionalVae,
   supportsInferenceVaePrecision,
 } from '../../shared/projects/inference-worker-capabilities.js'
 
@@ -430,6 +431,16 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     let dispatched = false
     let completed = false
     try {
+      if (
+        input.compositionProfile === 'invoke-canvas-v1' &&
+        (input.request.job.vae != null || (input.request.job.vaePrecision ?? 'Auto') !== 'FP16') &&
+        !supportsInferenceRegionalVae(this.ready)
+      ) {
+        throw new GenerationWorkerError(
+          'WORKER_VERSION_MISMATCH',
+          'The active worker has not qualified the frozen regional VAE or precision.',
+        )
+      }
       if (
         input.compositionProfile === 'invoke-canvas-v1' &&
         (input.request.job.loras?.length ?? 0) > 0 &&

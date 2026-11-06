@@ -14,7 +14,10 @@ their guarded equal-value policy; TI permits only pinned native capture hooks.
 All pre-existing local UNet/VAE forward hooks
 and all global forward hooks refuse before encoding or owned model mutation.
 
-One native pipeline call owns the whole bounded Euler-family loop and decode. The regional
+One native pipeline call owns the whole bounded Euler-family loop. Historical
+profiles retain its decode. Explicit public VAE profiles return native latents,
+then run Invoke's dtype-before-scaling VAE decode under the same reservation;
+the job-owned VAE has already received its compute dtype before borrowing. The regional
 adapter remains installed throughout, including equal-length conditioning and
 every repeated spatial consumption. Borrowed scheduler/call state is untouched;
 only the existing adapter, finite-output hooks and private late value guards
@@ -63,6 +66,12 @@ from .illustrious_regional_recipe import (
     _reservation,  # pyright: ignore[reportPrivateUsage]
     _unet_profile,  # pyright: ignore[reportPrivateUsage]
 )
+from .illustrious_regional_vae import (
+    decode_regional_latents,
+    validate_prepared_regional_vae,
+    validate_regional_vae_output,
+    validate_regional_vae_parameters,
+)
 from .inference import (
     _SDXL_MICRO_CONDITIONING_SIZE,  # pyright: ignore[reportPrivateUsage]
     DenoisingProgressSink,
@@ -91,6 +100,9 @@ _DenoisingProfile = Literal[
     "ordinary-canvas-euler-ancestral-txt2img-cuda-fp16-v1",
     "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cpu-v1",
     "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cuda-fp16-v1",
+    "ordinary-canvas-euler-txt2img-cuda-vae-v1",
+    "ordinary-canvas-euler-ancestral-txt2img-cuda-vae-v1",
+    "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cuda-vae-v1",
 ]
 _Layout = Literal["cfg-negative-first", "positive-only"]
 _MAX_FINITE_ELEMENTS = 8_388_608
@@ -140,6 +152,12 @@ def _execution_profile(
             "cuda-float16-v1",
             True,
         ),
+        "ordinary-canvas-euler-txt2img-cuda-vae-v1": ("cuda-float16-v1", True),
+        "ordinary-canvas-euler-ancestral-txt2img-cuda-vae-v1": ("cuda-float16-v1", True),
+        "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cuda-vae-v1": (
+            "cuda-float16-v1",
+            True,
+        ),
     }
     _require(
         type(denoising_profile) is str and denoising_profile in profiles,
@@ -158,7 +176,20 @@ def _execution_profile(
         "PROFILE_INVALID",
         "Encoding and denoising profiles must select the same CPU/CUDA lane.",
     )
+    _require(
+        not _vae_profile(denoising_profile) or profile in _INVOKE_PROFILES,
+        "PROFILE_INVALID",
+        "Prepared VAE decode requires the public Invoke Canvas encoding profile.",
+    )
     return tensor_profile, resolved_noise
+
+
+def _vae_profile(denoising_profile: _DenoisingProfile) -> bool:
+    return denoising_profile in (
+        "ordinary-canvas-euler-txt2img-cuda-vae-v1",
+        "ordinary-canvas-euler-ancestral-txt2img-cuda-vae-v1",
+        "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cuda-vae-v1",
+    )
 
 
 def _ancestral_profile(denoising_profile: _DenoisingProfile) -> bool:
@@ -167,6 +198,8 @@ def _ancestral_profile(denoising_profile: _DenoisingProfile) -> bool:
         "ordinary-canvas-euler-ancestral-txt2img-cuda-fp16-v1",
         "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cpu-v1",
         "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cuda-fp16-v1",
+        "ordinary-canvas-euler-ancestral-txt2img-cuda-vae-v1",
+        "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cuda-vae-v1",
     )
 
 
@@ -174,6 +207,7 @@ def _invoke_initialization_profile(denoising_profile: _DenoisingProfile) -> bool
     return denoising_profile in (
         "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cpu-v1",
         "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cuda-fp16-v1",
+        "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cuda-vae-v1",
     )
 
 
@@ -216,6 +250,7 @@ def _denoising_parameters(
     *,
     resolved_noise: bool = False,
     ancestral: bool = False,
+    prepared_vae: bool = False,
 ) -> IllustriousNoiseProfile | None:
     _require(
         type(parameters) is IllustriousInferenceParameters,
@@ -265,17 +300,25 @@ def _denoising_parameters(
             else "Only Euler/epsilon with no noise profile is supported."
         ),
     )
-    _require(
-        parameters.vae is None
-        and type(parameters.vae_precision) is str
-        and (
-            parameters.vae_precision == "FP16"
-            if tensor_profile == "cuda-float16-v1"
-            else parameters.vae_precision in ("Auto", "FP32")
-        ),
-        "UNSUPPORTED",
-        "External VAE requests are unsupported; CPU requires Auto/FP32 and CUDA requires FP16.",
-    )
+    if prepared_vae:
+        _require(
+            tensor_profile == "cuda-float16-v1",
+            "PROFILE_INVALID",
+            "Prepared VAE decode requires CUDA FP16 denoising.",
+        )
+        validate_regional_vae_parameters(parameters)
+    else:
+        _require(
+            parameters.vae is None
+            and type(parameters.vae_precision) is str
+            and (
+                parameters.vae_precision == "FP16"
+                if tensor_profile == "cuda-float16-v1"
+                else parameters.vae_precision in ("Auto", "FP32")
+            ),
+            "UNSUPPORTED",
+            "External VAE requests are unsupported; CPU requires Auto/FP32 and CUDA requires FP16.",
+        )
     return noise_profile
 
 
@@ -307,10 +350,15 @@ def _denoising_model_preflight(
     unet_modules: tuple[Any, ...],
     vae_modules: tuple[Any, ...],
     tensor_profile: _TensorProfile = "cpu-float32-v1",
+    vae_parameters: IllustriousInferenceParameters | None = None,
 ) -> None:
     _reject_local_forward_hooks((*unet_modules, *vae_modules))
     _reject_method_shadows((pipeline, *parts, *clip_modules, *unet_modules, *vae_modules))
-    _module_profile(torch, (*unet_modules, *vae_modules), tensor_profile)
+    if vae_parameters is None:
+        _module_profile(torch, (*unet_modules, *vae_modules), tensor_profile)
+    else:
+        _module_profile(torch, unet_modules, tensor_profile)
+        validate_prepared_regional_vae(pipeline, vae_parameters, torch, vae_modules)
     _unet_profile(pipeline.unet)
     _require(
         pipeline.watermark is None
@@ -334,7 +382,11 @@ def _denoising_model_preflight(
         _finite_number(config.scaling_factor)
         and config.scaling_factor > 0
         and type(config.force_upcast) is bool
-        and (tensor_profile != "cuda-float16-v1" or config.force_upcast is False),
+        and (
+            vae_parameters is not None
+            or tensor_profile != "cuda-float16-v1"
+            or config.force_upcast is False
+        ),
         "PROFILE_INVALID",
         "VAE scaling must be finite and positive; CUDA requires force_upcast exactly False.",
     )
@@ -845,11 +897,20 @@ def run_current_canvas_regional_denoising(
     )
     tensor_profile, resolved_noise = _execution_profile(denoising_profile, profile)
     ancestral = _ancestral_profile(denoising_profile)
+    prepared_vae = _vae_profile(denoising_profile)
     if resolved_noise:
         noise_profile = (
-            _denoising_parameters(parameters, tensor_profile, resolved_noise=True, ancestral=True)
+            _denoising_parameters(
+                parameters,
+                tensor_profile,
+                resolved_noise=True,
+                ancestral=True,
+                prepared_vae=prepared_vae,
+            )
             if ancestral
-            else _denoising_parameters(parameters, tensor_profile, resolved_noise=True)
+            else _denoising_parameters(
+                parameters, tensor_profile, resolved_noise=True, prepared_vae=prepared_vae
+            )
         )
         parameters = replace(parameters, noise_profile=noise_profile)
     else:
@@ -894,6 +955,7 @@ def run_current_canvas_regional_denoising(
             unet_modules=unet_modules,
             vae_modules=vae_modules,
             tensor_profile=tensor_profile,
+            **({"vae_parameters": parameters} if prepared_vae else {}),
         )
         _recipe_model_preflight(
             pipeline,
@@ -992,14 +1054,32 @@ def run_current_canvas_regional_denoising(
                 generator=generator,
                 torch=torch,
                 cfg_rescale=0.0,
-                output_type="pt",
+                output_type="latent" if prepared_vae else "pt",
                 **progress_options,
             )
-            _native_output(
-                result,
-                torch=torch,
-                width=bbox.width,
-                height=bbox.height,
-                tensor_profile=tensor_profile,
-            )
+            if prepared_vae:
+                result = decode_regional_latents(
+                    result,
+                    pipeline=fresh,
+                    parameters=parameters,
+                    torch=torch,
+                    width=bbox.width,
+                    height=bbox.height,
+                )
+                validate_regional_vae_output(
+                    result,
+                    pipeline=fresh,
+                    parameters=parameters,
+                    torch=torch,
+                    width=bbox.width,
+                    height=bbox.height,
+                )
+            else:
+                _native_output(
+                    result,
+                    torch=torch,
+                    width=bbox.width,
+                    height=bbox.height,
+                    tensor_profile=tensor_profile,
+                )
     return result

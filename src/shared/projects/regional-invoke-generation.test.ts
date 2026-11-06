@@ -98,12 +98,16 @@ test('finite regional settings refuse unsupported families, predictions, samplin
       /Euler.*Normal/,
     ],
     ['missing scheduler', (v) => (v.generationDraft.sampling.scheduler = null), /Euler.*Normal/],
-    ['Auto VAE', (v) => (v.generationDraft.vaePrecision = 'Auto'), /Embedded VAE.*FP16/],
-    ['unset VAE precision', (v) => delete v.generationDraft.vaePrecision, /Embedded VAE.*FP16/],
+    ['Auto VAE', (v) => (v.generationDraft.vaePrecision = 'Auto'), /selected VAE and precision/],
+    [
+      'unset VAE precision',
+      (v) => delete v.generationDraft.vaePrecision,
+      /selected VAE and precision/,
+    ],
     [
       'external VAE',
       (v) => (v.generationDraft.vae = { ...v.generationDraft.model!, kind: 'vae' }),
-      /Embedded VAE/,
+      /selected VAE and precision/,
     ],
     ['CFG 1', (v) => (v.generationDraft.sampling.cfgScale = 1), /CFG greater than 1/],
     ['CFG 31', (v) => (v.generationDraft.sampling.cfgScale = 31), /CFG greater than 1/],
@@ -280,6 +284,7 @@ test('regional capability is an optional strict boolean in preload action respon
     'regionalSupported',
     'regionalInvokeInitializationSupported',
     'regionalLoraSupported',
+    'regionalVaeSupported',
   ]) {
     for (const supported of [false, true]) {
       assert.equal(isProjectGenerationActionState({ ...state, [field]: supported }), true)

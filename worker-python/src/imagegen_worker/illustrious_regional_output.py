@@ -37,6 +37,7 @@ from .illustrious_regional_denoising import (
     _execution_profile,  # pyright: ignore[reportPrivateUsage]
     _Layout,  # pyright: ignore[reportPrivateUsage]
     _native_output,  # pyright: ignore[reportPrivateUsage]
+    _vae_profile,  # pyright: ignore[reportPrivateUsage]
     run_current_canvas_regional_denoising,
 )
 from .illustrious_regional_recipe import (
@@ -45,6 +46,7 @@ from .illustrious_regional_recipe import (
     _Profile,  # pyright: ignore[reportPrivateUsage]
     _recipe_inputs,  # pyright: ignore[reportPrivateUsage]
 )
+from .illustrious_regional_vae import validate_regional_vae_output
 from .inference import DenoisingProgressSink, MLRuntime
 from .protocol import (
     _REQUEST_ID_PATTERN,  # pyright: ignore[reportPrivateUsage]
@@ -160,9 +162,23 @@ def _rgb_image(
     width: int,
     height: int,
     tensor_profile: _TensorProfile = "cpu-float32-v1",
+    vae_context: tuple[Any, IllustriousInferenceParameters] | None = None,
 ) -> Image.Image:
     """Convert the original, already denormalized native pt image exactly once."""
-    _native_output(result, torch=torch, width=width, height=height, tensor_profile=tensor_profile)
+    if vae_context is None:
+        _native_output(
+            result, torch=torch, width=width, height=height, tensor_profile=tensor_profile
+        )
+    else:
+        pipeline, parameters = vae_context
+        validate_regional_vae_output(
+            result,
+            pipeline=pipeline,
+            parameters=parameters,
+            torch=torch,
+            width=width,
+            height=height,
+        )
     image = result.images
     # Keep each range-check temporary within the existing finite-check bound,
     # including non-contiguous native views, without flattening or cloning.
@@ -233,11 +249,20 @@ def generate_current_canvas_regional_txt2img(
         tensor_profile, resolved_noise = _execution_profile(denoising_profile, profile)
     except IllustriousRegionalDenoisingError as error:
         raise IllustriousRegionalOutputError("PROFILE_INVALID", str(error)) from error
+    prepared_vae = _vae_profile(denoising_profile)
     if resolved_noise:
         noise_profile = (
-            _denoising_parameters(parameters, tensor_profile, resolved_noise=True, ancestral=True)
+            _denoising_parameters(
+                parameters,
+                tensor_profile,
+                resolved_noise=True,
+                ancestral=True,
+                prepared_vae=prepared_vae,
+            )
             if _ancestral_profile(denoising_profile)
-            else _denoising_parameters(parameters, tensor_profile, resolved_noise=True)
+            else _denoising_parameters(
+                parameters, tensor_profile, resolved_noise=True, prepared_vae=prepared_vae
+            )
         )
         parameters = replace(parameters, noise_profile=noise_profile)
     else:
@@ -289,6 +314,7 @@ def generate_current_canvas_regional_txt2img(
         width=command.width,
         height=command.height,
         tensor_profile=tensor_profile,
+        **({"vae_context": (pipeline, parameters)} if prepared_vae else {}),
     )
     return publish_generation_image(
         image,

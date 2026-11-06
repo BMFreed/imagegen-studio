@@ -419,6 +419,7 @@ function retryReason(item: GenerationQueueEntry): string | null {
     state,
     item.details?.sampling.sampler,
     item.details?.requiresRegionalLora,
+    item.details?.requiresRegionalVae,
   )
   if (operationReason) {
     return operationReason
