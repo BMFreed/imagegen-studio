@@ -8,6 +8,7 @@ import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceEmbeddings,
   supportsInferenceRegionalImg2Img,
+  supportsInferenceRegionalImg2ImgCFGRescale,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
   supportsInferenceRegionalProgress,
@@ -509,6 +510,16 @@ export class RegionalGenerationProcessor {
         throw new RegionalGenerationProcessorError(
           'INFERENCE_UNAVAILABLE',
           'The worker has not qualified opaque Regional Guidance img2img.',
+        )
+      }
+      if (
+        input.request.type === 'generate-illustrious-img2img' &&
+        (input.request.job.sampling.cfgRescale ?? 0) !== 0 &&
+        !supportsInferenceRegionalImg2ImgCFGRescale(transport.ready)
+      ) {
+        throw new RegionalGenerationProcessorError(
+          'INFERENCE_UNAVAILABLE',
+          'The worker has not qualified CFG Rescale with opaque regional img2img.',
         )
       }
       if (

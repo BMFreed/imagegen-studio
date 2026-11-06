@@ -1171,7 +1171,9 @@ def run_current_canvas_regional_denoising(
     ancestral = _ancestral_profile(denoising_profile)
     dpmpp_2m = _dpmpp_2m_profile(denoising_profile)
     prepared_vae = _vae_profile(denoising_profile)
-    invoke_cfg_rescale = profile in _INVOKE_PROFILES and not img2img
+    # Invoke's Canvas IMG graft preserves the same denoiser and post-CFG
+    # RescaleCFGExt as TXT. Historical private profiles remain zero-only.
+    invoke_cfg_rescale = profile in _INVOKE_PROFILES
     if dpmpp_2m:
         noise_profile = _denoising_parameters(
             parameters,

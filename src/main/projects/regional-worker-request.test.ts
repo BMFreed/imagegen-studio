@@ -764,7 +764,8 @@ for (const fault of [
           break
         }
         case 'rescale': {
-          input.request.job.sampling.cfgRescale = 0.7
+          // Public image .7 is admitted; keep this a numeric-range refusal.
+          input.request.job.sampling.cfgRescale = 1
           break
         }
         default: {

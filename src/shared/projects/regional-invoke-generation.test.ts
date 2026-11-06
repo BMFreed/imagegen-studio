@@ -289,6 +289,7 @@ test('regional capability is an optional strict boolean in preload action respon
     'regionalSupported',
     'regionalInvokeInitializationSupported',
     'regionalImg2ImgSupported',
+    'regionalImg2ImgCfgRescaleSupported',
     'regionalLoraSupported',
     'regionalVaeSupported',
   ]) {
@@ -427,7 +428,6 @@ test('opaque regional img2img refuses TXT-only sampling and VAE choices without 
     ['FP32', (v) => (v.generationDraft.vaePrecision = 'FP32')],
     ['unset precision', (v) => delete v.generationDraft.vaePrecision],
     ['selected VAE', (v) => (v.generationDraft.vae = { ...v.generationDraft.model!, kind: 'vae' })],
-    ['nonzero CFG Rescale', (v) => (v.generationDraft.cfgRescale = 0.7)],
   ]
   for (const [name, change] of cases) {
     const value = document()
@@ -441,7 +441,7 @@ test('opaque regional img2img refuses TXT-only sampling and VAE choices without 
         initializationSupported: true,
         vaeSupported: true,
       })!,
-      /Regional img2img requires Euler\/Normal, Embedded FP16 VAE and CFG Rescale zero/,
+      /Regional img2img requires Euler\/Normal and Embedded FP16 VAE/,
       name,
     )
     assert.deepEqual(value, before)
@@ -531,5 +531,35 @@ test('opaque regional img2img retains active global resource gates and exact aut
       loraSupported: true,
     })!,
     /does not support opaque img2img/,
+  )
+})
+
+test('opaque nonzero rescale requires its combination capability while zero and TXT remain independent', () => {
+  const value = document()
+  value.generationDraft.sampling.denoisingStrength = 0.5
+  for (const cfgRescale of [0.7, 0.99]) {
+    value.generationDraft.cfgRescale = cfgRescale
+    const before = structuredClone(value)
+    for (const img2imgCfgRescaleSupported of [undefined, null, false]) {
+      assert.match(
+        imageReason(value, { cfgRescaleSupported: true, img2imgCfgRescaleSupported })!,
+        /CFG Rescale with opaque regional img2img/,
+      )
+    }
+    assert.equal(
+      imageReason(value, { cfgRescaleSupported: true, img2imgCfgRescaleSupported: true }),
+      null,
+    )
+    assert.match(
+      imageReason(value, { cfgRescaleSupported: false, img2imgCfgRescaleSupported: true })!,
+      /CFG Rescale with Regional Guidance/,
+    )
+    assert.equal(imageReason(value, { cfgRescaleSupported: true, targetMode: 'txt2img' }), null)
+    assert.deepEqual(value, before)
+  }
+  value.generationDraft.cfgRescale = 0
+  assert.equal(
+    imageReason(value, { cfgRescaleSupported: false, img2imgCfgRescaleSupported: false }),
+    null,
   )
 })

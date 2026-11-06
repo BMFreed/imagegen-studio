@@ -8,6 +8,25 @@ anonymized source bytes have not been rerun through earlier ML qualification.
 The cleaned publication history is prepared separately; no remote history is
 replaced as part of source preparation.
 
+## CFG Rescale for opaque regional img2img
+
+[IMG rescale continuation](./phase-4-regional-guidance-img2img-cfg-rescale-research.md)
+reuses Invoke's existing post-CFG operation and requires a separate combination
+capability for nonzero image jobs. Zero IMG, TXT and private refusals retain their
+previous contracts; no default, migration or numeric control changes. ROOT:
+499 Main / 299 Python / 190 browser PASS, strict typing/scoped checks/build PASS;
+21 mutation selections give 18 GREEN / three semantic RED with restoration.
+Installed native-r4 passes 17 checks through .7 Generate/Cancel, saved .2,
+frozen .7 Retry, exact control RGB and Add/Undo/Redo/Save/reopen. Two read-only
+installed-client controls preserve SQL/packages; .7 matches UI, zero changes
+569,646 RGB channels. Earlier incomplete attempts remain excluded. Retention and
+source reviews are CLEAN within their separate scopes; ROOT confirms fresh
+exit/restoration/reader/dependency gates. All 3,180 entries survive in the verified
+archive; exact idle scratch disposal reclaims 65,560,576 allocated bytes.
+Canonical runtime/model/autosave dependencies remain protected. No visual-quality,
+Anima, broader IMG or release Install/Repair promotion;
+PP-001/005/007/008 stay unchanged.
+
 ## Installed opaque Regional Guidance UI
 
 [Installed image UI](./phase-4-regional-guidance-img2img-installed-research.md)

@@ -8,6 +8,7 @@ import {
   supportsInferenceRegionalCFGRescale,
   supportsInferenceRegionalDpm,
   supportsInferenceRegionalImg2Img,
+  supportsInferenceRegionalImg2ImgCFGRescale,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
   supportsInferenceRegionalVae,
@@ -506,16 +507,22 @@ export class ProjectRegionalGenerationCoordinator {
                 )
               }
               if (
+                (draft.cfgRescale ?? 0) !== 0 &&
+                !supportsInferenceRegionalImg2ImgCFGRescale(ready)
+              ) {
+                throw new ProjectRegionalGenerationError(
+                  'INFERENCE_UNAVAILABLE',
+                  'The image engine has not qualified CFG Rescale with opaque regional img2img.',
+                )
+              }
+              if (
                 draft.sampling.sampler !== 'Euler' ||
                 draft.sampling.scheduler !== 'Normal' ||
                 draft.vae !== null ||
                 draft.vaePrecision !== 'FP16' ||
-                (draft.cfgRescale ?? 0) !== 0 ||
                 initializationProfile !== undefined
               ) {
-                throw unsupported(
-                  'Regional img2img requires Euler/Normal, Embedded FP16 VAE and CFG Rescale zero.',
-                )
+                throw unsupported('Regional img2img requires Euler/Normal and Embedded FP16 VAE.')
               }
             }
             const authoredEmbeddingRefs = {

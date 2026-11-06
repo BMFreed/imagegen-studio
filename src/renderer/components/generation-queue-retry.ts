@@ -8,6 +8,7 @@ type RetryState = Pick<
   | 'outpaintSupported'
   | 'regionalCfgRescaleSupported'
   | 'regionalDpmSupported'
+  | 'regionalImg2ImgCfgRescaleSupported'
   | 'regionalImg2ImgSupported'
   | 'regionalInvokeInitializationSupported'
   | 'regionalLoraSupported'
@@ -40,6 +41,13 @@ export function generationQueueRetryReason(
     }
     if (frozenCfgRescale !== 0 && state.regionalCfgRescaleSupported !== true) {
       return 'The current image engine does not support CFG Rescale with Regional Guidance. Repair or update the runtime.'
+    }
+    if (
+      operation === 'illustrious-regional-img2img' &&
+      frozenCfgRescale !== 0 &&
+      state.regionalImg2ImgCfgRescaleSupported !== true
+    ) {
+      return 'The current image engine does not support CFG Rescale with opaque regional img2img. Repair or update the runtime.'
     }
     if (requiresRegionalLora && state.regionalLoraSupported !== true) {
       return 'The current image engine does not support global LoRAs with Regional Guidance. Repair or update the runtime.'

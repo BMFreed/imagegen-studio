@@ -280,7 +280,7 @@ def _generate_current_canvas_regional(
         "The output mode must match its explicit txt2img or img2img execution profile.",
     )
     prepared_vae = _vae_profile(denoising_profile)
-    invoke_cfg_rescale = profile in _INVOKE_PROFILES and not img2img
+    invoke_cfg_rescale = profile in _INVOKE_PROFILES
     if _dpmpp_2m_profile(denoising_profile):
         noise_profile = _denoising_parameters(
             parameters,

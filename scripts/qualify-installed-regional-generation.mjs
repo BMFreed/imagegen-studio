@@ -20,7 +20,9 @@
  * step. It uses the existing Advanced Options control and frozen base field. Opaque img2img follows
  * current invokeai/frontend/webv2 canvas compileCanvasGraph graftImageToImage ->
  * addRegionalGuidance, sd/denoise_latents.py::init_scheduler and saved-root Queue Retry. It reuses
- * the existing imported-Raster, numeric progress and explicit Add/Save owners.
+ * the existing imported-Raster, numeric progress and explicit Add/Save owners. The separate opaque
+ * IMG CFG Rescale profile selects 0.7 through Advanced Options, then saves 0.2 after Cancel; both
+ * image encoding and the rescale extension retain their existing native owners.
  */
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
@@ -120,9 +122,12 @@ assert.ok(
     'installed-regional-invoke-dpmpp-2m-v1',
     'installed-regional-invoke-cfg-rescale-v1',
     'installed-regional-invoke-img2img-v1',
+    'installed-regional-invoke-img2img-cfg-rescale-v1',
   ].includes(fixture.profile),
 )
-const img2imgProfile = fixture.profile === 'installed-regional-invoke-img2img-v1'
+const imgCfgRescaleProfile = fixture.profile === 'installed-regional-invoke-img2img-cfg-rescale-v1'
+const img2imgProfile =
+  imgCfgRescaleProfile || fixture.profile === 'installed-regional-invoke-img2img-v1'
 const mainDeathProfile = fixture.profile === 'installed-regional-invoke-main-death-v1'
 const workerFaultProfile = fixture.profile === 'installed-regional-invoke-worker-fault-v1'
 const staticBatchProfile = fixture.profile === 'installed-regional-invoke-static-batch-v1'
@@ -155,7 +160,7 @@ const generationScheduler = dpmpp2mProfile
     ? 'euler_a'
     : 'euler'
 const generationScheduleLabel = dpmpp2mProfile ? 'Karras' : 'Normal'
-const generationCfgRescale = cfgRescaleProfile ? 0.7 : 0
+const generationCfgRescale = cfgRescaleProfile || imgCfgRescaleProfile ? 0.7 : 0
 assert.ok(
   Number.isSafeInteger(fixture.deadlineSeconds) &&
     fixture.deadlineSeconds > 0 &&
@@ -461,6 +466,12 @@ async function verifyProvision() {
     assert.ok(provision.ready.capabilities.includes(cap), `Missing installed capability ${cap}`)
   if (img2imgProfile)
     assert.ok(provision.ready.capabilities.includes('illustrious-regional-img2img-v1'))
+  if (imgCfgRescaleProfile)
+    for (const capability of [
+      'illustrious-regional-img2img-cfg-rescale-v1',
+      'illustrious-regional-cfg-rescale-v1',
+    ])
+      assert.ok(provision.ready.capabilities.includes(capability))
   if (initializationProfile)
     assert.ok(provision.ready.capabilities.includes('illustrious-regional-invoke-init-v1'))
   if (globalTiProfile) assert.ok(provision.ready.capabilities.includes('illustrious-embeddings'))
@@ -586,6 +597,13 @@ async function verifyProvision() {
       ...(globalVaeProfile ? ['invokeai/app/invocations/vae/latents_to_image.py'] : []),
       ...(dynamicPositiveProfile
         ? ['invokeai/frontend/webv2/src/workbench/invocationSubmit.ts']
+        : []),
+      ...(imgCfgRescaleProfile
+        ? [
+            'invokeai/frontend/webv2/src/features/generation/core/graph.ts',
+            'invokeai/backend/stable_diffusion/extensions/rescale_cfg.py',
+            'invokeai/backend/stable_diffusion/diffusion_backend.py',
+          ]
         : []),
       ...(progressProfile
         ? [
@@ -888,6 +906,17 @@ async function captureImagePreservation() {
   report.boundary.preconditions = `Reuse terminal pool of${sql.queue.length} jobs/${sql.receipts.length} receipts and${indexed.length} real packages, pinning all previous SQL/file bytes. Two new empty Project fixtures import the same real PNG through UI/original Main/installed normalizer; one separate partial-alpha control is portable setup.`
   report.boundary.exclusions =
     'No visual-quality PASS, generic SDXL, Anima, broader IMG samplers/VAE/precision/partial-alpha, Install/Repair or capacity claim. Existing source/noise numerical owner is reused; strength0 and semantic native mutations remain historical evidence.'
+  if (imgCfgRescaleProfile) {
+    report.boundary.calls +=
+      ' Real Advanced Options selects CFG Rescale0.7 for the independent healthy IMG control and original Generate. After observed Cancel, saved current authoring changes rescale to0.2 along with source/text/strength. Frozen Retry and ordinary IMG accepted provenance retain0.7; all three executing workers must advertise the separate IMG-rescale capability.'
+    report.boundary.cfgRescale = {
+      original: generationCfgRescale,
+      edited: 0.2,
+      newCapability: 'illustrious-regional-img2img-cfg-rescale-v1',
+      nativeFormulaCopied: false,
+      numericalCausalityClaimed: false,
+    }
+  }
   check('Existing mixed-operation terminal SQL/package/candidate/input pool pinned without reset')
 }
 async function captureProgressPreservation() {
@@ -3713,9 +3742,21 @@ async function launch() {
   )
 }
 async function openProject(project) {
-  await window.getByRole('tab', { name: 'Home', exact: true }).click()
-  await window.getByRole('button', { name: 'Refresh projects', exact: true }).click()
-  await window.getByRole('button', { name: `Open ${project.title}`, exact: true }).click()
+  const requestedTab = window.getByRole('tab', { name: project.title, exact: true })
+  // Preparing an image already leaves its Project selected. Reopening it through Home
+  // is unnecessary; retain ordinary cross-Project navigation and validate the real tab.
+  const alreadySelected =
+    imgCfgRescaleProfile &&
+    (await requestedTab.count()) === 1 &&
+    (await requestedTab.getAttribute('aria-selected')) === 'true'
+  if (!alreadySelected) {
+    const home = window.getByRole('tab', { name: 'Home', exact: true })
+    await home.click()
+    if (imgCfgRescaleProfile)
+      await expect(home).toHaveAttribute('aria-selected', 'true', { timeout: timeout() })
+    await window.getByRole('button', { name: 'Refresh projects', exact: true }).click()
+    await window.getByRole('button', { name: `Open ${project.title}`, exact: true }).click()
+  }
   await expect(window.getByRole('tab', { name: project.title, exact: true })).toBeVisible({
     timeout: timeout(),
   })
@@ -3786,7 +3827,7 @@ async function targetRefusalControls() {
       project.mode === 'partial'
         ? 'Regional Guidance does not support partially transparent Current Canvas input. Use an empty or fully opaque generation area.'
         : initializationProfile || globalVaeProfile
-          ? 'Regional img2img requires Euler/Normal, Embedded FP16 VAE and CFG Rescale zero.'
+          ? 'Regional img2img requires Euler/Normal and Embedded FP16 VAE.'
           : 'Set Denoising Strength from 0 to 1 before generating with Regional Guidance from this raster input.'
     await expect(window.getByText(reason, { exact: true })).toBeVisible({ timeout: timeout() })
     const generate = window.getByRole('button', { name: 'Generate', exact: true })
@@ -3862,6 +3903,10 @@ function assertFrozen(frozen, project, expectedSeed = 123) {
   assert.equal(frozen.workerJob.sampling.steps, 30)
   assert.equal(frozen.workerJob.sampling.seed, expectedSeed)
   assert.equal(frozen.workerJob.sampling.cfgScale, 5)
+  if (imgCfgRescaleProfile) {
+    assert.equal(frozen.context.sampling.cfgRescale, generationCfgRescale)
+    assert.equal(frozen.workerJob.sampling.cfgRescale, generationCfgRescale)
+  }
   assert.equal(frozen.workerJob.sampling.scheduler, generationScheduler)
   assert.deepEqual(frozen.workerJob.sampling.noiseProfile, policy)
   if (globalVaeProfile) {
@@ -4036,6 +4081,10 @@ async function prepareImageProject(project) {
   await expect
     .poll(async () => (await current(project)).generationDraft.sampling.denoisingStrength)
     .toBe(imageStrength)
+  if (imgCfgRescaleProfile) {
+    assert.equal((await current(project)).generationDraft.cfgRescale, 0)
+    await setCfgRescaleUi(project, generationCfgRescale)
+  }
   assert.equal((await targetState(project)).mode, 'img2img')
   await save(project)
   const saved = await readZip(project.file)
@@ -4061,6 +4110,11 @@ async function imageHealthyControl(project) {
     advisory = await api('getGenerationState', project.id)
   assert.equal(state.mode, 'img2img')
   assert.equal(advisory.regionalImg2ImgSupported, true)
+  if (imgCfgRescaleProfile) {
+    assert.equal(advisory.regionalImg2ImgCfgRescaleSupported, true)
+    assert.equal(advisory.regionalCfgRescaleSupported, true)
+    assert.equal((await current(project)).generationDraft.cfgRescale, generationCfgRescale)
+  }
   report.img2img.beforeFirstGenerate = {
     target: state,
     advisory,
@@ -4173,11 +4227,30 @@ async function editImageCurrentUi(project) {
   const global = window.getByRole('textbox', { name: 'Positive prompt', exact: true })
   await global.fill('later ordinary image authoring')
   const region = project.document.regionalGuidance[0]
-  await window
+  const regionalInput = window
     .locator(`[data-regional-guidance-id="${region.id}"]`)
     .getByRole('textbox', { name: 'Regional prompt', exact: true })
-    .fill('later blue teapot image authoring')
-  await global.press('Tab')
+  if (imgCfgRescaleProfile) {
+    // Global draft synchronization intentionally blocks regional prompt input.
+    // Observe its acknowledgement and actual editor readiness before the next edit.
+    await global.press('Tab')
+    await expect
+      .poll(async () => (await current(project)).generationDraft.positivePrompt.text, {
+        timeout: timeout(),
+      })
+      .toBe('later ordinary image authoring')
+    await expect(regionalInput).toBeEnabled({ timeout: timeout() })
+    await regionalInput.fill('later blue teapot image authoring')
+    await regionalInput.press('Tab')
+    await expect
+      .poll(async () => (await current(project)).regionalGuidance[0].prompts.positive.text, {
+        timeout: timeout(),
+      })
+      .toBe('later blue teapot image authoring')
+  } else {
+    await regionalInput.fill('later blue teapot image authoring')
+    await global.press('Tab')
+  }
   for (const item of project.document.regionalGuidance)
     await window
       .locator(`[data-regional-guidance-id="${item.id}"]`)
@@ -4192,6 +4265,7 @@ async function editImageCurrentUi(project) {
     await input.fill(value)
     await input.press('Tab')
   }
+  if (imgCfgRescaleProfile) await setCfgRescaleUi(project, 0.2)
   await expect
     .poll(async () => {
       const value = await current(project)
@@ -4203,6 +4277,7 @@ async function editImageCurrentUi(project) {
         steps: value.generationDraft.sampling.steps,
         seed: value.generationDraft.seed,
         enabled: value.regionalGuidance.map(({ enabled }) => enabled),
+        ...(imgCfgRescaleProfile ? { cfgRescale: value.generationDraft.cfgRescale } : {}),
       }
     })
     .toEqual({
@@ -4213,6 +4288,7 @@ async function editImageCurrentUi(project) {
       steps: 2,
       seed: { policy: 'fixed', value: 124 },
       enabled: [false, false],
+      ...(imgCfgRescaleProfile ? { cfgRescale: 0.2 } : {}),
     })
   const target = await targetState(project)
   assert.equal(
@@ -4237,6 +4313,10 @@ async function generateCancelEditRetry(project) {
   const advisory = await api('getGenerationState', project.id)
   assert.equal(advisory.regionalSupported, true)
   if (img2imgProfile) assert.equal(advisory.regionalImg2ImgSupported, true)
+  if (imgCfgRescaleProfile) {
+    assert.equal(advisory.regionalImg2ImgCfgRescaleSupported, true)
+    assert.equal((await current(project)).generationDraft.cfgRescale, generationCfgRescale)
+  }
   if (initializationProfile) {
     assert.equal(advisory.regionalInvokeInitializationSupported, true)
     assert.equal((await current(project)).generationDraft.sampling.sampler, 'Euler a')
@@ -4496,6 +4576,16 @@ async function generateCancelEditRetry(project) {
           .find(({ pid }) => pid === wire.pid)
           .ready.capabilities.includes('illustrious-regional-img2img-v1'),
       )
+      if (imgCfgRescaleProfile) {
+        const ready = observed.workers.find(({ pid }) => pid === wire.pid).ready
+        for (const capability of [
+          'illustrious-regional-invoke-v1',
+          'illustrious-regional-cfg-rescale-v1',
+          'illustrious-regional-img2img-cfg-rescale-v1',
+        ])
+          assert.ok(ready.capabilities.includes(capability))
+        assert.equal(wire.bundleJson.request.job.sampling.cfgRescale, generationCfgRescale)
+      }
     }
     assert.equal(wire.bundleJson.compositionProfile, 'invoke-canvas-v1')
     if (initializationProfile) {
@@ -4522,6 +4612,20 @@ async function generateCancelEditRetry(project) {
       assert.equal(alpha.positive, side ** 2 / 2)
       assert.equal(alpha.opaque, alpha.positive)
     }
+  }
+  if (imgCfgRescaleProfile) {
+    assert.equal(edited.generationDraft.cfgRescale, 0.2)
+    report.cfgRescaleFlow = {
+      originalValue: generationCfgRescale,
+      editedSavedValue: edited.generationDraft.cfgRescale,
+      actualWireValues: wires.map(({ bundleJson }) => bundleJson.request.job.sampling.cfgRescale),
+      newCapability: 'illustrious-regional-img2img-cfg-rescale-v1',
+      noExtraNativeRequests: true,
+    }
+    check(
+      'Actual IMG CFG Rescale0.7 reaches all three native wires and frozen Retry after a saved0.2 edit; every executing peer advertises the separate combination capability',
+      report.cfgRescaleFlow,
+    )
   }
   assert.equal(
     wires.length,
@@ -4857,7 +4961,7 @@ async function setVaePrecisionUi(project, value) {
 
 // Reuse the installed-generation Advanced Options helper; real input/change owns the edit.
 async function setCfgRescaleUi(project, value) {
-  assert.ok(cfgRescaleProfile && [0.2, 0.7].includes(value))
+  assert.ok((cfgRescaleProfile || imgCfgRescaleProfile) && [0.2, 0.7].includes(value))
   const input = window.locator('input[aria-label="CFG Rescale"]')
   if (!(await input.isVisible()))
     await window.getByText('Advanced Options', { exact: true }).click()
@@ -7033,7 +7137,7 @@ async function resultsAddSaveReopen(project, completed) {
     )
     report.dpmpp2mFlow.savedReopenedAssociationVerified = true
   }
-  if (cfgRescaleProfile) {
+  if (cfgRescaleProfile || imgCfgRescaleProfile) {
     assert.equal(reopened.generationDraft.cfgRescale, 0.2)
     assert.equal(accepted.generationProvenance.generationConfiguration.cfgRescale, 0.7)
     report.cfgRescaleFlow.savedReopenedAssociationVerified = true
@@ -7706,6 +7810,26 @@ async function assertImageActions(project) {
     )
   const retry = observed.ipc.find(({ channel }) => channel === 'projects:retry-generation-job')
   assert.equal(retry.args[0].id, report.retry.firstJobId)
+  if (imgCfgRescaleProfile) {
+    const changes = observed.ipc.filter(
+        ({ channel, args }) =>
+          channel === 'projects:update-generation-draft' && args[1]?.kind === 'cfg-rescale',
+      ),
+      cancel = observed.ipc.find(({ channel }) => channel === 'projects:cancel-generation-job')
+    assert.deepEqual(
+      changes.map(({ args }) => args.slice(0, 2)),
+      [
+        [report.img2img.controlProjectKey, { kind: 'cfg-rescale', value: 0.7 }],
+        [project.id, { kind: 'cfg-rescale', value: 0.7 }],
+        [project.id, { kind: 'cfg-rescale', value: 0.2 }],
+      ],
+    )
+    assert.ok(changes[0].finishedOrder < generates[0].startedOrder)
+    assert.ok(changes[1].finishedOrder < generates[1].startedOrder)
+    assert.ok(cancel.finishedOrder < changes[2].startedOrder)
+    assert.ok(changes[2].finishedOrder < retry.startedOrder)
+    report.cfgRescaleFlow.originalAuthoringActions = changes
+  }
   const rasterEdits = observed.ipc.filter(
     ({ channel }) => channel === 'projects:update-raster-layer',
   )

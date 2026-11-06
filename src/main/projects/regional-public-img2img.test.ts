@@ -1,11 +1,15 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
 import type { GenerationProgressSnapshot } from '../../shared/projects/generation-progress.js'
-import { supportsInferenceRegionalImg2Img } from '../../shared/projects/inference-worker-capabilities.js'
+import {
+  supportsInferenceRegionalImg2Img,
+  supportsInferenceRegionalImg2ImgCFGRescale,
+} from '../../shared/projects/inference-worker-capabilities.js'
 import { isProjectGenerationActionState } from '../../shared/projects/project-generation-actions.js'
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 
 import assert from 'node:assert/strict'
-import { readdir, readFile, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { chmod, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { test } from 'node:test'
 import { setImmediate } from 'node:timers/promises'
@@ -17,6 +21,7 @@ import { openAppDatabase } from '../db/database.js'
 import { ProjectGenerationActionController } from './generation-action-controller.js'
 import { GenerationDispatchCoordinator } from './generation-dispatch-coordinator.js'
 import { GenerationQueueRepository } from './generation-queue.js'
+import { GenerationWorkerClient } from './generation-worker-client.js'
 import { provenanceFromVerifiedRasterCandidate } from './project-generation-provenance.js'
 import { ProjectRegionalGenerationCoordinator } from './project-regional-generation-coordinator.js'
 import { parseAcceptedGenerationBaseV1 } from './regional-queued-generation.js'
@@ -32,6 +37,7 @@ import {
 import { literalSmartPatchColorPng } from './test-fixtures/smart-patch-input-material.js'
 
 const CAPABILITY = 'illustrious-regional-img2img-v1'
+const RESCALE_CAPABILITY = 'illustrious-regional-img2img-cfg-rescale-v1'
 const OPERATION = 'illustrious-regional-img2img'
 type Mode = 'img2img' | 'outpaint' | 'txt2img'
 type Fixture = Awaited<ReturnType<typeof imageFixture>>
@@ -66,6 +72,7 @@ async function imageFixture() {
         'illustrious-regional-vae-v1',
         'illustrious-regional-progress-v1',
         CAPABILITY,
+        RESCALE_CAPABILITY,
       ],
     },
   }
@@ -690,9 +697,9 @@ const UNSUPPORTED = [
     },
   ],
   [
-    'nonzero CFG Rescale',
+    'out-of-range CFG Rescale',
     (document: IgsProjectDocumentV1) => {
-      document.generationDraft.cfgRescale = 0.5
+      document.generationDraft.cfgRescale = 1
     },
   ],
 ] as const
@@ -861,3 +868,419 @@ for (const strength of [0, 0.5]) {
     })
   })
 }
+
+/**
+ * Invoke's Canvas graft feeds img2img into the same denoiser/RescaleCFGExt as TXT. The separate
+ * combination capability qualifies our encoder-to-native path; two independent historical TXT/image
+ * flags are insufficient. No numerical proof is claimed by these genuine Main/SQLite tests with
+ * controlled inference.
+ */
+test('opaque regional rescale capability requires the exact combination and strict transient state', async () => {
+  await withFixture(async (f) => {
+    assert.equal(supportsInferenceRegionalImg2ImgCFGRescale(f.controls.ready), true)
+    const ready = structuredClone(f.controls.ready)
+    for (const missing of [
+      RESCALE_CAPABILITY,
+      CAPABILITY,
+      'illustrious-regional-cfg-rescale-v1',
+      'illustrious-regional-invoke-v1',
+      'illustrious-cfg-rescale',
+      'illustrious-img2img',
+    ]) {
+      assert.equal(
+        supportsInferenceRegionalImg2ImgCFGRescale({
+          ...ready,
+          capabilities: ready.capabilities.filter((value) => value !== missing),
+        }),
+        false,
+        missing,
+      )
+    }
+    assert.equal(
+      supportsInferenceRegionalImg2ImgCFGRescale({ ...ready, workerVersion: '0.13.0' }),
+      false,
+    )
+    const state = await f.actions.getState(f.tabId)
+    assert.equal(state.regionalImg2ImgCfgRescaleSupported, true)
+    for (const value of [undefined, false, true]) {
+      assert.equal(
+        isProjectGenerationActionState({ ...state, regionalImg2ImgCfgRescaleSupported: value }),
+        true,
+      )
+    }
+    for (const value of [null, 0, 'true', {}]) {
+      assert.equal(
+        isProjectGenerationActionState({ ...state, regionalImg2ImgCfgRescaleSupported: value }),
+        false,
+      )
+    }
+    f.controls.ready.capabilities = ready.capabilities.filter(
+      (value) => value !== RESCALE_CAPABILITY,
+    )
+    const old = await f.actions.getState(f.tabId)
+    assert.equal(old.regionalImg2ImgSupported, true)
+    assert.equal(old.regionalCfgRescaleSupported, true)
+    assert.equal(old.regionalImg2ImgCfgRescaleSupported, false)
+  })
+})
+
+for (const cfgRescale of [0, 0.7, 0.99]) {
+  test(`opaque regional rescale ${cfgRescale} crosses saved Main queue reload receipt and base provenance`, async () => {
+    await withFixture(async (f) => {
+      const authored = await select(f, 0.5, (document) => {
+        document.generationDraft.cfgRescale = cfgRescale
+      })
+      const saved = await readFile(f.packagePath)
+      const source = f.sourceBytes()
+      const id = await queueOne(f)
+      assert.equal((await settled(f, id)).status, 'completed')
+      const frozen = await f.queue.loadVerifiedRegionalInput(id)
+      assert.equal(frozen.payload.kind, OPERATION)
+      assert.equal(frozen.payload.context.sampling.cfgRescale, cfgRescale)
+      assert.equal(frozen.payload.workerJob.sampling.cfgRescale, cfgRescale)
+      assert.equal(imgRequest(frozen.input).job.sampling.cfgRescale, cfgRescale)
+      assert.equal(imgRequest(f.consumed[0]).job.sampling.cfgRescale, cfgRescale)
+      assert.equal(imgRequest(f.consumed[0]).job.sampling.denoisingStrength, 0.5)
+      assert.ok(f.consumedTargets[0].equals(source))
+      assert.deepEqual(f.consumed[0].recipe, frozen.input.recipe)
+      const database = openAppDatabase(f.root, path.resolve('src/main/db/migrations'))
+      try {
+        const queue = new GenerationQueueRepository(database.db, f.root)
+        assert.deepEqual((await queue.loadVerifiedRegionalInput(id)).payload, frozen.payload)
+      } finally {
+        await database.close()
+      }
+      const candidate = (await f.staging.listVerifiedCandidates(f.tabId)).find(
+        (item) => item.queueItemId === id,
+      )
+      assert.ok(candidate)
+      const base = parseAcceptedGenerationBaseV1(candidate.frozenPayloadJson)
+      assert.equal(base.kind, 'illustrious-img2img')
+      assert.equal(base.context.sampling.cfgRescale, cfgRescale)
+      const provenance = provenanceFromVerifiedRasterCandidate({
+        acceptedAt: candidate.completedAt,
+        candidate,
+        imagePngBytes: Buffer.from(f.outputBytes),
+      })
+      assert.equal(provenance.kind, 'illustrious-img2img')
+      assert.equal(provenance.generationConfiguration.cfgRescale, cfgRescale)
+      assert.equal(provenance.generationConfiguration.sampling.denoisingStrength, 0.5)
+      for (const key of ['regionalGuidance', 'compositionProfile', 'initializationProfile']) {
+        assert.equal(JSON.stringify(provenance).includes(`"${key}"`), false)
+      }
+      assert.deepEqual(f.document(), authored)
+      assert.ok((await readFile(f.packagePath)).equals(saved))
+    })
+  })
+}
+
+test('test_regional_img_rescale_capability_mutation_red', async () => {
+  await withFixture(async (f) => {
+    await select(f, 0.5, (document) => {
+      document.generationDraft.cfgRescale = 0.7
+    })
+    f.controls.ready.capabilities = f.controls.ready.capabilities.filter(
+      (value) => value !== RESCALE_CAPABILITY,
+    )
+    assert.equal(supportsInferenceRegionalImg2Img(f.controls.ready), true)
+    const before = await snapshot(f)
+    await assert.rejects(
+      f.gate.run(
+        f.tabId,
+        async () =>
+          await f.publicCoordinator.submitInvokeBatchUnderGate(f.tabId, {
+            ...f.owner(),
+            iterations: 1,
+            withPreparation: async (use) =>
+              await use({
+                inferenceReady: structuredClone(f.controls.ready),
+                targetWorker: f.compositionWorker,
+              }),
+          }),
+      ),
+      { code: 'INFERENCE_UNAVAILABLE' },
+    )
+    assert.deepEqual(await snapshot(f), before)
+    assert.equal(
+      f.calls.compose.length,
+      1,
+      'Actual alpha classifies IMG before its combination gate',
+    )
+    assert.equal(f.calls.checkpoint, 0)
+    assert.equal(f.consumed.length, 0)
+    assert.deepEqual(await readdir(f.scratch), [])
+  })
+})
+
+for (const [mode, cfgRescale] of [
+  ['img2img', 0],
+  ['txt2img', 0.7],
+] as const) {
+  test(`test_regional_img_rescale_old_peer_control_green ${mode} ${cfgRescale}`, async () => {
+    await withFixture(async (f) => {
+      f.controls.mode = mode
+      const authored = await select(f, 0.5, (document) => {
+        document.generationDraft.cfgRescale = cfgRescale
+      })
+      f.controls.ready.capabilities = f.controls.ready.capabilities.filter(
+        (value) => value !== RESCALE_CAPABILITY,
+      )
+      const id = await queueOne(f)
+      assert.equal((await settled(f, id)).status, 'completed')
+      assert.equal(f.consumed[0].request.type, `generate-illustrious-${mode}`)
+      assert.equal(f.consumed[0].request.job.sampling.cfgRescale, cfgRescale)
+      assert.deepEqual(f.document(), authored)
+    })
+  })
+}
+
+test('opaque regional rescale frozen Retry keeps original .7 source and strength after saved .2 edits', async () => {
+  await withFixture(async (f) => {
+    await select(f, 0.5, (document) => {
+      document.generationDraft.cfgRescale = 0.7
+    })
+    f.controls.fail = true
+    const id = await queueOne(f)
+    const first = await settled(f, id)
+    assert.equal(first.status, 'failed')
+    const source = await f.queue.loadVerifiedRegionalInput(id)
+    f.controls.marker++
+    const authored = await select(f, 0.8, (document) => {
+      document.generationDraft.cfgRescale = 0.2
+      document.generationDraft.positivePrompt.text = 'changed authoring'
+      document.generationDraft.seed = { policy: 'fixed', value: 999 }
+      document.regionalGuidance![0].enabled = false
+    })
+    const saved = await readFile(f.packagePath)
+    f.controls.fail = false
+    await f.actions.retryJob({ id, statusSequence: first.status_sequence })
+    const retry = (await rows(f)).find((row) => row.id !== id)
+    assert.ok(retry)
+    assert.equal((await settled(f, retry.id)).status, 'completed')
+    const loaded = await f.queue.loadVerifiedRegionalInput(retry.id)
+    assert.deepEqual(loaded.payload, source.payload)
+    assert.equal(imgRequest(f.consumed[1]).job.sampling.cfgRescale, 0.7)
+    assert.equal(imgRequest(f.consumed[1]).job.sampling.denoisingStrength, 0.5)
+    assert.equal(f.consumed[1].request.job.sampling.seed, 123)
+    assert.deepEqual(f.consumed[1].recipe, source.input.recipe)
+    assert.ok(f.consumedTargets[1].equals(f.consumedTargets[0]))
+    assert.equal(f.calls.compose.length, 1)
+    assert.deepEqual(f.document(), authored)
+    assert.ok((await readFile(f.packagePath)).equals(saved))
+  })
+})
+
+test('opaque rescale frozen Retry refuses a missing combination capability before SQL despite current zero', async () => {
+  await withFixture(async (f) => {
+    await select(f, 0.5, (document) => {
+      document.generationDraft.cfgRescale = 0.7
+    })
+    f.controls.fail = true
+    const id = await queueOne(f)
+    const first = await settled(f, id)
+    await select(f, 0.8)
+    f.controls.ready.capabilities = f.controls.ready.capabilities.filter(
+      (value) => value !== RESCALE_CAPABILITY,
+    )
+    const before = await snapshot(f)
+    await assert.rejects(f.actions.retryJob({ id, statusSequence: first.status_sequence }), {
+      code: 'GENERATION_RUNTIME_UNAVAILABLE',
+    })
+    assert.deepEqual(await snapshot(f), before)
+    assert.equal(f.consumed.length, 1)
+    assert.equal(f.calls.compose.length, 1)
+  })
+})
+
+test('opaque neutral frozen Retry ignores later nonzero draft and absent combination capability', async () => {
+  await withFixture(async (f) => {
+    await select(f)
+    f.controls.fail = true
+    const id = await queueOne(f)
+    const first = await settled(f, id)
+    const authored = await select(f, 0.8, (document) => {
+      document.generationDraft.cfgRescale = 0.7
+    })
+    f.controls.ready.capabilities = f.controls.ready.capabilities.filter(
+      (value) => value !== RESCALE_CAPABILITY,
+    )
+    f.controls.fail = false
+    await f.actions.retryJob({ id, statusSequence: first.status_sequence })
+    const retry = (await rows(f)).find((row) => row.id !== id)
+    assert.ok(retry)
+    assert.equal((await settled(f, retry.id)).status, 'completed')
+    assert.equal(imgRequest(f.consumed[1]).job.sampling.cfgRescale, 0)
+    assert.deepEqual(f.document(), authored)
+  })
+})
+
+test('opaque rescale dispatch refuses a lost combination capability before reverify or receipt', async () => {
+  await withFixture(async (f) => {
+    await select(f, 0.5, (document) => {
+      document.generationDraft.cfgRescale = 0.7
+    })
+    const admitted = await f.gate.run(
+      f.tabId,
+      async () =>
+        await f.publicCoordinator.submitInvokeBatchUnderGate(f.tabId, {
+          ...f.owner(),
+          iterations: 1,
+          withPreparation: async (use) =>
+            await use({
+              inferenceReady: structuredClone(f.controls.ready),
+              targetWorker: f.compositionWorker,
+            }),
+        }),
+    )
+    assert.equal(admitted.length, 1)
+    const checkpointCalls = f.calls.checkpoint
+    f.controls.ready.capabilities = f.controls.ready.capabilities.filter(
+      (value) => value !== RESCALE_CAPABILITY,
+    )
+    const outcome = await f.publicCoordinator.runNext(
+      f.transport({ ready: structuredClone(f.controls.ready) }),
+    )
+    assert.equal(outcome.kind, 'failed')
+    assert.equal(f.calls.checkpoint, checkpointCalls)
+    assert.equal(f.consumed.length, 0)
+    assert.deepEqual(await f.staging.listVerifiedCandidates(f.tabId), [])
+    assert.deepEqual(await readdir(f.scratch), [])
+  })
+})
+
+test('opaque rescale Retry advisory consumes its own frozen value and separate strict flag', () => {
+  const base = {
+    regionalCfgRescaleSupported: true,
+    regionalImg2ImgSupported: true,
+    regionalSupported: true,
+  }
+  for (const regionalImg2ImgCfgRescaleSupported of [undefined, false, true]) {
+    const state = { ...base, regionalImg2ImgCfgRescaleSupported }
+    assert.equal(generationQueueRetryReason(OPERATION, state, 'Euler', false, false, 0), null)
+    assert.equal(
+      generationQueueRetryReason(OPERATION, state, 'Euler', false, false, 0.7) === null,
+      regionalImg2ImgCfgRescaleSupported === true,
+    )
+    assert.equal(
+      generationQueueRetryReason('illustrious-regional-txt2img', state, 'Euler', false, false, 0.7),
+      null,
+    )
+  }
+})
+
+test('opaque rescale actual JSONL child receives .7 and old combination peer refuses before scratch', async () => {
+  await withFixture(async (f) => {
+    await select(f, 0.5, (document) => {
+      document.generationDraft.cfgRescale = 0.7
+    })
+    const id = await queueOne(f)
+    assert.equal((await settled(f, id)).status, 'completed')
+    const frozen = await f.queue.loadVerifiedRegionalInput(id)
+    const input = structuredClone(frozen.input)
+    const runtime = path.join(f.root, 'img-rescale-runtime')
+    const scratch = path.join(f.root, 'img-rescale-client-scratch')
+    const received = path.join(f.root, 'img-rescale-received.jsonl')
+    await mkdir(runtime)
+    await mkdir(scratch, { mode: 0o700 })
+    const executable = path.join(runtime, 'python')
+    let client: GenerationWorkerClient | undefined
+    try {
+      for (const support of [false, true]) {
+        // These are independent client requests; preserve the distinct nonce assertion below.
+        input.request.requestId = randomUUID()
+        const ready = {
+          ...f.controls.ready,
+          capabilities: [
+            ...f.controls.ready.capabilities.filter((value) => value !== RESCALE_CAPABILITY),
+            ...(support ? [RESCALE_CAPABILITY] : []),
+            ...(process.platform === 'linux' ? ['linux-owned-inference-v1'] : []),
+          ],
+          pythonVersion: '3.12.13',
+          type: 'ready',
+        }
+        const script = String.raw`#!${process.execPath}
+const fs = require('node:fs'), crypto = require('node:crypto');
+const args = process.argv.slice(2);
+const validArgs = process.platform === 'linux'
+  ? args.length === 7 && JSON.stringify(args.slice(0, 6)) === JSON.stringify(['-I', '-m', 'imagegen_worker.owned_inference', '--parent-pid', String(process.ppid), '--scratch-base']) && require('node:path').isAbsolute(args[6])
+  : args.join(' ') === '-I -m imagegen_worker.inference_main';
+if (!validArgs) process.exit(21);
+const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
+process.stdout.write(JSON.stringify(${JSON.stringify(ready)}) + '\n');
+require('node:readline').createInterface({input: process.stdin}).on('line', line => {
+  const wire = JSON.parse(line);
+  if(wire.type !== 'execute-current-canvas-regional') throw Error('Wrong owner');
+  const bytes = fs.readFileSync(wire.bundle.path);
+  if(bytes.length !== wire.bundle.byteSize || hash(bytes) !== wire.bundle.sha256) throw Error('Bundle mismatch');
+  const bundle = JSON.parse(bytes);
+  if(bundle.request.type !== 'generate-illustrious-img2img') throw Error('Wrong image discriminator');
+  const target = fs.readFileSync(bundle.request.job.target.path);
+  if(hash(target) !== bundle.request.job.target.sha256) throw Error('Target mismatch');
+  fs.appendFileSync(${JSON.stringify(received)}, JSON.stringify({cfgRescale: bundle.request.job.sampling.cfgRescale, strength: bundle.request.job.sampling.denoisingStrength, requestId: wire.requestId}) + '\n');
+  fs.writeFileSync(bundle.request.job.output.pngPath, Buffer.from(${JSON.stringify(f.outputBytes.toString('base64'))}, 'base64'), {flag:'wx'});
+  process.stdout.write(JSON.stringify({type:'generation-done',protocolVersion:'1',requestId:wire.requestId,outputPath:bundle.request.job.output.pngPath,seed:bundle.request.job.sampling.seed}) + '\n');
+});
+`
+        await writeFile(executable, script)
+        await chmod(executable, 0o700)
+        client = await GenerationWorkerClient.start(
+          { pythonExecutable: executable, runtimeRoot: runtime, scratchBasePath: scratch },
+          { requestTimeoutMs: 3000, shutdownWaitMs: 100 },
+        )
+        input.request.job.sampling.cfgRescale = 0.7
+        if (!support) {
+          await assert.rejects(client.executeCurrentCanvasRegional(input), {
+            code: 'WORKER_VERSION_MISMATCH',
+          })
+          assert.deepEqual(await readdir(scratch), [])
+          assert.equal(await readFile(received, 'utf8').catch(() => ''), '')
+          input.request.job.sampling.cfgRescale = 0
+        }
+        assert.ok((await client.executeCurrentCanvasRegional(input)).pngBytes.equals(f.outputBytes))
+        await client.close()
+        client = undefined
+      }
+      const observed = (await readFile(received, 'utf8'))
+        .trim()
+        .split('\n')
+        .map(
+          (line) => JSON.parse(line) as { cfgRescale: number; requestId: string; strength: number },
+        )
+      assert.deepEqual(
+        observed.map(({ cfgRescale }) => cfgRescale),
+        [0, 0.7],
+      )
+      assert.deepEqual(
+        observed.map(({ strength }) => strength),
+        [0.5, 0.5],
+      )
+      assert.notEqual(observed[0].requestId, observed[1].requestId)
+      assert.deepEqual(await readdir(scratch), [])
+      assert.deepEqual((await f.queue.loadVerifiedRegionalInput(id)).payload, frozen.payload)
+    } finally {
+      await client?.close()
+    }
+  })
+})
+
+test('opaque rescale validates numeric bounds and never enables private nonzero execution', async () => {
+  await withFixture(async (f) => {
+    await select(f, 0.5, (document) => {
+      document.generationDraft.cfgRescale = 0.7
+    })
+    const id = await queueOne(f)
+    assert.equal((await settled(f, id)).status, 'completed')
+    const frozen = await f.queue.loadVerifiedRegionalInput(id)
+    const before = await snapshot(f)
+    for (const value of [-0.01, 1, NaN, Infinity, false, '0.7']) {
+      const input = structuredClone(frozen.input)
+      Reflect.set(input.request.job.sampling, 'cfgRescale', value)
+      assert.throws(() => captureRegionalWorkerInput(input), { code: 'INVALID_REQUEST' })
+    }
+    const privateInput = structuredClone(frozen.input)
+    delete privateInput.compositionProfile
+    assert.throws(() => captureRegionalWorkerInput(privateInput), { code: 'INVALID_REQUEST' })
+    assert.deepEqual(await snapshot(f), before)
+    assert.deepEqual(await readdir(f.scratch), [])
+  })
+})

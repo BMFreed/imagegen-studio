@@ -49,13 +49,18 @@ def _target(case: Any, *, alpha: int) -> None:
 
 
 @pytest.mark.parametrize("strength", (0.0, 0.5, 1.0))
+@pytest.mark.parametrize("cfg_rescale", (0.0, 0.7, 0.99))
 def test_real_opaque_bundle_preserves_exact_img_command_and_explicit_strength(
-    tmp_path: Path, strength: float
+    tmp_path: Path, strength: float, cfg_rescale: float
 ) -> None:
     case = _case(tmp_path, strength=strength)
+    case.request["job"]["sampling"]["cfgRescale"] = cfg_rescale
+    _seal(case)
     parsed = worker.parse_regional_request(case.wire)
     assert type(parsed.command) is GenerateIllustriousImg2ImgCommand
     assert parsed.command.denoising_strength == strength
+    assert parsed.command.cfg_rescale == cfg_rescale
+    assert parsed.parameters.cfg_rescale == cfg_rescale
     assert parsed.command.target_sha256 == _descriptor(case.target)["sha256"]
     assert parsed.composition_profile == "invoke-canvas-v1"
     assert parsed.initialization_profile is None
@@ -110,7 +115,9 @@ def test_invalid_img_bundle_refuses_before_any_native_loader(
     elif fault == "dpm":
         job["sampling"]["scheduler"] = "dpmpp_2m"
     elif fault == "rescale":
-        job["sampling"]["cfgRescale"] = 0.7
+        # Nonzero public IMG values are now supported; the operational upper
+        # bound remains strict, independently of target/mode qualification.
+        job["sampling"]["cfgRescale"] = 1.0
     elif fault in ("auto-vae", "fp32-vae"):
         job["vaePrecision"] = "Auto" if fault == "auto-vae" else "FP32"
     elif fault == "external-vae":
@@ -156,10 +163,13 @@ def test_invalid_img_bundle_refuses_before_any_native_loader(
 
 
 @pytest.mark.parametrize("strength", (0.0, 0.5))
+@pytest.mark.parametrize("cfg_rescale", (0.0, 0.7, 0.99))
 def test_real_dispatch_routes_img_once_without_prepared_vae_or_txt_output(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, strength: float
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, strength: float, cfg_rescale: float
 ) -> None:
     case = _case(tmp_path, strength=strength)
+    case.request["job"]["sampling"]["cfgRescale"] = cfg_rescale
+    _seal(case)
     case.wire["reportProgress"] = True
     calls: list[str] = []
     component = SimpleNamespace(eval=lambda: calls.append("eval"))
@@ -185,6 +195,7 @@ def test_real_dispatch_routes_img_once_without_prepared_vae_or_txt_output(
         calls.append("img-output")
         assert type(kwargs["command"]) is GenerateIllustriousImg2ImgCommand
         assert kwargs["command"].denoising_strength == strength
+        assert kwargs["command"].cfg_rescale == cfg_rescale
         assert kwargs["pipeline"] is pipeline
         assert kwargs["denoising_profile"] == "ordinary-canvas-euler-img2img-cuda-fp16-v1"
         assert (

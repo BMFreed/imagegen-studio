@@ -145,6 +145,16 @@ export function supportsInferenceRegionalImg2Img(value: unknown): boolean {
   )
 }
 
+/** Separate IMG rescale qualification cannot be inferred from independent TXT and image support. */
+export function supportsInferenceRegionalImg2ImgCFGRescale(value: unknown): boolean {
+  return (
+    isQualifiedInferenceWorkerReady(value) &&
+    supportsInferenceRegionalImg2Img(value) &&
+    supportsInferenceRegionalCFGRescale(value) &&
+    value.capabilities.includes('illustrious-regional-img2img-cfg-rescale-v1')
+  )
+}
+
 /** Global LoRAs require the qualified public regional owner and its explicit adapter opt-in. */
 export function supportsInferenceRegionalLoras(value: unknown): boolean {
   return (

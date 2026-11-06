@@ -2423,6 +2423,7 @@ const generationBlockingReason = computed(() => {
         document: { ...props.tab, generationDraft: props.generationDraft },
         dpmSupported: props.generationState?.regionalDpmSupported,
         embeddingsSupported: props.generationState?.embeddingsSupported,
+        img2imgCfgRescaleSupported: props.generationState?.regionalImg2ImgCfgRescaleSupported,
         img2imgSupported: props.generationState?.regionalImg2ImgSupported,
         initializationSupported: props.generationState?.regionalInvokeInitializationSupported,
         iterations: imagesPerClick.value ?? 0,

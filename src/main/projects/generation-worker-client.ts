@@ -29,6 +29,7 @@ import {
   supportsInferenceRegionalCFGRescale,
   supportsInferenceRegionalDpm,
   supportsInferenceRegionalImg2Img,
+  supportsInferenceRegionalImg2ImgCFGRescale,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
   supportsInferenceRegionalProgress,
@@ -441,6 +442,16 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
         throw new GenerationWorkerError(
           'WORKER_VERSION_MISMATCH',
           'The active worker has not qualified opaque img2img with Regional Guidance.',
+        )
+      }
+      if (
+        input.request.type === 'generate-illustrious-img2img' &&
+        (input.request.job.sampling.cfgRescale ?? 0) !== 0 &&
+        !supportsInferenceRegionalImg2ImgCFGRescale(this.ready)
+      ) {
+        throw new GenerationWorkerError(
+          'WORKER_VERSION_MISMATCH',
+          'The active worker has not qualified CFG Rescale with opaque regional img2img.',
         )
       }
       if (

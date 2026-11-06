@@ -30,6 +30,103 @@ declare global {
   }
 }
 
+test('renderer opaque IMG rescale requires the combination capability and preserves zero', async ({
+  page,
+}, testInfo) => {
+  const errors: string[] = []
+  page.on('pageerror', (cause) => errors.push(cause.message))
+  await mountWiring(page, 'project')
+  const generate = page.getByRole('button', { exact: true, name: 'Generate' })
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.targetMode = 'img2img'
+    fixture.tab.primaryBbox.x += 8
+    fixture.tab.generationDraft.sampling.denoisingStrength = 0.5
+    fixture.tab.generationDraft.cfgRescale = 0.7
+    fixture.state.regionalImg2ImgSupported = true
+    fixture.state.regionalCfgRescaleSupported = true
+    fixture.state.regionalImg2ImgCfgRescaleSupported = false
+  })
+  await expect(generate).toBeDisabled()
+  await expect(
+    page.getByText(
+      'The current image engine does not support CFG Rescale with opaque regional img2img. Repair or update the runtime.',
+    ),
+  ).toBeVisible()
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.tab.generationDraft.cfgRescale = 0
+  })
+  await expect(generate).toBeEnabled()
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.tab.generationDraft.cfgRescale = 0.99
+    delete fixture.state.regionalImg2ImgCfgRescaleSupported
+  })
+  await expect(generate).toBeDisabled()
+  await expect(
+    page.getByText(/Checking image engine support for CFG Rescale with opaque regional img2img/),
+  ).toBeVisible()
+  await page.evaluate(() => {
+    globalThis.window.regionalWiringFixture.state.regionalImg2ImgCfgRescaleSupported = true
+  })
+  await expect(generate).toBeEnabled()
+  await page.screenshot({ path: testInfo.outputPath('opaque-img-rescale-enabled.png') })
+  await generate.click()
+  expect(await page.evaluate(() => globalThis.window.regionalWiringFixture.generateCalls)).toEqual([
+    1,
+  ])
+  expect(errors).toEqual([])
+})
+
+test('renderer frozen IMG rescale Retry follows frozen settings and the combination capability', async ({
+  page,
+}) => {
+  const errors: string[] = []
+  page.on('pageerror', (cause) => errors.push(cause.message))
+  await mountWiring(page, 'queue')
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.queueItem.operation = 'illustrious-regional-img2img'
+    fixture.queueItem.details!.sampling.cfgRescale = 0.7
+    fixture.state.regionalImg2ImgSupported = true
+    fixture.state.regionalCfgRescaleSupported = true
+    fixture.state.regionalImg2ImgCfgRescaleSupported = false
+    fixture.tab.regionalGuidance = []
+    fixture.tab.generationDraft.cfgRescale = 0
+    fixture.tab.generationDraft.model!.baseModelFamily = 'anima'
+    fixture.epoch += 1
+  })
+  const retry = page.getByRole('button', { exact: true, name: 'Retry job' })
+  await expect(retry).toBeDisabled()
+  await page.evaluate(() => {
+    globalThis.window.regionalWiringFixture.state.regionalImg2ImgCfgRescaleSupported = true
+  })
+  await expect(retry).toBeEnabled()
+  await retry.click()
+  expect(await page.evaluate(() => globalThis.window.regionalWiringFixture.retryCalls)).toEqual([
+    await page.evaluate(() => ({
+      id: globalThis.window.regionalWiringFixture.queueItem.id,
+      statusSequence: 3,
+    })),
+  ])
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.queueItem.details!.sampling.cfgRescale = 0
+    fixture.state.regionalImg2ImgCfgRescaleSupported = false
+    fixture.epoch += 1
+  })
+  await expect(retry).toBeEnabled()
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.queueItem.operation = 'illustrious-regional-txt2img'
+    fixture.queueItem.details!.sampling.cfgRescale = 0.7
+    fixture.epoch += 1
+  })
+  await expect(retry).toBeEnabled()
+  expect(errors).toEqual([])
+})
+
 const sourceRoot = `/@fs${path.resolve(import.meta.dirname, '../../../src')}`
 
 /** Real renderer components, explicit mock IPC. These tests make no inference/runtime claim. */
@@ -575,7 +672,9 @@ test('renderer opaque regional img2img uses actual target and explicit strength'
     fixture.tab.generationDraft.cfgRescale = 0.7
   })
   await expect(generate).toBeDisabled()
-  await expect(page.getByText(/Regional img2img requires Euler\/Normal/)).toBeVisible()
+  await expect(
+    page.getByText(/Checking image engine support for CFG Rescale with opaque regional img2img/),
+  ).toBeVisible()
   await page.evaluate(() => {
     const fixture = globalThis.window.regionalWiringFixture
     fixture.tab.generationDraft.cfgRescale = 0

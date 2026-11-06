@@ -522,12 +522,11 @@ function validateAgreement(input: v.InferOutput<typeof inputSchema>): void {
     (input.compositionProfile !== 'invoke-canvas-v1' ||
       input.initializationProfile !== undefined ||
       request.job.sampling.scheduler !== 'euler' ||
-      (request.job.sampling.cfgRescale ?? 0) !== 0 ||
       request.job.vae != null ||
       request.job.vaePrecision !== 'FP16')
   ) {
     throw invalid(
-      'Regional img2img requires public Invoke Canvas, Euler, Embedded FP16 VAE, zero CFG Rescale and no txt2img initialization.',
+      'Regional img2img requires public Invoke Canvas, Euler, Embedded FP16 VAE and no txt2img initialization.',
     )
   }
   if (

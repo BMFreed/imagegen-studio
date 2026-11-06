@@ -105,9 +105,8 @@ def _denoising_profile(
             and initialization_profile is None
             and parameters.scheduler == "euler"
             and parameters.vae is None
-            and parameters.vae_precision == "FP16"
-            and parameters.cfg_rescale == 0,
-            "Regional img2img requires Invoke Canvas, Euler, Embedded FP16 VAE, zero CFG Rescale "
+            and parameters.vae_precision == "FP16",
+            "Regional img2img requires Invoke Canvas, Euler, Embedded FP16 VAE "
             "and no txt2img initialization.",
         )
         return "ordinary-canvas-euler-img2img-cuda-fp16-v1"
@@ -533,7 +532,7 @@ def parse_regional_request(value: object) -> RegionalRequest:
     )
     tensor_profile, _ = _execution_profile(denoising_profile, encoding_profile)
     prepared_vae = _vae_profile(denoising_profile)
-    invoke_cfg_rescale = encoding_profile in _INVOKE_PROFILES and not img2img
+    invoke_cfg_rescale = encoding_profile in _INVOKE_PROFILES
     if _dpmpp_2m_profile(denoising_profile):
         _denoising_parameters(
             execution_parameters,

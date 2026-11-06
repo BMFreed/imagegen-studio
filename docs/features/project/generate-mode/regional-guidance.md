@@ -1720,3 +1720,33 @@ two scratch roots, reclaiming 112,263,168 allocated bytes. Canonical runtime,
 model and unsaved Add shadows remain protected. This does not qualify
 visual quality, Anima, broader image modes, capacity or release
 Install/Repair; PP-001/005/007/008 remain unchanged.
+
+## CFG Rescale for opaque regional img2img
+
+The [IMG rescale continuation](../../../engineering/phase-4-regional-guidance-img2img-cfg-rescale-research.md)
+supersedes the preceding zero-only public IMG restriction only for an explicitly
+qualified peer advertising `illustrious-regional-img2img-cfg-rescale-v1` plus its
+regional IMG/CFG support. Euler/Normal, Embedded FP16, actual opaque source and
+explicit strength remain required. The existing 0..0.99 range and zero default
+are unchanged. Private image profiles remain zero-only; TXT options retain their
+previous qualifications. No numeric control, persisted field or migration is added.
+
+ROOT: 499 Main / 299 Python / 190 full browser PASS, strict typing/scoped checks
+and build PASS; isolated mutations give 18 GREEN / three semantic RED with exact
+source restoration. Installed native-r4 passes 17 grouped checks: actual .7,
+Cancel, saved source/text/strength/.2 edits, frozen .7 Retry and exact control
+RGBA through explicit Add/Undo/Redo/Save/ZIP/reopen. Ordinary IMG provenance keeps
+applied .7 while current authoring keeps .2. Regional operational fields remain
+excluded from provenance, Compare and result-derived presets.
+
+Two separate installed-client replays create no queue admissions/receipts and
+preserve SQL/input/package/resource state. Same-value .7 exactly matches the UI
+PNG; zero changes 569,646 RGB channels. This proves finite numerical influence,
+not better visual results. Source reviews, ROOT execution and retention/release
+remain separate. Independent final retained-data review is CLEAN; ROOT confirms
+fresh exit/restoration/reader/dependency gates, retains all 3,180 entries in the
+verified archive and releases only idle own scratch, reclaiming 65,560,576
+allocated bytes. Canonical runtime/model/autosave dependencies remain protected.
+Earlier incomplete attempts are retained and excluded. Anima, partial alpha,
+selected-VAE encoding, additional image samplers, visual/human and release
+Install/Repair remain separate; PP-001/005/007/008 stay unchanged.

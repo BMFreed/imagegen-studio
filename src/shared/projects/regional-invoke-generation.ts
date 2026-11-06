@@ -104,6 +104,7 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   document: RegionalDocument
   dpmSupported?: boolean | null
   embeddingsSupported?: boolean | null
+  img2imgCfgRescaleSupported?: boolean | null
   img2imgSupported?: boolean | null
   initializationSupported?: boolean | null
   iterations: number
@@ -133,10 +134,9 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
     (draft.sampling.sampler !== 'Euler' ||
       draft.sampling.scheduler !== 'Normal' ||
       draft.vae !== null ||
-      draft.vaePrecision !== 'FP16' ||
-      (draft.cfgRescale ?? 0) !== 0)
+      draft.vaePrecision !== 'FP16')
   ) {
-    return 'Regional img2img requires Euler/Normal, Embedded FP16 VAE and CFG Rescale zero.'
+    return 'Regional img2img requires Euler/Normal and Embedded FP16 VAE.'
   }
   if (!(
     ((draft.sampling.sampler === 'Euler' || draft.sampling.sampler === 'Euler a') &&
@@ -224,6 +224,17 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
     }
     if (input.cfgRescaleSupported !== true) {
       return 'The current image engine does not support CFG Rescale with Regional Guidance. Repair or update the runtime.'
+    }
+  }
+  if (img2img && cfgRescale !== 0) {
+    if (
+      input.img2imgCfgRescaleSupported === undefined ||
+      input.img2imgCfgRescaleSupported === null
+    ) {
+      return 'Checking image engine support for CFG Rescale with opaque regional img2img. Repair or update the runtime if support remains unavailable.'
+    }
+    if (input.img2imgCfgRescaleSupported !== true) {
+      return 'The current image engine does not support CFG Rescale with opaque regional img2img. Repair or update the runtime.'
     }
   }
   if (draft.sampling.sampler === 'DPM++ 2M') {

@@ -415,7 +415,8 @@ def _assert_source_and_schedule(native: Any, case: Any, seen: Any) -> None:
     assert [float(item["timestep"].item()) for item in seen.steps] == selected
     assert options["strength"] == command.denoising_strength
     assert options["num_inference_steps"] == command.steps
-    assert options["output_type"] == "pt" and options["guidance_rescale"] == 0
+    assert options["output_type"] == "pt"
+    assert options["guidance_rescale"] == command.cfg_rescale
     assert "height" not in options and "width" not in options
     assert len(seen.builds) == 1 + len(case.recipe["regions"])
     mean, std, posterior, posterior_generator, state = seen.posteriors[0]

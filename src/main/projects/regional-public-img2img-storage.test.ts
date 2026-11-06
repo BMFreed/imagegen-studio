@@ -300,8 +300,9 @@ for (const invalid of [
       const context = loaded.payload.context
       const job = loaded.payload.workerJob
       if (invalid === 'rescale') {
-        context.sampling.cfgRescale = 0.7
-        job.sampling.cfgRescale = 0.7
+        // Public image .7 is now valid; this negative fixture exceeds the unchanged range.
+        context.sampling.cfgRescale = 1
+        job.sampling.cfgRescale = 1
       }
       if (invalid === 'precision') {
         context.vaePrecision = 'Auto'
