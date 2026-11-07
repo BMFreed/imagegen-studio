@@ -694,3 +694,102 @@ def test_invalid_requested_device_has_no_cpu_fallback(native: Any, tmp_path: Pat
     with pytest.raises(DerivativeError) as error:
         _load(native, bundle, device="invalid-device")
     assert error.value.code == "INFERENCE_UNAVAILABLE"
+
+
+@pytest.mark.parametrize("dtype", ["float32", "float16", "bfloat16"])
+def test_loader_preserves_constructor_rotary_precision(
+    native: Any, tmp_path: Path, dtype: str
+) -> None:
+    torch, diffusers, transformers, _accelerate, architecture = native
+    bundle, expected = _fixture(native, tmp_path)
+    selected_dtype = getattr(torch, dtype)
+    # Construct a fresh oracle: widening a previously rounded buffer to F32
+    # cannot recover the native frequencies this loader must preserve.
+    with torch.random.fork_rng(devices=[]):
+        constructors = {
+            "transformer": diffusers.CosmosTransformer3DModel(**architecture.transformer),
+            "text_conditioner": diffusers.AnimaTextConditioner(**architecture.text_conditioner),
+            "qwen3_encoder": transformers.Qwen3Model(
+                transformers.Qwen3Config(**architecture.qwen3_encoder)
+            ),
+        }
+    loaded = _load(native, bundle, device="cpu", dtype=selected_dtype)
+
+    # Every persistent tensor still receives the exact requested cast, including
+    # the VAE. Preserving constructor buffers must not leave weights in F32.
+    for component, source_state in expected.items():
+        state = getattr(loaded, component).state_dict()
+        assert set(state) == set(source_state)
+        for key, source in source_state.items():
+            tensor = state[key]
+            assert tensor.device.type == "cpu" and not tensor.is_meta
+            assert tensor.dtype == selected_dtype, (component, key)
+            assert torch.equal(tensor, source.to(dtype=selected_dtype)), (component, key)
+
+    for component, key in (
+        ("qwen3_encoder", "inv_freq"),
+        ("qwen3_encoder", "original_inv_freq"),
+        ("text_conditioner", "inv_freq"),
+    ):
+        original = getattr(constructors[component].rotary_emb, key)
+        tensor = getattr(getattr(loaded, component).rotary_emb, key)
+        assert original.dtype == torch.float32
+        if selected_dtype != torch.float32:
+            # These real constructor values distinguish preserved precision
+            # from a low-precision buffer subsequently widened back to F32.
+            assert not torch.equal(
+                original, original.to(dtype=selected_dtype).to(dtype=torch.float32)
+            ), (component, key)
+        assert tensor.device.type == "cpu" and not tensor.is_meta
+        assert tensor.dtype == original.dtype, (component, key)
+        assert torch.equal(tensor, original), (component, key)
+
+    # Cover the backbone's generated position buffers as well as the explicit
+    # Qwen/conditioner frequencies; none belongs to the persistent source state.
+    for component, constructor in constructors.items():
+        original_buffers = {
+            key: tensor
+            for key, tensor in constructor.named_buffers()
+            if key not in constructor.state_dict()
+        }
+        model = getattr(loaded, component)
+        buffers = {
+            key: tensor for key, tensor in model.named_buffers() if key not in model.state_dict()
+        }
+        assert set(buffers) == set(original_buffers)
+        for key, original in original_buffers.items():
+            tensor = buffers[key]
+            assert tensor.device.type == "cpu" and not tensor.is_meta
+            assert tensor.dtype == original.dtype, (component, key)
+            assert torch.equal(tensor, original), (component, key)
+
+
+def test_loaded_bf16_native_qwen_conditioner_backbone_consumers_run_on_cpu(
+    native: Any, tmp_path: Path
+) -> None:
+    # Actual tiny native consumers exercise BF16 weights with their F32 rotary
+    # buffers. Random fixture weights do not qualify trained output or quality.
+    _torchvision = pytest.importorskip("torchvision")
+    torch = native[0]
+    bundle, _expected = _fixture(native, tmp_path)
+    loaded = _load(native, bundle, device="cpu", dtype=torch.bfloat16)
+    assert loaded.qwen3_encoder.rotary_emb.inv_freq.dtype == torch.float32
+    assert loaded.qwen3_encoder.rotary_emb.original_inv_freq.dtype == torch.float32
+    assert loaded.text_conditioner.rotary_emb.inv_freq.dtype == torch.float32
+    with torch.inference_mode():
+        qwen = loaded.qwen3_encoder(torch.tensor([[1, 2]])).last_hidden_state
+        conditioned = loaded.text_conditioner(qwen, torch.tensor([[1, 2]]))
+        output = loaded.transformer(
+            hidden_states=torch.zeros((1, 2, 1, 4, 4), dtype=torch.bfloat16),
+            encoder_hidden_states=conditioned,
+            timestep=torch.tensor([0.5]),
+            padding_mask=torch.zeros((1, 1, 4, 4), dtype=torch.bfloat16),
+        ).sample
+    for tensor, shape in (
+        (qwen, (1, 2, 32)),
+        (conditioned, (1, 4, 32)),
+        (output, (1, 2, 1, 4, 4)),
+    ):
+        assert tensor.shape == shape
+        assert tensor.dtype == torch.bfloat16
+        assert bool(torch.isfinite(tensor).all().item())

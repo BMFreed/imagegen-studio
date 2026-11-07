@@ -1920,3 +1920,15 @@ before commas differently and retains different adapter-buffer/RGB precision;
 those measured boundaries remain separate from visual usefulness. No production
 behavior/default changes follow. Visual NOT_QUALIFIED, public Anima exclusion,
 frozen-work independence and PP-001/005/007/008 remain unchanged.
+
+The subsequent [rotary precision correction](../../../engineering/phase-4-anima-rotary-precision-research.md)
+preserves native FP32 Qwen/adapter frequency buffers during selected-dtype
+checkpoint loading, following current Invoke. ROOT 526 distinct regression cases
+and the trained six-stage first-prediction probe pass. Held-input adapter outputs
+match original Invoke exactly on four streams; separate adapter/Qwen interventions
+change real contexts and native predictions, with exact restoration. This does
+not rerun the visual experiment or establish whole-pipeline/pixel parity.
+Frozen authored/compiled inputs remain exact; their contract does not pin a
+historical loader implementation or its numerical pixels. Public Anima regional
+jobs, spatial negatives/references, Smart regional and PP-001/005/007/008 remain
+unchanged.

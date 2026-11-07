@@ -410,6 +410,8 @@ def load_anima_models(
 
     Default CPU compute is F32. A caller may explicitly request F16/BF16/F32 and
     a device; unsupported/failed placement never falls back to another device.
+    Checkpoint tensors use that dtype; constructor-derived rotary buffers retain
+    their native FP32 values during placement, as in Invoke's state-first loader.
     Tokenizers and the mandatory weighting path belong to a later boundary.
     """
     files = {
@@ -473,7 +475,9 @@ def load_anima_models(
         for model in models.values():
             if any(tensor.is_meta for tensor in (*model.parameters(), *model.buffers())):
                 raise _unsupported("Anima native loading left uninitialized tensors.")
-            model.to(device=torch.device(device), dtype=selected_dtype)
+            # State was already cast before strict assignment. A whole-module
+            # dtype cast would also round native, nonpersistent RoPE buffers.
+            model.to(device=torch.device(device))
             model.eval()
     except DerivativeError:
         raise

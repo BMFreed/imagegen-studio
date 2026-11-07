@@ -2235,3 +2235,18 @@ legacy meaning. Raw↔compiled corruption checks and worker wire format stay int
 Isolated legacy-routing mutation gives5 GREEN→3 RED+2 controls GREEN→5 restored
 GREEN; source never mutates. Grammar replacement, trained visuals, installed
 qualification and PP-001/005/007/008 remain separate and unchanged.
+
+## Anima native rotary precision
+
+The [loader correction](./phase-4-anima-rotary-precision-research.md) follows
+current Invoke's state-first casting and device-only placement: checkpoint
+parameters retain selected precision, while native Qwen/adapter rotary buffers
+remain FP32. ROOT 526 distinct neighboring cases pass, including 62 loader cases;
+the isolated old-cast mutation gives 3 GREEN→2 RED+1 F32 control GREEN→3 restored
+GREEN. A six-stage trained first-prediction probe isolates both active frequency
+owners, observes 336 original cross-attention calls and exact source/RNG
+restoration. With fixed Qwen inputs, the corrected adapter matches original
+Invoke on all four streams exactly. No full trajectory/PNG or new visual result
+is claimed. Frozen inputs stay valid; numerical fixes do not promise old pixels.
+Output quantization, complete Invoke parity and visual NOT_QUALIFIED remain
+separate; public Anima and PP-001/005/007/008 boundaries stay unchanged.
