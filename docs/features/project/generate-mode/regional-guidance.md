@@ -1840,3 +1840,29 @@ scratch, reclaiming73498624 allocated bytes; canonical runtime,
 resources and durable data stay protected. These audits do not rerun ML/UI.
 Visual usefulness, Anima regional execution, explicit inpaint/Smart integration,
 capacity/release and PP-001/005/007/008 **«Пока не обещать»** remain unchanged.
+
+### Private original-Anima positive mechanics
+
+The [private Anima checkpoint](../../../engineering/phase-4-regional-guidance-anima-positive-research.md)
+now consumes genuine Main recipes and existing compiled weighted prompts through
+native Qwen/conditioner/Cosmos, Euler/Wan and provisional PNG. It follows current
+Invoke's nearest/ceil regional masks, background global support and even/odd
+block policy. Only explicit positive calls own masked processors; the ordinary
+global negative remains unmasked. Exact-empty/absent regional positives contribute
+no context or background subtraction; nonempty regions without sampled support
+refuse before encoding. Effective regional negatives must be empty. Global
+negative text may remain nonempty when regions explicitly select local-empty.
+
+ROOT's 163 Main/461 distinct Python PASS include CPU FP32/CUDA BF16 small random
+native models, exact zero-region ordinary controls, restoration and fresh-call
+recovery. The valid wrong-association mutation is consumed natively and publishes
+PNG before 2 semantic RED, with 10 GREEN controls/restoration. These are mechanical
+results, not trained or visual Anima qualification. The existing public Anima
+enabled-region refusal remains; no queue, durable candidate, UI, Smart, reference
+or spatial-negative support is added. Regional state stays excluded from accepted
+provenance, Compare and result-derived presets. Independent retained-byte review
+verifies 5,422 archived entries and Main/PNG closure; ROOT's separate physical-
+exit/restoration/reader/dependency gates precede release of 442,716,160 bytes of
+own scratch. Existing runtime, models and app data remain protected. Audits do
+not independently rerun native execution. PP-001/005/007/008 remain
+**«Пока не обещать»**.

@@ -2130,3 +2130,26 @@ scratch, reclaiming73498624 allocated bytes; canonical runtime,
 LaMa/models and durable data stay protected. The note records excluded attempts.
 Visual quality, Anima, explicit inpaint/Smart integration and promise readiness
 stay open.
+
+## Private original-Anima positive Regional Guidance
+
+The [Anima positive checkpoint](./phase-4-regional-guidance-anima-positive-research.md)
+adapts current Invoke `a61ac4fb` conditioning/mask/patch owners to original native
+Cosmos processors: nearest masks on the ceil latent-patch grid, background global
+support, even positive blocks masked and odd blocks unrestricted. Negative calls
+remain ordinary/unmasked. Existing Euler/Wan/publication owners remain; no public
+Anima admission, dispatcher, queue, UI or provenance change is made.
+
+ROOT qualifies 163 Main and 461 distinct Python PASS (73 new regional/388
+neighbors), TypeScript/scoped checks and zero-error strict Python typing. Genuine
+saved/reopened Main recipes reach CPU FP32/CUDA BF16 small random native models
+and independently checked PNGs. An isolated association mutation gives 10 GREEN /
+2 semantic RED, 1,711/9,806 changed RGB channels, exact ordinary controls and exact
+restoration. Native admission, tokenizer-copy/preflight and test-fixture diagnoses
+are recorded separately from accepted execution. Source R3 and retained-byte
+reviews are CLEAN within their read-only limits. All 5,422 archived entries and
+Main/PNG closure verify; ROOT separately confirms 34 owned units idle, restoration,
+reader/dependency gates and exact scratch release, reclaiming 442,716,160 allocated
+bytes. Verified archive and existing reusable runtime remain protected.
+Trained Anima/visual usefulness, regional negatives/references, public activation
+and installed capacity remain open; PP-001/005/007/008 stay «Пока не обещать».

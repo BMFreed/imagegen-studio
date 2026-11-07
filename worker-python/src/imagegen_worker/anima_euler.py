@@ -13,7 +13,7 @@ import math
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from PIL import Image
 
@@ -88,6 +88,10 @@ AnimaMaskedDenoiser = Callable[
     Any,
 ]
 AnimaDenoiserFactory = Callable[[Any, Any], AnimaDenoiser | AnimaMaskedDenoiser]
+
+# Trusted private prediction ownership; ordinary callers keep the original path.
+AnimaPredictor = Callable[[Literal["positive", "negative"], Any, float], Any]
+AnimaPredictionFactory = Callable[[AnimaConditioningPair, Any, Any, Any], AnimaPredictor]
 
 
 def _invalid(message: str) -> DerivativeError:
@@ -293,11 +297,14 @@ def execute_captured_anima_plan(
     denoiser_factory: AnimaDenoiserFactory | None = None,
     initial_sigma: float | None = None,
     latent_transform_factory: AnimaLatentTransformFactory | None = None,
+    prediction_factory: AnimaPredictionFactory | None = None,
 ) -> AnimaEulerResult:
     """Shared internal image boundary; collaborators come only from trusted Python code."""
     positive_input, negative_input = _capture_prompt(positive), _capture_prompt(negative)
     source = _source_image(source_image, captured)
     captured_loras = capture_anima_loras(loras)
+    if prediction_factory is not None and denoiser_factory is not None:
+        raise _invalid("Anima prediction ownership cannot replace a native sampling driver.")
     try:
         if importlib.metadata.version("torchvision").split("+", maxsplit=1)[0] != "0.22.1":
             raise DerivativeError(
@@ -339,6 +346,7 @@ def execute_captured_anima_plan(
             shape = (1, 16, 1, captured.height // 8, captured.width // 8)
             noise_generator = torch.Generator(device="cpu").manual_seed(captured.seed)
             conditioning = None
+            predictor = None
             if captured.total_steps:
                 conditioning = encode_anima_conditioning_pair(
                     positive_input, negative_input, models, tokenizers=tokenizers
@@ -350,6 +358,8 @@ def execute_captured_anima_plan(
                     raise DerivativeError(
                         "INFERENCE_UNAVAILABLE", "Anima conditioning placement differs."
                     )
+                if prediction_factory is not None:
+                    predictor = prediction_factory(conditioning, torch, device, dtype)
             with torch.inference_mode(), _vae_guard(vae, torch):
                 if source is not None:
                     pixels = torch.frombuffer(bytearray(source.tobytes()), dtype=torch.uint8)
@@ -387,16 +397,28 @@ def execute_captured_anima_plan(
                         else ()
                     )
                     for index, (current, following) in enumerate(iterations, 1):
-                        conditional = predict_anima_flow(
-                            transformer, latents, conditioning.positive.embeddings, current, torch
-                        )
-                        if not math.isclose(captured.guidance_scale, 1.0):
-                            unconditional = predict_anima_flow(
+                        conditional = (
+                            predict_anima_flow(
                                 transformer,
                                 latents,
-                                conditioning.negative.embeddings,
+                                conditioning.positive.embeddings,
                                 current,
                                 torch,
+                            )
+                            if predictor is None
+                            else predictor("positive", latents, current)
+                        )
+                        if not math.isclose(captured.guidance_scale, 1.0):
+                            unconditional = (
+                                predict_anima_flow(
+                                    transformer,
+                                    latents,
+                                    conditioning.negative.embeddings,
+                                    current,
+                                    torch,
+                                )
+                                if predictor is None
+                                else predictor("negative", latents, current)
                             )
                             flow = unconditional + captured.guidance_scale * (
                                 conditional - unconditional
