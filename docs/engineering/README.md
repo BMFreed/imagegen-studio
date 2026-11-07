@@ -2250,3 +2250,15 @@ Invoke on all four streams exactly. No full trajectory/PNG or new visual result
 is claimed. Frozen inputs stay valid; numerical fixes do not promise old pixels.
 Output quantization, complete Invoke parity and visual NOT_QUALIFIED remain
 separate; public Anima and PP-001/005/007/008 boundaries stay unchanged.
+
+## Anima RGB conversion parity
+
+The [decoded-output correction](./phase-4-anima-rgb-quantization-research.md)
+removes the extra FP32 widening before Anima's native clamp/scale/byte conversion,
+following the current Invoke decoder. ROOT: 700 neighboring cases pass, including
+11 new independent-source RGB/refusal/recovery cases. An isolated float-first
+mutation gives 3 GREEN → 2 RGB RED +1 F32 control GREEN → 3 restored GREEN. Two trained
+Main base/zero requests produce PNGs identical to the original Invoke conversion
+on the same decoded tensors; float-first controls differ by at most one channel
+unit. No denoising/VAE algorithm or frozen input changes. The previous visual
+NOT_QUALIFIED result and public Anima/PP-001/005/007/008 boundaries stay unchanged.

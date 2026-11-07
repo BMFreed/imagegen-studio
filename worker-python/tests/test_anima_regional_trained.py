@@ -772,7 +772,7 @@ def _rgb(session: _Session, command: Any, done: dict[str, Any], observed: _Obser
     assert _file_sha(command.target_path) == command.target_sha256
     assert observed.decoded is not None
     decoded = observed.decoded
-    expected = (127.5 * (decoded[0, :, 0].float().clamp(-1, 1) + 1)).to(session.torch.uint8)
+    expected = (127.5 * (decoded[0, :, 0].clamp(-1, 1) + 1)).to(session.torch.uint8)
     expected_bytes = expected.permute(1, 2, 0).contiguous().numpy().tobytes()
     with Image.open(command.output_path) as image:
         image.load()

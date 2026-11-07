@@ -1932,3 +1932,13 @@ Frozen authored/compiled inputs remain exact; their contract does not pin a
 historical loader implementation or its numerical pixels. Public Anima regional
 jobs, spatial negatives/references, Smart regional and PP-001/005/007/008 remain
 unchanged.
+
+The [RGB conversion correction](../../../engineering/phase-4-anima-rgb-quantization-research.md)
+then removes the extra FP32 widening before native Anima output quantization.
+ROOT: 700 neighboring cases pass; two trained Main base/zero PNGs match original
+Invoke conversion on their exact decoded BF16 tensors byte-for-byte. A separate
+float-first intervention is detected without changing denoising, VAE computation,
+resources or masks. This is finite conversion parity, not whole-application or
+visual parity. Existing PNGs stay unchanged; regenerated old inputs may reflect
+current numerical fixes. Public Anima regional exclusion, spatial negatives/
+references, Smart regional, provenance exclusions and PP-001/005/007/008 persist.

@@ -630,8 +630,8 @@ def _published(
     assert call.command.target_path.read_bytes() == call.target_bytes
     assert len(observed.decoded) == 1
     raw = observed.decoded[0]
-    # Existing Anima quantizes by truncating uint8, unlike SDXL's PIL rounding.
-    expected = (127.5 * (raw[0, :, 0].float().clamp(-1, 1) + 1)).to(dtype=native.torch.uint8)
+    # Invoke quantizes in the decode dtype by truncating uint8, without widening.
+    expected = (127.5 * (raw[0, :, 0].clamp(-1, 1) + 1)).to(dtype=native.torch.uint8)
     expected_bytes = expected.permute(1, 2, 0).contiguous().numpy().tobytes()
     with Image.open(call.command.output_path) as image:
         image.load()

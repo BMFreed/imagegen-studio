@@ -456,7 +456,8 @@ def execute_captured_anima_plan(
                     raise DerivativeError(
                         "GENERATION_WORKER_FAILED", "Anima decoded shape differs."
                     )
-                pixels = (127.5 * (decoded[0, :, 0].float().clamp(-1, 1) + 1)).to(torch.uint8)
+                # Invoke quantizes in the native decode dtype, without widening.
+                pixels = (127.5 * (decoded[0, :, 0].clamp(-1, 1) + 1)).to(torch.uint8)
                 image = Image.frombytes(
                     "RGB",
                     (captured.width, captured.height),
