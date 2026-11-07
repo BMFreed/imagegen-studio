@@ -2153,3 +2153,27 @@ reader/dependency gates and exact scratch release, reclaiming 442,716,160 alloca
 bytes. Verified archive and existing reusable runtime remain protected.
 Trained Anima/visual usefulness, regional negatives/references, public activation
 and installed capacity remain open; PP-001/005/007/008 stay «Пока не обещать».
+
+## Trained original-Anima regional positive mechanics
+
+The [trained Anima checkpoint](./phase-4-regional-guidance-anima-trained-research.md)
+uses the existing exact three-file bundle, unchanged original loader and private
+Main-to-Euler/Wan/PNG owners. Main fixture mode now saves a real exact reference
+and resolves linked companions inside capture, preserving its default shape.
+No production Python or public Anima admission changes.
+
+ROOT171 Main and15 primary Python PASS cover six existing small native neighbors,
+six trained matrix cases and three trained failure/recovery cases. Actual512²/
+20-step CUDA BF16 requests preserve the existing mask ceiling, all28 cross sites,
+ordinary decoded-PT/RGB parity, repeat and state restoration. Six isolated trained
+mutation executions give5GREEN/1semanticRED,292,075 changed RGB channels,
+exact zero control and exact source/native/RGB restoration. Source R1 review is
+CLEAN; later typing-only corrections have semantic-AST proof and zero final
+strict diagnostics. Visual usefulness, public Anima/negatives/references, Smart,
+durable candidates and PP-001/005/007/008 remain «Пока не обещать».
+
+Independent pre-release source/document/retained audit is CLEAN for all2,562
+entries,21 Main sets and16 PNGs. ROOT separately rechecks16 unit exits,
+restoration/readers/dependencies and releases149,463,040 allocated bytes of own
+scratch. Verified compact archive, original weights and existing runtime remain;
+final release bookkeeping is ROOT self-verification, without another native run.

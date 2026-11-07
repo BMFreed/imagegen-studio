@@ -1866,3 +1866,25 @@ exit/restoration/reader/dependency gates precede release of 442,716,160 bytes of
 own scratch. Existing runtime, models and app data remain protected. Audits do
 not independently rerun native execution. PP-001/005/007/008 remain
 **«Пока не обещать»**.
+
+### Trained original-Anima private checkpoint
+
+The [trained continuation](../../../engineering/phase-4-regional-guidance-anima-trained-research.md)
+qualifies one exact Cyberfalafel original-Anima Base checkpoint and pinned
+Qwen/Wan companions through genuine saved/reopened Main resolution, the unchanged
+loader and existing private regional TXT/Euler/PNG path. CPU/CUDA small neighbors
+remain green; actual trained CUDA BF16512²/20 steps exercise all28 original
+cross consumers, independent masks, exact repeat and ordinary decoded-PT/RGB
+parity, controlled failure restoration and fresh recovery. A valid wrong-mask
+intervention gives native prediction and PNG RED with exact zero control and
+restoration. This establishes finite trained mechanics/influence. Visual subject
+placement, public Anima regional jobs, regional negatives/references, Smart and
+durable candidate publication remain separate. Regional state remains excluded
+from accepted provenance/Compare/result-derived presets. PP-001/005/007/008 stay
+**«Пока не обещать»**.
+
+The trained checkpoint's pre-release source/document/retained audit is CLEAN:
+2,562 entries,21 Main sets and16 independently decoded PNGs. ROOT's separate
+physical-exit/restoration/reader/dependency gates precede149,463,040 bytes of
+exact own-scratch release. Source/output archive and original weights/runtime
+remain protected; final release bookkeeping is ROOT self-verification.

@@ -5,7 +5,7 @@ import type {
 } from '../../shared/projects/prompt-embeddings.js'
 
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -412,6 +412,7 @@ for (const variant of ['base', 'swapped', 'zero', 'empty', 'inherited'] as const
       assert.equal(fixture.durablePreservation.historyAndSeedCursorUnchanged, true)
       assert.equal(fixture.durablePreservation.modelMetadataOnly, true)
       assert.equal(fixture.durablePreservation.captureCalls, 1)
+      assert.equal(Object.hasOwn(fixture, 'verifiedBundle'), false)
       assert.equal(Object.hasOwn(fixture.recipe, 'globalEmbeddings'), false)
       assert.equal(fixture.authoredDocument.generationDraft.loras.length, 0)
       assert.equal(fixture.authoredDocument.regionalGuidance!.length, 2)
@@ -438,3 +439,72 @@ for (const variant of ['base', 'swapped', 'zero', 'empty', 'inherited'] as const
     }
   })
 }
+
+test('genuine Anima fixture preserves explicit useful steps and CFG in saved Main authoring and plan', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-anima-regional-sampling-'))
+  try {
+    const fixture = await produceAnimaRegionalInputFixture(root, {
+      guidanceScale: 5,
+      steps: 20,
+    })
+    assert.equal(fixture.sampling.totalSteps, 20)
+    assert.equal(fixture.sampling.guidanceScale, 5)
+    assert.equal(fixture.authoredDocument.generationDraft.sampling.steps, 20)
+    assert.equal(fixture.authoredDocument.generationDraft.sampling.cfgScale, 5)
+    assert.equal(fixture.durablePreservation.modelMetadataOnly, true)
+    assert.equal(Object.hasOwn(fixture, 'verifiedBundle'), false)
+    assert.equal(fixture.durablePreservation.durableUnchanged, true)
+  } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+for (const options of [
+  { steps: 0 },
+  { steps: 201 },
+  { steps: 1.5 },
+  { guidanceScale: 0 },
+  { guidanceScale: 31 },
+  { guidanceScale: Number.NaN },
+]) {
+  test(`Anima fixture sampling rejects invalid ${JSON.stringify(options)} before creating durable state`, async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'igs-anima-regional-invalid-'))
+    try {
+      await assert.rejects(produceAnimaRegionalInputFixture(path.join(root, 'uncreated'), options))
+      assert.deepEqual(await readdir(root), [])
+    } finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+}
+
+test('trained Anima fixture rejects a nonqualified checkpoint descriptor before any file or SQL work', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-anima-regional-trained-invalid-'))
+  try {
+    await assert.rejects(
+      produceAnimaRegionalInputFixture(path.join(root, 'uncreated'), {
+        trainedBundle: {
+          checkpoint: {
+            byteSize: 4_182_275_752,
+            path: path.join(root, 'unread-checkpoint.safetensors'),
+            sha256: '0'.repeat(64),
+          },
+          qwen3Encoder: {
+            byteSize: 1_192_135_096,
+            path: path.join(root, 'unread-qwen.safetensors'),
+            sha256: 'cd2a512003e2f9f3cd3c32a9c3573f820bb28c940f73c57b1ddaa983d9223eba',
+          },
+          vae: {
+            byteSize: 253_806_246,
+            path: path.join(root, 'unread-vae.safetensors'),
+            sha256: 'a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f',
+          },
+        },
+      }),
+      /0fc7507b222e52ac8cc5e2826786bc4caed05223df32d17aeb05a76cb4de9941/u,
+    )
+    assert.deepEqual(await readdir(root), [])
+  } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})

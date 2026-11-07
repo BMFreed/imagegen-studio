@@ -1,11 +1,16 @@
 /**
  * Genuine private Main handoff for ROOT's original-Anima regional probes. Import runs nothing.
- * SQLite/coordinator/Save/reopen/capture/planner/coverage are real. Authored model metadata and
- * literal masks are setup, not installed-checkpoint or trained execution evidence. No worker is
+ * SQLite/coordinator/Save/reopen/capture/planner/coverage are real. Default authored model metadata
+ * and literal masks are setup. Optional trained mode registers three exact read-only files only in
+ * the fresh fixture DB and resolves the saved reference through real ModelService. No worker is
  * spawned and no public generation permission is granted. The caller owns the fresh root/cleanup.
  *
  * InvokeAI a61ac4fb: backend/anima/{regional_prompting,conditioning_data}.py and
  * app/invocations/anima/anima_denoise.py; the existing Studio compiler remains the sole parser.
+ * Trained registration/loading also consults current
+ * app/services/model_records/model_records_sql.py and
+ * backend/model_manager/load/model_loaders/anima.py: existing Studio owners retain SQL, exact
+ * reference resolution, native qualification and loading; this fixture adds no model owner.
  */
 import {
   type AnimaFlowSamplingPlan,
@@ -27,7 +32,13 @@ import { lstat, mkdir, readdir, readFile, realpath, writeFile } from 'node:fs/pr
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import type { CivitaiClient } from '../../models/civitai-client.js'
+import type { CivitaiTokenStore } from '../../models/civitai-token-store.js'
+
 import { openAppDatabase } from '../../db/database.js'
+import { ANIMA_QWEN3_0_6B_ENCODER, ANIMA_QWEN_IMAGE_VAE } from '../../models/anima-manifest.js'
+import { ModelRepository, type VerifiedModelArtifact } from '../../models/model-repository.js'
+import { ModelService, type VerifiedAnimaGenerationBundle } from '../../models/model-service.js'
 import { readIgsPackage } from '../igs-package.js'
 import { ProjectAutosaveLeaseRegistry } from '../project-autosave.js'
 import {
@@ -58,6 +69,22 @@ const REGIONAL_TEXTS = ['(red scarf)1.5, one white cat', '(blue scarf)0.75, one 
 const digest = (value: string | Uint8Array): string =>
   createHash('sha256').update(value).digest('hex')
 const prompt = (text: string): GenerationPrompt => ({ embeddingRefs: [], text })
+const TRAINED_CHECKPOINT = {
+  byteSize: 4_182_275_752,
+  sha256: '0fc7507b222e52ac8cc5e2826786bc4caed05223df32d17aeb05a76cb4de9941',
+} as const
+
+export interface AnimaRegionalTrainedFile {
+  byteSize: number
+  path: string
+  sha256: string
+}
+
+export interface AnimaRegionalTrainedBundle {
+  checkpoint: AnimaRegionalTrainedFile
+  qwen3Encoder: AnimaRegionalTrainedFile
+  vae: AnimaRegionalTrainedFile
+}
 
 export type SerializedAnimaRegionalRecipe = Omit<CurrentCanvasRegionalRecipe, 'regions'> & {
   regions: (Omit<Region, 'coverage'> & {
@@ -72,7 +99,7 @@ export interface AnimaRegionalInputFixture {
     documentSha256: string
     durableUnchanged: true
     historyAndSeedCursorUnchanged: true
-    modelMetadataOnly: true
+    modelMetadataOnly: boolean
     packageSha256: string
     savedAndReopened: true
     sqlSha256: string
@@ -88,6 +115,7 @@ export interface AnimaRegionalInputFixture {
   sampling: AnimaFlowSamplingPlan
   schema: 'main-anima-regional-positive-v1'
   variant: AnimaRegionalFixtureVariant
+  verifiedBundle?: VerifiedAnimaGenerationBundle
 }
 
 type Region = CurrentCanvasRegionalRecipe['regions'][number]
@@ -96,21 +124,33 @@ type Region = CurrentCanvasRegionalRecipe['regions'][number]
 export async function produceAnimaRegionalInputFixture(
   root: string,
   options: {
+    guidanceScale?: number
     height?: number
     seed?: number
+    steps?: number
+    trainedBundle?: AnimaRegionalTrainedBundle
     variant?: AnimaRegionalFixtureVariant
     width?: number
   } = {},
 ): Promise<AnimaRegionalInputFixture> {
-  const { height = 72, seed = 123, variant = 'base', width = 104 } = options
+  const {
+    guidanceScale = 4,
+    height = 72,
+    seed = 123,
+    steps = 2,
+    variant = 'base',
+    width = 104,
+  } = options
+  const trainedBundle =
+    options.trainedBundle === undefined ? undefined : captureTrainedBundle(options.trainedBundle)
   assert.ok(VARIANTS.includes(variant), 'The fixture variant must be explicitly supported')
   const sampling = compileAnimaFlowSamplingPlan({
-    guidanceScale: 4,
+    guidanceScale,
     height,
     mode: 'txt2img',
     scheduler: 'euler',
     seed,
-    steps: 2,
+    steps,
     strength: null,
     width,
   })
@@ -138,6 +178,9 @@ export async function produceAnimaRegionalInputFixture(
   })
   let result: AnimaRegionalInputFixture | undefined
   try {
+    const trained = trainedBundle
+      ? await registerTrainedBundle(new ModelRepository(database.db), trainedBundle)
+      : undefined
     const tab = await service.create({
       height,
       title: 'Private Anima positive regional input',
@@ -197,7 +240,7 @@ export async function produceAnimaRegionalInputFixture(
       generationDraft: {
         ...current.generationDraft,
         loras: [],
-        model: {
+        model: trained?.reference ?? {
           baseModelFamily: 'anima',
           civitaiFileId: null,
           civitaiModelId: null,
@@ -215,9 +258,9 @@ export async function produceAnimaRegionalInputFixture(
         sampling: {
           ...current.generationDraft.sampling,
           animaMethod: 'euler',
-          cfgScale: 4,
+          cfgScale: guidanceScale,
           denoisingStrength: null,
-          steps: 2,
+          steps,
         },
         seed: { policy: 'fixed', value: seed },
         vae: null,
@@ -258,6 +301,14 @@ export async function produceAnimaRegionalInputFixture(
       epoch: coordinator().documentEpoch,
     }
     const prepared = await service.withCapturedRegionalGuidanceInput(tab.id, async (capture) => {
+      let verifiedBundle: VerifiedAnimaGenerationBundle | undefined
+      if (trained) {
+        const saved = capture.snapshot.generationDraft.model
+        assert.ok(saved)
+        assert.deepEqual(saved, trained.reference)
+        verifiedBundle = await trained.models.resolveVerifiedGenerationAnimaBundleForPlan(saved)
+        assert.deepEqual(verifiedBundle.checkpoint.reference, saved)
+      }
       const items = planGenerationBatch({
         baseSeed: seed,
         iterations: 1,
@@ -279,7 +330,11 @@ export async function produceAnimaRegionalInputFixture(
         },
       })
       assert.equal(Object.hasOwn(recipe, 'globalEmbeddings'), false)
-      return { compiledPrompts: compileCurrentCanvasAnimaRegionalPrompts(recipe), recipe }
+      return {
+        compiledPrompts: compileCurrentCanvasAnimaRegionalPrompts(recipe),
+        recipe,
+        verifiedBundle,
+      }
     })
     assert.deepEqual(coordinator().document, documentBefore)
     assert.ok(
@@ -305,7 +360,7 @@ export async function produceAnimaRegionalInputFixture(
         documentSha256: digest(JSON.stringify(documentBefore)),
         durableUnchanged: true,
         historyAndSeedCursorUnchanged: true,
-        modelMetadataOnly: true,
+        modelMetadataOnly: trained === undefined,
         packageSha256: digest(packageBefore),
         savedAndReopened: true,
         sqlSha256: sqlBefore,
@@ -327,6 +382,9 @@ export async function produceAnimaRegionalInputFixture(
       sampling,
       schema: 'main-anima-regional-positive-v1',
       variant,
+      ...(prepared.verifiedBundle
+        ? { verifiedBundle: structuredClone(prepared.verifiedBundle) }
+        : {}),
     }
   } finally {
     try {
@@ -343,4 +401,143 @@ export async function produceAnimaRegionalInputFixture(
     mode: 0o600,
   })
   return result
+}
+
+/** Descriptor semantics are captured before mkdir/database/file collaborators can run. */
+function captureTrainedBundle(input: AnimaRegionalTrainedBundle): AnimaRegionalTrainedBundle {
+  assert.ok(input !== null && typeof input === 'object' && !Array.isArray(input))
+  assert.deepEqual(Object.keys(input).sort(), ['checkpoint', 'qwen3Encoder', 'vae'])
+  const expected = {
+    checkpoint: TRAINED_CHECKPOINT,
+    qwen3Encoder: {
+      byteSize: ANIMA_QWEN3_0_6B_ENCODER.sizeBytes,
+      sha256: ANIMA_QWEN3_0_6B_ENCODER.sha256,
+    },
+    vae: { byteSize: ANIMA_QWEN_IMAGE_VAE.sizeBytes, sha256: ANIMA_QWEN_IMAGE_VAE.sha256 },
+  }
+  const captured = structuredClone(input)
+  for (const role of ['checkpoint', 'qwen3Encoder', 'vae'] as const) {
+    const file = captured[role]
+    assert.ok(file !== null && typeof file === 'object' && !Array.isArray(file))
+    assert.deepEqual(Object.keys(file).sort(), ['byteSize', 'path', 'sha256'])
+    assert.equal(file.byteSize, expected[role].byteSize)
+    assert.equal(file.sha256, expected[role].sha256)
+    assert.ok(
+      typeof file.path === 'string' &&
+        path.isAbsolute(file.path) &&
+        path.resolve(file.path) === file.path &&
+        !file.path.includes('\0'),
+      'Trained qualification requires canonical absolute component paths',
+    )
+  }
+  assert.equal(new Set(Object.values(captured).map((file) => file.path)).size, 3)
+  return captured
+}
+
+/**
+ * Fixture setup, not an installation claim: callers already verified these exact file descriptors.
+ * The real resolver independently hashes all three files and qualifies the checkpoint after Save/
+ * reopen. Only this fixture's database receives registrations; source weight files are never copied
+ * or modified. Missing/changed bytes therefore fail the same existing ModelService owner.
+ */
+async function registerTrainedBundle(
+  repository: ModelRepository,
+  bundle: AnimaRegionalTrainedBundle,
+): Promise<{
+  models: ModelService
+  reference: NonNullable<IgsProjectDocumentV1['generationDraft']['model']>
+}> {
+  const verifiedAt = new Date().toISOString()
+  const local = (file: AnimaRegionalTrainedFile) => ({
+    managedPath: file.path,
+    originalFilename: path.basename(file.path),
+    sha256: file.sha256,
+    sizeBytes: file.byteSize,
+    verifiedAt,
+  })
+  const dependency = (
+    role: 'qwen3_encoder' | 'vae',
+    file: AnimaRegionalTrainedFile,
+    manifest: typeof ANIMA_QWEN3_0_6B_ENCODER,
+  ): VerifiedModelArtifact => ({
+    file: local(file),
+    resource: {
+      displayName: `Exact original Anima ${role}`,
+      source: { key: manifest.url, kind: 'supported_dependency' },
+      sourceMetadata: { fixtureLocalRegistration: true, origin: manifest },
+      type: role,
+    },
+    version: {
+      baseModelFamily: 'anima',
+      format: 'SafeTensor',
+      name: manifest.revision,
+      predictionType: null,
+      source: {
+        expectedSha256: manifest.sha256,
+        kind: 'supported_dependency',
+        revision: manifest.revision,
+      },
+      sourceMetadata: { fixtureLocalRegistration: true, origin: manifest },
+    },
+  })
+  const installed = await repository.publishVerifiedInstallation({
+    dependencies: [
+      {
+        artifact: dependency('qwen3_encoder', bundle.qwen3Encoder, ANIMA_QWEN3_0_6B_ENCODER),
+        role: 'qwen3_encoder',
+      },
+      { artifact: dependency('vae', bundle.vae, ANIMA_QWEN_IMAGE_VAE), role: 'vae' },
+    ],
+    primary: {
+      file: local(bundle.checkpoint),
+      resource: {
+        creator: 'Knightus_Ai',
+        displayName: 'Cyberfalafel Anima exact trained qualification',
+        source: { kind: 'civitai', modelId: 1_147_756 },
+        sourceMetadata: { fixtureLocalRegistration: true },
+        type: 'checkpoint',
+      },
+      version: {
+        baseModelFamily: 'anima',
+        format: 'SafeTensor',
+        name: 'Cyberfalafel Anima V1.0 exact historical file',
+        predictionType: null,
+        source: {
+          expectedSha256: bundle.checkpoint.sha256,
+          fileId: 3_000_817,
+          kind: 'civitai',
+          versionId: 3_120_487,
+        },
+        sourceMetadata: { fixtureLocalRegistration: true },
+      },
+    },
+  })
+  const unavailable = new Proxy(
+    {},
+    {
+      get() {
+        throw new Error('Offline trained fixture must not access CivitAI or credential storage')
+      },
+    },
+  )
+  return {
+    models: new ModelService(
+      repository,
+      unavailable as CivitaiClient,
+      unavailable as CivitaiTokenStore,
+    ),
+    reference: {
+      baseModelFamily: 'anima',
+      civitaiFileId: 3_000_817,
+      civitaiModelId: 1_147_756,
+      civitaiVersionId: 3_120_487,
+      displayName: 'Cyberfalafel Anima exact trained qualification',
+      fileSha256: bundle.checkpoint.sha256,
+      kind: 'checkpoint',
+      localModelId: installed.resourceId,
+      localVersionId: installed.versionId,
+      predictionType: null,
+      versionName: 'Cyberfalafel Anima V1.0 exact historical file',
+    },
+  }
 }
