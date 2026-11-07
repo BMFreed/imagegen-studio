@@ -1909,3 +1909,14 @@ original/anonymous PNGs, without rerunning native generation. ROOT separately
 checks exit/readers/dependencies and releases13,967,360 bytes of exact own scratch;
 compact images/inputs and verified archive remain. This bookkeeping does not
 change the NOT_QUALIFIED visual result or product readiness.
+
+The [direct Invoke native control](../../../engineering/phase-4-regional-guidance-anima-invoke-control-research.md)
+repeats four fixed cases with current Invoke's original Anima transformer,
+adapter, region and source-Euler owners, sharing prepared Qwen/Wan. The same
+qualitative seed124 subject-collapse and regional bench loss occur there;
+seed123 assigned still places two scarves correctly. This does not isolate the
+cause or establish whole-application parity. Current Invoke also parses spaces
+before commas differently and retains different adapter-buffer/RGB precision;
+those measured boundaries remain separate from visual usefulness. No production
+behavior/default changes follow. Visual NOT_QUALIFIED, public Anima exclusion,
+frozen-work independence and PP-001/005/007/008 remain unchanged.

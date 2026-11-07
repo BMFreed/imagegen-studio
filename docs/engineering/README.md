@@ -2203,3 +2203,22 @@ ROOT separately checks physical exit/readers/dependencies and releases13,967,360
 allocated bytes of own scratch. All six loose originals, whole inputs, frozen
 rubric/map and verified archive remain. Final release bookkeeping is ROOT
 self-verification; public/visual readiness is not promoted by the audit.
+
+## Direct Invoke Anima scarf control
+
+The [native Invoke comparison](./phase-4-regional-guidance-anima-invoke-control-research.md)
+uses current `a61ac4fb` original transformer/adapter/region/source-Euler owners,
+the same authored inputs and trained bundle, and shared prepared Qwen/Wan.
+Four successful512²/20-step controls reproduce the visual limitation: seed124
+ordinary has two cats on a bench, both regional variants have one red-scarfed
+kitten; seed123 assigned places two scarves correctly but omits the bench.
+Visual NOT_QUALIFIED remains; this is not an installed Invoke application test.
+
+The first concrete adaptation discrepancy is weighted-group/comma parsing:
+Invoke inserts a space before the comma and changes actual Qwen/T5 IDs. The
+initial equality refusal is retained; a pre-generation addendum compares each
+real interpretation without changing raw prompts. Common-context first-step
+predictions and separate native-BF16/common-FP32 RGB quantizers distinguish
+further numeric differences. No prompt, mask, seed, precision or default tuning
+is performed. Focused parser parity is the next owner; frozen-work semantics,
+public Anima admission and PP-001/005/007/008 remain unchanged.
