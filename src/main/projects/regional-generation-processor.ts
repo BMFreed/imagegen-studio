@@ -11,6 +11,7 @@ import {
   supportsInferenceRegionalImg2ImgCFGRescale,
   supportsInferenceRegionalImg2ImgDpmpp2m,
   supportsInferenceRegionalImg2ImgEulerAncestral,
+  supportsInferenceRegionalImg2ImgVae,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
   supportsInferenceRegionalProgress,
@@ -543,6 +544,16 @@ export class RegionalGenerationProcessor {
         throw new RegionalGenerationProcessorError(
           'INFERENCE_UNAVAILABLE',
           'The worker has not qualified CFG Rescale with opaque regional img2img.',
+        )
+      }
+      if (
+        input.request.type === 'generate-illustrious-img2img' &&
+        (input.request.job.vae != null || (input.request.job.vaePrecision ?? 'Auto') !== 'FP16') &&
+        !supportsInferenceRegionalImg2ImgVae(transport.ready)
+      ) {
+        throw new RegionalGenerationProcessorError(
+          'INFERENCE_UNAVAILABLE',
+          'The worker has not qualified selected VAE and precision with opaque regional img2img.',
         )
       }
       if (

@@ -411,8 +411,7 @@ function parseRegionalPayload(json: string, invoke: boolean): FrozenQueuedRegion
     !samplerMatchesInitialization ||
     ordinary.workerJob.sampling.noiseProfile === undefined ||
     (!invoke && (ordinary.workerJob.sampling.cfgRescale ?? 0) !== 0) ||
-    ((!invoke || image) &&
-      (ordinary.workerJob.vaePrecision !== 'FP16' || ordinary.workerJob.vae != null)) ||
+    (!invoke && (ordinary.workerJob.vaePrecision !== 'FP16' || ordinary.workerJob.vae != null)) ||
     (image &&
       (initializationProfile !== undefined ||
         !['dpmpp_2m', 'dpmpp_2m_k', 'euler', 'euler_a'].includes(

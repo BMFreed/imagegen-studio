@@ -42,6 +42,8 @@ export interface ProjectGenerationActionState {
   regionalImg2ImgEulerASupported?: boolean
   /** Separate opaque regional image support; absence keeps old workers unavailable. */
   regionalImg2ImgSupported?: boolean
+  /** Selected VAE/precision on opaque IMG requires a separate encoder/decode qualification. */
+  regionalImg2ImgVaeSupported?: boolean
   /** Separate opt-in initialization capability; absence never enables regional Euler a. */
   regionalInvokeInitializationSupported?: boolean
   /** Explicit public regional LoRA support; absence never enables an active global stack. */
@@ -136,6 +138,7 @@ export function isProjectGenerationActionState(
         'regionalCfgRescaleSupported',
         'regionalDpmSupported',
         'regionalImg2ImgSupported',
+        'regionalImg2ImgVaeSupported',
         'regionalImg2ImgCfgRescaleSupported',
         'regionalImg2ImgEulerASupported',
         'regionalImg2ImgDpmpp2mSupported',
@@ -161,6 +164,8 @@ export function isProjectGenerationActionState(
       typeof value['regionalImg2ImgEulerASupported'] !== 'boolean') ||
     (value['regionalImg2ImgSupported'] !== undefined &&
       typeof value['regionalImg2ImgSupported'] !== 'boolean') ||
+    (value['regionalImg2ImgVaeSupported'] !== undefined &&
+      typeof value['regionalImg2ImgVaeSupported'] !== 'boolean') ||
     (value['regionalVaeSupported'] !== undefined &&
       typeof value['regionalVaeSupported'] !== 'boolean') ||
     (value['regionalSupported'] !== undefined && typeof value['regionalSupported'] !== 'boolean') ||

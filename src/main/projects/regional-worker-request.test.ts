@@ -754,8 +754,8 @@ for (const fault of [
   'ancestral-txt-init',
   'dpm-txt-init',
   'rescale',
-  'auto',
-  'fp32',
+  'unknown-precision',
+  'invalid-vae',
   'missing-strength',
   'bool-strength',
   'overflow-strength',
@@ -771,11 +771,6 @@ for (const fault of [
           input.initializationProfile = 'invoke-cpu-f32-add-noise-v1'
           break
         }
-        case 'auto':
-        case 'fp32': {
-          input.request.job.vaePrecision = fault === 'auto' ? 'Auto' : 'FP32'
-          break
-        }
         case 'dpm-txt-init': {
           input.request.job.sampling.scheduler = 'dpmpp_2m'
           input.initializationProfile = 'invoke-cpu-f32-add-noise-v1'
@@ -783,6 +778,14 @@ for (const fault of [
         }
         case 'init': {
           input.initializationProfile = 'invoke-cpu-f32-add-noise-v1'
+          break
+        }
+        case 'invalid-vae': {
+          input.request.job.vae = {
+            byteSize: 1,
+            path: 'relative-vae.safetensors',
+            sha256: 'a'.repeat(64),
+          }
           break
         }
         case 'missing-strength': {
@@ -796,6 +799,10 @@ for (const fault of [
         case 'rescale': {
           // Public image .7 is admitted; keep this a numeric-range refusal.
           input.request.job.sampling.cfgRescale = 1
+          break
+        }
+        case 'unknown-precision': {
+          Object.assign(input.request.job, { vaePrecision: 'BF16' })
           break
         }
         default: {
@@ -852,4 +859,36 @@ for (const scheduler of ['dpmpp_2m', 'dpmpp_2m_k'] as const) {
       })
     })
   }
+}
+
+for (const vaePrecision of ['Auto', 'FP16', 'FP32'] as const) {
+  test(`public regional IMG wire preserves selected VAE and ${vaePrecision} without TXT initialization`, async () => {
+    await withFixture(async (fixture) => {
+      await useOpaqueImgFixture(fixture)
+      const vaePath = path.join(
+        path.dirname(fixture.input.request.job.checkpoint.path),
+        'exact-owned-vae.safetensors',
+      )
+      const vaeBytes = Buffer.from('Exact VAE wire fixture')
+      await writeFile(vaePath, vaeBytes, { flag: 'wx', mode: 0o600 })
+      fixture.input.request.job.vae = {
+        byteSize: vaeBytes.length,
+        path: vaePath,
+        sha256: sha(vaeBytes),
+      }
+      fixture.input.request.job.vaePrecision = vaePrecision
+      const source = structuredClone(fixture.input)
+      const lease = await prepareRegionalWorkerRequest(fixture.input, fixture.scratch)
+      try {
+        const bundle = await bundleOf(lease)
+        assert.deepEqual(bundle.request.job.vae, source.request.job.vae)
+        assert.equal(bundle.request.job.vaePrecision, vaePrecision)
+        assert.equal(bundle.initializationProfile, undefined)
+        assert.deepEqual(fixture.input, source)
+      } finally {
+        await lease.dispose()
+      }
+      assert.deepEqual(await readdir(fixture.scratch), [])
+    })
+  })
 }

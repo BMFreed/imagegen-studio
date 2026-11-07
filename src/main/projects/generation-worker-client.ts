@@ -32,6 +32,7 @@ import {
   supportsInferenceRegionalImg2ImgCFGRescale,
   supportsInferenceRegionalImg2ImgDpmpp2m,
   supportsInferenceRegionalImg2ImgEulerAncestral,
+  supportsInferenceRegionalImg2ImgVae,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
   supportsInferenceRegionalProgress,
@@ -497,6 +498,16 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
         throw new GenerationWorkerError(
           'WORKER_VERSION_MISMATCH',
           'The active worker has not qualified frozen Regional Guidance with DPM++ 2M.',
+        )
+      }
+      if (
+        input.request.type === 'generate-illustrious-img2img' &&
+        (input.request.job.vae != null || (input.request.job.vaePrecision ?? 'Auto') !== 'FP16') &&
+        !supportsInferenceRegionalImg2ImgVae(this.ready)
+      ) {
+        throw new GenerationWorkerError(
+          'WORKER_VERSION_MISMATCH',
+          'The worker has not qualified selected VAE and precision with opaque regional img2img.',
         )
       }
       if (

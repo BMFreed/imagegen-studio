@@ -1791,3 +1791,27 @@ Install/Repair remain separate. PP-001/005/007/008 stay **«Пока не обе
 ## Private prepared-VAE IMG prerequisite
 
 [Prepared image encoder](../../../engineering/phase-4-regional-guidance-img2img-vae-research.md) reuses Invoke dtype/scale ordering and the existing selected-VAE preparation/decode owners. This private CUDA consumption slice does not enable selected/FP32 VAE in public IMG or change defaults, persistence or readiness. ROOT551 PASS/619 warnings include45 new native cases and four trained output calls plus an aggregate. Original encoder inputs/scaling and decoder casts, PNG quantization, storage/RNG preservation and exact FP32 repeat pass; early-cast mutation is semantic RED with legacy control/restoration. This establishes private mechanics, not public selected/FP32 IMG or quality. PP-001/005/007/008 remain «Пока не обещать».
+
+
+## Public selected-VAE opaque IMG continuation
+
+[Public VAE/precision handoff](../../../engineering/phase-4-regional-guidance-public-img2img-vae-research.md)
+adds a separate IMG/VAE capability for selected VAE or Auto/FP32 and reuses the
+existing private prepared encoder/decode profiles. Embedded FP16 and TXT keep
+their existing independent routes. Frozen exact refs/path/size/SHA/precision
+survive current authoring and Default changes; old peers refuse before resource/
+transport/SQL work. ROOT582 Main/223 Python/196 browser PASS and19 installed
+checks cover real A/FP32 Generate/Cancel/frozen Retry after saved Embedded/FP16,
+then Results/Add/Undo/Redo/Save-reopen. Direct A replay matches all UI RGBA; a
+controlled B replacement changes785915 RGB channels without SQL admission.
+This establishes finite resource consumption, not visual quality, encoder-only
+causality, arbitrary capacity, release Install/Repair or Anima. Existing ordinary
+VAE provenance is retained; Regional Guidance remains excluded from provenance,
+Compare and result-derived presets. Defaults and PP-001/005/007/008 stay
+**«Пока не обещать»**.
+
+Independent source/helper and retained-byte reviews are CLEAN within their stated
+scope. ROOT confirms fresh release gates and disposes only idle own scratch,
+reclaiming51,605,504 allocated bytes; all1692 payload entries remain in the verified
+archive. Canonical model/VAE/runtime and durable input/project dependencies stay
+protected. Final bookkeeping review does not independently rerun native evidence.

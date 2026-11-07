@@ -12,6 +12,7 @@ type RetryState = Pick<
   | 'regionalImg2ImgDpmpp2mSupported'
   | 'regionalImg2ImgEulerASupported'
   | 'regionalImg2ImgSupported'
+  | 'regionalImg2ImgVaeSupported'
   | 'regionalInvokeInitializationSupported'
   | 'regionalLoraSupported'
   | 'regionalSupported'
@@ -70,6 +71,13 @@ export function generationQueueRetryReason(
     }
     if (requiresRegionalVae && state.regionalVaeSupported !== true) {
       return 'The current image engine does not support selected VAE and precision with Regional Guidance. Repair or update the runtime.'
+    }
+    if (
+      operation === 'illustrious-regional-img2img' &&
+      requiresRegionalVae &&
+      state.regionalImg2ImgVaeSupported !== true
+    ) {
+      return 'The current image engine does not support selected VAE and precision with opaque regional img2img. Repair or update the runtime.'
     }
     if (
       operation === 'illustrious-regional-txt2img' &&

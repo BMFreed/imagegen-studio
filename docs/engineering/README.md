@@ -2094,3 +2094,18 @@ and independently audited CLEAN within scope. ROOT's exit/restoration/readers/
 dependency gates precede disposal of five exact scratch paths, reclaiming53,858,304
 allocated bytes. Shared runtime/resources/companion and saved business data remain
 protected. No quality, visual, Anima, capacity or promise promotion.
+
+
+## Public selected-VAE opaque regional IMG
+
+[Public IMG/VAE continuation](./phase-4-regional-guidance-public-img2img-vae-research.md)
+connects the existing Invoke-based prepared encoder/decode owner to Generate and
+frozen Retry behind a separate combination capability. Embedded FP16 retains its
+old peer/route. ROOT582 Main/223 Python/196 browser PASS and19 installed checks
+preserve exact A/FP32 after saved Embedded/FP16 edits through Add/Undo/Redo/Save/
+reopen. Two read-only installed-client controls leave SQL unchanged: A matches
+all UI RGBA; B changes785915 RGB channels. Independent source reviews are CLEAN;
+retained-data audit is CLEAN. ROOT verifies exit/readers/source/incoming gates and
+releases only own scratch, reclaiming51,605,504 allocated bytes; all1692 entries
+remain in the verified archive and canonical dependencies stay protected. Defaults,
+regional provenance exclusions and PP-001/005/007/008 statuses remain unchanged.

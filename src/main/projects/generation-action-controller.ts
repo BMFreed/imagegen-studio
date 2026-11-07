@@ -38,6 +38,7 @@ import {
   supportsInferenceRegionalImg2ImgCFGRescale,
   supportsInferenceRegionalImg2ImgDpmpp2m,
   supportsInferenceRegionalImg2ImgEulerAncestral,
+  supportsInferenceRegionalImg2ImgVae,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
   supportsInferenceRegionalVae,
@@ -454,6 +455,11 @@ export class ProjectGenerationActionController {
         !this.closed &&
         !!this.options.regional &&
         supportsInferenceRegionalImg2Img(ready),
+      regionalImg2ImgVaeSupported:
+        !this.blocked &&
+        !this.closed &&
+        !!this.options.regional &&
+        supportsInferenceRegionalImg2ImgVae(ready),
       regionalInvokeInitializationSupported:
         !this.blocked &&
         !this.closed &&
@@ -1438,6 +1444,10 @@ export class ProjectGenerationActionController {
                   (frozen.payload.workerJob.sampling.scheduler === 'dpmpp_2m' ||
                     frozen.payload.workerJob.sampling.scheduler === 'dpmpp_2m_k') &&
                   !supportsInferenceRegionalDpm(ready)) ||
+                (source.operation === 'illustrious-regional-img2img' &&
+                  (frozen.payload.workerJob.vae != null ||
+                    (frozen.payload.workerJob.vaePrecision ?? 'Auto') !== 'FP16') &&
+                  !supportsInferenceRegionalImg2ImgVae(ready)) ||
                 ((frozen.payload.workerJob.loras?.length ?? 0) > 0 &&
                   !supportsInferenceRegionalLoras(ready)) ||
                 ((frozen.payload.workerJob.vae != null ||

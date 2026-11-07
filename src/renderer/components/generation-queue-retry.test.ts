@@ -182,3 +182,43 @@ test('regional VAE Retry advisory follows frozen selection and precision indepen
     )
   }
 })
+
+test('regional IMG VAE Retry requires the frozen selection combination while legacy and TXT remain independent', () => {
+  for (const regionalImg2ImgVaeSupported of [undefined, false, true]) {
+    const state = {
+      regionalImg2ImgSupported: true,
+      regionalImg2ImgVaeSupported,
+      regionalSupported: true,
+      regionalVaeSupported: true,
+    }
+    const reason = generationQueueRetryReason(
+      'illustrious-regional-img2img',
+      state,
+      'Euler',
+      false,
+      true,
+    )
+    assert.equal(reason === null, regionalImg2ImgVaeSupported === true)
+    if (reason) {
+      assert.match(reason, /selected VAE and precision with opaque regional img2img/)
+    }
+    assert.equal(
+      generationQueueRetryReason('illustrious-regional-img2img', state, 'Euler', false, false),
+      null,
+    )
+    assert.equal(
+      generationQueueRetryReason('illustrious-regional-txt2img', state, 'Euler', false, true),
+      null,
+    )
+    assert.match(
+      generationQueueRetryReason(
+        'illustrious-regional-img2img',
+        { ...state, regionalVaeSupported: false },
+        'Euler',
+        false,
+        true,
+      )!,
+      /with Regional Guidance/,
+    )
+  }
+})

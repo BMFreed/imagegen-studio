@@ -419,7 +419,7 @@ test('opaque regional img2img requires explicit finite strength including admitt
   }
 })
 
-test('opaque regional img2img refuses TXT-only sampling and VAE choices without rewriting them', () => {
+test('opaque regional img2img refuses unqualified sampling choices without rewriting them', () => {
   const cases: [string, (value: IgsProjectDocumentV1) => void][] = [
     [
       'Euler a with Karras',
@@ -430,10 +430,6 @@ test('opaque regional img2img refuses TXT-only sampling and VAE choices without 
     ],
     ['DPM++ SDE', (v) => (v.generationDraft.sampling.sampler = 'DPM++ SDE')],
     ['Karras', (v) => (v.generationDraft.sampling.scheduler = 'Karras')],
-    ['Auto', (v) => (v.generationDraft.vaePrecision = 'Auto')],
-    ['FP32', (v) => (v.generationDraft.vaePrecision = 'FP32')],
-    ['unset precision', (v) => delete v.generationDraft.vaePrecision],
-    ['selected VAE', (v) => (v.generationDraft.vae = { ...v.generationDraft.model!, kind: 'vae' })],
   ]
   for (const [name, change] of cases) {
     const value = document()
@@ -447,7 +443,7 @@ test('opaque regional img2img refuses TXT-only sampling and VAE choices without 
         initializationSupported: true,
         vaeSupported: true,
       })!,
-      /Regional img2img requires Euler or Euler a with Normal, or DPM\+\+ 2M with Normal or Karras, and Embedded FP16 VAE/,
+      /Regional img2img requires Euler or Euler a with Normal, or DPM\+\+ 2M with Normal or Karras/,
       name,
     )
     assert.deepEqual(value, before)
@@ -661,5 +657,71 @@ test('opaque DPM Normal and Karras require the separate IMG capability without T
     )
     assert.match(imageReason(value, { ...flags, targetMode: 'outpaint' })!, /partially transparent/)
     assert.deepEqual(value, before)
+  }
+})
+
+test('opaque selected VAE or effective non-FP16 precision requires its own combination and preserves TXT admission', () => {
+  for (const selected of [false, true]) {
+    for (const precision of [undefined, 'Auto', 'FP16', 'FP32'] as const) {
+      const value = document()
+      value.generationDraft.sampling.denoisingStrength = 0.5
+      value.generationDraft.vae = selected ? { ...value.generationDraft.model!, kind: 'vae' } : null
+      if (precision === undefined) {
+        delete value.generationDraft.vaePrecision
+      } else {
+        value.generationDraft.vaePrecision = precision
+      }
+      const before = structuredClone(value)
+      for (const img2imgVaeSupported of [undefined, null, false, true]) {
+        const flags = { img2imgVaeSupported, vaeSupported: true }
+        const result = imageReason(value, flags)
+        const requires = selected || precision !== 'FP16'
+        assert.equal(result === null, !requires || img2imgVaeSupported === true)
+        if (result) {
+          assert.match(result, /selected VAE and precision with opaque regional img2img/)
+        }
+        assert.equal(imageReason(value, { ...flags, targetMode: 'txt2img' }), null)
+        assert.equal(imageReason(value, { ...flags, targetMode: undefined }), null)
+      }
+      if (selected || precision !== 'FP16') {
+        assert.match(
+          imageReason(value, { img2imgVaeSupported: true, vaeSupported: false })!,
+          /selected VAE and precision with Regional Guidance/,
+        )
+        assert.match(
+          imageReason(value, {
+            img2imgSupported: false,
+            img2imgVaeSupported: true,
+            vaeSupported: true,
+          })!,
+          /opaque img2img with Regional Guidance/,
+        )
+      }
+      assert.deepEqual(value, before)
+    }
+  }
+})
+
+test('regional image VAE support state accepts only optional Boolean values', () => {
+  // Reuse the established typed state fixture already verified by the neighboring state tests.
+  const state = {
+    animaOutpaintSupported: false,
+    animaSupported: false,
+    cfgRescaleSupported: true,
+    documentId: randomUUID(),
+    embeddingsSupported: true,
+    error: null,
+    externalVaeSupported: true,
+    img2imgSupported: true,
+    jobs: [],
+    phase: 'idle',
+    runningJobId: null,
+    vaePrecisionSupported: true,
+  }
+  for (const regionalImg2ImgVaeSupported of [undefined, false, true]) {
+    assert.equal(isProjectGenerationActionState({ ...state, regionalImg2ImgVaeSupported }), true)
+  }
+  for (const regionalImg2ImgVaeSupported of [null, 1, 'true']) {
+    assert.equal(isProjectGenerationActionState({ ...state, regionalImg2ImgVaeSupported }), false)
   }
 })

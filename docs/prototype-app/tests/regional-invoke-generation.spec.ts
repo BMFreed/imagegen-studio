@@ -9,6 +9,7 @@ import { expect, type Page, test } from '@playwright/test'
 import path from 'node:path'
 
 interface WiringFixture {
+  catalog: ModelCatalogItem[]
   epoch: number
   generateCalls: number[]
   holdTarget: boolean
@@ -329,6 +330,7 @@ async function mountWiring(page: Page, kind: 'project' | 'queue') {
         },
       ]
       const state: WiringFixture = reactive({
+        catalog: modelCatalog,
         epoch: 0,
         generateCalls: [],
         holdTarget: false,
@@ -475,7 +477,7 @@ async function mountWiring(page: Page, kind: 'project' | 'queue') {
                 generationStateLoading: false,
                 generationSubmitting: false,
                 imagesPerClick: 1,
-                modelCatalog,
+                modelCatalog: state.catalog,
                 modelCatalogError: null,
                 modelCatalogLoaded: true,
                 modelCatalogLoading: false,
@@ -794,7 +796,9 @@ test('renderer opaque regional img2img uses actual target and explicit strength'
   })
   await expect(generate).toBeDisabled()
   await expect(
-    page.getByText(/Regional img2img requires Euler or Euler a with Normal/),
+    page.getByText(
+      /Checking image engine support for selected VAE and precision with opaque regional img2img/,
+    ),
   ).toBeVisible()
   await page.evaluate(() => {
     const fixture = globalThis.window.regionalWiringFixture
@@ -1025,6 +1029,142 @@ test('renderer frozen IMG DPM++ 2M Retry follows frozen sampler rather than save
     fixture.queueItem.details!.sampling.sampler = 'DPM++ 2M'
     fixture.state.regionalDpmSupported = true
     fixture.state.regionalInvokeInitializationSupported = true
+    fixture.epoch += 1
+  })
+  await expect(retry).toBeEnabled()
+  expect(errors).toEqual([])
+})
+
+test('renderer opaque IMG selected VAE and FP32 require the separate encoder/decode capability', async ({
+  page,
+}) => {
+  const errors: string[] = []
+  page.on('pageerror', (cause) => errors.push(cause.message))
+  await mountWiring(page, 'project')
+  const generate = page.getByRole('button', { exact: true, name: 'Generate' })
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.targetMode = 'img2img'
+    fixture.tab.primaryBbox.x += 8
+    fixture.tab.generationDraft.sampling.denoisingStrength = 0.5
+    const model = fixture.tab.generationDraft.model!
+    const localModelId = crypto.randomUUID()
+    const localVersionId = crypto.randomUUID()
+    const catalogModel = fixture.catalog[0]!
+    const catalogVersion = catalogModel.versions[0]!
+    fixture.catalog.push({
+      ...catalogModel,
+      defaultVersionId: localVersionId,
+      id: localModelId,
+      modelId: 77,
+      name: 'Fixture VAE',
+      resourceType: 'vae',
+      versions: [
+        {
+          ...catalogVersion,
+          civitaiFileId: 79,
+          civitaiVersionId: 78,
+          fileName: 'fixture-vae.safetensors',
+          id: localVersionId,
+          name: 'Fixture VAE version',
+          predictionType: null,
+          sha256: 'c'.repeat(64),
+        },
+      ],
+    })
+    fixture.tab.generationDraft.vae = {
+      ...model,
+      civitaiFileId: 79,
+      civitaiModelId: 77,
+      civitaiVersionId: 78,
+      displayName: 'Fixture VAE',
+      fileSha256: 'c'.repeat(64),
+      kind: 'vae',
+      localModelId,
+      localVersionId,
+      predictionType: null,
+      versionName: 'Fixture VAE version',
+    }
+    fixture.tab.generationDraft.vaePrecision = 'FP32'
+    fixture.state.regionalImg2ImgSupported = true
+    fixture.state.regionalVaeSupported = true
+  })
+  await expect(generate).toBeDisabled()
+  await expect(
+    page.getByText(
+      /Checking image engine support for selected VAE and precision with opaque regional img2img/,
+    ),
+  ).toBeVisible()
+  await page.evaluate(() => {
+    globalThis.window.regionalWiringFixture.state.regionalImg2ImgVaeSupported = false
+  })
+  await expect(generate).toBeDisabled()
+  await expect(
+    page.getByText(
+      'The current image engine does not support selected VAE and precision with opaque regional img2img. Repair or update the runtime.',
+    ),
+  ).toBeVisible()
+  await page.evaluate(() => {
+    globalThis.window.regionalWiringFixture.state.regionalImg2ImgVaeSupported = true
+  })
+  await expect(generate).toBeEnabled()
+  await generate.click()
+  expect(await page.evaluate(() => globalThis.window.regionalWiringFixture.generateCalls)).toEqual([
+    1,
+  ])
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.tab.generationDraft.vae = null
+    fixture.tab.generationDraft.vaePrecision = 'FP16'
+    fixture.state.regionalImg2ImgVaeSupported = false
+    fixture.state.regionalVaeSupported = false
+  })
+  await expect(generate).toBeEnabled()
+  expect(errors).toEqual([])
+})
+
+test('renderer frozen selected IMG VAE Retry ignores the saved Embedded FP16 TXT draft', async ({
+  page,
+}) => {
+  const errors: string[] = []
+  page.on('pageerror', (cause) => errors.push(cause.message))
+  await mountWiring(page, 'queue')
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.queueItem.operation = 'illustrious-regional-img2img'
+    fixture.queueItem.details!.sampling.denoisingStrength = 0.5
+    fixture.queueItem.details!.requiresRegionalVae = true
+    fixture.state.regionalImg2ImgSupported = true
+    fixture.state.regionalVaeSupported = true
+    fixture.state.regionalImg2ImgVaeSupported = false
+    fixture.tab.regionalGuidance = []
+    fixture.tab.generationDraft.vae = null
+    fixture.tab.generationDraft.vaePrecision = 'FP16'
+    fixture.tab.generationDraft.sampling.denoisingStrength = null
+    fixture.epoch += 1
+  })
+  const retry = page.getByRole('button', { exact: true, name: 'Retry job' })
+  await expect(retry).toBeDisabled()
+  await expect(
+    page
+      .getByTestId('queue-job-row')
+      .getByText(/selected VAE and precision with opaque regional img2img/),
+  ).toBeVisible()
+  await page.evaluate(() => {
+    globalThis.window.regionalWiringFixture.state.regionalImg2ImgVaeSupported = true
+  })
+  await expect(retry).toBeEnabled()
+  await retry.click()
+  expect(await page.evaluate(() => globalThis.window.regionalWiringFixture.retryCalls)).toEqual([
+    await page.evaluate(() => ({
+      id: globalThis.window.regionalWiringFixture.queueItem.id,
+      statusSequence: 3,
+    })),
+  ])
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.queueItem.operation = 'illustrious-regional-txt2img'
+    fixture.state.regionalImg2ImgVaeSupported = false
     fixture.epoch += 1
   })
   await expect(retry).toBeEnabled()

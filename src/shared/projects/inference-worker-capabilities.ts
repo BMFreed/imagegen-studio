@@ -155,6 +155,16 @@ export function supportsInferenceRegionalImg2ImgCFGRescale(value: unknown): bool
   )
 }
 
+/** Selected VAE/precision on IMG requires its own encoder/decode combination qualification. */
+export function supportsInferenceRegionalImg2ImgVae(value: unknown): boolean {
+  return (
+    isQualifiedInferenceWorkerReady(value) &&
+    supportsInferenceRegionalImg2Img(value) &&
+    supportsInferenceRegionalVae(value) &&
+    value.capabilities.includes('illustrious-regional-img2img-vae-v1')
+  )
+}
+
 /** Opaque IMG plus TXT Euler a alone does not qualify their separate native combination. */
 export function supportsInferenceRegionalImg2ImgEulerAncestral(value: unknown): boolean {
   return (

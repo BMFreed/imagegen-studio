@@ -108,6 +108,7 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   img2imgDpmpp2mSupported?: boolean | null
   img2imgEulerASupported?: boolean | null
   img2imgSupported?: boolean | null
+  img2imgVaeSupported?: boolean | null
   initializationSupported?: boolean | null
   iterations: number
   loraSupported?: boolean | null
@@ -133,16 +134,14 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   const img2img = input.targetMode === 'img2img'
   if (
     img2img &&
-    (!(
+    !(
       ((draft.sampling.sampler === 'Euler' || draft.sampling.sampler === 'Euler a') &&
         draft.sampling.scheduler === 'Normal') ||
       (draft.sampling.sampler === 'DPM++ 2M' &&
         (draft.sampling.scheduler === 'Normal' || draft.sampling.scheduler === 'Karras'))
-    ) ||
-      draft.vae !== null ||
-      draft.vaePrecision !== 'FP16')
+    )
   ) {
-    return 'Regional img2img requires Euler or Euler a with Normal, or DPM++ 2M with Normal or Karras, and Embedded FP16 VAE.'
+    return 'Regional img2img requires Euler or Euler a with Normal, or DPM++ 2M with Normal or Karras.'
   }
   if (!(
     ((draft.sampling.sampler === 'Euler' || draft.sampling.sampler === 'Euler a') &&
@@ -277,6 +276,14 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
     }
     if (input.vaeSupported !== true) {
       return 'The current image engine does not support selected VAE and precision with Regional Guidance. Repair or update the runtime.'
+    }
+  }
+  if (img2img && (draft.vae !== null || (draft.vaePrecision ?? 'Auto') !== 'FP16')) {
+    if (input.img2imgVaeSupported === undefined || input.img2imgVaeSupported === null) {
+      return 'Checking image engine support for selected VAE and precision with opaque regional img2img. Repair or update the runtime if support remains unavailable.'
+    }
+    if (input.img2imgVaeSupported !== true) {
+      return 'The current image engine does not support selected VAE and precision with opaque regional img2img. Repair or update the runtime.'
     }
   }
   if (draft.loras.some((lora) => lora.enabled)) {

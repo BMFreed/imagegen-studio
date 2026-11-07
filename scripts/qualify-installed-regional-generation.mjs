@@ -22,7 +22,9 @@
  * addRegionalGuidance, sd/denoise_latents.py::init_scheduler and saved-root Queue Retry. It reuses
  * the existing imported-Raster, numeric progress and explicit Add/Save owners. The separate opaque
  * IMG CFG Rescale profile selects 0.7 through Advanced Options, then saves 0.2 after Cancel; both
- * image encoding and the rescale extension retain their existing native owners.
+ * image encoding and the rescale extension retain their existing native owners. The separate IMG
+ * VAE profile reuses the exact selected-VAE/precision controls and Invoke's image_to_latents.py
+ * encode/scale ordering through the existing prepared regional VAE owner.
  */
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
@@ -125,16 +127,20 @@ assert.ok(
     'installed-regional-invoke-img2img-cfg-rescale-v1',
     'installed-regional-invoke-img2img-euler-a-v1',
     'installed-regional-invoke-img2img-dpmpp-2m-v1',
+    'installed-regional-invoke-img2img-vae-v1',
   ].includes(fixture.profile),
 )
 const imgEulerAProfile = fixture.profile === 'installed-regional-invoke-img2img-euler-a-v1'
 const imgDpmProfile = fixture.profile === 'installed-regional-invoke-img2img-dpmpp-2m-v1'
+const imgVaeProfile = fixture.profile === 'installed-regional-invoke-img2img-vae-v1'
 const imgSamplerProfile = imgEulerAProfile || imgDpmProfile
 const imgSamplerCapability = imgDpmProfile
   ? 'illustrious-regional-img2img-dpmpp-2m-v1'
   : 'illustrious-regional-img2img-euler-a-v1'
 const imgCfgRescaleProfile =
-  imgSamplerProfile || fixture.profile === 'installed-regional-invoke-img2img-cfg-rescale-v1'
+  imgSamplerProfile ||
+  imgVaeProfile ||
+  fixture.profile === 'installed-regional-invoke-img2img-cfg-rescale-v1'
 const img2imgProfile =
   imgCfgRescaleProfile || fixture.profile === 'installed-regional-invoke-img2img-v1'
 const mainDeathProfile = fixture.profile === 'installed-regional-invoke-main-death-v1'
@@ -147,6 +153,7 @@ const dynamicPositiveProfile =
   dpmpp2mProfile || fixture.profile === 'installed-regional-invoke-dynamic-positive-v1'
 const globalVaeProfile =
   dynamicPositiveProfile || fixture.profile === 'installed-regional-invoke-vae-v1'
+const vaeSelectionProfile = globalVaeProfile || imgVaeProfile
 const globalLoraProfile =
   globalVaeProfile || fixture.profile === 'installed-regional-invoke-global-loras-v1'
 const globalTiProfile =
@@ -428,7 +435,7 @@ if (globalLoraProfile)
     'worker-python/src/imagegen_worker/illustrious_regional_lora.py',
     'worker-python/src/imagegen_worker/illustrious_regional_worker.py',
   )
-if (globalVaeProfile)
+if (vaeSelectionProfile)
   sourceFiles.push(
     'src/main/models/illustrious-vae-qualification.ts',
     'src/main/projects/illustrious-generation-vae.ts',
@@ -438,6 +445,12 @@ if (globalVaeProfile)
     'src/renderer/components/vae-precision-control.ts',
     'worker-python/src/imagegen_worker/inference_external_vae.py',
     'worker-python/src/imagegen_worker/inference_vae.py',
+  )
+if (imgVaeProfile)
+  sourceFiles.push(
+    'worker-python/src/imagegen_worker/illustrious_regional_vae.py',
+    'worker-python/src/imagegen_worker/illustrious_regional_denoising.py',
+    'worker-python/src/imagegen_worker/illustrious_regional_worker.py',
   )
 if (dynamicPositiveProfile)
   sourceFiles.push(
@@ -501,8 +514,10 @@ async function verifyProvision() {
   if (globalTiProfile) assert.ok(provision.ready.capabilities.includes('illustrious-embeddings'))
   if (globalLoraProfile)
     assert.ok(provision.ready.capabilities.includes('illustrious-regional-lora-v1'))
-  if (globalVaeProfile)
+  if (vaeSelectionProfile)
     assert.ok(provision.ready.capabilities.includes('illustrious-regional-vae-v1'))
+  if (imgVaeProfile)
+    assert.ok(provision.ready.capabilities.includes('illustrious-regional-img2img-vae-v1'))
   if (dpmpp2mProfile)
     assert.ok(provision.ready.capabilities.includes('illustrious-regional-dpmpp-2m-v1'))
   if (cfgRescaleProfile)
@@ -618,7 +633,10 @@ async function verifyProvision() {
             'invokeai/frontend/webv2/src/features/generation/core/canvas/compileCanvasGraph.ts',
           ]
         : []),
-      ...(globalVaeProfile ? ['invokeai/app/invocations/vae/latents_to_image.py'] : []),
+      ...(vaeSelectionProfile ? ['invokeai/app/invocations/vae/latents_to_image.py'] : []),
+      ...(imgVaeProfile
+        ? ['invokeai/app/invocations/model.py', 'invokeai/app/invocations/vae/image_to_latents.py']
+        : []),
       ...(dynamicPositiveProfile
         ? ['invokeai/frontend/webv2/src/workbench/invocationSubmit.ts']
         : []),
@@ -943,6 +961,24 @@ async function captureImagePreservation() {
   if (imgSamplerProfile) {
     report.boundary.calls += ` The Sampler UI explicitly changes Euler to ${generationSampler}/${generationScheduleLabel} for both requests. After Cancel, saved current authoring returns to ${imgDpmProfile ? 'Euler with cleared scheduler' : 'Euler/Normal'}; frozen Retry and accepted ordinary IMG provenance retain the selected pair.`
     report.boundary.exclusions += ` This profile additionally qualifies only ${generationSampler}/${generationScheduleLabel} for opaque IMG; other sampling/VAE lanes remain excluded.`
+  }
+  if (imgVaeProfile) {
+    report.boundary.preconditions +=
+      ' Reuse the two existing immutable complete native VAE files without copying, extraction or download: trained extracted A and artificial decoder-bias control B. Synthetic catalog IDs declare applicability; Default B never replaces saved exact A.'
+    report.boundary.calls +=
+      ' Actual VAE picker and precision controls reset/reselect exact A and select Auto then FP32 for both the independent healthy IMG control and original Generate. After observed Cancel, saved current authoring resets to Embedded/FP16 with the existing source/text/strength/rescale edits. All three original IMG wires and accepted ordinary IMG provenance retain A/FP32.'
+    report.boundary.exclusions =
+      ' No visual-quality PASS, generic SDXL, Anima, broader IMG samplers/VAE/precision/partial-alpha, Install/Repair or capacity claim. This profile qualifies only the exact selected A/FP32 with Euler/Normal and CFG Rescale0.7; no installed VAE pixel-causality, full loader-key census or precision-quality claim. Existing prepared source/scale/decode owners remain authoritative.'
+    report.boundary.retention +=
+      ' Both original VAE files, their historical source dependencies and exact catalog entries remain protected beyond this RUN for frozen Retry; preserve descriptors, stat/hash pins and accepted A/FP32 provenance.'
+    report.boundary.vae = {
+      original: 'A/FP32',
+      edited: 'Embedded/FP16',
+      default: 'B',
+      newCapability: 'illustrious-regional-img2img-vae-v1',
+      preparedVaeOwnerReused: true,
+      numericalCausalityClaimed: false,
+    }
   }
   check('Existing mixed-operation terminal SQL/package/candidate/input pool pinned without reset')
 }
@@ -1894,11 +1930,11 @@ async function prepareGlobalLoraCatalog(repository) {
 }
 
 function selectedVaeReference() {
-  assert.ok(globalVaeProfile && globalVae)
+  assert.ok(vaeSelectionProfile && globalVae)
   return structuredClone(globalVae.A.reference)
 }
 function selectedVaeWire() {
-  assert.ok(globalVaeProfile && globalVae)
+  assert.ok(vaeSelectionProfile && globalVae)
   return {
     byteSize: globalVae.A.byteSize,
     path: globalVae.A.managedPath,
@@ -1906,7 +1942,7 @@ function selectedVaeWire() {
   }
 }
 async function verifyGlobalVaeFiles() {
-  assert.ok(globalVaeProfile && globalVae)
+  assert.ok(vaeSelectionProfile && globalVae)
   for (const resource of Object.values(globalVae)) {
     assert.deepEqual(statIdentity(await regular(resource.managedPath)), resource.stat)
     assert.equal((await regular(resource.managedPath)).size, resource.byteSize)
@@ -2142,7 +2178,7 @@ async function prepareCatalogAndProjects() {
   database = openAppDatabase(appDataRoot, path.resolve('src/main/db/migrations'))
   if (globalTiProfile) await prepareGlobalEmbeddingCatalog(new ModelRepository(database.db))
   if (globalLoraProfile) await prepareGlobalLoraCatalog(new ModelRepository(database.db))
-  if (globalVaeProfile) await prepareGlobalVaeCatalog(new ModelRepository(database.db))
+  if (vaeSelectionProfile) await prepareGlobalVaeCatalog(new ModelRepository(database.db))
   if (img2imgProfile) await captureImagePreservation()
   else if (progressProfile) await captureProgressPreservation()
   if (recoveryProfile) {
@@ -2345,8 +2381,8 @@ async function prepareCatalogAndProjects() {
       dynamicPrompt: { maxPrompts: 1, seedBehavior: 'per-iteration' },
       seed: { policy: 'fixed', value: 123 },
       loras: globalLoraProfile ? configuredGlobalLoraStack() : [],
-      vae: globalVaeProfile ? selectedVaeReference() : null,
-      vaePrecision: globalVaeProfile ? 'FP32' : 'FP16',
+      vae: vaeSelectionProfile ? selectedVaeReference() : null,
+      vaePrecision: vaeSelectionProfile ? 'FP32' : 'FP16',
       cfgRescale: 0,
       sampling: {
         cfgScale: 5,
@@ -3096,7 +3132,7 @@ async function installObservers() {
       progress: progressProfile,
       workerFault: workerFaultProfile,
       loras: globalLoraProfile,
-      vae: globalVaeProfile,
+      vae: vaeSelectionProfile,
       dynamicPositive: dynamicPositiveProfile,
       img2img: img2imgProfile,
       scratch: path.join(appDataRoot, 'scratch'),
@@ -3939,7 +3975,7 @@ function assertFrozen(frozen, project, expectedSeed = 123) {
   }
   assert.equal(frozen.workerJob.sampling.scheduler, generationScheduler)
   assert.deepEqual(frozen.workerJob.sampling.noiseProfile, policy)
-  if (globalVaeProfile) {
+  if (vaeSelectionProfile) {
     assert.deepEqual(frozen.context.vae, {
       byteSize: globalVae.A.byteSize,
       managedPath: globalVae.A.managedPath,
@@ -4041,7 +4077,7 @@ async function captureFrozen(row, project, expectedSeed = 123) {
     await verifyGlobalEmbeddingFiles()
   }
   if (globalLoraProfile) await verifyGlobalLoraFiles()
-  if (globalVaeProfile) await verifyGlobalVaeFiles()
+  if (vaeSelectionProfile) await verifyGlobalVaeFiles()
   return {
     row,
     frozen,
@@ -4130,6 +4166,29 @@ async function prepareImageProject(project) {
       .poll(async () => (await current(project)).generationDraft.sampling.scheduler)
       .toBe(generationScheduleLabel)
   }
+  if (imgVaeProfile) {
+    const initial = await current(project)
+    assert.deepEqual(initial.generationDraft.vae, selectedVaeReference())
+    assert.equal(initial.generationDraft.vaePrecision, 'FP32')
+    // Select the saved exact version through the actual picker; Default remains B.
+    await setSelectedVaeUi(project, null)
+    await setSelectedVaeUi(project, 'A')
+    await setVaePrecisionUi(project, 'Auto')
+    await setVaePrecisionUi(project, 'FP32')
+    report.imgVaeAuthoringBeforeGenerate ??= []
+    report.imgVaeAuthoringBeforeGenerate.push({
+      projectKey: project.id,
+      initial: {
+        vae: initial.generationDraft.vae,
+        precision: initial.generationDraft.vaePrecision,
+      },
+      selected: selectedVaeReference(),
+      precision: 'FP32',
+      defaultVersionId: globalVae.B.reference.localVersionId,
+      realPickerResetAndExactReselection: true,
+      realPrecisionAutoThenFp32: true,
+    })
+  }
   assert.equal((await targetState(project)).mode, 'img2img')
   await save(project)
   const saved = await readZip(project.file)
@@ -4155,6 +4214,14 @@ async function imageHealthyControl(project) {
     advisory = await api('getGenerationState', project.id)
   assert.equal(state.mode, 'img2img')
   assert.equal(advisory.regionalImg2ImgSupported, true)
+  if (imgVaeProfile) {
+    assert.equal(advisory.regionalImg2ImgVaeSupported, true)
+    assert.equal(advisory.regionalVaeSupported, true)
+    assert.equal(advisory.externalVaeSupported, true)
+    assert.equal(advisory.vaePrecisionSupported, true)
+    assert.deepEqual((await current(project)).generationDraft.vae, selectedVaeReference())
+    assert.equal((await current(project)).generationDraft.vaePrecision, 'FP32')
+  }
   if (imgSamplerProfile)
     assert.equal(
       advisory[
@@ -4325,6 +4392,10 @@ async function editImageCurrentUi(project) {
       .toBe('Euler')
   }
   if (imgCfgRescaleProfile) await setCfgRescaleUi(project, 0.2)
+  if (imgVaeProfile) {
+    await setSelectedVaeUi(project, null)
+    await setVaePrecisionUi(project, 'FP16')
+  }
   await expect
     .poll(async () => {
       const value = await current(project)
@@ -4338,6 +4409,9 @@ async function editImageCurrentUi(project) {
         enabled: value.regionalGuidance.map(({ enabled }) => enabled),
         ...(imgCfgRescaleProfile ? { cfgRescale: value.generationDraft.cfgRescale } : {}),
         ...(imgSamplerProfile ? { sampler: value.generationDraft.sampling.sampler } : {}),
+        ...(imgVaeProfile
+          ? { vae: value.generationDraft.vae, vaePrecision: value.generationDraft.vaePrecision }
+          : {}),
       }
     })
     .toEqual({
@@ -4350,6 +4424,7 @@ async function editImageCurrentUi(project) {
       enabled: [false, false],
       ...(imgCfgRescaleProfile ? { cfgRescale: 0.2 } : {}),
       ...(imgSamplerProfile ? { sampler: 'Euler' } : {}),
+      ...(imgVaeProfile ? { vae: null, vaePrecision: 'FP16' } : {}),
     })
   const target = await targetState(project)
   assert.equal(
@@ -4374,6 +4449,14 @@ async function generateCancelEditRetry(project) {
   const advisory = await api('getGenerationState', project.id)
   assert.equal(advisory.regionalSupported, true)
   if (img2imgProfile) assert.equal(advisory.regionalImg2ImgSupported, true)
+  if (imgVaeProfile) {
+    assert.equal(advisory.regionalImg2ImgVaeSupported, true)
+    assert.equal(advisory.regionalVaeSupported, true)
+    assert.equal(advisory.externalVaeSupported, true)
+    assert.equal(advisory.vaePrecisionSupported, true)
+    assert.deepEqual((await current(project)).generationDraft.vae, selectedVaeReference())
+    assert.equal((await current(project)).generationDraft.vaePrecision, 'FP32')
+  }
   if (imgSamplerProfile) {
     assert.equal(
       advisory[
@@ -4547,6 +4630,10 @@ async function generateCancelEditRetry(project) {
     assert.equal(edited.layers[0].id, project.sourceLayerId)
     assert.equal(edited.layers[0].opacity, 0.75)
   } else assert.deepEqual(edited.layers, project.document.layers)
+  if (imgVaeProfile) {
+    assert.equal(edited.generationDraft.vae, null)
+    assert.equal(edited.generationDraft.vaePrecision, 'FP16')
+  }
   assert.deepEqual(edited.primaryBbox, bbox)
   report.currentAuthoringAfterEdit = {
     generationDraft: edited.generationDraft,
@@ -4668,6 +4755,19 @@ async function generateCancelEditRetry(project) {
           assert.ok(ready.capabilities.includes(capability))
         assert.equal(wire.bundleJson.request.job.sampling.cfgRescale, generationCfgRescale)
       }
+      if (imgVaeProfile) {
+        const ready = observed.workers.find(({ pid }) => pid === wire.pid).ready
+        for (const capability of [
+          'illustrious-regional-vae-v1',
+          'illustrious-regional-img2img-vae-v1',
+        ])
+          assert.ok(ready.capabilities.includes(capability))
+        assert.deepEqual(wire.bundleJson.request.job.vae, selectedVaeWire())
+        assert.equal(wire.bundleJson.request.job.vaePrecision, 'FP32')
+        assert.equal(wire.bundleJson.request.job.sampling.scheduler, 'euler')
+        assert.equal(Object.hasOwn(wire.bundleJson.recipe, 'vae'), false)
+        assert.equal(Object.hasOwn(wire.bundleJson.recipe, 'vaePrecision'), false)
+      }
     }
     assert.equal(wire.bundleJson.compositionProfile, 'invoke-canvas-v1')
     if (initializationProfile) {
@@ -4725,6 +4825,33 @@ async function generateCancelEditRetry(project) {
     check(
       `Actual opaque IMG ${generationSampler}/${generationScheduleLabel} reaches all three native wires and frozen Retry after saved Euler edits; every executing peer advertises the separate combination capability`,
       report[imgDpmProfile ? 'imgDpmFlow' : 'imgEulerAFlow'],
+    )
+  }
+  if (imgVaeProfile) {
+    await verifyGlobalVaeFiles()
+    report.imgVaeFlow = {
+      selectedReference: selectedVaeReference(),
+      selectedWorkerDescriptor: selectedVaeWire(),
+      selectedPrecision: 'FP32',
+      defaultVersionId: globalVae.B.reference.localVersionId,
+      editedSavedVae: edited.generationDraft.vae,
+      editedSavedPrecision: edited.generationDraft.vaePrecision,
+      actualWireVaeDescriptors: wires.map(({ bundleJson }) => bundleJson.request.job.vae),
+      actualWirePrecisions: wires.map(({ bundleJson }) => bundleJson.request.job.vaePrecision),
+      originalRequestSeeds: [123, 123, 123],
+      allThreeLogicalAndNativeCommandsRetainOriginalVaeAndPrecision: true,
+      originalFrozenRetryPreserved: true,
+      newCapability: 'illustrious-regional-img2img-vae-v1',
+      noTxtInitialization: true,
+      vaeAddedToRecipe: false,
+      precisionAddedToRecipe: false,
+      sourceFilesUnchanged: true,
+      numericalCausalityClaimed: false,
+      extraNativeCalls: 0,
+    }
+    check(
+      'Actual opaque IMG exact A/FP32 reaches all three native wires and frozen Retry after saved Embedded/FP16 edits; every executing peer advertises the separate combination capability',
+      report.imgVaeFlow,
     )
   }
   assert.equal(
@@ -5004,7 +5131,7 @@ async function generateStaticBatchEdit(project) {
 
 // Adapt the existing installed-generation VAE helpers; every edit enters the real rendered controls.
 async function setSelectedVaeUi(project, key) {
-  assert.ok(globalVaeProfile && (key === null || key === 'A'))
+  assert.ok(vaeSelectionProfile && (key === null || key === 'A'))
   const input = window.locator('input[aria-label="VAE"]')
   if (!(await input.isVisible()))
     await window.getByText('Advanced Options', { exact: true }).click()
@@ -5035,7 +5162,7 @@ async function setSelectedVaeUi(project, key) {
   ).toBeVisible()
 }
 async function setVaePrecisionUi(project, value) {
-  assert.ok(globalVaeProfile && ['Auto', 'FP16', 'FP32'].includes(value))
+  assert.ok(vaeSelectionProfile && ['Auto', 'FP16', 'FP32'].includes(value))
   const input = window.locator('input[aria-label="VAE precision"]')
   if (!(await input.isVisible()))
     await window.getByText('Advanced Options', { exact: true }).click()
@@ -6699,9 +6826,9 @@ async function observeCanvas(label, decoded, imageUrl) {
                 }),
               }
             },
-            { bbox, imageUrl, exactBackingScale: imgSamplerProfile },
+            { bbox, imageUrl, exactBackingScale: imgSamplerProfile || imgVaeProfile },
           )
-        if (imgSamplerProfile) {
+        if (imgSamplerProfile || imgVaeProfile) {
           report.canvasDiagnostics ??= {}
           report.canvasDiagnostics[label] = samples
           checkpoint()
@@ -6850,8 +6977,8 @@ function assertBaseProvenance(provenance, candidate, frozen) {
         : {}),
     },
     size: { height: side, width: side },
-    vae: globalVaeProfile ? selectedVaeReference() : null,
-    vaePrecision: globalVaeProfile ? 'FP32' : 'FP16',
+    vae: vaeSelectionProfile ? selectedVaeReference() : null,
+    vaePrecision: vaeSelectionProfile ? 'FP32' : 'FP16',
   })
   assert.equal(config.positivePrompt.text, positive.text)
   assert.equal(config.negativePrompt.text, globalNegativePrompt)
@@ -6859,8 +6986,8 @@ function assertBaseProvenance(provenance, candidate, frozen) {
   assert.equal(config.sampling.steps, 30)
   assert.equal(config.sampling.cfgScale, 5)
   assert.deepEqual(config.sampling.noiseProfile, policy)
-  assert.equal(config.vaePrecision, globalVaeProfile ? 'FP32' : 'FP16')
-  assert.deepEqual(config.vae, globalVaeProfile ? selectedVaeReference() : null)
+  assert.equal(config.vaePrecision, vaeSelectionProfile ? 'FP32' : 'FP16')
+  assert.deepEqual(config.vae, vaeSelectionProfile ? selectedVaeReference() : null)
   assert.equal(config.model.fileSha256, fixture.checkpoint.sha256)
   const json = JSON.stringify(provenance)
   for (const forbidden of [
@@ -6884,7 +7011,7 @@ function assertBaseProvenance(provenance, candidate, frozen) {
         ]
       : localPrompts),
     ...(globalLoraProfile ? Object.values(globalLoras).map(({ managedPath }) => managedPath) : []),
-    ...(globalVaeProfile
+    ...(vaeSelectionProfile
       ? [
           globalVae.B.reference.localVersionId,
           ...Object.values(globalVae).map(({ managedPath }) => managedPath),
@@ -7243,7 +7370,7 @@ async function resultsAddSaveReopen(project, completed) {
     report.globalLoraFlow.acceptedOriginalFullConfiguredStack =
       accepted.generationProvenance.generationConfiguration.loras
   }
-  if (globalVaeProfile) {
+  if (vaeSelectionProfile) {
     assert.equal(reopened.generationDraft.vae, null)
     assert.equal(reopened.generationDraft.vaePrecision, 'FP16')
     assert.deepEqual(
@@ -7251,10 +7378,10 @@ async function resultsAddSaveReopen(project, completed) {
       selectedVaeReference(),
     )
     assert.equal(accepted.generationProvenance.generationConfiguration.vaePrecision, 'FP32')
-    report.globalVaeFlow.editedVaePreservedAfterSaveZipAndReopen = true
-    report.globalVaeFlow.acceptedOriginalReference =
-      accepted.generationProvenance.generationConfiguration.vae
-    report.globalVaeFlow.acceptedOriginalPrecision = 'FP32'
+    const flow = imgVaeProfile ? report.imgVaeFlow : report.globalVaeFlow
+    flow.editedVaePreservedAfterSaveZipAndReopen = true
+    flow.acceptedOriginalReference = accepted.generationProvenance.generationConfiguration.vae
+    flow.acceptedOriginalPrecision = 'FP32'
   }
   if (dpmpp2mProfile) {
     assert.equal(reopened.generationDraft.sampling.sampler, 'Euler')
@@ -7525,6 +7652,7 @@ async function finalIdentities() {
     if (progressProfile) await verifyProgressPreservation(db.db)
     if (img2imgProfile) {
       assert.equal(await hashFile(report.img2img.source.path), report.img2img.source.sha256)
+      if (imgVaeProfile) await verifyGlobalVaeFiles()
       const own = ownProgressSql(whole),
         control = report.img2img.control
       assert.equal(own.queue.length, 2)
@@ -7957,6 +8085,53 @@ async function assertImageActions(project) {
     )
   const retry = observed.ipc.find(({ channel }) => channel === 'projects:retry-generation-job')
   assert.equal(retry.args[0].id, report.retry.firstJobId)
+  if (imgVaeProfile) {
+    const selections = observed.ipc.filter(
+        ({ channel }) => channel === 'projects:set-generation-vae',
+      ),
+      precisionChanges = observed.ipc.filter(
+        ({ channel, args }) =>
+          channel === 'projects:update-generation-draft' && args[1]?.kind === 'vae-precision',
+      ),
+      selectedIdentity = {
+        resourceId: globalVae.A.reference.localModelId,
+        versionId: globalVae.A.reference.localVersionId,
+      },
+      cancel = observed.ipc.find(({ channel }) => channel === 'projects:cancel-generation-job')
+    assert.deepEqual(
+      selections.map(({ args }) => args.slice(0, 2)),
+      [
+        [report.img2img.controlProjectKey, null],
+        [report.img2img.controlProjectKey, selectedIdentity],
+        [project.id, null],
+        [project.id, selectedIdentity],
+        [project.id, null],
+      ],
+    )
+    assert.deepEqual(
+      precisionChanges.map(({ args }) => args.slice(0, 2)),
+      [
+        ...['Auto', 'FP32'].map((value) => [
+          report.img2img.controlProjectKey,
+          { kind: 'vae-precision', value },
+        ]),
+        ...['Auto', 'FP32', 'FP16'].map((value) => [project.id, { kind: 'vae-precision', value }]),
+      ],
+    )
+    for (const [index, actionIndex] of [1, 3].entries()) {
+      assert.ok(selections[actionIndex].finishedOrder < generates[index].startedOrder)
+      assert.ok(precisionChanges[actionIndex].finishedOrder < generates[index].startedOrder)
+    }
+    assert.ok(cancel.finishedOrder < selections[4].startedOrder)
+    assert.ok(cancel.finishedOrder < precisionChanges[4].startedOrder)
+    assert.ok(selections[4].finishedOrder < retry.startedOrder)
+    assert.ok(precisionChanges[4].finishedOrder < retry.startedOrder)
+    assert.deepEqual(
+      report.imgVaeAuthoringBeforeGenerate.map(({ projectKey }) => projectKey),
+      [report.img2img.controlProjectKey, project.id],
+    )
+    report.imgVaeFlow.originalAuthoringActions = { selections, precisionChanges }
+  }
   if (imgCfgRescaleProfile) {
     const changes = observed.ipc.filter(
         ({ channel, args }) =>
@@ -8252,7 +8427,9 @@ try {
   report.elapsedSeconds = (Date.now() - started) / 1000
   check(
     img2imgProfile
-      ? 'Finite installed opaque regional IMG UI/default RuntimeManager, actual imported source, live numeric Cancel/frozen Retry and exact healthy-control RGB, explicit Add/Undo/Redo/Save/reopen completed; no visual-quality or broader IMG claim'
+      ? imgVaeProfile
+        ? 'Finite installed opaque regional IMG exact A/FP32 with Euler/Normal and CFG Rescale0.7, actual imported source, observed Cancel/frozen Retry after saved Embedded/FP16 edits, exact healthy-control RGB and accepted ordinary IMG provenance through Add/Undo/Redo/Save/reopen completed; no installed VAE pixel-causality or quality claim'
+        : 'Finite installed opaque regional IMG UI/default RuntimeManager, actual imported source, live numeric Cancel/frozen Retry and exact healthy-control RGB, explicit Add/Undo/Redo/Save/reopen completed; no visual-quality or broader IMG claim'
       : dynamicPositiveProfile
         ? 'Finite installed two-expansion global-positive prefix, exact per-item TI, original Cancel/frozen Retry and concrete accepted provenance completed after saved template/options/mask/LoRA/VAE edits; same runtime and three wires/two PNGs'
         : globalVaeProfile

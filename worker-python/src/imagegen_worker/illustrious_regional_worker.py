@@ -11,6 +11,10 @@ worker consumes hash-bound snapshots and never removes inputs or their parent.
 Checkpoint/catalog provenance remains Main's responsibility; the production
 single-file loader owns checkpoint-to-live-component construction.
 
+Invoke Canvas also grafts its selected VAE into image encoding
+(generation/core/graph.ts, canvas/compileCanvasGraph.ts and
+app/invocations/vae/image_to_latents.py); prepared IMG profiles reuse that path.
+
 Invoke's queue freezes invocation graphs for Retry, but noise dtype remains a
 runtime setting. Studio transports an explicit optional initialization identity
 so frozen jobs never inherit a later runtime default.
@@ -103,12 +107,23 @@ def _denoising_profile(
         _require(
             composition_profile == "invoke-canvas-v1"
             and initialization_profile is None
-            and parameters.scheduler in ("euler", "euler_a", "dpmpp_2m", "dpmpp_2m_k")
-            and parameters.vae is None
-            and parameters.vae_precision == "FP16",
+            and parameters.scheduler in ("euler", "euler_a", "dpmpp_2m", "dpmpp_2m_k"),
             "Regional img2img requires Invoke Canvas, Euler, Euler a or DPM++ 2M, "
-            "Embedded FP16 VAE and no txt2img initialization.",
+            "and no txt2img initialization.",
         )
+        # Invoke's Canvas graft feeds the selected VAE into the image encoder.
+        # The existing prepared profiles own that same encode/decode handoff;
+        # parser preflight validates the logical policy/resource before loading,
+        # and execute prepares the fresh owned VAE before any borrowed runner.
+        prepared_vae = parameters.vae is not None or parameters.vae_precision != "FP16"
+        if prepared_vae:
+            if parameters.scheduler in ("dpmpp_2m", "dpmpp_2m_k"):
+                return "ordinary-canvas-dpmpp-2m-img2img-cuda-vae-v1"
+            return (
+                "ordinary-canvas-euler-ancestral-img2img-cuda-vae-v1"
+                if parameters.scheduler == "euler_a"
+                else "ordinary-canvas-euler-img2img-cuda-vae-v1"
+            )
         if parameters.scheduler in ("dpmpp_2m", "dpmpp_2m_k"):
             return "ordinary-canvas-dpmpp-2m-img2img-cuda-fp16-v1"
         return (

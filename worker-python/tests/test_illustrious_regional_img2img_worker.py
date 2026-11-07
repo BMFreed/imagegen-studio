@@ -8,6 +8,8 @@ collects/runs tests and performs isolated mutations; authorship is AST/Ruff only
 from __future__ import annotations
 
 import contextlib
+import json
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -19,7 +21,7 @@ from imagegen_worker import illustrious_regional_worker as worker
 from imagegen_worker import inference_main
 from imagegen_worker.derivatives import SRGB_ICC_PROFILE
 from imagegen_worker.inference import MLRuntime
-from imagegen_worker.protocol import GenerateIllustriousImg2ImgCommand
+from imagegen_worker.protocol import GenerateIllustriousImg2ImgCommand, GenerationVae
 from test_illustrious_regional_worker import (
     _case as _text_case,  # pyright: ignore[reportPrivateUsage]
 )
@@ -46,6 +48,19 @@ def _target(case: Any, *, alpha: int) -> None:
     )
     case.target.chmod(0o600)
     case.request["job"]["target"].update(_descriptor(case.target))
+
+
+def _selected_vae(case: Any) -> Path:
+    """Real hash-bound snapshot; complete native architecture is outside this double."""
+    file = case.root.parent / "selected-vae.safetensors"
+    header = json.dumps(
+        {"encoder.fixture": {"dtype": "F16", "shape": [1], "data_offsets": [0, 2]}},
+        separators=(",", ":"),
+    ).encode()
+    header += b" " * (-len(header) % 8)
+    file.write_bytes(len(header).to_bytes(8, "little") + header + b"\x00\x34")
+    case.request["job"]["vae"] = _descriptor(file)
+    return file
 
 
 @pytest.mark.parametrize("strength", (0.0, 0.5, 1.0))
@@ -93,11 +108,11 @@ def test_real_opaque_bundle_preserves_exact_img_command_and_explicit_strength(
         "dpm-sde-karras",
         "dpm-sde",
         "dpm-initialization",
-        "dpm-karras-external-vae",
+        "dpm-karras-checkpoint-vae",
         "rescale",
-        "auto-vae",
-        "fp32-vae",
-        "external-vae",
+        "unsupported-precision",
+        "non-string-precision",
+        "checkpoint-vae",
         "missing-strength",
         "bool-strength",
         "negative-strength",
@@ -127,16 +142,16 @@ def test_invalid_img_bundle_refuses_before_any_native_loader(
     elif fault == "dpm-initialization":
         job["sampling"]["scheduler"] = "dpmpp_2m"
         case.bundle["initializationProfile"] = "invoke-cpu-f32-add-noise-v1"
-    elif fault == "dpm-karras-external-vae":
+    elif fault == "dpm-karras-checkpoint-vae":
         job["sampling"]["scheduler"] = "dpmpp_2m_k"
         job["vae"] = {**_descriptor(case.checkpoint)}
     elif fault == "rescale":
         # Nonzero public IMG values are now supported; the operational upper
         # bound remains strict, independently of target/mode qualification.
         job["sampling"]["cfgRescale"] = 1.0
-    elif fault in ("auto-vae", "fp32-vae"):
-        job["vaePrecision"] = "Auto" if fault == "auto-vae" else "FP32"
-    elif fault == "external-vae":
+    elif fault in ("unsupported-precision", "non-string-precision"):
+        job["vaePrecision"] = "FP64" if fault == "unsupported-precision" else False
+    elif fault == "checkpoint-vae":
         job["vae"] = {**_descriptor(case.checkpoint)}
     elif fault == "missing-strength":
         del job["sampling"]["denoisingStrength"]
@@ -266,3 +281,295 @@ def test_real_dispatch_routes_img_once_without_prepared_vae_or_txt_output(
     assert len(reports) == bool(strength)
     if reports:
         assert reports[0]["totalSteps"] == 1 and reports[0]["step"] == 1
+
+
+@pytest.mark.parametrize("selected", (False, True), ids=("embedded", "selected"))
+@pytest.mark.parametrize("precision", ("Auto", "FP16", "FP32"))
+@pytest.mark.parametrize("scheduler", ("euler", "euler_a", "dpmpp_2m", "dpmpp_2m_k"))
+def test_real_img_vae_matrix_verifies_snapshot_and_prepares_once_before_runner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    selected: bool,
+    precision: str,
+    scheduler: str,
+) -> None:
+    """Real snapshots/parser/dispatch, with labelled native loader/preparation doubles."""
+    case = _case(tmp_path)
+    job = case.request["job"]
+    job["sampling"]["scheduler"] = scheduler
+    job["vaePrecision"] = precision
+    file = _selected_vae(case) if selected else None
+    _seal(case)
+    parsed = worker.parse_regional_request(case.wire)
+    expected_vae = (
+        GenerationVae(file, cast(str, job["vae"]["sha256"]), cast(int, job["vae"]["byteSize"]))
+        if file is not None
+        else None
+    )
+    assert parsed.parameters.vae == parsed.command.vae == expected_vae
+    assert parsed.parameters.vae_precision == parsed.command.vae_precision == precision
+    prepared = selected or precision != "FP16"
+    expected_profile = {
+        "euler": "ordinary-canvas-euler-img2img-cuda-vae-v1",
+        "euler_a": "ordinary-canvas-euler-ancestral-img2img-cuda-vae-v1",
+        "dpmpp_2m": "ordinary-canvas-dpmpp-2m-img2img-cuda-vae-v1",
+        "dpmpp_2m_k": "ordinary-canvas-dpmpp-2m-img2img-cuda-vae-v1",
+    }[scheduler]
+    if not prepared:
+        expected_profile = expected_profile.replace("-vae-", "-fp16-")
+    assert (
+        worker._denoising_profile(  # pyright: ignore[reportPrivateUsage]
+            parsed.parameters, None, "invoke-canvas-v1", img2img=True
+        )
+        == expected_profile
+    )
+    calls: list[str] = []
+    component = SimpleNamespace(eval=lambda: calls.append("eval"))
+    pipeline = SimpleNamespace(
+        text_encoder=component, text_encoder_2=component, unet=component, vae=component
+    )
+    torch = SimpleNamespace(no_grad=contextlib.nullcontext)
+    runtime = cast(MLRuntime, SimpleNamespace(torch=torch))
+    observed_preparation: list[Any] = []
+
+    def load(parameters: Any, **kwargs: Any) -> tuple[Any, None]:
+        calls.append("load")
+        assert kwargs == {"config_dir": tmp_path, "runtime": runtime, "mode": "txt2img"}
+        assert parameters.vae == expected_vae and parameters.vae_precision == precision
+        assert parameters.scheduler == scheduler
+        assert parameters.positive_prompt == parameters.negative_prompt == ""
+        assert (
+            parameters.loras
+            == parameters.positive_embeddings
+            == parameters.negative_embeddings
+            == ()
+        )
+        return pipeline, None
+
+    def prepare(current: Any, parameters: Any, current_torch: Any) -> None:
+        calls.append("prepare")
+        assert current is pipeline and current_torch is torch
+        assert parameters == parsed.parameters
+        assert parameters.vae == expected_vae and parameters.vae_precision == precision
+        assert parameters.positive_prompt == parsed.command.positive_prompt
+        observed_preparation.append(current.vae)
+
+    def hooks(current: Any) -> None:
+        calls.append("hooks")
+        assert current is pipeline
+
+    def bindings(current: Any, current_runtime: Any) -> tuple[()]:
+        calls.append("bindings")
+        assert current is pipeline and current_runtime is runtime
+        return ()
+
+    done = {
+        "type": "generation-done",
+        "protocolVersion": "1",
+        "requestId": parsed.command.request_id,
+        "outputPath": str(parsed.command.output_path),
+        "seed": parsed.command.seed,
+    }
+
+    def publish(recipe: Any, **kwargs: Any) -> dict[str, object]:
+        calls.append("img-output")
+        assert calls == [
+            "load",
+            *(("prepare",) if prepared else ()),
+            "eval",
+            "eval",
+            "eval",
+            "eval",
+            "hooks",
+            "bindings",
+            "img-output",
+        ]
+        assert recipe == parsed.recipe
+        assert kwargs["command"] == parsed.command
+        assert type(kwargs["command"]) is GenerateIllustriousImg2ImgCommand
+        assert kwargs["pipeline"] is pipeline and pipeline.vae is component
+        assert kwargs["runtime"] is runtime
+        assert kwargs["denoising_profile"] == expected_profile
+        assert (
+            kwargs["profile"]
+            == "ordinary-canvas-invoke-dualclip-exact-ti-shared-readonly-cuda-fp16-v1"
+        )
+        assert kwargs["bindings"] == () and kwargs["layout"] == parsed.layout
+        return cast(dict[str, object], done)
+
+    def forbidden(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("IMG VAE dispatch selected TXT output")
+
+    monkeypatch.setattr(worker, "load_illustrious_pipeline", load)
+    monkeypatch.setattr(worker, "prepare_owned_regional_vae", prepare)
+    monkeypatch.setattr(worker, "install_capture_hooks", hooks)
+    monkeypatch.setattr(worker, "qualify_bindings", bindings)
+    monkeypatch.setattr(worker, "generate_current_canvas_regional_img2img", publish)
+    monkeypatch.setattr(worker, "generate_current_canvas_regional_txt2img", forbidden)
+    before = {
+        path: path.read_bytes()
+        for path in (case.target, case.checkpoint, *((file,) if file else ()))
+    }
+    response = inference_main.process_inference_request(
+        case.wire, config_dir=tmp_path, runtime=runtime
+    )
+    assert response == done
+    assert observed_preparation == ([component] if prepared else [])
+    assert before == {path: path.read_bytes() for path in before}
+
+
+@pytest.mark.parametrize(
+    ("fault", "code"),
+    (
+        ("missing-file", "GENERATION_INPUT_CHANGED"),
+        ("changed-file", "GENERATION_INPUT_CHANGED"),
+        ("wrong-size", "GENERATION_INPUT_CHANGED"),
+        ("wrong-hash", "GENERATION_INPUT_CHANGED"),
+        ("bad-header", "GENERATION_VAE_UNSUPPORTED"),
+        ("symlink", "INVALID_PATH"),
+        ("in-staging", "GENERATION_VAE_UNSUPPORTED"),
+        ("same-checkpoint", "GENERATION_VAE_UNSUPPORTED"),
+        ("descriptor-extra", "INVALID_REQUEST"),
+        ("descriptor-missing", "INVALID_REQUEST"),
+        ("descriptor-relative", "INVALID_REQUEST"),
+        ("descriptor-bool-size", "INVALID_REQUEST"),
+        ("descriptor-uppercase-sha", "INVALID_REQUEST"),
+        ("missing-composition", "INVALID_REQUEST"),
+        ("txt-initialization", "INVALID_REQUEST"),
+        ("unsupported-sampler", "INVALID_REQUEST"),
+    ),
+)
+def test_selected_img_vae_invalid_binding_refuses_before_native_load_or_preparation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str, code: str
+) -> None:
+    case = _case(tmp_path)
+    file = _selected_vae(case)
+    job = case.request["job"]
+    job["vaePrecision"] = "FP32"
+    descriptor = job["vae"]
+    if fault == "missing-file":
+        file.unlink()
+    elif fault == "changed-file":
+        data = file.read_bytes()
+        file.write_bytes(data[:-1] + bytes((data[-1] ^ 1,)))
+    elif fault == "wrong-size":
+        descriptor["byteSize"] += 1
+    elif fault == "wrong-hash":
+        descriptor["sha256"] = "0" * 64
+    elif fault == "bad-header":
+        file.write_bytes(b"not a safetensors snapshot")
+        job["vae"] = _descriptor(file)
+    elif fault == "symlink":
+        link = tmp_path / "linked.safetensors"
+        link.symlink_to(file)
+        descriptor["path"] = str(link)
+    elif fault == "in-staging":
+        staged = case.root / "vae.safetensors"
+        staged.write_bytes(file.read_bytes())
+        job["vae"] = _descriptor(staged)
+    elif fault == "same-checkpoint":
+        job["vae"] = _descriptor(case.checkpoint)
+    elif fault == "descriptor-extra":
+        descriptor["ignored"] = "forbidden"
+    elif fault == "descriptor-missing":
+        del descriptor["sha256"]
+    elif fault == "descriptor-relative":
+        descriptor["path"] = "selected-vae.safetensors"
+    elif fault == "descriptor-bool-size":
+        descriptor["byteSize"] = True
+    elif fault == "descriptor-uppercase-sha":
+        descriptor["sha256"] = "A" * 64
+    elif fault == "missing-composition":
+        del case.bundle["compositionProfile"]
+    elif fault == "txt-initialization":
+        case.bundle["initializationProfile"] = "invoke-cpu-f32-add-noise-v1"
+    else:
+        assert fault == "unsupported-sampler"
+        job["sampling"]["scheduler"] = "dpmpp_sde"
+    _seal(case)
+    calls: list[str] = []
+
+    def forbidden(*_args: Any, **_kwargs: Any) -> Any:
+        calls.append("native")
+        raise AssertionError("invalid selected IMG VAE reached native preparation")
+
+    monkeypatch.setattr(worker, "load_illustrious_pipeline", forbidden)
+    monkeypatch.setattr(worker, "prepare_owned_regional_vae", forbidden)
+    monkeypatch.setattr(worker, "generate_current_canvas_regional_img2img", forbidden)
+    runtime = cast(
+        MLRuntime, SimpleNamespace(torch=SimpleNamespace(no_grad=contextlib.nullcontext))
+    )
+    before = case.target.read_bytes()
+    response = inference_main.process_inference_request(
+        case.wire, config_dir=tmp_path, runtime=runtime
+    )
+    assert response["type"] == "error" and response["code"] == code
+    assert response["requestId"] == "private-1"
+    assert calls == [] and case.target.read_bytes() == before
+    assert not Path(job["output"]["pngPath"]).exists()
+
+
+@pytest.mark.parametrize(
+    ("fault", "code"),
+    (
+        ("unsupported-precision", "GENERATION_VAE_UNSUPPORTED"),
+        ("non-string-precision", "GENERATION_VAE_UNSUPPORTED"),
+        ("descriptor-type", "GENERATION_VAE_UNSUPPORTED"),
+        ("descriptor-extra", "GENERATION_VAE_UNSUPPORTED"),
+        ("bool-size", "GENERATION_VAE_UNSUPPORTED"),
+        ("zero-size", "GENERATION_VAE_UNSUPPORTED"),
+        ("uppercase-sha", "GENERATION_VAE_UNSUPPORTED"),
+        ("relative-path", "INVALID_PATH"),
+    ),
+)
+def test_img_logical_vae_policy_uses_existing_exact_validation_before_resource_or_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str, code: str
+) -> None:
+    """The wire is valid; inject malformed logical records at the existing projection seam."""
+    case = _case(tmp_path)
+    _selected_vae(case)
+    _seal(case)
+    original = worker._command_parameters  # pyright: ignore[reportPrivateUsage]
+
+    def parameters(*args: Any, **kwargs: Any) -> Any:
+        current = original(*args, **kwargs)
+        vae = current.vae
+        assert vae is not None
+        if fault == "unsupported-precision":
+            return replace(current, vae_precision=cast(Any, "FP64"))
+        if fault == "non-string-precision":
+            return replace(current, vae_precision=cast(Any, False))
+        if fault == "descriptor-type":
+            return replace(current, vae=cast(Any, SimpleNamespace(**vars(vae))))
+        if fault == "descriptor-extra":
+            object.__setattr__(vae, "extra", "forbidden")
+            return current
+        if fault == "bool-size":
+            vae = replace(vae, byte_size=cast(Any, True))
+        elif fault == "zero-size":
+            vae = replace(vae, byte_size=0)
+        elif fault == "uppercase-sha":
+            vae = replace(vae, sha256="A" * 64)
+        else:
+            assert fault == "relative-path"
+            vae = replace(vae, path=Path("selected-vae.safetensors"))
+        return replace(current, vae=vae)
+
+    calls: list[str] = []
+
+    def forbidden(*_args: Any, **_kwargs: Any) -> Any:
+        calls.append("resource-or-native")
+        raise AssertionError("invalid logical VAE escaped the existing validation")
+
+    monkeypatch.setattr(worker, "_command_parameters", parameters)
+    monkeypatch.setattr(worker, "verify_regional_vae_resource", forbidden)
+    monkeypatch.setattr(worker, "load_illustrious_pipeline", forbidden)
+    monkeypatch.setattr(worker, "prepare_owned_regional_vae", forbidden)
+    runtime = cast(
+        MLRuntime, SimpleNamespace(torch=SimpleNamespace(no_grad=contextlib.nullcontext))
+    )
+    response = inference_main.process_inference_request(
+        case.wire, config_dir=tmp_path, runtime=runtime
+    )
+    assert response["type"] == "error" and response["code"] == code
+    assert calls == [] and not (case.root / "result.png").exists()

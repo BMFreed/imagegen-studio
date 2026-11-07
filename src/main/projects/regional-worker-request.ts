@@ -523,12 +523,10 @@ function validateAgreement(input: v.InferOutput<typeof inputSchema>): void {
     request.type === 'generate-illustrious-img2img' &&
     (input.compositionProfile !== 'invoke-canvas-v1' ||
       input.initializationProfile !== undefined ||
-      !['dpmpp_2m', 'dpmpp_2m_k', 'euler', 'euler_a'].includes(request.job.sampling.scheduler) ||
-      request.job.vae != null ||
-      request.job.vaePrecision !== 'FP16')
+      !['dpmpp_2m', 'dpmpp_2m_k', 'euler', 'euler_a'].includes(request.job.sampling.scheduler))
   ) {
     throw invalid(
-      'Regional img2img requires public Invoke Canvas, Euler, Euler a or DPM++ 2M, Embedded FP16 VAE and no txt2img initialization.',
+      'Regional img2img requires public Invoke Canvas, Euler, Euler a or DPM++ 2M and no txt2img initialization.',
     )
   }
   if (

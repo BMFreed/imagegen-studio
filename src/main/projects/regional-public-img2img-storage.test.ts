@@ -392,8 +392,9 @@ for (const invalid of [
         job.sampling.cfgRescale = 1
       }
       if (invalid === 'precision') {
+        // Auto is admitted for IMG; logical and worker precision must still agree.
         context.vaePrecision = 'Auto'
-        job.vaePrecision = 'Auto'
+        job.vaePrecision = 'FP16'
       }
       if (invalid === 'initialization') {
         bad.initializationProfile = 'invoke-cpu-f32-add-noise-v1'

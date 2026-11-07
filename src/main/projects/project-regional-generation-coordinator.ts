@@ -11,6 +11,7 @@ import {
   supportsInferenceRegionalImg2ImgCFGRescale,
   supportsInferenceRegionalImg2ImgDpmpp2m,
   supportsInferenceRegionalImg2ImgEulerAncestral,
+  supportsInferenceRegionalImg2ImgVae,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
   supportsInferenceRegionalVae,
@@ -556,6 +557,15 @@ export class ProjectRegionalGenerationCoordinator {
                 )
               }
               if (
+                (draft.vae !== null || (draft.vaePrecision ?? 'Auto') !== 'FP16') &&
+                !supportsInferenceRegionalImg2ImgVae(ready)
+              ) {
+                throw new ProjectRegionalGenerationError(
+                  'INFERENCE_UNAVAILABLE',
+                  'The image engine has not qualified selected VAE and precision with opaque regional img2img.',
+                )
+              }
+              if (
                 !(
                   ((draft.sampling.sampler === 'Euler' || draft.sampling.sampler === 'Euler a') &&
                     draft.sampling.scheduler === 'Normal') ||
@@ -563,12 +573,10 @@ export class ProjectRegionalGenerationCoordinator {
                     (draft.sampling.scheduler === 'Normal' ||
                       draft.sampling.scheduler === 'Karras'))
                 ) ||
-                draft.vae !== null ||
-                draft.vaePrecision !== 'FP16' ||
                 initializationProfile !== undefined
               ) {
                 throw unsupported(
-                  'Regional img2img requires Euler or Euler a with Normal, or DPM++ 2M with Normal or Karras, and Embedded FP16 VAE.',
+                  'Regional img2img requires Euler or Euler a with Normal, or DPM++ 2M with Normal or Karras, and no txt2img initialization.',
                 )
               }
             }

@@ -581,13 +581,18 @@ def test_prepared_img_failures_restore_borrowed_state_and_allow_fresh_request(
 
 
 @pytest.mark.parametrize("external", (False, True))
-def test_public_img_worker_still_refuses_unqualified_prepared_vae_combination(
+def test_public_img_worker_maps_qualified_prepared_vae_combination(
     tmp_path: Path, cuda: Any, external: bool
 ) -> None:
     case = _case(tmp_path, cuda, precision="FP16" if external else "FP32", external=external)
     worker = importlib.import_module("imagegen_worker.illustrious_regional_worker")
-    with pytest.raises(DerivativeError) as caught:
+    assert (
         worker._denoising_profile(  # pyright: ignore[reportPrivateUsage]
             _parameters(case), composition_profile="invoke-canvas-v1", img2img=True
         )
-    assert caught.value.code == "INVALID_REQUEST"
+        == "ordinary-canvas-euler-img2img-cuda-vae-v1"
+    )
+    inference = importlib.import_module("imagegen_worker.inference_main")
+    assert (
+        "illustrious-regional-img2img-vae-v1" in inference.inference_ready_message()["capabilities"]
+    )
