@@ -9,6 +9,7 @@ import {
   supportsInferenceEmbeddings,
   supportsInferenceRegionalImg2Img,
   supportsInferenceRegionalImg2ImgCFGRescale,
+  supportsInferenceRegionalImg2ImgDpmpp2m,
   supportsInferenceRegionalImg2ImgEulerAncestral,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
@@ -521,6 +522,17 @@ export class RegionalGenerationProcessor {
         throw new RegionalGenerationProcessorError(
           'INFERENCE_UNAVAILABLE',
           'The worker has not qualified Euler a with opaque regional img2img.',
+        )
+      }
+      if (
+        input.request.type === 'generate-illustrious-img2img' &&
+        (input.request.job.sampling.scheduler === 'dpmpp_2m' ||
+          input.request.job.sampling.scheduler === 'dpmpp_2m_k') &&
+        !supportsInferenceRegionalImg2ImgDpmpp2m(transport.ready)
+      ) {
+        throw new RegionalGenerationProcessorError(
+          'INFERENCE_UNAVAILABLE',
+          'The worker has not qualified DPM++ 2M with opaque regional img2img.',
         )
       }
       if (

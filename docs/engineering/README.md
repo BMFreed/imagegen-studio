@@ -1,5 +1,9 @@
 # Engineering Workflow
 
+
+## DPM++ 2M for opaque regional img2img
+
+[Qualified finite slice](./phase-4-regional-guidance-img2img-dpmpp-2m-research.md): ROOT550 Main/450 Python/194 browser PASS,18 installed checks. Frozen DPM/Karras/.7 survives saved Euler/cleared-schedule/.2 through Add/Save-reopen; direct Normal/Karras replay qualifies15/16 selected steps, exact Karras UI RGBA and721,176 changed RGB channels. Source R2 and corrected final R5 retention review CLEAN; ROOT verifies physical exit/dependencies and reclaims59,707,392 bytes from its exact payload tree after retaining all3264 archive entries. Defaults and PP-001/005/007/008 statuses remain unchanged.
 ## Repository privacy preparation
 
 [Privacy maintenance](./repository-privacy.md) replaces identifying demo data and

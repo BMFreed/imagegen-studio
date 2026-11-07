@@ -165,6 +165,16 @@ export function supportsInferenceRegionalImg2ImgEulerAncestral(value: unknown): 
   )
 }
 
+/** Image DPM keeps the native scheduler but uses source latents instead of TXT initialization. */
+export function supportsInferenceRegionalImg2ImgDpmpp2m(value: unknown): boolean {
+  return (
+    isQualifiedInferenceWorkerReady(value) &&
+    supportsInferenceRegionalImg2Img(value) &&
+    value.capabilities.includes('illustrious-regional-dpmpp-2m-v1') &&
+    value.capabilities.includes('illustrious-regional-img2img-dpmpp-2m-v1')
+  )
+}
+
 /** Global LoRAs require the qualified public regional owner and its explicit adapter opt-in. */
 export function supportsInferenceRegionalLoras(value: unknown): boolean {
   return (

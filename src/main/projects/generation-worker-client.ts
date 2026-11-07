@@ -30,6 +30,7 @@ import {
   supportsInferenceRegionalDpm,
   supportsInferenceRegionalImg2Img,
   supportsInferenceRegionalImg2ImgCFGRescale,
+  supportsInferenceRegionalImg2ImgDpmpp2m,
   supportsInferenceRegionalImg2ImgEulerAncestral,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
@@ -457,6 +458,17 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
       }
       if (
         input.request.type === 'generate-illustrious-img2img' &&
+        (input.request.job.sampling.scheduler === 'dpmpp_2m' ||
+          input.request.job.sampling.scheduler === 'dpmpp_2m_k') &&
+        !supportsInferenceRegionalImg2ImgDpmpp2m(this.ready)
+      ) {
+        throw new GenerationWorkerError(
+          'WORKER_VERSION_MISMATCH',
+          'The active worker has not qualified DPM++ 2M with opaque regional img2img.',
+        )
+      }
+      if (
+        input.request.type === 'generate-illustrious-img2img' &&
         (input.request.job.sampling.cfgRescale ?? 0) !== 0 &&
         !supportsInferenceRegionalImg2ImgCFGRescale(this.ready)
       ) {
@@ -477,6 +489,7 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
       }
       if (
         input.compositionProfile === 'invoke-canvas-v1' &&
+        input.request.type === 'generate-illustrious-txt2img' &&
         (input.request.job.sampling.scheduler === 'dpmpp_2m' ||
           input.request.job.sampling.scheduler === 'dpmpp_2m_k') &&
         !supportsInferenceRegionalDpm(this.ready)

@@ -50,7 +50,7 @@ def _target(case: Any, *, alpha: int) -> None:
 
 @pytest.mark.parametrize("strength", (0.0, 0.5, 1.0))
 @pytest.mark.parametrize("cfg_rescale", (0.0, 0.7, 0.99))
-@pytest.mark.parametrize("scheduler", ("euler", "euler_a"))
+@pytest.mark.parametrize("scheduler", ("euler", "euler_a", "dpmpp_2m", "dpmpp_2m_k"))
 def test_real_opaque_bundle_preserves_exact_img_command_and_explicit_strength(
     tmp_path: Path, strength: float, cfg_rescale: float, scheduler: str
 ) -> None:
@@ -67,12 +67,16 @@ def test_real_opaque_bundle_preserves_exact_img_command_and_explicit_strength(
     assert parsed.command.target_sha256 == _descriptor(case.target)["sha256"]
     assert parsed.composition_profile == "invoke-canvas-v1"
     assert parsed.initialization_profile is None
-    assert worker._denoising_profile(  # pyright: ignore[reportPrivateUsage]
-        parsed.parameters, None, parsed.composition_profile, img2img=True
-    ) == (
-        "ordinary-canvas-euler-ancestral-img2img-cuda-fp16-v1"
-        if scheduler == "euler_a"
-        else "ordinary-canvas-euler-img2img-cuda-fp16-v1"
+    assert (
+        worker._denoising_profile(  # pyright: ignore[reportPrivateUsage]
+            parsed.parameters, None, parsed.composition_profile, img2img=True
+        )
+        == {
+            "euler": "ordinary-canvas-euler-img2img-cuda-fp16-v1",
+            "euler_a": "ordinary-canvas-euler-ancestral-img2img-cuda-fp16-v1",
+            "dpmpp_2m": "ordinary-canvas-dpmpp-2m-img2img-cuda-fp16-v1",
+            "dpmpp_2m_k": "ordinary-canvas-dpmpp-2m-img2img-cuda-fp16-v1",
+        }[scheduler]
     )
     expected = case.alpha.read_bytes()
     case.alpha.unlink()
@@ -86,8 +90,10 @@ def test_real_opaque_bundle_preserves_exact_img_command_and_explicit_strength(
     (
         "no-public-profile",
         "initialization",
-        "dpm-karras",
-        "dpm",
+        "dpm-sde-karras",
+        "dpm-sde",
+        "dpm-initialization",
+        "dpm-karras-external-vae",
         "rescale",
         "auto-vae",
         "fp32-vae",
@@ -114,12 +120,16 @@ def test_invalid_img_bundle_refuses_before_any_native_loader(
         del case.bundle["compositionProfile"]
     elif fault == "initialization":
         case.bundle["initializationProfile"] = "invoke-cpu-f32-add-noise-v1"
-    elif fault == "dpm-karras":
-        # Euler a now has its own IMG execution profile. DPM remains outside
-        # this image subset, with or without Karras scheduling.
-        job["sampling"]["scheduler"] = "dpmpp_2m_k"
-    elif fault == "dpm":
+    elif fault in ("dpm-sde-karras", "dpm-sde"):
+        # Deterministic 2M Normal/Karras now has its own IMG execution profile;
+        # stochastic DPM remains outside the qualified image subset.
+        job["sampling"]["scheduler"] = "dpmpp_sde_k" if fault == "dpm-sde-karras" else "dpmpp_sde"
+    elif fault == "dpm-initialization":
         job["sampling"]["scheduler"] = "dpmpp_2m"
+        case.bundle["initializationProfile"] = "invoke-cpu-f32-add-noise-v1"
+    elif fault == "dpm-karras-external-vae":
+        job["sampling"]["scheduler"] = "dpmpp_2m_k"
+        job["vae"] = {**_descriptor(case.checkpoint)}
     elif fault == "rescale":
         # Nonzero public IMG values are now supported; the operational upper
         # bound remains strict, independently of target/mode qualification.
@@ -170,7 +180,7 @@ def test_invalid_img_bundle_refuses_before_any_native_loader(
 
 @pytest.mark.parametrize("strength", (0.0, 0.5))
 @pytest.mark.parametrize("cfg_rescale", (0.0, 0.7, 0.99))
-@pytest.mark.parametrize("scheduler", ("euler", "euler_a"))
+@pytest.mark.parametrize("scheduler", ("euler", "euler_a", "dpmpp_2m", "dpmpp_2m_k"))
 def test_real_dispatch_routes_img_once_without_prepared_vae_or_txt_output(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -211,10 +221,14 @@ def test_real_dispatch_routes_img_once_without_prepared_vae_or_txt_output(
         assert kwargs["command"].cfg_rescale == cfg_rescale
         assert kwargs["command"].scheduler == scheduler
         assert kwargs["pipeline"] is pipeline
-        assert kwargs["denoising_profile"] == (
-            "ordinary-canvas-euler-ancestral-img2img-cuda-fp16-v1"
-            if scheduler == "euler_a"
-            else "ordinary-canvas-euler-img2img-cuda-fp16-v1"
+        assert (
+            kwargs["denoising_profile"]
+            == {
+                "euler": "ordinary-canvas-euler-img2img-cuda-fp16-v1",
+                "euler_a": "ordinary-canvas-euler-ancestral-img2img-cuda-fp16-v1",
+                "dpmpp_2m": "ordinary-canvas-dpmpp-2m-img2img-cuda-fp16-v1",
+                "dpmpp_2m_k": "ordinary-canvas-dpmpp-2m-img2img-cuda-fp16-v1",
+            }[scheduler]
         )
         assert (
             kwargs["profile"]

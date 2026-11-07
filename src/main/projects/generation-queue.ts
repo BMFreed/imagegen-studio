@@ -1079,7 +1079,7 @@ export class GenerationQueueRepository {
           !(
             input.request.type === 'generate-illustrious-img2img' &&
             input.prepared.context.kind === 'normal-img2img-preparation' &&
-            input.request.job.sampling.scheduler === 'euler_a'
+            ['dpmpp_2m', 'dpmpp_2m_k', 'euler_a'].includes(input.request.job.sampling.scheduler)
           )
         : input.regional.initializationProfile !== 'invoke-cpu-f32-add-noise-v1' ||
           !['dpmpp_2m', 'dpmpp_2m_k', 'euler_a'].includes(input.request.job.sampling.scheduler)
@@ -1158,7 +1158,7 @@ export class GenerationQueueRepository {
             !(
               request.type === 'generate-illustrious-img2img' &&
               prepared.context.kind === 'normal-img2img-preparation' &&
-              request.job.sampling.scheduler === 'euler_a'
+              ['dpmpp_2m', 'dpmpp_2m_k', 'euler_a'].includes(request.job.sampling.scheduler)
             )
           : regional.initializationProfile !== 'invoke-cpu-f32-add-noise-v1' ||
             !['dpmpp_2m', 'dpmpp_2m_k', 'euler_a'].includes(request.job.sampling.scheduler))

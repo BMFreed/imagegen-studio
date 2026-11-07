@@ -36,6 +36,7 @@ import {
   supportsInferenceRegionalDpm,
   supportsInferenceRegionalImg2Img,
   supportsInferenceRegionalImg2ImgCFGRescale,
+  supportsInferenceRegionalImg2ImgDpmpp2m,
   supportsInferenceRegionalImg2ImgEulerAncestral,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
@@ -438,6 +439,11 @@ export class ProjectGenerationActionController {
         !this.closed &&
         !!this.options.regional &&
         supportsInferenceRegionalImg2ImgCFGRescale(ready),
+      regionalImg2ImgDpmpp2mSupported:
+        !this.blocked &&
+        !this.closed &&
+        !!this.options.regional &&
+        supportsInferenceRegionalImg2ImgDpmpp2m(ready),
       regionalImg2ImgEulerASupported:
         !this.blocked &&
         !this.closed &&
@@ -712,7 +718,8 @@ export class ProjectGenerationActionController {
                 ((document.generationDraft.cfgRescale ?? 0) !== 0 &&
                   !supportsInferenceRegionalCFGRescale(preparation.inferenceReady)) ||
                 (document.generationDraft.sampling.sampler === 'DPM++ 2M' &&
-                  !supportsInferenceRegionalDpm(preparation.inferenceReady)) ||
+                  !supportsInferenceRegionalDpm(preparation.inferenceReady) &&
+                  !supportsInferenceRegionalImg2ImgDpmpp2m(preparation.inferenceReady)) ||
                 (document.generationDraft.loras.some((entry) => entry.enabled) &&
                   !supportsInferenceRegionalLoras(preparation.inferenceReady)) ||
                 ((document.generationDraft.vae !== null ||
@@ -1423,8 +1430,13 @@ export class ProjectGenerationActionController {
                 (source.operation === 'illustrious-regional-img2img' &&
                   (frozen.payload.workerJob.sampling.cfgRescale ?? 0) !== 0 &&
                   !supportsInferenceRegionalImg2ImgCFGRescale(ready)) ||
-                ((frozen.payload.workerJob.sampling.scheduler === 'dpmpp_2m' ||
-                  frozen.payload.workerJob.sampling.scheduler === 'dpmpp_2m_k') &&
+                (source.operation === 'illustrious-regional-img2img' &&
+                  (frozen.payload.workerJob.sampling.scheduler === 'dpmpp_2m' ||
+                    frozen.payload.workerJob.sampling.scheduler === 'dpmpp_2m_k') &&
+                  !supportsInferenceRegionalImg2ImgDpmpp2m(ready)) ||
+                (source.operation === 'illustrious-regional-txt2img' &&
+                  (frozen.payload.workerJob.sampling.scheduler === 'dpmpp_2m' ||
+                    frozen.payload.workerJob.sampling.scheduler === 'dpmpp_2m_k') &&
                   !supportsInferenceRegionalDpm(ready)) ||
                 ((frozen.payload.workerJob.loras?.length ?? 0) > 0 &&
                   !supportsInferenceRegionalLoras(ready)) ||

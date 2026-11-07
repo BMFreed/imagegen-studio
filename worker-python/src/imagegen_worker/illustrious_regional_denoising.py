@@ -114,6 +114,8 @@ _DenoisingProfile = Literal[
     "ordinary-canvas-euler-img2img-cuda-fp16-v1",
     "ordinary-canvas-euler-ancestral-img2img-cpu-v1",
     "ordinary-canvas-euler-ancestral-img2img-cuda-fp16-v1",
+    "ordinary-canvas-dpmpp-2m-img2img-cpu-v1",
+    "ordinary-canvas-dpmpp-2m-img2img-cuda-fp16-v1",
 ]
 _Layout = Literal["cfg-negative-first", "positive-only"]
 _MAX_FINITE_ELEMENTS = 8_388_608
@@ -187,6 +189,8 @@ def _execution_profile(
         "ordinary-canvas-euler-img2img-cuda-fp16-v1": ("cuda-float16-v1", True),
         "ordinary-canvas-euler-ancestral-img2img-cpu-v1": ("cpu-float32-v1", True),
         "ordinary-canvas-euler-ancestral-img2img-cuda-fp16-v1": ("cuda-float16-v1", True),
+        "ordinary-canvas-dpmpp-2m-img2img-cpu-v1": ("cpu-float32-v1", True),
+        "ordinary-canvas-dpmpp-2m-img2img-cuda-fp16-v1": ("cuda-float16-v1", True),
     }
     _require(
         type(denoising_profile) is str and denoising_profile in profiles,
@@ -224,6 +228,8 @@ def _img2img_profile(denoising_profile: _DenoisingProfile) -> bool:
         "ordinary-canvas-euler-img2img-cuda-fp16-v1",
         "ordinary-canvas-euler-ancestral-img2img-cpu-v1",
         "ordinary-canvas-euler-ancestral-img2img-cuda-fp16-v1",
+        "ordinary-canvas-dpmpp-2m-img2img-cpu-v1",
+        "ordinary-canvas-dpmpp-2m-img2img-cuda-fp16-v1",
     )
 
 
@@ -274,6 +280,8 @@ def _dpmpp_2m_profile(denoising_profile: _DenoisingProfile) -> bool:
         "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cpu-v1",
         "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cuda-fp16-v1",
         "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cuda-vae-v1",
+        "ordinary-canvas-dpmpp-2m-img2img-cpu-v1",
+        "ordinary-canvas-dpmpp-2m-img2img-cuda-fp16-v1",
     )
 
 
@@ -1152,8 +1160,10 @@ def run_current_canvas_regional_denoising(
     compute-device xor-seeded step generator. Initial-noise generation is unchanged.
     Their image profiles retain the native img2img strength window and posterior;
     they do not select the txt2img initializer.
-    Additive DPM++ 2M profiles require Invoke composition/initialization, the same
-    explicit policy, native int64 timesteps and independent xor step kwargs.
+    Additive DPM++ 2M profiles require Invoke composition, the same explicit
+    policy, native int64 timesteps and independent xor step kwargs. Only their
+    txt2img profiles select Invoke initialization; image profiles keep the
+    source/posterior and native selected-window begin index.
     The original deterministic multistep scheduler retains its own history.
     All use detached request policies; borrowed scheduler policy is unused.
     Invoke Canvas profiles admit the existing bounded CFG Rescale value. The
@@ -1301,6 +1311,7 @@ def run_current_canvas_regional_denoising(
                 resolved_noise=True,
                 img2img=True,
                 **({"ancestral": True} if ancestral else {}),
+                **({"dpmpp_2m": True} if dpmpp_2m else {}),
             )
         elif dpmpp_2m:
             fresh = _fresh_pipeline(

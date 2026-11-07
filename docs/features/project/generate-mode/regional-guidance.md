@@ -1781,3 +1781,8 @@ releases only idle own scratch, reclaiming 55,685,120 allocated bytes. Canonical
 runtime/model/autosave dependencies stay protected. Selected VAE/FP32 image
 encoding, DPM image sampling, partial alpha, Anima, visual/human and release
 Install/Repair remain separate. PP-001/005/007/008 stay **«Пока не обещать»**.
+
+
+## Opaque regional IMG DPM++ 2M continuation
+
+[Finite research contract](../../../engineering/phase-4-regional-guidance-img2img-dpmpp-2m-research.md) adds explicit Normal/Karras IMG profiles and a separate combination capability, reusing InvokeAI-based source/window/native history owners. IMG carries no TXT initializer. ROOT550 Main/450 Python/194 browser PASS and18 installed checks qualify the finite opaque Embedded-FP16 path. Actual DPM/Karras/.7 frozen Retry survives saved Euler/cleared-schedule/.2/source edits through Add/Save-reopen. Two direct installed controls preserve the project/queue, select15 Normal versus16 Karras steps and reproduce the UI Karras RGBA exactly;721,176 RGB channels differ between the modes. Three semantic mutation REDs retain controls/restoration. Authoring defaults, persistence, negative scope and visual-quality limits remain unchanged. PP-001/005/007/008 remain «Пока не обещать».

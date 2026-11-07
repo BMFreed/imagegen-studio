@@ -2424,6 +2424,7 @@ const generationBlockingReason = computed(() => {
         dpmSupported: props.generationState?.regionalDpmSupported,
         embeddingsSupported: props.generationState?.embeddingsSupported,
         img2imgCfgRescaleSupported: props.generationState?.regionalImg2ImgCfgRescaleSupported,
+        img2imgDpmpp2mSupported: props.generationState?.regionalImg2ImgDpmpp2mSupported,
         img2imgEulerASupported: props.generationState?.regionalImg2ImgEulerASupported,
         img2imgSupported: props.generationState?.regionalImg2ImgSupported,
         initializationSupported: props.generationState?.regionalInvokeInitializationSupported,

@@ -752,7 +752,7 @@ for (const fault of [
   'private',
   'init',
   'ancestral-txt-init',
-  'dpm',
+  'dpm-txt-init',
   'rescale',
   'auto',
   'fp32',
@@ -776,8 +776,9 @@ for (const fault of [
           input.request.job.vaePrecision = fault === 'auto' ? 'Auto' : 'FP32'
           break
         }
-        case 'dpm': {
+        case 'dpm-txt-init': {
           input.request.job.sampling.scheduler = 'dpmpp_2m'
+          input.initializationProfile = 'invoke-cpu-f32-add-noise-v1'
           break
         }
         case 'init': {
@@ -822,4 +823,33 @@ for (const alpha of [0, 127]) {
       assert.deepEqual(await readdir(fixture.scratch), [])
     })
   })
+}
+
+for (const scheduler of ['dpmpp_2m', 'dpmpp_2m_k'] as const) {
+  for (const strength of [0, 0.5, 1]) {
+    test(`public regional ${scheduler} image transport preserves strength ${strength} without TXT initialization`, async () => {
+      await withFixture(async (fixture) => {
+        await useOpaqueImgFixture(fixture, strength)
+        fixture.input.request.job.sampling.scheduler = scheduler
+        fixture.input.request.job.sampling.cfgRescale = 0.7
+        const before = structuredClone(fixture.input)
+        const source = await readFile(fixture.input.request.job.target.path)
+        const lease = await prepareRegionalWorkerRequest(fixture.input, fixture.scratch)
+        try {
+          const bundle = await bundleOf(lease)
+          assert.ok(bundle.request.type === 'generate-illustrious-img2img')
+          assert.equal(bundle.request.job.sampling.scheduler, scheduler)
+          assert.equal(bundle.request.job.sampling.denoisingStrength, strength)
+          assert.equal(bundle.request.job.sampling.cfgRescale, 0.7)
+          assert.equal(bundle.initializationProfile, undefined)
+          assert.equal('initializationProfile' in lease.wire, false)
+          assert.deepEqual(fixture.input, before)
+          assert.ok((await readFile(lease.request.job.target.path)).equals(source))
+        } finally {
+          await lease.dispose()
+        }
+        assert.deepEqual(await readdir(fixture.scratch), [])
+      })
+    })
+  }
 }

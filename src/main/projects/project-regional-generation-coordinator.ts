@@ -9,6 +9,7 @@ import {
   supportsInferenceRegionalDpm,
   supportsInferenceRegionalImg2Img,
   supportsInferenceRegionalImg2ImgCFGRescale,
+  supportsInferenceRegionalImg2ImgDpmpp2m,
   supportsInferenceRegionalImg2ImgEulerAncestral,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
@@ -456,7 +457,8 @@ export class ProjectRegionalGenerationCoordinator {
                 !supportsInferenceRegionalCFGRescale(ready)) ||
               (compositionProfile &&
                 document.generationDraft.sampling.sampler === 'DPM++ 2M' &&
-                !supportsInferenceRegionalDpm(ready)) ||
+                !supportsInferenceRegionalDpm(ready) &&
+                !supportsInferenceRegionalImg2ImgDpmpp2m(ready)) ||
               (compositionProfile &&
                 document.generationDraft.loras.some((entry) => entry.enabled) &&
                 !supportsInferenceRegionalLoras(ready)) ||
@@ -471,7 +473,11 @@ export class ProjectRegionalGenerationCoordinator {
                 ) &&
                 !supportsInferenceEmbeddings(ready)) ||
               (txtInitializationProfile !== undefined &&
-                !supportsInferenceRegionalInvokeInitialization(ready))
+                !supportsInferenceRegionalInvokeInitialization(ready) &&
+                !(
+                  document.generationDraft.sampling.sampler === 'DPM++ 2M' &&
+                  supportsInferenceRegionalImg2ImgDpmpp2m(ready)
+                ))
             ) {
               throw new ProjectRegionalGenerationError(
                 'INFERENCE_UNAVAILABLE',
@@ -503,6 +509,17 @@ export class ProjectRegionalGenerationCoordinator {
             // frozen source/posterior owner and must never inherit the TXT initializer.
             const initializationProfile =
               target.mode === 'img2img' ? undefined : txtInitializationProfile
+            if (
+              compositionProfile &&
+              target.mode !== 'img2img' &&
+              document.generationDraft.sampling.sampler === 'DPM++ 2M' &&
+              !supportsInferenceRegionalDpm(ready)
+            ) {
+              throw new ProjectRegionalGenerationError(
+                'INFERENCE_UNAVAILABLE',
+                'The image engine has not qualified the regional DPM++ 2M TXT initialization.',
+              )
+            }
             if (compositionProfile && target.mode === 'img2img') {
               const draft = document.generationDraft
               if (!supportsInferenceRegionalImg2Img(ready)) {
@@ -521,6 +538,15 @@ export class ProjectRegionalGenerationCoordinator {
                 )
               }
               if (
+                draft.sampling.sampler === 'DPM++ 2M' &&
+                !supportsInferenceRegionalImg2ImgDpmpp2m(ready)
+              ) {
+                throw new ProjectRegionalGenerationError(
+                  'INFERENCE_UNAVAILABLE',
+                  'The image engine has not qualified DPM++ 2M with opaque regional img2img.',
+                )
+              }
+              if (
                 (draft.cfgRescale ?? 0) !== 0 &&
                 !supportsInferenceRegionalImg2ImgCFGRescale(ready)
               ) {
@@ -530,14 +556,19 @@ export class ProjectRegionalGenerationCoordinator {
                 )
               }
               if (
-                (draft.sampling.sampler !== 'Euler' && draft.sampling.sampler !== 'Euler a') ||
-                draft.sampling.scheduler !== 'Normal' ||
+                !(
+                  ((draft.sampling.sampler === 'Euler' || draft.sampling.sampler === 'Euler a') &&
+                    draft.sampling.scheduler === 'Normal') ||
+                  (draft.sampling.sampler === 'DPM++ 2M' &&
+                    (draft.sampling.scheduler === 'Normal' ||
+                      draft.sampling.scheduler === 'Karras'))
+                ) ||
                 draft.vae !== null ||
                 draft.vaePrecision !== 'FP16' ||
                 initializationProfile !== undefined
               ) {
                 throw unsupported(
-                  'Regional img2img requires Euler or Euler a with Normal and Embedded FP16 VAE.',
+                  'Regional img2img requires Euler or Euler a with Normal, or DPM++ 2M with Normal or Karras, and Embedded FP16 VAE.',
                 )
               }
             }

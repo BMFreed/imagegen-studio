@@ -286,10 +286,12 @@ export function captureRegionalWorkerInput(input: RegionalWorkerInput): Regional
     if (
       dpm &&
       (detached.compositionProfile !== 'invoke-canvas-v1' ||
-        detached.initializationProfile !== 'invoke-cpu-f32-add-noise-v1')
+        (detached.request.type === 'generate-illustrious-img2img'
+          ? detached.initializationProfile !== undefined
+          : detached.initializationProfile !== 'invoke-cpu-f32-add-noise-v1'))
     ) {
       throw invalid(
-        'DPM++ 2M requires public Invoke Canvas and its explicit initialization policy.',
+        'DPM++ 2M requires public Invoke Canvas and the initialization policy matching its target mode.',
       )
     }
     if (
@@ -521,13 +523,12 @@ function validateAgreement(input: v.InferOutput<typeof inputSchema>): void {
     request.type === 'generate-illustrious-img2img' &&
     (input.compositionProfile !== 'invoke-canvas-v1' ||
       input.initializationProfile !== undefined ||
-      (request.job.sampling.scheduler !== 'euler' &&
-        request.job.sampling.scheduler !== 'euler_a') ||
+      !['dpmpp_2m', 'dpmpp_2m_k', 'euler', 'euler_a'].includes(request.job.sampling.scheduler) ||
       request.job.vae != null ||
       request.job.vaePrecision !== 'FP16')
   ) {
     throw invalid(
-      'Regional img2img requires public Invoke Canvas, Euler or Euler a, Embedded FP16 VAE and no txt2img initialization.',
+      'Regional img2img requires public Invoke Canvas, Euler, Euler a or DPM++ 2M, Embedded FP16 VAE and no txt2img initialization.',
     )
   }
   if (

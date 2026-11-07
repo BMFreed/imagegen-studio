@@ -105,6 +105,7 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   dpmSupported?: boolean | null
   embeddingsSupported?: boolean | null
   img2imgCfgRescaleSupported?: boolean | null
+  img2imgDpmpp2mSupported?: boolean | null
   img2imgEulerASupported?: boolean | null
   img2imgSupported?: boolean | null
   initializationSupported?: boolean | null
@@ -132,12 +133,16 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   const img2img = input.targetMode === 'img2img'
   if (
     img2img &&
-    ((draft.sampling.sampler !== 'Euler' && draft.sampling.sampler !== 'Euler a') ||
-      draft.sampling.scheduler !== 'Normal' ||
+    (!(
+      ((draft.sampling.sampler === 'Euler' || draft.sampling.sampler === 'Euler a') &&
+        draft.sampling.scheduler === 'Normal') ||
+      (draft.sampling.sampler === 'DPM++ 2M' &&
+        (draft.sampling.scheduler === 'Normal' || draft.sampling.scheduler === 'Karras'))
+    ) ||
       draft.vae !== null ||
       draft.vaePrecision !== 'FP16')
   ) {
-    return 'Regional img2img requires Euler or Euler a with Normal and Embedded FP16 VAE.'
+    return 'Regional img2img requires Euler or Euler a with Normal, or DPM++ 2M with Normal or Karras, and Embedded FP16 VAE.'
   }
   if (!(
     ((draft.sampling.sampler === 'Euler' || draft.sampling.sampler === 'Euler a') &&
@@ -227,6 +232,14 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
       return 'The current image engine does not support Euler a with opaque regional img2img. Repair or update the runtime.'
     }
   }
+  if (img2img && draft.sampling.sampler === 'DPM++ 2M') {
+    if (input.img2imgDpmpp2mSupported === undefined || input.img2imgDpmpp2mSupported === null) {
+      return 'Checking image engine support for DPM++ 2M with opaque regional img2img. Repair or update the runtime if support remains unavailable.'
+    }
+    if (input.img2imgDpmpp2mSupported !== true) {
+      return 'The current image engine does not support DPM++ 2M with opaque regional img2img. Repair or update the runtime.'
+    }
+  }
   if (cfgRescale !== 0) {
     if (input.cfgRescaleSupported === undefined || input.cfgRescaleSupported === null) {
       return 'Checking image engine support for CFG Rescale with Regional Guidance. Repair or update the runtime if support remains unavailable.'
@@ -246,7 +259,11 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
       return 'The current image engine does not support CFG Rescale with opaque regional img2img. Repair or update the runtime.'
     }
   }
-  if (draft.sampling.sampler === 'DPM++ 2M') {
+  if (
+    draft.sampling.sampler === 'DPM++ 2M' &&
+    !img2img &&
+    !(input.targetMode == null && input.img2imgDpmpp2mSupported === true)
+  ) {
     if (input.dpmSupported === undefined || input.dpmSupported === null) {
       return 'Checking image engine support for Regional Guidance with DPM++ 2M. Repair or update the runtime if support remains unavailable.'
     }

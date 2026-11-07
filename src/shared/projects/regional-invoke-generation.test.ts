@@ -428,7 +428,7 @@ test('opaque regional img2img refuses TXT-only sampling and VAE choices without 
         v.generationDraft.sampling.scheduler = 'Karras'
       },
     ],
-    ['DPM++ 2M', (v) => (v.generationDraft.sampling.sampler = 'DPM++ 2M')],
+    ['DPM++ SDE', (v) => (v.generationDraft.sampling.sampler = 'DPM++ SDE')],
     ['Karras', (v) => (v.generationDraft.sampling.scheduler = 'Karras')],
     ['Auto', (v) => (v.generationDraft.vaePrecision = 'Auto')],
     ['FP32', (v) => (v.generationDraft.vaePrecision = 'FP32')],
@@ -447,7 +447,7 @@ test('opaque regional img2img refuses TXT-only sampling and VAE choices without 
         initializationSupported: true,
         vaeSupported: true,
       })!,
-      /Regional img2img requires Euler or Euler a with Normal and Embedded FP16 VAE/,
+      /Regional img2img requires Euler or Euler a with Normal, or DPM\+\+ 2M with Normal or Karras, and Embedded FP16 VAE/,
       name,
     )
     assert.deepEqual(value, before)
@@ -629,4 +629,37 @@ test('opaque Euler a requires its own combination capability while Euler and TXT
     }),
     null,
   )
+})
+
+test('opaque DPM Normal and Karras require the separate IMG capability without TXT initialization', () => {
+  for (const scheduler of ['Normal', 'Karras'] as const) {
+    const value = document()
+    value.generationDraft.sampling.sampler = 'DPM++ 2M'
+    value.generationDraft.sampling.scheduler = scheduler
+    value.generationDraft.sampling.denoisingStrength = 0.5
+    const before = structuredClone(value)
+    for (const img2imgDpmpp2mSupported of [undefined, null, false]) {
+      assert.match(
+        imageReason(value, {
+          dpmSupported: true,
+          img2imgDpmpp2mSupported,
+          initializationSupported: true,
+        })!,
+        /DPM\+\+ 2M with opaque regional img2img/,
+      )
+    }
+    const flags = {
+      dpmSupported: false,
+      img2imgDpmpp2mSupported: true,
+      initializationSupported: false,
+    }
+    assert.equal(imageReason(value, flags), null)
+    assert.equal(imageReason(value, { ...flags, targetMode: undefined }), null)
+    assert.match(
+      imageReason(value, { ...flags, targetMode: 'txt2img' })!,
+      /Regional Guidance with DPM/,
+    )
+    assert.match(imageReason(value, { ...flags, targetMode: 'outpaint' })!, /partially transparent/)
+    assert.deepEqual(value, before)
+  }
 })

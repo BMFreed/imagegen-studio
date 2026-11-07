@@ -36,6 +36,8 @@ export interface ProjectGenerationActionState {
   regionalDpmSupported?: boolean
   /** Separate nonzero image rescale support; independent TXT/image flags never imply it. */
   regionalImg2ImgCfgRescaleSupported?: boolean
+  /** Separate image DPM++ 2M support; no TXT initialization is selected for source latents. */
+  regionalImg2ImgDpmpp2mSupported?: boolean
   /** Separate image Euler a support; TXT initialization and image support alone never imply it. */
   regionalImg2ImgEulerASupported?: boolean
   /** Separate opaque regional image support; absence keeps old workers unavailable. */
@@ -136,6 +138,7 @@ export function isProjectGenerationActionState(
         'regionalImg2ImgSupported',
         'regionalImg2ImgCfgRescaleSupported',
         'regionalImg2ImgEulerASupported',
+        'regionalImg2ImgDpmpp2mSupported',
         'regionalInvokeInitializationSupported',
         'regionalLoraSupported',
         'regionalVaeSupported',
@@ -152,6 +155,8 @@ export function isProjectGenerationActionState(
       typeof value['regionalDpmSupported'] !== 'boolean') ||
     (value['regionalImg2ImgCfgRescaleSupported'] !== undefined &&
       typeof value['regionalImg2ImgCfgRescaleSupported'] !== 'boolean') ||
+    (value['regionalImg2ImgDpmpp2mSupported'] !== undefined &&
+      typeof value['regionalImg2ImgDpmpp2mSupported'] !== 'boolean') ||
     (value['regionalImg2ImgEulerASupported'] !== undefined &&
       typeof value['regionalImg2ImgEulerASupported'] !== 'boolean') ||
     (value['regionalImg2ImgSupported'] !== undefined &&

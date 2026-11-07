@@ -9,6 +9,7 @@ type RetryState = Pick<
   | 'regionalCfgRescaleSupported'
   | 'regionalDpmSupported'
   | 'regionalImg2ImgCfgRescaleSupported'
+  | 'regionalImg2ImgDpmpp2mSupported'
   | 'regionalImg2ImgEulerASupported'
   | 'regionalImg2ImgSupported'
   | 'regionalInvokeInitializationSupported'
@@ -47,6 +48,13 @@ export function generationQueueRetryReason(
     ) {
       return 'The current image engine does not support Euler a with opaque regional img2img. Repair or update the runtime.'
     }
+    if (
+      operation === 'illustrious-regional-img2img' &&
+      frozenSampler === 'DPM++ 2M' &&
+      state.regionalImg2ImgDpmpp2mSupported !== true
+    ) {
+      return 'The current image engine does not support DPM++ 2M with opaque regional img2img. Repair or update the runtime.'
+    }
     if (frozenCfgRescale !== 0 && state.regionalCfgRescaleSupported !== true) {
       return 'The current image engine does not support CFG Rescale with Regional Guidance. Repair or update the runtime.'
     }
@@ -63,7 +71,11 @@ export function generationQueueRetryReason(
     if (requiresRegionalVae && state.regionalVaeSupported !== true) {
       return 'The current image engine does not support selected VAE and precision with Regional Guidance. Repair or update the runtime.'
     }
-    if (frozenSampler === 'DPM++ 2M' && state.regionalDpmSupported !== true) {
+    if (
+      operation === 'illustrious-regional-txt2img' &&
+      frozenSampler === 'DPM++ 2M' &&
+      state.regionalDpmSupported !== true
+    ) {
       return 'The current image engine does not support Regional Guidance with DPM++ 2M. Repair or update the runtime.'
     }
     return frozenSampler === 'Euler a' && state.regionalInvokeInitializationSupported !== true

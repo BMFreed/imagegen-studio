@@ -251,8 +251,10 @@ def _generate_current_canvas_regional(
     policy bounds and the runner's independent Invoke step generator.
     Separately selected invoke-init profiles also use Invoke's CPU FP32 draw,
     CPU compute-dtype cast and original scheduler.add_noise initialization.
-    DPM++ 2M profiles require that initialization and Invoke composition, selecting
-    the existing deterministic Normal/Karras native scheduler and int64 timesteps.
+    DPM++ 2M profiles require Invoke composition and select the existing
+    deterministic Normal/Karras native scheduler with int64 timesteps. Their
+    txt2img profiles require that initializer; image profiles retain the source
+    posterior and selected strength window.
     Existing profiles retain their native initial preparation. Exact-TI
     copy and existing native preflights remain unchanged.
     Invoke Canvas profiles consume bounded CFG Rescale through the original
@@ -437,12 +439,13 @@ def generate_current_canvas_regional_img2img(
 ) -> dict[str, object]:
     """Consume one verified opaque RGB snapshot through the ordinary native image path.
 
-    Only the exact img2img command and explicit Euler image profiles are admitted.
+    Only the exact img2img command and explicit Euler, Euler a or DPM++ 2M image
+    profiles are admitted.
     The unchanged ordinary factory owns training-timestep cutoff and independent
     replayable posterior sampling; its existing compute-dtype noise policy is
-    retained. Strength zero encodes/decodes without a denoising step. VAE selection,
-    ancestral/DPM image sampling, partial alpha and public transport remain outside
-    this private frontend. All output/restoration/publication owners are shared.
+    retained. Strength zero encodes/decodes without a denoising step. VAE selection
+    and partial alpha remain outside this frontend. All output/restoration and
+    publication owners are shared with the worker's public image route.
     """
     return _generate_current_canvas_regional(
         recipe,
