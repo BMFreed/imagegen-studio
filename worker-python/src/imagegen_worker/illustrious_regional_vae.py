@@ -7,6 +7,10 @@ external snapshot and selected precision configuration. This owner prepares only
 the fresh job-owned VAE before borrowing. The native denoising loop returns its
 original latent result; Invoke's dtype-before-scaling decode runs inside the same
 regional reservation, without changing borrowed tensor storage or configuration.
+The private prepared-image seam also adapts vae/image_to_latents.py and Canvas
+compileCanvasGraph.ts::graftImageToImage: native encode/sample, scale in VAE
+compute dtype, then cast for the denoiser. Its replayable posterior is the
+existing Studio image adaptation, not Invoke's unseeded sampling.
 
 Auto retains the native force_upcast decision; it is not a new fixed default.
 No VAE copy, offload, tiling, fallback or second diffusion loop is introduced.
@@ -16,6 +20,8 @@ from __future__ import annotations
 
 import importlib
 import math
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, cast
 
@@ -35,6 +41,7 @@ __all__ = (
     "regional_vae_dtype",
     "validate_prepared_regional_vae",
     "decode_regional_latents",
+    "scoped_prepared_img2img_latents",
     "validate_regional_vae_output",
 )
 
@@ -223,6 +230,146 @@ def validate_prepared_regional_vae(
         "Invoke regional VAE decode requires absent latent mean/std normalization.",
     )
     _model_state(pipeline, torch, modules, dtype)
+
+
+@contextmanager
+def scoped_prepared_img2img_latents(
+    pipeline: Any,
+    parameters: IllustriousInferenceParameters,
+    torch: Any,
+    *,
+    width: int,
+    height: int,
+) -> Generator[None]:
+    """Adapt Invoke encode on the fresh image wrapper, preserving borrowed VAE state.
+
+    The caller validates and reserves the prepared native components first. Only
+    this execution wrapper's method slot changes. In particular, do not call the
+    ordinary Diffusers prepare_latents here: force_upcast would call .to() on the
+    borrowed VAE and restore it to the denoiser dtype after encoding.
+    """
+    _require(
+        type(width) is int
+        and type(height) is int
+        and 8 <= width <= 2048
+        and 8 <= height <= 2048
+        and width % 8 == height % 8 == 0
+        and width * height <= 4_000_000,
+        "Prepared image dimensions exceed the existing Canvas bounds.",
+    )
+    vae_dtype = regional_vae_dtype(pipeline, parameters, torch)
+    unet_parameter = next(pipeline.unet.parameters())
+    device, denoiser_dtype = unet_parameter.device, unet_parameter.dtype
+    distribution_type = cast(
+        Any, importlib.import_module("diffusers.models.autoencoders.vae")
+    ).DiagonalGaussianDistribution
+    encoded_type = cast(
+        Any, importlib.import_module("diffusers.models.modeling_outputs")
+    ).AutoencoderKLOutput
+    present, previous = (
+        "prepare_latents" in pipeline.__dict__,
+        pipeline.__dict__.get("prepare_latents"),
+    )
+
+    def checked_tensor(value: Any, shape: tuple[int, ...], dtype: Any, label: str) -> None:
+        _require(
+            type(value) is torch.Tensor
+            and value.device == device
+            and value.layout == torch.strided
+            and value.dtype == dtype
+            and value.requires_grad is False
+            and tuple(value.shape) == shape,
+            f"Prepared image {label} has the wrong device, dtype or shape.",
+        )
+        # Dimensions are bounded first; never flatten an unsupported tensor or
+        # allocate an image-sized cast merely to inspect finite values.
+        rows = max(1, _MAX_FINITE_ELEMENTS // (shape[1] * shape[3]))
+        for start in range(0, shape[2], rows):
+            _require(
+                bool(torch.isfinite(value[:, :, start : start + rows, :]).all().item()),
+                f"Prepared image {label} must be finite.",
+            )
+
+    def prepare_latents(
+        image: Any,
+        timestep: Any,
+        batch_size: int,
+        num_images_per_prompt: int,
+        dtype: Any,
+        device: Any,
+        generator: Any = None,
+        add_noise: bool = True,
+    ) -> Any:
+        expected_device = unet_parameter.device
+        _require(
+            type(batch_size) is int
+            and batch_size == 1
+            and type(num_images_per_prompt) is int
+            and num_images_per_prompt == 1
+            and dtype == denoiser_dtype
+            and type(device) is torch.device
+            and device == expected_device
+            and type(generator) is torch.Generator
+            and generator.device == torch.device("cpu")
+            and type(add_noise) is bool,
+            "Prepared image encoding requires one image and its frozen CPU generator.",
+        )
+        _require(
+            type(image) is torch.Tensor
+            and image.device in (torch.device("cpu"), expected_device)
+            and image.layout == torch.strided
+            and image.dtype == torch.float32
+            and image.requires_grad is False
+            and tuple(image.shape) == (1, 3, height, width),
+            "Prepared image encoding requires the original preprocessed FP32 RGB tensor.",
+        )
+        _require(
+            type(timestep) is torch.Tensor
+            and timestep.device == expected_device
+            and timestep.layout == torch.strided
+            and timestep.dtype in (torch.float32, torch.int64)
+            and timestep.requires_grad is False
+            and tuple(timestep.shape) in ((0,), (1,))
+            and bool(torch.isfinite(timestep).all().item()),
+            "Prepared image encoding requires the native selected first timestep or empty window.",
+        )
+        _require(
+            len(timestep) == 0 or add_noise,
+            "Prepared img2img requires initial noise for a nonempty window.",
+        )
+        pixels = image.to(device=expected_device, dtype=vae_dtype)
+        checked_tensor(pixels, (1, 3, height, width), vae_dtype, "pixels")
+        posterior_generator = torch.Generator(device="cpu")
+        posterior_generator.set_state(generator.get_state())
+        encoded = pipeline.vae.encode(pixels)
+        _require(
+            type(encoded) is encoded_type and type(encoded.latent_dist) is distribution_type,
+            "Prepared image encoding requires the original native posterior distribution.",
+        )
+        sampled = encoded.latent_dist.sample(generator=posterior_generator)
+        latent_shape = (1, 4, height // 8, width // 8)
+        checked_tensor(sampled, latent_shape, vae_dtype, "posterior")
+        # Invoke multiplies before the final dtype conversion. Casting the
+        # posterior to FP16 first introduces a different rounding boundary.
+        encoded_latents = (pipeline.vae.config.scaling_factor * sampled).to(dtype=denoiser_dtype)
+        checked_tensor(encoded_latents, latent_shape, denoiser_dtype, "scaled source")
+        if len(timestep) == 0:
+            return encoded_latents
+        noise = torch.randn(
+            encoded_latents.shape, generator=generator, device="cpu", dtype=denoiser_dtype
+        ).to(expected_device)
+        result = pipeline.scheduler.add_noise(encoded_latents, noise, timestep)
+        checked_tensor(result, latent_shape, denoiser_dtype, "noised source")
+        return result
+
+    try:
+        pipeline.prepare_latents = prepare_latents
+        yield
+    finally:
+        if present:
+            pipeline.prepare_latents = previous
+        else:
+            del pipeline.prepare_latents
 
 
 def _output_tensor(

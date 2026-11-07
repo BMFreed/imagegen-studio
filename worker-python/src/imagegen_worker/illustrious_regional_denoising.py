@@ -70,6 +70,7 @@ from .illustrious_regional_recipe import (
 )
 from .illustrious_regional_vae import (
     decode_regional_latents,
+    scoped_prepared_img2img_latents,
     validate_prepared_regional_vae,
     validate_regional_vae_output,
     validate_regional_vae_parameters,
@@ -116,6 +117,9 @@ _DenoisingProfile = Literal[
     "ordinary-canvas-euler-ancestral-img2img-cuda-fp16-v1",
     "ordinary-canvas-dpmpp-2m-img2img-cpu-v1",
     "ordinary-canvas-dpmpp-2m-img2img-cuda-fp16-v1",
+    "ordinary-canvas-euler-img2img-cuda-vae-v1",
+    "ordinary-canvas-euler-ancestral-img2img-cuda-vae-v1",
+    "ordinary-canvas-dpmpp-2m-img2img-cuda-vae-v1",
 ]
 _Layout = Literal["cfg-negative-first", "positive-only"]
 _MAX_FINITE_ELEMENTS = 8_388_608
@@ -191,6 +195,9 @@ def _execution_profile(
         "ordinary-canvas-euler-ancestral-img2img-cuda-fp16-v1": ("cuda-float16-v1", True),
         "ordinary-canvas-dpmpp-2m-img2img-cpu-v1": ("cpu-float32-v1", True),
         "ordinary-canvas-dpmpp-2m-img2img-cuda-fp16-v1": ("cuda-float16-v1", True),
+        "ordinary-canvas-euler-img2img-cuda-vae-v1": ("cuda-float16-v1", True),
+        "ordinary-canvas-euler-ancestral-img2img-cuda-vae-v1": ("cuda-float16-v1", True),
+        "ordinary-canvas-dpmpp-2m-img2img-cuda-vae-v1": ("cuda-float16-v1", True),
     }
     _require(
         type(denoising_profile) is str and denoising_profile in profiles,
@@ -230,6 +237,9 @@ def _img2img_profile(denoising_profile: _DenoisingProfile) -> bool:
         "ordinary-canvas-euler-ancestral-img2img-cuda-fp16-v1",
         "ordinary-canvas-dpmpp-2m-img2img-cpu-v1",
         "ordinary-canvas-dpmpp-2m-img2img-cuda-fp16-v1",
+        "ordinary-canvas-euler-img2img-cuda-vae-v1",
+        "ordinary-canvas-euler-ancestral-img2img-cuda-vae-v1",
+        "ordinary-canvas-dpmpp-2m-img2img-cuda-vae-v1",
     )
 
 
@@ -248,6 +258,9 @@ def _vae_profile(denoising_profile: _DenoisingProfile) -> bool:
         "ordinary-canvas-euler-ancestral-txt2img-cuda-vae-v1",
         "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cuda-vae-v1",
         "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cuda-vae-v1",
+        "ordinary-canvas-euler-img2img-cuda-vae-v1",
+        "ordinary-canvas-euler-ancestral-img2img-cuda-vae-v1",
+        "ordinary-canvas-dpmpp-2m-img2img-cuda-vae-v1",
     )
 
 
@@ -261,6 +274,7 @@ def _ancestral_profile(denoising_profile: _DenoisingProfile) -> bool:
         "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cuda-vae-v1",
         "ordinary-canvas-euler-ancestral-img2img-cpu-v1",
         "ordinary-canvas-euler-ancestral-img2img-cuda-fp16-v1",
+        "ordinary-canvas-euler-ancestral-img2img-cuda-vae-v1",
     )
 
 
@@ -282,6 +296,7 @@ def _dpmpp_2m_profile(denoising_profile: _DenoisingProfile) -> bool:
         "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cuda-vae-v1",
         "ordinary-canvas-dpmpp-2m-img2img-cpu-v1",
         "ordinary-canvas-dpmpp-2m-img2img-cuda-fp16-v1",
+        "ordinary-canvas-dpmpp-2m-img2img-cuda-vae-v1",
     )
 
 
@@ -1164,6 +1179,8 @@ def run_current_canvas_regional_denoising(
     policy, native int64 timesteps and independent xor step kwargs. Only their
     txt2img profiles select Invoke initialization; image profiles keep the
     source/posterior and native selected-window begin index.
+    Prepared-image VAE profiles reuse the prevalidated VAE without precision
+    mutation; Invoke encode/sample/scale executes before denoiser conversion.
     The original deterministic multistep scheduler retains its own history.
     All use detached request policies; borrowed scheduler policy is unused.
     Invoke Canvas profiles admit the existing bounded CFG Rescale value. The
@@ -1288,11 +1305,12 @@ def run_current_canvas_regional_denoising(
             **({"vae_parameters": parameters} if prepared_vae else {}),
         )
         if img2img:
-            _require(
-                pipeline.vae.config.force_upcast is False,
-                "PROFILE_INVALID",
-                "Img2img requires force_upcast exactly False before borrowing the VAE.",
-            )
+            if not prepared_vae:
+                _require(
+                    pipeline.vae.config.force_upcast is False,
+                    "PROFILE_INVALID",
+                    "Img2img requires force_upcast exactly False before borrowing the VAE.",
+                )
             _img2img_vae_preflight(torch, vae_modules)
         _recipe_model_preflight(
             pipeline,
@@ -1369,6 +1387,11 @@ def run_current_canvas_regional_denoising(
         )
         generator = torch.Generator(device="cpu").manual_seed(parameters.seed)
         with (
+            scoped_prepared_img2img_latents(
+                fresh, parameters, torch, width=bbox.width, height=bbox.height
+            )
+            if img2img and prepared_vae
+            else nullcontext(),
             _scoped_invoke_initialization(
                 fresh,
                 torch,

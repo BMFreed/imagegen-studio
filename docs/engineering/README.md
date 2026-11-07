@@ -1,5 +1,9 @@
 # Engineering Workflow
 
+## Private prepared-VAE image encoding
+
+[Private encode owner](./phase-4-regional-guidance-img2img-vae-research.md) adapts Invoke image→VAE dtype→native posterior→scale→denoiser cast without changing borrowed VAE storage. New private CUDA profiles reuse existing prepared decode; public IMG remains Embedded FP16. ROOT551 PASS/619 warnings (45 new cases; four trained calls+one aggregate), strict typing and source review CLEAN. All encoder/decode precision oracles and exact FP32 repeat pass; isolated mutation gives5 GREEN/one semantic RED. Final retained-byte review is CLEAN; ROOT confirms15 ended units/readers/dependencies, retains all4502 archive entries and reclaims50,290,688 bytes from its exact scratch tree. Public selected/FP32 IMG remains the next owner.
+
 
 ## DPM++ 2M for opaque regional img2img
 

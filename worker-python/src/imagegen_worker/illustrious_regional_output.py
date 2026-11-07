@@ -443,9 +443,12 @@ def generate_current_canvas_regional_img2img(
     profiles are admitted.
     The unchanged ordinary factory owns training-timestep cutoff and independent
     replayable posterior sampling; its existing compute-dtype noise policy is
-    retained. Strength zero encodes/decodes without a denoising step. VAE selection
-    and partial alpha remain outside this frontend. All output/restoration and
-    publication owners are shared with the worker's public image route.
+    retained. Additive private prepared-VAE profiles adapt Invoke encode/sample/
+    scale with the validated VAE dtype and reuse the existing prepared decoder.
+    Strength zero encodes/decodes without a denoising step. Prepared VAE identity
+    remains the caller's loading responsibility; public worker admission is
+    unchanged. Partial alpha remains outside this frontend. All output/
+    restoration and publication owners retain their existing scopes.
     """
     return _generate_current_canvas_regional(
         recipe,
