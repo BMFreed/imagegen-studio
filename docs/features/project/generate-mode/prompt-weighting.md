@@ -110,6 +110,28 @@ existing behavior. Authoring tests use actual compilation after real dynamic
 expansion; editing itself does not apply the smaller generation-text limit.
 This handoff does not qualify public generation admission or frozen provenance.
 
+## Invoke fragment joining and frozen work
+
+The [fragment checkpoint](../../../engineering/phase-4-anima-fragment-parity-research.md)
+adapts current Invoke `a61ac4fb` leaf ownership and neutral separator insertion.
+New compilation emits `(red)2,blue` as `red , blue`, while plain `red,blue`
+remains exact. Adjacent parsed groups separate too. Synthetic spaces have
+weight1 after inherited weighting; authored spaces retain their group weight.
+Existing Anima grammar, escapes/refusals and code-point offsets remain; this
+does not claim replacement with all current Invoke grammar or Unicode lexing.
+
+New ordinary/OUT frozen context and Anima Smart manifest/queued root declare
+`animaPromptInterpretation: "invoke-fragments-v1"`. Missing markers retain legacy
+concatenation for raw↔compiled validation, Retry, candidate recovery and Smart
+resource requalification. Unknown or mismatched interpretations refuse. Worker
+wire `anima-prompt-weighting-v1` and supplied spans remain unchanged; the marker
+is operational metadata, excluded from accepted provenance/Compare/presets.
+Old requests are never rewritten using the current compiler.
+
+ROOT320 Main/TS and38 Python PASS,153 exact native-parser comparisons and
+isolated compatibility mutations support this finite boundary. The separate
+regional visual result remains NOT_QUALIFIED; no promise status is promoted.
+
 ## Owners and inference path
 
 Deterministic syntax/attention compilation belongs to typed TS business logic,

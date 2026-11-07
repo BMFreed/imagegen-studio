@@ -1,5 +1,8 @@
 import { compileAnimaFlowSamplingPlan } from '../../shared/projects/anima-flow-sampling-plan.js'
-import { compileAnimaPromptWeighting } from '../../shared/projects/anima-prompt-weighting.js'
+import {
+  compileAnimaPromptWeighting,
+  compileAnimaPromptWeightingForInterpretation,
+} from '../../shared/projects/anima-prompt-weighting.js'
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
 import { GENERATION_BATCH_JOB_LIMIT } from '../../shared/projects/generation-batch-policy.js'
 import {
@@ -197,7 +200,9 @@ export async function reverifyFrozenSmartPatchInput(
     validateSmartPatchExecutionDraft(manifest.context, item.item)
     const actual =
       manifest.context.generationDraft.model?.baseModelFamily === 'anima'
-        ? await prepareAnimaInference(prepared, item.item, resources.models)
+        ? await prepareAnimaInference(prepared, item.item, resources.models, (text) =>
+            compileAnimaPromptWeightingForInterpretation(text, manifest.animaPromptInterpretation),
+          )
         : await prepareIllustriousInference(prepared, item.item, resources.models)
     requireUnchanged({ family: item.family, inference: item.inference }, actual)
   }
@@ -499,6 +504,7 @@ async function prepareAnimaInference(
   prepared: Pick<PreparedSmartPatchModelSourceInput, 'context' | 'mode'>,
   item: SmartPatchExecutionItem,
   models: SmartPatchExecutionModelResolver,
+  compilePrompt = compileAnimaPromptWeighting,
 ): Promise<{
   family: 'anima'
   inference: Extract<SmartPatchExecutionRequest, { family: 'anima' }>['inference']
@@ -524,8 +530,8 @@ async function prepareAnimaInference(
     width: context.internalResolution.width,
   })
   const prompts = {
-    negative: compileAnimaPromptWeighting(item.prompts.negative),
-    positive: compileAnimaPromptWeighting(item.prompts.positive),
+    negative: compilePrompt(item.prompts.negative),
+    positive: compilePrompt(item.prompts.positive),
   }
   const model = structuredClone(
     await models.resolveVerifiedGenerationAnimaBundleForPlan(structuredClone(reference)),

@@ -1,4 +1,5 @@
 import { compileAnimaFlowSamplingPlan } from '../../shared/projects/anima-flow-sampling-plan.js'
+import { ANIMA_PROMPT_INTERPRETATION } from '../../shared/projects/anima-prompt-weighting.js'
 import { defaultIllustriousNoiseProfile } from '../../shared/projects/illustrious-noise-profile.js'
 
 import assert from 'node:assert/strict'
@@ -7,6 +8,7 @@ import test from 'node:test'
 
 import type { SmartPatchInputBundle } from './project-smart-patch-input-bundle.js'
 import type { SmartPatchInputMaterial } from './smart-patch-frozen-input.js'
+import type { FrozenQueuedSmartPatchV1 } from './smart-patch-queued-generation.js'
 
 import {
   reverifyFrozenSmartPatchInput,
@@ -27,6 +29,24 @@ import {
   literalSmartPatchColorPng,
   literalSmartPatchNumericPng,
 } from './test-fixtures/smart-patch-input-material.js'
+
+// Preserve historical frozen bytes without asking the current compiler to recreate the oracle.
+const legacyFragmentPrompt = {
+  cleanedText: 'a,b',
+  spans: [{ end: 3, start: 0, weight: 2 }],
+  version: 'anima-prompt-weighting-v1' as const,
+}
+const currentFragmentPrompt = {
+  cleanedText: 'a , b',
+  spans: [
+    { end: 1, start: 0, weight: 2 },
+    { end: 2, start: 1, weight: 1 },
+    { end: 3, start: 2, weight: 2 },
+    { end: 4, start: 3, weight: 1 },
+    { end: 5, start: 4, weight: 2 },
+  ],
+  version: 'anima-prompt-weighting-v1' as const,
+}
 
 function asBundle(material: SmartPatchInputMaterial): SmartPatchInputBundle {
   return {
@@ -145,6 +165,12 @@ for (const family of ['illustrious', 'anima'] as const) {
         manifestSha256: bundle.manifestSha256,
       })
       assert.equal(reopened.kind, `${family}-smart-patch`)
+      assert.equal(
+        reopened.animaPromptInterpretation,
+        family === 'anima' ? ANIMA_PROMPT_INTERPRETATION : undefined,
+      )
+      assert.equal('animaPromptInterpretation' in reopened, family === 'anima')
+      assert.equal('animaPromptInterpretation' in reopened.context, false)
       assert.equal(reopened.mode, mode)
       assert.equal(reopened.context.bbox.x, -9)
       assert.equal(reopened.context.bbox.width, 128)
@@ -183,6 +209,143 @@ for (const family of ['illustrious', 'anima'] as const) {
     assert.equal(resources.count(), family === 'anima' ? 2 : 4)
   })
 }
+
+for (const mode of ['txt2img', 'img2img', 'inpaint', 'outpaint'] as const) {
+  test(`queued Anima ${mode} preserves root interpretation and legacy absence through manifest projections`, async () => {
+    const currentMaterial = await literalPreparedSmartPatchInputMaterial('anima', mode)
+    const entry = currentMaterial.manifest.items[0]
+    if (entry.family !== 'anima') {
+      assert.fail('fixture family')
+    }
+    entry.item.prompts = { negative: '(a,b)2', positive: '(a,b)2' }
+    entry.inference = {
+      ...entry.inference,
+      prompts: {
+        negative: structuredClone(currentFragmentPrompt),
+        positive: structuredClone(currentFragmentPrompt),
+      },
+    }
+    const legacyMaterial: SmartPatchInputMaterial = {
+      files: currentMaterial.files,
+      manifest: structuredClone(currentMaterial.manifest),
+    }
+    delete legacyMaterial.manifest.animaPromptInterpretation
+    const legacyEntry = legacyMaterial.manifest.items[0]
+    if (legacyEntry.family !== 'anima') {
+      assert.fail('fixture family')
+    }
+    legacyEntry.inference = {
+      ...legacyEntry.inference,
+      prompts: {
+        negative: structuredClone(legacyFragmentPrompt),
+        positive: structuredClone(legacyFragmentPrompt),
+      },
+    }
+    for (const material of [currentMaterial, legacyMaterial]) {
+      const reloaded = await parseSmartPatchInputMaterial(
+        JSON.parse(JSON.stringify(material.manifest)),
+        material.files,
+      )
+      const bundle = asBundle(reloaded)
+      const payload = buildFrozenQueuedSmartPatchV1(bundle, 0)
+      const reopened = parseFrozenQueuedSmartPatchV1(JSON.parse(JSON.stringify(payload)))
+      const current = material === currentMaterial
+      assert.deepEqual(reopened, payload)
+      assert.equal(
+        reopened.animaPromptInterpretation,
+        current ? ANIMA_PROMPT_INTERPRETATION : undefined,
+      )
+      assert.equal('animaPromptInterpretation' in reopened, current)
+      assert.equal('animaPromptInterpretation' in reopened.context, false)
+      assert.deepEqual(reopened.item.inference.prompts, {
+        negative: current ? currentFragmentPrompt : legacyFragmentPrompt,
+        positive: current ? currentFragmentPrompt : legacyFragmentPrompt,
+      })
+      assertQueuedSmartPatchBundle(reopened, bundle)
+
+      const refused = (change: (value: FrozenQueuedSmartPatchV1) => void) => {
+        const changed = structuredClone(payload)
+        change(changed)
+        assert.throws(() => parseFrozenQueuedSmartPatchV1(changed), { code: 'QUEUE_INPUT_INVALID' })
+      }
+      refused((value) => {
+        if (current) {
+          delete value.animaPromptInterpretation
+        } else {
+          value.animaPromptInterpretation = ANIMA_PROMPT_INTERPRETATION
+        }
+      })
+      refused((value) => {
+        Object.assign(value, { animaPromptInterpretation: 'unknown-fragments-v2' })
+      })
+      refused((value) => {
+        Object.assign(value.context, { animaPromptInterpretation: ANIMA_PROMPT_INTERPRETATION })
+      })
+      for (const polarity of ['positive', 'negative'] as const) {
+        refused((value) => {
+          if (value.item.family !== 'anima') {
+            assert.fail('fixture family')
+          }
+          value.item.inference = {
+            ...value.item.inference,
+            prompts: {
+              ...value.item.inference.prompts,
+              [polarity]: structuredClone(current ? legacyFragmentPrompt : currentFragmentPrompt),
+            },
+          }
+        })
+      }
+    }
+  })
+}
+
+test('queued interpretation must agree with its bundle even when plain prompt bytes have identical meaning', async () => {
+  const material = await literalPreparedSmartPatchInputMaterial('anima')
+  const entry = material.manifest.items[0]
+  if (entry.family !== 'anima') {
+    assert.fail('fixture family')
+  }
+  const plain = {
+    cleanedText: 'plain',
+    spans: [{ end: 5, start: 0, weight: 1 }],
+    version: 'anima-prompt-weighting-v1' as const,
+  }
+  entry.item.prompts = { negative: 'plain', positive: 'plain' }
+  entry.inference = {
+    ...entry.inference,
+    prompts: { negative: structuredClone(plain), positive: structuredClone(plain) },
+  }
+  const currentBundle = asBundle(material)
+  const payload = buildFrozenQueuedSmartPatchV1(currentBundle, 0)
+  const legacyMaterial = { ...material, manifest: structuredClone(material.manifest) }
+  delete legacyMaterial.manifest.animaPromptInterpretation
+  const legacyBundle = { ...asBundle(legacyMaterial), id: currentBundle.id }
+  const currentAgainstLegacy = parseFrozenQueuedSmartPatchV1({
+    ...payload,
+    bundle: { ...payload.bundle, manifestSha256: legacyBundle.manifestSha256 },
+  })
+  assert.throws(
+    () => assertQueuedSmartPatchBundle(currentAgainstLegacy, legacyBundle),
+    /exact bundle item/,
+  )
+  const legacy = buildFrozenQueuedSmartPatchV1(legacyBundle, 0)
+  assert.equal('animaPromptInterpretation' in legacy, false)
+  assertQueuedSmartPatchBundle(legacy, legacyBundle)
+})
+
+test('queued Illustrious refuses an Anima-only interpretation declaration', async () => {
+  const bundle = asBundle(await literalPreparedSmartPatchInputMaterial('illustrious'))
+  const payload = buildFrozenQueuedSmartPatchV1(bundle, 0)
+  assert.equal('animaPromptInterpretation' in payload, false)
+  assert.throws(
+    () =>
+      parseFrozenQueuedSmartPatchV1({
+        ...payload,
+        animaPromptInterpretation: ANIMA_PROMPT_INTERPRETATION,
+      }),
+    { code: 'QUEUE_INPUT_INVALID' },
+  )
+})
 
 test('queue operation guard admits only the two exact Smart Patch literals', () => {
   assert.equal(isSmartPatchQueueOperation('anima-smart-patch'), true)

@@ -1,3 +1,5 @@
+import { ANIMA_PROMPT_INTERPRETATION } from '../../shared/projects/anima-prompt-weighting.js'
+
 import { isDeepStrictEqual } from 'node:util'
 import * as v from 'valibot'
 
@@ -27,6 +29,7 @@ export type FrozenQueuedSmartPatchV1 = FrozenQueuedSmartPatchFields &
   )
 
 interface FrozenQueuedSmartPatchFields {
+  animaPromptInterpretation?: typeof ANIMA_PROMPT_INTERPRETATION
   bundle: { id: string; itemIndex: number; manifestSha256: string }
   context: FrozenSmartPatchInputV1['context']
   files: FrozenSmartPatchInputV1['files']
@@ -46,6 +49,7 @@ export class SmartPatchQueuedGenerationError extends Error {
 }
 
 const queuedSchema = v.strictObject({
+  animaPromptInterpretation: v.optional(v.literal(ANIMA_PROMPT_INTERPRETATION)),
   bundle: v.strictObject({
     id: v.pipe(v.string(), v.uuid()),
     itemIndex: v.pipe(v.number(), v.safeInteger(), v.minValue(0), v.maxValue(31)),
@@ -89,6 +93,9 @@ export function parseFrozenQueuedSmartPatchV1(input: unknown): FrozenQueuedSmart
   let manifest: FrozenSmartPatchInputV1
   try {
     manifest = parseFrozenSmartPatchInputV1({
+      ...(queued.animaPromptInterpretation !== undefined
+        ? { animaPromptInterpretation: queued.animaPromptInterpretation }
+        : {}),
       context: queued.context,
       files: queued.files,
       items: [queued.item],
@@ -109,6 +116,9 @@ export function parseFrozenQueuedSmartPatchV1(input: unknown): FrozenQueuedSmart
     refuse('The Smart Patch queue operation and concrete model family disagree.')
   }
   return {
+    ...(manifest.animaPromptInterpretation !== undefined
+      ? { animaPromptInterpretation: manifest.animaPromptInterpretation }
+      : {}),
     bundle: { ...queued.bundle },
     context: manifest.context,
     files: manifest.files,
@@ -140,6 +150,9 @@ export function buildFrozenQueuedSmartPatchV1(
     refuse('The selected Smart Patch item is absent from its frozen bundle.')
   }
   return parseFrozenQueuedSmartPatchV1({
+    ...(manifest.animaPromptInterpretation !== undefined
+      ? { animaPromptInterpretation: manifest.animaPromptInterpretation }
+      : {}),
     bundle: { id: bundle.id, itemIndex, manifestSha256: bundle.manifestSha256 },
     context: manifest.context,
     files: manifest.files,

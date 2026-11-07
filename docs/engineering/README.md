@@ -2222,3 +2222,16 @@ predictions and separate native-BF16/common-FP32 RGB quantizers distinguish
 further numeric differences. No prompt, mask, seed, precision or default tuning
 is performed. Focused parser parity is the next owner; frozen-work semantics,
 public Anima admission and PP-001/005/007/008 remain unchanged.
+
+## Anima fragment parity with frozen-work compatibility
+
+The [fragment correction](./phase-4-anima-fragment-parity-research.md) adapts
+current Invoke comma ownership/neutral joining under the existing Anima grammar.
+All153 common-grammar cases match original native parser text/spans exactly;
+ROOT320 Main/TS and38 Python cases pass. Genuine SQLite/files cases preserve
+literal old TXT/IMG and Smart inputs through reopen/Retry/dispatch and candidate
+recovery. New frozen inputs declare their interpretation; missing markers retain
+legacy meaning. Raw↔compiled corruption checks and worker wire format stay intact.
+Isolated legacy-routing mutation gives5 GREEN→3 RED+2 controls GREEN→5 restored
+GREEN; source never mutates. Grammar replacement, trained visuals, installed
+qualification and PP-001/005/007/008 remain separate and unchanged.

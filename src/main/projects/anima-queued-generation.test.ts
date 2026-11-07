@@ -1,22 +1,144 @@
-import { compileAnimaPromptWeighting } from '../../shared/projects/anima-prompt-weighting.js'
+import {
+  ANIMA_PROMPT_INTERPRETATION,
+  compileAnimaPromptWeighting,
+} from '../../shared/projects/anima-prompt-weighting.js'
 import type { AnimaWorkerRequest } from '../../shared/projects/anima-worker-request.js'
 
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import type { FrozenQueuedAnimaGenerationV1 } from './anima-queued-generation.js'
+import type {
+  FrozenQueuedAnimaGenerationV1,
+  FrozenQueuedAnimaOutpaintV1,
+} from './anima-queued-generation.js'
 import type { AnimaBatchFixture } from './test-fixtures/anima-batch.js'
 
 import { prepareAnimaGenerationBatch } from './anima-generation-batch.js'
 import { withAnimaGenerationBatchRequests } from './anima-generation-request.js'
 import {
   buildFrozenQueuedAnimaGenerationV1,
+  buildFrozenQueuedAnimaOutpaintV1,
   parseFrozenQueuedAnimaGenerationV1,
+  parseFrozenQueuedAnimaOutpaintV1,
   reverifyFrozenQueuedAnimaGeneration,
 } from './anima-queued-generation.js'
+import { freezeAlphaOutpaintConditioning } from './outpaint-conditioning.js'
 import { ANIMA_BATCH_READY, withAnimaBatchFixture } from './test-fixtures/anima-batch.js'
 
 type Mutable<T> = { -readonly [K in keyof T]: Mutable<T[K]> }
+
+// Retained pre-fragment-joining bytes, authored independently from either compiler mode.
+const legacyFragmentPrompt = {
+  cleanedText: 'a,b',
+  spans: [{ end: 3, start: 0, weight: 2 }],
+  version: 'anima-prompt-weighting-v1' as const,
+}
+const currentFragmentPrompt = {
+  cleanedText: 'a , b',
+  spans: [
+    { end: 1, start: 0, weight: 2 },
+    { end: 2, start: 1, weight: 1 },
+    { end: 3, start: 2, weight: 2 },
+    { end: 4, start: 3, weight: 1 },
+    { end: 5, start: 4, weight: 2 },
+  ],
+  version: 'anima-prompt-weighting-v1' as const,
+}
+
+function assertFragmentInterpretations(
+  payload: FrozenQueuedAnimaGenerationV1 | FrozenQueuedAnimaOutpaintV1,
+  parse: (json: string) => FrozenQueuedAnimaGenerationV1 | FrozenQueuedAnimaOutpaintV1,
+): void {
+  assert.equal(payload.context.animaPromptInterpretation, ANIMA_PROMPT_INTERPRETATION)
+  assert.deepEqual(parse(JSON.stringify(payload)), payload)
+  for (const polarity of ['positive', 'negative'] as const) {
+    assert.equal(payload.context.prompts[polarity], '(a,b)2')
+    assert.deepEqual(payload.workerJob.prompts[polarity], currentFragmentPrompt)
+  }
+  const legacy = structuredClone(payload) as Mutable<typeof payload>
+  delete legacy.context.animaPromptInterpretation
+  legacy.workerJob.prompts = {
+    negative: structuredClone(legacyFragmentPrompt),
+    positive: structuredClone(legacyFragmentPrompt),
+  }
+  const reopenedLegacy = parse(JSON.stringify(legacy))
+  assert.deepEqual(reopenedLegacy, legacy)
+  assert.equal('animaPromptInterpretation' in reopenedLegacy.context, false)
+
+  const refused = (source: typeof payload, change: (changed: Mutable<typeof payload>) => void) => {
+    const changed = structuredClone(source) as Mutable<typeof payload>
+    change(changed)
+    assert.throws(() => parse(JSON.stringify(changed)), { code: 'QUEUE_INPUT_INVALID' })
+  }
+  refused(payload, (changed) => {
+    delete changed.context.animaPromptInterpretation
+  })
+  refused(legacy, (changed) => {
+    changed.context.animaPromptInterpretation = ANIMA_PROMPT_INTERPRETATION
+  })
+  refused(payload, (changed) => {
+    Object.assign(changed.context, { animaPromptInterpretation: 'unknown-fragments-v2' })
+  })
+  refused(legacy, (changed) => {
+    Object.assign(changed.context, { animaPromptInterpretation: 'legacy' })
+  })
+  for (const polarity of ['positive', 'negative'] as const) {
+    refused(legacy, (changed) => {
+      changed.workerJob.prompts[polarity] = structuredClone(currentFragmentPrompt)
+    })
+    refused(payload, (changed) => {
+      changed.workerJob.prompts[polarity] = structuredClone(legacyFragmentPrompt)
+    })
+    refused(legacy, (changed) => {
+      changed.workerJob.prompts[polarity].spans[0].weight = 3
+    })
+    refused(payload, (changed) => {
+      changed.workerJob.prompts[polarity].spans[1].weight = 2
+    })
+  }
+}
+
+for (const mode of ['txt2img', 'img2img', 'outpaint'] as const) {
+  test(`durable Anima ${mode} declares new fragment joining and reloads undeclared legacy signs without reinterpretation`, async () => {
+    await withAnimaBatchFixture(
+      async (fixture) => {
+        const { context } = fixture.prepared
+        context.prompts = { negative: '(a,b)2', positive: '(a,b)2' }
+        context.generationDraft.positivePrompt.text = '(a,b)2'
+        context.generationDraft.negativePrompt.text = '(a,b)2'
+        if (mode === 'outpaint') {
+          const conditioning = freezeAlphaOutpaintConditioning({
+            bbox: context.bbox,
+            sourceTargetSha256: context.target.sha256,
+            targetPngBytes: fixture.prepared.targetPngBytes,
+          })
+          const payload = buildFrozenQueuedAnimaOutpaintV1(
+            {
+              ...context,
+              conditioning: conditioning.context,
+              kind: 'anima-outpaint-preparation',
+              mode: 'outpaint',
+              sampling: { ...context.sampling, denoisingStrength: 0.5 },
+            },
+            '00000000-0000-4000-8000-000000000000',
+          )
+          context.prompts = { negative: 'later negative', positive: 'later positive' }
+          context.generationDraft.positivePrompt.text = 'later authoring'
+          assertFragmentInterpretations(payload, parseFrozenQueuedAnimaOutpaintV1)
+          assert.deepEqual(payload.context.conditioning, conditioning.context)
+          return
+        }
+        await withPayload(fixture, async (payload) => {
+          context.prompts = { negative: 'later negative', positive: 'later positive' }
+          context.generationDraft.positivePrompt.text = 'later authoring'
+          assertFragmentInterpretations(payload, parseFrozenQueuedAnimaGenerationV1)
+          await reverifyFrozenQueuedAnimaGeneration(payload, fixture.modelService)
+        })
+      },
+      { opaque: mode !== 'txt2img', ...(mode === 'outpaint' ? { alpha: 128 } : {}) },
+    )
+  })
+}
 
 async function withPayload(
   fixture: AnimaBatchFixture,

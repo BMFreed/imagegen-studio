@@ -255,7 +255,7 @@ def test_actual_ts_compiler_json_matches_python_unicode_and_cleaned_tokenizers(
         pytest.skip("Cross-language check requires repository pnpm dependencies.")
     source = "😀(é👩🏽‍🎨:2) z"
     program = (
-        "import {compileAnimaPromptWeighting} "
+        "import {compileAnimaPromptWeightingForInterpretation as compileAnimaPromptWeighting} "
         "from './src/shared/projects/anima-prompt-weighting.ts'; "
         "process.stdout.write(JSON.stringify(compileAnimaPromptWeighting("
         + json.dumps(source)
@@ -281,6 +281,65 @@ def test_actual_ts_compiler_json_matches_python_unicode_and_cleaned_tokenizers(
     assert actual.t5_input_ids[0].tolist() == [3, 2, 154, 2, 3, 2, 3, 172, 1]
     assert actual.t5_weights[0].tolist() == [1, 1, 2, 1, 2, 1, 1, 1, 1]
     assert bool(torch.isfinite(actual.embeddings).all().item())
+
+
+@pytest.mark.parametrize(
+    ("source", "cleaned", "prefix", "weight"),
+    [
+        ("(blur)0.75, noise", "blur , noise", "blur", 0.75),
+        ("(red scarf)1.5, one white cat", "red scarf , one white cat", "red scarf", 1.5),
+        ("(blue scarf)0.75, one white cat", "blue scarf , one white cat", "blue scarf", 0.75),
+    ],
+)
+def test_actual_ts_invoke_fragments_reach_native_conditioning_without_reparsing(
+    native_models: Any, tokenizers: Any, source: str, cleaned: str, prefix: str, weight: float
+) -> None:
+    root = Path(__file__).resolve().parents[2]
+    if not (root / "node_modules/.bin/tsx").exists():
+        pytest.skip("Cross-language check requires repository pnpm dependencies.")
+    program = (
+        "import {compileAnimaPromptWeighting} "
+        "from './src/shared/projects/anima-prompt-weighting.ts';"
+        "process.stdout.write(JSON.stringify(compileAnimaPromptWeighting("
+        + json.dumps(source)
+        + ")))"
+    )
+    data = json.loads(
+        subprocess.check_output(
+            [str(root / "node_modules/.bin/tsx"), "-e", program], cwd=root, text=True
+        )
+    )
+    assert data == {
+        "version": "anima-prompt-weighting-v1",
+        "cleanedText": cleaned,
+        "spans": [
+            {"start": 0, "end": len(prefix), "weight": weight},
+            {"start": len(prefix), "end": len(cleaned), "weight": 1},
+        ],
+    }
+    torch, models = native_models
+    current = encode_anima_prompt(data, models, tokenizers=tokenizers)
+    # An already frozen v1 interpretation remains an independent executable input.
+    legacy_text = cleaned.replace(" ,", ",")
+    legacy_data = {
+        **data,
+        "cleanedText": legacy_text,
+        "spans": [
+            {"start": 0, "end": len(prefix), "weight": weight},
+            {"start": len(prefix), "end": len(legacy_text), "weight": 1},
+        ],
+    }
+    legacy = encode_anima_prompt(legacy_data, models, tokenizers=tokenizers)
+    assert current.qwen3_input_ids[0].tolist() == tokenizers.qwen3(cleaned)["input_ids"]
+    assert current.t5_input_ids[0].tolist() == tokenizers.t5(cleaned)["input_ids"]
+    assert legacy.qwen3_input_ids[0].tolist() == tokenizers.qwen3(legacy_text)["input_ids"]
+    assert legacy.t5_input_ids[0].tolist() == tokenizers.t5(legacy_text)["input_ids"]
+    assert not torch.equal(current.qwen3_input_ids, legacy.qwen3_input_ids)
+    assert not torch.equal(current.t5_input_ids, legacy.t5_input_ids)
+    assert current.t5_weights[0, 0].item() == legacy.t5_weights[0, 0].item() == weight
+    assert current.t5_weights[0, -1].item() == legacy.t5_weights[0, -1].item() == 1
+    assert bool(torch.isfinite(current.embeddings).all())
+    assert bool(torch.isfinite(legacy.embeddings).all())
 
 
 def test_pair_captures_both_interpretations_before_native_callbacks(

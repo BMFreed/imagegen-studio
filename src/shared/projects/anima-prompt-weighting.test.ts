@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { AnimaPromptWeightingError, compileAnimaPromptWeighting } from './anima-prompt-weighting.js'
+import {
+  ANIMA_PROMPT_INTERPRETATION,
+  AnimaPromptWeightingError,
+  compileAnimaPromptWeighting,
+  compileAnimaPromptWeightingForInterpretation,
+} from './anima-prompt-weighting.js'
 import { planGenerationBatch } from './generation-batch-plan.js'
 import { adjustPromptAttention } from './prompt-text.js'
 
@@ -65,11 +70,11 @@ test('implicit, explicit and mixed nested groups multiply rather than reset ance
     assert.deepEqual(weightsFor(source), Array.from({ length: 9 }).fill(weight), source)
   }
   assert.deepEqual(compileAnimaPromptWeighting('a(b:2)c'), {
-    cleanedText: 'abc',
+    cleanedText: 'a b c',
     spans: [
-      { end: 1, start: 0, weight: 1 },
-      { end: 2, start: 1, weight: 2 },
-      { end: 3, start: 2, weight: 1 },
+      { end: 2, start: 0, weight: 1 },
+      { end: 3, start: 2, weight: 2 },
+      { end: 5, start: 3, weight: 1 },
     ],
     version: 'anima-prompt-weighting-v1',
   })
@@ -163,15 +168,15 @@ test('escaped syntax and ordinary literal content survive without accidentally w
 test('code-point offsets retain emoji, combining marks and escape boundaries independently of UTF-16', () => {
   const source = '😀(é👩🏽‍🎨:2) z'
   assert.deepEqual(compileAnimaPromptWeighting(source), {
-    cleanedText: '😀é👩🏽‍🎨 z',
+    cleanedText: '😀 é👩🏽‍🎨 z',
     spans: [
-      { end: 1, start: 0, weight: 1 },
-      { end: 7, start: 1, weight: 2 },
-      { end: 9, start: 7, weight: 1 },
+      { end: 2, start: 0, weight: 1 },
+      { end: 8, start: 2, weight: 2 },
+      { end: 10, start: 8, weight: 1 },
     ],
     version: 'anima-prompt-weighting-v1',
   })
-  assert.deepEqual(weightsFor(source), [1, 2, 2, 2, 2, 2, 2, 1, 1])
+  assert.deepEqual(weightsFor(source), [1, 1, 2, 2, 2, 2, 2, 2, 1, 1])
 })
 
 test('actual dynamic batch expansion feeds concrete prompts while unexpanded syntax refuses', () => {
@@ -259,9 +264,98 @@ test('bounded nesting and non-finite or underflowed compound weights refuse befo
 
 test('compiled DTO cannot be mutated and adjacent neutral spans are coalesced', () => {
   const compiled = compileAnimaPromptWeighting('a(b:1)c')
-  assert.deepEqual(compiled.spans, [{ end: 3, start: 0, weight: 1 }])
+  assert.deepEqual(compiled.spans, [{ end: 5, start: 0, weight: 1 }])
   assert.ok(Object.isFrozen(compiled))
   assert.ok(Object.isFrozen(compiled.spans))
   assert.ok(Object.isFrozen(compiled.spans[0]))
   assert.equal(Reflect.set(compiled.spans[0], 'weight', 7), false)
+})
+
+// Exact leaf ownership/joining from Invoke a61ac4fb prompt_weighting.py:315-352.
+// Spaces synthesized after inherited weighting are neutral; authored spaces are not.
+for (const [source, cleaned, weights] of [
+  ['(red)2,blue', 'red , blue', [2, 2, 2, 1, 1, 1, 1, 1, 1, 1]],
+  ['red,blue+', 'red, blue', [1, 1, 1, 1, 1, 1.1, 1.1, 1.1, 1.1]],
+  ['red,blue', 'red,blue', Array.from({ length: 8 }).fill(1)],
+  ['(red)1,blue', 'red , blue', Array.from({ length: 10 }).fill(1)],
+  ['red+(blue)2', 'red blue', [1.1, 1.1, 1.1, 1, 2, 2, 2, 2]],
+  ['(red)2(blue)3', 'red blue', [2, 2, 2, 1, 3, 3, 3, 3]],
+  ['((red)2(blue)3)4', 'red blue', [8, 8, 8, 1, 12, 12, 12, 12]],
+  ['(a,b)2', 'a , b', [2, 1, 2, 1, 2]],
+  ['(red)2 \tblue', 'red \tblue', [2, 2, 2, 1, 1, 1, 1, 1, 1]],
+  ['(red, blue)2', 'red , blue', [2, 2, 2, 1, 2, 2, 2, 2, 2, 2]],
+  ['(😀)2,猫', '😀 , 猫', [2, 1, 1, 1, 1]],
+] as const) {
+  test(`Invoke fragment joining preserves exact text and code-point weights: ${source}`, () => {
+    assert.equal(compileAnimaPromptWeighting(source).cleanedText, cleaned)
+    assert.deepEqual(weightsFor(source), weights)
+  })
+}
+
+test('the fixed scarf scene inserts neutral comma boundaries without changing authored weights', () => {
+  for (const [source, cleaned, weightedLength, weight] of [
+    ['(blur)0.75, noise', 'blur , noise', 4, 0.75],
+    ['(red scarf)1.5, one white cat', 'red scarf , one white cat', 9, 1.5],
+    ['(blue scarf)0.75, one white cat', 'blue scarf , one white cat', 10, 0.75],
+  ] as const) {
+    const compiled = compileAnimaPromptWeighting(source)
+    assert.equal(compiled.cleanedText, cleaned)
+    assert.deepEqual(compiled.spans, [
+      { end: weightedLength, start: 0, weight },
+      { end: Array.from(cleaned).length, start: weightedLength, weight: 1 },
+    ])
+  }
+  assert.equal(
+    compileAnimaPromptWeighting('(two white cats)1.25 on one bench').cleanedText,
+    'two white cats on one bench',
+  )
+})
+
+test('unmarked frozen interpretations retain literal legacy spans rather than the new default', () => {
+  for (const [source, cleaned, spans] of [
+    ['(a,b)2', 'a,b', [{ end: 3, start: 0, weight: 2 }]],
+    [
+      'a(b:2)c',
+      'abc',
+      [
+        { end: 1, start: 0, weight: 1 },
+        { end: 2, start: 1, weight: 2 },
+        { end: 3, start: 2, weight: 1 },
+      ],
+    ],
+    [
+      '(blur)0.75, noise',
+      'blur, noise',
+      [
+        { end: 4, start: 0, weight: 0.75 },
+        { end: 11, start: 4, weight: 1 },
+      ],
+    ],
+    [
+      '(😀)2,猫',
+      '😀,猫',
+      [
+        { end: 1, start: 0, weight: 2 },
+        { end: 3, start: 1, weight: 1 },
+      ],
+    ],
+  ] as const) {
+    assert.deepEqual(compileAnimaPromptWeightingForInterpretation(source), {
+      cleanedText: cleaned,
+      spans,
+      version: 'anima-prompt-weighting-v1',
+    })
+    assert.deepEqual(
+      compileAnimaPromptWeightingForInterpretation(source, ANIMA_PROMPT_INTERPRETATION),
+      compileAnimaPromptWeighting(source),
+    )
+  }
+  assert.throws(
+    () =>
+      compileAnimaPromptWeightingForInterpretation(
+        'cat',
+        'future' as typeof ANIMA_PROMPT_INTERPRETATION,
+      ),
+    AnimaPromptWeightingError,
+  )
 })

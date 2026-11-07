@@ -1,5 +1,8 @@
 import { GENERATION_BATCH_PROMPT_MAX_BYTES } from './generation-batch-plan.js'
 
+/** Main's frozen interpretation marker; the worker DTO below keeps its existing shape. */
+export const ANIMA_PROMPT_INTERPRETATION = 'invoke-fragments-v1' as const
+
 export interface AnimaWeightedSpan {
   readonly end: number
   readonly start: number
@@ -13,6 +16,7 @@ export interface CompiledAnimaPromptWeighting {
 }
 
 interface WeightedPart {
+  glue?: boolean
   text: string
   weight: number
 }
@@ -38,11 +42,16 @@ const FINITE_NUMBER = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i
 const PLAIN_SUFFIX_NUMBER = /^\+?(?:\d+(?:\.\d*)?|\.\d+)$/
 const ESCAPABLE = new Set(String.raw`()[]{}<>:|+-\.,"`.split(''))
 const UNSUPPORTED_MARKUP = new Set('[]{}<>'.split(''))
+const INVOKE_SPACE = ' \t\r\n\v\f'
 
 class AnimaAttentionParser {
+  hasMarkup = false
   private position = 0
 
-  constructor(private readonly points: readonly string[]) {}
+  constructor(
+    private readonly points: readonly string[],
+    private readonly fragmentJoining = false,
+  ) {}
 
   parse(): WeightedPart[] {
     return this.parseSequence(0)
@@ -75,6 +84,7 @@ class AnimaAttentionParser {
         'The prompt exceeds the compiler attention nesting limit.',
       )
     }
+    this.hasMarkup = true
     this.position += 1
     const parts = this.parseSequence(depth)
     let explicit = false
@@ -105,7 +115,7 @@ class AnimaAttentionParser {
       }
       weight = suffix
     }
-    return parts.map((part) => ({ text: part.text, weight: multiplyWeights(part.weight, weight) }))
+    return parts.map((part) => ({ ...part, weight: multiplyWeights(part.weight, weight) }))
   }
 
   private parseLiteral(depth: number): WeightedPart {
@@ -152,6 +162,7 @@ class AnimaAttentionParser {
           'The prompt mixes increase and decrease attention suffixes.',
         )
       }
+      this.hasMarkup = true
       return {
         text: literal
           .slice(0, suffixStart)
@@ -160,7 +171,14 @@ class AnimaAttentionParser {
         weight: suffixMarkersWeight(suffix),
       }
     }
-    return { text: literal.map((point) => point.text).join(''), weight: 1 }
+    let text = literal.map((point) => point.text).join('')
+    // Invoke's top-level fallback owns its trailing comma. A parsed suffix
+    // returns above; its following comma remains a separate fragment.
+    if (this.fragmentJoining && depth === 0 && this.points[this.position] === ',') {
+      text += ','
+      this.position += 1
+    }
+    return { text, weight: 1 }
   }
 
   private parseSequence(depth: number): WeightedPart[] {
@@ -179,7 +197,7 @@ class AnimaAttentionParser {
       if (point === '(') {
         parts.push(...this.parseGroup(depth + 1))
       } else if (/\s/.test(point) || point === ',') {
-        parts.push({ text: point, weight: 1 })
+        parts.push({ glue: point !== ',', text: point, weight: 1 })
         this.position += 1
       } else {
         parts.push(this.parseLiteral(depth))
@@ -230,24 +248,64 @@ class AnimaAttentionParser {
  * UTF-16 units.
  */
 export function compileAnimaPromptWeighting(concreteText: string): CompiledAnimaPromptWeighting {
+  return compilePrompt(concreteText, true)
+}
+
+/** Missing markers identify previously frozen concatenation, never the current default. */
+export function compileAnimaPromptWeightingForInterpretation(
+  concreteText: string,
+  interpretation?: typeof ANIMA_PROMPT_INTERPRETATION,
+): CompiledAnimaPromptWeighting {
+  if (interpretation === undefined) {
+    return compilePrompt(concreteText, false)
+  }
+  if (interpretation !== ANIMA_PROMPT_INTERPRETATION) {
+    throw new AnimaPromptWeightingError('The frozen Anima prompt interpretation is unsupported.')
+  }
+  return compilePrompt(concreteText, true)
+}
+
+function compilePrompt(
+  concreteText: string,
+  fragmentJoining: boolean,
+): CompiledAnimaPromptWeighting {
   validateConcreteText(concreteText)
-  const parts = new AnimaAttentionParser(Array.from(concreteText)).parse()
+  const parser = new AnimaAttentionParser(Array.from(concreteText), fragmentJoining)
+  const parts = parser.parse()
   const spans: AnimaWeightedSpan[] = []
   let cleanedText = ''
   let position = 0
+  const append = (text: string, weight: number) => {
+    cleanedText += text
+    const end = position + Array.from(text).length
+    const previous = spans.at(-1)
+    if (previous?.weight === weight) {
+      spans[spans.length - 1] = { end, start: previous.start, weight }
+    } else {
+      spans.push({ end, start: position, weight })
+    }
+    position = end
+  }
+  let previousGlue = true
   for (const part of parts) {
     if (!part.text) {
       continue
     }
-    cleanedText += part.text
-    const end = position + Array.from(part.text).length
-    const previous = spans.at(-1)
-    if (previous?.weight === part.weight) {
-      spans[spans.length - 1] = { end, start: previous.start, weight: part.weight }
-    } else {
-      spans.push({ end, start: position, weight: part.weight })
+    // Port of Invoke a61ac4fb prompt_weighting.py:315-352. Insert only
+    // after inherited weights are complete, so synthetic spaces stay neutral.
+    if (
+      fragmentJoining &&
+      parser.hasMarkup &&
+      cleanedText &&
+      !previousGlue &&
+      !part.glue &&
+      !INVOKE_SPACE.includes(cleanedText.at(-1)!) &&
+      !INVOKE_SPACE.includes(part.text[0])
+    ) {
+      append(' ', 1)
     }
-    position = end
+    append(part.text, part.weight)
+    previousGlue = part.glue ?? false
   }
   return Object.freeze({
     cleanedText,

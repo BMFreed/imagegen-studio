@@ -1,5 +1,8 @@
 import { compileAnimaFlowSamplingPlan } from '../../shared/projects/anima-flow-sampling-plan.js'
-import { compileAnimaPromptWeighting } from '../../shared/projects/anima-prompt-weighting.js'
+import {
+  ANIMA_PROMPT_INTERPRETATION,
+  compileAnimaPromptWeightingForInterpretation,
+} from '../../shared/projects/anima-prompt-weighting.js'
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
 import { GENERATION_BATCH_JOB_LIMIT } from '../../shared/projects/generation-batch-policy.js'
 import { ProjectMaskSettingsSchema } from '../../shared/projects/project-mask-settings.js'
@@ -56,6 +59,7 @@ export type FrozenSmartPatchInputItemV1 =
     }
 
 export interface FrozenSmartPatchInputV1 {
+  animaPromptInterpretation?: typeof ANIMA_PROMPT_INTERPRETATION
   context: FrozenSmartPatchGenerationContext
   files: {
     'authored-mask.png'?: FrozenSmartPatchInputFileV1
@@ -138,6 +142,7 @@ const item = v.strictObject({
   seed: uint(0, 0xff_ff_ff_ff),
 })
 const manifestSchema = v.strictObject({
+  animaPromptInterpretation: v.optional(v.literal(ANIMA_PROMPT_INTERPRETATION)),
   context,
   files: v.strictObject({
     'authored-mask.png': v.optional(file),
@@ -195,6 +200,12 @@ export function parseFrozenSmartPatchInputV1(input: unknown): FrozenSmartPatchIn
     refuse('The frozen Smart Patch manifest is invalid.')
   }
   const result = parsed.output as FrozenSmartPatchInputV1
+  if (
+    result.animaPromptInterpretation !== undefined &&
+    !result.items.some((entry) => entry.family === 'anima')
+  ) {
+    refuse('An Anima prompt interpretation requires an Anima Smart Patch item.')
+  }
   const { context: ctx, files, mode } = result
   const mask = ctx.mask.asset
   if (
@@ -238,7 +249,7 @@ export function parseFrozenSmartPatchInputV1(input: unknown): FrozenSmartPatchIn
   const embeddings = new Map<string, unknown>()
   result.items = result.items.map((entry) => {
     const request = requestForEntry(result, entry)
-    validateEntry(ctx, entry, request)
+    validateEntry(ctx, entry, request, result.animaPromptInterpretation)
     const inference = request.inference
     const resources =
       request.family === 'anima'
@@ -318,6 +329,9 @@ export async function captureSmartPatchInputMaterial(
     references['model-source.png'] = capturePlane('model-source.png', prepared.modelSource, files)
   }
   const manifest: FrozenSmartPatchInputV1 = {
+    ...(executions.some((execution) => execution.request.family === 'anima')
+      ? { animaPromptInterpretation: ANIMA_PROMPT_INTERPRETATION }
+      : {}),
     context: ctx,
     files: references,
     items: [],
@@ -487,6 +501,7 @@ function validateEntry(
   ctx: FrozenSmartPatchGenerationContext,
   entry: FrozenSmartPatchInputItemV1,
   request: SmartPatchExecutionRequest,
+  animaPromptInterpretation?: typeof ANIMA_PROMPT_INTERPRETATION,
 ): void {
   validateSmartPatchExecutionDraft(ctx, entry.item)
   const draft = ctx.generationDraft
@@ -523,8 +538,14 @@ function validateEntry(
       request.inference.model.checkpoint.sha256 !== model.fileSha256 ||
       !isDeepStrictEqual(request.inference.sampling, expected) ||
       !isDeepStrictEqual(request.inference.prompts, {
-        negative: compileAnimaPromptWeighting(entry.item.prompts.negative),
-        positive: compileAnimaPromptWeighting(entry.item.prompts.positive),
+        negative: compileAnimaPromptWeightingForInterpretation(
+          entry.item.prompts.negative,
+          animaPromptInterpretation,
+        ),
+        positive: compileAnimaPromptWeightingForInterpretation(
+          entry.item.prompts.positive,
+          animaPromptInterpretation,
+        ),
       })
     ) {
       refuse('The frozen Anima checkpoint, concrete prompt or sampling interpretation changed.')

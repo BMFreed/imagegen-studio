@@ -1,5 +1,9 @@
 import { compileAnimaFlowSamplingPlan } from '../../shared/projects/anima-flow-sampling-plan.js'
-import { compileAnimaPromptWeighting } from '../../shared/projects/anima-prompt-weighting.js'
+import {
+  ANIMA_PROMPT_INTERPRETATION,
+  compileAnimaPromptWeighting,
+  compileAnimaPromptWeightingForInterpretation,
+} from '../../shared/projects/anima-prompt-weighting.js'
 import type { AnimaWorkerRequest } from '../../shared/projects/anima-worker-request.js'
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
 import type { IgsProjectDocumentV1, IgsRectV1 } from '../../shared/projects/project-schema.js'
@@ -61,6 +65,7 @@ export interface FrozenQueuedAnimaOutpaintV1 {
 type Draft = IgsProjectDocumentV1['generationDraft']
 type AnimaJob = AnimaWorkerRequest['job']
 type Fields = {
+  animaPromptInterpretation?: typeof ANIMA_PROMPT_INTERPRETATION
   bbox: IgsRectV1
   cfgRescale?: 0
   documentId: string
@@ -192,6 +197,7 @@ const targetFields = {
   width: side,
 }
 const contextFields = {
+  animaPromptInterpretation: v.optional(v.literal(ANIMA_PROMPT_INTERPRETATION)),
   bbox,
   cfgRescale: v.optional(v.literal(0)),
   documentId: uuid,
@@ -320,6 +326,7 @@ export function buildFrozenQueuedAnimaOutpaintV1(
   return parseFrozenQueuedAnimaOutpaintV1(
     JSON.stringify({
       context: {
+        animaPromptInterpretation: ANIMA_PROMPT_INTERPRETATION,
         bbox: context.bbox,
         conditioning: context.conditioning,
         ...(context.generationDraft.cfgRescale !== undefined
@@ -464,6 +471,7 @@ export function buildFrozenQueuedAnimaGenerationV1(input: {
     invalid()
   }
   const common = {
+    animaPromptInterpretation: ANIMA_PROMPT_INTERPRETATION,
     bbox: context.bbox,
     ...(context.generationDraft.cfgRescale !== undefined
       ? { cfgRescale: context.generationDraft.cfgRescale }
@@ -580,8 +588,14 @@ function assertAgreement(
 ): void {
   const { context, workerJob } = payload
   const actualPrompts = {
-    negative: compileAnimaPromptWeighting(context.prompts.negative),
-    positive: compileAnimaPromptWeighting(context.prompts.positive),
+    negative: compileAnimaPromptWeightingForInterpretation(
+      context.prompts.negative,
+      context.animaPromptInterpretation,
+    ),
+    positive: compileAnimaPromptWeightingForInterpretation(
+      context.prompts.positive,
+      context.animaPromptInterpretation,
+    ),
   }
   const actualPlan = compileAnimaFlowSamplingPlan({
     guidanceScale: context.sampling.cfgScale,

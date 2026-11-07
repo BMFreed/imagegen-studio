@@ -1,5 +1,8 @@
 import { compileAnimaFlowSamplingPlan } from '../../shared/projects/anima-flow-sampling-plan.js'
-import { compileAnimaPromptWeighting } from '../../shared/projects/anima-prompt-weighting.js'
+import {
+  ANIMA_PROMPT_INTERPRETATION,
+  compileAnimaPromptWeighting,
+} from '../../shared/projects/anima-prompt-weighting.js'
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 
 import assert from 'node:assert/strict'
@@ -23,6 +26,24 @@ import {
 } from './test-fixtures/smart-patch-input-material.js'
 
 const digest = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
+// Frozen old/new sidecars are literal evidence, independent of the selected compiler default.
+const legacyFragmentPrompt = {
+  cleanedText: 'a,b',
+  spans: [{ end: 3, start: 0, weight: 2 }],
+  version: 'anima-prompt-weighting-v1' as const,
+}
+const currentFragmentPrompt = {
+  cleanedText: 'a , b',
+  spans: [
+    { end: 1, start: 0, weight: 2 },
+    { end: 2, start: 1, weight: 1 },
+    { end: 3, start: 2, weight: 2 },
+    { end: 4, start: 3, weight: 1 },
+    { end: 5, start: 4, weight: 2 },
+  ],
+  version: 'anima-prompt-weighting-v1' as const,
+}
+
 function cloneMaterial(input: SmartPatchInputMaterial): SmartPatchInputMaterial {
   return {
     files: Object.fromEntries(
@@ -65,6 +86,12 @@ for (const family of ['illustrious', 'anima'] as const) {
       assert.deepEqual(reopened, material)
       assert.equal(reopened.manifest.mode, mode)
       assert.equal(reopened.manifest.items[0].family, family)
+      assert.equal(
+        reopened.manifest.animaPromptInterpretation,
+        family === 'anima' ? ANIMA_PROMPT_INTERPRETATION : undefined,
+      )
+      assert.equal('animaPromptInterpretation' in reopened.manifest, family === 'anima')
+      assert.equal('animaPromptInterpretation' in reopened.manifest.context, false)
       assert.equal(reopened.manifest.context.bbox.x, -9)
       assert.equal(reopened.manifest.context.bbox.width, 128)
       assert.equal(reopened.manifest.context.internalResolution.width, 64)
@@ -100,6 +127,140 @@ for (const family of ['illustrious', 'anima'] as const) {
     })
   }
 }
+
+for (const mode of ['txt2img', 'img2img', 'inpaint', 'outpaint'] as const) {
+  test(`Anima ${mode} material retains declared fragment joining and absent-marker legacy signs on reload`, async () => {
+    const { executions, prepared } = literalSmartPatchPreparedInput('anima', mode)
+    const execution = executions[0]
+    if (execution.request.family !== 'anima') {
+      assert.fail('fixture family')
+    }
+    execution.item.prompts = { negative: '(a,b)2', positive: '(a,b)2' }
+    prepared.context.generationDraft.positivePrompt.text = '(a,b)2'
+    prepared.context.generationDraft.negativePrompt.text = '(a,b)2'
+    execution.request.inference = {
+      ...execution.request.inference,
+      prompts: {
+        negative: structuredClone(currentFragmentPrompt),
+        positive: structuredClone(currentFragmentPrompt),
+      },
+    }
+    const material = await captureSmartPatchInputMaterial(prepared, executions)
+    assert.equal(material.manifest.animaPromptInterpretation, ANIMA_PROMPT_INTERPRETATION)
+    assert.equal('animaPromptInterpretation' in material.manifest.context, false)
+    assert.deepEqual(material.manifest.items[0].inference.prompts, {
+      negative: currentFragmentPrompt,
+      positive: currentFragmentPrompt,
+    })
+    const legacy = cloneMaterial(material)
+    delete legacy.manifest.animaPromptInterpretation
+    const legacyEntry = legacy.manifest.items[0]
+    if (legacyEntry.family !== 'anima') {
+      assert.fail('fixture family')
+    }
+    legacyEntry.inference = {
+      ...legacyEntry.inference,
+      prompts: {
+        negative: structuredClone(legacyFragmentPrompt),
+        positive: structuredClone(legacyFragmentPrompt),
+      },
+    }
+    const reopened = await parseSmartPatchInputMaterial(
+      JSON.parse(JSON.stringify(legacy.manifest)),
+      legacy.files,
+    )
+    assert.deepEqual(reopened, legacy)
+    assert.equal('animaPromptInterpretation' in reopened.manifest, false)
+
+    const refused = (
+      source: SmartPatchInputMaterial,
+      change: (changed: SmartPatchInputMaterial['manifest']) => void,
+    ) => {
+      const changed = cloneMaterial(source)
+      change(changed.manifest)
+      assert.throws(() => parseFrozenSmartPatchInputV1(changed.manifest), {
+        code: 'SMART_PATCH_INPUT_INVALID',
+      })
+    }
+    refused(material, (manifest) => {
+      delete manifest.animaPromptInterpretation
+    })
+    refused(legacy, (manifest) => {
+      manifest.animaPromptInterpretation = ANIMA_PROMPT_INTERPRETATION
+    })
+    refused(material, (manifest) => {
+      Object.assign(manifest, { animaPromptInterpretation: 'unknown-fragments-v2' })
+    })
+    refused(legacy, (manifest) => {
+      Object.assign(manifest.context, { animaPromptInterpretation: ANIMA_PROMPT_INTERPRETATION })
+    })
+    for (const polarity of ['positive', 'negative'] as const) {
+      for (const [source, replacement] of [
+        [legacy, currentFragmentPrompt],
+        [material, legacyFragmentPrompt],
+      ] as const) {
+        refused(source, (manifest) => {
+          const entry = manifest.items[0]
+          if (entry.family !== 'anima') {
+            assert.fail('fixture family')
+          }
+          entry.inference = {
+            ...entry.inference,
+            prompts: { ...entry.inference.prompts, [polarity]: structuredClone(replacement) },
+          }
+        })
+      }
+      refused(legacy, (manifest) => {
+        const entry = manifest.items[0]
+        if (entry.family !== 'anima') {
+          assert.fail('fixture family')
+        }
+        entry.inference = {
+          ...entry.inference,
+          prompts: {
+            ...entry.inference.prompts,
+            [polarity]: { ...legacyFragmentPrompt, spans: [{ end: 3, start: 0, weight: 3 }] },
+          },
+        }
+      })
+      const oldSidecar = structuredClone(execution)
+      if (oldSidecar.request.family !== 'anima') {
+        assert.fail('fixture family')
+      }
+      oldSidecar.request.inference = {
+        ...oldSidecar.request.inference,
+        prompts: {
+          ...oldSidecar.request.inference.prompts,
+          [polarity]: structuredClone(legacyFragmentPrompt),
+        },
+      }
+      await assert.rejects(captureSmartPatchInputMaterial(prepared, [oldSidecar]), {
+        code: 'SMART_PATCH_INPUT_INVALID',
+      })
+    }
+    prepared.context.generationDraft.positivePrompt.text = 'later authoring'
+    execution.item.prompts.positive = 'later concrete prompt'
+    assert.deepEqual(
+      await parseSmartPatchInputMaterial(material.manifest, material.files),
+      material,
+    )
+    assert.deepEqual(await parseSmartPatchInputMaterial(legacy.manifest, legacy.files), legacy)
+  })
+}
+
+test('Illustrious material keeps the old schema and refuses an Anima-only interpretation marker', async () => {
+  const material = await literalPreparedSmartPatchInputMaterial('illustrious')
+  assert.equal('animaPromptInterpretation' in material.manifest, false)
+  assert.deepEqual(parseFrozenSmartPatchInputV1(material.manifest), material.manifest)
+  assert.throws(
+    () =>
+      parseFrozenSmartPatchInputV1({
+        ...material.manifest,
+        animaPromptInterpretation: ANIMA_PROMPT_INTERPRETATION,
+      }),
+    { code: 'SMART_PATCH_INPUT_INVALID' },
+  )
+})
 
 test('material capture owns buffers, context and concrete items before its first async PNG read', async () => {
   const { executions, prepared } = literalSmartPatchPreparedInput()

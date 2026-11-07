@@ -89,7 +89,7 @@ test('explicit and saved numeric forms step by 0.1 without rounding away authore
 test('markers and compound targets preserve inner weights rather than stealing the last word suffix', () => {
   assert.deepEqual(weights(change('word++', 1).text), Array.from({ length: 4 }).fill(1.1 ** 3))
   assert.deepEqual(weights(change('word--', 1).text), Array.from({ length: 4 }).fill(0.9))
-  for (const source of ['two words+', 'red (hair:2)', '(red)(hair:2)', 'word, (hair:2)']) {
+  for (const source of ['two words+', 'red (hair:2)', '(red)(hair:2)']) {
     const next = change(source, 1)
     assert.equal(
       compileAnimaPromptWeighting(next.text).cleanedText,
@@ -97,7 +97,9 @@ test('markers and compound targets preserve inner weights rather than stealing t
     )
     assert.deepEqual(
       weights(next.text),
-      weights(source).map((weight) => weight * 1.1),
+      weights(source).map((weight, index) =>
+        source === '(red)(hair:2)' && index === 3 ? 1 : weight * 1.1,
+      ),
     )
     const restored = adjustPromptAttention(next.text, next.selection, -1, 'anima')
     assert.deepEqual(
@@ -105,6 +107,16 @@ test('markers and compound targets preserve inner weights rather than stealing t
       compileAnimaPromptWeighting(source),
     )
   }
+  // Wrapping a compound comma target gives the comma its own Invoke fragment.
+  // Its newly synthesized boundary is neutral, unlike the authored whitespace.
+  const comma = change('word, (hair:2)', 1)
+  assert.equal(compileAnimaPromptWeighting(comma.text).cleanedText, 'word , hair')
+  assert.deepEqual(weights(comma.text), [1.1, 1.1, 1.1, 1.1, 1, 1.1, 1.1, 2.2, 2.2, 2.2, 2.2])
+  const restoredComma = adjustPromptAttention(comma.text, comma.selection, -1, 'anima')
+  assert.deepEqual(
+    compileAnimaPromptWeighting(restoredComma.text),
+    compileAnimaPromptWeighting('word, (hair:2)'),
+  )
 })
 
 test('nested saved numeric suffix hands the parent colon to its own group without changing old top-level refusal', () => {
@@ -248,7 +260,8 @@ test('reversed selections, valid partial text and caret ownership preserve untou
   const inside = adjustPromptAttention('(word:2)', { anchor: 1, head: 5 }, 1, 'anima')
   assert.deepEqual(weights(inside.text), Array.from({ length: 4 }).fill(2 * 1.1))
   const letters = adjustPromptAttention('word', { anchor: 0, head: 2 }, 1, 'anima')
-  assert.deepEqual(weights(letters.text), [1.1, 1.1, 1, 1])
+  assert.equal(compileAnimaPromptWeighting(letters.text).cleanedText, 'wo rd')
+  assert.deepEqual(weights(letters.text), [1.1, 1.1, 1, 1, 1])
   const restored = adjustPromptAttention(letters.text, letters.selection, -1, 'anima')
   assert.equal(restored.text, 'word')
   assert.equal(
