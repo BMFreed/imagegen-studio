@@ -1888,3 +1888,24 @@ The trained checkpoint's pre-release source/document/retained audit is CLEAN:
 physical-exit/restoration/reader/dependency gates precede149,463,040 bytes of
 exact own-scratch release. Source/output archive and original weights/runtime
 remain protected; final release bookkeeping is ROOT self-verification.
+
+### Anima visual placement remains unqualified
+
+The [fixed scarf scene](../../../engineering/phase-4-regional-guidance-anima-visual-research.md)
+uses the same exact trained bundle,512²/20 Euler/CFG4, seeds123/124 and existing
+Invoke-based masks. Four previous unviewed PNGs plus two new mechanically passing
+requests produce six images, with a pre-view frozen rubric and anonymous order.
+Blind descriptions agree with ROOT: ordinary controls show two cats on a bench;
+seed123 correctly swaps scarf colors, seed124 yields one red-scarfed cat before
+and after swap. Placement2PASS/2FAIL fails the both-seed/all-four criterion. All
+regional images also lose the global bench. No automatic visual PASS follows
+from correct masks or pixel influence. This finite assessment causes no prompt,
+seed, weight, mask or composition tuning and no public activation/status promotion.
+Spatial negatives/references, Smart/durable publication, provenance exclusions and
+PP-001/005/007/008 **«Пока не обещать»** remain unchanged.
+
+Independent retained/source review verifies all393 scratch entries and six
+original/anonymous PNGs, without rerunning native generation. ROOT separately
+checks exit/readers/dependencies and releases13,967,360 bytes of exact own scratch;
+compact images/inputs and verified archive remain. This bookkeeping does not
+change the NOT_QUALIFIED visual result or product readiness.

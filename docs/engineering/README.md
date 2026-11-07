@@ -2177,3 +2177,29 @@ entries,21 Main sets and16 PNGs. ROOT separately rechecks16 unit exits,
 restoration/readers/dependencies and releases149,463,040 allocated bytes of own
 scratch. Verified compact archive, original weights and existing runtime remain;
 final release bookkeeping is ROOT self-verification, without another native run.
+
+## Bounded Anima visual placement: not qualified
+
+The [Anima scarf assessment](./phase-4-regional-guidance-anima-visual-research.md)
+reuses four exact, previously unviewed trained PNGs and creates only the missing
+seed124 zero/swapped cases. Protocol/anonymous order precede all image viewing;
+the four reused generations predate the visual protocol, explicitly disclosed.
+Two new native tests pass with original loader/28-block/PNG/state oracles and
+unchanged source pins. No production code changes or new default is introduced.
+
+Independent blind descriptions and ROOT full-image inspection agree: both
+ordinary scenes contain two white cats on a bench. Seed123 exchanges red/blue
+neck scarves correctly; seed124 collapses to one red-scarfed cat in both regional
+variants. Placement2PASS/2FAIL defeats the all-four/both-seed gate. All four
+regional outputs omit the global bench; no full-scene preservation PASS is claimed.
+Rubric opposite-assignment controls reject the otherwise healthy seed123 placement
+without new generation. NOT_QUALIFIED is a bounded agent assessment, not a general
+model-quality judgment. No prompt/seed/settings search follows viewing. Public
+Anima/visual readiness and PP-001/005/007/008 remain «Пока не обещать».
+
+Independent pre-release source/document/retained review is CLEAN:393 payload
+entries, six exact original/blind images, two new Main sets and23 migration hashes.
+ROOT separately checks physical exit/readers/dependencies and releases13,967,360
+allocated bytes of own scratch. All six loose originals, whole inputs, frozen
+rubric/map and verified archive remain. Final release bookkeeping is ROOT
+self-verification; public/visual readiness is not promoted by the audit.
