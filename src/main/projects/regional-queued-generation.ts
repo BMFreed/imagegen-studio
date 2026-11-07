@@ -13,16 +13,23 @@ import * as v from 'valibot'
 import type {
   FrozenQueuedGenerationV1,
   FrozenQueuedIllustriousImg2ImgV1,
+  FrozenQueuedIllustriousOutpaintV1,
   FrozenQueuedIllustriousTxt2ImgV1,
 } from './generation-queue.js'
-import type { IllustriousGenerationRequestV1 } from './illustrious-txt2img-job.js'
-import type { RegionalWorkerInput } from './regional-worker-request.js'
+import type {
+  RegionalGenerationRequestV1,
+  RegionalOutpaintInfill,
+  RegionalWorkerInput,
+} from './regional-worker-request.js'
 
 import { GenerationQueueError, parseFrozenGenerationPayloadV1 } from './generation-queue.js'
 import { frozenEmbeddingFieldsAgree } from './illustrious-generation-embeddings.js'
 import { frozenLoraFieldsAgree } from './illustrious-generation-loras.js'
 import { frozenVaeFieldsAgree } from './illustrious-generation-vae.js'
-import { captureRegionalWorkerInput } from './regional-worker-request.js'
+import {
+  captureRegionalWorkerInput,
+  RegionalOutpaintInfillSchema,
+} from './regional-worker-request.js'
 
 /** Private operational identity, outside normal Generate and accepted-result provenance. */
 export interface FrozenQueuedRegionalV1 extends Omit<FrozenQueuedIllustriousTxt2ImgV1, 'kind'> {
@@ -47,8 +54,21 @@ export interface FrozenQueuedRegionalInvokeImg2ImgV1 extends Omit<
   regional: FrozenQueuedRegionalV1['regional']
 }
 
+export interface FrozenQueuedRegionalInvokeOutpaintV1 extends Omit<
+  FrozenQueuedIllustriousOutpaintV1,
+  'kind'
+> {
+  compositionProfile: 'invoke-canvas-v1'
+  initializationProfile?: never
+  kind: 'illustrious-regional-outpaint'
+  outpaintInfill: RegionalOutpaintInfill
+  regional: FrozenQueuedRegionalV1['regional']
+}
+
 export type FrozenQueuedRegionalInvokeV1 =
-  FrozenQueuedRegionalInvokeImg2ImgV1 | FrozenQueuedRegionalInvokeTxt2ImgV1
+  | FrozenQueuedRegionalInvokeImg2ImgV1
+  | FrozenQueuedRegionalInvokeOutpaintV1
+  | FrozenQueuedRegionalInvokeTxt2ImgV1
 
 export type FrozenQueuedRegionalOperationalV1 =
   FrozenQueuedRegionalInvokeV1 | FrozenQueuedRegionalV1
@@ -57,11 +77,14 @@ export interface RegionalQueuedMaterial {
   compositionProfile?: 'invoke-canvas-v1'
   files: Record<string, Buffer>
   initializationProfile?: RegionalInitializationProfile
+  outpaintInfill?: RegionalOutpaintInfill
   regional: FrozenQueuedRegionalV1['regional']
 }
 
 type RegionalFrozenContext =
-  FrozenQueuedIllustriousImg2ImgV1['context'] | FrozenQueuedIllustriousTxt2ImgV1['context']
+  | FrozenQueuedIllustriousImg2ImgV1['context']
+  | FrozenQueuedIllustriousOutpaintV1['context']
+  | FrozenQueuedIllustriousTxt2ImgV1['context']
 
 const MAX_PAYLOAD_BYTES = 128 * 1024
 const MAX_METADATA_BYTES = 1024 * 1024
@@ -106,9 +129,11 @@ export function parseFrozenQueuedRegionalOperationalV1(
 ): FrozenQueuedRegionalOperationalV1 {
   return parseRegionalPayload(
     json,
-    ['illustrious-regional-img2img', 'illustrious-regional-txt2img'].includes(
-      String(readKind(json)),
-    ),
+    [
+      'illustrious-regional-img2img',
+      'illustrious-regional-outpaint',
+      'illustrious-regional-txt2img',
+    ].includes(String(readKind(json))),
   )
 }
 
@@ -119,13 +144,25 @@ export function parseFrozenQueuedRegionalOperationalV1(
  */
 export function parseAcceptedGenerationBaseV1(json: string): FrozenQueuedGenerationV1 {
   if (
-    !['illustrious-regional-img2img', 'illustrious-regional-txt2img'].includes(
-      String(readKind(json)),
-    )
+    ![
+      'illustrious-regional-img2img',
+      'illustrious-regional-outpaint',
+      'illustrious-regional-txt2img',
+    ].includes(String(readKind(json)))
   ) {
     return parseFrozenGenerationPayloadV1(json)
   }
   const payload = parseFrozenQueuedRegionalInvokeV1(json)
+  if (payload.kind === 'illustrious-regional-outpaint') {
+    const {
+      compositionProfile: _profile,
+      initializationProfile: _init,
+      outpaintInfill: _infill,
+      regional: _regional,
+      ...base
+    } = payload
+    return { ...base, kind: 'illustrious-outpaint' }
+  }
   if (payload.kind === 'illustrious-regional-img2img') {
     const {
       compositionProfile: _profile,
@@ -206,6 +243,9 @@ export function captureRegionalQueuedMaterial(
       : {}),
     ...(captured.initializationProfile !== undefined
       ? { initializationProfile: captured.initializationProfile }
+      : {}),
+    ...(captured.request.type === 'generate-illustrious-outpaint'
+      ? { outpaintInfill: { ...captured.request.job.infillResource } }
       : {}),
     files,
     regional: { byteSize: bytes.length, sha256: sha256(bytes) },
@@ -300,7 +340,7 @@ export async function loadRegionalQueuedFiles(
 export async function loadRegionalQueuedInput(
   root: string,
   payload: FrozenQueuedRegionalOperationalV1,
-  request: IllustriousGenerationRequestV1,
+  request: RegionalGenerationRequestV1,
 ): Promise<RegionalWorkerInput> {
   const capturedPayload = parseFrozenQueuedRegionalOperationalV1(JSON.stringify(payload))
   const capturedRequest = structuredClone(request)
@@ -317,7 +357,25 @@ export async function loadRegionalQueuedInput(
     throw invalid('The frozen regional recipe/request association is invalid.')
   }
   assertPublicRegionalGlobalEmbeddingsAgree(captured, capturedPayload.context)
-  const { output: _output, target, ...job } = captured.request.job
+  const { output: _output, target, ...fullJob } = captured.request.job
+  let job = fullJob
+  if (captured.request.type === 'generate-illustrious-outpaint') {
+    if (
+      capturedPayload.kind !== 'illustrious-regional-outpaint' ||
+      !isDeepStrictEqual(captured.request.job.conditioning, capturedPayload.context.conditioning) ||
+      !isDeepStrictEqual(captured.request.job.infillResource, capturedPayload.outpaintInfill)
+    ) {
+      throw invalid('The frozen regional outpaint resources differ.')
+    }
+    const {
+      conditioning: _conditioning,
+      infillResource: _infill,
+      output: _output,
+      target: _target,
+      ...numeric
+    } = captured.request.job
+    job = numeric
+  }
   const { path: _targetPath, ...targetDescriptor } = target
   if (
     !isDeepStrictEqual({ ...job, target: targetDescriptor }, capturedPayload.workerJob) ||
@@ -359,9 +417,11 @@ function parseRegionalPayload(json: string, invoke: boolean): FrozenQueuedRegion
   if (
     !record(value) ||
     (invoke
-      ? !['illustrious-regional-img2img', 'illustrious-regional-txt2img'].includes(
-          String(value.kind),
-        )
+      ? ![
+          'illustrious-regional-img2img',
+          'illustrious-regional-outpaint',
+          'illustrious-regional-txt2img',
+        ].includes(String(value.kind))
       : value.kind !== 'illustrious-regional') ||
     (invoke ? value.compositionProfile !== 'invoke-canvas-v1' : 'compositionProfile' in value)
   ) {
@@ -380,6 +440,7 @@ function parseRegionalPayload(json: string, invoke: boolean): FrozenQueuedRegion
   const {
     compositionProfile: _profile,
     initializationProfile,
+    outpaintInfill,
     regional: _regional,
     ...base
   } = value
@@ -387,14 +448,24 @@ function parseRegionalPayload(json: string, invoke: boolean): FrozenQueuedRegion
     JSON.stringify({
       ...base,
       kind:
-        value.kind === 'illustrious-regional-img2img'
-          ? 'illustrious-img2img'
-          : 'illustrious-txt2img',
+        value.kind === 'illustrious-regional-outpaint'
+          ? 'illustrious-outpaint'
+          : value.kind === 'illustrious-regional-img2img'
+            ? 'illustrious-img2img'
+            : 'illustrious-txt2img',
     }),
   )
-  const image = value.kind === 'illustrious-regional-img2img'
+  const outpaint = value.kind === 'illustrious-regional-outpaint'
+  const image = value.kind === 'illustrious-regional-img2img' || outpaint
+  if (
+    outpaint ? !v.is(RegionalOutpaintInfillSchema, outpaintInfill) : outpaintInfill !== undefined
+  ) {
+    throw invalid('The frozen regional infill descriptor is invalid.')
+  }
   const samplerMatchesInitialization =
-    (ordinary.kind === 'illustrious-txt2img' || ordinary.kind === 'illustrious-img2img') &&
+    (ordinary.kind === 'illustrious-txt2img' ||
+      ordinary.kind === 'illustrious-img2img' ||
+      ordinary.kind === 'illustrious-outpaint') &&
     (initializationProfile === undefined
       ? ordinary.workerJob.sampling.scheduler === 'euler' ||
         (image &&
@@ -405,7 +476,9 @@ function parseRegionalPayload(json: string, invoke: boolean): FrozenQueuedRegion
           (ordinary.workerJob.sampling.scheduler === 'dpmpp_2m' ||
             ordinary.workerJob.sampling.scheduler === 'dpmpp_2m_k')))
   if (
-    (ordinary.kind !== 'illustrious-txt2img' && ordinary.kind !== 'illustrious-img2img') ||
+    (ordinary.kind !== 'illustrious-txt2img' &&
+      ordinary.kind !== 'illustrious-img2img' &&
+      ordinary.kind !== 'illustrious-outpaint') ||
     ordinary.workerJob.checkpoint.predictionType !== 'epsilon' ||
     (invoke && ordinary.workerJob.sampling.cfgScale <= 1) ||
     !samplerMatchesInitialization ||
@@ -433,6 +506,18 @@ function parseRegionalPayload(json: string, invoke: boolean): FrozenQueuedRegion
             initializationProfile,
           ),
         }
+  if (outpaint) {
+    if (!invoke || ordinary.kind !== 'illustrious-outpaint') {
+      throw invalid('Regional outpaint requires its exact mixed-alpha operation.')
+    }
+    return {
+      ...ordinary,
+      compositionProfile: 'invoke-canvas-v1',
+      kind: 'illustrious-regional-outpaint',
+      outpaintInfill: v.parse(RegionalOutpaintInfillSchema, outpaintInfill),
+      regional: parsed.output,
+    }
+  }
   if (image) {
     if (!invoke || ordinary.kind !== 'illustrious-img2img') {
       throw invalid('Regional img2img requires its exact opaque-image operation.')

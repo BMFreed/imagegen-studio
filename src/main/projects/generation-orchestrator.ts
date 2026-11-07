@@ -17,8 +17,12 @@ import { assertRegionalGuidanceGenerationAvailable } from '../../shared/projects
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
+import * as v from 'valibot'
 
-import type { OutpaintInfillResolver } from '../runtime/inference-auxiliary-resources.js'
+import type {
+  OutpaintInfillResolver,
+  VerifiedOutpaintInfill,
+} from '../runtime/inference-auxiliary-resources.js'
 import type { PreparedAnimaGenerationBatch } from './anima-generation-batch.js'
 import type { AnimaGenerationModelResolver } from './anima-generation-preparation.js'
 import type { GenerationWorkerTransport } from './generation-processor.js'
@@ -32,6 +36,7 @@ import type { GenerationModelResolver } from './illustrious-generation-loras.js'
 import type { IllustriousGenerationRequestV1 } from './illustrious-txt2img-job.js'
 import type {
   FrozenNormalGenerationPreparationV1,
+  FrozenNormalOutpaintPreparationV1,
   PreparedNormalGeneration,
 } from './project-generation-preparation.js'
 import type { ProjectIndexRepository } from './project-index.js'
@@ -41,7 +46,11 @@ import type {
   RegionalGenerationProcessorResult,
   RegionalGenerationTransport,
 } from './regional-generation-processor.js'
-import type { RegionalWorkerInput } from './regional-worker-request.js'
+import type {
+  RegionalGenerationRequestV1,
+  RegionalOutpaintInfill,
+  RegionalWorkerInput,
+} from './regional-worker-request.js'
 import type { SmartPatchInputMaterial } from './smart-patch-frozen-input.js'
 import type {
   SmartPatchInferenceTransport,
@@ -52,7 +61,10 @@ import type { SmartPatchGenerationStagingRepository } from './smart-patch-genera
 import type { ProjectWorkerClient } from './worker-client.js'
 
 import { withAnimaGenerationBatchRequests } from './anima-generation-request.js'
-import { buildFrozenQueuedOutpaintV1 } from './generation-queue.js'
+import {
+  buildFrozenQueuedOutpaintV1,
+  reverifyFrozenQueuedOutpaintGeneration,
+} from './generation-queue.js'
 import { GENERATION_STAGING_LIMITS } from './generation-staging-limits.js'
 import {
   effectiveGenerationEmbeddings,
@@ -73,7 +85,10 @@ import { buildQueuedOutpaintWorkerRequest } from './outpaint-worker-request.js'
 import { canonicalProjectPath, localProjectRecoveryKey } from './project-identity.js'
 import { captureSmartPatchModelResolver } from './project-smart-patch-execution.js'
 import { RegionalGenerationProcessor } from './regional-generation-processor.js'
-import { captureRegionalWorkerInput } from './regional-worker-request.js'
+import {
+  captureRegionalWorkerInput,
+  RegionalOutpaintInfillSchema,
+} from './regional-worker-request.js'
 import { SmartPatchGenerationProcessor } from './smart-patch-generation-processor.js'
 
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
@@ -293,7 +308,8 @@ export class GenerationOrchestrator {
     const entry = await this.queue.getManagerEntry(id)
     if (
       entry.operation === 'illustrious-regional-txt2img' ||
-      entry.operation === 'illustrious-regional-img2img'
+      entry.operation === 'illustrious-regional-img2img' ||
+      entry.operation === 'illustrious-regional-outpaint'
     ) {
       await this.cancelRegionalQueueItem(id)
       return await this.queue.cancel(id)
@@ -483,6 +499,7 @@ export class GenerationOrchestrator {
       this.staging,
       this.models,
       compositionProfile,
+      this.infillResolver,
     )
     this.regionalProcessors.add(processor)
     return {
@@ -1075,9 +1092,12 @@ export class GenerationOrchestrator {
       afterPublication?: (item: QueuedGenerationItem, assertCurrent: () => void) => Promise<void>
       assertCurrent: () => void
       beforePublication?: () => Promise<void>
-      prepared: PreparedNormalGeneration
+      prepared: {
+        context: FrozenNormalGenerationPreparationV1 | FrozenNormalOutpaintPreparationV1
+        targetPngBytes: Buffer
+      }
       regional: Omit<RegionalWorkerInput, 'request'>
-      request: IllustriousGenerationRequestV1
+      request: RegionalGenerationRequestV1
     },
   ): Promise<QueuedGenerationItem> {
     const afterPublication = input.afterPublication
@@ -1112,9 +1132,12 @@ export class GenerationOrchestrator {
       assertCurrent: () => void
       beforePublication?: () => Promise<void>
       items: readonly {
-        prepared: PreparedNormalGeneration
+        prepared: {
+          context: FrozenNormalGenerationPreparationV1 | FrozenNormalOutpaintPreparationV1
+          targetPngBytes: Buffer
+        }
         regional: Omit<RegionalWorkerInput, 'request'>
-        request: IllustriousGenerationRequestV1
+        request: RegionalGenerationRequestV1
       }[]
     },
   ): Promise<QueuedGenerationItem[]> {
@@ -1308,6 +1331,32 @@ export class GenerationOrchestrator {
     this.completedProjectCloses.delete(tabId)
   }
 
+  /** Resolve the same pinned auxiliary resource as ordinary outpaint, before any target publication. */
+  async resolveRegionalOutpaintInfill(
+    expected?: RegionalOutpaintInfill,
+  ): Promise<VerifiedOutpaintInfill> {
+    if (!this.infillResolver) {
+      throw new GenerationOrchestratorError(
+        'GENERATION_BATCH_INVALID',
+        'The exact local outpaint infill resource is unavailable.',
+      )
+    }
+    const source = await this.infillResolver.resolveVerifiedOutpaintInfill()
+    const descriptor = v.parse(RegionalOutpaintInfillSchema, {
+      byteSize: source.byteSize,
+      path: source.managedPath,
+      role: source.role,
+      sha256: source.sha256,
+    })
+    if (expected && !isDeepStrictEqual(descriptor, expected)) {
+      throw new GenerationOrchestratorError(
+        'GENERATION_BATCH_INVALID',
+        'The frozen regional infill resource changed.',
+      )
+    }
+    return { ...source }
+  }
+
   /** Frozen Retry reads no current prompts, regions, masks, model choices or seed settings. */
   async retryRegional(
     tabId: string,
@@ -1365,11 +1414,32 @@ export class GenerationOrchestrator {
         compositionProfile === 'invoke-canvas-v1'
           ? this.queue.retryInvokeCanvasRegionalTerminal.bind(this.queue)
           : this.queue.retryCurrentCanvasRegionalTerminal.bind(this.queue)
-      if (compositionProfile === 'invoke-canvas-v1' && workerEmbeddings(frozen.payload.context)) {
+      const reverifyOutpaint = async () => {
+        if (frozen.payload.kind !== 'illustrious-regional-outpaint') {
+          return
+        }
+        const infill = await this.resolveRegionalOutpaintInfill(frozen.payload.outpaintInfill)
+        assertCurrent()
+        await reverifyFrozenQueuedOutpaintGeneration(
+          frozen.payload,
+          this.models as AnimaGenerationModelResolver & GenerationModelResolver,
+          { resolveVerifiedOutpaintInfill: async () => infill },
+        )
+        assertCurrent()
+      }
+      await reverifyOutpaint()
+      if (
+        compositionProfile === 'invoke-canvas-v1' &&
+        frozen.payload.kind !== 'illustrious-regional-outpaint' &&
+        workerEmbeddings(frozen.payload.context)
+      ) {
         await reverifyFrozenGenerationEmbeddings(frozen.payload.context, this.models)
         assertCurrent()
       }
-      if (compositionProfile === 'invoke-canvas-v1') {
+      if (
+        compositionProfile === 'invoke-canvas-v1' &&
+        frozen.payload.kind !== 'illustrious-regional-outpaint'
+      ) {
         await reverifyFrozenGenerationLoras(frozen.payload.context, this.models)
         assertCurrent()
         await reverifyFrozenGenerationVae(frozen.payload.context, this.models)
@@ -1377,6 +1447,7 @@ export class GenerationOrchestrator {
       }
       const retried = await retry(id, expectedStatusSequence, async (input) => {
         assertCurrent()
+        await reverifyOutpaint()
         await this.staging.preflightRegionalBatchCapacity({
           entries: [{ frozenPayloadJson: input.frozenPayloadJson, queueItemId: input.queueItemId }],
           localProjectKey: tabId,
@@ -1734,9 +1805,12 @@ export class GenerationOrchestrator {
       assertCurrent: () => void
       beforePublication?: () => Promise<void>
       items: readonly {
-        prepared: PreparedNormalGeneration
+        prepared: {
+          context: FrozenNormalGenerationPreparationV1 | FrozenNormalOutpaintPreparationV1
+          targetPngBytes: Buffer
+        }
         regional: Omit<RegionalWorkerInput, 'request'>
-        request: IllustriousGenerationRequestV1
+        request: RegionalGenerationRequestV1
       }[]
     },
     publicBatch: boolean,
@@ -1822,6 +1896,12 @@ export class GenerationOrchestrator {
           'PROJECT_DOCUMENT_CHANGED',
           'The indexed Project changed.',
         )
+      }
+      for (const item of items) {
+        if (item.request.type === 'generate-illustrious-outpaint') {
+          await this.resolveRegionalOutpaintInfill(item.request.job.infillResource)
+          assertCurrent()
+        }
       }
       const verified = await this.models.resolveVerifiedGenerationCheckpointForPlan(
         structuredClone(prepared.context.model.reference),
@@ -2057,7 +2137,7 @@ export class GenerationOrchestrator {
   private requireBatchDocument(
     tabId: string,
     documentId: string,
-    items: readonly Pick<QualifiedGenerationBatchItem, 'prepared'>[],
+    items: readonly { prepared: { context: { documentId: string }; targetPngBytes?: Buffer } }[],
   ): void {
     if (
       this.projects.getOpenDocumentId(tabId) !== documentId ||

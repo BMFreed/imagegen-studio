@@ -14,6 +14,7 @@ import {
   supportsInferenceRegionalImg2ImgVae,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
+  supportsInferenceRegionalOutpaint,
   supportsInferenceRegionalProgress,
   supportsInferenceRegionalVae,
 } from '../../shared/projects/inference-worker-capabilities.js'
@@ -21,6 +22,7 @@ import {
 import { createHash, randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 
+import type { OutpaintInfillResolver } from '../runtime/inference-auxiliary-resources.js'
 import type {
   GenerationQueueRepository,
   QueuedGenerationItem,
@@ -134,6 +136,7 @@ export class RegionalGenerationProcessor {
     private readonly staging: GenerationStagingRepository,
     models: RegionalGenerationModelResolver,
     private readonly compositionProfile?: 'invoke-canvas-v1',
+    private readonly infillResolver?: OutpaintInfillResolver,
   ) {
     const names = [
       'assertNoUnboundGenerationEmbeddings',
@@ -390,6 +393,26 @@ export class RegionalGenerationProcessor {
     input: RegionalWorkerInput,
   ): Promise<void> {
     const { context, workerJob } = claimed.payload
+    if (claimed.payload.kind === 'illustrious-regional-outpaint') {
+      if (input.request.type !== 'generate-illustrious-outpaint' || !this.infillResolver) {
+        throw new Error('The frozen regional infill verifier is unavailable.')
+      }
+      const actual = await this.infillResolver.resolveVerifiedOutpaintInfill()
+      if (
+        !isDeepStrictEqual(
+          {
+            byteSize: actual.byteSize,
+            path: actual.managedPath,
+            role: actual.role,
+            sha256: actual.sha256,
+          },
+          claimed.payload.outpaintInfill,
+        ) ||
+        !isDeepStrictEqual(input.request.job.conditioning, claimed.payload.context.conditioning)
+      ) {
+        throw new Error('The frozen regional infill or conditioning changed.')
+      }
+    }
     if (!frozenLoraFieldsAgree(context, input.request.job.loras)) {
       throw new Error('The frozen regional LoRA stack differs from its command.')
     }
@@ -507,7 +530,16 @@ export class RegionalGenerationProcessor {
       }
       const input = captureRegionalWorkerInput(claimed.input)
       if (
-        input.request.type === 'generate-illustrious-img2img' &&
+        input.request.type === 'generate-illustrious-outpaint' &&
+        !supportsInferenceRegionalOutpaint(transport.ready)
+      ) {
+        throw new RegionalGenerationProcessorError(
+          'INFERENCE_UNAVAILABLE',
+          'The worker has not qualified outpaint with Regional Guidance.',
+        )
+      }
+      if (
+        input.request.type !== 'generate-illustrious-txt2img' &&
         !supportsInferenceRegionalImg2Img(transport.ready)
       ) {
         throw new RegionalGenerationProcessorError(
@@ -516,7 +548,7 @@ export class RegionalGenerationProcessor {
         )
       }
       if (
-        input.request.type === 'generate-illustrious-img2img' &&
+        input.request.type !== 'generate-illustrious-txt2img' &&
         input.request.job.sampling.scheduler === 'euler_a' &&
         !supportsInferenceRegionalImg2ImgEulerAncestral(transport.ready)
       ) {
@@ -526,7 +558,7 @@ export class RegionalGenerationProcessor {
         )
       }
       if (
-        input.request.type === 'generate-illustrious-img2img' &&
+        input.request.type !== 'generate-illustrious-txt2img' &&
         (input.request.job.sampling.scheduler === 'dpmpp_2m' ||
           input.request.job.sampling.scheduler === 'dpmpp_2m_k') &&
         !supportsInferenceRegionalImg2ImgDpmpp2m(transport.ready)
@@ -537,7 +569,7 @@ export class RegionalGenerationProcessor {
         )
       }
       if (
-        input.request.type === 'generate-illustrious-img2img' &&
+        input.request.type !== 'generate-illustrious-txt2img' &&
         (input.request.job.sampling.cfgRescale ?? 0) !== 0 &&
         !supportsInferenceRegionalImg2ImgCFGRescale(transport.ready)
       ) {
@@ -547,7 +579,7 @@ export class RegionalGenerationProcessor {
         )
       }
       if (
-        input.request.type === 'generate-illustrious-img2img' &&
+        input.request.type !== 'generate-illustrious-txt2img' &&
         (input.request.job.vae != null || (input.request.job.vaePrecision ?? 'Auto') !== 'FP16') &&
         !supportsInferenceRegionalImg2ImgVae(transport.ready)
       ) {
@@ -613,7 +645,7 @@ export class RegionalGenerationProcessor {
           this.stopping ||
           !supportsInferenceRegionalProgress(transport.ready) ||
           !isGenerationDenoisingProgress(progress) ||
-          (input.request.type === 'generate-illustrious-img2img'
+          (input.request.type !== 'generate-illustrious-txt2img'
             ? input.request.job.sampling.denoisingStrength === 0 ||
               progress.totalSteps > expectedTotalSteps
             : progress.totalSteps !== expectedTotalSteps)

@@ -31,6 +31,83 @@ declare global {
   }
 }
 
+test('renderer regional outpaint uses actual target, explicit strength and separate capability', async ({
+  page,
+}) => {
+  const errors: string[] = []
+  page.on('pageerror', (cause) => errors.push(cause.message))
+  await mountWiring(page, 'project')
+  const generate = page.getByRole('button', { exact: true, name: 'Generate' })
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.targetMode = 'outpaint'
+    fixture.tab.primaryBbox.x += 8
+    fixture.tab.generationDraft.sampling.denoisingStrength = 0.5
+    fixture.state.regionalImg2ImgSupported = true
+    fixture.state.regionalOutpaintSupported = false
+  })
+  await expect(generate).toBeDisabled()
+  await expect(page.getByText(/outpaint with Regional Guidance/)).toBeVisible()
+  await page.evaluate(() => {
+    globalThis.window.regionalWiringFixture.state.regionalOutpaintSupported = true
+  })
+  await expect(generate).toBeEnabled()
+  await generate.click()
+  expect(await page.evaluate(() => globalThis.window.regionalWiringFixture.generateCalls)).toEqual([
+    1,
+  ])
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.tab.generationDraft.sampling.denoisingStrength = null
+  })
+  await expect(generate).toBeDisabled()
+  await expect(page.getByText(/Set Denoising Strength from 0 to 1/)).toBeVisible()
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.tab.generationDraft.sampling.denoisingStrength = 0.5
+    fixture.state.regionalOutpaintSupported = false
+    fixture.targetMode = 'txt2img'
+    fixture.tab.primaryBbox.x += 8
+  })
+  await expect(generate).toBeEnabled()
+  expect(errors).toEqual([])
+})
+
+test('renderer frozen regional outpaint Retry uses frozen mode despite current authoring', async ({
+  page,
+}) => {
+  const errors: string[] = []
+  page.on('pageerror', (cause) => errors.push(cause.message))
+  await mountWiring(page, 'queue')
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.queueItem.operation = 'illustrious-regional-outpaint'
+    fixture.tab.regionalGuidance = []
+    fixture.tab.generationDraft.model!.baseModelFamily = 'anima'
+    fixture.state.regionalImg2ImgSupported = true
+    fixture.state.regionalOutpaintSupported = false
+    fixture.epoch += 1
+  })
+  const retry = page.getByRole('button', { exact: true, name: 'Retry job' })
+  await expect(retry).toBeDisabled()
+  await expect(
+    page
+      .getByRole('region', { name: 'Generation jobs' })
+      .getByText(/does not support outpaint with Regional Guidance/),
+  ).toBeVisible()
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.state.regionalOutpaintSupported = true
+    fixture.epoch += 1
+  })
+  await expect(retry).toBeEnabled()
+  await retry.click()
+  await expect
+    .poll(() => page.evaluate(() => globalThis.window.regionalWiringFixture.retryCalls.length))
+    .toBe(1)
+  expect(errors).toEqual([])
+})
+
 test('renderer opaque IMG rescale requires the combination capability and preserves zero', async ({
   page,
 }, testInfo) => {
@@ -806,7 +883,7 @@ test('renderer opaque regional img2img uses actual target and explicit strength'
     fixture.targetMode = 'outpaint'
     fixture.tab.primaryBbox.x += 8
   })
-  await expect(page.getByText(/partially transparent Current Canvas input/)).toBeVisible()
+  await expect(page.getByText(/outpaint with Regional Guidance/)).toBeVisible()
   await expect(generate).toBeDisabled()
   await page.evaluate(() => {
     const fixture = globalThis.window.regionalWiringFixture

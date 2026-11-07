@@ -997,7 +997,7 @@ export class GenerationStagingRepository {
       const outputBytes =
         'pngBytes' in input ? input.pngBytes : await readStableFile(outputPath!, MAX_IMAGE_BYTES)
       await validateOutputPng(outputBytes, verified.payload.context.bbox)
-      if (regional && outputBytes[25] !== 2) {
+      if (regional && !isQueuedOutpaint(verified.payload) && outputBytes[25] !== 2) {
         throw new GenerationStagingError(
           'STAGING_OUTPUT_INVALID',
           'The regional output must be RGB.',
@@ -1566,7 +1566,7 @@ export class GenerationStagingRepository {
     const bytes = await readStableFile(assetPath, MAX_IMAGE_BYTES)
     const payload = parseFrozenOperationalPayload(entry.frozenPayloadJson)
     await validateOutputPng(bytes, payload.context.bbox)
-    if ('regional' in payload && bytes[25] !== 2) {
+    if ('regional' in payload && !isQueuedOutpaint(payload) && bytes[25] !== 2) {
       throw new GenerationStagingError('STAGING_OUTPUT_INVALID', 'The regional output must be RGB.')
     }
     if (isQueuedOutpaint(payload)) {
@@ -1626,7 +1626,8 @@ function parseFrozenOperationalPayload(json: string): FrozenPayload {
   if (
     kind === 'illustrious-regional' ||
     kind === 'illustrious-regional-txt2img' ||
-    kind === 'illustrious-regional-img2img'
+    kind === 'illustrious-regional-img2img' ||
+    kind === 'illustrious-regional-outpaint'
   ) {
     try {
       return parseFrozenQueuedRegionalOperationalV1(json)

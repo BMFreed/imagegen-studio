@@ -35,6 +35,7 @@ import {
   supportsInferenceRegionalImg2ImgVae,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
+  supportsInferenceRegionalOutpaint,
   supportsInferenceRegionalProgress,
   supportsInferenceRegionalVae,
   supportsInferenceVaePrecision,
@@ -439,7 +440,16 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     let completed = false
     try {
       if (
-        input.request.type === 'generate-illustrious-img2img' &&
+        input.request.type === 'generate-illustrious-outpaint' &&
+        !supportsInferenceRegionalOutpaint(this.ready)
+      ) {
+        throw new GenerationWorkerError(
+          'WORKER_VERSION_MISMATCH',
+          'The active worker has not qualified outpaint with Regional Guidance.',
+        )
+      }
+      if (
+        input.request.type !== 'generate-illustrious-txt2img' &&
         !supportsInferenceRegionalImg2Img(this.ready)
       ) {
         throw new GenerationWorkerError(
@@ -448,7 +458,7 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
         )
       }
       if (
-        input.request.type === 'generate-illustrious-img2img' &&
+        input.request.type !== 'generate-illustrious-txt2img' &&
         input.request.job.sampling.scheduler === 'euler_a' &&
         !supportsInferenceRegionalImg2ImgEulerAncestral(this.ready)
       ) {
@@ -458,7 +468,7 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
         )
       }
       if (
-        input.request.type === 'generate-illustrious-img2img' &&
+        input.request.type !== 'generate-illustrious-txt2img' &&
         (input.request.job.sampling.scheduler === 'dpmpp_2m' ||
           input.request.job.sampling.scheduler === 'dpmpp_2m_k') &&
         !supportsInferenceRegionalImg2ImgDpmpp2m(this.ready)
@@ -469,7 +479,7 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
         )
       }
       if (
-        input.request.type === 'generate-illustrious-img2img' &&
+        input.request.type !== 'generate-illustrious-txt2img' &&
         (input.request.job.sampling.cfgRescale ?? 0) !== 0 &&
         !supportsInferenceRegionalImg2ImgCFGRescale(this.ready)
       ) {
@@ -501,7 +511,7 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
         )
       }
       if (
-        input.request.type === 'generate-illustrious-img2img' &&
+        input.request.type !== 'generate-illustrious-txt2img' &&
         (input.request.job.vae != null || (input.request.job.vaePrecision ?? 'Auto') !== 'FP16') &&
         !supportsInferenceRegionalImg2ImgVae(this.ready)
       ) {
@@ -588,7 +598,7 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
         reportProgress
           ? {
               expectedTotalSteps:
-                lease.request.type === 'generate-illustrious-img2img'
+                lease.request.type !== 'generate-illustrious-txt2img'
                   ? null
                   : lease.request.job.sampling.steps,
               maxSteps: lease.request.job.sampling.steps,

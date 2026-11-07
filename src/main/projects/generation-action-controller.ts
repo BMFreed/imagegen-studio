@@ -41,6 +41,7 @@ import {
   supportsInferenceRegionalImg2ImgVae,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
+  supportsInferenceRegionalOutpaint,
   supportsInferenceRegionalVae,
   supportsInferenceVaePrecision,
 } from '../../shared/projects/inference-worker-capabilities.js'
@@ -471,6 +472,11 @@ export class ProjectGenerationActionController {
         !this.closed &&
         !!this.options.regional &&
         supportsInferenceRegionalLoras(ready),
+      regionalOutpaintSupported:
+        !this.blocked &&
+        !this.closed &&
+        !!this.options.regional &&
+        supportsInferenceRegionalOutpaint(ready),
       regionalSupported:
         !this.blocked && !this.closed && !!this.options.regional && supportsRegional(ready),
       regionalVaeSupported:
@@ -1384,6 +1390,7 @@ export class ProjectGenerationActionController {
     const source = await this.options.queue.getManagerEntry(review.id)
     if (
       source.operation === 'illustrious-regional-txt2img' ||
+      source.operation === 'illustrious-regional-outpaint' ||
       source.operation === 'illustrious-regional-img2img'
     ) {
       const retry = this.options.orchestrator.retryRegional?.bind(this.options.orchestrator)
@@ -1426,17 +1433,23 @@ export class ProjectGenerationActionController {
               this.assertDocument(source.projectKey, source.documentId)
               if (
                 !supportsRegional(ready) ||
-                (source.operation === 'illustrious-regional-img2img' &&
+                (source.operation === 'illustrious-regional-outpaint' &&
+                  !supportsInferenceRegionalOutpaint(ready)) ||
+                ((source.operation === 'illustrious-regional-img2img' ||
+                  source.operation === 'illustrious-regional-outpaint') &&
                   !supportsInferenceRegionalImg2Img(ready)) ||
-                (source.operation === 'illustrious-regional-img2img' &&
+                ((source.operation === 'illustrious-regional-img2img' ||
+                  source.operation === 'illustrious-regional-outpaint') &&
                   frozen.payload.workerJob.sampling.scheduler === 'euler_a' &&
                   !supportsInferenceRegionalImg2ImgEulerAncestral(ready)) ||
                 ((frozen.payload.workerJob.sampling.cfgRescale ?? 0) !== 0 &&
                   !supportsInferenceRegionalCFGRescale(ready)) ||
-                (source.operation === 'illustrious-regional-img2img' &&
+                ((source.operation === 'illustrious-regional-img2img' ||
+                  source.operation === 'illustrious-regional-outpaint') &&
                   (frozen.payload.workerJob.sampling.cfgRescale ?? 0) !== 0 &&
                   !supportsInferenceRegionalImg2ImgCFGRescale(ready)) ||
-                (source.operation === 'illustrious-regional-img2img' &&
+                ((source.operation === 'illustrious-regional-img2img' ||
+                  source.operation === 'illustrious-regional-outpaint') &&
                   (frozen.payload.workerJob.sampling.scheduler === 'dpmpp_2m' ||
                     frozen.payload.workerJob.sampling.scheduler === 'dpmpp_2m_k') &&
                   !supportsInferenceRegionalImg2ImgDpmpp2m(ready)) ||
@@ -1444,7 +1457,8 @@ export class ProjectGenerationActionController {
                   (frozen.payload.workerJob.sampling.scheduler === 'dpmpp_2m' ||
                     frozen.payload.workerJob.sampling.scheduler === 'dpmpp_2m_k') &&
                   !supportsInferenceRegionalDpm(ready)) ||
-                (source.operation === 'illustrious-regional-img2img' &&
+                ((source.operation === 'illustrious-regional-img2img' ||
+                  source.operation === 'illustrious-regional-outpaint') &&
                   (frozen.payload.workerJob.vae != null ||
                     (frozen.payload.workerJob.vaePrecision ?? 'Auto') !== 'FP16') &&
                   !supportsInferenceRegionalImg2ImgVae(ready)) ||

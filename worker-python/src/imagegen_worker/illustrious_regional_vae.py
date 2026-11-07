@@ -240,6 +240,7 @@ def scoped_prepared_img2img_latents(
     *,
     width: int,
     height: int,
+    outpaint: bool = False,
 ) -> Generator[None]:
     """Adapt Invoke encode on the fresh image wrapper, preserving borrowed VAE state.
 
@@ -266,10 +267,10 @@ def scoped_prepared_img2img_latents(
     encoded_type = cast(
         Any, importlib.import_module("diffusers.models.modeling_outputs")
     ).AutoencoderKLOutput
-    present, previous = (
-        "prepare_latents" in pipeline.__dict__,
-        pipeline.__dict__.get("prepare_latents"),
-    )
+    # The masked wrapper must retain its outer prepare_latents owner to capture
+    # the source and single noise draw; only its parent encode seam is replaced.
+    slot = "_igs_prepared_image_latents" if outpaint else "prepare_latents"
+    present, previous = slot in pipeline.__dict__, pipeline.__dict__.get(slot)
 
     def checked_tensor(value: Any, shape: tuple[int, ...], dtype: Any, label: str) -> None:
         _require(
@@ -363,13 +364,13 @@ def scoped_prepared_img2img_latents(
         return result
 
     try:
-        pipeline.prepare_latents = prepare_latents
+        setattr(pipeline, slot, prepare_latents)
         yield
     finally:
         if present:
-            pipeline.prepare_latents = previous
+            setattr(pipeline, slot, previous)
         else:
-            del pipeline.prepare_latents
+            delattr(pipeline, slot)
 
 
 def _output_tensor(

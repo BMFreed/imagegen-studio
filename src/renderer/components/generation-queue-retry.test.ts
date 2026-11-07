@@ -5,6 +5,72 @@ import { test } from 'node:test'
 
 import { generationQueueRetryReason } from './generation-queue-retry.js'
 
+test('regional outpaint Retry requires its own capability and frozen image option prerequisites', () => {
+  const supported = {
+    outpaintSupported: true,
+    regionalCfgRescaleSupported: true,
+    regionalImg2ImgCfgRescaleSupported: true,
+    regionalImg2ImgDpmpp2mSupported: true,
+    regionalImg2ImgEulerASupported: true,
+    regionalImg2ImgSupported: true,
+    regionalImg2ImgVaeSupported: true,
+    regionalInvokeInitializationSupported: false,
+    regionalLoraSupported: true,
+    regionalOutpaintSupported: true,
+    regionalSupported: true,
+    regionalVaeSupported: true,
+  }
+  const operation = 'illustrious-regional-outpaint'
+  assert.match(generationQueueRetryReason(operation, null)!, /Checking image engine/)
+  for (const regionalOutpaintSupported of [undefined, false, true]) {
+    const reason = generationQueueRetryReason(operation, {
+      ...supported,
+      regionalOutpaintSupported,
+    })
+    assert.equal(reason === null, regionalOutpaintSupported === true)
+    if (reason) {
+      assert.match(reason, /outpaint with Regional Guidance/)
+    }
+    assert.equal(
+      generationQueueRetryReason('illustrious-outpaint', {
+        ...supported,
+        regionalOutpaintSupported,
+      }),
+      null,
+    )
+  }
+  for (const sampler of ['Euler', 'Euler a', 'DPM++ 2M']) {
+    assert.equal(generationQueueRetryReason(operation, supported, sampler, true, true, 0.7), null)
+  }
+  for (const [flag, sampler, lora, vae, rescale] of [
+    ['regionalImg2ImgEulerASupported', 'Euler a', false, false, 0],
+    ['regionalImg2ImgDpmpp2mSupported', 'DPM++ 2M', false, false, 0],
+    ['regionalImg2ImgCfgRescaleSupported', 'Euler', false, false, 0.7],
+    ['regionalImg2ImgVaeSupported', 'Euler', false, true, 0],
+    ['regionalLoraSupported', 'Euler', true, false, 0],
+  ] as const) {
+    assert.notEqual(
+      generationQueueRetryReason(
+        operation,
+        { ...supported, [flag]: false },
+        sampler,
+        lora,
+        vae,
+        rescale,
+      ),
+      null,
+    )
+  }
+  assert.equal(
+    generationQueueRetryReason(
+      'illustrious-regional-txt2img',
+      { ...supported, regionalOutpaintSupported: false },
+      'Euler',
+    ),
+    null,
+  )
+})
+
 test('regional LoRA Retry advisory follows the frozen stack and its separate capability', () => {
   for (const regionalLoraSupported of [undefined, false, true]) {
     const state = { regionalLoraSupported, regionalSupported: true }

@@ -53,6 +53,7 @@ export interface GenerationQueueEntry extends GenerationQueueReview {
     | 'illustrious-img2img'
     | 'illustrious-outpaint'
     | 'illustrious-regional-img2img'
+    | 'illustrious-regional-outpaint'
     | 'illustrious-regional-txt2img'
     | 'illustrious-smart-patch'
     | 'illustrious-txt2img'
@@ -168,6 +169,7 @@ const EntrySchema = v.pipe(
       'illustrious-txt2img',
       'illustrious-regional-txt2img',
       'illustrious-regional-img2img',
+      'illustrious-regional-outpaint',
       'illustrious-img2img',
       'illustrious-outpaint',
       'illustrious-smart-patch',
@@ -209,8 +211,11 @@ const EntrySchema = v.pipe(
       return isImg === 'denoisingStrength' in entry.details.sampling
     }
     return (
-      !['illustrious-outpaint', 'illustrious-regional-img2img'].includes(entry.operation) ||
-      'denoisingStrength' in entry.details.sampling
+      ![
+        'illustrious-outpaint',
+        'illustrious-regional-img2img',
+        'illustrious-regional-outpaint',
+      ].includes(entry.operation) || 'denoisingStrength' in entry.details.sampling
     )
   }),
 )

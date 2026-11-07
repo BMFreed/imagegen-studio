@@ -145,6 +145,16 @@ export function supportsInferenceRegionalImg2Img(value: unknown): boolean {
   )
 }
 
+/** Masked regional execution additionally requires the ordinary source-bound contribution owner. */
+export function supportsInferenceRegionalOutpaint(value: unknown): boolean {
+  return (
+    supportsInferenceRegionalImg2Img(value) &&
+    supportsInferenceOutpaint(value) &&
+    isQualifiedInferenceWorkerReady(value) &&
+    value.capabilities.includes('illustrious-regional-outpaint-v1')
+  )
+}
+
 /** Separate IMG rescale qualification cannot be inferred from independent TXT and image support. */
 export function supportsInferenceRegionalImg2ImgCFGRescale(value: unknown): boolean {
   return (

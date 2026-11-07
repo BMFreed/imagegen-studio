@@ -486,11 +486,9 @@ test('IMG-only advisory guards preserve omitted-mode Main and explicit TXT behav
 test('partial alpha never becomes regional IMG and disabled regions leave ordinary modes untouched', () => {
   const value = document()
   value.generationDraft.sampling.denoisingStrength = 0.5
-  assert.match(
-    imageReason(value, { targetMode: 'outpaint' })!,
-    /partially transparent Current Canvas/,
-  )
+  assert.match(imageReason(value, { targetMode: 'outpaint' })!, /outpaint with Regional Guidance/)
   assert.equal(imageReason(value), null)
+  assert.equal(imageReason(value, { outpaintSupported: true, targetMode: 'outpaint' }), null)
   value.regionalGuidance![0].enabled = false
   value.generationDraft.model = null
   for (const targetMode of ['img2img', 'outpaint', 'txt2img'] as const) {
@@ -655,7 +653,10 @@ test('opaque DPM Normal and Karras require the separate IMG capability without T
       imageReason(value, { ...flags, targetMode: 'txt2img' })!,
       /Regional Guidance with DPM/,
     )
-    assert.match(imageReason(value, { ...flags, targetMode: 'outpaint' })!, /partially transparent/)
+    assert.match(
+      imageReason(value, { ...flags, targetMode: 'outpaint' })!,
+      /outpaint with Regional Guidance/,
+    )
     assert.deepEqual(value, before)
   }
 })

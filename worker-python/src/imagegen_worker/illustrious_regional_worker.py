@@ -45,6 +45,7 @@ from .illustrious_regional_denoising import (
 from .illustrious_regional_lora import prepare_regional_loras, verify_regional_lora_resources
 from .illustrious_regional_output import (
     _command_parameters,  # pyright: ignore[reportPrivateUsage]
+    _generate_current_canvas_regional,  # pyright: ignore[reportPrivateUsage]
     generate_current_canvas_regional_img2img,
     generate_current_canvas_regional_txt2img,
 )
@@ -65,11 +66,13 @@ from .inference import (
     validate_generation_assets,
 )
 from .inference_embeddings import read_embedding_snapshot
+from .outpaint_worker_assets import prepare_worker_outpaint
 from .protocol import (
     _REQUEST_ID_PATTERN,  # pyright: ignore[reportPrivateUsage]
     _SHA256_PATTERN,  # pyright: ignore[reportPrivateUsage]
     MAX_GENERATION_TARGET_BYTES,
     GenerateIllustriousImg2ImgCommand,
+    GenerateIllustriousOutpaintCommand,
     GenerateIllustriousTxt2ImgCommand,
     IllustriousInferenceParameters,
     parse_request,
@@ -102,7 +105,14 @@ def _denoising_profile(
     composition_profile: str | None = None,
     *,
     img2img: bool = False,
+    outpaint: bool = False,
 ) -> _DenoisingProfile:
+    if outpaint:
+        _require(not img2img, "A regional request must select exactly one image mode.")
+        image_profile = _denoising_profile(
+            parameters, initialization_profile, composition_profile, img2img=True
+        )
+        return cast(_DenoisingProfile, image_profile.replace("-img2img-", "-outpaint-"))
     if img2img:
         _require(
             composition_profile == "invoke-canvas-v1"
@@ -513,11 +523,18 @@ def parse_regional_request(value: object) -> RegionalRequest:
     )
     command = parse_request(bundle["request"])
     _require(
-        type(command) in (GenerateIllustriousTxt2ImgCommand, GenerateIllustriousImg2ImgCommand),
-        "Regional loading requires an exact ordinary Illustrious txt2img or img2img command.",
+        type(command)
+        in (
+            GenerateIllustriousTxt2ImgCommand,
+            GenerateIllustriousImg2ImgCommand,
+            GenerateIllustriousOutpaintCommand,
+        ),
+        "Regional loading requires an exact ordinary Illustrious "
+        "txt2img, img2img or outpaint command.",
     )
     command = cast(GenerateIllustriousTxt2ImgCommand, command)
     img2img = type(command) is GenerateIllustriousImg2ImgCommand
+    outpaint = type(command) is GenerateIllustriousOutpaintCommand
     _require(
         command.request_id == request_id and command.staging_root == root,
         "Regional command identity/staging must agree with its transport.",
@@ -537,7 +554,11 @@ def parse_regional_request(value: object) -> RegionalRequest:
         "Regional bundle, target and output must be distinct.",
     )
     parameters = (
-        _command_parameters(command, img2img=True) if img2img else _command_parameters(command)
+        _command_parameters(command, outpaint=True)
+        if outpaint
+        else _command_parameters(command, img2img=True)
+        if img2img
+        else _command_parameters(command)
     )
     _require(
         not parameters.loras or composition_profile == "invoke-canvas-v1",
@@ -547,7 +568,11 @@ def parse_regional_request(value: object) -> RegionalRequest:
     # The existing recipe/denoising owners consume an already prepared native model.
     execution_parameters = replace(parameters, loras=())
     denoising_profile = (
-        _denoising_profile(parameters, initialization_profile, composition_profile, img2img=True)
+        _denoising_profile(parameters, initialization_profile, composition_profile, outpaint=True)
+        if outpaint
+        else _denoising_profile(
+            parameters, initialization_profile, composition_profile, img2img=True
+        )
         if img2img
         else _denoising_profile(parameters, initialization_profile, composition_profile)
     )
@@ -656,6 +681,12 @@ def execute_regional_request(
     )
     torch = cast(Any, runtime.torch)
     with torch.no_grad():
+        outpaint = type(request.command) is GenerateIllustriousOutpaintCommand
+        prepared_outpaint = (
+            prepare_worker_outpaint(cast(GenerateIllustriousOutpaintCommand, request.command))
+            if outpaint
+            else None
+        )
         # Invoke acquires model components before per-prompt TI/Compel conditioning.
         # This loader must not parse recipe-owned TI as ordinary resource-free text or
         # install it on the borrowed originals. The checked recipe/command below keeps
@@ -670,6 +701,13 @@ def execute_regional_request(
         img2img = type(request.command) is GenerateIllustriousImg2ImgCommand
         denoising_profile = (
             _denoising_profile(
+                request.parameters,
+                request.initialization_profile,
+                request.composition_profile,
+                outpaint=True,
+            )
+            if outpaint
+            else _denoising_profile(
                 request.parameters,
                 request.initialization_profile,
                 request.composition_profile,
@@ -697,7 +735,9 @@ def execute_regional_request(
         install_capture_hooks(pipeline)
         bindings = qualify_bindings(pipeline, runtime)
         publish: Any = (
-            generate_current_canvas_regional_img2img
+            _generate_current_canvas_regional
+            if outpaint
+            else generate_current_canvas_regional_img2img
             if img2img
             else generate_current_canvas_regional_txt2img
         )
@@ -718,6 +758,11 @@ def execute_regional_request(
                 positive_pooled_source_id=request.positive_pooled_source_id,
                 bindings=bindings,
                 layout=request.layout,
+                **(
+                    {"img2img": True, "outpaint": True, "_prepared_outpaint": prepared_outpaint}
+                    if outpaint
+                    else {}
+                ),
                 **(
                     {"on_progress": on_progress}
                     if request.report_progress and on_progress is not None

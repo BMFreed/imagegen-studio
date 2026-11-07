@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from PIL import Image
 
@@ -148,7 +148,14 @@ def outpaint_pipeline_class(diffusers: Any, torch: Any) -> Any:
                 )
             # Parent's empty-timestep path encodes with an independent copy of the
             # frozen CPU generator and does not advance the initial noise stream.
-            encoded: Any = parent.prepare_latents(
+            # Prepared regional VAEs bind only this fresh wrapper slot. The
+            # mask owner still captures exact source/noise through its normal path.
+            encode = getattr(self, "_igs_prepared_image_latents", None)
+            if encode is None:
+                encode = parent.prepare_latents
+            if not callable(encode):
+                raise DerivativeError("GENERATION_WORKER_FAILED", "Invalid prepared image encoder.")
+            encoded: Any = encode(
                 image,
                 timestep[:0],
                 batch_size,
@@ -200,6 +207,7 @@ def run_sdxl_outpaint_pipeline(
     denoising_strength: float,
     on_progress: DenoisingProgressSink | None = None,
     cfg_rescale: float = 0.0,
+    output_type: Literal["pil", "pt", "latent"] = "pil",
 ) -> Any:
     """Denoise supplied LaMa RGB with an owned alpha-derived latent keep mask.
 
@@ -250,6 +258,7 @@ def run_sdxl_outpaint_pipeline(
             image=image.copy(),
             denoising_strength=denoising_strength,
             on_denoising_step=state.step,
+            output_type=output_type,
         )
         if (
             state.original is None

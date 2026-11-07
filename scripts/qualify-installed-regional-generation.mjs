@@ -24,7 +24,10 @@
  * IMG CFG Rescale profile selects 0.7 through Advanced Options, then saves 0.2 after Cancel; both
  * image encoding and the rescale extension retain their existing native owners. The separate IMG
  * VAE profile reuses the exact selected-VAE/precision controls and Invoke's image_to_latents.py
- * encode/scale ordering through the existing prepared regional VAE owner.
+ * encode/scale ordering through the existing prepared regional VAE owner. Mixed-alpha outpaint
+ * additionally follows graftOutpaint, create_gradient_mask and InpaintExt before the same regional
+ * conditioning; ordinary contribution verification and portable source provenance remain their
+ * owners.
  */
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
@@ -44,6 +47,12 @@ import { CivitaiClient } from '../src/main/models/civitai-client.ts'
 import { CivitaiTokenStore } from '../src/main/models/civitai-token-store.ts'
 import { ModelRepository } from '../src/main/models/model-repository.ts'
 import { ModelService } from '../src/main/models/model-service.ts'
+import { InferenceAuxiliaryResources } from '../src/main/runtime/inference-auxiliary-resources.ts'
+import { assertOutpaintContribution } from '../src/main/projects/outpaint-contribution.ts'
+import {
+  INVOKE_ALPHA_OUTPAINT_POLICY_V1,
+  LAMA_OUTPAINT_IDENTITY_V1,
+} from '../src/shared/projects/alpha-outpaint.ts'
 import { qualifySdxlCheckpoint } from '../src/main/models/sdxl-checkpoint-qualification.ts'
 import { encodeProjectMaskPng } from '../src/main/projects/project-mask.ts'
 import { ProjectSession } from '../src/main/projects/project-session.ts'
@@ -128,8 +137,10 @@ assert.ok(
     'installed-regional-invoke-img2img-euler-a-v1',
     'installed-regional-invoke-img2img-dpmpp-2m-v1',
     'installed-regional-invoke-img2img-vae-v1',
+    'installed-regional-invoke-outpaint-v1',
   ].includes(fixture.profile),
 )
+const outpaintProfile = fixture.profile === 'installed-regional-invoke-outpaint-v1'
 const imgEulerAProfile = fixture.profile === 'installed-regional-invoke-img2img-euler-a-v1'
 const imgDpmProfile = fixture.profile === 'installed-regional-invoke-img2img-dpmpp-2m-v1'
 const imgVaeProfile = fixture.profile === 'installed-regional-invoke-img2img-vae-v1'
@@ -137,12 +148,16 @@ const imgSamplerProfile = imgEulerAProfile || imgDpmProfile
 const imgSamplerCapability = imgDpmProfile
   ? 'illustrious-regional-img2img-dpmpp-2m-v1'
   : 'illustrious-regional-img2img-euler-a-v1'
-const imgCfgRescaleProfile =
+const imageCfgRescaleProfile =
+  outpaintProfile ||
   imgSamplerProfile ||
   imgVaeProfile ||
   fixture.profile === 'installed-regional-invoke-img2img-cfg-rescale-v1'
-const img2imgProfile =
-  imgCfgRescaleProfile || fixture.profile === 'installed-regional-invoke-img2img-v1'
+const imageProfile =
+  imageCfgRescaleProfile || fixture.profile === 'installed-regional-invoke-img2img-v1'
+const generationMode = outpaintProfile ? 'outpaint' : imageProfile ? 'img2img' : 'txt2img'
+const regionalOperation = `illustrious-regional-${generationMode}`
+const generationRequestType = `generate-illustrious-${generationMode}`
 const mainDeathProfile = fixture.profile === 'installed-regional-invoke-main-death-v1'
 const workerFaultProfile = fixture.profile === 'installed-regional-invoke-worker-fault-v1'
 const staticBatchProfile = fixture.profile === 'installed-regional-invoke-static-batch-v1'
@@ -162,7 +177,7 @@ const multipleResultsProfile = staticBatchProfile || globalTiProfile
 const initializationProfile =
   multipleResultsProfile || fixture.profile === 'installed-regional-invoke-initialization-v1'
 const progressProfile =
-  img2imgProfile ||
+  imageProfile ||
   initializationProfile ||
   workerFaultProfile ||
   fixture.profile === 'installed-regional-invoke-progress-v1'
@@ -182,13 +197,13 @@ const generationScheduler =
       ? 'euler_a'
       : 'euler'
 const generationScheduleLabel = dpmpp2mProfile || imgDpmProfile ? 'Karras' : 'Normal'
-const generationCfgRescale = cfgRescaleProfile || imgCfgRescaleProfile ? 0.7 : 0
+const generationCfgRescale = cfgRescaleProfile || imageCfgRescaleProfile ? 0.7 : 0
 assert.ok(
   Number.isSafeInteger(fixture.deadlineSeconds) &&
     fixture.deadlineSeconds > 0 &&
     fixture.deadlineSeconds <= 1800,
 )
-if (img2imgProfile) assert.ok(fixture.deadlineSeconds <= 600)
+if (imageProfile) assert.ok(fixture.deadlineSeconds <= 600)
 const appDataRoot = fixture.appData
 const evidenceRoot = fixture.artifacts
 for (const value of [
@@ -240,7 +255,7 @@ const timeout = (maximum = 30_000) => {
   assert.ok(left > 0, 'Overall qualification deadline exceeded')
   return Math.min(maximum, left)
 }
-const side = img2imgProfile ? 512 : 1024
+const side = imageProfile ? 512 : 1024
 const bbox = { height: side, width: side, x: -13, y: 5 }
 const imageStrength = 0.5
 // Fixed30 native DPM Karras reference, independently constructed/retained for this
@@ -254,8 +269,8 @@ const imageTimesteps = imgDpmProfile
 const imageSelectedTimesteps = imageTimesteps.filter(
   (value) => value < Math.round(1000 * imageStrength),
 )
-const progressTotal = img2imgProfile ? imageSelectedTimesteps.length : 30
-if (img2imgProfile) assert.equal(progressTotal, 16)
+const progressTotal = imageProfile ? imageSelectedTimesteps.length : 30
+if (imageProfile) assert.equal(progressTotal, 16)
 const baseGlobalPrompt =
   'a still life of a red apple and a blue ceramic mug on a plain table, two separate objects, soft studio lighting'
 const globalPrompt = dynamicPositiveProfile
@@ -327,6 +342,7 @@ let preservationBaseline = null,
 let globalTi = null
 let globalLoras = null
 let globalVae = null
+let outpaintInfill = null
 let sampling = Promise.resolve()
 const nativeChecks = []
 const projects = []
@@ -394,7 +410,7 @@ const sourceFiles = [
   'worker-python/src/imagegen_worker/inference_lifetime.py',
   'worker-python/src/imagegen_worker/owned_inference.py',
 ]
-if (img2imgProfile)
+if (imageProfile)
   sourceFiles.push(
     'src/shared/projects/regional-invoke-generation.ts',
     'src/shared/projects/inference-worker-capabilities.ts',
@@ -404,6 +420,17 @@ if (img2imgProfile)
     'src/renderer/components/ProjectRasterLayerRow.vue',
     'src/renderer/components/ProjectRegionalGuidanceRow.vue',
     'src/main/db/migrations/0022_regional_img2img_queue.sql',
+  )
+if (outpaintProfile)
+  sourceFiles.push(
+    'src/main/db/migrations/0023_regional_outpaint_queue.sql',
+    'src/main/projects/outpaint-contribution.ts',
+    'src/main/projects/outpaint-conditioning.ts',
+    'src/main/runtime/inference-auxiliary-resources.ts',
+    'src/shared/projects/alpha-outpaint.ts',
+    'worker-python/src/imagegen_worker/outpaint_conditioning.py',
+    'worker-python/src/imagegen_worker/outpaint_worker_assets.py',
+    'worker-python/src/imagegen_worker/sdxl_outpaint.py',
   )
 if (initializationProfile)
   sourceFiles.push(
@@ -495,9 +522,21 @@ async function verifyProvision() {
   assert.equal(provision.ready.workerVersion, '0.14.0')
   for (const cap of ['illustrious-regional-invoke-v1', 'private-current-canvas-regional-v1'])
     assert.ok(provision.ready.capabilities.includes(cap), `Missing installed capability ${cap}`)
-  if (img2imgProfile)
+  if (imageProfile)
     assert.ok(provision.ready.capabilities.includes('illustrious-regional-img2img-v1'))
-  if (imgCfgRescaleProfile)
+  if (outpaintProfile) {
+    for (const capability of ['illustrious-outpaint', 'illustrious-regional-outpaint-v1'])
+      assert.ok(provision.ready.capabilities.includes(capability))
+    const verified = await new InferenceAuxiliaryResources(
+      path.join(appDataRoot, 'inference-resources'),
+    ).resolveVerifiedOutpaintInfill()
+    const { managedPath, ...identity } = verified
+    assert.deepEqual(identity, LAMA_OUTPAINT_IDENTITY_V1)
+    assert.ok(within(appDataRoot, managedPath) && !within(evidenceRoot, managedPath))
+    outpaintInfill = { ...verified, stat: statIdentity(await regular(managedPath)) }
+    report.outpaintInfill = outpaintInfill
+  }
+  if (imageCfgRescaleProfile)
     for (const capability of [
       'illustrious-regional-img2img-cfg-rescale-v1',
       'illustrious-regional-cfg-rescale-v1',
@@ -599,7 +638,7 @@ async function verifyProvision() {
       'invokeai/app/api/routers/session_queue.py',
       'invokeai/app/services/session_processor/session_processor_default.py',
       'invokeai/frontend/webv1/src/features/controlLayers/components/StagingArea/StagingAreaToolbarAcceptButton.tsx',
-      ...(img2imgProfile
+      ...(imageProfile
         ? [
             'invokeai/frontend/webv2/src/features/generation/core/canvas/compileCanvasGraph.ts',
             'invokeai/frontend/webv2/src/features/generation/core/canvas/addRegionalGuidance.ts',
@@ -637,10 +676,16 @@ async function verifyProvision() {
       ...(imgVaeProfile
         ? ['invokeai/app/invocations/model.py', 'invokeai/app/invocations/vae/image_to_latents.py']
         : []),
+      ...(outpaintProfile
+        ? [
+            'invokeai/app/invocations/sd/create_gradient_mask.py',
+            'invokeai/backend/stable_diffusion/extensions/inpaint.py',
+          ]
+        : []),
       ...(dynamicPositiveProfile
         ? ['invokeai/frontend/webv2/src/workbench/invocationSubmit.ts']
         : []),
-      ...(imgCfgRescaleProfile
+      ...(imageCfgRescaleProfile
         ? [
             'invokeai/frontend/webv2/src/features/generation/core/graph.ts',
             'invokeai/backend/stable_diffusion/extensions/rescale_cfg.py',
@@ -947,13 +992,15 @@ async function captureImagePreservation() {
   report.boundary.preconditions = `Reuse terminal pool of${sql.queue.length} jobs/${sql.receipts.length} receipts and${indexed.length} real packages, pinning all previous SQL/file bytes. Two new empty Project fixtures import the same real PNG through UI/original Main/installed normalizer; one separate partial-alpha control is portable setup.`
   report.boundary.exclusions =
     'No visual-quality PASS, generic SDXL, Anima, broader IMG samplers/VAE/precision/partial-alpha, Install/Repair or capacity claim. Existing source/noise numerical owner is reused; strength0 and semantic native mutations remain historical evidence.'
-  if (imgCfgRescaleProfile) {
+  if (imageCfgRescaleProfile) {
     report.boundary.calls +=
       ' Real Advanced Options selects CFG Rescale0.7 for the independent healthy IMG control and original Generate. After observed Cancel, saved current authoring changes rescale to0.2 along with source/text/strength. Frozen Retry and ordinary IMG accepted provenance retain0.7; all three executing workers must advertise the separate IMG-rescale capability.'
     report.boundary.cfgRescale = {
       original: generationCfgRescale,
       edited: 0.2,
-      newCapability: 'illustrious-regional-img2img-cfg-rescale-v1',
+      newCapability: outpaintProfile
+        ? 'illustrious-regional-outpaint-v1'
+        : 'illustrious-regional-img2img-cfg-rescale-v1',
       nativeFormulaCopied: false,
       numericalCausalityClaimed: false,
     }
@@ -979,6 +1026,30 @@ async function captureImagePreservation() {
       preparedVaeOwnerReused: true,
       numericalCausalityClaimed: false,
     }
+  }
+  if (outpaintProfile) {
+    report.boundary.calls =
+      'Three original installed regional outpaint starts: independent healthy30-requested/strength0.5 control, actual UI Cancel after selected-step progress, and exact frozen Retry after saved source opacity/text/steps/seed/strength/rescale/region edits. Exactly three regional wires and two completed RGBA contributions; no extra native generation.'
+    report.boundary.preconditions = `Reuse terminal pool of${sql.queue.length} jobs/${sql.receipts.length} receipts and${indexed.length} packages without reset. Two real Project fixtures import the same mixed-alpha PNG through original UI/Main/installed normalization; fixed local LaMa is independently verified through the actual auxiliary resolver before the baseline.`
+    report.boundary.exclusions =
+      'Finite official Illustriousepsilon, EmbeddedFP16, Euler/Normal, CFG5/rescale0.7, strength0.5,512-square masked regional consumption. No visual/human-quality, general soft-mask semantics, other installed sampling/VAE combinations, Anima, Install/Repair or capacity qualification. Lower native cases retain their distinct scope.'
+    report.boundary.outpaint = {
+      operation: regionalOperation,
+      requestType: generationRequestType,
+      newCapability: 'illustrious-regional-outpaint-v1',
+      keepMaskPolarity: 'keep',
+      outputMode: 'contribution',
+      existingPolicy: INVOKE_ALPHA_OUTPAINT_POLICY_V1,
+      exactInfill: outpaintInfill,
+      independentMainContributionVerification: true,
+      rawControlRetryRgbaExact: true,
+      browserAlphaExact: true,
+      browserOpaqueCompositeRgbRoundingBound: 1,
+      actualCanvasSourcePlusContributionReference: true,
+      noTxtInitialization: true,
+    }
+    report.boundary.retention +=
+      ' The managed fixed LaMa file, its original source and frozen target/input/project bytes remain protected cross-run dependencies.'
   }
   check('Existing mixed-operation terminal SQL/package/candidate/input pool pinned without reset')
 }
@@ -1227,7 +1298,7 @@ async function captureProgressPreservation() {
 }
 function ownProgressSql(whole) {
   assert.ok(progressProject?.id && preservationBaseline)
-  const ownKeys = img2imgProfile
+  const ownKeys = imageProfile
     ? [progressProject.id, report.img2img.controlProjectKey]
     : [progressProject.id]
   for (const [name, rows] of Object.entries(whole))
@@ -1268,7 +1339,7 @@ async function verifyProgressPreservation(db) {
           current.seq,
           row.seq +
             (row.name === 'generation_candidate_receipt'
-              ? multipleResultsProfile || img2imgProfile
+              ? multipleResultsProfile || imageProfile
                 ? 2
                 : 1
               : 0),
@@ -2179,7 +2250,7 @@ async function prepareCatalogAndProjects() {
   if (globalTiProfile) await prepareGlobalEmbeddingCatalog(new ModelRepository(database.db))
   if (globalLoraProfile) await prepareGlobalLoraCatalog(new ModelRepository(database.db))
   if (vaeSelectionProfile) await prepareGlobalVaeCatalog(new ModelRepository(database.db))
-  if (img2imgProfile) await captureImagePreservation()
+  if (imageProfile) await captureImagePreservation()
   else if (progressProfile) await captureProgressPreservation()
   if (recoveryProfile) {
     baselineSql = await sqlSnapshot()
@@ -2386,7 +2457,7 @@ async function prepareCatalogAndProjects() {
       cfgRescale: 0,
       sampling: {
         cfgScale: 5,
-        denoisingStrength: img2imgProfile ? imageStrength : null,
+        denoisingStrength: imageProfile ? imageStrength : null,
         steps: 30,
         sampler: imgSamplerProfile ? 'Euler' : generationSampler,
         scheduler: 'Normal',
@@ -2436,7 +2507,10 @@ async function prepareCatalogAndProjects() {
         },
       }
     })
-    if (mode !== 'transparent' && !(img2imgProfile && mode === 'opaque')) {
+    if (
+      mode !== 'transparent' &&
+      !(imageProfile && mode === (outpaintProfile ? 'partial' : 'opaque'))
+    ) {
       const id = randomUUID(),
         rgba = Buffer.alloc(64 * 64 * 4)
       for (let i = 0; i < 64 * 64; i++) {
@@ -2485,7 +2559,7 @@ async function prepareCatalogAndProjects() {
       regionAlphas,
     })
   }
-  if (img2imgProfile) {
+  if (imageProfile) {
     const rgba = Buffer.alloc(side * side * 4)
     for (let y = 0; y < side; y++)
       for (let x = 0; x < side; x++) {
@@ -2493,7 +2567,14 @@ async function prepareCatalogAndProjects() {
         rgba[offset] = x < side / 2 ? 180 : 35
         rgba[offset + 1] = 40 + Math.floor((y * 100) / side)
         rgba[offset + 2] = x < side / 2 ? 30 : 185
-        rgba[offset + 3] = 255
+        rgba[offset + 3] = outpaintProfile
+          ? x < side / 2 - 8
+            ? 255
+            : x < side / 2 + 8
+              ? 127
+              : 0
+          : 255
+        if (rgba[offset + 3] === 0) rgba.fill(0, offset, offset + 3)
       }
     const source = path.join(evidenceRoot, 'import-source.png')
     const bytes = fixturePng(side, side, rgba, profile)
@@ -2507,6 +2588,7 @@ async function prepareCatalogAndProjects() {
         height: side,
       },
       strength: imageStrength,
+      sourceMode: generationMode,
       requestedSteps: 30,
       selectedTimesteps: imageSelectedTimesteps,
       expectedProgressTotal: progressTotal,
@@ -3134,7 +3216,7 @@ async function installObservers() {
       loras: globalLoraProfile,
       vae: vaeSelectionProfile,
       dynamicPositive: dynamicPositiveProfile,
-      img2img: img2imgProfile,
+      img2img: imageProfile,
       scratch: path.join(appDataRoot, 'scratch'),
       previous: previousTransport,
       controls: mainDeathControls,
@@ -3289,8 +3371,8 @@ async function progressBeforeCancel(project, row) {
   const observed = await observerSnapshot(),
     wires = regionalWires(observed)
   assert.deepEqual(observed.faults, [])
-  assert.equal(wires.length, globalTiProfile || img2imgProfile ? 2 : 1)
-  const wire = wires[globalTiProfile || img2imgProfile ? 1 : 0]
+  assert.equal(wires.length, globalTiProfile || imageProfile ? 2 : 1)
+  const wire = wires[globalTiProfile || imageProfile ? 1 : 0]
   assert.equal(wire.reportProgress, true)
   const worker = observed.workers.find(({ pid }) => pid === wire.pid)
   assert.ok(worker.ready.capabilities.includes('illustrious-regional-progress-v1'))
@@ -3506,7 +3588,7 @@ async function progressAfterCancel(row) {
       ({ order, snapshot }) => order > call.startedOrder && snapshot.current === null,
     ),
     wire =
-      globalTiProfile || img2imgProfile
+      globalTiProfile || imageProfile
         ? regionalWires(observed).find(
             ({ requestId }) => requestId === report.progress.beforeCancel.requestId,
           )
@@ -3535,11 +3617,11 @@ async function verifyInstalledProgress(project, retryRow) {
       observed.workers
         .flatMap(({ frames }) => frames ?? [])
         .filter(({ message }) => message.requestId === id),
-    firstFrames = framesFor(wires[img2imgProfile ? 1 : 0].requestId),
-    retryFrames = framesFor(wires[img2imgProfile ? 2 : 1].requestId)
+    firstFrames = framesFor(wires[imageProfile ? 1 : 0].requestId),
+    retryFrames = framesFor(wires[imageProfile ? 2 : 1].requestId)
   assert.deepEqual(observed.faults, [])
-  assert.equal(wires.length, img2imgProfile ? 3 : 2)
-  assert.notEqual(wires[img2imgProfile ? 1 : 0].requestId, wires[img2imgProfile ? 2 : 1].requestId)
+  assert.equal(wires.length, imageProfile ? 3 : 2)
+  assert.notEqual(wires[imageProfile ? 1 : 0].requestId, wires[imageProfile ? 2 : 1].requestId)
   for (const wire of wires) assert.equal(wire.reportProgress, true)
   const numeric = (frames) => frames.filter(({ message }) => message.type === 'generation-progress')
   const first = numeric(firstFrames),
@@ -3809,13 +3891,13 @@ async function openProject(project) {
   // Preparing an image already leaves its Project selected. Reopening it through Home
   // is unnecessary; retain ordinary cross-Project navigation and validate the real tab.
   const alreadySelected =
-    imgCfgRescaleProfile &&
+    imageCfgRescaleProfile &&
     (await requestedTab.count()) === 1 &&
     (await requestedTab.getAttribute('aria-selected')) === 'true'
   if (!alreadySelected) {
     const home = window.getByRole('tab', { name: 'Home', exact: true })
     await home.click()
-    if (imgCfgRescaleProfile)
+    if (imageCfgRescaleProfile)
       await expect(home).toHaveAttribute('aria-selected', 'true', { timeout: timeout() })
     await window.getByRole('button', { name: 'Refresh projects', exact: true }).click()
     await window.getByRole('button', { name: `Open ${project.title}`, exact: true }).click()
@@ -3873,9 +3955,14 @@ async function targetState(project) {
   )
 }
 async function targetRefusalControls() {
+  // This profile admits all three alpha-derived modes; missing-peer/LaMa refusals
+  // are covered by the bounded admission suite, without extra installed inference.
+  if (outpaintProfile) return
   report.targetControls = []
   for (const project of projects.filter(
-    ({ mode }) => mode !== 'transparent' && (!img2imgProfile || mode === 'partial'),
+    ({ mode }) =>
+      mode !== 'transparent' &&
+      (!imageProfile || mode === (outpaintProfile ? 'opaque' : 'partial')),
   )) {
     await openProject(project)
     const count = window.locator('input[aria-label="Images per click"]')
@@ -3921,7 +4008,7 @@ async function targetRefusalControls() {
     await window.getByRole('button', { name: `Close ${project.title}`, exact: true }).click()
   }
   check(
-    img2imgProfile
+    imageProfile
       ? 'Partial-alpha real-compositor input refuses before SQL/inference; its portable source remains unchanged'
       : 'Opaque and partially transparent real-compositor targets refuse in the UI before SQL/inference; portable sources unchanged',
   )
@@ -3930,18 +4017,30 @@ async function targetRefusalControls() {
 function assertFrozen(frozen, project, expectedSeed = 123) {
   const positive = globalPositiveInput(expectedSeed)
   assert.equal(frozen.schemaVersion, 1)
-  assert.equal(
-    frozen.kind,
-    img2imgProfile ? 'illustrious-regional-img2img' : 'illustrious-regional-txt2img',
-  )
-  if (img2imgProfile) {
-    assert.equal(frozen.context.kind, 'normal-img2img-preparation')
+  assert.equal(frozen.kind, regionalOperation)
+  if (imageProfile) {
+    assert.equal(
+      frozen.context.kind,
+      outpaintProfile ? 'normal-outpaint-preparation' : 'normal-img2img-preparation',
+    )
     assert.equal(frozen.context.sampling.denoisingStrength, imageStrength)
     assert.equal(frozen.workerJob.sampling.denoisingStrength, imageStrength)
     assert.equal(frozen.context.sampling.sampler, generationSampler)
     assert.equal(frozen.context.sampling.scheduler, generationScheduleLabel)
     assert.equal(frozen.context.sampling.invokeScheduler, generationScheduler)
     assert.equal(Object.hasOwn(frozen, 'initializationProfile'), false)
+  }
+  if (outpaintProfile) {
+    assert.deepEqual(frozen.context.conditioning.policy, INVOKE_ALPHA_OUTPAINT_POLICY_V1)
+    assert.deepEqual(frozen.context.conditioning.infillResource, LAMA_OUTPAINT_IDENTITY_V1)
+    assert.deepEqual(frozen.context.conditioning.bbox, bbox)
+    assert.deepEqual(frozen.outpaintInfill, {
+      byteSize: outpaintInfill.byteSize,
+      path: outpaintInfill.managedPath,
+      role: outpaintInfill.role,
+      sha256: outpaintInfill.sha256,
+    })
+    assert.equal(frozen.context.conditioning.sourceTarget.sha256, frozen.workerJob.target.sha256)
   }
   assert.equal(frozen.compositionProfile, 'invoke-canvas-v1')
   if (initializationProfile) {
@@ -3969,7 +4068,7 @@ function assertFrozen(frozen, project, expectedSeed = 123) {
   assert.equal(frozen.workerJob.sampling.steps, 30)
   assert.equal(frozen.workerJob.sampling.seed, expectedSeed)
   assert.equal(frozen.workerJob.sampling.cfgScale, 5)
-  if (imgCfgRescaleProfile) {
+  if (imageCfgRescaleProfile) {
     assert.equal(frozen.context.sampling.cfgRescale, generationCfgRescale)
     assert.equal(frozen.workerJob.sampling.cfgRescale, generationCfgRescale)
   }
@@ -4005,10 +4104,7 @@ function assertFrozen(frozen, project, expectedSeed = 123) {
 }
 async function captureFrozen(row, project, expectedSeed = 123) {
   const positive = globalPositiveInput(expectedSeed)
-  assert.equal(
-    row.operation,
-    img2imgProfile ? 'illustrious-regional-img2img' : 'illustrious-regional-txt2img',
-  )
+  assert.equal(row.operation, regionalOperation)
   const frozen = JSON.parse(row.frozen_payload_json)
   assertFrozen(frozen, project, expectedSeed)
   const root = path.join(appDataRoot, 'generation-inputs', row.id)
@@ -4020,9 +4116,38 @@ async function captureFrozen(row, project, expectedSeed = 123) {
   assert.equal(target.width, side)
   assert.equal(target.height, side)
   assert.equal(target.iccSha256, IGS_SRGB_ICC_SHA256)
-  for (let i = 3; i < target.rgba.length; i += 4)
-    assert.equal(target.rgba[i], img2imgProfile ? 255 : 0)
-  if (img2imgProfile) assert.equal(target.rgbaSha256, report.img2img.source.rgbaSha256)
+  if (!outpaintProfile)
+    for (let i = 3; i < target.rgba.length; i += 4)
+      assert.equal(target.rgba[i], imageProfile ? 255 : 0)
+  else {
+    const alpha = Buffer.from(Array.from({ length: side * side }, (_, i) => target.rgba[i * 4 + 3]))
+    assert.equal(digest(alpha), frozen.context.conditioning.keepMask.sha256)
+    assert.equal(alpha.length, frozen.context.conditioning.keepMask.byteSize)
+    assert.ok(alpha.includes(0) && alpha.includes(127) && alpha.includes(255))
+  }
+  if (outpaintProfile) {
+    // Pillow's identity bicubic RGBA transform passes through premultiplied
+    // RGBa. Independently calculate both integer conversions for this single
+    // unscaled, unrotated source; compare every channel, including exact alpha.
+    const expected = Buffer.from(decodePng(await readFile(report.img2img.source.path)).rgba)
+    for (let offset = 0; offset < expected.length; offset += 4) {
+      const alpha = expected[offset + 3]
+      for (let channel = 0; channel < 3; channel++) {
+        expected[offset + channel] = alpha
+          ? Math.floor((Math.floor((expected[offset + channel] * alpha + 127) / 255) * 255) / alpha)
+          : 0
+      }
+    }
+    assert.deepEqual(target.rgba, expected)
+    report.img2img.compositeSourceOracle = {
+      sourceRgbaSha256: report.img2img.source.rgbaSha256,
+      expectedRgbaSha256: digest(expected),
+      actualRgbaSha256: target.rgbaSha256,
+      formula: 'floor(floor((channel * alpha + 127) / 255) * 255 / alpha); zero at alpha0',
+      alphaExact: true,
+      scope: 'single identity-affine source at opacity1; Pillow12.2 RGBA premultiplication',
+    }
+  } else if (imageProfile) assert.equal(target.rgbaSha256, report.img2img.source.rgbaSha256)
   const regionalBytes = await readFile(path.join(root, 'regional.json'))
   assert.equal(regionalBytes.length, frozen.regional.byteSize)
   assert.equal(digest(regionalBytes), frozen.regional.sha256)
@@ -4147,7 +4272,7 @@ async function prepareImageProject(project) {
   await expect
     .poll(async () => (await current(project)).generationDraft.sampling.denoisingStrength)
     .toBe(imageStrength)
-  if (imgCfgRescaleProfile) {
+  if (imageCfgRescaleProfile) {
     assert.equal((await current(project)).generationDraft.cfgRescale, 0)
     await setCfgRescaleUi(project, generationCfgRescale)
   }
@@ -4189,7 +4314,7 @@ async function prepareImageProject(project) {
       realPrecisionAutoThenFp32: true,
     })
   }
-  assert.equal((await targetState(project)).mode, 'img2img')
+  assert.equal((await targetState(project)).mode, generationMode)
   await save(project)
   const saved = await readZip(project.file)
   project.document = saved.project
@@ -4212,8 +4337,12 @@ async function imageHealthyControl(project) {
   await prepareImageProject(project)
   const state = await targetState(project),
     advisory = await api('getGenerationState', project.id)
-  assert.equal(state.mode, 'img2img')
+  assert.equal(state.mode, generationMode)
   assert.equal(advisory.regionalImg2ImgSupported, true)
+  if (outpaintProfile) {
+    assert.equal(advisory.regionalOutpaintSupported, true)
+    assert.equal(advisory.outpaintSupported, true)
+  }
   if (imgVaeProfile) {
     assert.equal(advisory.regionalImg2ImgVaeSupported, true)
     assert.equal(advisory.regionalVaeSupported, true)
@@ -4229,8 +4358,13 @@ async function imageHealthyControl(project) {
       ],
       true,
     )
-  if (imgCfgRescaleProfile) {
-    assert.equal(advisory.regionalImg2ImgCfgRescaleSupported, true)
+  if (imageCfgRescaleProfile) {
+    assert.equal(
+      advisory[
+        outpaintProfile ? 'regionalOutpaintSupported' : 'regionalImg2ImgCfgRescaleSupported'
+      ],
+      true,
+    )
     assert.equal(advisory.regionalCfgRescaleSupported, true)
     assert.equal((await current(project)).generationDraft.cfgRescale, generationCfgRescale)
   }
@@ -4292,9 +4426,10 @@ async function imageHealthyControl(project) {
   assert.equal(receipt.image_sha256, digest(bytes))
   assert.equal(decoded.width, side)
   assert.equal(decoded.height, side)
-  assert.equal(decoded.channels, 3)
+  assert.equal(decoded.channels, outpaintProfile ? 4 : 3)
   assert.equal(decoded.iccSha256, IGS_SRGB_ICC_SHA256)
-  assert.equal((await browserDecode(candidate.imageUrl)).rgbaSha256, decoded.rgbaSha256)
+  const browserPixels = await assertBrowserPixels(candidate.imageUrl, decoded)
+  const contribution = outpaintProfile ? await assertInstalledOutpaint(captured, bytes) : null
   await writeFile(path.join(evidenceRoot, 'img-control.png'), bytes, { flag: 'wx', mode: 0o600 })
   const observed = await observerSnapshot(),
     wires = regionalWires(observed)
@@ -4326,14 +4461,22 @@ async function imageHealthyControl(project) {
     rgbaSha256: decoded.rgbaSha256,
     byteSize: bytes.length,
     frames,
+    ...(outpaintProfile ? { contribution, browserPixels } : {}),
   }
   await tray().getByRole('button', { name: 'Preview candidate 1', exact: true }).click()
   await expect(
     tray().getByRole('button', { name: 'Preview candidate 1', exact: true }),
   ).toHaveAttribute('aria-pressed', 'true')
-  await observeCanvas('img-healthy-control', decoded, candidate.imageUrl)
+  await observeCanvas(
+    'img-healthy-control',
+    decoded,
+    candidate.imageUrl,
+    outpaintProfile ? { imageUrl: (await current(project)).layers[0].imageUrl, opacity: 1 } : null,
+  )
   check(
-    'Actual opaque UI Generate/default RuntimeManager completes independent16-step control and a signed PNG without implicit Add/Save',
+    outpaintProfile
+      ? 'Actual mixed-alpha UI Generate/default RuntimeManager completes independent16-step control, verified RGBA contribution and protected-source composition without implicit Add/Save'
+      : 'Actual opaque UI Generate/default RuntimeManager completes independent16-step control and a signed PNG without implicit Add/Save',
   )
 }
 async function editImageCurrentUi(project) {
@@ -4349,7 +4492,7 @@ async function editImageCurrentUi(project) {
   const regionalInput = window
     .locator(`[data-regional-guidance-id="${region.id}"]`)
     .getByRole('textbox', { name: 'Regional prompt', exact: true })
-  if (imgCfgRescaleProfile) {
+  if (imageCfgRescaleProfile) {
     // Global draft synchronization intentionally blocks regional prompt input.
     // Observe its acknowledgement and actual editor readiness before the next edit.
     await global.press('Tab')
@@ -4391,7 +4534,7 @@ async function editImageCurrentUi(project) {
       .poll(async () => (await current(project)).generationDraft.sampling.sampler)
       .toBe('Euler')
   }
-  if (imgCfgRescaleProfile) await setCfgRescaleUi(project, 0.2)
+  if (imageCfgRescaleProfile) await setCfgRescaleUi(project, 0.2)
   if (imgVaeProfile) {
     await setSelectedVaeUi(project, null)
     await setVaePrecisionUi(project, 'FP16')
@@ -4407,7 +4550,7 @@ async function editImageCurrentUi(project) {
         steps: value.generationDraft.sampling.steps,
         seed: value.generationDraft.seed,
         enabled: value.regionalGuidance.map(({ enabled }) => enabled),
-        ...(imgCfgRescaleProfile ? { cfgRescale: value.generationDraft.cfgRescale } : {}),
+        ...(imageCfgRescaleProfile ? { cfgRescale: value.generationDraft.cfgRescale } : {}),
         ...(imgSamplerProfile ? { sampler: value.generationDraft.sampling.sampler } : {}),
         ...(imgVaeProfile
           ? { vae: value.generationDraft.vae, vaePrecision: value.generationDraft.vaePrecision }
@@ -4422,7 +4565,7 @@ async function editImageCurrentUi(project) {
       steps: 2,
       seed: { policy: 'fixed', value: 124 },
       enabled: [false, false],
-      ...(imgCfgRescaleProfile ? { cfgRescale: 0.2 } : {}),
+      ...(imageCfgRescaleProfile ? { cfgRescale: 0.2 } : {}),
       ...(imgSamplerProfile ? { sampler: 'Euler' } : {}),
       ...(imgVaeProfile ? { vae: null, vaePrecision: 'FP16' } : {}),
     })
@@ -4445,10 +4588,14 @@ async function generateCancelEditRetry(project) {
   await openProject(project)
   const beforeGeneratePackageSha256 = await hashFile(project.file)
   assert.equal(beforeGeneratePackageSha256, project.initialPackageSha256)
-  assert.equal((await targetState(project)).mode, img2imgProfile ? 'img2img' : 'txt2img')
+  assert.equal((await targetState(project)).mode, generationMode)
   const advisory = await api('getGenerationState', project.id)
   assert.equal(advisory.regionalSupported, true)
-  if (img2imgProfile) assert.equal(advisory.regionalImg2ImgSupported, true)
+  if (imageProfile) assert.equal(advisory.regionalImg2ImgSupported, true)
+  if (outpaintProfile) {
+    assert.equal(advisory.regionalOutpaintSupported, true)
+    assert.equal(advisory.outpaintSupported, true)
+  }
   if (imgVaeProfile) {
     assert.equal(advisory.regionalImg2ImgVaeSupported, true)
     assert.equal(advisory.regionalVaeSupported, true)
@@ -4466,8 +4613,13 @@ async function generateCancelEditRetry(project) {
     )
     assert.equal((await current(project)).generationDraft.sampling.sampler, generationSampler)
   }
-  if (imgCfgRescaleProfile) {
-    assert.equal(advisory.regionalImg2ImgCfgRescaleSupported, true)
+  if (imageCfgRescaleProfile) {
+    assert.equal(
+      advisory[
+        outpaintProfile ? 'regionalOutpaintSupported' : 'regionalImg2ImgCfgRescaleSupported'
+      ],
+      true,
+    )
     assert.equal((await current(project)).generationDraft.cfgRescale, generationCfgRescale)
   }
   if (initializationProfile) {
@@ -4523,7 +4675,7 @@ async function generateCancelEditRetry(project) {
       },
       { timeout: timeout(240_000), intervals: [100, 250, 500] },
     )
-    .toBe(img2imgProfile ? 2 : 1)
+    .toBe(imageProfile ? 2 : 1)
   report.cancellationBoundary =
     'Actual Main-to-Python regional JSONL request witnessed before UI Cancel; no completed denoising-step count is inferred.'
   const snapshot = await observerSnapshot()
@@ -4536,9 +4688,9 @@ async function generateCancelEditRetry(project) {
   // IMG's shorter native window can finish while the GPU-backed screenshot is encoded.
   // Capture the running UI before waiting for the two actual step observations, then click
   // Cancel immediately afterward. Keep the historical TXT/fault observation order unchanged.
-  if (img2imgProfile) await screenshot('running-before-cancel')
+  if (imageProfile) await screenshot('running-before-cancel')
   if (progressProfile) await progressBeforeCancel(project, first)
-  if (!img2imgProfile)
+  if (!imageProfile)
     await screenshot(workerFaultProfile ? 'running-before-worker-fault' : 'running-before-cancel')
   if (workerFaultProfile) {
     await faultRegionalWorker(project, first)
@@ -4576,7 +4728,7 @@ async function generateCancelEditRetry(project) {
   else report.canceled = canceled.queue[0]
   if (progressProfile && !workerFaultProfile) await progressAfterCancel(first)
   await closeQueue()
-  if (img2imgProfile) await editImageCurrentUi(project)
+  if (imageProfile) await editImageCurrentUi(project)
   else {
     // These are renderer-owned edits delivered by original IPC, deliberately differing from Retry.
     const steps = window.locator('input[aria-label="Steps"]')
@@ -4625,7 +4777,7 @@ async function generateCancelEditRetry(project) {
   }
   await save(project)
   const edited = await current(project)
-  if (img2imgProfile) {
+  if (imageProfile) {
     assert.equal(edited.layers.length, 1)
     assert.equal(edited.layers[0].id, project.sourceLayerId)
     assert.equal(edited.layers[0].opacity, 0.75)
@@ -4658,10 +4810,7 @@ async function generateCancelEditRetry(project) {
     .toBe(2)
   const retried = (await scenarioSql()).queue.find(({ id }) => id !== first.id)
   assert.ok(retried)
-  assert.equal(
-    retried.operation,
-    img2imgProfile ? 'illustrious-regional-img2img' : 'illustrious-regional-txt2img',
-  )
+  assert.equal(retried.operation, regionalOperation)
   assert.equal(
     retried.frozen_payload_json,
     first.frozen_payload_json,
@@ -4719,13 +4868,28 @@ async function generateCancelEditRetry(project) {
   if (progressProfile) await verifyInstalledProgress(project, retried)
   const wires = regionalWires(observed)
   assert.ok(
-    wires.length <= (img2imgProfile ? 3 : 2),
+    wires.length <= (imageProfile ? 3 : 2),
     'No extra regional inference requests are authorized',
   )
   assert.equal(new Set(wires.map(({ requestId }) => requestId)).size, wires.length)
   for (const wire of wires) {
-    if (img2imgProfile) {
-      assert.equal(wire.bundleJson.request.type, 'generate-illustrious-img2img')
+    if (imageProfile) {
+      assert.equal(wire.bundleJson.request.type, generationRequestType)
+      if (outpaintProfile) {
+        assert.deepEqual(
+          wire.bundleJson.request.job.conditioning,
+          firstCaptured.frozen.context.conditioning,
+        )
+        assert.deepEqual(wire.bundleJson.request.job.infillResource, {
+          byteSize: outpaintInfill.byteSize,
+          path: outpaintInfill.managedPath,
+          role: outpaintInfill.role,
+          sha256: outpaintInfill.sha256,
+        })
+        const ready = observed.workers.find(({ pid }) => pid === wire.pid).ready
+        for (const capability of ['illustrious-outpaint', 'illustrious-regional-outpaint-v1'])
+          assert.ok(ready.capabilities.includes(capability))
+      }
       assert.equal(wire.bundleJson.request.job.sampling.denoisingStrength, imageStrength)
       assert.equal(Object.hasOwn(wire.bundleJson, 'initializationProfile'), false)
       assert.ok(
@@ -4745,12 +4909,14 @@ async function generateCancelEditRetry(project) {
         )
         assert.equal(wire.bundleJson.request.job.sampling.scheduler, generationScheduler)
       }
-      if (imgCfgRescaleProfile) {
+      if (imageCfgRescaleProfile) {
         const ready = observed.workers.find(({ pid }) => pid === wire.pid).ready
         for (const capability of [
           'illustrious-regional-invoke-v1',
           'illustrious-regional-cfg-rescale-v1',
-          'illustrious-regional-img2img-cfg-rescale-v1',
+          outpaintProfile
+            ? 'illustrious-regional-outpaint-v1'
+            : 'illustrious-regional-img2img-cfg-rescale-v1',
         ])
           assert.ok(ready.capabilities.includes(capability))
         assert.equal(wire.bundleJson.request.job.sampling.cfgRescale, generationCfgRescale)
@@ -4795,17 +4961,21 @@ async function generateCancelEditRetry(project) {
       assert.equal(alpha.opaque, alpha.positive)
     }
   }
-  if (imgCfgRescaleProfile) {
+  if (imageCfgRescaleProfile) {
     assert.equal(edited.generationDraft.cfgRescale, 0.2)
     report.cfgRescaleFlow = {
       originalValue: generationCfgRescale,
       editedSavedValue: edited.generationDraft.cfgRescale,
       actualWireValues: wires.map(({ bundleJson }) => bundleJson.request.job.sampling.cfgRescale),
-      newCapability: 'illustrious-regional-img2img-cfg-rescale-v1',
+      newCapability: outpaintProfile
+        ? 'illustrious-regional-outpaint-v1'
+        : 'illustrious-regional-img2img-cfg-rescale-v1',
       noExtraNativeRequests: true,
     }
     check(
-      'Actual IMG CFG Rescale0.7 reaches all three native wires and frozen Retry after a saved0.2 edit; every executing peer advertises the separate combination capability',
+      outpaintProfile
+        ? 'Actual outpaint CFG Rescale0.7, source conditioning and exact LaMa reach all three native wires and frozen Retry after saved0.2/source edits; every executing peer advertises the separate outpaint capability'
+        : 'Actual IMG CFG Rescale0.7 reaches all three native wires and frozen Retry after a saved0.2 edit; every executing peer advertises the separate combination capability',
       report.cfgRescaleFlow,
     )
   }
@@ -4856,14 +5026,18 @@ async function generateCancelEditRetry(project) {
   }
   assert.equal(
     wires.length,
-    img2imgProfile ? 3 : 2,
+    imageProfile ? 3 : 2,
     'Generate and Retry each require one witnessed original regional command',
   )
   assert.equal(
     observed.workers
       .flatMap(({ writes }) => writes.flatMap(({ lines }) => lines))
       .filter(({ type }) =>
-        ['generate-illustrious-txt2img', 'generate-illustrious-img2img'].includes(type),
+        [
+          'generate-illustrious-txt2img',
+          'generate-illustrious-img2img',
+          ...(outpaintProfile ? ['generate-illustrious-outpaint'] : []),
+        ].includes(type),
       ).length,
     0,
     'No ordinary inference command may replace regional execution',
@@ -5188,7 +5362,7 @@ async function setVaePrecisionUi(project, value) {
 
 // Reuse the installed-generation Advanced Options helper; real input/change owns the edit.
 async function setCfgRescaleUi(project, value) {
-  assert.ok((cfgRescaleProfile || imgCfgRescaleProfile) && [0.2, 0.7].includes(value))
+  assert.ok((cfgRescaleProfile || imageCfgRescaleProfile) && [0.2, 0.7].includes(value))
   const input = window.locator('input[aria-label="CFG Rescale"]')
   if (!(await input.isVisible()))
     await window.getByText('Advanced Options', { exact: true }).click()
@@ -6739,7 +6913,123 @@ async function browserDecode(url) {
     { url, side },
   )
 }
-async function observeCanvas(label, decoded, imageUrl) {
+async function assertBrowserPixels(url, decoded) {
+  if (!outpaintProfile) {
+    const observed = await browserDecode(url)
+    assert.equal(observed.rgbaSha256, decoded.rgbaSha256)
+    return observed
+  }
+  // Canvas premultiplies soft-alpha RGB, so compare the independently decoded
+  // PNG after opaque-black compositing. Integer rounding may differ by one RGB
+  // unit; alpha must remain exact. Raw PNG/control equality stays byte-exact.
+  const observed = await window.evaluate(
+    async ({ url, width, height, expectedBase64 }) => {
+      const raw = Uint8Array.from(atob(expectedBase64), (value) => value.charCodeAt(0))
+      const image = new Image()
+      image.crossOrigin = 'anonymous'
+      image.src = url
+      await image.decode()
+      if (image.naturalWidth !== width || image.naturalHeight !== height)
+        throw new Error('Browser decoded unexpected contribution size')
+      const surface = document.createElement('canvas')
+      surface.width = width
+      surface.height = height
+      const context = surface.getContext('2d', { willReadFrequently: true })
+      context.drawImage(image, 0, 0)
+      const transparent = context.getImageData(0, 0, width, height).data
+      let differentAlpha = 0
+      for (let i = 3; i < raw.length; i += 4) differentAlpha += Number(transparent[i] !== raw[i])
+      context.fillStyle = '#000000'
+      context.fillRect(0, 0, width, height)
+      context.drawImage(image, 0, 0)
+      const opaque = context.getImageData(0, 0, width, height).data
+      let maximumCompositeRgbError = 0
+      for (let i = 0; i < raw.length; i += 4)
+        for (let channel = 0; channel < 3; channel++)
+          maximumCompositeRgbError = Math.max(
+            maximumCompositeRgbError,
+            Math.abs(opaque[i + channel] - Math.round((raw[i + channel] * raw[i + 3]) / 255)),
+          )
+      return {
+        width,
+        height,
+        differentAlpha,
+        maximumCompositeRgbError,
+        rgbRoundingBound: 1,
+        alphaExact: differentAlpha === 0,
+      }
+    },
+    {
+      url,
+      width: decoded.width,
+      height: decoded.height,
+      expectedBase64: decoded.rgba.toString('base64'),
+    },
+  )
+  assert.equal(observed.differentAlpha, 0)
+  assert.ok(observed.maximumCompositeRgbError <= observed.rgbRoundingBound)
+  return observed
+}
+async function assertInstalledOutpaint(captured, outputBytes) {
+  assert.ok(outpaintProfile && captured.frozen.context.kind === 'normal-outpaint-preparation')
+  const sourcePath = path.join(appDataRoot, 'generation-inputs', captured.row.id, 'target.png')
+  const sourceBytes = await readFile(sourcePath)
+  assert.equal(digest(sourceBytes), captured.frozen.context.conditioning.sourceTarget.sha256)
+  const alpha = await assertOutpaintContribution(
+    captured.frozen.context.conditioning,
+    sourceBytes,
+    outputBytes,
+  )
+  const source = decodePng(sourceBytes),
+    output = decodePng(outputBytes),
+    merged = Buffer.alloc(source.rgba.length)
+  assert.equal(source.channels, 4)
+  assert.equal(output.channels, 4)
+  let protectedPixels = 0,
+    generatedPixels = 0,
+    softPixels = 0,
+    authoredProtectedInteriorPixels = 0
+  for (let i = 0; i < source.rgba.length; i += 4) {
+    const sourceAlpha = source.rgba[i + 3],
+      contributionAlpha = output.rgba[i + 3],
+      a = contributionAlpha / 255,
+      b = (sourceAlpha / 255) * (1 - a),
+      total = a + b
+    if ((i / 4) % side < side / 4) {
+      assert.equal(sourceAlpha, 255)
+      assert.equal(contributionAlpha, 0)
+      authoredProtectedInteriorPixels++
+    }
+    merged[i + 3] = Math.round(total * 255)
+    for (let channel = 0; channel < 3; channel++)
+      merged[i + channel] = total
+        ? Math.round((output.rgba[i + channel] * a + source.rgba[i + channel] * b) / total)
+        : 0
+    if (contributionAlpha === 0 && sourceAlpha === 255) {
+      protectedPixels++
+      assert.equal(merged[i + 3], 255)
+      assert.ok(merged.subarray(i, i + 4).equals(source.rgba.subarray(i, i + 4)))
+    }
+    if (contributionAlpha === 255) generatedPixels++
+    else if (contributionAlpha > 0) softPixels++
+  }
+  assert.ok(protectedPixels > 0 && generatedPixels > 0 && softPixels > 0)
+  assert.equal(authoredProtectedInteriorPixels, (side * side) / 4)
+  return {
+    alpha,
+    sourceSha256: digest(sourceBytes),
+    sourceRgbaSha256: source.rgbaSha256,
+    rawContributionRgbaSha256: output.rgbaSha256,
+    mergedRgbaSha256: digest(merged),
+    protectedPixels,
+    authoredProtectedInteriorPixels,
+    generatedPixels,
+    softPixels,
+    protectedSourceExact: true,
+    policyVerifiedByIndependentMainOwner: true,
+  }
+}
+async function observeCanvas(label, decoded, imageUrl, source = null) {
   await expect(canvas().locator('.canvas-area')).toHaveAttribute('data-scene-ready', 'true', {
     timeout: timeout(),
   })
@@ -6750,7 +7040,7 @@ async function observeCanvas(label, decoded, imageUrl) {
         samples = await canvas()
           .locator('.canvas-area')
           .evaluate(
-            async (host, { bbox, imageUrl, exactBackingScale }) => {
+            async (host, { bbox, imageUrl, exactBackingScale, source }) => {
               const bitmap = host.querySelector('.konvajs-content canvas')
               if (!(bitmap instanceof HTMLCanvasElement))
                 throw new Error('Actual Konva scene is absent')
@@ -6789,6 +7079,15 @@ async function observeCanvas(label, decoded, imageUrl) {
               context.scale(scaleX, scaleY)
               context.translate(camera.x, camera.y)
               context.scale(camera.scale, camera.scale)
+              if (source) {
+                const original = new Image()
+                original.crossOrigin = 'anonymous'
+                original.src = source.imageUrl
+                await original.decode()
+                context.globalAlpha = source.opacity
+                context.drawImage(original, bbox.x, bbox.y, bbox.width, bbox.height)
+                context.globalAlpha = 1
+              }
               context.drawImage(image, bbox.x, bbox.y, bbox.width, bbox.height)
               return {
                 camera,
@@ -6826,9 +7125,14 @@ async function observeCanvas(label, decoded, imageUrl) {
                 }),
               }
             },
-            { bbox, imageUrl, exactBackingScale: imgSamplerProfile || imgVaeProfile },
+            {
+              bbox,
+              imageUrl,
+              exactBackingScale: imgSamplerProfile || imgVaeProfile || outpaintProfile,
+              source,
+            },
           )
-        if (imgSamplerProfile || imgVaeProfile) {
+        if (imgSamplerProfile || imgVaeProfile || outpaintProfile) {
           report.canvasDiagnostics ??= {}
           report.canvasDiagnostics[label] = samples
           checkpoint()
@@ -6839,7 +7143,7 @@ async function observeCanvas(label, decoded, imageUrl) {
     )
     .toBeLessThanOrEqual(8)
   for (const sample of samples.samples) {
-    assert.equal(sample.rgba[3], 255)
+    assert.equal(sample.rgba[3], outpaintProfile ? sample.independentlyRenderedRgba[3] : 255)
     const offset = ((sample.world.y - bbox.y) * side + sample.world.x - bbox.x) * 4
     sample.rawOutputNeighbor = [...decoded.rgba.subarray(offset, offset + 4)]
   }
@@ -6916,7 +7220,7 @@ async function readZip(file) {
 function assertBaseProvenance(provenance, candidate, frozen) {
   const positive = globalPositiveInput(123)
   assert.equal(provenance.schemaVersion, 1)
-  assert.equal(provenance.kind, img2imgProfile ? 'illustrious-img2img' : 'illustrious-txt2img')
+  assert.equal(provenance.kind, `illustrious-${generationMode}`)
   assert.equal(provenance.executionResultContext.candidateId, candidate.candidateId)
   assert.equal(provenance.executionResultContext.queueItemId, candidate.queueItemId)
   assert.equal(provenance.executionResultContext.output.sha256, candidate.pngSha256)
@@ -6928,7 +7232,19 @@ function assertBaseProvenance(provenance, candidate, frozen) {
     width: side,
     iccSha256: IGS_SRGB_ICC_SHA256,
     sha256: candidate.pngSha256,
+    ...(outpaintProfile
+      ? { outputMode: 'contribution', contributionAlpha8: candidate.contributionAlpha8 }
+      : {}),
   })
+  if (outpaintProfile) {
+    const {
+      bbox: _bbox,
+      kind: _kind,
+      schemaVersion: _schema,
+      ...identity
+    } = frozen.context.conditioning
+    assert.deepEqual(provenance.layerSourceContext.outpaint, identity)
+  }
   assert.equal(provenance.layerSourceContext.sourceDocumentId, frozen.context.documentId)
   assert.equal(
     provenance.layerSourceContext.sourceDocumentRevision,
@@ -6940,7 +7256,7 @@ function assertBaseProvenance(provenance, candidate, frozen) {
   assert.deepEqual(config, {
     cfgRescale: generationCfgRescale,
     loras: globalLoraProfile ? configuredGlobalLoraStack() : [],
-    mode: img2imgProfile ? 'img2img' : 'txt2img',
+    mode: generationMode,
     model: {
       kind: 'checkpoint',
       baseModelFamily: 'illustrious',
@@ -6971,7 +7287,7 @@ function assertBaseProvenance(provenance, candidate, frozen) {
       sampler: generationSampler,
       scheduler: generationScheduleLabel,
       steps: 30,
-      ...(img2imgProfile ? { denoisingStrength: imageStrength } : {}),
+      ...(imageProfile ? { denoisingStrength: imageStrength } : {}),
       ...(multipleResultsProfile && frozen.context.sampling.seedBehavior !== undefined
         ? { seedBehavior: frozen.context.sampling.seedBehavior }
         : {}),
@@ -6993,7 +7309,7 @@ function assertBaseProvenance(provenance, candidate, frozen) {
   for (const forbidden of [
     'regional',
     'invoke-canvas-v1',
-    'alpha8',
+    ...(outpaintProfile ? [] : ['alpha8']),
     'maskId',
     'regionId',
     'compositionProfile',
@@ -7157,13 +7473,14 @@ async function resultsAddSaveReopen(project, completed) {
     decoded = decodePng(bytes)
   assert.equal(decoded.width, side)
   assert.equal(decoded.height, side)
-  assert.equal(decoded.channels, 3)
+  assert.equal(decoded.channels, outpaintProfile ? 4 : 3)
   assert.equal(decoded.iccSha256, IGS_SRGB_ICC_SHA256)
   assert.equal(digest(bytes), completed.receipt.image_sha256)
   assert.equal(bytes.length, completed.receipt.image_byte_size)
-  for (let i = 3; i < decoded.rgba.length; i += 4) assert.equal(decoded.rgba[i], 255)
-  const rendered = await browserDecode(candidate.imageUrl)
-  assert.equal(rendered.rgbaSha256, decoded.rgbaSha256)
+  if (!outpaintProfile)
+    for (let i = 3; i < decoded.rgba.length; i += 4) assert.equal(decoded.rgba[i], 255)
+  const rendered = await assertBrowserPixels(candidate.imageUrl, decoded)
+  const contribution = outpaintProfile ? await assertInstalledOutpaint(completed, bytes) : null
   await writeFile(path.join(evidenceRoot, 'regional-output.png'), bytes, {
     flag: 'wx',
     mode: 0o600,
@@ -7175,21 +7492,35 @@ async function resultsAddSaveReopen(project, completed) {
     rgbaSha256: decoded.rgbaSha256,
     iccSha256: decoded.iccSha256,
     browser: rendered,
+    ...(outpaintProfile ? { contributionAlpha8: contribution.alpha, contribution } : {}),
   }
-  await observeCanvas('results-preview', decoded, candidate.imageUrl)
+  await observeCanvas(
+    'results-preview',
+    decoded,
+    candidate.imageUrl,
+    outpaintProfile
+      ? { imageUrl: (await current(project)).layers[0].imageUrl, opacity: 0.75 }
+      : null,
+  )
   const before = await current(project),
     packageBefore = await hashFile(project.file)
   assert.equal(before.dirty, false)
-  assert.equal(before.layers.length, img2imgProfile ? 1 : 0)
-  const portableBefore = img2imgProfile ? (await readZip(project.file)).project.layers : []
-  const sourceBytesBefore = img2imgProfile ? await fetchPng(before.layers[0].imageUrl) : null
-  if (img2imgProfile) {
+  assert.equal(before.layers.length, imageProfile ? 1 : 0)
+  const portableBefore = imageProfile ? (await readZip(project.file)).project.layers : []
+  const sourceBytesBefore = imageProfile ? await fetchPng(before.layers[0].imageUrl) : null
+  if (imageProfile) {
     assert.equal(
       decoded.rgbaSha256,
       report.img2img.control.rgbaSha256,
-      'Frozen IMG Retry must reproduce independent healthy control RGB exactly',
+      outpaintProfile
+        ? 'Frozen outpaint Retry must reproduce every raw independently decoded healthy-control RGBA channel exactly'
+        : 'Frozen IMG Retry must reproduce independent healthy control RGB exactly',
     )
     report.img2img.exactControlRetryRgb = true
+    if (outpaintProfile) {
+      assert.deepEqual(contribution, report.img2img.control.contribution)
+      report.outpaintExactControlRetryRgba = true
+    }
   }
   await tray().getByRole('checkbox', { name: 'Select candidate 1', exact: true }).check()
   if (multipleResultsProfile)
@@ -7200,7 +7531,7 @@ async function resultsAddSaveReopen(project, completed) {
     await expect(review).toBeVisible({ timeout: timeout() })
     await expect(review).toContainText('1 unchecked temporary result will be discarded.')
     assert.equal((await api('listGenerationResults', project.id)).candidates.length, 2)
-    assert.equal((await current(project)).layers.length, img2imgProfile ? 1 : 0)
+    assert.equal((await current(project)).layers.length, imageProfile ? 1 : 0)
     await review.getByRole('button', { name: 'Add 1, Discard 1', exact: true }).click()
   }
   await expect
@@ -7217,7 +7548,7 @@ async function resultsAddSaveReopen(project, completed) {
     .toBe(true)
   await expect
     .poll(async () => (await current(project)).layers.length, { timeout: timeout() })
-    .toBe(img2imgProfile ? 2 : 1)
+    .toBe(imageProfile ? 2 : 1)
   const added = await current(project),
     layer = added.layers.find(({ id }) => !before.layers.some((source) => source.id === id))
   assert.ok(layer)
@@ -7263,7 +7594,7 @@ async function resultsAddSaveReopen(project, completed) {
   assert.deepEqual(added.primaryBbox, before.primaryBbox)
   assert.equal((await fetchPng(layer.imageUrl)).equals(bytes), true)
   await canvas().getByRole('button', { name: 'Undo', exact: true }).click()
-  await expect.poll(async () => (await current(project)).layers.length).toBe(img2imgProfile ? 1 : 0)
+  await expect.poll(async () => (await current(project)).layers.length).toBe(imageProfile ? 1 : 0)
   await assertSourceRasterState((await current(project)).layers, before.layers, sourceBytesBefore)
   assert.deepEqual((await current(project)).generationDraft, before.generationDraft)
   assert.deepEqual(portableRegions(await current(project)), portableRegions(before))
@@ -7283,12 +7614,12 @@ async function resultsAddSaveReopen(project, completed) {
   const saved = await readZip(project.file),
     accepted = saved.project.layers.find(({ id }) => id === layer.id)
   assert.ok(accepted)
-  assert.equal(saved.project.layers.length, img2imgProfile ? 2 : 1)
+  assert.equal(saved.project.layers.length, imageProfile ? 2 : 1)
   assert.deepEqual(
     saved.project.layers.filter(({ id }) => id !== layer.id),
     portableBefore,
   )
-  if (img2imgProfile) {
+  if (imageProfile) {
     const source = saved.project.layers.find(({ id }) => id === project.sourceLayerId)
     assert.ok(source)
     assert.ok(
@@ -7317,7 +7648,7 @@ async function resultsAddSaveReopen(project, completed) {
     )
     assert.deepEqual(
       region.prompts,
-      img2imgProfile
+      imageProfile
         ? portableRegions(before)[index].prompts
         : project.document.regionalGuidance[index].prompts,
     )
@@ -7350,7 +7681,7 @@ async function resultsAddSaveReopen(project, completed) {
   await expect(window.getByRole('tab', { name: project.title, exact: true })).toHaveCount(0)
   const reopened = await openProject(project)
   assert.equal(reopened.dirty, false)
-  assert.equal(reopened.layers.length, img2imgProfile ? 2 : 1)
+  assert.equal(reopened.layers.length, imageProfile ? 2 : 1)
   await assertSourceRasterState(
     reopened.layers.filter(({ id }) => id !== layer.id),
     before.layers,
@@ -7411,7 +7742,7 @@ async function resultsAddSaveReopen(project, completed) {
     )
     report[imgDpmProfile ? 'imgDpmFlow' : 'imgEulerAFlow'].savedReopenedAssociationVerified = true
   }
-  if (cfgRescaleProfile || imgCfgRescaleProfile) {
+  if (cfgRescaleProfile || imageCfgRescaleProfile) {
     assert.equal(reopened.generationDraft.cfgRescale, 0.2)
     assert.equal(accepted.generationProvenance.generationConfiguration.cfgRescale, 0.7)
     report.cfgRescaleFlow.savedReopenedAssociationVerified = true
@@ -7442,8 +7773,8 @@ async function resultsAddSaveReopen(project, completed) {
   await expect(
     window.getByRole('heading', { name: 'Image generation needs repair', exact: true }),
   ).toHaveCount(0)
-  if (img2imgProfile) {
-    assert.equal((await targetState(project)).mode, 'img2img')
+  if (imageProfile) {
+    assert.equal((await targetState(project)).mode, outpaintProfile ? 'outpaint' : 'img2img')
     assert.equal(reopened.generationDraft.sampling.denoisingStrength, 0.8)
     await expect(window.getByRole('button', { name: 'Generate', exact: true })).toBeEnabled({
       timeout: timeout(120_000),
@@ -7458,7 +7789,12 @@ async function resultsAddSaveReopen(project, completed) {
     ).toBeVisible({ timeout: timeout(120_000) })
     await expect(window.getByRole('button', { name: 'Generate', exact: true })).toBeDisabled()
   }
-  await observeCanvas('saved-reopened-raster', decoded, reopened.layers[0].imageUrl)
+  await observeCanvas(
+    'saved-reopened-raster',
+    decoded,
+    reopened.layers[0].imageUrl,
+    outpaintProfile ? { imageUrl: reopened.layers[1].imageUrl, opacity: 0.75 } : null,
+  )
   check(
     'Signed Results/browser PNG, actual preview, Raster Add/Undo/Redo and independently read Save ZIP/reopen preserve exact output and base-only provenance',
     { outputSha256: digest(bytes), layerId: layer.id },
@@ -7639,6 +7975,14 @@ async function finalIdentities() {
   assert.equal(await hashFile(fixturePath), report.fixtureSha256)
   assert.deepEqual(statIdentity(await regular(fixture.checkpoint.path)), modelStat)
   assert.equal(await hashFile(fixture.checkpoint.path), fixture.checkpoint.sha256)
+  if (outpaintProfile) {
+    const verified = await new InferenceAuxiliaryResources(
+      path.join(appDataRoot, 'inference-resources'),
+    ).resolveVerifiedOutpaintInfill()
+    const { stat, ...original } = outpaintInfill
+    assert.deepEqual(verified, original)
+    assert.deepEqual(statIdentity(await regular(verified.managedPath)), stat)
+  }
   if (progressProfile)
     assert.deepEqual(
       await captureFiles(Object.keys(report.progressSourceSha256)),
@@ -7650,7 +7994,7 @@ async function finalIdentities() {
     const whole = recoveryProfile || progressProfile ? await sqlSnapshot(db.db) : null
     if (recoveryProfile) assertBaselineSql(whole)
     if (progressProfile) await verifyProgressPreservation(db.db)
-    if (img2imgProfile) {
+    if (imageProfile) {
       assert.equal(await hashFile(report.img2img.source.path), report.img2img.source.sha256)
       if (imgVaeProfile) await verifyGlobalVaeFiles()
       const own = ownProgressSql(whole),
@@ -7661,7 +8005,7 @@ async function finalIdentities() {
       assert.ok(
         own.queue.every(
           ({ operation, frozen_payload_json }) =>
-            operation === 'illustrious-regional-img2img' &&
+            operation === regionalOperation &&
             frozen_payload_json === report.retry.originalFrozen.row.frozen_payload_json,
         ),
       )
@@ -7811,7 +8155,9 @@ async function finalIdentities() {
     await db.close()
   }
   for (const project of projects.filter(
-    ({ mode }) => mode !== 'transparent' && (!img2imgProfile || mode === 'partial'),
+    ({ mode }) =>
+      mode !== 'transparent' &&
+      (!imageProfile || mode === (outpaintProfile ? 'opaque' : 'partial')),
   ))
     assert.equal(await hashFile(project.file), project.initialPackageSha256)
   check(
@@ -8132,7 +8478,7 @@ async function assertImageActions(project) {
     )
     report.imgVaeFlow.originalAuthoringActions = { selections, precisionChanges }
   }
-  if (imgCfgRescaleProfile) {
+  if (imageCfgRescaleProfile) {
     const changes = observed.ipc.filter(
         ({ channel, args }) =>
           channel === 'projects:update-generation-draft' && args[1]?.kind === 'cfg-rescale',
@@ -8269,9 +8615,9 @@ try {
   await prepareCatalogAndProjects()
   await prepareMainDeathControls()
   await launch()
-  if (!img2imgProfile) await targetRefusalControls()
-  if (img2imgProfile) {
-    const project = projects.find(({ mode }) => mode === 'opaque'),
+  if (!imageProfile) await targetRefusalControls()
+  if (imageProfile) {
+    const project = projects.find(({ mode }) => mode === (outpaintProfile ? 'partial' : 'opaque')),
       control = projects.find(({ mode }) => mode === 'transparent')
     progressProject = project
     report.img2img.controlProjectKey = control.id
@@ -8384,7 +8730,7 @@ try {
   }
   assert.deepEqual(report.pageErrors, [])
   assert.equal(report.samplerError, undefined)
-  if (img2imgProfile) await closeImageControl()
+  if (imageProfile) await closeImageControl()
   await closeNative('healthy-final')
   if (workerFaultProfile) {
     assert.equal(report.nativeClosures.length, 1)
@@ -8426,25 +8772,27 @@ try {
   report.completedAt = new Date().toISOString()
   report.elapsedSeconds = (Date.now() - started) / 1000
   check(
-    img2imgProfile
-      ? imgVaeProfile
-        ? 'Finite installed opaque regional IMG exact A/FP32 with Euler/Normal and CFG Rescale0.7, actual imported source, observed Cancel/frozen Retry after saved Embedded/FP16 edits, exact healthy-control RGB and accepted ordinary IMG provenance through Add/Undo/Redo/Save/reopen completed; no installed VAE pixel-causality or quality claim'
-        : 'Finite installed opaque regional IMG UI/default RuntimeManager, actual imported source, live numeric Cancel/frozen Retry and exact healthy-control RGB, explicit Add/Undo/Redo/Save/reopen completed; no visual-quality or broader IMG claim'
-      : dynamicPositiveProfile
-        ? 'Finite installed two-expansion global-positive prefix, exact per-item TI, original Cancel/frozen Retry and concrete accepted provenance completed after saved template/options/mask/LoRA/VAE edits; same runtime and three wires/two PNGs'
-        : globalVaeProfile
-          ? 'Finite installed exact VAE A/FP32 with LoRA/TI, observed Cancel, original frozen Retry, two Results and base VAE/precision provenance completed after saved Embedded/FP16 edits; no installed pixel-causality or quality claim'
-          : globalLoraProfile
-            ? 'Finite installed global LoRA/TI batch, observed Cancel, original frozen Retry, two Results and full configured-LoRA/global-only-TI accepted provenance completed; no installed numerical-causality or quality claim'
-            : globalTiProfile
-              ? 'Finite installed global/region exact TI batch, observed Cancel, frozen Retry, two Results and global-only accepted provenance completed; no new native TI-causality or quality claim'
-              : staticBatchProfile
-                ? 'Finite installed two-image static batch, exact frozen identity, distinct Results and reviewed Add/Discard/Undo/Save qualification completed; no quality or throughput claim'
-                : workerFaultProfile
-                  ? 'Finite installed worker-only fault/normal failure/progress clearing/frozen Retry qualification completed with the same live Main; no visual-quality or capacity claim'
-                  : progressProfile
-                    ? 'Finite installed original scalar progress/Cancel/frozen Retry qualification completed; no visual-quality or capacity claim'
-                    : 'Finite installed public UI Regional qualification completed; evidence supports this exact matrix and no visual-quality or numerical-step claim',
+    outpaintProfile
+      ? 'Finite installed mixed-alpha regional outpaint with EmbeddedFP16, Euler/Normal, CFG Rescale0.7, exact LaMa, actual imported source and live Cancel/frozen Retry after saved edits completed through verified RGBA contribution, protected-source composition, Results/Add/Undo/Redo/Save ZIP/reopen; no visual-quality or broader model claim'
+      : imageProfile
+        ? imgVaeProfile
+          ? 'Finite installed opaque regional IMG exact A/FP32 with Euler/Normal and CFG Rescale0.7, actual imported source, observed Cancel/frozen Retry after saved Embedded/FP16 edits, exact healthy-control RGB and accepted ordinary IMG provenance through Add/Undo/Redo/Save/reopen completed; no installed VAE pixel-causality or quality claim'
+          : 'Finite installed opaque regional IMG UI/default RuntimeManager, actual imported source, live numeric Cancel/frozen Retry and exact healthy-control RGB, explicit Add/Undo/Redo/Save/reopen completed; no visual-quality or broader IMG claim'
+        : dynamicPositiveProfile
+          ? 'Finite installed two-expansion global-positive prefix, exact per-item TI, original Cancel/frozen Retry and concrete accepted provenance completed after saved template/options/mask/LoRA/VAE edits; same runtime and three wires/two PNGs'
+          : globalVaeProfile
+            ? 'Finite installed exact VAE A/FP32 with LoRA/TI, observed Cancel, original frozen Retry, two Results and base VAE/precision provenance completed after saved Embedded/FP16 edits; no installed pixel-causality or quality claim'
+            : globalLoraProfile
+              ? 'Finite installed global LoRA/TI batch, observed Cancel, original frozen Retry, two Results and full configured-LoRA/global-only-TI accepted provenance completed; no installed numerical-causality or quality claim'
+              : globalTiProfile
+                ? 'Finite installed global/region exact TI batch, observed Cancel, frozen Retry, two Results and global-only accepted provenance completed; no new native TI-causality or quality claim'
+                : staticBatchProfile
+                  ? 'Finite installed two-image static batch, exact frozen identity, distinct Results and reviewed Add/Discard/Undo/Save qualification completed; no quality or throughput claim'
+                  : workerFaultProfile
+                    ? 'Finite installed worker-only fault/normal failure/progress clearing/frozen Retry qualification completed with the same live Main; no visual-quality or capacity claim'
+                    : progressProfile
+                      ? 'Finite installed original scalar progress/Cancel/frozen Retry qualification completed; no visual-quality or capacity claim'
+                      : 'Finite installed public UI Regional qualification completed; evidence supports this exact matrix and no visual-quality or numerical-step claim',
   )
 } catch (error) {
   report.outcome = 'failed'

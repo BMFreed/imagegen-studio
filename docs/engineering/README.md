@@ -4,10 +4,10 @@
 
 [Private encode owner](./phase-4-regional-guidance-img2img-vae-research.md) adapts Invoke image→VAE dtype→native posterior→scale→denoiser cast without changing borrowed VAE storage. New private CUDA profiles reuse existing prepared decode; public IMG remains Embedded FP16. ROOT551 PASS/619 warnings (45 new cases; four trained calls+one aggregate), strict typing and source review CLEAN. All encoder/decode precision oracles and exact FP32 repeat pass; isolated mutation gives5 GREEN/one semantic RED. Final retained-byte review is CLEAN; ROOT confirms15 ended units/readers/dependencies, retains all4502 archive entries and reclaims50,290,688 bytes from its exact scratch tree. Public selected/FP32 IMG remains the next owner.
 
-
 ## DPM++ 2M for opaque regional img2img
 
 [Qualified finite slice](./phase-4-regional-guidance-img2img-dpmpp-2m-research.md): ROOT550 Main/450 Python/194 browser PASS,18 installed checks. Frozen DPM/Karras/.7 survives saved Euler/cleared-schedule/.2 through Add/Save-reopen; direct Normal/Karras replay qualifies15/16 selected steps, exact Karras UI RGBA and721,176 changed RGB channels. Source R2 and corrected final R5 retention review CLEAN; ROOT verifies physical exit/dependencies and reclaims59,707,392 bytes from its exact payload tree after retaining all3264 archive entries. Defaults and PP-001/005/007/008 statuses remain unchanged.
+
 ## Repository privacy preparation
 
 [Privacy maintenance](./repository-privacy.md) replaces identifying demo data and
@@ -2095,7 +2095,6 @@ dependency gates precede disposal of five exact scratch paths, reclaiming53,858,
 allocated bytes. Shared runtime/resources/companion and saved business data remain
 protected. No quality, visual, Anima, capacity or promise promotion.
 
-
 ## Public selected-VAE opaque regional IMG
 
 [Public IMG/VAE continuation](./phase-4-regional-guidance-public-img2img-vae-research.md)
@@ -2109,3 +2108,25 @@ retained-data audit is CLEAN. ROOT verifies exit/readers/source/incoming gates a
 releases only own scratch, reclaiming51,605,504 allocated bytes; all1692 entries
 remain in the verified archive and canonical dependencies stay protected. Defaults,
 regional provenance exclusions and PP-001/005/007/008 statuses remain unchanged.
+
+## Regional Guidance with mixed-alpha outpaint
+
+[Outpaint continuation](./phase-4-regional-guidance-outpaint-research.md) connects
+current Invoke's existing infill/alpha-mask/native denoising mechanism to the
+regional recipe owner. A separate capability and additive queue migration retain
+exact source/LaMa/resources for Generate and frozen Retry; ordinary RGBA
+contribution/source recovery and accepted provenance remain authoritative.
+ROOT1175 Main/302 Python PASS and198 distinct browser cases are qualified (197
+from the full run plus the corrected targeted pair, with one overlapping case).
+Installed native-r2 passes16 checks/344.445s through genuine LaMa, Cancel/Retry,
+Results/Add/Undo/Redo/four Saves and ZIP/reopen; raw healthy RGBA is exact.
+Isolated mutations give10GREEN/2semanticRED with exact source restoration.
+Source and oracle addendum reviews are CLEAN within their read-only limits.
+Post-qualification lint changes only comparator property order/test format,
+with normalized TypeScript AST proof and29 Main/20 shared focused passes; native
+remains R4. Independent retention audit verifies all4434 archived payload entries.
+ROOT's fresh exit/restoration/reader/dependency gates precede release of only own
+scratch, reclaiming73498624 allocated bytes; canonical runtime,
+LaMa/models and durable data stay protected. The note records excluded attempts.
+Visual quality, Anima, explicit inpaint/Smart integration and promise readiness
+stay open.

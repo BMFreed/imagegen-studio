@@ -14,6 +14,7 @@ import {
   supportsInferenceRegionalImg2ImgVae,
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
+  supportsInferenceRegionalOutpaint,
   supportsInferenceRegionalVae,
 } from '../../shared/projects/inference-worker-capabilities.js'
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
@@ -25,6 +26,7 @@ import {
 } from '../../shared/projects/regional-invoke-generation.js'
 
 import { randomUUID } from 'node:crypto'
+import path from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
 import type { GenerationOrchestrator, PrivateRegionalExecution } from './generation-orchestrator.js'
@@ -37,9 +39,13 @@ import type {
   RegionalGenerationProcessorResult,
   RegionalGenerationTransport,
 } from './regional-generation-processor.js'
-import type { RegionalGlobalCoverage } from './regional-worker-request.js'
+import type {
+  RegionalGenerationRequestV1,
+  RegionalGlobalCoverage,
+} from './regional-worker-request.js'
 import type { ProjectWorkerClient } from './worker-client.js'
 
+import { buildFrozenQueuedOutpaintV1 } from './generation-queue.js'
 import {
   effectiveGenerationEmbeddings,
   workerEmbeddings,
@@ -48,9 +54,14 @@ import {
   assertIllustriousTxt2ImgRequestFitsTransport,
   withIllustriousGenerationRequest,
 } from './illustrious-txt2img-job.js'
+import {
+  buildQueuedOutpaintWorkerRequest,
+  captureOutpaintWorkerRequest,
+} from './outpaint-worker-request.js'
 import { prepareCurrentCanvasRegionalRecipe } from './project-current-canvas-regional-recipe.js'
 import {
   prepareNormalGeneration,
+  prepareNormalOutpaintGeneration,
   prepareNormalTxt2Img,
   validateNormalGenerationDraft,
   validateNormalTxt2ImgDraft,
@@ -506,13 +517,27 @@ export class ProjectRegionalGenerationCoordinator {
             )
             const target = await capture.composeTarget({ composeTarget })
             assertCurrent()
+            if (
+              target.mode === 'outpaint' &&
+              (!compositionProfile || !supportsInferenceRegionalOutpaint(ready))
+            ) {
+              throw new ProjectRegionalGenerationError(
+                'INFERENCE_UNAVAILABLE',
+                'The image engine has not qualified outpaint with Regional Guidance.',
+              )
+            }
+            const infill =
+              target.mode === 'outpaint'
+                ? await this.options.orchestrator.resolveRegionalOutpaintInfill()
+                : undefined
+            assertCurrent()
             // Invoke grafts image latents into the ordinary denoiser. IMG uses its own
             // frozen source/posterior owner and must never inherit the TXT initializer.
             const initializationProfile =
-              target.mode === 'img2img' ? undefined : txtInitializationProfile
+              target.mode !== 'txt2img' ? undefined : txtInitializationProfile
             if (
               compositionProfile &&
-              target.mode !== 'img2img' &&
+              target.mode === 'txt2img' &&
               document.generationDraft.sampling.sampler === 'DPM++ 2M' &&
               !supportsInferenceRegionalDpm(ready)
             ) {
@@ -521,7 +546,7 @@ export class ProjectRegionalGenerationCoordinator {
                 'The image engine has not qualified the regional DPM++ 2M TXT initialization.',
               )
             }
-            if (compositionProfile && target.mode === 'img2img') {
+            if (compositionProfile && target.mode !== 'txt2img') {
               const draft = document.generationDraft
               if (!supportsInferenceRegionalImg2Img(ready)) {
                 throw new ProjectRegionalGenerationError(
@@ -612,7 +637,11 @@ export class ProjectRegionalGenerationCoordinator {
               )
             }
             const prepared = await (
-              compositionProfile ? prepareNormalGeneration : prepareNormalTxt2Img
+              target.mode === 'outpaint'
+                ? prepareNormalOutpaintGeneration
+                : compositionProfile
+                  ? prepareNormalGeneration
+                  : prepareNormalTxt2Img
             )({
               lastActualSeed: operationalSeed,
               modelService: this.models,
@@ -667,71 +696,99 @@ export class ProjectRegionalGenerationCoordinator {
               assertCurrent()
               materials.push({ context, item, recipe })
             }
+            const consumeRequest = async (request: RegionalGenerationRequestV1) => {
+              assertCurrent()
+              if (!compositionProfile && request.type !== 'generate-illustrious-txt2img') {
+                throw unsupported(
+                  'Private regional transport requires a transparent txt2img target.',
+                )
+              }
+              const items = materials.map(({ context, item, recipe }, index) => {
+                const concreteRequest = structuredClone(request)
+                if (index > 0) {
+                  concreteRequest.requestId = randomUUID()
+                }
+                concreteRequest.job.prompts = { ...item.prompts }
+                concreteRequest.job.sampling.seed = item.seed
+                delete concreteRequest.job.embeddings
+                const embeddings = workerEmbeddings(context)
+                if (embeddings) {
+                  concreteRequest.job.embeddings = embeddings
+                }
+                if (concreteRequest.type === 'generate-illustrious-outpaint') {
+                  captureOutpaintWorkerRequest(concreteRequest, ready)
+                } else {
+                  assertIllustriousTxt2ImgRequestFitsTransport(concreteRequest)
+                }
+                return {
+                  prepared: { context, targetPngBytes: prepared.targetPngBytes },
+                  regional: {
+                    ...(compositionProfile ? { compositionProfile } : {}),
+                    ...composition,
+                    ...(initializationProfile !== undefined ? { initializationProfile } : {}),
+                    recipe,
+                  },
+                  request: concreteRequest,
+                }
+              })
+              const callbacks = {
+                ...(input.beforePublication ? { beforePublication: input.beforePublication } : {}),
+                assertCurrent,
+              }
+              publication.admitted =
+                items.length === 1
+                  ? [
+                      await this.options.orchestrator.enqueuePreparedRegional(tabId, {
+                        ...callbacks,
+                        ...items[0],
+                        ...(input.afterPublication
+                          ? {
+                              afterPublication: async (queued, current) =>
+                                await input.afterPublication!([queued], current),
+                            }
+                          : {}),
+                      }),
+                    ]
+                  : await this.options.orchestrator.enqueuePreparedRegionalBatch(tabId, {
+                      ...callbacks,
+                      ...(input.afterPublication
+                        ? { afterPublication: input.afterPublication }
+                        : {}),
+                      items,
+                    })
+              return publication.admitted
+            }
+            if (prepared.context.kind === 'normal-outpaint-preparation') {
+              if (!infill) {
+                throw invalid('The exact regional outpaint infill resource is unavailable.')
+              }
+              const provisionalRoot = path.join(
+                path.resolve(this.options.scratchBasePath),
+                `outpaint-admission-${randomUUID()}`,
+              )
+              const request = buildQueuedOutpaintWorkerRequest({
+                infill,
+                outputPath: path.join(provisionalRoot, 'result.png'),
+                payload: buildFrozenQueuedOutpaintV1(
+                  { context: prepared.context, targetPngBytes: prepared.targetPngBytes },
+                  randomUUID(),
+                ),
+                provisionalRoot,
+                ready,
+                requestId: randomUUID(),
+                targetPath: path.join(provisionalRoot, 'target.png'),
+              })
+              if (request.type !== 'generate-illustrious-outpaint') {
+                throw invalid('The outpaint family changed.')
+              }
+              return await consumeRequest(request)
+            }
             return await withIllustriousGenerationRequest({
               modelService: this.models,
-              prepared,
+              prepared: { context: prepared.context, targetPngBytes: prepared.targetPngBytes },
               ready,
               scratchBasePath: this.options.scratchBasePath,
-              use: async (request) => {
-                assertCurrent()
-                if (!compositionProfile && request.type !== 'generate-illustrious-txt2img') {
-                  throw unsupported(
-                    'Private regional transport requires a transparent txt2img target.',
-                  )
-                }
-                const items = materials.map(({ context, item, recipe }, index) => {
-                  const concreteRequest = structuredClone(request)
-                  if (index > 0) {
-                    concreteRequest.requestId = randomUUID()
-                  }
-                  concreteRequest.job.prompts = { ...item.prompts }
-                  concreteRequest.job.sampling.seed = item.seed
-                  delete concreteRequest.job.embeddings
-                  const embeddings = workerEmbeddings(context)
-                  if (embeddings) {
-                    concreteRequest.job.embeddings = embeddings
-                  }
-                  assertIllustriousTxt2ImgRequestFitsTransport(concreteRequest)
-                  return {
-                    prepared: { context, targetPngBytes: prepared.targetPngBytes },
-                    regional: {
-                      ...(compositionProfile ? { compositionProfile } : {}),
-                      ...composition,
-                      ...(initializationProfile !== undefined ? { initializationProfile } : {}),
-                      recipe,
-                    },
-                    request: concreteRequest,
-                  }
-                })
-                const callbacks = {
-                  ...(input.beforePublication
-                    ? { beforePublication: input.beforePublication }
-                    : {}),
-                  assertCurrent,
-                }
-                publication.admitted =
-                  items.length === 1
-                    ? [
-                        await this.options.orchestrator.enqueuePreparedRegional(tabId, {
-                          ...callbacks,
-                          ...items[0],
-                          ...(input.afterPublication
-                            ? {
-                                afterPublication: async (queued, current) =>
-                                  await input.afterPublication!([queued], current),
-                              }
-                            : {}),
-                        }),
-                      ]
-                    : await this.options.orchestrator.enqueuePreparedRegionalBatch(tabId, {
-                        ...callbacks,
-                        ...(input.afterPublication
-                          ? { afterPublication: input.afterPublication }
-                          : {}),
-                        items,
-                      })
-                return publication.admitted
-              },
+              use: consumeRequest,
             })
           })
           if (result === null) {

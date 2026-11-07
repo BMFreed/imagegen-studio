@@ -112,6 +112,7 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   initializationSupported?: boolean | null
   iterations: number
   loraSupported?: boolean | null
+  outpaintSupported?: boolean | null
   runtimeSupported?: boolean | null
   targetMode?: 'img2img' | 'outpaint' | 'txt2img' | null
   vaeSupported?: boolean | null
@@ -128,10 +129,10 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   ) {
     return 'Regional Guidance requires an Illustrious epsilon model on Current Canvas.'
   }
-  if (input.targetMode === 'outpaint') {
-    return 'Regional Guidance does not support partially transparent Current Canvas input. Use an empty or fully opaque generation area.'
+  if (input.targetMode === 'outpaint' && input.outpaintSupported !== true) {
+    return 'The image engine has not qualified outpaint with Regional Guidance.'
   }
-  const img2img = input.targetMode === 'img2img'
+  const img2img = input.targetMode === 'img2img' || input.targetMode === 'outpaint'
   if (
     img2img &&
     !(
@@ -197,17 +198,18 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
     throw error
   }
   const { height, width } = input.document.primaryBbox
+  const minimumSide = input.targetMode === 'outpaint' ? 64 : 8
   if (
     [height, width].some(
       (dimension) =>
         !Number.isSafeInteger(dimension) ||
-        dimension < 8 ||
+        dimension < minimumSide ||
         dimension > 2048 ||
         dimension % 8 !== 0,
     ) ||
     height * width > 4_000_000
   ) {
-    return 'Regional Guidance requires dimensions from 8 to 2048, divisible by 8, and at most 4,000,000 pixels.'
+    return `Regional Guidance requires dimensions from ${minimumSide} to 2048, divisible by 8, and at most 4,000,000 pixels.`
   }
   if (input.runtimeSupported === undefined || input.runtimeSupported === null) {
     return 'Checking image engine support for Regional Guidance. Repair or update the runtime if support remains unavailable.'

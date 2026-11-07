@@ -40,6 +40,7 @@ from .illustrious_regional_denoising import (
     _img2img_strength,  # pyright: ignore[reportPrivateUsage]
     _Layout,  # pyright: ignore[reportPrivateUsage]
     _native_output,  # pyright: ignore[reportPrivateUsage]
+    _outpaint_profile,  # pyright: ignore[reportPrivateUsage]
     _vae_profile,  # pyright: ignore[reportPrivateUsage]
     run_current_canvas_regional_denoising,
 )
@@ -52,19 +53,26 @@ from .illustrious_regional_recipe import (
 )
 from .illustrious_regional_vae import validate_regional_vae_output
 from .inference import DenoisingProgressSink, MLRuntime
+from .lama_infill import OUTPAINT_INFILL_BYTE_SIZE, OUTPAINT_INFILL_SHA256
+from .outpaint_conditioning import OutpaintConditioning, create_outpaint_contribution
+from .outpaint_worker_assets import prepare_worker_outpaint
 from .protocol import (
     _REQUEST_ID_PATTERN,  # pyright: ignore[reportPrivateUsage]
     _SHA256_PATTERN,  # pyright: ignore[reportPrivateUsage]
     MAX_GENERATION_TARGET_BYTES,
+    AlphaOutpaintConditioning,
     GenerateIllustriousImg2ImgCommand,
+    GenerateIllustriousOutpaintCommand,
     GenerateIllustriousTxt2ImgCommand,
     IllustriousInferenceParameters,
+    OutpaintInfillResource,
 )
 
 __all__ = (
     "IllustriousRegionalOutputError",
     "generate_current_canvas_regional_txt2img",
     "generate_current_canvas_regional_img2img",
+    "generate_current_canvas_regional_outpaint",
 )
 
 _Code = Literal["INPUT_INVALID", "PROFILE_INVALID", "LIMIT", "UNSUPPORTED"]
@@ -103,14 +111,21 @@ def _command_parameters(
     command: GenerateIllustriousTxt2ImgCommand,
     *,
     img2img: bool = False,
+    outpaint: bool = False,
 ) -> IllustriousInferenceParameters:
     command_class = (
-        GenerateIllustriousImg2ImgCommand if img2img else GenerateIllustriousTxt2ImgCommand
+        GenerateIllustriousOutpaintCommand
+        if outpaint
+        else GenerateIllustriousImg2ImgCommand
+        if img2img
+        else GenerateIllustriousTxt2ImgCommand
     )
     _require(
         type(command) is command_class,
         "INPUT_INVALID",
-        "Only the exact ordinary img2img command record is supported."
+        "Only the exact ordinary outpaint command record is supported."
+        if outpaint
+        else "Only the exact ordinary img2img command record is supported."
         if img2img
         else "Only the exact ordinary txt2img command record is supported.",
     )
@@ -123,7 +138,7 @@ def _command_parameters(
     parameters = IllustriousInferenceParameters(
         **{field.name: values[field.name] for field in fields(IllustriousInferenceParameters)}
     )
-    if img2img:
+    if img2img or outpaint:
         _img2img_strength(cast(GenerateIllustriousImg2ImgCommand, command).denoising_strength)
     _require(
         type(command.request_id) is str
@@ -170,7 +185,55 @@ def _command_parameters(
         "INPUT_INVALID",
         "Target and output must be distinct direct .png staging children.",
     )
+    if outpaint:
+        _outpaint_command(cast(GenerateIllustriousOutpaintCommand, command))
     return parameters
+
+
+def _outpaint_command(command: GenerateIllustriousOutpaintCommand) -> None:
+    """Recheck manually constructed records against the existing frozen OUT policy."""
+    policy, resource = command.conditioning, command.infill_resource
+    _require(
+        type(policy) is AlphaOutpaintConditioning
+        and vars(policy).keys() == {field.name for field in fields(AlphaOutpaintConditioning)}
+        and _bbox(policy.bbox) == _bbox(command.bbox)
+        and policy.source_sha256 == command.target_sha256
+        and policy.source_byte_size == command.target_byte_size
+        and (policy.width, policy.height) == (command.width, command.height)
+        and type(policy.keep_mask_byte_size) is int
+        and policy.keep_mask_byte_size == command.width * command.height
+        and type(policy.keep_mask_sha256) is str
+        and _SHA256_PATTERN.fullmatch(policy.keep_mask_sha256) is not None
+        and type(policy.edge_radius) is int
+        and policy.edge_radius == 16
+        and type(policy.fade_distance) is int
+        and policy.fade_distance == 16
+        and type(policy.minimum_denoise) in (int, float)
+        and policy.minimum_denoise == 0,
+        "INPUT_INVALID",
+        "Outpaint requires the complete existing alpha identity and frozen coherence policy.",
+    )
+    _require(
+        type(resource) is OutpaintInfillResource
+        and vars(resource).keys() == {field.name for field in fields(OutpaintInfillResource)}
+        and resource.role == "outpaint-infill"
+        and type(resource.byte_size) is int
+        and resource.byte_size == OUTPAINT_INFILL_BYTE_SIZE
+        and resource.sha256 == OUTPAINT_INFILL_SHA256,
+        "INPUT_INVALID",
+        "Outpaint requires the exact pinned LaMa resource.",
+    )
+    path = _safe_path(resource.path, "Outpaint infill")
+    model_paths = {command.checkpoint_path, *(entry.path for entry in command.loras)}
+    if command.vae is not None:
+        model_paths.add(command.vae.path)
+    _require(
+        path not in model_paths | {command.target_path, command.output_path}
+        and path != command.staging_root
+        and command.staging_root not in path.parents,
+        "INPUT_INVALID",
+        "Outpaint infill must be distinct from all model and staging inputs.",
+    )
 
 
 def _rgb_image(
@@ -240,6 +303,8 @@ def _generate_current_canvas_regional(
     layout: _Layout,
     on_progress: DenoisingProgressSink | None = None,
     img2img: bool = False,
+    outpaint: bool = False,
+    _prepared_outpaint: tuple[OutpaintConditioning, Image.Image] | None = None,
 ) -> dict[str, object]:
     """Validate one frozen target, run once, and return the original publisher receipt.
 
@@ -267,7 +332,11 @@ def _generate_current_canvas_regional(
         "Regional progress requires a callable sink.",
     )
     parameters = (
-        _command_parameters(command, img2img=True) if img2img else _command_parameters(command)
+        _command_parameters(command, outpaint=True)
+        if outpaint
+        else _command_parameters(command, img2img=True)
+        if img2img
+        else _command_parameters(command)
     )
     # Preserve output's encoding-first refusal order and local execution-profile
     # error identity while sharing the runner's complete lane/version validator.
@@ -277,7 +346,8 @@ def _generate_current_canvas_regional(
     except IllustriousRegionalDenoisingError as error:
         raise IllustriousRegionalOutputError("PROFILE_INVALID", str(error)) from error
     _require(
-        _img2img_profile(denoising_profile) is img2img,
+        _img2img_profile(denoising_profile) is img2img
+        and _outpaint_profile(denoising_profile) is outpaint,
         "PROFILE_INVALID",
         "The output mode must match its explicit txt2img or img2img execution profile.",
     )
@@ -331,16 +401,27 @@ def _generate_current_canvas_regional(
         "INPUT_INVALID",
         "Command bbox position and dimensions must exactly match the complete recipe.",
     )
-    source = validate_generation_target(
-        staging_root=command.staging_root,
-        target_path=command.target_path,
-        output_path=command.output_path,
-        target_sha256=command.target_sha256,
-        target_byte_size=command.target_byte_size,
-        width=command.width,
-        height=command.height,
-        img2img=img2img,
-    )
+    alpha_conditioning = None
+    if outpaint:
+        # The worker supplies this private captured pair before loading models;
+        # direct frontend callers prepare through the same authoritative owner.
+        alpha_conditioning, source = (
+            _prepared_outpaint
+            if _prepared_outpaint is not None
+            else prepare_worker_outpaint(cast(GenerateIllustriousOutpaintCommand, command))
+        )
+    else:
+        _require(_prepared_outpaint is None, "INPUT_INVALID", "Unexpected outpaint preparation.")
+        source = validate_generation_target(
+            staging_root=command.staging_root,
+            target_path=command.target_path,
+            output_path=command.output_path,
+            target_sha256=command.target_sha256,
+            target_byte_size=command.target_byte_size,
+            width=command.width,
+            height=command.height,
+            img2img=img2img,
+        )
     result = run_current_canvas_regional_denoising(
         recipe,
         pipeline=pipeline,
@@ -355,6 +436,11 @@ def _generate_current_canvas_regional(
         bindings=bindings,
         layout=layout,
         **({"on_progress": on_progress} if on_progress is not None else {}),
+        **(
+            {"keep_mask": alpha_conditioning.latent_keep_mask}
+            if alpha_conditioning is not None
+            else {}
+        ),
         **cast(
             Any,
             {
@@ -375,6 +461,8 @@ def _generate_current_canvas_regional(
         tensor_profile=tensor_profile,
         **({"vae_context": (pipeline, parameters)} if prepared_vae else {}),
     )
+    if alpha_conditioning is not None:
+        image = create_outpaint_contribution(image, alpha_conditioning)
     return publish_generation_image(
         image,
         staging_root=command.staging_root,
@@ -383,7 +471,7 @@ def _generate_current_canvas_regional(
         height=command.height,
         request_id=command.request_id,
         seed=parameters.seed,
-        output_mode="RGB",
+        output_mode="RGBA" if alpha_conditioning is not None else "RGB",
     )
 
 
@@ -465,4 +553,45 @@ def generate_current_canvas_regional_img2img(
         layout=layout,
         on_progress=on_progress,
         img2img=True,
+    )
+
+
+def generate_current_canvas_regional_outpaint(
+    recipe: object,
+    *,
+    command: GenerateIllustriousOutpaintCommand,
+    pipeline: Any,
+    runtime: MLRuntime,
+    profile: _Profile,
+    denoising_profile: _DenoisingProfile,
+    global_negative_coverage: Everywhere | Alpha8,
+    global_positive_coverage: Everywhere | Alpha8,
+    negative_pooled_source_id: str,
+    positive_pooled_source_id: str,
+    bindings: tuple[TransformerBinding, ...],
+    layout: _Layout,
+    on_progress: DenoisingProgressSink | None = None,
+) -> dict[str, object]:
+    """Verify mixed alpha and exact LaMa, run once, publish the owned RGBA contribution.
+
+    InvokeAI a61ac4fb compileCanvasGraph.graftOutpaint/create_gradient_mask and
+    InpaintExt supply the mechanism. Existing Studio snapshot, infill, coherence,
+    native masked-denoise and contribution owners retain their contracts.
+    """
+    return _generate_current_canvas_regional(
+        recipe,
+        command=command,
+        pipeline=pipeline,
+        runtime=runtime,
+        profile=profile,
+        denoising_profile=denoising_profile,
+        global_negative_coverage=global_negative_coverage,
+        global_positive_coverage=global_positive_coverage,
+        negative_pooled_source_id=negative_pooled_source_id,
+        positive_pooled_source_id=positive_pooled_source_id,
+        bindings=bindings,
+        layout=layout,
+        on_progress=on_progress,
+        img2img=True,
+        outpaint=True,
     )

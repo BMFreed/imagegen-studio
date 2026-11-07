@@ -1,3 +1,4 @@
+import { LAMA_OUTPAINT_IDENTITY_V1 } from '../../shared/projects/alpha-outpaint.js'
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
 import { IllustriousNoiseProfileV1Schema } from '../../shared/projects/illustrious-noise-profile.js'
 import {
@@ -13,6 +14,7 @@ import { isDeepStrictEqual } from 'node:util'
 import * as v from 'valibot'
 
 import type { IllustriousGenerationRequestV1 } from './illustrious-txt2img-job.js'
+import type { IllustriousOutpaintRequestV1 } from './outpaint-worker-request.js'
 import type { CurrentCanvasRegionalRecipe } from './project-current-canvas-regional-recipe.js'
 import type { VerifiedWorkerImage } from './worker-client.js'
 
@@ -28,6 +30,11 @@ import {
   type InferenceWorkerOwner,
   serializeRegionalTransportOwner,
 } from './inference-worker-ownership.js'
+import {
+  assertFrozenAlphaOutpaintConditioning,
+  FrozenAlphaOutpaintConditioningSchema,
+} from './outpaint-conditioning.js'
+import { assertOutpaintContribution } from './outpaint-contribution.js'
 import { classifyTargetPngAlpha } from './target-png-mode.js'
 import {
   ProjectWorkerError,
@@ -39,6 +46,9 @@ import {
 export type RegionalGlobalCoverage =
   { alpha: Uint8Array; height: number; kind: 'alpha8'; width: number } | { kind: 'everywhere' }
 
+export type RegionalGenerationRequestV1 =
+  IllustriousGenerationRequestV1 | IllustriousOutpaintRequestV1
+
 export interface RegionalWorkerInput {
   compositionProfile?: 'invoke-canvas-v1'
   globalNegativeCoverage: RegionalGlobalCoverage
@@ -48,7 +58,7 @@ export interface RegionalWorkerInput {
   negativePooledSourceId: string
   positivePooledSourceId: string
   recipe: CurrentCanvasRegionalRecipe
-  request: IllustriousGenerationRequestV1
+  request: RegionalGenerationRequestV1
 }
 
 export interface RegionalWorkerFile {
@@ -68,7 +78,7 @@ export interface RegionalWorkerWire {
 /** The transport owns this lease after dispatch, including an unconfirmed physical child exit. */
 export interface RegionalWorkerLease {
   dispose: () => Promise<void>
-  request: IllustriousGenerationRequestV1
+  request: RegionalGenerationRequestV1
   wire: RegionalWorkerWire
 }
 
@@ -94,7 +104,7 @@ interface LeaseState {
   baseIdentity: BigIntStats
   disposal: Promise<void> | null
   disposed: boolean
-  request: IllustriousGenerationRequestV1
+  request: RegionalGenerationRequestV1
   root: string
   rootIdentity: BigIntStats
 }
@@ -202,7 +212,32 @@ const imgRequestSchema = v.strictObject({
   }),
   type: v.literal('generate-illustrious-img2img'),
 })
-const requestSchema = v.variant('type', [txtRequestSchema, imgRequestSchema])
+export const RegionalOutpaintInfillSchema = v.strictObject({
+  byteSize: v.literal(LAMA_OUTPAINT_IDENTITY_V1.byteSize),
+  path: filePath,
+  role: v.literal('outpaint-infill'),
+  sha256: v.literal(LAMA_OUTPAINT_IDENTITY_V1.sha256),
+})
+export interface RegionalOutpaintInfill {
+  byteSize: number
+  path: string
+  role: 'outpaint-infill'
+  sha256: string
+}
+export const RegionalOutpaintRequestSchema = v.strictObject({
+  ...imgRequestSchema.entries,
+  job: v.strictObject({
+    ...imgRequestSchema.entries.job.entries,
+    conditioning: FrozenAlphaOutpaintConditioningSchema,
+    infillResource: RegionalOutpaintInfillSchema,
+  }),
+  type: v.literal('generate-illustrious-outpaint'),
+})
+const requestSchema = v.variant('type', [
+  txtRequestSchema,
+  imgRequestSchema,
+  RegionalOutpaintRequestSchema,
+])
 const coverageSchema = v.variant('kind', [
   v.strictObject({ kind: v.literal('everywhere') }),
   v.strictObject({
@@ -286,7 +321,7 @@ export function captureRegionalWorkerInput(input: RegionalWorkerInput): Regional
     if (
       dpm &&
       (detached.compositionProfile !== 'invoke-canvas-v1' ||
-        (detached.request.type === 'generate-illustrious-img2img'
+        (detached.request.type !== 'generate-illustrious-txt2img'
           ? detached.initializationProfile !== undefined
           : detached.initializationProfile !== 'invoke-cpu-f32-add-noise-v1'))
     ) {
@@ -357,20 +392,45 @@ export async function prepareRegionalWorkerRequest(
       throw invalidPath('A regional model resource is unsafe or changed.')
     }
   }
-  const request = detached.request as IllustriousGenerationRequestV1
+  const request = detached.request as RegionalGenerationRequestV1
+  if (request.type === 'generate-illustrious-outpaint') {
+    const infill = request.job.infillResource
+    if (within(base, infill.path) || infill.path === base) {
+      throw invalidPath('Regional infill must be outside disposable scratch.')
+    }
+    const info = await lstat(infill.path, { bigint: true })
+    if (
+      !info.isFile() ||
+      info.isSymbolicLink() ||
+      info.size !== BigInt(infill.byteSize) ||
+      (await realpath(infill.path)) !== infill.path
+    ) {
+      throw invalidPath('The regional infill resource is unsafe or changed.')
+    }
+  }
   const sourceTarget = request.job.target
   const targetBytes = await readSmartPatchPreparationOutput(
     sourceTarget.path,
     { ...sourceTarget, colorSpace: 'srgb' },
     'source',
   )
-  const targetMode = request.type === 'generate-illustrious-img2img' ? 'img2img' : 'txt2img'
+  const targetMode =
+    request.type === 'generate-illustrious-outpaint'
+      ? 'outpaint'
+      : request.type === 'generate-illustrious-img2img'
+        ? 'img2img'
+        : 'txt2img'
   if (classifyTargetPngAlpha(targetBytes, sourceTarget.width, sourceTarget.height) !== targetMode) {
     throw invalid(
-      targetMode === 'img2img'
-        ? 'Regional img2img requires a wholly opaque target.'
-        : 'Regional txt2img requires a wholly transparent target.',
+      targetMode === 'outpaint'
+        ? 'Regional outpaint requires a partially transparent target.'
+        : targetMode === 'img2img'
+          ? 'Regional img2img requires a wholly opaque target.'
+          : 'Regional txt2img requires a wholly transparent target.',
     )
+  }
+  if (request.type === 'generate-illustrious-outpaint') {
+    await assertFrozenAlphaOutpaintConditioning(request.job.conditioning, targetBytes)
   }
   const root = await mkdtemp(path.join(base, 'regional-request-'))
   const rootIdentity = await canonicalDirectory(root)
@@ -513,14 +573,25 @@ export async function readRegionalWorkerResult(
     iccSha256: IGS_SRGB_ICC_SHA256,
     width: request.job.bbox.width,
   }
-  const pngBytes = await readSmartPatchModelSourceOutput(output.path, output)
+  const pngBytes =
+    request.type === 'generate-illustrious-outpaint'
+      ? await readSmartPatchPreparationOutput(output.path, output, 'source')
+      : await readSmartPatchModelSourceOutput(output.path, output)
+  if (request.type === 'generate-illustrious-outpaint') {
+    const source = await readSmartPatchPreparationOutput(
+      request.job.target.path,
+      { ...request.job.target, colorSpace: 'srgb' },
+      'source',
+    )
+    await assertOutpaintContribution(request.job.conditioning, source, pngBytes)
+  }
   return { output, pngBytes, seed: request.job.sampling.seed }
 }
 
 function validateAgreement(input: v.InferOutput<typeof inputSchema>): void {
   const { recipe, request } = input
   if (
-    request.type === 'generate-illustrious-img2img' &&
+    request.type !== 'generate-illustrious-txt2img' &&
     (input.compositionProfile !== 'invoke-canvas-v1' ||
       input.initializationProfile !== undefined ||
       !['dpmpp_2m', 'dpmpp_2m_k', 'euler', 'euler_a'].includes(request.job.sampling.scheduler))
@@ -548,6 +619,29 @@ function validateAgreement(input: v.InferOutput<typeof inputSchema>): void {
     throw invalid('Private regional execution does not support global LoRAs.')
   }
   const { bbox, prompts, sampling } = request.job
+  if (request.type === 'generate-illustrious-outpaint') {
+    const { conditioning, infillResource, target } = request.job
+    const { path: _path, ...identity } = target
+    const { format: _format, ...source } = conditioning.sourceTarget
+    const { path: _infill, ...infillIdentity } = infillResource
+    if (
+      !isDeepStrictEqual(conditioning.bbox, bbox) ||
+      !isDeepStrictEqual(identity, source) ||
+      !isDeepStrictEqual(infillIdentity, conditioning.infillResource) ||
+      bbox.width < 64 ||
+      bbox.height < 64 ||
+      [
+        request.job.checkpoint.path,
+        request.job.output.pngPath,
+        target.path,
+        ...(request.job.loras ?? []).map((entry) => entry.path),
+        ...(request.job.vae ? [request.job.vae.path] : []),
+        ...embeddingResources(recipe).map((entry) => entry.managedPath),
+      ].includes(infillResource.path)
+    ) {
+      throw invalid('The regional outpaint source, conditioning or infill identity differs.')
+    }
+  }
   if (
     bbox.width % 8 !== 0 ||
     bbox.height % 8 !== 0 ||

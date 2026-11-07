@@ -1157,6 +1157,7 @@ def test_separate_entrypoint_refuses_ready_without_offline_config() -> None:
         "illustrious-regional-img2img-euler-a-v1",
         "illustrious-regional-img2img-dpmpp-2m-v1",
         "illustrious-regional-img2img-vae-v1",
+        "illustrious-regional-outpaint-v1",
     ]
     assert inference_ready_message(owner_lifetime=True)["capabilities"] == [
         *cast(list[str], inference_ready_message()["capabilities"]),

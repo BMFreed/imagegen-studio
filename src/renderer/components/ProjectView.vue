@@ -2431,6 +2431,7 @@ const generationBlockingReason = computed(() => {
         initializationSupported: props.generationState?.regionalInvokeInitializationSupported,
         iterations: imagesPerClick.value ?? 0,
         loraSupported: props.generationState?.regionalLoraSupported,
+        outpaintSupported: props.generationState?.regionalOutpaintSupported,
         runtimeSupported: props.generationState?.regionalSupported,
         targetMode: targetState.value?.mode,
         vaeSupported: props.generationState?.regionalVaeSupported,

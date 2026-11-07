@@ -92,6 +92,7 @@ from .protocol import (
     IllustriousInferenceParameters,
     IllustriousNoiseProfile,
 )
+from .sdxl_outpaint import outpaint_pipeline_class, run_sdxl_outpaint_pipeline
 
 __all__ = ("IllustriousRegionalDenoisingError", "run_current_canvas_regional_denoising")
 
@@ -112,14 +113,23 @@ _DenoisingProfile = Literal[
     "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cuda-fp16-v1",
     "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cuda-vae-v1",
     "ordinary-canvas-euler-img2img-cpu-v1",
+    "ordinary-canvas-euler-outpaint-cpu-v1",
     "ordinary-canvas-euler-img2img-cuda-fp16-v1",
+    "ordinary-canvas-euler-outpaint-cuda-fp16-v1",
     "ordinary-canvas-euler-ancestral-img2img-cpu-v1",
+    "ordinary-canvas-euler-ancestral-outpaint-cpu-v1",
     "ordinary-canvas-euler-ancestral-img2img-cuda-fp16-v1",
+    "ordinary-canvas-euler-ancestral-outpaint-cuda-fp16-v1",
     "ordinary-canvas-dpmpp-2m-img2img-cpu-v1",
+    "ordinary-canvas-dpmpp-2m-outpaint-cpu-v1",
     "ordinary-canvas-dpmpp-2m-img2img-cuda-fp16-v1",
+    "ordinary-canvas-dpmpp-2m-outpaint-cuda-fp16-v1",
     "ordinary-canvas-euler-img2img-cuda-vae-v1",
+    "ordinary-canvas-euler-outpaint-cuda-vae-v1",
     "ordinary-canvas-euler-ancestral-img2img-cuda-vae-v1",
+    "ordinary-canvas-euler-ancestral-outpaint-cuda-vae-v1",
     "ordinary-canvas-dpmpp-2m-img2img-cuda-vae-v1",
+    "ordinary-canvas-dpmpp-2m-outpaint-cuda-vae-v1",
 ]
 _Layout = Literal["cfg-negative-first", "positive-only"]
 _MAX_FINITE_ELEMENTS = 8_388_608
@@ -190,14 +200,23 @@ def _execution_profile(
             True,
         ),
         "ordinary-canvas-euler-img2img-cpu-v1": ("cpu-float32-v1", True),
+        "ordinary-canvas-euler-outpaint-cpu-v1": ("cpu-float32-v1", True),
         "ordinary-canvas-euler-img2img-cuda-fp16-v1": ("cuda-float16-v1", True),
+        "ordinary-canvas-euler-outpaint-cuda-fp16-v1": ("cuda-float16-v1", True),
         "ordinary-canvas-euler-ancestral-img2img-cpu-v1": ("cpu-float32-v1", True),
+        "ordinary-canvas-euler-ancestral-outpaint-cpu-v1": ("cpu-float32-v1", True),
         "ordinary-canvas-euler-ancestral-img2img-cuda-fp16-v1": ("cuda-float16-v1", True),
+        "ordinary-canvas-euler-ancestral-outpaint-cuda-fp16-v1": ("cuda-float16-v1", True),
         "ordinary-canvas-dpmpp-2m-img2img-cpu-v1": ("cpu-float32-v1", True),
+        "ordinary-canvas-dpmpp-2m-outpaint-cpu-v1": ("cpu-float32-v1", True),
         "ordinary-canvas-dpmpp-2m-img2img-cuda-fp16-v1": ("cuda-float16-v1", True),
+        "ordinary-canvas-dpmpp-2m-outpaint-cuda-fp16-v1": ("cuda-float16-v1", True),
         "ordinary-canvas-euler-img2img-cuda-vae-v1": ("cuda-float16-v1", True),
+        "ordinary-canvas-euler-outpaint-cuda-vae-v1": ("cuda-float16-v1", True),
         "ordinary-canvas-euler-ancestral-img2img-cuda-vae-v1": ("cuda-float16-v1", True),
+        "ordinary-canvas-euler-ancestral-outpaint-cuda-vae-v1": ("cuda-float16-v1", True),
         "ordinary-canvas-dpmpp-2m-img2img-cuda-vae-v1": ("cuda-float16-v1", True),
+        "ordinary-canvas-dpmpp-2m-outpaint-cuda-vae-v1": ("cuda-float16-v1", True),
     }
     _require(
         type(denoising_profile) is str and denoising_profile in profiles,
@@ -226,20 +245,48 @@ def _execution_profile(
         "PROFILE_INVALID",
         "DPM++ 2M requires the explicit Invoke Canvas encoding profile.",
     )
+    _require(
+        not _outpaint_profile(denoising_profile) or profile in _INVOKE_PROFILES,
+        "PROFILE_INVALID",
+        "Regional outpaint requires the explicit Invoke Canvas encoding profile.",
+    )
     return tensor_profile, resolved_noise
 
 
 def _img2img_profile(denoising_profile: _DenoisingProfile) -> bool:
     return denoising_profile in (
         "ordinary-canvas-euler-img2img-cpu-v1",
+        "ordinary-canvas-euler-outpaint-cpu-v1",
         "ordinary-canvas-euler-img2img-cuda-fp16-v1",
+        "ordinary-canvas-euler-outpaint-cuda-fp16-v1",
         "ordinary-canvas-euler-ancestral-img2img-cpu-v1",
+        "ordinary-canvas-euler-ancestral-outpaint-cpu-v1",
         "ordinary-canvas-euler-ancestral-img2img-cuda-fp16-v1",
+        "ordinary-canvas-euler-ancestral-outpaint-cuda-fp16-v1",
         "ordinary-canvas-dpmpp-2m-img2img-cpu-v1",
+        "ordinary-canvas-dpmpp-2m-outpaint-cpu-v1",
         "ordinary-canvas-dpmpp-2m-img2img-cuda-fp16-v1",
+        "ordinary-canvas-dpmpp-2m-outpaint-cuda-fp16-v1",
         "ordinary-canvas-euler-img2img-cuda-vae-v1",
+        "ordinary-canvas-euler-outpaint-cuda-vae-v1",
         "ordinary-canvas-euler-ancestral-img2img-cuda-vae-v1",
+        "ordinary-canvas-euler-ancestral-outpaint-cuda-vae-v1",
         "ordinary-canvas-dpmpp-2m-img2img-cuda-vae-v1",
+        "ordinary-canvas-dpmpp-2m-outpaint-cuda-vae-v1",
+    )
+
+
+def _outpaint_profile(denoising_profile: _DenoisingProfile) -> bool:
+    return denoising_profile in (
+        "ordinary-canvas-euler-outpaint-cpu-v1",
+        "ordinary-canvas-euler-outpaint-cuda-fp16-v1",
+        "ordinary-canvas-euler-ancestral-outpaint-cpu-v1",
+        "ordinary-canvas-euler-ancestral-outpaint-cuda-fp16-v1",
+        "ordinary-canvas-dpmpp-2m-outpaint-cpu-v1",
+        "ordinary-canvas-dpmpp-2m-outpaint-cuda-fp16-v1",
+        "ordinary-canvas-euler-outpaint-cuda-vae-v1",
+        "ordinary-canvas-euler-ancestral-outpaint-cuda-vae-v1",
+        "ordinary-canvas-dpmpp-2m-outpaint-cuda-vae-v1",
     )
 
 
@@ -259,8 +306,11 @@ def _vae_profile(denoising_profile: _DenoisingProfile) -> bool:
         "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cuda-vae-v1",
         "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cuda-vae-v1",
         "ordinary-canvas-euler-img2img-cuda-vae-v1",
+        "ordinary-canvas-euler-outpaint-cuda-vae-v1",
         "ordinary-canvas-euler-ancestral-img2img-cuda-vae-v1",
+        "ordinary-canvas-euler-ancestral-outpaint-cuda-vae-v1",
         "ordinary-canvas-dpmpp-2m-img2img-cuda-vae-v1",
+        "ordinary-canvas-dpmpp-2m-outpaint-cuda-vae-v1",
     )
 
 
@@ -273,8 +323,11 @@ def _ancestral_profile(denoising_profile: _DenoisingProfile) -> bool:
         "ordinary-canvas-euler-ancestral-txt2img-cuda-vae-v1",
         "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cuda-vae-v1",
         "ordinary-canvas-euler-ancestral-img2img-cpu-v1",
+        "ordinary-canvas-euler-ancestral-outpaint-cpu-v1",
         "ordinary-canvas-euler-ancestral-img2img-cuda-fp16-v1",
+        "ordinary-canvas-euler-ancestral-outpaint-cuda-fp16-v1",
         "ordinary-canvas-euler-ancestral-img2img-cuda-vae-v1",
+        "ordinary-canvas-euler-ancestral-outpaint-cuda-vae-v1",
     )
 
 
@@ -295,8 +348,11 @@ def _dpmpp_2m_profile(denoising_profile: _DenoisingProfile) -> bool:
         "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cuda-fp16-v1",
         "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cuda-vae-v1",
         "ordinary-canvas-dpmpp-2m-img2img-cpu-v1",
+        "ordinary-canvas-dpmpp-2m-outpaint-cpu-v1",
         "ordinary-canvas-dpmpp-2m-img2img-cuda-fp16-v1",
+        "ordinary-canvas-dpmpp-2m-outpaint-cuda-fp16-v1",
         "ordinary-canvas-dpmpp-2m-img2img-cuda-vae-v1",
+        "ordinary-canvas-dpmpp-2m-outpaint-cuda-vae-v1",
     )
 
 
@@ -587,6 +643,7 @@ def _fresh_pipeline(
     ancestral: bool = False,
     dpmpp_2m: bool = False,
     img2img: bool = False,
+    outpaint: bool = False,
 ) -> Any:
     diffusers = cast(Any, runtime.diffusers)
     # V1 retains its fixed policy and three-argument seam. V2 uses only the
@@ -643,7 +700,9 @@ def _fresh_pipeline(
     # Reuse the ordinary worker's training-cutoff/replayable-posterior adaptation
     # and the original native loop; only this fresh wrapper changes class.
     pipeline_class = (
-        img2img_pipeline_class(diffusers, runtime.torch)
+        outpaint_pipeline_class(diffusers, runtime.torch)
+        if outpaint
+        else img2img_pipeline_class(diffusers, runtime.torch)
         if img2img
         else diffusers.StableDiffusionXLPipeline
     )
@@ -1154,6 +1213,7 @@ def run_current_canvas_regional_denoising(
     on_progress: DenoisingProgressSink | None = None,
     image: Image.Image | None = None,
     denoising_strength: float | None = None,
+    keep_mask: Image.Image | None = None,
 ) -> Any:
     """Return the original native pipeline output after all owned state restores.
 
@@ -1205,6 +1265,7 @@ def run_current_canvas_regional_denoising(
     )
     tensor_profile, resolved_noise = _execution_profile(denoising_profile, profile)
     img2img = _img2img_profile(denoising_profile)
+    outpaint = _outpaint_profile(denoising_profile)
     ancestral = _ancestral_profile(denoising_profile)
     dpmpp_2m = _dpmpp_2m_profile(denoising_profile)
     prepared_vae = _vae_profile(denoising_profile)
@@ -1272,6 +1333,17 @@ def run_current_canvas_regional_denoising(
             "INPUT_INVALID",
             "Img2img source dimensions must exactly match the complete recipe.",
         )
+    _require(
+        (
+            outpaint
+            and type(keep_mask) is Image.Image
+            and keep_mask.mode == "L"
+            and keep_mask.size == (bbox.width // 8, bbox.height // 8)
+        )
+        or (not outpaint and keep_mask is None),
+        "INPUT_INVALID",
+        "Only explicit outpaint profiles require a matching owned latent keep mask.",
+    )
     torch, diffusers, compel, transformers = _native_runtime(runtime, tensor_profile)
     _reject_global_forward_hooks()
     parts = _pipeline_parts(pipeline, diffusers, transformers)
@@ -1328,6 +1400,7 @@ def run_current_canvas_regional_denoising(
                 runtime,
                 resolved_noise=True,
                 img2img=True,
+                **({"outpaint": True} if outpaint else {}),
                 **({"ancestral": True} if ancestral else {}),
                 **({"dpmpp_2m": True} if dpmpp_2m else {}),
             )
@@ -1388,7 +1461,12 @@ def run_current_canvas_regional_denoising(
         generator = torch.Generator(device="cpu").manual_seed(parameters.seed)
         with (
             scoped_prepared_img2img_latents(
-                fresh, parameters, torch, width=bbox.width, height=bbox.height
+                fresh,
+                parameters,
+                torch,
+                width=bbox.width,
+                height=bbox.height,
+                **({"outpaint": True} if outpaint else {}),
             )
             if img2img and prepared_vae
             else nullcontext(),
@@ -1446,7 +1524,8 @@ def run_current_canvas_regional_denoising(
                 if img2img
                 else {}
             )
-            result = run_sdxl_pipeline(
+            native_run = run_sdxl_outpaint_pipeline if outpaint else run_sdxl_pipeline
+            result = native_run(
                 fresh,
                 conditioning,
                 width=bbox.width,
@@ -1457,6 +1536,7 @@ def run_current_canvas_regional_denoising(
                 torch=torch,
                 cfg_rescale=parameters.cfg_rescale,
                 output_type="latent" if prepared_vae else "pt",
+                **cast(Any, {"keep_mask": cast(Image.Image, keep_mask)} if outpaint else {}),
                 **progress_options,
                 **image_options,
             )

@@ -1782,16 +1782,13 @@ runtime/model/autosave dependencies stay protected. Selected VAE/FP32 image
 encoding, DPM image sampling, partial alpha, Anima, visual/human and release
 Install/Repair remain separate. PP-001/005/007/008 stay **«Пока не обещать»**.
 
-
 ## Opaque regional IMG DPM++ 2M continuation
 
 [Finite research contract](../../../engineering/phase-4-regional-guidance-img2img-dpmpp-2m-research.md) adds explicit Normal/Karras IMG profiles and a separate combination capability, reusing InvokeAI-based source/window/native history owners. IMG carries no TXT initializer. ROOT550 Main/450 Python/194 browser PASS and18 installed checks qualify the finite opaque Embedded-FP16 path. Actual DPM/Karras/.7 frozen Retry survives saved Euler/cleared-schedule/.2/source edits through Add/Save-reopen. Two direct installed controls preserve the project/queue, select15 Normal versus16 Karras steps and reproduce the UI Karras RGBA exactly;721,176 RGB channels differ between the modes. Three semantic mutation REDs retain controls/restoration. Authoring defaults, persistence, negative scope and visual-quality limits remain unchanged. PP-001/005/007/008 remain «Пока не обещать».
 
-
 ## Private prepared-VAE IMG prerequisite
 
 [Prepared image encoder](../../../engineering/phase-4-regional-guidance-img2img-vae-research.md) reuses Invoke dtype/scale ordering and the existing selected-VAE preparation/decode owners. This private CUDA consumption slice does not enable selected/FP32 VAE in public IMG or change defaults, persistence or readiness. ROOT551 PASS/619 warnings include45 new native cases and four trained output calls plus an aggregate. Original encoder inputs/scaling and decoder casts, PNG quantization, storage/RNG preservation and exact FP32 repeat pass; early-cast mutation is semantic RED with legacy control/restoration. This establishes private mechanics, not public selected/FP32 IMG or quality. PP-001/005/007/008 remain «Пока не обещать».
-
 
 ## Public selected-VAE opaque IMG continuation
 
@@ -1815,3 +1812,31 @@ scope. ROOT confirms fresh release gates and disposes only idle own scratch,
 reclaiming51,605,504 allocated bytes; all1692 payload entries remain in the verified
 archive. Canonical model/VAE/runtime and durable input/project dependencies stay
 protected. Final bookkeeping review does not independently rerun native evidence.
+
+## Mixed-alpha Current Canvas outpaint continuation
+
+[Outpaint evidence](../../../engineering/phase-4-regional-guidance-outpaint-research.md)
+connects Illustrious regional text to the existing alpha-derived outpaint policy.
+Actual mixed-alpha mode requires the separate regional-outpaint capability plus
+its ordinary/image prerequisites. The existing infill, coherence/fade, samplers,
+CFG Rescale and VAE owners keep their bounds and independent qualification gates.
+The new frozen operation retains original source PNG/alpha identity, complete
+recipe and exact LaMa/resource descriptors. Later authoring cannot replace them
+on Retry. Accepted output uses ordinary RGBA contribution/source preservation
+and ordinary outpaint provenance; Regional Guidance stays excluded from accepted
+provenance, Compare and result-derived presets.
+
+ROOT1175 Main/302 Python PASS and198 distinct browser cases are qualified; the
+full browser attempt had197 passes and one corrected test-locator failure, then
+the focused pair passed. Installed native-r2 passes16 checks at512x512 with actual
+LaMa, EmbeddedFP16, Euler/Normal, rescale.7 and16 selected steps. Cancel then saved
+source/options/seed/region edits do not alter frozen Retry. Exact control RGBA,
+Results/Add/Undo/Redo/four Saves and independent ZIP/reopen pass. Two isolated
+mutations give10GREEN/2semanticRED and exact restoration. Source/oracle reviews
+are CLEAN; lint-only comparator/test deltas have AST proof and focused reruns.
+Independent retained-byte audit verifies all4434 archived entries. ROOT separately
+confirms fresh exit/restoration/reader/dependency gates, then releases only own
+scratch, reclaiming73498624 allocated bytes; canonical runtime,
+resources and durable data stay protected. These audits do not rerun ML/UI.
+Visual usefulness, Anima regional execution, explicit inpaint/Smart integration,
+capacity/release and PP-001/005/007/008 **«Пока не обещать»** remain unchanged.
