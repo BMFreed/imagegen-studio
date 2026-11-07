@@ -1954,3 +1954,16 @@ finite visual gate remains NOT_QUALIFIED; this does not attribute the limitation
 to one numeric fix or establish whole Invoke parity. No prompt/composition/
 default/public readiness change follows; provenance exclusions and
 PP-001/005/007/008 remain unchanged.
+
+The separate [authored local scene-cue experiment](../../../engineering/phase-4-anima-local-scene-context-research.md)
+adds only ` on one bench` to both regional positives through the existing
+literal-text path. Current Invoke does not automatically append the global
+prompt; no such application policy is introduced. ROOT's 60 Main and four
+fresh native cases pass, with exact global/negative contexts, permissions,
+initial latents and first negative prediction controls. Anonymous descriptions
+and ROOT assessment find benches in all four new images, but correct subject/
+scarf placement in only one; one narrow complete-scene PASS also has an orange
+coat despite the authored white cat. All-four visual acceptance remains
+NOT_QUALIFIED. This finite data intervention neither replaces the preceding
+study nor promotes public Anima, general quality, spatial negatives/references,
+Smart/durable regional jobs or PP-001/005/007/008.

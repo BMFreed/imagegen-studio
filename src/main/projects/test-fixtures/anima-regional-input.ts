@@ -16,6 +16,7 @@ import {
   type AnimaFlowSamplingPlan,
   compileAnimaFlowSamplingPlan,
 } from '../../../shared/projects/anima-flow-sampling-plan.js'
+import { compileAnimaPromptWeighting } from '../../../shared/projects/anima-prompt-weighting.js'
 import { planGenerationBatch } from '../../../shared/projects/generation-batch-plan.js'
 import {
   type IgsProjectDocumentV1,
@@ -126,6 +127,7 @@ export async function produceAnimaRegionalInputFixture(
   options: {
     guidanceScale?: number
     height?: number
+    regionalTexts?: readonly [string, string]
     seed?: number
     steps?: number
     trainedBundle?: AnimaRegionalTrainedBundle
@@ -141,6 +143,7 @@ export async function produceAnimaRegionalInputFixture(
     variant = 'base',
     width = 104,
   } = options
+  const regionalTexts = captureRegionalTexts(options.regionalTexts)
   const trainedBundle =
     options.trainedBundle === undefined ? undefined : captureTrainedBundle(options.trainedBundle)
   assert.ok(VARIANTS.includes(variant), 'The fixture variant must be explicitly supported')
@@ -213,7 +216,9 @@ export async function produceAnimaRegionalInputFixture(
       const maskPath = path.join(root, `input-mask-${index}.png`)
       await writeFile(maskPath, bytes, { flag: 'wx', mode: 0o600 })
       maskPaths.push(maskPath)
-      const selectedText = variant === 'swapped' ? REGIONAL_TEXTS[1 - index] : REGIONAL_TEXTS[index]
+      // Invoke a61ac4fb addRegionalGuidance passes authored regional text verbatim.
+      // These fixture inputs add no global-prompt concatenation or inheritance.
+      const selectedText = variant === 'swapped' ? regionalTexts[1 - index] : regionalTexts[index]
       regions.push({
         enabled: variant !== 'zero',
         id: REGION_IDS[index],
@@ -401,6 +406,23 @@ export async function produceAnimaRegionalInputFixture(
     mode: 0o600,
   })
   return result
+}
+
+function captureRegionalTexts(value: unknown): readonly [string, string] {
+  if (value === undefined) {
+    return REGIONAL_TEXTS
+  }
+  assert.ok(Array.isArray(value) && value.length === 2, 'Exactly two regional texts are required')
+  const first: unknown = value[0]
+  const second: unknown = value[1]
+  assert.ok(typeof first === 'string' && first.trim().length > 0, 'Regional text must be nonempty')
+  assert.ok(
+    typeof second === 'string' && second.trim().length > 0,
+    'Regional text must be nonempty',
+  )
+  compileAnimaPromptWeighting(first)
+  compileAnimaPromptWeighting(second)
+  return Object.freeze([first, second] as const)
 }
 
 /** Descriptor semantics are captured before mkdir/database/file collaborators can run. */

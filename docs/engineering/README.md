@@ -2276,3 +2276,18 @@ Visual NOT_QUALIFIED persists without input/composition tuning or public
 promotion. Whole inputs/images/source and 446 scratch entries remain retained;
 ROOT's separate idle release reclaims 82,890,752 bytes. PP-001/005/007/008 remain
 unchanged.
+
+## Anima authored local scene cue — not qualified
+
+The [one-axis bench experiment](./phase-4-anima-local-scene-context-research.md)
+appends only ` on one bench` to both literal regional positives, using current
+Invoke's existing separate-text mechanism. No automatic inheritance, mask or
+production behavior changes. ROOT: 60 Main cases and four fresh native cases
+pass; global/negative contexts, permissions, initial latents and first negative
+prediction remain exact controls. Independent anonymous descriptions and ROOT
+assessment find a bench in 4/4 new images, but correct count/scarf placement in
+only 1/4, versus 2/4 before. One narrow full-scene PASS has an orange rather than
+authored white cat. The all-four visual gate remains NOT_QUALIFIED; human/public
+acceptance is separate. Frozen inputs, eight anonymous originals, four new PNGs,
+six controls and 537 archived scratch entries remain retained. This does not
+change the prior result or PP-001/005/007/008.

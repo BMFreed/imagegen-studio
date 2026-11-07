@@ -508,3 +508,205 @@ test('trained Anima fixture rejects a nonqualified checkpoint descriptor before 
     await rm(root, { force: true, recursive: true })
   }
 })
+
+const SCENE_CONTEXT_TEXTS = [
+  '(red scarf)1.5, one white cat on one bench',
+  '(blue scarf)0.75, one white cat on one bench',
+] as const
+
+for (const variant of ['base', 'swapped'] as const) {
+  test(`genuine Anima ${variant} fixture saves and consumes explicit regional scene text without changing other inputs`, async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'igs-anima-regional-scene-'))
+    try {
+      const baseline = await produceAnimaRegionalInputFixture(path.join(root, 'default'), {
+        variant,
+      })
+      const fixture = await produceAnimaRegionalInputFixture(path.join(root, 'custom'), {
+        regionalTexts: SCENE_CONTEXT_TEXTS,
+        variant,
+      })
+      const expectedTexts =
+        variant === 'swapped' ? [...SCENE_CONTEXT_TEXTS].reverse() : SCENE_CONTEXT_TEXTS
+      assert.equal(fixture.schema, baseline.schema)
+      assert.deepEqual(fixture.sampling, baseline.sampling)
+      assert.deepEqual(fixture.recipe.bbox, baseline.recipe.bbox)
+      assert.deepEqual(fixture.recipe.globalPrompts, baseline.recipe.globalPrompts)
+      assert.deepEqual(fixture.compiledPrompts.slice(0, 2), baseline.compiledPrompts.slice(0, 2))
+      assert.deepEqual(
+        fixture.authoredDocument.generationDraft.positivePrompt,
+        baseline.authoredDocument.generationDraft.positivePrompt,
+      )
+      assert.deepEqual(
+        fixture.authoredDocument.generationDraft.negativePrompt,
+        baseline.authoredDocument.generationDraft.negativePrompt,
+      )
+      assert.equal(Object.hasOwn(fixture, 'regionalTexts'), false)
+      assert.equal(Object.hasOwn(fixture.recipe, 'regionalTexts'), false)
+      const authored = fixture.authoredDocument.regionalGuidance!
+      const defaultAuthored = baseline.authoredDocument.regionalGuidance!
+      assert.equal(authored.length, 2)
+      assert.equal(fixture.recipe.regions.length, 2)
+      for (const index of [0, 1] as const) {
+        const text = expectedTexts[index]
+        const effective = fixture.recipe.regions[index]
+        const original = baseline.recipe.regions[index]
+        assert.deepEqual(authored[index].prompts!.positive, prompt(text))
+        assert.deepEqual(authored[index].mask, defaultAuthored[index].mask)
+        assert.equal(authored[index].id, defaultAuthored[index].id)
+        assert.equal(authored[index].enabled, defaultAuthored[index].enabled)
+        assert.equal(authored[index].locked, defaultAuthored[index].locked)
+        assert.equal(authored[index].overlayOpacity, defaultAuthored[index].overlayOpacity)
+        assert.deepEqual(
+          authored[index].prompts!.negative,
+          defaultAuthored[index].prompts!.negative,
+        )
+        assert.equal(
+          authored[index].prompts!.useGlobalNegativePrompt,
+          defaultAuthored[index].prompts!.useGlobalNegativePrompt,
+        )
+        assert.deepEqual(effective.positive, prompt(text))
+        assert.deepEqual(effective.authoredPrompts?.positive, prompt(text))
+        assert.deepEqual(effective.coverage, original.coverage)
+        assert.deepEqual(effective.negative, original.negative)
+        assert.equal(effective.regionId, original.regionId)
+        assert.equal(effective.maskId, original.maskId)
+        assert.equal(effective.maskRevision, original.maskRevision)
+        assert.deepEqual(fixture.compiledPrompts[index + 2], {
+          polarity: 'positive',
+          prompt: compileAnimaPromptWeighting(text),
+          sourceId: effective.regionId,
+          text,
+        })
+      }
+      assert.equal(fixture.durablePreservation.savedAndReopened, true)
+      assert.equal(fixture.durablePreservation.durableUnchanged, true)
+      assert.equal(fixture.durablePreservation.historyAndSeedCursorUnchanged, true)
+      assert.equal(fixture.durablePreservation.captureCalls, 1)
+      assert.ok(
+        (await readFile(fixture.paths.handoff)).equals(
+          Buffer.from(`${JSON.stringify(fixture, null, 2)}\n`),
+        ),
+      )
+    } finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+}
+
+for (const variant of ['zero', 'empty', 'inherited'] as const) {
+  test(`explicit Anima regional text preserves the ${variant} fixture branch`, async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'igs-anima-regional-scene-branch-'))
+    try {
+      const fixture = await produceAnimaRegionalInputFixture(root, {
+        regionalTexts: SCENE_CONTEXT_TEXTS,
+        variant,
+      })
+      const authored = fixture.authoredDocument.regionalGuidance!
+      assert.equal(authored.length, 2)
+      assert.deepEqual(
+        fixture.authoredDocument.generationDraft.positivePrompt,
+        prompt('(two white cats)1.25 on one bench'),
+      )
+      assert.deepEqual(
+        fixture.authoredDocument.generationDraft.negativePrompt,
+        prompt(variant === 'inherited' ? '' : '(blur)0.75, noise'),
+      )
+      if (variant === 'empty') {
+        assert.deepEqual(
+          authored.map((region) => region.prompts!.positive),
+          [prompt(''), null],
+        )
+        assert.deepEqual(
+          fixture.recipe.regions.map((region) => region.positive),
+          [prompt(''), null],
+        )
+        assert.equal(fixture.compiledPrompts.length, 3)
+        assert.equal(fixture.compiledPrompts[2].text, '')
+      } else {
+        assert.deepEqual(
+          authored.map((region) => region.prompts!.positive),
+          SCENE_CONTEXT_TEXTS.map((text) => prompt(text)),
+        )
+        assert.ok(authored.every((region) => region.enabled === (variant !== 'zero')))
+        if (variant === 'zero') {
+          assert.equal(fixture.recipe.regions.length, 0)
+          assert.equal(fixture.compiledPrompts.length, 2)
+        } else {
+          assert.ok(authored.every((region) => region.prompts!.useGlobalNegativePrompt))
+          assert.ok(
+            authored.every(
+              (region) =>
+                region.prompts!.negative!.text === 'dormant {not|selected} local negative',
+            ),
+          )
+          assert.ok(
+            fixture.recipe.regions.every((region) => region.negative.source === 'current-canvas'),
+          )
+          assert.deepEqual(
+            fixture.compiledPrompts.slice(2).map((entry) => entry.text),
+            SCENE_CONTEXT_TEXTS,
+          )
+        }
+      }
+      assert.equal(fixture.durablePreservation.savedAndReopened, true)
+      assert.equal(fixture.durablePreservation.durableUnchanged, true)
+      assert.equal(fixture.durablePreservation.historyAndSeedCursorUnchanged, true)
+    } finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+}
+
+test('Anima fixture owns explicit regional strings before its first filesystem await', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-anima-regional-scene-owned-'))
+  try {
+    const regionalTexts: [string, string] = [...SCENE_CONTEXT_TEXTS]
+    const options = { regionalTexts }
+    const pending = produceAnimaRegionalInputFixture(root, options)
+    regionalTexts[0] = 'changed original first'
+    regionalTexts[1] = 'changed original second'
+    options.regionalTexts = ['replaced first', 'replaced second']
+    const fixture = await pending
+    assert.deepEqual(
+      fixture.authoredDocument.regionalGuidance!.map((region) => region.prompts!.positive),
+      SCENE_CONTEXT_TEXTS.map((text) => prompt(text)),
+    )
+    assert.deepEqual(
+      fixture.recipe.regions.map((region) => region.positive),
+      SCENE_CONTEXT_TEXTS.map((text) => prompt(text)),
+    )
+    assert.deepEqual(
+      fixture.compiledPrompts.slice(2).map((entry) => entry.text),
+      SCENE_CONTEXT_TEXTS,
+    )
+  } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+for (const [label, regionalTexts] of [
+  ['null', null],
+  ['not an array', 'plain text'],
+  ['missing text', ['one']],
+  ['extra text', ['one', 'two', 'three']],
+  ['non-text first', [1, 'two']],
+  ['non-text second', ['one', 2]],
+  ['empty text', ['', 'two']],
+  ['blank text', ['one', ' \t\n']],
+  ['unclosed attention', ['one', '(two']],
+  ['unsupported resource syntax', ['one', '<embedding>']],
+  ['UTF-8 byte overflow', ['one', 'é'.repeat(8193)]],
+] as const) {
+  test(`Anima fixture refuses ${label} regional text before filesystem or SQL work`, async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'igs-anima-regional-scene-invalid-'))
+    try {
+      const options = { regionalTexts } as unknown as NonNullable<
+        Parameters<typeof produceAnimaRegionalInputFixture>[1]
+      >
+      await assert.rejects(produceAnimaRegionalInputFixture(path.join(root, 'uncreated'), options))
+      assert.deepEqual(await readdir(root), [])
+    } finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+}
