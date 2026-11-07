@@ -1967,3 +1967,15 @@ coat despite the authored white cat. All-four visual acceptance remains
 NOT_QUALIFIED. This finite data intervention neither replaces the preceding
 study nor promotes public Anima, general quality, spatial negatives/references,
 Smart/durable regional jobs or PP-001/005/007/008.
+
+The subsequent [global-support mechanism experiment](../../../engineering/phase-4-anima-global-support-research.md)
+explicitly adapts current Invoke Krea-2's full-coverage fallback only in retained
+artifact tooling; it is not current Anima parity or a new production default.
+Four CPU source-oracle cases and five trained requests pass, including exact
+restoration of the original-policy traces/RGB. Contexts and regional permissions
+are held exact while only positive-even global support changes. Anonymous
+assessment finds two cats in 4/4 and shared benches in 3/4, but placement remains
+2/4 and full scene 1/4. Visual NOT_QUALIFIED and human/public acceptance limits
+remain. The experiment establishes finite global-support influence, not a
+sufficient attribute-binding solution or new capability. Historical outcomes,
+public Anima restrictions, provenance exclusions and PP-001/005/007/008 persist.

@@ -2291,3 +2291,17 @@ authored white cat. The all-four visual gate remains NOT_QUALIFIED; human/public
 acceptance is separate. Frozen inputs, eight anonymous originals, four new PNGs,
 six controls and 537 archived scratch entries remain retained. This does not
 change the prior result or PP-001/005/007/008.
+
+## Anima global-support intervention — not qualified
+
+The [artifact-only mechanism experiment](./phase-4-anima-global-support-research.md)
+adapts current Invoke Krea-2's full-coverage global fallback into Anima's global
+cross-attention columns. Current Anima has no such toggle; this is explicitly a
+cross-family counterfactual, with production behavior unchanged. Four source-based
+CPU checks and five trained calls pass, including an exact original-policy native/
+RGB restoration control. Regional permissions and all contexts remain exact.
+Anonymous assessment finds two cats in 4/4 and benches in 3/4; scarf placement
+remains 2/4 and full scene 1/4. NOT_QUALIFIED persists. The host peak reaches the
+configured 12 GiB cap including file cache, so no headroom claim follows. All
+inputs/outputs/source and 445 archived scratch entries remain retained. Public
+Anima and PP-001/005/007/008 boundaries stay unchanged.
