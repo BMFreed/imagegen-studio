@@ -1942,3 +1942,15 @@ resources or masks. This is finite conversion parity, not whole-application or
 visual parity. Existing PNGs stay unchanged; regenerated old inputs may reflect
 current numerical fixes. Public Anima regional exclusion, spatial negatives/
 references, Smart regional, provenance exclusions and PP-001/005/007/008 persist.
+
+The [fixed post-correction visual retest](../../../engineering/phase-4-anima-visual-retest-research.md)
+uses the same raw inputs after parser/rotary/RGB corrections: two unviewed current
+images plus five fresh native cases, including an exact repeat. Technical
+association/preservation/PNG checks pass. Independent anonymous descriptions and
+ROOT's separate assessment still find placement 2 PASS/2 FAIL: seed123 reverses
+scarves, seed124 retains one red-scarfed kitten for either assignment. Both
+ordinary controls pass and all regional images omit the global bench. The
+finite visual gate remains NOT_QUALIFIED; this does not attribute the limitation
+to one numeric fix or establish whole Invoke parity. No prompt/composition/
+default/public readiness change follows; provenance exclusions and
+PP-001/005/007/008 remain unchanged.

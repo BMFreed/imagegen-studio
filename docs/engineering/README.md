@@ -2262,3 +2262,17 @@ Main base/zero requests produce PNGs identical to the original Invoke conversion
 on the same decoded tensors; float-first controls differ by at most one channel
 unit. No denoising/VAE algorithm or frozen input changes. The previous visual
 NOT_QUALIFIED result and public Anima/PP-001/005/007/008 boundaries stay unchanged.
+
+## Fixed Anima visual retest — not qualified
+
+The [post-correction retest](./phase-4-anima-visual-retest-research.md) preserves
+the same authored prompts, masks, weights and seeds after parser/rotary/RGB fixes.
+Two unviewed current PNGs are reused; five fresh native cases pass, including
+exact terminal/decoded/RGB repeat and all-site association checks. Independent
+anonymous descriptions and ROOT assessment still give placement 2 PASS/2 FAIL:
+seed123 swaps scarves correctly, seed124 has one red-scarfed kitten in both
+variants. Ordinary controls 2/2 pass; all four regional scenes omit the bench.
+Visual NOT_QUALIFIED persists without input/composition tuning or public
+promotion. Whole inputs/images/source and 446 scratch entries remain retained;
+ROOT's separate idle release reclaims 82,890,752 bytes. PP-001/005/007/008 remain
+unchanged.
