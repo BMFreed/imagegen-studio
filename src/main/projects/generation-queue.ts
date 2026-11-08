@@ -5519,6 +5519,12 @@ function managerDetails(row: Selectable<GenerationQueueItem>): GenerationQueueEn
         modelVersion: context.model.checkpoint.reference.versionName,
         negativePrompt: context.prompts.negative,
         prompt: context.prompts.positive,
+        ...((payload.kind === 'anima-regional-txt2img' ||
+          payload.kind === 'anima-regional-img2img' ||
+          payload.kind === 'anima-regional-outpaint') &&
+        payload.workerJob.loras.length > 0
+          ? { requiresRegionalLora: true }
+          : {}),
         sampling: {
           animaMethod: context.sampling.animaMethod,
           cfgScale: context.sampling.cfgScale,

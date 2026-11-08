@@ -6,6 +6,7 @@ import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceAnimaRegional,
   supportsInferenceAnimaRegionalImg2Img,
+  supportsInferenceAnimaRegionalLora,
   supportsInferenceAnimaRegionalOutpaint,
   supportsInferenceAnimaRegionalSampling,
   supportsInferenceEmbeddings,
@@ -467,6 +468,8 @@ export class ProjectRegionalGenerationCoordinator {
             const ready = structuredClone(preparation.inferenceReady)
             if (
               !supportsInferenceAnimaRegional(ready) ||
+              (document.generationDraft.loras.some((entry) => entry.enabled) &&
+                !supportsInferenceAnimaRegionalLora(ready)) ||
               (document.generationDraft.sampling.animaMethod !== 'euler' &&
                 !supportsInferenceAnimaRegionalSampling(ready))
             ) {
@@ -1082,6 +1085,7 @@ export class ProjectRegionalGenerationCoordinator {
 function validateInvokeDraft(document: IgsProjectDocumentV1, iterations = 1): void {
   const reason = getInvokeRegionalGenerationUnavailableReason({
     animaRegionalImg2ImgSupported: true,
+    animaRegionalLoraSupported: true,
     animaRegionalOutpaintSupported: true,
     animaRegionalSamplingSupported: true,
     animaRegionalSupported: true,

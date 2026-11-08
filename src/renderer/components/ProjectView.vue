@@ -2420,6 +2420,7 @@ const generationBlockingReason = computed(() => {
     ? getRegionalGuidanceGenerationUnavailableReason(props.tab)
     : getInvokeRegionalGenerationUnavailableReason({
         animaRegionalImg2ImgSupported: props.generationState?.animaRegionalImg2ImgSupported,
+        animaRegionalLoraSupported: props.generationState?.animaRegionalLoraSupported,
         animaRegionalOutpaintSupported: props.generationState?.animaRegionalOutpaintSupported,
         animaRegionalSamplingSupported: props.generationState?.animaRegionalSamplingSupported,
         animaRegionalSupported: props.generationState?.animaRegionalSupported,

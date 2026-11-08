@@ -63,6 +63,7 @@ ANIMA_REGIONAL_CAPABILITY = "anima-regional-txt2img-v1"
 ANIMA_REGIONAL_SAMPLING_CAPABILITY = "anima-regional-sampling-v1"
 ANIMA_REGIONAL_IMG2IMG_CAPABILITY = "anima-regional-img2img-v1"
 ANIMA_REGIONAL_OUTPAINT_CAPABILITY = "anima-regional-outpaint-v1"
+ANIMA_REGIONAL_LORA_CAPABILITY = "anima-regional-lora-v1"
 COMPOSITION_PROFILE = "invoke-krea2-global-support-v1"
 PROMPT_INTERPRETATION = "invoke-fragments-v1"
 
@@ -163,6 +164,7 @@ def parse_anima_regional_request(value: object) -> AnimaRegionalRequest:
         command,
         captured,
         sampling_profile="invoke-anima-flow-sampling-v1",
+        lora_profile="invoke-anima-global-lora-v1" if command.loras else None,
         img2img=img2img,
         outpaint=outpaint,
     )
@@ -269,6 +271,8 @@ def execute_anima_regional_request(
             if request.command.sampling.scheduler == "euler"
             else "invoke-anima-flow-sampling-v1",
         }
+        if request.command.loras:
+            arguments["lora_profile"] = "invoke-anima-global-lora-v1"
         if type(request.command) is GenerateAnimaOutpaintCommand:
             return generate_current_canvas_regional_anima_outpaint(
                 request.recipe,

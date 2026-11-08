@@ -5,6 +5,35 @@ import test from 'node:test'
 
 import { generationQueueRetryReason } from './generation-queue-retry.js'
 
+for (const operation of [
+  'anima-regional-txt2img',
+  'anima-regional-img2img',
+  'anima-regional-outpaint',
+] as const) {
+  test(`frozen ${operation} LoRA requirement follows its saved stack including zero weight`, () => {
+    const base = {
+      animaRegionalImg2ImgSupported: true,
+      animaRegionalOutpaintSupported: true,
+      animaRegionalSamplingSupported: true,
+      animaRegionalSupported: true,
+      // Illustrious or ordinary support cannot replace the combination capability.
+      animaSupported: true,
+      regionalLoraSupported: true,
+    }
+    for (const animaRegionalLoraSupported of [undefined, false, true]) {
+      const state = { ...base, animaRegionalLoraSupported }
+      assert.equal(
+        generationQueueRetryReason(operation, state, undefined, true, false, 0, 'heun') === null,
+        animaRegionalLoraSupported === true,
+      )
+      assert.equal(
+        generationQueueRetryReason(operation, state, undefined, false, false, 0, 'heun'),
+        null,
+      )
+    }
+  })
+}
+
 test('frozen Anima regional Retry requires only its separate regional operation capability', () => {
   const operation = 'anima-regional-txt2img'
   assert.match(generationQueueRetryReason(operation, null)!, /frozen Anima Regional Guidance/)
@@ -18,7 +47,12 @@ test('frozen Anima regional Retry requires only its separate regional operation 
   assert.equal(
     generationQueueRetryReason(
       operation,
-      { animaRegionalSupported: true, animaSupported: false, regionalSupported: false },
+      {
+        animaRegionalLoraSupported: true,
+        animaRegionalSupported: true,
+        animaSupported: false,
+        regionalSupported: false,
+      },
       'DPM++ 2M',
       true,
       true,
@@ -39,7 +73,11 @@ test('frozen Anima regional Retry requires only its separate regional operation 
 for (const method of ANIMA_SAMPLING_METHOD_KEYS) {
   test(`frozen regional ${method} Retry gates its own method independently of ordinary draft fields`, () => {
     for (const animaRegionalSamplingSupported of [undefined, false, true]) {
-      const state = { animaRegionalSamplingSupported, animaRegionalSupported: true }
+      const state = {
+        animaRegionalLoraSupported: true,
+        animaRegionalSamplingSupported,
+        animaRegionalSupported: true,
+      }
       assert.equal(
         generationQueueRetryReason(
           'anima-regional-txt2img',

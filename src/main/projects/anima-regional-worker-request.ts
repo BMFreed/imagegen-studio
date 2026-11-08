@@ -94,7 +94,6 @@ export function captureAnimaRegionalWorkerInput(
       (request.type !== 'generate-anima-txt2img' &&
         request.type !== 'generate-anima-img2img' &&
         request.type !== 'generate-anima-outpaint') ||
-      request.job.loras.length !== 0 ||
       request.job.bbox.width > 512 ||
       request.job.bbox.height > 512 ||
       !isDeepStrictEqual(recipe.bbox, request.job.bbox) ||
@@ -137,11 +136,17 @@ export async function prepareAnimaRegionalWorkerRequest(
     captured.request.job.model.checkpoint,
     captured.request.job.model.qwen3Encoder,
     captured.request.job.model.vae,
+    ...captured.request.job.loras,
     ...(captured.request.type === 'generate-anima-outpaint'
       ? [captured.request.job.infillResource]
       : []),
   ]) {
-    if (withinRegionalPath(scratchBasePath, resource.path) || resource.path === scratchBasePath) {
+    if (
+      withinRegionalPath(scratchBasePath, resource.path) ||
+      resource.path === scratchBasePath ||
+      resource.path === captured.request.job.target.path ||
+      resource.path === captured.request.job.output.pngPath
+    ) {
       invalid()
     }
     const entry = await lstat(resource.path, { bigint: true })

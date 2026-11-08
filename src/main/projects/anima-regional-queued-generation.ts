@@ -112,8 +112,6 @@ export function parseFrozenQueuedAnimaRegionalV1(json: string): FrozenQueuedAnim
       ordinary.context.animaPromptInterpretation !== promptInterpretation ||
       ordinary.context.bbox.width > 512 ||
       ordinary.context.bbox.height > 512 ||
-      ordinary.context.loras.length !== 0 ||
-      ordinary.context.loraStack.some((entry) => entry.enabled) ||
       (ordinary.context.vaePrecision ?? 'Auto') !== 'Auto' ||
       (ordinary.context.cfgRescale ?? 0) !== 0
     ) {

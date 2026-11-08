@@ -105,6 +105,7 @@ export function hasActiveGlobalPromptEmbeddings(
  */
 export function getInvokeRegionalGenerationUnavailableReason(input: {
   animaRegionalImg2ImgSupported?: boolean | null
+  animaRegionalLoraSupported?: boolean | null
   animaRegionalOutpaintSupported?: boolean | null
   animaRegionalSamplingSupported?: boolean | null
   animaRegionalSupported?: boolean | null
@@ -339,6 +340,7 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
  */
 function getAnimaRegionalGenerationUnavailableReason(input: {
   animaRegionalImg2ImgSupported?: boolean | null
+  animaRegionalLoraSupported?: boolean | null
   animaRegionalOutpaintSupported?: boolean | null
   animaRegionalSamplingSupported?: boolean | null
   animaRegionalSupported?: boolean | null
@@ -385,8 +387,10 @@ function getAnimaRegionalGenerationUnavailableReason(input: {
   if (!Number.isSafeInteger(input.iterations) || input.iterations < 1 || input.iterations > 100) {
     return 'Set Images to an integer from 1 to 100 before generating with Anima Regional Guidance.'
   }
-  if (draft.loras.some((entry) => entry.enabled)) {
-    return 'Disable all enabled LoRAs before generating with Anima Regional Guidance.'
+  if (draft.loras.some((entry) => entry.enabled) && input.animaRegionalLoraSupported !== true) {
+    return input.animaRegionalLoraSupported == null
+      ? 'Checking image engine support for global LoRAs with Anima Regional Guidance. Repair or update the runtime if support remains unavailable.'
+      : 'The current image engine does not support global LoRAs with Anima Regional Guidance. Repair or update the runtime.'
   }
   if (draft.vae !== null || (draft.vaePrecision ?? 'Auto') !== 'Auto') {
     return 'Anima Regional Guidance requires its embedded VAE and Auto VAE precision.'

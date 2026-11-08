@@ -317,6 +317,129 @@ test('renderer frozen IMG Euler a Retry follows frozen sampler rather than saved
 
 const sourceRoot = `/@fs${path.resolve(import.meta.dirname, '../../../src')}`
 
+test('renderer Anima regional enabled zero LoRA needs the combination capability in every existing mode', async ({
+  page,
+}) => {
+  const errors: string[] = []
+  page.on('pageerror', (cause) => errors.push(cause.message))
+  await mountWiring(page, 'project')
+  await page.evaluate(async () => {
+    const fixture = globalThis.window.regionalWiringFixture
+    const draft = fixture.tab.generationDraft
+    draft.model!.baseModelFamily = 'anima'
+    draft.model!.predictionType = null
+    fixture.catalog[0]!.versions[0]!.baseModelFamily = 'anima'
+    fixture.catalog[0]!.versions[0]!.predictionType = null
+    draft.sampling.animaMethod = 'euler'
+    draft.vaePrecision = 'Auto'
+    draft.negativePrompt.text = ''
+    const resource = {
+      ...draft.model!,
+      displayName: 'Installed Anima LoRA',
+      kind: 'lora' as const,
+      localModelId: crypto.randomUUID(),
+      localVersionId: crypto.randomUUID(),
+    }
+    const vueModule = '/@id/vue'
+    const { toRaw } = await import(vueModule)
+    const catalog = structuredClone(toRaw(fixture.catalog[0]!))
+    catalog.id = resource.localModelId
+    catalog.name = resource.displayName
+    catalog.resourceType = 'lora'
+    catalog.defaultVersionId = resource.localVersionId
+    catalog.versions[0]!.id = resource.localVersionId
+    fixture.catalog.push(catalog)
+    draft.loras = [{ enabled: true, resource, weight: 0 }]
+    fixture.tab.primaryBbox.width = 256
+    fixture.tab.primaryBbox.height = 256
+    fixture.tab.regionalGuidance![0]!.prompts = {
+      negative: null,
+      positive: { embeddingRefs: [], text: 'regional cat' },
+      useGlobalNegativePrompt: true,
+    }
+    Object.assign(fixture.state, {
+      animaOutpaintSupported: true,
+      animaRegionalImg2ImgSupported: true,
+      animaRegionalOutpaintSupported: true,
+      animaRegionalSupported: true,
+      animaSupported: true,
+      regionalLoraSupported: true,
+    })
+  })
+  const generate = page.getByRole('button', { exact: true, name: 'Generate' })
+  for (const targetMode of ['txt2img', 'img2img', 'outpaint'] as const) {
+    await page.evaluate((mode) => {
+      const fixture = globalThis.window.regionalWiringFixture
+      fixture.targetMode = mode
+      fixture.tab.primaryBbox.x += 8
+      fixture.tab.generationDraft.sampling.denoisingStrength = mode === 'txt2img' ? null : 0.5
+      fixture.state.animaRegionalLoraSupported = false
+      fixture.tab.generationDraft.loras[0]!.enabled = true
+    }, targetMode)
+    await expect(generate).toBeDisabled()
+    await expect(
+      page.getByLabel('Generation actions').getByText(/global LoRAs with Anima Regional Guidance/),
+    ).toBeVisible()
+    await page.evaluate(() => {
+      globalThis.window.regionalWiringFixture.state.animaRegionalLoraSupported = true
+    })
+    await expect(generate).toBeEnabled()
+    await generate.click()
+    await page.evaluate(() => {
+      const fixture = globalThis.window.regionalWiringFixture
+      fixture.state.animaRegionalLoraSupported = false
+      fixture.tab.generationDraft.loras[0]!.enabled = false
+    })
+    await expect(generate).toBeEnabled()
+  }
+  expect(await page.evaluate(() => globalThis.window.regionalWiringFixture.generateCalls)).toEqual([
+    1, 1, 1,
+  ])
+  expect(errors).toEqual([])
+})
+
+test('renderer Anima regional Retry gates the frozen LoRA requirement after the current stack is cleared', async ({
+  page,
+}) => {
+  const errors: string[] = []
+  page.on('pageerror', (cause) => errors.push(cause.message))
+  await mountWiring(page, 'queue')
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.queueItem.operation = 'anima-regional-txt2img'
+    fixture.queueItem.details!.requiresRegionalLora = true
+    fixture.tab.generationDraft.loras = []
+    fixture.tab.regionalGuidance = []
+    fixture.state.animaRegionalSupported = true
+    fixture.state.regionalLoraSupported = true
+    fixture.state.animaRegionalLoraSupported = false
+    fixture.epoch += 1
+  })
+  const retry = page.getByRole('button', { exact: true, name: 'Retry job' })
+  await expect(retry).toBeDisabled()
+  await expect(
+    page
+      .getByRole('region', { name: 'Generation jobs' })
+      .getByText(/global LoRAs with this frozen Anima Regional Guidance/),
+  ).toBeVisible()
+  await page.evaluate(() => {
+    globalThis.window.regionalWiringFixture.state.animaRegionalLoraSupported = true
+  })
+  await expect(retry).toBeEnabled()
+  await retry.click()
+  expect(await page.evaluate(() => globalThis.window.regionalWiringFixture.retryCalls.length)).toBe(
+    1,
+  )
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.state.animaRegionalLoraSupported = false
+    delete fixture.queueItem.details!.requiresRegionalLora
+    fixture.epoch += 1
+  })
+  await expect(retry).toBeEnabled()
+  expect(errors).toEqual([])
+})
+
 test('renderer Anima regional Generate uses its own capability and explicit local-empty negative without changing authoring', async ({
   page,
 }) => {

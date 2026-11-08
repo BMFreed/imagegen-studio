@@ -16,6 +16,7 @@ import { ILLUSTRIOUS_SCHEDULER_PAIRS } from '../../shared/projects/illustrious-s
 import {
   supportsInferenceAnimaRegional,
   supportsInferenceAnimaRegionalImg2Img,
+  supportsInferenceAnimaRegionalLora,
   supportsInferenceAnimaRegionalOutpaint,
   supportsInferenceAnimaRegionalSampling,
 } from '../../shared/projects/inference-worker-capabilities.js'
@@ -452,6 +453,8 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
       if (input.compositionProfile === 'invoke-krea2-global-support-v1') {
         if (
           !supportsInferenceAnimaRegional(this.ready) ||
+          ((input.request.job.loras?.length ?? 0) > 0 &&
+            !supportsInferenceAnimaRegionalLora(this.ready)) ||
           (input.request.type === 'generate-anima-outpaint' &&
             !supportsInferenceAnimaRegionalOutpaint(this.ready)) ||
           (input.request.type === 'generate-anima-img2img' &&

@@ -1,18 +1,21 @@
 import { ANIMA_SAMPLING_METHOD_KEYS } from '../../shared/projects/anima-sampling-method.js'
 
 import assert from 'node:assert/strict'
-import { readdir, readFile, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import test from 'node:test'
 
+import type { AnimaGenerationModelResolver } from './anima-generation-preparation.js'
 import type { AnimaRegionalWorkerInput } from './anima-regional-worker-request.js'
 import type { RegionalProjectFixture } from './test-fixtures/regional-project.js'
 
 import { openAppDatabase } from '../db/database.js'
 import { LAMA_OUTPAINT_ARTIFACT } from '../runtime/lama-manifest.js'
+import { prepareAnimaRegionalWorkerRequest } from './anima-regional-worker-request.js'
 import { ProjectGenerationActionController } from './generation-action-controller.js'
 import { GenerationOrchestrator } from './generation-orchestrator.js'
 import { GenerationQueueRepository } from './generation-queue.js'
+import { GenerationWorkerClient, GenerationWorkerError } from './generation-worker-client.js'
 import { ProjectRegionalGenerationCoordinator } from './project-regional-generation-coordinator.js'
 import { parseAcceptedGenerationBaseV1 } from './regional-queued-generation.js'
 import {
@@ -1462,3 +1465,252 @@ for (const branch of ['global-negative', 'regional-positive', 'regional-negative
     })
   })
 }
+
+/** Exact-resource fixture doubles; real capture, planner, files, SQLite and frozen reload. */
+async function enableRegionalLoraStack(
+  fixture: PublicAnimaFixture,
+  mode: BatchMode,
+): Promise<void> {
+  await selectConcreteBatch(fixture, { mode, positive: 'one fixed scene' })
+  fixture.controls.ready.capabilities = [
+    ...fixture.controls.ready.capabilities,
+    'anima-regional-lora-v1',
+  ]
+  await fixture.edit((document) => {
+    for (const entry of document.generationDraft.loras) {
+      entry.enabled = true
+    }
+  })
+}
+
+for (const mode of ['txt2img', 'img2img', 'outpaint'] as const) {
+  test(`Anima regional ${mode} freezes exact signed and zero LoRAs independently for every concrete member`, async () => {
+    await withPublicAnima(async (fixture) => {
+      await enableRegionalLoraStack(fixture, mode)
+      const before = structuredClone(fixture.document())
+      const saved = await readFile(fixture.packagePath)
+      const result = await queuedConcreteBatch(fixture, 2)
+      assert.equal(result.jobIds.length, 2)
+      const payloads = []
+      for (const [iteration, id] of result.jobIds.entries()) {
+        const frozen = await fixture.queue.loadVerifiedAnimaRegionalInput(id)
+        assert.equal(frozen.input.recipe.item.iteration, iteration)
+        assert.deepEqual(frozen.payload.context.loraStack, before.generationDraft.loras)
+        assert.deepEqual(
+          frozen.payload.context.loras.map((entry) => entry.weight),
+          [-0.7, 0, 1.2],
+        )
+        assert.equal(frozen.input.request.job.loras.length, 3)
+        for (const [index, resource] of frozen.input.request.job.loras.entries()) {
+          const bytes = await readFile(resource.path)
+          assert.equal(resource.byteSize, bytes.length)
+          assert.equal(resource.sha256, regionalProjectDigest(bytes))
+          assert.equal(resource.sha256, before.generationDraft.loras[index].resource.fileSha256)
+          assert.equal(resource.weight, before.generationDraft.loras[index].weight)
+          assert.deepEqual(
+            frozen.payload.context.loras[index].reference,
+            before.generationDraft.loras[index].resource,
+          )
+        }
+        const details = await fixture.queue.getManagerEntry(id)
+        assert.equal(details.details?.requiresRegionalLora, true)
+        payloads.push(frozen)
+      }
+      assert.notEqual(payloads[0].input.request.requestId, payloads[1].input.request.requestId)
+      assert.equal((await fixture.actions.getState(fixture.tabId)).animaRegionalLoraSupported, true)
+      assert.deepEqual(fixture.document(), before)
+      assert.ok((await readFile(fixture.packagePath)).equals(saved))
+    })
+  })
+
+  test(`Anima regional ${mode} enabled zero requires the new peer before composition; disabled-only preserves legacy admission`, async () => {
+    await withPublicAnima(async (fixture) => {
+      await enableRegionalLoraStack(fixture, mode)
+      fixture.controls.ready.capabilities = fixture.controls.ready.capabilities.filter(
+        (cap) => cap !== 'anima-regional-lora-v1',
+      )
+      await fixture.edit((document) => {
+        document.generationDraft.loras.forEach((entry, index) => {
+          entry.enabled = index === 1
+        })
+      })
+      assert.equal(fixture.document().generationDraft.loras[1].weight, 0)
+      await assert.rejects(queuedConcreteBatch(fixture, 1), /runtime|Regional Guidance/i)
+      assert.equal(fixture.calls.compose.length, 0)
+      await assertUnpublishedBatch(fixture)
+      assert.equal(
+        (await fixture.actions.getState(fixture.tabId)).animaRegionalLoraSupported,
+        false,
+      )
+      await fixture.edit((document) => {
+        document.generationDraft.loras.forEach((entry) => {
+          entry.enabled = false
+        })
+      })
+      const result = await queuedConcreteBatch(fixture, 1)
+      const frozen = await fixture.queue.loadVerifiedAnimaRegionalInput(result.jobIds[0])
+      assert.deepEqual(frozen.input.request.job.loras, [])
+      assert.equal(
+        (await fixture.queue.getManagerEntry(result.jobIds[0])).details?.requiresRegionalLora,
+        undefined,
+      )
+      assert.equal(frozen.payload.context.loraStack.length, 3)
+    })
+  })
+
+  test(`Anima regional ${mode} frozen LoRA Retry ignores current cleared or changed stack and gates the saved resources`, async () => {
+    await withPublicAnima(async (fixture) => {
+      await enableRegionalLoraStack(fixture, mode)
+      const admitted = await queuedConcreteBatch(fixture, 1)
+      const id = admitted.jobIds[0]
+      const original = await fixture.queue.loadVerifiedAnimaRegionalInput(id)
+      await fixture.orchestrator.cancelGenerationJob(id)
+      const reviewed = await fixture.queue.getManagerEntry(id)
+      await fixture.edit((document) => {
+        document.generationDraft.loras = []
+        document.generationDraft.sampling.animaMethod = 'euler'
+        document.generationDraft.positivePrompt.text = 'later unrelated authoring'
+        document.regionalGuidance = []
+      })
+      await fixture.projects.save(fixture.tabId)
+      const current = structuredClone(fixture.document())
+      const saved = await readFile(fixture.packagePath)
+      fixture.controls.ready.capabilities = fixture.controls.ready.capabilities.filter(
+        (cap) => cap !== 'anima-regional-lora-v1',
+      )
+      await assert.rejects(
+        fixture.actions.retryJob({ id, statusSequence: reviewed.statusSequence }),
+        /runtime|Anima Regional Guidance/i,
+      )
+      assert.equal((await concreteRows(fixture)).length, 1)
+      fixture.controls.ready.capabilities = [
+        ...fixture.controls.ready.capabilities,
+        'anima-regional-lora-v1',
+      ]
+      await fixture.actions.retryJob({ id, statusSequence: reviewed.statusSequence })
+      const rows = await concreteRows(fixture)
+      assert.equal(rows.length, 2)
+      const retryId = rows.find((row) => row.id !== id)!.id
+      const retry = await fixture.queue.loadVerifiedAnimaRegionalInput(retryId)
+      assert.deepEqual(retry.payload.context, original.payload.context)
+      assert.deepEqual(retry.input.recipe, original.input.recipe)
+      assert.deepEqual(retry.input.compiledPrompts, original.input.compiledPrompts)
+      assert.deepEqual(retry.input.request.job.loras, original.input.request.job.loras)
+      assert.equal(
+        (await fixture.queue.getManagerEntry(retryId)).details?.requiresRegionalLora,
+        true,
+      )
+      assert.deepEqual(fixture.document(), current)
+      assert.ok((await readFile(fixture.packagePath)).equals(saved))
+    })
+  })
+
+  test(`Anima regional ${mode} later LoRA resolution failure publishes no member or sidecar`, async () => {
+    await withPublicAnima(async (fixture) => {
+      await enableRegionalLoraStack(fixture, mode)
+      const models = fixture.models as AnimaGenerationModelResolver & typeof fixture.models
+      const resolve = models.resolveVerifiedAnimaGenerationLoraForPlan.bind(models)
+      const last = fixture.document().generationDraft.loras[2].resource.localVersionId
+      const calls: (string | null)[] = []
+      models.resolveVerifiedAnimaGenerationLoraForPlan = async (reference) => {
+        calls.push(reference.localVersionId)
+        if (reference.localVersionId === last) {
+          throw new Error('later exact LoRA resolution failure')
+        }
+        return await resolve(reference)
+      }
+      const before = structuredClone(fixture.document())
+      const saved = await readFile(fixture.packagePath)
+      await assert.rejects(queuedConcreteBatch(fixture, 2), /later exact LoRA resolution failure/)
+      assert.deepEqual(
+        calls,
+        before.generationDraft.loras.map((entry) => entry.resource.localVersionId),
+      )
+      await assertUnpublishedBatch(fixture)
+      assert.deepEqual(fixture.document(), before)
+      assert.ok((await readFile(fixture.packagePath)).equals(saved))
+    })
+  })
+}
+
+for (const location of ['scratch', 'target', 'output'] as const) {
+  test(`Anima regional LoRA transport refuses a descriptor overlapping its ${location}`, async () => {
+    await withPublicAnima(async (fixture) => {
+      await enableRegionalLoraStack(fixture, 'txt2img')
+      const admitted = await queuedConcreteBatch(fixture, 1)
+      const frozen = await fixture.queue.loadVerifiedAnimaRegionalInput(admitted.jobIds[0])
+      const original = frozen.input.request
+      const request = {
+        ...original,
+        job: {
+          ...original.job,
+          loras: original.job.loras.map((entry, index) =>
+            index === 0
+              ? {
+                  ...entry,
+                  path:
+                    location === 'scratch'
+                      ? path.join(fixture.scratch, 'unsafe-resource.safetensors')
+                      : location === 'target'
+                        ? original.job.target.path
+                        : original.job.output.pngPath,
+                }
+              : { ...entry },
+          ),
+        },
+      } as AnimaRegionalWorkerInput['request']
+      const before = await fixtureFileTree(fixture.scratch)
+      await assert.rejects(
+        prepareAnimaRegionalWorkerRequest({ ...frozen.input, request }, fixture.scratch),
+        /Anima regional input is invalid/,
+      )
+      assert.deepEqual(await fixtureFileTree(fixture.scratch), before)
+    })
+  })
+}
+
+test('actual regional dispatch refuses enabled zero LoRA on an otherwise qualified legacy peer before sending a request', async () => {
+  await withPublicAnima(async (fixture) => {
+    await enableRegionalLoraStack(fixture, 'txt2img')
+    await fixture.edit((document) => {
+      document.generationDraft.loras.forEach((entry, index) => {
+        entry.enabled = index === 1
+      })
+    })
+    const admitted = await queuedConcreteBatch(fixture, 1)
+    const frozen = await fixture.queue.loadVerifiedAnimaRegionalInput(admitted.jobIds[0])
+    const root = path.join(fixture.root, 'controlled-dispatch-peer')
+    await mkdir(root)
+    const executable = path.join(root, 'python')
+    const requestLog = path.join(root, 'requests')
+    const ready = {
+      ...fixture.controls.ready,
+      capabilities: fixture.controls.ready.capabilities
+        .filter((cap) => cap !== 'anima-regional-lora-v1')
+        .concat('linux-owned-inference-v1'),
+      pythonVersion: '3.12.13',
+      type: 'ready',
+    }
+    await writeFile(
+      executable,
+      `#!${process.execPath}\nconst fs=require('node:fs');\nprocess.stdout.write(${JSON.stringify(`${JSON.stringify(ready)}\n`)});\nprocess.stdin.on('data', chunk=>fs.appendFileSync(${JSON.stringify(requestLog)},chunk));\nprocess.stdin.resume();\nprocess.on('SIGTERM',()=>process.exit(0));\n`,
+    )
+    await chmod(executable, 0o700)
+    const client = await GenerationWorkerClient.start({
+      pythonExecutable: executable,
+      runtimeRoot: root,
+      scratchBasePath: fixture.scratch,
+    })
+    try {
+      await assert.rejects(
+        client.executeCurrentCanvasRegional(frozen.input),
+        (error) =>
+          error instanceof GenerationWorkerError && error.code === 'WORKER_VERSION_MISMATCH',
+      )
+      assert.equal((await readdir(root)).includes('requests'), false)
+      assert.deepEqual(await fixtureFileTree(fixture.scratch), [])
+    } finally {
+      await client.close()
+    }
+  })
+})

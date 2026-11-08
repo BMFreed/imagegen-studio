@@ -12,6 +12,13 @@ the default retains original Anima behavior.
 The explicit flow-sampling profile adapts the same revision's
 backend/anima/scheduler_driver.py and anima_denoise.py prediction/driver seam;
 the existing frozen native grids and iteration-progress contract stay unchanged.
+The explicit global-LoRA profile follows InvokeAI
+b0ac163b139c432aff4c51078c31c074bf292f72, generation/core/graph.ts,
+canvas/addRegionalGuidance.ts and app/invocations/anima/anima_denoise.py:
+regional encoders share the global adapted encoder, and the same scoped stack
+surrounds context preparation and native prediction. Studio's existing ordinary
+Anima adapter owner applies and removes that stack; default private admission
+and the standalone attention scope still require unadapted native models.
 
 Main compilation, recipe provenance and checkpoint-to-live-model association are
 trusted caller responsibilities, as in the ordinary compiled Anima command.
@@ -59,6 +66,7 @@ from imagegen_worker.anima_flow_sampling import (
     AnimaFlowSamplingPlan,
     validate_anima_flow_sampling_plan,
 )
+from imagegen_worker.anima_lora import capture_anima_loras
 from imagegen_worker.anima_outpaint import generate_anima_outpaint
 from imagegen_worker.anima_sampling import create_anima_native_denoiser
 from imagegen_worker.anima_tokenizers import AnimaTokenizers, load_anima_tokenizers
@@ -89,6 +97,7 @@ if TYPE_CHECKING:
 _Profile = Literal["cpu-float32-v1", "cuda-bfloat16-v1"]
 _CompositionProfile = Literal["invoke-krea2-global-support-v1"]
 _SamplingProfile = Literal["invoke-anima-flow-sampling-v1"]
+_LoraProfile = Literal["invoke-anima-global-lora-v1"]
 _MAX_REGIONS = 3
 _MAX_TEXT_BYTES = 16 * 1024
 _MAX_TOTAL_TEXT_BYTES = 128 * 1024
@@ -97,6 +106,7 @@ _CONTEXT_ROWS = 512
 _SCAN_ELEMENTS = 1_048_576
 _LOCK = threading.Lock()
 _MODEL_OWNERS: set[int] = set()
+_LORA_RNG_OWNER = object()
 _ATTENTION_OWNERS: set[int] = set()
 _WAN_CACHE_FIELDS = (
     "_conv_num",
@@ -457,6 +467,7 @@ def _capture_command(
     captured: _Input,
     *,
     sampling_profile: _SamplingProfile | None = None,
+    lora_profile: _LoraProfile | None = None,
     img2img: bool = False,
     outpaint: bool = False,
 ) -> AnimaFlowSamplingPlan:
@@ -478,10 +489,17 @@ def _capture_command(
     )
     _uuid(command.request_id)
     _require(
-        type(command.loras) is tuple and not command.loras,
+        lora_profile is None
+        or (type(lora_profile) is str and lora_profile == "invoke-anima-global-lora-v1"),
+        "INVALID_REQUEST",
+        "Anima regional LoRA profile is unsupported.",
+    )
+    _require(
+        type(command.loras) is tuple and (not command.loras or lora_profile is not None),
         "GENERATION_PROMPT_UNSUPPORTED",
         "Private Anima regions do not admit LoRA.",
     )
+    captured_loras = capture_anima_loras(command.loras)
     _require(
         sampling_profile is None
         or (type(sampling_profile) is str and sampling_profile == "invoke-anima-flow-sampling-v1"),
@@ -536,6 +554,33 @@ def _capture_command(
         )
     if outpaint:
         _capture_outpaint_command(cast(GenerateAnimaOutpaintCommand, command))
+    if captured_loras:
+        _require(
+            type(command.bundle) is AnimaModelBundle,
+            "INVALID_REQUEST",
+            "Anima regional LoRAs require the exact ordinary model bundle.",
+        )
+        model_paths = {
+            command.bundle.checkpoint.path,
+            command.bundle.qwen3_encoder.path,
+            command.bundle.vae.path,
+        }
+        for lora in captured_loras:
+            _require(
+                type(lora.path) is PosixPath
+                and lora.path.is_absolute()
+                and ".." not in lora.path.parts
+                and "\x00" not in str(lora.path)
+                and lora.path not in model_paths | {command.target_path, command.output_path}
+                and lora.path != command.staging_root
+                and command.staging_root not in lora.path.parents
+                and (
+                    not outpaint
+                    or lora.path != cast(GenerateAnimaOutpaintCommand, command).infill_resource.path
+                ),
+                "INVALID_REQUEST",
+                "Anima regional LoRAs must remain distinct from models and request staging.",
+            )
     return plan
 
 
@@ -1352,6 +1397,31 @@ def scoped_anima_regional_attention(transformer: Any, mask: Any, torch: Any) -> 
     after a partially successful native setter. No model forward is replaced.
     """
     attentions = _qualified_attentions(transformer, torch)
+    with _scoped_anima_regional_attention(transformer, attentions, mask, torch):
+        yield
+
+
+@contextmanager
+def _scoped_anima_regional_attention(
+    transformer: Any, attentions: tuple[Any, ...], mask: Any, torch: Any
+) -> Generator[None]:
+    """Install on the outer owner's captured native attentions, including owned LoRA scopes.
+
+    Only the private prediction closure supplies this tuple. Original unadapted model/graph
+    qualification precedes ordinary adapter loading; native PEFT replaces only qualified Linear
+    targets. Standalone callers continue through the strict public qualification above.
+    """
+    cosmos = importlib.import_module("diffusers.models.transformers.transformer_cosmos")
+    _require(
+        all(
+            type(attention.processor) is cosmos.CosmosAttnProcessor2_0
+            and not vars(attention.processor)
+            and "set_processor" not in vars(attention)
+            for attention in attentions
+        ),
+        "INFERENCE_UNAVAILABLE",
+        "Anima requires the captured original native attention processors.",
+    )
     _require(
         type(mask) is torch.Tensor
         and mask.dtype == torch.bool
@@ -1480,6 +1550,7 @@ def _prediction_factory(
     models: LoadedAnimaModels,
     tokenizers: AnimaTokenizers | None,
     mask: Any,
+    attentions: tuple[Any, ...] | None = None,
 ) -> AnimaPredictionFactory:
     active_ids = {
         region.source_id
@@ -1515,7 +1586,14 @@ def _prediction_factory(
 
         def predict(role: Literal["positive", "negative"], latents: Any, sigma: float) -> Any:
             if role == "positive":
-                with scoped_anima_regional_attention(models.transformer, mask, torch):
+                scope = (
+                    scoped_anima_regional_attention(models.transformer, mask, torch)
+                    if attentions is None
+                    else _scoped_anima_regional_attention(
+                        models.transformer, attentions, mask, torch
+                    )
+                )
+                with scope:
                     return predict_anima_flow(models.transformer, latents, combined, sigma, torch)
             _require(role == "negative", "INVALID_REQUEST", "Anima prediction sign is invalid.")
             return predict_anima_flow(
@@ -1539,6 +1617,7 @@ def generate_current_canvas_regional_anima_txt2img(
     composition_profile: _CompositionProfile | None = None,
     on_progress: DenoisingProgressSink | None = None,
     sampling_profile: _SamplingProfile | None = None,
+    lora_profile: _LoraProfile | None = None,
 ) -> dict[str, object]:
     """One matching Main recipe to existing native sampling/Wan and provisional PNG.
 
@@ -1559,6 +1638,7 @@ def generate_current_canvas_regional_anima_txt2img(
         composition_profile=composition_profile,
         on_progress=on_progress,
         sampling_profile=sampling_profile,
+        lora_profile=lora_profile,
         img2img=False,
     )
 
@@ -1575,6 +1655,7 @@ def generate_current_canvas_regional_anima_img2img(
     composition_profile: _CompositionProfile | None = None,
     on_progress: DenoisingProgressSink | None = None,
     sampling_profile: _SamplingProfile | None = None,
+    lora_profile: _LoraProfile | None = None,
 ) -> dict[str, object]:
     """Verify one opaque source snapshot and reuse original Anima image sampling.
 
@@ -1597,6 +1678,7 @@ def generate_current_canvas_regional_anima_img2img(
         composition_profile=composition_profile,
         on_progress=on_progress,
         sampling_profile=sampling_profile,
+        lora_profile=lora_profile,
         img2img=True,
     )
 
@@ -1613,6 +1695,7 @@ def generate_current_canvas_regional_anima_outpaint(
     composition_profile: _CompositionProfile | None = None,
     on_progress: DenoisingProgressSink | None = None,
     sampling_profile: _SamplingProfile | None = None,
+    lora_profile: _LoraProfile | None = None,
     _prepared_outpaint: tuple[OutpaintConditioning, Image.Image] | None = None,
 ) -> dict[str, object]:
     """Compose ordinary OUT protection and regional attention, then publish RGBA.
@@ -1636,6 +1719,7 @@ def generate_current_canvas_regional_anima_outpaint(
         composition_profile=composition_profile,
         on_progress=on_progress,
         sampling_profile=sampling_profile,
+        lora_profile=lora_profile,
         img2img=True,
         outpaint=True,
         _prepared_outpaint=_prepared_outpaint,
@@ -1654,6 +1738,7 @@ def _generate_current_canvas_regional_anima(
     composition_profile: _CompositionProfile | None,
     on_progress: DenoisingProgressSink | None,
     sampling_profile: _SamplingProfile | None,
+    lora_profile: _LoraProfile | None,
     img2img: bool,
     outpaint: bool = False,
     _prepared_outpaint: tuple[OutpaintConditioning, Image.Image] | None = None,
@@ -1683,6 +1768,7 @@ def _generate_current_canvas_regional_anima(
         command,
         captured,
         sampling_profile=sampling_profile,
+        lora_profile=lora_profile,
         img2img=img2img,
         outpaint=outpaint,
     )
@@ -1693,6 +1779,7 @@ def _generate_current_canvas_regional_anima(
         positive_prompt=captured.prompts[0].compiled,
         negative_prompt=captured.prompts[1].compiled,
         sampling=plan,
+        loras=capture_anima_loras(command.loras),
     )
     _require(
         type(models) is LoadedAnimaModels,
@@ -1700,7 +1787,15 @@ def _generate_current_canvas_regional_anima(
         "Prepared original Anima models are required.",
     )
     with _reserve(
-        (models.transformer, models.text_conditioner, models.qwen3_encoder, models.vae),
+        (
+            models.transformer,
+            models.text_conditioner,
+            models.qwen3_encoder,
+            models.vae,
+            # Native adapter constructors use fork_rng. Participating regional calls must
+            # not overlap those global saves/restores even with otherwise disjoint models.
+            *((_LORA_RNG_OWNER,) if command.loras else ()),
+        ),
         _MODEL_OWNERS,
     ):
         torch, attentions = _model_profile(models, runtime, profile)
@@ -1731,11 +1826,18 @@ def _generate_current_canvas_regional_anima(
                     models,
                     source_image=source,
                     keep_mask=alpha_conditioning.latent_keep_mask,
+                    loras=command.loras,
                     tokenizers=owned_tokenizers,
                     progress=on_progress,
                     prediction_factory=None
                     if mask is None
-                    else _prediction_factory(captured, models, owned_tokenizers, mask),
+                    else _prediction_factory(
+                        captured,
+                        models,
+                        owned_tokenizers,
+                        mask,
+                        attentions if command.loras else None,
+                    ),
                 )
             else:
                 source = validate_generation_target(
@@ -1753,12 +1855,19 @@ def _generate_current_canvas_regional_anima(
                     anima_prompt_payload(captured.prompts[0].compiled),
                     anima_prompt_payload(captured.prompts[1].compiled),
                     models,
+                    loras=command.loras,
                     tokenizers=owned_tokenizers,
                     initial_sigma=plan.initial_sigma,
                     progress=on_progress,
                     prediction_factory=None
                     if mask is None
-                    else _prediction_factory(captured, models, owned_tokenizers, mask),
+                    else _prediction_factory(
+                        captured,
+                        models,
+                        owned_tokenizers,
+                        mask,
+                        attentions if command.loras else None,
+                    ),
                     denoiser_factory=None
                     if plan.scheduler == "euler"
                     else lambda torch, device: create_anima_native_denoiser(

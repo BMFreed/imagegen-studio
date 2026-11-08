@@ -2127,3 +2127,28 @@ Native acceptance uses two prompt branches/iteration0,512² and Heun only; this 
 no32-job throughput, all-method trained matrix or visual-quality promotion.
 Smart/resources/references/spatial-negative restrictions and PP-001/005/007/008
 «Пока не обещать» remain unchanged.
+
+
+The subsequent [global Anima LoRA lane](../../../engineering/phase-4-anima-regional-lora-research.md)
+composes the existing ordinary ordered global stack with current regional TXT/IMG/OUT.
+Every enabled entry, including weight zero, requires the separate
+`anima-regional-lora-v1` capability in addition to ordinary/regional prerequisites;
+empty and disabled-only stacks preserve older peers. Exact saved resources are
+reverified, disabled missing entries stay inert, and full configured stack provenance
+is retained per concrete item. Frozen Retry uses that item after current draft edits.
+There is no per-region LoRA selector, new numerical loop, wire/queue schema or migration.
+Default private no-LoRA admission remains; only the explicit profile combines native
+scoped adapters with internally qualified regional attention.
+
+ROOT records1,653 Main/652 distinct Python/210 browser PASS and eight actual installed
+Heun512² requests/seven PNGs. Enabled−0.5 versus enabled0 changes visible RGB in all
+three modes with fixed semantic inputs; OUT alpha, source-over composite and restarted
+frozen Retry are exact. TXT/IMG accept/history/Save-reopen survives explicit zero-control
+discard; OUT additionally covers pending/running Cancel and selected Retry after edits.
+Two isolated Main/native semantic mutations retain controls and exact restoration.
+Actual metadata cleanup and cooperative RNG overlap regressions pass. Source review,
+retained bytes, runtime observations and physical release remain separate. This does
+not promote full-scene/human quality, other trained LoRAs/methods, Smart, regional
+references/TI/spatial negatives, per-region LoRA or PP-001/005/007/008 readiness.
+Ordinary global-LoRA provenance remains, while Regional Guidance exclusions from
+accepted provenance/Compare/result-derived presets are preserved.

@@ -6,6 +6,7 @@ import { ANIMA_SAMPLING_METHOD_KEYS } from './anima-sampling-method.js'
 import {
   supportsInferenceAnimaRegional,
   supportsInferenceAnimaRegionalImg2Img,
+  supportsInferenceAnimaRegionalLora,
   supportsInferenceAnimaRegionalOutpaint,
   supportsInferenceAnimaRegionalSampling,
 } from './inference-worker-capabilities.js'
@@ -73,6 +74,108 @@ function reason(
     ...options,
   })
 }
+
+for (const mode of ['txt2img', 'img2img', 'outpaint'] as const) {
+  test(`Anima regional ${mode} enabled signed or zero LoRA needs its own capability; disabled stays inert`, () => {
+    const value = document()
+    value.generationDraft.sampling.denoisingStrength = mode === 'txt2img' ? null : 0.5
+    const options = {
+      animaRegionalImg2ImgSupported: true,
+      animaRegionalOutpaintSupported: true,
+      targetMode: mode,
+    }
+    for (const weight of [-1, 0, 0.75]) {
+      value.generationDraft.loras = [
+        {
+          enabled: true,
+          resource: { ...value.generationDraft.model!, kind: 'lora' },
+          weight,
+        },
+      ]
+      const before = structuredClone(value)
+      for (const animaRegionalLoraSupported of [undefined, null, false, true]) {
+        assert.equal(
+          reason(value, { ...options, animaRegionalLoraSupported }) === null,
+          animaRegionalLoraSupported === true,
+        )
+      }
+      assert.deepEqual(value, before)
+      value.generationDraft.loras[0].enabled = false
+      assert.equal(reason(value, options), null)
+    }
+  })
+}
+
+test('Anima regional LoRA capability requires its own exact qualified ordinary and regional peer', () => {
+  const ready = {
+    capabilities: [
+      'illustrious-txt2img',
+      'denoising-progress',
+      'candidate-thumbnails',
+      'illustrious-cfg-rescale',
+      'illustrious-img2img',
+      'illustrious-lora',
+      'illustrious-vae-precision',
+      'illustrious-external-vae',
+      'illustrious-embeddings',
+      'illustrious-outpaint',
+      'anima-txt2img',
+      'anima-img2img',
+      'anima-lora',
+      'anima-prompt-weighting',
+      'anima-flow-sampling',
+      'anima-regional-txt2img-v1',
+      'anima-regional-lora-v1',
+    ],
+    protocolVersion: '1',
+    runtimeProfile: 'linux-nvidia',
+    workerVersion: '0.14.0',
+  }
+  assert.equal(supportsInferenceAnimaRegionalLora(ready), true)
+  for (const missing of ['anima-lora', 'anima-regional-txt2img-v1', 'anima-regional-lora-v1']) {
+    assert.equal(
+      supportsInferenceAnimaRegionalLora({
+        ...ready,
+        capabilities: ready.capabilities
+          .filter((cap) => cap !== missing)
+          .concat('illustrious-regional-lora-v1'),
+      }),
+      false,
+      missing,
+    )
+  }
+  for (const workerVersion of ['0.13.0', '0.15.0']) {
+    assert.equal(supportsInferenceAnimaRegionalLora({ ...ready, workerVersion }), false)
+  }
+  assert.equal(
+    supportsInferenceAnimaRegional({
+      ...ready,
+      capabilities: ready.capabilities.filter((cap) => cap !== 'anima-regional-lora-v1'),
+    }),
+    true,
+  )
+})
+
+test('Anima regional LoRA action state is optional but strictly Boolean', () => {
+  const state = {
+    cfgRescaleSupported: false,
+    documentId: randomUUID(),
+    embeddingsSupported: false,
+    error: null,
+    externalVaeSupported: false,
+    img2imgSupported: false,
+    jobs: [],
+    phase: 'idle',
+    runningJobId: null,
+    vaePrecisionSupported: false,
+  }
+  for (const animaRegionalLoraSupported of [undefined, false, true]) {
+    assert.equal(isProjectGenerationActionState({ ...state, animaRegionalLoraSupported }), true)
+  }
+  for (const animaRegionalLoraSupported of [null, 0, 1, 'true', {}, []]) {
+    assert.equal(isProjectGenerationActionState({ ...state, animaRegionalLoraSupported }), false)
+  }
+})
 
 test('Anima regional admission keeps literal zero weights and native Euler without changing inactive sampler fields', () => {
   const value = document()

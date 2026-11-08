@@ -2425,3 +2425,21 @@ unconfirmed exits remain fenced. ROOT256 focused Main/5 browser PASS, actual bui
 preload IPC and isolated status mutation qualify this finite boundary. A source-review
 race finding is reproduced and corrected; diagnostic failures stay separate.
 No queue/numerical/installer change, new trained rerun or promise-status promotion.
+
+
+## Anima Regional Guidance — global LoRA stack
+
+[Global LoRA composition](./phase-4-anima-regional-lora-research.md) reuses current
+Invoke graph ownership and the existing ordinary exact-resource/native adapter
+scopes across regional TXT/IMG/OUT. The additive combination capability includes
+enabled zero; full configured stacks and per-item frozen Retry remain independent
+from later draft edits. No new loop, worker command, schema or migration is added.
+ROOT records 1,653 Main/652 distinct Python/210 browser PASS, types/scoped checks/
+build PASS and eight actual installed requests/seven PNGs. Signed-vs-zero controls
+change visible RGB in every mode; OUT alpha and restarted Retry remain exact.
+Two semantic mutations retain controls and full restoration. Strict metadata/RNG
+regressions close two observed cleanup defects and one cooperative concurrency gap.
+Source and retained-data reviews remain distinct from execution and physical release.
+The existing Results replacement contract is respected, with explicit accept/hide/
+discard control handling in TXT/IMG. Quality/Smart/TI/references/spatial negatives and
+PP-001/005/007/008 limits remain unchanged.

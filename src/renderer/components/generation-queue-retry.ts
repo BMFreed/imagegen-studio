@@ -6,6 +6,7 @@ type RetryState = Pick<
   ProjectGenerationActionState,
   | 'animaOutpaintSupported'
   | 'animaRegionalImg2ImgSupported'
+  | 'animaRegionalLoraSupported'
   | 'animaRegionalOutpaintSupported'
   | 'animaRegionalSamplingSupported'
   | 'animaRegionalSupported'
@@ -46,6 +47,9 @@ export function generationQueueRetryReason(
     }
     if (state.animaRegionalSupported !== true) {
       return 'The current image engine does not support Anima Regional Guidance. Repair or update the runtime.'
+    }
+    if (requiresRegionalLora && state.animaRegionalLoraSupported !== true) {
+      return 'The current image engine does not support global LoRAs with this frozen Anima Regional Guidance job. Repair or update the runtime.'
     }
     if (operation === 'anima-regional-outpaint' && state.animaRegionalOutpaintSupported !== true) {
       return 'The current image engine does not support this frozen Anima Regional Guidance outpaint job. Repair or update the runtime.'

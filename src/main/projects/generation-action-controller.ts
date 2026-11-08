@@ -26,6 +26,7 @@ import {
   supportsInferenceAnimaOutpaint,
   supportsInferenceAnimaRegional,
   supportsInferenceAnimaRegionalImg2Img,
+  supportsInferenceAnimaRegionalLora,
   supportsInferenceAnimaRegionalOutpaint,
   supportsInferenceAnimaRegionalSampling,
   supportsInferenceCFGRescale,
@@ -419,6 +420,11 @@ export class ProjectGenerationActionController {
         !this.closed &&
         !!this.options.regional &&
         supportsInferenceAnimaRegionalImg2Img(ready),
+      animaRegionalLoraSupported:
+        !this.blocked &&
+        !this.closed &&
+        !!this.options.regional &&
+        supportsInferenceAnimaRegionalLora(ready),
       animaRegionalOutpaintSupported:
         !this.blocked &&
         !this.closed &&
@@ -682,6 +688,7 @@ export class ProjectGenerationActionController {
   ): Promise<ProjectGenerateResult> {
     const unavailable = getInvokeRegionalGenerationUnavailableReason({
       animaRegionalImg2ImgSupported: true,
+      animaRegionalLoraSupported: true,
       animaRegionalOutpaintSupported: true,
       animaRegionalSamplingSupported: true,
       animaRegionalSupported: true,
@@ -759,6 +766,8 @@ export class ProjectGenerationActionController {
               if (
                 anima
                   ? !supportsInferenceAnimaRegional(preparation.inferenceReady) ||
+                    (document.generationDraft.loras.some((entry) => entry.enabled) &&
+                      !supportsInferenceAnimaRegionalLora(preparation.inferenceReady)) ||
                     (document.generationDraft.sampling.animaMethod !== 'euler' &&
                       !supportsInferenceAnimaRegionalSampling(preparation.inferenceReady))
                   : !supportsRegional(preparation.inferenceReady) ||
@@ -1462,6 +1471,8 @@ export class ProjectGenerationActionController {
               this.assertDocument(source.projectKey, source.documentId)
               if (
                 !supportsInferenceAnimaRegional(ready) ||
+                (frozen.payload.workerJob.loras.length > 0 &&
+                  !supportsInferenceAnimaRegionalLora(ready)) ||
                 (frozen.payload.kind === 'anima-regional-outpaint' &&
                   !supportsInferenceAnimaRegionalOutpaint(ready)) ||
                 (frozen.payload.kind === 'anima-regional-img2img' &&

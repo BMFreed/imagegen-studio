@@ -276,8 +276,11 @@ def scoped_anima_generation_loras(
         qualified.append((f"igs_anima_lora_{index}", lora, targets))
 
     attempted: set[str] = set()
-    adapter_flags = {
-        component: getattr(model, "_hf_peft_config_loaded", False)
+    adapter_metadata = {
+        component: {
+            key: (key in vars(model), cast(dict[str, Any], vars(model)).get(key))
+            for key in ("_hf_peft_config_loaded", "_weight_conversions", "peft_config")
+        }
         for component, model in component_models.items()
     }
     gradient_flags = [
@@ -356,11 +359,19 @@ def scoped_anima_generation_loras(
                         del model.peft_config
                 else:
                     model.unload_lora()
-                model._hf_peft_config_loaded = adapter_flags[component]
                 if any(hasattr(module, "lora_A") for module in model.modules()) or getattr(
                     model, "peft_config", {}
                 ):
                     raise _unsupported("Anima native adapter cleanup is incomplete.")
+                for key, (owned, original) in adapter_metadata[component].items():
+                    if owned:
+                        # Admission permits only an empty pre-existing adapter map. Native
+                        # injection can fill that same object before native cleanup removes it.
+                        if key == "peft_config" and type(original) is dict:
+                            original.clear()
+                        setattr(model, key, original)
+                    elif key in vars(model):
+                        delattr(model, key)
             except Exception as error:
                 cleanup_errors.append(error)
         for parameter, enabled in gradient_flags:
