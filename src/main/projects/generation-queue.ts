@@ -1331,10 +1331,24 @@ export class GenerationQueueRepository {
       throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The qualified Anima batch is invalid.')
     }
     if (regionalInputs) {
-      if (payloads.length !== 1 || regionalInputs.length !== 1) {
+      if (
+        regionalInputs.length !== payloads.length ||
+        new Set(
+          regionalInputs.map(
+            ({ recipe }) => `${recipe.item.promptPairIndex}:${recipe.item.iteration}`,
+          ),
+        ).size !== payloads.length ||
+        regionalMaterials!.some(
+          (material) =>
+            !isDeepStrictEqual(
+              comparableAnimaRegionalBatchMaterial(material),
+              comparableAnimaRegionalBatchMaterial(regionalMaterials![0]),
+            ),
+        )
+      ) {
         throw new GenerationQueueError(
           'QUEUE_INPUT_INVALID',
-          'Anima Regional Guidance requires one job.',
+          'The Anima regional batch contains mixed frozen inputs.',
         )
       }
       payloads = payloads.map((payload, index) => {
@@ -1345,7 +1359,10 @@ export class GenerationQueueRepository {
           !isDeepStrictEqual(regional.request, requests[index]) ||
           regional.recipe.documentId !== payload.context.documentId ||
           regional.recipe.documentRevision !== payload.context.documentRevision ||
-          !isDeepStrictEqual(regional.recipe.item.prompts, payload.context.prompts)
+          !isDeepStrictEqual(regional.recipe.item.prompts, payload.context.prompts) ||
+          regional.recipe.item.seed !== payload.context.sampling.seed ||
+          regional.recipe.item.iteration !== supplied.items[index].iteration ||
+          regional.recipe.item.promptPairIndex !== supplied.items[index].promptPairIndex
         ) {
           throw new GenerationQueueError(
             'QUEUE_INPUT_INVALID',
@@ -1574,18 +1591,39 @@ export class GenerationQueueRepository {
     )
     const regionalInputs = input.regionalInputs?.map(captureAnimaRegionalWorkerInput)
     const regionalMaterials = regionalInputs?.map(captureAnimaRegionalQueuedMaterial)
+    if (
+      regionalInputs &&
+      (regionalInputs.length !== ordinaryPayloads.length ||
+        new Set(regionalInputs.map(({ request }) => request.requestId)).size !==
+          regionalInputs.length ||
+        new Set(regionalInputs.map(({ request }) => request.job.output.pngPath)).size !==
+          regionalInputs.length ||
+        new Set(
+          regionalInputs.map(
+            ({ recipe }) => `${recipe.item.promptPairIndex}:${recipe.item.iteration}`,
+          ),
+        ).size !== regionalInputs.length ||
+        regionalMaterials!.some(
+          (material) =>
+            !isDeepStrictEqual(
+              comparableAnimaRegionalBatchMaterial(material),
+              comparableAnimaRegionalBatchMaterial(regionalMaterials![0]),
+            ),
+        ))
+    ) {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'The Anima regional OUT batch contains mixed frozen inputs.',
+      )
+    }
     const payloads = ordinaryPayloads.map((payload, index) => {
       if (!regionalInputs) {
         return payload
       }
-      if (
-        ordinaryPayloads.length !== 1 ||
-        regionalInputs.length !== 1 ||
-        payload.kind !== 'anima-outpaint'
-      ) {
+      if (payload.kind !== 'anima-outpaint') {
         throw new GenerationQueueError(
           'QUEUE_INPUT_INVALID',
-          'Anima regional OUT requires one captured image.',
+          'Anima regional OUT requires its captured Anima preparations.',
         )
       }
       const material = regionalMaterials![index]
@@ -1597,6 +1635,7 @@ export class GenerationQueueRepository {
         regional.recipe.documentId !== payload.context.documentId ||
         regional.recipe.documentRevision !== payload.context.documentRevision ||
         !isDeepStrictEqual(regional.recipe.item.prompts, payload.context.prompts) ||
+        regional.recipe.item.seed !== payload.context.sampling.seed ||
         !isDeepStrictEqual(request.job.conditioning, payload.context.conditioning)
       ) {
         throw new GenerationQueueError(
@@ -4663,6 +4702,44 @@ function comparableRegionalBatchMaterial(
           positive: { ...recipe.globalPrompts.positive, embeddingRefs: [], text: '' },
         },
         item,
+      },
+    },
+    outpaintInfill: material.outpaintInfill,
+  }
+}
+
+/** Same captured Anima graph; only concrete global positive and planned slot/seed may vary. */
+function comparableAnimaRegionalBatchMaterial(
+  material: ReturnType<typeof captureAnimaRegionalQueuedMaterial>,
+) {
+  const metadata = JSON.parse(material.files['regional.json'].toString('utf8')) as {
+    [key: string]: unknown
+    compiledPrompts: AnimaRegionalWorkerInput['compiledPrompts']
+    recipe: AnimaRegionalWorkerInput['recipe']
+  }
+  const { recipe } = metadata
+  return {
+    files: Object.fromEntries(
+      Object.entries(material.files).filter(([name]) => name !== 'regional.json'),
+    ),
+    metadata: {
+      ...metadata,
+      compiledPrompts: metadata.compiledPrompts.map((prompt, index) =>
+        index === 0 ? { ...prompt, prompt: null, text: '' } : prompt,
+      ),
+      recipe: {
+        ...recipe,
+        globalPrompts: {
+          ...recipe.globalPrompts,
+          positive: { ...recipe.globalPrompts.positive, text: '' },
+        },
+        item: {
+          ...recipe.item,
+          iteration: 0,
+          promptPairIndex: 0,
+          prompts: { ...recipe.item.prompts, positive: '' },
+          seed: 0,
+        },
       },
     },
     outpaintInfill: material.outpaintInfill,

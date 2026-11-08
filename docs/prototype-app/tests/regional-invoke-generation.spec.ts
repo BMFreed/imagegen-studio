@@ -1390,3 +1390,67 @@ test('renderer frozen selected IMG VAE Retry ignores the saved Embedded FP16 TXT
   await expect(retry).toBeEnabled()
   expect(errors).toEqual([])
 })
+
+for (const mode of ['txt2img', 'img2img', 'outpaint'] as const) {
+  test(`renderer Anima regional ${mode} forwards authored batch count and global dynamic text with existing overflow refusal`, async ({
+    page,
+  }) => {
+    const errors: string[] = []
+    page.on('pageerror', (cause) => errors.push(cause.message))
+    await mountWiring(page, 'project')
+    await page.evaluate((targetMode) => {
+      const fixture = globalThis.window.regionalWiringFixture
+      const draft = fixture.tab.generationDraft
+      draft.model!.baseModelFamily = 'anima'
+      draft.model!.predictionType = null
+      fixture.catalog[0]!.versions[0]!.baseModelFamily = 'anima'
+      fixture.catalog[0]!.versions[0]!.predictionType = null
+      draft.sampling.animaMethod = 'heun'
+      draft.sampling.denoisingStrength = 0.5
+      draft.vaePrecision = 'Auto'
+      draft.positivePrompt.text = '{white cat|black cat}'
+      draft.negativePrompt.text = 'blur'
+      draft.dynamicPrompt = { maxPrompts: 2, seedBehavior: 'per-prompt' }
+      fixture.tab.primaryBbox.width = 256
+      fixture.tab.primaryBbox.height = 256
+      fixture.tab.regionalGuidance![0]!.prompts = {
+        negative: { embeddingRefs: [], text: '' },
+        positive: { embeddingRefs: [], text: '(red scarf)1.5' },
+        useGlobalNegativePrompt: false,
+      }
+      fixture.state.animaRegionalSupported = true
+      fixture.state.animaRegionalSamplingSupported = true
+      fixture.state.animaRegionalImg2ImgSupported = true
+      fixture.state.animaRegionalOutpaintSupported = true
+      fixture.state.animaOutpaintSupported = true
+      fixture.targetMode = targetMode
+      fixture.epoch += 1
+    }, mode)
+    const count = page.locator('input[aria-label="Images per click"]')
+    const generate = page.getByRole('button', { exact: true, name: 'Generate' })
+    await count.fill('2')
+    await count.press('Tab')
+    await expect(generate).toBeEnabled()
+    await generate.click()
+    expect(
+      await page.evaluate(() => globalThis.window.regionalWiringFixture.generateCalls),
+    ).toEqual([2])
+    expect(
+      await page.evaluate(
+        () => globalThis.window.regionalWiringFixture.tab.generationDraft.positivePrompt.text,
+      ),
+    ).toBe('{white cat|black cat}')
+    await count.fill('17')
+    await count.press('Tab')
+    await expect(generate).toBeDisabled()
+    await expect(
+      page
+        .getByLabel('Generation actions')
+        .getByText('The planned jobs exceed the supplied batch admission limit.'),
+    ).toBeVisible()
+    await count.fill('1')
+    await count.press('Tab')
+    await expect(generate).toBeEnabled()
+    expect(errors).toEqual([])
+  })
+}

@@ -25,7 +25,7 @@ export function hasEnabledRegionalGuidance(
 }
 
 /**
- * InvokeAI a61ac4fb's invocationSubmit → submissionApi → promptBatch expands global positive before
+ * InvokeAI b0ac163b's invocationSubmit → submissionApi → promptBatch expands global positive before
  * batching; addRegionalGuidance keeps regional texts static. Reuse Studio's planner and its
  * prefix/seed policies, retaining the existing aggregate admission bound.
  */
@@ -332,9 +332,10 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
 }
 
 /**
- * Invoke ae06c1bd: addRegionalGuidance.ts uses truthy positive text and Anima has no spatial
- * negatives or references. The explicit first lane uses Krea-2's global-support predicate from
- * backend/krea2/regional_prompting.py; no authoring text, inheritance or defaults are changed.
+ * Invoke b0ac163b: addRegionalGuidance.ts uses truthy positive text and Anima has no spatial
+ * negatives or regional references. The explicit profile uses Krea-2's global-support predicate
+ * from backend/krea2/regional_prompting.py; no authoring text, inheritance or defaults are
+ * changed.
  */
 function getAnimaRegionalGenerationUnavailableReason(input: {
   animaRegionalImg2ImgSupported?: boolean | null
@@ -381,8 +382,8 @@ function getAnimaRegionalGenerationUnavailableReason(input: {
   if (steps === null || !Number.isSafeInteger(steps) || steps < 1 || steps > 200) {
     return 'Anima Regional Guidance requires an integer from 1 to 200 for Steps.'
   }
-  if (input.iterations !== 1) {
-    return 'Anima Regional Guidance supports one image per click. Set Images to 1.'
+  if (!Number.isSafeInteger(input.iterations) || input.iterations < 1 || input.iterations > 100) {
+    return 'Set Images to an integer from 1 to 100 before generating with Anima Regional Guidance.'
   }
   if (draft.loras.some((entry) => entry.enabled)) {
     return 'Disable all enabled LoRAs before generating with Anima Regional Guidance.'
@@ -421,8 +422,13 @@ function getAnimaRegionalGenerationUnavailableReason(input: {
         : []),
     ]),
   ]
-  if (prompts.some((prompt) => /[{}]/u.test(prompt.text))) {
-    return 'Anima Regional Guidance requires static global and regional prompt text without braces.'
+  try {
+    planInvokeRegionalGenerationBatch(input.document, input.iterations)
+  } catch (error) {
+    if (error instanceof GenerationBatchPlanError) {
+      return error.message
+    }
+    throw error
   }
   if (
     prompts.some(

@@ -2102,3 +2102,28 @@ regressions. Source/retained-data review is separate from execution and physical
 release. Other methods have native small-model/Main evidence, not a trained visual
 matrix; full-scene/human limits, Smart/batch/resource/spatial-negative exclusions
 and PP-001/005/007/008 «Пока не обещать» remain unchanged.
+
+
+The subsequent [Anima concrete-batch lane](../../../engineering/phase-4-anima-regional-batch-research.md)
+allows ordinary Images iterations and dynamic global-positive expansion for the
+existing TXT/IMG/OUT paths. Global-negative and effective regional texts remain
+static, with existing exact-empty regional-negative restrictions. The ordinary
+planner owns prefix selection, both seed policies and wrap; more than32 concrete
+jobs refuse atomically rather than truncating jobs. Data-dependent storage/staging
+limits remain. Each member freezes its concrete text, coordinates, seed, compiled
+prompts, native arrays, source and regional files independently. Worker commands,
+capabilities, numerical behavior and persistence schemas stay unchanged.
+
+ROOT records1,629 Main/203 browser PASS and eight qualified installed Heun requests
+with seven PNGs across TXT/IMG/OUT. Joint prompt/seed members differ independently;
+selected Add explicitly confirms unchecked disposal and passes Undo/Redo/Save-reopen
+in each mode. OUT pending cancellation produces no native request, running Cancel
+produces no completion, and selected frozen Retry after saved edits/restart matches
+its own healthy member RGBA while differing from its neighbor. Original source and
+ordinary-only per-item provenance are preserved. Five GREEN/one semantic Main-order
+RED and exact restoration test association sensitivity. Source/retained review is
+separate from ROOT execution; failed setup/harness attempts are retained as failed.
+Native acceptance uses two prompt branches/iteration0,512² and Heun only; this is
+no32-job throughput, all-method trained matrix or visual-quality promotion.
+Smart/resources/references/spatial-negative restrictions and PP-001/005/007/008
+«Пока не обещать» remain unchanged.

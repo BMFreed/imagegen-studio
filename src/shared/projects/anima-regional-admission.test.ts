@@ -82,7 +82,7 @@ test('Anima regional admission keeps literal zero weights and native Euler witho
   value.generationDraft.sampling.cfgScale = 30
   value.generationDraft.sampling.steps = 200
   assert.equal(reason(value), null)
-  assert.match(reason(value, { iterations: 2 })!, /one image per click/)
+  assert.equal(reason(value, { iterations: 2 }), null)
   assert.match(reason(value, { targetMode: 'outpaint' })!, /Anima Regional Guidance outpaint/)
   value.generationDraft.sampling.denoisingStrength = 0.5
   assert.match(
@@ -126,9 +126,11 @@ test('finite regional refusals preserve disabled rows and demand nonempty enable
     ],
     [
       (value) => {
-        value.generationDraft.positivePrompt.text = '{cat|dog}'
+        value.generationDraft.negativePrompt.text = '{bad|worse}'
+        value.regionalGuidance![0].prompts!.useGlobalNegativePrompt = false
+        value.regionalGuidance![0].prompts!.negative = { embeddingRefs: [], text: '' }
       },
-      /static/,
+      /static global negative and regional/,
     ],
     [
       (value) => {
@@ -424,5 +426,82 @@ for (const method of ANIMA_SAMPLING_METHOD_KEYS) {
         /Denoising Strength/,
       )
     }
+  })
+}
+
+// Batch admission expands only Current Canvas positive text. The actual planner,
+// frozen membership and SQL/files are exercised by the Main public suite.
+test('Anima advisory accepts global-positive expansion without editing authored syntax or dormant rows', () => {
+  const value = document()
+  value.generationDraft.positivePrompt.text = 'a {red|blue} {cat|dog}'
+  value.generationDraft.dynamicPrompt = { maxPrompts: 2, seedBehavior: 'per-prompt' }
+  value.regionalGuidance!.push({
+    ...structuredClone(value.regionalGuidance![0]),
+    enabled: false,
+    id: randomUUID(),
+    mask: { asset: null, id: randomUUID(), revision: 0 },
+    prompts: {
+      negative: { embeddingRefs: [], text: '{dormant|negative}' },
+      positive: { embeddingRefs: [], text: '{dormant|positive}' },
+      useGlobalNegativePrompt: false,
+    },
+  })
+  const before = structuredClone(value)
+  assert.equal(reason(value, { iterations: 2 }), null)
+  assert.deepEqual(value, before)
+})
+
+for (const iterations of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 101, true, '2']) {
+  test(`Anima advisory refuses non-authorable Images ${String(iterations)} before selecting a batch`, () => {
+    const value = document()
+    const before = structuredClone(value)
+    assert.match(
+      reason(value, { iterations: iterations as unknown as number })!,
+      /Set Images to an integer from 1 to 100/,
+    )
+    assert.deepEqual(value, before)
+  })
+}
+
+test('Anima advisory preserves the actual maxPrompts prefix but never truncates overflowing jobs', () => {
+  const value = document()
+  value.generationDraft.positivePrompt.text = '{first|second|third}'
+  value.generationDraft.dynamicPrompt = { maxPrompts: 1, seedBehavior: 'per-iteration' }
+  assert.equal(reason(value, { iterations: 32 }), null)
+  assert.match(reason(value, { iterations: 33 })!, /batch admission limit/)
+  value.generationDraft.dynamicPrompt.maxPrompts = 2
+  assert.equal(reason(value, { iterations: 16 }), null)
+  assert.match(reason(value, { iterations: 17 })!, /batch admission limit/)
+})
+
+for (const branch of ['global-negative', 'regional-positive', 'regional-negative'] as const) {
+  test(`Anima advisory retains static ${branch} despite global-positive expansion`, () => {
+    const value = document()
+    value.generationDraft.positivePrompt.text = '{cat|dog}'
+    value.generationDraft.dynamicPrompt = { maxPrompts: 2, seedBehavior: 'per-iteration' }
+    const region = value.regionalGuidance![0]
+    region.prompts!.useGlobalNegativePrompt = false
+    region.prompts!.negative = { embeddingRefs: [], text: '' }
+    if (branch === 'global-negative') {
+      value.generationDraft.negativePrompt.text = '{bad|worse}'
+    }
+    if (branch === 'regional-positive') {
+      region.prompts!.positive!.text = '{red|blue}'
+    }
+    if (branch === 'regional-negative') {
+      region.prompts!.negative.text = '{bad|worse}'
+    }
+    const before = structuredClone(value)
+    assert.notEqual(reason(value, { iterations: 2 }), null)
+    assert.deepEqual(value, before)
+  })
+}
+
+for (const positive of ['{cat|dog', '{cat|dog}{broken', '{cat|dog}|broken}']) {
+  test(`Anima advisory validates complete positive grammar beyond maxPrompts1: ${positive}`, () => {
+    const value = document()
+    value.generationDraft.positivePrompt.text = positive
+    value.generationDraft.dynamicPrompt = { maxPrompts: 1, seedBehavior: 'per-iteration' }
+    assert.notEqual(reason(value, { iterations: 1 }), null)
   })
 }

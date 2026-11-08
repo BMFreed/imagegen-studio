@@ -1,15 +1,18 @@
 import { ANIMA_SAMPLING_METHOD_KEYS } from '../../shared/projects/anima-sampling-method.js'
 
 import assert from 'node:assert/strict'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import test from 'node:test'
 
+import type { AnimaRegionalWorkerInput } from './anima-regional-worker-request.js'
 import type { RegionalProjectFixture } from './test-fixtures/regional-project.js'
 
+import { openAppDatabase } from '../db/database.js'
 import { LAMA_OUTPAINT_ARTIFACT } from '../runtime/lama-manifest.js'
 import { ProjectGenerationActionController } from './generation-action-controller.js'
 import { GenerationOrchestrator } from './generation-orchestrator.js'
+import { GenerationQueueRepository } from './generation-queue.js'
 import { ProjectRegionalGenerationCoordinator } from './project-regional-generation-coordinator.js'
 import { parseAcceptedGenerationBaseV1 } from './regional-queued-generation.js'
 import {
@@ -33,6 +36,8 @@ async function withPublicAnima(
     fixture: RegionalProjectFixture & {
       actions: ProjectGenerationActionController
       controls: {
+        afterPreparation?: () => Promise<void>
+        beforePreparation?: () => Promise<void>
         infillAvailable: boolean
         infillPath: string
         ready: ReturnType<RegionalProjectFixture['input']>['ready']
@@ -40,9 +45,10 @@ async function withPublicAnima(
       coordinator: ProjectRegionalGenerationCoordinator
     },
   ) => Promise<void>,
+  options: Parameters<typeof createRegionalProjectFixture>[0] = {},
 ) {
   await withAnimaBatchFixture(async (anima) => {
-    const fixture = await createRegionalProjectFixture()
+    const fixture = await createRegionalProjectFixture(options)
     const models = Object.assign(fixture.models, anima.modelService)
     await fixture.edit((document) => {
       document.generationDraft = structuredClone(anima.prepared.context.generationDraft)
@@ -57,7 +63,13 @@ async function withPublicAnima(
       }))
       document.generationDraft.seed = { policy: 'fixed', value: 123 }
     })
-    const controls = {
+    const controls: {
+      afterPreparation?: () => Promise<void>
+      beforePreparation?: () => Promise<void>
+      infillAvailable: boolean
+      infillPath: string
+      ready: ReturnType<RegionalProjectFixture['input']>['ready']
+    } = {
       infillAvailable: true,
       infillPath: path.join(fixture.root, 'explicit-structural-LaMa-resolver-substitute.pt'),
       ready: {
@@ -106,11 +118,15 @@ async function withPublicAnima(
       readQualifiedInferenceReady: async () => structuredClone(controls.ready),
       withGenerationAdmission: async (_scratch, callback) =>
         await callback(structuredClone(controls.ready)),
-      withGenerationPreparation: async (_scratch, callback) =>
-        await callback({
+      withGenerationPreparation: async (_scratch, callback) => {
+        await controls.beforePreparation?.()
+        const result = await callback({
           inferenceReady: structuredClone(controls.ready),
           targetWorker: fixture.compositionWorker,
-        }),
+        })
+        await controls.afterPreparation?.()
+        return result
+      },
     }
     const actions = new ProjectGenerationActionController({
       dispatch: { runNext: async () => ({ kind: 'idle' }), shutdown: async () => {} },
@@ -791,6 +807,656 @@ for (const failure of ['missing', 'changed-path'] as const) {
         )
         assert.equal((await fixture.queue.listManagerPage()).items.length, 1)
       }
+      assert.deepEqual(fixture.document(), before)
+      assert.ok((await readFile(fixture.packagePath)).equals(saved))
+    })
+  })
+}
+
+type PublicAnimaFixture = Parameters<Parameters<typeof withPublicAnima>[0]>[0]
+type BatchMode = 'img2img' | 'outpaint' | 'txt2img'
+type SeedBehavior = 'per-iteration' | 'per-prompt'
+
+async function selectConcreteBatch(
+  fixture: PublicAnimaFixture,
+  options: {
+    maxPrompts?: number
+    method?: (typeof ANIMA_SAMPLING_METHOD_KEYS)[number]
+    mode?: BatchMode
+    positive?: string
+    seed?: number
+    seedBehavior?: SeedBehavior
+  } = {},
+): Promise<void> {
+  const mode = options.mode ?? 'txt2img'
+  enableRegionalOutpaint(fixture)
+  if (mode !== 'txt2img') {
+    await useOpaqueTarget(fixture, mode === 'img2img' ? 255 : 127)
+  }
+  await fixture.edit((document) => {
+    document.generationDraft.dynamicPrompt = {
+      maxPrompts: options.maxPrompts ?? 2,
+      seedBehavior: options.seedBehavior ?? 'per-iteration',
+    }
+    document.generationDraft.positivePrompt = {
+      embeddingRefs: [],
+      text: options.positive ?? '{red cat|blue dog}',
+    }
+    document.generationDraft.seed = { policy: 'fixed', value: options.seed ?? 123 }
+    document.generationDraft.sampling.animaMethod = options.method ?? 'heun'
+    document.generationDraft.sampling.steps = 20
+    document.generationDraft.sampling.denoisingStrength = mode === 'txt2img' ? null : 0.5
+  })
+}
+
+async function queuedConcreteBatch(fixture: PublicAnimaFixture, iterations: number) {
+  const result = await fixture.actions.generate(fixture.tabId, {
+    documentId: fixture.document().documentId,
+    iterations,
+  })
+  if (result.kind !== 'queued') {
+    assert.fail('Expected one complete concrete Anima batch.')
+  }
+  return result
+}
+
+async function concreteRows(fixture: PublicAnimaFixture) {
+  return await fixture.db.selectFrom('generation_queue_item').selectAll().execute()
+}
+
+async function fixtureFileTree(root: string): Promise<{ path: string; sha256: string }[]> {
+  let entries
+  try {
+    entries = await readdir(root, { withFileTypes: true })
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      return []
+    }
+    throw error
+  }
+  const files: { path: string; sha256: string }[] = []
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (entry.isDirectory()) {
+      for (const child of await fixtureFileTree(path.join(root, entry.name))) {
+        files.push({ path: path.join(entry.name, child.path), sha256: child.sha256 })
+      }
+    } else {
+      assert.equal(entry.isFile(), true, 'Only actual fixture-owned regular files are expected.')
+      files.push({
+        path: entry.name,
+        sha256: regionalProjectDigest(await readFile(path.join(root, entry.name))),
+      })
+    }
+  }
+  return files
+}
+
+async function assertUnpublishedBatch(fixture: PublicAnimaFixture): Promise<void> {
+  assert.deepEqual(await concreteRows(fixture), [])
+  assert.deepEqual(await fixtureFileTree(path.join(fixture.root, 'generation-inputs')), [])
+  assert.deepEqual(await fixtureFileTree(fixture.scratch), [])
+  assert.deepEqual(await fixture.staging.listVerifiedCandidates(fixture.tabId), [])
+}
+
+function inspectConcreteInput(
+  input: AnimaRegionalWorkerInput,
+  expected: { iteration: number; mode: BatchMode; pair: number; positive: string; seed: number },
+): void {
+  assert.deepEqual(input.recipe.item, {
+    iteration: expected.iteration,
+    promptPairIndex: expected.pair,
+    prompts: { negative: '', positive: expected.positive },
+    seed: expected.seed,
+  })
+  assert.deepEqual(input.recipe.globalPrompts, {
+    negative: { embeddingRefs: [], text: '' },
+    positive: { embeddingRefs: [], text: expected.positive },
+  })
+  assert.equal(input.request.type, `generate-anima-${expected.mode}`)
+  assert.equal(input.request.job.sampling.seed, expected.seed)
+  assert.equal(input.request.job.sampling.stepSeed, expected.seed)
+  assert.equal(input.request.job.sampling.mode, expected.mode === 'txt2img' ? 'txt2img' : 'img2img')
+  assert.equal(
+    input.request.job.sampling.posteriorSeed,
+    expected.mode === 'txt2img' ? null : (expected.seed ^ 0x9e_37_79_b9) >>> 0,
+  )
+  assert.equal(input.compiledPrompts[0].text, expected.positive)
+  assert.deepEqual(input.request.job.prompts.positive, {
+    cleanedText: expected.positive,
+    spans: [{ end: expected.positive.length, start: 0, weight: 1 }],
+    version: 'anima-prompt-weighting-v1',
+  })
+  assert.equal(input.compiledPrompts[2].text, 'regional subject')
+}
+
+for (const seedBehavior of ['per-iteration', 'per-prompt'] as const) {
+  for (const seed of [123, 0xff_ff_ff_ff]) {
+    test(`Anima concrete positive batch binds every item for ${seedBehavior} seed ${seed}`, async () => {
+      await withPublicAnima(async (fixture) => {
+        await selectConcreteBatch(fixture, { seed, seedBehavior })
+        const document = structuredClone(fixture.document())
+        const saved = await readFile(fixture.packagePath)
+        const result = await queuedConcreteBatch(fixture, 2)
+        assert.equal(result.truncated, false)
+        assert.equal(result.jobIds.length, 4)
+        const rows = await concreteRows(fixture)
+        assert.equal(rows.length, 4)
+        assert.equal(new Set(rows.map((row) => row.batch_id)).size, 1)
+        assert.equal(rows[0].batch_id, result.batchId)
+        assert.equal(new Set(rows.map((row) => row.staging_session_id)).size, 1)
+        assert.equal(new Set(result.jobIds).size, 4)
+        const offsets = seedBehavior === 'per-iteration' ? [0, 1, 0, 1] : [0, 1, 2, 3]
+        const requestIds: string[] = []
+        const outputs: string[] = []
+        for (const [index, id] of result.jobIds.entries()) {
+          const concreteSeed = (seed + offsets[index]) % 0x1_00_00_00_00
+          const loaded = await fixture.queue.loadVerifiedAnimaRegionalInput(id)
+          requestIds.push(loaded.input.request.requestId)
+          outputs.push(loaded.input.request.job.output.pngPath)
+          inspectConcreteInput(loaded.input, {
+            iteration: index % 2,
+            mode: 'txt2img',
+            pair: Math.floor(index / 2),
+            positive: index < 2 ? 'red cat' : 'blue dog',
+            seed: concreteSeed,
+          })
+          assert.equal(loaded.payload.context.sampling.seed, concreteSeed)
+          assert.deepEqual(loaded.payload.context.prompts, loaded.input.recipe.item.prompts)
+          assert.deepEqual(loaded.input.recipe.regions[0].coverage.alpha, fixture.alpha)
+          assert.deepEqual(loaded.payload.workerJob.sampling, loaded.input.request.job.sampling)
+        }
+        assert.equal(new Set(requestIds).size, 4)
+        assert.equal(new Set(outputs).size, 4)
+        assert.equal(fixture.calls.compose.length, 1)
+        assert.deepEqual(fixture.document(), document)
+        assert.ok(
+          (await readFile(fixture.packagePath)).equals(saved),
+          'Queue admission cannot Save.',
+        )
+      })
+    })
+  }
+}
+
+for (const [index, method] of ANIMA_SAMPLING_METHOD_KEYS.entries()) {
+  const mode = (['txt2img', 'img2img', 'outpaint'] as const)[index % 3]
+  test(`Anima concrete ${method} ${mode} batch preserves every clipped native plan`, async () => {
+    await withPublicAnima(async (fixture) => {
+      await selectConcreteBatch(fixture, { method, mode, seedBehavior: 'per-prompt' })
+      const result = await queuedConcreteBatch(fixture, 2)
+      assert.equal(result.jobIds.length, 4)
+      for (const [i, id] of result.jobIds.entries()) {
+        const frozen = await fixture.queue.loadVerifiedAnimaRegionalInput(id)
+        inspectConcreteInput(frozen.input, {
+          iteration: i % 2,
+          mode,
+          pair: Math.floor(i / 2),
+          positive: i < 2 ? 'red cat' : 'blue dog',
+          seed: 123 + i,
+        })
+        const native = frozen.input.request.job.sampling
+        assert.equal(native.scheduler, method)
+        const completed = mode === 'txt2img' ? 20 : 10
+        assert.equal(native.totalSteps, method === 'heun' ? completed * 2 - 1 : completed)
+        assert.deepEqual(frozen.payload.workerJob.sampling, native)
+        if (frozen.payload.kind === 'anima-regional-outpaint') {
+          assert.equal(
+            frozen.payload.context.conditioning.keepMask.sha256,
+            regionalProjectDigest(Buffer.alloc(4096, 127)),
+          )
+          assert.equal(frozen.payload.outpaintInfill.path, fixture.controls.infillPath)
+        }
+      }
+      assert.equal(fixture.calls.compose.length, 1)
+    })
+  })
+}
+
+for (const mode of ['txt2img', 'img2img', 'outpaint'] as const) {
+  test(`Anima ${mode} maxPrompts prefix selects complete jobs and reports actual truncation`, async () => {
+    await withPublicAnima(async (fixture) => {
+      await selectConcreteBatch(fixture, {
+        maxPrompts: 1,
+        mode,
+        positive: '{first|second|third}',
+      })
+      const result = await queuedConcreteBatch(fixture, 2)
+      assert.equal(result.jobIds.length, 2)
+      assert.equal(result.truncated, true)
+      for (const [iteration, id] of result.jobIds.entries()) {
+        const frozen = await fixture.queue.loadVerifiedAnimaRegionalInput(id)
+        inspectConcreteInput(frozen.input, {
+          iteration,
+          mode,
+          pair: 0,
+          positive: 'first',
+          seed: 123 + iteration,
+        })
+      }
+      assert.equal(fixture.document().generationDraft.positivePrompt.text, '{first|second|third}')
+    })
+  })
+
+  test(`Anima ${mode} admits32 concrete jobs but rejects33 without truncation or side effects`, async () => {
+    await withPublicAnima(async (fixture) => {
+      await selectConcreteBatch(fixture, { maxPrompts: 1, mode, positive: 'same subject' })
+      const document = structuredClone(fixture.document())
+      const saved = await readFile(fixture.packagePath)
+      await assert.rejects(queuedConcreteBatch(fixture, 33), { code: 'GENERATION_INVALID_REQUEST' })
+      await assertUnpublishedBatch(fixture)
+      assert.equal(fixture.calls.compose.length, 0)
+      const result = await queuedConcreteBatch(fixture, 32)
+      assert.equal(result.jobIds.length, 32)
+      assert.equal(result.truncated, false)
+      const seeds = []
+      for (const id of result.jobIds) {
+        const frozen = await fixture.queue.loadVerifiedAnimaRegionalInput(id)
+        seeds.push(frozen.input.recipe.item.seed)
+      }
+      assert.deepEqual(
+        seeds,
+        Array.from({ length: 32 }, (_, i) => 123 + i),
+      )
+      assert.deepEqual(fixture.document(), document)
+      assert.ok((await readFile(fixture.packagePath)).equals(saved))
+    })
+  })
+}
+
+// Mutation target: supplying the first planned seed/recipe to later same-text members
+// must fail this independent identity oracle. The single-item neighbor below stays GREEN.
+test('regional Anima concrete batch keeps distinct member seeds red', async () => {
+  await withPublicAnima(async (fixture) => {
+    await selectConcreteBatch(fixture, { maxPrompts: 1, positive: 'same literal text' })
+    const result = await queuedConcreteBatch(fixture, 2)
+    assert.equal(result.jobIds.length, 2)
+    const entries = await Promise.all(
+      result.jobIds.map((id) => fixture.queue.loadVerifiedAnimaRegionalInput(id)),
+    )
+    assert.deepEqual(
+      entries.map((entry) => entry.input.recipe.item.seed),
+      [123, 124],
+    )
+    assert.deepEqual(
+      entries.map((entry) => entry.input.request.job.sampling.seed),
+      [123, 124],
+    )
+    assert.deepEqual(
+      entries.map((entry) => entry.payload.context.sampling.seed),
+      [123, 124],
+    )
+    assert.deepEqual(
+      entries.map((entry) => entry.input.recipe.item.iteration),
+      [0, 1],
+    )
+    assert.deepEqual(
+      entries.map((entry) => entry.input.recipe.item.prompts.positive),
+      ['same literal text', 'same literal text'],
+    )
+  })
+})
+
+test('regional Anima single concrete item control green', async () => {
+  await withPublicAnima(async (fixture) => {
+    await selectConcreteBatch(fixture, { maxPrompts: 1, positive: 'same literal text' })
+    const result = await queuedConcreteBatch(fixture, 1)
+    assert.equal(result.jobIds.length, 1)
+    const frozen = await fixture.queue.loadVerifiedAnimaRegionalInput(result.jobIds[0])
+    inspectConcreteInput(frozen.input, {
+      iteration: 0,
+      mode: 'txt2img',
+      pair: 0,
+      positive: 'same literal text',
+      seed: 123,
+    })
+  })
+})
+
+for (const failure of ['late-seed', 'late-mode', 'late-coverage'] as const) {
+  test(`Anima batch ${failure} mismatch refuses before publishing any member or file`, async () => {
+    await withPublicAnima(async (fixture) => {
+      await selectConcreteBatch(fixture)
+      const original = fixture.orchestrator.enqueuePreparedAnimaRegionalBatch.bind(
+        fixture.orchestrator,
+      )
+      let intercepted = 0
+      fixture.orchestrator.enqueuePreparedAnimaRegionalBatch = async (tabId, input) => {
+        intercepted++
+        const regionalInputs = structuredClone(input.regionalInputs)
+        const last = regionalInputs.at(-1)!
+        assert.equal(regionalInputs.length, 4)
+        if (failure === 'late-seed') {
+          last.recipe.item = { ...last.recipe.item, seed: 999 }
+        } else if (failure === 'late-mode') {
+          ;(last.request as { type: string }).type = 'generate-anima-img2img'
+        } else {
+          last.recipe.regions[0].coverage.alpha[0] = 255
+        }
+        return await original(tabId, { ...input, regionalInputs })
+      }
+      const before = structuredClone(fixture.document())
+      const saved = await readFile(fixture.packagePath)
+      try {
+        await assert.rejects(queuedConcreteBatch(fixture, 2), (error: unknown) => {
+          assert.ok(error instanceof Error && 'code' in error)
+          assert.ok(
+            ['GENERATION_BATCH_INVALID', 'INVALID_REQUEST', 'QUEUE_INPUT_INVALID'].includes(
+              String(error.code),
+            ),
+          )
+          return true
+        })
+        assert.equal(
+          intercepted,
+          1,
+          'The complete valid plan must reach the intended late boundary.',
+        )
+        await assertUnpublishedBatch(fixture)
+        assert.deepEqual(fixture.document(), before)
+        assert.ok((await readFile(fixture.packagePath)).equals(saved))
+      } finally {
+        fixture.orchestrator.enqueuePreparedAnimaRegionalBatch = original
+      }
+      const healthy = await queuedConcreteBatch(fixture, 2)
+      assert.equal(healthy.jobIds.length, 4, 'Refusal must release admission/capture ownership.')
+    })
+  })
+}
+
+test('Anima batch synchronously owns mutable regional sidecars before awaiting publication', async () => {
+  await withPublicAnima(async (fixture) => {
+    await selectConcreteBatch(fixture)
+    const original = fixture.orchestrator.enqueuePreparedAnimaRegionalBatch.bind(
+      fixture.orchestrator,
+    )
+    let mutated = false
+    fixture.orchestrator.enqueuePreparedAnimaRegionalBatch = async (tabId, input) => {
+      const pending = original(tabId, input)
+      const borrowed = input.regionalInputs.at(-1)!
+      borrowed.recipe.item = { ...borrowed.recipe.item, seed: 999 }
+      borrowed.recipe.regions[0].coverage.alpha.fill(255)
+      mutated = true
+      return await pending
+    }
+    try {
+      const result = await queuedConcreteBatch(fixture, 2)
+      assert.equal(mutated, true)
+      assert.equal(result.jobIds.length, 4)
+      for (const [index, id] of result.jobIds.entries()) {
+        const frozen = await fixture.queue.loadVerifiedAnimaRegionalInput(id)
+        assert.equal(frozen.input.recipe.item.seed, 123 + (index % 2))
+        assert.deepEqual(frozen.input.recipe.regions[0].coverage.alpha, fixture.alpha)
+      }
+    } finally {
+      fixture.orchestrator.enqueuePreparedAnimaRegionalBatch = original
+    }
+  })
+})
+
+for (const failure of ['runtime-release', 'capture-release'] as const) {
+  test(`Anima dynamic batch late ${failure} failure cancels every admitted group member`, async () => {
+    await withPublicAnima(async (fixture) => {
+      await selectConcreteBatch(fixture)
+      const capture = fixture.projects.withCapturedCurrentCanvasRegionalGenerationInput.bind(
+        fixture.projects,
+      )
+      const sentinel = new Error(`Controlled Anima batch ${failure}`)
+      if (failure === 'runtime-release') {
+        fixture.controls.afterPreparation = async () => {
+          throw sentinel
+        }
+      } else {
+        fixture.projects.withCapturedCurrentCanvasRegionalGenerationInput = async (...args) => {
+          await capture(...args)
+          throw sentinel
+        }
+      }
+      try {
+        await assert.rejects(queuedConcreteBatch(fixture, 2), sentinel)
+        const rows = await concreteRows(fixture)
+        assert.equal(rows.length, 4)
+        assert.equal(new Set(rows.map((row) => row.batch_id)).size, 1)
+        assert.ok(rows.every((row) => row.status === 'canceled'))
+        assert.deepEqual(await fixture.staging.listVerifiedCandidates(fixture.tabId), [])
+        for (const row of rows) {
+          assert.equal(
+            (await fixture.queue.loadVerifiedAnimaRegionalInput(row.id)).item.status,
+            'canceled',
+          )
+        }
+      } finally {
+        fixture.controls.afterPreparation = undefined
+        fixture.projects.withCapturedCurrentCanvasRegionalGenerationInput = capture
+      }
+      assert.equal((await queuedConcreteBatch(fixture, 2)).jobIds.length, 4)
+    })
+  })
+}
+
+test('Anima dynamic batch rejects an ABA-changed capture before composing or publishing', async () => {
+  await withPublicAnima(async (fixture) => {
+    await selectConcreteBatch(fixture)
+    const before = structuredClone(fixture.document())
+    fixture.controls.beforePreparation = async () => {
+      await fixture.edit((document) => {
+        document.regionalGuidance![0].name = 'Temporary capture edit'
+      })
+      await fixture.projects.undo(fixture.tabId)
+      assert.notEqual(fixture.document().documentRevision, before.documentRevision)
+      assert.deepEqual({ ...fixture.document(), documentRevision: before.documentRevision }, before)
+    }
+    await assert.rejects(queuedConcreteBatch(fixture, 2), { code: 'PROJECT_CHANGED' })
+    assert.equal(fixture.calls.compose.length, 0)
+    await assertUnpublishedBatch(fixture)
+    fixture.controls.beforePreparation = undefined
+    assert.equal((await queuedConcreteBatch(fixture, 2)).jobIds.length, 4)
+  })
+})
+
+test('Anima batch files become visible before one atomic transaction and never as partial SQL', async () => {
+  let published = 0
+  let inspect = async (): Promise<number> =>
+    assert.fail('Independent SQLite reader is not installed.')
+  const visible: number[] = []
+  await withPublicAnima(
+    async (fixture) => {
+      const observer = openAppDatabase(fixture.root, path.resolve('src/main/db/migrations'))
+      inspect = async () =>
+        (await observer.db.selectFrom('generation_queue_item').select('id').execute()).length
+      try {
+        await selectConcreteBatch(fixture)
+        const result = await queuedConcreteBatch(fixture, 2)
+        assert.equal(result.jobIds.length, 4)
+        assert.equal(published, 4)
+        assert.deepEqual(visible, [0, 0, 0, 0, 0])
+        assert.equal(await inspect(), 4)
+      } finally {
+        await observer.close()
+      }
+    },
+    {
+      queueHooks: {
+        afterInputPublish: async () => {
+          published++
+          visible.push(await inspect())
+        },
+        beforeBatchCommit: async () => {
+          visible.push(await inspect())
+        },
+      },
+    },
+  )
+})
+
+test('Anima dynamic batch rolls back all files after a second-item publication failure', async () => {
+  let published = 0
+  const sentinel = new Error('Controlled second Anima input publication failure')
+  await withPublicAnima(
+    async (fixture) => {
+      await selectConcreteBatch(fixture)
+      const before = structuredClone(fixture.document())
+      await assert.rejects(queuedConcreteBatch(fixture, 2), sentinel)
+      assert.equal(published, 2)
+      await assertUnpublishedBatch(fixture)
+      assert.deepEqual(fixture.document(), before)
+      assert.equal((await queuedConcreteBatch(fixture, 2)).jobIds.length, 4)
+    },
+    {
+      queueHooks: {
+        afterInputPublish: async () => {
+          published++
+          if (published === 2) {
+            throw sentinel
+          }
+        },
+      },
+    },
+  )
+})
+
+test('Anima dynamic batch aggregate staging refusal leaves no first-member publication', async () => {
+  await withPublicAnima(async (fixture) => {
+    await selectConcreteBatch(fixture)
+    const preflight = fixture.staging.preflightRegionalBatchCapacity.bind(fixture.staging)
+    const sentinel = new Error('Controlled aggregate Anima capacity refusal')
+    let checked = 0
+    fixture.staging.preflightRegionalBatchCapacity = async (input) => {
+      checked++
+      assert.equal(input.entries.length, 4)
+      await preflight(input)
+      throw sentinel
+    }
+    try {
+      await assert.rejects(queuedConcreteBatch(fixture, 2), sentinel)
+      assert.equal(checked, 1)
+      await assertUnpublishedBatch(fixture)
+    } finally {
+      fixture.staging.preflightRegionalBatchCapacity = preflight
+    }
+    assert.equal((await queuedConcreteBatch(fixture, 2)).jobIds.length, 4)
+  })
+})
+
+test('Anima selected dynamic OUT member Retry reloads only its frozen concrete input after saved edits', async () => {
+  await withPublicAnima(async (fixture) => {
+    await selectConcreteBatch(fixture, { mode: 'outpaint', seedBehavior: 'per-prompt' })
+    const admitted = await queuedConcreteBatch(fixture, 2)
+    assert.equal(admitted.jobIds.length, 4)
+    for (const id of admitted.jobIds) {
+      await fixture.orchestrator.cancelGenerationJob(id)
+    }
+    const sourceId = admitted.jobIds[2]
+    const source = await fixture.queue.getManagerEntry(sourceId)
+    const before = await fixture.queue.loadVerifiedAnimaRegionalInput(sourceId)
+    const rowsBefore = await concreteRows(fixture)
+    const rowBefore = rowsBefore.find((row) => row.id === sourceId)!
+    const originalPng = await readFile(before.targetPath)
+    inspectConcreteInput(before.input, {
+      iteration: 0,
+      mode: 'outpaint',
+      pair: 1,
+      positive: 'blue dog',
+      seed: 125,
+    })
+    await fixture.edit((document) => {
+      document.generationDraft.model = null
+      document.generationDraft.dynamicPrompt = { maxPrompts: 1, seedBehavior: 'per-iteration' }
+      document.generationDraft.positivePrompt.text = '{changed|authoring}'
+      document.generationDraft.seed = { policy: 'fixed', value: 999 }
+      document.generationDraft.sampling.animaMethod = 'euler'
+      document.generationDraft.sampling.denoisingStrength = 1
+      for (const region of document.regionalGuidance!) {
+        region.enabled = false
+      }
+    })
+    await fixture.projects.save(fixture.tabId)
+    const edited = structuredClone(fixture.document())
+    const saved = await readFile(fixture.packagePath)
+    await fixture.projects.close(fixture.tabId)
+    assert.equal((await fixture.projects.open(fixture.tabId)).kind, 'opened')
+    const reloadedQueue = new GenerationQueueRepository(fixture.db, fixture.root)
+    await reloadedQueue.recoverAfterRestart()
+    const reloaded = await reloadedQueue.loadVerifiedAnimaRegionalInput(sourceId)
+    assert.deepEqual(reloaded.input, before.input)
+    fixture.compositionWorker.composeTarget = async () => {
+      throw new Error('Frozen member Retry recomposed current source')
+    }
+    await fixture.actions.retryJob({ id: sourceId, statusSequence: source.statusSequence })
+    const afterRows = await concreteRows(fixture)
+    assert.equal(afterRows.length, 5)
+    const clone = afterRows.find((row) => !admitted.jobIds.includes(row.id))!
+    assert.equal(clone.frozen_payload_json, rowBefore.frozen_payload_json)
+    assert.notEqual(clone.staging_session_id, rowBefore.staging_session_id)
+    const after = await fixture.queue.loadVerifiedAnimaRegionalInput(clone.id)
+    assert.ok((await readFile(after.targetPath)).equals(originalPng))
+    assert.deepEqual(after.input.recipe, before.input.recipe)
+    assert.deepEqual(after.input.compiledPrompts, before.input.compiledPrompts)
+    assert.deepEqual(after.input.request.job.sampling, before.input.request.job.sampling)
+    assert.equal(after.input.request.job.sampling.seed, 125)
+    const sourceAfter = afterRows.find((row) => row.id === sourceId)!
+    assert.equal(
+      sourceAfter.status_sequence,
+      rowBefore.status_sequence + 1,
+      'Retry consumes the reviewed source sequence once.',
+    )
+    assert.deepEqual(
+      {
+        ...sourceAfter,
+        status_sequence: rowBefore.status_sequence,
+        updated_at: rowBefore.updated_at,
+      },
+      rowBefore,
+    )
+    assert.deepEqual(
+      afterRows.filter((row) => admitted.jobIds.includes(row.id) && row.id !== sourceId),
+      rowsBefore.filter((row) => row.id !== sourceId),
+    )
+    assert.deepEqual(fixture.document(), edited)
+    assert.ok((await readFile(fixture.packagePath)).equals(saved))
+  })
+})
+
+test('Anima malformed authoring Images values refuse before target capture or durable admission', async () => {
+  await withPublicAnima(async (fixture) => {
+    await selectConcreteBatch(fixture)
+    const before = structuredClone(fixture.document())
+    for (const iterations of [0, -1, 1.5, 101, Number.NaN, Number.POSITIVE_INFINITY, true, '2']) {
+      await assert.rejects(queuedConcreteBatch(fixture, iterations as unknown as number), {
+        code: 'GENERATION_INVALID_REQUEST',
+      })
+      assert.equal(fixture.calls.compose.length, 0)
+      await assertUnpublishedBatch(fixture)
+      assert.deepEqual(fixture.document(), before)
+    }
+  })
+})
+
+for (const branch of ['global-negative', 'regional-positive', 'regional-negative'] as const) {
+  test(`Anima public dynamic batch keeps ${branch} static without partial publication`, async () => {
+    await withPublicAnima(async (fixture) => {
+      await selectConcreteBatch(fixture)
+      await fixture.edit((document) => {
+        const prompts = document.regionalGuidance![0].prompts!
+        prompts.useGlobalNegativePrompt = false
+        prompts.negative = { embeddingRefs: [], text: '' }
+        if (branch === 'global-negative') {
+          document.generationDraft.negativePrompt.text = '{bad|worse}'
+        }
+        if (branch === 'regional-positive') {
+          prompts.positive!.text = '{red|blue}'
+        }
+        if (branch === 'regional-negative') {
+          prompts.negative.text = '{bad|worse}'
+        }
+      })
+      const before = structuredClone(fixture.document())
+      const saved = await readFile(fixture.packagePath)
+      await assert.rejects(
+        queuedConcreteBatch(fixture, 2),
+        /static global negative and regional|local negative/,
+      )
+      assert.equal(fixture.calls.compose.length, 0)
+      await assertUnpublishedBatch(fixture)
       assert.deepEqual(fixture.document(), before)
       assert.ok((await readFile(fixture.packagePath)).equals(saved))
     })

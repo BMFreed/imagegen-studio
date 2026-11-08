@@ -52,6 +52,7 @@ import type { ProjectWorkerClient } from './worker-client.js'
 
 import { prepareAnimaGenerationBatch } from './anima-generation-batch.js'
 import {
+  materializeAnimaOutpaintBatchItem,
   prepareAnimaGeneration,
   prepareAnimaOutpaintGeneration,
 } from './anima-generation-preparation.js'
@@ -323,7 +324,7 @@ export class ProjectRegionalGenerationCoordinator {
       !UUID.test(input?.documentRevision) ||
       !Number.isSafeInteger(input.iterations) ||
       input.iterations < 1 ||
-      input.iterations > GENERATION_BATCH_JOB_LIMIT ||
+      input.iterations > 100 ||
       typeof input.withPreparation !== 'function' ||
       (input.beforePublication !== undefined && typeof input.beforePublication !== 'function') ||
       (input.afterPublication !== undefined && typeof input.afterPublication !== 'function') ||
@@ -332,6 +333,12 @@ export class ProjectRegionalGenerationCoordinator {
       throw invalid('The reviewed Project and regional preparation owner are required.')
     }
     const { assertOwner, document } = this.captureOwner(tabId, input)
+    if (
+      document.generationDraft.model?.baseModelFamily !== 'anima' &&
+      input.iterations > GENERATION_BATCH_JOB_LIMIT
+    ) {
+      throw invalid('The reviewed Project and regional preparation owner are required.')
+    }
     validateInvokeDraft(document, input.iterations)
     if (document.generationDraft.model?.baseModelFamily === 'anima') {
       return await this.track(this.submitCapturedAnimaBatch(tabId, { ...input, assertOwner }))
@@ -455,7 +462,6 @@ export class ProjectRegionalGenerationCoordinator {
           const document = structuredClone(capture.document)
           validateInvokeDraft(document, input.iterations)
           const models = captureAnimaModels(this.options.models)
-          input.onPlanned?.({ truncated: false })
           const queued = await input.withPreparation(async (preparation) => {
             assertCurrent()
             const ready = structuredClone(preparation.inferenceReady)
@@ -491,60 +497,62 @@ export class ProjectRegionalGenerationCoordinator {
                 target,
               })
               assertCurrent()
-              const planned = planGenerationBatch({
-                baseSeed: prepared.context.sampling.seed,
-                iterations: 1,
-                maxJobs: GENERATION_BATCH_JOB_LIMIT,
-                maxPrompts: 1,
-                negativePrompt: prepared.context.prompts.negative,
-                positivePrompt: prepared.context.prompts.positive,
-                seedBehavior: prepared.context.dynamic.seedBehavior,
-              })
-              if (planned.items.length !== 1 || planned.truncated) {
-                throw unsupported(
-                  'Anima Regional Guidance requires one concrete static image per click.',
-                )
-              }
-              const recipe = await prepareCurrentCanvasRegionalRecipe({
-                capture: capture.regional,
-                job: {
-                  bbox: prepared.context.bbox,
-                  documentId: prepared.context.documentId,
-                  documentRevision: prepared.context.documentRevision,
-                  family: 'anima',
-                  item: planned.items[0],
-                },
-              })
-              assertCurrent()
-              const provisionalRoot = path.join(
-                path.resolve(this.options.scratchBasePath),
-                `outpaint-admission-${randomUUID()}`,
+              const planned = planInvokeRegionalGenerationBatch(
+                document,
+                input.iterations,
+                prepared.context.sampling.seed,
               )
-              const request = buildQueuedOutpaintWorkerRequest({
-                infill,
-                outputPath: path.join(provisionalRoot, 'result.png'),
-                payload: buildFrozenQueuedOutpaintV1(prepared, randomUUID()),
-                provisionalRoot,
-                ready,
-                requestId: randomUUID(),
-                targetPath: path.join(provisionalRoot, 'target.png'),
-              })
-              if (request.type !== 'generate-anima-outpaint') {
-                throw invalid('The outpaint family changed.')
+              input.onPlanned?.({ truncated: planned.truncated })
+              assertCurrent()
+              const items: {
+                prepared: ReturnType<typeof materializeAnimaOutpaintBatchItem>
+                regional: ReturnType<typeof captureAnimaRegionalWorkerInput>
+              }[] = []
+              for (const item of planned.items) {
+                const concrete = materializeAnimaOutpaintBatchItem(prepared, item)
+                const recipe = await prepareCurrentCanvasRegionalRecipe({
+                  capture: capture.regional,
+                  job: {
+                    bbox: concrete.context.bbox,
+                    documentId: concrete.context.documentId,
+                    documentRevision: concrete.context.documentRevision,
+                    family: 'anima',
+                    item,
+                  },
+                })
+                assertCurrent()
+                const provisionalRoot = path.join(
+                  path.resolve(this.options.scratchBasePath),
+                  `outpaint-admission-${randomUUID()}`,
+                )
+                const request = buildQueuedOutpaintWorkerRequest({
+                  infill,
+                  outputPath: path.join(provisionalRoot, 'result.png'),
+                  payload: buildFrozenQueuedOutpaintV1(concrete, randomUUID()),
+                  provisionalRoot,
+                  ready,
+                  requestId: randomUUID(),
+                  targetPath: path.join(provisionalRoot, 'target.png'),
+                })
+                if (request.type !== 'generate-anima-outpaint') {
+                  throw invalid('The outpaint family changed.')
+                }
+                items.push({
+                  prepared: concrete,
+                  regional: captureAnimaRegionalWorkerInput({
+                    compiledPrompts: [...compileCurrentCanvasAnimaRegionalPrompts(recipe)],
+                    compositionProfile: 'invoke-krea2-global-support-v1',
+                    promptInterpretation: 'invoke-fragments-v1',
+                    recipe,
+                    request,
+                  }),
+                })
               }
-              const regional = captureAnimaRegionalWorkerInput({
-                compiledPrompts: [...compileCurrentCanvasAnimaRegionalPrompts(recipe)],
-                compositionProfile: 'invoke-krea2-global-support-v1',
-                promptInterpretation: 'invoke-fragments-v1',
-                recipe,
-                request,
-              })
-              admitted = await this.options.orchestrator.enqueuePreparedAnimaRegionalOutpaint(
+              admitted = await this.options.orchestrator.enqueuePreparedAnimaRegionalOutpaintBatch(
                 tabId,
                 {
                   assertCurrent,
-                  prepared,
-                  regional,
+                  items,
                   ...(input.beforePublication
                     ? { beforePublication: input.beforePublication }
                     : {}),
@@ -570,29 +578,30 @@ export class ProjectRegionalGenerationCoordinator {
               target,
             })
             assertCurrent()
-            const batch = prepareAnimaGenerationBatch({ iterations: 1, prepared })
-            if (batch.items.length !== 1 || batch.truncated) {
-              throw unsupported(
-                'Anima Regional Guidance requires one concrete static image per click.',
-              )
-            }
-            const recipe = await prepareCurrentCanvasRegionalRecipe({
-              capture: capture.regional,
-              job: {
-                bbox: batch.context.bbox,
-                documentId: batch.context.documentId,
-                documentRevision: batch.context.documentRevision,
-                family: 'anima',
-                item: {
-                  iteration: batch.items[0].iteration,
-                  promptPairIndex: batch.items[0].promptPairIndex,
-                  prompts: { ...batch.items[0].prompts },
-                  seed: batch.items[0].seed,
-                },
-              },
-            })
-            const compiledPrompts = compileCurrentCanvasAnimaRegionalPrompts(recipe)
+            const batch = prepareAnimaGenerationBatch({ iterations: input.iterations, prepared })
+            input.onPlanned?.({ truncated: batch.truncated })
             assertCurrent()
+            const recipes: Awaited<ReturnType<typeof prepareCurrentCanvasRegionalRecipe>>[] = []
+            for (const item of batch.items) {
+              recipes.push(
+                await prepareCurrentCanvasRegionalRecipe({
+                  capture: capture.regional,
+                  job: {
+                    bbox: batch.context.bbox,
+                    documentId: batch.context.documentId,
+                    documentRevision: batch.context.documentRevision,
+                    family: 'anima',
+                    item: {
+                      iteration: item.iteration,
+                      promptPairIndex: item.promptPairIndex,
+                      prompts: { ...item.prompts },
+                      seed: item.seed,
+                    },
+                  },
+                }),
+              )
+              assertCurrent()
+            }
             return await withAnimaGenerationBatchRequests({
               modelService: models,
               prepared: batch,
@@ -600,12 +609,12 @@ export class ProjectRegionalGenerationCoordinator {
               scratchBasePath: this.options.scratchBasePath,
               use: async (requests) => {
                 assertCurrent()
-                const regionalInputs = requests.map((request) =>
+                const regionalInputs = requests.map((request, index) =>
                   captureAnimaRegionalWorkerInput({
-                    compiledPrompts: [...compiledPrompts],
+                    compiledPrompts: [...compileCurrentCanvasAnimaRegionalPrompts(recipes[index])],
                     compositionProfile: 'invoke-krea2-global-support-v1',
                     promptInterpretation: 'invoke-fragments-v1',
-                    recipe,
+                    recipe: recipes[index],
                     request,
                   }),
                 )

@@ -4,6 +4,7 @@ import {
 } from '../../shared/projects/anima-flow-sampling-plan.js'
 import { isAnimaSamplingMethod } from '../../shared/projects/anima-sampling-method.js'
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
+import type { PlannedGenerationBatchItem } from '../../shared/projects/generation-batch-plan.js'
 import {
   type GenerationDynamicPromptSettings,
   getEffectiveDynamicPromptSettings,
@@ -107,6 +108,32 @@ interface AnimaGenerationSettingsValidationInput {
   internalResolution: { height: number; width: number }
   lastActualSeed?: number | null
   lastActualSeedSnapshot?: number | null
+}
+
+/**
+ * Project one concrete planner item exactly as ordinary Anima OUT batching does. The caller owns
+ * the detached group context/target; retain its shared target bytes without mutating either input.
+ */
+export function materializeAnimaOutpaintBatchItem(
+  prepared: PreparedAnimaOutpaintGeneration,
+  item: PlannedGenerationBatchItem,
+): PreparedAnimaOutpaintGeneration {
+  const { context, targetPngBytes } = prepared
+  const generationDraft = structuredClone(context.generationDraft)
+  generationDraft.positivePrompt.text = item.prompts.positive
+  generationDraft.negativePrompt.text = item.prompts.negative
+  if (generationDraft.seed.policy === 'fixed') {
+    generationDraft.seed.value = item.seed
+  }
+  return {
+    context: {
+      ...context,
+      generationDraft,
+      prompts: { ...item.prompts },
+      sampling: { ...context.sampling, seed: item.seed },
+    },
+    targetPngBytes,
+  }
 }
 
 /** Normal generation keeps its world-position contract separate from native sampling settings. */

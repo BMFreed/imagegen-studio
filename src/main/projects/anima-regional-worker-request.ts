@@ -3,6 +3,7 @@ import {
   type AnimaWorkerRequest,
   captureCompiledAnimaWorkerRequest,
 } from '../../shared/projects/anima-worker-request.js'
+import { GENERATION_BATCH_JOB_LIMIT } from '../../shared/projects/generation-batch-policy.js'
 import { ANIMA_REGIONAL_COMPOSITION_PROFILE } from '../../shared/projects/regional-invoke-generation.js'
 
 import { lstat, realpath } from 'node:fs/promises'
@@ -98,8 +99,12 @@ export function captureAnimaRegionalWorkerInput(
       request.job.bbox.height > 512 ||
       !isDeepStrictEqual(recipe.bbox, request.job.bbox) ||
       recipe.item.seed !== request.job.sampling.seed ||
-      recipe.item.iteration !== 0 ||
-      recipe.item.promptPairIndex !== 0 ||
+      !Number.isSafeInteger(recipe.item.iteration) ||
+      recipe.item.iteration < 0 ||
+      recipe.item.iteration >= GENERATION_BATCH_JOB_LIMIT ||
+      !Number.isSafeInteger(recipe.item.promptPairIndex) ||
+      recipe.item.promptPairIndex < 0 ||
+      recipe.item.promptPairIndex >= GENERATION_BATCH_JOB_LIMIT ||
       recipe.regions.length < 1 ||
       recipe.regions.some((region) => region.positive === null || region.positive.text === '') ||
       !isDeepStrictEqual(compiled, captured.compiledPrompts) ||

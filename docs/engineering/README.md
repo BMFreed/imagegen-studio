@@ -2396,3 +2396,22 @@ remain distinct. All9,369 disposable entries are retained before measured
 Whole lint retains two unchanged historical project-service errors; final scoped
 lint/types/build pass. Trained acceptance uses Heun only; six-method lower evidence
 does not promote quality, Smart/batch/resources or PP-001/005/007/008.
+
+
+## Anima Regional Guidance — concrete batch and global-positive expansion
+
+[Concrete batch ownership](./phase-4-anima-regional-batch-research.md) adapts current
+Invoke batching through the existing ordinary Anima/atomic queue owners for
+TXT/IMG/OUT. Each concrete item owns its recipe, seed, compiled prompts/arrays and
+frozen sidecars. Existing32-job/data-dependent limits remain; no Python, worker
+command/capability, migration or numerical changes occur. ROOT records1,629 Main /
+203 browser PASS, types/scoped lint/build PASS and eight qualified installed
+requests/seven PNGs. Selected Add/Undo/Redo/Save-reopen passes in all modes; OUT
+pending/running Cancel and restarted selected-member Retry preserve exact own RGBA
+and distinct neighbor. Six Main mutation selections givefive GREEN/one semantic
+RED, exact restoration. Failed UI-oracle/setup attempts remain excluded. All4,575
+disposable entries are retained before141,377,536 allocated bytes are reclaimed;
+canonical runtime/models/projects/frozen inputs remain protected. Source/retained
+review, execution and physical release remain distinct. Whole lint retains two
+unchanged historical project-service errors. Quality/Smart/resources/spatial-negative
+and PP-001/005/007/008 limits remain unchanged.

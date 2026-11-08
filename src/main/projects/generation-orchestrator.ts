@@ -64,7 +64,10 @@ import type {
 import type { SmartPatchGenerationStagingRepository } from './smart-patch-generation-staging.js'
 import type { ProjectWorkerClient } from './worker-client.js'
 
-import { reverifyFrozenAnimaGeneration } from './anima-generation-preparation.js'
+import {
+  materializeAnimaOutpaintBatchItem,
+  reverifyFrozenAnimaGeneration,
+} from './anima-generation-preparation.js'
 import { withAnimaGenerationBatchRequests } from './anima-generation-request.js'
 import {
   parseFrozenQueuedAnimaGenerationV1,
@@ -771,10 +774,14 @@ export class GenerationOrchestrator {
     const regionalInputs = input.regionalInputs.map((regional) =>
       captureAnimaRegionalWorkerInput(regional),
     )
-    if (preparedBatch.items.length !== 1 || regionalInputs.length !== 1) {
+    if (
+      preparedBatch.items.length < 1 ||
+      preparedBatch.items.length > GENERATION_BATCH_JOB_LIMIT ||
+      regionalInputs.length !== preparedBatch.items.length
+    ) {
       throw new GenerationOrchestratorError(
         'GENERATION_BATCH_INVALID',
-        'Anima Regional Guidance requires one captured item.',
+        'Anima Regional Guidance requires one complete captured batch.',
       )
     }
     const requests = regionalInputs.map(({ request }) => {
@@ -882,18 +889,78 @@ export class GenerationOrchestrator {
       regional: AnimaRegionalWorkerInput
     },
   ): Promise<QueuedGenerationItem[]> {
-    const prepared = {
-      context: structuredClone(input.prepared.context),
-      targetPngBytes: Buffer.from(input.prepared.targetPngBytes),
+    return await this.enqueuePreparedAnimaRegionalOutpaintBatch(tabId, {
+      ...input,
+      items: [{ prepared: input.prepared, regional: input.regional }],
+    })
+  }
+
+  /** One captured OUT source and complete concrete group through the ordinary atomic owner. */
+  async enqueuePreparedAnimaRegionalOutpaintBatch(
+    tabId: string,
+    input: {
+      afterPublication?: (
+        items: readonly QueuedGenerationItem[],
+        assertCurrent: () => void,
+      ) => Promise<void>
+      assertCurrent: () => void
+      beforePublication?: () => Promise<void>
+      items: readonly {
+        prepared: PreparedAnimaOutpaintGeneration
+        regional: AnimaRegionalWorkerInput
+      }[]
+    },
+  ): Promise<QueuedGenerationItem[]> {
+    this.assertGenerationOpen(tabId)
+    if (
+      !Array.isArray(input.items) ||
+      input.items.length < 1 ||
+      input.items.length > GENERATION_BATCH_JOB_LIMIT ||
+      !Buffer.isBuffer(input.items[0]?.prepared?.targetPngBytes)
+    ) {
+      throw new GenerationOrchestratorError(
+        'GENERATION_BATCH_INVALID',
+        'The Anima OUT batch is invalid.',
+      )
     }
-    const regional = captureAnimaRegionalWorkerInput(input.regional)
-    if (regional.request.type !== 'generate-anima-outpaint') {
+    const targetPngBytes = Buffer.from(input.items[0].prepared.targetPngBytes)
+    const items = input.items.map((item) => {
+      if (
+        !Buffer.isBuffer(item?.prepared?.targetPngBytes) ||
+        !item.prepared.targetPngBytes.equals(targetPngBytes)
+      ) {
+        throw new GenerationOrchestratorError(
+          'GENERATION_BATCH_INVALID',
+          'The Anima OUT batch must share one source.',
+        )
+      }
+      return {
+        prepared: { context: structuredClone(item.prepared.context), targetPngBytes },
+        regional: captureAnimaRegionalWorkerInput(item.regional),
+      }
+    })
+    const prepared = items[0].prepared
+    const request = items[0].regional.request
+    if (request.type !== 'generate-anima-outpaint') {
       throw new GenerationOrchestratorError(
         'GENERATION_BATCH_INVALID',
         'Anima regional OUT requires its exact command.',
       )
     }
-    const expectedInfill = { ...regional.request.job.infillResource }
+    const expectedInfill = { ...request.job.infillResource }
+    if (
+      items.some(
+        ({ regional }) =>
+          regional.request.type !== 'generate-anima-outpaint' ||
+          !isDeepStrictEqual(regional.request.job.infillResource, expectedInfill),
+      )
+    ) {
+      throw new GenerationOrchestratorError(
+        'GENERATION_BATCH_INVALID',
+        'The Anima OUT batch must share one infill resource.',
+      )
+    }
+    const { afterPublication, assertCurrent: assertCaptured, beforePublication } = input
     const assertCurrent = () => {
       this.assertGenerationOpen(tabId)
       if (
@@ -905,7 +972,7 @@ export class GenerationOrchestrator {
           'The captured Anima OUT Project changed.',
         )
       }
-      input.assertCurrent()
+      assertCaptured()
     }
     assertCurrent()
     const operation = this.enqueueBarrier.then(async () => {
@@ -935,14 +1002,14 @@ export class GenerationOrchestrator {
         return actual
       }
       await resolveVerifiedOutpaintInfill()
-      await input.beforePublication?.()
+      await beforePublication?.()
       assertCurrent()
       const stagingSessionId = randomUUID()
       const queued = await this.queue.enqueuePreparedOutpaintBatch({
         assertCurrent,
         beforeCommit: async () => assertCurrent(),
         infillResolver: { resolveVerifiedOutpaintInfill },
-        items: [prepared],
+        items: items.map((item) => item.prepared),
         modelService: this.models as AnimaGenerationModelResolver & GenerationModelResolver,
         preflight: async (entries) => {
           await assertIdentity()
@@ -955,12 +1022,12 @@ export class GenerationOrchestrator {
           assertCurrent()
         },
         projectPath: project.canonicalPath,
-        regionalInputs: [regional],
+        regionalInputs: items.map((item) => item.regional),
         stagingSessionId,
       })
       try {
         await assertIdentity()
-        await input.afterPublication?.(queued, assertCurrent)
+        await afterPublication?.(queued, assertCurrent)
         assertCurrent()
         return queued
       } catch (error) {
@@ -1185,21 +1252,7 @@ export class GenerationOrchestrator {
     }
     const concrete: PreparedOutpaintGeneration[] = plan.items.map((item) => {
       if (context.kind === 'anima-outpaint-preparation') {
-        const generationDraft = structuredClone(context.generationDraft)
-        generationDraft.positivePrompt.text = item.prompts.positive
-        generationDraft.negativePrompt.text = item.prompts.negative
-        if (generationDraft.seed.policy === 'fixed') {
-          generationDraft.seed.value = item.seed
-        }
-        return {
-          context: {
-            ...context,
-            generationDraft,
-            prompts: { ...item.prompts },
-            sampling: { ...context.sampling, seed: item.seed },
-          },
-          targetPngBytes,
-        }
+        return materializeAnimaOutpaintBatchItem({ context, targetPngBytes }, item)
       }
       const embeddings =
         context.embeddingRefs && embeddingPool
