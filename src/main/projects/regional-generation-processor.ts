@@ -7,6 +7,7 @@ import {
 import {
   supportsInferenceAnimaRegional,
   supportsInferenceAnimaRegionalImg2Img,
+  supportsInferenceAnimaRegionalOutpaint,
   supportsInferenceAnimaRegionalSampling,
 } from '../../shared/projects/inference-worker-capabilities.js'
 import {
@@ -46,6 +47,7 @@ import type {
 } from './regional-worker-request.js'
 
 import { reverifyFrozenQueuedAnimaGeneration } from './anima-queued-generation.js'
+import { reverifyFrozenQueuedOutpaintGeneration } from './generation-queue.js'
 import { reverifyFrozenGenerationEmbeddings } from './illustrious-generation-embeddings.js'
 import {
   frozenLoraFieldsAgree,
@@ -422,7 +424,8 @@ export class RegionalGenerationProcessor {
   ): Promise<void> {
     if (
       claimed.payload.kind === 'anima-regional-txt2img' ||
-      claimed.payload.kind === 'anima-regional-img2img'
+      claimed.payload.kind === 'anima-regional-img2img' ||
+      claimed.payload.kind === 'anima-regional-outpaint'
     ) {
       const resolveVerifiedGenerationAnimaBundleForPlan =
         this.models.resolveVerifiedGenerationAnimaBundleForPlan
@@ -436,6 +439,32 @@ export class RegionalGenerationProcessor {
         throw new Error('The frozen Anima resource verifier is unavailable.')
       }
       const base = parseAcceptedGenerationBaseV1(JSON.stringify(claimed.payload))
+      if (base.kind === 'anima-outpaint' && claimed.payload.kind === 'anima-regional-outpaint') {
+        if (input.request.type !== 'generate-anima-outpaint' || !this.infillResolver) {
+          throw new Error('The frozen Anima OUT resource verifier is unavailable.')
+        }
+        const infill = await this.infillResolver.resolveVerifiedOutpaintInfill()
+        if (
+          !isDeepStrictEqual(
+            {
+              byteSize: infill.byteSize,
+              path: infill.managedPath,
+              role: infill.role,
+              sha256: infill.sha256,
+            },
+            claimed.payload.outpaintInfill,
+          ) ||
+          !isDeepStrictEqual(input.request.job.conditioning, claimed.payload.context.conditioning)
+        ) {
+          throw new Error('The frozen Anima OUT resource or alpha identity changed.')
+        }
+        await reverifyFrozenQueuedOutpaintGeneration(
+          base,
+          this.models as AnimaGenerationModelResolver & GenerationModelResolver,
+          { resolveVerifiedOutpaintInfill: async () => infill },
+        )
+        return
+      }
       if (base.kind !== 'anima-txt2img' && base.kind !== 'anima-img2img') {
         throw new Error('The frozen Anima regional base is invalid.')
       }
@@ -588,6 +617,8 @@ export class RegionalGenerationProcessor {
       if (input.compositionProfile === 'invoke-krea2-global-support-v1') {
         if (
           !supportsInferenceAnimaRegional(transport.ready) ||
+          (input.request.type === 'generate-anima-outpaint' &&
+            !supportsInferenceAnimaRegionalOutpaint(transport.ready)) ||
           (input.request.type === 'generate-anima-img2img' &&
             !supportsInferenceAnimaRegionalImg2Img(transport.ready)) ||
           (input.request.job.sampling.scheduler !== 'euler' &&
@@ -711,7 +742,8 @@ export class RegionalGenerationProcessor {
       active.receivingProgress = true
       const expectedTotalSteps =
         input.request.type === 'generate-anima-txt2img' ||
-        input.request.type === 'generate-anima-img2img'
+        input.request.type === 'generate-anima-img2img' ||
+        input.request.type === 'generate-anima-outpaint'
           ? input.request.job.sampling.totalSteps
           : input.request.job.sampling.steps
       const onProgress = (progress: GenerationDenoisingProgress): void => {

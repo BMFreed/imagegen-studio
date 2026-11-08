@@ -6,6 +6,7 @@ type RetryState = Pick<
   ProjectGenerationActionState,
   | 'animaOutpaintSupported'
   | 'animaRegionalImg2ImgSupported'
+  | 'animaRegionalOutpaintSupported'
   | 'animaRegionalSamplingSupported'
   | 'animaRegionalSupported'
   | 'animaSupported'
@@ -35,12 +36,19 @@ export function generationQueueRetryReason(
   frozenCfgRescale = 0,
   frozenAnimaMethod?: string | null,
 ): string | null {
-  if (operation === 'anima-regional-txt2img' || operation === 'anima-regional-img2img') {
+  if (
+    operation === 'anima-regional-txt2img' ||
+    operation === 'anima-regional-img2img' ||
+    operation === 'anima-regional-outpaint'
+  ) {
     if (state === null) {
       return 'Checking image engine support for this frozen Anima Regional Guidance job.'
     }
     if (state.animaRegionalSupported !== true) {
       return 'The current image engine does not support Anima Regional Guidance. Repair or update the runtime.'
+    }
+    if (operation === 'anima-regional-outpaint' && state.animaRegionalOutpaintSupported !== true) {
+      return 'The current image engine does not support this frozen Anima Regional Guidance outpaint job. Repair or update the runtime.'
     }
     if (operation === 'anima-regional-img2img' && state.animaRegionalImg2ImgSupported !== true) {
       return 'The current image engine does not support this frozen Anima Regional Guidance image job. Repair or update the runtime.'

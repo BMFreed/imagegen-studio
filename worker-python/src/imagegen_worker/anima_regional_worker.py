@@ -23,6 +23,7 @@ from imagegen_worker.anima_regional import (
     _capture,  # pyright: ignore[reportPrivateUsage]
     _capture_command,  # pyright: ignore[reportPrivateUsage]
     generate_current_canvas_regional_anima_img2img,
+    generate_current_canvas_regional_anima_outpaint,
     generate_current_canvas_regional_anima_txt2img,
 )
 from imagegen_worker.anima_worker import supports_anima_compute
@@ -42,10 +43,15 @@ from imagegen_worker.illustrious_regional_worker import (
     _snapshot,  # pyright: ignore[reportPrivateUsage]
 )
 from imagegen_worker.inference_anima import ANIMA_BASE_ARCHITECTURE, load_anima_models
+from imagegen_worker.outpaint_worker_assets import (
+    capture_outpaint_target,
+    prepare_worker_outpaint,
+)
 from imagegen_worker.protocol import (
     _REQUEST_ID_PATTERN,  # pyright: ignore[reportPrivateUsage]
     MAX_GENERATION_TARGET_BYTES,
     GenerateAnimaImg2ImgCommand,
+    GenerateAnimaOutpaintCommand,
     GenerateAnimaTxt2ImgCommand,
     parse_request,
 )
@@ -56,6 +62,7 @@ if TYPE_CHECKING:
 ANIMA_REGIONAL_CAPABILITY = "anima-regional-txt2img-v1"
 ANIMA_REGIONAL_SAMPLING_CAPABILITY = "anima-regional-sampling-v1"
 ANIMA_REGIONAL_IMG2IMG_CAPABILITY = "anima-regional-img2img-v1"
+ANIMA_REGIONAL_OUTPAINT_CAPABILITY = "anima-regional-outpaint-v1"
 COMPOSITION_PROFILE = "invoke-krea2-global-support-v1"
 PROMPT_INTERPRETATION = "invoke-fragments-v1"
 
@@ -74,7 +81,7 @@ def _require(condition: bool, message: str) -> None:
 
 
 def parse_anima_regional_request(value: object) -> AnimaRegionalRequest:
-    """Validate/detach the finite public TXT/opaque image handoff before model loading."""
+    """Validate/detach the finite public TXT/IMG/OUT handoff before model loading."""
     envelope = _object(
         value,
         {"type", "protocolVersion", "requestId", "stagingRoot", "bundle"}
@@ -122,11 +129,13 @@ def parse_anima_regional_request(value: object) -> AnimaRegionalRequest:
     )
     parsed = parse_request(bundle["request"])
     _require(
-        type(parsed) in (GenerateAnimaTxt2ImgCommand, GenerateAnimaImg2ImgCommand),
-        "Anima regions require an exact ordinary Anima txt2img or img2img command.",
+        type(parsed)
+        in (GenerateAnimaTxt2ImgCommand, GenerateAnimaImg2ImgCommand, GenerateAnimaOutpaintCommand),
+        "Anima regions require an exact ordinary Anima txt2img, img2img or outpaint command.",
     )
     command = cast(GenerateAnimaTxt2ImgCommand, parsed)
     img2img = type(command) is GenerateAnimaImg2ImgCommand
+    outpaint = type(command) is GenerateAnimaOutpaintCommand
     _require(
         command.request_id == request_id and command.staging_root == root,
         "Anima regional command identity/staging differs from its transport.",
@@ -155,6 +164,7 @@ def parse_anima_regional_request(value: object) -> AnimaRegionalRequest:
         captured,
         sampling_profile="invoke-anima-flow-sampling-v1",
         img2img=img2img,
+        outpaint=outpaint,
     )
     _require(
         all(region.text is not None and region.text != "" for region in captured.regions),
@@ -190,16 +200,19 @@ def parse_anima_regional_request(value: object) -> AnimaRegionalRequest:
             (file.sha256, file.byte_size) == identity,
             "Anima regional execution requires the exact pinned Qwen3 and VAE companions.",
         )
-    validate_generation_target(
-        staging_root=root,
-        target_path=command.target_path,
-        output_path=command.output_path,
-        target_sha256=command.target_sha256,
-        target_byte_size=command.target_byte_size,
-        width=command.width,
-        height=command.height,
-        img2img=img2img,
-    )
+    if outpaint:
+        capture_outpaint_target(command)
+    else:
+        validate_generation_target(
+            staging_root=root,
+            target_path=command.target_path,
+            output_path=command.output_path,
+            target_sha256=command.target_sha256,
+            target_byte_size=command.target_byte_size,
+            width=command.width,
+            height=command.height,
+            img2img=img2img,
+        )
     return AnimaRegionalRequest(
         command=command,
         recipe=recipe,
@@ -229,6 +242,14 @@ def execute_anima_regional_request(
         raise DerivativeError("INFERENCE_UNAVAILABLE", "Anima requires native CUDA BF16 compute.")
     torch = cast(Any, runtime.torch)
     with torch.no_grad():
+        # Invoke grafts infill/source protection before regional conditioning.
+        # Reuse the existing Illustrious worker's trusted owned-tuple handoff:
+        # one authoritative preparation before loading Anima's family models.
+        prepared_outpaint = (
+            prepare_worker_outpaint(request.command)
+            if type(request.command) is GenerateAnimaOutpaintCommand
+            else None
+        )
         models = load_anima_models(request.command.bundle, device="cuda", dtype=torch.bfloat16)
         for model in (
             models.transformer,
@@ -248,6 +269,13 @@ def execute_anima_regional_request(
             if request.command.sampling.scheduler == "euler"
             else "invoke-anima-flow-sampling-v1",
         }
+        if type(request.command) is GenerateAnimaOutpaintCommand:
+            return generate_current_canvas_regional_anima_outpaint(
+                request.recipe,
+                command=request.command,
+                _prepared_outpaint=prepared_outpaint,
+                **arguments,
+            )
         if type(request.command) is GenerateAnimaImg2ImgCommand:
             return generate_current_canvas_regional_anima_img2img(
                 request.recipe,

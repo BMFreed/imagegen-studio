@@ -20,11 +20,11 @@ from imagegen_worker.outpaint_conditioning import (
 )
 
 _SOURCE_HASHES = {
-    "invokeai/app/invocations/create_gradient_mask.py": (
-        "4cf9673b0935547a043f64c6ecd9b44a83a392fa1de19ee9be2f2ebb0ada0f37"
+    "invokeai/app/invocations/sd/create_gradient_mask.py": (
+        "8d841f7bc6ab7678232baa3d42fb87d2fd50534b48b128a52ca4c6ac24557e7c"
     ),
     "invokeai/app/invocations/image.py": (
-        "3f6a9c80649d1fe0185bb48d64cbe27c809c3104d4eaa45946211a615a3ce972"
+        "354f952ebfcb35872bd38cd8668984de19cad2e879df6eccc91f418dc488a20e"
     ),
 }
 
@@ -138,7 +138,7 @@ def _reference_masks(
         "image_resized_to_grid_as_tensor": tensor_sink,
     }
     gradient_class = _upstream_class(
-        "invokeai/app/invocations/create_gradient_mask.py",
+        "invokeai/app/invocations/sd/create_gradient_mask.py",
         "CreateGradientMaskInvocation",
         namespace,
     )

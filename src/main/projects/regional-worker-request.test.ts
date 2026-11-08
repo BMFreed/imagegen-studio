@@ -23,10 +23,17 @@ import { crc32, deflateSync } from 'node:zlib'
 import type { FrozenGenerationEmbedding } from './illustrious-generation-embeddings.js'
 import type { RegionalWorkerInput, RegionalWorkerLease } from './regional-worker-request.js'
 
+import { buildFrozenQueuedOutpaintV1 } from './generation-queue.js'
+import { deriveOutpaintContributionAlphaV1 } from './outpaint-contribution.js'
+import { buildQueuedOutpaintWorkerRequest } from './outpaint-worker-request.js'
 import {
+  prepareOwnedRegionalWorkerRequest,
   prepareRegionalWorkerRequest,
   readRegionalWorkerResult,
 } from './regional-worker-request.js'
+import { decodeTargetPngAlpha } from './target-png-mode.js'
+import { withOutpaintConsumerFixture } from './test-fixtures/outpaint-consumers.js'
+import { OUTPAINT_READY } from './test-fixtures/outpaint-ready.js'
 
 const sha = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
 
@@ -889,6 +896,66 @@ for (const vaePrecision of ['Auto', 'FP16', 'FP32'] as const) {
         await lease.dispose()
       }
       assert.deepEqual(await readdir(fixture.scratch), [])
+    })
+  })
+}
+
+for (const family of ['anima', 'illustrious'] as const) {
+  test(`${family} regional OUT result consumes RGBA and independently refuses wrong contribution alpha`, async () => {
+    // Real ordinary OUT DTO, owned regional transport lease and PNG consumer;
+    // no neural execution or trained model/resource claim.
+    await withOutpaintConsumerFixture(family, async (fixture) => {
+      const payload = buildFrozenQueuedOutpaintV1(fixture.outpaintPrepared, randomUUID())
+      const provisionalRoot = path.join(fixture.scratch, 'unpublished-result-probe')
+      const request = buildQueuedOutpaintWorkerRequest({
+        infill: await fixture.infillResolver.resolveVerifiedOutpaintInfill(),
+        outputPath: path.join(provisionalRoot, 'result.png'),
+        payload,
+        provisionalRoot,
+        ready: OUTPAINT_READY,
+        requestId: randomUUID(),
+        targetPath: path.join(provisionalRoot, 'target.png'),
+      })
+      assert.equal(request.type, `generate-${family}-outpaint`)
+      const targetBytes = Buffer.from(fixture.target.composite.bytes)
+      const lease = await prepareOwnedRegionalWorkerRequest({
+        base: fixture.scratch,
+        materialize: async () => ({ schemaVersion: 1 }),
+        request,
+        targetBytes,
+        type:
+          family === 'anima'
+            ? 'execute-current-canvas-anima-regional'
+            : 'execute-current-canvas-regional',
+      })
+      try {
+        const { height, width } = request.job.bbox
+        const sourceAlpha = decodeTargetPngAlpha(targetBytes, width, height)
+        const expectedAlpha = deriveOutpaintContributionAlphaV1(sourceAlpha, width, height)
+        assert.ok(expectedAlpha.every((value) => value === 255))
+        const profile = await readFile(
+          new URL('../../../worker-python/src/imagegen_worker/srgb.icc', import.meta.url),
+        )
+        const output = png(width, height, profile, 255)
+        await writeFile(lease.request.job.output.pngPath, output)
+        const done = {
+          outputPath: lease.request.job.output.pngPath,
+          protocolVersion: '1',
+          requestId: request.requestId,
+          seed: request.job.sampling.seed,
+          type: 'generation-done',
+        }
+        const actual = await readRegionalWorkerResult(lease, done)
+        assert.deepEqual(actual.pngBytes, output)
+        assert.equal(actual.output.sha256, sha(output))
+        await writeFile(lease.request.job.output.pngPath, png(width, height, profile, 254))
+        await assert.rejects(readRegionalWorkerResult(lease, done), {
+          message: 'The output alpha does not match the frozen outpaint contribution policy.',
+        })
+        assert.deepEqual(await readFile(lease.request.job.target.path), targetBytes)
+      } finally {
+        await lease.dispose()
+      }
     })
   })
 }

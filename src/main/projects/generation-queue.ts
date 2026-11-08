@@ -49,6 +49,7 @@ import type {
   IllustriousImg2ImgRequestV1,
   IllustriousTxt2ImgRequestV1,
 } from './illustrious-txt2img-job.js'
+import type { AnimaOutpaintRequestV1 } from './outpaint-worker-request.js'
 import type {
   FrozenNormalGenerationPreparationV1,
   FrozenNormalImg2ImgPreparationV1,
@@ -430,11 +431,15 @@ export type FrozenQueuedGenerationV1 =
 
 export function isQueuedOutpaint(
   payload: FrozenQueuedGenerationV1 | FrozenQueuedRegionalOperationalV1,
-): payload is FrozenQueuedOutpaintV1 | FrozenQueuedRegionalInvokeOutpaintV1 {
+): payload is
+  | Extract<FrozenQueuedAnimaRegionalV1, { kind: 'anima-regional-outpaint' }>
+  | FrozenQueuedOutpaintV1
+  | FrozenQueuedRegionalInvokeOutpaintV1 {
   return (
     payload.kind === 'illustrious-outpaint' ||
     payload.kind === 'anima-outpaint' ||
-    payload.kind === 'illustrious-regional-outpaint'
+    payload.kind === 'illustrious-regional-outpaint' ||
+    payload.kind === 'anima-regional-outpaint'
   )
 }
 export type { FrozenQueuedAnimaOutpaintV1 } from './anima-queued-generation.js'
@@ -862,6 +867,7 @@ export class GenerationQueueRepository {
       claimed &&
       (claimed.payload.kind === 'anima-regional-txt2img' ||
         claimed.payload.kind === 'anima-regional-img2img' ||
+        claimed.payload.kind === 'anima-regional-outpaint' ||
         claimed.input.compositionProfile === 'invoke-krea2-global-support-v1')
     ) {
       throw statusConflict()
@@ -1516,6 +1522,7 @@ export class GenerationQueueRepository {
       entries: readonly { frozenPayloadJson: string; queueItemId: string }[],
     ) => Promise<void>
     projectPath: string
+    regionalInputs?: readonly AnimaRegionalWorkerInput[]
     stagingSessionId: string
   }): Promise<QueuedGenerationItem[]> {
     if (
@@ -1562,10 +1569,69 @@ export class GenerationQueueRepository {
       }
       return { context: structuredClone(prepared.context), targetPngBytes: targetBytes }
     })
-    const payloads = captures.map((prepared) => buildFrozenQueuedOutpaintV1(prepared, randomUUID()))
-    const common = comparableOutpaintBatchContext(payloads[0])
+    const ordinaryPayloads = captures.map((prepared) =>
+      buildFrozenQueuedOutpaintV1(prepared, randomUUID()),
+    )
+    const regionalInputs = input.regionalInputs?.map(captureAnimaRegionalWorkerInput)
+    const regionalMaterials = regionalInputs?.map(captureAnimaRegionalQueuedMaterial)
+    const payloads = ordinaryPayloads.map((payload, index) => {
+      if (!regionalInputs) {
+        return payload
+      }
+      if (
+        ordinaryPayloads.length !== 1 ||
+        regionalInputs.length !== 1 ||
+        payload.kind !== 'anima-outpaint'
+      ) {
+        throw new GenerationQueueError(
+          'QUEUE_INPUT_INVALID',
+          'Anima regional OUT requires one captured image.',
+        )
+      }
+      const material = regionalMaterials![index]
+      const regional = regionalInputs[index]
+      const request = regional.request
+      if (
+        request.type !== 'generate-anima-outpaint' ||
+        !material.outpaintInfill ||
+        regional.recipe.documentId !== payload.context.documentId ||
+        regional.recipe.documentRevision !== payload.context.documentRevision ||
+        !isDeepStrictEqual(regional.recipe.item.prompts, payload.context.prompts) ||
+        !isDeepStrictEqual(request.job.conditioning, payload.context.conditioning)
+      ) {
+        throw new GenerationQueueError(
+          'QUEUE_INPUT_INVALID',
+          'Anima regional OUT differs from its ordinary input.',
+        )
+      }
+      const {
+        conditioning: _conditioning,
+        infillResource: _infill,
+        output: _output,
+        target,
+        ...job
+      } = request.job
+      const { path: _path, ...targetIdentity } = target
+      if (!isDeepStrictEqual({ ...job, target: targetIdentity }, payload.workerJob)) {
+        throw new GenerationQueueError(
+          'QUEUE_INPUT_INVALID',
+          'Anima regional OUT numeric request differs.',
+        )
+      }
+      return parseFrozenQueuedAnimaRegionalV1(
+        JSON.stringify({
+          ...payload,
+          compositionProfile: material.compositionProfile,
+          kind: 'anima-regional-outpaint',
+          outpaintInfill: material.outpaintInfill,
+          promptInterpretation: material.promptInterpretation,
+          regional: material.regional,
+        }),
+      )
+    })
+    const common = comparableOutpaintBatchContext(ordinaryPayloads[0])
     if (
-      payloads.some(
+      ordinaryPayloads.some(
         (payload) => !isDeepStrictEqual(comparableOutpaintBatchContext(payload), common),
       )
     ) {
@@ -1574,7 +1640,7 @@ export class GenerationQueueRepository {
         'The outpaint batch mixes captured inputs.',
       )
     }
-    const illustriousContexts = payloads.flatMap((payload) =>
+    const illustriousContexts = ordinaryPayloads.flatMap((payload) =>
       payload.kind === 'illustrious-outpaint' ? [payload.context] : [],
     )
     if (!batchEmbeddingFilesAgree(illustriousContexts)) {
@@ -1602,7 +1668,7 @@ export class GenerationQueueRepository {
       this.assertProjectCanEnqueue(localProjectKey)
       const initialQualification = memoizedOutpaintQualification(modelService, infillResolver)
       await validateTargetPng(targetBytes, payloads[0].context)
-      for (const payload of payloads) {
+      for (const payload of ordinaryPayloads) {
         await reverifyFrozenQueuedOutpaintGeneration(
           payload,
           initialQualification.models,
@@ -1647,7 +1713,7 @@ export class GenerationQueueRepository {
       const root = await this.ensureRoot()
       const directories: { path: string; published: boolean }[] = []
       try {
-        for (const row of rows) {
+        for (const [index, row] of rows.entries()) {
           const temporary = await mkdtemp(path.join(root, '.tmp-'))
           const directory = { path: temporary, published: false }
           directories.push(directory)
@@ -1660,6 +1726,9 @@ export class GenerationQueueRepository {
             targetSha256: sha256(targetBytes),
           }
           await writeDurableFile(path.join(temporary, 'target.png'), targetBytes)
+          for (const [name, bytes] of Object.entries(regionalMaterials?.[index].files ?? {})) {
+            await writeDurableFile(path.join(temporary, name), bytes)
+          }
           await writeDurableFile(
             path.join(temporary, 'manifest.json'),
             Buffer.from(JSON.stringify(manifest), 'utf8'),
@@ -1675,7 +1744,7 @@ export class GenerationQueueRepository {
         }
         await beforeCommit?.()
         const finalQualification = memoizedOutpaintQualification(modelService, infillResolver)
-        for (const payload of payloads) {
+        for (const payload of ordinaryPayloads) {
           await reverifyFrozenQueuedOutpaintGeneration(
             payload,
             finalQualification.models,
@@ -1990,6 +2059,7 @@ export class GenerationQueueRepository {
           'illustrious-regional',
           'anima-regional-txt2img',
           'anima-regional-img2img',
+          'anima-regional-outpaint',
           'illustrious-regional-txt2img',
           'illustrious-regional-img2img',
           'illustrious-regional-outpaint',
@@ -2466,6 +2536,7 @@ export class GenerationQueueRepository {
           ...NORMAL_QUEUE_OPERATIONS,
           'anima-regional-txt2img',
           'anima-regional-img2img',
+          'anima-regional-outpaint',
           'illustrious-regional-txt2img',
           'illustrious-regional-img2img',
           'illustrious-regional-outpaint',
@@ -2515,7 +2586,8 @@ export class GenerationQueueRepository {
     const verified = await this.loadVerifiedOperationalRegionalInput(id)
     if (
       (verified.payload.kind !== 'anima-regional-txt2img' &&
-        verified.payload.kind !== 'anima-regional-img2img') ||
+        verified.payload.kind !== 'anima-regional-img2img' &&
+        verified.payload.kind !== 'anima-regional-outpaint') ||
       verified.input.compositionProfile !== 'invoke-krea2-global-support-v1'
     ) {
       throw new GenerationQueueError(
@@ -2544,6 +2616,7 @@ export class GenerationQueueRepository {
     if (
       verified.payload.kind === 'anima-regional-txt2img' ||
       verified.payload.kind === 'anima-regional-img2img' ||
+      verified.payload.kind === 'anima-regional-outpaint' ||
       verified.input.compositionProfile === 'invoke-krea2-global-support-v1'
     ) {
       throw new GenerationQueueError(
@@ -3078,6 +3151,7 @@ export class GenerationQueueRepository {
               ? [
                   'anima-regional-txt2img',
                   'anima-regional-img2img',
+                  'anima-regional-outpaint',
                   'illustrious-regional-txt2img',
                   'illustrious-regional-img2img',
                   'illustrious-regional-outpaint',
@@ -3154,6 +3228,7 @@ export class GenerationQueueRepository {
               ? [
                   'anima-regional-txt2img',
                   'anima-regional-img2img',
+                  'anima-regional-outpaint',
                   'illustrious-regional-txt2img',
                   'illustrious-regional-img2img',
                   'illustrious-regional-outpaint',
@@ -3831,7 +3906,8 @@ export class GenerationQueueRepository {
           : {}
       if (
         isQueuedOutpaint(verified.payload) &&
-        verified.payload.kind !== 'illustrious-regional-outpaint'
+        verified.payload.kind !== 'illustrious-regional-outpaint' &&
+        verified.payload.kind !== 'anima-regional-outpaint'
       ) {
         if (!outpaintQualification || !preflight) {
           throw new GenerationQueueError(
@@ -4011,34 +4087,48 @@ export class GenerationQueueRepository {
       }
       if (
         verified.payload.kind === 'anima-regional-txt2img' ||
-        verified.payload.kind === 'anima-regional-img2img'
+        verified.payload.kind === 'anima-regional-img2img' ||
+        verified.payload.kind === 'anima-regional-outpaint'
       ) {
         const output = {
           pngPath: path.join(path.dirname(verified.targetPath), 'result.png'),
           stagingRoot: path.dirname(verified.targetPath),
         }
-        const request: AnimaWorkerRequest =
-          verified.payload.kind === 'anima-regional-img2img'
+        const request: AnimaOutpaintRequestV1 | AnimaWorkerRequest =
+          verified.payload.kind === 'anima-regional-outpaint'
             ? {
                 job: {
                   ...structuredClone(verified.payload.workerJob),
+                  conditioning: structuredClone(verified.payload.context.conditioning),
+                  infillResource: { ...verified.payload.outpaintInfill },
                   output,
                   target: { ...verified.payload.workerJob.target, path: verified.targetPath },
                 },
                 protocolVersion: '1',
                 requestId: row.id,
-                type: 'generate-anima-img2img',
+                type: 'generate-anima-outpaint',
               }
-            : {
-                job: {
-                  ...structuredClone(verified.payload.workerJob),
-                  output,
-                  target: { ...verified.payload.workerJob.target, path: verified.targetPath },
-                },
-                protocolVersion: '1',
-                requestId: row.id,
-                type: 'generate-anima-txt2img',
-              }
+            : verified.payload.kind === 'anima-regional-img2img'
+              ? {
+                  job: {
+                    ...structuredClone(verified.payload.workerJob),
+                    output,
+                    target: { ...verified.payload.workerJob.target, path: verified.targetPath },
+                  },
+                  protocolVersion: '1',
+                  requestId: row.id,
+                  type: 'generate-anima-img2img',
+                }
+              : {
+                  job: {
+                    ...structuredClone(verified.payload.workerJob),
+                    output,
+                    target: { ...verified.payload.workerJob.target, path: verified.targetPath },
+                  },
+                  protocolVersion: '1',
+                  requestId: row.id,
+                  type: 'generate-anima-txt2img',
+                }
         const input = await loadAnimaRegionalQueuedInput(
           path.dirname(verified.targetPath),
           verified.payload,
@@ -4330,7 +4420,10 @@ export function buildFrozenQueuedOutpaintV1(
 
 /** Force-qualify exact family and common infill files; neither Library Default nor draft is read. */
 export async function reverifyFrozenQueuedOutpaintGeneration(
-  input: FrozenQueuedOutpaintV1 | FrozenQueuedRegionalInvokeOutpaintV1,
+  input:
+    | Extract<FrozenQueuedAnimaRegionalV1, { kind: 'anima-regional-outpaint' }>
+    | FrozenQueuedOutpaintV1
+    | FrozenQueuedRegionalInvokeOutpaintV1,
   models: AnimaGenerationModelResolver & GenerationModelResolver,
   infillResolver: OutpaintInfillResolver,
 ): Promise<void> {
@@ -5228,6 +5321,7 @@ function toManagerEntry(
       'anima-img2img',
       'anima-outpaint',
       'anima-regional-img2img',
+      'anima-regional-outpaint',
       'anima-regional-txt2img',
       'anima-smart-patch',
       'anima-txt2img',
@@ -5337,6 +5431,7 @@ function managerDetails(row: Selectable<GenerationQueueItem>): GenerationQueueEn
     if (
       payload.kind === 'anima-regional-txt2img' ||
       payload.kind === 'anima-regional-img2img' ||
+      payload.kind === 'anima-regional-outpaint' ||
       payload.kind === 'anima-txt2img' ||
       payload.kind === 'anima-img2img' ||
       payload.kind === 'anima-outpaint'
@@ -5460,6 +5555,7 @@ function isInvokeRegionalQueueOperation(operation: string): boolean {
   return (
     operation === 'anima-regional-txt2img' ||
     operation === 'anima-regional-img2img' ||
+    operation === 'anima-regional-outpaint' ||
     operation === 'illustrious-regional-txt2img' ||
     operation === 'illustrious-regional-img2img' ||
     operation === 'illustrious-regional-outpaint'

@@ -3,6 +3,7 @@ import {
   type AnimaWorkerRequest,
   captureCompiledAnimaWorkerRequest,
 } from '../../shared/projects/anima-worker-request.js'
+import { ANIMA_REGIONAL_COMPOSITION_PROFILE } from '../../shared/projects/regional-invoke-generation.js'
 
 import { lstat, realpath } from 'node:fs/promises'
 import { isDeepStrictEqual } from 'node:util'
@@ -13,6 +14,11 @@ import {
   captureInferenceWorkerOwnerValue,
   type InferenceWorkerOwner,
 } from './inference-worker-ownership.js'
+import { assertFrozenAlphaOutpaintConditioning } from './outpaint-conditioning.js'
+import {
+  type AnimaOutpaintRequestV1,
+  captureOutpaintWorkerRequest,
+} from './outpaint-worker-request.js'
 import {
   compileCurrentCanvasAnimaRegionalPrompts,
   type CompiledCurrentCanvasAnimaRegionalPrompt,
@@ -26,14 +32,14 @@ import {
 import { classifyTargetPngAlpha } from './target-png-mode.js'
 import { ProjectWorkerError, readSmartPatchPreparationOutput } from './worker-client.js'
 
+export { ANIMA_REGIONAL_COMPOSITION_PROFILE } from '../../shared/projects/regional-invoke-generation.js'
 export type { CompiledCurrentCanvasAnimaRegionalPrompt } from './project-current-canvas-anima-regional-input.js'
-export const ANIMA_REGIONAL_COMPOSITION_PROFILE = 'invoke-krea2-global-support-v1' as const
 export interface AnimaRegionalWorkerInput {
   compiledPrompts: CompiledCurrentCanvasAnimaRegionalPrompt[]
   compositionProfile: typeof ANIMA_REGIONAL_COMPOSITION_PROFILE
   promptInterpretation: typeof ANIMA_PROMPT_INTERPRETATION
   recipe: CurrentCanvasRegionalRecipe
-  request: AnimaWorkerRequest
+  request: AnimaOutpaintRequestV1 | AnimaWorkerRequest
 }
 
 // This is a syntax-validation profile only. Admission and dispatch independently qualify the
@@ -45,6 +51,7 @@ const VALIDATION_PROFILE = {
     'candidate-thumbnails',
     'illustrious-cfg-rescale',
     'illustrious-img2img',
+    'illustrious-outpaint',
     'illustrious-lora',
     'illustrious-vae-precision',
     'illustrious-external-vae',
@@ -54,10 +61,11 @@ const VALIDATION_PROFILE = {
     'anima-lora',
     'anima-prompt-weighting',
     'anima-flow-sampling',
+    'anima-outpaint',
   ],
   protocolVersion: '1',
   runtimeProfile: 'linux-nvidia',
-  workerVersion: '0.11.0',
+  workerVersion: '0.14.0',
 }
 
 /** Detach Main's complete recipe, then check exact compiled/source/ordinary-command agreement. */
@@ -75,11 +83,16 @@ export function captureAnimaRegionalWorkerInput(
     ) {
       invalid()
     }
-    const request = captureCompiledAnimaWorkerRequest(captured.request, VALIDATION_PROFILE)
+    const request =
+      captured.request.type === 'generate-anima-outpaint'
+        ? captureOutpaintWorkerRequest(captured.request, VALIDATION_PROFILE)
+        : captureCompiledAnimaWorkerRequest(captured.request, VALIDATION_PROFILE)
     const { recipe } = captured
     const compiled = compileCurrentCanvasAnimaRegionalPrompts(recipe)
     if (
-      (request.type !== 'generate-anima-txt2img' && request.type !== 'generate-anima-img2img') ||
+      (request.type !== 'generate-anima-txt2img' &&
+        request.type !== 'generate-anima-img2img' &&
+        request.type !== 'generate-anima-outpaint') ||
       request.job.loras.length !== 0 ||
       request.job.bbox.width > 512 ||
       request.job.bbox.height > 512 ||
@@ -111,7 +124,7 @@ export async function prepareAnimaRegionalWorkerRequest(
   input: AnimaRegionalWorkerInput,
   scratchBasePath: string,
   owner?: InferenceWorkerOwner,
-): Promise<RegionalWorkerLease<AnimaWorkerRequest>> {
+): Promise<RegionalWorkerLease<AnimaOutpaintRequestV1 | AnimaWorkerRequest>> {
   const captured = captureAnimaRegionalWorkerInput(input)
   const capturedOwner = owner === undefined ? undefined : captureInferenceWorkerOwnerValue(owner)
   const baseIdentity = await canonicalRegionalDirectory(scratchBasePath)
@@ -119,6 +132,9 @@ export async function prepareAnimaRegionalWorkerRequest(
     captured.request.job.model.checkpoint,
     captured.request.job.model.qwen3Encoder,
     captured.request.job.model.vae,
+    ...(captured.request.type === 'generate-anima-outpaint'
+      ? [captured.request.job.infillResource]
+      : []),
   ]) {
     if (withinRegionalPath(scratchBasePath, resource.path) || resource.path === scratchBasePath) {
       invalid()
@@ -141,9 +157,16 @@ export async function prepareAnimaRegionalWorkerRequest(
   )
   if (
     classifyTargetPngAlpha(targetBytes, target.width, target.height) !==
-    (captured.request.type === 'generate-anima-img2img' ? 'img2img' : 'txt2img')
+    (captured.request.type === 'generate-anima-outpaint'
+      ? 'outpaint'
+      : captured.request.type === 'generate-anima-img2img'
+        ? 'img2img'
+        : 'txt2img')
   ) {
     invalid()
+  }
+  if (captured.request.type === 'generate-anima-outpaint') {
+    await assertFrozenAlphaOutpaintConditioning(captured.request.job.conditioning, targetBytes)
   }
   return await prepareOwnedRegionalWorkerRequest({
     base: scratchBasePath,

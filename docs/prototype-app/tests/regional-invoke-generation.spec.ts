@@ -399,7 +399,27 @@ test('renderer Anima regional Generate uses its own capability and explicit loca
     fixture.tab.primaryBbox.x += 8
   })
   await expect(generate).toBeDisabled()
-  await expect(page.getByText(/fully transparent or fully opaque Current Canvas/)).toBeVisible()
+  await expect(page.getByText(/support for Anima Regional Guidance outpaint/)).toBeVisible()
+  await page.evaluate(() => {
+    globalThis.window.regionalWiringFixture.state.animaRegionalOutpaintSupported = false
+  })
+  await expect(generate).toBeDisabled()
+  await expect(page.getByText(/does not support Anima Regional Guidance outpaint/)).toBeVisible()
+  await page.evaluate(() => {
+    globalThis.window.regionalWiringFixture.state.animaRegionalOutpaintSupported = true
+  })
+  await expect(generate).toBeDisabled()
+  await expect(
+    page.getByLabel('Generation actions').getByText(/does not support outpaint for Anima/),
+  ).toBeVisible()
+  await page.evaluate(() => {
+    globalThis.window.regionalWiringFixture.state.animaOutpaintSupported = true
+  })
+  await expect(generate).toBeEnabled()
+  await generate.click()
+  expect(await page.evaluate(() => globalThis.window.regionalWiringFixture.generateCalls)).toEqual([
+    1, 1, 1,
+  ])
   expect(errors).toEqual([])
 })
 

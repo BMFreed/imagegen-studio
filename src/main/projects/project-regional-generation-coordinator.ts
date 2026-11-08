@@ -6,6 +6,7 @@ import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceAnimaRegional,
   supportsInferenceAnimaRegionalImg2Img,
+  supportsInferenceAnimaRegionalOutpaint,
   supportsInferenceAnimaRegionalSampling,
   supportsInferenceEmbeddings,
   supportsInferenceRegionalCFGRescale,
@@ -50,7 +51,10 @@ import type {
 import type { ProjectWorkerClient } from './worker-client.js'
 
 import { prepareAnimaGenerationBatch } from './anima-generation-batch.js'
-import { prepareAnimaGeneration } from './anima-generation-preparation.js'
+import {
+  prepareAnimaGeneration,
+  prepareAnimaOutpaintGeneration,
+} from './anima-generation-preparation.js'
 import { withAnimaGenerationBatchRequests } from './anima-generation-request.js'
 import { captureAnimaRegionalWorkerInput } from './anima-regional-worker-request.js'
 import { buildFrozenQueuedOutpaintV1 } from './generation-queue.js'
@@ -472,6 +476,83 @@ export class ProjectRegionalGenerationCoordinator {
             assertCurrent()
             const target = await capture.composeTarget(preparation.targetWorker)
             assertCurrent()
+            if (target.mode === 'outpaint') {
+              if (!supportsInferenceAnimaRegionalOutpaint(ready)) {
+                throw new ProjectRegionalGenerationError(
+                  'INFERENCE_UNAVAILABLE',
+                  'The image engine has not qualified Anima Regional Guidance outpaint. Repair or update the runtime.',
+                )
+              }
+              const infill = await this.options.orchestrator.resolveRegionalOutpaintInfill()
+              assertCurrent()
+              const prepared = await prepareAnimaOutpaintGeneration({
+                lastActualSeed: operationalSeed,
+                modelService: models,
+                target,
+              })
+              assertCurrent()
+              const planned = planGenerationBatch({
+                baseSeed: prepared.context.sampling.seed,
+                iterations: 1,
+                maxJobs: GENERATION_BATCH_JOB_LIMIT,
+                maxPrompts: 1,
+                negativePrompt: prepared.context.prompts.negative,
+                positivePrompt: prepared.context.prompts.positive,
+                seedBehavior: prepared.context.dynamic.seedBehavior,
+              })
+              if (planned.items.length !== 1 || planned.truncated) {
+                throw unsupported(
+                  'Anima Regional Guidance requires one concrete static image per click.',
+                )
+              }
+              const recipe = await prepareCurrentCanvasRegionalRecipe({
+                capture: capture.regional,
+                job: {
+                  bbox: prepared.context.bbox,
+                  documentId: prepared.context.documentId,
+                  documentRevision: prepared.context.documentRevision,
+                  family: 'anima',
+                  item: planned.items[0],
+                },
+              })
+              assertCurrent()
+              const provisionalRoot = path.join(
+                path.resolve(this.options.scratchBasePath),
+                `outpaint-admission-${randomUUID()}`,
+              )
+              const request = buildQueuedOutpaintWorkerRequest({
+                infill,
+                outputPath: path.join(provisionalRoot, 'result.png'),
+                payload: buildFrozenQueuedOutpaintV1(prepared, randomUUID()),
+                provisionalRoot,
+                ready,
+                requestId: randomUUID(),
+                targetPath: path.join(provisionalRoot, 'target.png'),
+              })
+              if (request.type !== 'generate-anima-outpaint') {
+                throw invalid('The outpaint family changed.')
+              }
+              const regional = captureAnimaRegionalWorkerInput({
+                compiledPrompts: [...compileCurrentCanvasAnimaRegionalPrompts(recipe)],
+                compositionProfile: 'invoke-krea2-global-support-v1',
+                promptInterpretation: 'invoke-fragments-v1',
+                recipe,
+                request,
+              })
+              admitted = await this.options.orchestrator.enqueuePreparedAnimaRegionalOutpaint(
+                tabId,
+                {
+                  assertCurrent,
+                  prepared,
+                  regional,
+                  ...(input.beforePublication
+                    ? { beforePublication: input.beforePublication }
+                    : {}),
+                  ...(input.afterPublication ? { afterPublication: input.afterPublication } : {}),
+                },
+              )
+              return admitted
+            }
             if (target.mode !== 'txt2img' && target.mode !== 'img2img') {
               throw unsupported(
                 'Anima Regional Guidance requires a fully transparent or fully opaque Current Canvas generation area.',
@@ -992,6 +1073,7 @@ export class ProjectRegionalGenerationCoordinator {
 function validateInvokeDraft(document: IgsProjectDocumentV1, iterations = 1): void {
   const reason = getInvokeRegionalGenerationUnavailableReason({
     animaRegionalImg2ImgSupported: true,
+    animaRegionalOutpaintSupported: true,
     animaRegionalSamplingSupported: true,
     animaRegionalSupported: true,
     cfgRescaleSupported: true,

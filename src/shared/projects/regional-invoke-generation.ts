@@ -10,6 +10,9 @@ import { GENERATION_BATCH_JOB_LIMIT } from './generation-batch-policy.js'
 import { getEffectiveDynamicPromptSettings } from './generation-dynamic-settings.js'
 import { activePromptEmbeddingRefs } from './prompt-embeddings.js'
 
+/** Frozen Anima regional composition, shared without importing queue owners. */
+export const ANIMA_REGIONAL_COMPOSITION_PROFILE = 'invoke-krea2-global-support-v1' as const
+
 type RegionalDocument = Pick<
   IgsProjectDocumentV1,
   'generationDraft' | 'primaryBbox' | 'regionalGuidance'
@@ -102,6 +105,7 @@ export function hasActiveGlobalPromptEmbeddings(
  */
 export function getInvokeRegionalGenerationUnavailableReason(input: {
   animaRegionalImg2ImgSupported?: boolean | null
+  animaRegionalOutpaintSupported?: boolean | null
   animaRegionalSamplingSupported?: boolean | null
   animaRegionalSupported?: boolean | null
   cfgRescaleSupported?: boolean | null
@@ -334,6 +338,7 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
  */
 function getAnimaRegionalGenerationUnavailableReason(input: {
   animaRegionalImg2ImgSupported?: boolean | null
+  animaRegionalOutpaintSupported?: boolean | null
   animaRegionalSamplingSupported?: boolean | null
   animaRegionalSupported?: boolean | null
   document: RegionalDocument
@@ -345,15 +350,17 @@ function getAnimaRegionalGenerationUnavailableReason(input: {
   if (draft.model?.kind !== 'checkpoint' || draft.model.predictionType !== null) {
     return 'Regional Guidance requires an original Anima checkpoint on Current Canvas.'
   }
-  if (input.targetMode === 'outpaint') {
-    return 'Anima Regional Guidance requires a fully transparent or fully opaque Current Canvas generation area.'
+  if (input.targetMode === 'outpaint' && input.animaRegionalOutpaintSupported !== true) {
+    return input.animaRegionalOutpaintSupported == null
+      ? 'Checking image engine support for Anima Regional Guidance outpaint. Repair or update the runtime if support remains unavailable.'
+      : 'The current image engine does not support Anima Regional Guidance outpaint. Repair or update the runtime.'
   }
-  if (input.targetMode === 'img2img') {
+  if (input.targetMode === 'img2img' || input.targetMode === 'outpaint') {
     const strength = draft.sampling.denoisingStrength
     if (strength === null || !Number.isFinite(strength) || strength < 0 || strength > 1) {
-      return 'Anima Regional Guidance img2img requires Denoising Strength from 0 to 1.'
+      return `Anima Regional Guidance ${input.targetMode} requires Denoising Strength from 0 to 1.`
     }
-    if (input.animaRegionalImg2ImgSupported !== true) {
+    if (input.targetMode === 'img2img' && input.animaRegionalImg2ImgSupported !== true) {
       return input.animaRegionalImg2ImgSupported == null
         ? 'Checking image engine support for Anima Regional Guidance img2img. Repair or update the runtime if support remains unavailable.'
         : 'The current image engine does not support Anima Regional Guidance img2img. Repair or update the runtime.'

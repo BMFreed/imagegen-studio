@@ -43,8 +43,8 @@ _SOURCES = {
         "a7a77d7ac6433b5ad930716bf21852a97a81960688e8670a8120e8d26f94e721",
         {"assert_broadcastable", "RectifiedFlowInpaintExtension"},
     ),
-    "invokeai/app/invocations/anima_denoise.py": (
-        "cb92470f4b329677b303fe02ab189dd1d16b6400261fdb61042f789620b37c08",
+    "invokeai/app/invocations/anima/anima_denoise.py": (
+        "34511531b56e6e589e0f7a0071a9c86d8bc1b2c78f3150ceb282185ec2511e56",
         {"inverse_loglinear_timestep_shift", "AnimaInpaintExtension"},
     ),
 }
@@ -570,11 +570,11 @@ def test_real_request_factory_inverts_float32_before_bfloat16_cast(
                 str(Path(__file__).resolve().parents[3] / "sources/InvokeAI"),
             )
         )
-        / "invokeai/app/invocations/anima_denoise.py"
+        / "invokeai/app/invocations/anima/anima_denoise.py"
     )
     assert (
         hashlib.sha256(path.read_bytes()).hexdigest()
-        == _SOURCES["invokeai/app/invocations/anima_denoise.py"][0]
+        == _SOURCES["invokeai/app/invocations/anima/anima_denoise.py"][0]
     )
     klass = next(
         node

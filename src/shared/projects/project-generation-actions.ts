@@ -18,6 +18,7 @@ export interface ProjectGenerationActionState {
   animaOutpaintSupported?: boolean
   /** Separate non-Euler regional support; ordinary flow and regional Euler never imply it. */
   animaRegionalImg2ImgSupported?: boolean
+  animaRegionalOutpaintSupported?: boolean
   animaRegionalSamplingSupported?: boolean
   /** Separate finite regional Anima execution support; ordinary Anima never grants it. */
   animaRegionalSupported?: boolean
@@ -141,6 +142,7 @@ export function isProjectGenerationActionState(
         'animaSupported',
         'animaRegionalSupported',
         'animaRegionalImg2ImgSupported',
+        'animaRegionalOutpaintSupported',
         'animaRegionalSamplingSupported',
         'animaOutpaintSupported',
         'outpaintSupported',
@@ -164,6 +166,8 @@ export function isProjectGenerationActionState(
       typeof value['animaRegionalSupported'] !== 'boolean') ||
     (value['animaRegionalImg2ImgSupported'] !== undefined &&
       typeof value['animaRegionalImg2ImgSupported'] !== 'boolean') ||
+    (value['animaRegionalOutpaintSupported'] !== undefined &&
+      typeof value['animaRegionalOutpaintSupported'] !== 'boolean') ||
     (value['animaRegionalSamplingSupported'] !== undefined &&
       typeof value['animaRegionalSamplingSupported'] !== 'boolean') ||
     (value['animaOutpaintSupported'] !== undefined &&

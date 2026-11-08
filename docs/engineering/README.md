@@ -2378,3 +2378,21 @@ race remains excluded/retained. All8,044 disposable entries are archived before
 322,498,560 allocated bytes are reclaimed; reusable inputs remain protected.
 Trained Heun evidence does not qualify the other methods' visual matrix, OUT,
 batch/resources or PP-001/005/007/008, whose statuses remain unchanged.
+
+
+## Anima Regional Guidance — mixed-alpha outpaint
+
+[Mixed-alpha OUT integration](./phase-4-anima-regional-outpaint-research.md)
+reuses ordinary source/LaMa/keep-mask restoration and RGBA contribution owners,
+with a distinct capability, frozen queue kind and additive migration26. ROOT
+records1,580 distinct Main/641 Python/200 browser PASS; actual installed Heun
+Generate/Cancel/frozen Retry has19/2/19 progress and exact RGBA replay. Add/Undo/Redo/
+Save-reopen retains source and contribution; independent640-square source-over
+checks are exact. Two actual result-reader/queue-wire omissions were reproduced
+and corrected; failed attempts stay excluded. Nine mutation phases yield15 GREEN/
+three semantic RED with exact restoration. Source/retained review and ROOT runtime
+remain distinct. All9,369 disposable entries are retained before measured
+365,821,952 allocated bytes are reclaimed; original inputs/runtime stay protected.
+Whole lint retains two unchanged historical project-service errors; final scoped
+lint/types/build pass. Trained acceptance uses Heun only; six-method lower evidence
+does not promote quality, Smart/batch/resources or PP-001/005/007/008.

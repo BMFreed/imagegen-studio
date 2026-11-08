@@ -24,7 +24,10 @@ import type {
   VerifiedOutpaintInfill,
 } from '../runtime/inference-auxiliary-resources.js'
 import type { PreparedAnimaGenerationBatch } from './anima-generation-batch.js'
-import type { AnimaGenerationModelResolver } from './anima-generation-preparation.js'
+import type {
+  AnimaGenerationModelResolver,
+  PreparedAnimaOutpaintGeneration,
+} from './anima-generation-preparation.js'
 import type { AnimaRegionalWorkerInput } from './anima-regional-worker-request.js'
 import type { GenerationWorkerTransport } from './generation-processor.js'
 import type { GenerationProcessorResult } from './generation-processor.js'
@@ -92,6 +95,7 @@ import { buildQueuedOutpaintWorkerRequest } from './outpaint-worker-request.js'
 import { canonicalProjectPath, localProjectRecoveryKey } from './project-identity.js'
 import { captureSmartPatchModelResolver } from './project-smart-patch-execution.js'
 import { RegionalGenerationProcessor } from './regional-generation-processor.js'
+import { parseAcceptedGenerationBaseV1 } from './regional-queued-generation.js'
 import {
   captureRegionalWorkerInput,
   RegionalOutpaintInfillSchema,
@@ -316,6 +320,7 @@ export class GenerationOrchestrator {
     if (
       entry.operation === 'anima-regional-txt2img' ||
       entry.operation === 'anima-regional-img2img' ||
+      entry.operation === 'anima-regional-outpaint' ||
       entry.operation === 'illustrious-regional-txt2img' ||
       entry.operation === 'illustrious-regional-img2img' ||
       entry.operation === 'illustrious-regional-outpaint'
@@ -772,6 +777,15 @@ export class GenerationOrchestrator {
         'Anima Regional Guidance requires one captured item.',
       )
     }
+    const requests = regionalInputs.map(({ request }) => {
+      if (request.type === 'generate-anima-outpaint') {
+        throw new GenerationOrchestratorError(
+          'GENERATION_BATCH_INVALID',
+          'Regional outpaint requires its captured outpaint admission owner.',
+        )
+      }
+      return request
+    })
     const { afterPublication, beforePublication } = input
     const assertCaptured = input.assertCurrent
     const assertCurrent = () => {
@@ -832,12 +846,121 @@ export class GenerationOrchestrator {
         preparedBatch,
         projectPath: project.canonicalPath,
         regionalInputs,
-        requests: regionalInputs.map((regional) => regional.request),
+        requests,
         stagingSessionId,
       })
       try {
         await assertIdentity()
         await afterPublication?.(queued, assertCurrent)
+        assertCurrent()
+        return queued
+      } catch (error) {
+        for (const item of queued) {
+          await this.cancelFailedRegionalAdmission(tabId, item.id)
+        }
+        throw error
+      }
+    })
+    this.enqueueBarrier = operation.then(
+      () => undefined,
+      () => undefined,
+    )
+    return await operation
+  }
+
+  /** One frozen OUT source plus regional material through the existing outpaint transaction. */
+  async enqueuePreparedAnimaRegionalOutpaint(
+    tabId: string,
+    input: {
+      afterPublication?: (
+        items: readonly QueuedGenerationItem[],
+        assertCurrent: () => void,
+      ) => Promise<void>
+      assertCurrent: () => void
+      beforePublication?: () => Promise<void>
+      prepared: PreparedAnimaOutpaintGeneration
+      regional: AnimaRegionalWorkerInput
+    },
+  ): Promise<QueuedGenerationItem[]> {
+    const prepared = {
+      context: structuredClone(input.prepared.context),
+      targetPngBytes: Buffer.from(input.prepared.targetPngBytes),
+    }
+    const regional = captureAnimaRegionalWorkerInput(input.regional)
+    if (regional.request.type !== 'generate-anima-outpaint') {
+      throw new GenerationOrchestratorError(
+        'GENERATION_BATCH_INVALID',
+        'Anima regional OUT requires its exact command.',
+      )
+    }
+    const expectedInfill = { ...regional.request.job.infillResource }
+    const assertCurrent = () => {
+      this.assertGenerationOpen(tabId)
+      if (
+        this.regionalStopping ||
+        this.projects.getOpenDocumentId(tabId) !== prepared.context.documentId
+      ) {
+        throw new GenerationOrchestratorError(
+          'PROJECT_DOCUMENT_CHANGED',
+          'The captured Anima OUT Project changed.',
+        )
+      }
+      input.assertCurrent()
+    }
+    assertCurrent()
+    const operation = this.enqueueBarrier.then(async () => {
+      this.queue.assertReadyForDispatch()
+      this.staging.assertReadyForPublication()
+      assertCurrent()
+      const project = await this.indexedProject(tabId)
+      const assertIdentity = async () => {
+        assertCurrent()
+        const current = await this.indexedProject(tabId)
+        assertCurrent()
+        if (
+          project.documentId !== prepared.context.documentId ||
+          current.documentId !== project.documentId ||
+          current.canonicalPath !== project.canonicalPath
+        ) {
+          throw new GenerationOrchestratorError(
+            'PROJECT_DOCUMENT_CHANGED',
+            'The indexed Anima OUT Project changed.',
+          )
+        }
+      }
+      await assertIdentity()
+      const resolveVerifiedOutpaintInfill = async () => {
+        const actual = await this.resolveRegionalOutpaintInfill(expectedInfill)
+        assertCurrent()
+        return actual
+      }
+      await resolveVerifiedOutpaintInfill()
+      await input.beforePublication?.()
+      assertCurrent()
+      const stagingSessionId = randomUUID()
+      const queued = await this.queue.enqueuePreparedOutpaintBatch({
+        assertCurrent,
+        beforeCommit: async () => assertCurrent(),
+        infillResolver: { resolveVerifiedOutpaintInfill },
+        items: [prepared],
+        modelService: this.models as AnimaGenerationModelResolver & GenerationModelResolver,
+        preflight: async (entries) => {
+          await assertIdentity()
+          await this.staging.preflightRegionalBatchCapacity({
+            entries,
+            localProjectKey: tabId,
+            projectPath: project.canonicalPath,
+            stagingSessionId,
+          })
+          assertCurrent()
+        },
+        projectPath: project.canonicalPath,
+        regionalInputs: [regional],
+        stagingSessionId,
+      })
+      try {
+        await assertIdentity()
+        await input.afterPublication?.(queued, assertCurrent)
         assertCurrent()
         return queued
       } catch (error) {
@@ -1523,18 +1646,41 @@ export class GenerationOrchestrator {
         regional: _regional,
         ...base
       } = frozen.payload
-      const ordinary = parseFrozenQueuedAnimaGenerationV1(
-        JSON.stringify({
-          ...base,
-          kind:
-            frozen.payload.kind === 'anima-regional-img2img' ? 'anima-img2img' : 'anima-txt2img',
-        }),
-      )
+      const ordinary =
+        frozen.payload.kind === 'anima-regional-outpaint'
+          ? parseAcceptedGenerationBaseV1(JSON.stringify(frozen.payload))
+          : parseFrozenQueuedAnimaGenerationV1(
+              JSON.stringify({
+                ...base,
+                kind:
+                  frozen.payload.kind === 'anima-regional-img2img'
+                    ? 'anima-img2img'
+                    : 'anima-txt2img',
+              }),
+            )
       const reverifyFrozen = async () => {
-        await reverifyFrozenQueuedAnimaGeneration(
-          ordinary,
-          this.models as AnimaGenerationModelResolver,
-        )
+        if (
+          ordinary.kind === 'anima-outpaint' &&
+          frozen.payload.kind === 'anima-regional-outpaint'
+        ) {
+          const infill = await this.resolveRegionalOutpaintInfill(frozen.payload.outpaintInfill)
+          assertCurrent()
+          await reverifyFrozenQueuedOutpaintGeneration(
+            ordinary,
+            this.models as AnimaGenerationModelResolver & GenerationModelResolver,
+            { resolveVerifiedOutpaintInfill: async () => infill },
+          )
+        } else if (ordinary.kind === 'anima-txt2img' || ordinary.kind === 'anima-img2img') {
+          await reverifyFrozenQueuedAnimaGeneration(
+            ordinary,
+            this.models as AnimaGenerationModelResolver,
+          )
+        } else {
+          throw new GenerationOrchestratorError(
+            'GENERATION_BATCH_INVALID',
+            'The frozen Anima family differs.',
+          )
+        }
         assertCurrent()
       }
       await reverifyFrozen()

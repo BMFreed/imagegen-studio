@@ -18,6 +18,7 @@ import type {
   FrozenQueuedIllustriousOutpaintV1,
   FrozenQueuedIllustriousTxt2ImgV1,
 } from './generation-queue.js'
+import type { AnimaOutpaintRequestV1 } from './outpaint-worker-request.js'
 import type {
   RegionalGenerationRequestV1,
   RegionalOutpaintInfill,
@@ -137,7 +138,11 @@ export function parseFrozenQueuedRegionalInvokeV1(json: string): FrozenQueuedReg
 export function parseFrozenQueuedRegionalOperationalV1(
   json: string,
 ): FrozenQueuedRegionalOperationalV1 {
-  if (readKind(json) === 'anima-regional-txt2img' || readKind(json) === 'anima-regional-img2img') {
+  if (
+    readKind(json) === 'anima-regional-txt2img' ||
+    readKind(json) === 'anima-regional-img2img' ||
+    readKind(json) === 'anima-regional-outpaint'
+  ) {
     return parseFrozenQueuedAnimaRegionalV1(json)
   }
   return parseRegionalPayload(
@@ -156,8 +161,22 @@ export function parseFrozenQueuedRegionalOperationalV1(
  * provenance.
  */
 export function parseAcceptedGenerationBaseV1(json: string): FrozenQueuedGenerationV1 {
-  if (readKind(json) === 'anima-regional-txt2img' || readKind(json) === 'anima-regional-img2img') {
+  if (
+    readKind(json) === 'anima-regional-txt2img' ||
+    readKind(json) === 'anima-regional-img2img' ||
+    readKind(json) === 'anima-regional-outpaint'
+  ) {
     const payload = parseFrozenQueuedAnimaRegionalV1(json)
+    if (payload.kind === 'anima-regional-outpaint') {
+      const {
+        compositionProfile: _profile,
+        outpaintInfill: _infill,
+        promptInterpretation: _interpretation,
+        regional: _regional,
+        ...base
+      } = payload
+      return { ...base, kind: 'anima-outpaint' }
+    }
     if (payload.kind === 'anima-regional-img2img') {
       const {
         compositionProfile: _profile,
@@ -368,7 +387,9 @@ export async function loadRegionalQueuedFiles(
   payload: FrozenQueuedRegionalOperationalV1,
 ): Promise<Record<string, Buffer>> {
   try {
-    return payload.kind === 'anima-regional-txt2img' || payload.kind === 'anima-regional-img2img'
+    return payload.kind === 'anima-regional-txt2img' ||
+      payload.kind === 'anima-regional-img2img' ||
+      payload.kind === 'anima-regional-outpaint'
       ? await loadAnimaRegionalQueuedFiles(root, payload)
       : await loadFiles(root, payload)
   } catch (error) {
@@ -388,15 +409,23 @@ export function loadRegionalQueuedInput(
 export function loadRegionalQueuedInput(
   root: string,
   payload: FrozenQueuedAnimaRegionalV1,
-  request: AnimaWorkerRequest,
+  request: AnimaOutpaintRequestV1 | AnimaWorkerRequest,
 ): Promise<AnimaRegionalWorkerInput>
 export async function loadRegionalQueuedInput(
   root: string,
   payload: FrozenQueuedRegionalOperationalV1,
-  request: AnimaWorkerRequest | RegionalGenerationRequestV1,
+  request: AnimaOutpaintRequestV1 | AnimaWorkerRequest | RegionalGenerationRequestV1,
 ): Promise<AnimaRegionalWorkerInput | RegionalWorkerInput> {
-  if (payload.kind === 'anima-regional-txt2img' || payload.kind === 'anima-regional-img2img') {
-    return await loadAnimaRegionalQueuedInput(root, payload, request as AnimaWorkerRequest)
+  if (
+    payload.kind === 'anima-regional-txt2img' ||
+    payload.kind === 'anima-regional-img2img' ||
+    payload.kind === 'anima-regional-outpaint'
+  ) {
+    return await loadAnimaRegionalQueuedInput(
+      root,
+      payload,
+      request as AnimaOutpaintRequestV1 | AnimaWorkerRequest,
+    )
   }
 
   const capturedPayload = parseRegionalPayload(

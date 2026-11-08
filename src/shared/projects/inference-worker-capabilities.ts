@@ -365,6 +365,16 @@ export function supportsInferenceAnimaRegionalImg2Img(value: unknown): boolean {
   )
 }
 
+/** Regional OUT adds alpha restoration/contribution to the qualified image owner. */
+export function supportsInferenceAnimaRegionalOutpaint(value: unknown): boolean {
+  return (
+    supportsInferenceAnimaRegionalImg2Img(value) &&
+    supportsInferenceAnimaOutpaint(value) &&
+    isQualifiedInferenceWorkerReady(value) &&
+    value.capabilities.includes('anima-regional-outpaint-v1')
+  )
+}
+
 /** Explicit alpha conditioning and RGBA contribution require a qualified contribution adapter. */
 export function supportsInferenceOutpaint(value: unknown): boolean {
   return (

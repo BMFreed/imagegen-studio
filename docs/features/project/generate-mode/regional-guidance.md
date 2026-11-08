@@ -2074,3 +2074,31 @@ controls/restoration. Source/retention review is separate from execution; the
 first Cancel-harness race remains a failed diagnostic. Other methods have small
 native/Main coverage here, not a trained visual matrix. Previous full-scene/human
 limits and PP-001/005/007/008 «Пока не обещать» remain unchanged.
+
+
+The subsequent [original-Anima mixed-alpha OUT lane](../../../engineering/phase-4-anima-regional-outpaint-research.md)
+adds partially transparent Current Canvas input through the existing ordinary
+outpaint owner. It requires `anima-regional-outpaint-v1` plus regional IMG and
+ordinary OUT prerequisites; non-Euler additionally needs the sampling capability.
+The same one-static-item, original-Anima,64–512-grid,1–200-step, strength0–1 bounds
+remain. Actual source/raw alpha, fixed LaMa/policy, native sampling plan and regional
+sidecars are frozen together. Regional text permissions remain independent from
+source keep protection. This does not expose an explicit painted inpaint mask.
+
+Output is an RGBA contribution, validated against its original source; it does not
+paste that source. Ordinary-only `anima-outpaint` accepted provenance preserves
+regional exclusions. Queue history requires frozen strength for this distinct
+operation; old TXT/IMG/default jobs keep their meanings. Additive migration26
+preserves all prior rows and frozen data.
+
+ROOT records1,580 distinct Main/641 Python/200 browser PASS. Real installed
+Heun20/.5 Generate/Cancel/restarted Retry produces19/2/19 progress, no canceled
+completion and exact replay RGBA after saved source/strength/method/model/text/mask
+edits. Results Add1→2/Undo1/Redo2/Save-reopen retains the exact original source and
+accepted contribution. Independent640-square visible source-over pixels match
+exactly. Three semantic mutations retain controls and restoration. Earlier actual
+RGB-reader and queue-wire failures remain excluded diagnostics with focused
+regressions. Source/retained-data review is separate from execution and physical
+release. Other methods have native small-model/Main evidence, not a trained visual
+matrix; full-scene/human limits, Smart/batch/resource/spatial-negative exclusions
+and PP-001/005/007/008 «Пока не обещать» remain unchanged.

@@ -6,6 +6,7 @@ import { ANIMA_SAMPLING_METHOD_KEYS } from './anima-sampling-method.js'
 import {
   supportsInferenceAnimaRegional,
   supportsInferenceAnimaRegionalImg2Img,
+  supportsInferenceAnimaRegionalOutpaint,
   supportsInferenceAnimaRegionalSampling,
 } from './inference-worker-capabilities.js'
 import { isProjectGenerationActionState } from './project-generation-actions.js'
@@ -82,7 +83,7 @@ test('Anima regional admission keeps literal zero weights and native Euler witho
   value.generationDraft.sampling.steps = 200
   assert.equal(reason(value), null)
   assert.match(reason(value, { iterations: 2 })!, /one image per click/)
-  assert.match(reason(value, { targetMode: 'outpaint' })!, /fully transparent or fully opaque/)
+  assert.match(reason(value, { targetMode: 'outpaint' })!, /Anima Regional Guidance outpaint/)
   value.generationDraft.sampling.denoisingStrength = 0.5
   assert.match(
     reason(value, { targetMode: 'img2img' })!,
@@ -220,6 +221,31 @@ test('regional sampling capability requires the complete ordinary and regional w
   }
   assert.equal(supportsInferenceAnimaRegionalImg2Img(ready), false)
   assert.equal(supportsInferenceAnimaRegionalImg2Img(imageReady), true)
+  const outpaintReady = {
+    ...imageReady,
+    capabilities: [...imageReady.capabilities, 'anima-outpaint', 'anima-regional-outpaint-v1'],
+  }
+  assert.equal(supportsInferenceAnimaRegionalOutpaint(outpaintReady), true)
+  assert.equal(supportsInferenceAnimaRegionalOutpaint(imageReady), false)
+  for (const missing of [
+    'anima-outpaint',
+    'anima-regional-img2img-v1',
+    'anima-regional-outpaint-v1',
+    'anima-regional-txt2img-v1',
+  ]) {
+    assert.equal(
+      supportsInferenceAnimaRegionalOutpaint({
+        ...outpaintReady,
+        capabilities: outpaintReady.capabilities.filter((cap) => cap !== missing),
+      }),
+      false,
+      missing,
+    )
+  }
+  for (const workerVersion of ['0.13.0', '0.15.0']) {
+    assert.equal(supportsInferenceAnimaRegionalOutpaint({ ...outpaintReady, workerVersion }), false)
+  }
+
   assert.equal(
     supportsInferenceAnimaRegionalImg2Img({
       ...imageReady,
@@ -253,6 +279,15 @@ test('optional regional sampling action state admits only actual Boolean capabil
     vaePrecisionSupported: false,
   }
   assert.equal(isProjectGenerationActionState(state), true)
+  for (const animaRegionalOutpaintSupported of [true, false, undefined]) {
+    assert.equal(isProjectGenerationActionState({ ...state, animaRegionalOutpaintSupported }), true)
+  }
+  for (const animaRegionalOutpaintSupported of [null, 0, 'true', {}, []]) {
+    assert.equal(
+      isProjectGenerationActionState({ ...state, animaRegionalOutpaintSupported }),
+      false,
+    )
+  }
   for (const animaRegionalImg2ImgSupported of [true, false, undefined]) {
     assert.equal(isProjectGenerationActionState({ ...state, animaRegionalImg2ImgSupported }), true)
   }
@@ -353,6 +388,38 @@ for (const method of ANIMA_SAMPLING_METHOD_KEYS) {
           animaRegionalImg2ImgSupported: true,
           animaRegionalSamplingSupported: true,
           targetMode: 'img2img',
+        })!,
+        /Denoising Strength/,
+      )
+    }
+  })
+}
+
+for (const method of ANIMA_SAMPLING_METHOD_KEYS) {
+  test(`mixed-alpha regional ${method} advisory requires OUT capability explicit strength and saved method support`, () => {
+    const value = document()
+    value.generationDraft.sampling.animaMethod = method
+    value.generationDraft.sampling.denoisingStrength = 0.5
+    for (const animaRegionalOutpaintSupported of [undefined, false, true]) {
+      for (const animaRegionalSamplingSupported of [undefined, false, true]) {
+        assert.equal(
+          reason(value, {
+            animaRegionalOutpaintSupported,
+            animaRegionalSamplingSupported,
+            targetMode: 'outpaint',
+          }) === null,
+          animaRegionalOutpaintSupported === true &&
+            (method === 'euler' || animaRegionalSamplingSupported === true),
+        )
+      }
+    }
+    for (const strength of [null, -1, 1.01, Infinity, NaN]) {
+      value.generationDraft.sampling.denoisingStrength = strength
+      assert.match(
+        reason(value, {
+          animaRegionalOutpaintSupported: true,
+          animaRegionalSamplingSupported: true,
+          targetMode: 'outpaint',
         })!,
         /Denoising Strength/,
       )

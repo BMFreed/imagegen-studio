@@ -12,6 +12,14 @@ const migrationName = '0025_anima_regional_img2img_queue.sql'
 
 test('Anima Regional SQL migration preserves thirteen existing operations in every state and independent receipt/cursor/index bytes across reopen', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'igs-regional-queue-migration-'))
+  // Keep this historical 24->25 regression pinned to its migration boundary.
+  const through25 = path.join(root, 'through25')
+  await mkdir(through25, { mode: 0o700 })
+  for (const name of await readdir(migrations)) {
+    if (/^\d{4}_[a-z0-9_]+\.sql$/.test(name) && name <= migrationName) {
+      await cp(path.join(migrations, name), path.join(through25, name))
+    }
+  }
   const legacyMigrations = path.join(root, 'legacy-migrations')
   await mkdir(legacyMigrations, { mode: 0o700 })
   for (const name of await readdir(migrations)) {
@@ -163,7 +171,7 @@ test('Anima Regional SQL migration preserves thirteen existing operations in eve
     } finally {
       await legacy.close()
     }
-    const migrated = openAppDatabase(root, migrations)
+    const migrated = openAppDatabase(root, through25)
     try {
       assert.deepEqual(
         await migrated.db.selectFrom('generation_queue_item').selectAll().orderBy('id').execute(),
@@ -266,7 +274,7 @@ test('Anima Regional SQL migration preserves thirteen existing operations in eve
     } finally {
       await migrated.close()
     }
-    const reopened = openAppDatabase(root, migrations)
+    const reopened = openAppDatabase(root, through25)
     try {
       assert.equal(
         (await reopened.db.selectFrom('generation_queue_item').selectAll().execute()).length,

@@ -15,6 +15,7 @@ import { isDeepStrictEqual } from 'node:util'
 import * as v from 'valibot'
 
 import type { IllustriousGenerationRequestV1 } from './illustrious-txt2img-job.js'
+import type { AnimaOutpaintRequestV1 } from './outpaint-worker-request.js'
 import type { IllustriousOutpaintRequestV1 } from './outpaint-worker-request.js'
 import type { CurrentCanvasRegionalRecipe } from './project-current-canvas-regional-recipe.js'
 import type { VerifiedWorkerImage } from './worker-client.js'
@@ -68,7 +69,7 @@ export interface RegionalWorkerInput {
 
 export type OperationalRegionalWorkerInput = AnimaRegionalWorkerInput | RegionalWorkerInput
 export type OperationalRegionalGenerationRequestV1 =
-  AnimaWorkerRequest | RegionalGenerationRequestV1
+  AnimaOutpaintRequestV1 | AnimaWorkerRequest | RegionalGenerationRequestV1
 
 export interface RegionalWorkerFile {
   byteSize: number
@@ -632,10 +633,13 @@ export async function readRegionalWorkerResult(
     width: request.job.bbox.width,
   }
   const pngBytes =
-    request.type === 'generate-illustrious-outpaint'
+    request.type === 'generate-illustrious-outpaint' || request.type === 'generate-anima-outpaint'
       ? await readSmartPatchPreparationOutput(output.path, output, 'source')
       : await readSmartPatchModelSourceOutput(output.path, output)
-  if (request.type === 'generate-illustrious-outpaint') {
+  if (
+    request.type === 'generate-illustrious-outpaint' ||
+    request.type === 'generate-anima-outpaint'
+  ) {
     const source = await readSmartPatchPreparationOutput(
       request.job.target.path,
       { ...request.job.target, colorSpace: 'srgb' },

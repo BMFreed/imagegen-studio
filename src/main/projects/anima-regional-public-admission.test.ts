@@ -2,12 +2,16 @@ import { ANIMA_SAMPLING_METHOD_KEYS } from '../../shared/projects/anima-sampling
 
 import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
+import path from 'node:path'
 import test from 'node:test'
 
 import type { RegionalProjectFixture } from './test-fixtures/regional-project.js'
 
+import { LAMA_OUTPAINT_ARTIFACT } from '../runtime/lama-manifest.js'
 import { ProjectGenerationActionController } from './generation-action-controller.js'
+import { GenerationOrchestrator } from './generation-orchestrator.js'
 import { ProjectRegionalGenerationCoordinator } from './project-regional-generation-coordinator.js'
+import { parseAcceptedGenerationBaseV1 } from './regional-queued-generation.js'
 import {
   ANIMA_BATCH_READY,
   animaFixturePng,
@@ -28,7 +32,11 @@ async function withPublicAnima(
   use: (
     fixture: RegionalProjectFixture & {
       actions: ProjectGenerationActionController
-      controls: { ready: ReturnType<RegionalProjectFixture['input']>['ready'] }
+      controls: {
+        infillAvailable: boolean
+        infillPath: string
+        ready: ReturnType<RegionalProjectFixture['input']>['ready']
+      }
       coordinator: ProjectRegionalGenerationCoordinator
     },
   ) => Promise<void>,
@@ -50,6 +58,8 @@ async function withPublicAnima(
       document.generationDraft.seed = { policy: 'fixed', value: 123 }
     })
     const controls = {
+      infillAvailable: true,
+      infillPath: path.join(fixture.root, 'explicit-structural-LaMa-resolver-substitute.pt'),
       ready: {
         ...ANIMA_BATCH_READY,
         capabilities: [
@@ -60,11 +70,34 @@ async function withPublicAnima(
         workerVersion: '0.14.0',
       },
     }
+    // Metadata-only exact resource resolver substitute; no LaMa load/download is claimed.
+    const orchestrator = new GenerationOrchestrator(
+      fixture.projects,
+      fixture.index,
+      models,
+      fixture.queue,
+      fixture.staging,
+      fixture.processor,
+      fixture.scratch,
+      {
+        resolveVerifiedOutpaintInfill: async () => {
+          if (!controls.infillAvailable) {
+            throw new Error('Explicit LaMa resource unavailable')
+          }
+          return {
+            byteSize: LAMA_OUTPAINT_ARTIFACT.sizeBytes,
+            managedPath: controls.infillPath,
+            role: 'outpaint-infill',
+            sha256: LAMA_OUTPAINT_ARTIFACT.sha256,
+          }
+        },
+      },
+    )
     const coordinator = new ProjectRegionalGenerationCoordinator({
       compositionProfile: 'invoke-canvas-v1',
       gate: fixture.gate,
       models,
-      orchestrator: fixture.orchestrator,
+      orchestrator,
       projects: fixture.projects,
       scratchBasePath: fixture.scratch,
     })
@@ -83,7 +116,7 @@ async function withPublicAnima(
       dispatch: { runNext: async () => ({ kind: 'idle' }), shutdown: async () => {} },
       gate: fixture.gate,
       models,
-      orchestrator: fixture.orchestrator,
+      orchestrator,
       processor: fixture.processor,
       projects: fixture.projects,
       queue: fixture.queue,
@@ -93,7 +126,7 @@ async function withPublicAnima(
       staging: fixture.staging,
     })
     try {
-      await use({ ...fixture, actions, controls, coordinator })
+      await use({ ...fixture, actions, controls, coordinator, orchestrator })
     } finally {
       await actions.shutdown()
       await coordinator.shutdown()
@@ -257,7 +290,7 @@ test('opaque regional admission retains mixed-alpha refusal with the new capabil
         documentId: fixture.document().documentId,
         iterations: 1,
       }),
-      /transparent or fully opaque/,
+      /Anima Regional Guidance outpaint/,
     )
     assert.equal((await fixture.queue.listManagerPage()).items.length, 0)
   })
@@ -565,3 +598,201 @@ test('genuine Anima regional admission retains dormant authored references with 
     assert.ok((await readFile(fixture.packagePath)).equals(saved))
   })
 })
+
+function enableRegionalOutpaint(
+  fixture: Parameters<Parameters<typeof withPublicAnima>[0]>[0],
+): void {
+  fixture.controls.ready.capabilities = [
+    ...fixture.controls.ready.capabilities,
+    'anima-outpaint',
+    'anima-regional-img2img-v1',
+    'anima-regional-outpaint-v1',
+    'anima-regional-sampling-v1',
+  ]
+}
+
+for (const method of ANIMA_SAMPLING_METHOD_KEYS) {
+  test(`mixed-alpha regional ${method} NEW freezes OUT source alpha infill and native plan`, async () => {
+    await withPublicAnima(async (fixture) => {
+      enableRegionalOutpaint(fixture)
+      await useOpaqueTarget(fixture, 127)
+      await fixture.edit((document) => {
+        document.generationDraft.sampling.animaMethod = method
+        document.generationDraft.sampling.steps = 20
+        document.generationDraft.sampling.denoisingStrength = 0.5
+      })
+      const before = structuredClone(fixture.document())
+      const saved = await readFile(fixture.packagePath)
+      fixture.controls.ready.capabilities = fixture.controls.ready.capabilities.filter(
+        (cap) => cap !== 'anima-regional-outpaint-v1',
+      )
+      await assert.rejects(
+        fixture.actions.generate(fixture.tabId, { documentId: before.documentId, iterations: 1 }),
+        /Anima Regional Guidance outpaint/,
+      )
+      assert.equal((await fixture.queue.listManagerPage()).items.length, 0)
+      assert.equal(
+        (await fixture.actions.getState(fixture.tabId)).animaRegionalOutpaintSupported,
+        false,
+      )
+      ;(fixture.controls.ready.capabilities as string[]).push('anima-regional-outpaint-v1')
+      const result = await fixture.actions.generate(fixture.tabId, {
+        documentId: before.documentId,
+        iterations: 1,
+      })
+      if (result.kind !== 'queued') {
+        assert.fail('Expected one frozen regional OUT job')
+      }
+      const frozen = await fixture.queue.loadVerifiedAnimaRegionalInput(result.jobIds[0])
+      assert.equal(frozen.payload.kind, 'anima-regional-outpaint')
+      assert.equal(frozen.input.request.type, 'generate-anima-outpaint')
+      if (
+        frozen.payload.kind !== 'anima-regional-outpaint' ||
+        frozen.input.request.type !== 'generate-anima-outpaint'
+      ) {
+        assert.fail('Expected exact OUT variants')
+      }
+      assert.equal(frozen.payload.context.kind, 'anima-outpaint-preparation')
+      const mismatched = structuredClone(frozen.payload)
+      mismatched.outpaintInfill.sha256 = 'f'.repeat(64)
+      assert.throws(() => parseAcceptedGenerationBaseV1(JSON.stringify(mismatched)), {
+        code: 'QUEUE_INPUT_INVALID',
+      })
+      assert.equal(frozen.payload.outpaintInfill.path, fixture.controls.infillPath)
+      assert.deepEqual(frozen.input.request.job.infillResource, frozen.payload.outpaintInfill)
+      assert.deepEqual(frozen.input.request.job.conditioning, frozen.payload.context.conditioning)
+      assert.equal(frozen.input.request.job.sampling.mode, 'img2img')
+      assert.equal(frozen.input.request.job.sampling.strength, 0.5)
+      assert.equal(frozen.input.request.job.sampling.totalSteps, method === 'heun' ? 19 : 10)
+      assert.equal(frozen.payload.context.conditioning.keepMask.polarity, 'keep')
+      assert.equal(
+        frozen.payload.context.conditioning.keepMask.sha256,
+        regionalProjectDigest(Buffer.alloc(64 * 64, 127)),
+      )
+      assert.deepEqual(frozen.payload.workerJob.sampling, frozen.input.request.job.sampling)
+      const ordinary = parseAcceptedGenerationBaseV1(JSON.stringify(frozen.payload))
+      assert.equal(ordinary.kind, 'anima-outpaint')
+      for (const field of [
+        'regional',
+        'compositionProfile',
+        'promptInterpretation',
+        'outpaintInfill',
+      ]) {
+        assert.equal(field in ordinary, false)
+      }
+      const details = (await fixture.queue.listManagerPage()).items[0]
+      assert.equal(details.operation, 'anima-regional-outpaint')
+      assert.equal(details.details?.sampling.animaMethod, method)
+      assert.deepEqual(fixture.document(), before)
+      assert.ok((await readFile(fixture.packagePath)).equals(saved))
+    })
+  })
+
+  test(`mixed-alpha regional ${method} Retry retains frozen OUT source infill and method after saved edits`, async () => {
+    await withPublicAnima(async (fixture) => {
+      enableRegionalOutpaint(fixture)
+      await useOpaqueTarget(fixture, 127)
+      await fixture.edit((document) => {
+        document.generationDraft.sampling.animaMethod = method
+        document.generationDraft.sampling.denoisingStrength = 0.5
+      })
+      const result = await fixture.actions.generate(fixture.tabId, {
+        documentId: fixture.document().documentId,
+        iterations: 1,
+      })
+      if (result.kind !== 'queued') {
+        assert.fail('Expected OUT queue job')
+      }
+      const id = result.jobIds[0]
+      await fixture.orchestrator.cancelGenerationJob(id)
+      const before = await fixture.queue.loadVerifiedAnimaRegionalInput(id)
+      const png = await readFile(before.targetPath)
+      const source = await fixture.queue.getManagerEntry(id)
+      const row = await fixture.db
+        .selectFrom('generation_queue_item')
+        .selectAll()
+        .where('id', '=', id)
+        .executeTakeFirstOrThrow()
+      await fixture.edit((document) => {
+        document.generationDraft.model = null
+        document.generationDraft.seed = { policy: 'fixed', value: 999 }
+        document.generationDraft.sampling.animaMethod = method === 'euler' ? 'heun' : 'euler'
+        document.generationDraft.sampling.denoisingStrength = 1
+        document.regionalGuidance!.forEach((region) => {
+          region.enabled = false
+        })
+      })
+      await fixture.projects.save(fixture.tabId)
+      const edited = structuredClone(fixture.document())
+      const saved = await readFile(fixture.packagePath)
+      fixture.compositionWorker.composeTarget = async () => {
+        throw new Error('OUT Retry recomposed current source')
+      }
+      fixture.controls.ready.capabilities = fixture.controls.ready.capabilities.filter(
+        (cap) => cap !== 'anima-regional-outpaint-v1',
+      )
+      await assert.rejects(
+        fixture.actions.retryJob({ id, statusSequence: source.statusSequence }),
+        { code: 'GENERATION_RUNTIME_UNAVAILABLE' },
+      )
+      assert.equal((await fixture.queue.listManagerPage()).items.length, 1)
+      ;(fixture.controls.ready.capabilities as string[]).push('anima-regional-outpaint-v1')
+      await fixture.actions.retryJob({ id, statusSequence: source.statusSequence })
+      const rows = await fixture.db.selectFrom('generation_queue_item').selectAll().execute()
+      assert.equal(rows.length, 2)
+      const next = rows.find((entry) => entry.id !== id)!
+      assert.equal(next.frozen_payload_json, row.frozen_payload_json)
+      const after = await fixture.queue.loadVerifiedAnimaRegionalInput(next.id)
+      assert.ok((await readFile(after.targetPath)).equals(png))
+      assert.deepEqual(after.input.recipe, before.input.recipe)
+      assert.deepEqual(after.input.request.job, {
+        ...before.input.request.job,
+        output: after.input.request.job.output,
+        target: after.input.request.job.target,
+      })
+      assert.deepEqual(fixture.document(), edited)
+      assert.ok((await readFile(fixture.packagePath)).equals(saved))
+    })
+  })
+}
+
+for (const failure of ['missing', 'changed-path'] as const) {
+  test(`regional OUT ${failure} infill refuses NEW or frozen Retry without partial SQL`, async () => {
+    await withPublicAnima(async (fixture) => {
+      enableRegionalOutpaint(fixture)
+      await useOpaqueTarget(fixture, 127)
+      await fixture.edit((document) => {
+        document.generationDraft.sampling.denoisingStrength = 0.5
+      })
+      const before = structuredClone(fixture.document())
+      const saved = await readFile(fixture.packagePath)
+      if (failure === 'missing') {
+        fixture.controls.infillAvailable = false
+        await assert.rejects(
+          fixture.actions.generate(fixture.tabId, { documentId: before.documentId, iterations: 1 }),
+          /LaMa resource unavailable/,
+        )
+        assert.equal((await fixture.queue.listManagerPage()).items.length, 0)
+      } else {
+        const result = await fixture.actions.generate(fixture.tabId, {
+          documentId: before.documentId,
+          iterations: 1,
+        })
+        if (result.kind !== 'queued') {
+          assert.fail('Expected OUT queue job')
+        }
+        const id = result.jobIds[0]
+        await fixture.orchestrator.cancelGenerationJob(id)
+        const row = await fixture.queue.getManagerEntry(id)
+        fixture.controls.infillPath += '-changed'
+        await assert.rejects(
+          fixture.actions.retryJob({ id, statusSequence: row.statusSequence }),
+          /infill resource changed/,
+        )
+        assert.equal((await fixture.queue.listManagerPage()).items.length, 1)
+      }
+      assert.deepEqual(fixture.document(), before)
+      assert.ok((await readFile(fixture.packagePath)).equals(saved))
+    })
+  })
+}

@@ -15,6 +15,7 @@ from PIL import Image
 
 from imagegen_worker.anima_euler import (
     AnimaEulerResult,
+    AnimaPredictionFactory,
     execute_captured_anima_plan,
     require_finite_anima_tensor,
 )
@@ -67,6 +68,7 @@ def generate_anima_outpaint(
     loras: tuple[GenerationLora, ...] = (),
     tokenizers: AnimaTokenizers | None = None,
     progress: Callable[[int, int], None] | None = None,
+    prediction_factory: AnimaPredictionFactory | None = None,
 ) -> AnimaEulerResult:
     """Return internal RGB pixels; no command, queue, publication or capability."""
     captured = validate_anima_flow_sampling_plan(plan)
@@ -103,6 +105,7 @@ def generate_anima_outpaint(
         loras=loras,
         tokenizers=tokenizers,
         progress=progress,
+        prediction_factory=prediction_factory,
         initial_sigma=captured.initial_sigma,
         latent_transform_factory=make_transform,
         denoiser_factory=(

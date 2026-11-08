@@ -1,16 +1,20 @@
 import { ANIMA_PROMPT_INTERPRETATION } from '../../shared/projects/anima-prompt-weighting.js'
 import type { AnimaWorkerRequest } from '../../shared/projects/anima-worker-request.js'
+import { ANIMA_REGIONAL_COMPOSITION_PROFILE } from '../../shared/projects/regional-invoke-generation.js'
 
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import * as v from 'valibot'
 
+import type { AnimaOutpaintRequestV1 } from './outpaint-worker-request.js'
+
 import {
   type FrozenQueuedAnimaGenerationV1,
+  type FrozenQueuedAnimaOutpaintV1,
   parseFrozenQueuedAnimaGenerationV1,
+  parseFrozenQueuedAnimaOutpaintV1,
 } from './anima-queued-generation.js'
 import {
-  ANIMA_REGIONAL_COMPOSITION_PROFILE,
   type AnimaRegionalWorkerInput,
   captureAnimaRegionalWorkerInput,
 } from './anima-regional-worker-request.js'
@@ -21,6 +25,10 @@ import {
   loadOwnedRegionalQueuedFiles,
   regionalAlphaRefSchema,
 } from './regional-queued-generation.js'
+import {
+  type RegionalOutpaintInfill,
+  RegionalOutpaintInfillSchema,
+} from './regional-worker-request.js'
 
 export type FrozenQueuedAnimaRegionalV1 = RegionalFields &
   (
@@ -30,10 +38,15 @@ export type FrozenQueuedAnimaRegionalV1 = RegionalFields &
     | (Omit<Extract<FrozenQueuedAnimaGenerationV1, { kind: 'anima-txt2img' }>, 'kind'> & {
         kind: 'anima-regional-txt2img'
       })
+    | (Omit<FrozenQueuedAnimaOutpaintV1, 'kind'> & {
+        kind: 'anima-regional-outpaint'
+        outpaintInfill: RegionalOutpaintInfill
+      })
   )
 export interface AnimaRegionalQueuedMaterial {
   compositionProfile: typeof ANIMA_REGIONAL_COMPOSITION_PROFILE
   files: Record<string, Buffer>
+  outpaintInfill?: RegionalOutpaintInfill
   promptInterpretation: typeof ANIMA_PROMPT_INTERPRETATION
   regional: FrozenQueuedAnimaRegionalV1['regional']
 }
@@ -59,9 +72,12 @@ export function parseFrozenQueuedAnimaRegionalV1(json: string): FrozenQueuedAnim
       invalid()
     }
     const value = JSON.parse(json) as FrozenQueuedAnimaRegionalV1
-    const { compositionProfile, promptInterpretation, regional, ...base } = value
+    const { compositionProfile, outpaintInfill, promptInterpretation, regional, ...base } =
+      value as FrozenQueuedAnimaRegionalV1 & { outpaintInfill?: unknown }
     if (
-      (value.kind !== 'anima-regional-txt2img' && value.kind !== 'anima-regional-img2img') ||
+      (value.kind !== 'anima-regional-txt2img' &&
+        value.kind !== 'anima-regional-img2img' &&
+        value.kind !== 'anima-regional-outpaint') ||
       compositionProfile !== ANIMA_REGIONAL_COMPOSITION_PROFILE ||
       promptInterpretation !== ANIMA_PROMPT_INTERPRETATION ||
       !v.is(
@@ -74,10 +90,22 @@ export function parseFrozenQueuedAnimaRegionalV1(json: string): FrozenQueuedAnim
     ) {
       invalid()
     }
-    const ordinary = parseFrozenQueuedAnimaGenerationV1(
+    const outpaint = value.kind === 'anima-regional-outpaint'
+    if (
+      outpaint ? !v.is(RegionalOutpaintInfillSchema, outpaintInfill) : outpaintInfill !== undefined
+    ) {
+      invalid()
+    }
+    const ordinary = (
+      outpaint ? parseFrozenQueuedAnimaOutpaintV1 : parseFrozenQueuedAnimaGenerationV1
+    )(
       JSON.stringify({
         ...base,
-        kind: value.kind === 'anima-regional-img2img' ? 'anima-img2img' : 'anima-txt2img',
+        kind: outpaint
+          ? 'anima-outpaint'
+          : value.kind === 'anima-regional-img2img'
+            ? 'anima-img2img'
+            : 'anima-txt2img',
       }),
     )
     if (
@@ -90,6 +118,21 @@ export function parseFrozenQueuedAnimaRegionalV1(json: string): FrozenQueuedAnim
       (ordinary.context.cfgRescale ?? 0) !== 0
     ) {
       invalid()
+    }
+    if (ordinary.kind === 'anima-outpaint') {
+      const infill = v.parse(RegionalOutpaintInfillSchema, outpaintInfill)
+      const { path: _path, ...identity } = infill
+      if (!isDeepStrictEqual(identity, ordinary.context.conditioning.infillResource)) {
+        invalid()
+      }
+      return {
+        ...ordinary,
+        compositionProfile,
+        kind: 'anima-regional-outpaint',
+        outpaintInfill: v.parse(RegionalOutpaintInfillSchema, outpaintInfill),
+        promptInterpretation,
+        regional,
+      }
     }
     return ordinary.kind === 'anima-img2img'
       ? {
@@ -142,6 +185,9 @@ export function captureAnimaRegionalQueuedMaterial(
   return {
     compositionProfile: captured.compositionProfile,
     files,
+    ...(captured.request.type === 'generate-anima-outpaint'
+      ? { outpaintInfill: { ...captured.request.job.infillResource } }
+      : {}),
     promptInterpretation: captured.promptInterpretation,
     regional: { byteSize: bytes.length, sha256: sha256(bytes) },
   }
@@ -157,7 +203,7 @@ export async function loadAnimaRegionalQueuedFiles(
 export async function loadAnimaRegionalQueuedInput(
   root: string,
   payload: FrozenQueuedAnimaRegionalV1,
-  request: AnimaWorkerRequest,
+  request: AnimaOutpaintRequestV1 | AnimaWorkerRequest,
 ): Promise<AnimaRegionalWorkerInput> {
   const captured = parseFrozenQueuedAnimaRegionalV1(JSON.stringify(payload))
   const detachedRequest = structuredClone(request)
@@ -181,7 +227,27 @@ export async function loadAnimaRegionalQueuedInput(
     recipe: hydrated,
     request: detachedRequest,
   } as AnimaRegionalWorkerInput)
-  const { output: _output, target, ...job } = input.request.job
+  const { output: _output, target, ...jobFields } = input.request.job
+  const job =
+    input.request.type === 'generate-anima-outpaint'
+      ? (() => {
+          const {
+            conditioning: _conditioning,
+            infillResource: _infill,
+            ...numeric
+          } = input.request.job
+          const { output: _output, target: _target, ...rest } = numeric
+          return rest
+        })()
+      : jobFields
+  if (
+    captured.kind === 'anima-regional-outpaint' &&
+    (input.request.type !== 'generate-anima-outpaint' ||
+      !isDeepStrictEqual(input.request.job.conditioning, captured.context.conditioning) ||
+      !isDeepStrictEqual(input.request.job.infillResource, captured.outpaintInfill))
+  ) {
+    invalid()
+  }
   const { path: _path, ...descriptor } = target
   if (
     !isDeepStrictEqual({ ...job, target: descriptor }, captured.workerJob) ||

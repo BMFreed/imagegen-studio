@@ -31,11 +31,13 @@ import re
 import threading
 from collections.abc import Generator
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from itertools import chain
 from pathlib import PosixPath
 from typing import TYPE_CHECKING, Any, Literal, cast
 from uuid import UUID
+
+from PIL import Image
 
 from imagegen_worker.anima_conditioning import (
     AnimaConditioningPair,
@@ -57,16 +59,29 @@ from imagegen_worker.anima_flow_sampling import (
     AnimaFlowSamplingPlan,
     validate_anima_flow_sampling_plan,
 )
+from imagegen_worker.anima_outpaint import generate_anima_outpaint
 from imagegen_worker.anima_sampling import create_anima_native_denoiser
 from imagegen_worker.anima_tokenizers import AnimaTokenizers, load_anima_tokenizers
 from imagegen_worker.anima_worker import anima_prompt_payload, anima_sampling_payload
-from imagegen_worker.derivatives import DerivativeError
+from imagegen_worker.derivatives import SRGB_ICC_PROFILE, DerivativeError
 from imagegen_worker.generation_artifacts import (
     publish_generation_image,
     validate_generation_target,
 )
-from imagegen_worker.inference_anima import LoadedAnimaModels
-from imagegen_worker.protocol import GenerateAnimaImg2ImgCommand, GenerateAnimaTxt2ImgCommand
+from imagegen_worker.inference_anima import AnimaModelBundle, LoadedAnimaModels
+from imagegen_worker.lama_infill import OUTPAINT_INFILL_BYTE_SIZE, OUTPAINT_INFILL_SHA256
+from imagegen_worker.outpaint_conditioning import (
+    OutpaintConditioning,
+    create_outpaint_contribution,
+)
+from imagegen_worker.outpaint_worker_assets import prepare_worker_outpaint
+from imagegen_worker.protocol import (
+    AlphaOutpaintConditioning,
+    GenerateAnimaImg2ImgCommand,
+    GenerateAnimaOutpaintCommand,
+    GenerateAnimaTxt2ImgCommand,
+    OutpaintInfillResource,
+)
 
 if TYPE_CHECKING:
     from imagegen_worker.inference import DenoisingProgressSink, MLRuntime
@@ -443,11 +458,21 @@ def _capture_command(
     *,
     sampling_profile: _SamplingProfile | None = None,
     img2img: bool = False,
+    outpaint: bool = False,
 ) -> AnimaFlowSamplingPlan:
     _require(
-        type(command) is (GenerateAnimaImg2ImgCommand if img2img else GenerateAnimaTxt2ImgCommand),
+        type(command)
+        is (
+            GenerateAnimaOutpaintCommand
+            if outpaint
+            else GenerateAnimaImg2ImgCommand
+            if img2img
+            else GenerateAnimaTxt2ImgCommand
+        ),
         "INVALID_REQUEST",
-        "Anima regional execution requires exact img2img command."
+        "Anima regional execution requires exact outpaint command."
+        if outpaint
+        else "Anima regional execution requires exact img2img command."
         if img2img
         else "Anima regional execution requires exact txt2img command.",
     )
@@ -468,11 +493,11 @@ def _capture_command(
     except (AttributeError, TypeError, ValueError) as error:
         raise DerivativeError("INVALID_REQUEST", "Anima sampling command is invalid.") from error
     _require(
-        plan.mode == ("img2img" if img2img else "txt2img")
+        plan.mode == ("img2img" if img2img or outpaint else "txt2img")
         and (plan.scheduler == "euler" or sampling_profile is not None),
         "INVALID_REQUEST",
         "Private Anima image regions require original img2img Euler."
-        if img2img
+        if img2img or outpaint
         else "Private Anima regions require original txt2img Euler.",
     )
     bbox = _rect(command.bbox)
@@ -509,7 +534,125 @@ def _capture_command(
             "INVALID_REQUEST",
             "Anima generation paths must be safe absolute paths.",
         )
+    if outpaint:
+        _capture_outpaint_command(cast(GenerateAnimaOutpaintCommand, command))
     return plan
+
+
+def _capture_outpaint_command(command: GenerateAnimaOutpaintCommand) -> None:
+    """Keep manually constructed OUT records on the existing frozen ordinary policy."""
+    policy, resource = command.conditioning, command.infill_resource
+    _require(
+        type(policy) is AlphaOutpaintConditioning
+        and vars(policy).keys() == {field.name for field in fields(AlphaOutpaintConditioning)}
+        and _rect(policy.bbox) == _rect(command.bbox)
+        and type(policy.source_sha256) is str
+        and policy.source_sha256 == command.target_sha256
+        and type(policy.source_byte_size) is int
+        and policy.source_byte_size == command.target_byte_size
+        and type(policy.width) is int
+        and type(policy.height) is int
+        and (policy.width, policy.height) == (command.width, command.height)
+        and type(policy.keep_mask_byte_size) is int
+        and policy.keep_mask_byte_size == command.width * command.height
+        and type(policy.keep_mask_sha256) is str
+        and re.fullmatch(r"[0-9a-f]{64}", policy.keep_mask_sha256) is not None
+        and type(policy.edge_radius) is int
+        and policy.edge_radius == 16
+        and type(policy.fade_distance) is int
+        and policy.fade_distance == 16
+        and type(policy.minimum_denoise) in (int, float)
+        and policy.minimum_denoise == 0,
+        "INVALID_REQUEST",
+        "Anima outpaint requires the complete existing alpha identity and frozen policy.",
+    )
+    _require(
+        type(resource) is OutpaintInfillResource
+        and vars(resource).keys() == {field.name for field in fields(OutpaintInfillResource)}
+        and resource.role == "outpaint-infill"
+        and type(resource.byte_size) is int
+        and resource.byte_size == OUTPAINT_INFILL_BYTE_SIZE
+        and type(resource.sha256) is str
+        and resource.sha256 == OUTPAINT_INFILL_SHA256
+        and type(resource.path) is PosixPath
+        and resource.path.is_absolute()
+        and ".." not in resource.path.parts
+        and "\x00" not in str(resource.path)
+        and type(command.bundle) is AnimaModelBundle,
+        "INVALID_REQUEST",
+        "Anima outpaint requires the exact pinned LaMa resource outside request staging.",
+    )
+    model_paths = {
+        command.bundle.checkpoint.path,
+        command.bundle.qwen3_encoder.path,
+        command.bundle.vae.path,
+    }
+    _require(
+        resource.path not in model_paths | {command.target_path, command.output_path}
+        and resource.path != command.staging_root
+        and command.staging_root not in resource.path.parents,
+        "INVALID_REQUEST",
+        "Anima outpaint infill must be distinct from all model and staging inputs.",
+    )
+
+
+def _owned_outpaint_inputs(
+    command: GenerateAnimaOutpaintCommand,
+    prepared: tuple[OutpaintConditioning, Image.Image] | None,
+) -> tuple[OutpaintConditioning, Image.Image]:
+    """Detach the trusted preparer's snapshot without reopening it or loading LaMa twice.
+
+    As in the existing Illustrious worker, source-PNG/infill association belongs
+    to prepare_worker_outpaint. This private tuple is never a wire input or a
+    provenance assertion for arbitrary Python callers.
+    """
+    captured = prepare_worker_outpaint(command) if prepared is None else prepared
+    _require(
+        type(captured) is tuple
+        and len(captured) == 2
+        and type(captured[0]) is OutpaintConditioning
+        and vars(captured[0]).keys() == {field.name for field in fields(OutpaintConditioning)}
+        and isinstance(cast(object, captured[1]), Image.Image),
+        "INVALID_REQUEST",
+        "Anima prepared outpaint inputs are invalid.",
+    )
+    conditioning, source = captured
+    images = (
+        (conditioning.source, "RGBA", (command.width, command.height)),
+        (conditioning.latent_keep_mask, "L", (command.width // 8, command.height // 8)),
+        (conditioning.expanded_keep_mask, "L", (command.width, command.height)),
+        (conditioning.output_keep_mask, "L", (command.width, command.height)),
+        (source, "RGB", (command.width, command.height)),
+    )
+    _require(
+        all(
+            isinstance(cast(object, image), Image.Image)
+            and image.mode == mode
+            and image.size == size
+            and image.info.get("icc_profile") in (None, SRGB_ICC_PROFILE)
+            for image, mode, size in images
+        ),
+        "INVALID_REQUEST",
+        "Anima prepared outpaint image topology or color differs.",
+    )
+    alpha = conditioning.source.getchannel("A")
+    raw_alpha = alpha.tobytes()
+    _require(
+        alpha.getextrema() not in ((0, 0), (255, 255))
+        and len(raw_alpha) == command.conditioning.keep_mask_byte_size
+        and hashlib.sha256(raw_alpha).hexdigest() == command.conditioning.keep_mask_sha256,
+        "GENERATION_INPUT_CHANGED",
+        "Anima prepared outpaint source alpha differs from its frozen identity.",
+    )
+    return (
+        OutpaintConditioning(
+            conditioning.source.copy(),
+            conditioning.latent_keep_mask.copy(),
+            conditioning.expanded_keep_mask.copy(),
+            conditioning.output_keep_mask.copy(),
+        ),
+        source.copy(),
+    )
 
 
 def _native_classes(torch: Any) -> set[type[Any]]:
@@ -1458,6 +1601,47 @@ def generate_current_canvas_regional_anima_img2img(
     )
 
 
+def generate_current_canvas_regional_anima_outpaint(
+    recipe: object,
+    *,
+    command: GenerateAnimaOutpaintCommand,
+    compiled_prompts: object,
+    models: LoadedAnimaModels,
+    runtime: MLRuntime,
+    profile: _Profile,
+    tokenizers: AnimaTokenizers | None = None,
+    composition_profile: _CompositionProfile | None = None,
+    on_progress: DenoisingProgressSink | None = None,
+    sampling_profile: _SamplingProfile | None = None,
+    _prepared_outpaint: tuple[OutpaintConditioning, Image.Image] | None = None,
+) -> dict[str, object]:
+    """Compose ordinary OUT protection and regional attention, then publish RGBA.
+
+    Invoke b0ac163b139c432aff4c51078c31c074bf292f72:
+    frontend/webv2/src/features/generation/core/canvas/compileCanvasGraph.ts
+    grafts infill/source latents/denoise protection before addRegionalGuidance;
+    app/invocations/anima/anima_denoise.py and
+    backend/rectified_flow/rectified_flow_inpaint_extension.py keep source on its
+    shifted-noise trajectory after completed steps. The existing ordinary
+    Anima helper owns that mechanism; regional permissions do not alter keep alpha.
+    """
+    return _generate_current_canvas_regional_anima(
+        recipe,
+        command=command,
+        compiled_prompts=compiled_prompts,
+        models=models,
+        runtime=runtime,
+        profile=profile,
+        tokenizers=tokenizers,
+        composition_profile=composition_profile,
+        on_progress=on_progress,
+        sampling_profile=sampling_profile,
+        img2img=True,
+        outpaint=True,
+        _prepared_outpaint=_prepared_outpaint,
+    )
+
+
 def _generate_current_canvas_regional_anima(
     recipe: object,
     *,
@@ -1471,8 +1655,10 @@ def _generate_current_canvas_regional_anima(
     on_progress: DenoisingProgressSink | None,
     sampling_profile: _SamplingProfile | None,
     img2img: bool,
+    outpaint: bool = False,
+    _prepared_outpaint: tuple[OutpaintConditioning, Image.Image] | None = None,
 ) -> dict[str, object]:
-    """One reservation/conditioning/target/cache owner for the two exact command modes."""
+    """One reservation/conditioning/target/cache owner for the three exact modes."""
     _require(
         on_progress is None or callable(on_progress),
         "INVALID_REQUEST",
@@ -1487,8 +1673,19 @@ def _generate_current_canvas_regional_anima(
         "INVALID_REQUEST",
         "Anima regional composition profile is unsupported.",
     )
+    _require(
+        outpaint or _prepared_outpaint is None,
+        "INVALID_REQUEST",
+        "Unexpected prepared outpaint inputs for an unmasked Anima command.",
+    )
     captured = _capture(recipe, compiled_prompts)
-    plan = _capture_command(command, captured, sampling_profile=sampling_profile, img2img=img2img)
+    plan = _capture_command(
+        command,
+        captured,
+        sampling_profile=sampling_profile,
+        img2img=img2img,
+        outpaint=outpaint,
+    )
     x, y, width, height = captured.bbox
     command = replace(
         command,
@@ -1522,46 +1719,70 @@ def _generate_current_canvas_regional_anima(
         with _vae_cache_scope(models.vae):
             owned_tokenizers = _owned_tokenizers(tokenizers)
             _preflight_prompt_weights(captured, owned_tokenizers, torch, parameter.dtype)
-            source = validate_generation_target(
-                staging_root=command.staging_root,
-                target_path=command.target_path,
-                output_path=command.output_path,
-                target_sha256=command.target_sha256,
-                target_byte_size=command.target_byte_size,
-                width=command.width,
-                height=command.height,
-                img2img=img2img,
-            )
-            result = execute_captured_anima_plan(
-                plan,
-                anima_prompt_payload(captured.prompts[0].compiled),
-                anima_prompt_payload(captured.prompts[1].compiled),
-                models,
-                tokenizers=owned_tokenizers,
-                initial_sigma=plan.initial_sigma,
-                progress=on_progress,
-                prediction_factory=None
-                if mask is None
-                else _prediction_factory(captured, models, owned_tokenizers, mask),
-                denoiser_factory=None
-                if plan.scheduler == "euler"
-                else lambda torch, device: create_anima_native_denoiser(
-                    plan, torch, device, step_seed=plan.step_seed
-                ),
-                **cast(Any, {"source_image": source} if img2img else {}),
-            )
+            alpha_conditioning = None
+            if outpaint:
+                alpha_conditioning, source = _owned_outpaint_inputs(
+                    cast(GenerateAnimaOutpaintCommand, command), _prepared_outpaint
+                )
+                result = generate_anima_outpaint(
+                    anima_sampling_payload(plan),
+                    anima_prompt_payload(captured.prompts[0].compiled),
+                    anima_prompt_payload(captured.prompts[1].compiled),
+                    models,
+                    source_image=source,
+                    keep_mask=alpha_conditioning.latent_keep_mask,
+                    tokenizers=owned_tokenizers,
+                    progress=on_progress,
+                    prediction_factory=None
+                    if mask is None
+                    else _prediction_factory(captured, models, owned_tokenizers, mask),
+                )
+            else:
+                source = validate_generation_target(
+                    staging_root=command.staging_root,
+                    target_path=command.target_path,
+                    output_path=command.output_path,
+                    target_sha256=command.target_sha256,
+                    target_byte_size=command.target_byte_size,
+                    width=command.width,
+                    height=command.height,
+                    img2img=img2img,
+                )
+                result = execute_captured_anima_plan(
+                    plan,
+                    anima_prompt_payload(captured.prompts[0].compiled),
+                    anima_prompt_payload(captured.prompts[1].compiled),
+                    models,
+                    tokenizers=owned_tokenizers,
+                    initial_sigma=plan.initial_sigma,
+                    progress=on_progress,
+                    prediction_factory=None
+                    if mask is None
+                    else _prediction_factory(captured, models, owned_tokenizers, mask),
+                    denoiser_factory=None
+                    if plan.scheduler == "euler"
+                    else lambda torch, device: create_anima_native_denoiser(
+                        plan, torch, device, step_seed=plan.step_seed
+                    ),
+                    **cast(Any, {"source_image": source} if img2img else {}),
+                )
         _require(
             result.total_steps == plan.total_steps,
             "GENERATION_WORKER_FAILED",
             "Anima regional execution count differs.",
         )
+        output_image = (
+            create_outpaint_contribution(result.image, alpha_conditioning)
+            if alpha_conditioning is not None
+            else result.image
+        )
         return publish_generation_image(
-            result.image,
+            output_image,
             staging_root=command.staging_root,
             output_path=command.output_path,
             width=command.width,
             height=command.height,
             request_id=command.request_id,
             seed=plan.seed,
-            output_mode="RGB",
+            output_mode="RGBA" if outpaint else "RGB",
         )

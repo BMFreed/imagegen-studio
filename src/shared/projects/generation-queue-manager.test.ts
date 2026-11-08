@@ -294,3 +294,42 @@ test('Smart Patch queue summaries preserve native family and non-grid world boun
   }
   assert.equal(isGenerationQueuePage(page([row])), true)
 })
+
+test('Queue Manager regional Anima OUT accepts frozen strength for every status and preserves family refusals', () => {
+  const base = entry()
+  const anima: GenerationQueueEntry = {
+    ...base,
+    details: {
+      ...base.details!,
+      sampling: { animaMethod: 'heun', cfgScale: 4, denoisingStrength: 0.5, seed: 123, steps: 20 },
+    },
+    operation: 'anima-regional-outpaint',
+  }
+  for (const status of generationQueueStatuses) {
+    const candidate = { ...anima, status }
+    assert.equal(isGenerationQueuePage(page([candidate])), true, status)
+    assert.equal(isGenerationQueuePage(page([{ ...candidate, details: null }])), true)
+    const { denoisingStrength: _strength, ...withoutStrength } = candidate.details!.sampling
+    assert.equal(_strength, 0.5)
+    assert.equal(
+      isGenerationQueuePage({
+        ...page([]),
+        items: [{ ...candidate, details: { ...candidate.details!, sampling: withoutStrength } }],
+      }),
+      false,
+    )
+    assert.equal(
+      isGenerationQueuePage(page([{ ...candidate, operation: 'anima-regional-txt2img' }])),
+      false,
+    )
+    assert.equal(
+      isGenerationQueuePage(page([{ ...candidate, operation: 'illustrious-regional-outpaint' }])),
+      false,
+    )
+    assert.equal(
+      isGenerationQueuePage(page([{ ...candidate, operation: 'anima-regional-img2img' }])),
+      true,
+    )
+    assert.equal(isGenerationQueuePage(page([{ ...candidate, operation: 'anima-outpaint' }])), true)
+  }
+})

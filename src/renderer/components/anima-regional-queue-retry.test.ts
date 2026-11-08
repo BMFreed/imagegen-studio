@@ -96,3 +96,47 @@ for (const method of ANIMA_SAMPLING_METHOD_KEYS) {
     }
   })
 }
+
+for (const method of ANIMA_SAMPLING_METHOD_KEYS) {
+  test(`frozen OUT regional ${method} Retry keeps its separate OUT and native method gates`, () => {
+    for (const animaRegionalOutpaintSupported of [undefined, false, true]) {
+      for (const animaRegionalSamplingSupported of [undefined, false, true]) {
+        const state = {
+          animaRegionalOutpaintSupported,
+          animaRegionalSamplingSupported,
+          animaRegionalSupported: true,
+        }
+        assert.equal(
+          generationQueueRetryReason(
+            'anima-regional-outpaint',
+            state,
+            null,
+            false,
+            false,
+            0,
+            method,
+          ) === null,
+          animaRegionalOutpaintSupported === true &&
+            (method === 'euler' || animaRegionalSamplingSupported === true),
+        )
+        assert.equal(generationQueueRetryReason('anima-txt2img', state), null)
+      }
+    }
+    assert.notEqual(
+      generationQueueRetryReason(
+        'anima-regional-outpaint',
+        {
+          animaRegionalOutpaintSupported: true,
+          animaRegionalSamplingSupported: true,
+          animaRegionalSupported: false,
+        },
+        null,
+        false,
+        false,
+        0,
+        method,
+      ),
+      null,
+    )
+  })
+}

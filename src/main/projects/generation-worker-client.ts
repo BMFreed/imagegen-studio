@@ -16,6 +16,7 @@ import { ILLUSTRIOUS_SCHEDULER_PAIRS } from '../../shared/projects/illustrious-s
 import {
   supportsInferenceAnimaRegional,
   supportsInferenceAnimaRegionalImg2Img,
+  supportsInferenceAnimaRegionalOutpaint,
   supportsInferenceAnimaRegionalSampling,
 } from '../../shared/projects/inference-worker-capabilities.js'
 import {
@@ -451,6 +452,8 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
       if (input.compositionProfile === 'invoke-krea2-global-support-v1') {
         if (
           !supportsInferenceAnimaRegional(this.ready) ||
+          (input.request.type === 'generate-anima-outpaint' &&
+            !supportsInferenceAnimaRegionalOutpaint(this.ready)) ||
           (input.request.type === 'generate-anima-img2img' &&
             !supportsInferenceAnimaRegionalImg2Img(this.ready)) ||
           (input.request.job.sampling.scheduler !== 'euler' &&
@@ -635,14 +638,16 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
           ? {
               expectedTotalSteps:
                 lease.request.type === 'generate-anima-txt2img' ||
-                lease.request.type === 'generate-anima-img2img'
+                lease.request.type === 'generate-anima-img2img' ||
+                lease.request.type === 'generate-anima-outpaint'
                   ? lease.request.job.sampling.totalSteps
                   : lease.request.type === 'generate-illustrious-txt2img'
                     ? lease.request.job.sampling.steps
                     : null,
               maxSteps:
                 lease.request.type === 'generate-anima-txt2img' ||
-                lease.request.type === 'generate-anima-img2img'
+                lease.request.type === 'generate-anima-img2img' ||
+                lease.request.type === 'generate-anima-outpaint'
                   ? 2 * lease.request.job.sampling.steps
                   : lease.request.job.sampling.steps,
               onProgress,
