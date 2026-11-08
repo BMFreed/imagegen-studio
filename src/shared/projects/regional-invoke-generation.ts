@@ -101,6 +101,7 @@ export function hasActiveGlobalPromptEmbeddings(
  * separately qualified image subset; omitted target mode preserves pre-composition Main checks.
  */
 export function getInvokeRegionalGenerationUnavailableReason(input: {
+  animaRegionalImg2ImgSupported?: boolean | null
   animaRegionalSamplingSupported?: boolean | null
   animaRegionalSupported?: boolean | null
   cfgRescaleSupported?: boolean | null
@@ -332,6 +333,7 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
  * backend/krea2/regional_prompting.py; no authoring text, inheritance or defaults are changed.
  */
 function getAnimaRegionalGenerationUnavailableReason(input: {
+  animaRegionalImg2ImgSupported?: boolean | null
   animaRegionalSamplingSupported?: boolean | null
   animaRegionalSupported?: boolean | null
   document: RegionalDocument
@@ -343,8 +345,19 @@ function getAnimaRegionalGenerationUnavailableReason(input: {
   if (draft.model?.kind !== 'checkpoint' || draft.model.predictionType !== null) {
     return 'Regional Guidance requires an original Anima checkpoint on Current Canvas.'
   }
-  if (input.targetMode === 'img2img' || input.targetMode === 'outpaint') {
-    return 'Anima Regional Guidance requires a fully transparent Current Canvas generation area. Hide raster inputs or choose an empty area.'
+  if (input.targetMode === 'outpaint') {
+    return 'Anima Regional Guidance requires a fully transparent or fully opaque Current Canvas generation area.'
+  }
+  if (input.targetMode === 'img2img') {
+    const strength = draft.sampling.denoisingStrength
+    if (strength === null || !Number.isFinite(strength) || strength < 0 || strength > 1) {
+      return 'Anima Regional Guidance img2img requires Denoising Strength from 0 to 1.'
+    }
+    if (input.animaRegionalImg2ImgSupported !== true) {
+      return input.animaRegionalImg2ImgSupported == null
+        ? 'Checking image engine support for Anima Regional Guidance img2img. Repair or update the runtime if support remains unavailable.'
+        : 'The current image engine does not support Anima Regional Guidance img2img. Repair or update the runtime.'
+    }
   }
   if (!isAnimaSamplingMethod(draft.sampling.animaMethod)) {
     return 'Anima Regional Guidance requires a supported native Anima sampling method.'

@@ -102,6 +102,167 @@ async function withPublicAnima(
   })
 }
 
+async function useOpaqueTarget(fixture: RegionalProjectFixture, alpha = 255): Promise<void> {
+  const compose = fixture.compositionWorker.composeTarget.bind(fixture.compositionWorker)
+  const bytes = await animaFixturePng(alpha)
+  fixture.compositionWorker.composeTarget = async (request) => {
+    const captured = await compose(request)
+    await writeFile(request.targetPngPath, bytes)
+    return {
+      ...captured,
+      composite: {
+        ...captured.composite,
+        byteSize: bytes.length,
+        sha256: regionalProjectDigest(bytes),
+      },
+      mode: alpha === 255 ? 'img2img' : 'outpaint',
+    }
+  }
+}
+
+for (const method of ANIMA_SAMPLING_METHOD_KEYS) {
+  test(`opaque regional ${method} NEW requires the image capability and freezes the exact image plan`, async () => {
+    await withPublicAnima(async (fixture) => {
+      fixture.controls.ready.capabilities = [
+        ...fixture.controls.ready.capabilities,
+        'anima-regional-sampling-v1',
+      ]
+      await useOpaqueTarget(fixture)
+      await fixture.edit((document) => {
+        document.generationDraft.sampling.animaMethod = method
+        document.generationDraft.sampling.steps = 20
+        document.generationDraft.sampling.denoisingStrength = 0.5
+      })
+      const before = structuredClone(fixture.document())
+      const saved = await readFile(fixture.packagePath)
+      await assert.rejects(
+        fixture.actions.generate(fixture.tabId, { documentId: before.documentId, iterations: 1 }),
+        /Anima Regional Guidance img2img/,
+      )
+      assert.equal((await fixture.queue.listManagerPage()).items.length, 0)
+      assert.equal(
+        (await fixture.actions.getState(fixture.tabId)).animaRegionalImg2ImgSupported,
+        false,
+      )
+      fixture.controls.ready.capabilities = [
+        ...fixture.controls.ready.capabilities,
+        'anima-regional-img2img-v1',
+      ]
+      const result = await fixture.actions.generate(fixture.tabId, {
+        documentId: before.documentId,
+        iterations: 1,
+      })
+      if (result.kind !== 'queued') {
+        assert.fail('Expected one frozen opaque regional job.')
+      }
+      const frozen = await fixture.queue.loadVerifiedAnimaRegionalInput(result.jobIds[0])
+      assert.equal(frozen.payload.kind, 'anima-regional-img2img')
+      assert.equal(frozen.input.request.type, 'generate-anima-img2img')
+      assert.equal(frozen.input.request.job.sampling.mode, 'img2img')
+      assert.equal(frozen.input.request.job.sampling.strength, 0.5)
+      assert.equal(frozen.input.request.job.sampling.posteriorSeed, (123 ^ 0x9e_37_79_b9) >>> 0)
+      assert.equal(frozen.input.request.job.sampling.totalSteps, method === 'heun' ? 19 : 10)
+      assert.deepEqual(frozen.input.request.job.sampling, frozen.payload.workerJob.sampling)
+      const details = (await fixture.queue.listManagerPage()).items[0]
+      assert.equal(details.operation, 'anima-regional-img2img')
+      assert.equal(details.details?.sampling.denoisingStrength, 0.5)
+      assert.equal(details.details?.sampling.animaMethod, method)
+      assert.deepEqual(fixture.document(), before)
+      assert.ok((await readFile(fixture.packagePath)).equals(saved))
+    })
+  })
+
+  test(`opaque regional ${method} Retry uses frozen source strength and method after saved current edits`, async () => {
+    await withPublicAnima(async (fixture) => {
+      fixture.controls.ready.capabilities = [
+        ...fixture.controls.ready.capabilities,
+        'anima-regional-img2img-v1',
+        'anima-regional-sampling-v1',
+      ]
+      await useOpaqueTarget(fixture)
+      await fixture.edit((document) => {
+        document.generationDraft.sampling.animaMethod = method
+        document.generationDraft.sampling.denoisingStrength = 0.5
+      })
+      const result = await fixture.actions.generate(fixture.tabId, {
+        documentId: fixture.document().documentId,
+        iterations: 1,
+      })
+      if (result.kind !== 'queued') {
+        assert.fail('Expected one image queue job.')
+      }
+      const id = result.jobIds[0]
+      await fixture.orchestrator.cancelGenerationJob(id)
+      const source = await fixture.queue.getManagerEntry(id)
+      const before = await fixture.queue.loadVerifiedAnimaRegionalInput(id)
+      const bytes = await readFile(before.targetPath)
+      const original = await fixture.db
+        .selectFrom('generation_queue_item')
+        .selectAll()
+        .where('id', '=', id)
+        .executeTakeFirstOrThrow()
+      await fixture.edit((document) => {
+        document.generationDraft.model = null
+        document.generationDraft.seed = { policy: 'fixed', value: 999 }
+        document.generationDraft.sampling.animaMethod = method === 'euler' ? 'heun' : 'euler'
+        document.generationDraft.sampling.denoisingStrength = 0.2
+        document.generationDraft.positivePrompt.text = 'later source and settings'
+        document.regionalGuidance!.forEach((region) => {
+          region.enabled = false
+        })
+      })
+      // A changed current source must never replace the frozen opaque target.
+      fixture.compositionWorker.composeTarget = async () => {
+        throw new Error('Retry recomposed the edited current source')
+      }
+      const edited = structuredClone(fixture.document())
+      fixture.controls.ready.capabilities = fixture.controls.ready.capabilities.filter(
+        (cap) => cap !== 'anima-regional-img2img-v1',
+      )
+      await assert.rejects(
+        fixture.actions.retryJob({ id, statusSequence: source.statusSequence }),
+        { code: 'GENERATION_RUNTIME_UNAVAILABLE' },
+      )
+      assert.equal((await fixture.queue.listManagerPage()).items.length, 1)
+      fixture.controls.ready.capabilities = [
+        ...fixture.controls.ready.capabilities,
+        'anima-regional-img2img-v1',
+      ]
+      await fixture.actions.retryJob({ id, statusSequence: source.statusSequence })
+      const rows = await fixture.db.selectFrom('generation_queue_item').selectAll().execute()
+      assert.equal(rows.length, 2)
+      const clone = rows.find((row) => row.id !== id)!
+      assert.equal(clone.frozen_payload_json, original.frozen_payload_json)
+      const after = await fixture.queue.loadVerifiedAnimaRegionalInput(clone.id)
+      assert.ok((await readFile(after.targetPath)).equals(bytes))
+      assert.deepEqual(after.input.recipe, before.input.recipe)
+      assert.deepEqual(after.input.request.job.sampling, before.input.request.job.sampling)
+      assert.deepEqual(fixture.document(), edited)
+    })
+  })
+}
+
+test('opaque regional admission retains mixed-alpha refusal with the new capability', async () => {
+  await withPublicAnima(async (fixture) => {
+    fixture.controls.ready.capabilities = [
+      ...fixture.controls.ready.capabilities,
+      'anima-regional-img2img-v1',
+    ]
+    await fixture.edit((document) => {
+      document.generationDraft.sampling.denoisingStrength = 0.5
+    })
+    await useOpaqueTarget(fixture, 127)
+    await assert.rejects(
+      fixture.actions.generate(fixture.tabId, {
+        documentId: fixture.document().documentId,
+        iterations: 1,
+      }),
+      /transparent or fully opaque/,
+    )
+    assert.equal((await fixture.queue.listManagerPage()).items.length, 0)
+  })
+})
+
 test('existing Generate admits one original Anima regional job without Illustrious model calls or Project mutation', async () => {
   await withPublicAnima(async (fixture) => {
     const before = structuredClone(fixture.document())
@@ -226,7 +387,7 @@ test('frozen Anima regional Retry survives later Illustrious draft and disabled 
   })
 })
 
-test('actual opaque composed pixels refuse the Anima regional lane before durable admission', async () => {
+test('actual opaque composed pixels require the new Anima regional image capability before durable admission', async () => {
   await withPublicAnima(async (fixture) => {
     const compose = fixture.compositionWorker.composeTarget.bind(fixture.compositionWorker)
     const opaqueBytes = await animaFixturePng(255)
@@ -246,7 +407,7 @@ test('actual opaque composed pixels refuse the Anima regional lane before durabl
     const before = structuredClone(fixture.document())
     await assert.rejects(
       fixture.actions.generate(fixture.tabId, { documentId: before.documentId, iterations: 1 }),
-      /fully transparent Current Canvas/,
+      /Anima Regional Guidance img2img/,
     )
     assert.equal(fixture.calls.compose.length, 1)
     assert.equal(

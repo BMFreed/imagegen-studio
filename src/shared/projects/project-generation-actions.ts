@@ -17,6 +17,7 @@ export interface ProjectGenerationActionState {
   /** Explicit worker 0.12+ support; absence must not enable mixed-alpha generation. */
   animaOutpaintSupported?: boolean
   /** Separate non-Euler regional support; ordinary flow and regional Euler never imply it. */
+  animaRegionalImg2ImgSupported?: boolean
   animaRegionalSamplingSupported?: boolean
   /** Separate finite regional Anima execution support; ordinary Anima never grants it. */
   animaRegionalSupported?: boolean
@@ -139,6 +140,7 @@ export function isProjectGenerationActionState(
       [
         'animaSupported',
         'animaRegionalSupported',
+        'animaRegionalImg2ImgSupported',
         'animaRegionalSamplingSupported',
         'animaOutpaintSupported',
         'outpaintSupported',
@@ -160,6 +162,8 @@ export function isProjectGenerationActionState(
     (value['animaSupported'] !== undefined && typeof value['animaSupported'] !== 'boolean') ||
     (value['animaRegionalSupported'] !== undefined &&
       typeof value['animaRegionalSupported'] !== 'boolean') ||
+    (value['animaRegionalImg2ImgSupported'] !== undefined &&
+      typeof value['animaRegionalImg2ImgSupported'] !== 'boolean') ||
     (value['animaRegionalSamplingSupported'] !== undefined &&
       typeof value['animaRegionalSamplingSupported'] !== 'boolean') ||
     (value['animaOutpaintSupported'] !== undefined &&

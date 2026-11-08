@@ -66,7 +66,7 @@ from imagegen_worker.generation_artifacts import (
     validate_generation_target,
 )
 from imagegen_worker.inference_anima import LoadedAnimaModels
-from imagegen_worker.protocol import GenerateAnimaTxt2ImgCommand
+from imagegen_worker.protocol import GenerateAnimaImg2ImgCommand, GenerateAnimaTxt2ImgCommand
 
 if TYPE_CHECKING:
     from imagegen_worker.inference import DenoisingProgressSink, MLRuntime
@@ -442,11 +442,14 @@ def _capture_command(
     captured: _Input,
     *,
     sampling_profile: _SamplingProfile | None = None,
+    img2img: bool = False,
 ) -> AnimaFlowSamplingPlan:
     _require(
-        type(command) is GenerateAnimaTxt2ImgCommand,
+        type(command) is (GenerateAnimaImg2ImgCommand if img2img else GenerateAnimaTxt2ImgCommand),
         "INVALID_REQUEST",
-        "Anima regional execution requires exact txt2img command.",
+        "Anima regional execution requires exact img2img command."
+        if img2img
+        else "Anima regional execution requires exact txt2img command.",
     )
     _uuid(command.request_id)
     _require(
@@ -465,9 +468,12 @@ def _capture_command(
     except (AttributeError, TypeError, ValueError) as error:
         raise DerivativeError("INVALID_REQUEST", "Anima sampling command is invalid.") from error
     _require(
-        plan.mode == "txt2img" and (plan.scheduler == "euler" or sampling_profile is not None),
+        plan.mode == ("img2img" if img2img else "txt2img")
+        and (plan.scheduler == "euler" or sampling_profile is not None),
         "INVALID_REQUEST",
-        "Private Anima regions require original txt2img Euler.",
+        "Private Anima image regions require original img2img Euler."
+        if img2img
+        else "Private Anima regions require original txt2img Euler.",
     )
     bbox = _rect(command.bbox)
     _require(
@@ -1399,6 +1405,74 @@ def generate_current_canvas_regional_anima_txt2img(
     The default remains Euler-only; the explicit sampling profile reuses the
     ordinary native flow driver without changing frozen schedules or progress.
     """
+    return _generate_current_canvas_regional_anima(
+        recipe,
+        command=command,
+        compiled_prompts=compiled_prompts,
+        models=models,
+        runtime=runtime,
+        profile=profile,
+        tokenizers=tokenizers,
+        composition_profile=composition_profile,
+        on_progress=on_progress,
+        sampling_profile=sampling_profile,
+        img2img=False,
+    )
+
+
+def generate_current_canvas_regional_anima_img2img(
+    recipe: object,
+    *,
+    command: GenerateAnimaImg2ImgCommand,
+    compiled_prompts: object,
+    models: LoadedAnimaModels,
+    runtime: MLRuntime,
+    profile: _Profile,
+    tokenizers: AnimaTokenizers | None = None,
+    composition_profile: _CompositionProfile | None = None,
+    on_progress: DenoisingProgressSink | None = None,
+    sampling_profile: _SamplingProfile | None = None,
+) -> dict[str, object]:
+    """Verify one opaque source snapshot and reuse original Anima image sampling.
+
+    Invoke b0ac163b139c432aff4c51078c31c074bf292f72:
+    app/invocations/vae/anima_image_to_latents.py and
+    frontend/webv2/src/features/generation/core/canvas/compileCanvasGraph.ts
+    supply the image-to-latents/normalization and canvas graft mechanism.
+    The existing ordinary executor owns posterior noise, selected
+    clipped initial sigma, native driver and Wan decoding. Opaque image guidance
+    adds no inpaint keep mask, contribution alpha or separate denoising loop.
+    """
+    return _generate_current_canvas_regional_anima(
+        recipe,
+        command=command,
+        compiled_prompts=compiled_prompts,
+        models=models,
+        runtime=runtime,
+        profile=profile,
+        tokenizers=tokenizers,
+        composition_profile=composition_profile,
+        on_progress=on_progress,
+        sampling_profile=sampling_profile,
+        img2img=True,
+    )
+
+
+def _generate_current_canvas_regional_anima(
+    recipe: object,
+    *,
+    command: GenerateAnimaTxt2ImgCommand,
+    compiled_prompts: object,
+    models: LoadedAnimaModels,
+    runtime: MLRuntime,
+    profile: _Profile,
+    tokenizers: AnimaTokenizers | None,
+    composition_profile: _CompositionProfile | None,
+    on_progress: DenoisingProgressSink | None,
+    sampling_profile: _SamplingProfile | None,
+    img2img: bool,
+) -> dict[str, object]:
+    """One reservation/conditioning/target/cache owner for the two exact command modes."""
     _require(
         on_progress is None or callable(on_progress),
         "INVALID_REQUEST",
@@ -1414,7 +1488,7 @@ def generate_current_canvas_regional_anima_txt2img(
         "Anima regional composition profile is unsupported.",
     )
     captured = _capture(recipe, compiled_prompts)
-    plan = _capture_command(command, captured, sampling_profile=sampling_profile)
+    plan = _capture_command(command, captured, sampling_profile=sampling_profile, img2img=img2img)
     x, y, width, height = captured.bbox
     command = replace(
         command,
@@ -1448,7 +1522,7 @@ def generate_current_canvas_regional_anima_txt2img(
         with _vae_cache_scope(models.vae):
             owned_tokenizers = _owned_tokenizers(tokenizers)
             _preflight_prompt_weights(captured, owned_tokenizers, torch, parameter.dtype)
-            validate_generation_target(
+            source = validate_generation_target(
                 staging_root=command.staging_root,
                 target_path=command.target_path,
                 output_path=command.output_path,
@@ -1456,7 +1530,7 @@ def generate_current_canvas_regional_anima_txt2img(
                 target_byte_size=command.target_byte_size,
                 width=command.width,
                 height=command.height,
-                img2img=False,
+                img2img=img2img,
             )
             result = execute_captured_anima_plan(
                 plan,
@@ -1474,6 +1548,7 @@ def generate_current_canvas_regional_anima_txt2img(
                 else lambda torch, device: create_anima_native_denoiser(
                     plan, torch, device, step_seed=plan.step_seed
                 ),
+                **cast(Any, {"source_image": source} if img2img else {}),
             )
         _require(
             result.total_steps == plan.total_steps,

@@ -68,3 +68,31 @@ for (const method of ANIMA_SAMPLING_METHOD_KEYS) {
     )
   })
 }
+
+for (const method of ANIMA_SAMPLING_METHOD_KEYS) {
+  test(`frozen opaque regional ${method} Retry keeps its image and native method gates`, () => {
+    for (const animaRegionalImg2ImgSupported of [undefined, false, true]) {
+      for (const animaRegionalSamplingSupported of [undefined, false, true]) {
+        const state = {
+          animaRegionalImg2ImgSupported,
+          animaRegionalSamplingSupported,
+          animaRegionalSupported: true,
+        }
+        assert.equal(
+          generationQueueRetryReason(
+            'anima-regional-img2img',
+            state,
+            null,
+            false,
+            false,
+            0,
+            method,
+          ) === null,
+          animaRegionalImg2ImgSupported === true &&
+            (method === 'euler' || animaRegionalSamplingSupported === true),
+        )
+        assert.equal(generationQueueRetryReason('anima-img2img', state), null)
+      }
+    }
+  })
+}

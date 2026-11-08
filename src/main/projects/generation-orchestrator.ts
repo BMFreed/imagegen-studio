@@ -315,6 +315,7 @@ export class GenerationOrchestrator {
     const entry = await this.queue.getManagerEntry(id)
     if (
       entry.operation === 'anima-regional-txt2img' ||
+      entry.operation === 'anima-regional-img2img' ||
       entry.operation === 'illustrious-regional-txt2img' ||
       entry.operation === 'illustrious-regional-img2img' ||
       entry.operation === 'illustrious-regional-outpaint'
@@ -1523,7 +1524,11 @@ export class GenerationOrchestrator {
         ...base
       } = frozen.payload
       const ordinary = parseFrozenQueuedAnimaGenerationV1(
-        JSON.stringify({ ...base, kind: 'anima-txt2img' }),
+        JSON.stringify({
+          ...base,
+          kind:
+            frozen.payload.kind === 'anima-regional-img2img' ? 'anima-img2img' : 'anima-txt2img',
+        }),
       )
       const reverifyFrozen = async () => {
         await reverifyFrozenQueuedAnimaGeneration(

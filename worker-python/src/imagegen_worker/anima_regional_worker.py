@@ -22,6 +22,7 @@ from imagegen_worker import PROTOCOL_VERSION
 from imagegen_worker.anima_regional import (
     _capture,  # pyright: ignore[reportPrivateUsage]
     _capture_command,  # pyright: ignore[reportPrivateUsage]
+    generate_current_canvas_regional_anima_img2img,
     generate_current_canvas_regional_anima_txt2img,
 )
 from imagegen_worker.anima_worker import supports_anima_compute
@@ -44,6 +45,7 @@ from imagegen_worker.inference_anima import ANIMA_BASE_ARCHITECTURE, load_anima_
 from imagegen_worker.protocol import (
     _REQUEST_ID_PATTERN,  # pyright: ignore[reportPrivateUsage]
     MAX_GENERATION_TARGET_BYTES,
+    GenerateAnimaImg2ImgCommand,
     GenerateAnimaTxt2ImgCommand,
     parse_request,
 )
@@ -53,6 +55,7 @@ if TYPE_CHECKING:
 
 ANIMA_REGIONAL_CAPABILITY = "anima-regional-txt2img-v1"
 ANIMA_REGIONAL_SAMPLING_CAPABILITY = "anima-regional-sampling-v1"
+ANIMA_REGIONAL_IMG2IMG_CAPABILITY = "anima-regional-img2img-v1"
 COMPOSITION_PROFILE = "invoke-krea2-global-support-v1"
 PROMPT_INTERPRETATION = "invoke-fragments-v1"
 
@@ -71,7 +74,7 @@ def _require(condition: bool, message: str) -> None:
 
 
 def parse_anima_regional_request(value: object) -> AnimaRegionalRequest:
-    """Validate/detach the finite public TXT handoff before loading any model."""
+    """Validate/detach the finite public TXT/opaque image handoff before model loading."""
     envelope = _object(
         value,
         {"type", "protocolVersion", "requestId", "stagingRoot", "bundle"}
@@ -119,10 +122,11 @@ def parse_anima_regional_request(value: object) -> AnimaRegionalRequest:
     )
     parsed = parse_request(bundle["request"])
     _require(
-        type(parsed) is GenerateAnimaTxt2ImgCommand,
-        "Anima regions require an exact ordinary Anima txt2img command.",
+        type(parsed) in (GenerateAnimaTxt2ImgCommand, GenerateAnimaImg2ImgCommand),
+        "Anima regions require an exact ordinary Anima txt2img or img2img command.",
     )
     command = cast(GenerateAnimaTxt2ImgCommand, parsed)
+    img2img = type(command) is GenerateAnimaImg2ImgCommand
     _require(
         command.request_id == request_id and command.staging_root == root,
         "Anima regional command identity/staging differs from its transport.",
@@ -146,7 +150,12 @@ def parse_anima_regional_request(value: object) -> AnimaRegionalRequest:
     )
     recipe = _hydrate_recipe(bundle["recipe"], snapshots)
     captured = _capture(recipe, bundle["compiledPrompts"])
-    plan = _capture_command(command, captured, sampling_profile="invoke-anima-flow-sampling-v1")
+    plan = _capture_command(
+        command,
+        captured,
+        sampling_profile="invoke-anima-flow-sampling-v1",
+        img2img=img2img,
+    )
     _require(
         all(region.text is not None and region.text != "" for region in captured.regions),
         "Every enabled public Anima region requires a nonempty positive prompt.",
@@ -189,7 +198,7 @@ def parse_anima_regional_request(value: object) -> AnimaRegionalRequest:
         target_byte_size=command.target_byte_size,
         width=command.width,
         height=command.height,
-        img2img=False,
+        img2img=img2img,
     )
     return AnimaRegionalRequest(
         command=command,
@@ -228,16 +237,23 @@ def execute_anima_regional_request(
             models.vae,
         ):
             model.eval()
-        return generate_current_canvas_regional_anima_txt2img(
-            request.recipe,
-            command=request.command,
-            compiled_prompts=request.compiled_prompts,
-            models=models,
-            runtime=runtime,
-            profile="cuda-bfloat16-v1",
-            composition_profile="invoke-krea2-global-support-v1",
-            on_progress=on_progress if request.report_progress else None,
-            sampling_profile=None
+        arguments: dict[str, Any] = {
+            "compiled_prompts": request.compiled_prompts,
+            "models": models,
+            "runtime": runtime,
+            "profile": "cuda-bfloat16-v1",
+            "composition_profile": "invoke-krea2-global-support-v1",
+            "on_progress": on_progress if request.report_progress else None,
+            "sampling_profile": None
             if request.command.sampling.scheduler == "euler"
             else "invoke-anima-flow-sampling-v1",
+        }
+        if type(request.command) is GenerateAnimaImg2ImgCommand:
+            return generate_current_canvas_regional_anima_img2img(
+                request.recipe,
+                command=request.command,
+                **arguments,
+            )
+        return generate_current_canvas_regional_anima_txt2img(
+            request.recipe, command=request.command, **arguments
         )

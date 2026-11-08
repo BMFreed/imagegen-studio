@@ -5,6 +5,7 @@ import { isIllustriousNoiseProfileV1 } from '../../shared/projects/illustrious-n
 import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceAnimaRegional,
+  supportsInferenceAnimaRegionalImg2Img,
   supportsInferenceAnimaRegionalSampling,
   supportsInferenceEmbeddings,
   supportsInferenceRegionalCFGRescale,
@@ -471,9 +472,15 @@ export class ProjectRegionalGenerationCoordinator {
             assertCurrent()
             const target = await capture.composeTarget(preparation.targetWorker)
             assertCurrent()
-            if (target.mode !== 'txt2img') {
+            if (target.mode !== 'txt2img' && target.mode !== 'img2img') {
               throw unsupported(
-                'Anima Regional Guidance requires a fully transparent Current Canvas generation area. Hide raster inputs or choose an empty area.',
+                'Anima Regional Guidance requires a fully transparent or fully opaque Current Canvas generation area.',
+              )
+            }
+            if (target.mode === 'img2img' && !supportsInferenceAnimaRegionalImg2Img(ready)) {
+              throw new ProjectRegionalGenerationError(
+                'INFERENCE_UNAVAILABLE',
+                'The image engine has not qualified Anima Regional Guidance img2img. Repair or update the runtime.',
               )
             }
             const prepared = await prepareAnimaGeneration({
@@ -984,6 +991,7 @@ export class ProjectRegionalGenerationCoordinator {
 
 function validateInvokeDraft(document: IgsProjectDocumentV1, iterations = 1): void {
   const reason = getInvokeRegionalGenerationUnavailableReason({
+    animaRegionalImg2ImgSupported: true,
     animaRegionalSamplingSupported: true,
     animaRegionalSupported: true,
     cfgRescaleSupported: true,

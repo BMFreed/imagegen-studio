@@ -25,6 +25,7 @@ import {
   supportsInferenceAnima,
   supportsInferenceAnimaOutpaint,
   supportsInferenceAnimaRegional,
+  supportsInferenceAnimaRegionalImg2Img,
   supportsInferenceAnimaRegionalSampling,
   supportsInferenceCFGRescale,
   supportsInferenceEmbeddings,
@@ -412,6 +413,11 @@ export class ProjectGenerationActionController {
     return {
       animaOutpaintSupported:
         !this.blocked && !this.closed && supportsInferenceAnimaOutpaint(ready),
+      animaRegionalImg2ImgSupported:
+        !this.blocked &&
+        !this.closed &&
+        !!this.options.regional &&
+        supportsInferenceAnimaRegionalImg2Img(ready),
       animaRegionalSamplingSupported:
         !this.blocked &&
         !this.closed &&
@@ -669,6 +675,7 @@ export class ProjectGenerationActionController {
     document: IgsProjectDocumentV1,
   ): Promise<ProjectGenerateResult> {
     const unavailable = getInvokeRegionalGenerationUnavailableReason({
+      animaRegionalImg2ImgSupported: true,
       animaRegionalSamplingSupported: true,
       animaRegionalSupported: true,
       cfgRescaleSupported: true,
@@ -1409,7 +1416,10 @@ export class ProjectGenerationActionController {
 
   private async retryUnlocked(review: GenerationQueueReview): Promise<void> {
     const source = await this.options.queue.getManagerEntry(review.id)
-    if (source.operation === 'anima-regional-txt2img') {
+    if (
+      source.operation === 'anima-regional-txt2img' ||
+      source.operation === 'anima-regional-img2img'
+    ) {
       const retry = this.options.orchestrator.retryAnimaRegional?.bind(this.options.orchestrator)
       const loadFrozen = this.options.queue.loadVerifiedAnimaRegionalInput?.bind(this.options.queue)
       if (!retry || !loadFrozen || !this.options.regional) {
@@ -1444,6 +1454,8 @@ export class ProjectGenerationActionController {
               this.assertDocument(source.projectKey, source.documentId)
               if (
                 !supportsInferenceAnimaRegional(ready) ||
+                (frozen.payload.kind === 'anima-regional-img2img' &&
+                  !supportsInferenceAnimaRegionalImg2Img(ready)) ||
                 (frozen.payload.workerJob.sampling.scheduler !== 'euler' &&
                   !supportsInferenceAnimaRegionalSampling(ready))
               ) {

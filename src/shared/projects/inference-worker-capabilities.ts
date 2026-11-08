@@ -356,6 +356,15 @@ export function supportsInferenceAnimaRegionalSampling(value: unknown): boolean 
   )
 }
 
+/** Opaque regional Anima sources require their separately qualified image consumer. */
+export function supportsInferenceAnimaRegionalImg2Img(value: unknown): boolean {
+  return (
+    isQualifiedInferenceWorkerReady(value) &&
+    supportsInferenceAnimaRegional(value) &&
+    value.capabilities.includes('anima-regional-img2img-v1')
+  )
+}
+
 /** Explicit alpha conditioning and RGBA contribution require a qualified contribution adapter. */
 export function supportsInferenceOutpaint(value: unknown): boolean {
   return (

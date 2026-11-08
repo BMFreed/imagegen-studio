@@ -137,7 +137,7 @@ export function parseFrozenQueuedRegionalInvokeV1(json: string): FrozenQueuedReg
 export function parseFrozenQueuedRegionalOperationalV1(
   json: string,
 ): FrozenQueuedRegionalOperationalV1 {
-  if (readKind(json) === 'anima-regional-txt2img') {
+  if (readKind(json) === 'anima-regional-txt2img' || readKind(json) === 'anima-regional-img2img') {
     return parseFrozenQueuedAnimaRegionalV1(json)
   }
   return parseRegionalPayload(
@@ -156,13 +156,23 @@ export function parseFrozenQueuedRegionalOperationalV1(
  * provenance.
  */
 export function parseAcceptedGenerationBaseV1(json: string): FrozenQueuedGenerationV1 {
-  if (readKind(json) === 'anima-regional-txt2img') {
+  if (readKind(json) === 'anima-regional-txt2img' || readKind(json) === 'anima-regional-img2img') {
+    const payload = parseFrozenQueuedAnimaRegionalV1(json)
+    if (payload.kind === 'anima-regional-img2img') {
+      const {
+        compositionProfile: _profile,
+        promptInterpretation: _interpretation,
+        regional: _regional,
+        ...base
+      } = payload
+      return { ...base, kind: 'anima-img2img' }
+    }
     const {
       compositionProfile: _profile,
       promptInterpretation: _interpretation,
       regional: _regional,
       ...base
-    } = parseFrozenQueuedAnimaRegionalV1(json)
+    } = payload
     return { ...base, kind: 'anima-txt2img' }
   }
   if (
@@ -358,7 +368,7 @@ export async function loadRegionalQueuedFiles(
   payload: FrozenQueuedRegionalOperationalV1,
 ): Promise<Record<string, Buffer>> {
   try {
-    return payload.kind === 'anima-regional-txt2img'
+    return payload.kind === 'anima-regional-txt2img' || payload.kind === 'anima-regional-img2img'
       ? await loadAnimaRegionalQueuedFiles(root, payload)
       : await loadFiles(root, payload)
   } catch (error) {
@@ -385,7 +395,7 @@ export async function loadRegionalQueuedInput(
   payload: FrozenQueuedRegionalOperationalV1,
   request: AnimaWorkerRequest | RegionalGenerationRequestV1,
 ): Promise<AnimaRegionalWorkerInput | RegionalWorkerInput> {
-  if (payload.kind === 'anima-regional-txt2img') {
+  if (payload.kind === 'anima-regional-txt2img' || payload.kind === 'anima-regional-img2img') {
     return await loadAnimaRegionalQueuedInput(root, payload, request as AnimaWorkerRequest)
   }
 

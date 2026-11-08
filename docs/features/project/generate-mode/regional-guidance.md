@@ -2053,3 +2053,24 @@ Save/reopen preserves the accepted Raster and ordinary-only provenance. Other
 methods' new evidence is native small-model/Main integration, not a trained visual
 matrix. The prior full-scene and human-acceptance limits, IMG/batch exclusions,
 regional provenance exclusions and PP-001/005/007/008 remain unchanged.
+
+
+The subsequent [Anima opaque img2img lane](../../../engineering/phase-4-anima-regional-img2img-research.md)
+adds only fully opaque Current Canvas input to the same one-static-item contract.
+It requires `anima-regional-img2img-v1`; non-Euler also needs the existing sampling
+capability. Strength is captured in0–1 with the source PNG and exact native plan.
+The existing VAE/posterior/source blend is reused; no inpaint mask or replacement
+loop is introduced. Mixed alpha, OUT, Smart/batch and resource/spatial-negative
+extensions remain outside this lane. RGB output and ordinary Anima-img2img accepted
+provenance preserve regional exclusions. Additive migration25 grants a distinct
+queue/frozen kind without relabeling old TXT jobs.
+
+ROOT records1,550 Main/413 Python/200 browser PASS. Installed Heun20/.5 produces
+19 native evaluations; observed Cancel has one progress frame and no completion.
+Frozen Retry after saved source hiding/strength/method/model/text/mask edits and
+restart reproduces control RGB exactly. Real Add1→2/Undo1/Redo2/Save-reopen retains
+both Rasters and exact source bytes. Three isolated semantic mutations retain
+controls/restoration. Source/retention review is separate from execution; the
+first Cancel-harness race remains a failed diagnostic. Other methods have small
+native/Main coverage here, not a trained visual matrix. Previous full-scene/human
+limits and PP-001/005/007/008 «Пока не обещать» remain unchanged.

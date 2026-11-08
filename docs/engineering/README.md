@@ -2361,3 +2361,20 @@ Nine isolated mutation units yield 15 GREEN/three semantic RED with exact restor
 The source review is CLEAN; retained evidence, runtime outcomes and physical release
 remain separate. Other samplers have new small-native/Main integration evidence;
 trained visual quality, Anima image/batch modes and PP-001/005/007/008 stay open.
+
+
+## Anima Regional Guidance — opaque img2img
+
+[Opaque image integration](./phase-4-anima-regional-img2img-research.md) reuses the
+existing source VAE/posterior and six-method native flow owner behind a separate
+IMG capability and additive queue migration25. Frozen source/strength/mode survive
+later draft edits; TXT/default behavior and composition remain unchanged.
+ROOT records1,550 Main/413 Python/200 browser PASS and three real installed Heun
+Generate/Cancel/frozen Retry requests with19/1/19 progress and exact replay RGB.
+Add/Undo/Redo/Save-reopen preserves both the source and accepted Raster. Nine
+mutation phases yield15 GREEN/three semantic RED and exact restoration. Source
+review, runtime and retention levels remain separate. The initial Cancel-harness
+race remains excluded/retained. All8,044 disposable entries are archived before
+322,498,560 allocated bytes are reclaimed; reusable inputs remain protected.
+Trained Heun evidence does not qualify the other methods' visual matrix, OUT,
+batch/resources or PP-001/005/007/008, whose statuses remain unchanged.

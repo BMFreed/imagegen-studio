@@ -79,7 +79,7 @@ export function captureAnimaRegionalWorkerInput(
     const { recipe } = captured
     const compiled = compileCurrentCanvasAnimaRegionalPrompts(recipe)
     if (
-      request.type !== 'generate-anima-txt2img' ||
+      (request.type !== 'generate-anima-txt2img' && request.type !== 'generate-anima-img2img') ||
       request.job.loras.length !== 0 ||
       request.job.bbox.width > 512 ||
       request.job.bbox.height > 512 ||
@@ -139,7 +139,10 @@ export async function prepareAnimaRegionalWorkerRequest(
     { ...target, colorSpace: 'srgb' },
     'source',
   )
-  if (classifyTargetPngAlpha(targetBytes, target.width, target.height) !== 'txt2img') {
+  if (
+    classifyTargetPngAlpha(targetBytes, target.width, target.height) !==
+    (captured.request.type === 'generate-anima-img2img' ? 'img2img' : 'txt2img')
+  ) {
     invalid()
   }
   return await prepareOwnedRegionalWorkerRequest({

@@ -5,6 +5,7 @@ import test from 'node:test'
 import { ANIMA_SAMPLING_METHOD_KEYS } from './anima-sampling-method.js'
 import {
   supportsInferenceAnimaRegional,
+  supportsInferenceAnimaRegionalImg2Img,
   supportsInferenceAnimaRegionalSampling,
 } from './inference-worker-capabilities.js'
 import { isProjectGenerationActionState } from './project-generation-actions.js'
@@ -81,9 +82,12 @@ test('Anima regional admission keeps literal zero weights and native Euler witho
   value.generationDraft.sampling.steps = 200
   assert.equal(reason(value), null)
   assert.match(reason(value, { iterations: 2 })!, /one image per click/)
-  for (const targetMode of ['img2img', 'outpaint'] as const) {
-    assert.match(reason(value, { targetMode })!, /fully transparent/)
-  }
+  assert.match(reason(value, { targetMode: 'outpaint' })!, /fully transparent or fully opaque/)
+  value.generationDraft.sampling.denoisingStrength = 0.5
+  assert.match(
+    reason(value, { targetMode: 'img2img' })!,
+    /support for Anima Regional Guidance img2img/,
+  )
   for (const animaRegionalSupported of [undefined, null, false]) {
     assert.match(
       reason(value, { animaRegionalSupported, runtimeSupported: true })!,
@@ -210,6 +214,19 @@ test('regional sampling capability requires the complete ordinary and regional w
     workerVersion: '0.14.0',
   }
   assert.equal(supportsInferenceAnimaRegionalSampling(ready), true)
+  const imageReady = {
+    ...ready,
+    capabilities: [...ready.capabilities, 'anima-regional-img2img-v1'],
+  }
+  assert.equal(supportsInferenceAnimaRegionalImg2Img(ready), false)
+  assert.equal(supportsInferenceAnimaRegionalImg2Img(imageReady), true)
+  assert.equal(
+    supportsInferenceAnimaRegionalImg2Img({
+      ...imageReady,
+      capabilities: imageReady.capabilities.filter((cap) => cap !== 'anima-regional-txt2img-v1'),
+    }),
+    false,
+  )
   for (const missing of ready.capabilities) {
     const peer = { ...ready, capabilities: ready.capabilities.filter((value) => value !== missing) }
     assert.equal(supportsInferenceAnimaRegionalSampling(peer), false, missing)
@@ -236,6 +253,12 @@ test('optional regional sampling action state admits only actual Boolean capabil
     vaePrecisionSupported: false,
   }
   assert.equal(isProjectGenerationActionState(state), true)
+  for (const animaRegionalImg2ImgSupported of [true, false, undefined]) {
+    assert.equal(isProjectGenerationActionState({ ...state, animaRegionalImg2ImgSupported }), true)
+  }
+  for (const animaRegionalImg2ImgSupported of [null, 0, 'true', {}, []]) {
+    assert.equal(isProjectGenerationActionState({ ...state, animaRegionalImg2ImgSupported }), false)
+  }
   for (const animaRegionalSamplingSupported of [true, false, undefined]) {
     assert.equal(isProjectGenerationActionState({ ...state, animaRegionalSamplingSupported }), true)
   }
@@ -305,3 +328,34 @@ test('separate capability never follows from ordinary Anima or Illustrious regio
     assert.equal(isProjectGenerationActionState({ ...state, animaRegionalSupported }), false)
   }
 })
+
+for (const method of ANIMA_SAMPLING_METHOD_KEYS) {
+  test(`opaque regional ${method} advisory requires image and selected-method capabilities with explicit strength`, () => {
+    const value = document()
+    value.generationDraft.sampling.animaMethod = method
+    for (const strength of [0, 0.5, 1]) {
+      value.generationDraft.sampling.denoisingStrength = strength
+      for (const animaRegionalImg2ImgSupported of [undefined, null, false, true]) {
+        assert.equal(
+          reason(value, {
+            animaRegionalImg2ImgSupported,
+            animaRegionalSamplingSupported: true,
+            targetMode: 'img2img',
+          }) === null,
+          animaRegionalImg2ImgSupported === true,
+        )
+      }
+    }
+    for (const strength of [null, -0.1, 1.1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      value.generationDraft.sampling.denoisingStrength = strength
+      assert.match(
+        reason(value, {
+          animaRegionalImg2ImgSupported: true,
+          animaRegionalSamplingSupported: true,
+          targetMode: 'img2img',
+        })!,
+        /Denoising Strength/,
+      )
+    }
+  })
+}

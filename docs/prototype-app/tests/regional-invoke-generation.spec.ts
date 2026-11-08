@@ -377,7 +377,29 @@ test('renderer Anima regional Generate uses its own capability and explicit loca
     fixture.tab.primaryBbox.x += 8
   })
   await expect(generate).toBeDisabled()
-  await expect(page.getByText(/fully transparent Current Canvas/)).toBeVisible()
+  await expect(page.getByText(/img2img requires Denoising Strength from 0 to 1/)).toBeVisible()
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.tab.generationDraft.sampling.denoisingStrength = 0.5
+    fixture.state.animaRegionalImg2ImgSupported = false
+  })
+  await expect(generate).toBeDisabled()
+  await expect(page.getByText(/does not support Anima Regional Guidance img2img/)).toBeVisible()
+  await page.evaluate(() => {
+    globalThis.window.regionalWiringFixture.state.animaRegionalImg2ImgSupported = true
+  })
+  await expect(generate).toBeEnabled()
+  await generate.click()
+  expect(await page.evaluate(() => globalThis.window.regionalWiringFixture.generateCalls)).toEqual([
+    1, 1,
+  ])
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.targetMode = 'outpaint'
+    fixture.tab.primaryBbox.x += 8
+  })
+  await expect(generate).toBeDisabled()
+  await expect(page.getByText(/fully transparent or fully opaque Current Canvas/)).toBeVisible()
   expect(errors).toEqual([])
 })
 

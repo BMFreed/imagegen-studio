@@ -1625,6 +1625,7 @@ function parseFrozenOperationalPayload(json: string): FrozenPayload {
   }
   if (
     kind === 'anima-regional-txt2img' ||
+    kind === 'anima-regional-img2img' ||
     kind === 'illustrious-regional' ||
     kind === 'illustrious-regional-txt2img' ||
     kind === 'illustrious-regional-img2img' ||

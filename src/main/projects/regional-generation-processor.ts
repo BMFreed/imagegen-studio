@@ -6,6 +6,7 @@ import {
 } from '../../shared/projects/generation-progress.js'
 import {
   supportsInferenceAnimaRegional,
+  supportsInferenceAnimaRegionalImg2Img,
   supportsInferenceAnimaRegionalSampling,
 } from '../../shared/projects/inference-worker-capabilities.js'
 import {
@@ -419,7 +420,10 @@ export class RegionalGenerationProcessor {
     claimed: VerifiedQueuedOperationalRegionalInput,
     input: OperationalRegionalWorkerInput,
   ): Promise<void> {
-    if (claimed.payload.kind === 'anima-regional-txt2img') {
+    if (
+      claimed.payload.kind === 'anima-regional-txt2img' ||
+      claimed.payload.kind === 'anima-regional-img2img'
+    ) {
       const resolveVerifiedGenerationAnimaBundleForPlan =
         this.models.resolveVerifiedGenerationAnimaBundleForPlan
       const resolveVerifiedAnimaGenerationLoraForPlan =
@@ -432,7 +436,7 @@ export class RegionalGenerationProcessor {
         throw new Error('The frozen Anima resource verifier is unavailable.')
       }
       const base = parseAcceptedGenerationBaseV1(JSON.stringify(claimed.payload))
-      if (base.kind !== 'anima-txt2img') {
+      if (base.kind !== 'anima-txt2img' && base.kind !== 'anima-img2img') {
         throw new Error('The frozen Anima regional base is invalid.')
       }
       await reverifyFrozenQueuedAnimaGeneration(base, {
@@ -584,6 +588,8 @@ export class RegionalGenerationProcessor {
       if (input.compositionProfile === 'invoke-krea2-global-support-v1') {
         if (
           !supportsInferenceAnimaRegional(transport.ready) ||
+          (input.request.type === 'generate-anima-img2img' &&
+            !supportsInferenceAnimaRegionalImg2Img(transport.ready)) ||
           (input.request.job.sampling.scheduler !== 'euler' &&
             !supportsInferenceAnimaRegionalSampling(transport.ready))
         ) {
@@ -704,7 +710,8 @@ export class RegionalGenerationProcessor {
       active.dispatched = true
       active.receivingProgress = true
       const expectedTotalSteps =
-        input.request.type === 'generate-anima-txt2img'
+        input.request.type === 'generate-anima-txt2img' ||
+        input.request.type === 'generate-anima-img2img'
           ? input.request.job.sampling.totalSteps
           : input.request.job.sampling.steps
       const onProgress = (progress: GenerationDenoisingProgress): void => {

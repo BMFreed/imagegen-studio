@@ -861,6 +861,7 @@ export class GenerationQueueRepository {
     if (
       claimed &&
       (claimed.payload.kind === 'anima-regional-txt2img' ||
+        claimed.payload.kind === 'anima-regional-img2img' ||
         claimed.input.compositionProfile === 'invoke-krea2-global-support-v1')
     ) {
       throw statusConflict()
@@ -1334,7 +1335,7 @@ export class GenerationQueueRepository {
         const regional = regionalInputs[index]
         const material = regionalMaterials![index]
         if (
-          payload.kind !== 'anima-txt2img' ||
+          (payload.kind !== 'anima-txt2img' && payload.kind !== 'anima-img2img') ||
           !isDeepStrictEqual(regional.request, requests[index]) ||
           regional.recipe.documentId !== payload.context.documentId ||
           regional.recipe.documentRevision !== payload.context.documentRevision ||
@@ -1349,7 +1350,10 @@ export class GenerationQueueRepository {
           JSON.stringify({
             ...payload,
             compositionProfile: material.compositionProfile,
-            kind: 'anima-regional-txt2img',
+            kind:
+              payload.kind === 'anima-img2img'
+                ? 'anima-regional-img2img'
+                : 'anima-regional-txt2img',
             promptInterpretation: material.promptInterpretation,
             regional: material.regional,
           }),
@@ -1985,6 +1989,7 @@ export class GenerationQueueRepository {
         .where('operation', 'in', [
           'illustrious-regional',
           'anima-regional-txt2img',
+          'anima-regional-img2img',
           'illustrious-regional-txt2img',
           'illustrious-regional-img2img',
           'illustrious-regional-outpaint',
@@ -2460,6 +2465,7 @@ export class GenerationQueueRepository {
         .where('operation', 'in', [
           ...NORMAL_QUEUE_OPERATIONS,
           'anima-regional-txt2img',
+          'anima-regional-img2img',
           'illustrious-regional-txt2img',
           'illustrious-regional-img2img',
           'illustrious-regional-outpaint',
@@ -2508,7 +2514,8 @@ export class GenerationQueueRepository {
   > {
     const verified = await this.loadVerifiedOperationalRegionalInput(id)
     if (
-      verified.payload.kind !== 'anima-regional-txt2img' ||
+      (verified.payload.kind !== 'anima-regional-txt2img' &&
+        verified.payload.kind !== 'anima-regional-img2img') ||
       verified.input.compositionProfile !== 'invoke-krea2-global-support-v1'
     ) {
       throw new GenerationQueueError(
@@ -2536,6 +2543,7 @@ export class GenerationQueueRepository {
     const verified = await this.loadVerifiedOperationalRegionalInput(id)
     if (
       verified.payload.kind === 'anima-regional-txt2img' ||
+      verified.payload.kind === 'anima-regional-img2img' ||
       verified.input.compositionProfile === 'invoke-krea2-global-support-v1'
     ) {
       throw new GenerationQueueError(
@@ -3069,6 +3077,7 @@ export class GenerationQueueRepository {
             operation === 'invoke'
               ? [
                   'anima-regional-txt2img',
+                  'anima-regional-img2img',
                   'illustrious-regional-txt2img',
                   'illustrious-regional-img2img',
                   'illustrious-regional-outpaint',
@@ -3144,6 +3153,7 @@ export class GenerationQueueRepository {
             operation === 'invoke'
               ? [
                   'anima-regional-txt2img',
+                  'anima-regional-img2img',
                   'illustrious-regional-txt2img',
                   'illustrious-regional-img2img',
                   'illustrious-regional-outpaint',
@@ -3999,20 +4009,36 @@ export class GenerationQueueRepository {
       if (!('regional' in verified.payload)) {
         throw statusConflict()
       }
-      if (verified.payload.kind === 'anima-regional-txt2img') {
-        const request: AnimaWorkerRequest = {
-          job: {
-            ...structuredClone(verified.payload.workerJob),
-            output: {
-              pngPath: path.join(path.dirname(verified.targetPath), 'result.png'),
-              stagingRoot: path.dirname(verified.targetPath),
-            },
-            target: { ...verified.payload.workerJob.target, path: verified.targetPath },
-          },
-          protocolVersion: '1',
-          requestId: row.id,
-          type: 'generate-anima-txt2img',
+      if (
+        verified.payload.kind === 'anima-regional-txt2img' ||
+        verified.payload.kind === 'anima-regional-img2img'
+      ) {
+        const output = {
+          pngPath: path.join(path.dirname(verified.targetPath), 'result.png'),
+          stagingRoot: path.dirname(verified.targetPath),
         }
+        const request: AnimaWorkerRequest =
+          verified.payload.kind === 'anima-regional-img2img'
+            ? {
+                job: {
+                  ...structuredClone(verified.payload.workerJob),
+                  output,
+                  target: { ...verified.payload.workerJob.target, path: verified.targetPath },
+                },
+                protocolVersion: '1',
+                requestId: row.id,
+                type: 'generate-anima-img2img',
+              }
+            : {
+                job: {
+                  ...structuredClone(verified.payload.workerJob),
+                  output,
+                  target: { ...verified.payload.workerJob.target, path: verified.targetPath },
+                },
+                protocolVersion: '1',
+                requestId: row.id,
+                type: 'generate-anima-txt2img',
+              }
         const input = await loadAnimaRegionalQueuedInput(
           path.dirname(verified.targetPath),
           verified.payload,
@@ -5201,6 +5227,7 @@ function toManagerEntry(
     ![
       'anima-img2img',
       'anima-outpaint',
+      'anima-regional-img2img',
       'anima-regional-txt2img',
       'anima-smart-patch',
       'anima-txt2img',
@@ -5309,6 +5336,7 @@ function managerDetails(row: Selectable<GenerationQueueItem>): GenerationQueueEn
     }
     if (
       payload.kind === 'anima-regional-txt2img' ||
+      payload.kind === 'anima-regional-img2img' ||
       payload.kind === 'anima-txt2img' ||
       payload.kind === 'anima-img2img' ||
       payload.kind === 'anima-outpaint'
@@ -5431,6 +5459,7 @@ function isRegionalQueueOperation(operation: string): boolean {
 function isInvokeRegionalQueueOperation(operation: string): boolean {
   return (
     operation === 'anima-regional-txt2img' ||
+    operation === 'anima-regional-img2img' ||
     operation === 'illustrious-regional-txt2img' ||
     operation === 'illustrious-regional-img2img' ||
     operation === 'illustrious-regional-outpaint'

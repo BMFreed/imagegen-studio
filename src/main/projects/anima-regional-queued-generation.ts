@@ -22,20 +22,25 @@ import {
   regionalAlphaRefSchema,
 } from './regional-queued-generation.js'
 
-export interface FrozenQueuedAnimaRegionalV1 extends Omit<
-  Extract<FrozenQueuedAnimaGenerationV1, { kind: 'anima-txt2img' }>,
-  'kind'
-> {
-  compositionProfile: typeof ANIMA_REGIONAL_COMPOSITION_PROFILE
-  kind: 'anima-regional-txt2img'
-  promptInterpretation: typeof ANIMA_PROMPT_INTERPRETATION
-  regional: { byteSize: number; sha256: string }
-}
+export type FrozenQueuedAnimaRegionalV1 = RegionalFields &
+  (
+    | (Omit<Extract<FrozenQueuedAnimaGenerationV1, { kind: 'anima-img2img' }>, 'kind'> & {
+        kind: 'anima-regional-img2img'
+      })
+    | (Omit<Extract<FrozenQueuedAnimaGenerationV1, { kind: 'anima-txt2img' }>, 'kind'> & {
+        kind: 'anima-regional-txt2img'
+      })
+  )
 export interface AnimaRegionalQueuedMaterial {
   compositionProfile: typeof ANIMA_REGIONAL_COMPOSITION_PROFILE
   files: Record<string, Buffer>
   promptInterpretation: typeof ANIMA_PROMPT_INTERPRETATION
   regional: FrozenQueuedAnimaRegionalV1['regional']
+}
+interface RegionalFields {
+  compositionProfile: typeof ANIMA_REGIONAL_COMPOSITION_PROFILE
+  promptInterpretation: typeof ANIMA_PROMPT_INTERPRETATION
+  regional: { byteSize: number; sha256: string }
 }
 const sha256 = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
 const metadataSchema = v.strictObject({
@@ -56,7 +61,7 @@ export function parseFrozenQueuedAnimaRegionalV1(json: string): FrozenQueuedAnim
     const value = JSON.parse(json) as FrozenQueuedAnimaRegionalV1
     const { compositionProfile, promptInterpretation, regional, ...base } = value
     if (
-      value.kind !== 'anima-regional-txt2img' ||
+      (value.kind !== 'anima-regional-txt2img' && value.kind !== 'anima-regional-img2img') ||
       compositionProfile !== ANIMA_REGIONAL_COMPOSITION_PROFILE ||
       promptInterpretation !== ANIMA_PROMPT_INTERPRETATION ||
       !v.is(
@@ -70,10 +75,12 @@ export function parseFrozenQueuedAnimaRegionalV1(json: string): FrozenQueuedAnim
       invalid()
     }
     const ordinary = parseFrozenQueuedAnimaGenerationV1(
-      JSON.stringify({ ...base, kind: 'anima-txt2img' }),
+      JSON.stringify({
+        ...base,
+        kind: value.kind === 'anima-regional-img2img' ? 'anima-img2img' : 'anima-txt2img',
+      }),
     )
     if (
-      ordinary.kind !== 'anima-txt2img' ||
       ordinary.context.animaPromptInterpretation !== promptInterpretation ||
       ordinary.context.bbox.width > 512 ||
       ordinary.context.bbox.height > 512 ||
@@ -84,13 +91,21 @@ export function parseFrozenQueuedAnimaRegionalV1(json: string): FrozenQueuedAnim
     ) {
       invalid()
     }
-    return {
-      ...ordinary,
-      compositionProfile,
-      kind: 'anima-regional-txt2img',
-      promptInterpretation,
-      regional,
-    }
+    return ordinary.kind === 'anima-img2img'
+      ? {
+          ...ordinary,
+          compositionProfile,
+          kind: 'anima-regional-img2img',
+          promptInterpretation,
+          regional,
+        }
+      : {
+          ...ordinary,
+          compositionProfile,
+          kind: 'anima-regional-txt2img',
+          promptInterpretation,
+          regional,
+        }
   } catch {
     invalid()
   }

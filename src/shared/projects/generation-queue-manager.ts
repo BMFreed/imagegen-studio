@@ -48,6 +48,7 @@ export interface GenerationQueueEntry extends GenerationQueueReview {
   operation:
     | 'anima-img2img'
     | 'anima-outpaint'
+    | 'anima-regional-img2img'
     | 'anima-regional-txt2img'
     | 'anima-smart-patch'
     | 'anima-txt2img'
@@ -175,6 +176,7 @@ const EntrySchema = v.pipe(
       'illustrious-outpaint',
       'illustrious-smart-patch',
       'anima-regional-txt2img',
+      'anima-regional-img2img',
       'anima-txt2img',
       'anima-img2img',
       'anima-outpaint',
@@ -199,6 +201,7 @@ const EntrySchema = v.pipe(
     }
     const isAnima =
       entry.operation === 'anima-regional-txt2img' ||
+      entry.operation === 'anima-regional-img2img' ||
       entry.operation === 'anima-txt2img' ||
       entry.operation === 'anima-img2img' ||
       entry.operation === 'anima-outpaint' ||
@@ -210,7 +213,10 @@ const EntrySchema = v.pipe(
       if (isSmartPatch) {
         return true
       }
-      const isImg = entry.operation === 'anima-img2img' || entry.operation === 'anima-outpaint'
+      const isImg =
+        entry.operation === 'anima-regional-img2img' ||
+        entry.operation === 'anima-img2img' ||
+        entry.operation === 'anima-outpaint'
       return isImg === 'denoisingStrength' in entry.details.sampling
     }
     return (
