@@ -14,10 +14,11 @@ from PIL import Image
 
 from imagegen_worker.anima_conditioning import AnimaConditioningPair
 from imagegen_worker.anima_euler import (
-    AnimaDenoiser,
     AnimaEulerPlan,
     AnimaEulerResult,
     AnimaLatentTransform,
+    AnimaPredictor,
+    AnimaPredictorDenoiser,
     execute_captured_anima_plan,
     predict_anima_flow,
     require_finite_anima_tensor,
@@ -214,7 +215,7 @@ def capture_anima_sampling_schedule(
 
 def create_anima_native_denoiser(
     plan: AnimaSamplingPlan, torch: Any, device: Any, *, step_seed: int | None = None
-) -> AnimaDenoiser:
+) -> AnimaPredictorDenoiser:
     if importlib.metadata.version("diffusers") != "0.40.0":
         raise DerivativeError("INFERENCE_UNAVAILABLE", "Pinned Anima scheduler runtime differs.")
     diffusers = cast(Any, importlib.import_module("diffusers"))
@@ -276,17 +277,23 @@ def create_anima_native_denoiser(
         dtype: Any,
         progress: Callable[[int, int], None] | None,
         latent_transform: AnimaLatentTransform | None = None,
+        *,
+        predictor: AnimaPredictor | None = None,
     ) -> Any:
         for index in range(plan.total_steps):
             timestep = scheduler.timesteps[plan.begin_index + index]
             in_first_order = scheduler.state_in_first_order if plan.scheduler == "heun" else True
             sigma = timestep.item() / 1000
-            conditional = predict_anima_flow(
-                transformer, latents, pair.positive.embeddings, sigma, torch
+            conditional = (
+                predict_anima_flow(transformer, latents, pair.positive.embeddings, sigma, torch)
+                if predictor is None
+                else predictor("positive", latents, sigma)
             )
             if not math.isclose(plan.guidance_scale, 1.0):
-                unconditional = predict_anima_flow(
-                    transformer, latents, pair.negative.embeddings, sigma, torch
+                unconditional = (
+                    predict_anima_flow(transformer, latents, pair.negative.embeddings, sigma, torch)
+                    if predictor is None
+                    else predictor("negative", latents, sigma)
                 )
                 flow = unconditional + plan.guidance_scale * (conditional - unconditional)
             else:

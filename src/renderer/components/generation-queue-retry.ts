@@ -1,9 +1,11 @@
+import { isAnimaSamplingMethod } from '../../shared/projects/anima-sampling-method.js'
 import type { GenerationQueueEntry } from '../../shared/projects/generation-queue-manager.js'
 import type { ProjectGenerationActionState } from '../../shared/projects/project-generation-actions.js'
 
 type RetryState = Pick<
   ProjectGenerationActionState,
   | 'animaOutpaintSupported'
+  | 'animaRegionalSamplingSupported'
   | 'animaRegionalSupported'
   | 'animaSupported'
   | 'outpaintSupported'
@@ -30,14 +32,23 @@ export function generationQueueRetryReason(
   requiresRegionalLora = false,
   requiresRegionalVae = false,
   frozenCfgRescale = 0,
+  frozenAnimaMethod?: string | null,
 ): string | null {
   if (operation === 'anima-regional-txt2img') {
     if (state === null) {
       return 'Checking image engine support for this frozen Anima Regional Guidance job.'
     }
-    return state.animaRegionalSupported === true
-      ? null
-      : 'The current image engine does not support Anima Regional Guidance. Repair or update the runtime.'
+    if (state.animaRegionalSupported !== true) {
+      return 'The current image engine does not support Anima Regional Guidance. Repair or update the runtime.'
+    }
+    if (frozenAnimaMethod != null && !isAnimaSamplingMethod(frozenAnimaMethod)) {
+      return 'This frozen Anima Regional Guidance sampling method is unsupported.'
+    }
+    return frozenAnimaMethod != null &&
+      frozenAnimaMethod !== 'euler' &&
+      state.animaRegionalSamplingSupported !== true
+      ? 'The current image engine does not support this frozen Anima Regional Guidance sampling method. Repair or update the runtime.'
+      : null
   }
   if (
     operation === 'illustrious-regional-txt2img' ||

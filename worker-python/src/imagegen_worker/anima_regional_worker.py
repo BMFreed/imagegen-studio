@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from imagegen_worker.inference import DenoisingProgressSink, MLRuntime
 
 ANIMA_REGIONAL_CAPABILITY = "anima-regional-txt2img-v1"
+ANIMA_REGIONAL_SAMPLING_CAPABILITY = "anima-regional-sampling-v1"
 COMPOSITION_PROFILE = "invoke-krea2-global-support-v1"
 PROMPT_INTERPRETATION = "invoke-fragments-v1"
 
@@ -145,7 +146,7 @@ def parse_anima_regional_request(value: object) -> AnimaRegionalRequest:
     )
     recipe = _hydrate_recipe(bundle["recipe"], snapshots)
     captured = _capture(recipe, bundle["compiledPrompts"])
-    plan = _capture_command(command, captured)
+    plan = _capture_command(command, captured, sampling_profile="invoke-anima-flow-sampling-v1")
     _require(
         all(region.text is not None and region.text != "" for region in captured.regions),
         "Every enabled public Anima region requires a nonempty positive prompt.",
@@ -158,7 +159,7 @@ def parse_anima_regional_request(value: object) -> AnimaRegionalRequest:
         and 1 <= plan.steps <= 200
         and 1 <= plan.guidance_scale <= 30,
         "Anima regional public execution requires 64..512 pixels, "
-        "Euler 1..200 steps and CFG 1..30.",
+        "native flow sampling 1..200 steps and CFG 1..30.",
     )
     # The ordinary parser pins original Base architecture and three distinct file
     # descriptors. Reuse the loader's pinned-companion policy before invoking it;
@@ -236,4 +237,7 @@ def execute_anima_regional_request(
             profile="cuda-bfloat16-v1",
             composition_profile="invoke-krea2-global-support-v1",
             on_progress=on_progress if request.report_progress else None,
+            sampling_profile=None
+            if request.command.sampling.scheduler == "euler"
+            else "invoke-anima-flow-sampling-v1",
         )

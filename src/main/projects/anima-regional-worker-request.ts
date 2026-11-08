@@ -80,7 +80,6 @@ export function captureAnimaRegionalWorkerInput(
     const compiled = compileCurrentCanvasAnimaRegionalPrompts(recipe)
     if (
       request.type !== 'generate-anima-txt2img' ||
-      request.job.sampling.scheduler !== 'euler' ||
       request.job.loras.length !== 0 ||
       request.job.bbox.width > 512 ||
       request.job.bbox.height > 512 ||

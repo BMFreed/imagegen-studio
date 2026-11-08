@@ -9,6 +9,9 @@ selects a sign. This is no checkpoint loading owner. The explicit global-support
 profile adapts only Krea-2's background fallback from InvokeAI
 ae06c1bd36218100f89a48ff5b8855751d06a898, backend/krea2/regional_prompting.py;
 the default retains original Anima behavior.
+The explicit flow-sampling profile adapts the same revision's
+backend/anima/scheduler_driver.py and anima_denoise.py prediction/driver seam;
+the existing frozen native grids and iteration-progress contract stay unchanged.
 
 Main compilation, recipe provenance and checkpoint-to-live-model association are
 trusted caller responsibilities, as in the ordinary compiled Anima command.
@@ -54,6 +57,7 @@ from imagegen_worker.anima_flow_sampling import (
     AnimaFlowSamplingPlan,
     validate_anima_flow_sampling_plan,
 )
+from imagegen_worker.anima_sampling import create_anima_native_denoiser
 from imagegen_worker.anima_tokenizers import AnimaTokenizers, load_anima_tokenizers
 from imagegen_worker.anima_worker import anima_prompt_payload, anima_sampling_payload
 from imagegen_worker.derivatives import DerivativeError
@@ -69,6 +73,7 @@ if TYPE_CHECKING:
 
 _Profile = Literal["cpu-float32-v1", "cuda-bfloat16-v1"]
 _CompositionProfile = Literal["invoke-krea2-global-support-v1"]
+_SamplingProfile = Literal["invoke-anima-flow-sampling-v1"]
 _MAX_REGIONS = 3
 _MAX_TEXT_BYTES = 16 * 1024
 _MAX_TOTAL_TEXT_BYTES = 128 * 1024
@@ -433,7 +438,10 @@ def _capture(recipe: object, compiled_prompts: object) -> _Input:
 
 
 def _capture_command(
-    command: GenerateAnimaTxt2ImgCommand, captured: _Input
+    command: GenerateAnimaTxt2ImgCommand,
+    captured: _Input,
+    *,
+    sampling_profile: _SamplingProfile | None = None,
 ) -> AnimaFlowSamplingPlan:
     _require(
         type(command) is GenerateAnimaTxt2ImgCommand,
@@ -446,12 +454,18 @@ def _capture_command(
         "GENERATION_PROMPT_UNSUPPORTED",
         "Private Anima regions do not admit LoRA.",
     )
+    _require(
+        sampling_profile is None
+        or (type(sampling_profile) is str and sampling_profile == "invoke-anima-flow-sampling-v1"),
+        "INVALID_REQUEST",
+        "Anima regional sampling profile is unsupported.",
+    )
     try:
         plan = validate_anima_flow_sampling_plan(anima_sampling_payload(command.sampling))
     except (AttributeError, TypeError, ValueError) as error:
         raise DerivativeError("INVALID_REQUEST", "Anima sampling command is invalid.") from error
     _require(
-        plan.mode == "txt2img" and plan.scheduler == "euler",
+        plan.mode == "txt2img" and (plan.scheduler == "euler" or sampling_profile is not None),
         "INVALID_REQUEST",
         "Private Anima regions require original txt2img Euler.",
     )
@@ -1375,12 +1389,15 @@ def generate_current_canvas_regional_anima_txt2img(
     tokenizers: AnimaTokenizers | None = None,
     composition_profile: _CompositionProfile | None = None,
     on_progress: DenoisingProgressSink | None = None,
+    sampling_profile: _SamplingProfile | None = None,
 ) -> dict[str, object]:
-    """One matching Main recipe to existing Euler/Wan and exclusive provisional PNG.
+    """One matching Main recipe to existing native sampling/Wan and provisional PNG.
 
     The exact prepared Anima Base models are borrowed, not loaded here. This
     private consumer grants no public admission, durable candidate or visual
     quality claim; all regional negatives/references remain unsupported.
+    The default remains Euler-only; the explicit sampling profile reuses the
+    ordinary native flow driver without changing frozen schedules or progress.
     """
     _require(
         on_progress is None or callable(on_progress),
@@ -1397,7 +1414,7 @@ def generate_current_canvas_regional_anima_txt2img(
         "Anima regional composition profile is unsupported.",
     )
     captured = _capture(recipe, compiled_prompts)
-    plan = _capture_command(command, captured)
+    plan = _capture_command(command, captured, sampling_profile=sampling_profile)
     x, y, width, height = captured.bbox
     command = replace(
         command,
@@ -1452,6 +1469,11 @@ def generate_current_canvas_regional_anima_txt2img(
                 prediction_factory=None
                 if mask is None
                 else _prediction_factory(captured, models, owned_tokenizers, mask),
+                denoiser_factory=None
+                if plan.scheduler == "euler"
+                else lambda torch, device: create_anima_native_denoiser(
+                    plan, torch, device, step_seed=plan.step_seed
+                ),
             )
         _require(
             result.total_steps == plan.total_steps,

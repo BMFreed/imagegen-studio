@@ -4,7 +4,10 @@ import {
   type GenerationProgressSnapshot,
   isGenerationDenoisingProgress,
 } from '../../shared/projects/generation-progress.js'
-import { supportsInferenceAnimaRegional } from '../../shared/projects/inference-worker-capabilities.js'
+import {
+  supportsInferenceAnimaRegional,
+  supportsInferenceAnimaRegionalSampling,
+} from '../../shared/projects/inference-worker-capabilities.js'
 import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceEmbeddings,
@@ -579,7 +582,11 @@ export class RegionalGenerationProcessor {
       }
       const input = captureOperationalRegionalWorkerInput(claimed.input)
       if (input.compositionProfile === 'invoke-krea2-global-support-v1') {
-        if (!supportsInferenceAnimaRegional(transport.ready)) {
+        if (
+          !supportsInferenceAnimaRegional(transport.ready) ||
+          (input.request.job.sampling.scheduler !== 'euler' &&
+            !supportsInferenceAnimaRegionalSampling(transport.ready))
+        ) {
           throw new RegionalGenerationProcessorError(
             'INFERENCE_UNAVAILABLE',
             'The worker has not qualified Anima Regional Guidance.',
@@ -696,7 +703,10 @@ export class RegionalGenerationProcessor {
       }
       active.dispatched = true
       active.receivingProgress = true
-      const expectedTotalSteps = input.request.job.sampling.steps
+      const expectedTotalSteps =
+        input.request.type === 'generate-anima-txt2img'
+          ? input.request.job.sampling.totalSteps
+          : input.request.job.sampling.steps
       const onProgress = (progress: GenerationDenoisingProgress): void => {
         if (
           this.active !== active ||

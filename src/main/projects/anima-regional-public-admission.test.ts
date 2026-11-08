@@ -1,3 +1,5 @@
+import { ANIMA_SAMPLING_METHOD_KEYS } from '../../shared/projects/anima-sampling-method.js'
+
 import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import test from 'node:test'
@@ -254,6 +256,117 @@ test('actual opaque composed pixels refuse the Anima regional lane before durabl
     assert.deepEqual(fixture.document(), before)
   })
 })
+
+for (const method of ANIMA_SAMPLING_METHOD_KEYS) {
+  test(`public regional ${method} preserves its actual flow plan and requires a new peer only for non-Euler`, async () => {
+    await withPublicAnima(async (fixture) => {
+      await fixture.edit((document) => {
+        document.generationDraft.sampling.animaMethod = method
+        document.generationDraft.sampling.steps = 20
+      })
+      const document = structuredClone(fixture.document())
+      const saved = await readFile(fixture.packagePath)
+      assert.equal(
+        (await fixture.actions.getState(fixture.tabId)).animaRegionalSamplingSupported,
+        false,
+      )
+      if (method !== 'euler') {
+        await assert.rejects(
+          fixture.actions.generate(fixture.tabId, {
+            documentId: document.documentId,
+            iterations: 1,
+          }),
+          { code: 'GENERATION_RUNTIME_UNAVAILABLE' },
+        )
+        assert.equal(fixture.calls.compose.length, 0)
+        assert.equal((await fixture.queue.listManagerPage()).items.length, 0)
+        void (fixture.controls.ready.capabilities as string[]).push('anima-regional-sampling-v1')
+        assert.equal(
+          (await fixture.actions.getState(fixture.tabId)).animaRegionalSamplingSupported,
+          true,
+        )
+      }
+      const result = await fixture.actions.generate(fixture.tabId, {
+        documentId: document.documentId,
+        iterations: 1,
+      })
+      if (result.kind !== 'queued') {
+        assert.fail('Expected one regional queue job.')
+      }
+      const frozen = await fixture.queue.loadVerifiedAnimaRegionalInput(result.jobIds[0])
+      assert.equal(frozen.payload.context.sampling.animaMethod, method)
+      assert.equal(frozen.payload.workerJob.sampling.scheduler, method)
+      assert.equal(frozen.input.request.job.sampling.scheduler, method)
+      assert.deepEqual(frozen.input.request.job.sampling, frozen.payload.workerJob.sampling)
+      assert.equal(frozen.input.request.job.sampling.totalSteps, method === 'heun' ? 39 : 20)
+      assert.equal(
+        (await fixture.queue.listManagerPage()).items[0].details?.sampling.animaMethod,
+        method,
+      )
+      assert.equal(fixture.calls.compose.length, 1)
+      assert.deepEqual(fixture.document(), document)
+      assert.ok((await readFile(fixture.packagePath)).equals(saved))
+    })
+  })
+
+  test(`frozen regional ${method} Retry gates the saved method after opposite current edits`, async () => {
+    await withPublicAnima(async (fixture) => {
+      void (fixture.controls.ready.capabilities as string[]).push('anima-regional-sampling-v1')
+      await fixture.edit((document) => {
+        document.generationDraft.sampling.animaMethod = method
+      })
+      const result = await fixture.actions.generate(fixture.tabId, {
+        documentId: fixture.document().documentId,
+        iterations: 1,
+      })
+      if (result.kind !== 'queued') {
+        assert.fail('Expected one regional queue job.')
+      }
+      const id = result.jobIds[0]
+      await fixture.orchestrator.cancelGenerationJob(id)
+      const source = await fixture.queue.getManagerEntry(id)
+      const before = await fixture.queue.loadVerifiedAnimaRegionalInput(id)
+      const sourceRow = await fixture.db
+        .selectFrom('generation_queue_item')
+        .selectAll()
+        .where('id', '=', id)
+        .executeTakeFirstOrThrow()
+      await fixture.edit((document) => {
+        document.generationDraft.model = null
+        document.generationDraft.sampling.animaMethod = method === 'euler' ? 'heun' : 'euler'
+        document.generationDraft.seed = { policy: 'fixed', value: 999 }
+        document.generationDraft.positivePrompt.text = 'later current text'
+        document.regionalGuidance!.forEach((region) => {
+          region.enabled = false
+        })
+      })
+      const edited = structuredClone(fixture.document())
+      fixture.controls.ready.capabilities = fixture.controls.ready.capabilities.filter(
+        (entry) => entry !== 'anima-regional-sampling-v1',
+      )
+      if (method !== 'euler') {
+        await assert.rejects(
+          fixture.actions.retryJob({ id, statusSequence: source.statusSequence }),
+          { code: 'GENERATION_RUNTIME_UNAVAILABLE' },
+        )
+        assert.equal((await fixture.queue.listManagerPage()).items.length, 1)
+        void (fixture.controls.ready.capabilities as string[]).push('anima-regional-sampling-v1')
+      }
+      await fixture.actions.retryJob({ id, statusSequence: source.statusSequence })
+      const rows = await fixture.db.selectFrom('generation_queue_item').selectAll().execute()
+      assert.equal(rows.length, 2)
+      const clone = rows.find((entry) => entry.id !== id)!
+      const after = await fixture.queue.loadVerifiedAnimaRegionalInput(clone.id)
+      assert.equal(clone.frozen_payload_json, sourceRow.frozen_payload_json)
+      assert.notEqual(clone.staging_session_id, sourceRow.staging_session_id)
+      assert.deepEqual(after.input.recipe, before.input.recipe)
+      assert.deepEqual(after.input.compiledPrompts, before.input.compiledPrompts)
+      assert.deepEqual(after.input.request.job.sampling, before.input.request.job.sampling)
+      assert.equal(fixture.calls.compose.length, 1)
+      assert.deepEqual(fixture.document(), edited)
+    })
+  })
+}
 
 test('genuine Anima regional admission retains dormant authored references with empty effective references', async () => {
   await withPublicAnima(async (fixture) => {

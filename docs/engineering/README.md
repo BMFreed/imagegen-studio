@@ -2343,3 +2343,21 @@ Save/reopen/exact PNG/base-only provenance. The failed native report is retained
 with its status, not relabelled PASS. Nine mutation units give15 GREEN/3 semantic
 RED with exact restoration. Source reviews are clean; resource/retention and public
 readiness remain separate evidence levels as documented.
+
+## Anima Regional Guidance — existing native flow samplers
+
+[Native sampling](./phase-4-anima-regional-sampling-research.md) connects the prepared
+regional predictor to the existing six-method flow driver, adapting current Invoke's
+prediction/scheduler separation. The additional capability grants non-Euler while
+old peers and the private default keep Euler-only meaning. Frozen arrays/seed,
+queue and wire formats, composition and ordinary numerical behavior stay unchanged;
+Heun progress uses actual `2N−1` evaluations.
+
+ROOT records 1,500 Main, 340 Python, 200 browser and 82 tooling-guard PASS. Three
+real installed Heun requests cover Generate, progress-observed Cancel and exact
+frozen Retry after saved Euler/seed/text/mask/model edits. Real Add/Undo/Redo/
+Save/reopen closes the previous remaining Add-history check on a new result.
+Nine isolated mutation units yield 15 GREEN/three semantic RED with exact restoration.
+The source review is CLEAN; retained evidence, runtime outcomes and physical release
+remain separate. Other samplers have new small-native/Main integration evidence;
+trained visual quality, Anima image/batch modes and PP-001/005/007/008 stay open.

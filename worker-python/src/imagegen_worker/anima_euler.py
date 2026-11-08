@@ -13,7 +13,7 @@ import math
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import Any, Literal, Protocol, cast
 
 from PIL import Image
 
@@ -92,6 +92,22 @@ AnimaDenoiserFactory = Callable[[Any, Any], AnimaDenoiser | AnimaMaskedDenoiser]
 # Trusted private prediction ownership; ordinary callers keep the original path.
 AnimaPredictor = Callable[[Literal["positive", "negative"], Any, float], Any]
 AnimaPredictionFactory = Callable[[AnimaConditioningPair, Any, Any, Any], AnimaPredictor]
+
+
+class AnimaPredictorDenoiser(Protocol):
+    """Existing native driver with optional request-owned prediction consumption."""
+
+    def __call__(
+        self,
+        transformer: Any,
+        latents: Any,
+        pair: AnimaConditioningPair,
+        dtype: Any,
+        progress: Callable[[int, int], None] | None,
+        latent_transform: AnimaLatentTransform | None = None,
+        *,
+        predictor: AnimaPredictor | None = None,
+    ) -> Any: ...
 
 
 def _invalid(message: str) -> DerivativeError:
@@ -303,8 +319,6 @@ def execute_captured_anima_plan(
     positive_input, negative_input = _capture_prompt(positive), _capture_prompt(negative)
     source = _source_image(source_image, captured)
     captured_loras = capture_anima_loras(loras)
-    if prediction_factory is not None and denoiser_factory is not None:
-        raise _invalid("Anima prediction ownership cannot replace a native sampling driver.")
     try:
         if importlib.metadata.version("torchvision").split("+", maxsplit=1)[0] != "0.22.1":
             raise DerivativeError(
@@ -433,20 +447,31 @@ def execute_captured_anima_plan(
                         if progress is not None:
                             progress(index, captured.total_steps)
                     if denoise is not None:
-                        latents = (
-                            cast(AnimaDenoiser, denoise)(
-                                transformer, latents, conditioning, dtype, progress
-                            )
-                            if latent_transform is None
-                            else cast(AnimaMaskedDenoiser, denoise)(
+                        if predictor is not None:
+                            latents = cast(AnimaPredictorDenoiser, denoise)(
                                 transformer,
                                 latents,
                                 conditioning,
                                 dtype,
                                 progress,
                                 latent_transform,
+                                predictor=predictor,
                             )
-                        )
+                        else:
+                            latents = (
+                                cast(AnimaDenoiser, denoise)(
+                                    transformer, latents, conditioning, dtype, progress
+                                )
+                                if latent_transform is None
+                                else cast(AnimaMaskedDenoiser, denoise)(
+                                    transformer,
+                                    latents,
+                                    conditioning,
+                                    dtype,
+                                    progress,
+                                    latent_transform,
+                                )
+                            )
                 assert latents is not None
                 raw_latents = latents.to(dtype=vae_parameter.dtype) * std + mean
                 require_finite_anima_tensor(raw_latents, torch, "denormalized latent")

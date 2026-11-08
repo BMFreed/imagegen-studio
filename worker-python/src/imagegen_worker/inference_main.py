@@ -102,7 +102,11 @@ def inference_ready_message(
             "illustrious-regional-outpaint-v1",
             *(("linux-owned-inference-v1",) if owner_lifetime else ()),
             *(
-                (*ANIMA_CAPABILITIES, "anima-regional-txt2img-v1")
+                (
+                    *ANIMA_CAPABILITIES,
+                    "anima-regional-txt2img-v1",
+                    "anima-regional-sampling-v1",
+                )
                 if runtime is not None and supports_anima_compute(runtime)
                 else ()
             ),

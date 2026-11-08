@@ -1,3 +1,5 @@
+import { ANIMA_SAMPLING_METHOD_KEYS } from '../../shared/projects/anima-sampling-method.js'
+
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
@@ -33,3 +35,36 @@ test('frozen Anima regional Retry requires only its separate regional operation 
     false,
   )
 })
+
+for (const method of ANIMA_SAMPLING_METHOD_KEYS) {
+  test(`frozen regional ${method} Retry gates its own method independently of ordinary draft fields`, () => {
+    for (const animaRegionalSamplingSupported of [undefined, false, true]) {
+      const state = { animaRegionalSamplingSupported, animaRegionalSupported: true }
+      assert.equal(
+        generationQueueRetryReason(
+          'anima-regional-txt2img',
+          state,
+          'Euler a',
+          true,
+          true,
+          0.7,
+          method,
+        ) === null,
+        method === 'euler' || animaRegionalSamplingSupported === true,
+      )
+      assert.equal(generationQueueRetryReason('anima-txt2img', state), null)
+    }
+    assert.notEqual(
+      generationQueueRetryReason(
+        'anima-regional-txt2img',
+        { animaRegionalSamplingSupported: true, animaRegionalSupported: false },
+        undefined,
+        false,
+        false,
+        0,
+        method,
+      ),
+      null,
+    )
+  })
+}

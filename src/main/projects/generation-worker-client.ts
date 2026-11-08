@@ -13,7 +13,10 @@ import {
   supportsIllustriousNoiseProfile,
 } from '../../shared/projects/illustrious-noise-profile.js'
 import { ILLUSTRIOUS_SCHEDULER_PAIRS } from '../../shared/projects/illustrious-scheduler.js'
-import { supportsInferenceAnimaRegional } from '../../shared/projects/inference-worker-capabilities.js'
+import {
+  supportsInferenceAnimaRegional,
+  supportsInferenceAnimaRegionalSampling,
+} from '../../shared/projects/inference-worker-capabilities.js'
 import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceAnima,
@@ -445,7 +448,11 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     let completed = false
     try {
       if (input.compositionProfile === 'invoke-krea2-global-support-v1') {
-        if (!supportsInferenceAnimaRegional(this.ready)) {
+        if (
+          !supportsInferenceAnimaRegional(this.ready) ||
+          (input.request.job.sampling.scheduler !== 'euler' &&
+            !supportsInferenceAnimaRegionalSampling(this.ready))
+        ) {
           throw new GenerationWorkerError(
             'WORKER_VERSION_MISMATCH',
             'The active worker has not qualified Anima Regional Guidance.',
@@ -624,11 +631,15 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
         reportProgress
           ? {
               expectedTotalSteps:
-                lease.request.type !== 'generate-illustrious-txt2img' &&
-                lease.request.type !== 'generate-anima-txt2img'
-                  ? null
+                lease.request.type === 'generate-anima-txt2img'
+                  ? lease.request.job.sampling.totalSteps
+                  : lease.request.type === 'generate-illustrious-txt2img'
+                    ? lease.request.job.sampling.steps
+                    : null,
+              maxSteps:
+                lease.request.type === 'generate-anima-txt2img'
+                  ? 2 * lease.request.job.sampling.steps
                   : lease.request.job.sampling.steps,
-              maxSteps: lease.request.job.sampling.steps,
               onProgress,
             }
           : undefined,

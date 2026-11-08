@@ -1,5 +1,6 @@
 import type { IgsProjectDocumentV1 } from './project-schema.js'
 
+import { isAnimaSamplingMethod } from './anima-sampling-method.js'
 import {
   type GenerationBatchPlan,
   GenerationBatchPlanError,
@@ -100,6 +101,7 @@ export function hasActiveGlobalPromptEmbeddings(
  * separately qualified image subset; omitted target mode preserves pre-composition Main checks.
  */
 export function getInvokeRegionalGenerationUnavailableReason(input: {
+  animaRegionalSamplingSupported?: boolean | null
   animaRegionalSupported?: boolean | null
   cfgRescaleSupported?: boolean | null
   document: RegionalDocument
@@ -330,6 +332,7 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
  * backend/krea2/regional_prompting.py; no authoring text, inheritance or defaults are changed.
  */
 function getAnimaRegionalGenerationUnavailableReason(input: {
+  animaRegionalSamplingSupported?: boolean | null
   animaRegionalSupported?: boolean | null
   document: RegionalDocument
   iterations: number
@@ -343,8 +346,13 @@ function getAnimaRegionalGenerationUnavailableReason(input: {
   if (input.targetMode === 'img2img' || input.targetMode === 'outpaint') {
     return 'Anima Regional Guidance requires a fully transparent Current Canvas generation area. Hide raster inputs or choose an empty area.'
   }
-  if (draft.sampling.animaMethod !== 'euler') {
-    return 'Anima Regional Guidance requires the native Anima Euler sampling method.'
+  if (!isAnimaSamplingMethod(draft.sampling.animaMethod)) {
+    return 'Anima Regional Guidance requires a supported native Anima sampling method.'
+  }
+  if (draft.sampling.animaMethod !== 'euler' && input.animaRegionalSamplingSupported !== true) {
+    return input.animaRegionalSamplingSupported == null
+      ? 'Checking image engine support for this Anima Regional Guidance sampling method. Repair or update the runtime if support remains unavailable.'
+      : 'The current image engine does not support this Anima Regional Guidance sampling method. Repair or update the runtime.'
   }
   const { cfgScale, steps } = draft.sampling
   if (cfgScale === null || !Number.isFinite(cfgScale) || cfgScale < 1 || cfgScale > 30) {

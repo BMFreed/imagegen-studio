@@ -5,6 +5,7 @@ import { isIllustriousNoiseProfileV1 } from '../../shared/projects/illustrious-n
 import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceAnimaRegional,
+  supportsInferenceAnimaRegionalSampling,
   supportsInferenceEmbeddings,
   supportsInferenceRegionalCFGRescale,
   supportsInferenceRegionalDpm,
@@ -453,7 +454,11 @@ export class ProjectRegionalGenerationCoordinator {
           const queued = await input.withPreparation(async (preparation) => {
             assertCurrent()
             const ready = structuredClone(preparation.inferenceReady)
-            if (!supportsInferenceAnimaRegional(ready)) {
+            if (
+              !supportsInferenceAnimaRegional(ready) ||
+              (document.generationDraft.sampling.animaMethod !== 'euler' &&
+                !supportsInferenceAnimaRegionalSampling(ready))
+            ) {
               throw new ProjectRegionalGenerationError(
                 'INFERENCE_UNAVAILABLE',
                 'The image engine has not qualified Anima Regional Guidance. Repair or update the runtime.',
@@ -979,6 +984,7 @@ export class ProjectRegionalGenerationCoordinator {
 
 function validateInvokeDraft(document: IgsProjectDocumentV1, iterations = 1): void {
   const reason = getInvokeRegionalGenerationUnavailableReason({
+    animaRegionalSamplingSupported: true,
     animaRegionalSupported: true,
     cfgRescaleSupported: true,
     document,

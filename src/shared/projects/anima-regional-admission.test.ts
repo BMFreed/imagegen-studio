@@ -2,7 +2,11 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 
-import { supportsInferenceAnimaRegional } from './inference-worker-capabilities.js'
+import { ANIMA_SAMPLING_METHOD_KEYS } from './anima-sampling-method.js'
+import {
+  supportsInferenceAnimaRegional,
+  supportsInferenceAnimaRegionalSampling,
+} from './inference-worker-capabilities.js'
 import { isProjectGenerationActionState } from './project-generation-actions.js'
 import { createEmptyProjectDocumentV1, type IgsProjectDocumentV1 } from './project-schema.js'
 import { getInvokeRegionalGenerationUnavailableReason } from './regional-invoke-generation.js'
@@ -125,7 +129,7 @@ test('finite regional refusals preserve disabled rows and demand nonempty enable
       (value) => {
         value.generationDraft.sampling.animaMethod = 'heun'
       },
-      /native Anima Euler/,
+      /Anima Regional Guidance sampling method/,
     ],
     [
       (value) => {
@@ -158,6 +162,89 @@ test('finite regional refusals preserve disabled rows and demand nonempty enable
   const value = document()
   value.regionalGuidance![0].prompts!.positive!.text = ' '
   assert.equal(reason(value), null, 'Whitespace remains an authored emitting prompt.')
+})
+
+for (const method of ANIMA_SAMPLING_METHOD_KEYS) {
+  test(`regional Anima ${method} requires only its own explicit sampling capability`, () => {
+    const value = document()
+    value.generationDraft.sampling.animaMethod = method
+    const before = structuredClone(value)
+    for (const animaRegionalSamplingSupported of [undefined, null, false, true]) {
+      assert.equal(
+        reason(value, { animaRegionalSamplingSupported }) === null,
+        method === 'euler' || animaRegionalSamplingSupported === true,
+      )
+    }
+    assert.equal(
+      reason(value, { animaRegionalSamplingSupported: true, animaRegionalSupported: false }) ===
+        null,
+      false,
+    )
+    assert.deepEqual(value, before)
+  })
+}
+
+test('regional sampling capability requires the complete ordinary and regional worker contract', () => {
+  const ready = {
+    capabilities: [
+      'illustrious-txt2img',
+      'denoising-progress',
+      'candidate-thumbnails',
+      'illustrious-cfg-rescale',
+      'illustrious-img2img',
+      'illustrious-lora',
+      'illustrious-vae-precision',
+      'illustrious-external-vae',
+      'illustrious-embeddings',
+      'illustrious-outpaint',
+      'anima-txt2img',
+      'anima-img2img',
+      'anima-lora',
+      'anima-prompt-weighting',
+      'anima-flow-sampling',
+      'anima-regional-txt2img-v1',
+      'anima-regional-sampling-v1',
+    ],
+    protocolVersion: '1',
+    runtimeProfile: 'linux-nvidia',
+    workerVersion: '0.14.0',
+  }
+  assert.equal(supportsInferenceAnimaRegionalSampling(ready), true)
+  for (const missing of ready.capabilities) {
+    const peer = { ...ready, capabilities: ready.capabilities.filter((value) => value !== missing) }
+    assert.equal(supportsInferenceAnimaRegionalSampling(peer), false, missing)
+    if (missing === 'anima-regional-sampling-v1') {
+      assert.equal(supportsInferenceAnimaRegional(peer), true)
+    }
+  }
+  for (const workerVersion of ['0.13.0', '0.15.0']) {
+    assert.equal(supportsInferenceAnimaRegionalSampling({ ...ready, workerVersion }), false)
+  }
+})
+
+test('optional regional sampling action state admits only actual Boolean capability values', () => {
+  const state = {
+    cfgRescaleSupported: false,
+    documentId: randomUUID(),
+    embeddingsSupported: false,
+    error: null,
+    externalVaeSupported: false,
+    img2imgSupported: false,
+    jobs: [],
+    phase: 'idle',
+    runningJobId: null,
+    vaePrecisionSupported: false,
+  }
+  assert.equal(isProjectGenerationActionState(state), true)
+  for (const animaRegionalSamplingSupported of [true, false, undefined]) {
+    assert.equal(isProjectGenerationActionState({ ...state, animaRegionalSamplingSupported }), true)
+  }
+  for (const animaRegionalSamplingSupported of [null, 0, 'true', {}, []]) {
+    assert.equal(
+      isProjectGenerationActionState({ ...state, animaRegionalSamplingSupported }),
+      false,
+    )
+  }
 })
 
 test('separate capability never follows from ordinary Anima or Illustrious regional strings', () => {

@@ -1,9 +1,10 @@
+import { ANIMA_SAMPLING_METHOD_KEYS } from '../../shared/projects/anima-sampling-method.js'
 import type { AnimaWorkerRequest } from '../../shared/projects/anima-worker-request.js'
 import { isGenerationQueuePage } from '../../shared/projects/generation-queue-manager.js'
 
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { link, readdir, readFile, symlink, unlink, writeFile } from 'node:fs/promises'
+import { chmod, link, mkdir, readdir, readFile, symlink, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import test from 'node:test'
 import { crc32, deflateSync } from 'node:zlib'
@@ -19,6 +20,7 @@ import {
   prepareAnimaRegionalWorkerRequest,
 } from './anima-regional-worker-request.js'
 import { GenerationStagingRepository } from './generation-staging.js'
+import { GenerationWorkerClient } from './generation-worker-client.js'
 import { compileCurrentCanvasAnimaRegionalPrompts } from './project-current-canvas-anima-regional-input.js'
 import { localProjectRecoveryKey } from './project-identity.js'
 import { RegionalGenerationProcessor } from './regional-generation-processor.js'
@@ -443,6 +445,235 @@ function deferred<T>() {
   })
   return { promise, resolve }
 }
+
+for (const method of ANIMA_SAMPLING_METHOD_KEYS) {
+  test(`regional ${method} dispatch retains native iteration progress, frozen arrays and base-only publication`, async () => {
+    await withAnimaStagingFixture(async (fixture) => {
+      fixture.prepared.context.sampling.animaMethod = method
+      fixture.prepared.context.generationDraft.sampling.animaMethod = method
+      fixture.prepared.context.sampling.steps = 20
+      fixture.prepared.context.generationDraft.sampling.steps = 20
+      const item = await enqueue(fixture)
+      const frozen = await fixture.queue.loadVerifiedAnimaRegionalInput(item.id)
+      const arrays = structuredClone(frozen.input.request.job.sampling)
+      const models = {
+        ...fixture.modelService,
+        assertNoUnboundGenerationEmbeddings: async () => {},
+        resolveVerifiedGenerationCheckpointForPlan: async () => {
+          throw new Error('wrong family')
+        },
+        resolveVerifiedGenerationEmbeddingForPlan: async () => {
+          throw new Error('wrong family')
+        },
+      }
+      const processor = new RegionalGenerationProcessor(
+        fixture.queue,
+        fixture.staging,
+        models,
+        'invoke-canvas-v1',
+      )
+      const outputBytes = await rgbOutput()
+      let calls = 0
+      const result = await processor.runOne({
+        close: async () => {},
+        executeCurrentCanvasRegional: async (input, progress) => {
+          calls += 1
+          assert.deepEqual(input.request.job.sampling, arrays)
+          const totalSteps = method === 'heun' ? 39 : 20
+          assert.equal(input.request.job.sampling.totalSteps, totalSteps)
+          if (method === 'heun') {
+            progress?.({ step: 1, totalSteps: 20 })
+            assert.equal(processor.getProgressSnapshot().current, null)
+          }
+          for (let step = 1; step <= totalSteps; step += 1) {
+            progress?.({ step, totalSteps })
+            assert.equal(processor.getProgressSnapshot().current?.step, step)
+            assert.equal(processor.getProgressSnapshot().current?.totalSteps, totalSteps)
+          }
+          return {
+            output: {
+              byteSize: outputBytes.length,
+              colorSpace: 'srgb',
+              height: 64,
+              iccSha256: input.request.job.target.iccSha256,
+              path: '/historical/result.png',
+              sha256: animaFixtureSha256(outputBytes),
+              width: 64,
+            },
+            pngBytes: outputBytes,
+            seed: input.request.job.sampling.seed,
+          }
+        },
+        ready: { ...READY, capabilities: [...READY.capabilities, 'anima-regional-sampling-v1'] },
+      })
+      assert.equal(calls, 1)
+      assert.equal(result.kind, 'completed')
+      const candidates = await fixture.staging.listVerifiedCandidates(item.localProjectKey)
+      assert.equal(candidates.length, 1)
+      const accepted = parseAcceptedGenerationBaseV1(candidates[0].frozenPayloadJson)
+      assert.equal(accepted.kind, 'anima-txt2img')
+      assert.equal(accepted.workerJob.sampling.scheduler, method)
+      assert.equal('regional' in accepted, false)
+      assert.equal('compositionProfile' in accepted, false)
+      assert.ok((await readFile(fixture.projectPath)).equals(fixture.originalProjectBytes))
+    })
+  })
+}
+
+test('non-Euler regional dispatch refuses an old peer before invoking transport and preserves frozen input', async () => {
+  await withAnimaStagingFixture(async (fixture) => {
+    fixture.prepared.context.sampling.animaMethod = 'heun'
+    fixture.prepared.context.generationDraft.sampling.animaMethod = 'heun'
+    const item = await enqueue(fixture)
+    const before = await fixture.queue.loadVerifiedAnimaRegionalInput(item.id)
+    const models = {
+      ...fixture.modelService,
+      assertNoUnboundGenerationEmbeddings: async () => {},
+      resolveVerifiedGenerationCheckpointForPlan: async () => {
+        throw new Error('wrong family')
+      },
+      resolveVerifiedGenerationEmbeddingForPlan: async () => {
+        throw new Error('wrong family')
+      },
+    }
+    const processor = new RegionalGenerationProcessor(
+      fixture.queue,
+      fixture.staging,
+      models,
+      'invoke-canvas-v1',
+    )
+    const result = await processor.runOne({
+      close: async () => {},
+      executeCurrentCanvasRegional: async () =>
+        assert.fail('Unqualified peer must not receive a regional flow job.'),
+      ready: READY,
+    })
+    assert.equal(result.kind, 'failed')
+    const after = await fixture.queue.loadVerifiedAnimaRegionalInput(item.id)
+    assert.deepEqual(after.payload, before.payload)
+    assert.deepEqual(after.input.recipe, before.input.recipe)
+    assert.equal((await fixture.staging.listVerifiedCandidates(item.localProjectKey)).length, 0)
+  })
+})
+
+test('regional flow client qualifies before scratch and consumes exact native Heun progress over unchanged JSONL', async () => {
+  await withAnimaStagingFixture(async (fixture) => {
+    const runtime = path.join(fixture.root, 'regional-flow-runtime')
+    const scratch = path.join(fixture.root, 'regional-flow-client')
+    const received = path.join(fixture.root, 'regional-flow-wire.jsonl')
+    await mkdir(runtime)
+    await mkdir(scratch, { mode: 0o700 })
+    const executable = path.join(runtime, 'python')
+    const outputBytes = await rgbOutput()
+    for (const support of [false, true]) {
+      const ready = {
+        ...READY,
+        capabilities: [
+          ...READY.capabilities,
+          ...(support ? ['anima-regional-sampling-v1'] : []),
+          ...(process.platform === 'linux' ? ['linux-owned-inference-v1'] : []),
+        ],
+        pythonVersion: '3.12.13',
+        type: 'ready',
+      }
+      // Protocol substitute only: no native kernel guard or inference is claimed here.
+      const script = String.raw`#!${process.execPath}
+const fs = require('node:fs'), crypto = require('node:crypto');
+const args = process.argv.slice(2);
+const valid = process.platform === 'linux'
+  ? args.length === 7 && JSON.stringify(args.slice(0, 6)) === JSON.stringify(['-I', '-m', 'imagegen_worker.owned_inference', '--parent-pid', String(process.ppid), '--scratch-base'])
+  : args.join(' ') === '-I -m imagegen_worker.inference_main';
+if (!valid) process.exit(21);
+const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
+process.stdout.write(JSON.stringify(${JSON.stringify(ready)}) + '\n');
+require('node:readline').createInterface({input: process.stdin}).on('line', line => {
+  const wire = JSON.parse(line);
+  if (wire.type !== 'execute-current-canvas-anima-regional' || wire.reportProgress !== true) throw Error('Wrong flow owner');
+  const bytes = fs.readFileSync(wire.bundle.path);
+  if (bytes.length !== wire.bundle.byteSize || sha(bytes) !== wire.bundle.sha256) throw Error('Changed bundle');
+  const bundle = JSON.parse(bytes), plan = bundle.request.job.sampling;
+  fs.appendFileSync(${JSON.stringify(received)}, JSON.stringify({method:plan.scheduler,plan,keys:Object.keys(wire).sort()}) + '\n');
+  for (let step = 1; step <= plan.totalSteps; step++) process.stdout.write(JSON.stringify({type:'generation-progress',protocolVersion:'1',requestId:wire.requestId,step,totalSteps:plan.totalSteps}) + '\n');
+  fs.writeFileSync(bundle.request.job.output.pngPath, Buffer.from(${JSON.stringify(outputBytes.toString('base64'))}, 'base64'), {flag:'wx'});
+  process.stdout.write(JSON.stringify({type:'generation-done',protocolVersion:'1',requestId:wire.requestId,outputPath:bundle.request.job.output.pngPath,seed:plan.seed}) + '\n');
+});
+`
+      await writeFile(executable, script)
+      await chmod(executable, 0o700)
+      const client = await GenerationWorkerClient.start(
+        { pythonExecutable: executable, runtimeRoot: runtime, scratchBasePath: scratch },
+        { requestTimeoutMs: 3000, shutdownWaitMs: 100 },
+      )
+      try {
+        for (const method of ANIMA_SAMPLING_METHOD_KEYS) {
+          fixture.prepared.context.sampling.animaMethod = method
+          fixture.prepared.context.generationDraft.sampling.animaMethod = method
+          fixture.prepared.context.sampling.steps = 20
+          fixture.prepared.context.generationDraft.sampling.steps = 20
+          await withAnimaGenerationBatchRequests({
+            modelService: fixture.modelService,
+            prepared: prepare(fixture),
+            ready: READY,
+            scratchBasePath: fixture.scratch,
+            use: async (requests) => {
+              const input = regional(fixture, requests[0])
+              const frozen = structuredClone(input)
+              const progress: { step: number; totalSteps: number }[] = []
+              if (!support && method !== 'euler') {
+                const before = await readFile(received, 'utf8')
+                await assert.rejects(
+                  client.executeCurrentCanvasRegional(input, (value) => progress.push(value)),
+                  { code: 'WORKER_VERSION_MISMATCH' },
+                )
+                assert.equal(await readFile(received, 'utf8'), before)
+                assert.deepEqual(progress, [])
+              } else {
+                const result = await client.executeCurrentCanvasRegional(input, (value) =>
+                  progress.push(value),
+                )
+                assert.ok(result.pngBytes.equals(outputBytes))
+                const totalSteps = method === 'heun' ? 39 : 20
+                assert.deepEqual(
+                  progress,
+                  Array.from({ length: totalSteps }, (_, index) => ({
+                    step: index + 1,
+                    totalSteps,
+                  })),
+                )
+              }
+              assert.deepEqual(input, frozen)
+              assert.deepEqual(await readdir(scratch), [])
+            },
+          })
+        }
+      } finally {
+        await client.close()
+      }
+    }
+    const records = (await readFile(received, 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as { keys: string[]; method: string })
+    assert.deepEqual(
+      records.map((record) => record.method),
+      ['euler', ...ANIMA_SAMPLING_METHOD_KEYS],
+    )
+    assert.ok(
+      records.every(
+        (record) =>
+          JSON.stringify(record.keys) ===
+          JSON.stringify([
+            'bundle',
+            'protocolVersion',
+            'reportProgress',
+            'requestId',
+            'stagingRoot',
+            'type',
+          ]),
+      ),
+    )
+  })
+})
 
 test('Anima regional Cancel retains running slot and lease fence until physical exit, suppresses late progress/completion, then frozen Retry works', async () => {
   await withAnimaStagingFixture(async (fixture) => {

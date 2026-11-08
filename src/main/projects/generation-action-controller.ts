@@ -25,6 +25,7 @@ import {
   supportsInferenceAnima,
   supportsInferenceAnimaOutpaint,
   supportsInferenceAnimaRegional,
+  supportsInferenceAnimaRegionalSampling,
   supportsInferenceCFGRescale,
   supportsInferenceEmbeddings,
   supportsInferenceEuler,
@@ -411,6 +412,11 @@ export class ProjectGenerationActionController {
     return {
       animaOutpaintSupported:
         !this.blocked && !this.closed && supportsInferenceAnimaOutpaint(ready),
+      animaRegionalSamplingSupported:
+        !this.blocked &&
+        !this.closed &&
+        !!this.options.regional &&
+        supportsInferenceAnimaRegionalSampling(ready),
       animaRegionalSupported:
         !this.blocked &&
         !this.closed &&
@@ -663,6 +669,7 @@ export class ProjectGenerationActionController {
     document: IgsProjectDocumentV1,
   ): Promise<ProjectGenerateResult> {
     const unavailable = getInvokeRegionalGenerationUnavailableReason({
+      animaRegionalSamplingSupported: true,
       animaRegionalSupported: true,
       cfgRescaleSupported: true,
       document,
@@ -737,7 +744,9 @@ export class ProjectGenerationActionController {
               const anima = document.generationDraft.model?.baseModelFamily === 'anima'
               if (
                 anima
-                  ? !supportsInferenceAnimaRegional(preparation.inferenceReady)
+                  ? !supportsInferenceAnimaRegional(preparation.inferenceReady) ||
+                    (document.generationDraft.sampling.animaMethod !== 'euler' &&
+                      !supportsInferenceAnimaRegionalSampling(preparation.inferenceReady))
                   : !supportsRegional(preparation.inferenceReady) ||
                     ((document.generationDraft.cfgRescale ?? 0) !== 0 &&
                       !supportsInferenceRegionalCFGRescale(preparation.inferenceReady)) ||
@@ -1433,7 +1442,11 @@ export class ProjectGenerationActionController {
             async (ready) => {
               this.assertAdmissionOpen()
               this.assertDocument(source.projectKey, source.documentId)
-              if (!supportsInferenceAnimaRegional(ready)) {
+              if (
+                !supportsInferenceAnimaRegional(ready) ||
+                (frozen.payload.workerJob.sampling.scheduler !== 'euler' &&
+                  !supportsInferenceAnimaRegionalSampling(ready))
+              ) {
                 throw new ProjectGenerationActionError(
                   'GENERATION_RUNTIME_UNAVAILABLE',
                   'Repair or update the image engine to retry Anima Regional Guidance. The original job was kept.',

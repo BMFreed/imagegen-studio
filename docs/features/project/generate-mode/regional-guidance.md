@@ -2036,3 +2036,20 @@ ordinary Anima settings and continues to exclude regional guidance from Compare
 and result-derived presets. Implementation evidence and installed qualification
 are recorded separately in the linked note. This integration does not change the
 preceding NOT_QUALIFIED full-scene result, human acceptance or PP-001/005/007/008.
+
+The additive [Anima native sampling extension](../../../engineering/phase-4-anima-regional-sampling-research.md)
+uses the same frozen TXT owner for all six existing methods: Euler, Heun,
+DPM++ 2M, DPM++ 2M SDE, ER-SDE and LCM. Non-Euler requires the separate
+`anima-regional-sampling-v1` capability; the older capability still grants Euler
+only. Existing method selection, limits, composition, resources and negative
+restrictions remain. Retry follows the frozen method and arrays after later draft
+edits. Progress counts native evaluations, including Heun's `2N−1`, alongside the
+authored step setting. No queue/wire schema or default changes.
+
+ROOT records 1,500 Main, 340 Python and 200 browser PASS, independent source review,
+and three semantic mutations with controls/restoration. Actual installed Heun
+Generate/Cancel/frozen Retry has exact control/Retry RGB; Results Add/Undo/Redo/
+Save/reopen preserves the accepted Raster and ordinary-only provenance. Other
+methods' new evidence is native small-model/Main integration, not a trained visual
+matrix. The prior full-scene and human-acceptance limits, IMG/batch exclusions,
+regional provenance exclusions and PP-001/005/007/008 remain unchanged.

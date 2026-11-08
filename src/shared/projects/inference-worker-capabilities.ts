@@ -347,6 +347,15 @@ export function supportsInferenceAnimaRegional(value: unknown): boolean {
   )
 }
 
+/** Non-Euler regional sampling additionally requires the qualified shared flow executor. */
+export function supportsInferenceAnimaRegionalSampling(value: unknown): boolean {
+  return (
+    isQualifiedInferenceWorkerReady(value) &&
+    supportsInferenceAnimaRegional(value) &&
+    value.capabilities.includes('anima-regional-sampling-v1')
+  )
+}
+
 /** Explicit alpha conditioning and RGBA contribution require a qualified contribution adapter. */
 export function supportsInferenceOutpaint(value: unknown): boolean {
   return (
