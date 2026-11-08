@@ -317,6 +317,107 @@ test('renderer frozen IMG Euler a Retry follows frozen sampler rather than saved
 
 const sourceRoot = `/@fs${path.resolve(import.meta.dirname, '../../../src')}`
 
+test('renderer Anima regional Generate uses its own capability and explicit local-empty negative without changing authoring', async ({
+  page,
+}) => {
+  const errors: string[] = []
+  page.on('pageerror', (cause) => errors.push(cause.message))
+  await mountWiring(page, 'project')
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    const draft = fixture.tab.generationDraft
+    draft.model!.baseModelFamily = 'anima'
+    draft.model!.predictionType = null
+    fixture.catalog[0]!.versions[0]!.baseModelFamily = 'anima'
+    fixture.catalog[0]!.versions[0]!.predictionType = null
+    draft.sampling.animaMethod = 'euler'
+    draft.vaePrecision = 'Auto'
+    draft.positivePrompt.text = '(white cat)0'
+    fixture.tab.primaryBbox.width = 256
+    fixture.tab.primaryBbox.height = 256
+    fixture.tab.regionalGuidance![0]!.prompts = {
+      negative: null,
+      positive: { embeddingRefs: [], text: '(red scarf)1.5' },
+      useGlobalNegativePrompt: true,
+    }
+    fixture.state.animaRegionalSupported = false
+    fixture.state.animaSupported = true
+    fixture.state.regionalSupported = true
+  })
+  const generate = page.getByRole('button', { exact: true, name: 'Generate' })
+  await expect(generate).toBeDisabled()
+  await expect(page.getByText(/does not support Anima Regional Guidance/)).toBeVisible()
+  await page.evaluate(() => {
+    globalThis.window.regionalWiringFixture.state.animaRegionalSupported = true
+  })
+  await expect(generate).toBeEnabled()
+  await page.evaluate(() => {
+    globalThis.window.regionalWiringFixture.tab.generationDraft.negativePrompt.text = 'bad anatomy'
+  })
+  await expect(generate).toBeDisabled()
+  await expect(page.getByText(/turn off Use global negative prompt/)).toBeVisible()
+  await page.evaluate(() => {
+    const prompts = globalThis.window.regionalWiringFixture.tab.regionalGuidance![0]!.prompts!
+    prompts.useGlobalNegativePrompt = false
+    prompts.negative = { embeddingRefs: [], text: '' }
+  })
+  await expect(generate).toBeEnabled()
+  await generate.click()
+  expect(await page.evaluate(() => globalThis.window.regionalWiringFixture.generateCalls)).toEqual([
+    1,
+  ])
+  expect(
+    await page.evaluate(
+      () => globalThis.window.regionalWiringFixture.tab.generationDraft.negativePrompt.text,
+    ),
+  ).toBe('bad anatomy')
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.targetMode = 'img2img'
+    fixture.tab.primaryBbox.x += 8
+  })
+  await expect(generate).toBeDisabled()
+  await expect(page.getByText(/fully transparent Current Canvas/)).toBeVisible()
+  expect(errors).toEqual([])
+})
+
+test('renderer frozen Anima regional Retry ignores later draft family and requires separate regional support', async ({
+  page,
+}) => {
+  const errors: string[] = []
+  page.on('pageerror', (cause) => errors.push(cause.message))
+  await mountWiring(page, 'queue')
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.queueItem.operation = 'anima-regional-txt2img'
+    fixture.tab.regionalGuidance = []
+    fixture.tab.generationDraft.positivePrompt.text = 'later Illustrious text'
+    fixture.state.animaRegionalSupported = false
+    fixture.state.animaSupported = true
+    fixture.state.regionalSupported = true
+    fixture.epoch += 1
+  })
+  const retry = page.getByRole('button', { exact: true, name: 'Retry job' })
+  await expect(retry).toBeDisabled()
+  await expect(
+    page
+      .getByRole('region', { name: 'Generation jobs' })
+      .getByText(/does not support Anima Regional Guidance/),
+  ).toBeVisible()
+  await page.evaluate(() => {
+    const state = globalThis.window.regionalWiringFixture.state
+    state.animaRegionalSupported = true
+    state.animaSupported = false
+    state.regionalSupported = false
+  })
+  await expect(retry).toBeEnabled()
+  await retry.click()
+  await expect
+    .poll(() => page.evaluate(() => globalThis.window.regionalWiringFixture.retryCalls.length))
+    .toBe(1)
+  expect(errors).toEqual([])
+})
+
 /** Real renderer components, explicit mock IPC. These tests make no inference/runtime claim. */
 async function mountWiring(page: Page, kind: 'project' | 'queue') {
   await page.goto('/?prototype=project')

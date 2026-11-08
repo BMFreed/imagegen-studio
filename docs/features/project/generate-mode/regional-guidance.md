@@ -1,5 +1,25 @@
 # Regional Guidance
 
+## Anima positive TXT — finite installed integration
+
+The [Anima public TXT lane](../../../engineering/phase-4-anima-regional-public-research.md)
+now uses ordinary Generate/Queue/Results with an explicit, frozen Invoke Krea2-derived
+global-support profile. Original Anima, transparent Current Canvas, one static item,
+native Euler, 64–512 sides, 1–200 steps and CFG1–30 are the admitted subset. Every
+enabled regional positive is present/nonempty; effective regional negatives are
+exact-empty. References, active TI, LoRA, image/Smart modes and other samplers remain
+outside this lane. Authored text/weights are preserved.
+
+ROOT:1466 Main,206 qualified Python,200 browser and separate35 guard cases; three
+installed requests establish actual progress/Cancel and exact-RGB frozen Retry after
+saved edits/restart. Actual Results Add is followed by a separate zero-ML Recover,
+visibility Undo/Redo and explicit Save/reopen with ordinary Anima provenance. The
+original Add Undo/Redo was not reached before a harness DTO assertion failure and
+is **UNVERIFIED** in this installed checkpoint. The prior report stays FAILED;
+the successful continuation is recorded separately. Three semantic mutations retain
+ordinary controls and restored GREEN. Earlier full-scene NOT_QUALIFIED, human
+acceptance and PP-001/005/007/008 remain unchanged.
+
 ## Regional worker failure with Main alive — installed boundary verified
 
 The [worker-only qualification](../../../engineering/phase-4-regional-guidance-worker-fault-research.md)
@@ -789,9 +809,11 @@ builds the conditioning node but its current denoiser does not apply a separate
 mask to the negative pass. Do not claim spatially scoped negative behavior until
 the worker implements and validates it with real Anima generations. Positive
 regional prompts remain available independently. Until that gate passes, an
-Anima job with an explicit or inherited regional negative prompt is rejected
+Anima job with a nonempty explicit or inherited regional negative prompt is rejected
 before enqueue with an actionable explanation; it must not silently become a
-global negative prompt.
+global negative prompt. The finite positive TXT lane permits exactly empty effective
+regional negatives. A nonempty ordinary global negative requires each enabled region
+to select a local-empty negative explicitly; authoring/inheritance is never rewritten.
 
 ## Vue Prototype Coverage
 
@@ -1991,3 +2013,26 @@ closes the current diagnostic branch, without automatic weight normalization,
 new production composition or public capability. Anima integration and explicit
 acceptance of the remaining scene limitation stay separate; historical results,
 human acceptance, provenance exclusions and PP-001/005/007/008 remain unchanged.
+
+The next [Anima public TXT integration](../../../engineering/phase-4-anima-regional-public-research.md)
+adds the explicit `invoke-krea2-global-support-v1` composition and frozen
+`invoke-fragments-v1` interpretation to the normal Generate/Queue/Results owners.
+The original private Anima profile and old frozen jobs retain their previous meaning.
+This finite lane requires original Anima, a verified transparent Current Canvas,
+one static-text item, native Euler, 1–200 steps, CFG 1–30 and 64–512 pixel sides
+divisible by eight. Up to three enabled rows each require a present, nonempty
+positive; each effective regional negative must be exactly empty. A nonempty global
+negative needs explicitly local-empty negatives in every enabled row. Active TI,
+global embedding references, enabled LoRA, regional image references, non-Auto VAE,
+CFG rescale, image/outpaint and Smart regional remain outside this lane. Disabled
+rows and dormant regional authored references remain inert and preserved.
+
+The composition takes Krea2's full-coverage global-support fallback from the current
+Invoke source, while Anima regional columns and positive-even/negative/odd scopes
+remain unchanged. Authored text and weights are not rewritten. Complete recipe,
+compiled streams, policy, resources, sampling and seed belong to the frozen job;
+Retry follows that job after later Project edits. Accepted provenance projects to
+ordinary Anima settings and continues to exclude regional guidance from Compare
+and result-derived presets. Implementation evidence and installed qualification
+are recorded separately in the linked note. This integration does not change the
+preceding NOT_QUALIFIED full-scene result, human acceptance or PP-001/005/007/008.

@@ -142,6 +142,7 @@ test('unsupported initialization fails only its frozen attempt before resolver o
       close: async () => assert.fail('Healthy transport remains reusable.'),
       executeCurrentCanvasRegional: async (input) => {
         calls++
+        assert.ok(input.compositionProfile !== 'invoke-krea2-global-support-v1')
         assert.equal(input.initializationProfile, INITIALIZATION)
         assert.equal(input.request.job.sampling.scheduler, 'euler_a')
         return {

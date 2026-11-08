@@ -5,7 +5,10 @@ backend/anima/{regional_prompting,conditioning_data,anima_transformer_patch}.py,
 app/invocations/anima/anima_denoise.py and the canvas addRegionalGuidance caller.
 The pinned Diffusers Cosmos processor remains the attention implementation. Only
 the positive prediction call owns the temporary processors; context length never
-selects a sign. This is no public worker command or checkpoint loading owner.
+selects a sign. This is no checkpoint loading owner. The explicit global-support
+profile adapts only Krea-2's background fallback from InvokeAI
+ae06c1bd36218100f89a48ff5b8855751d06a898, backend/krea2/regional_prompting.py;
+the default retains original Anima behavior.
 
 Main compilation, recipe provenance and checkpoint-to-live-model association are
 trusted caller responsibilities, as in the ordinary compiled Anima command.
@@ -62,9 +65,10 @@ from imagegen_worker.inference_anima import LoadedAnimaModels
 from imagegen_worker.protocol import GenerateAnimaTxt2ImgCommand
 
 if TYPE_CHECKING:
-    from imagegen_worker.inference import MLRuntime
+    from imagegen_worker.inference import DenoisingProgressSink, MLRuntime
 
 _Profile = Literal["cpu-float32-v1", "cuda-bfloat16-v1"]
+_CompositionProfile = Literal["invoke-krea2-global-support-v1"]
 _MAX_REGIONS = 3
 _MAX_TEXT_BYTES = 16 * 1024
 _MAX_TOTAL_TEXT_BYTES = 128 * 1024
@@ -181,6 +185,41 @@ def _prompt(value: object) -> str:
         "Original Anima regional inputs do not support textual inversion references.",
     )
     return _text(data["text"])
+
+
+def _authored_prompt_agrees(value: object, effective: object) -> None:
+    if value == effective:
+        return
+    authored = _object(value, {"text", "embeddingRefs"})
+    selected = _object(effective, {"text", "embeddingRefs"})
+    _require(
+        authored["text"] == selected["text"],
+        "INVALID_REQUEST",
+        "Regional prompt differs from its authored block.",
+    )
+    refs = authored["embeddingRefs"]
+    _require(
+        type(refs) is list and len(cast(list[object], refs)) <= 10_000,
+        "INVALID_REQUEST",
+        "Authored regional references are invalid.",
+    )
+    # Main retains dormant metadata in authored blocks while effective Anima
+    # prompts have no TI. Reuse the existing recipe/reference and literal-range
+    # owners rather than introducing another activation interpretation.
+    from imagegen_worker.illustrious_regional_embeddings import validate_authored_selection
+    from imagegen_worker.illustrious_regional_recipe import (
+        _authored_ref,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    try:
+        for ref in cast(list[object], refs):
+            _authored_ref(ref)
+        validate_authored_selection(cast(dict[str, Any], authored), cast(dict[str, Any], selected))
+    except (ValueError, TypeError, KeyError) as error:
+        raise DerivativeError(
+            "GENERATION_PROMPT_UNSUPPORTED",
+            "Anima regional authored references must remain inactive.",
+        ) from error
 
 
 def _coverage(value: object, bbox: tuple[int, int, int, int]) -> bytes:
@@ -334,11 +373,7 @@ def _capture(recipe: object, compiled_prompts: object) -> _Input:
                 "INVALID_REQUEST",
                 "Invalid negative inheritance.",
             )
-            _require(
-                authored["positive"] == region["positive"],
-                "INVALID_REQUEST",
-                "Regional positive differs from its authored block.",
-            )
+            _authored_prompt_agrees(authored["positive"], region["positive"])
             if authored["useGlobalNegativePrompt"]:
                 _require(
                     local_negative["source"] == "current-canvas",
@@ -347,11 +382,11 @@ def _capture(recipe: object, compiled_prompts: object) -> _Input:
                 )
             else:
                 _require(
-                    local_negative["source"] == "regional"
-                    and authored["negative"] == local_negative["prompt"],
+                    local_negative["source"] == "regional",
                     "INVALID_REQUEST",
                     "Local negative differs from its authored block.",
                 )
+                _authored_prompt_agrees(authored["negative"], local_negative["prompt"])
         if local_negative["source"] == "current-canvas":
             _require(
                 local_negative["prompt"] == global_prompts["negative"],
@@ -1205,8 +1240,22 @@ def scoped_anima_regional_attention(transformer: Any, mask: Any, torch: Any) -> 
 
 
 def _prepare_mask(
-    captured: _Input, attentions: tuple[Any, ...], torch: Any, device: Any, dtype: Any
+    captured: _Input,
+    attentions: tuple[Any, ...],
+    torch: Any,
+    device: Any,
+    dtype: Any,
+    composition_profile: _CompositionProfile | None = None,
 ) -> Any:
+    _require(
+        composition_profile is None
+        or (
+            type(composition_profile) is str
+            and composition_profile == "invoke-krea2-global-support-v1"
+        ),
+        "INVALID_REQUEST",
+        "Anima regional composition profile is unsupported.",
+    )
     active = tuple(
         region for region in captured.regions if region.text is not None and region.text != ""
     )
@@ -1244,7 +1293,14 @@ def _prepare_mask(
         masks.append(sampled)
         background &= ~sampled
     allowed = torch.zeros((queries, keys), dtype=torch.bool, device=device)
-    allowed[:, :_CONTEXT_ROWS] = background.unsqueeze(1)
+    # Adapt only Krea-2's unmasked-conditioning fallback. The original regional
+    # permissions, background subtraction, and Anima block/sign scopes stay exact.
+    global_support = (
+        background | ~background.any()
+        if composition_profile == "invoke-krea2-global-support-v1"
+        else background
+    )
+    allowed[:, :_CONTEXT_ROWS] = global_support.unsqueeze(1)
     for index, region_mask in enumerate(masks, 1):
         start, end = index * _CONTEXT_ROWS, (index + 1) * _CONTEXT_ROWS
         allowed[:, start:end] = region_mask.unsqueeze(1)
@@ -1317,6 +1373,8 @@ def generate_current_canvas_regional_anima_txt2img(
     runtime: MLRuntime,
     profile: _Profile,
     tokenizers: AnimaTokenizers | None = None,
+    composition_profile: _CompositionProfile | None = None,
+    on_progress: DenoisingProgressSink | None = None,
 ) -> dict[str, object]:
     """One matching Main recipe to existing Euler/Wan and exclusive provisional PNG.
 
@@ -1324,6 +1382,20 @@ def generate_current_canvas_regional_anima_txt2img(
     private consumer grants no public admission, durable candidate or visual
     quality claim; all regional negatives/references remain unsupported.
     """
+    _require(
+        on_progress is None or callable(on_progress),
+        "INVALID_REQUEST",
+        "Anima regional progress requires a callable sink.",
+    )
+    _require(
+        composition_profile is None
+        or (
+            type(composition_profile) is str
+            and composition_profile == "invoke-krea2-global-support-v1"
+        ),
+        "INVALID_REQUEST",
+        "Anima regional composition profile is unsupported.",
+    )
     captured = _capture(recipe, compiled_prompts)
     plan = _capture_command(command, captured)
     x, y, width, height = captured.bbox
@@ -1345,7 +1417,17 @@ def generate_current_canvas_regional_anima_txt2img(
     ):
         torch, attentions = _model_profile(models, runtime, profile)
         parameter = next(models.transformer.parameters())
-        mask = _prepare_mask(captured, attentions, torch, parameter.device, parameter.dtype)
+        if composition_profile is None:
+            mask = _prepare_mask(captured, attentions, torch, parameter.device, parameter.dtype)
+        else:
+            mask = _prepare_mask(
+                captured,
+                attentions,
+                torch,
+                parameter.device,
+                parameter.dtype,
+                composition_profile=composition_profile,
+            )
         with _vae_cache_scope(models.vae):
             owned_tokenizers = _owned_tokenizers(tokenizers)
             _preflight_prompt_weights(captured, owned_tokenizers, torch, parameter.dtype)
@@ -1366,6 +1448,7 @@ def generate_current_canvas_regional_anima_txt2img(
                 models,
                 tokenizers=owned_tokenizers,
                 initial_sigma=plan.initial_sigma,
+                progress=on_progress,
                 prediction_factory=None
                 if mask is None
                 else _prediction_factory(captured, models, owned_tokenizers, mask),

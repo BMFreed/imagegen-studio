@@ -944,7 +944,7 @@ export class GenerationStagingRepository {
       this.requireReconciled()
       const queue = new GenerationQueueRepository(this.db, this.dataRoot)
       const verified = regional
-        ? await queue.loadVerifiedRegionalInput(input.queueItemId)
+        ? await queue.loadVerifiedOperationalRegionalInput(input.queueItemId)
         : await queue.loadVerifiedInput(input.queueItemId)
       if (
         requiredFamily === 'illustrious' &&
@@ -1624,6 +1624,7 @@ function parseFrozenOperationalPayload(json: string): FrozenPayload {
     )
   }
   if (
+    kind === 'anima-regional-txt2img' ||
     kind === 'illustrious-regional' ||
     kind === 'illustrious-regional-txt2img' ||
     kind === 'illustrious-regional-img2img' ||

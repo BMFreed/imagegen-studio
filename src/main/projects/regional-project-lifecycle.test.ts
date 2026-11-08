@@ -6,7 +6,10 @@ import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import test from 'node:test'
 
-import type { RegionalWorkerInput, RegionalWorkerResult } from './regional-worker-request.js'
+import type {
+  OperationalRegionalWorkerInput,
+  RegionalWorkerResult,
+} from './regional-worker-request.js'
 import type { RegionalQueueFixture } from './test-fixtures/regional-queue.js'
 
 import { GenerationQueueRepository } from './generation-queue.js'
@@ -30,7 +33,11 @@ function deferred() {
   return { promise, resolve }
 }
 
-function resultFor(f: RegionalQueueFixture, input: RegionalWorkerInput): RegionalWorkerResult {
+function resultFor(
+  f: RegionalQueueFixture,
+  input: OperationalRegionalWorkerInput,
+): RegionalWorkerResult {
+  assert.ok(input.compositionProfile !== 'invoke-krea2-global-support-v1')
   return {
     output: {
       byteSize: f.outputBytes.length,
@@ -210,7 +217,8 @@ test('regional scoped quiescence joins claim startup after the Project fence and
     const processor = new RegionalGenerationProcessor(f.queue, f.staging, f.models)
     const transport = {
       close: async () => {},
-      executeCurrentCanvasRegional: async (input: RegionalWorkerInput) => resultFor(f, input),
+      executeCurrentCanvasRegional: async (input: OperationalRegionalWorkerInput) =>
+        resultFor(f, input),
       ready: REGIONAL_QUEUE_READY,
     }
     const running = processor.runOne(transport)

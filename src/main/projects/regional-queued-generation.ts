@@ -1,3 +1,4 @@
+import type { AnimaWorkerRequest } from '../../shared/projects/anima-worker-request.js'
 import {
   type RegionalInitializationProfile,
   RegionalInitializationProfileSchema,
@@ -10,6 +11,7 @@ import path from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import * as v from 'valibot'
 
+import type { AnimaRegionalWorkerInput } from './anima-regional-worker-request.js'
 import type {
   FrozenQueuedGenerationV1,
   FrozenQueuedIllustriousImg2ImgV1,
@@ -22,6 +24,12 @@ import type {
   RegionalWorkerInput,
 } from './regional-worker-request.js'
 
+import {
+  type FrozenQueuedAnimaRegionalV1,
+  loadAnimaRegionalQueuedFiles,
+  loadAnimaRegionalQueuedInput,
+  parseFrozenQueuedAnimaRegionalV1,
+} from './anima-regional-queued-generation.js'
 import { GenerationQueueError, parseFrozenGenerationPayloadV1 } from './generation-queue.js'
 import { frozenEmbeddingFieldsAgree } from './illustrious-generation-embeddings.js'
 import { frozenLoraFieldsAgree } from './illustrious-generation-loras.js'
@@ -70,8 +78,10 @@ export type FrozenQueuedRegionalInvokeV1 =
   | FrozenQueuedRegionalInvokeOutpaintV1
   | FrozenQueuedRegionalInvokeTxt2ImgV1
 
-export type FrozenQueuedRegionalOperationalV1 =
+export type FrozenQueuedIllustriousRegionalOperationalV1 =
   FrozenQueuedRegionalInvokeV1 | FrozenQueuedRegionalV1
+export type FrozenQueuedRegionalOperationalV1 =
+  FrozenQueuedAnimaRegionalV1 | FrozenQueuedIllustriousRegionalOperationalV1
 
 export interface RegionalQueuedMaterial {
   compositionProfile?: 'invoke-canvas-v1'
@@ -96,7 +106,7 @@ const regionalRef = v.strictObject({
   byteSize: v.pipe(v.number(), v.safeInteger(), v.minValue(1), v.maxValue(MAX_METADATA_BYTES)),
   sha256: sha,
 })
-const alphaRef = v.strictObject({
+export const regionalAlphaRefSchema = v.strictObject({
   $alpha8: v.strictObject({ byteSize, file: v.string(), sha256: sha }),
 })
 const metadataSchema = v.strictObject({
@@ -111,7 +121,7 @@ const metadataSchema = v.strictObject({
   schemaVersion: v.literal(1),
 })
 type Metadata = v.InferOutput<typeof metadataSchema>
-type AlphaRef = v.InferOutput<typeof alphaRef>
+type AlphaRef = v.InferOutput<typeof regionalAlphaRefSchema>
 type Snapshot = { bytes: Buffer; identity: BigIntStats; name: string }
 
 /** Parse the private outer discriminator while retaining the existing ordinary agreement checks. */
@@ -127,6 +137,9 @@ export function parseFrozenQueuedRegionalInvokeV1(json: string): FrozenQueuedReg
 export function parseFrozenQueuedRegionalOperationalV1(
   json: string,
 ): FrozenQueuedRegionalOperationalV1 {
+  if (readKind(json) === 'anima-regional-txt2img') {
+    return parseFrozenQueuedAnimaRegionalV1(json)
+  }
   return parseRegionalPayload(
     json,
     [
@@ -143,6 +156,15 @@ export function parseFrozenQueuedRegionalOperationalV1(
  * provenance.
  */
 export function parseAcceptedGenerationBaseV1(json: string): FrozenQueuedGenerationV1 {
+  if (readKind(json) === 'anima-regional-txt2img') {
+    const {
+      compositionProfile: _profile,
+      promptInterpretation: _interpretation,
+      regional: _regional,
+      ...base
+    } = parseFrozenQueuedAnimaRegionalV1(json)
+    return { ...base, kind: 'anima-txt2img' }
+  }
   if (
     ![
       'illustrious-regional-img2img',
@@ -192,17 +214,7 @@ export function captureRegionalQueuedMaterial(
 ): RegionalQueuedMaterial {
   const captured = captureRegionalWorkerInput(input)
   assertPublicRegionalGlobalEmbeddingsAgree(captured, context)
-  const files: Record<string, Buffer> = {}
-  let aggregate = 0
-  const alpha = (samples: Uint8Array, file: string): AlphaRef => {
-    aggregate += samples.byteLength
-    if (aggregate > MAX_ALPHA_BYTES) {
-      throw invalid('Frozen regional alpha exceeds 64 MiB.')
-    }
-    const bytes = Buffer.from(samples)
-    files[file] = bytes
-    return { $alpha8: { byteSize: bytes.length, file, sha256: sha256(bytes) } }
-  }
+  const { alpha, files } = createRegionalQueuedAlphaCollector()
   const globalCoverage = (coverage: RegionalWorkerInput['globalNegativeCoverage'], sign: string) =>
     coverage.kind === 'everywhere'
       ? coverage
@@ -231,7 +243,7 @@ export function captureRegionalQueuedMaterial(
     },
     schemaVersion: 1,
   }
-  assertJsonTree(metadata)
+  assertRegionalJsonTree(metadata)
   const bytes = Buffer.from(JSON.stringify(metadata), 'utf8')
   if (bytes.length > MAX_METADATA_BYTES) {
     throw invalid('Frozen regional recipe metadata exceeds 1 MiB.')
@@ -250,6 +262,25 @@ export function captureRegionalQueuedMaterial(
     files,
     regional: { byteSize: bytes.length, sha256: sha256(bytes) },
   }
+}
+
+/** One owned fixed-role alpha serializer for both frozen family lanes. */
+export function createRegionalQueuedAlphaCollector(): {
+  alpha: (samples: Uint8Array, file: string) => AlphaRef
+  files: Record<string, Buffer>
+} {
+  const files: Record<string, Buffer> = {}
+  let aggregate = 0
+  const alpha = (samples: Uint8Array, file: string): AlphaRef => {
+    aggregate += samples.byteLength
+    if (aggregate > MAX_ALPHA_BYTES) {
+      throw invalid('Frozen regional alpha exceeds 64 MiB.')
+    }
+    const bytes = Buffer.from(samples)
+    files[file] = bytes
+    return { $alpha8: { byteSize: bytes.length, file, sha256: sha256(bytes) } }
+  }
+  return { alpha, files }
 }
 
 /** TI agrees with the recipe; LoRAs and selected VAE retain their ordinary frozen owners. */
@@ -327,7 +358,9 @@ export async function loadRegionalQueuedFiles(
   payload: FrozenQueuedRegionalOperationalV1,
 ): Promise<Record<string, Buffer>> {
   try {
-    return await loadFiles(root, payload)
+    return payload.kind === 'anima-regional-txt2img'
+      ? await loadAnimaRegionalQueuedFiles(root, payload)
+      : await loadFiles(root, payload)
   } catch (error) {
     if (error instanceof GenerationQueueError) {
       throw error
@@ -337,13 +370,30 @@ export async function loadRegionalQueuedFiles(
 }
 
 /** Hydrate only owned alpha bytes, then revalidate the complete recipe/request association. */
+export function loadRegionalQueuedInput(
+  root: string,
+  payload: FrozenQueuedIllustriousRegionalOperationalV1,
+  request: RegionalGenerationRequestV1,
+): Promise<RegionalWorkerInput>
+export function loadRegionalQueuedInput(
+  root: string,
+  payload: FrozenQueuedAnimaRegionalV1,
+  request: AnimaWorkerRequest,
+): Promise<AnimaRegionalWorkerInput>
 export async function loadRegionalQueuedInput(
   root: string,
   payload: FrozenQueuedRegionalOperationalV1,
-  request: RegionalGenerationRequestV1,
-): Promise<RegionalWorkerInput> {
-  const capturedPayload = parseFrozenQueuedRegionalOperationalV1(JSON.stringify(payload))
-  const capturedRequest = structuredClone(request)
+  request: AnimaWorkerRequest | RegionalGenerationRequestV1,
+): Promise<AnimaRegionalWorkerInput | RegionalWorkerInput> {
+  if (payload.kind === 'anima-regional-txt2img') {
+    return await loadAnimaRegionalQueuedInput(root, payload, request as AnimaWorkerRequest)
+  }
+
+  const capturedPayload = parseRegionalPayload(
+    JSON.stringify(payload),
+    payload.kind !== 'illustrious-regional',
+  )
+  const capturedRequest = structuredClone(request) as RegionalGenerationRequestV1
   const files = await loadRegionalQueuedFiles(root, capturedPayload)
   const metadata = parseMetadata(files['regional.json'])
   const hydrated = hydrate(metadata, files)
@@ -392,6 +442,75 @@ export async function loadRegionalQueuedInput(
   return captured
 }
 
+/** Exact fixed-role loading shared by both family recipes; no alternate filesystem owner. */
+export async function loadOwnedRegionalQueuedFiles<T>(
+  root: string,
+  regional: { byteSize: number; sha256: string },
+  parse: (bytes: Buffer) => T,
+  collect: (metadata: T) => AlphaRef['$alpha8'][],
+): Promise<Record<string, Buffer>> {
+  const directory = await directoryIdentity(root)
+  const snapshots: Snapshot[] = []
+  const metadata = await readSnapshot(root, 'regional.json', regional)
+  snapshots.push(metadata)
+  const parsed = parse(metadata.bytes)
+  const descriptors = collect(parsed)
+  let aggregate = 0
+  const inodes = new Set([inode(metadata.identity)])
+  for (const descriptor of descriptors) {
+    aggregate += descriptor.byteSize
+    if (aggregate > MAX_ALPHA_BYTES) {
+      throw invalid('Frozen regional alpha exceeds 64 MiB.')
+    }
+    const snapshot = await readSnapshot(root, descriptor.file, descriptor)
+    if (inodes.has(inode(snapshot.identity))) {
+      throw invalid('Frozen regional resources alias one inode.')
+    }
+    inodes.add(inode(snapshot.identity))
+    snapshots.push(snapshot)
+  }
+  const allowed = new Set(['manifest.json', 'target.png', ...snapshots.map((entry) => entry.name)])
+  const entries = await readdir(root)
+  if (entries.some((name) => !allowed.has(name))) {
+    throw invalid('The frozen regional folder contains an unexpected file.')
+  }
+  // Reads may yield. Every pathname must still designate the exact qualified version.
+  for (const snapshot of snapshots) {
+    const current = await lstat(path.join(root, snapshot.name), { bigint: true })
+    if (!sameVersion(current, snapshot.identity) || current.isSymbolicLink()) {
+      throw invalid('A frozen regional resource changed after verification.')
+    }
+  }
+  if (!sameVersion(await directoryIdentity(root), directory)) {
+    throw invalid('The frozen regional directory changed while loading.')
+  }
+  return Object.fromEntries(snapshots.map((snapshot) => [snapshot.name, snapshot.bytes]))
+}
+
+export function assertRegionalJsonTree(value: unknown, seen = new Set<object>(), depth = 0): void {
+  if (
+    value === null ||
+    typeof value === 'string' ||
+    typeof value === 'boolean' ||
+    (typeof value === 'number' && Number.isFinite(value))
+  ) {
+    return
+  }
+  if (
+    typeof value !== 'object' ||
+    depth > 64 ||
+    seen.has(value) ||
+    (!Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype)
+  ) {
+    throw invalid('Frozen regional metadata is not a finite JSON tree.')
+  }
+  seen.add(value)
+  for (const child of Object.values(value)) {
+    assertRegionalJsonTree(child, seen, depth + 1)
+  }
+  seen.delete(value)
+}
+
 function readKind(json: string): unknown {
   if (typeof json !== 'string' || Buffer.byteLength(json, 'utf8') > MAX_PAYLOAD_BYTES) {
     throw invalid('The frozen regional payload exceeds its metadata limit.')
@@ -404,7 +523,10 @@ function readKind(json: string): unknown {
   }
 }
 
-function parseRegionalPayload(json: string, invoke: boolean): FrozenQueuedRegionalOperationalV1 {
+function parseRegionalPayload(
+  json: string,
+  invoke: boolean,
+): FrozenQueuedIllustriousRegionalOperationalV1 {
   if (typeof json !== 'string' || Buffer.byteLength(json, 'utf8') > MAX_PAYLOAD_BYTES) {
     throw invalid('The frozen regional payload exceeds its metadata limit.')
   }
@@ -545,45 +667,18 @@ function parseRegionalPayload(json: string, invoke: boolean): FrozenQueuedRegion
 
 async function loadFiles(
   root: string,
-  payload: FrozenQueuedRegionalOperationalV1,
+  payload: FrozenQueuedIllustriousRegionalOperationalV1,
 ): Promise<Record<string, Buffer>> {
-  const captured = parseFrozenQueuedRegionalOperationalV1(JSON.stringify(payload))
-  const directory = await directoryIdentity(root)
-  const snapshots: Snapshot[] = []
-  const metadata = await readSnapshot(root, 'regional.json', captured.regional)
-  snapshots.push(metadata)
-  const parsed = parseMetadata(metadata.bytes)
-  const descriptors = collectAlphaDescriptors(parsed)
-  let aggregate = 0
-  const inodes = new Set([inode(metadata.identity)])
-  for (const descriptor of descriptors) {
-    aggregate += descriptor.byteSize
-    if (aggregate > MAX_ALPHA_BYTES) {
-      throw invalid('Frozen regional alpha exceeds 64 MiB.')
-    }
-    const snapshot = await readSnapshot(root, descriptor.file, descriptor)
-    if (inodes.has(inode(snapshot.identity))) {
-      throw invalid('Frozen regional resources alias one inode.')
-    }
-    inodes.add(inode(snapshot.identity))
-    snapshots.push(snapshot)
-  }
-  const allowed = new Set(['manifest.json', 'target.png', ...snapshots.map((entry) => entry.name)])
-  const entries = await readdir(root)
-  if (entries.some((name) => !allowed.has(name))) {
-    throw invalid('The frozen regional folder contains an unexpected file.')
-  }
-  // Reads may yield. Every pathname must still designate the exact qualified version.
-  for (const snapshot of snapshots) {
-    const current = await lstat(path.join(root, snapshot.name), { bigint: true })
-    if (!sameVersion(current, snapshot.identity) || current.isSymbolicLink()) {
-      throw invalid('A frozen regional resource changed after verification.')
-    }
-  }
-  if (!sameVersion(await directoryIdentity(root), directory)) {
-    throw invalid('The frozen regional directory changed while loading.')
-  }
-  return Object.fromEntries(snapshots.map((snapshot) => [snapshot.name, snapshot.bytes]))
+  const captured = parseRegionalPayload(
+    JSON.stringify(payload),
+    payload.kind !== 'illustrious-regional',
+  )
+  return await loadOwnedRegionalQueuedFiles(
+    root,
+    captured.regional,
+    parseMetadata,
+    collectAlphaDescriptors,
+  )
 }
 
 function parseMetadata(bytes: Buffer): Metadata {
@@ -613,7 +708,7 @@ function collectAlphaDescriptors(metadata: Metadata): AlphaRef['$alpha8'][] {
   }
   const descriptors: AlphaRef['$alpha8'][] = []
   const collect = (value: unknown, expected: string): void => {
-    const result = v.safeParse(alphaRef, value)
+    const result = v.safeParse(regionalAlphaRefSchema, value)
     if (!result.success || result.output.$alpha8.file !== expected) {
       throw invalid('A frozen regional alpha role or descriptor is invalid.')
     }
@@ -647,7 +742,7 @@ function hydrate(
   collectAlphaDescriptors(metadata)
   const { schemaVersion: _schemaVersion, ...result } = metadata
   const alpha = (value: unknown): Uint8Array => {
-    const descriptor = v.parse(alphaRef, value).$alpha8
+    const descriptor = v.parse(regionalAlphaRefSchema, value).$alpha8
     return new Uint8Array(files[descriptor.file])
   }
   const globalCoverage = (value: unknown) => {
@@ -755,30 +850,6 @@ function sameVersion(left: BigIntStats, right: BigIntStats): boolean {
 
 function inode(entry: BigIntStats): string {
   return `${entry.dev}:${entry.ino}`
-}
-
-function assertJsonTree(value: unknown, seen = new Set<object>(), depth = 0): void {
-  if (
-    value === null ||
-    typeof value === 'string' ||
-    typeof value === 'boolean' ||
-    (typeof value === 'number' && Number.isFinite(value))
-  ) {
-    return
-  }
-  if (
-    typeof value !== 'object' ||
-    depth > 64 ||
-    seen.has(value) ||
-    (!Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype)
-  ) {
-    throw invalid('Frozen regional metadata is not a finite JSON tree.')
-  }
-  seen.add(value)
-  for (const child of Object.values(value)) {
-    assertJsonTree(child, seen, depth + 1)
-  }
-  seen.delete(value)
 }
 
 function invalid(message: string): GenerationQueueError {

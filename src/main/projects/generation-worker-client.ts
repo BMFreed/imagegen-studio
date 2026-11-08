@@ -13,6 +13,7 @@ import {
   supportsIllustriousNoiseProfile,
 } from '../../shared/projects/illustrious-noise-profile.js'
 import { ILLUSTRIOUS_SCHEDULER_PAIRS } from '../../shared/projects/illustrious-scheduler.js'
+import { supportsInferenceAnimaRegional } from '../../shared/projects/inference-worker-capabilities.js'
 import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceAnima,
@@ -54,6 +55,7 @@ import type {
 } from './illustrious-txt2img-job.js'
 
 import { verifyInferenceAuxiliaryFile } from '../runtime/inference-auxiliary-resources.js'
+import { prepareAnimaRegionalWorkerRequest } from './anima-regional-worker-request.js'
 import { validWorkerVae } from './illustrious-generation-vae.js'
 import {
   captureInferenceWorkerOwner,
@@ -66,9 +68,10 @@ import {
   isOutpaintWorkerRequest,
 } from './outpaint-worker-request.js'
 import {
+  type OperationalRegionalGenerationRequestV1,
+  type OperationalRegionalWorkerInput,
   prepareRegionalWorkerRequest,
   readRegionalWorkerResult,
-  type RegionalWorkerInput,
   type RegionalWorkerLease,
   type RegionalWorkerResult,
 } from './regional-worker-request.js'
@@ -184,7 +187,9 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
   private readonly requestTimeoutMs: number
   // A failed kill must not release files a still-running child may consume. A late physical
   // exit, or close() retry, releases these request-owned stages.
-  private readonly retainedRegionalLeases = new Set<RegionalWorkerLease>()
+  private readonly retainedRegionalLeases = new Set<
+    RegionalWorkerLease<OperationalRegionalGenerationRequestV1>
+  >()
   private readonly scratchBasePath: string
   // The worker executes synchronous requests serially. Retain the previous generation's ID to
   // discard its trailing progress without accepting unknown/crossed request IDs.
@@ -425,7 +430,7 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
 
   /** Private explicit experiment. Returns owned PNG bytes; it never creates a queue candidate. */
   async executeCurrentCanvasRegional(
-    input: RegionalWorkerInput,
+    input: OperationalRegionalWorkerInput,
     onProgress?: (progress: GenerationDenoisingProgress) => void,
   ): Promise<RegionalWorkerResult> {
     if (this.closed) {
@@ -435,142 +440,153 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
       throw new GenerationWorkerError('BUSY', 'The generation worker is already processing a job.')
     }
     this.busy = true
-    let lease: RegionalWorkerLease | undefined
+    let lease: RegionalWorkerLease<OperationalRegionalGenerationRequestV1> | undefined
     let dispatched = false
     let completed = false
     try {
-      if (
-        input.request.type === 'generate-illustrious-outpaint' &&
-        !supportsInferenceRegionalOutpaint(this.ready)
-      ) {
-        throw new GenerationWorkerError(
-          'WORKER_VERSION_MISMATCH',
-          'The active worker has not qualified outpaint with Regional Guidance.',
-        )
-      }
-      if (
-        input.request.type !== 'generate-illustrious-txt2img' &&
-        !supportsInferenceRegionalImg2Img(this.ready)
-      ) {
-        throw new GenerationWorkerError(
-          'WORKER_VERSION_MISMATCH',
-          'The active worker has not qualified opaque img2img with Regional Guidance.',
-        )
-      }
-      if (
-        input.request.type !== 'generate-illustrious-txt2img' &&
-        input.request.job.sampling.scheduler === 'euler_a' &&
-        !supportsInferenceRegionalImg2ImgEulerAncestral(this.ready)
-      ) {
-        throw new GenerationWorkerError(
-          'WORKER_VERSION_MISMATCH',
-          'The active worker has not qualified Euler a with opaque regional img2img.',
-        )
-      }
-      if (
-        input.request.type !== 'generate-illustrious-txt2img' &&
-        (input.request.job.sampling.scheduler === 'dpmpp_2m' ||
-          input.request.job.sampling.scheduler === 'dpmpp_2m_k') &&
-        !supportsInferenceRegionalImg2ImgDpmpp2m(this.ready)
-      ) {
-        throw new GenerationWorkerError(
-          'WORKER_VERSION_MISMATCH',
-          'The active worker has not qualified DPM++ 2M with opaque regional img2img.',
-        )
-      }
-      if (
-        input.request.type !== 'generate-illustrious-txt2img' &&
-        (input.request.job.sampling.cfgRescale ?? 0) !== 0 &&
-        !supportsInferenceRegionalImg2ImgCFGRescale(this.ready)
-      ) {
-        throw new GenerationWorkerError(
-          'WORKER_VERSION_MISMATCH',
-          'The active worker has not qualified CFG Rescale with opaque regional img2img.',
-        )
-      }
-      if (
-        input.compositionProfile === 'invoke-canvas-v1' &&
-        (input.request.job.sampling.cfgRescale ?? 0) !== 0 &&
-        !supportsInferenceRegionalCFGRescale(this.ready)
-      ) {
-        throw new GenerationWorkerError(
-          'WORKER_VERSION_MISMATCH',
-          'The active worker has not qualified frozen CFG Rescale with Regional Guidance.',
-        )
-      }
-      if (
-        input.compositionProfile === 'invoke-canvas-v1' &&
-        input.request.type === 'generate-illustrious-txt2img' &&
-        (input.request.job.sampling.scheduler === 'dpmpp_2m' ||
-          input.request.job.sampling.scheduler === 'dpmpp_2m_k') &&
-        !supportsInferenceRegionalDpm(this.ready)
-      ) {
-        throw new GenerationWorkerError(
-          'WORKER_VERSION_MISMATCH',
-          'The active worker has not qualified frozen Regional Guidance with DPM++ 2M.',
-        )
-      }
-      if (
-        input.request.type !== 'generate-illustrious-txt2img' &&
-        (input.request.job.vae != null || (input.request.job.vaePrecision ?? 'Auto') !== 'FP16') &&
-        !supportsInferenceRegionalImg2ImgVae(this.ready)
-      ) {
-        throw new GenerationWorkerError(
-          'WORKER_VERSION_MISMATCH',
-          'The worker has not qualified selected VAE and precision with opaque regional img2img.',
-        )
-      }
-      if (
-        input.compositionProfile === 'invoke-canvas-v1' &&
-        (input.request.job.vae != null || (input.request.job.vaePrecision ?? 'Auto') !== 'FP16') &&
-        !supportsInferenceRegionalVae(this.ready)
-      ) {
-        throw new GenerationWorkerError(
-          'WORKER_VERSION_MISMATCH',
-          'The active worker has not qualified the frozen regional VAE or precision.',
-        )
-      }
-      if (
-        input.compositionProfile === 'invoke-canvas-v1' &&
-        (input.request.job.loras?.length ?? 0) > 0 &&
-        !supportsInferenceRegionalLoras(this.ready)
-      ) {
-        throw new GenerationWorkerError(
-          'WORKER_VERSION_MISMATCH',
-          'The active worker has not qualified the frozen global LoRA stack.',
-        )
-      }
-      if (
-        input.compositionProfile === 'invoke-canvas-v1' &&
-        ((input.request.job.embeddings?.positive.length ?? 0) > 0 ||
-          (input.request.job.embeddings?.negative.length ?? 0) > 0) &&
-        !supportsInferenceEmbeddings(this.ready)
-      ) {
-        throw new GenerationWorkerError(
-          'WORKER_VERSION_MISMATCH',
-          'The active worker has not qualified the frozen global embedding resources.',
-        )
-      }
-      if (
-        input.initializationProfile !== undefined &&
-        !supportsInferenceRegionalInvokeInitialization(this.ready)
-      ) {
-        throw new GenerationWorkerError(
-          'WORKER_VERSION_MISMATCH',
-          'The active worker has not qualified the explicit regional initialization policy.',
-        )
-      }
-      if (
-        !this.ready.capabilities.includes(
-          input.compositionProfile === 'invoke-canvas-v1'
-            ? 'illustrious-regional-invoke-v1'
-            : 'private-current-canvas-regional-v1',
-        )
-      ) {
-        throw new GenerationWorkerError(
-          'WORKER_VERSION_MISMATCH',
-          'The active worker has not qualified private regional execution.',
-        )
+      if (input.compositionProfile === 'invoke-krea2-global-support-v1') {
+        if (!supportsInferenceAnimaRegional(this.ready)) {
+          throw new GenerationWorkerError(
+            'WORKER_VERSION_MISMATCH',
+            'The active worker has not qualified Anima Regional Guidance.',
+          )
+        }
+      } else {
+        if (
+          input.request.type === 'generate-illustrious-outpaint' &&
+          !supportsInferenceRegionalOutpaint(this.ready)
+        ) {
+          throw new GenerationWorkerError(
+            'WORKER_VERSION_MISMATCH',
+            'The active worker has not qualified outpaint with Regional Guidance.',
+          )
+        }
+        if (
+          input.request.type !== 'generate-illustrious-txt2img' &&
+          !supportsInferenceRegionalImg2Img(this.ready)
+        ) {
+          throw new GenerationWorkerError(
+            'WORKER_VERSION_MISMATCH',
+            'The active worker has not qualified opaque img2img with Regional Guidance.',
+          )
+        }
+        if (
+          input.request.type !== 'generate-illustrious-txt2img' &&
+          input.request.job.sampling.scheduler === 'euler_a' &&
+          !supportsInferenceRegionalImg2ImgEulerAncestral(this.ready)
+        ) {
+          throw new GenerationWorkerError(
+            'WORKER_VERSION_MISMATCH',
+            'The active worker has not qualified Euler a with opaque regional img2img.',
+          )
+        }
+        if (
+          input.request.type !== 'generate-illustrious-txt2img' &&
+          (input.request.job.sampling.scheduler === 'dpmpp_2m' ||
+            input.request.job.sampling.scheduler === 'dpmpp_2m_k') &&
+          !supportsInferenceRegionalImg2ImgDpmpp2m(this.ready)
+        ) {
+          throw new GenerationWorkerError(
+            'WORKER_VERSION_MISMATCH',
+            'The active worker has not qualified DPM++ 2M with opaque regional img2img.',
+          )
+        }
+        if (
+          input.request.type !== 'generate-illustrious-txt2img' &&
+          (input.request.job.sampling.cfgRescale ?? 0) !== 0 &&
+          !supportsInferenceRegionalImg2ImgCFGRescale(this.ready)
+        ) {
+          throw new GenerationWorkerError(
+            'WORKER_VERSION_MISMATCH',
+            'The active worker has not qualified CFG Rescale with opaque regional img2img.',
+          )
+        }
+        if (
+          input.compositionProfile === 'invoke-canvas-v1' &&
+          (input.request.job.sampling.cfgRescale ?? 0) !== 0 &&
+          !supportsInferenceRegionalCFGRescale(this.ready)
+        ) {
+          throw new GenerationWorkerError(
+            'WORKER_VERSION_MISMATCH',
+            'The active worker has not qualified frozen CFG Rescale with Regional Guidance.',
+          )
+        }
+        if (
+          input.compositionProfile === 'invoke-canvas-v1' &&
+          input.request.type === 'generate-illustrious-txt2img' &&
+          (input.request.job.sampling.scheduler === 'dpmpp_2m' ||
+            input.request.job.sampling.scheduler === 'dpmpp_2m_k') &&
+          !supportsInferenceRegionalDpm(this.ready)
+        ) {
+          throw new GenerationWorkerError(
+            'WORKER_VERSION_MISMATCH',
+            'The active worker has not qualified frozen Regional Guidance with DPM++ 2M.',
+          )
+        }
+        if (
+          input.request.type !== 'generate-illustrious-txt2img' &&
+          (input.request.job.vae != null ||
+            (input.request.job.vaePrecision ?? 'Auto') !== 'FP16') &&
+          !supportsInferenceRegionalImg2ImgVae(this.ready)
+        ) {
+          throw new GenerationWorkerError(
+            'WORKER_VERSION_MISMATCH',
+            'The worker has not qualified selected VAE and precision with opaque regional img2img.',
+          )
+        }
+        if (
+          input.compositionProfile === 'invoke-canvas-v1' &&
+          (input.request.job.vae != null ||
+            (input.request.job.vaePrecision ?? 'Auto') !== 'FP16') &&
+          !supportsInferenceRegionalVae(this.ready)
+        ) {
+          throw new GenerationWorkerError(
+            'WORKER_VERSION_MISMATCH',
+            'The active worker has not qualified the frozen regional VAE or precision.',
+          )
+        }
+        if (
+          input.compositionProfile === 'invoke-canvas-v1' &&
+          (input.request.job.loras?.length ?? 0) > 0 &&
+          !supportsInferenceRegionalLoras(this.ready)
+        ) {
+          throw new GenerationWorkerError(
+            'WORKER_VERSION_MISMATCH',
+            'The active worker has not qualified the frozen global LoRA stack.',
+          )
+        }
+        if (
+          input.compositionProfile === 'invoke-canvas-v1' &&
+          ((input.request.job.embeddings?.positive.length ?? 0) > 0 ||
+            (input.request.job.embeddings?.negative.length ?? 0) > 0) &&
+          !supportsInferenceEmbeddings(this.ready)
+        ) {
+          throw new GenerationWorkerError(
+            'WORKER_VERSION_MISMATCH',
+            'The active worker has not qualified the frozen global embedding resources.',
+          )
+        }
+        if (
+          input.initializationProfile !== undefined &&
+          !supportsInferenceRegionalInvokeInitialization(this.ready)
+        ) {
+          throw new GenerationWorkerError(
+            'WORKER_VERSION_MISMATCH',
+            'The active worker has not qualified the explicit regional initialization policy.',
+          )
+        }
+        if (
+          !this.ready.capabilities.includes(
+            input.compositionProfile === 'invoke-canvas-v1'
+              ? 'illustrious-regional-invoke-v1'
+              : 'private-current-canvas-regional-v1',
+          )
+        ) {
+          throw new GenerationWorkerError(
+            'WORKER_VERSION_MISMATCH',
+            'The active worker has not qualified private regional execution.',
+          )
+        }
       }
       if (process.platform === 'linux' && !this.inferenceOwner) {
         throw new GenerationWorkerError(
@@ -578,12 +594,22 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
           'The inference worker lifetime owner is unavailable.',
         )
       }
-      lease = await prepareRegionalWorkerRequest(input, this.scratchBasePath, this.inferenceOwner)
+      lease =
+        input.compositionProfile === 'invoke-krea2-global-support-v1'
+          ? await prepareAnimaRegionalWorkerRequest(
+              input,
+              this.scratchBasePath,
+              this.inferenceOwner,
+            )
+          : await prepareRegionalWorkerRequest(input, this.scratchBasePath, this.inferenceOwner)
       if (this.closed) {
         throw new GenerationWorkerError('CLOSED', 'The generation worker is unavailable.')
       }
       const reportProgress =
-        typeof onProgress === 'function' && supportsInferenceRegionalProgress(this.ready)
+        typeof onProgress === 'function' &&
+        (input.compositionProfile === 'invoke-krea2-global-support-v1'
+          ? supportsInferenceAnimaRegional(this.ready)
+          : supportsInferenceRegionalProgress(this.ready))
       const wire = reportProgress ? { ...lease.wire, reportProgress: true } : lease.wire
       const line = Buffer.from(`${JSON.stringify(wire)}\n`, 'utf8')
       if (line.byteLength > MAX_PROTOCOL_LINE_BYTES) {
@@ -598,7 +624,8 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
         reportProgress
           ? {
               expectedTotalSteps:
-                lease.request.type !== 'generate-illustrious-txt2img'
+                lease.request.type !== 'generate-illustrious-txt2img' &&
+                lease.request.type !== 'generate-anima-txt2img'
                   ? null
                   : lease.request.job.sampling.steps,
               maxSteps: lease.request.job.sampling.steps,

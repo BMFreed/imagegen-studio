@@ -2321,3 +2321,25 @@ composition/acceptance and normal Generate/frozen-job/Results integration owner;
 production policy/public readiness and PP-001/005/007/008 remain unchanged.
 The host peak reaches the 12 GiB cap including cache, so headroom is unqualified.
 All inputs/images/source and 428 scratch entries remain archived.
+
+## Anima Regional Guidance — positive TXT integration
+
+[Public TXT integration](./phase-4-anima-regional-public-research.md) connects the
+explicit Invoke Krea2-derived global-support profile to the existing Anima loader,
+Main capture/compiler, owned queue files, installed worker, progress/cancellation,
+frozen Retry and Results/Raster acceptance owners. The first lane is one static
+Current Canvas TXT item, original Anima/Euler, 64–512 sides and exact-empty regional
+negatives. Old jobs/default profiles keep their meanings; authors' text/weights
+are not normalized. Runtime evidence, negative controls, installation refresh and
+lifecycle closure are recorded in the note. General visual quality, image/Smart
+regional modes, references/LoRA, other samplers and PP-001/005/007/008 remain open.
+
+ROOT execution:1466 Main,206 distinct qualified Python,200 browser and35 separate
+tooling-guard cases. Three real installed requests preserve scalar progress/Cancel
+and exact frozen-Retry RGB after saved edits/restart. Results Add succeeded before
+a harness UI DTO assertion; original Add Undo/Redo remains unverified. A separate
+zero-ML continuation passes Home Recover, visibility Undo/Redo and explicit
+Save/reopen/exact PNG/base-only provenance. The failed native report is retained
+with its status, not relabelled PASS. Nine mutation units give15 GREEN/3 semantic
+RED with exact restoration. Source reviews are clean; resource/retention and public
+readiness remain separate evidence levels as documented.

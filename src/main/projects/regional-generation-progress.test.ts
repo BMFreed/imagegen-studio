@@ -11,7 +11,11 @@ import test from 'node:test'
 
 import type { InferenceWorkerReady } from './illustrious-txt2img-job.js'
 import type { RegionalGenerationTransport } from './regional-generation-processor.js'
-import type { RegionalWorkerInput, RegionalWorkerResult } from './regional-worker-request.js'
+import type {
+  OperationalRegionalWorkerInput,
+  RegionalWorkerInput,
+  RegionalWorkerResult,
+} from './regional-worker-request.js'
 import type { RegionalQueueFixture } from './test-fixtures/regional-queue.js'
 
 import { GenerationProgressSource } from './generation-progress-source.js'
@@ -40,8 +44,9 @@ function deferred<T = void>() {
 
 function resultFor(
   fixture: RegionalQueueFixture,
-  input: RegionalWorkerInput,
+  input: OperationalRegionalWorkerInput,
 ): RegionalWorkerResult {
+  assert.ok(input.compositionProfile !== 'invoke-krea2-global-support-v1')
   return {
     output: {
       byteSize: fixture.outputBytes.length,
@@ -82,6 +87,7 @@ function beginRun(
     close: options.close ?? (async () => {}),
     executeCurrentCanvasRegional: async (input, onProgress) => {
       assert.equal(typeof onProgress, 'function')
+      assert.ok(input.compositionProfile !== 'invoke-krea2-global-support-v1')
       started.resolve({ input, send: onProgress! })
       return await completion.promise
     },
@@ -415,6 +421,7 @@ test('regional transport methods and ready capability state are detached before 
       async executeCurrentCanvasRegional(input, onProgress) {
         assert.equal(this, transport)
         onProgress?.({ step: 1, totalSteps: 2 })
+        assert.ok(input.compositionProfile !== 'invoke-krea2-global-support-v1')
         started.resolve(input)
         return await completion.promise
       },

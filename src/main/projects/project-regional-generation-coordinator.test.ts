@@ -360,6 +360,7 @@ test('constructor captures regional resolver methods and freezes effective TI in
     const completed = await f.coordinator.runNext(
       f.transport({
         executeCurrentCanvasRegional: async (input) => {
+          assert.ok(input.compositionProfile !== 'invoke-krea2-global-support-v1')
           assert.equal(input.recipe.regions[0].positive?.text, f.embedding.token)
           assert.equal(input.recipe.regions[0].embeddings?.positive[0].token, f.embedding.token)
           assert.equal(input.request.job.embeddings?.positive.length ?? 0, 0)
@@ -579,6 +580,7 @@ test('running Project close retains its slot until physical exit and ignores a l
           await exited.promise
         },
         executeCurrentCanvasRegional: async (input) => {
+          assert.ok(input.compositionProfile !== 'invoke-krea2-global-support-v1')
           dispatched = input
           entered.resolve()
           await late.promise

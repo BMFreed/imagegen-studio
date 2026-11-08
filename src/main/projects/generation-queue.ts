@@ -61,10 +61,15 @@ import type {
 import type { SmartPatchExecutionModelResolver } from './project-smart-patch-execution.js'
 import type { SmartPatchInputBundle } from './project-smart-patch-input-bundle.js'
 import type {
+  FrozenQueuedIllustriousRegionalOperationalV1,
   FrozenQueuedRegionalInvokeOutpaintV1,
   FrozenQueuedRegionalOperationalV1,
 } from './regional-queued-generation.js'
-import type { RegionalGenerationRequestV1, RegionalWorkerInput } from './regional-worker-request.js'
+import type {
+  OperationalRegionalWorkerInput,
+  RegionalGenerationRequestV1,
+  RegionalWorkerInput,
+} from './regional-worker-request.js'
 import type { SmartPatchInputMaterial } from './smart-patch-frozen-input.js'
 import type { FrozenQueuedSmartPatchV1 } from './smart-patch-queued-generation.js'
 
@@ -78,6 +83,16 @@ import {
   parseFrozenQueuedAnimaGenerationV1,
   parseFrozenQueuedAnimaOutpaintV1,
 } from './anima-queued-generation.js'
+import {
+  captureAnimaRegionalQueuedMaterial,
+  type FrozenQueuedAnimaRegionalV1,
+  loadAnimaRegionalQueuedInput,
+  parseFrozenQueuedAnimaRegionalV1,
+} from './anima-regional-queued-generation.js'
+import {
+  type AnimaRegionalWorkerInput,
+  captureAnimaRegionalWorkerInput,
+} from './anima-regional-worker-request.js'
 import { GENERATION_STAGING_LIMITS } from './generation-staging-limits.js'
 import { validateSrgbPngStream } from './igs-package.js'
 import {
@@ -474,11 +489,19 @@ export interface QueuedGenerationActionJob {
 export type TerminalGenerationStatus = 'canceled' | 'completed' | 'failed'
 
 /** Private durable regional input; ordinary dispatch/provenance deliberately exclude it. */
-export interface VerifiedQueuedRegionalInput {
-  input: RegionalWorkerInput
+export interface VerifiedQueuedOperationalRegionalInput {
+  input: OperationalRegionalWorkerInput
   item: QueuedGenerationItem
   payload: FrozenQueuedRegionalOperationalV1
   targetPath: string
+}
+
+export interface VerifiedQueuedRegionalInput extends Omit<
+  VerifiedQueuedOperationalRegionalInput,
+  'input' | 'payload'
+> {
+  input: RegionalWorkerInput
+  payload: FrozenQueuedIllustriousRegionalOperationalV1
 }
 
 export interface VerifiedQueuedInput {
@@ -828,13 +851,21 @@ export class GenerationQueueRepository {
   }
 
   /** Public regional claims retain the same global slot and never adopt private operations. */
-  async claimNextPendingInvokeCanvasRegional(): Promise<VerifiedQueuedRegionalInput | null> {
+  async claimNextPendingInvokeCanvasRegional(): Promise<VerifiedQueuedOperationalRegionalInput | null> {
     return await this.claimNextRegional('invoke')
   }
 
   /** Private regional claim uses the same global running-slot CAS. */
   async claimNextPendingRegional(): Promise<VerifiedQueuedRegionalInput | null> {
-    return await this.claimNextRegional('illustrious-regional')
+    const claimed = await this.claimNextRegional('illustrious-regional')
+    if (
+      claimed &&
+      (claimed.payload.kind === 'anima-regional-txt2img' ||
+        claimed.input.compositionProfile === 'invoke-krea2-global-support-v1')
+    ) {
+      throw statusConflict()
+    }
+    return claimed as VerifiedQueuedRegionalInput | null
   }
 
   /** Private Smart Patch claim shares the global slot while keeping ordinary readers separate. */
@@ -963,6 +994,14 @@ export class GenerationQueueRepository {
       await this.cleanupPrunedInputs(root, [id])
       await this.cleanupSmartPatchBundles(smartPatchBundles)
     })
+  }
+
+  async enqueueAnimaRegionalBatchWithCaptureGate(
+    input: Parameters<GenerationQueueRepository['enqueuePreparedAnimaGenerationBatch']>[0] & {
+      regionalInputs: readonly AnimaRegionalWorkerInput[]
+    },
+  ): Promise<QueuedGenerationItem[]> {
+    return await this.enqueuePreparedAnimaGenerationBatch(input)
   }
 
   /** Main-only experiment; never called by public enabled-region NEW admission. */
@@ -1230,6 +1269,7 @@ export class GenerationQueueRepository {
     ) => Promise<void>
     preparedBatch: PreparedAnimaGenerationBatch
     projectPath: string
+    regionalInputs?: readonly AnimaRegionalWorkerInput[]
     requests: readonly AnimaWorkerRequest[]
     stagingSessionId: string
   }): Promise<QueuedGenerationItem[]> {
@@ -1255,7 +1295,9 @@ export class GenerationQueueRepository {
       truncated: input.preparedBatch.truncated,
     })
     const requests = structuredClone(input.requests)
-    let payloads: FrozenQueuedAnimaGenerationV1[]
+    const regionalInputs = input.regionalInputs?.map(captureAnimaRegionalWorkerInput)
+    const regionalMaterials = regionalInputs?.map(captureAnimaRegionalQueuedMaterial)
+    let payloads: (FrozenQueuedAnimaGenerationV1 | FrozenQueuedAnimaRegionalV1)[]
     try {
       const rebuilt = prepareAnimaGenerationBatch({
         iterations: supplied.iterations,
@@ -1280,6 +1322,39 @@ export class GenerationQueueRepository {
       )
     } catch {
       throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The qualified Anima batch is invalid.')
+    }
+    if (regionalInputs) {
+      if (payloads.length !== 1 || regionalInputs.length !== 1) {
+        throw new GenerationQueueError(
+          'QUEUE_INPUT_INVALID',
+          'Anima Regional Guidance requires one job.',
+        )
+      }
+      payloads = payloads.map((payload, index) => {
+        const regional = regionalInputs[index]
+        const material = regionalMaterials![index]
+        if (
+          payload.kind !== 'anima-txt2img' ||
+          !isDeepStrictEqual(regional.request, requests[index]) ||
+          regional.recipe.documentId !== payload.context.documentId ||
+          regional.recipe.documentRevision !== payload.context.documentRevision ||
+          !isDeepStrictEqual(regional.recipe.item.prompts, payload.context.prompts)
+        ) {
+          throw new GenerationQueueError(
+            'QUEUE_INPUT_INVALID',
+            'The Anima regional batch differs from its captured input.',
+          )
+        }
+        return parseFrozenQueuedAnimaRegionalV1(
+          JSON.stringify({
+            ...payload,
+            compositionProfile: material.compositionProfile,
+            kind: 'anima-regional-txt2img',
+            promptInterpretation: material.promptInterpretation,
+            regional: material.regional,
+          }),
+        )
+      })
     }
     const payloadJsons = payloads.map((payload) => JSON.stringify(payload))
     return await this.serialize(async () => {
@@ -1345,7 +1420,7 @@ export class GenerationQueueRepository {
       const root = await this.ensureRoot()
       const directories: { path: string; published: boolean }[] = []
       try {
-        for (const row of rows) {
+        for (const [index, row] of rows.entries()) {
           const temporary = await mkdtemp(path.join(root, '.tmp-'))
           const directory = { path: temporary, published: false }
           directories.push(directory)
@@ -1358,6 +1433,9 @@ export class GenerationQueueRepository {
             targetSha256: sha256(targetBytes),
           }
           await writeDurableFile(path.join(temporary, 'target.png'), targetBytes)
+          for (const [name, bytes] of Object.entries(regionalMaterials?.[index].files ?? {})) {
+            await writeDurableFile(path.join(temporary, name), bytes)
+          }
           await writeDurableFile(
             path.join(temporary, 'manifest.json'),
             Buffer.from(JSON.stringify(manifest), 'utf8'),
@@ -1906,6 +1984,7 @@ export class GenerationQueueRepository {
         .where('id', '=', id)
         .where('operation', 'in', [
           'illustrious-regional',
+          'anima-regional-txt2img',
           'illustrious-regional-txt2img',
           'illustrious-regional-img2img',
           'illustrious-regional-outpaint',
@@ -2249,7 +2328,7 @@ export class GenerationQueueRepository {
           )
         }
         const payload = isInvokeRegionalQueueOperation(row.operation)
-          ? parseFrozenQueuedRegionalInvokeV1(row.frozen_payload_json)
+          ? parseFrozenQueuedRegionalOperationalV1(row.frozen_payload_json)
           : parsePayload(row.frozen_payload_json)
         if (
           payload.kind !== row.operation ||
@@ -2380,6 +2459,7 @@ export class GenerationQueueRepository {
         .where('document_id', '=', documentId)
         .where('operation', 'in', [
           ...NORMAL_QUEUE_OPERATIONS,
+          'anima-regional-txt2img',
           'illustrious-regional-txt2img',
           'illustrious-regional-img2img',
           'illustrious-regional-outpaint',
@@ -2419,14 +2499,51 @@ export class GenerationQueueRepository {
     })
   }
 
+  /** Global FIFO routing hint; each typed processor still verifies and claims its own row. */
+  async loadVerifiedAnimaRegionalInput(id: string): Promise<
+    VerifiedQueuedOperationalRegionalInput & {
+      input: AnimaRegionalWorkerInput
+      payload: FrozenQueuedAnimaRegionalV1
+    }
+  > {
+    const verified = await this.loadVerifiedOperationalRegionalInput(id)
+    if (
+      verified.payload.kind !== 'anima-regional-txt2img' ||
+      verified.input.compositionProfile !== 'invoke-krea2-global-support-v1'
+    ) {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'The queue item is not Anima Regional Guidance.',
+      )
+    }
+    return { ...verified, input: verified.input, payload: verified.payload }
+  }
+
   async loadVerifiedInput(id: string): Promise<VerifiedQueuedInput> {
     validateQueueId(id)
     return await this.serialize(async () => await this.verifyRow(await this.requireRow(id)))
   }
 
-  async loadVerifiedRegionalInput(id: string): Promise<VerifiedQueuedRegionalInput> {
+  async loadVerifiedOperationalRegionalInput(
+    id: string,
+  ): Promise<VerifiedQueuedOperationalRegionalInput> {
     validateQueueId(id)
     return await this.serialize(async () => await this.verifyRegionalRow(await this.requireRow(id)))
+  }
+
+  /** Preserve the original Illustrious-only reader; family dispatch uses the operational reader. */
+  async loadVerifiedRegionalInput(id: string): Promise<VerifiedQueuedRegionalInput> {
+    const verified = await this.loadVerifiedOperationalRegionalInput(id)
+    if (
+      verified.payload.kind === 'anima-regional-txt2img' ||
+      verified.input.compositionProfile === 'invoke-krea2-global-support-v1'
+    ) {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'Anima Regional Guidance requires its family input reader.',
+      )
+    }
+    return { ...verified, input: verified.input, payload: verified.payload }
   }
 
   /** Recheck queue files. A dispatcher must separately force-hash the exact model and capability. */
@@ -2451,7 +2568,6 @@ export class GenerationQueueRepository {
     })
   }
 
-  /** Global FIFO routing hint; each typed processor still verifies and claims its own row. */
   async nextDispatchableKind(): Promise<'normal' | 'regional' | 'smart-patch' | null> {
     return await this.serialize(async () => {
       for (;;) {
@@ -2603,6 +2719,20 @@ export class GenerationQueueRepository {
       throw batchPublicationUncertain()
     }
     this.fencedProjects.delete(localProjectKey)
+  }
+
+  async retryAnimaRegionalTerminal(
+    id: string,
+    expectedStatusSequence: number,
+    preflight?: (input: GenerationQueueRetryPreflightInput) => Promise<void>,
+  ): Promise<QueuedGenerationItem> {
+    return await this.retryTerminalInternal(
+      id,
+      expectedStatusSequence,
+      preflight,
+      undefined,
+      'invoke',
+    )
   }
 
   async retryCurrentCanvasRegionalTerminal(
@@ -2918,7 +3048,7 @@ export class GenerationQueueRepository {
 
   private async claimNextRegional(
     operation: 'illustrious-regional' | 'invoke',
-  ): Promise<VerifiedQueuedRegionalInput | null> {
+  ): Promise<VerifiedQueuedOperationalRegionalInput | null> {
     return await this.serialize(async () => {
       for (;;) {
         const running = await this.db
@@ -2938,6 +3068,7 @@ export class GenerationQueueRepository {
             'in',
             operation === 'invoke'
               ? [
+                  'anima-regional-txt2img',
                   'illustrious-regional-txt2img',
                   'illustrious-regional-img2img',
                   'illustrious-regional-outpaint',
@@ -2959,7 +3090,7 @@ export class GenerationQueueRepository {
           continue
         }
 
-        let verified: VerifiedQueuedRegionalInput
+        let verified: VerifiedQueuedOperationalRegionalInput
         try {
           verified = await this.verifyRegionalRow(pending)
         } catch (error) {
@@ -3012,6 +3143,7 @@ export class GenerationQueueRepository {
             'in',
             operation === 'invoke'
               ? [
+                  'anima-regional-txt2img',
                   'illustrious-regional-txt2img',
                   'illustrious-regional-img2img',
                   'illustrious-regional-outpaint',
@@ -3861,11 +3993,37 @@ export class GenerationQueueRepository {
 
   private async verifyRegionalRow(
     row: Selectable<GenerationQueueItem>,
-  ): Promise<VerifiedQueuedRegionalInput> {
+  ): Promise<VerifiedQueuedOperationalRegionalInput> {
     try {
       const verified = await this.verifyRowWithBytes(row, true)
       if (!('regional' in verified.payload)) {
         throw statusConflict()
+      }
+      if (verified.payload.kind === 'anima-regional-txt2img') {
+        const request: AnimaWorkerRequest = {
+          job: {
+            ...structuredClone(verified.payload.workerJob),
+            output: {
+              pngPath: path.join(path.dirname(verified.targetPath), 'result.png'),
+              stagingRoot: path.dirname(verified.targetPath),
+            },
+            target: { ...verified.payload.workerJob.target, path: verified.targetPath },
+          },
+          protocolVersion: '1',
+          requestId: row.id,
+          type: 'generate-anima-txt2img',
+        }
+        const input = await loadAnimaRegionalQueuedInput(
+          path.dirname(verified.targetPath),
+          verified.payload,
+          request,
+        )
+        return {
+          input,
+          item: verified.item,
+          payload: verified.payload,
+          targetPath: verified.targetPath,
+        }
       }
       const request: RegionalGenerationRequestV1 =
         verified.payload.kind === 'illustrious-regional-outpaint'
@@ -5043,6 +5201,7 @@ function toManagerEntry(
     ![
       'anima-img2img',
       'anima-outpaint',
+      'anima-regional-txt2img',
       'anima-smart-patch',
       'anima-txt2img',
       'illustrious-img2img',
@@ -5139,7 +5298,7 @@ function managerDetails(row: Selectable<GenerationQueueItem>): GenerationQueueEn
       }
     }
     const payload = isInvokeRegionalQueueOperation(row.operation)
-      ? parseFrozenQueuedRegionalInvokeV1(row.frozen_payload_json)
+      ? parseFrozenQueuedRegionalOperationalV1(row.frozen_payload_json)
       : parsePayload(row.frozen_payload_json)
     if (
       payload.kind !== row.operation ||
@@ -5149,6 +5308,7 @@ function managerDetails(row: Selectable<GenerationQueueItem>): GenerationQueueEn
       return null
     }
     if (
+      payload.kind === 'anima-regional-txt2img' ||
       payload.kind === 'anima-txt2img' ||
       payload.kind === 'anima-img2img' ||
       payload.kind === 'anima-outpaint'
@@ -5270,6 +5430,7 @@ function isRegionalQueueOperation(operation: string): boolean {
 
 function isInvokeRegionalQueueOperation(operation: string): boolean {
   return (
+    operation === 'anima-regional-txt2img' ||
     operation === 'illustrious-regional-txt2img' ||
     operation === 'illustrious-regional-img2img' ||
     operation === 'illustrious-regional-outpaint'

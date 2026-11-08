@@ -4,6 +4,7 @@ import {
   type GenerationProgressSnapshot,
   isGenerationDenoisingProgress,
 } from '../../shared/projects/generation-progress.js'
+import { supportsInferenceAnimaRegional } from '../../shared/projects/inference-worker-capabilities.js'
 import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceEmbeddings,
@@ -23,10 +24,11 @@ import { createHash, randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 
 import type { OutpaintInfillResolver } from '../runtime/inference-auxiliary-resources.js'
+import type { AnimaGenerationModelResolver } from './anima-generation-preparation.js'
 import type {
   GenerationQueueRepository,
   QueuedGenerationItem,
-  VerifiedQueuedRegionalInput,
+  VerifiedQueuedOperationalRegionalInput,
 } from './generation-queue.js'
 import type {
   GenerationStagingRepository,
@@ -34,22 +36,28 @@ import type {
 } from './generation-staging.js'
 import type { GenerationModelResolver } from './illustrious-generation-loras.js'
 import type { InferenceWorkerReady } from './illustrious-txt2img-job.js'
-import type { RegionalWorkerInput, RegionalWorkerResult } from './regional-worker-request.js'
+import type {
+  OperationalRegionalWorkerInput,
+  RegionalWorkerResult,
+} from './regional-worker-request.js'
 
+import { reverifyFrozenQueuedAnimaGeneration } from './anima-queued-generation.js'
 import { reverifyFrozenGenerationEmbeddings } from './illustrious-generation-embeddings.js'
 import {
   frozenLoraFieldsAgree,
   reverifyFrozenGenerationLoras,
 } from './illustrious-generation-loras.js'
 import { frozenVaeFieldsAgree, reverifyFrozenGenerationVae } from './illustrious-generation-vae.js'
-import { captureRegionalWorkerInput } from './regional-worker-request.js'
+import { parseAcceptedGenerationBaseV1 } from './regional-queued-generation.js'
+import { captureOperationalRegionalWorkerInput } from './regional-worker-request.js'
 
-export type RegionalGenerationModelResolver = Partial<
-  Pick<
-    GenerationModelResolver,
-    'resolveVerifiedGenerationLoraForPlan' | 'resolveVerifiedGenerationVaeForPlan'
-  >
-> &
+export type RegionalGenerationModelResolver = Partial<AnimaGenerationModelResolver> &
+  Partial<
+    Pick<
+      GenerationModelResolver,
+      'resolveVerifiedGenerationLoraForPlan' | 'resolveVerifiedGenerationVaeForPlan'
+    >
+  > &
   Pick<
     GenerationModelResolver,
     | 'assertNoUnboundGenerationEmbeddings'
@@ -58,10 +66,12 @@ export type RegionalGenerationModelResolver = Partial<
   >
 
 /** The private client verifies correlation and owned PNG bytes; close confirms physical exit. */
-export interface RegionalGenerationTransport {
+export interface RegionalGenerationTransport<
+  TInput extends OperationalRegionalWorkerInput = OperationalRegionalWorkerInput,
+> {
   close: () => Promise<void>
   executeCurrentCanvasRegional: (
-    input: RegionalWorkerInput,
+    input: TInput,
     onProgress?: (progress: GenerationDenoisingProgress) => void,
   ) => Promise<RegionalWorkerResult>
   readonly ready: InferenceWorkerReady
@@ -123,7 +133,7 @@ function exitUnconfirmed(): RegionalGenerationProcessorError {
  */
 export class RegionalGenerationProcessor {
   private active: ActiveRegionalJob | null = null
-  private claiming: Promise<VerifiedQueuedRegionalInput | null> | null = null
+  private claiming: Promise<VerifiedQueuedOperationalRegionalInput | null> | null = null
   private currentRun: Promise<RegionalGenerationProcessorResult> | null = null
   private readonly listeners = new Set<() => void>()
   private readonly models: RegionalGenerationModelResolver
@@ -147,6 +157,18 @@ export class RegionalGenerationProcessor {
       throw new TypeError('Regional generation resource verification is unavailable.')
     }
     this.models = {
+      ...(typeof models.resolveVerifiedGenerationAnimaBundleForPlan === 'function'
+        ? {
+            resolveVerifiedGenerationAnimaBundleForPlan:
+              models.resolveVerifiedGenerationAnimaBundleForPlan.bind(models),
+          }
+        : {}),
+      ...(typeof models.resolveVerifiedAnimaGenerationLoraForPlan === 'function'
+        ? {
+            resolveVerifiedAnimaGenerationLoraForPlan:
+              models.resolveVerifiedAnimaGenerationLoraForPlan.bind(models),
+          }
+        : {}),
       assertNoUnboundGenerationEmbeddings: models.assertNoUnboundGenerationEmbeddings.bind(models),
       resolveVerifiedGenerationCheckpointForPlan:
         models.resolveVerifiedGenerationCheckpointForPlan.bind(models),
@@ -257,7 +279,9 @@ export class RegionalGenerationProcessor {
       )
     }
     const ready = structuredClone(transport.ready)
-    requireRegionalReady(ready, this.compositionProfile)
+    if (this.compositionProfile !== 'invoke-canvas-v1' || !supportsInferenceAnimaRegional(ready)) {
+      requireRegionalReady(ready, this.compositionProfile)
+    }
     const capturedTransport: RegionalGenerationTransport = {
       close: transport.close.bind(transport),
       executeCurrentCanvasRegional: transport.executeCurrentCanvasRegional.bind(transport),
@@ -389,9 +413,34 @@ export class RegionalGenerationProcessor {
   }
 
   private async reverifyResources(
-    claimed: VerifiedQueuedRegionalInput,
-    input: RegionalWorkerInput,
+    claimed: VerifiedQueuedOperationalRegionalInput,
+    input: OperationalRegionalWorkerInput,
   ): Promise<void> {
+    if (claimed.payload.kind === 'anima-regional-txt2img') {
+      const resolveVerifiedGenerationAnimaBundleForPlan =
+        this.models.resolveVerifiedGenerationAnimaBundleForPlan
+      const resolveVerifiedAnimaGenerationLoraForPlan =
+        this.models.resolveVerifiedAnimaGenerationLoraForPlan
+      if (
+        input.compositionProfile !== 'invoke-krea2-global-support-v1' ||
+        !resolveVerifiedGenerationAnimaBundleForPlan ||
+        !resolveVerifiedAnimaGenerationLoraForPlan
+      ) {
+        throw new Error('The frozen Anima resource verifier is unavailable.')
+      }
+      const base = parseAcceptedGenerationBaseV1(JSON.stringify(claimed.payload))
+      if (base.kind !== 'anima-txt2img') {
+        throw new Error('The frozen Anima regional base is invalid.')
+      }
+      await reverifyFrozenQueuedAnimaGeneration(base, {
+        resolveVerifiedAnimaGenerationLoraForPlan,
+        resolveVerifiedGenerationAnimaBundleForPlan,
+      })
+      return
+    }
+    if (input.compositionProfile === 'invoke-krea2-global-support-v1') {
+      throw new Error('The frozen regional family differs.')
+    }
     const { context, workerJob } = claimed.payload
     if (claimed.payload.kind === 'illustrious-regional-outpaint') {
       if (input.request.type !== 'generate-illustrious-outpaint' || !this.infillResolver) {
@@ -493,7 +542,7 @@ export class RegionalGenerationProcessor {
         ? this.queue.claimNextPendingInvokeCanvasRegional()
         : this.queue.claimNextPendingRegional()
     this.claiming = claiming
-    let claimed: VerifiedQueuedRegionalInput | null
+    let claimed: VerifiedQueuedOperationalRegionalInput | null
     try {
       claimed = await claiming
     } finally {
@@ -528,107 +577,119 @@ export class RegionalGenerationProcessor {
       if (!(await this.stillRunning(active))) {
         return { kind: 'canceled', queueItemId: claimed.item.id }
       }
-      const input = captureRegionalWorkerInput(claimed.input)
-      if (
-        input.request.type === 'generate-illustrious-outpaint' &&
-        !supportsInferenceRegionalOutpaint(transport.ready)
-      ) {
-        throw new RegionalGenerationProcessorError(
-          'INFERENCE_UNAVAILABLE',
-          'The worker has not qualified outpaint with Regional Guidance.',
-        )
+      const input = captureOperationalRegionalWorkerInput(claimed.input)
+      if (input.compositionProfile === 'invoke-krea2-global-support-v1') {
+        if (!supportsInferenceAnimaRegional(transport.ready)) {
+          throw new RegionalGenerationProcessorError(
+            'INFERENCE_UNAVAILABLE',
+            'The worker has not qualified Anima Regional Guidance.',
+          )
+        }
+      } else {
+        requireRegionalReady(transport.ready, this.compositionProfile)
+        if (
+          input.request.type === 'generate-illustrious-outpaint' &&
+          !supportsInferenceRegionalOutpaint(transport.ready)
+        ) {
+          throw new RegionalGenerationProcessorError(
+            'INFERENCE_UNAVAILABLE',
+            'The worker has not qualified outpaint with Regional Guidance.',
+          )
+        }
+        if (
+          input.request.type !== 'generate-illustrious-txt2img' &&
+          !supportsInferenceRegionalImg2Img(transport.ready)
+        ) {
+          throw new RegionalGenerationProcessorError(
+            'INFERENCE_UNAVAILABLE',
+            'The worker has not qualified opaque Regional Guidance img2img.',
+          )
+        }
+        if (
+          input.request.type !== 'generate-illustrious-txt2img' &&
+          input.request.job.sampling.scheduler === 'euler_a' &&
+          !supportsInferenceRegionalImg2ImgEulerAncestral(transport.ready)
+        ) {
+          throw new RegionalGenerationProcessorError(
+            'INFERENCE_UNAVAILABLE',
+            'The worker has not qualified Euler a with opaque regional img2img.',
+          )
+        }
+        if (
+          input.request.type !== 'generate-illustrious-txt2img' &&
+          (input.request.job.sampling.scheduler === 'dpmpp_2m' ||
+            input.request.job.sampling.scheduler === 'dpmpp_2m_k') &&
+          !supportsInferenceRegionalImg2ImgDpmpp2m(transport.ready)
+        ) {
+          throw new RegionalGenerationProcessorError(
+            'INFERENCE_UNAVAILABLE',
+            'The worker has not qualified DPM++ 2M with opaque regional img2img.',
+          )
+        }
+        if (
+          input.request.type !== 'generate-illustrious-txt2img' &&
+          (input.request.job.sampling.cfgRescale ?? 0) !== 0 &&
+          !supportsInferenceRegionalImg2ImgCFGRescale(transport.ready)
+        ) {
+          throw new RegionalGenerationProcessorError(
+            'INFERENCE_UNAVAILABLE',
+            'The worker has not qualified CFG Rescale with opaque regional img2img.',
+          )
+        }
+        if (
+          input.request.type !== 'generate-illustrious-txt2img' &&
+          (input.request.job.vae != null ||
+            (input.request.job.vaePrecision ?? 'Auto') !== 'FP16') &&
+          !supportsInferenceRegionalImg2ImgVae(transport.ready)
+        ) {
+          throw new RegionalGenerationProcessorError(
+            'INFERENCE_UNAVAILABLE',
+            'The worker has not qualified selected VAE and precision with opaque regional img2img.',
+          )
+        }
+        if (
+          input.compositionProfile === 'invoke-canvas-v1' &&
+          (input.request.job.vae != null ||
+            (input.request.job.vaePrecision ?? 'Auto') !== 'FP16') &&
+          !supportsInferenceRegionalVae(transport.ready)
+        ) {
+          throw new RegionalGenerationProcessorError(
+            'INFERENCE_UNAVAILABLE',
+            'The worker has not qualified the frozen regional VAE or precision.',
+          )
+        }
+        if (
+          input.compositionProfile === 'invoke-canvas-v1' &&
+          (input.request.job.loras?.length ?? 0) > 0 &&
+          !supportsInferenceRegionalLoras(transport.ready)
+        ) {
+          throw new RegionalGenerationProcessorError(
+            'INFERENCE_UNAVAILABLE',
+            'The worker has not qualified the frozen global LoRA stack.',
+          )
+        }
+        if (
+          input.compositionProfile === 'invoke-canvas-v1' &&
+          ((input.request.job.embeddings?.positive.length ?? 0) > 0 ||
+            (input.request.job.embeddings?.negative.length ?? 0) > 0) &&
+          !supportsInferenceEmbeddings(transport.ready)
+        ) {
+          throw new RegionalGenerationProcessorError(
+            'INFERENCE_UNAVAILABLE',
+            'The worker has not qualified the frozen global embedding resources.',
+          )
+        }
+        if (
+          input.initializationProfile !== undefined &&
+          !supportsInferenceRegionalInvokeInitialization(transport.ready)
+        ) {
+          throw new RegionalGenerationProcessorError(
+            'INFERENCE_UNAVAILABLE',
+            'The worker has not qualified the frozen regional initialization policy.',
+          )
+        }
       }
-      if (
-        input.request.type !== 'generate-illustrious-txt2img' &&
-        !supportsInferenceRegionalImg2Img(transport.ready)
-      ) {
-        throw new RegionalGenerationProcessorError(
-          'INFERENCE_UNAVAILABLE',
-          'The worker has not qualified opaque Regional Guidance img2img.',
-        )
-      }
-      if (
-        input.request.type !== 'generate-illustrious-txt2img' &&
-        input.request.job.sampling.scheduler === 'euler_a' &&
-        !supportsInferenceRegionalImg2ImgEulerAncestral(transport.ready)
-      ) {
-        throw new RegionalGenerationProcessorError(
-          'INFERENCE_UNAVAILABLE',
-          'The worker has not qualified Euler a with opaque regional img2img.',
-        )
-      }
-      if (
-        input.request.type !== 'generate-illustrious-txt2img' &&
-        (input.request.job.sampling.scheduler === 'dpmpp_2m' ||
-          input.request.job.sampling.scheduler === 'dpmpp_2m_k') &&
-        !supportsInferenceRegionalImg2ImgDpmpp2m(transport.ready)
-      ) {
-        throw new RegionalGenerationProcessorError(
-          'INFERENCE_UNAVAILABLE',
-          'The worker has not qualified DPM++ 2M with opaque regional img2img.',
-        )
-      }
-      if (
-        input.request.type !== 'generate-illustrious-txt2img' &&
-        (input.request.job.sampling.cfgRescale ?? 0) !== 0 &&
-        !supportsInferenceRegionalImg2ImgCFGRescale(transport.ready)
-      ) {
-        throw new RegionalGenerationProcessorError(
-          'INFERENCE_UNAVAILABLE',
-          'The worker has not qualified CFG Rescale with opaque regional img2img.',
-        )
-      }
-      if (
-        input.request.type !== 'generate-illustrious-txt2img' &&
-        (input.request.job.vae != null || (input.request.job.vaePrecision ?? 'Auto') !== 'FP16') &&
-        !supportsInferenceRegionalImg2ImgVae(transport.ready)
-      ) {
-        throw new RegionalGenerationProcessorError(
-          'INFERENCE_UNAVAILABLE',
-          'The worker has not qualified selected VAE and precision with opaque regional img2img.',
-        )
-      }
-      if (
-        input.compositionProfile === 'invoke-canvas-v1' &&
-        (input.request.job.vae != null || (input.request.job.vaePrecision ?? 'Auto') !== 'FP16') &&
-        !supportsInferenceRegionalVae(transport.ready)
-      ) {
-        throw new RegionalGenerationProcessorError(
-          'INFERENCE_UNAVAILABLE',
-          'The worker has not qualified the frozen regional VAE or precision.',
-        )
-      }
-      if (
-        input.compositionProfile === 'invoke-canvas-v1' &&
-        (input.request.job.loras?.length ?? 0) > 0 &&
-        !supportsInferenceRegionalLoras(transport.ready)
-      ) {
-        throw new RegionalGenerationProcessorError(
-          'INFERENCE_UNAVAILABLE',
-          'The worker has not qualified the frozen global LoRA stack.',
-        )
-      }
-      if (
-        input.compositionProfile === 'invoke-canvas-v1' &&
-        ((input.request.job.embeddings?.positive.length ?? 0) > 0 ||
-          (input.request.job.embeddings?.negative.length ?? 0) > 0) &&
-        !supportsInferenceEmbeddings(transport.ready)
-      ) {
-        throw new RegionalGenerationProcessorError(
-          'INFERENCE_UNAVAILABLE',
-          'The worker has not qualified the frozen global embedding resources.',
-        )
-      }
-      if (
-        input.initializationProfile !== undefined &&
-        !supportsInferenceRegionalInvokeInitialization(transport.ready)
-      ) {
-        throw new RegionalGenerationProcessorError(
-          'INFERENCE_UNAVAILABLE',
-          'The worker has not qualified the frozen regional initialization policy.',
-        )
-      }
-      input.request.requestId = randomUUID()
+      input.request = { ...input.request, requestId: randomUUID() }
       await this.reverifyResources(claimed, input)
       if (!(await this.stillRunning(active))) {
         return { kind: 'canceled', queueItemId: claimed.item.id }
@@ -643,9 +704,12 @@ export class RegionalGenerationProcessor {
           active.cancelPromise ||
           active.exitUnconfirmed ||
           this.stopping ||
-          !supportsInferenceRegionalProgress(transport.ready) ||
+          !(input.compositionProfile === 'invoke-krea2-global-support-v1'
+            ? supportsInferenceAnimaRegional(transport.ready)
+            : supportsInferenceRegionalProgress(transport.ready)) ||
           !isGenerationDenoisingProgress(progress) ||
-          (input.request.type !== 'generate-illustrious-txt2img'
+          (input.request.type === 'generate-illustrious-img2img' ||
+          input.request.type === 'generate-illustrious-outpaint'
             ? input.request.job.sampling.denoisingStrength === 0 ||
               progress.totalSteps > expectedTotalSteps
             : progress.totalSteps !== expectedTotalSteps)
@@ -739,7 +803,7 @@ export class RegionalGenerationProcessor {
             : 'The frozen regional input could not be verified.',
         })
       } catch (failure) {
-        const current = await this.queue.loadVerifiedRegionalInput(claimed.item.id)
+        const current = await this.queue.loadVerifiedOperationalRegionalInput(claimed.item.id)
         if (!current.item.cancelRequested) {
           throw failure
         }
@@ -766,7 +830,7 @@ export class RegionalGenerationProcessor {
       await this.cancelActive(active)
       return false
     }
-    const current = await this.queue.loadVerifiedRegionalInput(active.item.id)
+    const current = await this.queue.loadVerifiedOperationalRegionalInput(active.item.id)
     if (current.item.status === 'running' && current.item.cancelRequested) {
       await this.cancelActive(active)
       return false
@@ -807,7 +871,10 @@ function requireRegionalReady(
   }
 }
 
-function requireRegionalResult(result: RegionalWorkerResult, input: RegionalWorkerInput): void {
+function requireRegionalResult(
+  result: RegionalWorkerResult,
+  input: OperationalRegionalWorkerInput,
+): void {
   if (
     !result ||
     !Buffer.isBuffer(result.pngBytes) ||

@@ -4,6 +4,7 @@ import type { ProjectGenerationActionState } from '../../shared/projects/project
 type RetryState = Pick<
   ProjectGenerationActionState,
   | 'animaOutpaintSupported'
+  | 'animaRegionalSupported'
   | 'animaSupported'
   | 'outpaintSupported'
   | 'regionalCfgRescaleSupported'
@@ -30,6 +31,14 @@ export function generationQueueRetryReason(
   requiresRegionalVae = false,
   frozenCfgRescale = 0,
 ): string | null {
+  if (operation === 'anima-regional-txt2img') {
+    if (state === null) {
+      return 'Checking image engine support for this frozen Anima Regional Guidance job.'
+    }
+    return state.animaRegionalSupported === true
+      ? null
+      : 'The current image engine does not support Anima Regional Guidance. Repair or update the runtime.'
+  }
   if (
     operation === 'illustrious-regional-txt2img' ||
     operation === 'illustrious-regional-img2img' ||

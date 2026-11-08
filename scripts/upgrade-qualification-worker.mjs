@@ -251,6 +251,8 @@ export async function assertRuntimeIdle(
     '/usr/bin/kwin_wayland',
     '/usr/lib/x86_64-linux-gnu/libexec/polkit-kde-authentication-agent-1',
     '/usr/lib/x86_64-linux-gnu/libexec/org_kde_powerdevil',
+    // Electron's protected desktop password manager reports this exact title as argv[0].
+    '/opt/Bitwarden/bitwarden-app --autostart',
   ])
   for (const name of await entries('/proc')) {
     if (!/^\d+$/.test(name) || Number(name) === process.pid) continue

@@ -48,6 +48,7 @@ export interface GenerationQueueEntry extends GenerationQueueReview {
   operation:
     | 'anima-img2img'
     | 'anima-outpaint'
+    | 'anima-regional-txt2img'
     | 'anima-smart-patch'
     | 'anima-txt2img'
     | 'illustrious-img2img'
@@ -173,6 +174,7 @@ const EntrySchema = v.pipe(
       'illustrious-img2img',
       'illustrious-outpaint',
       'illustrious-smart-patch',
+      'anima-regional-txt2img',
       'anima-txt2img',
       'anima-img2img',
       'anima-outpaint',
@@ -196,6 +198,7 @@ const EntrySchema = v.pipe(
       return false
     }
     const isAnima =
+      entry.operation === 'anima-regional-txt2img' ||
       entry.operation === 'anima-txt2img' ||
       entry.operation === 'anima-img2img' ||
       entry.operation === 'anima-outpaint' ||

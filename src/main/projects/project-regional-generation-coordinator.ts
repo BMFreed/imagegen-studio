@@ -4,6 +4,7 @@ import { getEffectiveDynamicPromptSettings } from '../../shared/projects/generat
 import { isIllustriousNoiseProfileV1 } from '../../shared/projects/illustrious-noise-profile.js'
 import {
   isQualifiedInferenceWorkerReady,
+  supportsInferenceAnimaRegional,
   supportsInferenceEmbeddings,
   supportsInferenceRegionalCFGRescale,
   supportsInferenceRegionalDpm,
@@ -29,6 +30,7 @@ import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
+import type { AnimaGenerationModelResolver } from './anima-generation-preparation.js'
 import type { GenerationOrchestrator, PrivateRegionalExecution } from './generation-orchestrator.js'
 import type { QueuedGenerationItem } from './generation-queue.js'
 import type { GenerationModelResolver } from './illustrious-generation-loras.js'
@@ -45,6 +47,10 @@ import type {
 } from './regional-worker-request.js'
 import type { ProjectWorkerClient } from './worker-client.js'
 
+import { prepareAnimaGenerationBatch } from './anima-generation-batch.js'
+import { prepareAnimaGeneration } from './anima-generation-preparation.js'
+import { withAnimaGenerationBatchRequests } from './anima-generation-request.js'
+import { captureAnimaRegionalWorkerInput } from './anima-regional-worker-request.js'
 import { buildFrozenQueuedOutpaintV1 } from './generation-queue.js'
 import {
   effectiveGenerationEmbeddings,
@@ -58,6 +64,7 @@ import {
   buildQueuedOutpaintWorkerRequest,
   captureOutpaintWorkerRequest,
 } from './outpaint-worker-request.js'
+import { compileCurrentCanvasAnimaRegionalPrompts } from './project-current-canvas-anima-regional-input.js'
 import { prepareCurrentCanvasRegionalRecipe } from './project-current-canvas-regional-recipe.js'
 import {
   prepareNormalGeneration,
@@ -138,11 +145,11 @@ export class ProjectRegionalGenerationError extends Error {
 export class ProjectRegionalGenerationCoordinator {
   private closed = false
   private readonly execution: PrivateRegionalExecution
-  private readonly models: GenerationModelResolver
+  private readonly illustriousModels: { error: unknown } | { value: GenerationModelResolver }
   private readonly options: {
     compositionProfile?: 'invoke-canvas-v1'
     gate: ProjectGenerationOperationGate
-    models: GenerationModelResolver
+    models: GenerationModelResolver & Partial<AnimaGenerationModelResolver>
     orchestrator: GenerationOrchestrator
     projects: ProjectService
     scratchBasePath: string
@@ -150,16 +157,29 @@ export class ProjectRegionalGenerationCoordinator {
   private readonly pending = new Set<Promise<unknown>>()
   private shutdownPromise: Promise<void> | null = null
 
+  private get models(): GenerationModelResolver {
+    if ('error' in this.illustriousModels) {
+      throw this.illustriousModels.error
+    }
+    return this.illustriousModels.value
+  }
+
   constructor(options: {
     compositionProfile?: 'invoke-canvas-v1'
     gate: ProjectGenerationOperationGate
-    models: GenerationModelResolver
+    models: GenerationModelResolver & Partial<AnimaGenerationModelResolver>
     orchestrator: GenerationOrchestrator
     projects: ProjectService
     scratchBasePath: string
   }) {
     this.options = { ...options }
-    this.models = captureModels(options.models)
+    // Preserve constructor-owned bindings for legacy Illustrious callers. An Anima-only owner
+    // may omit those collaborators; its unrelated capture failure belongs only to that lane.
+    try {
+      this.illustriousModels = { value: captureModels(options.models) }
+    } catch (error) {
+      this.illustriousModels = { error }
+    }
     this.execution = options.orchestrator.createRegionalExecution(options.compositionProfile)
   }
 
@@ -307,6 +327,9 @@ export class ProjectRegionalGenerationCoordinator {
     }
     const { assertOwner, document } = this.captureOwner(tabId, input)
     validateInvokeDraft(document, input.iterations)
+    if (document.generationDraft.model?.baseModelFamily === 'anima') {
+      return await this.track(this.submitCapturedAnimaBatch(tabId, { ...input, assertOwner }))
+    }
     const { afterPublication, beforePublication, iterations, onPlanned, withPreparation } = input
     // The call enters Service capture synchronously, before the runtime callback can await.
     return await this.track(
@@ -406,6 +429,133 @@ export class ProjectRegionalGenerationCoordinator {
       iterations: 1,
     })
     return items[0]
+  }
+
+  /** One ordinary capture and native Anima preparation; no Illustrious resolver is consulted. */
+  private async submitCapturedAnimaBatch(
+    tabId: string,
+    input: ProjectRegionalInvokeGenerationBatchSubmission & { assertOwner: () => void },
+  ): Promise<QueuedGenerationItem[]> {
+    let admitted: QueuedGenerationItem[] = []
+    try {
+      return await this.options.projects.withCapturedCurrentCanvasRegionalGenerationInput(
+        tabId,
+        async (capture) => {
+          const assertCurrent = () => {
+            input.assertOwner()
+            capture.assertCurrent()
+          }
+          assertCurrent()
+          const document = structuredClone(capture.document)
+          validateInvokeDraft(document, input.iterations)
+          const models = captureAnimaModels(this.options.models)
+          input.onPlanned?.({ truncated: false })
+          const queued = await input.withPreparation(async (preparation) => {
+            assertCurrent()
+            const ready = structuredClone(preparation.inferenceReady)
+            if (!supportsInferenceAnimaRegional(ready)) {
+              throw new ProjectRegionalGenerationError(
+                'INFERENCE_UNAVAILABLE',
+                'The image engine has not qualified Anima Regional Guidance. Repair or update the runtime.',
+              )
+            }
+            const operationalSeed = await this.options.orchestrator.readRegionalOperationalSeed(
+              tabId,
+              document.documentId,
+            )
+            assertCurrent()
+            const target = await capture.composeTarget(preparation.targetWorker)
+            assertCurrent()
+            if (target.mode !== 'txt2img') {
+              throw unsupported(
+                'Anima Regional Guidance requires a fully transparent Current Canvas generation area. Hide raster inputs or choose an empty area.',
+              )
+            }
+            const prepared = await prepareAnimaGeneration({
+              lastActualSeed: operationalSeed,
+              modelService: models,
+              target,
+            })
+            assertCurrent()
+            const batch = prepareAnimaGenerationBatch({ iterations: 1, prepared })
+            if (batch.items.length !== 1 || batch.truncated) {
+              throw unsupported(
+                'Anima Regional Guidance requires one concrete static image per click.',
+              )
+            }
+            const recipe = await prepareCurrentCanvasRegionalRecipe({
+              capture: capture.regional,
+              job: {
+                bbox: batch.context.bbox,
+                documentId: batch.context.documentId,
+                documentRevision: batch.context.documentRevision,
+                family: 'anima',
+                item: {
+                  iteration: batch.items[0].iteration,
+                  promptPairIndex: batch.items[0].promptPairIndex,
+                  prompts: { ...batch.items[0].prompts },
+                  seed: batch.items[0].seed,
+                },
+              },
+            })
+            const compiledPrompts = compileCurrentCanvasAnimaRegionalPrompts(recipe)
+            assertCurrent()
+            return await withAnimaGenerationBatchRequests({
+              modelService: models,
+              prepared: batch,
+              ready,
+              scratchBasePath: this.options.scratchBasePath,
+              use: async (requests) => {
+                assertCurrent()
+                const regionalInputs = requests.map((request) =>
+                  captureAnimaRegionalWorkerInput({
+                    compiledPrompts: [...compiledPrompts],
+                    compositionProfile: 'invoke-krea2-global-support-v1',
+                    promptInterpretation: 'invoke-fragments-v1',
+                    recipe,
+                    request,
+                  }),
+                )
+                admitted = await this.options.orchestrator.enqueuePreparedAnimaRegionalBatch(
+                  tabId,
+                  {
+                    ...(input.afterPublication ? { afterPublication: input.afterPublication } : {}),
+                    ...(input.beforePublication
+                      ? { beforePublication: input.beforePublication }
+                      : {}),
+                    assertCurrent,
+                    preparedBatch: batch,
+                    regionalInputs,
+                  },
+                )
+                return admitted
+              },
+            })
+          })
+          if (queued === null) {
+            throw new ProjectRegionalGenerationError(
+              'INFERENCE_UNAVAILABLE',
+              'The Anima Regional Guidance image engine is unavailable.',
+            )
+          }
+          assertCurrent()
+          return queued
+        },
+      )
+    } catch (error) {
+      let cleanupError: unknown
+      for (const item of admitted) {
+        try {
+          await this.options.orchestrator.cancelFailedRegionalAdmission(tabId, item.id)
+        } catch (failure) {
+          cleanupError ??= failure
+        }
+      }
+      if (cleanupError !== undefined) {
+        throw cleanupError
+      }
+      throw error
+    }
   }
 
   private async submitCapturedBatch(
@@ -829,6 +979,7 @@ export class ProjectRegionalGenerationCoordinator {
 
 function validateInvokeDraft(document: IgsProjectDocumentV1, iterations = 1): void {
   const reason = getInvokeRegionalGenerationUnavailableReason({
+    animaRegionalSupported: true,
     cfgRescaleSupported: true,
     document,
     dpmSupported: true,
@@ -841,6 +992,22 @@ function validateInvokeDraft(document: IgsProjectDocumentV1, iterations = 1): vo
   })
   if (reason) {
     throw unsupported(reason)
+  }
+}
+
+function captureAnimaModels(
+  models: Partial<AnimaGenerationModelResolver>,
+): AnimaGenerationModelResolver {
+  const bundle = models.resolveVerifiedGenerationAnimaBundleForPlan
+  const lora = models.resolveVerifiedAnimaGenerationLoraForPlan
+  if (typeof bundle !== 'function' || typeof lora !== 'function') {
+    throw invalid('The exact original Anima bundle cannot be verified.')
+  }
+  return {
+    resolveVerifiedAnimaGenerationLoraForPlan: async (...args) =>
+      structuredClone(await lora.apply(models, structuredClone(args))),
+    resolveVerifiedGenerationAnimaBundleForPlan: async (...args) =>
+      structuredClone(await bundle.apply(models, structuredClone(args))),
   }
 }
 

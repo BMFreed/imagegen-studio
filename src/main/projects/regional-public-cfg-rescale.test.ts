@@ -89,6 +89,7 @@ async function cfgFixture() {
       await use({
         ...f.transport({
           executeCurrentCanvasRegional: async (input) => {
+            assert.ok(input.compositionProfile !== 'invoke-krea2-global-support-v1')
             consumed.push(structuredClone(input))
             if (controls.fail) {
               throw new Error('Controlled regional inference failure')

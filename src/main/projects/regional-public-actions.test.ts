@@ -78,6 +78,7 @@ async function publicActionsFixture() {
       return await use({
         ...f.transport({
           executeCurrentCanvasRegional: async (input) => {
+            assert.ok(input.compositionProfile !== 'invoke-krea2-global-support-v1')
             consumed.push(structuredClone(input))
             if (controls.failInference) {
               throw new Error('Controlled first regional inference refusal')

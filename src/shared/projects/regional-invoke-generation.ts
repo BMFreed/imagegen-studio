@@ -100,6 +100,7 @@ export function hasActiveGlobalPromptEmbeddings(
  * separately qualified image subset; omitted target mode preserves pre-composition Main checks.
  */
 export function getInvokeRegionalGenerationUnavailableReason(input: {
+  animaRegionalSupported?: boolean | null
   cfgRescaleSupported?: boolean | null
   document: RegionalDocument
   dpmSupported?: boolean | null
@@ -122,6 +123,9 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
     return null
   }
   const draft = input.document.generationDraft
+  if (draft.model?.baseModelFamily === 'anima' && draft.model.predictionType === null) {
+    return getAnimaRegionalGenerationUnavailableReason(input)
+  }
   if (
     draft.model?.kind !== 'checkpoint' ||
     draft.model.baseModelFamily !== 'illustrious' ||
@@ -318,4 +322,102 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
     }
   }
   return null
+}
+
+/**
+ * Invoke ae06c1bd: addRegionalGuidance.ts uses truthy positive text and Anima has no spatial
+ * negatives or references. The explicit first lane uses Krea-2's global-support predicate from
+ * backend/krea2/regional_prompting.py; no authoring text, inheritance or defaults are changed.
+ */
+function getAnimaRegionalGenerationUnavailableReason(input: {
+  animaRegionalSupported?: boolean | null
+  document: RegionalDocument
+  iterations: number
+  targetMode?: 'img2img' | 'outpaint' | 'txt2img' | null
+}): string | null {
+  const draft = input.document.generationDraft
+  const regions = input.document.regionalGuidance?.filter((region) => region.enabled) ?? []
+  if (draft.model?.kind !== 'checkpoint' || draft.model.predictionType !== null) {
+    return 'Regional Guidance requires an original Anima checkpoint on Current Canvas.'
+  }
+  if (input.targetMode === 'img2img' || input.targetMode === 'outpaint') {
+    return 'Anima Regional Guidance requires a fully transparent Current Canvas generation area. Hide raster inputs or choose an empty area.'
+  }
+  if (draft.sampling.animaMethod !== 'euler') {
+    return 'Anima Regional Guidance requires the native Anima Euler sampling method.'
+  }
+  const { cfgScale, steps } = draft.sampling
+  if (cfgScale === null || !Number.isFinite(cfgScale) || cfgScale < 1 || cfgScale > 30) {
+    return 'Anima Regional Guidance requires CFG from 1 to 30.'
+  }
+  if (steps === null || !Number.isSafeInteger(steps) || steps < 1 || steps > 200) {
+    return 'Anima Regional Guidance requires an integer from 1 to 200 for Steps.'
+  }
+  if (input.iterations !== 1) {
+    return 'Anima Regional Guidance supports one image per click. Set Images to 1.'
+  }
+  if (draft.loras.some((entry) => entry.enabled)) {
+    return 'Disable all enabled LoRAs before generating with Anima Regional Guidance.'
+  }
+  if (draft.vae !== null || (draft.vaePrecision ?? 'Auto') !== 'Auto') {
+    return 'Anima Regional Guidance requires its embedded VAE and Auto VAE precision.'
+  }
+  if ((draft.cfgRescale ?? 0) !== 0 || draft.clipSkip !== undefined) {
+    return 'Anima Regional Guidance requires CFG Rescale 0 and no CLIP Skip setting.'
+  }
+  if (regions.some((region) => (region.referenceImages?.length ?? 0) > 0)) {
+    return 'Remove reference images from enabled regions before generating with Anima Regional Guidance.'
+  }
+  if (regions.some((region) => !region.prompts?.positive?.text)) {
+    return 'Add a nonempty positive prompt to each enabled Anima Regional Guidance region, or disable that region.'
+  }
+  if (regions.length > 3) {
+    return 'Anima Regional Guidance supports at most 3 enabled regions with nonempty positive prompts.'
+  }
+  for (const region of regions) {
+    const local = region.prompts?.useGlobalNegativePrompt === false
+    const negative = local ? region.prompts?.negative : draft.negativePrompt
+    if (negative?.text !== '') {
+      return local
+        ? 'Clear each enabled region’s local negative prompt before generating with Anima Regional Guidance.'
+        : 'Anima Regional Guidance cannot inherit a nonempty global negative prompt. Clear it, or turn off Use global negative prompt and set an explicit empty local negative in each enabled region.'
+    }
+  }
+  const prompts = [
+    draft.positivePrompt,
+    draft.negativePrompt,
+    ...regions.flatMap((region) => [
+      ...(region.prompts?.positive ? [region.prompts.positive] : []),
+      ...(region.prompts?.useGlobalNegativePrompt === false && region.prompts.negative
+        ? [region.prompts.negative]
+        : []),
+    ]),
+  ]
+  if (prompts.some((prompt) => /[{}]/u.test(prompt.text))) {
+    return 'Anima Regional Guidance requires static global and regional prompt text without braces.'
+  }
+  if (
+    prompts.some(
+      (prompt) => activePromptEmbeddingRefs(prompt.text, prompt.embeddingRefs).length > 0,
+    )
+  ) {
+    return 'Remove active textual-inversion tokens before generating with Anima Regional Guidance.'
+  }
+  if (draft.positivePrompt.embeddingRefs.length || draft.negativePrompt.embeddingRefs.length) {
+    return 'Remove global prompt embedding references before generating with Anima Regional Guidance.'
+  }
+  const { height, width } = input.document.primaryBbox
+  if (
+    [height, width].some(
+      (side) => !Number.isSafeInteger(side) || side < 64 || side > 512 || side % 8 !== 0,
+    )
+  ) {
+    return 'Anima Regional Guidance requires dimensions from 64 to 512, divisible by 8.'
+  }
+  if (input.animaRegionalSupported == null) {
+    return 'Checking image engine support for Anima Regional Guidance. Repair or update the runtime if support remains unavailable.'
+  }
+  return input.animaRegionalSupported === true
+    ? null
+    : 'The current image engine does not support Anima Regional Guidance. Repair or update the runtime.'
 }

@@ -1,4 +1,5 @@
 import { LAMA_OUTPAINT_IDENTITY_V1 } from '../../shared/projects/alpha-outpaint.js'
+import type { AnimaWorkerRequest } from '../../shared/projects/anima-worker-request.js'
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
 import { IllustriousNoiseProfileV1Schema } from '../../shared/projects/illustrious-noise-profile.js'
 import {
@@ -18,6 +19,10 @@ import type { IllustriousOutpaintRequestV1 } from './outpaint-worker-request.js'
 import type { CurrentCanvasRegionalRecipe } from './project-current-canvas-regional-recipe.js'
 import type { VerifiedWorkerImage } from './worker-client.js'
 
+import {
+  type AnimaRegionalWorkerInput,
+  captureAnimaRegionalWorkerInput,
+} from './anima-regional-worker-request.js'
 import {
   ExactIllustriousEmbeddingSchema,
   frozenEmbeddingFieldsAgree,
@@ -61,6 +66,10 @@ export interface RegionalWorkerInput {
   request: RegionalGenerationRequestV1
 }
 
+export type OperationalRegionalWorkerInput = AnimaRegionalWorkerInput | RegionalWorkerInput
+export type OperationalRegionalGenerationRequestV1 =
+  AnimaWorkerRequest | RegionalGenerationRequestV1
+
 export interface RegionalWorkerFile {
   byteSize: number
   path: string
@@ -72,13 +81,15 @@ export interface RegionalWorkerWire {
   protocolVersion: '1'
   requestId: string
   stagingRoot: string
-  type: 'execute-current-canvas-regional'
+  type: 'execute-current-canvas-anima-regional' | 'execute-current-canvas-regional'
 }
 
 /** The transport owns this lease after dispatch, including an unconfirmed physical child exit. */
-export interface RegionalWorkerLease {
+export interface RegionalWorkerLease<
+  T extends OperationalRegionalGenerationRequestV1 = RegionalGenerationRequestV1,
+> {
   dispose: () => Promise<void>
-  request: RegionalGenerationRequestV1
+  request: T
   wire: RegionalWorkerWire
 }
 
@@ -97,14 +108,14 @@ const MAX_LORA_BYTES = 512 * 1024 * 1024
 const MAX_TARGET_BYTES = 32 * 1024 * 1024
 const MAX_LINE_BYTES = 64 * 1024
 const SHA256 = /^[a-f0-9]{64}$/
-const leases = new WeakMap<RegionalWorkerLease, LeaseState>()
+const leases = new WeakMap<object, LeaseState>()
 
 interface LeaseState {
   base: string
   baseIdentity: BigIntStats
   disposal: Promise<void> | null
   disposed: boolean
-  request: RegionalGenerationRequestV1
+  request: OperationalRegionalGenerationRequestV1
   root: string
   rootIdentity: BigIntStats
 }
@@ -356,6 +367,14 @@ export function captureRegionalWorkerInput(input: RegionalWorkerInput): Regional
   return detached as RegionalWorkerInput
 }
 
+export function captureOperationalRegionalWorkerInput(
+  input: OperationalRegionalWorkerInput,
+): OperationalRegionalWorkerInput {
+  return input.compositionProfile === 'invoke-krea2-global-support-v1'
+    ? captureAnimaRegionalWorkerInput(input)
+    : captureRegionalWorkerInput(input)
+}
+
 /**
  * Detach before the first await, then own independent recipe/alpha/target snapshots. No input path
  * is renamed, retained as a capture lease, or removed. InvokeAI a61ac4fb uses captured pixels and
@@ -370,7 +389,7 @@ export async function prepareRegionalWorkerRequest(
   const capturedOwner = owner === undefined ? undefined : captureInferenceWorkerOwnerValue(owner)
   const detached = captureRegionalWorkerInput(input) as v.InferOutput<typeof inputSchema>
   const base = scratchBasePath
-  const baseIdentity = await canonicalDirectory(base)
+  const baseIdentity = await canonicalRegionalDirectory(base)
   const sources = [
     detached.request.job.checkpoint,
     ...(detached.request.job.loras ?? []),
@@ -379,7 +398,7 @@ export async function prepareRegionalWorkerRequest(
   ]
   for (const resource of sources) {
     const file = 'managedPath' in resource ? resource.managedPath : resource.path
-    if (!v.is(filePath, file) || within(base, file) || file === base) {
+    if (!v.is(filePath, file) || withinRegionalPath(base, file) || file === base) {
       throw invalidPath('Regional model resources must be outside disposable scratch.')
     }
     const entry = await lstat(file, { bigint: true })
@@ -395,7 +414,7 @@ export async function prepareRegionalWorkerRequest(
   const request = detached.request as RegionalGenerationRequestV1
   if (request.type === 'generate-illustrious-outpaint') {
     const infill = request.job.infillResource
-    if (within(base, infill.path) || infill.path === base) {
+    if (withinRegionalPath(base, infill.path) || infill.path === base) {
       throw invalidPath('Regional infill must be outside disposable scratch.')
     }
     const info = await lstat(infill.path, { bigint: true })
@@ -432,8 +451,92 @@ export async function prepareRegionalWorkerRequest(
   if (request.type === 'generate-illustrious-outpaint') {
     await assertFrozenAlphaOutpaintConditioning(request.job.conditioning, targetBytes)
   }
+  return await prepareOwnedRegionalWorkerRequest({
+    base,
+    baseIdentity,
+    materialize: async (operationalRequest, alphaDescriptor) => {
+      const request = operationalRequest as RegionalGenerationRequestV1
+      const regions = []
+      for (const [index, region] of detached.recipe.regions.entries()) {
+        regions.push({
+          ...region,
+          coverage: {
+            ...region.coverage,
+            alpha: await alphaDescriptor(region.coverage.alpha, `region-${index}.alpha8`),
+          },
+        })
+      }
+      const globalCoverage = async (coverage: RegionalGlobalCoverage, sign: string) =>
+        coverage.kind === 'everywhere'
+          ? coverage
+          : {
+              ...coverage,
+              alpha: await alphaDescriptor(coverage.alpha, `global-${sign}.alpha8`),
+            }
+      // Invoke applies TI while building each prompt's conditioning. The recipe owns that loading
+      // here; the ordinary command remains intact for frozen agreement, provenance and Retry.
+      // Its graph.ts SDXL LoRA collection targets both CLIPs and UNet. Retain that logical stack
+      // for the regional worker's single application scope before its components are borrowed.
+      // The selected VAE and precision remain intact for that same pre-borrow preparation owner.
+      const nativeRequest = structuredClone(request)
+      if (
+        detached.compositionProfile === 'invoke-canvas-v1' &&
+        ((nativeRequest.job.embeddings?.positive.length ?? 0) > 0 ||
+          (nativeRequest.job.embeddings?.negative.length ?? 0) > 0)
+      ) {
+        delete nativeRequest.job.embeddings
+      }
+      return {
+        ...(detached.compositionProfile ? { compositionProfile: detached.compositionProfile } : {}),
+        ...(detached.initializationProfile !== undefined
+          ? { initializationProfile: detached.initializationProfile }
+          : {}),
+        globalNegativeCoverage: await globalCoverage(detached.globalNegativeCoverage, 'negative'),
+        globalPositiveCoverage: await globalCoverage(detached.globalPositiveCoverage, 'positive'),
+        layout: detached.layout,
+        negativePooledSourceId: detached.negativePooledSourceId,
+        positivePooledSourceId: detached.positivePooledSourceId,
+        recipe: { ...detached.recipe, regions },
+        request: nativeRequest,
+        schemaVersion: 1,
+      }
+    },
+    owner: capturedOwner,
+    request,
+    targetBytes,
+    type: 'execute-current-canvas-regional',
+  })
+}
+
+/** Shared fixed-role transport ownership, including the physical-exit disposal fence. */
+export async function prepareOwnedRegionalWorkerRequest<
+  T extends OperationalRegionalGenerationRequestV1,
+>(input: {
+  base: string
+  baseIdentity?: BigIntStats
+  materialize: (
+    request: OperationalRegionalGenerationRequestV1,
+    alpha: (samples: Uint8Array, name: string) => Promise<{ $alpha8: RegionalWorkerFile }>,
+  ) => Promise<unknown>
+  owner?: InferenceWorkerOwner
+  request: T
+  targetBytes: Buffer
+  type: RegionalWorkerWire['type']
+}): Promise<RegionalWorkerLease<T>> {
+  const { base, targetBytes } = input
+  const baseIdentity = input.baseIdentity ?? (await canonicalRegionalDirectory(base))
+  const capturedOwner =
+    input.owner === undefined ? undefined : captureInferenceWorkerOwnerValue(input.owner)
   const root = await mkdtemp(path.join(base, 'regional-request-'))
-  const rootIdentity = await canonicalDirectory(root)
+  const rootIdentity = await canonicalRegionalDirectory(root)
+  const request = {
+    ...structuredClone(input.request),
+    job: {
+      ...structuredClone(input.request.job),
+      output: { pngPath: path.join(root, 'result.png'), stagingRoot: root },
+      target: { ...structuredClone(input.request.job.target), path: path.join(root, 'target.png') },
+    },
+  } as T
   const state: LeaseState = {
     base,
     baseIdentity,
@@ -447,8 +550,6 @@ export async function prepareRegionalWorkerRequest(
     if (capturedOwner) {
       await writeOwnerMarker(state, capturedOwner)
     }
-    request.job.target.path = path.join(root, 'target.png')
-    request.job.output = { pngPath: path.join(root, 'result.png'), stagingRoot: root }
     await writeFile(request.job.target.path, targetBytes, { flag: 'wx', mode: 0o600 })
     let alphaBytes = 0
     const alphaDescriptor = async (alpha: Uint8Array, name: string) => {
@@ -461,50 +562,7 @@ export async function prepareRegionalWorkerRequest(
       await writeFile(file, bytes, { flag: 'wx', mode: 0o600 })
       return { $alpha8: descriptor(file, bytes) }
     }
-    const regions = []
-    for (const [index, region] of detached.recipe.regions.entries()) {
-      regions.push({
-        ...region,
-        coverage: {
-          ...region.coverage,
-          alpha: await alphaDescriptor(region.coverage.alpha, `region-${index}.alpha8`),
-        },
-      })
-    }
-    const globalCoverage = async (coverage: RegionalGlobalCoverage, sign: string) =>
-      coverage.kind === 'everywhere'
-        ? coverage
-        : {
-            ...coverage,
-            alpha: await alphaDescriptor(coverage.alpha, `global-${sign}.alpha8`),
-          }
-    // Invoke applies TI while building each prompt's conditioning. The recipe owns that loading
-    // here; the ordinary command remains intact for frozen agreement, provenance and Retry.
-    // Its graph.ts SDXL LoRA collection targets both CLIPs and UNet. Retain that logical stack
-    // for the regional worker's single application scope before its components are borrowed.
-    // The selected VAE and precision remain intact for that same pre-borrow preparation owner.
-    const nativeRequest = structuredClone(request)
-    if (
-      detached.compositionProfile === 'invoke-canvas-v1' &&
-      ((nativeRequest.job.embeddings?.positive.length ?? 0) > 0 ||
-        (nativeRequest.job.embeddings?.negative.length ?? 0) > 0)
-    ) {
-      delete nativeRequest.job.embeddings
-    }
-    const bundle = {
-      ...(detached.compositionProfile ? { compositionProfile: detached.compositionProfile } : {}),
-      ...(detached.initializationProfile !== undefined
-        ? { initializationProfile: detached.initializationProfile }
-        : {}),
-      globalNegativeCoverage: await globalCoverage(detached.globalNegativeCoverage, 'negative'),
-      globalPositiveCoverage: await globalCoverage(detached.globalPositiveCoverage, 'positive'),
-      layout: detached.layout,
-      negativePooledSourceId: detached.negativePooledSourceId,
-      positivePooledSourceId: detached.positivePooledSourceId,
-      recipe: { ...detached.recipe, regions },
-      request: nativeRequest,
-      schemaVersion: 1,
-    }
+    const bundle = await input.materialize(request, alphaDescriptor)
     assertJsonTree(bundle)
     const bytes = Buffer.from(JSON.stringify(bundle), 'utf8')
     if (bytes.length > MAX_BUNDLE_BYTES) {
@@ -517,14 +575,14 @@ export async function prepareRegionalWorkerRequest(
       protocolVersion: '1',
       requestId: request.requestId,
       stagingRoot: root,
-      type: 'execute-current-canvas-regional',
+      type: input.type,
     }
     if (Buffer.byteLength(`${JSON.stringify(wire)}\n`) > MAX_LINE_BYTES) {
       throw invalid('Regional wire exceeds 64 KiB.')
     }
     freezeTree(request)
     freezeTree(wire)
-    const lease: RegionalWorkerLease = Object.freeze({
+    const lease: RegionalWorkerLease<T> = Object.freeze({
       dispose: () => dispose(state),
       request,
       wire,
@@ -539,7 +597,7 @@ export async function prepareRegionalWorkerRequest(
 
 /** Verify correlation and actual RGB/ICC bytes, independently of optional thumbnail claims. */
 export async function readRegionalWorkerResult(
-  lease: RegionalWorkerLease,
+  lease: RegionalWorkerLease<OperationalRegionalGenerationRequestV1>,
   response: Record<string, unknown>,
 ): Promise<RegionalWorkerResult> {
   const state = leases.get(lease)
@@ -565,7 +623,7 @@ export async function readRegionalWorkerResult(
   ) {
     throw new ProjectWorkerError('OUTPUT_MISMATCH', 'Regional completion differs from its request.')
   }
-  const bytes = await readBoundedFile(request.job.output.pngPath, MAX_TARGET_BYTES)
+  const bytes = await readBoundedRegionalFile(request.job.output.pngPath, MAX_TARGET_BYTES)
   const output: VerifiedWorkerImage = {
     ...descriptor(request.job.output.pngPath, bytes),
     colorSpace: 'srgb',
@@ -586,6 +644,87 @@ export async function readRegionalWorkerResult(
     await assertOutpaintContribution(request.job.conditioning, source, pngBytes)
   }
   return { output, pngBytes, seed: request.job.sampling.seed }
+}
+
+export async function canonicalRegionalDirectory(directory: string): Promise<BigIntStats> {
+  if (!v.is(filePath, directory)) {
+    throw invalidPath('Regional scratch path is invalid.')
+  }
+  const stat = await lstat(directory, { bigint: true })
+  if (
+    !stat.isDirectory() ||
+    stat.isSymbolicLink() ||
+    stat.uid !== BigInt(process.getuid!()) ||
+    (stat.mode & 0o022n) !== 0n ||
+    (await realpath(directory)) !== directory
+  ) {
+    throw invalidPath('Regional scratch must be an owned canonical private directory.')
+  }
+  return stat
+}
+
+export async function readBoundedRegionalFile(filePath: string, maximum: number): Promise<Buffer> {
+  const file = await open(
+    filePath,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  ).catch(() => {
+    throw new ProjectWorkerError('OUTPUT_MISMATCH', 'Regional output is unavailable.')
+  })
+  try {
+    const before = await file.stat({ bigint: true })
+    if (
+      !before.isFile() ||
+      before.size < 1n ||
+      before.size > BigInt(maximum) ||
+      before.nlink !== 1n
+    ) {
+      throw new ProjectWorkerError(
+        'OUTPUT_MISMATCH',
+        'Regional output is not a bounded owned file.',
+      )
+    }
+    const bytes = Buffer.alloc(Number(before.size))
+    let offset = 0
+    while (offset < bytes.length) {
+      const read = await file.read(bytes, offset, bytes.length - offset, offset)
+      if (read.bytesRead === 0) {
+        break
+      }
+      offset += read.bytesRead
+    }
+    const after = await file.stat({ bigint: true })
+    const atPath = await lstat(filePath, { bigint: true })
+    if (
+      offset !== bytes.length ||
+      !sameIdentity(before, after) ||
+      !sameIdentity(before, atPath) ||
+      before.size !== after.size ||
+      before.ctimeNs !== after.ctimeNs ||
+      before.mtimeNs !== after.mtimeNs ||
+      atPath.isSymbolicLink() ||
+      (await realpath(filePath)) !== filePath
+    ) {
+      throw new ProjectWorkerError('OUTPUT_MISMATCH', 'Regional output changed while being read.')
+    }
+    return bytes
+  } catch (error) {
+    if (error instanceof ProjectWorkerError) {
+      throw error
+    }
+    throw new ProjectWorkerError('OUTPUT_MISMATCH', 'Regional output could not be verified.')
+  } finally {
+    await file.close()
+  }
+}
+
+export function withinRegionalPath(parent: string, child: string): boolean {
+  const relative = path.relative(parent, child)
+  return (
+    relative !== '' &&
+    relative !== '..' &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative)
+  )
 }
 
 function validateAgreement(input: v.InferOutput<typeof inputSchema>): void {
@@ -739,26 +878,9 @@ function descriptor(file: string, bytes: Buffer): RegionalWorkerFile {
   }
 }
 
-async function canonicalDirectory(directory: string): Promise<BigIntStats> {
-  if (!v.is(filePath, directory)) {
-    throw invalidPath('Regional scratch path is invalid.')
-  }
-  const stat = await lstat(directory, { bigint: true })
-  if (
-    !stat.isDirectory() ||
-    stat.isSymbolicLink() ||
-    stat.uid !== BigInt(process.getuid!()) ||
-    (stat.mode & 0o022n) !== 0n ||
-    (await realpath(directory)) !== directory
-  ) {
-    throw invalidPath('Regional scratch must be an owned canonical private directory.')
-  }
-  return stat
-}
-
 async function assertStage(state: LeaseState): Promise<void> {
-  const base = await canonicalDirectory(state.base)
-  const root = await canonicalDirectory(state.root)
+  const base = await canonicalRegionalDirectory(state.base)
+  const root = await canonicalRegionalDirectory(state.root)
   if (!sameIdentity(base, state.baseIdentity) || !sameIdentity(root, state.rootIdentity)) {
     throw invalidPath('Regional staging was replaced.')
   }
@@ -859,72 +981,8 @@ async function dispose(state: LeaseState): Promise<void> {
   await state.disposal
 }
 
-async function readBoundedFile(filePath: string, maximum: number): Promise<Buffer> {
-  const file = await open(
-    filePath,
-    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-  ).catch(() => {
-    throw new ProjectWorkerError('OUTPUT_MISMATCH', 'Regional output is unavailable.')
-  })
-  try {
-    const before = await file.stat({ bigint: true })
-    if (
-      !before.isFile() ||
-      before.size < 1n ||
-      before.size > BigInt(maximum) ||
-      before.nlink !== 1n
-    ) {
-      throw new ProjectWorkerError(
-        'OUTPUT_MISMATCH',
-        'Regional output is not a bounded owned file.',
-      )
-    }
-    const bytes = Buffer.alloc(Number(before.size))
-    let offset = 0
-    while (offset < bytes.length) {
-      const read = await file.read(bytes, offset, bytes.length - offset, offset)
-      if (read.bytesRead === 0) {
-        break
-      }
-      offset += read.bytesRead
-    }
-    const after = await file.stat({ bigint: true })
-    const atPath = await lstat(filePath, { bigint: true })
-    if (
-      offset !== bytes.length ||
-      !sameIdentity(before, after) ||
-      !sameIdentity(before, atPath) ||
-      before.size !== after.size ||
-      before.ctimeNs !== after.ctimeNs ||
-      before.mtimeNs !== after.mtimeNs ||
-      atPath.isSymbolicLink() ||
-      (await realpath(filePath)) !== filePath
-    ) {
-      throw new ProjectWorkerError('OUTPUT_MISMATCH', 'Regional output changed while being read.')
-    }
-    return bytes
-  } catch (error) {
-    if (error instanceof ProjectWorkerError) {
-      throw error
-    }
-    throw new ProjectWorkerError('OUTPUT_MISMATCH', 'Regional output could not be verified.')
-  } finally {
-    await file.close()
-  }
-}
-
 function sameIdentity(left: BigIntStats, right: BigIntStats): boolean {
   return left.dev === right.dev && left.ino === right.ino
-}
-
-function within(parent: string, child: string): boolean {
-  const relative = path.relative(parent, child)
-  return (
-    relative !== '' &&
-    relative !== '..' &&
-    !relative.startsWith(`..${path.sep}`) &&
-    !path.isAbsolute(relative)
-  )
 }
 
 /** Reject values which JSON would omit, coerce, invoke, or serialize through a custom prototype. */

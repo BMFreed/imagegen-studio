@@ -16,7 +16,10 @@ import type { GenerationQueueTestHooks } from '../generation-queue.js'
 import type { GenerationStagingTestHooks } from '../generation-staging.js'
 import type { GenerationModelResolver } from '../illustrious-generation-loras.js'
 import type { RegionalGenerationTransport } from '../regional-generation-processor.js'
-import type { RegionalWorkerInput, RegionalWorkerResult } from '../regional-worker-request.js'
+import type {
+  OperationalRegionalWorkerInput,
+  RegionalWorkerResult,
+} from '../regional-worker-request.js'
 import type { ProjectWorkerClient } from '../worker-client.js'
 
 import { openAppDatabase } from '../../db/database.js'
@@ -306,19 +309,22 @@ export async function createRegionalProjectFixture(
     change(next)
     await co.applyDocument(next)
   }
-  const resultFor = (value: RegionalWorkerInput): RegionalWorkerResult => ({
-    output: {
-      byteSize: outputBytes.length,
-      colorSpace: 'srgb',
-      height: 64,
-      iccSha256: IGS_SRGB_ICC_SHA256,
-      path: path.join(root, 'disposed-provisional-result.png'),
-      sha256: regionalProjectDigest(outputBytes),
-      width: 64,
-    },
-    pngBytes: Buffer.from(outputBytes),
-    seed: value.request.job.sampling.seed,
-  })
+  const resultFor = (value: OperationalRegionalWorkerInput): RegionalWorkerResult => {
+    assert.ok(value.compositionProfile !== 'invoke-krea2-global-support-v1')
+    return {
+      output: {
+        byteSize: outputBytes.length,
+        colorSpace: 'srgb',
+        height: 64,
+        iccSha256: IGS_SRGB_ICC_SHA256,
+        path: path.join(root, 'disposed-provisional-result.png'),
+        sha256: regionalProjectDigest(outputBytes),
+        width: 64,
+      },
+      pngBytes: Buffer.from(outputBytes),
+      seed: value.request.job.sampling.seed,
+    }
+  }
   const transport = (
     overrides: Partial<RegionalGenerationTransport> = {},
   ): RegionalGenerationTransport => ({

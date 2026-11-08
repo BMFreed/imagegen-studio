@@ -164,6 +164,7 @@ async function fixture() {
       await use({
         ...f.transport({
           executeCurrentCanvasRegional: async (input, onProgress) => {
+            assert.ok(input.compositionProfile !== 'invoke-krea2-global-support-v1')
             assert.equal(input.request.type, 'generate-illustrious-outpaint')
             if (input.request.type !== 'generate-illustrious-outpaint') {
               assert.fail('Wrong outpaint command')

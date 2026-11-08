@@ -197,6 +197,7 @@ async function loraFixture() {
       return await use({
         ...f.transport({
           executeCurrentCanvasRegional: async (input) => {
+            assert.ok(input.compositionProfile !== 'invoke-krea2-global-support-v1')
             consumed.push(structuredClone(input))
             if (controls.failSeeds.has(input.request.job.sampling.seed)) {
               throw new Error('Controlled frozen regional LoRA inference refusal')

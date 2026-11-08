@@ -150,6 +150,7 @@ async function imageFixture() {
       await use({
         ...f.transport({
           executeCurrentCanvasRegional: async (input, onProgress) => {
+            assert.ok(input.compositionProfile !== 'invoke-krea2-global-support-v1')
             consumed.push(structuredClone(input))
             const bytes = await readFile(input.request.job.target.path)
             consumedTargets.push(bytes)

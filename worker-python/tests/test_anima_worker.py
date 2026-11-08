@@ -320,15 +320,16 @@ def test_actual_ready_composition_advertises_anima_only_on_native_bf16_hardware(
     yes = inference_ready_message(fake_runtime())
     no = inference_ready_message(fake_runtime(bf16=False))
     capabilities = cast(list[str], yes["capabilities"])
-    assert capabilities[-6:] == [
+    assert capabilities[-7:] == [
         "anima-txt2img",
         "anima-img2img",
         "anima-lora",
         "anima-prompt-weighting",
         "anima-flow-sampling",
         "anima-outpaint",
+        "anima-regional-txt2img-v1",
     ]
-    assert no["capabilities"] == capabilities[:-6]
+    assert no["capabilities"] == capabilities[:-7]
     assert no["workerVersion"] == yes["workerVersion"] == "0.14.0"
     assert "illustrious-txt2img" in cast(list[str], no["capabilities"])
     assert inference_ready_message()["capabilities"] == no["capabilities"]

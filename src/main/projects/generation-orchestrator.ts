@@ -25,6 +25,7 @@ import type {
 } from '../runtime/inference-auxiliary-resources.js'
 import type { PreparedAnimaGenerationBatch } from './anima-generation-batch.js'
 import type { AnimaGenerationModelResolver } from './anima-generation-preparation.js'
+import type { AnimaRegionalWorkerInput } from './anima-regional-worker-request.js'
 import type { GenerationWorkerTransport } from './generation-processor.js'
 import type { GenerationProcessorResult } from './generation-processor.js'
 import type { GenerationProcessor } from './generation-processor.js'
@@ -60,7 +61,13 @@ import type {
 import type { SmartPatchGenerationStagingRepository } from './smart-patch-generation-staging.js'
 import type { ProjectWorkerClient } from './worker-client.js'
 
+import { reverifyFrozenAnimaGeneration } from './anima-generation-preparation.js'
 import { withAnimaGenerationBatchRequests } from './anima-generation-request.js'
+import {
+  parseFrozenQueuedAnimaGenerationV1,
+  reverifyFrozenQueuedAnimaGeneration,
+} from './anima-queued-generation.js'
+import { captureAnimaRegionalWorkerInput } from './anima-regional-worker-request.js'
 import {
   buildFrozenQueuedOutpaintV1,
   reverifyFrozenQueuedOutpaintGeneration,
@@ -307,6 +314,7 @@ export class GenerationOrchestrator {
   async cancelGenerationJob(id: string): Promise<QueuedGenerationItem> {
     const entry = await this.queue.getManagerEntry(id)
     if (
+      entry.operation === 'anima-regional-txt2img' ||
       entry.operation === 'illustrious-regional-txt2img' ||
       entry.operation === 'illustrious-regional-img2img' ||
       entry.operation === 'illustrious-regional-outpaint'
@@ -727,6 +735,116 @@ export class GenerationOrchestrator {
           }
         },
       })
+    })
+    this.enqueueBarrier = operation.then(
+      () => undefined,
+      () => undefined,
+    )
+    return await operation
+  }
+
+  /** One captured public Anima regional item, using the existing Anima files-first queue owner. */
+  async enqueuePreparedAnimaRegionalBatch(
+    tabId: string,
+    input: {
+      afterPublication?: (
+        items: readonly QueuedGenerationItem[],
+        assertCurrent: () => void,
+      ) => Promise<void>
+      assertCurrent: () => void
+      beforePublication?: () => Promise<void>
+      preparedBatch: PreparedAnimaGenerationBatch
+      regionalInputs: readonly AnimaRegionalWorkerInput[]
+    },
+  ): Promise<QueuedGenerationItem[]> {
+    this.assertGenerationOpen(tabId)
+    const preparedBatch = {
+      ...structuredClone(input.preparedBatch),
+      targetPngBytes: Buffer.from(input.preparedBatch.targetPngBytes),
+    }
+    const regionalInputs = input.regionalInputs.map((regional) =>
+      captureAnimaRegionalWorkerInput(regional),
+    )
+    if (preparedBatch.items.length !== 1 || regionalInputs.length !== 1) {
+      throw new GenerationOrchestratorError(
+        'GENERATION_BATCH_INVALID',
+        'Anima Regional Guidance requires one captured item.',
+      )
+    }
+    const { afterPublication, beforePublication } = input
+    const assertCaptured = input.assertCurrent
+    const assertCurrent = () => {
+      this.assertGenerationOpen(tabId)
+      if (
+        this.regionalStopping ||
+        this.projects.getOpenDocumentId(tabId) !== preparedBatch.context.documentId
+      ) {
+        throw new GenerationOrchestratorError(
+          'PROJECT_DOCUMENT_CHANGED',
+          'The captured Anima regional Project changed.',
+        )
+      }
+      assertCaptured()
+    }
+    assertCurrent()
+    const operation = this.enqueueBarrier.then(async () => {
+      this.queue.assertReadyForDispatch()
+      this.staging.assertReadyForPublication()
+      assertCurrent()
+      const project = await this.indexedProject(tabId)
+      const assertIdentity = async () => {
+        assertCurrent()
+        const current = await this.indexedProject(tabId)
+        assertCurrent()
+        if (
+          project.documentId !== preparedBatch.context.documentId ||
+          current.documentId !== project.documentId ||
+          current.canonicalPath !== project.canonicalPath
+        ) {
+          throw new GenerationOrchestratorError(
+            'PROJECT_DOCUMENT_CHANGED',
+            'The indexed Anima regional Project changed.',
+          )
+        }
+      }
+      await assertIdentity()
+      await reverifyFrozenAnimaGeneration(
+        preparedBatch.context,
+        this.models as AnimaGenerationModelResolver,
+      )
+      assertCurrent()
+      await beforePublication?.()
+      assertCurrent()
+      const stagingSessionId = randomUUID()
+      const queued = await this.queue.enqueueAnimaRegionalBatchWithCaptureGate({
+        beforeCommit: async () => assertCurrent(),
+        preflight: async (entries) => {
+          await assertIdentity()
+          await this.staging.preflightRegionalBatchCapacity({
+            entries,
+            localProjectKey: tabId,
+            projectPath: project.canonicalPath,
+            stagingSessionId,
+          })
+          assertCurrent()
+        },
+        preparedBatch,
+        projectPath: project.canonicalPath,
+        regionalInputs,
+        requests: regionalInputs.map((regional) => regional.request),
+        stagingSessionId,
+      })
+      try {
+        await assertIdentity()
+        await afterPublication?.(queued, assertCurrent)
+        assertCurrent()
+        return queued
+      } catch (error) {
+        for (const item of queued) {
+          await this.cancelFailedRegionalAdmission(tabId, item.id)
+        }
+        throw error
+      }
     })
     this.enqueueBarrier = operation.then(
       () => undefined,
@@ -1355,6 +1473,106 @@ export class GenerationOrchestrator {
       )
     }
     return { ...source }
+  }
+
+  /** Frozen Anima regional Retry checks ownership and saved resources without reading the draft. */
+  async retryAnimaRegional(
+    tabId: string,
+    id: string,
+    expectedStatusSequence: number,
+  ): Promise<QueuedGenerationItem> {
+    this.assertGenerationOpen(tabId)
+    const owner = this.projects.getOpenDocumentForAcceptance?.(tabId)
+    if (!owner) {
+      throw new GenerationOrchestratorError('PROJECT_NOT_OPEN', 'Open the Project before Retry.')
+    }
+    const documentId = owner.document.documentId
+    const assertCurrent = () => {
+      this.assertGenerationOpen(tabId)
+      if (
+        this.regionalStopping ||
+        this.projects.getOpenDocumentForAcceptance?.(tabId) !== owner ||
+        owner.document.documentId !== documentId
+      ) {
+        throw new GenerationOrchestratorError(
+          'PROJECT_DOCUMENT_CHANGED',
+          'The Retry Project owner changed.',
+        )
+      }
+    }
+    const operation = this.enqueueBarrier.then(async () => {
+      assertCurrent()
+      const frozen = await this.queue.loadVerifiedAnimaRegionalInput(id)
+      const project = await this.indexedProject(tabId)
+      assertCurrent()
+      if (
+        frozen.item.localProjectKey !== tabId ||
+        frozen.item.projectPath !== project.canonicalPath ||
+        frozen.payload.context.documentId !== documentId ||
+        project.documentId !== documentId
+      ) {
+        throw new GenerationOrchestratorError(
+          'PROJECT_IDENTITY_CHANGED',
+          'The frozen Anima regional Retry belongs to another Project.',
+        )
+      }
+      const {
+        compositionProfile: _compositionProfile,
+        promptInterpretation: _promptInterpretation,
+        regional: _regional,
+        ...base
+      } = frozen.payload
+      const ordinary = parseFrozenQueuedAnimaGenerationV1(
+        JSON.stringify({ ...base, kind: 'anima-txt2img' }),
+      )
+      const reverifyFrozen = async () => {
+        await reverifyFrozenQueuedAnimaGeneration(
+          ordinary,
+          this.models as AnimaGenerationModelResolver,
+        )
+        assertCurrent()
+      }
+      await reverifyFrozen()
+      assertCurrent()
+      const retried = await this.queue.retryAnimaRegionalTerminal(
+        id,
+        expectedStatusSequence,
+        async (entry) => {
+          assertCurrent()
+          await reverifyFrozen()
+          assertCurrent()
+          await this.staging.preflightRegionalBatchCapacity({
+            entries: [
+              { frozenPayloadJson: entry.frozenPayloadJson, queueItemId: entry.queueItemId },
+            ],
+            localProjectKey: tabId,
+            projectPath: project.canonicalPath,
+            stagingSessionId: entry.stagingSessionId,
+          })
+          assertCurrent()
+        },
+      )
+      try {
+        assertCurrent()
+        const after = await this.indexedProject(tabId)
+        assertCurrent()
+        if (after.canonicalPath !== project.canonicalPath || after.documentId !== documentId) {
+          throw new GenerationOrchestratorError(
+            'PROJECT_IDENTITY_CHANGED',
+            'The Retry Project changed after enqueue.',
+          )
+        }
+        return retried
+      } catch (error) {
+        await this.cancelFailedRegionalAdmission(tabId, retried.id)
+        throw error
+      }
+    })
+    this.enqueueBarrier = operation.then(
+      () => undefined,
+      () => undefined,
+    )
+    return await operation
   }
 
   /** Frozen Retry reads no current prompts, regions, masks, model choices or seed settings. */

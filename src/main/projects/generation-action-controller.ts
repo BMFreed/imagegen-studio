@@ -24,6 +24,7 @@ import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceAnima,
   supportsInferenceAnimaOutpaint,
+  supportsInferenceAnimaRegional,
   supportsInferenceCFGRescale,
   supportsInferenceEmbeddings,
   supportsInferenceEuler,
@@ -157,6 +158,7 @@ interface GenerationActionDependencies {
       | 'cancelGenerationJob'
       | 'enqueuePreparedAnimaBatch'
       | 'enqueuePreparedOutpaintBatch'
+      | 'retryAnimaRegional'
       | 'retryRegional'
     >
   > &
@@ -167,6 +169,7 @@ interface GenerationActionDependencies {
     Pick<
       GenerationQueueRepository,
       | 'listUnfinishedNormalByProjectDocument'
+      | 'loadVerifiedAnimaRegionalInput'
       | 'loadVerifiedRegionalInput'
       | 'loadVerifiedSmartPatchInput'
       | 'retryPreparedOutpaintTerminal'
@@ -408,6 +411,11 @@ export class ProjectGenerationActionController {
     return {
       animaOutpaintSupported:
         !this.blocked && !this.closed && supportsInferenceAnimaOutpaint(ready),
+      animaRegionalSupported:
+        !this.blocked &&
+        !this.closed &&
+        !!this.options.regional &&
+        supportsInferenceAnimaRegional(ready),
       animaSupported: !this.blocked && !this.closed && supportsInferenceAnima(ready),
       cfgRescaleSupported: !this.blocked && !this.closed && supportsInferenceCFGRescale(ready),
       documentId,
@@ -655,6 +663,7 @@ export class ProjectGenerationActionController {
     document: IgsProjectDocumentV1,
   ): Promise<ProjectGenerateResult> {
     const unavailable = getInvokeRegionalGenerationUnavailableReason({
+      animaRegionalSupported: true,
       cfgRescaleSupported: true,
       document,
       dpmSupported: true,
@@ -725,22 +734,25 @@ export class ProjectGenerationActionController {
             this.options.scratchBasePath,
             async (preparation) => {
               assertAction()
+              const anima = document.generationDraft.model?.baseModelFamily === 'anima'
               if (
-                !supportsRegional(preparation.inferenceReady) ||
-                ((document.generationDraft.cfgRescale ?? 0) !== 0 &&
-                  !supportsInferenceRegionalCFGRescale(preparation.inferenceReady)) ||
-                (document.generationDraft.sampling.sampler === 'DPM++ 2M' &&
-                  !supportsInferenceRegionalDpm(preparation.inferenceReady) &&
-                  !supportsInferenceRegionalImg2ImgDpmpp2m(preparation.inferenceReady)) ||
-                (document.generationDraft.loras.some((entry) => entry.enabled) &&
-                  !supportsInferenceRegionalLoras(preparation.inferenceReady)) ||
-                ((document.generationDraft.vae !== null ||
-                  (document.generationDraft.vaePrecision ?? 'Auto') !== 'FP16') &&
-                  !supportsInferenceRegionalVae(preparation.inferenceReady)) ||
-                (hasActiveGlobalPromptEmbeddings(document) &&
-                  !supportsInferenceEmbeddings(preparation.inferenceReady)) ||
-                (document.generationDraft.sampling.sampler === 'Euler a' &&
-                  !supportsInferenceRegionalInvokeInitialization(preparation.inferenceReady))
+                anima
+                  ? !supportsInferenceAnimaRegional(preparation.inferenceReady)
+                  : !supportsRegional(preparation.inferenceReady) ||
+                    ((document.generationDraft.cfgRescale ?? 0) !== 0 &&
+                      !supportsInferenceRegionalCFGRescale(preparation.inferenceReady)) ||
+                    (document.generationDraft.sampling.sampler === 'DPM++ 2M' &&
+                      !supportsInferenceRegionalDpm(preparation.inferenceReady) &&
+                      !supportsInferenceRegionalImg2ImgDpmpp2m(preparation.inferenceReady)) ||
+                    (document.generationDraft.loras.some((entry) => entry.enabled) &&
+                      !supportsInferenceRegionalLoras(preparation.inferenceReady)) ||
+                    ((document.generationDraft.vae !== null ||
+                      (document.generationDraft.vaePrecision ?? 'Auto') !== 'FP16') &&
+                      !supportsInferenceRegionalVae(preparation.inferenceReady)) ||
+                    (hasActiveGlobalPromptEmbeddings(document) &&
+                      !supportsInferenceEmbeddings(preparation.inferenceReady)) ||
+                    (document.generationDraft.sampling.sampler === 'Euler a' &&
+                      !supportsInferenceRegionalInvokeInitialization(preparation.inferenceReady))
               ) {
                 throw new ProjectGenerationActionError(
                   'GENERATION_RUNTIME_UNAVAILABLE',
@@ -1388,6 +1400,67 @@ export class ProjectGenerationActionController {
 
   private async retryUnlocked(review: GenerationQueueReview): Promise<void> {
     const source = await this.options.queue.getManagerEntry(review.id)
+    if (source.operation === 'anima-regional-txt2img') {
+      const retry = this.options.orchestrator.retryAnimaRegional?.bind(this.options.orchestrator)
+      const loadFrozen = this.options.queue.loadVerifiedAnimaRegionalInput?.bind(this.options.queue)
+      if (!retry || !loadFrozen || !this.options.regional) {
+        throw new ProjectGenerationActionError(
+          'GENERATION_RUNTIME_UNAVAILABLE',
+          'Anima Regional Guidance Retry is unavailable. The original job was kept.',
+        )
+      }
+      this.admittingTabId = source.projectKey
+      await this.options.gate.run(source.projectKey, async () => {
+        this.assertAdmissionOpen()
+        this.assertDocument(source.projectKey, source.documentId)
+        const frozen = await loadFrozen(review.id)
+        this.assertAdmissionOpen()
+        this.assertDocument(source.projectKey, source.documentId)
+        if (
+          frozen.payload.kind !== source.operation ||
+          frozen.payload.context.documentId !== source.documentId ||
+          frozen.item.localProjectKey !== source.projectKey
+        ) {
+          throw new ProjectGenerationActionError(
+            'GENERATION_INVALID_REQUEST',
+            'The frozen Anima Regional Guidance identity differs from the reviewed job.',
+          )
+        }
+        let published: QueuedGenerationItem | null = null
+        try {
+          const admitted = await this.options.runtime.withGenerationAdmission(
+            this.options.scratchBasePath,
+            async (ready) => {
+              this.assertAdmissionOpen()
+              this.assertDocument(source.projectKey, source.documentId)
+              if (!supportsInferenceAnimaRegional(ready)) {
+                throw new ProjectGenerationActionError(
+                  'GENERATION_RUNTIME_UNAVAILABLE',
+                  'Repair or update the image engine to retry Anima Regional Guidance. The original job was kept.',
+                )
+              }
+              published = await retry(source.projectKey, review.id, review.statusSequence)
+              this.assertAdmissionOpen()
+              return true
+            },
+          )
+          this.assertAdmissionOpen()
+          this.assertDocument(source.projectKey, source.documentId)
+          if (admitted === null) {
+            throw new ProjectGenerationActionError(
+              'GENERATION_RUNTIME_UNAVAILABLE',
+              'The image runtime is unavailable. The original job was kept.',
+            )
+          }
+        } catch (error) {
+          if (published) {
+            await this.cancelPublishedJobs(source.projectKey, [published])
+          }
+          throw error
+        }
+      })
+      return
+    }
     if (
       source.operation === 'illustrious-regional-txt2img' ||
       source.operation === 'illustrious-regional-outpaint' ||

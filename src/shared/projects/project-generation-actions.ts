@@ -16,6 +16,8 @@ export interface ProjectGenerationQueueJob {
 export interface ProjectGenerationActionState {
   /** Explicit worker 0.12+ support; absence must not enable mixed-alpha generation. */
   animaOutpaintSupported?: boolean
+  /** Separate finite regional Anima execution support; ordinary Anima never grants it. */
+  animaRegionalSupported?: boolean
   /** Absent in older responses; never treat absence as native Anima support. */
   animaSupported?: boolean
   /** Advisory only; Main rechecks the actual worker at admission and dispatch. */
@@ -134,6 +136,7 @@ export function isProjectGenerationActionState(
       ],
       [
         'animaSupported',
+        'animaRegionalSupported',
         'animaOutpaintSupported',
         'outpaintSupported',
         'regionalSupported',
@@ -152,6 +155,8 @@ export function isProjectGenerationActionState(
       ],
     ) ||
     (value['animaSupported'] !== undefined && typeof value['animaSupported'] !== 'boolean') ||
+    (value['animaRegionalSupported'] !== undefined &&
+      typeof value['animaRegionalSupported'] !== 'boolean') ||
     (value['animaOutpaintSupported'] !== undefined &&
       typeof value['animaOutpaintSupported'] !== 'boolean') ||
     (value['outpaintSupported'] !== undefined && typeof value['outpaintSupported'] !== 'boolean') ||

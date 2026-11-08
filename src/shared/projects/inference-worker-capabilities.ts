@@ -337,6 +337,16 @@ export function supportsInferenceAnima(value: unknown): boolean {
   )
 }
 
+/** Regional Anima has a separate frozen execution owner; ordinary family support cannot grant it. */
+export function supportsInferenceAnimaRegional(value: unknown): boolean {
+  return (
+    isQualifiedInferenceWorkerReady(value) &&
+    value.workerVersion === '0.14.0' &&
+    supportsInferenceAnima(value) &&
+    value.capabilities.includes('anima-regional-txt2img-v1')
+  )
+}
+
 /** Explicit alpha conditioning and RGBA contribution require a qualified contribution adapter. */
 export function supportsInferenceOutpaint(value: unknown): boolean {
   return (

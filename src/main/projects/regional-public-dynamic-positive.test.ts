@@ -225,6 +225,7 @@ async function dynamicFixture() {
       return await use({
         ...f.transport({
           executeCurrentCanvasRegional: async (input) => {
+            assert.ok(input.compositionProfile !== 'invoke-krea2-global-support-v1')
             consumed.push(structuredClone(input))
             if (controls.failTexts.has(input.request.job.prompts.positive)) {
               throw new Error('Controlled frozen concrete item inference refusal')

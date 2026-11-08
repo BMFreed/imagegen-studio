@@ -7,7 +7,11 @@ import path from 'node:path'
 import test from 'node:test'
 
 import type { FrozenGenerationEmbedding } from './illustrious-generation-embeddings.js'
-import type { RegionalWorkerInput, RegionalWorkerResult } from './regional-worker-request.js'
+import type {
+  OperationalRegionalWorkerInput,
+  RegionalWorkerInput,
+  RegionalWorkerResult,
+} from './regional-worker-request.js'
 import type { RegionalQueueFixture } from './test-fixtures/regional-queue.js'
 
 import { GenerationQueueRepository } from './generation-queue.js'
@@ -38,8 +42,9 @@ const code = (expected: string) => (error: unknown) => {
 
 function resultFor(
   fixture: RegionalQueueFixture,
-  input: RegionalWorkerInput,
+  input: OperationalRegionalWorkerInput,
 ): RegionalWorkerResult {
+  assert.ok(input.compositionProfile !== 'invoke-krea2-global-support-v1')
   return {
     output: {
       byteSize: fixture.outputBytes.length,
@@ -368,6 +373,7 @@ test('cancel keeps global running slot until physical close and ignores a late c
         await physicalExit.promise
       },
       executeCurrentCanvasRegional: async (input) => {
+        assert.ok(input.compositionProfile !== 'invoke-krea2-global-support-v1')
         dispatched.resolve(input)
         return await late.promise
       },
@@ -573,7 +579,8 @@ test('manifest-first uncertainty stays fenced and restart reconciles the exact p
     )
     const transport = {
       close: async () => {},
-      executeCurrentCanvasRegional: async (input: RegionalWorkerInput) => resultFor(fixture, input),
+      executeCurrentCanvasRegional: async (input: OperationalRegionalWorkerInput) =>
+        resultFor(fixture, input),
       ready: REGIONAL_QUEUE_READY,
     }
     await assert.rejects(processor.runOne(transport), code('PUBLICATION_UNCERTAIN'))

@@ -1090,6 +1090,16 @@ test('protected desktop services do not hide app-data consumers or unknown inacc
     (await assertRuntimeIdle('/owned/data', '/owned/data/runtime/python', deps)).noLiveRuntimeUsers,
     true,
   )
+  command = '/opt/Bitwarden/bitwarden-app --autostart\0'
+  assert.equal(
+    (await assertRuntimeIdle('/owned/data', '/owned/data/runtime/python', deps)).noLiveRuntimeUsers,
+    true,
+  )
+  command = '/opt/Bitwarden/bitwarden-app --autostart\0--app-data=/owned/data\0'
+  await assert.rejects(
+    assertRuntimeIdle('/owned/data', '/owned/data/runtime/python', deps),
+    /physically in use/,
+  )
   command = '/usr/lib/systemd/systemd\0--app-data=/owned/data\0'
   await assert.rejects(
     assertRuntimeIdle('/owned/data', '/owned/data/runtime/python', deps),

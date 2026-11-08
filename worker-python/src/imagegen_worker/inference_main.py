@@ -102,7 +102,7 @@ def inference_ready_message(
             "illustrious-regional-outpaint-v1",
             *(("linux-owned-inference-v1",) if owner_lifetime else ()),
             *(
-                ANIMA_CAPABILITIES
+                (*ANIMA_CAPABILITIES, "anima-regional-txt2img-v1")
                 if runtime is not None and supports_anima_compute(runtime)
                 else ()
             ),
@@ -134,8 +134,16 @@ def process_inference_request(
         private_type = (
             cast(dict[str, object], value).get("type") if isinstance(value, dict) else None
         )
-        if private_type == "execute-current-canvas-regional":
-            from imagegen_worker.illustrious_regional_worker import execute_regional_request
+        if private_type in (
+            "execute-current-canvas-regional",
+            "execute-current-canvas-anima-regional",
+        ):
+            if private_type == "execute-current-canvas-anima-regional":
+                from imagegen_worker.anima_regional_worker import (
+                    execute_anima_regional_request as execute_regional_request,
+                )
+            else:
+                from imagegen_worker.illustrious_regional_worker import execute_regional_request
 
             regional_progress = None
             if (
