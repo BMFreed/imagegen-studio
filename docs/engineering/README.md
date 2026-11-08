@@ -2305,3 +2305,19 @@ remains 2/4 and full scene 1/4. NOT_QUALIFIED persists. The host peak reaches th
 configured 12 GiB cap including file cache, so no headroom claim follows. All
 inputs/outputs/source and 445 archived scratch entries remain retained. Public
 Anima and PP-001/005/007/008 boundaries stay unchanged.
+
+## Anima single blue-weight control — diagnostics closed
+
+The [last fixed weight control](./phase-4-anima-blue-weight-research.md) changes
+only blue scarf 0.75→1.5, holding red 1.5 and the exact experimental global-support
+policy. Three small and four trained cases pass. Actual tokenizer metadata,
+Qwen hidden states and unweighted adapter output stay exact; only two blue T5/
+output rows change, with independent native-BF16 held-product equality. Global/
+red/negative contexts and all permission records remain exact. Anonymous
+assessment gives placement 4/4, bench/shared scene 3/4 and full scene 3/4: finite
+placement passes, the all-four full-scene gate remains NOT_QUALIFIED. No further
+calibration follows this diagnostic branch. Next is the explicit Anima
+composition/acceptance and normal Generate/frozen-job/Results integration owner;
+production policy/public readiness and PP-001/005/007/008 remain unchanged.
+The host peak reaches the 12 GiB cap including cache, so headroom is unqualified.
+All inputs/images/source and 428 scratch entries remain archived.

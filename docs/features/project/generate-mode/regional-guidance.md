@@ -1979,3 +1979,15 @@ assessment finds two cats in 4/4 and shared benches in 3/4, but placement remain
 remain. The experiment establishes finite global-support influence, not a
 sufficient attribute-binding solution or new capability. Historical outcomes,
 public Anima restrictions, provenance exclusions and PP-001/005/007/008 persist.
+
+The [single-scalar weight control](../../../engineering/phase-4-anima-blue-weight-research.md)
+then changes only blue 0.75→1.5 while red and the experimental fallback remain
+fixed. Three small and four trained cases pass. Token IDs/offsets, Qwen hidden
+and unweighted adapter output stay exact; only two blue weighted rows change,
+with independent original-dtype product witnesses. Global/red/negative contexts
+and masks stay exact. Anonymous assessment passes scarf placement in 4/4 but
+the full scene in 3/4; the all-four full-scene gate stays NOT_QUALIFIED. This
+closes the current diagnostic branch, without automatic weight normalization,
+new production composition or public capability. Anima integration and explicit
+acceptance of the remaining scene limitation stay separate; historical results,
+human acceptance, provenance exclusions and PP-001/005/007/008 remain unchanged.
