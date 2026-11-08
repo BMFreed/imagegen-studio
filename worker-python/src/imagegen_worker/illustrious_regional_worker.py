@@ -110,19 +110,20 @@ def _denoising_profile(
 ) -> _DenoisingProfile:
     if parameters.prediction_type == "v_prediction":
         _require(
-            not img2img
-            and not outpaint
+            not (img2img and outpaint)
             and composition_profile == "invoke-canvas-v1"
             and initialization_profile is None
             and parameters.scheduler == "euler",
-            "Regional v_prediction requires explicit Invoke Canvas txt2img, Euler, "
+            "Regional v_prediction requires explicit Invoke Canvas Euler, one target mode, "
             "and no txt2img initialization override.",
         )
-        return (
-            "ordinary-canvas-euler-v-prediction-txt2img-cuda-vae-v1"
+        mode = "outpaint" if outpaint else "img2img" if img2img else "txt2img"
+        suffix = (
+            "cuda-vae-v1"
             if parameters.vae is not None or parameters.vae_precision != "FP16"
-            else "ordinary-canvas-euler-v-prediction-txt2img-cuda-fp16-v1"
+            else "cuda-fp16-v1"
         )
+        return cast(_DenoisingProfile, f"ordinary-canvas-euler-v-prediction-{mode}-{suffix}")
     if outpaint:
         _require(not img2img, "A regional request must select exactly one image mode.")
         image_profile = _denoising_profile(

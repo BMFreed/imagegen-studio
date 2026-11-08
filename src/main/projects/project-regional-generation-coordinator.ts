@@ -22,6 +22,7 @@ import {
   supportsInferenceRegionalOutpaint,
   supportsInferenceRegionalVae,
   supportsInferenceRegionalVPrediction,
+  supportsInferenceRegionalVPredictionImage,
 } from '../../shared/projects/inference-worker-capabilities.js'
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 import { activePromptEmbeddingRefs } from '../../shared/projects/prompt-embeddings.js'
@@ -908,19 +909,23 @@ export class ProjectRegionalGenerationCoordinator {
               // Recheck the actual classified target and exact resolver output before any queue files.
               if (
                 !compositionProfile ||
-                target.mode !== 'txt2img' ||
                 prepared.context.sampling.sampler !== 'Euler' ||
                 prepared.context.sampling.scheduler !== 'Normal' ||
                 initializationProfile !== undefined
               ) {
                 throw unsupported(
-                  'Regional v_prediction requires transparent TXT with Euler/Normal.',
+                  'Regional v_prediction requires Euler/Normal and no txt2img initialization.',
                 )
               }
-              if (!supportsInferenceRegionalVPrediction(ready)) {
+              if (
+                !supportsInferenceRegionalVPrediction(ready) ||
+                (target.mode !== 'txt2img' && !supportsInferenceRegionalVPredictionImage(ready))
+              ) {
                 throw new ProjectRegionalGenerationError(
                   'INFERENCE_UNAVAILABLE',
-                  'The image engine has not qualified Regional Guidance v_prediction.',
+                  target.mode === 'txt2img'
+                    ? 'The image engine has not qualified Regional Guidance v_prediction.'
+                    : 'The image engine has not qualified Regional Guidance v_prediction image modes.',
                 )
               }
             }
@@ -1120,6 +1125,7 @@ function validateInvokeDraft(document: IgsProjectDocumentV1, iterations = 1): vo
     loraSupported: true,
     runtimeSupported: true,
     vaeSupported: true,
+    vPredictionImageSupported: true,
     vPredictionSupported: true,
   })
   if (reason) {

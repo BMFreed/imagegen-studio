@@ -2460,3 +2460,21 @@ The first actual EPS setup attempt, emergency closure/recovery and lower diagnos
 remain excluded. Core/harness source reviews are CLEAN; retained-byte/runtime/release
 evidence remains separate. V image/other-method, Smart/reference, Anima spatial-negative
 and quality/readiness limits remain; PP-001/005/007/008 stay «Пока не обещать».
+
+## NoobAI V-prediction — source-conditioned Regional Guidance
+
+[V IMG/OUT integration](./phase-4-regional-guidance-v-prediction-image-research.md)
+adapts current Invoke's independent objective/source handoff through the existing
+native Euler, source VAE/window, LaMa/keep-mask and RGB/RGBA contribution owners.
+An additive image-combination capability preserves the older TXT-only V capability;
+exact source/strength/objective/policy survive frozen Retry. No new numerical loop,
+worker command/version, queue kind/schema or migration is added. ROOT lower records
+1,694 distinct Main/419 Python/216 browser PASS, strict types/scoped checks/build
+PASS, and 27 GREEN/six semantic RED with exact restoration. Six qualified installed
+V requests/four byte-exact own control/Retry PNGs cover both modes with16/9/16
+progress, no canceled completion, three normal lifetimes each and real Add/history/
+Save-reopen/source preservation. OUT alpha/source-over is independently checked.
+The additional one-request/one-PNG failed harness-oracle attempt and emergency
+closure remain excluded. Core/harness source reviews, retained data, ROOT runtime
+and physical release remain distinct. Quality, other V methods, Smart/references
+and PP-001/005/007/008 remain open.

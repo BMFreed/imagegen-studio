@@ -49,6 +49,7 @@ import {
   supportsInferenceRegionalOutpaint,
   supportsInferenceRegionalVae,
   supportsInferenceRegionalVPrediction,
+  supportsInferenceRegionalVPredictionImage,
   supportsInferenceVaePrecision,
 } from '../../shared/projects/inference-worker-capabilities.js'
 import type {
@@ -517,6 +518,11 @@ export class ProjectGenerationActionController {
         !this.closed &&
         !!this.options.regional &&
         supportsInferenceRegionalVae(ready),
+      regionalVPredictionImageSupported:
+        !this.blocked &&
+        !this.closed &&
+        !!this.options.regional &&
+        supportsInferenceRegionalVPredictionImage(ready),
       regionalVPredictionSupported:
         !this.blocked &&
         !this.closed &&
@@ -707,6 +713,7 @@ export class ProjectGenerationActionController {
       loraSupported: true,
       runtimeSupported: true,
       vaeSupported: true,
+      vPredictionImageSupported: true,
       vPredictionSupported: true,
     })
     if (unavailable || !this.options.regional) {
@@ -1560,10 +1567,11 @@ export class ProjectGenerationActionController {
               if (
                 !supportsRegional(ready) ||
                 (frozen.payload.workerJob.checkpoint.predictionType === 'v_prediction' &&
-                  (source.operation !== 'illustrious-regional-txt2img' ||
-                    frozen.payload.workerJob.sampling.scheduler !== 'euler' ||
+                  (frozen.payload.workerJob.sampling.scheduler !== 'euler' ||
                     frozen.payload.initializationProfile !== undefined ||
-                    !supportsInferenceRegionalVPrediction(ready))) ||
+                    !supportsInferenceRegionalVPrediction(ready) ||
+                    (source.operation !== 'illustrious-regional-txt2img' &&
+                      !supportsInferenceRegionalVPredictionImage(ready)))) ||
                 (source.operation === 'illustrious-regional-outpaint' &&
                   !supportsInferenceRegionalOutpaint(ready)) ||
                 ((source.operation === 'illustrious-regional-img2img' ||

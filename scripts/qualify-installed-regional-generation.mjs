@@ -141,11 +141,20 @@ assert.ok(
     'installed-regional-invoke-img2img-vae-v1',
     'installed-regional-invoke-outpaint-v1',
     'installed-regional-invoke-v-prediction-v1',
+    'installed-regional-invoke-v-prediction-img2img-v1',
+    'installed-regional-invoke-v-prediction-outpaint-v1',
   ].includes(fixture.profile),
 )
-const vPredictionProfile = fixture.profile === 'installed-regional-invoke-v-prediction-v1'
+const vPredictionImageProfile = [
+  'installed-regional-invoke-v-prediction-img2img-v1',
+  'installed-regional-invoke-v-prediction-outpaint-v1',
+].includes(fixture.profile)
+const vPredictionProfile =
+  vPredictionImageProfile || fixture.profile === 'installed-regional-invoke-v-prediction-v1'
 const predictionType = vPredictionProfile ? 'v_prediction' : 'epsilon'
-const outpaintProfile = fixture.profile === 'installed-regional-invoke-outpaint-v1'
+const outpaintProfile =
+  fixture.profile === 'installed-regional-invoke-outpaint-v1' ||
+  fixture.profile === 'installed-regional-invoke-v-prediction-outpaint-v1'
 const imgEulerAProfile = fixture.profile === 'installed-regional-invoke-img2img-euler-a-v1'
 const imgDpmProfile = fixture.profile === 'installed-regional-invoke-img2img-dpmpp-2m-v1'
 const imgVaeProfile = fixture.profile === 'installed-regional-invoke-img2img-vae-v1'
@@ -154,12 +163,14 @@ const imgSamplerCapability = imgDpmProfile
   ? 'illustrious-regional-img2img-dpmpp-2m-v1'
   : 'illustrious-regional-img2img-euler-a-v1'
 const imageCfgRescaleProfile =
-  outpaintProfile ||
+  (outpaintProfile && !vPredictionImageProfile) ||
   imgSamplerProfile ||
   imgVaeProfile ||
   fixture.profile === 'installed-regional-invoke-img2img-cfg-rescale-v1'
 const imageProfile =
-  imageCfgRescaleProfile || fixture.profile === 'installed-regional-invoke-img2img-v1'
+  vPredictionImageProfile ||
+  imageCfgRescaleProfile ||
+  fixture.profile === 'installed-regional-invoke-img2img-v1'
 const generationMode = outpaintProfile ? 'outpaint' : imageProfile ? 'img2img' : 'txt2img'
 const regionalOperation = `illustrious-regional-${generationMode}`
 const generationRequestType = `generate-illustrious-${generationMode}`
@@ -244,6 +255,21 @@ if (!vPredictionProfile) {
   assert.ok(Number.isSafeInteger(fixture.checkpoint.byteSize) && fixture.checkpoint.byteSize > 0)
   for (const key of ['civitaiModelId', 'civitaiVersionId', 'civitaiFileId'])
     assert.ok(Number.isSafeInteger(fixture.checkpoint[key]) && fixture.checkpoint[key] > 0)
+}
+if (vPredictionImageProfile) {
+  assert.equal(
+    fixture.checkpoint.sha256,
+    'edca0d656069468ce208440edda4643b8795b6dc500606bb6d0e57eb9a54c89d',
+  )
+  assert.equal(fixture.checkpoint.byteSize, 6938040794)
+  assert.deepEqual(
+    [
+      fixture.checkpoint.civitaiModelId,
+      fixture.checkpoint.civitaiVersionId,
+      fixture.checkpoint.civitaiFileId,
+    ],
+    [1147756, 2679856, 2566634],
+  )
 }
 for (const key of ['modelName', 'versionName'])
   assert.ok(typeof fixture.checkpoint[key] === 'string' && fixture.checkpoint[key].length > 0)
@@ -435,6 +461,15 @@ if (imageProfile)
     'src/renderer/components/ProjectRegionalGuidanceRow.vue',
     'src/main/db/migrations/0022_regional_img2img_queue.sql',
   )
+if (vPredictionImageProfile)
+  sourceFiles.push(
+    'src/main/projects/illustrious-generation-vae.ts',
+    'src/renderer/components/ProjectGenerationAdvancedOptions.vue',
+    'src/renderer/components/vae-precision-control.ts',
+    'worker-python/src/imagegen_worker/illustrious_regional_vae.py',
+    'worker-python/src/imagegen_worker/inference.py',
+    'worker-python/src/imagegen_worker/inference_vae.py',
+  )
 if (outpaintProfile)
   sourceFiles.push(
     'src/main/db/migrations/0023_regional_outpaint_queue.sql',
@@ -571,6 +606,14 @@ async function verifyProvision() {
     assert.ok(provision.ready.capabilities.includes('illustrious-regional-vae-v1'))
   if (vPredictionProfile)
     assert.ok(provision.ready.capabilities.includes('illustrious-regional-v-prediction-v1'))
+  if (vPredictionImageProfile)
+    for (const capability of [
+      'illustrious-regional-v-prediction-image-v1',
+      'illustrious-regional-img2img-vae-v1',
+      'illustrious-img2img',
+      'illustrious-vae-precision',
+    ])
+      assert.ok(provision.ready.capabilities.includes(capability))
   if (imgVaeProfile)
     assert.ok(provision.ready.capabilities.includes('illustrious-regional-img2img-vae-v1'))
   if (dpmpp2mProfile)
@@ -733,6 +776,18 @@ async function verifyProvision() {
         'invokeai/frontend/webv2/src/features/generation/core/canvas/addRegionalGuidance.ts',
         'invokeai/app/services/session_queue/session_queue_default.py',
         'invokeai/app/invocations/vae/latents_to_image.py',
+        ...(vPredictionImageProfile
+          ? [
+              'invokeai/frontend/webv2/src/features/generation/core/canvas/compileCanvasGraph.ts',
+              'invokeai/app/invocations/vae/image_to_latents.py',
+              ...(outpaintProfile
+                ? [
+                    'invokeai/app/invocations/sd/create_gradient_mask.py',
+                    'invokeai/backend/stable_diffusion/extensions/inpaint.py',
+                  ]
+                : []),
+            ]
+          : []),
       ],
     }
 
@@ -2454,8 +2509,10 @@ async function prepareCatalogAndProjects() {
   const workspace = path.join(appDataRoot, 'workspaces/Uncategorized')
   await mkdir(workspace, { recursive: true, mode: 0o700 })
   await directory(workspace)
-  for (const mode of vPredictionProfile
-    ? ['transparent', 'v-control', 'partial']
+  for (const mode of vPredictionImageProfile
+    ? ['transparent', 'v-control', outpaintProfile ? 'partial' : 'opaque']
+    : vPredictionProfile
+      ? ['transparent', 'v-control', 'partial']
     : ['transparent', 'opaque', 'partial']) {
     const title = `Regional ${mode} ${path.basename(evidenceRoot)} ${randomUUID().slice(0, 8)}`
     const file = path.join(workspace, `${title}.igs`)
@@ -2640,13 +2697,29 @@ async function prepareCatalogAndProjects() {
         'Clearing the current model removes the current objective/policy selection; no catalog override is mutated.',
     }
     report.boundary.calls =
-      'Three original native requests across three serial physically closed Electron lifetimes: independent healthy TXT control, progress-observed Cancel, then restarted frozen Queue Retry; exactly two PNGs.'
+      `Three original native requests across three serial physically closed Electron lifetimes: independent healthy ${generationMode} control, progress-observed Cancel, then restarted frozen Queue Retry; exactly two PNGs.`
     report.boundary.preconditions =
       'ROOT registered the exact existing NoobAI V file/version through real ModelRepository before this preserved catalog baseline. Reuse the original file and canonical runtime; no download, model/environment copy, alternate source or injected worker recipe.'
     report.boundary.progress =
-      'Original scalar JSONL and Main/DOM observe selected Euler30 steps; Cancel after real completed steps; fresh Retry starts at1 and completes30 before PNG.'
+      `Original scalar JSONL and Main/DOM observe ${progressTotal} selected Euler steps from30 requested; Cancel after real completed steps; fresh Retry starts at1 and completes${progressTotal} before PNG.`
     report.boundary.exclusions =
-      'Only exact V checkpoint/TXT/Euler-Normal/EmbeddedFP32 at512-square/CFG5/seed123. No V IMG/OUT/other samplers, scene quality, spatial-negative/reference, Install/Repair, general capacity or public-readiness claim.'
+      vPredictionImageProfile
+        ? `Only exact V checkpoint/${generationMode}/Euler-Normal/EmbeddedFP32/strength0.5 at512-square/CFG5/seed123, with existing source/posterior and ${outpaintProfile ? 'LaMa/keep-mask/RGBA contribution' : 'opaque source/RGB'} owners. No other V samplers, initializer, Smart/reference, visual-quality, Install/Repair, general capacity or public-readiness claim.`
+        : 'Only exact V checkpoint/TXT/Euler-Normal/EmbeddedFP32 at512-square/CFG5/seed123. No V IMG/OUT/other samplers, scene quality, spatial-negative/reference, Install/Repair, general capacity or public-readiness claim.'
+    if (vPredictionImageProfile) {
+      report.boundary.preconditions +=
+        ' Each healthy/canceled Project imports the same retained original PNG through actual UI/Main/installed normalization. Saved source visibility/strength/model/text/region/seed edits cannot replace the frozen image, keep mask, exact resources or policy.'
+      report.vPrediction.image = {
+        mode: generationMode,
+        combinationCapability: 'illustrious-regional-v-prediction-image-v1',
+        precision: 'FP32',
+        strength: imageStrength,
+        selectedTimesteps: imageSelectedTimesteps,
+        expectedProgressTotal: progressTotal,
+        noTxtInitialization: true,
+        sourceVaeOwnerReused: true,
+      }
+    }
   }
   report.projectSetup = projects.map(
     ({ mode, title, file, document, initialPackageSha256, regionAlphas }) => ({
@@ -3425,8 +3498,9 @@ async function progressBeforeCancel(project, row) {
   const observed = await observerSnapshot(),
     wires = regionalWires(observed)
   assert.deepEqual(observed.faults, [])
-  assert.equal(wires.length, globalTiProfile || imageProfile ? 2 : 1)
-  const wire = wires[globalTiProfile || imageProfile ? 1 : 0]
+  const priorControlInLifetime = (globalTiProfile || imageProfile) && !vPredictionProfile
+  assert.equal(wires.length, priorControlInLifetime ? 2 : 1)
+  const wire = wires[priorControlInLifetime ? 1 : 0]
   assert.equal(wire.reportProgress, true)
   const worker = observed.workers.find(({ pid }) => pid === wire.pid)
   assert.ok(worker.ready.capabilities.includes('illustrious-regional-progress-v1'))
@@ -4669,10 +4743,22 @@ function assertVPredictionWire(observed, expectedCount = 1) {
       'illustrious-regional-v-prediction-v1',
       'illustrious-regional-vae-v1',
       'illustrious-regional-progress-v1',
+      ...(vPredictionImageProfile
+        ? [
+            'illustrious-regional-v-prediction-image-v1',
+            'illustrious-regional-img2img-v1',
+            'illustrious-regional-img2img-vae-v1',
+            'illustrious-img2img',
+            'illustrious-vae-precision',
+            ...(outpaintProfile
+              ? ['illustrious-outpaint', 'illustrious-regional-outpaint-v1']
+              : []),
+          ]
+        : []),
     ])
       assert.ok(ready.capabilities.includes(cap))
     const bundle = wire.bundleJson
-    assert.equal(bundle.request.type, 'generate-illustrious-txt2img')
+    assert.equal(bundle.request.type, generationRequestType)
     assert.equal(bundle.request.job.checkpoint.predictionType, 'v_prediction')
     assert.equal(bundle.request.job.checkpoint.sha256, fixture.checkpoint.sha256)
     assert.equal(bundle.request.job.vae, null)
@@ -4683,6 +4769,12 @@ function assertVPredictionWire(observed, expectedCount = 1) {
     assert.equal(bundle.request.job.sampling.steps, 30)
     assert.equal(bundle.request.job.sampling.seed, 123)
     assert.equal(bundle.request.job.sampling.cfgScale, 5)
+    assert.equal(bundle.request.job.sampling.cfgRescale ?? 0, 0)
+    if (vPredictionImageProfile) {
+      assert.equal(bundle.request.job.sampling.denoisingStrength, imageStrength)
+      assert.equal(bundle.request.job.target.width, side)
+      assert.equal(bundle.request.job.target.height, side)
+    }
     assert.equal(bundle.compositionProfile, 'invoke-canvas-v1')
     assert.equal(Object.hasOwn(bundle, 'initializationProfile'), false)
     assert.deepEqual(bundle.recipe.globalPrompts.positive.embeddingRefs, [])
@@ -4700,7 +4792,13 @@ function assertVPredictionWire(observed, expectedCount = 1) {
     assert.equal(
       observed.workers
         .flatMap(({ writes }) => writes.flatMap(({ lines }) => lines))
-        .filter(({ type }) => type === 'generate-illustrious-txt2img').length,
+        .filter(({ type }) =>
+          [
+            'generate-illustrious-txt2img',
+            'generate-illustrious-img2img',
+            'generate-illustrious-outpaint',
+          ].includes(type),
+        ).length,
       0,
       'An ordinary request cannot replace regional execution',
     )
@@ -4714,14 +4812,32 @@ function assertVPredictionCompletion(observed, wire) {
   const progress = frames.filter(({ message }) => message.type === 'generation-progress')
   assert.deepEqual(
     progress.map(({ message }) => message.step),
-    Array.from({ length: 30 }, (_, i) => i + 1),
+    Array.from({ length: progressTotal }, (_, i) => i + 1),
   )
-  assert.ok(progress.every(({ message }) => message.totalSteps === 30))
+  assert.ok(progress.every(({ message }) => message.totalSteps === progressTotal))
   const done = frames.filter(({ message }) => message.type === 'generation-done')
   assert.equal(done.length, 1)
   assert.equal(frames.filter(({ message }) => message.type === 'error').length, 0)
   assert.ok(progress.at(-1).order < done[0].order)
   return frames
+}
+function assertVPredictionImageSource(wire, captured) {
+  if (!vPredictionImageProfile) return
+  const target = wire.bundleJson.request.job.target
+  for (const key of ['width', 'height', 'byteSize', 'iccSha256', 'sha256'])
+    assert.equal(target[key], captured.frozen.workerJob.target[key])
+  assert.equal(target.sha256, captured.targetSha256)
+  assert.equal(
+    wire.bundleJson.request.job.sampling.denoisingStrength,
+    captured.frozen.context.sampling.denoisingStrength,
+  )
+  assert.equal(wire.bundleJson.request.job.checkpoint.path, fixture.checkpoint.path)
+  assert.deepEqual(wire.bundleJson.request.job.checkpoint, captured.frozen.workerJob.checkpoint)
+  if (outpaintProfile)
+    assert.equal(
+      target.sha256,
+      captured.frozen.context.conditioning.sourceTarget.sha256,
+    )
 }
 async function waitVPredictionCompletion(project, row) {
   await expect
@@ -4745,7 +4861,8 @@ async function waitVPredictionCompletion(project, row) {
 async function generateVPredictionControlCancelRetry(project) {
   const control = projects.find(({ mode }) => mode === 'v-control')
   assert.ok(control && report.lifetimes.length === 0)
-  await openProject(control)
+  if (vPredictionImageProfile) await prepareImageProject(control)
+  else await openProject(control)
   await setVaePrecisionUi(control, 'Auto')
   await setVaePrecisionUi(control, 'FP32')
   await save(control)
@@ -4755,10 +4872,21 @@ async function generateVPredictionControlCancelRetry(project) {
   const ownRows = async (owner) =>
     (await sqlSnapshot()).queue.filter(({ local_project_key }) => local_project_key === owner.id)
   const begin = async (owner) => {
-    assert.equal((await targetState(owner)).mode, 'txt2img')
+    assert.equal((await targetState(owner)).mode, generationMode)
     const state = await api('getGenerationState', owner.id)
     assert.equal(state.regionalVPredictionSupported, true)
     assert.equal(state.regionalVaeSupported, true)
+    if (vPredictionImageProfile) {
+      assert.equal(state.regionalVPredictionImageSupported, true)
+      assert.equal(state.regionalImg2ImgSupported, true)
+      assert.equal(state.regionalImg2ImgVaeSupported, true)
+      assert.equal(state.vaePrecisionSupported, true)
+      assert.equal((await current(owner)).generationDraft.sampling.denoisingStrength, imageStrength)
+      if (outpaintProfile) {
+        assert.equal(state.regionalOutpaintSupported, true)
+        assert.equal(state.outpaintSupported, true)
+      }
+    }
     assert.equal((await current(owner)).generationDraft.vaePrecision, 'FP32')
     const count = window.locator('input[aria-label="Images per click"]')
     await count.fill('1')
@@ -4787,7 +4915,7 @@ async function generateVPredictionControlCancelRetry(project) {
     decoded = decodePng(bytes)
   assert.equal(decoded.width, side)
   assert.equal(decoded.height, side)
-  assert.equal(decoded.channels, 3)
+  assert.equal(decoded.channels, outpaintProfile ? 4 : 3)
   assert.equal(decoded.iccSha256, IGS_SRGB_ICC_SHA256)
   const receipt = (await sqlSnapshot()).receipts.find(
     ({ queue_item_id }) => queue_item_id === healthy.row.id,
@@ -4796,12 +4924,14 @@ async function generateVPredictionControlCancelRetry(project) {
   assert.equal(receipt.image_sha256, digest(bytes))
   assert.equal(receipt.image_byte_size, bytes.length)
   const browser = await assertBrowserPixels(candidate.imageUrl, decoded)
+  const contribution = outpaintProfile ? await assertInstalledOutpaint(healthy.captured, bytes) : null
   await writeFile(path.join(evidenceRoot, 'v-prediction-control.png'), bytes, {
     flag: 'wx',
     mode: 0o600,
   })
   const healthyObserved = await observerSnapshot()
   const healthyWire = assertVPredictionWire(healthyObserved)
+  assertVPredictionImageSource(healthyWire, healthy.captured)
   report.vPrediction.control = {
     ...healthy,
     projectKey: control.id,
@@ -4811,21 +4941,36 @@ async function generateVPredictionControlCancelRetry(project) {
     rgbaSha256: decoded.rgbaSha256,
     byteSize: bytes.length,
     browser,
+    ...(outpaintProfile ? { contribution } : {}),
     frames: assertVPredictionCompletion(healthyObserved, healthyWire),
   }
+  if (vPredictionImageProfile) report.img2img.control = report.vPrediction.control
   assert.equal(await hashFile(control.file), control.initialPackageSha256)
-  assert.equal((await current(control)).layers.length, 0)
+  assert.equal((await current(control)).layers.length, vPredictionImageProfile ? 1 : 0)
   await tray().getByRole('button', { name: 'Preview candidate 1', exact: true }).click()
-  await observeCanvas('v-prediction-healthy-control', decoded, candidate.imageUrl)
+  await observeCanvas(
+    'v-prediction-healthy-control',
+    decoded,
+    candidate.imageUrl,
+    outpaintProfile ? { imageUrl: (await current(control)).layers[0].imageUrl, opacity: 1 } : null,
+  )
   await window.getByRole('button', { name: `Close ${control.title}`, exact: true }).click()
   const discard = window.getByRole('dialog', { name: 'Close Project', exact: true })
   await expect(discard).toBeVisible()
   await discard.getByRole('button', { name: 'Discard Candidates and Close', exact: true }).click()
   await expect(window.getByRole('tab', { name: control.title, exact: true })).toHaveCount(0)
   report.vPrediction.controlDiscardedExplicitly = true
+  if (vPredictionImageProfile)
+    report.img2img.controlClosedExplicitly = {
+      projectKey: control.id,
+      decision: 'Discard Candidates and Close',
+      originalPngRetained: path.join(evidenceRoot, 'v-prediction-control.png'),
+      noExtraGeneration: true,
+    }
   await closeVPredictionLifetime('v-prediction-control-complete')
   await launch()
-  await openProject(project)
+  if (vPredictionImageProfile) await prepareImageProject(project)
+  else await openProject(project)
   await installProgressDomObserver()
   const first = await begin(project)
   await openQueue()
@@ -4846,6 +4991,7 @@ async function generateVPredictionControlCancelRetry(project) {
   assert.equal(await hashFile(project.file), project.initialPackageSha256)
   const canceledObserved = await observerSnapshot()
   const canceledWire = assertVPredictionWire(canceledObserved)
+  assertVPredictionImageSource(canceledWire, first.captured)
   assert.equal(
     canceledObserved.workers
       .flatMap(({ frames }) => frames ?? [])
@@ -4859,6 +5005,7 @@ async function generateVPredictionControlCancelRetry(project) {
   for (const [label, value] of [
     ['Steps', '2'],
     ['Generation seed', '124'],
+    ...(vPredictionImageProfile ? [['Denoising Strength', '0.8']] : []),
   ]) {
     const input = window.locator(`input[aria-label="${label}"]`)
     await input.fill(value)
@@ -4885,6 +5032,21 @@ async function generateVPredictionControlCancelRetry(project) {
       .locator(`[data-regional-guidance-id="${item.id}"]`)
       .getByRole('button', { name: `Hide ${item.name}`, exact: true })
       .click()
+  if (vPredictionImageProfile) {
+    const source = (await current(project)).layers[0]
+    assert.equal(source.id, project.sourceLayerId)
+    await window.getByRole('button', { name: `Hide ${source.name}`, exact: true }).click()
+    await expect.poll(async () => (await current(project)).layers[0].visible).toBe(false)
+    report.img2img.editedSource = {
+      id: source.id,
+      visible: false,
+      originalVisible: true,
+      opacity: source.opacity,
+      target: await targetState(project),
+      noNewGeneration: true,
+    }
+    assert.equal(report.img2img.editedSource.target.mode, 'txt2img')
+  }
   await setVaePrecisionUi(project, 'FP16')
   const modelPicker = window.locator('[aria-label="Generation model"]')
   await modelPicker.hover()
@@ -4896,10 +5058,21 @@ async function generateVPredictionControlCancelRetry(project) {
   assert.deepEqual(edited.generationDraft.seed, { policy: 'fixed', value: 124 })
   assert.equal(edited.generationDraft.vaePrecision, 'FP16')
   assert.ok(edited.regionalGuidance.every(({ enabled }) => enabled === false))
+  if (vPredictionImageProfile) {
+    assert.equal(edited.generationDraft.sampling.denoisingStrength, 0.8)
+    assert.equal(edited.layers.length, 1)
+    assert.equal(edited.layers[0].visible, false)
+    assert.equal(edited.layers[0].opacity, 1)
+    assert.equal(
+      decodePng(await fetchPng(edited.layers[0].imageUrl)).rgbaSha256,
+      report.img2img.source.rgbaSha256,
+    )
+  }
   report.currentAuthoringAfterEdit = {
     generationDraft: edited.generationDraft,
     regionalGuidance: edited.regionalGuidance,
     packageSha256: await hashFile(project.file),
+    ...(vPredictionImageProfile ? { sourceLayers: edited.layers } : {}),
   }
   await screenshot('v-prediction-edited-saved-before-restart')
   await closeVPredictionLifetime('v-prediction-canceled-edited-saved')
@@ -4908,6 +5081,16 @@ async function generateVPredictionControlCancelRetry(project) {
   await installProgressDomObserver()
   assert.deepEqual((await current(project)).generationDraft, edited.generationDraft)
   assert.deepEqual(portableRegions(await current(project)), portableRegions(edited))
+  if (vPredictionImageProfile) {
+    const reopenedSource = (await current(project)).layers[0]
+    assert.equal(reopenedSource.id, project.sourceLayerId)
+    assert.equal(reopenedSource.visible, false)
+    assert.equal(reopenedSource.opacity, 1)
+    assert.equal(
+      decodePng(await fetchPng(reopenedSource.imageUrl)).rgbaSha256,
+      report.img2img.source.rgbaSha256,
+    )
+  }
   await expect(generate()).toBeDisabled()
   await openQueue()
   const retry = queueRow(first.row.id).getByRole('button', { name: 'Retry job', exact: true })
@@ -4933,6 +5116,7 @@ async function generateVPredictionControlCancelRetry(project) {
   const completed = await waitVPredictionCompletion(project, retried)
   const retryObserved = await observerSnapshot(),
     retryWire = assertVPredictionWire(retryObserved)
+  assertVPredictionImageSource(retryWire, retryCaptured)
   report.vPrediction.retryFrames = assertVPredictionCompletion(retryObserved, retryWire)
   assert.equal(await hashFile(project.file), report.currentAuthoringAfterEdit.packageSha256)
   assert.deepEqual((await current(project)).generationDraft, edited.generationDraft)
@@ -4941,7 +5125,7 @@ async function generateVPredictionControlCancelRetry(project) {
   )
   assert.deepEqual(
     mainSteps.map(({ snapshot }) => snapshot.current.step),
-    Array.from({ length: 30 }, (_, i) => i + 1),
+    Array.from({ length: progressTotal }, (_, i) => i + 1),
   )
   assert.equal((await api('getGenerationProgress')).current, null)
   await expect(window.getByTestId('generation-progress')).toHaveCount(0)
@@ -4973,7 +5157,7 @@ async function generateVPredictionControlCancelRetry(project) {
     canceledWire.alpha.map(({ sha256 }) => sha256),
   )
   check(
-    'Exact V objective/leading/EmbeddedFP32 reaches three real regional requests; healthy control and live Cancel precede clean restart and original frozen Retry without additional generation',
+    `Exact V objective/leading/EmbeddedFP32 reaches three real regional ${generationMode} requests; healthy control and live Cancel precede clean restart and original frozen Retry without additional generation`,
   )
   return {
     row: completed,
@@ -7915,7 +8099,9 @@ async function resultsAddSaveReopen(project, completed) {
     decoded,
     candidate.imageUrl,
     outpaintProfile
-      ? { imageUrl: (await current(project)).layers[0].imageUrl, opacity: 0.75 }
+      ? vPredictionImageProfile
+        ? null
+        : { imageUrl: (await current(project)).layers[0].imageUrl, opacity: 0.75 }
       : null,
   )
   const before = await current(project),
@@ -8042,7 +8228,8 @@ async function resultsAddSaveReopen(project, completed) {
       saved.members.get(source.asset.path)?.equals(sourceBytesBefore),
       'Add/Save must preserve exact edited source Raster bytes',
     )
-    assert.equal(source.opacity, 0.75)
+    assert.equal(source.opacity, vPredictionImageProfile ? 1 : 0.75)
+    if (vPredictionImageProfile) assert.equal(source.visible, false)
   }
   assert.equal(accepted.id, layer.id)
   assert.equal(accepted.kind, 'raster')
@@ -8189,7 +8376,16 @@ async function resultsAddSaveReopen(project, completed) {
   await expect(
     window.getByRole('heading', { name: 'Image generation needs repair', exact: true }),
   ).toHaveCount(0)
-  if (imageProfile) {
+  if (vPredictionImageProfile) {
+    assert.equal(reopened.generationDraft.sampling.denoisingStrength, 0.8)
+    assert.equal(reopened.generationDraft.model, null)
+    const retainedSource = reopened.layers.find(({ id }) => id === project.sourceLayerId)
+    assert.ok(retainedSource && retainedSource.visible === false && retainedSource.opacity === 1)
+    await expect(
+      window.getByText('Choose an installed model before generating.', { exact: true }),
+    ).toBeVisible()
+    await expect(window.getByRole('button', { name: 'Generate', exact: true })).toBeDisabled()
+  } else if (imageProfile) {
     assert.equal((await targetState(project)).mode, outpaintProfile ? 'outpaint' : 'img2img')
     assert.equal(reopened.generationDraft.sampling.denoisingStrength, 0.8)
     await expect(window.getByRole('button', { name: 'Generate', exact: true })).toBeEnabled({
@@ -8216,7 +8412,9 @@ async function resultsAddSaveReopen(project, completed) {
     'saved-reopened-raster',
     decoded,
     reopened.layers[0].imageUrl,
-    outpaintProfile ? { imageUrl: reopened.layers[1].imageUrl, opacity: 0.75 } : null,
+    outpaintProfile && !vPredictionImageProfile
+      ? { imageUrl: reopened.layers[1].imageUrl, opacity: 0.75 }
+      : null,
   )
   check(
     'Signed Results/browser PNG, actual preview, Raster Add/Undo/Redo and independently read Save ZIP/reopen preserve exact output and base-only provenance',
@@ -8419,6 +8617,8 @@ async function finalIdentities() {
     if (recoveryProfile) assertBaselineSql(whole)
     if (progressProfile) await verifyProgressPreservation(db.db)
     if (vPredictionProfile) {
+      if (vPredictionImageProfile)
+        assert.equal(await hashFile(report.img2img.source.path), report.img2img.source.sha256)
       const own = ownProgressSql(whole)
       assert.equal(own.queue.length, 2)
       assert.equal(own.queue.filter(({ status }) => status === 'canceled').length, 1)
@@ -8445,7 +8645,7 @@ async function finalIdentities() {
       assert.equal(
         (await readZip(projects.find(({ id }) => id === control.projectKey).file)).project.layers
           .length,
-        0,
+        vPredictionImageProfile ? 1 : 0,
       )
       report.finalSql = own
     } else if (imageProfile) {
@@ -9071,14 +9271,20 @@ try {
   await launch()
   if (!imageProfile && !vPredictionProfile) await targetRefusalControls()
   if (vPredictionProfile) {
-    const project = projects.find(({ mode }) => mode === 'transparent')
+    const project = projects.find(
+      ({ mode }) => mode === (vPredictionImageProfile ? (outpaintProfile ? 'partial' : 'opaque') : 'transparent'),
+    )
     progressProject = project
     report.vPrediction.controlProjectKey = projects.find(({ mode }) => mode === 'v-control').id
+    if (vPredictionImageProfile)
+      report.img2img.controlProjectKey = report.vPrediction.controlProjectKey
     const completed = await generateVPredictionControlCancelRetry(project)
     await resultsAddSaveReopen(project, completed)
     assert.equal(report.output.pngSha256, report.vPrediction.control.pngSha256)
     assert.equal(report.output.rgbaSha256, report.vPrediction.control.rgbaSha256)
     report.vPrediction.exactControlRetryRgb = true
+    if (vPredictionImageProfile)
+      report.vPrediction.exactControlRetryRgba = outpaintProfile
     const observed = await observerSnapshot()
     assert.equal(observed.ipc.filter(({ channel }) => channel === 'projects:generate').length, 0)
     assert.equal(
@@ -9206,8 +9412,18 @@ try {
   }
   assert.deepEqual(report.pageErrors, [])
   assert.equal(report.samplerError, undefined)
-  if (imageProfile) await closeImageControl()
+  if (imageProfile && !vPredictionImageProfile) await closeImageControl()
   await closeNative('healthy-final')
+  if (vPredictionImageProfile) {
+    assert.equal(report.lifetimes.length, 3)
+    assert.equal(report.nativeClosures.length, 3)
+    assert.ok(
+      report.nativeClosures.every(
+        ({ confirmed, processExitCode, signalCode }) =>
+          confirmed && processExitCode === 0 && signalCode === null,
+      ),
+    )
+  }
   if (workerFaultProfile) {
     assert.equal(report.nativeClosures.length, 1)
     assert.equal(report.nativeClosures[0].label, 'healthy-final')
@@ -9249,7 +9465,7 @@ try {
   report.elapsedSeconds = (Date.now() - started) / 1000
   check(
     vPredictionProfile
-      ? 'Finite installed exact NoobAI V-prediction TXT Euler/Normal, EmbeddedFP32, genuine healthy/progress-Cancel/restarted frozen-Retry, exact independently decoded control RGB and ordinary V provenance through Add/Undo/Redo/Save/reopen; no visual-quality/all-method/public-readiness claim'
+      ? `Finite installed exact NoobAI V-prediction ${generationMode} Euler/Normal, EmbeddedFP32${vPredictionImageProfile ? '/strength0.5' : ''}, genuine healthy/progress-Cancel/restarted frozen-Retry, exact independently decoded control ${outpaintProfile ? 'RGBA contribution/source-over' : 'RGB'} and ordinary V provenance through Add/Undo/Redo/Save/reopen${vPredictionImageProfile ? ' with original source preserved after saved hiding' : ''}; no visual-quality/all-method/public-readiness claim`
       : outpaintProfile
         ? 'Finite installed mixed-alpha regional outpaint with EmbeddedFP16, Euler/Normal, CFG Rescale0.7, exact LaMa, actual imported source and live Cancel/frozen Retry after saved edits completed through verified RGBA contribution, protected-source composition, Results/Add/Undo/Redo/Save ZIP/reopen; no visual-quality or broader model claim'
         : imageProfile

@@ -133,6 +133,19 @@ export function supportsInferenceRegionalVPrediction(value: unknown): boolean {
   )
 }
 
+/**
+ * Source-conditioned V execution is separately qualified; the TXT objective capability stays
+ * narrow.
+ */
+export function supportsInferenceRegionalVPredictionImage(value: unknown): boolean {
+  return (
+    supportsInferenceRegionalVPrediction(value) &&
+    supportsInferenceRegionalImg2Img(value) &&
+    isQualifiedInferenceWorkerReady(value) &&
+    value.capabilities.includes('illustrious-regional-v-prediction-image-v1')
+  )
+}
+
 /** Ordinary rescale support alone never qualifies the separate regional execution owner. */
 export function supportsInferenceRegionalCFGRescale(value: unknown): boolean {
   return (

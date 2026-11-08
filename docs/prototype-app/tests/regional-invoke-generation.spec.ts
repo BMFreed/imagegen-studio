@@ -1613,7 +1613,9 @@ test('renderer regional V TXT requires its own objective capability while epsilo
     fixture.state.regionalImg2ImgSupported = true
   })
   await expect(generate).toBeDisabled()
-  await expect(page.getByText(/v_prediction requires a fully transparent txt2img/)).toBeVisible()
+  await expect(
+    page.getByText(/Checking image engine support for Regional Guidance v_prediction image modes/),
+  ).toBeVisible()
   await page.evaluate(() => {
     const fixture = globalThis.window.regionalWiringFixture
     fixture.tab.generationDraft.model!.predictionType = 'epsilon'
@@ -1663,3 +1665,104 @@ test('renderer V Retry uses recorded objective after current epsilon draft edits
   await expect(retry).toBeEnabled()
   expect(errors).toEqual([])
 })
+
+for (const mode of ['img2img', 'outpaint'] as const) {
+  test(`renderer V ${mode} needs source combination while legacy V TXT stays available`, async ({
+    page,
+  }) => {
+    const errors: string[] = []
+    page.on('pageerror', (cause) => errors.push(cause.message))
+    await mountWiring(page, 'project')
+    await page.evaluate((mode) => {
+      const fixture = globalThis.window.regionalWiringFixture
+      fixture.tab.generationDraft.model!.predictionType = 'v_prediction'
+      fixture.catalog[0]!.versions[0]!.predictionType = 'v_prediction'
+      fixture.tab.generationDraft.sampling.denoisingStrength = 0.5
+      fixture.targetMode = mode
+      fixture.tab.primaryBbox.x += 8
+      fixture.state.regionalVPredictionSupported = true
+      fixture.state.regionalVPredictionImageSupported = false
+      fixture.state.regionalImg2ImgSupported = true
+      fixture.state.regionalOutpaintSupported = true
+    }, mode)
+    const generate = page.getByRole('button', { exact: true, name: 'Generate' })
+    await expect(generate).toBeDisabled()
+    await expect(
+      page.getByText(
+        'The current image engine does not support Regional Guidance v_prediction image modes. Repair or update the runtime.',
+      ),
+    ).toBeVisible()
+    await page.evaluate(() => {
+      globalThis.window.regionalWiringFixture.state.regionalVPredictionImageSupported = true
+    })
+    await expect(generate).toBeEnabled()
+    await generate.click()
+    expect(
+      await page.evaluate(() => globalThis.window.regionalWiringFixture.generateCalls),
+    ).toEqual([1])
+    await page.evaluate(() => {
+      const fixture = globalThis.window.regionalWiringFixture
+      fixture.tab.generationDraft.sampling.sampler = 'Euler a'
+    })
+    await expect(generate).toBeDisabled()
+    await expect(
+      page.getByText('Regional v_prediction requires Euler with the Normal scheduler.'),
+    ).toBeVisible()
+    await page.evaluate(() => {
+      const fixture = globalThis.window.regionalWiringFixture
+      fixture.tab.generationDraft.sampling.sampler = 'Euler'
+      fixture.targetMode = 'txt2img'
+      fixture.tab.primaryBbox.x += 8
+      fixture.state.regionalVPredictionImageSupported = false
+    })
+    await expect(generate).toBeEnabled()
+    expect(errors).toEqual([])
+  })
+
+  test(`renderer frozen V ${mode} Retry owns its recorded objective and image capability`, async ({
+    page,
+  }) => {
+    const errors: string[] = []
+    page.on('pageerror', (cause) => errors.push(cause.message))
+    await mountWiring(page, 'queue')
+    await page.evaluate((mode) => {
+      const fixture = globalThis.window.regionalWiringFixture
+      fixture.queueItem.operation =
+        mode === 'outpaint' ? 'illustrious-regional-outpaint' : 'illustrious-regional-img2img'
+      fixture.queueItem.details!.sampling.predictionType = 'v_prediction'
+      fixture.state.regionalVPredictionSupported = true
+      fixture.state.regionalVPredictionImageSupported = false
+      fixture.state.regionalImg2ImgSupported = true
+      fixture.state.regionalOutpaintSupported = true
+      fixture.tab.regionalGuidance = []
+      fixture.tab.generationDraft.model = null
+      fixture.epoch += 1
+    }, mode)
+    const retry = page.getByRole('button', { exact: true, name: 'Retry job' })
+    await expect(retry).toBeDisabled()
+    await expect(
+      page
+        .getByTestId('queue-job-row')
+        .getByText(/frozen Regional Guidance v_prediction image job/),
+    ).toBeVisible()
+    await page.evaluate(() => {
+      const fixture = globalThis.window.regionalWiringFixture
+      fixture.state.regionalVPredictionImageSupported = true
+      fixture.epoch += 1
+    })
+    await expect(retry).toBeEnabled()
+    await retry.click()
+    await expect
+      .poll(() => page.evaluate(() => globalThis.window.regionalWiringFixture.retryCalls.length))
+      .toBe(1)
+    await page.evaluate(() => {
+      const fixture = globalThis.window.regionalWiringFixture
+      fixture.queueItem.details!.sampling.predictionType = 'epsilon'
+      fixture.state.regionalVPredictionImageSupported = false
+      fixture.state.regionalVPredictionSupported = false
+      fixture.epoch += 1
+    })
+    await expect(retry).toBeEnabled()
+    expect(errors).toEqual([])
+  })
+}

@@ -736,11 +736,10 @@ function validateAgreement(input: v.InferOutput<typeof inputSchema>): void {
   if (
     request.job.checkpoint.predictionType === 'v_prediction' &&
     (input.compositionProfile !== 'invoke-canvas-v1' ||
-      request.type !== 'generate-illustrious-txt2img' ||
       request.job.sampling.scheduler !== 'euler' ||
       input.initializationProfile !== undefined)
   ) {
-    throw invalid('Regional v_prediction requires explicit Invoke Canvas TXT Euler execution.')
+    throw invalid('Regional v_prediction requires explicit Invoke Canvas Euler execution.')
   }
   if (
     request.type !== 'generate-illustrious-txt2img' &&

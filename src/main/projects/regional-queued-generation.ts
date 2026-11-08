@@ -643,7 +643,6 @@ function parseRegionalPayload(
     !(
       ordinary.workerJob.checkpoint.predictionType === 'epsilon' ||
       (invoke &&
-        !image &&
         ordinary.workerJob.checkpoint.predictionType === 'v_prediction' &&
         ordinary.workerJob.sampling.scheduler === 'euler' &&
         initializationProfile === undefined)

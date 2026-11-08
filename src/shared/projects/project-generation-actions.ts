@@ -62,6 +62,8 @@ export interface ProjectGenerationActionState {
   regionalSupported?: boolean
   /** Explicit selected-VAE/precision support; legacy Embedded/FP16 needs no new opt-in. */
   regionalVaeSupported?: boolean
+  /** Separate source-conditioned V Euler support; TXT and image support never imply it. */
+  regionalVPredictionImageSupported?: boolean
   /** Explicit objective-aware TXT Euler support; epsilon peers do not imply it. */
   regionalVPredictionSupported?: boolean
   runningJobId: string | null
@@ -163,6 +165,7 @@ export function isProjectGenerationActionState(
         'regionalInvokeInitializationSupported',
         'regionalLoraSupported',
         'regionalVaeSupported',
+        'regionalVPredictionImageSupported',
         'regionalVPredictionSupported',
         'smartPatchSupported',
       ],
@@ -197,6 +200,8 @@ export function isProjectGenerationActionState(
       typeof value['regionalImg2ImgVaeSupported'] !== 'boolean') ||
     (value['regionalOutpaintSupported'] !== undefined &&
       typeof value['regionalOutpaintSupported'] !== 'boolean') ||
+    (value['regionalVPredictionImageSupported'] !== undefined &&
+      typeof value['regionalVPredictionImageSupported'] !== 'boolean') ||
     (value['regionalVPredictionSupported'] !== undefined &&
       typeof value['regionalVPredictionSupported'] !== 'boolean') ||
     (value['regionalVaeSupported'] !== undefined &&

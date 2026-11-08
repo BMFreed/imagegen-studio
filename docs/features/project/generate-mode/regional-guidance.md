@@ -2178,3 +2178,27 @@ Source/retained/runtime/release levels remain distinct; this finite V checkpoint
 does not replace the selected official Illustrious visual target, qualify trained
 quality or broaden Anima/Smart/reference/image-mode scope. PP-001/005/007/008
 remain «Пока не обещать».
+
+The subsequent [V source-conditioned extension](../../../engineering/phase-4-regional-guidance-v-prediction-image-research.md)
+adds opaque IMG and mixed-alpha OUT with Euler/Normal through the same exact-file
+objective and explicit resolved noise-policy owner. It requires the separate
+`illustrious-regional-v-prediction-image-v1` capability, the prior V capability and
+existing image/OUT/VAE prerequisites. Older V peers retain TXT-only meaning.
+Existing strengths, source snapshots/raw alpha, selected-VAE precision, source
+posterior/window, LaMa/keep protection and RGB/RGBA contribution rules remain;
+there is no new source algorithm, sampler, command, queue kind or migration.
+
+Frozen Retry uses its original source, strength, objective, policy and resources
+after current draft edits. Add/history/Save/reopen continue to project ordinary
+image/outpaint provenance while excluding Regional Guidance from Compare and
+result-derived presets. ROOT lower evidence is 1,694 distinct Main/419 Python/216
+browser PASS with controlled mutations and exact restoration. Six qualified
+installed V requests/four byte-exact own control/Retry PNGs pass both512²/Euler30/
+strength0.5/EmbeddedFP32 modes. Each observes16/9/16 native progress, no canceled
+completion and three normal closures. Actual Add/history/Save-reopen preserves
+source/result and ordinary-only V provenance; OUT alpha/source-over is independently
+checked. The additional initial harness-oracle failure, one V completion/PNG and
+emergency physical closure remain excluded. Source review, retained bytes, ROOT
+runtime and physical release remain separate. This does not broaden V ancestral/
+DPM, independent TXT initialization, Smart/references, visual quality or
+PP-001/005/007/008 readiness.

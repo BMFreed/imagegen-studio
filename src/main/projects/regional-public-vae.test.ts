@@ -1,3 +1,4 @@
+import { LAMA_OUTPAINT_IDENTITY_V1 } from '../../shared/projects/alpha-outpaint.js'
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
 import { supportsInferenceRegionalImg2ImgVae } from '../../shared/projects/inference-worker-capabilities.js'
 import type { ProjectGenerateOptions } from '../../shared/projects/project-generation-actions.js'
@@ -5,12 +6,13 @@ import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.
 
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { chmod, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readdir, readFile, rm, truncate, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { test } from 'node:test'
 import { setImmediate } from 'node:timers/promises'
 import { isDeepStrictEqual } from 'node:util'
 
+import type { OutpaintInfillResolver } from '../runtime/inference-auxiliary-resources.js'
 import type { FrozenGenerationVae } from './illustrious-generation-vae.js'
 import type { RegionalWorkerInput } from './regional-worker-request.js'
 import type { RegionalProjectFixture } from './test-fixtures/regional-project.js'
@@ -18,12 +20,15 @@ import type { RegionalProjectFixture } from './test-fixtures/regional-project.js
 import { openAppDatabase } from '../db/database.js'
 import { ProjectGenerationActionController } from './generation-action-controller.js'
 import { GenerationDispatchCoordinator } from './generation-dispatch-coordinator.js'
+import { GenerationOrchestrator } from './generation-orchestrator.js'
 import { GenerationQueueRepository } from './generation-queue.js'
 import { GenerationWorkerClient } from './generation-worker-client.js'
+import { deriveOutpaintContributionAlphaV1 } from './outpaint-contribution.js'
 import { provenanceFromVerifiedRasterCandidate } from './project-generation-provenance.js'
 import { ProjectRegionalGenerationCoordinator } from './project-regional-generation-coordinator.js'
 import { parseAcceptedGenerationBaseV1 } from './regional-queued-generation.js'
 import { prepareRegionalWorkerRequest } from './regional-worker-request.js'
+import { decodeTargetPngAlpha } from './target-png-mode.js'
 import {
   createRegionalProjectFixture,
   regionalProjectDigest,
@@ -45,10 +50,10 @@ type Loaded = Awaited<ReturnType<Fixture['queue']['loadVerifiedRegionalInput']>>
  * generation/core/graph.ts chooses the compatible VAE override and l2i.fp32; model.py's
  * VAELoaderInvocation and vae/latents_to_image.py preserve selection and decode precision.
  */
-async function vaeFixture(image = false) {
+async function vaeFixture(image: boolean | 'outpaint' = false) {
   const f = await createRegionalProjectFixture()
   if (image) {
-    // Controlled compositor, with actual opaque PNG bytes verified by Main. Numerical inference
+    // Controlled compositor, with actual source PNG bytes verified by Main. Numerical inference
     // remains a controlled substitute; this fixture qualifies only Main ownership and resources.
     f.compositionWorker.composeTarget = async (input) => {
       f.calls.compose.push(structuredClone(input))
@@ -56,7 +61,12 @@ async function vaeFixture(image = false) {
       const bytes = literalSmartPatchColorPng(
         64,
         64,
-        Array.from({ length: 4096 }, () => [40, 80, 120, 255]).flat(),
+        Array.from({ length: 4096 }, (_, i) => [
+          40,
+          80,
+          120,
+          image === 'outpaint' ? (i % 64 < 32 ? 255 : i % 64 === 32 ? 127 : 0) : 255,
+        ]).flat(),
         4,
       )
       await writeFile(input.targetPngPath, bytes, { flag: 'wx', mode: 0o600 })
@@ -70,7 +80,7 @@ async function vaeFixture(image = false) {
           sha256: regionalProjectDigest(bytes),
           width: 64,
         },
-        mode: 'img2img',
+        mode: image === 'outpaint' ? 'outpaint' : 'img2img',
         rect: { ...f.bbox },
       }
     }
@@ -78,6 +88,28 @@ async function vaeFixture(image = false) {
       document.generationDraft.sampling.denoisingStrength = 0.5
     })
   }
+  let infillResolver: OutpaintInfillResolver | undefined
+  if (image === 'outpaint') {
+    // Sparse Main-only stand-in: never native LaMa or trained-image evidence.
+    const managedPath = path.join(f.root, 'v-image-controlled-lama.pt')
+    await writeFile(managedPath, '', { flag: 'wx', mode: 0o600 })
+    await truncate(managedPath, LAMA_OUTPAINT_IDENTITY_V1.byteSize)
+    infillResolver = {
+      resolveVerifiedOutpaintInfill: async () => ({ ...LAMA_OUTPAINT_IDENTITY_V1, managedPath }),
+    }
+  }
+  const orchestrator = infillResolver
+    ? new GenerationOrchestrator(
+        f.projects,
+        f.index,
+        f.models,
+        f.queue,
+        f.staging,
+        f.processor,
+        f.scratch,
+        infillResolver,
+      )
+    : f.orchestrator
   const resources = {} as Record<ResourceKey, Resource>
   const modelId = randomUUID()
   for (const [index, key] of (['A', 'B'] as const).entries()) {
@@ -147,6 +179,7 @@ async function vaeFixture(image = false) {
               'illustrious-regional-dpmpp-2m-v1',
               'illustrious-regional-cfg-rescale-v1',
               'illustrious-regional-img2img-cfg-rescale-v1',
+              ...(image === 'outpaint' ? ['illustrious-regional-outpaint-v1'] : []),
             ]
           : []),
       ],
@@ -203,7 +236,7 @@ async function vaeFixture(image = false) {
     compositionProfile: 'invoke-canvas-v1',
     gate: f.gate,
     models: f.models,
-    orchestrator: f.orchestrator,
+    orchestrator,
     projects: f.projects,
     scratchBasePath: f.scratch,
   })
@@ -228,7 +261,31 @@ async function vaeFixture(image = false) {
             if (controls.failSeeds.has(input.request.job.sampling.seed)) {
               throw new Error('Controlled frozen regional VAE inference refusal')
             }
-            return f.resultFor(input)
+            const result = f.resultFor(input)
+            if (input.request.type !== 'generate-illustrious-outpaint') {
+              return result
+            }
+            const source = await readFile(input.request.job.target.path)
+            const alpha = deriveOutpaintContributionAlphaV1(
+              decodeTargetPngAlpha(source, 64, 64),
+              64,
+              64,
+            )
+            const pngBytes = literalSmartPatchColorPng(
+              64,
+              64,
+              Array.from({ length: 4096 }, (_, i) => [17, i % 251, 91, alpha[i]]).flat(),
+              4,
+            )
+            return {
+              ...result,
+              output: {
+                ...result.output,
+                byteSize: pngBytes.length,
+                sha256: regionalProjectDigest(pngBytes),
+              },
+              pngBytes,
+            }
           },
           ready: structuredClone(controls.ready),
         }),
@@ -238,7 +295,7 @@ async function vaeFixture(image = false) {
   }
   const dispatch = new GenerationDispatchCoordinator(
     runtime,
-    f.orchestrator,
+    orchestrator,
     f.processor,
     f.scratch,
     undefined,
@@ -248,8 +305,9 @@ async function vaeFixture(image = false) {
     dispatch,
     gate: f.gate,
     models: f.models,
-    orchestrator: f.orchestrator,
+    orchestrator,
     processor: f.processor,
+    ...(infillResolver ? { infillResolver } : {}),
     projects: f.projects,
     queue: f.queue,
     regional: publicCoordinator,
@@ -260,7 +318,10 @@ async function vaeFixture(image = false) {
   return { ...f, actions, consumed, controls, publicCoordinator, resolved, resources }
 }
 
-async function withFixture(use: (f: Fixture) => Promise<void>, image = false) {
+async function withFixture(
+  use: (f: Fixture) => Promise<void>,
+  image: boolean | 'outpaint' = false,
+) {
   const f = await vaeFixture(image)
   try {
     await use(f)
@@ -1251,11 +1312,14 @@ test('regional actual resolver V override cannot borrow an epsilon peer and is f
   })
 })
 
-test('regional V actual opaque target refuses before publishing any member or regional sidecar', async () => {
+test('regional V actual opaque target on a legacy V TXT peer refuses before publishing any member or regional sidecar', async () => {
   await withFixture(async (f) => {
     await selectVPrediction(f)
     const before = await snapshot(f)
-    await assert.rejects(f.actions.generate(f.tabId, options(f, 2)), /transparent TXT/)
+    await assert.rejects(
+      f.actions.generate(f.tabId, options(f, 2)),
+      /qualified Regional Guidance v_prediction image modes/,
+    )
     assert.deepEqual(await snapshot(f), before)
     assert.equal(f.consumed.length, 0)
   }, true)
@@ -1419,3 +1483,288 @@ test('regional stale saved V label defers to actual epsilon resolver output on a
     assert.equal((await f.actions.getState(f.tabId)).regionalVPredictionSupported, false)
   })
 })
+
+// InvokeAI b0ac163b: Canvas graftImageToImage/graftOutpaint precede addRegionalGuidance;
+// get_scheduler forwards the same exact UNet objective through either source mode.
+// The following tests exercise Main ownership with controlled numerical/LaMa substitutes.
+const V_IMAGE_CAPABILITY = 'illustrious-regional-v-prediction-image-v1'
+
+async function selectVImage(
+  f: Fixture,
+  saved: 'epsilon' | 'v_prediction' = 'v_prediction',
+  resolved: 'epsilon' | 'v_prediction' = saved,
+) {
+  await selectVPrediction(f, saved, resolved)
+  f.controls.ready.capabilities = [...f.controls.ready.capabilities, V_IMAGE_CAPABILITY]
+}
+
+for (const mode of ['img2img', 'outpaint'] as const) {
+  const fixtureMode = mode === 'outpaint' ? 'outpaint' : true
+  test(`regional V ${mode} freezes source objective policy strength and VAE through actual queue dispatch`, async () => {
+    await withFixture(async (f) => {
+      await selectVImage(f)
+      await select(f, true, 'FP32')
+      const authored = structuredClone(f.document())
+      const saved = await readFile(f.packagePath)
+      const result = await queued(f)
+      assert.equal((await settled(f, result.jobIds))[0].status, 'completed')
+      const frozen = await f.queue.loadVerifiedRegionalInput(result.jobIds[0])
+      assert.equal(frozen.payload.kind, `illustrious-regional-${mode}`)
+      assert.equal(frozen.input.request.type, `generate-illustrious-${mode}`)
+      assert.ok(
+        frozen.input.request.type === 'generate-illustrious-img2img' ||
+          frozen.input.request.type === 'generate-illustrious-outpaint',
+      )
+      assert.equal(frozen.input.request.job.checkpoint.predictionType, 'v_prediction')
+      assert.equal(frozen.payload.context.model.reference.predictionType, 'v_prediction')
+      assert.equal(frozen.input.request.job.sampling.denoisingStrength, 0.5)
+      assert.equal(frozen.input.request.job.sampling.scheduler, 'euler')
+      assert.deepEqual(frozen.input.request.job.sampling.noiseProfile, {
+        baseSchedule: 'sdxl-scaled-linear-v1',
+        rescaleBetasZeroSnr: false,
+        schemaVersion: 1,
+        timestepSpacing: 'leading',
+      })
+      assert.equal(frozen.input.initializationProfile, undefined)
+      assertFrozen(f, frozen)
+      assert.equal(f.consumed.length, 1)
+      assert.deepEqual(f.consumed[0].request.job, frozen.input.request.job)
+      const target = await readFile(frozen.input.request.job.target.path)
+      assert.equal(regionalProjectDigest(target), frozen.input.request.job.target.sha256)
+      assert.equal(target.length, frozen.input.request.job.target.byteSize)
+      assert.equal((await f.actions.getState(f.tabId)).regionalVPredictionImageSupported, true)
+      assert.equal(
+        (await f.queue.getManagerEntry(result.jobIds[0])).details?.sampling.predictionType,
+        'v_prediction',
+      )
+      assert.equal((await f.staging.listVerifiedCandidates(f.tabId)).length, 1)
+      assert.deepEqual(f.document(), authored)
+      assert.ok((await readFile(f.packagePath)).equals(saved))
+    }, fixtureMode)
+  })
+
+  test(`regional V ${mode} legacy image peer refuses atomically after actual resolution`, async () => {
+    await withFixture(async (f) => {
+      await selectVImage(f)
+      f.controls.ready.capabilities = f.controls.ready.capabilities.filter(
+        (c) => c !== V_IMAGE_CAPABILITY,
+      )
+      const before = await snapshot(f)
+      const draft = structuredClone(f.document())
+      const saved = await readFile(f.packagePath)
+      await assert.rejects(f.actions.generate(f.tabId, options(f, 2)), {
+        code: 'INFERENCE_UNAVAILABLE',
+        message: 'The image engine has not qualified Regional Guidance v_prediction image modes.',
+      })
+      assert.deepEqual(await snapshot(f), before)
+      assert.deepEqual(f.document(), draft)
+      assert.ok((await readFile(f.packagePath)).equals(saved))
+      assert.equal(f.calls.compose.length, 1)
+      assert.equal(f.calls.checkpoint, 1)
+      assert.equal(f.consumed.length, 0)
+      assert.equal((await f.actions.getState(f.tabId)).regionalVPredictionSupported, true)
+      assert.equal((await f.actions.getState(f.tabId)).regionalVPredictionImageSupported, false)
+    }, fixtureMode)
+  })
+
+  test(`regional ${mode} actual V override needs the image peer despite a saved epsilon label`, async () => {
+    await withFixture(async (f) => {
+      await selectVImage(f, 'epsilon', 'v_prediction')
+      f.controls.ready.capabilities = f.controls.ready.capabilities.filter(
+        (c) => c !== V_IMAGE_CAPABILITY,
+      )
+      const before = await snapshot(f)
+      await assert.rejects(
+        f.actions.generate(f.tabId, options(f)),
+        /qualified Regional Guidance v_prediction image modes/,
+      )
+      assert.deepEqual(await snapshot(f), before)
+      assert.equal(f.consumed.length, 0)
+      f.controls.ready.capabilities = [...f.controls.ready.capabilities, V_IMAGE_CAPABILITY]
+      const result = await queued(f)
+      assert.equal((await settled(f, result.jobIds))[0].status, 'completed')
+      const frozen = await f.queue.loadVerifiedRegionalInput(result.jobIds[0])
+      assert.equal(f.document().generationDraft.model?.predictionType, 'epsilon')
+      assert.equal(frozen.payload.workerJob.checkpoint.predictionType, 'v_prediction')
+      assert.equal(frozen.payload.context.model.reference.predictionType, 'v_prediction')
+    }, fixtureMode)
+  })
+
+  test(`regional ${mode} stale saved V still uses actual epsilon on an unchanged image peer`, async () => {
+    await withFixture(async (f) => {
+      await selectVImage(f, 'v_prediction', 'epsilon')
+      f.controls.ready.capabilities = f.controls.ready.capabilities.filter(
+        (c) => c !== V_IMAGE_CAPABILITY && c !== V_PREDICTION_CAPABILITY,
+      )
+      const result = await queued(f)
+      assert.equal((await settled(f, result.jobIds))[0].status, 'completed')
+      const frozen = await f.queue.loadVerifiedRegionalInput(result.jobIds[0])
+      assert.equal(f.document().generationDraft.model?.predictionType, 'v_prediction')
+      assert.equal(frozen.payload.workerJob.checkpoint.predictionType, 'epsilon')
+      assert.equal(frozen.payload.context.model.reference.predictionType, 'epsilon')
+      assert.equal(f.consumed[0].request.job.checkpoint.predictionType, 'epsilon')
+      assert.equal((await f.actions.getState(f.tabId)).regionalVPredictionImageSupported, false)
+    }, fixtureMode)
+  })
+
+  test(`regional V ${mode} frozen Retry owns original source and strength after saved authoring changes`, async () => {
+    await withFixture(async (f) => {
+      await selectVImage(f)
+      await select(f, true, 'FP32')
+      f.controls.failSeeds.add(123)
+      const result = await queued(f)
+      const [source] = await settled(f, result.jobIds)
+      assert.equal(source.status, 'failed')
+      const frozen = await f.queue.loadVerifiedRegionalInput(source.id)
+      const target = await readFile(frozen.input.request.job.target.path)
+      await f.edit((document) => {
+        document.generationDraft.model = null
+        document.generationDraft.vae = structuredClone(f.resources.B.descriptor.reference)
+        document.generationDraft.vaePrecision = 'FP16'
+        document.generationDraft.sampling.denoisingStrength = 0.9
+        document.generationDraft.sampling.sampler = 'Euler a'
+        document.generationDraft.positivePrompt.text = 'Saved later draft'
+        document.generationDraft.seed.value = 999
+        document.regionalGuidance = []
+      })
+      await f.projects.save(f.tabId)
+      const authored = structuredClone(f.document())
+      const saved = await readFile(f.packagePath)
+      const before = await snapshot(f)
+      const capable = structuredClone(f.controls.ready)
+      f.controls.ready.capabilities = capable.capabilities.filter((c) => c !== V_IMAGE_CAPABILITY)
+      await assert.rejects(
+        f.actions.retryJob({ id: source.id, statusSequence: source.status_sequence }),
+        { code: 'GENERATION_RUNTIME_UNAVAILABLE' },
+      )
+      assert.deepEqual(await snapshot(f), before)
+      assert.equal(f.consumed.length, 1)
+      f.controls.ready = capable
+      f.controls.failSeeds.clear()
+      await f.actions.retryJob({ id: source.id, statusSequence: source.status_sequence })
+      const retry = (await rows(f)).find((row) => row.id !== source.id)
+      assert.ok(retry)
+      assert.equal((await settled(f, [retry.id]))[0].status, 'completed')
+      const replay = await f.queue.loadVerifiedRegionalInput(retry.id)
+      assert.deepEqual(replay.payload, frozen.payload)
+      assert.deepEqual(f.consumed.at(-1)?.recipe, frozen.input.recipe)
+      assert.equal(f.consumed.at(-1)?.request.job.checkpoint.predictionType, 'v_prediction')
+      const consumed = f.consumed.at(-1)
+      assert.ok(consumed)
+      assert.ok(
+        consumed.request.type === 'generate-illustrious-img2img' ||
+          consumed.request.type === 'generate-illustrious-outpaint',
+      )
+      assert.equal(consumed.request.job.sampling.denoisingStrength, 0.5)
+      assert.ok((await readFile(replay.input.request.job.target.path)).equals(target))
+      assert.equal(f.calls.compose.length, 1)
+      assert.deepEqual(f.document(), authored)
+      assert.ok((await readFile(f.packagePath)).equals(saved))
+    }, fixtureMode)
+  })
+
+  test(`regional V ${mode} actual JSONL peer requires image support and preserves source strength and objective on send`, async () => {
+    await withFixture(async (f) => {
+      await selectVImage(f)
+      const result = await queued(f)
+      assert.equal((await settled(f, result.jobIds))[0].status, 'completed')
+      const frozen = await f.queue.loadVerifiedRegionalInput(result.jobIds[0])
+      const target = await readFile(frozen.input.request.job.target.path)
+      const alpha =
+        mode === 'outpaint'
+          ? deriveOutpaintContributionAlphaV1(decodeTargetPngAlpha(target, 64, 64), 64, 64)
+          : null
+      const output = alpha
+        ? literalSmartPatchColorPng(
+            64,
+            64,
+            Array.from({ length: 4096 }, (_, i) => [17, i % 251, 91, alpha[i]]).flat(),
+            4,
+          )
+        : f.outputBytes
+      const runtime = path.join(f.root, `v-${mode}-jsonl-runtime`)
+      const scratch = path.join(f.root, `v-${mode}-jsonl-scratch`)
+      const received = path.join(f.root, `v-${mode}-jsonl-received.jsonl`)
+      await mkdir(runtime)
+      await mkdir(scratch, { mode: 0o700 })
+      const executable = path.join(runtime, 'python')
+      for (const support of [false, true]) {
+        const ready = {
+          ...f.controls.ready,
+          capabilities: [
+            ...f.controls.ready.capabilities.filter((c) => c !== V_IMAGE_CAPABILITY),
+            ...(support ? [V_IMAGE_CAPABILITY] : []),
+            ...(process.platform === 'linux' ? ['linux-owned-inference-v1'] : []),
+          ],
+          pythonVersion: '3.12.13',
+          type: 'ready',
+        }
+        const script = String.raw`#!${process.execPath}
+const fs=require('node:fs'), crypto=require('node:crypto');
+const hash=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
+process.stdout.write(JSON.stringify(${JSON.stringify(ready)})+'\n');
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const wire=JSON.parse(line); if(wire.type!=='execute-current-canvas-regional') throw Error('Wrong owner');
+ const raw=fs.readFileSync(wire.bundle.path); if(raw.length!==wire.bundle.byteSize || hash(raw)!==wire.bundle.sha256) throw Error('Bundle mismatch');
+ const bundle=JSON.parse(raw), request=bundle.request, job=request.job;
+ if(request.type!==${JSON.stringify(`generate-illustrious-${mode}`)} || job.checkpoint.predictionType!=='v_prediction' || job.sampling.scheduler!=='euler' || job.sampling.denoisingStrength!==0.5 || bundle.initializationProfile!==undefined) throw Error('Source execution changed');
+ const target=fs.readFileSync(job.target.path); if(target.length!==job.target.byteSize || hash(target)!==job.target.sha256) throw Error('Lost source association');
+ fs.appendFileSync(${JSON.stringify(received)},JSON.stringify({checkpoint:job.checkpoint,target:job.target,targetBytes:target.toString('base64'),strength:job.sampling.denoisingStrength})+'\n');
+ fs.writeFileSync(job.output.pngPath,Buffer.from(${JSON.stringify(output.toString('base64'))},'base64'),{flag:'wx'});
+ process.stdout.write(JSON.stringify({type:'generation-done',protocolVersion:'1',requestId:wire.requestId,outputPath:job.output.pngPath,seed:job.sampling.seed})+'\n');
+});
+`
+        await writeFile(executable, script)
+        await chmod(executable, 0o700)
+        const client = await GenerationWorkerClient.start(
+          { pythonExecutable: executable, runtimeRoot: runtime, scratchBasePath: scratch },
+          { requestTimeoutMs: 3000, shutdownWaitMs: 100 },
+        )
+        try {
+          const input = structuredClone(frozen.input)
+          input.request.requestId = randomUUID()
+          if (support) {
+            assert.ok((await client.executeCurrentCanvasRegional(input)).pngBytes.equals(output))
+          } else {
+            await assert.rejects(client.executeCurrentCanvasRegional(input), {
+              code: 'WORKER_VERSION_MISMATCH',
+            })
+            assert.equal(await readFile(received, 'utf8').catch(() => ''), '')
+          }
+          assert.deepEqual(await readdir(scratch), [])
+          assert.deepEqual(
+            (await f.queue.loadVerifiedRegionalInput(result.jobIds[0])).payload,
+            frozen.payload,
+          )
+        } finally {
+          await client.close()
+        }
+      }
+      const observations = (await readFile(received, 'utf8'))
+        .trim()
+        .split('\n')
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              checkpoint: unknown
+              strength: number
+              target: typeof frozen.input.request.job.target
+              targetBytes: string
+            },
+        )
+      assert.equal(observations.length, 1)
+      const observed = observations[0]
+      // The real client transfers its verified target into its own staging lifetime.
+      assert.equal(path.dirname(path.dirname(observed.target.path)), scratch)
+      assert.ok(path.basename(path.dirname(observed.target.path)).startsWith('regional-request-'))
+      assert.equal(path.basename(observed.target.path), 'target.png')
+      assert.notEqual(observed.target.path, frozen.input.request.job.target.path)
+      assert.deepEqual(observed, {
+        checkpoint: frozen.input.request.job.checkpoint,
+        strength: 0.5,
+        target: { ...frozen.input.request.job.target, path: observed.target.path },
+        targetBytes: target.toString('base64'),
+      })
+    }, fixtureMode)
+  })
+}

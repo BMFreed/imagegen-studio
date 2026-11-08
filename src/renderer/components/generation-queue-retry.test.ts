@@ -356,7 +356,160 @@ for (const [operation, sampler] of [
         undefined,
         'v_prediction',
       )!,
-      /requires TXT Euler/,
+      operation === 'illustrious-regional-img2img'
+        ? /v_prediction image job/
+        : /requires TXT Euler/,
     )
+  })
+}
+
+for (const operation of [
+  'illustrious-regional-img2img',
+  'illustrious-regional-outpaint',
+] as const) {
+  test(`frozen V ${operation} Retry requires its own source combination and preserves epsilon neighbors`, () => {
+    const state = {
+      regionalImg2ImgSupported: true,
+      regionalOutpaintSupported: true,
+      regionalSupported: true,
+      regionalVPredictionSupported: true,
+    }
+    for (const regionalVPredictionImageSupported of [undefined, false, true]) {
+      const input = { ...state, regionalVPredictionImageSupported }
+      const reason = generationQueueRetryReason(
+        operation,
+        input,
+        'Euler',
+        false,
+        false,
+        0,
+        undefined,
+        'v_prediction',
+      )
+      assert.equal(reason === null, regionalVPredictionImageSupported === true)
+      if (reason) {
+        assert.match(reason, /v_prediction image job.*Repair or update/)
+      }
+      assert.equal(
+        generationQueueRetryReason(
+          operation,
+          input,
+          'Euler',
+          false,
+          false,
+          0,
+          undefined,
+          'epsilon',
+        ),
+        null,
+      )
+      assert.equal(
+        generationQueueRetryReason(
+          'illustrious-regional-txt2img',
+          input,
+          'Euler',
+          false,
+          false,
+          0,
+          undefined,
+          'v_prediction',
+        ),
+        null,
+      )
+    }
+    assert.match(
+      generationQueueRetryReason(
+        operation,
+        { ...state, regionalVPredictionImageSupported: true, regionalVPredictionSupported: false },
+        'Euler',
+        false,
+        false,
+        0,
+        undefined,
+        'v_prediction',
+      )!,
+      /v_prediction job/,
+    )
+  })
+
+  test(`frozen V ${operation} Retry keeps source VAE and method prerequisites`, () => {
+    const state = {
+      regionalImg2ImgSupported: true,
+      regionalImg2ImgVaeSupported: true,
+      regionalOutpaintSupported: true,
+      regionalSupported: true,
+      regionalVaeSupported: true,
+      regionalVPredictionImageSupported: true,
+      regionalVPredictionSupported: true,
+    }
+    for (const sampler of ['Euler a', 'DPM++ 2M']) {
+      assert.match(
+        generationQueueRetryReason(
+          operation,
+          state,
+          sampler,
+          false,
+          false,
+          0,
+          undefined,
+          'v_prediction',
+        )!,
+        /requires Euler/,
+      )
+    }
+    assert.match(
+      generationQueueRetryReason(
+        operation,
+        { ...state, regionalImg2ImgSupported: false },
+        'Euler',
+        false,
+        false,
+        0,
+        undefined,
+        'v_prediction',
+      )!,
+      /opaque img2img/,
+    )
+    assert.match(
+      generationQueueRetryReason(
+        operation,
+        { ...state, regionalImg2ImgVaeSupported: false },
+        'Euler',
+        false,
+        true,
+        0,
+        undefined,
+        'v_prediction',
+      )!,
+      /selected VAE and precision/,
+    )
+    assert.equal(
+      generationQueueRetryReason(
+        operation,
+        state,
+        'Euler',
+        false,
+        true,
+        0,
+        undefined,
+        'v_prediction',
+      ),
+      null,
+    )
+    if (operation === 'illustrious-regional-outpaint') {
+      assert.match(
+        generationQueueRetryReason(
+          operation,
+          { ...state, regionalOutpaintSupported: false },
+          'Euler',
+          false,
+          false,
+          0,
+          undefined,
+          'v_prediction',
+        )!,
+        /outpaint/,
+      )
+    }
   })
 }

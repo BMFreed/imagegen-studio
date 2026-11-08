@@ -530,7 +530,8 @@ def generate_current_canvas_regional_img2img(
     """Consume one verified opaque RGB snapshot through the ordinary native image path.
 
     Only the exact img2img command and explicit Euler, Euler a or DPM++ 2M image
-    profiles are admitted.
+    profiles are admitted. Additive V-prediction profiles admit Euler only and
+    preserve the same source/window/prepared-VAE mechanism.
     The unchanged ordinary factory owns training-timestep cutoff and independent
     replayable posterior sampling; its existing compute-dtype noise policy is
     retained. Additive private prepared-VAE profiles adapt Invoke encode/sample/
