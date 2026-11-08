@@ -2415,3 +2415,13 @@ canonical runtime/models/projects/frozen inputs remain protected. Source/retaine
 review, execution and physical release remain distinct. Whole lint retains two
 unchanged historical project-service errors. Quality/Smart/resources/spatial-negative
 and PP-001/005/007/008 limits remain unchanged.
+
+## Runtime startup without false Repair
+
+[Advisory startup correction](./runtime-checking-research.md) adapts current InvokeAI's
+connection/activity separation. Valid in-flight worker startup reports checking,
+then settles by owner events after final metadata validation; true failures and
+unconfirmed exits remain fenced. ROOT256 focused Main/5 browser PASS, actual built
+preload IPC and isolated status mutation qualify this finite boundary. A source-review
+race finding is reproduced and corrected; diagnostic failures stay separate.
+No queue/numerical/installer change, new trained rerun or promise-status promotion.

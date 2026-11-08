@@ -567,7 +567,7 @@ test('native JSONL VAE and UNet refusals reach safe stage diagnostics without ch
           await writeFile(
             executable,
             String.raw`#!${process.execPath}
-const ready = ${JSON.stringify({ ...ready, pythonVersion: '3.12.13', type: 'ready' })}
+const ready = ${JSON.stringify({ ...ready, capabilities: [...ready.capabilities, ...(process.platform === 'linux' ? ['linux-owned-inference-v1'] : [])], pythonVersion: '3.12.13', type: 'ready' })}
 process.stdout.write(JSON.stringify(ready) + '\n')
 let buffer = ''
 process.stdin.setEncoding('utf8')

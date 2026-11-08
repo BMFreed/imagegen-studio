@@ -91,6 +91,7 @@ import {
 import { contextBridge, ipcRenderer } from 'electron'
 
 const runtimeKinds = new Set<RuntimeStatus['kind']>([
+  'checking',
   'needs-repair',
   'not-installed',
   'ready',

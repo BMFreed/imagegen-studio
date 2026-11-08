@@ -410,6 +410,9 @@ const runtimeUnavailableReason = computed(() => {
     return 'Check the image generation connection with Check again above.'
   }
   switch (status.value?.kind) {
+    case 'checking': {
+      return 'Wait for the image engine to finish starting.'
+    }
     case 'needs-repair': {
       return 'Use Repair in the image generation notice above before generating.'
     }

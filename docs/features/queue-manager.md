@@ -746,3 +746,18 @@ implemented event bus. Durable statuses continue through the existing invalidati
 Progress is discarded on restart, while job/candidate recovery follows its durable
 contract. Denoising preview images, ETA, Upscale, broader runtime/device coverage
 and release qualification remain separate work.
+
+## Runtime connection transitions
+
+A valid worker that is still starting is a transient checking state, not a Repair
+diagnosis. Queue refresh may observe it; the existing runtime owner publishes ready
+or failure after validating its actual child and current runtime metadata. The
+notice shows progress without a Repair action during this transition. Failed
+startup, changed metadata and unconfirmed exit retain unavailable/Repair behavior.
+No advisory status grants generation permission or starts a competing GPU probe.
+
+The [bounded correction](../engineering/runtime-checking-research.md) covers actual
+controlled subprocesses, typed preload IPC, distinct presentation states and stale
+query refusal. Existing queue ownership, frozen Retry, cancellation, accepted
+provenance and explicit Save remain unchanged. PP-001/005/007/008 stay
+**«Пока не обещать»**. No new trained or full-app Retry qualification is implied.

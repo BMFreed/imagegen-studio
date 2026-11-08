@@ -966,6 +966,8 @@ test('a generation lease excludes status and resolver probes during qualificatio
       return child
     },
   )
+  const statuses = []
+  const unsubscribe = manager.onStatusChanged((status) => statuses.push(status.kind))
   const generation = manager.withGenerationWorker(scratch, async (worker) => {
     assert.equal(worker.ready.workerVersion, '0.2.0')
     workEntered()
@@ -980,7 +982,7 @@ test('a generation lease excludes status and resolver probes during qualificatio
         setTimeout(() => reject(new Error('status waited for generation')), 1000),
       ),
     ])
-    assert.equal(startingStatus.value.kind, 'needs-repair')
+    assert.equal(startingStatus.value.kind, 'checking')
     assert.equal(await manager.resolveQualifiedGenerationWorker(scratch), null)
     assert.deepEqual(await lines(path.join(roots.runtimeDir, 'launches')), [
       'worker-2-linux-nvidia',
@@ -988,6 +990,7 @@ test('a generation lease excludes status and resolver probes during qualificatio
 
     resumeQualification()
     await working
+    assert.equal(statuses.at(-1), 'ready', 'Startup settles through its event before a new status getter.')
     const activeStatus = await Promise.race([
       manager.getStatus(),
       new Promise((_, reject) =>
@@ -1022,6 +1025,7 @@ test('a generation lease excludes status and resolver probes during qualificatio
   ])
   assert.equal((await manager.getStatus()).value.kind, 'ready')
   assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 3)
+  unsubscribe()
 })
 
 test('shutdown fences late runtime probes and waits for an in-flight qualification before SQLite closes', async () => {
@@ -1735,6 +1739,8 @@ test('idle new-generation preparation delegates the normal GPU lease and refuses
 
 test('GPU completion during CPU startup retains captured qualification and never permits a competing GPU probe', async () => {
   const { roots, manager } = await fixture()
+  const statuses = []
+  const unsubscribe = manager.onStatusChanged((status) => statuses.push(status.kind))
   const installed = await installFakeInferenceRuntime(roots)
   await installCpuTarget(roots)
   await fs.writeFile(path.join(installed.environment, 'cpu-mode'), 'startup-gate')
@@ -1757,18 +1763,22 @@ test('GPU completion during CPU startup retains captured qualification and never
   )
   try {
     await waitForLines(path.join(roots.runtimeDir, 'cpu-launches'), 1)
+    assert.equal((await manager.getStatus()).value.kind, 'checking')
     finish.resolve()
     assert.equal(await generation, 'gpu-finished')
+    assert.equal(statuses.includes('needs-repair'), false)
     assert.equal(await manager.withGenerationWorker(scratch, async () => 'competing GPU'), null)
-    assert.equal((await manager.getStatus()).value.kind, 'needs-repair')
+    assert.equal((await manager.getStatus()).value.kind, 'checking')
     assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
     await fs.writeFile(path.join(roots.runtimeDir, 'cpu-release-start'), '')
     assert.equal(await preparation, 'txt2img')
+    assert.equal(statuses.at(-1), 'ready')
     assert.equal((await lines(path.join(roots.runtimeDir, 'cpu-exits'))).length, 1)
   } finally {
     finish.resolve()
     await fs.writeFile(path.join(roots.runtimeDir, 'cpu-release-start'), '')
     await Promise.allSettled([generation, preparation])
+    unsubscribe()
   }
 })
 
@@ -2405,3 +2415,237 @@ test(
     }
   },
 )
+
+// Actual installed-location subprocesses, held at explicit lifecycle boundaries. A status
+// observer may render a pending check but must never turn ordinary startup into repair.
+test('checking second generation startup settles by event only after final metadata validation', async (t) => {
+  for (const changed of [false, true]) {
+    await t.test(changed ? 'changed config refuses ready' : 'healthy startup becomes ready', async () => {
+      const { roots, manager } = await fixture()
+      const installed = await installFakeInferenceRuntime(roots)
+      const scratch = path.join(roots.appDataDir, 'scratch')
+      const entered = deferred()
+      const release = deferred()
+      const finish = deferred()
+      const statuses = []
+      const unsubscribe = manager.onStatusChanged((status) => statuses.push(status.kind))
+      const start = GenerationWorkerClient.start
+      let starts = 0
+      let callbacks = 0
+      GenerationWorkerClient.start = async (location, options) => {
+        const client = await start.call(GenerationWorkerClient, location, options)
+        if (++starts === 2) {
+          entered.resolve()
+          await release.promise
+        }
+        return client
+      }
+      const outcome = manager.withGenerationWorker(scratch, async () => {
+        callbacks++
+        assert.equal(statuses.at(-1), 'ready', 'No new getter is needed to clear the startup notice.')
+        await finish.promise
+        return 'started'
+      }).then((value) => ({ value }), (error) => ({ error }))
+      try {
+        await entered.promise
+        assert.equal((await manager.getStatus()).value.kind, 'checking')
+        assert.equal(await manager.withGenerationWorker(scratch, async () => 'extra child'), null)
+        assert.equal(await manager.resolveQualifiedGenerationWorker(scratch), null)
+        assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+        if (changed) await fs.writeFile(path.join(installed.config, 'model_index.json'), 'changed')
+        release.resolve()
+        if (changed) {
+          assert.deepEqual(await outcome, { value: null })
+          assert.equal(callbacks, 0)
+          assert.equal(statuses.at(-1), 'needs-repair')
+          assert.equal(statuses.includes('ready'), false)
+        } else {
+          finish.resolve()
+          assert.deepEqual(await outcome, { value: 'started' })
+          assert.equal(callbacks, 1)
+          assert.equal(statuses.at(-1), 'ready')
+          assert.equal(statuses.includes('needs-repair'), false)
+        }
+        assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+        assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 2)
+      } finally {
+        release.resolve()
+        finish.resolve()
+        await outcome
+        GenerationWorkerClient.start = start
+        unsubscribe()
+      }
+    })
+  }
+})
+
+test('checking failed qualification settles to repair without another worker probe', async () => {
+  const roots = await createRuntimeRoots(await temporaryRoot())
+  await installFakeInferenceRuntime(roots)
+  const scratch = path.join(roots.appDataDir, 'scratch')
+  await fs.mkdir(scratch, { mode: 0o700 })
+  const entered = deferred()
+  const release = deferred()
+  const sentinel = new Error('Controlled self-test failure after actual child exit.')
+  const manager = new RuntimeManager(
+    roots,
+    { platform: 'linux', arch: 'x64' },
+    async (location, environment) => {
+      const client = await GenerationWorkerClient.start(location, { environment })
+      entered.resolve()
+      await release.promise
+      await client.close()
+      throw sentinel
+    },
+  )
+  const statuses = []
+  const unsubscribe = manager.onStatusChanged((status) => statuses.push(status.kind))
+  const outcome = manager.withGenerationWorker(scratch, async () =>
+    assert.fail('A failed self-test must not enter generation.'),
+  ).then((value) => ({ value }), (error) => ({ error }))
+  try {
+    await entered.promise
+    assert.equal((await manager.getStatus()).value.kind, 'checking')
+    release.resolve()
+    assert.deepEqual(await outcome, { value: null })
+    assert.equal(statuses.at(-1), 'needs-repair')
+    assert.equal(statuses.includes('ready'), false)
+    assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 1)
+    assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 1)
+  } finally {
+    release.resolve()
+    await outcome
+    unsubscribe()
+  }
+})
+
+test('checking failed second generation startup preserves its error and emits repair without retrying', async () => {
+  const roots = await createRuntimeRoots(await temporaryRoot())
+  const installed = await installFakeInferenceRuntime(roots)
+  const scratch = path.join(roots.appDataDir, 'scratch')
+  await fs.mkdir(scratch, { mode: 0o700 })
+  const entered = deferred()
+  const release = deferred()
+  const manager = new RuntimeManager(
+    roots,
+    { platform: 'linux', arch: 'x64' },
+    async (location, environment) => {
+      const client = await GenerationWorkerClient.start(location, { environment })
+      entered.resolve()
+      await release.promise
+      await fs.writeFile(path.join(installed.environment, 'mode'), 'no-ready')
+      return client
+    },
+  )
+  const statuses = []
+  const unsubscribe = manager.onStatusChanged((status) => statuses.push(status.kind))
+  const outcome = manager.withGenerationWorker(scratch, async () =>
+    assert.fail('A worker that exited before ready must not enter generation.'),
+  ).then((value) => ({ value }), (error) => ({ error }))
+  try {
+    await entered.promise
+    assert.equal((await manager.getStatus()).value.kind, 'checking')
+    release.resolve()
+    const result = await outcome
+    assert.equal(result.error?.code, 'WORKER_EXITED')
+    assert.equal(statuses.at(-1), 'needs-repair')
+    assert.equal(statuses.includes('ready'), false)
+    assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+    // The failing fake exits before registering its normal exit-log hook. Physical exit is
+    // confirmed by start() rejecting without retaining an unconfirmed-start fence.
+    assert.equal(GenerationWorkerClient.hasUnconfirmedStartExit(), false)
+    assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 1)
+  } finally {
+    release.resolve()
+    await outcome
+    unsubscribe()
+  }
+})
+
+test('checking CPU target and Smart preparation settle by event without another CUDA probe', async (t) => {
+  for (const kind of ['target', 'smart']) {
+    await t.test(kind, async () => {
+      const { roots, manager } = await fixture()
+      const installed = await installFakeInferenceRuntime(roots)
+      await fs.writeFile(path.join(installed.environment, 'mode'), 'smart-ready')
+      await fs.writeFile(path.join(installed.environment, 'cpu-mode'), 'startup-gate')
+      await installCpuTarget(roots)
+      const scratch = path.join(roots.appDataDir, 'scratch')
+      const entered = deferred()
+      const finish = deferred()
+      const statuses = []
+      const unsubscribe = manager.onStatusChanged((status) => statuses.push(status.kind))
+      const generation = manager.withGenerationWorker(scratch, async () => {
+        entered.resolve()
+        await finish.promise
+      })
+      let preparation
+      try {
+        await entered.promise
+        // Seed the advisory state before its CPU-only preparation enters a gated startup.
+        assert.equal((await manager.getStatus()).value.kind, 'ready')
+        const prepare = kind === 'target'
+          ? manager.withGenerationPreparation.bind(manager)
+          : manager.withSmartPatchGenerationPreparation.bind(manager)
+        preparation = prepare(scratch, async (input) => {
+          assert.equal(statuses.at(-1), 'ready', 'CPU readiness must settle before its callback.')
+          return (await composeCpuTarget(input.targetWorker ?? input.preparationWorker, scratch)).mode
+        })
+        await waitForLines(path.join(roots.runtimeDir, 'cpu-launches'), 1)
+        assert.equal((await manager.getStatus()).value.kind, 'checking')
+        assert.equal(await manager.withGenerationWorker(scratch, async () => 'unsafe'), null)
+        assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+        await fs.writeFile(path.join(roots.runtimeDir, 'cpu-release-start'), '')
+        assert.equal(await preparation, 'txt2img')
+        assert.equal(statuses.at(-1), 'ready')
+        assert.equal(statuses.includes('needs-repair'), false)
+        assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+        assert.equal((await lines(path.join(roots.runtimeDir, 'cpu-exits'))).length, 1)
+      } finally {
+        await fs.writeFile(path.join(roots.runtimeDir, 'cpu-release-start'), '')
+        await Promise.allSettled([preparation])
+        finish.resolve()
+        await generation
+        unsubscribe()
+      }
+    })
+  }
+})
+
+test('a delayed status query cannot hide invalid metadata behind a newer ready publication', async () => {
+  const { roots, manager } = await fixture()
+  const installed = await installFakeInferenceRuntime(roots)
+  const entered = deferred()
+  const release = deferred()
+  const prepare = manager.prepareQualification.bind(manager)
+  let held = false
+  // Delay just the first real configuration read. Both queries retain the actual pointer,
+  // fingerprint, worker qualification and status publication implementations.
+  manager.prepareQualification = async (...args) => {
+    if (!held) {
+      held = true
+      entered.resolve()
+      await release.promise
+    }
+    return await prepare(...args)
+  }
+  const statuses = []
+  const unsubscribe = manager.onStatusChanged((status) => statuses.push(status.kind))
+  const delayed = manager.getStatus()
+  try {
+    await entered.promise
+    assert.equal((await manager.getStatus()).value.kind, 'ready')
+    assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 1)
+    await fs.rm(installed.config, { recursive: true })
+    release.resolve()
+    assert.equal((await delayed).value.kind, 'needs-repair')
+    assert.equal(statuses.at(-1), 'needs-repair')
+    assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 1)
+    assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 1)
+  } finally {
+    release.resolve()
+    await delayed
+    manager.prepareQualification = prepare
+    unsubscribe()
+  }
+})

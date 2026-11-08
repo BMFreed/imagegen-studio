@@ -128,6 +128,7 @@ export class RuntimeManager {
   private qualificationTail: Promise<void> = Promise.resolve()
   private readonly roots: RuntimeRoots
   private readonly startClient: StartQualificationClient
+  private statusRevision = 0
   private unconfirmedClient: QualificationClient | null = null
 
   constructor(
@@ -141,6 +142,7 @@ export class RuntimeManager {
   }
 
   async getStatus(): Promise<ApiResult<RuntimeStatus>> {
+    const observedRevision = this.statusRevision
     if (this.generationWorkPrevented) {
       return this.shuttingDownStatus()
     }
@@ -218,12 +220,30 @@ export class RuntimeManager {
             : lease
               ? this.leaseIsAdvisoryReady(lease, prepared)
               : prepared !== null && (await this.qualify(prepared, true))
+        if (lease !== this.generationLease || preparation !== this.preparationLease) {
+          return await this.getStatus()
+        }
         if (this.generationWorkPrevented) {
           return this.shuttingDownStatus()
         }
         if (!ready) {
           this.cachedQualification = null
         }
+        // An owned startup is a connection transition, not evidence of a broken runtime.
+        // Metadata changes and unconfirmed exits must still fail closed.
+        const checking =
+          prepared !== null &&
+          !this.unconfirmedClient &&
+          !GenerationWorkerClient.hasUnconfirmedStartExit() &&
+          !ProjectWorkerClient.hasUnconfirmedExit() &&
+          !this.hasUnconfirmedGenerationExit() &&
+          (preparation
+            ? preparation.phase === 'starting' &&
+              prepared.key === preparation.key &&
+              prepared.worker.runtimeId === preparation.runtimeId
+            : lease?.phase === 'qualifying' &&
+              (lease.key === null ||
+                (prepared.key === lease.key && prepared.worker.runtimeId === lease.runtimeId)))
         status = ready
           ? {
               detail: lease
@@ -233,20 +253,29 @@ export class RuntimeManager {
               profile: 'linux-nvidia',
               runtimeId: pointer.value.runtimeId,
             }
-          : {
-              detail: preparation
-                ? preparation.phase === 'unconfirmed-exit'
-                  ? 'The preparation worker has not confirmed exit; runtime probing is blocked.'
-                  : 'Target preparation is in progress; a separate status probe is deferred.'
-                : lease
-                  ? lease.phase === 'unconfirmed-exit'
-                    ? 'The generation worker has not confirmed exit; runtime probing is blocked.'
-                    : 'The image runtime is starting; a separate status probe is deferred.'
-                  : 'The installed Linux/NVIDIA image runtime failed its worker self-test.',
-              kind: 'needs-repair',
-              profile: 'linux-nvidia',
-              runtimeId: pointer.value.runtimeId,
-            }
+          : checking
+            ? {
+                detail: preparation
+                  ? 'Target preparation is starting; a separate status probe is deferred.'
+                  : 'The image runtime is starting; a separate status probe is deferred.',
+                kind: 'checking',
+                profile: 'linux-nvidia',
+                runtimeId: pointer.value.runtimeId,
+              }
+            : {
+                detail: preparation
+                  ? preparation.phase === 'unconfirmed-exit'
+                    ? 'The preparation worker has not confirmed exit; runtime probing is blocked.'
+                    : 'Target preparation is in progress; a separate status probe is deferred.'
+                  : lease
+                    ? lease.phase === 'unconfirmed-exit'
+                      ? 'The generation worker has not confirmed exit; runtime probing is blocked.'
+                      : 'The image runtime is starting; a separate status probe is deferred.'
+                    : 'The installed Linux/NVIDIA image runtime failed its worker self-test.',
+                kind: 'needs-repair',
+                profile: 'linux-nvidia',
+                runtimeId: pointer.value.runtimeId,
+              }
       }
     }
 
@@ -254,16 +283,11 @@ export class RuntimeManager {
       return this.shuttingDownStatus()
     }
 
-    if (this.previousStatus && JSON.stringify(this.previousStatus) !== JSON.stringify(status)) {
-      for (const listener of this.listeners) {
-        try {
-          listener(status)
-        } catch {
-          // A failed event consumer must not turn a successful status query into an IPC error.
-        }
-      }
+    // A lifecycle callback may have settled a preceding check while this query awaited I/O.
+    if (observedRevision !== this.statusRevision) {
+      return await this.getStatus()
     }
-    this.previousStatus = status
+    this.publishStatus(status)
     return { ok: true, value: status }
   }
 
@@ -694,6 +718,7 @@ export class RuntimeManager {
         ) {
           return null
         }
+        await this.refreshCheckingStatus()
         return await use({
           inferenceReady: ready,
           targetWorker: { composeTarget: (input) => client.composeTarget(input) },
@@ -714,6 +739,7 @@ export class RuntimeManager {
       if (preparation.phase !== 'unconfirmed-exit' && this.preparationLease === preparation) {
         this.preparationLease = null
       }
+      this.failCheckingStatus()
     }
   }
 
@@ -806,6 +832,7 @@ export class RuntimeManager {
             key: prepared.key,
             ready: copyInferenceReady(client.ready),
           }
+          await this.refreshCheckingStatus()
           return await use(client, prepared.worker)
         } finally {
           try {
@@ -820,6 +847,9 @@ export class RuntimeManager {
     } finally {
       if (lease.phase !== 'unconfirmed-exit' && this.generationLease === lease) {
         this.generationLease = null
+      }
+      if (!this.preparationLease || lease.phase === 'unconfirmed-exit') {
+        this.failCheckingStatus()
       }
     }
   }
@@ -897,6 +927,7 @@ export class RuntimeManager {
           ) {
             return null
           }
+          await this.refreshCheckingStatus()
           return await use({ inferenceReady: copyInferenceReady(ready), preparationWorker: client })
         } finally {
           try {
@@ -914,6 +945,7 @@ export class RuntimeManager {
         if (preparation.phase !== 'unconfirmed-exit' && this.preparationLease === preparation) {
           this.preparationLease = null
         }
+        this.failCheckingStatus()
       }
     })
   }
@@ -928,6 +960,16 @@ export class RuntimeManager {
       return true
     } catch {
       return false
+    }
+  }
+
+  private failCheckingStatus(): void {
+    if (!this.generationWorkPrevented && this.previousStatus?.kind === 'checking') {
+      this.publishStatus({
+        ...this.previousStatus,
+        detail: 'The image runtime could not complete startup.',
+        kind: 'needs-repair',
+      })
     }
   }
 
@@ -1040,6 +1082,24 @@ export class RuntimeManager {
       }
     }
     return true
+  }
+
+  private publishStatus(status: RuntimeStatus): void {
+    const previous = this.previousStatus
+    if (previous && JSON.stringify(previous) === JSON.stringify(status)) {
+      return
+    }
+    this.previousStatus = status
+    this.statusRevision += 1
+    if (previous) {
+      for (const listener of this.listeners) {
+        try {
+          listener(status)
+        } catch {
+          // A failed event consumer must not turn a successful status query into an IPC error.
+        }
+      }
+    }
   }
 
   private async qualify(prepared: PreparedQualification, useCache: boolean): Promise<boolean> {
@@ -1161,6 +1221,13 @@ export class RuntimeManager {
       return qualified
     } catch {
       return false
+    }
+  }
+
+  private async refreshCheckingStatus(): Promise<void> {
+    if (!this.generationWorkPrevented && this.previousStatus?.kind === 'checking') {
+      // Only called with the validated running lease still held: this cannot start a probe.
+      await this.getStatus()
     }
   }
 

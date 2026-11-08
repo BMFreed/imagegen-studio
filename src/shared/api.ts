@@ -244,7 +244,7 @@ export const ipcChannels = {
 
 export interface RuntimeStatus {
   detail: string
-  kind: 'needs-repair' | 'not-installed' | 'ready' | 'unsupported'
+  kind: 'checking' | 'needs-repair' | 'not-installed' | 'ready' | 'unsupported'
   profile: 'linux-nvidia' | null
   runtimeId?: string
 }

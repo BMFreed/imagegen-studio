@@ -18,6 +18,9 @@ const emit = defineEmits<{
 
 const heading = computed(() => {
   switch (props.status?.kind) {
+    case 'checking': {
+      return 'Starting image generation'
+    }
     case 'needs-repair': {
       return 'Image generation needs repair'
     }
@@ -35,6 +38,9 @@ const heading = computed(() => {
 
 const description = computed(() => {
   switch (props.status?.kind) {
+    case 'checking': {
+      return 'The image engine is starting. Queued work will continue when it is ready.'
+    }
     case 'needs-repair': {
       return 'The image engine cannot start. Repair it to resume generation.'
     }
@@ -57,7 +63,10 @@ const description = computed(() => {
   <section aria-label="Image generation status" aria-live="polite" class="runtime-notice">
     <div class="notice-copy">
       <div class="notice-heading">
-        <NSpin v-if="pending === 'check' && !status" size="small" />
+        <NSpin
+          v-if="status?.kind === 'checking' || (pending === 'check' && !status)"
+          size="small"
+        />
         <h2>{{ heading }}</h2>
       </div>
       <p>{{ description }}</p>
