@@ -21,6 +21,7 @@ import {
   supportsInferenceRegionalLoras,
   supportsInferenceRegionalOutpaint,
   supportsInferenceRegionalVae,
+  supportsInferenceRegionalVPrediction,
 } from '../../shared/projects/inference-worker-capabilities.js'
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 import { activePromptEmbeddingRefs } from '../../shared/projects/prompt-embeddings.js'
@@ -902,6 +903,27 @@ export class ProjectRegionalGenerationCoordinator {
               modelService: this.models,
               target: preparationTarget,
             })
+            if (prepared.context.model.reference.predictionType === 'v_prediction') {
+              // Invoke denoise_latents.py takes the resolved UNet objective, not a saved label.
+              // Recheck the actual classified target and exact resolver output before any queue files.
+              if (
+                !compositionProfile ||
+                target.mode !== 'txt2img' ||
+                prepared.context.sampling.sampler !== 'Euler' ||
+                prepared.context.sampling.scheduler !== 'Normal' ||
+                initializationProfile !== undefined
+              ) {
+                throw unsupported(
+                  'Regional v_prediction requires transparent TXT with Euler/Normal.',
+                )
+              }
+              if (!supportsInferenceRegionalVPrediction(ready)) {
+                throw new ProjectRegionalGenerationError(
+                  'INFERENCE_UNAVAILABLE',
+                  'The image engine has not qualified Regional Guidance v_prediction.',
+                )
+              }
+            }
             if (compositionProfile) {
               prepared.context.embeddingRefs = authoredEmbeddingRefs
             }
@@ -1098,6 +1120,7 @@ function validateInvokeDraft(document: IgsProjectDocumentV1, iterations = 1): vo
     loraSupported: true,
     runtimeSupported: true,
     vaeSupported: true,
+    vPredictionSupported: true,
   })
   if (reason) {
     throw unsupported(reason)
@@ -1247,11 +1270,12 @@ function captureModels(models: GenerationModelResolver): GenerationModelResolver
     resolveVerifiedGenerationCheckpointForPlan: async (...args) => {
       const resolved = structuredClone(await checkpoint(...structuredClone(args)))
       if (
-        resolved.reference.predictionType !== 'epsilon' ||
+        (resolved.reference.predictionType !== 'epsilon' &&
+          resolved.reference.predictionType !== 'v_prediction') ||
         !isIllustriousNoiseProfileV1(resolved.noiseProfile)
       ) {
         throw unsupported(
-          'The resolved checkpoint must have epsilon prediction and an explicit current noise policy.',
+          'The resolved checkpoint must have epsilon or v_prediction and an explicit current noise policy.',
         )
       }
       return resolved

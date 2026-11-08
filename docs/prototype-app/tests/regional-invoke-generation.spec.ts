@@ -1577,3 +1577,89 @@ for (const mode of ['txt2img', 'img2img', 'outpaint'] as const) {
     expect(errors).toEqual([])
   })
 }
+
+test('renderer regional V TXT requires its own objective capability while epsilon and disabled rows retain legacy peers', async ({
+  page,
+}) => {
+  const errors: string[] = []
+  page.on('pageerror', (cause) => errors.push(cause.message))
+  await mountWiring(page, 'project')
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.tab.generationDraft.model!.predictionType = 'v_prediction'
+    fixture.catalog[0]!.versions[0]!.predictionType = 'v_prediction'
+    fixture.state.regionalVPredictionSupported = false
+  })
+  const generate = page.getByRole('button', { exact: true, name: 'Generate' })
+  await expect(generate).toBeDisabled()
+  await expect(
+    page.getByText(
+      'The current image engine does not support Regional Guidance v_prediction. Repair or update the runtime.',
+    ),
+  ).toBeVisible()
+  await page.evaluate(() => {
+    globalThis.window.regionalWiringFixture.state.regionalVPredictionSupported = true
+  })
+  await expect(generate).toBeEnabled()
+  await generate.click()
+  expect(await page.evaluate(() => globalThis.window.regionalWiringFixture.generateCalls)).toEqual([
+    1,
+  ])
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.targetMode = 'img2img'
+    fixture.tab.primaryBbox.x += 8
+    fixture.tab.generationDraft.sampling.denoisingStrength = 0.5
+    fixture.state.regionalImg2ImgSupported = true
+  })
+  await expect(generate).toBeDisabled()
+  await expect(page.getByText(/v_prediction requires a fully transparent txt2img/)).toBeVisible()
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.tab.generationDraft.model!.predictionType = 'epsilon'
+    fixture.catalog[0]!.versions[0]!.predictionType = 'epsilon'
+    fixture.state.regionalVPredictionSupported = false
+  })
+  await expect(generate).toBeEnabled()
+  expect(errors).toEqual([])
+})
+
+test('renderer V Retry uses recorded objective after current epsilon draft edits and keeps epsilon neighbor enabled', async ({
+  page,
+}) => {
+  const errors: string[] = []
+  page.on('pageerror', (cause) => errors.push(cause.message))
+  await mountWiring(page, 'queue')
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.queueItem.details!.sampling.predictionType = 'v_prediction'
+    fixture.state.regionalVPredictionSupported = false
+    fixture.tab.regionalGuidance = []
+    fixture.tab.generationDraft.model!.predictionType = 'epsilon'
+    fixture.epoch += 1
+  })
+  const retry = page.getByRole('button', { exact: true, name: 'Retry job' })
+  await expect(retry).toBeDisabled()
+  await expect(
+    page.getByTestId('queue-job-row').getByText(/frozen Regional Guidance v_prediction job/),
+  ).toBeVisible()
+  await page.evaluate(() => {
+    globalThis.window.regionalWiringFixture.state.regionalVPredictionSupported = true
+  })
+  await expect(retry).toBeEnabled()
+  await retry.click()
+  expect(await page.evaluate(() => globalThis.window.regionalWiringFixture.retryCalls)).toEqual([
+    await page.evaluate(() => ({
+      id: globalThis.window.regionalWiringFixture.queueItem.id,
+      statusSequence: 3,
+    })),
+  ])
+  await page.evaluate(() => {
+    const fixture = globalThis.window.regionalWiringFixture
+    fixture.queueItem.details!.sampling.predictionType = 'epsilon'
+    fixture.state.regionalVPredictionSupported = false
+    fixture.epoch += 1
+  })
+  await expect(retry).toBeEnabled()
+  expect(errors).toEqual([])
+})

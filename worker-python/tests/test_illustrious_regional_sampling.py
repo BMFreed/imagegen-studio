@@ -807,9 +807,9 @@ def test_high_level_signatures_remain_required_and_have_no_sampling_side_channel
         ),
     ):
         signature = inspect.signature(entry)
-        # IMG adds a paired internal source seam; TXT has no image side channel.
+        # IMG/OUT retain their existing source/keep-mask seams; TXT has no image side channel.
         image_keywords = (
-            ("image", "denoising_strength")
+            ("image", "denoising_strength", "keep_mask")
             if entry is cpu.denoising.run_current_canvas_regional_denoising
             else ()
         )

@@ -2152,3 +2152,29 @@ not promote full-scene/human quality, other trained LoRAs/methods, Smart, region
 references/TI/spatial negatives, per-region LoRA or PP-001/005/007/008 readiness.
 Ordinary global-LoRA provenance remains, while Regional Guidance exclusions from
 accepted provenance/Compare/result-derived presets are preserved.
+
+
+The subsequent [NoobAI V TXT lane](../../../engineering/phase-4-regional-guidance-v-prediction-research.md)
+allows the exact-file resolver's `v_prediction` objective for transparent Current
+Canvas TXT with Euler/Normal. It requires `illustrious-regional-v-prediction-v1`
+in addition to existing prerequisites; no initializer, V IMG/OUT or other V sampler
+is admitted. Existing VAE/resource owners and limits remain. Noise policy is
+independent of prediction objective and comes from the actual Main resolver.
+Saved stale labels cannot substitute the library setting; frozen Retry retains
+the original effective objective/policy after subsequent authoring changes.
+Renderer compatibility hints remain conservative snapshots. Existing EPS/private
+profiles, commands, worker version, persistence and ordinary result projection keep
+their meanings.
+
+ROOT records1,672 Main/347 distinct Python/212 browser PASS and three qualified
+512²/Euler30 V requests/two PNGs. Cancel follows observed5/30 and6/30 progress
+(nine native steps, no completion);
+restarted Retry after model-clear/text/mask/seed edits is byte-exact with its healthy
+control. Add/Undo/Redo/Save-reopen preserves ordinary V/false-leading/EmbeddedFP32
+provenance without regional fields. Fifteen GREEN/three semantic RED and exact
+restoration test capability/objective sensitivity. Initial wrong-library-objective
+setup, emergency cleanup/recovery and legacy-test diagnostics remain excluded.
+Source/retained/runtime/release levels remain distinct; this finite V checkpoint
+does not replace the selected official Illustrious visual target, qualify trained
+quality or broaden Anima/Smart/reference/image-mode scope. PP-001/005/007/008
+remain «Пока не обещать».

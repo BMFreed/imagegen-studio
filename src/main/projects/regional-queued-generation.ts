@@ -640,7 +640,14 @@ function parseRegionalPayload(
     (ordinary.kind !== 'illustrious-txt2img' &&
       ordinary.kind !== 'illustrious-img2img' &&
       ordinary.kind !== 'illustrious-outpaint') ||
-    ordinary.workerJob.checkpoint.predictionType !== 'epsilon' ||
+    !(
+      ordinary.workerJob.checkpoint.predictionType === 'epsilon' ||
+      (invoke &&
+        !image &&
+        ordinary.workerJob.checkpoint.predictionType === 'v_prediction' &&
+        ordinary.workerJob.sampling.scheduler === 'euler' &&
+        initializationProfile === undefined)
+    ) ||
     (invoke && ordinary.workerJob.sampling.cfgScale <= 1) ||
     !samplerMatchesInitialization ||
     ordinary.workerJob.sampling.noiseProfile === undefined ||

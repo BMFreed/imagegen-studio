@@ -123,6 +123,16 @@ export function supportsInferenceRegionalDpm(value: unknown): boolean {
   )
 }
 
+/** Invoke's UNet objective is frozen explicitly; older epsilon regional peers cannot execute V. */
+export function supportsInferenceRegionalVPrediction(value: unknown): boolean {
+  return (
+    isQualifiedInferenceWorkerReady(value) &&
+    value.workerVersion === '0.14.0' &&
+    value.capabilities.includes('illustrious-regional-invoke-v1') &&
+    value.capabilities.includes('illustrious-regional-v-prediction-v1')
+  )
+}
+
 /** Ordinary rescale support alone never qualifies the separate regional execution owner. */
 export function supportsInferenceRegionalCFGRescale(value: unknown): boolean {
   return (

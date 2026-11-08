@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 
+import { supportsInferenceRegionalVPrediction } from './inference-worker-capabilities.js'
 import { isProjectGenerationActionState } from './project-generation-actions.js'
 import { createEmptyProjectDocumentV1, type IgsProjectDocumentV1 } from './project-schema.js'
 import {
@@ -91,7 +92,11 @@ test('finite regional settings refuse unsupported families, predictions, samplin
       (v) => (v.generationDraft.model!.baseModelFamily = null),
       /Illustrious epsilon/,
     ],
-    ['v-prediction', (v) => (v.generationDraft.model!.predictionType = 'v_prediction'), /epsilon/],
+    [
+      'v-prediction',
+      (v) => (v.generationDraft.model!.predictionType = 'v_prediction'),
+      /v_prediction/,
+    ],
     [
       'unsupported sampler',
       (v) => (v.generationDraft.sampling.sampler = 'DPM++ SDE'),
@@ -724,5 +729,152 @@ test('regional image VAE support state accepts only optional Boolean values', ()
   }
   for (const regionalImg2ImgVaeSupported of [null, 1, 'true']) {
     assert.equal(isProjectGenerationActionState({ ...state, regionalImg2ImgVaeSupported }), false)
+  }
+})
+
+const V_PREDICTION_CAPABILITY = 'illustrious-regional-v-prediction-v1'
+
+test('regional V objective requires the new explicit combination capability on a qualified peer', () => {
+  const capabilities = [
+    'illustrious-txt2img',
+    'denoising-progress',
+    'candidate-thumbnails',
+    'illustrious-cfg-rescale',
+    'illustrious-img2img',
+    'illustrious-lora',
+    'illustrious-vae-precision',
+    'illustrious-external-vae',
+    'illustrious-embeddings',
+    'illustrious-outpaint',
+    'illustrious-regional-invoke-v1',
+    V_PREDICTION_CAPABILITY,
+  ]
+  const ready = {
+    capabilities,
+    protocolVersion: '1',
+    runtimeProfile: 'linux-nvidia',
+    workerVersion: '0.14.0',
+  }
+  assert.equal(supportsInferenceRegionalVPrediction(ready), true)
+  for (const absent of [
+    V_PREDICTION_CAPABILITY,
+    'illustrious-regional-invoke-v1',
+    'illustrious-txt2img',
+  ]) {
+    assert.equal(
+      supportsInferenceRegionalVPrediction({
+        ...ready,
+        capabilities: capabilities.filter((c) => c !== absent),
+      }),
+      false,
+    )
+  }
+  assert.equal(supportsInferenceRegionalVPrediction({ ...ready, workerVersion: '0.13.0' }), false)
+})
+
+test('regional V advisory keeps epsilon independent and zero enabled owners inert', () => {
+  const value = document()
+  for (const support of [undefined, false, true]) {
+    assert.equal(
+      getInvokeRegionalGenerationUnavailableReason({
+        document: value,
+        iterations: 1,
+        runtimeSupported: true,
+        vPredictionSupported: support,
+      }),
+      null,
+    )
+  }
+  value.generationDraft.model!.predictionType = 'v_prediction'
+  const before = structuredClone(value)
+  for (const support of [undefined, false, true]) {
+    const result = getInvokeRegionalGenerationUnavailableReason({
+      document: value,
+      iterations: 1,
+      runtimeSupported: true,
+      targetMode: 'txt2img',
+      vPredictionSupported: support,
+    })
+    assert.equal(result === null, support === true)
+    if (result) {
+      assert.match(result, /v_prediction.*Repair or update/)
+    }
+  }
+  assert.deepEqual(value, before)
+  value.regionalGuidance![0].enabled = false
+  assert.equal(
+    getInvokeRegionalGenerationUnavailableReason({
+      document: value,
+      iterations: 1,
+      runtimeSupported: false,
+      vPredictionSupported: false,
+    }),
+    null,
+  )
+})
+
+for (const targetMode of ['img2img', 'outpaint'] as const) {
+  test(`regional V advisory refuses actual ${targetMode} despite all relevant peers`, () => {
+    const value = document()
+    value.generationDraft.model!.predictionType = 'v_prediction'
+    value.generationDraft.sampling.denoisingStrength = 0.5
+    const before = structuredClone(value)
+    assert.match(
+      getInvokeRegionalGenerationUnavailableReason({
+        document: value,
+        img2imgSupported: true,
+        iterations: 1,
+        outpaintSupported: true,
+        runtimeSupported: true,
+        targetMode,
+        vPredictionSupported: true,
+      })!,
+      /transparent txt2img/,
+    )
+    assert.deepEqual(value, before)
+  })
+}
+
+for (const sampler of ['Euler a', 'DPM++ 2M'] as const) {
+  test(`regional V advisory refuses ${sampler} while the epsilon neighbor remains admitted`, () => {
+    const value = document()
+    value.generationDraft.model!.predictionType = 'v_prediction'
+    value.generationDraft.sampling.sampler = sampler
+    const input = {
+      document: value,
+      dpmSupported: true,
+      initializationSupported: true,
+      iterations: 1,
+      runtimeSupported: true,
+      vPredictionSupported: true,
+    }
+    assert.match(
+      getInvokeRegionalGenerationUnavailableReason(input)!,
+      /v_prediction requires Euler.*Normal/,
+    )
+    value.generationDraft.model!.predictionType = 'epsilon'
+    assert.equal(getInvokeRegionalGenerationUnavailableReason(input), null)
+  })
+}
+
+test('regional V support is an optional strict boolean without changing legacy preload action states', () => {
+  const state = {
+    cfgRescaleSupported: true,
+    documentId: randomUUID(),
+    embeddingsSupported: true,
+    error: null,
+    externalVaeSupported: true,
+    img2imgSupported: true,
+    jobs: [],
+    phase: 'idle',
+    runningJobId: null,
+    vaePrecisionSupported: true,
+  }
+  assert.equal(isProjectGenerationActionState(state), true)
+  for (const regionalVPredictionSupported of [false, true]) {
+    assert.equal(isProjectGenerationActionState({ ...state, regionalVPredictionSupported }), true)
+  }
+  for (const regionalVPredictionSupported of [null, 0, 1, 'true', {}]) {
+    assert.equal(isProjectGenerationActionState({ ...state, regionalVPredictionSupported }), false)
   }
 })

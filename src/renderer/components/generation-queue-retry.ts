@@ -24,6 +24,7 @@ type RetryState = Pick<
   | 'regionalOutpaintSupported'
   | 'regionalSupported'
   | 'regionalVaeSupported'
+  | 'regionalVPredictionSupported'
   | 'smartPatchSupported'
 >
 
@@ -36,6 +37,7 @@ export function generationQueueRetryReason(
   requiresRegionalVae = false,
   frozenCfgRescale = 0,
   frozenAnimaMethod?: string | null,
+  frozenPredictionType?: string | null,
 ): string | null {
   if (
     operation === 'anima-regional-txt2img' ||
@@ -76,6 +78,14 @@ export function generationQueueRetryReason(
     }
     if (state.regionalSupported !== true) {
       return 'The current image engine does not support Regional Guidance. Repair or update the runtime.'
+    }
+    if (frozenPredictionType === 'v_prediction') {
+      if (operation !== 'illustrious-regional-txt2img' || frozenSampler !== 'Euler') {
+        return 'This frozen regional v_prediction job requires TXT Euler execution.'
+      }
+      if (state.regionalVPredictionSupported !== true) {
+        return 'The current image engine does not support this frozen Regional Guidance v_prediction job. Repair or update the runtime.'
+      }
     }
     if (operation === 'illustrious-regional-outpaint' && state.regionalOutpaintSupported !== true) {
       return 'The current image engine does not support outpaint with Regional Guidance. Repair or update the runtime.'

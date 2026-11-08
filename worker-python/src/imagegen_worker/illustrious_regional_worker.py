@@ -40,6 +40,7 @@ from .illustrious_regional_denoising import (
     _DenoisingProfile,  # pyright: ignore[reportPrivateUsage]
     _dpmpp_2m_profile,  # pyright: ignore[reportPrivateUsage]
     _execution_profile,  # pyright: ignore[reportPrivateUsage]
+    _v_prediction_profile,  # pyright: ignore[reportPrivateUsage]
     _vae_profile,  # pyright: ignore[reportPrivateUsage]
 )
 from .illustrious_regional_lora import prepare_regional_loras, verify_regional_lora_resources
@@ -107,6 +108,21 @@ def _denoising_profile(
     img2img: bool = False,
     outpaint: bool = False,
 ) -> _DenoisingProfile:
+    if parameters.prediction_type == "v_prediction":
+        _require(
+            not img2img
+            and not outpaint
+            and composition_profile == "invoke-canvas-v1"
+            and initialization_profile is None
+            and parameters.scheduler == "euler",
+            "Regional v_prediction requires explicit Invoke Canvas txt2img, Euler, "
+            "and no txt2img initialization override.",
+        )
+        return (
+            "ordinary-canvas-euler-v-prediction-txt2img-cuda-vae-v1"
+            if parameters.vae is not None or parameters.vae_precision != "FP16"
+            else "ordinary-canvas-euler-v-prediction-txt2img-cuda-fp16-v1"
+        )
     if outpaint:
         _require(not img2img, "A regional request must select exactly one image mode.")
         image_profile = _denoising_profile(
@@ -604,6 +620,7 @@ def parse_regional_request(value: object) -> RegionalRequest:
             resolved_noise=True,
             prepared_vae=prepared_vae,
             invoke_cfg_rescale=invoke_cfg_rescale,
+            **({"v_prediction": True} if _v_prediction_profile(denoising_profile) else {}),
         )
     snapshots = _RawSnapshots(
         root, {bundle_descriptor[0], command.target_path, command.output_path}

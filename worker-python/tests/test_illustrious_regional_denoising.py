@@ -1265,11 +1265,12 @@ def test_settled_signature_only_required_inputs_and_no_execution_overrides(denoi
         "on_progress",
         "image",
         "denoising_strength",
+        "keep_mask",
     )
     for name, parameter in signature.parameters.items():
         assert parameter.default is (
             None
-            if name in ("on_progress", "image", "denoising_strength")
+            if name in ("on_progress", "image", "denoising_strength", "keep_mask")
             else inspect.Parameter.empty
         )
         assert parameter.kind is (

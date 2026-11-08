@@ -288,3 +288,75 @@ test('regional IMG VAE Retry requires the frozen selection combination while leg
     )
   }
 })
+
+test('frozen regional V Retry follows the recorded objective independently of current epsilon state', () => {
+  for (const regionalVPredictionSupported of [undefined, false, true]) {
+    const state = { regionalSupported: true, regionalVPredictionSupported }
+    const reason = generationQueueRetryReason(
+      'illustrious-regional-txt2img',
+      state,
+      'Euler',
+      false,
+      false,
+      0,
+      undefined,
+      'v_prediction',
+    )
+    assert.equal(reason === null, regionalVPredictionSupported === true)
+    if (reason) {
+      assert.match(reason, /frozen Regional Guidance v_prediction.*Repair or update/)
+    }
+    assert.equal(
+      generationQueueRetryReason(
+        'illustrious-regional-txt2img',
+        state,
+        'Euler',
+        false,
+        false,
+        0,
+        undefined,
+        'epsilon',
+      ),
+      null,
+    )
+    assert.equal(
+      generationQueueRetryReason(
+        'illustrious-txt2img',
+        state,
+        'Euler',
+        false,
+        false,
+        0,
+        undefined,
+        'v_prediction',
+      ),
+      null,
+    )
+  }
+})
+
+for (const [operation, sampler] of [
+  ['illustrious-regional-img2img', 'Euler'],
+  ['illustrious-regional-txt2img', 'Euler a'],
+] as const) {
+  test(`frozen V Retry cannot turn qualified ${operation}/${sampler} into an unsupported objective combination`, () => {
+    assert.match(
+      generationQueueRetryReason(
+        operation,
+        {
+          regionalImg2ImgSupported: true,
+          regionalInvokeInitializationSupported: true,
+          regionalSupported: true,
+          regionalVPredictionSupported: true,
+        },
+        sampler,
+        false,
+        false,
+        0,
+        undefined,
+        'v_prediction',
+      )!,
+      /requires TXT Euler/,
+    )
+  })
+}

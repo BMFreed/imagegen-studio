@@ -41,6 +41,7 @@ from .illustrious_regional_denoising import (
     _Layout,  # pyright: ignore[reportPrivateUsage]
     _native_output,  # pyright: ignore[reportPrivateUsage]
     _outpaint_profile,  # pyright: ignore[reportPrivateUsage]
+    _v_prediction_profile,  # pyright: ignore[reportPrivateUsage]
     _vae_profile,  # pyright: ignore[reportPrivateUsage]
     run_current_canvas_regional_denoising,
 )
@@ -380,6 +381,7 @@ def _generate_current_canvas_regional(
                 resolved_noise=True,
                 prepared_vae=prepared_vae,
                 invoke_cfg_rescale=invoke_cfg_rescale,
+                **({"v_prediction": True} if _v_prediction_profile(denoising_profile) else {}),
             )
         )
         parameters = replace(parameters, noise_profile=noise_profile)

@@ -125,6 +125,7 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   runtimeSupported?: boolean | null
   targetMode?: 'img2img' | 'outpaint' | 'txt2img' | null
   vaeSupported?: boolean | null
+  vPredictionSupported?: boolean | null
 }): string | null {
   const regions = input.document.regionalGuidance?.filter((region) => region.enabled) ?? []
   if (regions.length === 0) {
@@ -137,9 +138,22 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   if (
     draft.model?.kind !== 'checkpoint' ||
     draft.model.baseModelFamily !== 'illustrious' ||
-    draft.model.predictionType !== 'epsilon'
+    (draft.model.predictionType !== 'epsilon' && draft.model.predictionType !== 'v_prediction')
   ) {
     return 'Regional Guidance requires an Illustrious epsilon model on Current Canvas.'
+  }
+  if (draft.model.predictionType === 'v_prediction') {
+    if (input.targetMode === 'img2img' || input.targetMode === 'outpaint') {
+      return 'Regional v_prediction requires a fully transparent txt2img Current Canvas target.'
+    }
+    if (draft.sampling.sampler !== 'Euler' || draft.sampling.scheduler !== 'Normal') {
+      return 'Regional v_prediction requires Euler with the Normal scheduler.'
+    }
+    if (input.vPredictionSupported !== true) {
+      return input.vPredictionSupported == null
+        ? 'Checking image engine support for Regional Guidance v_prediction. Repair or update the runtime if support remains unavailable.'
+        : 'The current image engine does not support Regional Guidance v_prediction. Repair or update the runtime.'
+    }
   }
   if (input.targetMode === 'outpaint' && input.outpaintSupported !== true) {
     return 'The image engine has not qualified outpaint with Regional Guidance.'

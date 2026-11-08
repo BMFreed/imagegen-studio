@@ -2443,3 +2443,20 @@ Source and retained-data reviews remain distinct from execution and physical rel
 The existing Results replacement contract is respected, with explicit accept/hide/
 discard control handling in TXT/IMG. Quality/Smart/TI/references/spatial negatives and
 PP-001/005/007/008 limits remain unchanged.
+
+
+## NoobAI V-prediction — Regional TXT Euler
+
+[Objective-aware regional TXT](./phase-4-regional-guidance-v-prediction-research.md)
+adapts current Invoke's model-objective handoff through the existing ordinary
+scheduler/loader/native loop. A separate V capability, explicit profiles and
+actual resolved objective guard the transparent TXT Euler/Normal lane; old epsilon
+profiles, wire/queue schemas and worker0.14 remain. ROOT records1,672 Main/347
+distinct Python/212 browser PASS, types/scoped checks/build PASS and three qualified
+installed V requests/two exact control-Retry PNGs. Progress Cancel and restarted
+frozen Retry survive saved edits through Add/history/Save-reopen with ordinary V
+provenance. Main/native mutations give15 GREEN/three semantic RED and restoration.
+The first actual EPS setup attempt, emergency closure/recovery and lower diagnostics
+remain excluded. Core/harness source reviews are CLEAN; retained-byte/runtime/release
+evidence remains separate. V image/other-method, Smart/reference, Anima spatial-negative
+and quality/readiness limits remain; PP-001/005/007/008 stay «Пока не обещать».

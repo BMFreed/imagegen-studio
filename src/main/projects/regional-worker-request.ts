@@ -171,7 +171,7 @@ const txtRequestSchema = v.strictObject({
     bbox: rect,
     checkpoint: v.strictObject({
       path: filePath,
-      predictionType: v.literal('epsilon'),
+      predictionType: v.picklist(['epsilon', 'v_prediction']),
       sha256: digest,
     }),
     embeddings: v.optional(IllustriousWorkerEmbeddingsSchema),
@@ -733,6 +733,15 @@ export function withinRegionalPath(parent: string, child: string): boolean {
 
 function validateAgreement(input: v.InferOutput<typeof inputSchema>): void {
   const { recipe, request } = input
+  if (
+    request.job.checkpoint.predictionType === 'v_prediction' &&
+    (input.compositionProfile !== 'invoke-canvas-v1' ||
+      request.type !== 'generate-illustrious-txt2img' ||
+      request.job.sampling.scheduler !== 'euler' ||
+      input.initializationProfile !== undefined)
+  ) {
+    throw invalid('Regional v_prediction requires explicit Invoke Canvas TXT Euler execution.')
+  }
   if (
     request.type !== 'generate-illustrious-txt2img' &&
     (input.compositionProfile !== 'invoke-canvas-v1' ||

@@ -102,6 +102,9 @@ _DenoisingProfile = Literal[
     "ordinary-canvas-euler-txt2img-cuda-fp16-v1",
     "ordinary-canvas-euler-txt2img-cpu-v2",
     "ordinary-canvas-euler-txt2img-cuda-fp16-v2",
+    "ordinary-canvas-euler-v-prediction-txt2img-cpu-v1",
+    "ordinary-canvas-euler-v-prediction-txt2img-cuda-fp16-v1",
+    "ordinary-canvas-euler-v-prediction-txt2img-cuda-vae-v1",
     "ordinary-canvas-euler-ancestral-txt2img-cpu-v1",
     "ordinary-canvas-euler-ancestral-txt2img-cuda-fp16-v1",
     "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cpu-v1",
@@ -177,6 +180,9 @@ def _execution_profile(
         "ordinary-canvas-euler-txt2img-cuda-fp16-v1": ("cuda-float16-v1", False),
         "ordinary-canvas-euler-txt2img-cpu-v2": ("cpu-float32-v1", True),
         "ordinary-canvas-euler-txt2img-cuda-fp16-v2": ("cuda-float16-v1", True),
+        "ordinary-canvas-euler-v-prediction-txt2img-cpu-v1": ("cpu-float32-v1", True),
+        "ordinary-canvas-euler-v-prediction-txt2img-cuda-fp16-v1": ("cuda-float16-v1", True),
+        "ordinary-canvas-euler-v-prediction-txt2img-cuda-vae-v1": ("cuda-float16-v1", True),
         "ordinary-canvas-euler-ancestral-txt2img-cpu-v1": ("cpu-float32-v1", True),
         "ordinary-canvas-euler-ancestral-txt2img-cuda-fp16-v1": ("cuda-float16-v1", True),
         "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cpu-v1": ("cpu-float32-v1", True),
@@ -299,8 +305,20 @@ def _img2img_strength(value: object) -> float:
     return cast(float, value)
 
 
+# InvokeAI b0ac163b139c432aff4c51078c31c074bf292f72, sd/denoise_latents.py:
+# the scheduler consumes the resolved UNet prediction objective. Keep old profiles
+# epsilon-only and opt in through new names, reusing the ordinary native selector.
+def _v_prediction_profile(denoising_profile: _DenoisingProfile) -> bool:
+    return denoising_profile in (
+        "ordinary-canvas-euler-v-prediction-txt2img-cpu-v1",
+        "ordinary-canvas-euler-v-prediction-txt2img-cuda-fp16-v1",
+        "ordinary-canvas-euler-v-prediction-txt2img-cuda-vae-v1",
+    )
+
+
 def _vae_profile(denoising_profile: _DenoisingProfile) -> bool:
     return denoising_profile in (
+        "ordinary-canvas-euler-v-prediction-txt2img-cuda-vae-v1",
         "ordinary-canvas-euler-txt2img-cuda-vae-v1",
         "ordinary-canvas-euler-ancestral-txt2img-cuda-vae-v1",
         "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cuda-vae-v1",
@@ -398,6 +416,7 @@ def _denoising_parameters(
     prepared_vae: bool = False,
     dpmpp_2m: bool = False,
     invoke_cfg_rescale: bool = False,
+    v_prediction: bool = False,
 ) -> IllustriousNoiseProfile | None:
     _require(
         type(parameters) is IllustriousInferenceParameters,
@@ -413,6 +432,11 @@ def _denoising_parameters(
         not dpmpp_2m or (resolved_noise and not ancestral),
         "PROFILE_INVALID",
         "DPM++ 2M requires its own explicit resolved noise policy.",
+    )
+    _require(
+        not v_prediction or (resolved_noise and not ancestral and not dpmpp_2m),
+        "PROFILE_INVALID",
+        "V-prediction requires its explicit resolved-noise Euler profile.",
     )
     _require(
         type(parameters.steps) is int
@@ -459,10 +483,12 @@ def _denoising_parameters(
             else parameters.scheduler == ("euler_a" if ancestral else "euler")
         )
         and type(parameters.prediction_type) is str
-        and parameters.prediction_type == "epsilon"
+        and parameters.prediction_type == ("v_prediction" if v_prediction else "epsilon")
         and (resolved_noise or parameters.noise_profile is None),
         "UNSUPPORTED",
-        "Only deterministic DPM++ 2M/epsilon is supported."
+        "Only explicit Euler/v_prediction is supported."
+        if v_prediction
+        else "Only deterministic DPM++ 2M/epsilon is supported."
         if dpmpp_2m
         else (
             "Only Euler ancestral/epsilon is supported."
@@ -644,8 +670,15 @@ def _fresh_pipeline(
     dpmpp_2m: bool = False,
     img2img: bool = False,
     outpaint: bool = False,
+    v_prediction: bool = False,
 ) -> Any:
     diffusers = cast(Any, runtime.diffusers)
+    _require(
+        not v_prediction
+        or (resolved_noise and not ancestral and not dpmpp_2m and not img2img and not outpaint),
+        "PROFILE_INVALID",
+        "V-prediction requires its explicit txt2img Euler profile.",
+    )
     # V1 retains its fixed policy and three-argument seam. V2 uses only the
     # validated explicit four-field policy, detached again for the selector.
     # Neither path inherits trained_betas/sigma/spacing policy or registers
@@ -690,9 +723,11 @@ def _fresh_pipeline(
                 else diffusers.EulerDiscreteScheduler
             )
             and scheduler is not pipeline.scheduler
-            and scheduler.config.prediction_type == "epsilon",
+            and scheduler.config.prediction_type == ("v_prediction" if v_prediction else "epsilon"),
             "PROFILE_INVALID",
-            "Scheduler selection must create a fresh native epsilon Euler ancestral instance."
+            "Scheduler selection must create a fresh native v_prediction Euler instance."
+            if v_prediction
+            else "Scheduler selection must create a fresh native epsilon Euler ancestral instance."
             if ancestral
             else "Scheduler selection must create a fresh native epsilon Euler instance.",
         )
@@ -1268,6 +1303,7 @@ def run_current_canvas_regional_denoising(
     outpaint = _outpaint_profile(denoising_profile)
     ancestral = _ancestral_profile(denoising_profile)
     dpmpp_2m = _dpmpp_2m_profile(denoising_profile)
+    v_prediction = _v_prediction_profile(denoising_profile)
     prepared_vae = _vae_profile(denoising_profile)
     # Invoke's Canvas IMG graft preserves the same denoiser and post-CFG
     # RescaleCFGExt as TXT. Historical private profiles remain zero-only.
@@ -1299,6 +1335,7 @@ def run_current_canvas_regional_denoising(
                 resolved_noise=True,
                 prepared_vae=prepared_vae,
                 invoke_cfg_rescale=invoke_cfg_rescale,
+                **({"v_prediction": True} if v_prediction else {}),
             )
         )
         parameters = replace(parameters, noise_profile=noise_profile)
@@ -1414,7 +1451,13 @@ def run_current_canvas_regional_denoising(
             )
         else:
             fresh = (
-                _fresh_pipeline(pipeline, parameters, runtime, resolved_noise=True)
+                _fresh_pipeline(
+                    pipeline,
+                    parameters,
+                    runtime,
+                    resolved_noise=True,
+                    **({"v_prediction": True} if v_prediction else {}),
+                )
                 if resolved_noise
                 else _fresh_pipeline(pipeline, parameters, runtime)
             )

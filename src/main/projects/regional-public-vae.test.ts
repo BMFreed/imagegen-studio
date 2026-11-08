@@ -125,6 +125,7 @@ async function vaeFixture(image = false) {
     libraryDefault: ResourceKey
     ready: ReturnType<RegionalProjectFixture['input']>['ready']
     resolve?: (key: ResourceKey) => Promise<void>
+    resolvedPredictionType?: 'epsilon' | 'v_prediction'
     wrongReference: boolean
   } = {
     failSeeds: new Set(),
@@ -180,6 +181,23 @@ async function vaeFixture(image = false) {
     return structuredClone(
       controls.wrongReference ? resources.TwinA.descriptor : resource.descriptor,
     )
+  }
+  const exactCheckpoint = f.models.resolveVerifiedGenerationCheckpointForPlan
+  f.models.resolveVerifiedGenerationCheckpointForPlan = async (saved) => {
+    // The real ModelService owns the current objective override independently from a saved ref.
+    // Keep every other exact identity assertion in the underlying Main-only fixture unchanged.
+    const resolved = await exactCheckpoint(
+      controls.resolvedPredictionType === undefined
+        ? saved
+        : { ...saved, predictionType: f.reference.predictionType },
+    )
+    return {
+      ...resolved,
+      reference: {
+        ...resolved.reference,
+        predictionType: controls.resolvedPredictionType ?? resolved.reference.predictionType,
+      },
+    }
   }
   const publicCoordinator = new ProjectRegionalGenerationCoordinator({
     compositionProfile: 'invoke-canvas-v1',
@@ -1141,4 +1159,263 @@ require('node:readline').createInterface({input: process.stdin}).on('line', line
       await client?.close()
     }
   }, true)
+})
+
+const V_PREDICTION_CAPABILITY = 'illustrious-regional-v-prediction-v1'
+
+async function selectVPrediction(
+  f: Fixture,
+  saved: 'epsilon' | 'v_prediction' = 'v_prediction',
+  resolved: 'epsilon' | 'v_prediction' = saved,
+) {
+  f.reference.predictionType = saved
+  f.controls.resolvedPredictionType = resolved
+  f.controls.ready.capabilities = [...f.controls.ready.capabilities, V_PREDICTION_CAPABILITY]
+  await f.edit((document) => {
+    document.generationDraft.model = structuredClone(f.reference)
+  })
+  await f.projects.save(f.tabId)
+}
+
+test('regional V TXT keeps the resolved objective noise policy and selected VAE through real queue and dispatch', async () => {
+  await withFixture(async (f) => {
+    await selectVPrediction(f)
+    await select(f, true, 'FP32')
+    const before = structuredClone(f.document())
+    const result = await queued(f)
+    await settled(f, result.jobIds)
+    const frozen = await f.queue.loadVerifiedRegionalInput(result.jobIds[0])
+    assert.equal(frozen.payload.workerJob.checkpoint.predictionType, 'v_prediction')
+    assert.equal(frozen.payload.context.model.reference.predictionType, 'v_prediction')
+    assert.deepEqual(frozen.payload.workerJob.sampling.noiseProfile, {
+      baseSchedule: 'sdxl-scaled-linear-v1',
+      rescaleBetasZeroSnr: false,
+      schemaVersion: 1,
+      timestepSpacing: 'leading',
+    })
+    assert.deepEqual(f.consumed[0].request.job.checkpoint, frozen.payload.workerJob.checkpoint)
+    assert.equal(f.consumed[0].request.type, 'generate-illustrious-txt2img')
+    assert.equal(f.consumed[0].request.job.sampling.scheduler, 'euler')
+    assert.deepEqual(f.consumed[0].request.job.vae, wire(f))
+    assert.equal(f.consumed[0].request.job.vaePrecision, 'FP32')
+    assert.equal((await f.actions.getState(f.tabId)).regionalVPredictionSupported, true)
+    assert.equal(
+      (await f.queue.getManagerEntry(result.jobIds[0])).details?.sampling.predictionType,
+      'v_prediction',
+    )
+    assert.deepEqual(f.document(), before)
+  })
+})
+
+test('regional V refuses a legacy peer after authoritative resolution without queue files or publication', async () => {
+  await withFixture(async (f) => {
+    await selectVPrediction(f)
+    f.controls.ready.capabilities = f.controls.ready.capabilities.filter(
+      (c) => c !== V_PREDICTION_CAPABILITY,
+    )
+    const before = await snapshot(f)
+    const draft = structuredClone(f.document())
+    const compose = f.calls.compose.length
+    await assert.rejects(f.actions.generate(f.tabId, options(f)), {
+      code: 'INFERENCE_UNAVAILABLE',
+    })
+    assert.deepEqual(await snapshot(f), before)
+    assert.deepEqual(f.document(), draft)
+    assert.equal(f.calls.compose.length, compose + 1)
+    assert.equal(f.calls.checkpoint, 1)
+    assert.equal(f.consumed.length, 0)
+    assert.equal((await f.actions.getState(f.tabId)).regionalVPredictionSupported, false)
+  })
+})
+
+test('regional actual resolver V override cannot borrow an epsilon peer and is frozen when explicitly qualified', async () => {
+  await withFixture(async (f) => {
+    await selectVPrediction(f, 'epsilon', 'v_prediction')
+    f.controls.ready.capabilities = f.controls.ready.capabilities.filter(
+      (c) => c !== V_PREDICTION_CAPABILITY,
+    )
+    const before = await snapshot(f)
+    await assert.rejects(
+      f.actions.generate(f.tabId, options(f)),
+      /qualified Regional Guidance v_prediction/,
+    )
+    assert.deepEqual(await snapshot(f), before)
+    assert.equal(f.consumed.length, 0)
+    f.controls.ready.capabilities = [...f.controls.ready.capabilities, V_PREDICTION_CAPABILITY]
+    const result = await queued(f)
+    await settled(f, result.jobIds)
+    const frozen = await f.queue.loadVerifiedRegionalInput(result.jobIds[0])
+    assert.equal(f.document().generationDraft.model?.predictionType, 'epsilon')
+    assert.equal(frozen.payload.context.model.reference.predictionType, 'v_prediction')
+    assert.equal(frozen.payload.workerJob.checkpoint.predictionType, 'v_prediction')
+  })
+})
+
+test('regional V actual opaque target refuses before publishing any member or regional sidecar', async () => {
+  await withFixture(async (f) => {
+    await selectVPrediction(f)
+    const before = await snapshot(f)
+    await assert.rejects(f.actions.generate(f.tabId, options(f, 2)), /transparent TXT/)
+    assert.deepEqual(await snapshot(f), before)
+    assert.equal(f.consumed.length, 0)
+  }, true)
+})
+
+test('regional V frozen Retry follows its original objective after current epsilon draft and peer edits', async () => {
+  await withFixture(async (f) => {
+    await selectVPrediction(f)
+    f.controls.failSeeds.add(123)
+    const result = await queued(f)
+    const [source] = await settled(f, result.jobIds)
+    assert.equal(source.status, 'failed')
+    const frozen = await f.queue.loadVerifiedRegionalInput(source.id)
+    await f.edit((document) => {
+      document.regionalGuidance = []
+      document.generationDraft.model = null
+      document.generationDraft.positivePrompt.text = 'Later ordinary draft'
+      document.generationDraft.seed.value = 999
+    })
+    await f.projects.save(f.tabId)
+    f.controls.failSeeds.clear()
+    const ready = structuredClone(f.controls.ready)
+    f.controls.ready.capabilities = ready.capabilities.filter((c) => c !== V_PREDICTION_CAPABILITY)
+    const before = await rows(f)
+    await assert.rejects(
+      f.actions.retryJob({ id: source.id, statusSequence: source.status_sequence }),
+      { code: 'GENERATION_RUNTIME_UNAVAILABLE' },
+    )
+    assert.deepEqual(await rows(f), before)
+    f.controls.ready = ready
+    await f.actions.retryJob({ id: source.id, statusSequence: source.status_sequence })
+    const retry = (await rows(f)).find((row) => row.id !== source.id)
+    assert.ok(retry)
+    await settled(f, [retry.id])
+    assert.deepEqual((await f.queue.loadVerifiedRegionalInput(retry.id)).payload, frozen.payload)
+    assert.equal(f.consumed.at(-1)?.request.job.checkpoint.predictionType, 'v_prediction')
+    assert.equal(f.document().generationDraft.model, null)
+    assert.equal(f.calls.compose.length, 1)
+  })
+})
+
+test('regional private epsilon profile still refuses V despite the new public capability', async () => {
+  await withFixture(async (f) => {
+    await selectVPrediction(f)
+    const before = await snapshot(f)
+    await assert.rejects(f.coordinator.submit(f.tabId, f.input()), {
+      code: 'UNSUPPORTED',
+      message: 'The Project does not match the private Illustrious regional profile.',
+    })
+    assert.deepEqual(await snapshot(f), before)
+    assert.equal(f.calls.compose.length, 0)
+  })
+})
+
+test('regional V JSONL dispatch requires the actual ready combination before staging or send', async () => {
+  await withFixture(async (f) => {
+    await selectVPrediction(f)
+    const result = await queued(f)
+    await settled(f, result.jobIds)
+    const frozen = await f.queue.loadVerifiedRegionalInput(result.jobIds[0])
+    const runtime = path.join(f.root, 'v-prediction-jsonl-runtime')
+    const scratch = path.join(f.root, 'v-prediction-jsonl-scratch')
+    const received = path.join(f.root, 'v-prediction-jsonl-received.jsonl')
+    await mkdir(runtime)
+    await mkdir(scratch, { mode: 0o700 })
+    const executable = path.join(runtime, 'python')
+    let client: GenerationWorkerClient | undefined
+    try {
+      for (const support of [false, true]) {
+        const input = structuredClone(frozen.input)
+        input.request.requestId = randomUUID()
+        const ready = {
+          ...f.controls.ready,
+          capabilities: [
+            ...f.controls.ready.capabilities.filter((c) => c !== V_PREDICTION_CAPABILITY),
+            ...(support ? [V_PREDICTION_CAPABILITY] : []),
+            ...(process.platform === 'linux' ? ['linux-owned-inference-v1'] : []),
+          ],
+          pythonVersion: '3.12.13',
+          type: 'ready',
+        }
+        const script = String.raw`#!${process.execPath}
+const fs = require('node:fs'), crypto = require('node:crypto');
+const args = process.argv.slice(2);
+const validArgs = process.platform === 'linux'
+ ? args.length === 7 && JSON.stringify(args.slice(0, 6)) === JSON.stringify(['-I', '-m', 'imagegen_worker.owned_inference', '--parent-pid', String(process.ppid), '--scratch-base']) && require('node:path').isAbsolute(args[6])
+ : args.join(' ') === '-I -m imagegen_worker.inference_main';
+if(!validArgs) process.exit(21);
+const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
+process.stdout.write(JSON.stringify(${JSON.stringify(ready)}) + '\n');
+require('node:readline').createInterface({input:process.stdin}).on('line', line => {
+ const wire=JSON.parse(line); if(wire.type !== 'execute-current-canvas-regional') throw Error('Wrong owner');
+ const raw=fs.readFileSync(wire.bundle.path); if(raw.length!==wire.bundle.byteSize || hash(raw)!==wire.bundle.sha256) throw Error('Bundle mismatch');
+ const bundle=JSON.parse(raw); if(bundle.request.type!=='generate-illustrious-txt2img' || bundle.request.job.checkpoint.predictionType!=='v_prediction') throw Error('Lost objective');
+ fs.appendFileSync(${JSON.stringify(received)}, JSON.stringify(bundle.request.job.checkpoint)+'\n');
+ fs.writeFileSync(bundle.request.job.output.pngPath,Buffer.from(${JSON.stringify(f.outputBytes.toString('base64'))},'base64'),{flag:'wx'});
+ process.stdout.write(JSON.stringify({type:'generation-done',protocolVersion:'1',requestId:wire.requestId,outputPath:bundle.request.job.output.pngPath,seed:bundle.request.job.sampling.seed})+'\n');
+});
+`
+        await writeFile(executable, script)
+        await chmod(executable, 0o700)
+        client = await GenerationWorkerClient.start(
+          { pythonExecutable: executable, runtimeRoot: runtime, scratchBasePath: scratch },
+          { requestTimeoutMs: 3000, shutdownWaitMs: 100 },
+        )
+        if (!support) {
+          await assert.rejects(client.executeCurrentCanvasRegional(input), {
+            code: 'WORKER_VERSION_MISMATCH',
+          })
+          assert.deepEqual(await readdir(scratch), [])
+          assert.equal(await readFile(received, 'utf8').catch(() => ''), '')
+        } else {
+          assert.ok(
+            (await client.executeCurrentCanvasRegional(input)).pngBytes.equals(f.outputBytes),
+          )
+        }
+        await client.close()
+        client = undefined
+      }
+      assert.deepEqual(
+        (await readFile(received, 'utf8'))
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line) as unknown),
+        [frozen.payload.workerJob.checkpoint],
+      )
+      assert.deepEqual(await readdir(scratch), [])
+    } finally {
+      await client?.close()
+    }
+  })
+})
+
+test('regional epsilon completion remains available on its unchanged peer without V capability', async () => {
+  await withFixture(async (f) => {
+    assert.equal(f.controls.ready.capabilities.includes(V_PREDICTION_CAPABILITY), false)
+    const result = await queued(f)
+    await settled(f, result.jobIds)
+    assert.equal(f.consumed[0].request.job.checkpoint.predictionType, 'epsilon')
+    assert.equal((await f.actions.getState(f.tabId)).regionalVPredictionSupported, false)
+    assert.equal(
+      (await f.queue.getManagerEntry(result.jobIds[0])).details?.sampling.predictionType,
+      'epsilon',
+    )
+  })
+})
+
+test('regional stale saved V label defers to actual epsilon resolver output on a legacy regional peer', async () => {
+  await withFixture(async (f) => {
+    await selectVPrediction(f, 'v_prediction', 'epsilon')
+    f.controls.ready.capabilities = f.controls.ready.capabilities.filter(
+      (c) => c !== V_PREDICTION_CAPABILITY,
+    )
+    const result = await queued(f)
+    await settled(f, result.jobIds)
+    const frozen = await f.queue.loadVerifiedRegionalInput(result.jobIds[0])
+    assert.equal(f.document().generationDraft.model?.predictionType, 'v_prediction')
+    assert.equal(frozen.payload.context.model.reference.predictionType, 'epsilon')
+    assert.equal(frozen.payload.workerJob.checkpoint.predictionType, 'epsilon')
+    assert.equal(f.consumed[0].request.job.checkpoint.predictionType, 'epsilon')
+    assert.equal((await f.actions.getState(f.tabId)).regionalVPredictionSupported, false)
+  })
 })

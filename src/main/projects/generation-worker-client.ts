@@ -45,6 +45,7 @@ import {
   supportsInferenceRegionalOutpaint,
   supportsInferenceRegionalProgress,
   supportsInferenceRegionalVae,
+  supportsInferenceRegionalVPrediction,
   supportsInferenceVaePrecision,
 } from '../../shared/projects/inference-worker-capabilities.js'
 
@@ -468,6 +469,19 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
           )
         }
       } else {
+        if (
+          input.request.job.checkpoint.predictionType === 'v_prediction' &&
+          (input.compositionProfile !== 'invoke-canvas-v1' ||
+            input.request.type !== 'generate-illustrious-txt2img' ||
+            input.request.job.sampling.scheduler !== 'euler' ||
+            input.initializationProfile !== undefined ||
+            !supportsInferenceRegionalVPrediction(this.ready))
+        ) {
+          throw new GenerationWorkerError(
+            'WORKER_VERSION_MISMATCH',
+            'The active worker has not qualified frozen Regional Guidance v_prediction TXT Euler.',
+          )
+        }
         if (
           input.request.type === 'generate-illustrious-outpaint' &&
           !supportsInferenceRegionalOutpaint(this.ready)
