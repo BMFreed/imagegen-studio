@@ -457,7 +457,9 @@ def test_private_profile_plan_cannot_cross_modes(tmp_path: Path, mode: str, chan
 
 
 @pytest.mark.parametrize("mode", _MODES)
-def test_private_flow_profile_does_not_open_public_descriptor(tmp_path: Path, mode: str) -> None:
+def test_partial_flow_transport_cannot_replace_inner_command_identity(
+    tmp_path: Path, mode: str
+) -> None:
     case = _case(tmp_path / "private-only", mode)
     bundle = copy.deepcopy(case.value)
     bundle["promptInterpretation"] = "invoke-fragments-v1"
@@ -467,7 +469,7 @@ def test_private_flow_profile_does_not_open_public_descriptor(tmp_path: Path, mo
     envelope = {
         "type": "execute-anima-smart-patch-regional",
         "protocolVersion": "1",
-        "requestId": case.command.request_id,
+        "requestId": f"different-{case.command.request_id}",
         "stagingRoot": str(case.command.staging_root),
         "bundle": _descriptor(path),
     }

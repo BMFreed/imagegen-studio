@@ -2357,3 +2357,56 @@ in the note. Both public frozen type/schema and attachment remain INP/OUT-only;
 no TXT/IMG capability, public descriptor/admission, durable Retry, provenance or
 UI change follows. Public integration, trained/visual quality, release and
 PP-001/005/007/008 remain **«Пока не обещать»**.
+
+
+## Public original-Anima Smart regional TXT/IMG
+
+The [public flow integration](../../../engineering/phase-4-anima-smart-regional-flow-public-research.md)
+extends the historical private TXT/IMG slice above through existing public Smart
+admission, frozen queue/descriptor, world candidates and whole-bundle Retry.
+Current Invoke4875d965 selects the source graft before the common signed regional
+collector; Studio reuses its verified WORLD source/mask classifier inside the
+same capture lease. Regional permissions never redefine the Smart source mode.
+
+Independent `anima-smart-patch-regional-txt2img-v1` and
+`anima-smart-patch-regional-img2img-v1` capabilities bind their matching frozen
+`invoke-anima-smart-regional-txt2img-v1` and
+`invoke-anima-smart-regional-img2img-v1` profiles. TXT requires transparent source,
+no model source, null effective strength and zero KEEP. IMG requires opaque
+source, no WORLD effective Smart-mask coverage, original prepared RGB, numeric
+strength and zero KEEP. Old INP/OUT capabilities, meanings and default are retained.
+Known-mode admission/Retry requires its exact capability; an unsupported peer
+cannot silently run ordinary generation or another Smart mode.
+
+Selected Smart settings own inherited negative and the executing model, seed,
+resolution and sampling. Fresh CPU preparation precedes exact capability and
+resource resolution. Frozen Retry instead verifies/copies the saved whole bundle;
+current source, masks, disabled/deleted regions or settings cannot replace it.
+Existing world candidates, explicit Add/history/Save and ordinary-only accepted
+provenance/Compare/result-derived presets remain authoritative. No new `.igs`
+field, queue operation, command version or numerical loop is introduced.
+
+Scope remains one static original-Anima item, Euler/Heun, embedded Auto VAE,
+processing64–512 divisible by8, world sides≤2048/area≤4,000,000, three regions/eight
+signed streams, existing text/context/attention ceilings and no enabled
+LoRA/TI/references or batch. ROOT1,060 Main/223 native Python/230 prototype-browser
+PASS, two prior opt-in private fixture skips, source review and installed outcome
+boundaries are recorded separately in the linked note. General visual quality,
+other resources/families, release and PP-001/005/007/008 remain **«Пока не обещать»**.
+
+
+Installed ROOT qualification passes22 checks across8 native requests,6 actual
+world publications and2 progress cancellations. Both modes pass A/B local-negative
+causality, explicit Add/history/Save-reopen and exact restarted frozen Retry after
+saved source/mask/region/settings edits. Changed visible RGB channels are14,179
+for TXT and21,272 for IMG. Independent original-processing-PNG→world-RGBA checks
+pass, and all4 app lifetimes close normally after explicit temporary-result
+retirement. Actual runtime, source/retained-data review, operational limits and
+exclusions remain separate in the research note; no visual/readiness status rises.
+
+
+Final source/document/retained-byte audit is CLEAN. ROOT separately verifies
+physical exit, restored sources, idle readers and global dependencies, retains
+all5690 scratch entries and reclaims82,268,160 allocated bytes from its two exact
+owned payload paths. Shared runtime/models/Projects/rows and active worker report
+companions stay protected; lifecycle and evidence limits remain in the note.

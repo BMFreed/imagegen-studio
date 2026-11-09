@@ -10,8 +10,10 @@ type RetryState = Pick<
   | 'animaRegionalOutpaintSupported'
   | 'animaRegionalSamplingSupported'
   | 'animaRegionalSupported'
+  | 'animaSmartPatchRegionalImg2ImgSupported'
   | 'animaSmartPatchRegionalOutpaintSupported'
   | 'animaSmartPatchRegionalSupported'
+  | 'animaSmartPatchRegionalTxt2ImgSupported'
   | 'animaSupported'
   | 'outpaintSupported'
   | 'regionalCfgRescaleSupported'
@@ -44,6 +46,8 @@ export function generationQueueRetryReason(
   frozenPredictionType?: string | null,
   requiresSmartPatchRegional = false,
   requiresSmartPatchRegionalOutpaint = false,
+  requiresSmartPatchRegionalTxt2Img = false,
+  requiresSmartPatchRegionalImg2Img = false,
 ): string | null {
   if (
     operation === 'anima-regional-txt2img' ||
@@ -158,6 +162,18 @@ export function generationQueueRetryReason(
       return 'The current image engine does not support Smart Patch generation.'
     }
     if (
+      requiresSmartPatchRegionalTxt2Img &&
+      state.animaSmartPatchRegionalTxt2ImgSupported !== true
+    ) {
+      return 'The current image engine does not support this frozen Anima Smart TXT Regional Guidance job.'
+    }
+    if (
+      requiresSmartPatchRegionalImg2Img &&
+      state.animaSmartPatchRegionalImg2ImgSupported !== true
+    ) {
+      return 'The current image engine does not support this frozen Anima Smart IMG Regional Guidance job.'
+    }
+    if (
       requiresSmartPatchRegionalOutpaint &&
       state.animaSmartPatchRegionalOutpaintSupported !== true
     ) {
@@ -166,6 +182,8 @@ export function generationQueueRetryReason(
     if (
       requiresSmartPatchRegional &&
       !requiresSmartPatchRegionalOutpaint &&
+      !requiresSmartPatchRegionalTxt2Img &&
+      !requiresSmartPatchRegionalImg2Img &&
       state.animaSmartPatchRegionalSupported !== true
     ) {
       return 'The current image engine does not support this frozen Anima Smart Patch Regional Guidance job.'

@@ -1,8 +1,9 @@
-"""Owned-file public Smart INP/OUT handoff to the existing signed Anima owner.
+"""Owned-file public Smart handoff to the existing signed Anima owner.
 
-InvokeAI 4875d96531ca6712b288f6e660fcbb34143408c1 grafts INP source/KEEP before
-joining Regional Guidance to that same denoiser (invokeai/frontend/webv2/src/
-features/generation/core/canvas/compileCanvasGraph.ts). Native Anima background
+InvokeAI 4875d96531ca6712b288f6e660fcbb34143408c1 grafts each image source before
+joining Regional Guidance to that same denoiser; TXT needs no source graft
+(invokeai/frontend/webv2/src/features/generation/core/canvas/compileCanvasGraph.ts).
+Native Anima background
 positive support and image-wide global negatives remain in the qualified private
 consumer; this transport does not select the Current Canvas Krea2 profile.
 
@@ -54,6 +55,8 @@ if TYPE_CHECKING:
 
 ANIMA_SMART_PATCH_REGIONAL_CAPABILITY = "anima-smart-patch-regional-inpaint-v1"
 ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_CAPABILITY = "anima-smart-patch-regional-outpaint-v1"
+ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_CAPABILITY = "anima-smart-patch-regional-txt2img-v1"
+ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_CAPABILITY = "anima-smart-patch-regional-img2img-v1"
 PROMPT_INTERPRETATION = "invoke-fragments-v1"
 
 
@@ -123,7 +126,7 @@ def parse_anima_smart_patch_regional_request(value: object) -> AnimaSmartPatchRe
     command = cast(ExecuteSmartPatchCommand, syntax)
     _require(
         command.family == "anima"
-        and command.mode in ("inpaint", "outpaint")
+        and command.mode in ("txt2img", "img2img", "inpaint", "outpaint")
         and type(command.inference) is AnimaInferenceParameters
         and command.request_id == request_id
         and command.staging_root == root,

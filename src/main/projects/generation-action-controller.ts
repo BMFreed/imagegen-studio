@@ -31,8 +31,10 @@ import {
   supportsInferenceAnimaRegionalOutpaint,
   supportsInferenceAnimaRegionalSampling,
   supportsInferenceAnimaSmartPatchRegional,
+  supportsInferenceAnimaSmartPatchRegionalImg2Img,
   supportsInferenceAnimaSmartPatchRegionalMode,
   supportsInferenceAnimaSmartPatchRegionalOutpaint,
+  supportsInferenceAnimaSmartPatchRegionalTxt2Img,
   supportsInferenceCFGRescale,
   supportsInferenceEmbeddings,
   supportsInferenceEuler,
@@ -454,10 +456,14 @@ export class ProjectGenerationActionController {
         !this.closed &&
         !!this.options.regional &&
         supportsInferenceAnimaRegional(ready),
+      animaSmartPatchRegionalImg2ImgSupported:
+        !this.blocked && !this.closed && supportsInferenceAnimaSmartPatchRegionalImg2Img(ready),
       animaSmartPatchRegionalOutpaintSupported:
         !this.blocked && !this.closed && supportsInferenceAnimaSmartPatchRegionalOutpaint(ready),
       animaSmartPatchRegionalSupported:
         !this.blocked && !this.closed && supportsInferenceAnimaSmartPatchRegional(ready),
+      animaSmartPatchRegionalTxt2ImgSupported:
+        !this.blocked && !this.closed && supportsInferenceAnimaSmartPatchRegionalTxt2Img(ready),
       animaSupported: !this.blocked && !this.closed && supportsInferenceAnima(ready),
       cfgRescaleSupported: !this.blocked && !this.closed && supportsInferenceCFGRescale(ready),
       documentId,

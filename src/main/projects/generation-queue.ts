@@ -5461,6 +5461,8 @@ function managerDetails(row: Selectable<GenerationQueueItem>): GenerationQueueEn
         ...(payload.regional
           ? {
               requiresSmartPatchRegional: true,
+              ...(payload.mode === 'txt2img' ? { requiresSmartPatchRegionalTxt2Img: true } : {}),
+              ...(payload.mode === 'img2img' ? { requiresSmartPatchRegionalImg2Img: true } : {}),
               ...(payload.mode === 'outpaint' ? { requiresSmartPatchRegionalOutpaint: true } : {}),
             }
           : {}),

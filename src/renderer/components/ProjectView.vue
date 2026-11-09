@@ -2421,9 +2421,13 @@ const generationBlockingReason = computed(() => {
         document: props.tab,
         iterations: imagesPerClick.value ?? 0,
         patch: { ...activePatch.value, generationDraft: props.generationDraft },
+        runtimeImg2ImgSupported:
+          props.generationState?.animaSmartPatchRegionalImg2ImgSupported === true,
         runtimeOutpaintSupported:
           props.generationState?.animaSmartPatchRegionalOutpaintSupported === true,
         runtimeSupported: props.generationState?.animaSmartPatchRegionalSupported === true,
+        runtimeTxt2ImgSupported:
+          props.generationState?.animaSmartPatchRegionalTxt2ImgSupported === true,
         targetMode: smartTargetState.value?.mode,
       })
     : getInvokeRegionalGenerationUnavailableReason({

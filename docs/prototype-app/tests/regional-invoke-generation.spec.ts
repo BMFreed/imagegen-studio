@@ -18,7 +18,7 @@ interface WiringFixture {
   retryCalls: GenerationQueueReview[]
   selected: string | null
   show: boolean
-  smartMode: 'inpaint' | 'outpaint'
+  smartMode: 'img2img' | 'inpaint' | 'outpaint' | 'txt2img'
   smartReason: string | null
   state: ProjectGenerationActionState
   tab: ProjectTab
@@ -2158,6 +2158,216 @@ test('renderer frozen Smart OUT Retry requires saved OUT support after regions a
   await page.evaluate(() => {
     const f = globalThis.window.regionalWiringFixture
     f.state.animaSmartPatchRegionalOutpaintSupported = true
+    f.state.animaSmartPatchRegionalSupported = false
+  })
+  await expect(retry).toBeEnabled()
+  await retry.click()
+  await expect
+    .poll(() => page.evaluate(() => globalThis.window.regionalWiringFixture.retryCalls.length))
+    .toBe(1)
+})
+
+test('renderer Smart TXT needs its actual-mode capability while INP remains independent', async ({
+  page,
+}) => {
+  await mountWiring(page, 'project')
+  await page.evaluate(() => {
+    const f = globalThis.window.regionalWiringFixture
+    const draft = JSON.parse(JSON.stringify(f.tab.generationDraft))
+    draft.model.baseModelFamily = 'anima'
+    draft.model.predictionType = null
+    f.catalog[0]!.versions[0]!.baseModelFamily = 'anima'
+    f.catalog[0]!.versions[0]!.predictionType = null
+    draft.positivePrompt = { embeddingRefs: [], text: '(one cat)1.5' }
+    draft.negativePrompt = { embeddingRefs: [], text: 'Smart negative' }
+    draft.loras = []
+    draft.vae = null
+    draft.vaePrecision = 'Auto'
+    draft.sampling = {
+      animaMethod: 'heun',
+      cfgScale: 4,
+      denoisingStrength: 0.5,
+      sampler: null,
+      scheduler: null,
+      steps: 3,
+    }
+    f.tab.layers = [
+      {
+        activeRaster: null,
+        activeRasterSubLayerId: null,
+        blendMode: 'normal',
+        boundingBox: { height: 73, width: 107, x: -13, y: 5 },
+        generationDraft: draft,
+        id: crypto.randomUUID(),
+        internalResolution: { height: 128, width: 264 },
+        kind: 'smart-patch',
+        locked: false,
+        mask: { asset: null, id: crypto.randomUUID(), revision: 0 },
+        maskImageUrl: null,
+        name: 'Selected Anima Smart',
+        opacity: 1,
+        rasterSubLayers: [],
+        status: 'empty',
+        visible: true,
+      },
+    ]
+    f.selected = f.tab.layers[0]!.id
+    f.tab.generationDraft.negativePrompt.text = '{unrelated|Canvas}'
+    f.tab.regionalGuidance![0]!.prompts = {
+      negative: { embeddingRefs: [], text: '{dormant|local}' },
+      positive: { embeddingRefs: [], text: '(red scarf)1.5' },
+      useGlobalNegativePrompt: true,
+    }
+    f.state.smartPatchSupported = true
+    f.state.animaSupported = true
+    f.smartMode = 'txt2img'
+    f.state.animaSmartPatchRegionalSupported = true
+    f.state.animaSmartPatchRegionalTxt2ImgSupported = false
+  })
+  const generate = page.getByRole('button', { exact: true, name: 'Generate' })
+  await expect(generate).toBeDisabled()
+  await expect(page.getByText(/does not support Anima Smart Patch Regional Guidance/)).toBeVisible()
+  await page.evaluate(() => {
+    const f = globalThis.window.regionalWiringFixture
+    f.state.animaSmartPatchRegionalTxt2ImgSupported = true
+    f.state.animaSmartPatchRegionalSupported = false
+  })
+  await expect(generate).toBeEnabled()
+  await generate.click()
+  expect(await page.evaluate(() => globalThis.window.regionalWiringFixture.generateCalls)).toEqual([
+    1,
+  ])
+})
+
+test('renderer frozen Smart TXT Retry requires saved OUT support after regions are removed', async ({
+  page,
+}) => {
+  await mountWiring(page, 'queue')
+  await page.evaluate(() => {
+    const f = globalThis.window.regionalWiringFixture
+    f.queueItem.operation = 'anima-smart-patch'
+    f.queueItem.details!.requiresSmartPatchRegional = true
+    f.queueItem.details!.requiresSmartPatchRegionalTxt2Img = true
+    f.state.smartPatchSupported = true
+    f.state.animaSupported = true
+    f.state.animaSmartPatchRegionalSupported = true
+    f.state.animaSmartPatchRegionalTxt2ImgSupported = false
+    f.tab.regionalGuidance = []
+    f.epoch += 1
+  })
+  const retry = page.getByRole('button', { exact: true, name: 'Retry job' })
+  await expect(retry).toBeDisabled()
+  await expect(
+    page.getByTestId('queue-job-row').getByText(/does not support this frozen Anima Smart TXT/),
+  ).toBeVisible()
+  await page.evaluate(() => {
+    const f = globalThis.window.regionalWiringFixture
+    f.state.animaSmartPatchRegionalTxt2ImgSupported = true
+    f.state.animaSmartPatchRegionalSupported = false
+  })
+  await expect(retry).toBeEnabled()
+  await retry.click()
+  await expect
+    .poll(() => page.evaluate(() => globalThis.window.regionalWiringFixture.retryCalls.length))
+    .toBe(1)
+})
+
+test('renderer Smart IMG needs its actual-mode capability while INP remains independent', async ({
+  page,
+}) => {
+  await mountWiring(page, 'project')
+  await page.evaluate(() => {
+    const f = globalThis.window.regionalWiringFixture
+    const draft = JSON.parse(JSON.stringify(f.tab.generationDraft))
+    draft.model.baseModelFamily = 'anima'
+    draft.model.predictionType = null
+    f.catalog[0]!.versions[0]!.baseModelFamily = 'anima'
+    f.catalog[0]!.versions[0]!.predictionType = null
+    draft.positivePrompt = { embeddingRefs: [], text: '(one cat)1.5' }
+    draft.negativePrompt = { embeddingRefs: [], text: 'Smart negative' }
+    draft.loras = []
+    draft.vae = null
+    draft.vaePrecision = 'Auto'
+    draft.sampling = {
+      animaMethod: 'heun',
+      cfgScale: 4,
+      denoisingStrength: 0.5,
+      sampler: null,
+      scheduler: null,
+      steps: 3,
+    }
+    f.tab.layers = [
+      {
+        activeRaster: null,
+        activeRasterSubLayerId: null,
+        blendMode: 'normal',
+        boundingBox: { height: 73, width: 107, x: -13, y: 5 },
+        generationDraft: draft,
+        id: crypto.randomUUID(),
+        internalResolution: { height: 128, width: 264 },
+        kind: 'smart-patch',
+        locked: false,
+        mask: { asset: null, id: crypto.randomUUID(), revision: 0 },
+        maskImageUrl: null,
+        name: 'Selected Anima Smart',
+        opacity: 1,
+        rasterSubLayers: [],
+        status: 'empty',
+        visible: true,
+      },
+    ]
+    f.selected = f.tab.layers[0]!.id
+    f.tab.generationDraft.negativePrompt.text = '{unrelated|Canvas}'
+    f.tab.regionalGuidance![0]!.prompts = {
+      negative: { embeddingRefs: [], text: '{dormant|local}' },
+      positive: { embeddingRefs: [], text: '(red scarf)1.5' },
+      useGlobalNegativePrompt: true,
+    }
+    f.state.smartPatchSupported = true
+    f.state.animaSupported = true
+    f.smartMode = 'img2img'
+    f.state.animaSmartPatchRegionalSupported = true
+    f.state.animaSmartPatchRegionalImg2ImgSupported = false
+  })
+  const generate = page.getByRole('button', { exact: true, name: 'Generate' })
+  await expect(generate).toBeDisabled()
+  await expect(page.getByText(/does not support Anima Smart Patch Regional Guidance/)).toBeVisible()
+  await page.evaluate(() => {
+    const f = globalThis.window.regionalWiringFixture
+    f.state.animaSmartPatchRegionalImg2ImgSupported = true
+    f.state.animaSmartPatchRegionalSupported = false
+  })
+  await expect(generate).toBeEnabled()
+  await generate.click()
+  expect(await page.evaluate(() => globalThis.window.regionalWiringFixture.generateCalls)).toEqual([
+    1,
+  ])
+})
+
+test('renderer frozen Smart IMG Retry requires saved OUT support after regions are removed', async ({
+  page,
+}) => {
+  await mountWiring(page, 'queue')
+  await page.evaluate(() => {
+    const f = globalThis.window.regionalWiringFixture
+    f.queueItem.operation = 'anima-smart-patch'
+    f.queueItem.details!.requiresSmartPatchRegional = true
+    f.queueItem.details!.requiresSmartPatchRegionalImg2Img = true
+    f.state.smartPatchSupported = true
+    f.state.animaSupported = true
+    f.state.animaSmartPatchRegionalSupported = true
+    f.state.animaSmartPatchRegionalImg2ImgSupported = false
+    f.tab.regionalGuidance = []
+    f.epoch += 1
+  })
+  const retry = page.getByRole('button', { exact: true, name: 'Retry job' })
+  await expect(retry).toBeDisabled()
+  await expect(
+    page.getByTestId('queue-job-row').getByText(/does not support this frozen Anima Smart IMG/),
+  ).toBeVisible()
+  await page.evaluate(() => {
+    const f = globalThis.window.regionalWiringFixture
+    f.state.animaSmartPatchRegionalImg2ImgSupported = true
     f.state.animaSmartPatchRegionalSupported = false
   })
   await expect(retry).toBeEnabled()

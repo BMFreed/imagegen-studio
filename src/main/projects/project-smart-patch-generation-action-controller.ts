@@ -6,10 +6,11 @@ import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceAnima,
   supportsInferenceAnimaSmartPatchRegional,
+  supportsInferenceAnimaSmartPatchRegionalImg2Img,
   supportsInferenceAnimaSmartPatchRegionalMode,
   supportsInferenceAnimaSmartPatchRegionalOutpaint,
+  supportsInferenceAnimaSmartPatchRegionalTxt2Img,
 } from '../../shared/projects/inference-worker-capabilities.js'
-import { RegionalGuidanceGenerationError } from '../../shared/projects/regional-guidance.js'
 import { hasEnabledRegionalGuidance } from '../../shared/projects/regional-invoke-generation.js'
 import type {
   ProjectSmartPatchGenerateOptions,
@@ -34,8 +35,10 @@ import type { SmartPatchGenerationStagingRepository } from './smart-patch-genera
 import { ProjectGenerationActionError } from './generation-action-controller.js'
 import { validateSmartPatchExecutionDraft } from './project-smart-patch-execution.js'
 import {
+  ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE,
   ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE,
   ANIMA_SMART_PATCH_REGIONAL_PROFILE,
+  ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE,
   type CapturedSmartPatchRegionalGenerationInput,
   type PreparedSmartPatchAnimaRegionalInput,
   prepareSmartPatchAnimaRegionalInput,
@@ -265,7 +268,9 @@ export class ProjectSmartPatchGenerationActionController {
                 !supportsInferenceAnima(inferenceReady)) ||
               (regionalCapture !== undefined &&
                 !supportsInferenceAnimaSmartPatchRegional(inferenceReady) &&
-                !supportsInferenceAnimaSmartPatchRegionalOutpaint(inferenceReady))
+                !supportsInferenceAnimaSmartPatchRegionalOutpaint(inferenceReady) &&
+                !supportsInferenceAnimaSmartPatchRegionalTxt2Img(inferenceReady) &&
+                !supportsInferenceAnimaSmartPatchRegionalImg2Img(inferenceReady))
             ) {
               throw new ProjectGenerationActionError(
                 'GENERATION_RUNTIME_UNAVAILABLE',
@@ -274,16 +279,11 @@ export class ProjectSmartPatchGenerationActionController {
             }
             let regionalPrepared: PreparedSmartPatchAnimaRegionalInput | null = null
             if (regionalCapture) {
-              // Existing CPU owner classifies actual source before the OUT LaMa/model work.
-              // The leased source is composed again by the unchanged batch-preparation owner.
-              const source = await capture.composeSource(preparationWorker)
+              // Existing CPU preparation classifies verified WORLD source/mask before LaMa/models.
+              // Batch preparation reuses the same historical lease and requalifies final material.
+              const classified = await capture.prepareInput(preparationWorker)
               assertCurrent()
-              if (source.sourceAlpha === 'transparent') {
-                throw new RegionalGuidanceGenerationError(
-                  'Regional Smart Patch generation requires opaque-source INP or mixed-source OUT.',
-                )
-              }
-              const mode = source.sourceAlpha === 'mixed' ? 'outpaint' : 'inpaint'
+              const mode = classified.mode
               if (!supportsInferenceAnimaSmartPatchRegionalMode(inferenceReady, mode)) {
                 throw new ProjectGenerationActionError(
                   'GENERATION_RUNTIME_UNAVAILABLE',
@@ -296,7 +296,11 @@ export class ProjectSmartPatchGenerationActionController {
                 profile:
                   mode === 'outpaint'
                     ? ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE
-                    : ANIMA_SMART_PATCH_REGIONAL_PROFILE,
+                    : mode === 'txt2img'
+                      ? ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE
+                      : mode === 'img2img'
+                        ? ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE
+                        : ANIMA_SMART_PATCH_REGIONAL_PROFILE,
                 promptInterpretation: ANIMA_PROMPT_INTERPRETATION,
               })
             }

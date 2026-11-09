@@ -489,6 +489,28 @@ export function supportsInferenceAnimaSmartPatchRegionalOutpaint(value: unknown)
   )
 }
 
+export function supportsInferenceAnimaSmartPatchRegionalTxt2Img(value: unknown): boolean {
+  return (
+    isQualifiedInferenceWorkerReady(value) &&
+    value.workerVersion === '0.14.0' &&
+    supportsInferenceAnima(value) &&
+    value.capabilities.includes('smart-patch-execution') &&
+    value.capabilities.includes('smart-patch-seed-confirmation') &&
+    value.capabilities.includes('anima-smart-patch-regional-txt2img-v1')
+  )
+}
+
+export function supportsInferenceAnimaSmartPatchRegionalImg2Img(value: unknown): boolean {
+  return (
+    isQualifiedInferenceWorkerReady(value) &&
+    value.workerVersion === '0.14.0' &&
+    supportsInferenceAnima(value) &&
+    value.capabilities.includes('smart-patch-execution') &&
+    value.capabilities.includes('smart-patch-seed-confirmation') &&
+    value.capabilities.includes('anima-smart-patch-regional-img2img-v1')
+  )
+}
+
 /** Call only with the actual classified or strictly parsed frozen Smart mode. */
 export function supportsInferenceAnimaSmartPatchRegionalMode(
   value: unknown,
@@ -498,5 +520,9 @@ export function supportsInferenceAnimaSmartPatchRegionalMode(
     ? supportsInferenceAnimaSmartPatchRegional(value)
     : mode === 'outpaint'
       ? supportsInferenceAnimaSmartPatchRegionalOutpaint(value)
-      : false
+      : mode === 'txt2img'
+        ? supportsInferenceAnimaSmartPatchRegionalTxt2Img(value)
+        : mode === 'img2img'
+          ? supportsInferenceAnimaSmartPatchRegionalImg2Img(value)
+          : false
 }

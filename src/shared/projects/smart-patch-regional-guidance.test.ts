@@ -9,8 +9,10 @@ import { literalSmartPatchPreparedInput } from '../../main/projects/test-fixture
 import { generationQueueRetryReason } from '../../renderer/components/generation-queue-retry.js'
 import {
   supportsInferenceAnimaSmartPatchRegional,
+  supportsInferenceAnimaSmartPatchRegionalImg2Img,
   supportsInferenceAnimaSmartPatchRegionalMode,
   supportsInferenceAnimaSmartPatchRegionalOutpaint,
+  supportsInferenceAnimaSmartPatchRegionalTxt2Img,
 } from './inference-worker-capabilities.js'
 import { getSmartPatchRegionalGenerationUnavailableReason as reason } from './smart-patch-regional-guidance.js'
 
@@ -283,9 +285,9 @@ test('Smart regional advisory requires the capability for the actual known mode'
   input.runtimeSupported = true
   assert.equal(reason(input), null)
   input.targetMode = 'img2img'
-  assert.match(reason(input)!, /INP or mixed-source OUT/u)
+  assert.match(reason(input)!, /engine/u)
   input.targetMode = 'txt2img'
-  assert.match(reason(input)!, /INP or mixed-source OUT/u)
+  assert.match(reason(input)!, /engine/u)
   assert.equal(reason({ ...fixture(), runtimeSupported: undefined, targetMode: 'outpaint' }), null)
 })
 
@@ -320,3 +322,100 @@ test('frozen Smart OUT Retry uses its saved OUT requirement independently of cur
   assert.match(check(onlyOut, false)!, /Regional Guidance/u)
   assert.equal(generationQueueRetryReason('anima-smart-patch', onlyOut), null)
 })
+
+for (const mode of ['txt2img', 'img2img'] as const) {
+  test(`Smart regional ${mode} requires its own capability without inheriting INP or OUT`, () => {
+    const ready = {
+      ...ANIMA_BATCH_READY,
+      capabilities: [
+        ...ANIMA_BATCH_READY.capabilities,
+        'illustrious-outpaint',
+        'smart-patch-execution',
+        'smart-patch-seed-confirmation',
+        `anima-smart-patch-regional-${mode}-v1`,
+      ],
+      workerVersion: '0.14.0',
+    }
+    assert.equal(supportsInferenceAnimaSmartPatchRegionalMode(ready, mode), true)
+    assert.equal(supportsInferenceAnimaSmartPatchRegional(ready), false)
+    assert.equal(supportsInferenceAnimaSmartPatchRegionalOutpaint(ready), false)
+    assert.equal(
+      supportsInferenceAnimaSmartPatchRegionalMode(
+        ready,
+        mode === 'txt2img' ? 'img2img' : 'txt2img',
+      ),
+      false,
+    )
+    assert.equal(supportsInferenceAnimaSmartPatchRegionalTxt2Img(ready), mode === 'txt2img')
+    assert.equal(supportsInferenceAnimaSmartPatchRegionalImg2Img(ready), mode === 'img2img')
+    for (const missing of [
+      `anima-smart-patch-regional-${mode}-v1`,
+      'anima-flow-sampling',
+      'smart-patch-execution',
+      'smart-patch-seed-confirmation',
+    ]) {
+      assert.equal(
+        supportsInferenceAnimaSmartPatchRegionalMode(
+          { ...ready, capabilities: ready.capabilities.filter((x) => x !== missing) },
+          mode,
+        ),
+        false,
+      )
+    }
+    const flags =
+      mode === 'txt2img' ? { runtimeTxt2ImgSupported: true } : { runtimeImg2ImgSupported: true }
+    assert.equal(
+      reason({
+        ...fixture(),
+        runtimeOutpaintSupported: false,
+        runtimeSupported: false,
+        ...flags,
+        targetMode: mode,
+      }),
+      null,
+    )
+    assert.match(reason({ ...fixture(), targetMode: mode })!, /engine/u)
+    assert.equal(reason({ ...fixture(), runtimeSupported: undefined, targetMode: mode }), null)
+  })
+  test(`Smart frozen ${mode} Retry requires its saved capability after current regions change`, () => {
+    const state = {
+      animaSmartPatchRegionalImg2ImgSupported: mode === 'img2img',
+      animaSmartPatchRegionalOutpaintSupported: true,
+      animaSmartPatchRegionalSupported: true,
+      animaSmartPatchRegionalTxt2ImgSupported: mode === 'txt2img',
+      animaSupported: true,
+      smartPatchSupported: true,
+    }
+    const check = (value: typeof state) =>
+      generationQueueRetryReason(
+        'anima-smart-patch',
+        value,
+        null,
+        false,
+        false,
+        0,
+        'euler',
+        null,
+        true,
+        false,
+        mode === 'txt2img',
+        mode === 'img2img',
+      )
+    assert.equal(check(state), null)
+    assert.match(
+      check({
+        ...state,
+        animaSmartPatchRegionalImg2ImgSupported: false,
+        animaSmartPatchRegionalTxt2ImgSupported: false,
+      })!,
+      /Regional Guidance/u,
+    )
+    assert.equal(
+      generationQueueRetryReason('anima-smart-patch', {
+        ...state,
+        animaSmartPatchRegionalSupported: false,
+      }),
+      null,
+    )
+  })
+}

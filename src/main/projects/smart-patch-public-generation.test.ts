@@ -2670,3 +2670,134 @@ test(
     )
   },
 )
+
+for (const mode of ['txt2img', 'img2img'] as const) {
+  const capability = `anima-smart-patch-regional-${mode}-v1`
+  test(
+    `public Anima regional Smart ${mode} freezes actual mode and reaches dedicated world candidate`,
+    options,
+    async () => {
+      await withPublicFixture(
+        'anima',
+        async (f) => {
+          await enableAnimaSmartRegions(f)
+          f.runtime.ready.capabilities.push(capability)
+          const before = structuredClone(f.owner.document)
+          const batch = await queued(f)
+          const input = await f.base.queue.loadVerifiedSmartPatchInput(batch.jobIds[0])
+          assert.equal(input.payload.mode, mode)
+          assert.equal(input.payload.sourceAlpha, mode === 'txt2img' ? 'transparent' : 'opaque')
+          assert.equal(input.payload.regional?.profile, `invoke-anima-smart-regional-${mode}-v1`)
+          assert.equal(Object.hasOwn(input.bundle.files, 'model-source.png'), mode === 'img2img')
+          assert.equal(input.payload.item.family, 'anima')
+          if (input.payload.item.family !== 'anima') {
+            assert.fail('Original Anima fixture required')
+          }
+          assert.equal(input.payload.item.inference.sampling.mode, mode)
+          assert.equal(
+            input.payload.item.inference.sampling.strength,
+            mode === 'txt2img' ? null : 0.5,
+          )
+          const details = (await f.base.queue.getManagerEntry(batch.jobIds[0])).details
+          assert.equal(details?.requiresSmartPatchRegional, true)
+          assert.equal(
+            mode === 'txt2img'
+              ? details?.requiresSmartPatchRegionalTxt2Img
+              : details?.requiresSmartPatchRegionalImg2Img,
+            true,
+          )
+          await drain(f)
+          assert.equal(f.runtime.regionalGenerated.length, 1)
+          assert.equal(f.runtime.regionalGenerated[0].execution.mode, mode)
+          assert.equal((await f.staging.listVerifiedCandidates(f.tabId)).length, 1)
+          assert.deepEqual(f.owner.document, before)
+        },
+        mode,
+      )
+    },
+  )
+  test(
+    `public Smart ${mode} INP-only peer refuses before models or SQL after existing CPU classification`,
+    options,
+    async (t) => {
+      await withPublicFixture(
+        'anima',
+        async (f) => {
+          await enableAnimaSmartRegions(f)
+          const models = t.mock.method(
+            f.models,
+            'resolveVerifiedGenerationAnimaBundleForPlan',
+            async () => assert.fail('Wrong peer must refuse before model resolution'),
+          )
+          try {
+            await assert.rejects(f.controller.generate(f.tabId, f.request()), {
+              code: 'GENERATION_RUNTIME_UNAVAILABLE',
+            })
+            assert.equal(models.mock.callCount(), 0)
+            assert.equal(f.runtime.generated.length, 0)
+            assert.equal(f.runtime.regionalGenerated.length, 0)
+            assert.equal((await f.base.queue.listManagerPage()).items.length, 0)
+          } finally {
+            t.mock.restoreAll()
+          }
+        },
+        mode,
+      )
+    },
+  )
+  test(
+    `public Smart ${mode} frozen Retry ignores saved current regions and source preparation`,
+    options,
+    async (t) => {
+      await withPublicFixture(
+        'anima',
+        async (f) => {
+          const region = await enableAnimaSmartRegions(f)
+          f.runtime.ready.capabilities.push(capability)
+          const batch = await queued(f)
+          const original = await f.base.queue.loadVerifiedSmartPatchInput(batch.jobIds[0])
+          await f.normalActions.cancelJob(await f.base.queue.getManagerEntry(batch.jobIds[0]))
+          const terminal = await f.base.queue.getManagerEntry(batch.jobIds[0])
+          await f.service.deleteRegionalGuidance(f.tabId, {
+            ...regionalSmartDocumentOwner(f),
+            regionId: region,
+          })
+          await f.service.updateGenerationDraft(
+            f.tabId,
+            { kind: 'seed', policy: 'fixed', value: 999 },
+            undefined,
+            f.target.id,
+          )
+          await f.service.save(f.tabId)
+          const document = structuredClone(f.owner.document)
+          const saved = await readFile(f.owner.filePath)
+          const preparation = t.mock.method(
+            f.runtime,
+            'withSmartPatchGenerationPreparation',
+            async () => assert.fail('Frozen Retry must not prepare current source'),
+          )
+          try {
+            await f.normalActions.retryJob(terminal)
+            const retry = (await f.base.queue.listManagerPage()).items.find(
+              (x) => x.id !== terminal.id,
+            )!
+            await waitForRetryCompletion(f, retry.id)
+            const replay = await f.base.queue.loadVerifiedSmartPatchInput(retry.id)
+            assert.deepEqual(replay.payload.regional, original.payload.regional)
+            assert.deepEqual(replay.payload.item, original.payload.item)
+            for (const [name, bytes] of Object.entries(original.bundle.files)) {
+              assert.ok(bytes.equals(replay.bundle.files[name]), name)
+            }
+            assert.equal(preparation.mock.callCount(), 0)
+            assert.equal(f.runtime.regionalGenerated.at(-1)?.execution.mode, mode)
+            assert.deepEqual(f.owner.document, document)
+            assert.ok((await readFile(f.owner.filePath)).equals(saved))
+          } finally {
+            t.mock.restoreAll()
+          }
+        },
+        mode,
+      )
+    },
+  )
+}

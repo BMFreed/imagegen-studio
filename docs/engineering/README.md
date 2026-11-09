@@ -2582,3 +2582,37 @@ post-PNG semantic RED with exact INP controls/restoration. The note separates
 fixture diagnostics, real native/file checks, synthetic resource/model setup and
 retained source/data review. Public delivery, trained quality, visual semantics,
 release and PP-001/005/007/008 remain open.
+
+
+## Public Anima Smart regional TXT/IMG
+
+[Public flow research](./phase-4-anima-smart-regional-flow-public-research.md)
+extends the preceding private owner through actual WORLD mode classification,
+independent TXT/IMG capabilities, exact frozen source/profile, descriptor dispatch
+and existing candidates/whole-bundle Retry. It adapts Invoke4875's source graft
+before the same signed regional collector. Selected-Smart negative, old INP/OUT,
+explicit Add/Save and ordinary-only provenance remain unchanged.
+
+ROOT1,060 Main/223 native Python/230 prototype-browser PASS, two prior opt-in
+private fixture skips, typing/build/lint and18 isolated mutation selections
+(14 GREEN/four post-PNG TXT/IMG semantic RED, exact INP controls/restoration)
+remain distinct from the installed evidence and operational closure in the note.
+No new sampler, `.igs` field, queue operation, batch or resource support is added.
+Visual quality, release and PP-001/005/007/008 remain unpromoted.
+
+
+Installed ROOT qualification passes22 checks across8 native requests,6 actual
+world publications and2 progress cancellations. Both modes pass A/B local-negative
+causality, explicit Add/history/Save-reopen and exact restarted frozen Retry after
+saved source/mask/region/settings edits. Changed visible RGB channels are14,179
+for TXT and21,272 for IMG. Independent original-processing-PNG→world-RGBA checks
+pass, and all4 app lifetimes close normally after explicit temporary-result
+retirement. Actual runtime, source/retained-data review, operational limits and
+exclusions remain separate in the research note; no visual/readiness status rises.
+
+
+Final source/document/retained-byte audit is CLEAN. ROOT separately verifies
+physical exit, restored sources, idle readers and global dependencies, retains
+all5690 scratch entries and reclaims82,268,160 allocated bytes from its two exact
+owned payload paths. Shared runtime/models/Projects/rows and active worker report
+companions stay protected; lifecycle and evidence limits remain in the note.

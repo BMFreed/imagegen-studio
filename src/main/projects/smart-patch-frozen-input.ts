@@ -38,8 +38,10 @@ import { resolveIllustriousScheduler } from './illustrious-scheduler.js'
 import { decodeDerivedProjectMaskPng, decodeProjectMaskPng } from './project-mask.js'
 import { validateSmartPatchExecutionDraft } from './project-smart-patch-execution.js'
 import {
+  ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE,
   ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE,
   ANIMA_SMART_PATCH_REGIONAL_PROFILE,
+  ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE,
   bindSmartPatchAnimaRegionalExecution,
   captureFrozenSmartPatchAnimaRegionalInputV1,
   capturePreparedSmartPatchAnimaRegionalInput,
@@ -516,9 +518,11 @@ export async function attachSmartPatchAnimaRegionalInput(
   const { profile } = prepared
   if (
     profile !== ANIMA_SMART_PATCH_REGIONAL_PROFILE &&
-    profile !== ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE
+    profile !== ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE &&
+    profile !== ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE &&
+    profile !== ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE
   ) {
-    refuse('Private Smart TXT/IMG regional profiles cannot enter the public frozen bundle.')
+    refuse('The public Smart regional profile is unsupported.')
   }
   const manifest = parseFrozenSmartPatchInputV1(input.manifest)
   if (manifest.regional || prepared.promptInterpretation !== ANIMA_PROMPT_INTERPRETATION) {
@@ -605,6 +609,12 @@ function assertRegionalMetadataAgreement(manifest: FrozenSmartPatchInputV1): voi
   const model = draft.model
   const entry = manifest.items[0]
   const matchingMode =
+    (regional.profile === ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE &&
+      manifest.mode === 'txt2img' &&
+      manifest.sourceAlpha === 'transparent') ||
+    (regional.profile === ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE &&
+      manifest.mode === 'img2img' &&
+      manifest.sourceAlpha === 'opaque') ||
     (regional.profile === ANIMA_SMART_PATCH_REGIONAL_PROFILE &&
       manifest.mode === 'inpaint' &&
       manifest.sourceAlpha === 'opaque') ||

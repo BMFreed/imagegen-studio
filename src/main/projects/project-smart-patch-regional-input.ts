@@ -38,13 +38,13 @@ export const ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE =
   'invoke-anima-smart-regional-txt2img-v1' as const
 export const ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE =
   'invoke-anima-smart-regional-img2img-v1' as const
-/** The two public frozen profiles keep their original mode-specific meanings. */
+/** Each public frozen profile keeps its exact original Smart execution mode. */
 export type SmartPatchAnimaRegionalProfile =
-  typeof ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE | typeof ANIMA_SMART_PATCH_REGIONAL_PROFILE
-export type PreparedSmartPatchAnimaRegionalProfile =
-  | SmartPatchAnimaRegionalProfile
   | typeof ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE
+  | typeof ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE
+  | typeof ANIMA_SMART_PATCH_REGIONAL_PROFILE
   | typeof ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE
+export type PreparedSmartPatchAnimaRegionalProfile = SmartPatchAnimaRegionalProfile
 const MODE_BY_PROFILE = {
   [ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE]: 'img2img',
   [ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE]: 'outpaint',
@@ -239,6 +239,8 @@ const frozenPreparedSchema = v.strictObject({
   profile: v.picklist([
     ANIMA_SMART_PATCH_REGIONAL_PROFILE,
     ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE,
+    ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE,
+    ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE,
   ]),
   promptInterpretation: v.literal(ANIMA_PROMPT_INTERPRETATION),
   recipe: v.strictObject({

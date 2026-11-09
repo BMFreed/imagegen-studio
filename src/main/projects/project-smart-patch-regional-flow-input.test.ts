@@ -39,7 +39,10 @@ import {
   capturePreparedSmartPatchAnimaRegionalInput,
   prepareSmartPatchAnimaRegionalInput,
 } from './project-smart-patch-regional-input.js'
-import { attachSmartPatchAnimaRegionalInput } from './smart-patch-frozen-input.js'
+import {
+  attachSmartPatchAnimaRegionalInput,
+  hydrateFrozenSmartPatchAnimaRegionalInput,
+} from './smart-patch-frozen-input.js'
 import { literalPreparedSmartPatchInputMaterial } from './test-fixtures/smart-patch-input-material.js'
 
 type FlowMode = 'img2img' | 'txt2img'
@@ -268,7 +271,7 @@ for (const mode of ['txt2img', 'img2img'] as const) {
     assert.deepEqual(result, before)
   })
 
-  test(`private ${mode} profile is refused by frozen metadata and public material attachment`, async () => {
+  test(`explicit ${mode} profile round-trips public frozen material and refuses crossed profiles`, async () => {
     const f = await fixture(mode)
     const prepared = await prepareSmartPatchAnimaRegionalInput({
       ...captured(f.document, f.material),
@@ -276,13 +279,36 @@ for (const mode of ['txt2img', 'img2img'] as const) {
       promptInterpretation: ANIMA_PROMPT_INTERPRETATION,
     })
     const before = structuredClone(f.material)
-    assert.throws(() => captureFrozenSmartPatchAnimaRegionalInputV1(frozen(prepared)), {
-      code: 'SMART_PATCH_REGIONAL_INPUT_INVALID',
-    })
-    await assert.rejects(attachSmartPatchAnimaRegionalInput(f.material, prepared), {
-      code: 'SMART_PATCH_INPUT_INVALID',
-      message: 'Private Smart TXT/IMG regional profiles cannot enter the public frozen bundle.',
-    })
+    assert.equal(
+      captureFrozenSmartPatchAnimaRegionalInputV1(frozen(prepared)).profile,
+      PROFILE[mode],
+    )
+    const attached = await attachSmartPatchAnimaRegionalInput(f.material, prepared)
+    assert.equal(attached.manifest.mode, mode)
+    assert.equal(attached.manifest.regional!.profile, PROFILE[mode])
+    assert.deepEqual(
+      hydrateFrozenSmartPatchAnimaRegionalInput(attached.manifest, attached.files),
+      prepared,
+    )
+    assert.throws(
+      () =>
+        captureFrozenSmartPatchAnimaRegionalInputV1({
+          ...frozen(prepared),
+          profile: `${PROFILE[mode]}-unknown`,
+        }),
+      {
+        code: 'SMART_PATCH_REGIONAL_INPUT_INVALID',
+      },
+    )
+    await assert.rejects(
+      attachSmartPatchAnimaRegionalInput(f.material, {
+        ...prepared,
+        profile: PROFILE[mode === 'txt2img' ? 'img2img' : 'txt2img'],
+      }),
+      {
+        code: 'SMART_PATCH_INPUT_INVALID',
+      },
+    )
     assert.deepEqual(f.material.manifest, before.manifest)
     assert.deepEqual(Object.keys(f.material.files), Object.keys(before.files))
     for (const [name, bytes] of Object.entries(f.material.files)) {

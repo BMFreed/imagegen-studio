@@ -8,28 +8,37 @@ export const ANIMA_SMART_PATCH_REGIONAL_CAPABILITY =
   'anima-smart-patch-regional-inpaint-v1' as const
 export const ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_CAPABILITY =
   'anima-smart-patch-regional-outpaint-v1' as const
+export const ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_CAPABILITY =
+  'anima-smart-patch-regional-txt2img-v1' as const
+export const ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_CAPABILITY =
+  'anima-smart-patch-regional-img2img-v1' as const
 
 /**
- * Invoke4875 compileCanvasGraph grafts INP before regions on the selected job. This is
- * source/settings preflight; actual opaque INP classification and raw alpha qualification remain
- * the CPU/frozen input owners. Undefined runtime support means metadata-only Main preflight;
- * renderer always supplies a boolean.
+ * Invoke4875 compileCanvasGraph joins regions after the selected job's mode/source graft. This is
+ * settings preflight; actual mode and raw alpha qualification remain CPU/frozen input owners.
+ * Undefined runtime support means metadata-only Main preflight; renderer always supplies a
+ * boolean.
  */
 export function getSmartPatchRegionalGenerationUnavailableReason(input: {
   document: Pick<IgsProjectDocumentV1, 'regionalGuidance'>
   iterations?: number
   patch:
     Pick<IgsSmartPatchLayerV1, 'boundingBox' | 'generationDraft' | 'internalResolution'> | undefined
+  runtimeImg2ImgSupported?: boolean
   runtimeOutpaintSupported?: boolean
   runtimeSupported?: boolean
+  runtimeTxt2ImgSupported?: boolean
   targetMode?: string | null
 }): string | null {
   const regions = (input.document.regionalGuidance ?? []).filter((region) => region.enabled)
   if (regions.length === 0) {
     return null
   }
-  if (input.targetMode != null && !['inpaint', 'outpaint'].includes(input.targetMode)) {
-    return 'Regional Smart Patch generation currently requires opaque-source INP or mixed-source OUT.'
+  if (
+    input.targetMode != null &&
+    !['img2img', 'inpaint', 'outpaint', 'txt2img'].includes(input.targetMode)
+  ) {
+    return 'Regional Smart Patch generation requires a supported source and mask mode.'
   }
   const { patch } = input
   if (!patch) {
@@ -104,14 +113,24 @@ export function getSmartPatchRegionalGenerationUnavailableReason(input: {
     return 'A Regional Smart Patch prompt is invalid or unsupported.'
   }
   const runtimeSpecified =
-    input.runtimeSupported !== undefined || input.runtimeOutpaintSupported !== undefined
+    input.runtimeSupported !== undefined ||
+    input.runtimeOutpaintSupported !== undefined ||
+    input.runtimeTxt2ImgSupported !== undefined ||
+    input.runtimeImg2ImgSupported !== undefined
   const supported = !runtimeSpecified
     ? undefined
     : input.targetMode === 'outpaint'
       ? input.runtimeOutpaintSupported === true
       : input.targetMode === 'inpaint'
         ? input.runtimeSupported === true
-        : input.runtimeSupported === true || input.runtimeOutpaintSupported === true
+        : input.targetMode === 'txt2img'
+          ? input.runtimeTxt2ImgSupported === true
+          : input.targetMode === 'img2img'
+            ? input.runtimeImg2ImgSupported === true
+            : input.runtimeSupported === true ||
+              input.runtimeOutpaintSupported === true ||
+              input.runtimeTxt2ImgSupported === true ||
+              input.runtimeImg2ImgSupported === true
   return supported === false
     ? 'The image engine does not support Anima Smart Patch Regional Guidance. Repair or update the runtime.'
     : null
