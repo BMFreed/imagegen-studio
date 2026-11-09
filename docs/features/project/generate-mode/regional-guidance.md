@@ -526,8 +526,9 @@ prompt with inheritance false. Turning on `Use global negative prompt` preserves
 the dormant local text/refs without copying global text. Remove Negative clears
 the local block and restores inheritance. The read-only inherited display is
 labelled `Current Canvas negative prompt`. Current Canvas also supplies model and
-LoRA authoring context when a Smart Patch is selected; future Smart-job freeze
-inheritance is a separate decision, not behavior implemented by this slice.
+LoRA authoring context when a Smart Patch is selected. This authoring checkpoint
+did not implement Smart-job inheritance; the later Smart contract resolves it
+from the selected Patch's frozen settings, without changing that display.
 
 Existing blocks remain inline independently of row selection. They use compact
 production `PlainPromptEditor`, its syntax/attention actions and exact ID-only
@@ -693,8 +694,12 @@ Regional guidance images are a narrow exception inside this feature. They may us
 Invoke's `auto-negative` (using a region's positive prompt as negative
 conditioning outside its mask) is excluded for **both** supported families. The
 ImageGen Studio `Use global negative prompt` option has a different meaning: at
-Generate time it resolves the current global negative text for that region,
-instead of copying text when the switch is changed.
+Generate time it resolves the executing job's global negative text for that region,
+instead of copying text when the switch is changed. Current Canvas jobs inherit
+from their frozen Canvas settings; Smart Patch jobs inherit from the selected
+Patch's frozen generation settings, as in InvokeAI. The Current Canvas authoring
+display must not override a Smart job's negative. Dormant local text/refs remain
+authored state and are not consumed while inheritance is enabled.
 
 Regional guidance is a prompt-control mechanism, not a replacement for Smart Patch Layer.
 
@@ -2252,3 +2257,25 @@ provenance owners remain unchanged; OUT sampled canvas-rounding evidence is
 bounded. This finite extension adds no numerical loop, wire/queue schema,
 provenance field or quality/readiness claim. SDE/Smart/references, Anima and
 PP-001/005/007/008 remain open.
+
+## Private original-Anima Smart regional INP
+
+The [private Smart integration](../../../engineering/phase-4-anima-smart-regional-research.md)
+uses the selected Patch's model, static prompts, inherited negative, concrete seed,
+sampling and processing size. A coherent Main lease captures Smart and regional
+assets from one document/epoch/package before use; later callback edits/Save/close
+do not replace those historical inputs. The complete private input binds the
+original Smart execution request rather than synthesizing a Current Canvas job.
+
+Owned world alpha is normalized/binarized then NEAREST-sampled directly to the
+processing Anima token grid. Positive and negative permissions stay separate;
+Smart KEEP/source trajectory, source preparation and world contribution remain
+the existing independent owners. Private scope is original Anima INP, Euler/Heun,
+one static item, no enabled LoRA/TI/references, processing sizes 64–512 divisible by 8.
+
+This adds no public Smart+regional Generate permission, worker capability or
+dispatch branch, durable queue/Retry schema, `.igs` field, variant acceptance or
+provenance. Current public refusal and ordinary/frozen-work independence remain.
+The read-only regional editor still shows Current Canvas authoring context.
+PP-001/005/007/008 remain **«Пока не обещать»**. Runnable results and their exact
+limits are recorded in the linked note; useful visual placement remains separate.

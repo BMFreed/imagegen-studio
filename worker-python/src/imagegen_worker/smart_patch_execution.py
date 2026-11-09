@@ -199,7 +199,14 @@ def execute_smart_patch(
     config_dir: Path,
     runtime: inference.MLRuntime,
     on_progress: inference.DenoisingProgressSink | None = None,
+    _anima_regional: object | None = None,
 ) -> dict[str, object]:
+    if _anima_regional is not None:
+        from imagegen_worker.anima_smart_patch_regional import (
+            _require_captured_command,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        _require_captured_command(_anima_regional, command)
     resources = _resource_entries(command.inference)
     _paths(command, resources)
     prepared = capture_smart_patch_execution(command)
@@ -237,15 +244,30 @@ def execute_smart_patch(
             )
         models = anima_worker.load_anima_models(policy.bundle, device="cuda", dtype=torch.bfloat16)
         _verify_resources(resources)
-        result = run_smart_patch_anima(
-            anima_worker.anima_sampling_payload(policy.sampling),
-            anima_worker.anima_prompt_payload(policy.positive_prompt),
-            anima_worker.anima_prompt_payload(policy.negative_prompt),
-            models,
-            prepared,
-            loras=policy.loras,
-            progress=on_progress,
-        )
+        if _anima_regional is None:
+            result = run_smart_patch_anima(
+                anima_worker.anima_sampling_payload(policy.sampling),
+                anima_worker.anima_prompt_payload(policy.positive_prompt),
+                anima_worker.anima_prompt_payload(policy.negative_prompt),
+                models,
+                prepared,
+                loras=policy.loras,
+                progress=on_progress,
+            )
+        else:
+            from imagegen_worker.anima_smart_patch_regional import (
+                CapturedAnimaSmartPatchRegionalInput,
+                run_prepared_anima_smart_patch_regional,
+            )
+
+            result = run_prepared_anima_smart_patch_regional(
+                cast(CapturedAnimaSmartPatchRegionalInput, _anima_regional),
+                models,
+                prepared,
+                runtime=runtime,
+                profile="cuda-bfloat16-v1",
+                progress=on_progress,
+            )
         if result.total_steps != policy.sampling.total_steps:
             raise DerivativeError("GENERATION_WORKER_FAILED", "Anima execution count differs.")
         image = result.image

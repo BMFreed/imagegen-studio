@@ -14,7 +14,7 @@ from typing import Any, cast
 
 from PIL import Image
 
-from imagegen_worker.anima_euler import AnimaEulerResult
+from imagegen_worker.anima_euler import AnimaEulerResult, AnimaPredictionFactory
 from imagegen_worker.anima_flow_sampling import (
     PLAN_VERSION as ANIMA_PLAN_VERSION,
 )
@@ -224,8 +224,13 @@ def run_smart_patch_anima(
     loras: tuple[GenerationLora, ...] = (),
     tokenizers: AnimaTokenizers | None = None,
     progress: DenoisingProgressSink | None = None,
+    prediction_factory: AnimaPredictionFactory | None = None,
 ) -> AnimaEulerResult:
-    """Execute prepared Smart Patch inputs through original Anima native models."""
+    """Execute prepared Smart Patch inputs through original Anima native models.
+
+    The private regional owner may supply its derived signed predictor for INP.
+    Source preparation and latent KEEP remain independent native owners.
+    """
     captured = _capture_inputs(inputs)
     sampling = validate_anima_flow_sampling_plan(plan)
     if sampling.mode != ("txt2img" if captured.mode == "txt2img" else "img2img") or (
@@ -260,6 +265,10 @@ def run_smart_patch_anima(
         "tokenizers": tokenizers,
         "progress": progress,
     }
+    if prediction_factory is not None:
+        if captured.mode != "inpaint" or not callable(prediction_factory):
+            raise _invalid("The private Smart regional predictor requires INP.")
+        arguments["prediction_factory"] = prediction_factory
     if captured.mode in ("inpaint", "outpaint"):
         result = generate_anima_outpaint(
             owned_plan,

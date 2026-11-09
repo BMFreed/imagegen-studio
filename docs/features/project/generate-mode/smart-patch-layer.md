@@ -1108,3 +1108,18 @@ lifecycle controls and current-state checks are described above.
 - Smart Patch comparison uses active-variant provenance against the current Project Canvas draft, including while a Patch is selected, and never compares two variant provenance records.
 - Converted Smart Rasters use the same Smart settings comparison rules; Size, geometry and layer/source/execution context are absent.
 - Inactive direct Compare is outside this slice; existing inactive preset actions remain separate.
+
+## Regional negative inheritance and private Anima INP
+
+For Smart generation, Regional Guidance's `Use global negative prompt` inherits
+from the **selected Smart Patch's generation settings**, frozen for that job.
+Current Canvas remains the regional editor's authoring display/context; it does
+not replace the executing Smart negative, model, prompts, seed or sampling.
+
+The [private Anima Smart INP owner](../../../engineering/phase-4-anima-smart-regional-research.md)
+joins coherent historical Smart/regional captures to the existing source/KEEP,
+Euler/Heun, native decode, processing RGB and world-contribution owners. Regional
+alpha is projected independently to Anima's processing token grid; it does not
+reuse Smart blur/fade/coherence/KEEP as attention permissions. This checkpoint
+adds no public Smart+regional admission, frozen queue/Retry, Add-as-Variant,
+provenance or quality claim. PP-001/005/007/008 remain **«Пока не обещать»**.

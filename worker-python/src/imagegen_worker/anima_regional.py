@@ -320,6 +320,21 @@ def _capture(
     *,
     negative_profile: _NegativeProfile | None = None,
 ) -> _Input:
+    return _capture_regional_recipe(recipe, compiled_prompts, negative_profile=negative_profile)
+
+
+def _capture_regional_recipe(
+    recipe: object,
+    compiled_prompts: object,
+    *,
+    negative_profile: _NegativeProfile | None = None,
+    recipe_kind: str = "current-canvas-regional-recipe",
+    global_source_id: str = "current-canvas",
+    inherited_source: str = "current-canvas",
+    extra_fields: frozenset[str] = frozenset(),
+    reserved_owner_ids: tuple[str, ...] = (),
+) -> _Input:
+    """Capture signed jobs while the caller fixes the actual target/source namespace."""
     _require(
         negative_profile is None
         or (
@@ -340,12 +355,15 @@ def _capture(
             "item",
             "globalPrompts",
             "regions",
-        },
+        }
+        | extra_fields,
     )
     _require(
-        data["kind"] == "current-canvas-regional-recipe" and data["family"] == "anima",
+        data["kind"] == recipe_kind and data["family"] == "anima",
         "INVALID_REQUEST",
-        "A complete original-Anima Current Canvas recipe is required.",
+        "A complete original-Anima Current Canvas recipe is required."
+        if recipe_kind == "current-canvas-regional-recipe"
+        else "A complete original-Anima Smart Patch recipe is required.",
     )
     _uuid(data["documentId"])
     _uuid(data["documentRevision"])
@@ -376,12 +394,12 @@ def _capture(
         "Anima regional execution admits at most three regions.",
     )
     expected: list[tuple[str, str, str]] = [
-        ("current-canvas", "positive", positive),
-        ("current-canvas", "negative", negative),
+        (global_source_id, "positive", positive),
+        (global_source_id, "negative", negative),
     ]
     total_text_bytes = len(positive.encode("utf-8")) + len(negative.encode("utf-8"))
     regions: list[_Region] = []
-    owned: set[str] = set()
+    owned: set[str] = set(reserved_owner_ids)
     for value in entries:
         region = _object(
             value,
@@ -406,13 +424,13 @@ def _capture(
         local_negative = _object(region["negative"], {"prompt", "source"})
         negative_text = _prompt(local_negative["prompt"])
         _require(
-            local_negative["source"] in ("current-canvas", "regional"),
+            local_negative["source"] in (inherited_source, "regional"),
             "INVALID_REQUEST",
             "Regional negative source is invalid.",
         )
         if "authoredPrompts" not in region:
             _require(
-                local_positive is None and local_negative["source"] == "current-canvas",
+                local_positive is None and local_negative["source"] == inherited_source,
                 "INVALID_REQUEST",
                 "Effective prompts have no authored owner.",
             )
@@ -428,7 +446,7 @@ def _capture(
             _authored_prompt_agrees(authored["positive"], region["positive"])
             if authored["useGlobalNegativePrompt"]:
                 _require(
-                    local_negative["source"] == "current-canvas",
+                    local_negative["source"] == inherited_source,
                     "INVALID_REQUEST",
                     "Inherited negative source differs.",
                 )
@@ -439,11 +457,13 @@ def _capture(
                     "Local negative differs from its authored block.",
                 )
                 _authored_prompt_agrees(authored["negative"], local_negative["prompt"])
-        if local_negative["source"] == "current-canvas":
+        if local_negative["source"] == inherited_source:
             _require(
                 local_negative["prompt"] == global_prompts["negative"],
                 "INVALID_REQUEST",
-                "Inherited negative text or references differ from Current Canvas.",
+                "Inherited negative text or references differ from Current Canvas."
+                if inherited_source == "current-canvas"
+                else "Inherited negative text or references differ from the selected Smart Patch.",
             )
         _require(
             negative_text == "" or negative_profile is not None,
@@ -1237,11 +1257,16 @@ def _owned_tokenizers(supplied: AnimaTokenizers | None) -> AnimaTokenizers:
 
 
 def _preflight_prompt_weights(
-    captured: _Input, tokenizers: AnimaTokenizers, torch: Any, dtype: Any
+    captured: _Input,
+    tokenizers: AnimaTokenizers,
+    torch: Any,
+    dtype: Any,
+    *,
+    global_source_id: str = "current-canvas",
 ) -> None:
     """Reuse real native tokenization/weight arithmetic before any encoder forward."""
     for prompt in captured.prompts:
-        if prompt.source_id != "current-canvas" and prompt.text == "":
+        if prompt.source_id != global_source_id and prompt.text == "":
             continue
         qwen, t5 = _tokenize(prompt.compiled, tokenizers)
         qwen_ids = _first_token_sequence(qwen, "input_ids")
@@ -1499,6 +1524,27 @@ def _scoped_anima_regional_attention(
                 attention.processor = original
 
 
+def _regional_mask_grid(
+    captured: _Input, processing_size: tuple[int, int] | None
+) -> tuple[int, int]:
+    """Keep world alpha storage separate from the explicit processing-token target."""
+    if processing_size is None:
+        width, height = captured.bbox[2:]
+    else:
+        _require(
+            type(processing_size) is tuple
+            and len(processing_size) == 2
+            and all(
+                type(value) is int and 64 <= value <= 512 and value % 8 == 0
+                for value in processing_size
+            ),
+            "INVALID_REQUEST",
+            "Anima Smart regional processing size must contain bounded multiples of eight.",
+        )
+        width, height = processing_size
+    return math.ceil((height // 8) / 2), math.ceil((width // 8) / 2)
+
+
 def _prepare_mask(
     captured: _Input,
     attentions: tuple[Any, ...],
@@ -1506,6 +1552,8 @@ def _prepare_mask(
     device: Any,
     dtype: Any,
     composition_profile: _CompositionProfile | None = None,
+    *,
+    processing_size: tuple[int, int] | None = None,
 ) -> Any:
     _require(
         composition_profile is None
@@ -1522,7 +1570,7 @@ def _prepare_mask(
     if not active:
         return None
     width, height = captured.bbox[2:]
-    grid_height, grid_width = math.ceil((height // 8) / 2), math.ceil((width // 8) / 2)
+    grid_height, grid_width = _regional_mask_grid(captured, processing_size)
     queries, keys = grid_height * grid_width, _CONTEXT_ROWS * (1 + len(active))
     for attention in attentions:
         _require(
@@ -1578,13 +1626,15 @@ def _prepare_negative_mask(
     torch: Any,
     device: Any,
     dtype: Any,
+    *,
+    processing_size: tuple[int, int] | None = None,
 ) -> Any:
     """Invoke's independent negative bank keeps its unmasked global source everywhere."""
     active = tuple(region for region in captured.regions if region.negative_text != "")
     if not active:
         return None
     width, height = captured.bbox[2:]
-    grid_height, grid_width = math.ceil((height // 8) / 2), math.ceil((width // 8) / 2)
+    grid_height, grid_width = _regional_mask_grid(captured, processing_size)
     queries, keys = grid_height * grid_width, _CONTEXT_ROWS * (1 + len(active))
     for attention in attentions:
         _require(

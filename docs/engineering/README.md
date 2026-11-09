@@ -2515,3 +2515,23 @@ The note separates diagnosed fixture/source-oracle attempts, native-mask tests,
 trained wire/progress/image evidence, retained bytes and physical release.
 Visual usefulness, Smart/TI/references/new architectures/per-region LoRA and
 PP-001/005/007/008 remain open.
+
+## Private original-Anima Smart regional INP
+
+[Selected-job regional conditioning](./phase-4-anima-smart-regional-research.md)
+adapts current Invoke's INP-before-regions graft. The user selected the Smart
+Patch's frozen negative for inherited regions. Coherent Main capture and strict
+complete-input binding retain true Smart ownership; direct WORLD→processing
+Anima NEAREST permissions stay independent of native KEEP and existing world
+contribution. Public admission, installed worker, durable Retry and variant/
+provenance boundaries are unchanged. ROOT224 affected Main/157 Python cases, typing/scoped checks/build and three
+trained Main→world cases pass. Twenty-four mutation selections give20 GREEN/four
+semantic RED, with exact restoration. Negative-only variation changes47,959
+processing and8,674 fully visible world RGB channels; repeat is exact. Source R1
+review is CLEAN. Evidence and operational closure are in the linked note;
+PP-001/005/007/008 and visual quality remain unpromoted.
+
+Final source/document/retained-byte audit is CLEAN; ROOT separately closes owned
+process/readers/restoration/dependency gates. All6140 scratch entries survive in
+the verified archive; exact disposal reclaims429,486,080 allocated bytes. The one
+shared runtime/catalog/models and previous qualified refresh remain protected.

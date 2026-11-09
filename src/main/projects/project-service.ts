@@ -126,7 +126,7 @@ import {
 } from '../../shared/projects/smart-result-preset.js'
 
 import { createHash, randomUUID } from 'node:crypto'
-import { type BigIntStats, constants } from 'node:fs'
+import { type BigIntStats, constants, lstatSync } from 'node:fs'
 import { link, lstat, mkdir, mkdtemp, open, realpath, rm, unlink } from 'node:fs/promises'
 import path from 'node:path'
 
@@ -141,6 +141,7 @@ import type {
   SmartPatchAcceptancePlan,
   SmartPatchAcceptancePlanInput,
 } from './project-smart-patch-acceptance-plan.js'
+import type { CapturedSmartPatchRegionalGenerationInput } from './project-smart-patch-regional-input.js'
 import type { TargetInspectionWorkerProvider } from './project-target-inspection-owner.js'
 import type { ProjectTemporaryRecoveryInspection } from './project-temporary-recovery.js'
 import type { ProjectWorkerClient } from './worker-client.js'
@@ -3673,6 +3674,95 @@ export class ProjectService {
         scratchBasePath: this.options.roots.scratchDir,
       },
       use,
+    )
+  }
+
+  /**
+   * One read-only Smart/Regional lease. Invoke4875's Canvas graft joins regions to the selected
+   * job's conditioning after INP preparation; it does not read a later Current Canvas draft. Both
+   * pending-asset sets detach synchronously. The callback starts only after both existing leases
+   * qualify the same coordinator/epoch and package version, then owns historical inputs.
+   */
+  async withCapturedSmartPatchRegionalGenerationInput<T>(
+    tabId: string,
+    layerId: string,
+    use: (capture: CapturedSmartPatchRegionalGenerationInput) => Promise<T>,
+  ): Promise<T> {
+    const coordinator = this.requireTab(tabId)
+    const captured = this.captureRegionalGuidanceDocument(tabId, {
+      documentId: coordinator.document.documentId,
+      documentRevision: coordinator.document.documentRevision,
+    })
+    const assertAcquisitionCurrent = () => {
+      captured.assertCurrent()
+      if (this.saving.has(tabId) || this.rebuilding.has(tabId)) {
+        throw new ProjectAutosaveError(
+          'EDIT_CONFLICT',
+          'Wait for the Project Save or preview rebuild before capturing Smart regional inputs.',
+        )
+      }
+    }
+    assertAcquisitionCurrent()
+    const document = structuredClone(captured.document)
+    const patch = requireSmartPatch(document, layerId)
+    const packagePath = coordinator.filePath
+    const readPending = coordinator.getCurrentAssetSource.bind(coordinator)
+    const copySource = (source: IgsAssetSource | null): IgsAssetSource | null =>
+      source && ('bytes' in source ? { bytes: Buffer.from(source.bytes) } : { ...source })
+    const sources = new Map(
+      compositionRasterLayers(document, { beneathLayerId: layerId }).map((layer) => [
+        `${layer.asset.path}:${layer.asset.sha256}`,
+        copySource(readPending(layer.asset)),
+      ]),
+    )
+    const maskSource = patch.mask.asset ? copySource(readPending(patch.mask.asset)) : null
+    // Save can replace a same-revision package without changing documentEpoch. Establish this
+    // no-follow witness before the first asynchronous capture operation, not after an await.
+    const packageBefore = lstatSync(packagePath, { bigint: true })
+    if (!packageBefore.isFile()) {
+      throw new ProjectAutosaveError('EDIT_CONFLICT', 'The captured Project is not a regular file.')
+    }
+    assertAcquisitionCurrent()
+    return await withFrozenRegionalGuidanceInput(
+      {
+        assertCurrent: assertAcquisitionCurrent,
+        document,
+        packagePath,
+        // This existing helper copies all pending regional buffers before its first await.
+        pendingSource: readPending,
+        scratchBasePath: this.options.roots.scratchDir,
+      },
+      async (regional) =>
+        await withFrozenSmartPatchGenerationInput(
+          {
+            document,
+            layerId,
+            maskSource,
+            packagePath,
+            pendingSource: (asset) => sources.get(`${asset.path}:${asset.sha256}`) ?? null,
+            projectKey: tabId,
+            scratchBasePath: this.options.roots.scratchDir,
+          },
+          async (smartPatch) => {
+            assertAcquisitionCurrent()
+            const packageAfter = lstatSync(packagePath, { bigint: true })
+            if (
+              !packageAfter.isFile() ||
+              packageBefore.dev !== packageAfter.dev ||
+              packageBefore.ino !== packageAfter.ino ||
+              packageBefore.size !== packageAfter.size ||
+              packageBefore.mtimeNs !== packageAfter.mtimeNs ||
+              packageBefore.ctimeNs !== packageAfter.ctimeNs
+            ) {
+              throw new ProjectAutosaveError(
+                'EDIT_CONFLICT',
+                'The saved Project changed while capturing Smart Patch regional inputs.',
+              )
+            }
+            assertAcquisitionCurrent()
+            return await use({ regional, smartPatch })
+          },
+        ),
     )
   }
 
