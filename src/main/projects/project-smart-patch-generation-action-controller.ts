@@ -6,7 +6,10 @@ import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceAnima,
   supportsInferenceAnimaSmartPatchRegional,
+  supportsInferenceAnimaSmartPatchRegionalMode,
+  supportsInferenceAnimaSmartPatchRegionalOutpaint,
 } from '../../shared/projects/inference-worker-capabilities.js'
+import { RegionalGuidanceGenerationError } from '../../shared/projects/regional-guidance.js'
 import { hasEnabledRegionalGuidance } from '../../shared/projects/regional-invoke-generation.js'
 import type {
   ProjectSmartPatchGenerateOptions,
@@ -31,7 +34,10 @@ import type { SmartPatchGenerationStagingRepository } from './smart-patch-genera
 import { ProjectGenerationActionError } from './generation-action-controller.js'
 import { validateSmartPatchExecutionDraft } from './project-smart-patch-execution.js'
 import {
+  ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE,
+  ANIMA_SMART_PATCH_REGIONAL_PROFILE,
   type CapturedSmartPatchRegionalGenerationInput,
+  type PreparedSmartPatchAnimaRegionalInput,
   prepareSmartPatchAnimaRegionalInput,
 } from './project-smart-patch-regional-input.js'
 import { attachSmartPatchAnimaRegionalInput } from './smart-patch-frozen-input.js'
@@ -246,13 +252,6 @@ export class ProjectSmartPatchGenerationActionController {
           positivePrompt: draft.positivePrompt.text,
           seedBehavior: dynamic.seedBehavior,
         })
-        const regionalPrepared = regionalCapture
-          ? await prepareSmartPatchAnimaRegionalInput({
-              capture: regionalCapture,
-              item: plan.items[0],
-              promptInterpretation: ANIMA_PROMPT_INTERPRETATION,
-            })
-          : null
         const material = await this.options.runtime.withSmartPatchGenerationPreparation(
           this.options.scratchBasePath,
           async ({ inferenceReady, preparationWorker }) => {
@@ -264,13 +263,42 @@ export class ProjectSmartPatchGenerationActionController {
               !inferenceReady.capabilities.includes('smart-patch-seed-confirmation') ||
               (draft.model?.baseModelFamily === 'anima' &&
                 !supportsInferenceAnima(inferenceReady)) ||
-              (regionalPrepared !== null &&
-                !supportsInferenceAnimaSmartPatchRegional(inferenceReady))
+              (regionalCapture !== undefined &&
+                !supportsInferenceAnimaSmartPatchRegional(inferenceReady) &&
+                !supportsInferenceAnimaSmartPatchRegionalOutpaint(inferenceReady))
             ) {
               throw new ProjectGenerationActionError(
                 'GENERATION_RUNTIME_UNAVAILABLE',
                 'The installed worker cannot generate Smart Patches.',
               )
+            }
+            let regionalPrepared: PreparedSmartPatchAnimaRegionalInput | null = null
+            if (regionalCapture) {
+              // Existing CPU owner classifies actual source before the OUT LaMa/model work.
+              // The leased source is composed again by the unchanged batch-preparation owner.
+              const source = await capture.composeSource(preparationWorker)
+              assertCurrent()
+              if (source.sourceAlpha === 'transparent') {
+                throw new RegionalGuidanceGenerationError(
+                  'Regional Smart Patch generation requires opaque-source INP or mixed-source OUT.',
+                )
+              }
+              const mode = source.sourceAlpha === 'mixed' ? 'outpaint' : 'inpaint'
+              if (!supportsInferenceAnimaSmartPatchRegionalMode(inferenceReady, mode)) {
+                throw new ProjectGenerationActionError(
+                  'GENERATION_RUNTIME_UNAVAILABLE',
+                  'The installed worker cannot generate this Regional Smart Patch mode.',
+                )
+              }
+              regionalPrepared = await prepareSmartPatchAnimaRegionalInput({
+                capture: regionalCapture,
+                item: plan.items[0],
+                profile:
+                  mode === 'outpaint'
+                    ? ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE
+                    : ANIMA_SMART_PATCH_REGIONAL_PROFILE,
+                promptInterpretation: ANIMA_PROMPT_INTERPRETATION,
+              })
             }
             const prepared = await capture.prepareBatchInput({
               infillResolver: this.options.infillResolver,

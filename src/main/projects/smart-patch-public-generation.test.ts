@@ -25,6 +25,7 @@ import type { SmartPatchExecutionPreparationWorker } from './project-smart-patch
 import type { SmartPatchExecutionRequest } from './smart-patch-execution-request.js'
 import type { SmartPatchInferenceTransport } from './smart-patch-generation-processor.js'
 
+import { InferenceAuxiliaryResources } from '../runtime/inference-auxiliary-resources.js'
 import { GenerationAcceptanceJournalRepository } from './generation-acceptance-journal.js'
 import { ProjectGenerationActionController } from './generation-action-controller.js'
 import { GenerationDispatchCoordinator } from './generation-dispatch-coordinator.js'
@@ -252,7 +253,7 @@ function raster(bytes: Buffer, bbox: IgsSmartPatchLayerV1['boundingBox']): IgsRa
 async function withPublicFixture(
   family: Family,
   run: (f: Awaited<ReturnType<typeof publicFixture>>) => Promise<void>,
-  mode: 'img2img' | 'inpaint' | 'txt2img' = 'inpaint',
+  mode: 'img2img' | 'inpaint' | 'outpaint' | 'txt2img' = 'inpaint',
   queueHooks: GenerationQueueTestHooks = {},
 ) {
   await withSmartPatchQueueFixture(
@@ -277,7 +278,7 @@ async function withPublicFixture(
 
 async function publicFixture(
   base: Parameters<Parameters<typeof withSmartPatchQueueFixture>[1]>[0],
-  mode: 'img2img' | 'inpaint' | 'txt2img',
+  mode: 'img2img' | 'inpaint' | 'outpaint' | 'txt2img',
 ) {
   const repository = new ProjectIndexRepository(base.database.db)
   const shadow = new ProjectShadowStore(path.join(base.root, 'public-autosave'))
@@ -324,7 +325,11 @@ async function publicFixture(
   const sourceBytes = literalSmartPatchColorPng(
     128,
     128,
-    Array.from({ length: 128 * 128 }, () => [70, 80, 90, 255]).flat(),
+    Array.from({ length: 128 * 128 }, (_, i) => {
+      const x = i % 128
+      const alpha = mode !== 'outpaint' || x < 64 ? 255 : x === 64 ? 127 : x === 65 ? 128 : 0
+      return alpha === 0 ? [0, 0, 0, 0] : [70, 80, 90, alpha]
+    }).flat(),
     4,
   )
   const lower = raster(sourceBytes, target.boundingBox)
@@ -390,8 +395,13 @@ async function publicFixture(
     staging: base.staging,
   })
   let wakes = 0
+  const infillResolver =
+    mode === 'outpaint' && process.env['IGS_SMART_PATCH_TEST_LAMA_PATH']
+      ? new InferenceAuxiliaryResources(path.dirname(process.env['IGS_SMART_PATCH_TEST_LAMA_PATH']))
+      : undefined
   const controller = new ProjectSmartPatchGenerationActionController({
     gate,
+    infillResolver,
     models,
     orchestrator,
     projects: service,
@@ -474,6 +484,7 @@ async function publicFixture(
     dispatch,
     execution,
     gate,
+    infillResolver,
     lifecycle,
     models,
     neighbor,
@@ -2506,5 +2517,156 @@ test(
         t.mock.restoreAll()
       }
     })
+  },
+)
+
+const outpaintRegionalOptions = {
+  skip: options.skip || !process.env['IGS_SMART_PATCH_TEST_LAMA_PATH'],
+}
+
+test(
+  'public Anima regional OUT freezes actual mixed source and dedicated profile through world candidate',
+  outpaintRegionalOptions,
+  async () => {
+    await withPublicFixture(
+      'anima',
+      async (f) => {
+        await enableAnimaSmartRegions(f)
+        f.runtime.ready.capabilities.push('anima-smart-patch-regional-outpaint-v1')
+        const document = structuredClone(f.owner.document)
+        const batch = await queued(f)
+        const input = await f.base.queue.loadVerifiedSmartPatchInput(batch.jobIds[0])
+        assert.equal(input.payload.mode, 'outpaint')
+        assert.equal(input.payload.sourceAlpha, 'mixed')
+        assert.equal(input.payload.regional?.profile, 'invoke-anima-smart-regional-outpaint-v1')
+        assert.ok(input.bundle.files['model-source.png'])
+        assert.equal(
+          (await f.base.queue.getManagerEntry(batch.jobIds[0])).details
+            ?.requiresSmartPatchRegionalOutpaint,
+          true,
+        )
+        await drain(f)
+        assert.equal(f.runtime.regionalGenerated.length, 1)
+        assert.equal(f.runtime.regionalGenerated[0].execution.mode, 'outpaint')
+        assert.equal((await f.staging.listVerifiedCandidates(f.tabId)).length, 1)
+        assert.deepEqual(f.owner.document, document)
+      },
+      'outpaint',
+    )
+  },
+)
+
+test(
+  'public regional OUT INP-only peer refuses after actual source classification before LaMa resources or SQL',
+  outpaintRegionalOptions,
+  async (t) => {
+    await withPublicFixture(
+      'anima',
+      async (f) => {
+        await enableAnimaSmartRegions(f)
+        assert.ok(f.infillResolver)
+        const infill = t.mock.method(f.infillResolver, 'resolveVerifiedOutpaintInfill', async () =>
+          assert.fail('Wrong peer must refuse before LaMa'),
+        )
+        const models = t.mock.method(
+          f.models,
+          'resolveVerifiedGenerationAnimaBundleForPlan',
+          async () => assert.fail('Wrong peer must refuse before models'),
+        )
+        try {
+          await assert.rejects(f.controller.generate(f.tabId, f.request()), {
+            code: 'GENERATION_RUNTIME_UNAVAILABLE',
+          })
+          assert.equal(infill.mock.callCount(), 0)
+          assert.equal(models.mock.callCount(), 0)
+          assert.equal((await f.base.queue.listManagerPage()).items.length, 0)
+        } finally {
+          t.mock.restoreAll()
+        }
+      },
+      'outpaint',
+    )
+  },
+)
+
+test(
+  'public regional OUT fresh LaMa failure refuses before SQL without altering source',
+  outpaintRegionalOptions,
+  async (t) => {
+    await withPublicFixture(
+      'anima',
+      async (f) => {
+        await enableAnimaSmartRegions(f)
+        f.runtime.ready.capabilities.push('anima-smart-patch-regional-outpaint-v1')
+        assert.ok(f.infillResolver)
+        const source = structuredClone(f.owner.document)
+        const sentinel = Object.assign(new Error('LaMa unavailable sentinel'), {
+          code: 'GENERATION_RESOURCE_CHANGED',
+        })
+        t.mock.method(f.infillResolver, 'resolveVerifiedOutpaintInfill', async () => {
+          throw sentinel
+        })
+        try {
+          await assert.rejects(
+            f.controller.generate(f.tabId, f.request()),
+            (error) => error === sentinel,
+          )
+          assert.equal((await f.base.queue.listManagerPage()).items.length, 0)
+          assert.deepEqual(f.owner.document, source)
+        } finally {
+          t.mock.restoreAll()
+        }
+      },
+      'outpaint',
+    )
+  },
+)
+
+test(
+  'public regional OUT frozen Retry retains infilled bytes after authoring deletion without LaMa or preparation',
+  outpaintRegionalOptions,
+  async (t) => {
+    await withPublicFixture(
+      'anima',
+      async (f) => {
+        const region = await enableAnimaSmartRegions(f)
+        f.runtime.ready.capabilities.push('anima-smart-patch-regional-outpaint-v1')
+        const batch = await queued(f)
+        const original = await f.base.queue.loadVerifiedSmartPatchInput(batch.jobIds[0])
+        await f.normalActions.cancelJob(await f.base.queue.getManagerEntry(batch.jobIds[0]))
+        const terminal = await f.base.queue.getManagerEntry(batch.jobIds[0])
+        await f.service.deleteRegionalGuidance(f.tabId, {
+          ...regionalSmartDocumentOwner(f),
+          regionId: region,
+        })
+        assert.ok(f.infillResolver)
+        const infill = t.mock.method(f.infillResolver, 'resolveVerifiedOutpaintInfill', async () =>
+          assert.fail('Frozen Retry must not re-resolve LaMa'),
+        )
+        const preparation = t.mock.method(
+          f.runtime,
+          'withSmartPatchGenerationPreparation',
+          async () => assert.fail('Frozen Retry must not prepare current source'),
+        )
+        try {
+          await f.normalActions.retryJob(terminal)
+          const retry = (await f.base.queue.listManagerPage()).items.find(
+            (x) => x.id !== terminal.id,
+          )!
+          await waitForRetryCompletion(f, retry.id)
+          const reloaded = await f.base.queue.loadVerifiedSmartPatchInput(retry.id)
+          assert.deepEqual(reloaded.payload.regional, original.payload.regional)
+          for (const [name, bytes] of Object.entries(original.bundle.files)) {
+            assert.ok(bytes.equals(reloaded.bundle.files[name]), name)
+          }
+          assert.equal(infill.mock.callCount(), 0)
+          assert.equal(preparation.mock.callCount(), 0)
+          assert.equal(f.runtime.regionalGenerated.at(-1)?.execution.mode, 'outpaint')
+        } finally {
+          t.mock.restoreAll()
+        }
+      },
+      'outpaint',
+    )
   },
 )

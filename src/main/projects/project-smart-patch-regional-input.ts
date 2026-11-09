@@ -32,6 +32,10 @@ import { compositionRasterLayers } from './project-raster-snapshot.js'
 import { captureSmartPatchExecutionRequest } from './smart-patch-execution-request.js'
 
 export const ANIMA_SMART_PATCH_REGIONAL_PROFILE = 'invoke-anima-smart-regional-inpaint-v1' as const
+export const ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE =
+  'invoke-anima-smart-regional-outpaint-v1' as const
+export type SmartPatchAnimaRegionalProfile =
+  typeof ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE | typeof ANIMA_SMART_PATCH_REGIONAL_PROFILE
 const MAX_REGIONS = 3
 const MAX_AGGREGATE_TEXT_BYTES = 128 * 1024
 
@@ -79,7 +83,7 @@ export interface CompiledSmartPatchAnimaRegionalPrompt {
 
 export interface PreparedSmartPatchAnimaRegionalInput {
   compiledPrompts: readonly CompiledSmartPatchAnimaRegionalPrompt[]
-  profile: typeof ANIMA_SMART_PATCH_REGIONAL_PROFILE
+  profile: SmartPatchAnimaRegionalProfile
   promptInterpretation?: typeof ANIMA_PROMPT_INTERPRETATION
   recipe: SmartPatchAnimaRegionalRecipe
   schemaVersion: 1
@@ -199,7 +203,10 @@ const preparedSchema = v.strictObject({
       text: v.string(),
     }),
   ),
-  profile: v.literal(ANIMA_SMART_PATCH_REGIONAL_PROFILE),
+  profile: v.picklist([
+    ANIMA_SMART_PATCH_REGIONAL_PROFILE,
+    ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE,
+  ]),
   promptInterpretation: v.optional(v.literal(ANIMA_PROMPT_INTERPRETATION)),
   recipe: recipeSchema,
   schemaVersion: v.literal(1),
@@ -242,6 +249,7 @@ type RecipeSources = Omit<SmartPatchAnimaRegionalRecipe, 'regions'> & {
 export async function prepareSmartPatchAnimaRegionalInput(input: {
   capture: CapturedSmartPatchRegionalGenerationInput
   item: PlannedGenerationBatchItem
+  profile?: SmartPatchAnimaRegionalProfile
   promptInterpretation?: typeof ANIMA_PROMPT_INTERPRETATION
 }): Promise<PreparedSmartPatchAnimaRegionalInput> {
   let document: ReturnType<typeof parseProjectDocumentV1>
@@ -249,8 +257,11 @@ export async function prepareSmartPatchAnimaRegionalInput(input: {
   let snapshot: CapturedRegionalGuidanceInput['snapshot']
   let item: PlannedGenerationBatchItem
   let projectMask: CapturedRegionalGuidanceInput['projectMask']
+  let profile: SmartPatchAnimaRegionalProfile
   let promptInterpretation: typeof ANIMA_PROMPT_INTERPRETATION | undefined
   try {
+    const requestedProfile = input.profile
+    profile = requestedProfile === undefined ? ANIMA_SMART_PATCH_REGIONAL_PROFILE : requestedProfile
     promptInterpretation = input.promptInterpretation
     document = parseProjectDocumentV1(structuredClone(input.capture.smartPatch.document))
     context = structuredClone(input.capture.smartPatch.context)
@@ -259,6 +270,12 @@ export async function prepareSmartPatchAnimaRegionalInput(input: {
     projectMask = input.capture.regional.projectMask.bind(input.capture.regional)
   } catch {
     throw invalid('The private Smart Patch regional capture cannot be detached.')
+  }
+  if (
+    profile !== ANIMA_SMART_PATCH_REGIONAL_PROFILE &&
+    profile !== ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE
+  ) {
+    throw invalid('The Smart regional execution profile is unsupported.')
   }
   if (promptInterpretation !== undefined && promptInterpretation !== ANIMA_PROMPT_INTERPRETATION) {
     throw invalid('The Smart regional prompt interpretation is unsupported.')
@@ -380,7 +397,7 @@ export async function prepareSmartPatchAnimaRegionalInput(input: {
   return capturePrepared({
     compiledPrompts,
     ...(promptInterpretation !== undefined ? { promptInterpretation } : {}),
-    profile: ANIMA_SMART_PATCH_REGIONAL_PROFILE,
+    profile,
     recipe,
     schemaVersion: 1,
   })
@@ -393,8 +410,14 @@ export function bindSmartPatchAnimaRegionalExecution(
 ): BoundSmartPatchAnimaRegionalInput {
   const prepared = capturePrepared(input)
   const execution = captureSmartPatchExecutionRequest(executionInput)
-  if (execution.family !== 'anima' || execution.mode !== 'inpaint') {
-    throw unsupported('Private Smart regional execution requires an original Anima INP command.')
+  const expectedMode =
+    prepared.profile === ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE ? 'outpaint' : 'inpaint'
+  if (execution.family !== 'anima' || execution.mode !== expectedMode) {
+    throw unsupported(
+      prepared.profile === ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE
+        ? 'Private Smart regional OUT requires an original Anima OUT command.'
+        : 'Private Smart regional execution requires an original Anima INP command.',
+    )
   }
   const { recipe } = prepared
   const expectedPlan = compileAnimaFlowSamplingPlan({

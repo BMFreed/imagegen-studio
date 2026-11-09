@@ -5458,7 +5458,12 @@ function managerDetails(row: Selectable<GenerationQueueItem>): GenerationQueueEn
         modelVersion: model.versionName,
         negativePrompt: selected.item.prompts.negative,
         prompt: selected.item.prompts.positive,
-        ...(payload.regional ? { requiresSmartPatchRegional: true } : {}),
+        ...(payload.regional
+          ? {
+              requiresSmartPatchRegional: true,
+              ...(payload.mode === 'outpaint' ? { requiresSmartPatchRegionalOutpaint: true } : {}),
+            }
+          : {}),
         size: { height: payload.context.bbox.height, width: payload.context.bbox.width },
       }
       if (selected.family === 'anima') {

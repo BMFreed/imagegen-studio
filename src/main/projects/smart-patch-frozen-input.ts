@@ -38,6 +38,8 @@ import { resolveIllustriousScheduler } from './illustrious-scheduler.js'
 import { decodeDerivedProjectMaskPng, decodeProjectMaskPng } from './project-mask.js'
 import { validateSmartPatchExecutionDraft } from './project-smart-patch-execution.js'
 import {
+  ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE,
+  ANIMA_SMART_PATCH_REGIONAL_PROFILE,
   bindSmartPatchAnimaRegionalExecution,
   captureFrozenSmartPatchAnimaRegionalInputV1,
   capturePreparedSmartPatchAnimaRegionalInput,
@@ -594,9 +596,15 @@ function assertRegionalMetadataAgreement(manifest: FrozenSmartPatchInputV1): voi
   const draft = ctx.generationDraft
   const model = draft.model
   const entry = manifest.items[0]
+  const matchingMode =
+    (regional.profile === ANIMA_SMART_PATCH_REGIONAL_PROFILE &&
+      manifest.mode === 'inpaint' &&
+      manifest.sourceAlpha === 'opaque') ||
+    (regional.profile === ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE &&
+      manifest.mode === 'outpaint' &&
+      manifest.sourceAlpha === 'mixed')
   if (
-    manifest.mode !== 'inpaint' ||
-    manifest.sourceAlpha !== 'opaque' ||
+    !matchingMode ||
     manifest.items.length !== 1 ||
     entry.family !== 'anima' ||
     manifest.animaPromptInterpretation !== ANIMA_PROMPT_INTERPRETATION ||
@@ -641,7 +649,7 @@ function assertRegionalMetadataAgreement(manifest: FrozenSmartPatchInputV1): voi
       positive: regional.compiledPrompts[0].prompt,
     })
   ) {
-    refuse('The regional input does not describe this one frozen original Anima Smart INP job.')
+    refuse('The regional input does not describe this one frozen original Anima Smart job.')
   }
   if (
     recipe.regions.some(

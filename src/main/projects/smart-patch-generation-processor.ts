@@ -7,7 +7,7 @@ import { isGenerationDenoisingProgress } from '../../shared/projects/generation-
 import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceAnima,
-  supportsInferenceAnimaSmartPatchRegional,
+  supportsInferenceAnimaSmartPatchRegionalMode,
   supportsInferenceDenoisingProgress,
 } from '../../shared/projects/inference-worker-capabilities.js'
 
@@ -399,11 +399,12 @@ export class SmartPatchGenerationProcessor {
     await this.assertRunning(active)
     if (
       payload.regional !== undefined &&
-      (!supportsInferenceAnimaSmartPatchRegional(active.transport.ready) || !regionalExecution)
+      (!supportsInferenceAnimaSmartPatchRegionalMode(active.transport.ready, payload.mode) ||
+        !regionalExecution)
     ) {
       throw new SmartPatchProcessorError(
         'INFERENCE_UNAVAILABLE',
-        'The worker has not qualified Anima Smart INP with Regional Guidance.',
+        `The worker has not qualified Anima Smart ${payload.mode === 'outpaint' ? 'OUT' : 'INP'} with Regional Guidance.`,
       )
     }
     if (payload.item.family === 'anima' && !supportsInferenceAnima(active.transport.ready)) {

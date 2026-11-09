@@ -6,6 +6,8 @@ import { RegionalGuidanceGenerationError } from './regional-guidance.js'
 
 export const ANIMA_SMART_PATCH_REGIONAL_CAPABILITY =
   'anima-smart-patch-regional-inpaint-v1' as const
+export const ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_CAPABILITY =
+  'anima-smart-patch-regional-outpaint-v1' as const
 
 /**
  * Invoke4875 compileCanvasGraph grafts INP before regions on the selected job. This is
@@ -18,6 +20,7 @@ export function getSmartPatchRegionalGenerationUnavailableReason(input: {
   iterations?: number
   patch:
     Pick<IgsSmartPatchLayerV1, 'boundingBox' | 'generationDraft' | 'internalResolution'> | undefined
+  runtimeOutpaintSupported?: boolean
   runtimeSupported?: boolean
   targetMode?: string | null
 }): string | null {
@@ -25,8 +28,8 @@ export function getSmartPatchRegionalGenerationUnavailableReason(input: {
   if (regions.length === 0) {
     return null
   }
-  if (input.targetMode != null && input.targetMode !== 'inpaint') {
-    return 'Regional Smart Patch generation currently requires opaque-source INP.'
+  if (input.targetMode != null && !['inpaint', 'outpaint'].includes(input.targetMode)) {
+    return 'Regional Smart Patch generation currently requires opaque-source INP or mixed-source OUT.'
   }
   const { patch } = input
   if (!patch) {
@@ -100,7 +103,16 @@ export function getSmartPatchRegionalGenerationUnavailableReason(input: {
   } catch {
     return 'A Regional Smart Patch prompt is invalid or unsupported.'
   }
-  return input.runtimeSupported === false
+  const runtimeSpecified =
+    input.runtimeSupported !== undefined || input.runtimeOutpaintSupported !== undefined
+  const supported = !runtimeSpecified
+    ? undefined
+    : input.targetMode === 'outpaint'
+      ? input.runtimeOutpaintSupported === true
+      : input.targetMode === 'inpaint'
+        ? input.runtimeSupported === true
+        : input.runtimeSupported === true || input.runtimeOutpaintSupported === true
+  return supported === false
     ? 'The image engine does not support Anima Smart Patch Regional Guidance. Repair or update the runtime.'
     : null
 }

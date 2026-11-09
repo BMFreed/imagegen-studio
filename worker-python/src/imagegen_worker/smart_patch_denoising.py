@@ -266,8 +266,8 @@ def run_smart_patch_anima(
         "progress": progress,
     }
     if prediction_factory is not None:
-        if captured.mode != "inpaint" or not callable(prediction_factory):
-            raise _invalid("The private Smart regional predictor requires INP.")
+        if captured.mode not in ("inpaint", "outpaint") or not callable(prediction_factory):
+            raise _invalid("The private Smart regional predictor requires INP or OUT.")
         arguments["prediction_factory"] = prediction_factory
     if captured.mode in ("inpaint", "outpaint"):
         result = generate_anima_outpaint(

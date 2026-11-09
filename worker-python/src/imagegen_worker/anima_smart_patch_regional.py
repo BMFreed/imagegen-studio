@@ -1,4 +1,4 @@
-"""Private original-Anima Smart INP with independently owned signed regions.
+"""Private original-Anima Smart INP/OUT with independently owned signed regions.
 
 InvokeAI 4875d96531ca6712b288f6e660fcbb34143408c1 grafts the prepared INP
 source/KEEP before adding regional conditioning to that same job denoiser
@@ -60,6 +60,8 @@ if TYPE_CHECKING:
     from imagegen_worker.inference import DenoisingProgressSink, MLRuntime
 
 _PROFILE = "invoke-anima-smart-regional-inpaint-v1"
+_OUTPAINT_PROFILE = "invoke-anima-smart-regional-outpaint-v1"
+_MODE_BY_PROFILE = {_PROFILE: "inpaint", _OUTPAINT_PROFILE: "outpaint"}
 _RECIPE_FIELDS = frozenset(
     {"layerId", "internalResolution", "smartMask", "modelSha256", "sampling"}
 )
@@ -79,6 +81,7 @@ class CapturedAnimaSmartPatchRegionalInput:
     smart_mask_id: str
     smart_mask_revision: int
     processing_size: tuple[int, int]
+    execution_profile: str = _PROFILE
 
 
 def capture_anima_smart_patch_regional_input(value: object) -> CapturedAnimaSmartPatchRegionalInput:
@@ -99,10 +102,11 @@ def capture_anima_smart_patch_regional_input(value: object) -> CapturedAnimaSmar
         type(data["schemaVersion"]) is int
         and data["schemaVersion"] == 1
         and type(data["profile"]) is str
-        and data["profile"] == _PROFILE,
+        and data["profile"] in _MODE_BY_PROFILE,
         "INVALID_REQUEST",
-        "Anima Smart regional input requires its explicit private INP profile.",
+        "Anima Smart regional input requires an explicit INP or OUT profile.",
     )
+    execution_profile = cast(str, data["profile"])
     recipe = _object(
         data["recipe"],
         {
@@ -190,12 +194,12 @@ def capture_anima_smart_patch_regional_input(value: object) -> CapturedAnimaSmar
     command = cast(ExecuteSmartPatchCommand, parsed)
     _require(
         command.family == "anima"
-        and command.mode == "inpaint"
+        and command.mode == _MODE_BY_PROFILE[execution_profile]
         and type(command.inference) is AnimaInferenceParameters
         and (command.width, command.height) == (width, height)
         and command.denoising_strength is None,
         "INVALID_REQUEST",
-        "Anima Smart regional execution differs from its family, INP mode or processing size.",
+        "Anima Smart regional execution differs from its family, profile mode or processing size.",
     )
     policy = cast(AnimaInferenceParameters, command.inference)
     plan = policy.sampling
@@ -247,6 +251,7 @@ def capture_anima_smart_patch_regional_input(value: object) -> CapturedAnimaSmar
         smart_mask_id=mask_id,
         smart_mask_revision=mask_revision,
         processing_size=(width, height),
+        execution_profile=execution_profile,
     )
 
 
@@ -264,7 +269,9 @@ def _require_captured_command(
         owned.command is command
         and type(command) is ExecuteSmartPatchCommand
         and command.family == "anima"
-        and command.mode == "inpaint"
+        and type(owned.execution_profile) is str
+        and owned.execution_profile in _MODE_BY_PROFILE
+        and command.mode == _MODE_BY_PROFILE[owned.execution_profile]
         and type(command.inference) is AnimaInferenceParameters
         and owned.policy is command.inference
         and type(owned.regional) is _Input
@@ -337,9 +344,10 @@ def run_prepared_anima_smart_patch_regional(
     )
     prepared = _capture_inputs(inputs)
     _require(
-        prepared.mode == "inpaint" and (prepared.width, prepared.height) == owned.processing_size,
+        prepared.mode == owned.command.mode
+        and (prepared.width, prepared.height) == owned.processing_size,
         "INVALID_REQUEST",
-        "Anima Smart prepared source/KEEP differ from the frozen INP size.",
+        "Anima Smart prepared source/KEEP differ from the frozen execution mode or size.",
     )
     _require(
         type(models) is LoadedAnimaModels,

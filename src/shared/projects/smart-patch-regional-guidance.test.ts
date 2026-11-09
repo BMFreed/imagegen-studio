@@ -7,7 +7,11 @@ import type { IgsProjectDocumentV1, IgsSmartPatchLayerV1 } from './project-schem
 import { ANIMA_BATCH_READY } from '../../main/projects/test-fixtures/anima-batch.js'
 import { literalSmartPatchPreparedInput } from '../../main/projects/test-fixtures/smart-patch-input-material.js'
 import { generationQueueRetryReason } from '../../renderer/components/generation-queue-retry.js'
-import { supportsInferenceAnimaSmartPatchRegional } from './inference-worker-capabilities.js'
+import {
+  supportsInferenceAnimaSmartPatchRegional,
+  supportsInferenceAnimaSmartPatchRegionalMode,
+  supportsInferenceAnimaSmartPatchRegionalOutpaint,
+} from './inference-worker-capabilities.js'
 import { getSmartPatchRegionalGenerationUnavailableReason as reason } from './smart-patch-regional-guidance.js'
 
 function fixture() {
@@ -220,4 +224,99 @@ test('Retry capability requirement follows frozen Smart metadata rather than cur
     ),
     null,
   )
+})
+
+test('Smart OUT regional capability is independent of old INP and ordinary OUT support', () => {
+  const common = {
+    ...ANIMA_BATCH_READY,
+    capabilities: [
+      ...ANIMA_BATCH_READY.capabilities,
+      'illustrious-outpaint',
+      'smart-patch-execution',
+      'smart-patch-seed-confirmation',
+      'anima-outpaint',
+    ],
+    workerVersion: '0.14.0',
+  }
+  const inp = {
+    ...common,
+    capabilities: [...common.capabilities, 'anima-smart-patch-regional-inpaint-v1'],
+  }
+  const out = {
+    ...common,
+    capabilities: [...common.capabilities, 'anima-smart-patch-regional-outpaint-v1'],
+  }
+  assert.equal(supportsInferenceAnimaSmartPatchRegionalOutpaint(common), false)
+  assert.equal(supportsInferenceAnimaSmartPatchRegionalOutpaint(inp), false)
+  assert.equal(supportsInferenceAnimaSmartPatchRegionalOutpaint(out), true)
+  assert.equal(supportsInferenceAnimaSmartPatchRegional(out), false)
+  assert.equal(supportsInferenceAnimaSmartPatchRegionalMode(out, 'outpaint'), true)
+  assert.equal(supportsInferenceAnimaSmartPatchRegionalMode(out, 'inpaint'), false)
+  assert.equal(supportsInferenceAnimaSmartPatchRegionalMode(inp, 'inpaint'), true)
+  assert.equal(supportsInferenceAnimaSmartPatchRegionalMode(inp, 'outpaint'), false)
+  assert.equal(supportsInferenceAnimaSmartPatchRegionalMode(out, 'img2img'), false)
+  for (const missing of [
+    'smart-patch-execution',
+    'smart-patch-seed-confirmation',
+    'anima-smart-patch-regional-outpaint-v1',
+    'anima-flow-sampling',
+  ]) {
+    assert.equal(
+      supportsInferenceAnimaSmartPatchRegionalOutpaint({
+        ...out,
+        capabilities: out.capabilities.filter((x) => x !== missing),
+      }),
+      false,
+      missing,
+    )
+  }
+})
+
+test('Smart regional advisory requires the capability for the actual known mode', () => {
+  const input = { ...fixture(), runtimeOutpaintSupported: false, targetMode: 'outpaint' }
+  assert.match(reason(input)!, /engine/u)
+  input.runtimeOutpaintSupported = true
+  input.runtimeSupported = false
+  assert.equal(reason(input), null)
+  input.targetMode = 'inpaint'
+  assert.match(reason(input)!, /engine/u)
+  input.runtimeSupported = true
+  assert.equal(reason(input), null)
+  input.targetMode = 'img2img'
+  assert.match(reason(input)!, /INP or mixed-source OUT/u)
+  input.targetMode = 'txt2img'
+  assert.match(reason(input)!, /INP or mixed-source OUT/u)
+  assert.equal(reason({ ...fixture(), runtimeSupported: undefined, targetMode: 'outpaint' }), null)
+})
+
+test('frozen Smart OUT Retry uses its saved OUT requirement independently of current INP support', () => {
+  const state = {
+    animaSmartPatchRegionalOutpaintSupported: false,
+    animaSmartPatchRegionalSupported: true,
+    animaSupported: true,
+    smartPatchSupported: true,
+  }
+  const check = (value: typeof state, out: boolean) =>
+    generationQueueRetryReason(
+      'anima-smart-patch',
+      value,
+      null,
+      false,
+      false,
+      0,
+      'heun',
+      null,
+      true,
+      out,
+    )
+  assert.match(check(state, true)!, /Smart OUT/u)
+  assert.equal(check(state, false), null)
+  const onlyOut = {
+    ...state,
+    animaSmartPatchRegionalOutpaintSupported: true,
+    animaSmartPatchRegionalSupported: false,
+  }
+  assert.equal(check(onlyOut, true), null)
+  assert.match(check(onlyOut, false)!, /Regional Guidance/u)
+  assert.equal(generationQueueRetryReason('anima-smart-patch', onlyOut), null)
 })

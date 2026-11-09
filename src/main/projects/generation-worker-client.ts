@@ -20,7 +20,7 @@ import {
   supportsInferenceAnimaRegionalNegative,
   supportsInferenceAnimaRegionalOutpaint,
   supportsInferenceAnimaRegionalSampling,
-  supportsInferenceAnimaSmartPatchRegional,
+  supportsInferenceAnimaSmartPatchRegionalMode,
 } from '../../shared/projects/inference-worker-capabilities.js'
 import {
   isQualifiedInferenceWorkerReady,
@@ -463,10 +463,10 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     try {
       const captured = captureSmartPatchRegionalWorkerInput(input)
       const request = captured.execution
-      if (!supportsInferenceAnimaSmartPatchRegional(this.ready)) {
+      if (!supportsInferenceAnimaSmartPatchRegionalMode(this.ready, request.mode)) {
         throw new GenerationWorkerError(
           'WORKER_VERSION_MISMATCH',
-          'The active worker has not qualified Anima Smart INP with Regional Guidance.',
+          `The active worker has not qualified Anima Smart ${request.mode === 'outpaint' ? 'OUT' : 'INP'} with Regional Guidance.`,
         )
       }
       const result = await executeSmartPatchWithTransport(

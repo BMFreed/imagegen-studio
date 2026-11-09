@@ -2308,3 +2308,33 @@ and result-derived presets remain ordinary Smart configuration and exclude
 regional operational material. Evidence and qualification limits are recorded
 in the linked note. General visual quality, other modes/resources and
 PP-001/005/007/008 remain **«Пока не обещать»**.
+
+## Public original-Anima Smart regional OUT
+
+The [OUT integration](../../../engineering/phase-4-anima-smart-regional-outpaint-research.md)
+extends the existing Invoke-derived Smart source/infill/KEEP owner with the same
+signed Anima regional consumer. Its independent
+`anima-smart-patch-regional-outpaint-v1` capability and
+`invoke-anima-smart-regional-outpaint-v1` frozen profile bind only actual mixed-alpha
+OUT. The old INP capability/profile retain their opaque-INP meaning. Fresh source
+classification precedes exact capability and LaMa/model preparation; unsupported
+peers refuse without ordinary fallback. Regional permissions do not replace Smart
+KEEP, edit core or final contribution. Inherited negative is the selected Smart
+job's frozen negative.
+
+Scope remains one static original-Anima item, Euler/Heun, embedded Auto VAE,
+processing64–512 divisible by8, no enabled LoRA/TI/references. Whole-bundle Retry
+uses verified saved infilled RGB, source/KEEP and raw regional planes, independently
+of current edits or LaMa. Existing world candidates, explicit Add/history/Save and
+ordinary-only provenance/Compare/result-derived presets remain authoritative.
+There is no new `.igs` field, queue operation or numerical loop.
+
+ROOT1,003 Main/136 Python/226 prototype-browser PASS and four installed requests
+qualify three real completions plus progress Cancel, Add/Undo/Redo/Save-reopen and
+exact restarted frozen Retry after saved source/mask/settings edits. A local-negative
+control changes15,018 fully visible world RGB channels; independent processing-to-
+world RGBA checks pass. Twelve isolated mutation selections give10 GREEN/two OUT
+semantic RED with old-INP controls and exact source/output restoration. The note
+separates actual runtime, prototype, source review and retained-byte evidence.
+Other Smart modes/resources, visual quality, release and overall
+PP-001/005/007/008 remain **«Пока не обещать»**.

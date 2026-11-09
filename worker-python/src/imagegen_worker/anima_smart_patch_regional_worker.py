@@ -1,4 +1,4 @@
-"""Owned-file public Smart INP handoff to the existing signed Anima owner.
+"""Owned-file public Smart INP/OUT handoff to the existing signed Anima owner.
 
 InvokeAI 4875d96531ca6712b288f6e660fcbb34143408c1 grafts INP source/KEEP before
 joining Regional Guidance to that same denoiser (invokeai/frontend/webv2/src/
@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from imagegen_worker.inference import DenoisingProgressSink, MLRuntime
 
 ANIMA_SMART_PATCH_REGIONAL_CAPABILITY = "anima-smart-patch-regional-inpaint-v1"
+ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_CAPABILITY = "anima-smart-patch-regional-outpaint-v1"
 PROMPT_INTERPRETATION = "invoke-fragments-v1"
 
 
@@ -122,7 +123,7 @@ def parse_anima_smart_patch_regional_request(value: object) -> AnimaSmartPatchRe
     command = cast(ExecuteSmartPatchCommand, syntax)
     _require(
         command.family == "anima"
-        and command.mode == "inpaint"
+        and command.mode in ("inpaint", "outpaint")
         and type(command.inference) is AnimaInferenceParameters
         and command.request_id == request_id
         and command.staging_root == root,
@@ -186,7 +187,10 @@ def parse_anima_smart_patch_regional_request(value: object) -> AnimaSmartPatchRe
     recipe["regions"] = hydrated
     captured = capture_anima_smart_patch_regional_input({**bundle, "recipe": recipe})
     _require(
-        captured.command.request_id == request_id and captured.command.staging_root == root,
+        captured.command.request_id == request_id
+        and captured.command.staging_root == root
+        and captured.command.mode == command.mode
+        and captured.execution_profile == bundle["profile"],
         "Captured Anima Smart execution differs from its transport identity.",
     )
     item = cast(dict[str, Any], recipe["item"])

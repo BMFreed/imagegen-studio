@@ -424,6 +424,7 @@ function retryReason(item: GenerationQueueEntry): string | null {
     item.details?.sampling.animaMethod,
     item.details?.sampling.predictionType,
     item.details?.requiresSmartPatchRegional,
+    item.details?.requiresSmartPatchRegionalOutpaint,
   )
   if (operationReason) {
     return operationReason

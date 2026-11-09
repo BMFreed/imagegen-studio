@@ -2421,6 +2421,8 @@ const generationBlockingReason = computed(() => {
         document: props.tab,
         iterations: imagesPerClick.value ?? 0,
         patch: { ...activePatch.value, generationDraft: props.generationDraft },
+        runtimeOutpaintSupported:
+          props.generationState?.animaSmartPatchRegionalOutpaintSupported === true,
         runtimeSupported: props.generationState?.animaSmartPatchRegionalSupported === true,
         targetMode: smartTargetState.value?.mode,
       })

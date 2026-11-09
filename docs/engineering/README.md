@@ -2545,3 +2545,22 @@ frozen Retry. It follows current Invoke4875d965 INP/signed regional job ownershi
 and saved-input Retry. Selected Smart settings own inherited negative; accepted
 provenance and explicit Add/Save remain unchanged. Qualification and retention
 levels are separate in the note; PP-001/005/007/008 are not promoted.
+
+## Public original-Anima Smart regional OUT
+
+[Smart OUT research](./phase-4-anima-smart-regional-outpaint-research.md) adapts
+current Invoke4875d965 OUT-before-regions graft through the existing infill/KEEP
+and signed Anima owners. Independent OUT capability/profile bind actual mixed
+source and frozen mode; old INP semantics remain. Selected-Smart negative,
+whole-bundle Retry and ordinary-only accepted provenance stay unchanged.
+
+ROOT1,003 affected Main/136 native Python/226 prototype-browser PASS, typing/build
+and scoped checks accompany four installed requests/three world completions.
+Actual LaMa, numeric-progress Cancel, Add/history/Save-reopen and restarted exact
+Retry after saved source/mask/settings/region edits pass ten installed checks.
+Local-negative B changes15,018 fully visible world RGB channels. Independent
+original-processing-PNG/world-RGBA checks and12 isolated mutation selections
+(10 GREEN/two post-PNG OUT semantic RED, unchanged INP controls/restoration) pass.
+The note records fixture substitutions, excluded diagnostics, exact evidence and
+retention dependencies. Visual usefulness, other Smart modes/resources, release
+and PP-001/005/007/008 remain unpromoted.

@@ -476,3 +476,27 @@ export function supportsInferenceAnimaSmartPatchRegional(value: unknown): boolea
     value.capabilities.includes('anima-smart-patch-regional-inpaint-v1')
   )
 }
+
+/** OUT is a separately qualified composition; the older INP capability keeps its meaning. */
+export function supportsInferenceAnimaSmartPatchRegionalOutpaint(value: unknown): boolean {
+  return (
+    isQualifiedInferenceWorkerReady(value) &&
+    value.workerVersion === '0.14.0' &&
+    supportsInferenceAnima(value) &&
+    value.capabilities.includes('smart-patch-execution') &&
+    value.capabilities.includes('smart-patch-seed-confirmation') &&
+    value.capabilities.includes('anima-smart-patch-regional-outpaint-v1')
+  )
+}
+
+/** Call only with the actual classified or strictly parsed frozen Smart mode. */
+export function supportsInferenceAnimaSmartPatchRegionalMode(
+  value: unknown,
+  mode: unknown,
+): boolean {
+  return mode === 'inpaint'
+    ? supportsInferenceAnimaSmartPatchRegional(value)
+    : mode === 'outpaint'
+      ? supportsInferenceAnimaSmartPatchRegionalOutpaint(value)
+      : false
+}
