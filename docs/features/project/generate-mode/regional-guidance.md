@@ -2410,3 +2410,23 @@ physical exit, restored sources, idle readers and global dependencies, retains
 all5690 scratch entries and reclaims82,268,160 allocated bytes from its two exact
 owned payload paths. Shared runtime/models/Projects/rows and active worker report
 companions stay protected; lifecycle and evidence limits remain in the note.
+
+
+## Private Illustrious Smart Regional consumer
+
+The [private complete-input consumer](../../../engineering/phase-4-illustrious-smart-regional-private-research.md)
+connects selected Smart settings and original TXT/IMG/INP/OUT execution commands
+to the existing Illustrious regional conditioning/attention/denoising owners.
+Independent WORLD regional alpha is sampled to the processing grid with Invoke
+NEAREST semantics; Smart source, KEEP and processing-output publication retain
+their original owners. Inherited negative comes from the captured selected Smart
+settings. Regional Guidance remains outside accepted provenance/Compare/presets.
+
+Initial private scope is epsilon Euler/Normal, one static item, embedded Auto
+VAE, CFG(1,30], processing64–512 divisible by8, bounded WORLD geometry and at
+most3 regions. References, LoRA/TI, dynamic/batch, other sampling/objectives and
+selected VAE remain refused here. This does not reduce the final MVP contract.
+Main capture/binding tests, native tiny CPU execution, file/publication tests
+with explicit loader/placement substitution and semantic mutation evidence are
+separate from trained-model or installed/public qualification. Public Illustrious
+Smart Regional admission remains closed; no promise status changes.

@@ -6,19 +6,41 @@
 описании исполнимых контрактов появится новый выбор, его следует вынести сюда,
 а не принимать молча в реализации.
 
-## Инженерные контракты до первой реализации
+## Текущая граница реализации — 10.11.2026
+
+Сверка кода на `c976e57f2d729d6095f88cbab54bdd6f00bddbb8` не выявила нового
+блокирующего продуктового выбора. Актуальный конечный список обязательных gaps
+зафиксирован в [roadmap checkpoint](./specs/01-implementation-roadmap.md#актуальный-checkpoint-на-10112026):
+Illustrious Smart Regional и regional reference inference, обещанные оставшиеся
+Smart Regional combinations после сверки контракта, визуальная/capacity
+приёмка, Home/workspaces/Project Trash, hard resource removal и оставшиеся
+Models contexts, полный image export, release runtime и Electron delivery,
+итоговая compatibility/recovery/NoobAI/MVP acceptance. Private source consumer
+не означает public readiness. Anima references и generic ControlNet/IP-Adapter
+не добавляются в MVP; PP-001/005/007/008 остаются «Пока не обещать».
+
+Последующие checkpoints закрыли ordinary Smart, Compare/Preset и Current Canvas
+regional integrations, перечисленные в roadmap; их не нужно реализовывать
+повторно. Нерешённые release engineering детали ниже не отменяют уже принятого
+продуктового scope и не требуют автоматического согласования research → implementation.
+
+## Исходные инженерные контракты и последующие checkpoints
 
 - Для pinned Invoke reference `9e1540962bcca7f8fa668d7d8e02cf79d75fda3b`
   дополнить source map по обещанным операциям, исполнимые типизированные worker
   request/response DTO и per-family capability matrix для Illustrious и Anima.
-  Для Anima региональный negative prompt требует проверки маскирования отрицательной CFG
-  ветки на реальной модели; regional reference images недоступны в MVP.
+  Source map и capability matrix пополняются по конкретному consumer, со свежей
+  сверкой текущего InvokeAI и callers. [Anima signed negatives](./engineering/phase-4-anima-regional-negative-research.md)
+  уже имеют finite native/installed checkpoint; это не общая визуальная приёмка.
+  Anima regional reference images недоступны в MVP.
 - Развести создание изображений/thumbnail в worker и владение исходниками,
   путями, cache и атомарной публикацией в main process. Установить scheduling
   правила для thumbnail tasks рядом с одним active inference job, включая
   project preview после Save, когда Project уже закрыт.
-- Довести typed IPC для `presets.getDeleted`/`presets.restore` и idempotent
-  30-дневной cleanup операции до реализации SQLite lifecycle.
+- [Preset SQLite lifecycle](./engineering/phase-3-preset-storage-research.md)
+  уже подключает typed `list({ deleted: true })`/`restore`, 30-дневный срок и
+  idempotent startup/hourly cleanup; прежнее имя `getDeleted` не является
+  отдельным незавершённым API.
 - По результатам Linux/NVIDIA packaging и inference tests установить минимальные
   driver/CUDA/VRAM требования; это release qualification, не выбор другого
   inference backend.
@@ -180,7 +202,7 @@
 - Preset import/export: не планируется; отдельный portable preset bundle format не проектируем.
 - Preset storage: гибридная SQLite-модель; каталог и `workflow_type` в колонках, настройки генерации в валидируемом `payload_json`.
 - Preset UX: manual/project-derived creation проходит через transient Draft в Preset Manager; Apply использует detached editable application draft, не изменяет сохранённый preset и хранит section selection только в памяти. Home New Project переиспользует тот же `PresetPayloadEditor` для Text to Image initialization payload.
-- Preset resource diagnostics: PP-006 требует visible warning до mutation и hard block только для выбранных секций с missing model/LoRA/VAE/embedding. Standalone и Project-integrated mock Apply уже показывают текстовую диагностику и учитывают nested resources. Production resource registry, persistent storage и handoff `Open in Models` остаются незавершёнными; mock не доказывает готовность PP-006 в приложении.
+- Preset resource diagnostics: PP-006 требует visible warning до mutation и hard block только для выбранных секций с missing model/LoRA/VAE/embedding. [Production Project Apply](./engineering/phase-3-preset-apply-research.md) использует реальные resources, Main exact-file verification и persistent Project history. [Project Apply → Models → return](./engineering/phase-3-preset-model-handoff-research.md) сохраняет detached edits, selected sections, raw fields и точную resource identity. Preset storage также реализован; Preset Manager/New Project resource handoffs и общая release readiness остаются отдельными границами. Mock не доказывает готовность PP-006 в приложении.
 - Smart Patch Layer: mask принадлежит слою, standalone mask layers не входят в MVP.
 - Model compatibility: любой поддерживаемый CivitAI Illustrious/Anima
   `.safetensors` checkpoint можно установить. Для нового Illustrious выбора без

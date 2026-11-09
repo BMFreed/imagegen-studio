@@ -433,6 +433,7 @@ def _authored(
     effective_positive: dict[str, Any] | None = None,
     effective_negative: dict[str, Any] | None = None,
     exact_ti: bool = False,
+    inherited_source: str = "current-canvas",
 ) -> None:
     record = _record(value, {"positive", "negative", "useGlobalNegativePrompt"})
     use_global = record["useGlobalNegativePrompt"]
@@ -447,7 +448,7 @@ def _authored(
         (authored_positive is not None or authored_negative is not None)
         and (authored_negative is not None or use_global)
         and positive == authored_positive
-        and (source == "current-canvas") == use_global
+        and (source == inherited_source) == use_global
         and (use_global or negative == authored_negative),
         "INPUT_INVALID",
         "Effective regional channels disagree with their authored selection.",
@@ -464,8 +465,18 @@ def _authored(
 
 
 def _recipe(
-    recipe: object, parameters: IllustriousInferenceParameters, *, exact_ti: bool = False
+    recipe: object,
+    parameters: IllustriousInferenceParameters,
+    *,
+    exact_ti: bool = False,
+    smart_patch_source_id: str | None = None,
 ) -> tuple[_Rect, tuple[_Pair, ...]]:
+    # Private Smart consumers retain their actual kind and selected-Patch global
+    # owner. They never masquerade as a Current Canvas job or inherit its text.
+    global_source = (
+        "current-canvas" if smart_patch_source_id is None else _identity(smart_patch_source_id)
+    )
+    inherited_source = "current-canvas" if smart_patch_source_id is None else "smart-patch"
     record = _record(
         recipe,
         {
@@ -487,9 +498,15 @@ def _recipe(
         "Resolved TI resources require an explicit exact-TI encoding profile.",
     )
     _require(
-        type(record["kind"]) is str and record["kind"] == "current-canvas-regional-recipe",
+        type(record["kind"]) is str
+        and record["kind"]
+        == (
+            "current-canvas-regional-recipe"
+            if smart_patch_source_id is None
+            else "smart-patch-regional-recipe"
+        ),
         "INPUT_INVALID",
-        "Only the complete ordinary Current Canvas Main recipe is supported.",
+        "The complete Main recipe must match its explicit target owner.",
     )
     _require(
         type(record["family"]) is str and record["family"] == "illustrious",
@@ -541,7 +558,7 @@ def _recipe(
     _require(
         len(regions) <= _MAX_REGIONS, "LIMIT", "This private profile admits at most 3 regions."
     )
-    owned: set[str] = set()
+    owned: set[str] = set() if smart_patch_source_id is None else {str(UUID(global_source))}
     global_resources = (
         recipe_embedding_resources(
             record["globalEmbeddings"],
@@ -551,7 +568,7 @@ def _recipe(
         if exact_ti
         else None
     )
-    pairs = [_Pair("current-canvas", positive, negative, None, global_resources)]
+    pairs = [_Pair(global_source, positive, negative, None, global_resources)]
     for value in regions:
         region = _record(
             value,
@@ -576,13 +593,13 @@ def _recipe(
         resolved = _record(region["negative"], {"prompt", "source"})
         source = resolved["source"]
         _require(
-            type(source) is str and source in ("current-canvas", "regional"),
+            type(source) is str and source in (inherited_source, "regional"),
             "INPUT_INVALID",
             "Regional negative source must be explicit.",
         )
         # Keep the local-vs-inherited selection explicit; local empty stays local.
         local_negative = _prompt(resolved["prompt"], effective=True, exact_ti=exact_ti)
-        if source == "current-canvas":
+        if source == inherited_source:
             _require(
                 local_negative == pairs[0].negative
                 and (
@@ -605,6 +622,7 @@ def _recipe(
                 effective_positive=region["positive"],
                 effective_negative=resolved["prompt"],
                 exact_ti=exact_ti,
+                inherited_source=inherited_source,
             )
         if "referenceImages" in region:
             refs = region["referenceImages"]
@@ -1298,6 +1316,8 @@ def _recipe_inputs(
     global_positive_coverage: Everywhere | Alpha8,
     negative_pooled_source_id: str,
     positive_pooled_source_id: str,
+    *,
+    smart_patch_source_id: str | None = None,
 ) -> tuple[
     _Rect,
     tuple[_Pair, ...],
@@ -1308,7 +1328,12 @@ def _recipe_inputs(
 ]:
     """Private shared input preflight; no model, tokenization or owned mutation."""
     _encoding_tensor_profile(profile)
-    bbox, pairs = _recipe(recipe, parameters, exact_ti=profile in _TI_PROFILES)
+    bbox, pairs = _recipe(
+        recipe,
+        parameters,
+        exact_ti=profile in _TI_PROFILES,
+        smart_patch_source_id=smart_patch_source_id,
+    )
     # A private base-record copy also prevents callbacks from retargeting later
     # pairs by altering the borrowed parameters through dataclass escape hatches.
     parameters = replace(parameters)
@@ -1335,9 +1360,9 @@ def _recipe_inputs(
             and type(global_negative_coverage) is Everywhere
             and type(global_positive_coverage) is Everywhere
             and type(negative_pooled_source_id) is str
-            and negative_pooled_source_id == "current-canvas"
+            and negative_pooled_source_id == (smart_patch_source_id or "current-canvas")
             and type(positive_pooled_source_id) is str
-            and positive_pooled_source_id == "current-canvas",
+            and positive_pooled_source_id == (smart_patch_source_id or "current-canvas"),
             "PROFILE_INVALID",
             "Invoke Canvas requires CFG in (1,30], global Everywhere and both global pools.",
         )

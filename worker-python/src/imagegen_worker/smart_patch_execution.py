@@ -200,7 +200,18 @@ def execute_smart_patch(
     runtime: inference.MLRuntime,
     on_progress: inference.DenoisingProgressSink | None = None,
     _anima_regional: object | None = None,
+    _illustrious_regional: object | None = None,
 ) -> dict[str, object]:
+    if _illustrious_regional is not None:
+        from imagegen_worker.illustrious_smart_patch_regional import (
+            _require_captured_command as require_illustrious_command,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        require_illustrious_command(_illustrious_regional, command)
+        if _anima_regional is not None:
+            raise DerivativeError(
+                "INVALID_REQUEST", "Smart input cannot own two regional families."
+            )
     if _anima_regional is not None:
         from imagegen_worker.anima_smart_patch_regional import (
             _require_captured_command,  # pyright: ignore[reportPrivateUsage]
@@ -218,24 +229,53 @@ def execute_smart_patch(
     )
     if isinstance(policy, IllustriousInferenceParameters):
         pipeline, embeddings = inference.load_illustrious_pipeline(
-            policy, config_dir=config_dir, runtime=runtime, mode=command.mode
+            policy,
+            config_dir=config_dir,
+            runtime=runtime,
+            mode=command.mode if _illustrious_regional is None else "txt2img",
         )
         _verify_resources(resources)
-        conditioning = inference.prepare_illustrious_conditioning(
-            policy, pipeline, runtime, embeddings
-        )
-        native = run_smart_patch_illustrious(
-            pipeline,
-            conditioning,
-            prepared,
-            steps=policy.steps,
-            cfg_scale=policy.cfg_scale,
-            cfg_rescale=policy.cfg_rescale,
-            generator=torch.Generator(device="cpu").manual_seed(policy.seed),
-            torch=torch,
-            denoising_strength=command.denoising_strength,
-            on_progress=on_progress,
-        )
+        if _illustrious_regional is None:
+            conditioning = inference.prepare_illustrious_conditioning(
+                policy, pipeline, runtime, embeddings
+            )
+            native = run_smart_patch_illustrious(
+                pipeline,
+                conditioning,
+                prepared,
+                steps=policy.steps,
+                cfg_scale=policy.cfg_scale,
+                cfg_rescale=policy.cfg_rescale,
+                generator=torch.Generator(device="cpu").manual_seed(policy.seed),
+                torch=torch,
+                denoising_strength=command.denoising_strength,
+                on_progress=on_progress,
+            )
+        else:
+            from imagegen_worker.illustrious_regional_vae import prepare_owned_regional_vae
+            from imagegen_worker.illustrious_regional_worker import install_capture_hooks
+            from imagegen_worker.illustrious_smart_patch_regional import (
+                CapturedIllustriousSmartPatchRegionalInput,
+                run_prepared_illustrious_smart_patch_regional,
+            )
+
+            prepare_owned_regional_vae(pipeline, policy, torch)
+            for component in (
+                pipeline.text_encoder,
+                pipeline.text_encoder_2,
+                pipeline.unet,
+                pipeline.vae,
+            ):
+                component.eval()
+            install_capture_hooks(pipeline)
+            native = run_prepared_illustrious_smart_patch_regional(
+                cast(CapturedIllustriousSmartPatchRegionalInput, _illustrious_regional),
+                pipeline,
+                prepared,
+                runtime=runtime,
+                profile="cuda-float16-v1",
+                progress=on_progress,
+            )
         image = cast(Image.Image, native.images[0])
     else:
         if not anima_worker.supports_anima_compute(runtime):

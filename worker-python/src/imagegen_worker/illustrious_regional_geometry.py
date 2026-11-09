@@ -7,7 +7,7 @@ that bbox, without absolute-grid snapping or image rescaling.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 from imagegen_worker.illustrious_regional_attention import Alpha8, Shape
 
@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 __all__ = (
     "IllustriousRegionalGeometryError",
     "ordinary_canvas_coverage_to_latent",
+    "smart_patch_world_coverage_to_processing",
 )
 
 _ErrorCode = Literal["INPUT_INVALID", "PROFILE_INVALID", "LIMIT"]
@@ -169,3 +170,48 @@ def ordinary_canvas_coverage_to_latent(
         shape=Shape(height=latent_height, width=latent_width),
         samples=bytes(samples),
     )
+
+
+def smart_patch_world_coverage_to_processing(
+    *,
+    alpha: bytes,
+    bbox: PreviewRect,
+    processing_size: tuple[int, int],
+) -> bytes:
+    """Own Invoke4875 alpha>0 / nearest sampling for an independent Smart grid.
+
+    sd/denoise_latents.py resizes the world tensor directly to the latent grid.
+    This processing plane is the existing recipe ABI: its nearest8 samples are
+    exactly floor(x*world_width/latent_width), likewise y. No PIL centered
+    nearest resize, Smart KEEP intersection or display opacity enters this path.
+    The caller has already validated world clipping and coverage classification.
+    At most 512*512 bytes plus the immutable result are allocated here.
+    """
+    if type(cast(object, bbox)) is not dict or bbox.keys() != {"x", "y", "width", "height"}:
+        raise IllustriousRegionalGeometryError("INPUT_INVALID", "Invalid Smart world bbox.")
+    x, y, width, height = (bbox[key] for key in ("x", "y", "width", "height"))
+    if (
+        any(type(n) is not int for n in (x, y, width, height))
+        or abs(x) > _MAX_ORIGIN
+        or abs(y) > _MAX_ORIGIN
+        or not 1 <= width <= _MAX_SIDE
+        or not 1 <= height <= _MAX_SIDE
+        or width * height > _MAX_AREA
+        or type(alpha) is not bytes
+        or len(alpha) != width * height
+        or type(processing_size) is not tuple
+        or len(processing_size) != 2
+        or any(type(n) is not int or not 64 <= n <= 512 or n % 8 for n in processing_size)
+    ):
+        raise IllustriousRegionalGeometryError(
+            "INPUT_INVALID", "Smart world pixels or processing dimensions exceed their bounds."
+        )
+    processing_width, processing_height = processing_size
+    samples = bytearray(processing_width * processing_height)
+    for row in range(processing_height):
+        source_row = (row * height // processing_height) * width
+        for column in range(processing_width):
+            samples[row * processing_width + column] = (
+                255 if alpha[source_row + column * width // processing_width] > 0 else 0
+            )
+    return bytes(samples)

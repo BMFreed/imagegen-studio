@@ -1266,11 +1266,13 @@ def test_settled_signature_only_required_inputs_and_no_execution_overrides(denoi
         "image",
         "denoising_strength",
         "keep_mask",
+        "_smart_patch_source_id",
     )
     for name, parameter in signature.parameters.items():
         assert parameter.default is (
             None
-            if name in ("on_progress", "image", "denoising_strength", "keep_mask")
+            if name
+            in ("on_progress", "image", "denoising_strength", "keep_mask", "_smart_patch_source_id")
             else inspect.Parameter.empty
         )
         assert parameter.kind is (

@@ -2616,3 +2616,16 @@ physical exit, restored sources, idle readers and global dependencies, retains
 all5690 scratch entries and reclaims82,268,160 allocated bytes from its two exact
 owned payload paths. Shared runtime/models/Projects/rows and active worker report
 companions stay protected; lifecycle and evidence limits remain in the note.
+
+
+## Private Illustrious Smart Regional consumer
+
+The [private complete-input bridge](./phase-4-illustrious-smart-regional-private-research.md)
+reuses existing Smart source/KEEP/output and Illustrious regional native owners
+for four explicit TXT/IMG/INP/OUT profiles. Selected Smart settings own inherited
+negative; WORLD regional geometry uses Invoke's independent NEAREST sampling.
+Finite EPS Euler/Normal/static/embedded-Auto-VAE scope is tested on native tiny
+CPU models. Genuine Main capture, file checks, explicit loader/placement test
+substitution and mutation evidence are recorded separately. Public admission,
+installed/trained qualification, visual acceptance and wider resource/method
+combinations remain open; PP-001/005/007/008 stay **«Пока не обещать»**.

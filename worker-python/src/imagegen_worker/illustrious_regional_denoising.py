@@ -1413,6 +1413,7 @@ def run_current_canvas_regional_denoising(
     image: Image.Image | None = None,
     denoising_strength: float | None = None,
     keep_mask: Image.Image | None = None,
+    _smart_patch_source_id: str | None = None,
 ) -> Any:
     """Return the original native pipeline output after all owned state restores.
 
@@ -1531,6 +1532,7 @@ def run_current_canvas_regional_denoising(
         global_positive_coverage,
         negative_pooled_source_id,
         positive_pooled_source_id,
+        smart_patch_source_id=_smart_patch_source_id,
     )
     if img2img:
         _require(

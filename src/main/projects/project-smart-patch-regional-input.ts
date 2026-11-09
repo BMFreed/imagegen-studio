@@ -263,30 +263,17 @@ type RecipeSources = Omit<SmartPatchAnimaRegionalRecipe, 'regions'> & {
   })[]
 }
 
-/**
- * Invoke4875 compileCanvasGraph grafts image sources before the same regional collector for every
- * mode; TXT needs no source graft. This companion preserves that job association. This private
- * companion freezes selected Smart settings; it grants neither public admission nor queue/variant
- * persistence. World clipping stays with the existing regional lease. Anima's binary/NEAREST
- * processing-token projection belongs to the native consumer, independently of KEEP.
- */
-export async function prepareSmartPatchAnimaRegionalInput(input: {
+/** Detach and verify the existing selected-Smart and regional lease before awaits. */
+export function captureSmartPatchRegionalSources(input: {
   capture: CapturedSmartPatchRegionalGenerationInput
   item: PlannedGenerationBatchItem
-  profile?: PreparedSmartPatchAnimaRegionalProfile
-  promptInterpretation?: typeof ANIMA_PROMPT_INTERPRETATION
-}): Promise<PreparedSmartPatchAnimaRegionalInput> {
+}) {
   let document: ReturnType<typeof parseProjectDocumentV1>
   let context: CapturedSmartPatchGenerationInput['context']
   let snapshot: CapturedRegionalGuidanceInput['snapshot']
   let item: PlannedGenerationBatchItem
   let projectMask: CapturedRegionalGuidanceInput['projectMask']
-  let profile: PreparedSmartPatchAnimaRegionalProfile
-  let promptInterpretation: typeof ANIMA_PROMPT_INTERPRETATION | undefined
   try {
-    const requestedProfile = input.profile
-    profile = requestedProfile === undefined ? ANIMA_SMART_PATCH_REGIONAL_PROFILE : requestedProfile
-    promptInterpretation = input.promptInterpretation
     document = parseProjectDocumentV1(structuredClone(input.capture.smartPatch.document))
     context = structuredClone(input.capture.smartPatch.context)
     snapshot = structuredClone(input.capture.regional.snapshot)
@@ -294,17 +281,6 @@ export async function prepareSmartPatchAnimaRegionalInput(input: {
     projectMask = input.capture.regional.projectMask.bind(input.capture.regional)
   } catch {
     throw invalid('The private Smart Patch regional capture cannot be detached.')
-  }
-  if (
-    profile !== ANIMA_SMART_PATCH_REGIONAL_PROFILE &&
-    profile !== ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE &&
-    profile !== ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE &&
-    profile !== ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE
-  ) {
-    throw invalid('The Smart regional execution profile is unsupported.')
-  }
-  if (promptInterpretation !== undefined && promptInterpretation !== ANIMA_PROMPT_INTERPRETATION) {
-    throw invalid('The Smart regional prompt interpretation is unsupported.')
   }
   if (!context || typeof context !== 'object' || !snapshot || typeof snapshot !== 'object') {
     throw invalid('The captured Smart and regional contexts are invalid.')
@@ -338,6 +314,31 @@ export async function prepareSmartPatchAnimaRegionalInput(input: {
     )
   ) {
     throw invalid('Smart Patch and regional leases do not describe the same frozen target.')
+  }
+  return { context, document, item, patch, projectMask }
+}
+
+/**
+ * Invoke4875 compileCanvasGraph grafts image sources before the same regional collector for every
+ * mode; TXT needs no source graft. This companion preserves that job association. This private
+ * companion freezes selected Smart settings; it grants neither public admission nor queue/variant
+ * persistence. World clipping stays with the existing regional lease. Anima's binary/NEAREST
+ * processing-token projection belongs to the native consumer, independently of KEEP.
+ */
+export async function prepareSmartPatchAnimaRegionalInput(input: {
+  capture: CapturedSmartPatchRegionalGenerationInput
+  item: PlannedGenerationBatchItem
+  profile?: PreparedSmartPatchAnimaRegionalProfile
+  promptInterpretation?: typeof ANIMA_PROMPT_INTERPRETATION
+}): Promise<PreparedSmartPatchAnimaRegionalInput> {
+  const { context, document, item, patch, projectMask } = captureSmartPatchRegionalSources(input)
+  const profile = input.profile === undefined ? ANIMA_SMART_PATCH_REGIONAL_PROFILE : input.profile
+  const promptInterpretation = input.promptInterpretation
+  if (!Object.hasOwn(MODE_BY_PROFILE, profile)) {
+    throw invalid('The Smart regional execution profile is unsupported.')
+  }
+  if (promptInterpretation !== undefined && promptInterpretation !== ANIMA_PROMPT_INTERPRETATION) {
+    throw invalid('The Smart regional prompt interpretation is unsupported.')
   }
   const draft = patch.generationDraft
   if (
@@ -418,7 +419,7 @@ export async function prepareSmartPatchAnimaRegionalInput(input: {
   const compiledPrompts = compileRecipe(recipe, promptInterpretation)
   for (const region of recipe.regions) {
     const projected = structuredClone(await projectMask(region.regionId, { ...recipe.bbox }))
-    region.coverage = checkedCoverage(projected, recipe.bbox)
+    region.coverage = checkedSmartPatchRegionalCoverage(projected, recipe.bbox)
   }
   return capturePrepared({
     compiledPrompts,
@@ -520,6 +521,57 @@ export function captureFrozenSmartPatchAnimaRegionalInputV1(
   }
 }
 
+export function checkedSmartPatchRegionalCoverage(
+  input: unknown,
+  bbox: IgsRectV1,
+): ProjectRegionalGuidanceCoverage {
+  const parsed = v.safeParse(coverage, input)
+  if (!parsed.success) {
+    throw invalid('The projected regional world coverage is invalid.')
+  }
+  const value = parsed.output
+  if (!isDeepStrictEqual(value.bounds, bbox) || value.alpha.length !== bbox.width * bbox.height) {
+    throw invalid('The regional world coverage differs from the Smart bbox.')
+  }
+  const intersection = value.intersection
+  if (
+    intersection &&
+    (intersection.x < bbox.x ||
+      intersection.y < bbox.y ||
+      intersection.x + intersection.width > bbox.x + bbox.width ||
+      intersection.y + intersection.height > bbox.y + bbox.height)
+  ) {
+    throw invalid('The regional world intersection is outside the Smart bbox.')
+  }
+  if (intersection) {
+    for (let row = 0; row < bbox.height; row++) {
+      for (let column = 0; column < bbox.width; column++) {
+        if (
+          value.alpha[row * bbox.width + column] !== 0 &&
+          (bbox.x + column < intersection.x ||
+            bbox.y + row < intersection.y ||
+            bbox.x + column >= intersection.x + intersection.width ||
+            bbox.y + row >= intersection.y + intersection.height)
+        ) {
+          throw invalid('Regional pixels exceed their declared clipped world intersection.')
+        }
+      }
+    }
+  }
+  const nonzero = value.alpha.some((sample) => sample !== 0)
+  if (
+    (value.kind === 'covered' && (!intersection || !nonzero)) ||
+    (value.kind === 'intersecting-empty' && (!intersection || nonzero)) ||
+    ((value.kind === 'empty' || value.kind === 'outside') && (intersection || nonzero))
+  ) {
+    throw invalid('The regional world coverage classification differs from its pixels.')
+  }
+  const common = { alpha: new Uint8Array(value.alpha), bounds: { ...value.bounds } }
+  return value.kind === 'covered' || value.kind === 'intersecting-empty'
+    ? { ...common, intersection: { ...intersection! }, kind: value.kind }
+    : { ...common, intersection: null, kind: value.kind }
+}
+
 function capturePrepared(value: unknown): PreparedSmartPatchAnimaRegionalInput {
   const parsed = v.safeParse(preparedSchema, structuredClone(value))
   if (!parsed.success) {
@@ -540,7 +592,7 @@ function capturePrepared(value: unknown): PreparedSmartPatchAnimaRegionalInput {
       ...data.recipe,
       regions: data.recipe.regions.map(({ referenceImages, ...region }) => ({
         ...region,
-        coverage: checkedCoverage(region.coverage, data.recipe.bbox),
+        coverage: checkedSmartPatchRegionalCoverage(region.coverage, data.recipe.bbox),
         ...(referenceImages !== undefined ? { referenceImages: [] } : {}),
       })),
     },
@@ -680,54 +732,6 @@ function textBytes(text: string): number {
     throw limit('Private Smart regional text exceeds 16 KiB.')
   }
   return bytes
-}
-
-function checkedCoverage(input: unknown, bbox: IgsRectV1): ProjectRegionalGuidanceCoverage {
-  const parsed = v.safeParse(coverage, input)
-  if (!parsed.success) {
-    throw invalid('The projected regional world coverage is invalid.')
-  }
-  const value = parsed.output
-  if (!isDeepStrictEqual(value.bounds, bbox) || value.alpha.length !== bbox.width * bbox.height) {
-    throw invalid('The regional world coverage differs from the Smart bbox.')
-  }
-  const intersection = value.intersection
-  if (
-    intersection &&
-    (intersection.x < bbox.x ||
-      intersection.y < bbox.y ||
-      intersection.x + intersection.width > bbox.x + bbox.width ||
-      intersection.y + intersection.height > bbox.y + bbox.height)
-  ) {
-    throw invalid('The regional world intersection is outside the Smart bbox.')
-  }
-  if (intersection) {
-    for (let row = 0; row < bbox.height; row++) {
-      for (let column = 0; column < bbox.width; column++) {
-        if (
-          value.alpha[row * bbox.width + column] !== 0 &&
-          (bbox.x + column < intersection.x ||
-            bbox.y + row < intersection.y ||
-            bbox.x + column >= intersection.x + intersection.width ||
-            bbox.y + row >= intersection.y + intersection.height)
-        ) {
-          throw invalid('Regional pixels exceed their declared clipped world intersection.')
-        }
-      }
-    }
-  }
-  const nonzero = value.alpha.some((sample) => sample !== 0)
-  if (
-    (value.kind === 'covered' && (!intersection || !nonzero)) ||
-    (value.kind === 'intersecting-empty' && (!intersection || nonzero)) ||
-    ((value.kind === 'empty' || value.kind === 'outside') && (intersection || nonzero))
-  ) {
-    throw invalid('The regional world coverage classification differs from its pixels.')
-  }
-  const common = { alpha: new Uint8Array(value.alpha), bounds: { ...value.bounds } }
-  return value.kind === 'covered' || value.kind === 'intersecting-empty'
-    ? { ...common, intersection: { ...intersection! }, kind: value.kind }
-    : { ...common, intersection: null, kind: value.kind }
 }
 
 function invalid(message: string): SmartPatchRegionalInputError {

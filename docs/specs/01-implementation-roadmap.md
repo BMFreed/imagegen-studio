@@ -46,6 +46,61 @@ MVP, фаза 5 допускает его к первому релизу. Сле
 
 ## Текущая карта реализации и оставшихся работ
 
+### Актуальный checkpoint на 10.11.2026
+
+Сверка выполнена по `c976e57f2d729d6095f88cbab54bdd6f00bddbb8`.
+Исторические checkpoints ниже описывают состояние на момент своего выполнения;
+их «следующий owner» не является актуальным backlog. Последний завершённый
+[public Anima Smart regional TXT/IMG](../engineering/phase-4-anima-smart-regional-flow-public-research.md)
+дополняет уже подключённые INP/OUT. Ordinary Smart обеих семей, variants,
+freshness, frozen Retry, orphan Raster Add, accepted history, Smart Save Current,
+Smart-target preset Apply, Compare и result-derived presets повторно не нужны.
+Current Canvas regional batches, Anima global-positive expansion/global LoRA/
+signed negatives и NoobAI V regional TXT/IMG/OUT с выбранными sampling
+continuations также имеют свои checkpoints. Это не общая визуальная или
+релизная приёмка.
+
+Оставшиеся обязательные границы:
+
+1. **Regional Guidance consumers:** Illustrious/NoobAI Smart Patch и Illustrious
+   regional reference-image inference. `smart-patch-regional-guidance.ts` пока
+   допускает только original Anima; `regional-invoke-generation.ts` отклоняет
+   reference images. Authoring/storage references уже существуют и не заменяют
+   inference. Smart Regional batch/dynamic prompts/resources/sampling нужно
+   сверить конечной матрицей с контрактом: текущий отказ сам по себе не делает
+   любую комбинацию новой обязательной функцией. Anima references и generic
+   ControlNet/IP-Adapter остаются вне MVP. Начатый private consumer не равен
+   public admission или installed qualification.
+2. **Визуальная полезность и capacity:** фиксированные контроли, реальная
+   совместимость и визуальная приёмка с выбранным официальным Illustrious XL
+   v0.1. Pixel inequality, точный Retry и source audit не закрывают этот gate;
+   defaults не меняются ради отдельного примера.
+3. **Home/workspaces и Project Trash:** реальные workspace операции,
+   rename/move/reveal/locate Project, sort/Status/grid-list/Inspector и
+   move/restore/permanent delete с файлами/SQLite/restart. Нынешние Home
+   search/create/import/open/refresh/rebuild и default workspace — foundation.
+4. **Model Manager:** hard Remove Local Resource с running/pending/reference/
+   shared-file guards; оставшиеся контексты, включая Project menu и missing
+   accepted-result resources, Preset Manager/New Project. Project checkpoint/
+   LoRA/VAE/embedding navigation, Project Apply diagnostic return и installed
+   artwork уже подключены; не ставить их повторно в TODO.
+5. **Image export:** `Export As` по visible-content bounds с active Smart
+   variants и отдельный `Export Generation BBox`, sRGB, empty refusal и
+   неизменность Project/`.igs`. Экспорт отдельного candidate этот consumer
+   не заменяет; custom rectangle остаётся вне MVP.
+6. **Release delivery:** Runtime Install/Repair остаются
+   `RUNTIME_INSTALL_UNAVAILABLE`; нужны trusted artifacts, staged install/
+   self-test/activation/rollback. Затем проверяемый Linux/NVIDIA distributable,
+   clean install/upgrade/rollback и ручные Electron Check for Updates/Install
+   Update с обычными close/cancel guards. Model-version check и developer
+   provisioner не являются app updater или release installer.
+7. **Итоговая приёмка:** migration/recovery/protocol compatibility, NoobAI
+   release matrix и полный MVP acceptance на конкретном поддержанном профиле.
+   PP-001/005/007/008 остаются **«Пока не обещать»**; повышение требует supporting
+   contract и строки promise matrix с фактическим итоговым evidence.
+
+### Историческая карта и накопленные checkpoints
+
 Сверка кода, IPC, SQLite migrations и прототипа выполнена на `73196af`
 (27.09.2026); последующая UI-доработка описана в
 [desktop UI review](../engineering/desktop-ui-layout-review.md).
@@ -2363,12 +2418,12 @@ Fit менял только owned bbox с фиксированным 24px margin
 нынешние owned defaults16/8 дают тот же запас. Qualification: regression1820 до terminal snapping, final affected59/native57,
 three semantic RED/GREEN и required checks PASS; chronology/limits — в checkpoint.
 
-**Последний private Main/CPU срез фазы 4:**
+**Исторический private Main/CPU срез фазы 4:**
 [Smart Patch generation input capture](../engineering/phase-4-smart-patch-generation-capture-research.md),
 read-only Main preparation source beneath target +owned mask/bbox/internal/draft/settings.
 Focused14/affected1852 PASS, actual CPU четыре tests/nine calls и три semantic
 RED/neighbor GREEN probes; typecheck PASS, lint/build PASS; lifecycle/cleanup подтверждены.
-Generate/jobs/inference/variants не включаются. Следующий finite owner — effective
+Generate/jobs/inference/variants не включались в этот checkpoint. Следующим finite owner был effective
 mask clipping/mode/internal-scale conditioning, затем queue/inference и variants,
 staleness/compositing/comparison, Regional Guidance и Patch presets.
 Other-context Models handoffs остаются owner фазы 5. Каждая непроверенная
@@ -2413,7 +2468,7 @@ Result` переносит фактический expanded prompt и portable ge
 
 ## Фаза 4. Полный Canvas и Smart Patch Layer
 
-**Текущий private durable acceptance scope:**
+**Исторический private durable acceptance scope:**
 
 [Smart Patch durable acceptance](../engineering/phase-4-smart-patch-durable-acceptance-research.md)
 Private Main Add now appends verified world candidates to the exact Smart Patch,
@@ -2431,10 +2486,12 @@ must pass actual member verification plus file/directory sync before replacing
 shadow proof. Replays do not duplicate or reactivate variants. Add never performs
 Save or rewrites completed receipts/seed cursor.
 
-Public Smart Generate/Results/IPC, variant lifecycle controls, freshness/resource
-UI, accepted-history navigation, Compare/Preset and installed inference
-qualification remain later owners. PP-007/008 remain «Пока не обещать». Next finite
-owner is variant lifecycle and current-state diagnostics before public integration.
+At this historical checkpoint, public Smart Generate/Results/IPC, variant lifecycle
+controls, freshness/resource UI, accepted-history navigation, Compare/Preset and
+installed inference qualification were later owners. Those integrations now have
+their own later checkpoints; use the current gap list above. PP-007/008 remain
+«Пока не обещать». The next finite owner at that time was variant lifecycle and
+current-state diagnostics before public integration.
 Executed evidence and finite limits belong to the linked research.
 
 **Предыдущий variant storage/display scope:**
