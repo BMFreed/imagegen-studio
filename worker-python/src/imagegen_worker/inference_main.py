@@ -112,6 +112,7 @@ def inference_ready_message(
                     "anima-regional-img2img-v1",
                     "anima-regional-outpaint-v1",
                     "anima-regional-lora-v1",
+                    "anima-regional-negative-v1",
                 )
                 if runtime is not None and supports_anima_compute(runtime)
                 else ()

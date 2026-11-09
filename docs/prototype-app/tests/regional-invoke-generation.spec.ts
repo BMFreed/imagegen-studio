@@ -1874,3 +1874,81 @@ for (const mode of ['txt2img', 'outpaint'] as const) {
     expect(errors).toEqual([])
   })
 }
+
+for (const source of ['local', 'inherited'] as const) {
+  test(`renderer Anima ${source} negative capability is independent of mode CFG and authoring`, async ({
+    page,
+  }) => {
+    const errors: string[] = []
+    page.on('pageerror', (cause) => errors.push(cause.message))
+    await mountWiring(page, 'project')
+    await page.evaluate((negativeSource) => {
+      const fixture = globalThis.window.regionalWiringFixture
+      const draft = fixture.tab.generationDraft
+      draft.model!.baseModelFamily = 'anima'
+      draft.model!.predictionType = null
+      fixture.catalog[0]!.versions[0]!.baseModelFamily = 'anima'
+      fixture.catalog[0]!.versions[0]!.predictionType = null
+      draft.sampling.animaMethod = 'euler'
+      draft.sampling.cfgScale = 1
+      draft.vaePrecision = 'Auto'
+      draft.positivePrompt.text = '(white cat)0'
+      draft.negativePrompt.text = '(blur)0.75, noise'
+      fixture.tab.primaryBbox.width = 256
+      fixture.tab.primaryBbox.height = 256
+      fixture.tab.regionalGuidance![0]!.prompts = {
+        negative: {
+          embeddingRefs: [],
+          text: negativeSource === 'local' ? '(red scarf)1.5' : '{dormant|local}',
+        },
+        positive: { embeddingRefs: [], text: '(blue scarf)0.75' },
+        useGlobalNegativePrompt: negativeSource === 'inherited',
+      }
+      Object.assign(fixture.state, {
+        animaOutpaintSupported: true,
+        animaRegionalImg2ImgSupported: true,
+        animaRegionalOutpaintSupported: true,
+        animaRegionalSamplingSupported: true,
+        animaRegionalSupported: true,
+        animaSupported: true,
+        outpaintSupported: true,
+      })
+    }, source)
+    const authored = await page.evaluate(
+      () => globalThis.window.regionalWiringFixture.tab.regionalGuidance![0]!.prompts,
+    )
+    const generate = page.getByRole('button', { exact: true, name: 'Generate' })
+    for (const mode of ['txt2img', 'img2img', 'outpaint'] as const) {
+      await page.evaluate((targetMode) => {
+        const fixture = globalThis.window.regionalWiringFixture
+        fixture.targetMode = targetMode
+        fixture.tab.primaryBbox.x += 8
+        fixture.tab.generationDraft.sampling.denoisingStrength =
+          targetMode === 'txt2img' ? null : 0.5
+        fixture.state.animaRegionalNegativeSupported = false
+      }, mode)
+      await expect(generate).toBeDisabled()
+      await expect(page.getByText(/does not support Anima regional negative prompts/)).toBeVisible()
+      await page.evaluate(() => {
+        globalThis.window.regionalWiringFixture.state.animaRegionalNegativeSupported = true
+      })
+      await expect(generate).toBeEnabled()
+      await generate.click()
+      await page.evaluate(() => {
+        const fixture = globalThis.window.regionalWiringFixture
+        fixture.tab.generationDraft.sampling.cfgScale = 4
+        fixture.state.animaRegionalNegativeSupported = false
+      })
+      await expect(generate).toBeDisabled()
+    }
+    expect(
+      await page.evaluate(() => globalThis.window.regionalWiringFixture.generateCalls),
+    ).toEqual([1, 1, 1])
+    expect(
+      await page.evaluate(
+        () => globalThis.window.regionalWiringFixture.tab.regionalGuidance![0]!.prompts,
+      ),
+    ).toEqual(authored)
+    expect(errors).toEqual([])
+  })
+}

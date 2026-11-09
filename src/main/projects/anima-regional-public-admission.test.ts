@@ -354,7 +354,7 @@ test('existing Generate admits one original Anima regional job without Illustrio
   })
 })
 
-test('new Generate refuses ordinary-only runtime and inherited nonempty negatives before publishing any job', async () => {
+test('new Generate refuses ordinary-only and negative-unsupported peers before publishing any job', async () => {
   await withPublicAnima(async (fixture) => {
     const documentId = fixture.document().documentId
     fixture.controls.ready.capabilities = fixture.controls.ready.capabilities.filter(
@@ -379,7 +379,7 @@ test('new Generate refuses ordinary-only runtime and inherited nonempty negative
     const before = structuredClone(fixture.document())
     await assert.rejects(
       fixture.actions.generate(fixture.tabId, { documentId, iterations: 1 }),
-      /turn off Use global negative prompt/,
+      /Repair or update/,
     )
     assert.deepEqual(fixture.document(), before)
     assert.equal(fixture.calls.compose.length, 0)
@@ -1714,3 +1714,158 @@ test('actual regional dispatch refuses enabled zero LoRA on an otherwise qualifi
     }
   })
 })
+
+async function selectSignedNegativeFixture(
+  fixture: PublicAnimaFixture,
+  mode: BatchMode,
+  method: (typeof ANIMA_SAMPLING_METHOD_KEYS)[number] = 'euler',
+): Promise<void> {
+  await selectConcreteBatch(fixture, { method, mode, positive: 'one fixed signed scene' })
+  await fixture.edit((document) => {
+    document.generationDraft.negativePrompt = { embeddingRefs: [], text: '(blur)0.75, noise' }
+    for (const [index, region] of document.regionalGuidance!.entries()) {
+      region.prompts!.useGlobalNegativePrompt = index !== 0
+      region.prompts!.negative = {
+        embeddingRefs: [],
+        text: index === 0 ? '(red scarf)1.5' : '{dormant|negative}',
+      }
+    }
+  })
+}
+
+for (const method of ANIMA_SAMPLING_METHOD_KEYS) {
+  for (const mode of ['txt2img', 'img2img', 'outpaint'] as const) {
+    test(`Anima regional ${mode} ${method} signed negatives require actual capability before publication`, async () => {
+      await withPublicAnima(async (fixture) => {
+        await selectSignedNegativeFixture(fixture, mode, method)
+        await fixture.edit((document) => {
+          document.generationDraft.sampling.cfgScale = method === 'euler' ? 1 : 4
+        })
+        const before = structuredClone(fixture.document())
+        const saved = await readFile(fixture.packagePath)
+        await assert.rejects(queuedConcreteBatch(fixture, 1), {
+          code: 'GENERATION_RUNTIME_UNAVAILABLE',
+        })
+        assert.equal(fixture.calls.compose.length, 0)
+        await assertUnpublishedBatch(fixture)
+        assert.equal(
+          (await fixture.actions.getState(fixture.tabId)).animaRegionalNegativeSupported,
+          false,
+        )
+        ;(fixture.controls.ready.capabilities as string[]).push('anima-regional-negative-v1')
+        const queued = await queuedConcreteBatch(fixture, 1)
+        assert.equal(queued.jobIds.length, 1)
+        const frozen = await fixture.queue.loadVerifiedAnimaRegionalInput(queued.jobIds[0])
+        const negatives = frozen.input.compiledPrompts.filter(
+          (entry) => entry.sourceId !== 'current-canvas' && entry.polarity === 'negative',
+        )
+        assert.equal(
+          negatives.length,
+          before.regionalGuidance!.filter((region) => region.enabled).length,
+        )
+        assert.equal(negatives[0].text, '(red scarf)1.5')
+        assert.ok(negatives.slice(1).every((entry) => entry.text === '(blur)0.75, noise'))
+        assert.equal(frozen.input.request.job.sampling.scheduler, method)
+        assert.equal(frozen.input.request.job.sampling.guidanceScale, method === 'euler' ? 1 : 4)
+        assert.equal(frozen.input.recipe.regions[0].negative.source, 'regional')
+        assert.ok(
+          frozen.input.recipe.regions
+            .slice(1)
+            .every((region) => region.negative.source === 'current-canvas'),
+        )
+        assert.equal(Object.hasOwn(frozen.payload, 'negativeProfile'), false)
+        assert.equal(Object.hasOwn(frozen.input, 'negativeProfile'), false)
+        assert.equal(
+          (await fixture.actions.getState(fixture.tabId)).animaRegionalNegativeSupported,
+          true,
+        )
+        assert.deepEqual(fixture.document(), before)
+        assert.ok((await readFile(fixture.packagePath)).equals(saved))
+      })
+    })
+  }
+}
+
+for (const mode of ['txt2img', 'img2img', 'outpaint'] as const) {
+  test(`Anima regional ${mode} signed frozen Retry gates saved negatives after current text and masks are cleared`, async () => {
+    await withPublicAnima(async (fixture) => {
+      await selectSignedNegativeFixture(fixture, mode, 'heun')
+      ;(fixture.controls.ready.capabilities as string[]).push('anima-regional-negative-v1')
+      const queued = await queuedConcreteBatch(fixture, 1)
+      const id = queued.jobIds[0]
+      const original = await fixture.queue.loadVerifiedAnimaRegionalInput(id)
+      await fixture.orchestrator.cancelGenerationJob(id)
+      const reviewed = await fixture.queue.getManagerEntry(id)
+      await fixture.edit((document) => {
+        document.generationDraft.negativePrompt.text = ''
+        document.generationDraft.positivePrompt.text = 'later unrelated scene'
+        document.generationDraft.sampling.animaMethod = 'euler'
+        document.generationDraft.sampling.denoisingStrength = 0.2
+        document.regionalGuidance = []
+      })
+      await fixture.projects.save(fixture.tabId)
+      const current = structuredClone(fixture.document())
+      const saved = await readFile(fixture.packagePath)
+      fixture.compositionWorker.composeTarget = async () =>
+        assert.fail('Signed frozen Retry must not recompose current text or source')
+      fixture.controls.ready.capabilities = fixture.controls.ready.capabilities.filter(
+        (capability) => capability !== 'anima-regional-negative-v1',
+      )
+      await assert.rejects(
+        fixture.actions.retryJob({ id, statusSequence: reviewed.statusSequence }),
+        { code: 'GENERATION_RUNTIME_UNAVAILABLE' },
+      )
+      assert.equal((await concreteRows(fixture)).length, 1)
+      ;(fixture.controls.ready.capabilities as string[]).push('anima-regional-negative-v1')
+      await fixture.actions.retryJob({ id, statusSequence: reviewed.statusSequence })
+      const rows = await concreteRows(fixture)
+      assert.equal(rows.length, 2)
+      const retried = await fixture.queue.loadVerifiedAnimaRegionalInput(
+        rows.find((row) => row.id !== id)!.id,
+      )
+      assert.deepEqual(retried.payload.context, original.payload.context)
+      assert.deepEqual(retried.input.recipe, original.input.recipe)
+      assert.deepEqual(retried.input.compiledPrompts, original.input.compiledPrompts)
+      assert.deepEqual(retried.input.request.job.sampling, original.input.request.job.sampling)
+      assert.deepEqual(fixture.document(), current)
+      assert.ok((await readFile(fixture.packagePath)).equals(saved))
+    })
+  })
+
+  test(`Anima regional ${mode} old empty-negative Retry ignores later signed draft without a new capability`, async () => {
+    await withPublicAnima(async (fixture) => {
+      await selectConcreteBatch(fixture, {
+        method: 'euler',
+        mode,
+        positive: 'old ordinary negative control',
+      })
+      const queued = await queuedConcreteBatch(fixture, 1)
+      const id = queued.jobIds[0]
+      await fixture.orchestrator.cancelGenerationJob(id)
+      const reviewed = await fixture.queue.getManagerEntry(id)
+      await fixture.edit((document) => {
+        document.generationDraft.negativePrompt.text = 'later inherited negative'
+        for (const region of document.regionalGuidance!) {
+          region.prompts!.negative = { embeddingRefs: [], text: 'later local negative' }
+          region.prompts!.useGlobalNegativePrompt = false
+        }
+      })
+      assert.equal(
+        fixture.controls.ready.capabilities.includes('anima-regional-negative-v1'),
+        false,
+      )
+      await fixture.actions.retryJob({ id, statusSequence: reviewed.statusSequence })
+      const rows = await concreteRows(fixture)
+      assert.equal(rows.length, 2)
+      const retried = await fixture.queue.loadVerifiedAnimaRegionalInput(
+        rows.find((row) => row.id !== id)!.id,
+      )
+      assert.equal(
+        retried.input.compiledPrompts.filter(
+          (entry) => entry.sourceId !== 'current-canvas' && entry.polarity === 'negative',
+        ).length,
+        0,
+      )
+    })
+  })
+}

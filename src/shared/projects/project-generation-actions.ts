@@ -20,6 +20,8 @@ export interface ProjectGenerationActionState {
   animaRegionalImg2ImgSupported?: boolean
   /** Global enabled LoRAs, including zero weight, need the separate regional adapter scope. */
   animaRegionalLoraSupported?: boolean
+  /** Nonempty local or inherited regional negatives need their own signed attention scope. */
+  animaRegionalNegativeSupported?: boolean
   animaRegionalOutpaintSupported?: boolean
   animaRegionalSamplingSupported?: boolean
   /** Separate finite regional Anima execution support; ordinary Anima never grants it. */
@@ -151,6 +153,7 @@ export function isProjectGenerationActionState(
         'animaRegionalSupported',
         'animaRegionalImg2ImgSupported',
         'animaRegionalLoraSupported',
+        'animaRegionalNegativeSupported',
         'animaRegionalOutpaintSupported',
         'animaRegionalSamplingSupported',
         'animaOutpaintSupported',
@@ -180,6 +183,8 @@ export function isProjectGenerationActionState(
       typeof value['animaRegionalImg2ImgSupported'] !== 'boolean') ||
     (value['animaRegionalLoraSupported'] !== undefined &&
       typeof value['animaRegionalLoraSupported'] !== 'boolean') ||
+    (value['animaRegionalNegativeSupported'] !== undefined &&
+      typeof value['animaRegionalNegativeSupported'] !== 'boolean') ||
     (value['animaRegionalOutpaintSupported'] !== undefined &&
       typeof value['animaRegionalOutpaintSupported'] !== 'boolean') ||
     (value['animaRegionalSamplingSupported'] !== undefined &&

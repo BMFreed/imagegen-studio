@@ -379,6 +379,15 @@ export function supportsInferenceAnimaRegional(value: unknown): boolean {
   )
 }
 
+/** Spatial negative banks additionally require their explicitly qualified regional owner. */
+export function supportsInferenceAnimaRegionalNegative(value: unknown): boolean {
+  return (
+    supportsInferenceAnimaRegional(value) &&
+    isQualifiedInferenceWorkerReady(value) &&
+    value.capabilities.includes('anima-regional-negative-v1')
+  )
+}
+
 /** Global adapters require both ordinary Anima support and its separately qualified regional scope. */
 export function supportsInferenceAnimaRegionalLora(value: unknown): boolean {
   return (

@@ -1,10 +1,10 @@
-"""Private original-Anima positive regions through the existing native owners.
+"""Private original-Anima regions through the existing native owners.
 
 Adapted from InvokeAI a61ac4fb75bec78d92885bf39bcf3ed3900a9bdd:
 backend/anima/{regional_prompting,conditioning_data,anima_transformer_patch}.py,
 app/invocations/anima/anima_denoise.py and the canvas addRegionalGuidance caller.
-The pinned Diffusers Cosmos processor remains the attention implementation. Only
-the positive prediction call owns the temporary processors; context length never
+The pinned Diffusers Cosmos processor remains the attention implementation. By
+default only the positive prediction call owns temporary processors; context length never
 selects a sign. This is no checkpoint loading owner. The explicit global-support
 profile adapts only Krea-2's background fallback from InvokeAI
 ae06c1bd36218100f89a48ff5b8855751d06a898, backend/krea2/regional_prompting.py;
@@ -19,6 +19,12 @@ regional encoders share the global adapted encoder, and the same scoped stack
 surrounds context preparation and native prediction. Studio's existing ordinary
 Anima adapter owner applies and removes that stack; default private admission
 and the standalone attention scope still require unadapted native models.
+The explicit regional-negative profile adapts InvokeAI
+4875d96531ca6712b288f6e660fcbb34143408c1, anima_denoise.py,
+backend/anima/{regional_prompting,anima_transformer_patch}.py and the canvas
+addRegionalGuidance caller. Each prediction sign has its own bank/mask; global
+negative conditioning remains image-wide and even/odd attention scopes stay exact.
+Default private admission still refuses nonempty effective regional negatives.
 
 Main compilation, recipe provenance and checkpoint-to-live-model association are
 trusted caller responsibilities, as in the ordinary compiled Anima command.
@@ -98,6 +104,7 @@ _Profile = Literal["cpu-float32-v1", "cuda-bfloat16-v1"]
 _CompositionProfile = Literal["invoke-krea2-global-support-v1"]
 _SamplingProfile = Literal["invoke-anima-flow-sampling-v1"]
 _LoraProfile = Literal["invoke-anima-global-lora-v1"]
+_NegativeProfile = Literal["invoke-anima-regional-negative-v1"]
 _MAX_REGIONS = 3
 _MAX_TEXT_BYTES = 16 * 1024
 _MAX_TOTAL_TEXT_BYTES = 128 * 1024
@@ -131,6 +138,7 @@ class _Region:
     source_id: str
     text: str | None
     alpha: bytes
+    negative_text: str = ""
 
 
 @dataclass(frozen=True)
@@ -306,7 +314,21 @@ def _coverage(value: object, bbox: tuple[int, int, int, int]) -> bytes:
     return alpha
 
 
-def _capture(recipe: object, compiled_prompts: object) -> _Input:
+def _capture(
+    recipe: object,
+    compiled_prompts: object,
+    *,
+    negative_profile: _NegativeProfile | None = None,
+) -> _Input:
+    _require(
+        negative_profile is None
+        or (
+            type(negative_profile) is str
+            and negative_profile == "invoke-anima-regional-negative-v1"
+        ),
+        "INVALID_REQUEST",
+        "Anima regional negative profile is unsupported.",
+    )
     data = _object(
         recipe,
         {
@@ -424,14 +446,19 @@ def _capture(recipe: object, compiled_prompts: object) -> _Input:
                 "Inherited negative text or references differ from Current Canvas.",
             )
         _require(
-            negative_text == "",
+            negative_text == "" or negative_profile is not None,
             "GENERATION_PROMPT_UNSUPPORTED",
             "Spatial Anima regional negative prompts are not qualified.",
         )
         if local_positive is not None:
             expected.append((source_id, "positive", local_positive))
             total_text_bytes += len(local_positive.encode("utf-8"))
-        regions.append(_Region(source_id, local_positive, _coverage(region["coverage"], bbox)))
+        if negative_text != "":
+            expected.append((source_id, "negative", negative_text))
+            total_text_bytes += len(negative_text.encode("utf-8"))
+        regions.append(
+            _Region(source_id, local_positive, _coverage(region["coverage"], bbox), negative_text)
+        )
     _require(
         total_text_bytes <= _MAX_TOTAL_TEXT_BYTES,
         "LIMIT",
@@ -1392,7 +1419,7 @@ class _RegionalProcessor:
 def scoped_anima_regional_attention(transformer: Any, mask: Any, torch: Any) -> Generator[None]:
     """Temporarily delegate even cross-attention to the original native processor.
 
-    The caller scopes this only around a positive prediction. Private mask bytes
+    The caller scopes this around its explicitly selected prediction sign. Private mask bytes
     detach the scope from caller mutation; original processors are restored even
     after a partially successful native setter. No model forward is replaced.
     """
@@ -1545,19 +1572,77 @@ def _prepare_mask(
     return allowed.unsqueeze(0).unsqueeze(0)
 
 
+def _prepare_negative_mask(
+    captured: _Input,
+    attentions: tuple[Any, ...],
+    torch: Any,
+    device: Any,
+    dtype: Any,
+) -> Any:
+    """Invoke's independent negative bank keeps its unmasked global source everywhere."""
+    active = tuple(region for region in captured.regions if region.negative_text != "")
+    if not active:
+        return None
+    width, height = captured.bbox[2:]
+    grid_height, grid_width = math.ceil((height // 8) / 2), math.ceil((width // 8) / 2)
+    queries, keys = grid_height * grid_width, _CONTEXT_ROWS * (1 + len(active))
+    for attention in attentions:
+        _require(
+            attention.heads * queries * keys <= _MAX_MASK_ELEMENTS,
+            "LIMIT",
+            "Anima expanded attention mask exceeds its existing element bound.",
+        )
+    allowed = torch.zeros((queries, keys), dtype=torch.bool, device=device)
+    allowed[:, :_CONTEXT_ROWS] = True
+    for index, region in enumerate(active, 1):
+        alpha = torch.frombuffer(bytearray(region.alpha), dtype=torch.uint8).reshape(
+            1, 1, height, width
+        )
+        # Match Invoke's full-resolution normalization/binarization before NEAREST.
+        binary = (alpha.to(dtype=dtype, device=device) / 255) > 0.5
+        sampled = (
+            torch.nn.functional.interpolate(
+                binary.to(dtype=dtype), size=(grid_height, grid_width), mode="nearest"
+            )
+            .reshape(-1)
+            .to(dtype=torch.bool)
+        )
+        start, end = index * _CONTEXT_ROWS, (index + 1) * _CONTEXT_ROWS
+        allowed[:, start:end] = sampled.unsqueeze(1)
+    # Zero-support regional columns are valid. Odd blocks still read the full bank;
+    # on even blocks the image-wide global columns prevent all-masked queries.
+    return allowed.unsqueeze(0).unsqueeze(0)
+
+
 def _prediction_factory(
     captured: _Input,
     models: LoadedAnimaModels,
     tokenizers: AnimaTokenizers | None,
     mask: Any,
     attentions: tuple[Any, ...] | None = None,
+    *,
+    negative_mask: Any = None,
 ) -> AnimaPredictionFactory:
     active_ids = {
         region.source_id
         for region in captured.regions
         if region.text is not None and region.text != ""
     }
-    extras = tuple(prompt for prompt in captured.prompts[2:] if prompt.source_id in active_ids)
+    extras = tuple(
+        prompt
+        for prompt in captured.prompts[2:]
+        if prompt.polarity == "positive" and prompt.source_id in active_ids
+    )
+    negative_ids = {region.source_id for region in captured.regions if region.negative_text != ""}
+    negative_extras = (
+        tuple(
+            prompt
+            for prompt in captured.prompts[2:]
+            if prompt.polarity == "negative" and prompt.source_id in negative_ids
+        )
+        if negative_mask is not None
+        else ()
+    )
 
     def prepare(pair: AnimaConditioningPair, torch: Any, device: Any, dtype: Any) -> AnimaPredictor:
         contexts = [pair.positive.embeddings]
@@ -1567,7 +1652,14 @@ def _prediction_factory(
                     anima_prompt_payload(prompt.compiled), models, tokenizers=tokenizers
                 ).embeddings
             )
-        for context in (*contexts, pair.negative.embeddings):
+        negative_contexts = [pair.negative.embeddings]
+        for prompt in negative_extras:
+            negative_contexts.append(
+                encode_anima_prompt(
+                    anima_prompt_payload(prompt.compiled), models, tokenizers=tokenizers
+                ).embeddings
+            )
+        for context in (*contexts, *negative_contexts):
             _require(
                 tuple(context.shape)
                 == (1, _CONTEXT_ROWS, models.text_conditioner.config.target_dim)
@@ -1577,28 +1669,37 @@ def _prediction_factory(
                 "GENERATION_WORKER_FAILED",
                 "Anima regional context rows, placement or finite state differ from preflight.",
             )
-        combined = torch.cat(contexts, dim=1)
-        _require(
-            combined.shape[1] == mask.shape[-1],
-            "GENERATION_WORKER_FAILED",
-            "Anima combined context length differs from its mask.",
+        combined = contexts[0] if len(contexts) == 1 else torch.cat(contexts, dim=1)
+        negative_combined = (
+            negative_contexts[0]
+            if len(negative_contexts) == 1
+            else torch.cat(negative_contexts, dim=1)
         )
+        for context, selected_mask in ((combined, mask), (negative_combined, negative_mask)):
+            if selected_mask is not None:
+                _require(
+                    context.shape[1] == selected_mask.shape[-1],
+                    "GENERATION_WORKER_FAILED",
+                    "Anima combined context length differs from its mask.",
+                )
 
         def predict(role: Literal["positive", "negative"], latents: Any, sigma: float) -> Any:
             if role == "positive":
-                scope = (
-                    scoped_anima_regional_attention(models.transformer, mask, torch)
-                    if attentions is None
-                    else _scoped_anima_regional_attention(
-                        models.transformer, attentions, mask, torch
-                    )
+                context, selected_mask = combined, mask
+            else:
+                _require(role == "negative", "INVALID_REQUEST", "Anima prediction sign is invalid.")
+                context, selected_mask = negative_combined, negative_mask
+            if selected_mask is None:
+                return predict_anima_flow(models.transformer, latents, context, sigma, torch)
+            scope = (
+                scoped_anima_regional_attention(models.transformer, selected_mask, torch)
+                if attentions is None
+                else _scoped_anima_regional_attention(
+                    models.transformer, attentions, selected_mask, torch
                 )
-                with scope:
-                    return predict_anima_flow(models.transformer, latents, combined, sigma, torch)
-            _require(role == "negative", "INVALID_REQUEST", "Anima prediction sign is invalid.")
-            return predict_anima_flow(
-                models.transformer, latents, pair.negative.embeddings, sigma, torch
             )
+            with scope:
+                return predict_anima_flow(models.transformer, latents, context, sigma, torch)
 
         return predict
 
@@ -1618,12 +1719,14 @@ def generate_current_canvas_regional_anima_txt2img(
     on_progress: DenoisingProgressSink | None = None,
     sampling_profile: _SamplingProfile | None = None,
     lora_profile: _LoraProfile | None = None,
+    negative_profile: _NegativeProfile | None = None,
 ) -> dict[str, object]:
     """One matching Main recipe to existing native sampling/Wan and provisional PNG.
 
     The exact prepared Anima Base models are borrowed, not loaded here. This
     private consumer grants no public admission, durable candidate or visual
-    quality claim; all regional negatives/references remain unsupported.
+    quality claim. Regional negatives require their explicit profile; references
+    remain unsupported.
     The default remains Euler-only; the explicit sampling profile reuses the
     ordinary native flow driver without changing frozen schedules or progress.
     """
@@ -1639,6 +1742,7 @@ def generate_current_canvas_regional_anima_txt2img(
         on_progress=on_progress,
         sampling_profile=sampling_profile,
         lora_profile=lora_profile,
+        negative_profile=negative_profile,
         img2img=False,
     )
 
@@ -1656,6 +1760,7 @@ def generate_current_canvas_regional_anima_img2img(
     on_progress: DenoisingProgressSink | None = None,
     sampling_profile: _SamplingProfile | None = None,
     lora_profile: _LoraProfile | None = None,
+    negative_profile: _NegativeProfile | None = None,
 ) -> dict[str, object]:
     """Verify one opaque source snapshot and reuse original Anima image sampling.
 
@@ -1679,6 +1784,7 @@ def generate_current_canvas_regional_anima_img2img(
         on_progress=on_progress,
         sampling_profile=sampling_profile,
         lora_profile=lora_profile,
+        negative_profile=negative_profile,
         img2img=True,
     )
 
@@ -1696,6 +1802,7 @@ def generate_current_canvas_regional_anima_outpaint(
     on_progress: DenoisingProgressSink | None = None,
     sampling_profile: _SamplingProfile | None = None,
     lora_profile: _LoraProfile | None = None,
+    negative_profile: _NegativeProfile | None = None,
     _prepared_outpaint: tuple[OutpaintConditioning, Image.Image] | None = None,
 ) -> dict[str, object]:
     """Compose ordinary OUT protection and regional attention, then publish RGBA.
@@ -1720,6 +1827,7 @@ def generate_current_canvas_regional_anima_outpaint(
         on_progress=on_progress,
         sampling_profile=sampling_profile,
         lora_profile=lora_profile,
+        negative_profile=negative_profile,
         img2img=True,
         outpaint=True,
         _prepared_outpaint=_prepared_outpaint,
@@ -1739,6 +1847,7 @@ def _generate_current_canvas_regional_anima(
     on_progress: DenoisingProgressSink | None,
     sampling_profile: _SamplingProfile | None,
     lora_profile: _LoraProfile | None,
+    negative_profile: _NegativeProfile | None,
     img2img: bool,
     outpaint: bool = False,
     _prepared_outpaint: tuple[OutpaintConditioning, Image.Image] | None = None,
@@ -1763,7 +1872,7 @@ def _generate_current_canvas_regional_anima(
         "INVALID_REQUEST",
         "Unexpected prepared outpaint inputs for an unmasked Anima command.",
     )
-    captured = _capture(recipe, compiled_prompts)
+    captured = _capture(recipe, compiled_prompts, negative_profile=negative_profile)
     plan = _capture_command(
         command,
         captured,
@@ -1811,6 +1920,11 @@ def _generate_current_canvas_regional_anima(
                 parameter.dtype,
                 composition_profile=composition_profile,
             )
+        negative_mask = (
+            _prepare_negative_mask(captured, attentions, torch, parameter.device, parameter.dtype)
+            if not math.isclose(plan.guidance_scale, 1.0)
+            else None
+        )
         with _vae_cache_scope(models.vae):
             owned_tokenizers = _owned_tokenizers(tokenizers)
             _preflight_prompt_weights(captured, owned_tokenizers, torch, parameter.dtype)
@@ -1830,13 +1944,17 @@ def _generate_current_canvas_regional_anima(
                     tokenizers=owned_tokenizers,
                     progress=on_progress,
                     prediction_factory=None
-                    if mask is None
+                    if mask is None and negative_mask is None
                     else _prediction_factory(
                         captured,
                         models,
                         owned_tokenizers,
                         mask,
                         attentions if command.loras else None,
+                        **cast(
+                            Any,
+                            {} if negative_mask is None else {"negative_mask": negative_mask},
+                        ),
                     ),
                 )
             else:
@@ -1860,13 +1978,17 @@ def _generate_current_canvas_regional_anima(
                     initial_sigma=plan.initial_sigma,
                     progress=on_progress,
                     prediction_factory=None
-                    if mask is None
+                    if mask is None and negative_mask is None
                     else _prediction_factory(
                         captured,
                         models,
                         owned_tokenizers,
                         mask,
                         attentions if command.loras else None,
+                        **cast(
+                            Any,
+                            {} if negative_mask is None else {"negative_mask": negative_mask},
+                        ),
                     ),
                     denoiser_factory=None
                     if plan.scheduler == "euler"

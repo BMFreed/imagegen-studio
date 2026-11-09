@@ -15,6 +15,7 @@ import type { CurrentCanvasRegionalRecipe } from './project-current-canvas-regio
 import {
   compileCurrentCanvasAnimaRegionalPrompts,
   CurrentCanvasAnimaRegionalInputError,
+  hasCompiledAnimaRegionalNegative,
 } from './project-current-canvas-anima-regional-input.js'
 import { produceAnimaRegionalInputFixture } from './test-fixtures/anima-regional-input.js'
 
@@ -710,3 +711,243 @@ for (const [label, regionalTexts] of [
     }
   })
 }
+
+const SIGNED_NEGATIVE = { negativeProfile: 'invoke-anima-regional-negative-v1' } as const
+function signedInput(): CurrentCanvasRegionalRecipe {
+  const value = input()
+  const first = value.regions[0]
+  first.authoredPrompts!.negative = prompt('(red scarf)1.5')
+  first.negative = { prompt: prompt('(red scarf)1.5'), source: 'regional' }
+  const second = value.regions[1]
+  second.authoredPrompts!.useGlobalNegativePrompt = true
+  second.authoredPrompts!.negative = prompt('{dormant|local}')
+  second.negative = {
+    prompt: structuredClone(value.globalPrompts.negative),
+    source: 'current-canvas',
+  }
+  return value
+}
+
+test('explicit signed Anima compiler keeps independent local and inherited negative source records', () => {
+  const value = signedInput()
+  const before = structuredClone(value)
+  const records = compileCurrentCanvasAnimaRegionalPrompts(value, SIGNED_NEGATIVE)
+  assert.deepEqual(
+    records.map(({ polarity, sourceId, text }) => ({ polarity, sourceId, text })),
+    [
+      { polarity: 'positive', sourceId: 'current-canvas', text: '(two cats)1.25' },
+      { polarity: 'negative', sourceId: 'current-canvas', text: '(blur)0.75' },
+      { polarity: 'positive', sourceId: id(100), text: '(red scarf)1.5' },
+      { polarity: 'negative', sourceId: id(100), text: '(red scarf)1.5' },
+      { polarity: 'positive', sourceId: id(101), text: '(blue scarf)0.75' },
+      { polarity: 'negative', sourceId: id(101), text: '(blur)0.75' },
+    ],
+  )
+  for (const record of records) {
+    assert.deepEqual(record.prompt, compileAnimaPromptWeighting(record.text))
+  }
+  assert.equal(hasCompiledAnimaRegionalNegative(records), true)
+  assertUnchanged(value, before)
+  refuses(value, 'REGIONAL_ANIMA_UNSUPPORTED')
+})
+
+test('explicit signed compiler keeps old empty-negative record bytes and exact ordering', () => {
+  const value = input()
+  const legacy = compileCurrentCanvasAnimaRegionalPrompts(value)
+  const signed = compileCurrentCanvasAnimaRegionalPrompts(value, SIGNED_NEGATIVE)
+  assert.equal(JSON.stringify(signed), JSON.stringify(legacy))
+  assert.equal(hasCompiledAnimaRegionalNegative(signed), false)
+})
+
+test('negative-only Anima sources are compiled independently before absent-positive continuation', () => {
+  const value = signedInput()
+  for (const region of value.regions) {
+    region.positive = null
+    region.authoredPrompts!.positive = null
+  }
+  const records = compileCurrentCanvasAnimaRegionalPrompts(value, SIGNED_NEGATIVE)
+  assert.deepEqual(
+    records.slice(2).map(({ polarity, sourceId, text }) => ({ polarity, sourceId, text })),
+    [
+      { polarity: 'negative', sourceId: id(100), text: '(red scarf)1.5' },
+      { polarity: 'negative', sourceId: id(101), text: '(blur)0.75' },
+    ],
+  )
+  assert.equal(hasCompiledAnimaRegionalNegative(records), true)
+})
+
+for (const branch of [
+  'inherited-text',
+  'inherited-refs',
+  'local-authored',
+  'local-active-refs',
+  'late-positive',
+] as const) {
+  test(`signed Anima compiler refuses ${branch} atomically with no caller mutation`, () => {
+    const value = signedInput()
+    if (branch === 'inherited-text') {
+      value.regions[1].negative.prompt.text += ' changed'
+    }
+    if (branch === 'inherited-refs') {
+      value.regions[1].negative.prompt.embeddingRefs = [embedding()]
+    }
+    if (branch === 'local-authored') {
+      value.regions[0].authoredPrompts!.negative!.text += ' changed'
+    }
+    if (branch === 'local-active-refs') {
+      value.regions[0].authoredPrompts!.negative!.embeddingRefs = [embedding('scarf')]
+    }
+    if (branch === 'late-positive') {
+      value.regions[1].positive!.text += ' changed'
+    }
+    const before = structuredClone(value)
+    assert.throws(
+      () => compileCurrentCanvasAnimaRegionalPrompts(value, SIGNED_NEGATIVE),
+      CurrentCanvasAnimaRegionalInputError,
+    )
+    assertUnchanged(value, before)
+  })
+}
+
+for (const options of [
+  null,
+  [],
+  { negativeProfile: 'other' },
+  { negativeProfile: false },
+  { unexpected: true },
+]) {
+  test(`signed Anima compiler refuses unsupported private profile ${JSON.stringify(options)}`, () => {
+    const value = input()
+    assert.throws(
+      () =>
+        compileCurrentCanvasAnimaRegionalPrompts(
+          value,
+          options as unknown as typeof SIGNED_NEGATIVE,
+        ),
+      CurrentCanvasAnimaRegionalInputError,
+    )
+  })
+}
+
+test('signed Anima compilation retains all eight independent streams at the exact UTF8 text envelope', () => {
+  const value = input(3)
+  const text = 'é'.repeat(8192)
+  value.globalPrompts = { negative: prompt(text), positive: prompt(text) }
+  ;(value.item as { prompts: { negative: string; positive: string } }).prompts = {
+    negative: text,
+    positive: text,
+  }
+  for (const region of value.regions) {
+    region.positive = prompt(text)
+    region.authoredPrompts!.positive = prompt(text)
+    region.authoredPrompts!.useGlobalNegativePrompt = true
+    region.negative = { prompt: prompt(text), source: 'current-canvas' }
+  }
+  const records = compileCurrentCanvasAnimaRegionalPrompts(value, SIGNED_NEGATIVE)
+  assert.equal(records.length, 8)
+  assert.equal(
+    records.reduce((sum, record) => sum + Buffer.byteLength(record.text, 'utf8'), 0),
+    128 * 1024,
+  )
+  assert.equal(
+    new Set(
+      records.filter((record) => record.polarity === 'negative').map((record) => record.sourceId),
+    ).size,
+    4,
+  )
+  value.regions[2].negative.prompt.text += 'é'
+  assert.throws(
+    () => compileCurrentCanvasAnimaRegionalPrompts(value, SIGNED_NEGATIVE),
+    CurrentCanvasAnimaRegionalInputError,
+  )
+})
+
+for (const variant of ['negative', 'negative-neighbor', 'negative-only'] as const) {
+  test(`genuine Main ${variant} fixture preserves signed ownership through Save reopen and read-only capture`, async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'igs-anima-signed-main-'))
+    try {
+      const fixture = await produceAnimaRegionalInputFixture(root, { variant })
+      assert.equal(fixture.schema, 'main-anima-regional-signed-v1')
+      assert.equal(
+        fixture.authoredDocument.generationDraft.negativePrompt.text,
+        '(blur)0.75, noise',
+      )
+      assert.equal(fixture.recipe.regions[0].negative.source, 'regional')
+      assert.equal(
+        fixture.recipe.regions[0].negative.prompt.text,
+        variant === 'negative-neighbor' ? '(green scarf)1.5' : '(red scarf)1.5',
+      )
+      assert.equal(fixture.recipe.regions[1].negative.source, 'current-canvas')
+      assert.deepEqual(
+        fixture.recipe.regions[1].negative.prompt,
+        fixture.recipe.globalPrompts.negative,
+      )
+      assert.equal(
+        fixture.authoredDocument.regionalGuidance![1].prompts!.negative!.text,
+        'dormant {not|selected} local negative',
+      )
+      const negative = fixture.compiledPrompts.filter(
+        (record) => record.sourceId !== 'current-canvas' && record.polarity === 'negative',
+      )
+      assert.deepEqual(
+        negative.map((record) => record.text),
+        [fixture.recipe.regions[0].negative.prompt.text, '(blur)0.75, noise'],
+      )
+      assert.equal(fixture.compiledPrompts.length, variant === 'negative-only' ? 4 : 6)
+      if (variant === 'negative-only') {
+        assert.ok(fixture.recipe.regions.every((region) => region.positive === null))
+      }
+      assert.equal(fixture.durablePreservation.savedAndReopened, true)
+      assert.equal(fixture.durablePreservation.durableUnchanged, true)
+      assert.equal(fixture.durablePreservation.historyAndSeedCursorUnchanged, true)
+    } finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+}
+
+test('signed Main fixture owns negative override tuples before its first filesystem await', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-anima-signed-owned-'))
+  try {
+    const regionalNegativeTexts: [string, string] = [' ', '']
+    const inheritGlobalNegative: [boolean, boolean] = [false, false]
+    const pending = produceAnimaRegionalInputFixture(root, {
+      inheritGlobalNegative,
+      regionalNegativeTexts,
+      variant: 'negative',
+    })
+    regionalNegativeTexts[0] = 'later changed'
+    inheritGlobalNegative[0] = true
+    const fixture = await pending
+    assert.deepEqual(
+      fixture.recipe.regions.map((region) => region.negative.prompt.text),
+      [' ', ''],
+    )
+    assert.ok(fixture.recipe.regions.every((region) => region.negative.source === 'regional'))
+    assert.deepEqual(
+      fixture.compiledPrompts
+        .filter((record) => record.polarity === 'negative')
+        .map((record) => record.text),
+      ['(blur)0.75, noise', ' '],
+    )
+  } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('old Main fixture variants reject negative-only override arguments before creating any path', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-anima-signed-old-invalid-'))
+  try {
+    for (const options of [
+      { regionalNegativeTexts: ['', ''] as const },
+      { inheritGlobalNegative: [false, true] as const },
+    ]) {
+      await assert.rejects(
+        produceAnimaRegionalInputFixture(path.join(root, 'not-created'), options),
+      )
+      assert.deepEqual(await readdir(root), [])
+    }
+  } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})

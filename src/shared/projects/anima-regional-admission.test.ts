@@ -7,6 +7,7 @@ import {
   supportsInferenceAnimaRegional,
   supportsInferenceAnimaRegionalImg2Img,
   supportsInferenceAnimaRegionalLora,
+  supportsInferenceAnimaRegionalNegative,
   supportsInferenceAnimaRegionalOutpaint,
   supportsInferenceAnimaRegionalSampling,
 } from './inference-worker-capabilities.js'
@@ -608,3 +609,178 @@ for (const positive of ['{cat|dog', '{cat|dog}{broken', '{cat|dog}|broken}']) {
     assert.notEqual(reason(value, { iterations: 1 }), null)
   })
 }
+
+test('Anima regional negative capability is additive and keeps every ordinary and regional prerequisite', () => {
+  const ready = {
+    capabilities: [
+      'illustrious-txt2img',
+      'denoising-progress',
+      'candidate-thumbnails',
+      'illustrious-cfg-rescale',
+      'illustrious-img2img',
+      'illustrious-lora',
+      'illustrious-vae-precision',
+      'illustrious-external-vae',
+      'illustrious-embeddings',
+      'illustrious-outpaint',
+      'anima-txt2img',
+      'anima-img2img',
+      'anima-lora',
+      'anima-prompt-weighting',
+      'anima-flow-sampling',
+      'anima-regional-txt2img-v1',
+      'anima-regional-negative-v1',
+    ],
+    protocolVersion: '1',
+    runtimeProfile: 'linux-nvidia',
+    workerVersion: '0.14.0',
+  }
+  assert.equal(supportsInferenceAnimaRegionalNegative(ready), true)
+  for (const capability of [
+    'anima-regional-negative-v1',
+    'anima-regional-txt2img-v1',
+    'anima-txt2img',
+    'anima-prompt-weighting',
+    'anima-flow-sampling',
+  ]) {
+    const peer = {
+      ...ready,
+      capabilities: ready.capabilities.filter((entry) => entry !== capability),
+    }
+    assert.equal(supportsInferenceAnimaRegionalNegative(peer), false)
+  }
+  for (const workerVersion of ['0.13.0', '0.15.0', null]) {
+    assert.equal(supportsInferenceAnimaRegionalNegative({ ...ready, workerVersion }), false)
+  }
+})
+
+for (const method of ANIMA_SAMPLING_METHOD_KEYS) {
+  for (const source of ['local', 'inherited'] as const) {
+    test(`Anima ${method} ${source} negative requires its own capability at CFG1 and CFG4 in every mode`, () => {
+      for (const cfgScale of [1, 4]) {
+        for (const targetMode of ['txt2img', 'img2img', 'outpaint'] as const) {
+          const value = document()
+          value.generationDraft.sampling.animaMethod = method
+          value.generationDraft.sampling.cfgScale = cfgScale
+          value.generationDraft.sampling.denoisingStrength = targetMode === 'txt2img' ? null : 0.5
+          value.generationDraft.negativePrompt.text = '(blur)0.75'
+          const prompts = value.regionalGuidance![0].prompts!
+          prompts.useGlobalNegativePrompt = source === 'inherited'
+          prompts.negative = {
+            embeddingRefs: [],
+            text: source === 'local' ? '(red scarf)1.5' : '{dormant|negative}',
+          }
+          const before = structuredClone(value)
+          const options = {
+            animaRegionalImg2ImgSupported: true,
+            animaRegionalOutpaintSupported: true,
+            animaRegionalSamplingSupported: true,
+            targetMode,
+          }
+          assert.match(
+            reason(value, options)!,
+            /Checking image engine support for Anima regional negative prompts/,
+          )
+          assert.match(
+            reason(value, { ...options, animaRegionalNegativeSupported: false })!,
+            /does not support Anima regional negative prompts/,
+          )
+          assert.equal(reason(value, { ...options, animaRegionalNegativeSupported: true }), null)
+          assert.deepEqual(value, before)
+        }
+      }
+    })
+  }
+}
+
+test('Anima regional negative capability cannot grant missing method image OUT or base support', () => {
+  const value = document()
+  value.generationDraft.negativePrompt.text = 'noise'
+  const options = {
+    animaRegionalImg2ImgSupported: true,
+    animaRegionalNegativeSupported: true,
+    animaRegionalOutpaintSupported: true,
+    animaRegionalSamplingSupported: true,
+  }
+  assert.match(
+    reason(value, { ...options, animaRegionalSupported: false })!,
+    /does not support Anima Regional Guidance/,
+  )
+  value.generationDraft.sampling.animaMethod = 'heun'
+  assert.match(
+    reason(value, { ...options, animaRegionalSamplingSupported: false })!,
+    /sampling method/,
+  )
+  value.generationDraft.sampling.denoisingStrength = 0.5
+  assert.match(
+    reason(value, { ...options, animaRegionalImg2ImgSupported: false, targetMode: 'img2img' })!,
+    /img2img/,
+  )
+  assert.match(
+    reason(value, { ...options, animaRegionalOutpaintSupported: false, targetMode: 'outpaint' })!,
+    /outpaint/,
+  )
+})
+
+test('Anima negative admission leaves dormant disabled and local-empty branches on legacy peers', () => {
+  const value = document()
+  value.generationDraft.negativePrompt.text = 'ordinary global negative'
+  value.regionalGuidance![0].prompts!.useGlobalNegativePrompt = false
+  value.regionalGuidance![0].prompts!.negative = { embeddingRefs: [], text: '' }
+  assert.equal(reason(value, { animaRegionalNegativeSupported: false }), null)
+  value.generationDraft.negativePrompt.text = ''
+  value.regionalGuidance![0].prompts!.useGlobalNegativePrompt = true
+  value.regionalGuidance![0].prompts!.negative.text = '{dormant|negative}'
+  assert.equal(reason(value, { animaRegionalNegativeSupported: false }), null)
+  value.regionalGuidance!.push({
+    ...structuredClone(value.regionalGuidance![0]),
+    enabled: false,
+    id: randomUUID(),
+    mask: { asset: null, id: randomUUID(), revision: 0 },
+    prompts: {
+      negative: { embeddingRefs: [], text: 'disabled negative' },
+      positive: null,
+      useGlobalNegativePrompt: false,
+    },
+  })
+  assert.equal(reason(value, { animaRegionalNegativeSupported: false }), null)
+})
+
+test('Anima signed admission retains exact whitespace static text and source resource refusals', () => {
+  const value = document()
+  const prompts = value.regionalGuidance![0].prompts!
+  prompts.useGlobalNegativePrompt = false
+  prompts.negative = { embeddingRefs: [], text: ' ' }
+  assert.match(reason(value)!, /regional negative prompts/)
+  assert.equal(reason(value, { animaRegionalNegativeSupported: true }), null)
+  prompts.negative.text = '{bad|worse}'
+  assert.match(
+    reason(value, { animaRegionalNegativeSupported: true })!,
+    /static global negative and regional/,
+  )
+})
+
+test('optional Anima regional negative state rejects null strings and all nonboolean values', () => {
+  const state = {
+    cfgRescaleSupported: false,
+    documentId: randomUUID(),
+    embeddingsSupported: false,
+    error: null,
+    externalVaeSupported: false,
+    img2imgSupported: false,
+    jobs: [],
+    phase: 'idle',
+    runningJobId: null,
+    vaePrecisionSupported: false,
+  }
+  assert.equal(isProjectGenerationActionState(state), true)
+  for (const animaRegionalNegativeSupported of [undefined, false, true]) {
+    assert.equal(isProjectGenerationActionState({ ...state, animaRegionalNegativeSupported }), true)
+  }
+  for (const animaRegionalNegativeSupported of [null, 'true', 1, 0, {}, []]) {
+    assert.equal(
+      isProjectGenerationActionState({ ...state, animaRegionalNegativeSupported }),
+      false,
+    )
+  }
+})

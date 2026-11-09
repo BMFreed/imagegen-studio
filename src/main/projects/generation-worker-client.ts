@@ -17,6 +17,7 @@ import {
   supportsInferenceAnimaRegional,
   supportsInferenceAnimaRegionalImg2Img,
   supportsInferenceAnimaRegionalLora,
+  supportsInferenceAnimaRegionalNegative,
   supportsInferenceAnimaRegionalOutpaint,
   supportsInferenceAnimaRegionalSampling,
 } from '../../shared/projects/inference-worker-capabilities.js'
@@ -64,7 +65,10 @@ import type {
 } from './illustrious-txt2img-job.js'
 
 import { verifyInferenceAuxiliaryFile } from '../runtime/inference-auxiliary-resources.js'
-import { prepareAnimaRegionalWorkerRequest } from './anima-regional-worker-request.js'
+import {
+  captureAnimaRegionalWorkerInput,
+  prepareAnimaRegionalWorkerRequest,
+} from './anima-regional-worker-request.js'
 import { validWorkerVae } from './illustrious-generation-vae.js'
 import {
   captureInferenceWorkerOwner,
@@ -76,6 +80,7 @@ import {
   captureOutpaintWorkerRequest,
   isOutpaintWorkerRequest,
 } from './outpaint-worker-request.js'
+import { hasCompiledAnimaRegionalNegative } from './project-current-canvas-anima-regional-input.js'
 import {
   type OperationalRegionalGenerationRequestV1,
   type OperationalRegionalWorkerInput,
@@ -454,8 +459,12 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     let completed = false
     try {
       if (input.compositionProfile === 'invoke-krea2-global-support-v1') {
+        const captured = captureAnimaRegionalWorkerInput(input)
+        input = captured
         if (
           !supportsInferenceAnimaRegional(this.ready) ||
+          (hasCompiledAnimaRegionalNegative(captured.compiledPrompts) &&
+            !supportsInferenceAnimaRegionalNegative(this.ready)) ||
           ((input.request.job.loras?.length ?? 0) > 0 &&
             !supportsInferenceAnimaRegionalLora(this.ready)) ||
           (input.request.type === 'generate-anima-outpaint' &&

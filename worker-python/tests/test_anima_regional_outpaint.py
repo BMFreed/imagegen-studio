@@ -7,7 +7,8 @@ snapshot/CRC/ICC, coherence/fade, original Wan/predictor/native solvers, regiona
 attention, decode and RGBA PNG publication remain real. The installed suite owns
 the actual pinned LaMa/checkpoint and renderer/queue boundary.
 
-External oracles read current Invoke b0ac163b source bodies, not worker helpers.
+External oracles read current Invoke 4875d965 source bodies, not worker helpers.
+The extracted OUT numerical definitions are AST-identical to the prior b0ac163b pin.
 Assertions for protected history and regional association follow publication so
 the named semantic mutation genuinely reaches the original native consumers.
 """
@@ -91,7 +92,7 @@ _PROFILE = "invoke-anima-flow-sampling-v1"
 _Producer = Callable[..., dict[str, Any]]
 _INVOKE = {
     "invokeai/app/invocations/anima/anima_denoise.py": (
-        "34511531b56e6e589e0f7a0071a9c86d8bc1b2c78f3150ceb282185ec2511e56"
+        "8adb45e054d0425547fd4db3fcdf95e20396ca28e0fb72b52a9d6e71d230cdcf"
     ),
     "invokeai/backend/rectified_flow/rectified_flow_inpaint_extension.py": (
         "a7a77d7ac6433b5ad930716bf21852a97a81960688e8670a8120e8d26f94e721"

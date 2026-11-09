@@ -17,6 +17,13 @@
  * schemaVersion1. ROOT owns all execution,600-second/2+10GiB/no-swap guards and cleanup. No
  * runtime, model or source image copies; no new numeric loop, Python fake or availability
  * override.
+ *
+ * The additive installed-anima-regional-negative-v1 profile reuses these mode/lifetime owners
+ * without LoRAs. InvokeAI4875d96531ca6712b288f6e660fcbb34143408c1 routes the negative collector
+ * through anima_denoise.py and backend/anima/{regional_prompting,anima_transformer_patch}.py:
+ * global negative stays image-wide; regional signed ranges keep their own masks on even blocks.
+ * Its fixture omits only lora. A/B changes one local nonempty negative from(red scarf)1.5 to
+ * (green scarf)1.5, with the neighboring region inheriting the unchanged global negative.
  */
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
@@ -74,6 +81,7 @@ const samplingCapability = 'anima-regional-sampling-v1'
 const imageCapability = 'anima-regional-img2img-v1'
 const outpaintCapability = 'anima-regional-outpaint-v1'
 const loraCapability = 'anima-regional-lora-v1'
+const negativeCapability = 'anima-regional-negative-v1'
 const requestType = 'execute-current-canvas-anima-regional'
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex')
 const exec = promisify(execFile)
@@ -113,6 +121,7 @@ async function json(file, maximum = 32 * 1024 ** 2) {
 }
 const fixturePath = process.argv[3]
 const fixture = await json(fixturePath, 64 * 1024)
+const negativeProfile = fixture.profile === 'installed-anima-regional-negative-v1'
 keys(fixture, [
   'schemaVersion',
   'profile',
@@ -124,10 +133,13 @@ keys(fixture, [
   'baseline',
   'source',
   'mode',
-  'lora',
+  ...(!negativeProfile ? ['lora'] : []),
 ])
 assert.equal(fixture.schemaVersion, 1)
-assert.equal(fixture.profile, 'installed-anima-regional-lora-v1')
+assert.ok(
+  negativeProfile || fixture.profile === 'installed-anima-regional-lora-v1',
+  'Use an explicitly supported installed Anima profile',
+)
 assert.ok(['txt2img', 'img2img', 'outpaint'].includes(fixture.mode))
 const outpaint = fixture.mode === 'outpaint'
 const imageInput = fixture.mode !== 'txt2img'
@@ -135,6 +147,11 @@ const requestBudget = outpaint ? 4 : 2
 const globalPositive = '(two white cats)1.25 on one bench'
 const activeWeight = -0.5
 const controlWeight = 0
+const activeNegative = '(red scarf)1.5'
+const controlNegative = '(green scarf)1.5'
+const dormantNegative = 'dormant local negative preserved'
+const activeSetting = negativeProfile ? activeNegative : activeWeight
+const controlSetting = negativeProfile ? controlNegative : controlWeight
 assert.equal(fixture.appData, sharedAppData)
 assert.ok(
   Number.isSafeInteger(fixture.deadlineSeconds) &&
@@ -143,12 +160,14 @@ assert.ok(
 )
 keys(fixture.catalog, ['modelId', 'versionId'])
 for (const id of Object.values(fixture.catalog)) assert.match(id, /^[a-f0-9-]{36}$/i)
-keys(fixture.lora, ['modelId', 'versionId', 'managedPath', 'sha256', 'byteSize'])
-for (const key of ['modelId', 'versionId']) assert.match(fixture.lora[key], /^[a-f0-9-]{36}$/i)
-canonical(fixture.lora.managedPath)
-assert.match(fixture.lora.sha256, /^[a-f0-9]{64}$/)
-assert.ok(Number.isSafeInteger(fixture.lora.byteSize) && fixture.lora.byteSize > 0)
-assert.ok(!within(fixture.artifacts, fixture.lora.managedPath))
+if (!negativeProfile) {
+  keys(fixture.lora, ['modelId', 'versionId', 'managedPath', 'sha256', 'byteSize'])
+  for (const key of ['modelId', 'versionId']) assert.match(fixture.lora[key], /^[a-f0-9-]{36}$/i)
+  canonical(fixture.lora.managedPath)
+  assert.match(fixture.lora.sha256, /^[a-f0-9]{64}$/)
+  assert.ok(Number.isSafeInteger(fixture.lora.byteSize) && fixture.lora.byteSize > 0)
+  assert.ok(!within(fixture.artifacts, fixture.lora.managedPath))
+}
 keys(fixture.baseline, ['contract', 'bundle', 'input', 'png'])
 for (const value of [fixturePath, fixture.appData, fixture.artifacts]) {
   canonical(value)
@@ -250,8 +269,21 @@ const report = {
   profile: fixture.profile,
   status: 'running',
   fixtureSha256: await hashFile(fixturePath),
-  invokeRevision: 'b0ac163b139c432aff4c51078c31c074bf292f72',
-  invokeSourcePins: {
+  invokeRevision: negativeProfile
+    ? '4875d96531ca6712b288f6e660fcbb34143408c1'
+    : 'b0ac163b139c432aff4c51078c31c074bf292f72',
+  invokeSourcePins: negativeProfile ? {
+    'invokeai/app/invocations/anima/anima_denoise.py':
+      '8adb45e054d0425547fd4db3fcdf95e20396ca28e0fb72b52a9d6e71d230cdcf',
+    'invokeai/backend/anima/regional_prompting.py':
+      '92c7436d039bbea68d0bc802fc708bff1a2f13b462343f936ee6eef50ca059fc',
+    'invokeai/backend/anima/anima_transformer_patch.py':
+      '76d1a69b873c857f41b8e5a4ebc9ea3734e681b36dc7d48422c4e8a452795f03',
+    'invokeai/frontend/webv2/src/features/generation/core/canvas/addRegionalGuidance.ts':
+      '4465a25022b33be040ed41cb6d207014fe10c24696357131c1b299a406b93f98',
+    'invokeai/backend/architectures/defs/anima.py':
+      'd05e063f0406263c034adcebac6a177bae3874228dc69141843e5cf6df9e325c',
+  } : {
     'invokeai/frontend/webv2/src/features/generation/core/graph.ts':
       '98b965560da36e51d5c3156792af9e5c304d89374296a7404c424bb56c46c8b2',
     'invokeai/app/invocations/text_encoder/anima_text_encoder.py':
@@ -297,17 +329,23 @@ const report = {
   checks: [],
   expectedSampling,
   planAdaptation:
-    'Separate weight settings require separate Generate actions. Existing temporary-result replacement prevents retaining A and B together. TXT/IMG accept A first and hide only that Raster for B; OUT uses explicit Discard and Generate after retaining A, then frozen Retry recreates A. No Add1/Discard1 claim for this slice.',
+    negativeProfile
+      ? 'Separate local-negative settings require separate Generate actions. TXT/IMG accept A first and hide only that Raster for B; OUT explicitly replaces temporary A with B, then selected frozen Retry recreates A. No implicit acceptance or Add1/Discard1 claim.'
+      : 'Separate weight settings require separate Generate actions. Existing temporary-result replacement prevents retaining A and B together. TXT/IMG accept A first and hide only that Raster for B; OUT uses explicit Discard and Generate after retaining A, then frozen Retry recreates A. No Add1/Discard1 claim for this slice.',
   boundaries: {
     runtime:
       'Default installed RuntimeManager; no injected worker, availability, model, or ML adapter',
     pixels:
-      'Healthy nonzero versus enabled-zero exact LoRA share seed/text/masks/source/arrays; RGB must differ. OUT frozen Retry equals its own nonzero healthy RGBA. Original source-over is independently checked.',
+      negativeProfile
+        ? 'A/B changes only local region0 negative text, retaining nonempty signed bank length/global/inherited/positive/masks/source/seed/arrays. Visible reopened RGB must differ. OUT selected frozen Retry equals its own A RGBA; alpha/source-over remain exact.'
+        : 'Healthy nonzero versus enabled-zero exact LoRA share seed/text/masks/source/arrays; RGB must differ. OUT frozen Retry equals its own nonzero healthy RGBA. Original source-over is independently checked.',
     composite: outpaint
       ? 'Saved640-square source/contribution union checks exact alpha/protected/generated/source-only pixels, existing1-unit soft RGB rounding only'
       : 'Saved512-square opaque accepted Raster is checked against every reopened published RGB byte',
     sampling:
-      'Unchanged ordinary Heun20 compiler: TXT39 evaluations; IMG/OUT strength0.5 gives19. Healthy and enabled-zero controls use identical seed123/arrays; canceled pending sibling alone has seed124.',
+      negativeProfile
+        ? 'Unchanged ordinary Heun20 compiler: TXT39 evaluations; IMG/OUT strength0.5 gives19. Negative A/B controls use seed123 and exact arrays; canceled pending sibling alone has seed124.'
+        : 'Unchanged ordinary Heun20 compiler: TXT39 evaluations; IMG/OUT strength0.5 gives19. Healthy and enabled-zero controls use identical seed123/arrays; canceled pending sibling alone has seed124.',
     source: imageInput
       ? 'Exact canonical preceding RGB PNG prepared through ProjectSession without pixel edits/resampling; actual source composition and frozen snapshot verified; not Import UI qualification'
       : 'Genuine transparent Current Canvas, no source Raster; original source descriptor is protected but unused',
@@ -344,6 +382,7 @@ let timer,
   error,
   closing
 const allWires = () => report.lifetimes.flatMap(({ observers }) => wires(observers))
+const frozenNegativeInputs = new Map()
 const workerFiles = [
   'anima_outpaint.py',
   'outpaint_worker_assets.py',
@@ -371,6 +410,7 @@ const sourceFiles = [
   'scripts/qualify-installed-anima-regional-outpaint.mjs',
   'scripts/qualify-installed-anima-regional.mjs',
   'src/main/projects/anima-regional-worker-request.ts',
+  ...(negativeProfile ? ['src/main/projects/project-current-canvas-anima-regional-input.ts'] : []),
   'src/main/projects/anima-regional-queued-generation.ts',
   'src/main/projects/project-regional-generation-coordinator.ts',
   'src/main/projects/regional-generation-processor.ts',
@@ -550,37 +590,40 @@ async function prepare() {
     )
     assert.ok(!within(fixture.artifacts, file.path))
   }
-  const loraReference = await models.resolveGenerationLora(
-    fixture.lora.modelId,
-    fixture.lora.versionId,
-  )
-  assert.equal(loraReference.kind, 'lora')
-  assert.equal(loraReference.baseModelFamily, 'anima')
-  assert.equal(loraReference.predictionType, null)
-  const loraVerified = await models.resolveVerifiedAnimaGenerationLoraForPlan(loraReference)
-  assert.deepEqual(
-    {
-      managedPath: loraVerified.managedPath,
-      byteSize: loraVerified.byteSize,
-      sha256: loraVerified.reference.fileSha256,
-    },
-    {
-      managedPath: fixture.lora.managedPath,
-      byteSize: fixture.lora.byteSize,
-      sha256: fixture.lora.sha256,
-    },
-  )
-  assert.equal((await regular(fixture.lora.managedPath)).size, fixture.lora.byteSize)
-  assert.equal(await hashFile(fixture.lora.managedPath), fixture.lora.sha256)
-  report.catalog = {
-    reference,
-    verified,
-    lora: {
-      reference: loraReference,
-      verified: loraVerified,
-      stat: statIdentity(await regular(fixture.lora.managedPath)),
-    },
-  }
+  let loraReference
+  if (!negativeProfile) {
+    loraReference = await models.resolveGenerationLora(
+      fixture.lora.modelId,
+      fixture.lora.versionId,
+    )
+    assert.equal(loraReference.kind, 'lora')
+    assert.equal(loraReference.baseModelFamily, 'anima')
+    assert.equal(loraReference.predictionType, null)
+    const loraVerified = await models.resolveVerifiedAnimaGenerationLoraForPlan(loraReference)
+    assert.deepEqual(
+      {
+        managedPath: loraVerified.managedPath,
+        byteSize: loraVerified.byteSize,
+        sha256: loraVerified.reference.fileSha256,
+      },
+      {
+        managedPath: fixture.lora.managedPath,
+        byteSize: fixture.lora.byteSize,
+        sha256: fixture.lora.sha256,
+      },
+    )
+    assert.equal((await regular(fixture.lora.managedPath)).size, fixture.lora.byteSize)
+    assert.equal(await hashFile(fixture.lora.managedPath), fixture.lora.sha256)
+    report.catalog = {
+      reference,
+      verified,
+      lora: {
+        reference: loraReference,
+        verified: loraVerified,
+        stat: statIdentity(await regular(fixture.lora.managedPath)),
+      },
+    }
+  } else report.catalog = { reference, verified }
   report.catalog.fileStats = Object.fromEntries(
     await Promise.all(
       Object.entries(bundle).map(async ([role, file]) => [
@@ -594,8 +637,7 @@ async function prepare() {
     imageCapability,
     samplingCapability,
     outpaintCapability,
-    loraCapability,
-    'anima-lora',
+    ...(negativeProfile ? [negativeCapability] : [loraCapability, 'anima-lora']),
     'anima-outpaint',
   ])
     assert.ok(provision.ready.capabilities.includes(required), `Installed worker lacks ${required}`)
@@ -609,7 +651,7 @@ async function prepare() {
   report.outpaintInfill = outpaintInfill
   const workspace = path.join(fixture.appData, 'workspaces/Uncategorized')
   await mkdir(workspace, { recursive: true, mode: 0o700 })
-  const title = `Anima regional LoRA ${fixture.mode} ${path.basename(fixture.artifacts)} ${randomUUID().slice(0, 8)}`
+  const title = `Anima regional ${negativeProfile ? 'negative' : 'LoRA'} ${fixture.mode} ${path.basename(fixture.artifacts)} ${randomUUID().slice(0, 8)}`
   const file = path.join(workspace, `${title}.igs`)
   assert.equal(existsSync(file), false)
   const session = await ProjectSession.create(
@@ -626,7 +668,7 @@ async function prepare() {
   document.generationDraft.model = reference
   document.generationDraft.dynamicPrompt = { maxPrompts: 1, seedBehavior: 'per-prompt' }
   document.generationDraft.positivePrompt.text = globalPositive
-  document.generationDraft.loras = [
+  document.generationDraft.loras = negativeProfile ? [] : [
     { resource: structuredClone(loraReference), enabled: true, weight: activeWeight },
     {
       resource: {
@@ -708,6 +750,17 @@ async function prepare() {
     initialPackageSha256: await hashFile(file),
   }
   report.project = project
+  if (negativeProfile) report.negative = {
+    capability: negativeCapability,
+    activeLocalText: activeNegative,
+    controlLocalText: controlNegative,
+    globalText: contract.globalNegative,
+    inheritedRegionIndex: 1,
+    rowsPerSource: 512,
+    expectedSignedSources: 6,
+    expectedKeysPerSign: 1536,
+    frozenInputs: [],
+  }
   report.source = {
     descriptor: fixture.source,
     layerId: imageInput ? sourceId : null,
@@ -724,7 +777,9 @@ async function prepare() {
   await database.close()
   database = null
   check(
-    'Canonical installed runtime/catalog verified; ProjectSession prepares exact regional source geometry and unchanged Heun plan and exact signed/disabled LoRA stack; genuine UI will author enabled-zero control',
+    negativeProfile
+      ? 'Canonical installed runtime/catalog verified; ProjectSession preserves source/masks/Heun plan with no LoRAs; genuine UI will author local/inherited negatives and the nonempty text-only neighbor'
+      : 'Canonical installed runtime/catalog verified; ProjectSession prepares exact regional source geometry and unchanged Heun plan and exact signed/disabled LoRA stack; genuine UI will author enabled-zero control',
   )
 }
 
@@ -1241,6 +1296,39 @@ async function setLoraWeight(weight, persist = true) {
     project.initialPackageSha256 = await hashFile(project.file)
   }
 }
+async function setNegativeSource(index, inherited) {
+  const region = (await current()).regionalGuidance[index]
+  const row = window.locator(`[data-regional-guidance-id="${region.id}"]`)
+  const control = row.getByRole('switch', { name: 'Use global negative prompt', exact: true })
+  await expect(control).toBeEnabled({ timeout: timeout() })
+  if ((await control.getAttribute('aria-checked')) !== String(inherited)) await control.click()
+  await expect(control).toHaveAttribute('aria-checked', String(inherited))
+  await expect
+    .poll(async () => (await current()).regionalGuidance[index].prompts.useGlobalNegativePrompt)
+    .toBe(inherited)
+}
+async function setNegativeText(text, persist = true) {
+  assert.ok(negativeProfile && [activeNegative, controlNegative].includes(text))
+  const first = (await current()).regionalGuidance[0]
+  const row = window.locator(`[data-regional-guidance-id="${first.id}"]`)
+  const input = row.getByRole('textbox', { name: 'Regional negative prompt', exact: true })
+  await expect(input).toBeEnabled({ timeout: timeout() })
+  await input.fill(text)
+  await input.press('Tab')
+  await expect
+    .poll(async () => (await current()).regionalGuidance[0].prompts.negative.text)
+    .toBe(text)
+  assert.equal((await current()).regionalGuidance[0].prompts.useGlobalNegativePrompt, false)
+  assert.equal((await current()).regionalGuidance[1].prompts.useGlobalNegativePrompt, true)
+  if (persist) {
+    await save()
+    project.initialPackageSha256 = await hashFile(project.file)
+  }
+}
+async function setControl(setting) {
+  if (negativeProfile) await setNegativeText(setting)
+  else await setLoraWeight(setting)
+}
 async function authorStaticUi() {
   const editor = window.getByRole('textbox', { name: 'Positive prompt', exact: true })
   await editor.fill(globalPositive)
@@ -1249,7 +1337,33 @@ async function authorStaticUi() {
     .poll(async () => (await current()).generationDraft.positivePrompt.text)
     .toBe(globalPositive)
   await setInput('Images per click', 1)
-  await setLoraWeight(activeWeight)
+  if (negativeProfile) {
+    const firstRegion = (await current()).regionalGuidance[0]
+    if (firstRegion.locked) {
+      const firstRow = window.locator(`[data-regional-guidance-id="${firstRegion.id}"]`)
+      await firstRow.getByRole('button', { name: `Unlock ${firstRegion.name}`, exact: true }).click()
+      await expect.poll(async () => (await current()).regionalGuidance[0].locked).toBe(false)
+      report.negative.unlockedForAuthoring = firstRegion.id
+    }
+    const negative = window.getByRole('textbox', { name: 'Negative prompt', exact: true })
+    await negative.fill(contract.globalNegative)
+    await negative.press('Tab')
+    await expect
+      .poll(async () => (await current()).generationDraft.negativePrompt.text)
+      .toBe(contract.globalNegative)
+    await setNegativeSource(0, false)
+    await setNegativeSource(1, false)
+    const right = (await current()).regionalGuidance[1]
+    const dormant = window.locator(`[data-regional-guidance-id="${right.id}"]`)
+      .getByRole('textbox', { name: 'Regional negative prompt', exact: true })
+    await dormant.fill(dormantNegative)
+    await dormant.press('Tab')
+    await expect
+      .poll(async () => (await current()).regionalGuidance[1].prompts.negative.text)
+      .toBe(dormantNegative)
+    await setNegativeSource(1, true)
+    await setNegativeText(activeNegative)
+  } else await setLoraWeight(activeWeight)
   const authored = await current(),
     stored = await readIgsPackage(project.file)
   assert.deepEqual(authored.generationDraft.dynamicPrompt, {
@@ -1258,13 +1372,24 @@ async function authorStaticUi() {
   })
   assert.deepEqual(stored.project.generationDraft, authored.generationDraft)
   assert.deepEqual(authored.generationDraft.loras, project.document.generationDraft.loras)
-  assert.equal(authored.generationDraft.loras[1].enabled, false)
+  if (!negativeProfile) assert.equal(authored.generationDraft.loras[1].enabled, false)
+  else {
+    assert.deepEqual(authored.generationDraft.loras, [])
+    assert.equal(authored.regionalGuidance[0].prompts.negative.text, activeNegative)
+    assert.equal(authored.regionalGuidance[0].prompts.useGlobalNegativePrompt, false)
+    assert.equal(authored.regionalGuidance[1].prompts.useGlobalNegativePrompt, true)
+    assert.equal(authored.regionalGuidance[1].prompts.negative.text, dormantNegative)
+    assert.deepEqual(stored.project.regionalGuidance, authored.regionalGuidance.map(
+      ({ maskImageUrl: _maskImageUrl, ...region }) => region,
+    ))
+  }
   report.authoring = {
     generationDraft: authored.generationDraft,
     packageSha256: project.initialPackageSha256,
     globalPositive,
-    activeWeight,
-    controlWeight,
+    ...(negativeProfile
+      ? { activeLocalNegative: activeNegative, controlLocalNegative: controlNegative }
+      : { activeWeight, controlWeight }),
     seed: 123,
     iterations: 1,
   }
@@ -1278,6 +1403,12 @@ function frozenSeed(frozen) {
   return seed
 }
 function assertFrozenLora(frozen, expectedWeight) {
+  if (negativeProfile) {
+    assert.deepEqual(frozen.context.loraStack, [])
+    assert.deepEqual(frozen.context.loras, [])
+    assert.deepEqual(frozen.workerJob.loras, [])
+    return []
+  }
   assert.equal(frozen.context.loraStack.length, 2)
   assert.deepEqual(frozen.context.loraStack[1], project.document.generationDraft.loras[1])
   assert.deepEqual(frozen.context.loraStack[0], {
@@ -1302,6 +1433,59 @@ function assertFrozenLora(frozen, expectedWeight) {
   assert.deepEqual(frozen.workerJob.loras, expected)
   return expected
 }
+function negativeCompiled(text) {
+  assert.ok([activeNegative, controlNegative].includes(text))
+  const cleanedText = text === activeNegative ? 'red scarf' : 'green scarf'
+  return {
+    version: 'anima-prompt-weighting-v1',
+    cleanedText,
+    spans: [{ start: 0, end: cleanedText.length, weight: 1.5 }],
+  }
+}
+function assertNegativeRecords(value, expectedText) {
+  assert.ok(negativeProfile && [activeNegative, controlNegative].includes(expectedText))
+  assert.equal(value.recipe.regions.length, 2)
+  const [left, right] = value.recipe.regions
+  assert.deepEqual(left.negative, {
+    source: 'regional', prompt: { text: expectedText, embeddingRefs: [] },
+  })
+  assert.equal(left.authoredPrompts.useGlobalNegativePrompt, false)
+  assert.deepEqual(left.authoredPrompts.negative, left.negative.prompt)
+  assert.deepEqual(right.negative, {
+    source: 'current-canvas', prompt: { text: contract.globalNegative, embeddingRefs: [] },
+  })
+  assert.equal(right.authoredPrompts.useGlobalNegativePrompt, true)
+  assert.deepEqual(right.authoredPrompts.negative, { text: dormantNegative, embeddingRefs: [] })
+  assert.deepEqual(value.compiledPrompts.map(({ polarity, sourceId, text }) => ({ polarity, sourceId, text })), [
+    { polarity: 'positive', sourceId: 'current-canvas', text: globalPositive },
+    { polarity: 'negative', sourceId: 'current-canvas', text: contract.globalNegative },
+    { polarity: 'positive', sourceId: left.regionId, text: contract.regionalTexts[0] },
+    { polarity: 'negative', sourceId: left.regionId, text: expectedText },
+    { polarity: 'positive', sourceId: right.regionId, text: contract.regionalTexts[1] },
+    { polarity: 'negative', sourceId: right.regionId, text: contract.globalNegative },
+  ])
+  assert.deepEqual(value.compiledPrompts[3].prompt, negativeCompiled(expectedText))
+  assert.deepEqual(value.compiledPrompts[5].prompt, baseline.compiledPrompts[1].prompt)
+  assert.deepEqual(value.compiledPrompts[1].prompt, value.compiledPrompts[5].prompt)
+  assert.notEqual(value.compiledPrompts[1].sourceId, value.compiledPrompts[5].sourceId)
+}
+async function captureFrozenNegative(entry, expectedText) {
+  const frozen = JSON.parse(entry.frozen_payload_json)
+  assertFrozenLora(frozen)
+  const file = path.join(fixture.appData, 'generation-inputs', entry.id, 'regional.json')
+  await regular(file, 1024 * 1024)
+  const bytes = await readFile(file)
+  assert.equal(bytes.length, frozen.regional.byteSize)
+  assert.equal(sha(bytes), frozen.regional.sha256)
+  const value = JSON.parse(bytes)
+  assertNegativeRecords(value, expectedText)
+  assert.equal(value.recipe.documentId, frozen.context.documentId)
+  assert.equal(value.recipe.documentRevision, frozen.context.documentRevision)
+  assert.equal(value.recipe.item.seed, frozen.context.sampling.seed)
+  const preserved = structuredClone(value)
+  frozenNegativeInputs.set(entry.id, preserved)
+  report.negative.frozenInputs.push({ queueItemId: entry.id, sha256: sha(bytes), value: preserved })
+}
 async function generateItems(expectedTotal, iterations = 1) {
   const before = new Set((await ownRows()).map(({ id }) => id)),
     document = await current()
@@ -1311,7 +1495,9 @@ async function generateItems(expectedTotal, iterations = 1) {
   await expect(button).toBeEnabled({ timeout: timeout() })
   await button.click()
   if (existing.length) {
-    assert.equal(outpaint, true, 'TXT/IMG accept A before creating the zero control')
+    assert.equal(outpaint, true, negativeProfile
+      ? 'TXT/IMG accept A before creating the negative-B control'
+      : 'TXT/IMG accept A before creating the zero control')
     assert.equal(existing.length, 1)
     const dialog = window.getByRole('dialog', {
       name: 'Replace temporary generation results',
@@ -1353,7 +1539,8 @@ async function generateItems(expectedTotal, iterations = 1) {
     assert.equal(frozen.context.documentRevision, document.documentRevision)
     assert.equal(frozen.kind, `anima-regional-${fixture.mode}`)
     assert.deepEqual(frozen.workerJob.sampling, samplingFor(123 + index))
-    assertFrozenLora(frozen, document.generationDraft.loras[0].weight)
+    if (negativeProfile) await captureFrozenNegative(entry, document.regionalGuidance[0].prompts.negative.text)
+    else assertFrozenLora(frozen, document.generationDraft.loras[0].weight)
   }
   report.admitted = [...(report.admitted ?? []), ...fresh.map(({ id }) => id)]
   report.submissions ??= []
@@ -1719,7 +1906,9 @@ async function candidateOutput(jobId, name) {
     target,
     alphaIdentity,
     frozen,
-    weight: frozen.context.loras[0].weight,
+    ...(negativeProfile
+      ? { localNegative: frozenNegativeInputs.get(jobId).recipe.regions[0].negative.prompt.text }
+      : { weight: frozen.context.loras[0].weight }),
   }
 }
 function assertTarget(target) {
@@ -1748,6 +1937,18 @@ function semanticInput(value) {
     compiledPrompts: value.compiledPrompts.map(({ sourceId: _sourceId, ...record }) => record),
     sampling: value.request?.job.sampling ?? value.sampling,
   }
+}
+function negativeControlSemanticInput(value) {
+  const normalized = structuredClone(semanticInput(value))
+  assert.equal(normalized.compiledPrompts.length, 6)
+  normalized.regions[0].negative.prompt.text = '<local negative A/B>'
+  normalized.regions[0].authoredPrompts.negative.text = '<local negative A/B>'
+  normalized.compiledPrompts[3] = {
+    ...normalized.compiledPrompts[3],
+    text: '<local negative A/B>',
+    prompt: '<local negative A/B compilation>',
+  }
+  return normalized
 }
 async function verifyWire(wire, expectedRow) {
   assert.equal(wire.reportProgress, true)
@@ -1786,12 +1987,19 @@ async function verifyWire(wire, expectedRow) {
     assert.equal(region.maskId, authored.mask.id)
     assert.equal(region.maskRevision, authored.mask.revision)
     assert.deepEqual(region.positive, retained.positive)
-    assert.deepEqual(
-      { ...region.negative, source: undefined },
-      { ...retained.negative, source: undefined },
-    )
-    assert.equal(region.negative.source, 'regional')
-    assert.deepEqual(region.authoredPrompts, retained.authoredPrompts)
+    if (!negativeProfile) {
+      assert.deepEqual(
+        { ...region.negative, source: undefined },
+        { ...retained.negative, source: undefined },
+      )
+      assert.equal(region.negative.source, 'regional')
+      assert.deepEqual(region.authoredPrompts, retained.authoredPrompts)
+    } else {
+      const input = frozenNegativeInputs.get(expectedRow.id)
+      assert.ok(input)
+      assert.deepEqual(region.negative, input.recipe.regions[regionIndex].negative)
+      assert.deepEqual(region.authoredPrompts, input.recipe.regions[regionIndex].authoredPrompts)
+    }
     assert.deepEqual(
       { ...region.coverage, alpha: undefined },
       { ...retained.coverage, alpha: undefined },
@@ -1803,18 +2011,27 @@ async function verifyWire(wire, expectedRow) {
     )
   }
   const compiled = value.compiledPrompts
-  assert.deepEqual(
-    compiled.map(({ polarity, sourceId, text }) => ({ polarity, sourceId, text })),
-    [
-      { polarity: 'positive', sourceId: 'current-canvas', text: globalPositive },
-      { polarity: 'negative', sourceId: 'current-canvas', text: contract.globalNegative },
-      ...value.recipe.regions.map(({ regionId, positive }) => ({
-        polarity: 'positive',
-        sourceId: regionId,
-        text: positive.text,
-      })),
-    ],
-  )
+  if (!negativeProfile) {
+    assert.deepEqual(
+      compiled.map(({ polarity, sourceId, text }) => ({ polarity, sourceId, text })),
+      [
+        { polarity: 'positive', sourceId: 'current-canvas', text: globalPositive },
+        { polarity: 'negative', sourceId: 'current-canvas', text: contract.globalNegative },
+        ...value.recipe.regions.map(({ regionId, positive }) => ({
+          polarity: 'positive',
+          sourceId: regionId,
+          text: positive.text,
+        })),
+      ],
+    )
+  } else {
+    const input = frozenNegativeInputs.get(expectedRow.id)
+    assert.ok(input)
+    assertNegativeRecords(value, input.recipe.regions[0].negative.prompt.text)
+    assert.deepEqual(compiled, input.compiledPrompts)
+    assert.deepEqual(compiled[2].prompt, baseline.compiledPrompts[2].prompt)
+    assert.deepEqual(compiled[4].prompt, baseline.compiledPrompts[3].prompt)
+  }
   // Fixed independent expected code-point spans for this predeclared static scene.
   assert.deepEqual(compiled[0].prompt, {
     version: 'anima-prompt-weighting-v1',
@@ -1824,18 +2041,22 @@ async function verifyWire(wire, expectedRow) {
       { start: 14, end: 27, weight: 1 },
     ],
   })
-  for (let n = 1; n < compiled.length; n++)
-    assert.deepEqual(compiled[n].prompt, baseline.compiledPrompts[n].prompt)
+  if (!negativeProfile)
+    for (let n = 1; n < compiled.length; n++)
+      assert.deepEqual(compiled[n].prompt, baseline.compiledPrompts[n].prompt)
+  else assert.deepEqual(compiled[1].prompt, baseline.compiledPrompts[1].prompt)
   assert.deepEqual(value.request.job.prompts, {
     positive: compiled[0].prompt,
     negative: compiled[1].prompt,
   })
   for (const [role, file] of Object.entries(bundle))
     assert.deepEqual(value.request.job.model[role], file)
-  const expectedWeight = frozen.context.loras[0].weight
-  assert.ok(expectedWeight === activeWeight || expectedWeight === controlWeight)
-  assert.deepEqual(value.request.job.loras, assertFrozenLora(frozen, expectedWeight))
-  assert.ok(!within(wire.stagingRoot, fixture.lora.managedPath))
+  const expectedWeight = negativeProfile ? null : frozen.context.loras[0].weight
+  if (!negativeProfile) {
+    assert.ok(expectedWeight === activeWeight || expectedWeight === controlWeight)
+    assert.deepEqual(value.request.job.loras, assertFrozenLora(frozen, expectedWeight))
+    assert.ok(!within(wire.stagingRoot, fixture.lora.managedPath))
+  } else assert.deepEqual(value.request.job.loras, assertFrozenLora(frozen))
   const bytes = await readFile(wire.target.retained),
     target = decodePng(bytes)
   assert.equal(sha(bytes), wire.target.sha256)
@@ -1863,7 +2084,9 @@ async function verifyWire(wire, expectedRow) {
   report.verifiedAssociations.push({
     queueItemId: expectedRow.id,
     wireRequestId: wire.requestId,
-    loraWeight: expectedWeight,
+    ...(negativeProfile
+      ? { localNegative: value.recipe.regions[0].negative.prompt.text, signedSources: compiled.length }
+      : { loraWeight: expectedWeight }),
     seed,
     prompt: globalPositive,
     documentId: value.recipe.documentId,
@@ -1915,6 +2138,23 @@ async function editCurrent() {
   await expect
     .poll(async () => (await current()).generationDraft.positivePrompt.text)
     .toBe('later ordinary authoring after frozen Anima cancellation')
+  if (negativeProfile) {
+    const globalNegative = window.getByRole('textbox', { name: 'Negative prompt', exact: true })
+    await globalNegative.fill('later global negative after frozen cancellation')
+    await globalNegative.press('Tab')
+    await expect
+      .poll(async () => (await current()).generationDraft.negativePrompt.text)
+      .toBe('later global negative after frozen cancellation')
+    await setNegativeSource(0, true)
+    await setNegativeSource(1, false)
+    const neighbor = window.locator(`[data-regional-guidance-id="${second.id}"]`)
+    const localNegative = neighbor.getByRole('textbox', { name: 'Regional negative prompt', exact: true })
+    await localNegative.fill('later local negative after frozen cancellation')
+    await localNegative.press('Tab')
+    await expect
+      .poll(async () => (await current()).regionalGuidance[1].prompts.negative.text)
+      .toBe('later local negative after frozen cancellation')
+  }
   const regionRow = window.locator(`[data-regional-guidance-id="${second.id}"]`)
   const prompt = regionRow.getByRole('textbox', { name: 'Regional prompt', exact: true })
   await expect(prompt).toBeEnabled({ timeout: timeout() })
@@ -1971,6 +2211,12 @@ async function editCurrent() {
   assert.deepEqual(after.generationDraft.seed, { policy: 'fixed', value: 999 })
   assert.ok(after.regionalGuidance.every(({ enabled }) => !enabled))
   assert.equal(after.regionalGuidance[1].prompts.positive.text, 'later green scarf authoring')
+  if (negativeProfile) {
+    assert.equal(after.generationDraft.negativePrompt.text, 'later global negative after frozen cancellation')
+    assert.equal(after.regionalGuidance[0].prompts.useGlobalNegativePrompt, true)
+    assert.equal(after.regionalGuidance[1].prompts.useGlobalNegativePrompt, false)
+    assert.equal(after.regionalGuidance[1].prompts.negative.text, 'later local negative after frozen cancellation')
+  }
   report.edited = {
     sourceLayer: sourceUiState(after.layers[0]),
     generationDraft: after.generationDraft,
@@ -2036,6 +2282,7 @@ function assertProvenance(provenance, candidate, frozen, pngSha256) {
     'outpaintInfill',
     'regional:',
     ...contract.regionalTexts,
+    ...(negativeProfile ? [activeNegative, controlNegative] : []),
     fixture.appData,
   ])
     assert.ok(
@@ -2299,8 +2546,7 @@ async function verifyObservers() {
         samplingCapability,
         imageCapability,
         outpaintCapability,
-        loraCapability,
-        'anima-lora',
+        ...(negativeProfile ? [negativeCapability] : [loraCapability, 'anima-lora']),
         'anima-outpaint',
       ])
         assert.ok(worker.ready.capabilities.includes(required))
@@ -2385,7 +2631,9 @@ async function verifyObservers() {
       assert.equal(
         wire.bundleJson.recipe.item.seed,
         123,
-        'Healthy and enabled-zero controls must use the same numeric seed',
+        negativeProfile
+          ? 'Negative A/B controls must use the same numeric seed'
+          : 'Healthy and enabled-zero controls must use the same numeric seed',
       )
     const targetJob = report.verifiedAssociations.find(
       ({ wireRequestId }) => wireRequestId === wire.requestId,
@@ -2416,11 +2664,13 @@ async function run() {
     assert.ok((await rasterBytes(initial.layers[0])).equals(sourceBytes))
   }
   await authorStaticUi()
-  await screenshot('00-authored-global-lora-ready')
+  if (negativeProfile) assert.equal((await api('getGenerationState', project.id)).animaRegionalNegativeSupported, true)
+  await screenshot(negativeProfile ? '00-authored-regional-negatives-ready' : '00-authored-global-lora-ready')
   const first = (await generateItems(1))[0]
   await completed(first.id)
   await idle()
-  const controls = [await candidateOutput(first.id, 'healthy-nonzero')]
+  const controls = [await candidateOutput(first.id, negativeProfile ? 'negative-a' : 'healthy-nonzero')]
+  if (negativeProfile) assert.equal(controls[0].localNegative, activeNegative)
   assertFrozenLora(controls[0].frozen, activeWeight)
   if (!outpaint) {
     await acceptUndoSaveReopen(controls[0], controls[0].frozen)
@@ -2430,41 +2680,56 @@ async function run() {
     await expect
       .poll(async () => (await current()).layers.find(({ id }) => id === accepted.id).visible)
       .toBe(false)
-    report.acceptedHiddenForZeroControl = {
+    report[negativeProfile ? 'acceptedHiddenForNegativeControl' : 'acceptedHiddenForZeroControl'] = {
       layerId: accepted.id,
       originalProvenance: report.accepted.provenance,
     }
     assert.equal((await targetState()).mode, fixture.mode)
   }
-  await setLoraWeight(controlWeight)
+  await setControl(controlSetting)
   const second = (await generateItems(2))[0]
   await completed(second.id)
   await idle()
-  controls.push(await candidateOutput(second.id, 'enabled-zero-control'))
+  controls.push(await candidateOutput(second.id, negativeProfile ? 'negative-b' : 'enabled-zero-control'))
+  if (negativeProfile) assert.equal(controls[1].localNegative, controlNegative)
   assertFrozenLora(controls[1].frozen, controlWeight)
   const healthy = [first, second]
   const firstObserved = await observed(),
     firstWires = wires(firstObserved)
   assert.equal(firstWires.length, 2)
   for (const [index, wire] of firstWires.entries()) await verifyWire(wire, healthy[index])
-  assert.deepEqual(semanticInput(firstWires[0].bundleJson), semanticInput(firstWires[1].bundleJson))
+  if (negativeProfile)
+    assert.deepEqual(negativeControlSemanticInput(firstWires[0].bundleJson), negativeControlSemanticInput(firstWires[1].bundleJson))
+  else assert.deepEqual(semanticInput(firstWires[0].bundleJson), semanticInput(firstWires[1].bundleJson))
   assert.equal(firstWires[0].target.sha256, firstWires[1].target.sha256)
   let changedRgbChannels = 0,
-    changedVisibleRgbChannels = 0
+    changedVisibleRgbChannels = 0,
+    changedFullyVisibleRgbChannels = 0
   for (let n = 0; n < controls[0].decoded.rgb.length; n++) {
     const changed = Number(controls[0].decoded.rgb[n] !== controls[1].decoded.rgb[n])
     changedRgbChannels += changed
     if (controls[0].decoded.rgba[Math.floor(n / 3) * 4 + 3] > 0)
       changedVisibleRgbChannels += changed
+    if (controls[0].decoded.rgba[Math.floor(n / 3) * 4 + 3] === 255)
+      changedFullyVisibleRgbChannels += changed
   }
   assert.ok(
     changedRgbChannels > 0,
-    'Changing only the exact enabled LoRA weight -0.5 to0 must change reopened published RGB',
+    negativeProfile
+      ? 'Changing only the first local nonempty negative red scarf to green scarf must change reopened published RGB'
+      : 'Changing only the exact enabled LoRA weight -0.5 to0 must change reopened published RGB',
   )
   assert.ok(
     changedVisibleRgbChannels > 0,
-    'LoRA contrast must reach visible output, not only RGB hidden under zero contribution alpha',
+    negativeProfile
+      ? 'Local-negative contrast must reach visible RGB, not only hidden contribution channels'
+      : 'LoRA contrast must reach visible output, not only RGB hidden under zero contribution alpha',
   )
+  if (negativeProfile)
+    assert.ok(
+      changedFullyVisibleRgbChannels > 0,
+      'Local-negative contrast must change opaque contribution pixels that stay visibly distinct after source-over',
+    )
   if (outpaint) {
     for (let n = 0; n < 512 * 512; n++)
       assert.equal(controls[0].decoded.rgba[n * 4 + 3], controls[1].decoded.rgba[n * 4 + 3])
@@ -2472,33 +2737,37 @@ async function run() {
   assert.notEqual(controls[0].receipt.image_sha256, controls[1].receipt.image_sha256)
   report.controls = controls.map((control) => ({
     queueItemId: control.candidate.queueItemId,
-    loraWeight: control.weight,
+    ...(negativeProfile ? { localNegative: control.localNegative } : { loraWeight: control.weight }),
     actualSeed: control.candidate.actualSeed,
     pngSha256: sha(control.bytes),
     rgbSha256: control.decoded.rgbSha256,
     rgbaSha256: control.decoded.rgbaSha256,
   }))
-  report.loraOnlyRgbContrast = {
+  report[negativeProfile ? 'negativeOnlyRgbContrast' : 'loraOnlyRgbContrast'] = {
     changedRgbChannels,
     changedVisibleRgbChannels,
     fullRgbBytes: controls[0].decoded.rgb.length,
     seedExact: 123,
-    semanticInputsExact: true,
+    ...(negativeProfile
+      ? { allOtherSemanticInputsExact: true, changedOnly: 'region0.localNegativeText', signedSourceCount: 6, keysPerSign: 1536 }
+      : { semanticInputsExact: true }),
+    ...(negativeProfile ? { changedFullyVisibleRgbChannels } : {}),
     sourceExact: true,
     alphaExact: outpaint,
   }
   report.healthyRows = await Promise.all(healthy.map(({ id }) => row(id)))
   assert.ok(report.healthyRows.every(({ status }) => status === 'completed'))
-  assert.equal((await current()).generationDraft.loras[0].weight, controlWeight)
+  if (negativeProfile) assert.equal((await current()).regionalGuidance[0].prompts.negative.text, controlNegative)
+  else assert.equal((await current()).generationDraft.loras[0].weight, controlWeight)
   assert.equal(
     await hashFile(project.file),
     project.initialPackageSha256,
     'Completion must not save authoring',
   )
-  await screenshot('01-enabled-zero-control-result')
+  await screenshot(negativeProfile ? '01-negative-b-control-result' : '01-enabled-zero-control-result')
   if (!outpaint) {
     await closeProjectDiscardCandidates()
-    report.zeroTemporaryCandidateExplicitlyDiscarded = second.id
+    report[negativeProfile ? 'negativeNeighborExplicitlyDiscarded' : 'zeroTemporaryCandidateExplicitlyDiscarded'] = second.id
     await openProject()
     const accepted = (await current()).layers.find(({ id }) => id === report.accepted.layerId)
     assert.ok(accepted && !accepted.visible)
@@ -2522,26 +2791,27 @@ async function run() {
       sha(controls[0].bytes),
     )
     assert.ok((await finalSaved.readMember(finalAccepted.asset.path)).equals(controls[0].bytes))
-    assert.equal(finalSaved.project.generationDraft.loras[0].weight, controlWeight)
+    if (negativeProfile) assert.equal(finalSaved.project.regionalGuidance[0].prompts.negative.text, controlNegative)
+    else assert.equal(finalSaved.project.generationDraft.loras[0].weight, controlWeight)
     if (imageInput) await assertSavedSource(finalSaved, true)
     const finalPreview = decodePng(await finalSaved.readMember('preview/merged.png'))
     assert.ok(finalPreview.rgb.equals(controls[0].decoded.rgb))
-    report.accepted.beforeZeroControlPackageSha256 = report.accepted.packageSha256
+    report.accepted[negativeProfile ? 'beforeNegativeControlPackageSha256' : 'beforeZeroControlPackageSha256'] = report.accepted.packageSha256
     report.accepted.packageSha256 = await hashFile(project.file)
-    report.accepted.afterZeroControl = {
+    report.accepted[negativeProfile ? 'afterNegativeControl' : 'afterZeroControl'] = {
       sameProvenance: true,
       sameAcceptedPng: true,
       visible: true,
-      currentWeight: controlWeight,
+      ...(negativeProfile ? { currentLocalNegative: controlNegative } : { currentWeight: controlWeight }),
       mergedRgbSha256: finalPreview.rgbSha256,
     }
     assert.deepEqual((await api('listGenerationResults', project.id)).candidates, [])
-    await screenshot('08-nonzero-accepted-after-zero-discard-reopened')
+    await screenshot(negativeProfile ? '08-negative-a-accepted-after-b-discard-reopened' : '08-nonzero-accepted-after-zero-discard-reopened')
   } else {
     await closeProjectDiscardCandidates()
-    report.zeroTemporaryCandidateExplicitlyDiscardedBeforeCancel = second.id
+    report[negativeProfile ? 'negativeNeighborExplicitlyDiscardedBeforeCancel' : 'zeroTemporaryCandidateExplicitlyDiscardedBeforeCancel'] = second.id
     await openProject()
-    await setLoraWeight(activeWeight)
+    await setControl(activeSetting)
     const [running, pending] = await generateItems(4, 2)
     await openQueue()
     assert.equal(
@@ -2615,7 +2885,8 @@ async function run() {
       pendingCanceledId: pending.id,
       frozenPayloadSha256: sha(Buffer.from(retried.frozen_payload_json)),
     }
-    await screenshot('04-explicit-frozen-lora-retry')
+    if (negativeProfile) await captureFrozenNegative(retried, activeNegative)
+    await screenshot(negativeProfile ? '04-explicit-frozen-negative-retry' : '04-explicit-frozen-lora-retry')
     await closeQueue()
     await completed(retried.id)
     await idle()
@@ -2625,17 +2896,21 @@ async function run() {
     await verifyWire(retryWire, retried)
     assert.deepEqual(semanticInput(retryWire.bundleJson), semanticInput(thirdWire.bundleJson))
     assert.deepEqual(retryWire.bundleJson.request.job.loras, thirdWire.bundleJson.request.job.loras)
-    const output = await candidateOutput(retried.id, 'frozen-lora-retry')
+    const output = await candidateOutput(retried.id, negativeProfile ? 'frozen-negative-retry' : 'frozen-lora-retry')
     assert.ok(
       output.decoded.rgba.equals(controls[0].decoded.rgba),
-      'Frozen Retry must reproduce its original exact nonzero-LoRA healthy RGBA',
+      negativeProfile
+        ? 'Frozen Retry must reproduce its original exact negative-A healthy RGBA'
+        : 'Frozen Retry must reproduce its original exact nonzero-LoRA healthy RGBA',
     )
     assert.ok(
       !output.decoded.rgb.equals(controls[1].decoded.rgb),
-      'Frozen nonzero-LoRA Retry must remain different from its enabled-zero control',
+      negativeProfile
+        ? 'Frozen negative-A Retry must remain different from its negative-B neighbor'
+        : 'Frozen nonzero-LoRA Retry must remain different from its enabled-zero control',
     )
-    report.retry.rgbaExactHealthyNonzero = true
-    report.retry.zeroControlRemainsDifferent = true
+    report.retry[negativeProfile ? 'rgbaExactNegativeA' : 'rgbaExactHealthyNonzero'] = true
+    report.retry[negativeProfile ? 'negativeNeighborRemainsDifferent' : 'zeroControlRemainsDifferent'] = true
     assert.equal(await hashFile(project.file), report.edited.packageSha256)
     await acceptUndoSaveReopen(output, JSON.parse(retried.frozen_payload_json))
     assert.deepEqual(await Promise.all(healthy.map(({ id }) => row(id))), report.healthyRows)
@@ -2682,8 +2957,10 @@ async function run() {
   for (const file of sourceFiles) assert.equal(await hashFile(file), report.sourcePins[file])
   for (const [role, file] of Object.entries(bundle))
     assert.deepEqual(statIdentity(await regular(file.path)), report.catalog.fileStats[role])
-  assert.equal(await hashFile(fixture.lora.managedPath), fixture.lora.sha256)
-  assert.deepEqual(statIdentity(await regular(fixture.lora.managedPath)), report.catalog.lora.stat)
+  if (!negativeProfile) {
+    assert.equal(await hashFile(fixture.lora.managedPath), fixture.lora.sha256)
+    assert.deepEqual(statIdentity(await regular(fixture.lora.managedPath)), report.catalog.lora.stat)
+  }
   for (const file of report.protectedProjects) {
     assert.deepEqual(statIdentity(await regular(file.path)), file.stat)
     assert.equal(await hashFile(file.path), file.sha256)
@@ -2701,7 +2978,9 @@ async function run() {
   assert.equal(report.boundsError, undefined)
   report.status = 'passed'
   check(
-    'Exact signed global Anima LoRA reaches real regional TXT/IMG/OUT output; enabled-zero numerical control, fullstack provenance and selected Add/history/Save are exact; OUT frozen Retry survives current stack/source/model edits',
+    negativeProfile
+      ? 'Independent local/inherited Anima negative signed ranges reach real TXT/IMG/OUT PNGs; only local negative A/B changes visible RGB; OUT selected frozen Retry survives global/local/inheritance/mask/source/model edits, with exact alpha and ordinary-only Add/history/Save provenance'
+      : 'Exact signed global Anima LoRA reaches real regional TXT/IMG/OUT output; enabled-zero numerical control, fullstack provenance and selected Add/history/Save are exact; OUT frozen Retry survives current stack/source/model edits',
   )
 }
 

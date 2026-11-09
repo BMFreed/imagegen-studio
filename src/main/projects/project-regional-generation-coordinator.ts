@@ -7,6 +7,7 @@ import {
   supportsInferenceAnimaRegional,
   supportsInferenceAnimaRegionalImg2Img,
   supportsInferenceAnimaRegionalLora,
+  supportsInferenceAnimaRegionalNegative,
   supportsInferenceAnimaRegionalOutpaint,
   supportsInferenceAnimaRegionalSampling,
   supportsInferenceEmbeddings,
@@ -28,8 +29,10 @@ import {
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 import { activePromptEmbeddingRefs } from '../../shared/projects/prompt-embeddings.js'
 import {
+  ANIMA_REGIONAL_NEGATIVE_PROFILE,
   getInvokeRegionalGenerationUnavailableReason,
   hasActiveGlobalPromptEmbeddings,
+  hasEffectiveAnimaRegionalNegative,
   planInvokeRegionalGenerationBatch,
 } from '../../shared/projects/regional-invoke-generation.js'
 
@@ -471,6 +474,8 @@ export class ProjectRegionalGenerationCoordinator {
             const ready = structuredClone(preparation.inferenceReady)
             if (
               !supportsInferenceAnimaRegional(ready) ||
+              (hasEffectiveAnimaRegionalNegative(document) &&
+                !supportsInferenceAnimaRegionalNegative(ready)) ||
               (document.generationDraft.loras.some((entry) => entry.enabled) &&
                 !supportsInferenceAnimaRegionalLora(ready)) ||
               (document.generationDraft.sampling.animaMethod !== 'euler' &&
@@ -546,7 +551,11 @@ export class ProjectRegionalGenerationCoordinator {
                 items.push({
                   prepared: concrete,
                   regional: captureAnimaRegionalWorkerInput({
-                    compiledPrompts: [...compileCurrentCanvasAnimaRegionalPrompts(recipe)],
+                    compiledPrompts: [
+                      ...compileCurrentCanvasAnimaRegionalPrompts(recipe, {
+                        negativeProfile: ANIMA_REGIONAL_NEGATIVE_PROFILE,
+                      }),
+                    ],
                     compositionProfile: 'invoke-krea2-global-support-v1',
                     promptInterpretation: 'invoke-fragments-v1',
                     recipe,
@@ -617,7 +626,11 @@ export class ProjectRegionalGenerationCoordinator {
                 assertCurrent()
                 const regionalInputs = requests.map((request, index) =>
                   captureAnimaRegionalWorkerInput({
-                    compiledPrompts: [...compileCurrentCanvasAnimaRegionalPrompts(recipes[index])],
+                    compiledPrompts: [
+                      ...compileCurrentCanvasAnimaRegionalPrompts(recipes[index], {
+                        negativeProfile: ANIMA_REGIONAL_NEGATIVE_PROFILE,
+                      }),
+                    ],
                     compositionProfile: 'invoke-krea2-global-support-v1',
                     promptInterpretation: 'invoke-fragments-v1',
                     recipe: recipes[index],
@@ -1127,6 +1140,7 @@ function validateInvokeDraft(document: IgsProjectDocumentV1, iterations = 1): vo
   const reason = getInvokeRegionalGenerationUnavailableReason({
     animaRegionalImg2ImgSupported: true,
     animaRegionalLoraSupported: true,
+    animaRegionalNegativeSupported: true,
     animaRegionalOutpaintSupported: true,
     animaRegionalSamplingSupported: true,
     animaRegionalSupported: true,

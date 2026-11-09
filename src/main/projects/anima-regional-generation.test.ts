@@ -106,6 +106,7 @@ async function enqueue(
   options: {
     beforeCommit?: () => Promise<void>
     retainInput?: (input: AnimaRegionalWorkerInput) => void
+    signedNegative?: boolean
   } = {},
 ) {
   const preparedBatch = prepare(fixture)
@@ -117,6 +118,22 @@ async function enqueue(
     scratchBasePath: fixture.scratch,
     use: async (requests) => {
       const input = regional(fixture, requests[0])
+      if (options.signedNegative) {
+        input.recipe.regions[0].authoredPrompts!.useGlobalNegativePrompt = false
+        input.recipe.regions[0].authoredPrompts!.negative = {
+          embeddingRefs: [],
+          text: '(red scarf)1.5',
+        }
+        input.recipe.regions[0].negative = {
+          prompt: { embeddingRefs: [], text: '(red scarf)1.5' },
+          source: 'regional',
+        }
+        input.compiledPrompts = [
+          ...compileCurrentCanvasAnimaRegionalPrompts(input.recipe, {
+            negativeProfile: 'invoke-anima-regional-negative-v1',
+          }),
+        ]
+      }
       options.retainInput?.(input)
       return await fixture.queue.enqueueAnimaRegionalBatchWithCaptureGate({
         beforeCommit: options.beforeCommit,
@@ -1169,4 +1186,129 @@ test('opaque regional lease rejects changed source digest and recovers without c
     },
     { opaque: true },
   )
+})
+
+test('signed Anima queue client gates its own capability before wire and publishes every existing method through the mock peer', async () => {
+  await withAnimaStagingFixture(async (fixture) => {
+    const runtime = path.join(fixture.root, 'signed-regional-runtime')
+    const scratch = path.join(fixture.root, 'signed-regional-client')
+    const received = path.join(fixture.root, 'signed-regional-wire.jsonl')
+    await mkdir(runtime)
+    await mkdir(scratch, { mode: 0o700 })
+    const executable = path.join(runtime, 'python')
+    const outputBytes = await rgbOutput()
+    const models = {
+      ...fixture.modelService,
+      assertNoUnboundGenerationEmbeddings: async () => {},
+      resolveVerifiedGenerationCheckpointForPlan: async () => {
+        throw new Error('Wrong Illustrious family')
+      },
+      resolveVerifiedGenerationEmbeddingForPlan: async () => {
+        throw new Error('Wrong Illustrious family')
+      },
+    }
+    const processor = new RegionalGenerationProcessor(
+      fixture.queue,
+      fixture.staging,
+      models,
+      'invoke-canvas-v1',
+    )
+    for (const support of [false, true]) {
+      const ready = {
+        ...READY,
+        capabilities: [
+          ...READY.capabilities,
+          'anima-regional-sampling-v1',
+          ...(support ? ['anima-regional-negative-v1'] : []),
+          ...(process.platform === 'linux' ? ['linux-owned-inference-v1'] : []),
+        ],
+        pythonVersion: '3.12.13',
+        type: 'ready',
+      }
+      // A protocol substitute; real queue, file ownership, client and publication remain the subjects.
+      const script = String.raw`#!${process.execPath}
+const fs=require('node:fs'),crypto=require('node:crypto'),args=process.argv.slice(2);
+const valid=process.platform==='linux'?args.length===7&&JSON.stringify(args.slice(0,6))===JSON.stringify(['-I','-m','imagegen_worker.owned_inference','--parent-pid',String(process.ppid),'--scratch-base']):args.join(' ')==='-I -m imagegen_worker.inference_main';
+if(!valid)process.exit(21);
+const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
+process.stdout.write(JSON.stringify(${JSON.stringify(ready)})+'\n');
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const wire=JSON.parse(line),bytes=fs.readFileSync(wire.bundle.path);
+ if(wire.type!=='execute-current-canvas-anima-regional'||bytes.length!==wire.bundle.byteSize||sha(bytes)!==wire.bundle.sha256)throw Error('Wrong owned signed bundle');
+ const bundle=JSON.parse(bytes),plan=bundle.request.job.sampling;
+ const negatives=bundle.compiledPrompts.filter(p=>p.sourceId!=='current-canvas'&&p.polarity==='negative');
+ if(negatives.length!==1||negatives[0].text!=='(red scarf)1.5')throw Error('Missing source-bound negative');
+ if(Object.hasOwn(bundle,'negativeProfile'))throw Error('Unexpected wire field');
+ fs.appendFileSync(${JSON.stringify(received)},JSON.stringify({method:plan.scheduler,negative:negatives[0],keys:Object.keys(wire).sort()})+'\n');
+ for(let step=1;step<=plan.totalSteps;step++)process.stdout.write(JSON.stringify({type:'generation-progress',protocolVersion:'1',requestId:wire.requestId,step,totalSteps:plan.totalSteps})+'\n');
+ fs.writeFileSync(bundle.request.job.output.pngPath,Buffer.from(${JSON.stringify(outputBytes.toString('base64'))},'base64'),{flag:'wx'});
+ process.stdout.write(JSON.stringify({type:'generation-done',protocolVersion:'1',requestId:wire.requestId,outputPath:bundle.request.job.output.pngPath,seed:plan.seed})+'\n');
+});
+`
+      await writeFile(executable, script)
+      await chmod(executable, 0o700)
+      const client = await GenerationWorkerClient.start(
+        { pythonExecutable: executable, runtimeRoot: runtime, scratchBasePath: scratch },
+        { requestTimeoutMs: 3000, shutdownWaitMs: 100 },
+      )
+      try {
+        for (const method of ANIMA_SAMPLING_METHOD_KEYS) {
+          fixture.prepared.context.sampling.animaMethod = method
+          fixture.prepared.context.generationDraft.sampling.animaMethod = method
+          const queued = await enqueue(fixture, { signedNegative: true })
+          const original = await fixture.queue.loadVerifiedAnimaRegionalInput(queued.id)
+          if (!support) {
+            await assert.rejects(client.executeCurrentCanvasRegional(original.input), {
+              code: 'WORKER_VERSION_MISMATCH',
+            })
+            await assert.rejects(readFile(received), { code: 'ENOENT' })
+            assert.equal(
+              (await fixture.staging.listVerifiedCandidates(queued.localProjectKey)).length,
+              0,
+            )
+            await fixture.queue.cancel(queued.id)
+          } else {
+            const result = await processor.runOne(client)
+            assert.equal(result.kind, 'completed')
+            const rows = (await readFile(received, 'utf8'))
+              .trim()
+              .split('\n')
+              .map((line) => JSON.parse(line) as { method: string })
+            assert.equal(rows.at(-1)!.method, method)
+            const candidates = await fixture.staging.listVerifiedCandidates(queued.localProjectKey)
+            assert.ok(candidates.some((candidate) => candidate.queueItemId === queued.id))
+          }
+          assert.deepEqual(
+            (await fixture.queue.loadVerifiedAnimaRegionalInput(queued.id)).input.compiledPrompts,
+            original.input.compiledPrompts,
+          )
+          assert.deepEqual(await readdir(scratch), [])
+        }
+      } finally {
+        await client.close()
+      }
+    }
+    const records = (await readFile(received, 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as { keys: string[]; method: string })
+    assert.deepEqual(
+      records.map((record) => record.method),
+      ANIMA_SAMPLING_METHOD_KEYS,
+    )
+    assert.ok(
+      records.every(
+        (record) =>
+          JSON.stringify(record.keys) ===
+          JSON.stringify([
+            'bundle',
+            'protocolVersion',
+            'reportProgress',
+            'requestId',
+            'stagingRoot',
+            'type',
+          ]),
+      ),
+    )
+  })
 })

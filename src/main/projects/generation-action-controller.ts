@@ -27,6 +27,7 @@ import {
   supportsInferenceAnimaRegional,
   supportsInferenceAnimaRegionalImg2Img,
   supportsInferenceAnimaRegionalLora,
+  supportsInferenceAnimaRegionalNegative,
   supportsInferenceAnimaRegionalOutpaint,
   supportsInferenceAnimaRegionalSampling,
   supportsInferenceCFGRescale,
@@ -66,6 +67,7 @@ import {
 import {
   getInvokeRegionalGenerationUnavailableReason,
   hasActiveGlobalPromptEmbeddings,
+  hasEffectiveAnimaRegionalNegative,
   hasEnabledRegionalGuidance,
 } from '../../shared/projects/regional-invoke-generation.js'
 
@@ -111,6 +113,7 @@ import {
   withIllustriousGenerationRequest,
 } from './illustrious-txt2img-job.js'
 import { buildQueuedOutpaintWorkerRequest } from './outpaint-worker-request.js'
+import { hasCompiledAnimaRegionalNegative } from './project-current-canvas-anima-regional-input.js'
 import {
   GenerationPreparationError,
   prepareNormalGeneration,
@@ -428,6 +431,11 @@ export class ProjectGenerationActionController {
         !this.closed &&
         !!this.options.regional &&
         supportsInferenceAnimaRegionalLora(ready),
+      animaRegionalNegativeSupported:
+        !this.blocked &&
+        !this.closed &&
+        !!this.options.regional &&
+        supportsInferenceAnimaRegionalNegative(ready),
       animaRegionalOutpaintSupported:
         !this.blocked &&
         !this.closed &&
@@ -707,6 +715,7 @@ export class ProjectGenerationActionController {
     const unavailable = getInvokeRegionalGenerationUnavailableReason({
       animaRegionalImg2ImgSupported: true,
       animaRegionalLoraSupported: true,
+      animaRegionalNegativeSupported: true,
       animaRegionalOutpaintSupported: true,
       animaRegionalSamplingSupported: true,
       animaRegionalSupported: true,
@@ -787,6 +796,8 @@ export class ProjectGenerationActionController {
               if (
                 anima
                   ? !supportsInferenceAnimaRegional(preparation.inferenceReady) ||
+                    (hasEffectiveAnimaRegionalNegative(document) &&
+                      !supportsInferenceAnimaRegionalNegative(preparation.inferenceReady)) ||
                     (document.generationDraft.loras.some((entry) => entry.enabled) &&
                       !supportsInferenceAnimaRegionalLora(preparation.inferenceReady)) ||
                     (document.generationDraft.sampling.animaMethod !== 'euler' &&
@@ -1492,6 +1503,8 @@ export class ProjectGenerationActionController {
               this.assertDocument(source.projectKey, source.documentId)
               if (
                 !supportsInferenceAnimaRegional(ready) ||
+                (hasCompiledAnimaRegionalNegative(frozen.input.compiledPrompts) &&
+                  !supportsInferenceAnimaRegionalNegative(ready)) ||
                 (frozen.payload.workerJob.loras.length > 0 &&
                   !supportsInferenceAnimaRegionalLora(ready)) ||
                 (frozen.payload.kind === 'anima-regional-outpaint' &&

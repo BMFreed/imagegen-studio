@@ -6,7 +6,10 @@ scope. Studio reuses its ordinary request parser and production model loader,
 plus the established Illustrious no-follow bundle/alpha snapshot transport.
 The sole explicit composition adaptation is Krea-2's background global-support
 fallback (backend/krea2/regional_prompting.py); Anima's regional permissions and
-even/odd positive-only attention scope remain in anima_regional.py.
+even/odd attention scope remain in anima_regional.py. Its explicit signed-negative
+profile follows InvokeAI 4875d96531ca6712b288f6e660fcbb34143408c1,
+anima_denoise.py and backend/anima/regional_prompting.py: the global negative is
+image-wide while nonempty regional negatives own separate mask-scoped ranges.
 
 Main owns staging until consumed completion or physical worker exit. This worker
 never removes input files and owns no queue, persistence, or retry mechanism.
@@ -64,6 +67,7 @@ ANIMA_REGIONAL_SAMPLING_CAPABILITY = "anima-regional-sampling-v1"
 ANIMA_REGIONAL_IMG2IMG_CAPABILITY = "anima-regional-img2img-v1"
 ANIMA_REGIONAL_OUTPAINT_CAPABILITY = "anima-regional-outpaint-v1"
 ANIMA_REGIONAL_LORA_CAPABILITY = "anima-regional-lora-v1"
+ANIMA_REGIONAL_NEGATIVE_CAPABILITY = "anima-regional-negative-v1"
 COMPOSITION_PROFILE = "invoke-krea2-global-support-v1"
 PROMPT_INTERPRETATION = "invoke-fragments-v1"
 
@@ -159,7 +163,11 @@ def parse_anima_regional_request(value: object) -> AnimaRegionalRequest:
         root, {bundle_descriptor[0], command.target_path, command.output_path}
     )
     recipe = _hydrate_recipe(bundle["recipe"], snapshots)
-    captured = _capture(recipe, bundle["compiledPrompts"])
+    captured = _capture(
+        recipe,
+        bundle["compiledPrompts"],
+        negative_profile="invoke-anima-regional-negative-v1",
+    )
     plan = _capture_command(
         command,
         captured,
@@ -273,6 +281,13 @@ def execute_anima_regional_request(
         }
         if request.command.loras:
             arguments["lora_profile"] = "invoke-anima-global-lora-v1"
+        if any(
+            record["polarity"] == "negative"
+            and record["sourceId"] != "current-canvas"
+            and record["text"] != ""
+            for record in cast(list[dict[str, Any]], request.compiled_prompts)
+        ):
+            arguments["negative_profile"] = "invoke-anima-regional-negative-v1"
         if type(request.command) is GenerateAnimaOutpaintCommand:
             return generate_current_canvas_regional_anima_outpaint(
                 request.recipe,

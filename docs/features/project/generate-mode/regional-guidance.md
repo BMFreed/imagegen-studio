@@ -1,5 +1,34 @@
 # Regional Guidance
 
+## Anima signed negatives — finite installed integration
+
+The [signed-negative extension](../../../engineering/phase-4-anima-regional-negative-research.md)
+adapts current InvokeAI's separate Anima conditioning banks and masks across the
+existing TXT/IMG/OUT owners. A qualified worker0.14 advertises the additive
+`anima-regional-negative-v1` capability. Fresh admission, verified frozen Retry and
+actual dispatch require it for every nonempty effective regional negative, including
+CFG1. Older empty-negative work retains its existing capability meanings. A global
+negative alone does not require it when every region explicitly uses local-empty.
+
+Global negative columns stay image-wide. Local/inherited negative streams retain
+separate ownership and their own regional masks on even blocks; odd blocks consume
+the original unmasked bank. Zero support does not imply global inertness, and final
+pixel locality is not promised. CFG1 still validates/preflights frozen signed data,
+then skips additional regional-negative encoding/masks/forwarding. Public enabled
+regions continue to require nonempty positive prompts. Inverse-mask auto-negative,
+Smart, TI/references, new architectures and per-region LoRA are outside this slice.
+
+ROOT affected union1,941 Main/580 Python/222 browser PASS and five controlled
+semantic REDs with exact restoration are retained. Eight installed requests/seven
+PNG outputs pass TXT/IMG/OUT at512 squared/Heun20/CFG4/seed123/Auto embedded VAE,
+with image strength0.5. Changing only one local negative gives471,330 TXT/430,043 IMG
+RGB-channel differences and176,972 fully visible OUT differences. OUT alpha/source
+protection, pending/running Cancel, saved edits/restart, exact frozen Retry and
+selected Add/history/Save/reopen pass. Regional Guidance stays excluded from accepted
+provenance, Compare and result-derived presets. Source, retained bytes, ROOT runtime
+and physical release remain distinct; visual quality/capacity and PP-001/005/007/008
+remain **«Пока не обещать»**. Earlier checkpoint sections preserve historical scopes.
+
 ## Anima positive TXT — finite installed integration
 
 The [Anima public TXT lane](../../../engineering/phase-4-anima-regional-public-research.md)
@@ -804,16 +833,15 @@ When enabled regional guidance entities exist:
 
 Known unsupported model/region combinations are rejected before enqueue with an
 actionable explanation. Anima regional reference images are one such combination.
-Anima regional **negative** text is an implementation acceptance gate: Invoke
-builds the conditioning node but its current denoiser does not apply a separate
-mask to the negative pass. Do not claim spatially scoped negative behavior until
-the worker implements and validates it with real Anima generations. Positive
-regional prompts remain available independently. Until that gate passes, an
-Anima job with a nonempty explicit or inherited regional negative prompt is rejected
-before enqueue with an actionable explanation; it must not silently become a
-global negative prompt. The finite positive TXT lane permits exactly empty effective
-regional negatives. A nonempty ordinary global negative requires each enabled region
-to select a local-empty negative explicitly; authoring/inheritance is never rewritten.
+Anima regional **negative** text uses the signed-negative extension above on
+qualified peers. Inherited text and references are frozen separately for each
+region; local negatives remain attached to their authored owner. A peer without
+`anima-regional-negative-v1` rejects a nonempty effective regional negative before
+enqueue/dispatch with an actionable explanation, even at CFG1. It must never drop
+the text or substitute a global negative. Exactly empty effective regional negatives
+remain compatible with the earlier positive lane. An ordinary global negative with
+local-empty regional blocks remains valid without the new capability. Authoring and
+inheritance are never rewritten to manufacture compatibility.
 
 ## Vue Prototype Coverage
 

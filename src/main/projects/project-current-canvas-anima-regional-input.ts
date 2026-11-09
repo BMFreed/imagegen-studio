@@ -9,6 +9,7 @@ import {
   type GenerationPrompt,
   type PromptEmbeddingRef,
 } from '../../shared/projects/prompt-embeddings.js'
+import { ANIMA_REGIONAL_NEGATIVE_PROFILE } from '../../shared/projects/regional-invoke-generation.js'
 
 import type { CurrentCanvasRegionalRecipe } from './project-current-canvas-regional-recipe.js'
 
@@ -34,16 +35,39 @@ export class CurrentCanvasAnimaRegionalInputError extends Error {
   }
 }
 
+/** Only validated compiled records determine frozen runtime requirements. */
+export function hasCompiledAnimaRegionalNegative(
+  prompts: readonly CompiledCurrentCanvasAnimaRegionalPrompt[],
+): boolean {
+  return prompts.some(
+    (entry) =>
+      entry.sourceId !== 'current-canvas' && entry.polarity === 'negative' && entry.text !== '',
+  )
+}
+
 /**
  * Private companion to the existing captured recipe, not generation admission or a wire schema.
  * Invoke a61ac4fb's addRegionalGuidance.ts and Anima denoiser encode each positive source
  * separately. The existing compiler owns syntax and Unicode offsets. Empty blocks remain bound
  * sidecars, but Invoke's truthy-positive rule makes exact empty text non-emitting at the native
- * consumer.
+ * consumer. The explicit signed profile follows Invoke 4875d965's addRegionalGuidance.ts and
+ * anima_denoise.py: each nonempty effective negative retains its own source and mask owner.
  */
 export function compileCurrentCanvasAnimaRegionalPrompts(
   recipe: CurrentCanvasRegionalRecipe,
+  options: { negativeProfile?: typeof ANIMA_REGIONAL_NEGATIVE_PROFILE } = {},
 ): readonly CompiledCurrentCanvasAnimaRegionalPrompt[] {
+  if (
+    options === null ||
+    typeof options !== 'object' ||
+    Array.isArray(options) ||
+    Object.keys(options).some((key) => key !== 'negativeProfile') ||
+    (options.negativeProfile !== undefined &&
+      options.negativeProfile !== ANIMA_REGIONAL_NEGATIVE_PROFILE)
+  ) {
+    throw unsupported('The private Anima regional negative profile is unsupported.')
+  }
+  const signed = options.negativeProfile === ANIMA_REGIONAL_NEGATIVE_PROFILE
   const data = object(recipe, 'recipe')
   if (data.family !== 'anima') {
     throw unsupported('Regional Anima input requires an original Anima Current Canvas recipe.')
@@ -153,7 +177,7 @@ export function compileCurrentCanvasAnimaRegionalPrompts(
     const effectiveNegative = object(region.negative, 'regional negative')
     fields(effectiveNegative, ['prompt', 'source'])
     const localNegative = prompt(effectiveNegative.prompt, 'effective regional negative')
-    if (localNegative.text !== '') {
+    if (localNegative.text !== '' && !signed) {
       throw unsupported('Spatial Anima regional negative prompts are not qualified.')
     }
     const authored = Object.hasOwn(region, 'authoredPrompts')
@@ -166,20 +190,35 @@ export function compileCurrentCanvasAnimaRegionalPrompts(
       }
     }
     if (effectiveNegative.source === 'current-canvas') {
-      if (negative.text !== '' || (authored && authored.useGlobalNegativePrompt !== true)) {
-        throw invalid('Inherited Anima regional negatives must match the empty global source.')
+      if (
+        localNegative.text !== negative.text ||
+        (authored && authored.useGlobalNegativePrompt !== true)
+      ) {
+        throw invalid(
+          'Inherited Anima regional negatives must match the global text and references.',
+        )
       }
     } else if (effectiveNegative.source === 'regional') {
       if (!authored || authored.useGlobalNegativePrompt !== false || authored.negative === null) {
-        throw invalid('A local Anima regional negative requires its authored empty block.')
+        throw invalid('A local Anima regional negative requires its authored block.')
       }
-      authoredPrompt(authored.negative, '', 'authored local negative')
+      authoredPrompt(authored.negative, localNegative.text, 'authored local negative')
     } else {
       throw invalid('The regional Anima negative source is invalid.')
+    }
+    const negativeRecord =
+      signed && localNegative.text !== ''
+        ? { polarity: 'negative' as const, sourceId, text: localNegative.text }
+        : null
+    if (negativeRecord) {
+      bytes += textBytes(negativeRecord.text)
     }
     if (region.positive === null) {
       if (authored && authored.positive !== null) {
         throw invalid('An absent positive source must match its authored block.')
+      }
+      if (negativeRecord) {
+        pending.push(negativeRecord)
       }
       continue
     }
@@ -190,6 +229,9 @@ export function compileCurrentCanvasAnimaRegionalPrompts(
     authoredPrompt(authored.positive, regionalPositive.text, 'authored positive')
     bytes += textBytes(regionalPositive.text)
     pending.push({ polarity: 'positive', sourceId, text: regionalPositive.text })
+    if (negativeRecord) {
+      pending.push(negativeRecord)
+    }
   }
   if (bytes > MAX_AGGREGATE_TEXT_BYTES) {
     throw limit('Private Anima regional text exceeds its aggregate byte ceiling.')

@@ -4,7 +4,10 @@ import {
   captureCompiledAnimaWorkerRequest,
 } from '../../shared/projects/anima-worker-request.js'
 import { GENERATION_BATCH_JOB_LIMIT } from '../../shared/projects/generation-batch-policy.js'
-import { ANIMA_REGIONAL_COMPOSITION_PROFILE } from '../../shared/projects/regional-invoke-generation.js'
+import {
+  ANIMA_REGIONAL_COMPOSITION_PROFILE,
+  ANIMA_REGIONAL_NEGATIVE_PROFILE,
+} from '../../shared/projects/regional-invoke-generation.js'
 
 import { lstat, realpath } from 'node:fs/promises'
 import { isDeepStrictEqual } from 'node:util'
@@ -89,7 +92,9 @@ export function captureAnimaRegionalWorkerInput(
         ? captureOutpaintWorkerRequest(captured.request, VALIDATION_PROFILE)
         : captureCompiledAnimaWorkerRequest(captured.request, VALIDATION_PROFILE)
     const { recipe } = captured
-    const compiled = compileCurrentCanvasAnimaRegionalPrompts(recipe)
+    const compiled = compileCurrentCanvasAnimaRegionalPrompts(recipe, {
+      negativeProfile: ANIMA_REGIONAL_NEGATIVE_PROFILE,
+    })
     if (
       (request.type !== 'generate-anima-txt2img' &&
         request.type !== 'generate-anima-img2img' &&

@@ -12,11 +12,28 @@ import { activePromptEmbeddingRefs } from './prompt-embeddings.js'
 
 /** Frozen Anima regional composition, shared without importing queue owners. */
 export const ANIMA_REGIONAL_COMPOSITION_PROFILE = 'invoke-krea2-global-support-v1' as const
+export const ANIMA_REGIONAL_NEGATIVE_PROFILE = 'invoke-anima-regional-negative-v1' as const
 
 type RegionalDocument = Pick<
   IgsProjectDocumentV1,
   'generationDraft' | 'primaryBbox' | 'regionalGuidance'
 >
+
+/** Effective signed input, independent of CFG and dormant local text. */
+export function hasEffectiveAnimaRegionalNegative(
+  input: Pick<RegionalDocument, 'generationDraft' | 'regionalGuidance'>,
+): boolean {
+  return (input.regionalGuidance ?? []).some((region) => {
+    if (!region.enabled) {
+      return false
+    }
+    const negative =
+      region.prompts?.useGlobalNegativePrompt === false
+        ? region.prompts.negative
+        : input.generationDraft.negativePrompt
+    return typeof negative?.text === 'string' && negative.text !== ''
+  })
+}
 
 export function hasEnabledRegionalGuidance(
   input: Pick<IgsProjectDocumentV1, 'regionalGuidance'>,
@@ -106,6 +123,7 @@ export function hasActiveGlobalPromptEmbeddings(
 export function getInvokeRegionalGenerationUnavailableReason(input: {
   animaRegionalImg2ImgSupported?: boolean | null
   animaRegionalLoraSupported?: boolean | null
+  animaRegionalNegativeSupported?: boolean | null
   animaRegionalOutpaintSupported?: boolean | null
   animaRegionalSamplingSupported?: boolean | null
   animaRegionalSupported?: boolean | null
@@ -364,14 +382,15 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
 }
 
 /**
- * Invoke b0ac163b: addRegionalGuidance.ts uses truthy positive text and Anima has no spatial
- * negatives or regional references. The explicit profile uses Krea-2's global-support predicate
- * from backend/krea2/regional_prompting.py; no authoring text, inheritance or defaults are
- * changed.
+ * Invoke 4875d965: addRegionalGuidance.ts owns signed collectors and anima_denoise.py selects
+ * independent masks per CFG sign; Anima regional references remain outside Studio's contract. The
+ * explicit profile uses Krea-2's global-support predicate from backend/krea2/regional_prompting.py;
+ * no authoring text, inheritance or defaults are changed.
  */
 function getAnimaRegionalGenerationUnavailableReason(input: {
   animaRegionalImg2ImgSupported?: boolean | null
   animaRegionalLoraSupported?: boolean | null
+  animaRegionalNegativeSupported?: boolean | null
   animaRegionalOutpaintSupported?: boolean | null
   animaRegionalSamplingSupported?: boolean | null
   animaRegionalSupported?: boolean | null
@@ -439,13 +458,29 @@ function getAnimaRegionalGenerationUnavailableReason(input: {
     return 'Anima Regional Guidance supports at most 3 enabled regions with nonempty positive prompts.'
   }
   for (const region of regions) {
-    const local = region.prompts?.useGlobalNegativePrompt === false
-    const negative = local ? region.prompts?.negative : draft.negativePrompt
-    if (negative?.text !== '') {
-      return local
-        ? 'Clear each enabled region’s local negative prompt before generating with Anima Regional Guidance.'
-        : 'Anima Regional Guidance cannot inherit a nonempty global negative prompt. Clear it, or turn off Use global negative prompt and set an explicit empty local negative in each enabled region.'
+    if (region.prompts?.useGlobalNegativePrompt === false && !region.prompts.negative) {
+      return 'Add a local negative prompt block or turn on Use global negative prompt.'
     }
+  }
+  if (
+    hasEffectiveAnimaRegionalNegative(input.document) &&
+    input.animaRegionalNegativeSupported !== true
+  ) {
+    const support =
+      input.animaRegionalNegativeSupported == null
+        ? 'Checking image engine support for Anima regional negative prompts.'
+        : 'The current image engine does not support Anima regional negative prompts.'
+    const local =
+      regions.find((region) => {
+        const negative =
+          region.prompts?.useGlobalNegativePrompt === false
+            ? region.prompts.negative
+            : draft.negativePrompt
+        return negative?.text !== ''
+      })?.prompts?.useGlobalNegativePrompt === false
+    return local
+      ? `${support} Clear each enabled region’s local negative prompt, or repair or update the runtime.`
+      : `${support} Clear it, or turn off Use global negative prompt and set an explicit empty local negative in each enabled region; otherwise repair or update the runtime.`
   }
   const prompts = [
     draft.positivePrompt,

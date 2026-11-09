@@ -56,7 +56,16 @@ import { ProjectService } from '../project-service.js'
 import { ProjectShadowStore } from '../project-shadow.js'
 
 const REPO = fileURLToPath(new URL('../../../../', import.meta.url))
-const VARIANTS = ['base', 'swapped', 'zero', 'empty', 'inherited'] as const
+const VARIANTS = [
+  'base',
+  'swapped',
+  'zero',
+  'empty',
+  'inherited',
+  'negative',
+  'negative-neighbor',
+  'negative-only',
+] as const
 export type AnimaRegionalFixtureVariant = (typeof VARIANTS)[number]
 const REGION_IDS = [
   '00000000-0000-4000-8000-000000000101',
@@ -114,7 +123,7 @@ export interface AnimaRegionalInputFixture {
   }
   recipe: SerializedAnimaRegionalRecipe
   sampling: AnimaFlowSamplingPlan
-  schema: 'main-anima-regional-positive-v1'
+  schema: 'main-anima-regional-positive-v1' | 'main-anima-regional-signed-v1'
   variant: AnimaRegionalFixtureVariant
   verifiedBundle?: VerifiedAnimaGenerationBundle
 }
@@ -127,6 +136,8 @@ export async function produceAnimaRegionalInputFixture(
   options: {
     guidanceScale?: number
     height?: number
+    inheritGlobalNegative?: readonly [boolean, boolean]
+    regionalNegativeTexts?: readonly [string, string]
     regionalTexts?: readonly [string, string]
     seed?: number
     steps?: number
@@ -147,6 +158,29 @@ export async function produceAnimaRegionalInputFixture(
   const trainedBundle =
     options.trainedBundle === undefined ? undefined : captureTrainedBundle(options.trainedBundle)
   assert.ok(VARIANTS.includes(variant), 'The fixture variant must be explicitly supported')
+  const signed =
+    variant === 'negative' || variant === 'negative-neighbor' || variant === 'negative-only'
+  assert.ok(
+    signed ||
+      (options.inheritGlobalNegative === undefined && options.regionalNegativeTexts === undefined),
+    'Negative fixture overrides require an explicit signed variant',
+  )
+  const regionalNegativeTexts = signed
+    ? captureNegativeTexts(options.regionalNegativeTexts, [
+        variant === 'negative-neighbor' ? '(green scarf)1.5' : '(red scarf)1.5',
+        'dormant {not|selected} local negative',
+      ])
+    : null
+  const inheritGlobalNegative = signed
+    ? captureNegativeInheritance(options.inheritGlobalNegative)
+    : null
+  if (signed) {
+    for (const index of [0, 1] as const) {
+      if (!inheritGlobalNegative![index]) {
+        compileAnimaPromptWeighting(regionalNegativeTexts![index])
+      }
+    }
+  }
   const sampling = compileAnimaFlowSamplingPlan({
     guidanceScale,
     height,
@@ -232,10 +266,20 @@ export async function produceAnimaRegionalInputFixture(
         name: index === 0 ? 'First independent region' : 'Second independent region',
         overlayOpacity: index === 0 ? 0 : 0.5,
         prompts: {
-          negative:
-            variant === 'inherited' ? prompt('dormant {not|selected} local negative') : prompt(''),
-          positive: variant === 'empty' ? (index === 0 ? prompt('') : null) : prompt(selectedText),
-          useGlobalNegativePrompt: variant === 'inherited',
+          negative: signed
+            ? prompt(regionalNegativeTexts![index])
+            : variant === 'inherited'
+              ? prompt('dormant {not|selected} local negative')
+              : prompt(''),
+          positive:
+            variant === 'negative-only'
+              ? null
+              : variant === 'empty'
+                ? index === 0
+                  ? prompt('')
+                  : null
+                : prompt(selectedText),
+          useGlobalNegativePrompt: signed ? inheritGlobalNegative![index] : variant === 'inherited',
         },
       })
     }
@@ -336,7 +380,11 @@ export async function produceAnimaRegionalInputFixture(
       })
       assert.equal(Object.hasOwn(recipe, 'globalEmbeddings'), false)
       return {
-        compiledPrompts: compileCurrentCanvasAnimaRegionalPrompts(recipe),
+        compiledPrompts: signed
+          ? compileCurrentCanvasAnimaRegionalPrompts(recipe, {
+              negativeProfile: 'invoke-anima-regional-negative-v1',
+            })
+          : compileCurrentCanvasAnimaRegionalPrompts(recipe),
         recipe,
         verifiedBundle,
       }
@@ -385,7 +433,7 @@ export async function produceAnimaRegionalInputFixture(
         })),
       },
       sampling,
-      schema: 'main-anima-regional-positive-v1',
+      schema: signed ? 'main-anima-regional-signed-v1' : 'main-anima-regional-positive-v1',
       variant,
       ...(prepared.verifiedBundle
         ? { verifiedBundle: structuredClone(prepared.verifiedBundle) }
@@ -406,6 +454,37 @@ export async function produceAnimaRegionalInputFixture(
     mode: 0o600,
   })
   return result
+}
+
+function captureNegativeTexts(
+  value: unknown,
+  defaults: readonly [string, string],
+): readonly [string, string] {
+  const selected = value === undefined ? defaults : value
+  assert.ok(
+    Array.isArray(selected) && selected.length === 2,
+    'Exactly two regional negative texts are required',
+  )
+  for (const text of selected) {
+    assert.ok(
+      typeof text === 'string' &&
+        Buffer.from(text, 'utf8').toString('utf8') === text &&
+        Buffer.byteLength(text, 'utf8') <= 16 * 1024,
+      'Regional negative text must be bounded valid Unicode',
+    )
+  }
+  return Object.freeze([selected[0] as string, selected[1] as string] as const)
+}
+
+function captureNegativeInheritance(value: unknown): readonly [boolean, boolean] {
+  const selected = value === undefined ? [false, true] : value
+  assert.ok(
+    Array.isArray(selected) &&
+      selected.length === 2 &&
+      selected.every((entry) => typeof entry === 'boolean'),
+    'Exactly two regional negative inheritance flags are required',
+  )
+  return Object.freeze([selected[0], selected[1]] as const)
 }
 
 function captureRegionalTexts(value: unknown): readonly [string, string] {

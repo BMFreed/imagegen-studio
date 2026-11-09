@@ -2494,3 +2494,24 @@ Add/history/Save-reopen, with completed progress30/15/16. Metadata window oracle
 are distinct from trained per-step observations. Diagnostic attempts, lifecycle,
 source/retained/runtime levels and exclusions are explicit in the note. Quality,
 SDE/Smart/references, Anima and PP-001/005/007/008 remain open.
+
+
+## Anima regional signed negatives — finite integration
+
+The [signed-negative owner](./phase-4-anima-regional-negative-research.md)
+adapts clean InvokeAI4875's independent positive/negative banks, negative-global
+Everywhere mask and even/odd transformer routing. Additive worker0.14 capability,
+fresh/frozen Retry/client gates preserve older empty-negative peers. CFG1 validates
+signed input and skips additional negative consumption. No new numerical loop,
+command field/version, queue/document schema, migration or provenance field.
+
+ROOT affected union1,941 Main/580 Python/222 browser PASS, types/scoped checks/build
+PASS;24 mutation selections retain19 GREEN/five semantic RED and exact restoration.
+Eight installed requests/seven PNGs pass all three modes through A/B, explicit
+acceptance/history/Save-reopen and OUT Cancel/saved edits/restart/frozen Retry.
+TXT/IMG RGB contrasts471,330/430,043 and OUT176,972 fully visible channels are
+independently reopened; OUT Retry matches A in original PNG bytes/RGBA exactly.
+The note separates diagnosed fixture/source-oracle attempts, native-mask tests,
+trained wire/progress/image evidence, retained bytes and physical release.
+Visual usefulness, Smart/TI/references/new architectures/per-region LoRA and
+PP-001/005/007/008 remain open.

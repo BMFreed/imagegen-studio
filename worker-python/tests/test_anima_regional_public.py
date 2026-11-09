@@ -74,16 +74,35 @@ def _invoke_global_support(background: Any) -> Any:
         / "sources/InvokeAI/invokeai/backend/krea2/regional_prompting.py"
     )
     tree = ast.parse(source.read_text())
+    classes = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "Krea2RegionalPromptingExtension"
+    ]
+    assert len(classes) == 1, "Current Invoke must supply the adapted extension"
+    methods = [
+        node
+        for node in classes[0].body
+        if isinstance(node, ast.FunctionDef) and node.name == "_build_attention_mask"
+    ]
+    assert len(methods) == 1, "Current Invoke must supply the adapted mask builder"
+    branch_test = ast.parse("self.unmasked_covers_whole_image", mode="eval").body
+    branches = [
+        node
+        for node in methods[0].body
+        if isinstance(node, ast.If) and ast.dump(node.test) == ast.dump(branch_test)
+    ]
+    assert len(branches) == 1, "Current Invoke must distinguish signed global support"
     predicates = [
         node.value
-        for node in ast.walk(tree)
+        for node in branches[0].orelse
         if isinstance(node, ast.Assign)
         and any(
             isinstance(target, ast.Name) and target.id == "unmasked_conditioning_mask"
             for target in node.targets
         )
     ]
-    assert len(predicates) == 1, "Current Invoke must supply the adapted source predicate"
+    assert len(predicates) == 1, "Current Invoke must supply the positive source predicate"
     predicate = ast.Expression(predicates[0])
     expected = ast.parse("background_mask | ~background_mask.any()", mode="eval")
     assert ast.dump(predicate) == ast.dump(expected)
