@@ -13,6 +13,8 @@ import {
   supportsInferenceAnimaSmartPatchRegionalMode,
   supportsInferenceAnimaSmartPatchRegionalOutpaint,
   supportsInferenceAnimaSmartPatchRegionalTxt2Img,
+  supportsInferenceIllustriousSmartPatchRegionalMode,
+  supportsInferenceSmartPatchRegionalMode,
 } from './inference-worker-capabilities.js'
 import { getSmartPatchRegionalGenerationUnavailableReason as reason } from './smart-patch-regional-guidance.js'
 
@@ -77,11 +79,11 @@ test('disabled regions keep ordinary Smart eligibility independent of new capabi
 
 for (const [name, change, expected] of [
   [
-    'family',
+    'Illustrious missing epsilon objective',
     (x: ReturnType<typeof fixture>) => {
       x.patch.generationDraft.model!.baseModelFamily = 'illustrious'
     },
-    /original Anima/u,
+    /epsilon/u,
   ],
   [
     'batch',
@@ -419,3 +421,162 @@ for (const mode of ['txt2img', 'img2img'] as const) {
     )
   })
 }
+
+function illustriousFixture() {
+  const input = fixture()
+  const { context } = literalSmartPatchPreparedInput('illustrious').prepared
+  input.patch.generationDraft = structuredClone(context.generationDraft)
+  input.patch.generationDraft.sampling.sampler = 'Euler'
+  input.patch.generationDraft.sampling.scheduler = 'Normal'
+  input.patch.generationDraft.vaePrecision = 'Auto'
+  return input
+}
+
+for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
+  test(`Illustrious Smart regional ${mode} requires exact family/mode readiness`, () => {
+    const cap = `illustrious-smart-patch-regional-${mode}-v1`
+    const ready = {
+      ...ANIMA_BATCH_READY,
+      capabilities: [
+        ...ANIMA_BATCH_READY.capabilities,
+        'illustrious-outpaint',
+        'illustrious-euler',
+        'illustrious-noise-profile',
+        'smart-patch-execution',
+        'smart-patch-seed-confirmation',
+        cap,
+      ],
+      workerVersion: '0.14.0',
+    }
+    assert.equal(supportsInferenceIllustriousSmartPatchRegionalMode(ready, mode), true)
+    assert.equal(supportsInferenceSmartPatchRegionalMode(ready, 'illustrious', mode), true)
+    for (const required of [
+      cap,
+      'smart-patch-execution',
+      'smart-patch-seed-confirmation',
+      'illustrious-euler',
+      'illustrious-noise-profile',
+    ]) {
+      const peer = { ...ready, capabilities: ready.capabilities.filter((x) => x !== required) }
+      assert.equal(
+        supportsInferenceSmartPatchRegionalMode(peer, 'illustrious', mode),
+        false,
+        required,
+      )
+    }
+    assert.equal(supportsInferenceSmartPatchRegionalMode(ready, 'anima', mode), false)
+    for (const other of ['inpaint', 'outpaint', 'txt2img', 'img2img'].filter((x) => x !== mode)) {
+      assert.equal(supportsInferenceSmartPatchRegionalMode(ready, 'illustrious', other), false)
+    }
+    assert.equal(
+      supportsInferenceIllustriousSmartPatchRegionalMode(
+        { ...ready, workerVersion: '0.13.0' },
+        mode,
+      ),
+      false,
+    )
+    const input = illustriousFixture()
+    const runtime = {
+      runtimeImg2ImgSupported: mode === 'img2img',
+      runtimeOutpaintSupported: mode === 'outpaint',
+      runtimeSupported: mode === 'inpaint',
+      runtimeTxt2ImgSupported: mode === 'txt2img',
+    }
+    assert.equal(reason({ ...input, ...runtime, targetMode: mode }), null)
+    assert.match(
+      reason({
+        ...input,
+        ...runtime,
+        [mode === 'inpaint'
+          ? 'runtimeSupported'
+          : mode === 'outpaint'
+            ? 'runtimeOutpaintSupported'
+            : mode === 'txt2img'
+              ? 'runtimeTxt2ImgSupported'
+              : 'runtimeImg2ImgSupported']: false,
+        targetMode: mode,
+      })!,
+      /Illustrious/u,
+    )
+    const state = {
+      [`illustriousSmartPatchRegional${mode === 'inpaint' ? '' : mode === 'outpaint' ? 'Outpaint' : mode === 'txt2img' ? 'Txt2Img' : 'Img2Img'}Supported`]: true,
+      smartPatchSupported: true,
+    }
+    assert.equal(
+      generationQueueRetryReason(
+        'illustrious-smart-patch',
+        state,
+        undefined,
+        false,
+        false,
+        0,
+        undefined,
+        undefined,
+        true,
+        mode === 'outpaint',
+        mode === 'txt2img',
+        mode === 'img2img',
+      ),
+      null,
+    )
+    assert.match(
+      generationQueueRetryReason(
+        'illustrious-smart-patch',
+        {
+          animaSmartPatchRegionalImg2ImgSupported: true,
+          animaSmartPatchRegionalOutpaintSupported: true,
+          animaSmartPatchRegionalSupported: true,
+          animaSmartPatchRegionalTxt2ImgSupported: true,
+          smartPatchSupported: true,
+        },
+        undefined,
+        false,
+        false,
+        0,
+        undefined,
+        undefined,
+        true,
+        mode === 'outpaint',
+        mode === 'txt2img',
+        mode === 'img2img',
+      )!,
+      /Illustrious/u,
+    )
+  })
+}
+
+test('Illustrious Smart regional guard preserves bounded epsilon Euler Normal policy and selected negatives', () => {
+  const good = illustriousFixture()
+  assert.equal(reason(good), null)
+  const unsupported = [
+    (x: ReturnType<typeof illustriousFixture>) => {
+      x.patch.generationDraft.model!.predictionType = 'v_prediction'
+    },
+    (x: ReturnType<typeof illustriousFixture>) => {
+      x.patch.generationDraft.sampling.sampler = 'Euler a'
+    },
+    (x: ReturnType<typeof illustriousFixture>) => {
+      x.patch.generationDraft.sampling.scheduler = 'Karras'
+    },
+    (x: ReturnType<typeof illustriousFixture>) => {
+      x.patch.generationDraft.sampling.cfgScale = 1
+    },
+    (x: ReturnType<typeof illustriousFixture>) => {
+      x.patch.generationDraft.vaePrecision = 'FP32'
+    },
+    (x: ReturnType<typeof illustriousFixture>) => {
+      x.patch.generationDraft.negativePrompt.text = '{changed|Smart}'
+    },
+    (x: ReturnType<typeof illustriousFixture>) => {
+      x.iterations = 2
+    },
+  ]
+  for (const change of unsupported) {
+    const candidate = structuredClone(good)
+    change(candidate)
+    assert.equal(typeof reason(candidate), 'string')
+  }
+  good.document.regionalGuidance![0].prompts!.useGlobalNegativePrompt = false
+  good.document.regionalGuidance![0].prompts!.negative!.text = 'local exclusion'
+  assert.equal(reason(good), null)
+})

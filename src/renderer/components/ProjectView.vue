@@ -2422,12 +2422,21 @@ const generationBlockingReason = computed(() => {
         iterations: imagesPerClick.value ?? 0,
         patch: { ...activePatch.value, generationDraft: props.generationDraft },
         runtimeImg2ImgSupported:
-          props.generationState?.animaSmartPatchRegionalImg2ImgSupported === true,
+          (props.generationDraft.model?.baseModelFamily === 'illustrious'
+            ? props.generationState?.illustriousSmartPatchRegionalImg2ImgSupported
+            : props.generationState?.animaSmartPatchRegionalImg2ImgSupported) === true,
         runtimeOutpaintSupported:
-          props.generationState?.animaSmartPatchRegionalOutpaintSupported === true,
-        runtimeSupported: props.generationState?.animaSmartPatchRegionalSupported === true,
+          (props.generationDraft.model?.baseModelFamily === 'illustrious'
+            ? props.generationState?.illustriousSmartPatchRegionalOutpaintSupported
+            : props.generationState?.animaSmartPatchRegionalOutpaintSupported) === true,
+        runtimeSupported:
+          (props.generationDraft.model?.baseModelFamily === 'illustrious'
+            ? props.generationState?.illustriousSmartPatchRegionalSupported
+            : props.generationState?.animaSmartPatchRegionalSupported) === true,
         runtimeTxt2ImgSupported:
-          props.generationState?.animaSmartPatchRegionalTxt2ImgSupported === true,
+          (props.generationDraft.model?.baseModelFamily === 'illustrious'
+            ? props.generationState?.illustriousSmartPatchRegionalTxt2ImgSupported
+            : props.generationState?.animaSmartPatchRegionalTxt2ImgSupported) === true,
         targetMode: smartTargetState.value?.mode,
       })
     : getInvokeRegionalGenerationUnavailableReason({

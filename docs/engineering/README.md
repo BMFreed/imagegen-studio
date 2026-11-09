@@ -2629,3 +2629,16 @@ CPU models. Genuine Main capture, file checks, explicit loader/placement test
 substitution and mutation evidence are recorded separately. Public admission,
 installed/trained qualification, visual acceptance and wider resource/method
 combinations remain open; PP-001/005/007/008 stay **«Пока не обещать»**.
+
+
+## Public Illustrious Smart Regional EPS
+
+[Four-mode public integration and installed qualification](./phase-4-illustrious-smart-regional-public-research.md)
+reuse existing selected-Smart capture/WORLD classification, frozen queue/Retry,
+regional native consumer and world/acceptance owners. Four exact mode capabilities
+are independent of Anima and ordinary Smart support. ROOT678 Main/238 Python/
+238 browser PASS; installed8phases/44checks/16requests/12publications/four step1
+cancellations, exact restarted Retry and8normal closes. Finite epsilon Euler/
+Normal/static/Auto-VAE scope only; source review, retained audit, runtime outcome
+and visual/release readiness remain separate. NoobAI V is the next native consumer;
+other compatible resources/batches/methods/references remain in the linked matrix.

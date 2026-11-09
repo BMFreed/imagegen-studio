@@ -43,6 +43,7 @@ import { ProjectService } from './project-service.js'
 import { ProjectShadowStore } from './project-shadow.js'
 import { ProjectSmartPatchAcceptance } from './project-smart-patch-acceptance.js'
 import { ProjectSmartPatchGenerationActionController } from './project-smart-patch-generation-action-controller.js'
+import { bindSmartPatchIllustriousRegionalExecution } from './project-smart-patch-illustrious-regional-input.js'
 import { bindSmartPatchAnimaRegionalExecution } from './project-smart-patch-regional-input.js'
 import { ProjectSmartPatchResultActions } from './project-smart-patch-result-actions.js'
 import { ProjectSmartPatchResultResource } from './project-smart-patch-result-resource.js'
@@ -97,6 +98,7 @@ class ControlledSmartRuntime {
   beforeExecution: ((request: SmartPatchExecutionRequest) => Promise<void>) | null = null
   beforePreparation: (() => Promise<void>) | null = null
   generated: SmartPatchExecutionRequest[] = []
+  illustriousRegionalGenerated: ReturnType<typeof bindSmartPatchIllustriousRegionalExecution>[] = []
   maximum = 0
   ready = structuredClone(ready)
   regionalGenerated: ReturnType<typeof bindSmartPatchAnimaRegionalExecution>[] = []
@@ -160,6 +162,12 @@ class ControlledSmartRuntime {
         const { execution, ...prepared } = input
         bindSmartPatchAnimaRegionalExecution(prepared, execution)
         this.regionalGenerated.push(structuredClone(input))
+        return await transport.executeSmartPatch(execution)
+      },
+      executeIllustriousSmartPatchRegional: async (input) => {
+        const { execution, ...prepared } = input
+        bindSmartPatchIllustriousRegionalExecution(prepared, execution)
+        this.illustriousRegionalGenerated.push(structuredClone(input))
         return await transport.executeSmartPatch(execution)
       },
       executeSmartPatch: async (request) => {
@@ -255,11 +263,12 @@ async function withPublicFixture(
   run: (f: Awaited<ReturnType<typeof publicFixture>>) => Promise<void>,
   mode: 'img2img' | 'inpaint' | 'outpaint' | 'txt2img' = 'inpaint',
   queueHooks: GenerationQueueTestHooks = {},
+  epsilonRegional = false,
 ) {
   await withSmartPatchQueueFixture(
     family,
     async (base) => {
-      const f = await publicFixture(base, mode)
+      const f = await publicFixture(base, mode, epsilonRegional)
       try {
         await run(f)
       } finally {
@@ -279,6 +288,7 @@ async function withPublicFixture(
 async function publicFixture(
   base: Parameters<Parameters<typeof withSmartPatchQueueFixture>[1]>[0],
   mode: 'img2img' | 'inpaint' | 'outpaint' | 'txt2img',
+  epsilonRegional = false,
 ) {
   const repository = new ProjectIndexRepository(base.database.db)
   const shadow = new ProjectShadowStore(path.join(base.root, 'public-autosave'))
@@ -343,6 +353,13 @@ async function publicFixture(
   await service.clearHistory(tab.id)
   const savedBytes = await readFile(owner.filePath)
   const models = { ...base.modelService, ...base.models }
+  if (epsilonRegional) {
+    const resolve = models.resolveVerifiedGenerationCheckpointForPlan.bind(models)
+    models.resolveVerifiedGenerationCheckpointForPlan = async (reference) => {
+      const verified = await resolve(reference)
+      return { ...verified, reference: { ...verified.reference, predictionType: 'epsilon' } }
+    }
+  }
   const normalProcessor = new GenerationProcessor(base.queue, base.staging, models, base.scratch)
   const orchestrator = new GenerationOrchestrator(
     service,
@@ -2094,7 +2111,7 @@ async function regionalSmartQueueSnapshot(f: PublicFixture) {
 // A committed candidate plus a pending sibling prevents a false green based on an empty queue.
 for (const family of ['illustrious', 'anima'] as const) {
   test(
-    `public ${family} unsupported regional Smart Generate refuses before planning and stale confirmation even with empty locked zero-overlay regions`,
+    `public ${family} invalid regional Smart prompt refuses before planning and stale confirmation even with empty locked zero-overlay regions`,
     options,
     async (t) => {
       await withPublicFixture(family, async (f) => {
@@ -2176,9 +2193,7 @@ for (const family of ['illustrious', 'anima'] as const) {
                 {
                   code: 'GENERATION_REGIONAL_GUIDANCE_UNSUPPORTED',
                   message:
-                    family === 'illustrious'
-                      ? 'Regional Guidance with Smart Patch currently requires an original Anima model.'
-                      : 'Regional Smart Patch generation requires static prompts without braces.',
+                    'Regional Smart Patch generation requires static prompts without braces.',
                 },
               )
             }
@@ -2417,7 +2432,7 @@ test(
       const batch = await queued(f)
       assert.equal(batch.jobIds.length, 1)
       const frozen = await f.base.queue.loadVerifiedSmartPatchInput(batch.jobIds[0])
-      assert.ok(frozen.payload.regional)
+      assert.ok(frozen.payload.regional && 'promptInterpretation' in frozen.payload.regional)
       assert.equal(frozen.payload.regional.promptInterpretation, 'invoke-fragments-v1')
       assert.equal(frozen.payload.regional.recipe.regions[0].regionId, regionId)
       assert.equal(frozen.payload.regional.recipe.regions[0].negative.source, 'smart-patch')
@@ -2797,6 +2812,225 @@ for (const mode of ['txt2img', 'img2img'] as const) {
           }
         },
         mode,
+      )
+    },
+  )
+}
+
+async function enableIllustriousSmartRegions(f: PublicFixture, capabilities: string[]) {
+  f.runtime.ready.capabilities.push(...capabilities)
+  await f.service.updateGenerationDraft(
+    f.tabId,
+    { kind: 'positive-prompt', text: '(one cat:1.25) on a bench' },
+    undefined,
+    f.target.id,
+  )
+  await f.service.updateGenerationDraft(
+    f.tabId,
+    { kind: 'negative-prompt', text: 'Smart exclusion' },
+    undefined,
+    f.target.id,
+  )
+  const tab = await f.service.addRegionalGuidance(f.tabId, regionalSmartDocumentOwner(f))
+  return tab.regionalGuidance![0].id
+}
+
+for (const mode of ['txt2img', 'img2img', 'inpaint', 'outpaint'] as const) {
+  const capability = `illustrious-smart-patch-regional-${mode}-v1`
+  const profile = `invoke-illustrious-smart-regional-${mode}-v1`
+  const testOptions = mode === 'outpaint' ? { ...options, ...outpaintRegionalOptions } : options
+  test(
+    `public Illustrious regional Smart ${mode} reaches dedicated dispatch/world candidate and explicit Add/Save`,
+    testOptions,
+    async () => {
+      await withPublicFixture(
+        'illustrious',
+        async (f) => {
+          const regionId = await enableIllustriousSmartRegions(f, [capability])
+          await f.service.save(f.tabId)
+          await f.service.clearHistory(f.tabId)
+          const before = structuredClone(f.owner.document)
+          const savedBytes = await readFile(f.owner.filePath)
+          const batch = await queued(f)
+          assert.equal(batch.jobIds.length, 1)
+          const original = await f.base.queue.loadVerifiedSmartPatchInput(batch.jobIds[0])
+          assert.equal(original.payload.mode, mode)
+          assert.equal(original.payload.regional?.profile, profile)
+          assert.equal(original.payload.regional?.recipe.family, 'illustrious')
+          assert.equal(original.payload.regional?.recipe.regions[0].regionId, regionId)
+          assert.equal(
+            original.payload.regional?.recipe.regions[0].negative.prompt.text,
+            'Smart exclusion',
+          )
+          assert.equal(original.payload.regional?.recipe.regions[0].negative.source, 'smart-patch')
+          assert.equal(Object.hasOwn(original.payload.regional, 'compiledPrompts'), false)
+          assert.equal(original.payload.item.family, 'illustrious')
+          if (original.payload.item.family !== 'illustrious') {
+            assert.fail('Illustrious item required')
+          }
+          assert.equal(original.payload.item.inference.checkpoint.predictionType, 'epsilon')
+          assert.equal(
+            original.payload.item.inference.sampling.denoisingStrength,
+            mode === 'txt2img' ? undefined : 0.5,
+          )
+          await drain(f)
+          assert.equal(f.runtime.illustriousRegionalGenerated.length, 1)
+          assert.equal(f.runtime.regionalGenerated.length, 0)
+          assert.equal(f.runtime.illustriousRegionalGenerated[0].execution.mode, mode)
+          assert.equal((await f.base.queue.getManagerEntry(batch.jobIds[0])).status, 'completed')
+          assert.deepEqual(f.owner.document, before)
+          assert.ok((await readFile(f.owner.filePath)).equals(savedBytes), 'Generate must not Save')
+          const candidates = (await f.results.list(f.tabId)).candidates
+          assert.equal(candidates.length, 1)
+          await f.actions.accept(f.tabId, acceptRequest(f, candidates))
+          const accepted = structuredClone(f.owner.document)
+          const target = patch(accepted, f.target.id)
+          assert.equal(target.rasterSubLayers.length, 1)
+          const provenance = target.rasterSubLayers[0].generationProvenance
+          assert.deepEqual(
+            provenance.layerSourceContext.generationDraft,
+            patch(before, f.target.id).generationDraft,
+          )
+          assert.equal(
+            JSON.stringify(provenance).includes(regionId),
+            false,
+            'Regions are outside accepted provenance',
+          )
+          assert.deepEqual(accepted.regionalGuidance, before.regionalGuidance)
+          assert.ok((await readFile(f.owner.filePath)).equals(savedBytes), 'Add must not Save')
+          await f.service.undo(f.tabId)
+          assert.deepEqual(f.owner.document.layers, before.layers)
+          await f.service.redo(f.tabId)
+          assert.deepEqual(f.owner.document.layers, accepted.layers)
+          await f.service.save(f.tabId)
+          const reopened = await readIgsPackage(f.owner.filePath)
+          assert.deepEqual(
+            patch(reopened.project, f.target.id).rasterSubLayers,
+            target.rasterSubLayers,
+          )
+          assert.deepEqual(reopened.project.regionalGuidance, before.regionalGuidance)
+        },
+        mode,
+        {},
+        true,
+      )
+    },
+  )
+  for (const peer of ['wrong-family', 'wrong-mode'] as const) {
+    test(
+      `public Illustrious Smart ${mode} ${peer} capability refuses before resources/SQL`,
+      options,
+      async (t) => {
+        await withPublicFixture(
+          'illustrious',
+          async (f) => {
+            const supported =
+              peer === 'wrong-family'
+                ? `anima-smart-patch-regional-${mode}-v1`
+                : `illustrious-smart-patch-regional-${mode === 'inpaint' ? 'txt2img' : 'inpaint'}-v1`
+            await enableIllustriousSmartRegions(f, [supported])
+            const models = t.mock.method(
+              f.models,
+              'resolveVerifiedGenerationCheckpointForPlan',
+              async () => assert.fail('Wrong peer must refuse before resource resolution'),
+            )
+            const cpu =
+              peer === 'wrong-family'
+                ? t.mock.method(f.worker, 'composeTarget', async () =>
+                    assert.fail('Wrong family capability must refuse before CPU composition'),
+                  )
+                : null
+            try {
+              await assert.rejects(f.controller.generate(f.tabId, f.request()), {
+                code: 'GENERATION_RUNTIME_UNAVAILABLE',
+              })
+              assert.equal(models.mock.callCount(), 0)
+              if (cpu) {
+                assert.equal(cpu.mock.callCount(), 0)
+              }
+              assert.equal(f.runtime.generated.length, 0)
+              assert.equal(f.runtime.illustriousRegionalGenerated.length, 0)
+              assert.equal((await f.base.queue.listManagerPage()).items.length, 0)
+            } finally {
+              t.mock.restoreAll()
+            }
+          },
+          mode,
+        )
+      },
+    )
+  }
+  test(
+    `public Illustrious Smart ${mode} frozen Retry retains original regions/settings/files after saved deletion`,
+    testOptions,
+    async (t) => {
+      await withPublicFixture(
+        'illustrious',
+        async (f) => {
+          const regionId = await enableIllustriousSmartRegions(f, [capability])
+          const batch = await queued(f)
+          const original = await f.base.queue.loadVerifiedSmartPatchInput(batch.jobIds[0])
+          await f.normalActions.cancelJob(await f.base.queue.getManagerEntry(batch.jobIds[0]))
+          const terminal = await f.base.queue.getManagerEntry(batch.jobIds[0])
+          await f.service.deleteRegionalGuidance(f.tabId, {
+            ...regionalSmartDocumentOwner(f),
+            regionId,
+          })
+          await f.service.updateGenerationDraft(
+            f.tabId,
+            { kind: 'negative-prompt', text: 'Later Smart exclusion' },
+            undefined,
+            f.target.id,
+          )
+          await f.service.updateGenerationDraft(
+            f.tabId,
+            { kind: 'seed', policy: 'fixed', value: 999 },
+            undefined,
+            f.target.id,
+          )
+          await f.service.save(f.tabId)
+          const before = structuredClone(f.owner.document)
+          const savedBytes = await readFile(f.owner.filePath)
+          const capture = t.mock.method(
+            f.service,
+            'withCapturedSmartPatchRegionalGenerationInput',
+            async () => assert.fail('Frozen Retry cannot capture current regions'),
+          )
+          const preparation = t.mock.method(
+            f.runtime,
+            'withSmartPatchGenerationPreparation',
+            async () => assert.fail('Frozen Retry cannot reprepare current source'),
+          )
+          try {
+            await f.normalActions.retryJob(terminal)
+            const retry = (await f.base.queue.listManagerPage()).items.find(
+              (row) => row.id !== terminal.id,
+            )!
+            await waitForRetryCompletion(f, retry.id)
+            const replay = await f.base.queue.loadVerifiedSmartPatchInput(retry.id)
+            assert.equal(replay.payload.regional?.profile, profile)
+            assert.deepEqual(replay.payload.regional, original.payload.regional)
+            assert.deepEqual(replay.payload.item, original.payload.item)
+            for (const [name, bytes] of Object.entries(original.bundle.files)) {
+              assert.ok(bytes.equals(replay.bundle.files[name]), name)
+            }
+            assert.equal(f.runtime.illustriousRegionalGenerated.length, 1)
+            assert.equal(
+              f.runtime.illustriousRegionalGenerated[0].recipe.globalPrompts.negative.text,
+              'Smart exclusion',
+            )
+            assert.equal(f.runtime.illustriousRegionalGenerated[0].execution.mode, mode)
+            assert.equal(capture.mock.callCount(), 0)
+            assert.equal(preparation.mock.callCount(), 0)
+            assert.deepEqual(f.owner.document, before)
+            assert.ok((await readFile(f.owner.filePath)).equals(savedBytes), 'Retry must not Save')
+          } finally {
+            t.mock.restoreAll()
+          }
+        },
+        mode,
+        {},
+        true,
       )
     },
   )

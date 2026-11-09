@@ -15,6 +15,10 @@ type RetryState = Pick<
   | 'animaSmartPatchRegionalSupported'
   | 'animaSmartPatchRegionalTxt2ImgSupported'
   | 'animaSupported'
+  | 'illustriousSmartPatchRegionalImg2ImgSupported'
+  | 'illustriousSmartPatchRegionalOutpaintSupported'
+  | 'illustriousSmartPatchRegionalSupported'
+  | 'illustriousSmartPatchRegionalTxt2ImgSupported'
   | 'outpaintSupported'
   | 'regionalCfgRescaleSupported'
   | 'regionalDpmSupported'
@@ -161,32 +165,34 @@ export function generationQueueRetryReason(
     if (state.smartPatchSupported !== true) {
       return 'The current image engine does not support Smart Patch generation.'
     }
+    const family = operation === 'illustrious-smart-patch' ? 'Illustrious' : 'Anima'
+    const prefix = operation === 'illustrious-smart-patch' ? 'illustrious' : 'anima'
     if (
       requiresSmartPatchRegionalTxt2Img &&
-      state.animaSmartPatchRegionalTxt2ImgSupported !== true
+      state[`${prefix}SmartPatchRegionalTxt2ImgSupported`] !== true
     ) {
-      return 'The current image engine does not support this frozen Anima Smart TXT Regional Guidance job.'
+      return `The current image engine does not support this frozen ${family} Smart TXT Regional Guidance job.`
     }
     if (
       requiresSmartPatchRegionalImg2Img &&
-      state.animaSmartPatchRegionalImg2ImgSupported !== true
+      state[`${prefix}SmartPatchRegionalImg2ImgSupported`] !== true
     ) {
-      return 'The current image engine does not support this frozen Anima Smart IMG Regional Guidance job.'
+      return `The current image engine does not support this frozen ${family} Smart IMG Regional Guidance job.`
     }
     if (
       requiresSmartPatchRegionalOutpaint &&
-      state.animaSmartPatchRegionalOutpaintSupported !== true
+      state[`${prefix}SmartPatchRegionalOutpaintSupported`] !== true
     ) {
-      return 'The current image engine does not support this frozen Anima Smart OUT Regional Guidance job.'
+      return `The current image engine does not support this frozen ${family} Smart OUT Regional Guidance job.`
     }
     if (
       requiresSmartPatchRegional &&
       !requiresSmartPatchRegionalOutpaint &&
       !requiresSmartPatchRegionalTxt2Img &&
       !requiresSmartPatchRegionalImg2Img &&
-      state.animaSmartPatchRegionalSupported !== true
+      state[`${prefix}SmartPatchRegionalSupported`] !== true
     ) {
-      return 'The current image engine does not support this frozen Anima Smart Patch Regional Guidance job.'
+      return `The current image engine does not support this frozen ${family} Smart Patch Regional Guidance job.`
     }
     return operation === 'anima-smart-patch' && state.animaSupported !== true
       ? 'The current image engine does not support Smart Patch generation for Anima.'

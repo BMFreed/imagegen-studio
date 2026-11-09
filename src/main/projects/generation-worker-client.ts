@@ -21,6 +21,7 @@ import {
   supportsInferenceAnimaRegionalOutpaint,
   supportsInferenceAnimaRegionalSampling,
   supportsInferenceAnimaSmartPatchRegionalMode,
+  supportsInferenceIllustriousSmartPatchRegionalMode,
 } from '../../shared/projects/inference-worker-capabilities.js'
 import {
   isQualifiedInferenceWorkerReady,
@@ -64,6 +65,7 @@ import type {
   IllustriousGenerationRequestV1,
   InferenceWorkerReady,
 } from './illustrious-txt2img-job.js'
+import type { BoundSmartPatchIllustriousRegionalInput } from './project-smart-patch-illustrious-regional-input.js'
 import type { BoundSmartPatchAnimaRegionalInput } from './project-smart-patch-regional-input.js'
 
 import { verifyInferenceAuxiliaryFile } from '../runtime/inference-auxiliary-resources.js'
@@ -810,6 +812,79 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
       } finally {
         this.busy = false
       }
+    }
+  }
+
+  /** The processor owns Smart source/KEEP and regional sidecars until confirmed physical exit. */
+  async executeIllustriousSmartPatchRegional(
+    input: BoundSmartPatchIllustriousRegionalInput,
+    onProgress?: (progress: GenerationDenoisingProgress) => void,
+  ): Promise<SmartPatchExecutionResult> {
+    if (this.closed) {
+      throw new GenerationWorkerError('CLOSED', 'The generation worker is unavailable.')
+    }
+    if (this.busy) {
+      throw new GenerationWorkerError('BUSY', 'The generation worker is already processing a job.')
+    }
+    this.busy = true
+    try {
+      const captured = captureSmartPatchRegionalWorkerInput(input)
+      const request = captured.execution
+      if (!supportsInferenceIllustriousSmartPatchRegionalMode(this.ready, request.mode)) {
+        throw new GenerationWorkerError(
+          'WORKER_VERSION_MISMATCH',
+          `The active worker has not qualified Illustrious Smart ${request.mode} with Regional Guidance.`,
+        )
+      }
+      const result = await executeSmartPatchWithTransport(
+        request,
+        this.scratchBasePath,
+        async (frozen) => {
+          const wire = await prepareSmartPatchRegionalWorkerRequest({
+            ...captured,
+            execution: frozen as BoundSmartPatchIllustriousRegionalInput['execution'],
+          })
+          return await this.exchange(
+            Buffer.from(`${JSON.stringify(wire)}\n`, 'utf8'),
+            frozen.requestId,
+            frozen.output.pngPath,
+            'smart-patch-executed',
+            {
+              expectedTotalSteps: null,
+              maxSteps: request.inference.sampling.steps,
+              onProgress,
+            },
+          )
+        },
+      )
+      if (this.closed) {
+        throw new GenerationWorkerError('CLOSED', 'The generation worker is unavailable.')
+      }
+      return result
+    } catch (error) {
+      const mapped =
+        error instanceof ProjectWorkerError
+          ? new GenerationWorkerError(error.code, error.message, error.workerCode)
+          : error
+      if (
+        mapped instanceof GenerationWorkerError &&
+        (mapped.code === 'OUTPUT_MISMATCH' || mapped.code === 'PROTOCOL_ERROR')
+      ) {
+        this.fail(mapped)
+      }
+      if (this.closed) {
+        // The capture may remove its inputs after this promise settles. Confirm
+        // physical exit on worker failure/timeout before relinquishing its lease.
+        try {
+          await this.close()
+        } catch (closeError) {
+          GenerationWorkerClient.unconfirmedStartChildren.add(this)
+          throw closeError
+        }
+      }
+      throw mapped
+    } finally {
+      this.busy = false
     }
   }
 

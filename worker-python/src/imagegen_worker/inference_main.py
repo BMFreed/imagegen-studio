@@ -103,6 +103,10 @@ def inference_ready_message(
             "illustrious-regional-v-prediction-v1",
             "illustrious-regional-v-prediction-image-v1",
             "illustrious-regional-v-prediction-sampling-v1",
+            "illustrious-smart-patch-regional-inpaint-v1",
+            "illustrious-smart-patch-regional-outpaint-v1",
+            "illustrious-smart-patch-regional-txt2img-v1",
+            "illustrious-smart-patch-regional-img2img-v1",
             *(("linux-owned-inference-v1",) if owner_lifetime else ()),
             *(
                 (
@@ -153,8 +157,13 @@ def process_inference_request(
             "execute-current-canvas-regional",
             "execute-current-canvas-anima-regional",
             "execute-anima-smart-patch-regional",
+            "execute-illustrious-smart-patch-regional",
         ):
-            if private_type == "execute-anima-smart-patch-regional":
+            if private_type == "execute-illustrious-smart-patch-regional":
+                from imagegen_worker.illustrious_smart_patch_regional_worker import (
+                    execute_illustrious_smart_patch_regional_request as execute_regional_request,
+                )
+            elif private_type == "execute-anima-smart-patch-regional":
                 from imagegen_worker.anima_smart_patch_regional_worker import (
                     execute_anima_smart_patch_regional_request as execute_regional_request,
                 )

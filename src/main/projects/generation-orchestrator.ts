@@ -576,6 +576,12 @@ export class GenerationOrchestrator {
         const captured: SmartPatchInferenceTransport = {
           close: worker.close.bind(worker),
           executeSmartPatch: worker.executeSmartPatch.bind(worker),
+          ...(typeof worker.executeIllustriousSmartPatchRegional === 'function'
+            ? {
+                executeIllustriousSmartPatchRegional:
+                  worker.executeIllustriousSmartPatchRegional.bind(worker),
+              }
+            : {}),
           ...(typeof worker.executeAnimaSmartPatchRegional === 'function'
             ? { executeAnimaSmartPatchRegional: worker.executeAnimaSmartPatchRegional.bind(worker) }
             : {}),

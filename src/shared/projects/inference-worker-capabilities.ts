@@ -526,3 +526,33 @@ export function supportsInferenceAnimaSmartPatchRegionalMode(
           ? supportsInferenceAnimaSmartPatchRegionalImg2Img(value)
           : false
 }
+
+/** Native Illustrious Smart regions require their exact family/mode capability. */
+export function supportsInferenceIllustriousSmartPatchRegionalMode(
+  value: unknown,
+  mode: unknown,
+): boolean {
+  return (
+    isQualifiedInferenceWorkerReady(value) &&
+    value.workerVersion === '0.14.0' &&
+    ['img2img', 'inpaint', 'outpaint', 'txt2img'].includes(typeof mode === 'string' ? mode : '') &&
+    supportsInferenceEuler(value) &&
+    supportsInferenceIllustriousNoiseProfile(value) &&
+    value.capabilities.includes('smart-patch-execution') &&
+    value.capabilities.includes('smart-patch-seed-confirmation') &&
+    value.capabilities.includes(`illustrious-smart-patch-regional-${String(mode)}-v1`)
+  )
+}
+
+/** Family is taken from the classified request or strictly parsed frozen item. */
+export function supportsInferenceSmartPatchRegionalMode(
+  value: unknown,
+  family: unknown,
+  mode: unknown,
+): boolean {
+  return family === 'illustrious'
+    ? supportsInferenceIllustriousSmartPatchRegionalMode(value, mode)
+    : family === 'anima'
+      ? supportsInferenceAnimaSmartPatchRegionalMode(value, mode)
+      : false
+}

@@ -985,7 +985,7 @@ test('renderer Generate requires explicit regional support and retains ordinary 
     fixture.selected = id
   })
   await expect(generate).toBeDisabled()
-  await expect(page.getByText(/requires an original Anima model/)).toBeVisible()
+  await expect(page.getByText(/requires processing dimensions/)).toBeVisible()
   await page.evaluate(() => {
     const fixture = globalThis.window.regionalWiringFixture
     fixture.tab.regionalGuidance![0]!.enabled = false
@@ -2376,3 +2376,131 @@ test('renderer frozen Smart IMG Retry requires saved OUT support after regions a
     .poll(() => page.evaluate(() => globalThis.window.regionalWiringFixture.retryCalls.length))
     .toBe(1)
 })
+
+for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
+  test(`renderer Illustrious Smart regional ${mode} uses selected settings and exact family capability`, async ({
+    page,
+  }) => {
+    await mountWiring(page, 'project')
+    await page.evaluate((mode) => {
+      const f = globalThis.window.regionalWiringFixture
+      const draft = JSON.parse(JSON.stringify(f.tab.generationDraft))
+      draft.positivePrompt = { embeddingRefs: [], text: 'one white cat' }
+      draft.negativePrompt = { embeddingRefs: [], text: 'Smart exclusion' }
+      draft.loras = []
+      draft.vae = null
+      draft.vaePrecision = 'Auto'
+      draft.cfgRescale = 0
+      delete draft.clipSkip
+      draft.sampling = {
+        cfgScale: 4,
+        denoisingStrength: 0.5,
+        sampler: 'Euler',
+        scheduler: 'Normal',
+        steps: 3,
+      }
+      const patch = {
+        activeRaster: null,
+        activeRasterSubLayerId: null,
+        blendMode: 'normal' as const,
+        boundingBox: { height: 73, width: 107, x: -13, y: 5 },
+        generationDraft: draft,
+        id: crypto.randomUUID(),
+        internalResolution: { height: 128, width: 136 },
+        kind: 'smart-patch' as const,
+        locked: false,
+        mask: { asset: null, id: crypto.randomUUID(), revision: 0 },
+        maskImageUrl: null,
+        name: 'Selected Illustrious Smart',
+        opacity: 1,
+        rasterSubLayers: [],
+        status: 'empty' as const,
+        visible: true,
+      }
+      f.tab.layers = [patch]
+      f.selected = patch.id
+      f.smartMode = mode
+      f.tab.generationDraft.negativePrompt.text = '{unrelated|Canvas}'
+      f.tab.regionalGuidance![0]!.prompts = {
+        negative: { embeddingRefs: [], text: '{dormant|local}' },
+        positive: { embeddingRefs: [], text: 'regional cat' },
+        useGlobalNegativePrompt: true,
+      }
+      f.state.smartPatchSupported = true
+      f.state.animaSmartPatchRegionalSupported = true
+      f.state.animaSmartPatchRegionalOutpaintSupported = true
+      f.state.animaSmartPatchRegionalTxt2ImgSupported = true
+      f.state.animaSmartPatchRegionalImg2ImgSupported = true
+    }, mode)
+    const generate = page.getByRole('button', { exact: true, name: 'Generate' })
+    await expect(generate).toBeDisabled()
+    await expect(
+      page.getByText(/does not support Illustrious Smart Patch Regional Guidance/),
+    ).toBeVisible()
+    await page.evaluate((mode) => {
+      const f = globalThis.window.regionalWiringFixture
+      const key =
+        mode === 'inpaint'
+          ? 'illustriousSmartPatchRegionalSupported'
+          : mode === 'outpaint'
+            ? 'illustriousSmartPatchRegionalOutpaintSupported'
+            : mode === 'txt2img'
+              ? 'illustriousSmartPatchRegionalTxt2ImgSupported'
+              : 'illustriousSmartPatchRegionalImg2ImgSupported'
+      f.state[key] = true
+    }, mode)
+    await expect(generate).toBeEnabled()
+    await page.evaluate(() => {
+      const f = globalThis.window.regionalWiringFixture
+      const patch = f.tab.layers[0]!
+      if (patch.kind === 'smart-patch') {
+        patch.generationDraft.negativePrompt.text = '{active|Smart}'
+      }
+    })
+    await expect(generate).toBeDisabled()
+    await expect(page.getByText(/requires static prompts/)).toBeVisible()
+  })
+
+  test(`renderer frozen Illustrious Smart regional ${mode} Retry survives authoring deletion`, async ({
+    page,
+  }) => {
+    await mountWiring(page, 'queue')
+    await page.evaluate((mode) => {
+      const f = globalThis.window.regionalWiringFixture
+      f.queueItem.operation = 'illustrious-smart-patch'
+      f.queueItem.details!.requiresSmartPatchRegional = true
+      f.queueItem.details!.requiresSmartPatchRegionalOutpaint = mode === 'outpaint'
+      f.queueItem.details!.requiresSmartPatchRegionalTxt2Img = mode === 'txt2img'
+      f.queueItem.details!.requiresSmartPatchRegionalImg2Img = mode === 'img2img'
+      f.state.smartPatchSupported = true
+      f.state.animaSmartPatchRegionalSupported = true
+      f.state.animaSmartPatchRegionalOutpaintSupported = true
+      f.state.animaSmartPatchRegionalTxt2ImgSupported = true
+      f.state.animaSmartPatchRegionalImg2ImgSupported = true
+      f.tab.regionalGuidance = []
+      f.epoch += 1
+    }, mode)
+    const retry = page.getByRole('button', { exact: true, name: 'Retry job' })
+    await expect(retry).toBeDisabled()
+    await expect(
+      page.getByTestId('queue-job-row').getByText(/does not support this frozen Illustrious Smart/),
+    ).toBeVisible()
+    await page.evaluate((mode) => {
+      const f = globalThis.window.regionalWiringFixture
+      const key =
+        mode === 'inpaint'
+          ? 'illustriousSmartPatchRegionalSupported'
+          : mode === 'outpaint'
+            ? 'illustriousSmartPatchRegionalOutpaintSupported'
+            : mode === 'txt2img'
+              ? 'illustriousSmartPatchRegionalTxt2ImgSupported'
+              : 'illustriousSmartPatchRegionalImg2ImgSupported'
+      f.state[key] = true
+    }, mode)
+    await expect(retry).toBeEnabled()
+    await retry.click()
+    await expect
+      .poll(() => page.evaluate(() => globalThis.window.regionalWiringFixture.retryCalls.length))
+      .toBe(1)
+  })
+}

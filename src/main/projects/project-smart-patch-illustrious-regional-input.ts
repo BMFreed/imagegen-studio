@@ -12,6 +12,7 @@ import type { SmartPatchExecutionRequest } from './smart-patch-execution-request
 import {
   captureSmartPatchRegionalSources,
   checkedSmartPatchRegionalCoverage,
+  SMART_PATCH_REGIONAL_ALPHA_ROLES,
   SmartPatchRegionalInputError,
 } from './project-smart-patch-regional-input.js'
 import { captureSmartPatchExecutionRequest } from './smart-patch-execution-request.js'
@@ -98,9 +99,32 @@ const preparedSchema = v.strictObject({
   recipe: recipeSchema,
   schemaVersion: v.literal(1),
 })
+const frozenPreparedSchema = v.strictObject({
+  ...preparedSchema.entries,
+  recipe: v.strictObject({
+    ...recipeSchema.entries,
+    regions: v.array(
+      v.strictObject({
+        ...recipeSchema.entries.regions.item.entries,
+        coverage: v.strictObject({
+          ...recipeSchema.entries.regions.item.entries.coverage.entries,
+          alpha: v.picklist(SMART_PATCH_REGIONAL_ALPHA_ROLES),
+        }),
+      }),
+    ),
+  }),
+})
+export type FrozenSmartPatchIllustriousRegionalInputV1 = v.InferOutput<typeof frozenPreparedSchema>
 export type PreparedSmartPatchIllustriousRegionalInput = v.InferOutput<typeof preparedSchema>
 export type BoundSmartPatchIllustriousRegionalInput = PreparedSmartPatchIllustriousRegionalInput & {
   execution: Extract<SmartPatchExecutionRequest, { family: 'illustrious' }>
+}
+
+type RecipeSources = Omit<PreparedSmartPatchIllustriousRegionalInput['recipe'], 'regions'> & {
+  regions: Omit<
+    PreparedSmartPatchIllustriousRegionalInput['recipe']['regions'][number],
+    'coverage'
+  >[]
 }
 
 /** Private Main companion; neither public permission nor a second source/mask classifier. */
@@ -204,13 +228,23 @@ export function bindSmartPatchIllustriousRegionalExecution(
 ): BoundSmartPatchIllustriousRegionalInput {
   const prepared = capturePreparedSmartPatchIllustriousRegionalInput(input)
   const execution = captureSmartPatchExecutionRequest(executionInput)
+  assertSmartPatchIllustriousRegionalExecutionAgreement(prepared, execution)
+
+  return { ...prepared, execution }
+}
+
+/** Validate the complete original policy without fabricating regional alpha during metadata reads. */
+export function assertSmartPatchIllustriousRegionalExecutionAgreement(
+  input: Omit<PreparedSmartPatchIllustriousRegionalInput, 'recipe'> & { recipe: RecipeSources },
+  execution: SmartPatchExecutionRequest,
+): asserts execution is Extract<SmartPatchExecutionRequest, { family: 'illustrious' }> {
   if (execution.family !== 'illustrious') {
     throw invalid('Illustrious regions require their original Smart command.')
   }
-  const { recipe } = prepared
+  const { recipe } = input
   const policy = execution.inference
   if (
-    execution.mode !== ILLUSTRIOUS_SMART_REGIONAL_MODES[prepared.profile] ||
+    execution.mode !== ILLUSTRIOUS_SMART_REGIONAL_MODES[input.profile] ||
     !isDeepStrictEqual(execution.internalResolution, recipe.internalResolution) ||
     policy.checkpoint.predictionType !== 'epsilon' ||
     policy.checkpoint.sha256 !== recipe.modelSha256 ||
@@ -234,7 +268,41 @@ export function bindSmartPatchIllustriousRegionalExecution(
       'The original Smart execution differs from its frozen Illustrious regional input.',
     )
   }
-  return { ...prepared, execution }
+}
+
+/**
+ * Frozen metadata authenticates role/owner associations; actual bytes remain the bundle owner's
+ * job.
+ */
+export function captureFrozenSmartPatchIllustriousRegionalInputV1(
+  input: unknown,
+): FrozenSmartPatchIllustriousRegionalInputV1 {
+  const parsed = v.safeParse(frozenPreparedSchema, structuredClone(input))
+  if (!parsed.success) {
+    throw invalid('The frozen Illustrious Smart regional input is malformed.')
+  }
+  const value = parsed.output
+  validateSources(value.recipe)
+  for (const [index, region] of value.recipe.regions.entries()) {
+    const plane = region.coverage
+    const bbox = value.recipe.bbox
+    const intersection = plane.intersection
+    if (
+      plane.alpha !== SMART_PATCH_REGIONAL_ALPHA_ROLES[index] ||
+      !isDeepStrictEqual(plane.bounds, bbox) ||
+      (plane.kind === 'covered' || plane.kind === 'intersecting-empty') !==
+        (intersection !== null) ||
+      (region.maskRevision === 0 && plane.kind !== 'empty') ||
+      (intersection &&
+        (intersection.x < bbox.x ||
+          intersection.y < bbox.y ||
+          intersection.x + intersection.width > bbox.x + bbox.width ||
+          intersection.y + intersection.height > bbox.y + bbox.height))
+    ) {
+      throw invalid('Frozen Illustrious regional role/world metadata differs from its owned plane.')
+    }
+  }
+  return value
 }
 
 function parsePrepared(input: unknown): PreparedSmartPatchIllustriousRegionalInput {
@@ -245,7 +313,7 @@ function parsePrepared(input: unknown): PreparedSmartPatchIllustriousRegionalInp
   return parsed.output
 }
 
-function validateSources(recipe: PreparedSmartPatchIllustriousRegionalInput['recipe']): void {
+function validateSources(recipe: RecipeSources): void {
   const { bbox, internalResolution: size } = recipe
   if (
     bbox.width * bbox.height > 4_000_000 ||

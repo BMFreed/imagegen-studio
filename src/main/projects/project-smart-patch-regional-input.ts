@@ -332,7 +332,9 @@ export async function prepareSmartPatchAnimaRegionalInput(input: {
   promptInterpretation?: typeof ANIMA_PROMPT_INTERPRETATION
 }): Promise<PreparedSmartPatchAnimaRegionalInput> {
   const { context, document, item, patch, projectMask } = captureSmartPatchRegionalSources(input)
-  const profile = input.profile === undefined ? ANIMA_SMART_PATCH_REGIONAL_PROFILE : input.profile
+  const requestedProfile = input.profile
+  const profile =
+    requestedProfile === undefined ? ANIMA_SMART_PATCH_REGIONAL_PROFILE : requestedProfile
   const promptInterpretation = input.promptInterpretation
   if (!Object.hasOwn(MODE_BY_PROFILE, profile)) {
     throw invalid('The Smart regional execution profile is unsupported.')

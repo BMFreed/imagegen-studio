@@ -4,8 +4,13 @@ import { createHash } from 'node:crypto'
 import { lstat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
+import type { BoundSmartPatchIllustriousRegionalInput } from './project-smart-patch-illustrious-regional-input.js'
 import type { BoundSmartPatchAnimaRegionalInput } from './project-smart-patch-regional-input.js'
 
+import {
+  bindSmartPatchIllustriousRegionalExecution,
+  capturePreparedSmartPatchIllustriousRegionalInput,
+} from './project-smart-patch-illustrious-regional-input.js'
 import {
   bindSmartPatchAnimaRegionalExecution,
   capturePreparedSmartPatchAnimaRegionalInput,
@@ -19,7 +24,7 @@ export interface SmartPatchRegionalWorkerWire {
   reportProgress?: true
   requestId: string
   stagingRoot: string
-  type: 'execute-anima-smart-patch-regional'
+  type: 'execute-anima-smart-patch-regional' | 'execute-illustrious-smart-patch-regional'
 }
 
 const MAX_BUNDLE_BYTES = 1024 * 1024
@@ -27,18 +32,36 @@ const MAX_ALPHA_BYTES = 64 * 1024 * 1024
 const MAX_LINE_BYTES = 64 * 1024
 const BUNDLE = 'smart-regional.json'
 
+export type BoundSmartPatchRegionalInput =
+  BoundSmartPatchAnimaRegionalInput | BoundSmartPatchIllustriousRegionalInput
+
 /** Own the complete semantic input before the first asynchronous file operation. */
 export function captureSmartPatchRegionalWorkerInput(
   input: BoundSmartPatchAnimaRegionalInput,
-): BoundSmartPatchAnimaRegionalInput {
+): BoundSmartPatchAnimaRegionalInput
+export function captureSmartPatchRegionalWorkerInput(
+  input: BoundSmartPatchIllustriousRegionalInput,
+): BoundSmartPatchIllustriousRegionalInput
+export function captureSmartPatchRegionalWorkerInput(
+  input: BoundSmartPatchRegionalInput,
+): BoundSmartPatchRegionalInput
+export function captureSmartPatchRegionalWorkerInput(
+  input: BoundSmartPatchRegionalInput,
+): BoundSmartPatchRegionalInput {
   try {
     const { execution, ...prepared } = structuredClone(input)
+    if (prepared.recipe.family === 'illustrious') {
+      return bindSmartPatchIllustriousRegionalExecution(
+        capturePreparedSmartPatchIllustriousRegionalInput(prepared),
+        execution,
+      )
+    }
     const owned = bindSmartPatchAnimaRegionalExecution(
       capturePreparedSmartPatchAnimaRegionalInput(prepared),
       execution,
     )
     if (owned.promptInterpretation !== ANIMA_PROMPT_INTERPRETATION) {
-      invalid('Public Smart regions require the frozen Invoke fragment interpretation.')
+      invalid('Public Anima Smart regions require the frozen Invoke fragment interpretation.')
     }
     return owned
   } catch (error) {
@@ -56,7 +79,7 @@ export function captureSmartPatchRegionalWorkerInput(
  * helper creates no nested Canvas lease and never removes another owner's inputs.
  */
 export async function prepareSmartPatchRegionalWorkerRequest(
-  input: BoundSmartPatchAnimaRegionalInput,
+  input: BoundSmartPatchRegionalInput,
   reportProgress = true,
 ): Promise<SmartPatchRegionalWorkerWire> {
   const captured = captureSmartPatchRegionalWorkerInput(input)
@@ -70,12 +93,21 @@ export async function prepareSmartPatchRegionalWorkerRequest(
     request.latentKeepMask.path,
     ...(request.modelSource ? [request.modelSource.path] : []),
   ]
-  const resources = [
-    request.inference.model.checkpoint.path,
-    request.inference.model.qwen3Encoder.path,
-    request.inference.model.vae.path,
-    ...request.inference.loras.map((resource) => resource.path),
-  ]
+  const resources =
+    request.family === 'anima'
+      ? [
+          request.inference.model.checkpoint,
+          request.inference.model.qwen3Encoder,
+          request.inference.model.vae,
+          ...request.inference.loras,
+        ].map((resource) => resource.path)
+      : [
+          request.inference.checkpoint,
+          ...(request.inference.loras ?? []),
+          ...(request.inference.vae ? [request.inference.vae] : []),
+          ...(request.inference.embeddings?.positive ?? []),
+          ...(request.inference.embeddings?.negative ?? []),
+        ].map((resource) => resource.path)
   if (
     new Set(images).size !== images.length ||
     images.some((image) => path.dirname(image) !== root || path.extname(image) !== '.png') ||
@@ -114,7 +146,10 @@ export async function prepareSmartPatchRegionalWorkerRequest(
     ...(reportProgress ? { reportProgress: true } : {}),
     requestId: request.requestId,
     stagingRoot: root,
-    type: 'execute-anima-smart-patch-regional',
+    type:
+      request.family === 'anima'
+        ? 'execute-anima-smart-patch-regional'
+        : 'execute-illustrious-smart-patch-regional',
   }
   if (Buffer.byteLength(`${JSON.stringify(wire)}\n`, 'utf8') > MAX_LINE_BYTES) {
     invalid('Smart regional descriptor exceeds the existing 64 KiB wire bound.')

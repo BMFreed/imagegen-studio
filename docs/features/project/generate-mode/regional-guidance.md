@@ -2430,3 +2430,26 @@ Main capture/binding tests, native tiny CPU execution, file/publication tests
 with explicit loader/placement substitution and semantic mutation evidence are
 separate from trained-model or installed/public qualification. Public Illustrious
 Smart Regional admission remains closed; no promise status changes.
+
+
+## Public Illustrious Smart Regional EPS — finite installed qualification
+
+The [public integration](../../../engineering/phase-4-illustrious-smart-regional-public-research.md)
+connects the private consumer through existing Smart admission, coherent WORLD
+classification, frozen bundle/SQL, exact family/mode capabilities, descriptor,
+world output and restarted Retry. Four independent capabilities/profiles preserve
+TXT no-source/null strength, IMG prepared RGB/zero KEEP and masked INP/OUT with
+independent latent KEEP. Regional masks do not redefine the mode or contribution.
+Selected frozen Smart settings own inherited negatives. Generate/Retry never
+implicitly Add/Save; accepted provenance/Compare/result presets remain ordinary-only.
+
+Scope remains Illustrious-family epsilon, Euler/Normal/default exact noise,
+embedded Auto VAE, CFG(1,30], one static item, processing64–512 divisible by8,
+bounded WORLD geometry and≤3 regions. NoobAI V, resources/batches/other sampling
+combinations and reference inference remain separate work; Anima meanings stay
+unchanged. ROOT678 Main/238 Python/238 browser PASS and installed44 checks across
+16 requests/12 world publications/four step1 cancellations are separate evidence.
+All four restarted Retry outputs/inputs match A; all8app lifetimes close normally.
+Source review is CLEAN; retained-byte audit/release details live in the note.
+Visual utility, general capacity/release and PP-001/005/007/008 remain
+**«Пока не обещать»**. The official Illustrious XLv0.1 visual gate remains open.

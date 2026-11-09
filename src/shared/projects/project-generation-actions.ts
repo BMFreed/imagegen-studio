@@ -30,7 +30,6 @@ export interface ProjectGenerationActionState {
   animaSmartPatchRegionalOutpaintSupported?: boolean
   animaSmartPatchRegionalSupported?: boolean
   animaSmartPatchRegionalTxt2ImgSupported?: boolean
-  /** Absent in older responses; never treat absence as native Anima support. */
   animaSupported?: boolean
   /** Advisory only; Main rechecks the actual worker at admission and dispatch. */
   cfgRescaleSupported: boolean
@@ -38,6 +37,11 @@ export interface ProjectGenerationActionState {
   embeddingsSupported: boolean
   error: { code: string; message: string } | null
   externalVaeSupported: boolean
+  illustriousSmartPatchRegionalImg2ImgSupported?: boolean
+  illustriousSmartPatchRegionalOutpaintSupported?: boolean
+  /** Absent in older responses; never treat absence as native Anima support. */
+  illustriousSmartPatchRegionalSupported?: boolean
+  illustriousSmartPatchRegionalTxt2ImgSupported?: boolean
   img2imgSupported: boolean
   jobs: ProjectGenerationQueueJob[]
   /** Worker capability only. Main verifies the exact local LaMa resource on admission. */
@@ -153,6 +157,10 @@ export function isProjectGenerationActionState(
         'vaePrecisionSupported',
       ],
       [
+        'illustriousSmartPatchRegionalSupported',
+        'illustriousSmartPatchRegionalOutpaintSupported',
+        'illustriousSmartPatchRegionalTxt2ImgSupported',
+        'illustriousSmartPatchRegionalImg2ImgSupported',
         'animaSupported',
         'animaSmartPatchRegionalTxt2ImgSupported',
         'animaSmartPatchRegionalImg2ImgSupported',
@@ -184,6 +192,14 @@ export function isProjectGenerationActionState(
         'smartPatchSupported',
       ],
     ) ||
+    (value['illustriousSmartPatchRegionalSupported'] !== undefined &&
+      typeof value['illustriousSmartPatchRegionalSupported'] !== 'boolean') ||
+    (value['illustriousSmartPatchRegionalOutpaintSupported'] !== undefined &&
+      typeof value['illustriousSmartPatchRegionalOutpaintSupported'] !== 'boolean') ||
+    (value['illustriousSmartPatchRegionalTxt2ImgSupported'] !== undefined &&
+      typeof value['illustriousSmartPatchRegionalTxt2ImgSupported'] !== 'boolean') ||
+    (value['illustriousSmartPatchRegionalImg2ImgSupported'] !== undefined &&
+      typeof value['illustriousSmartPatchRegionalImg2ImgSupported'] !== 'boolean') ||
     (value['animaSupported'] !== undefined && typeof value['animaSupported'] !== 'boolean') ||
     (value['animaSmartPatchRegionalTxt2ImgSupported'] !== undefined &&
       typeof value['animaSmartPatchRegionalTxt2ImgSupported'] !== 'boolean') ||

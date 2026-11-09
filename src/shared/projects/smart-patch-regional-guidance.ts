@@ -45,8 +45,12 @@ export function getSmartPatchRegionalGenerationUnavailableReason(input: {
     return 'Select the Smart Patch that owns this regional generation.'
   }
   const draft = patch.generationDraft
-  if (draft.model?.baseModelFamily !== 'anima') {
-    return 'Regional Guidance with Smart Patch currently requires an original Anima model.'
+  const family = draft.model?.baseModelFamily
+  if (family !== 'anima' && family !== 'illustrious') {
+    return 'Regional Guidance with Smart Patch requires a supported Illustrious or original Anima model.'
+  }
+  if (family === 'illustrious' && draft.model?.predictionType !== 'epsilon') {
+    return 'Regional Illustrious Smart Patch currently requires an epsilon checkpoint.'
   }
   if ((input.iterations ?? 1) !== 1) {
     return 'Regional Smart Patch generation currently requires one static image.'
@@ -66,15 +70,25 @@ export function getSmartPatchRegionalGenerationUnavailableReason(input: {
     return 'Regional Smart Patch generation requires processing dimensions 64–512, divisible by 8, and bounded world dimensions.'
   }
   if (
-    !['euler', 'heun'].includes(draft.sampling.animaMethod ?? '') ||
-    draft.sampling.sampler !== null ||
-    draft.sampling.scheduler !== null ||
+    (family === 'anima'
+      ? !['euler', 'heun'].includes(draft.sampling.animaMethod ?? '') ||
+        draft.sampling.sampler !== null ||
+        draft.sampling.scheduler !== null
+      : draft.sampling.sampler !== 'Euler' ||
+        draft.sampling.scheduler !== 'Normal' ||
+        draft.sampling.animaMethod != null ||
+        typeof draft.sampling.cfgScale !== 'number' ||
+        draft.sampling.cfgScale <= 1 ||
+        draft.sampling.cfgScale > 30 ||
+        !Number.isFinite(draft.sampling.cfgScale)) ||
     (draft.cfgRescale ?? 0) !== 0 ||
     draft.clipSkip !== undefined ||
     draft.vae !== null ||
     (draft.vaePrecision ?? 'Auto') !== 'Auto'
   ) {
-    return 'Regional Smart Patch generation requires native Anima Euler or Heun and embedded Auto VAE.'
+    return family === 'anima'
+      ? 'Regional Smart Patch generation requires native Anima Euler or Heun and embedded Auto VAE.'
+      : 'Regional Illustrious Smart Patch requires Euler/Normal, CFG greater than 1 and embedded Auto VAE.'
   }
   if (draft.loras.some((entry) => entry.enabled)) {
     return 'Regional Smart Patch generation does not support enabled LoRAs yet.'
@@ -107,7 +121,11 @@ export function getSmartPatchRegionalGenerationUnavailableReason(input: {
       if (activePromptEmbeddingRefs(prompt.text, prompt.embeddingRefs).length > 0) {
         return 'Regional Smart Patch generation does not support active textual inversion.'
       }
-      compileAnimaPromptWeighting(prompt.text)
+      if (family === 'anima') {
+        compileAnimaPromptWeighting(prompt.text)
+      } else if (prompt.embeddingRefs.length !== 0) {
+        return 'Regional Illustrious Smart Patch requires prompts without textual-inversion references.'
+      }
     }
   } catch {
     return 'A Regional Smart Patch prompt is invalid or unsupported.'
@@ -132,7 +150,7 @@ export function getSmartPatchRegionalGenerationUnavailableReason(input: {
               input.runtimeTxt2ImgSupported === true ||
               input.runtimeImg2ImgSupported === true
   return supported === false
-    ? 'The image engine does not support Anima Smart Patch Regional Guidance. Repair or update the runtime.'
+    ? `The image engine does not support ${family === 'anima' ? 'Anima' : 'Illustrious'} Smart Patch Regional Guidance. Repair or update the runtime.`
     : null
 }
 

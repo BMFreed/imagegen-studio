@@ -32,7 +32,6 @@ import {
   supportsInferenceAnimaRegionalSampling,
   supportsInferenceAnimaSmartPatchRegional,
   supportsInferenceAnimaSmartPatchRegionalImg2Img,
-  supportsInferenceAnimaSmartPatchRegionalMode,
   supportsInferenceAnimaSmartPatchRegionalOutpaint,
   supportsInferenceAnimaSmartPatchRegionalTxt2Img,
   supportsInferenceCFGRescale,
@@ -40,6 +39,7 @@ import {
   supportsInferenceEuler,
   supportsInferenceExternalVae,
   supportsInferenceIllustriousNoiseProfile,
+  supportsInferenceIllustriousSmartPatchRegionalMode,
   supportsInferenceImg2Img,
   supportsInferenceLora,
   supportsInferenceOutpaint,
@@ -57,6 +57,7 @@ import {
   supportsInferenceRegionalVPrediction,
   supportsInferenceRegionalVPredictionImage,
   supportsInferenceRegionalVPredictionSampling,
+  supportsInferenceSmartPatchRegionalMode,
   supportsInferenceVaePrecision,
 } from '../../shared/projects/inference-worker-capabilities.js'
 import type {
@@ -470,6 +471,22 @@ export class ProjectGenerationActionController {
       embeddingsSupported: !this.blocked && !this.closed && supportsInferenceEmbeddings(ready),
       error: this.error,
       externalVaeSupported: !this.blocked && !this.closed && supportsInferenceExternalVae(ready),
+      illustriousSmartPatchRegionalImg2ImgSupported:
+        !this.blocked &&
+        !this.closed &&
+        supportsInferenceIllustriousSmartPatchRegionalMode(ready, 'img2img'),
+      illustriousSmartPatchRegionalOutpaintSupported:
+        !this.blocked &&
+        !this.closed &&
+        supportsInferenceIllustriousSmartPatchRegionalMode(ready, 'outpaint'),
+      illustriousSmartPatchRegionalSupported:
+        !this.blocked &&
+        !this.closed &&
+        supportsInferenceIllustriousSmartPatchRegionalMode(ready, 'inpaint'),
+      illustriousSmartPatchRegionalTxt2ImgSupported:
+        !this.blocked &&
+        !this.closed &&
+        supportsInferenceIllustriousSmartPatchRegionalMode(ready, 'txt2img'),
       img2imgSupported: !this.blocked && !this.closed && supportsInferenceImg2Img(ready),
       jobs,
       outpaintSupported: !this.blocked && !this.closed && supportsInferenceOutpaint(ready),
@@ -1434,7 +1451,11 @@ export class ProjectGenerationActionController {
               !ready.capabilities.includes('smart-patch-seed-confirmation') ||
               (frozen.payload.kind === 'anima-smart-patch' && !supportsInferenceAnima(ready)) ||
               (frozen.payload.regional !== undefined &&
-                !supportsInferenceAnimaSmartPatchRegionalMode(ready, frozen.payload.mode))
+                !supportsInferenceSmartPatchRegionalMode(
+                  ready,
+                  frozen.payload.item.family,
+                  frozen.payload.mode,
+                ))
             ) {
               throw new ProjectGenerationActionError(
                 'GENERATION_RUNTIME_UNAVAILABLE',

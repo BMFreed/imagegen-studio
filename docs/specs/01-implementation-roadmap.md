@@ -48,7 +48,8 @@ MVP, фаза 5 допускает его к первому релизу. Сле
 
 ### Актуальный checkpoint на 10.11.2026
 
-Сверка выполнена по `c976e57f2d729d6095f88cbab54bdd6f00bddbb8`.
+Private checkpoint опирается на `3bdc1ce129ea43d7df34e83093f32981eb9dec62`;
+текущий public EPS outcome и его source/evidence pins приведены в новом note ниже.
 Исторические checkpoints ниже описывают состояние на момент своего выполнения;
 их «следующий owner» не является актуальным backlog. Последний завершённый
 [public Anima Smart regional TXT/IMG](../engineering/phase-4-anima-smart-regional-flow-public-research.md)
@@ -60,17 +61,26 @@ signed negatives и NoobAI V regional TXT/IMG/OUT с выбранными sampli
 continuations также имеют свои checkpoints. Это не общая визуальная или
 релизная приёмка.
 
+Текущий [public Illustrious Smart Regional EPS checkpoint](../engineering/phase-4-illustrious-smart-regional-public-research.md)
+добавляет все четыре Smart mode через существующие owners и installed qualification.
+Его finite epsilon/Euler/Normal/static/Auto-VAE scope не закрывает NoobAI V,
+ресурсы/batch/остальные методы, reference inference или визуальную приёмку.
+Следующий материальный consumer — V Euler Smart Regional с отдельной
+objective-specific qualification и exact frozen noise policy; текущие EPS
+capabilities сохраняют своё значение. Конечная матрица оставшихся сочетаний
+находится в linked research note.
+
 Оставшиеся обязательные границы:
 
-1. **Regional Guidance consumers:** Illustrious/NoobAI Smart Patch и Illustrious
-   regional reference-image inference. `smart-patch-regional-guidance.ts` пока
-   допускает только original Anima; `regional-invoke-generation.ts` отклоняет
+1. **Regional Guidance consumers:** NoobAI V и оставшиеся совместимые Smart
+   Regional combinations; Illustrious regional reference-image inference. `smart-patch-regional-guidance.ts` пока
+   допускает original Anima и finite Illustrious EPS; `regional-invoke-generation.ts` отклоняет
    reference images. Authoring/storage references уже существуют и не заменяют
    inference. Smart Regional batch/dynamic prompts/resources/sampling нужно
    сверить конечной матрицей с контрактом: текущий отказ сам по себе не делает
    любую комбинацию новой обязательной функцией. Anima references и generic
-   ControlNet/IP-Adapter остаются вне MVP. Начатый private consumer не равен
-   public admission или installed qualification.
+   ControlNet/IP-Adapter остаются вне MVP. Private и public/installed evidence
+   различаются; текущий public EPS checkpoint не квалифицирует V или все controls.
 2. **Визуальная полезность и capacity:** фиксированные контроли, реальная
    совместимость и визуальная приёмка с выбранным официальным Illustrious XL
    v0.1. Pixel inequality, точный Retry и source audit не закрывают этот gate;

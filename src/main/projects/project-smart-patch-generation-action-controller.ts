@@ -5,11 +5,7 @@ import { getEffectiveDynamicPromptSettings } from '../../shared/projects/generat
 import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceAnima,
-  supportsInferenceAnimaSmartPatchRegional,
-  supportsInferenceAnimaSmartPatchRegionalImg2Img,
-  supportsInferenceAnimaSmartPatchRegionalMode,
-  supportsInferenceAnimaSmartPatchRegionalOutpaint,
-  supportsInferenceAnimaSmartPatchRegionalTxt2Img,
+  supportsInferenceSmartPatchRegionalMode,
 } from '../../shared/projects/inference-worker-capabilities.js'
 import { hasEnabledRegionalGuidance } from '../../shared/projects/regional-invoke-generation.js'
 import type {
@@ -35,6 +31,10 @@ import type { SmartPatchGenerationStagingRepository } from './smart-patch-genera
 import { ProjectGenerationActionError } from './generation-action-controller.js'
 import { validateSmartPatchExecutionDraft } from './project-smart-patch-execution.js'
 import {
+  type PreparedSmartPatchIllustriousRegionalInput,
+  prepareSmartPatchIllustriousRegionalInput,
+} from './project-smart-patch-illustrious-regional-input.js'
+import {
   ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE,
   ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE,
   ANIMA_SMART_PATCH_REGIONAL_PROFILE,
@@ -43,7 +43,10 @@ import {
   type PreparedSmartPatchAnimaRegionalInput,
   prepareSmartPatchAnimaRegionalInput,
 } from './project-smart-patch-regional-input.js'
-import { attachSmartPatchAnimaRegionalInput } from './smart-patch-frozen-input.js'
+import {
+  attachSmartPatchAnimaRegionalInput,
+  attachSmartPatchIllustriousRegionalInput,
+} from './smart-patch-frozen-input.js'
 
 interface Dependencies {
   gate: ProjectGenerationOperationGate
@@ -267,42 +270,61 @@ export class ProjectSmartPatchGenerationActionController {
               (draft.model?.baseModelFamily === 'anima' &&
                 !supportsInferenceAnima(inferenceReady)) ||
               (regionalCapture !== undefined &&
-                !supportsInferenceAnimaSmartPatchRegional(inferenceReady) &&
-                !supportsInferenceAnimaSmartPatchRegionalOutpaint(inferenceReady) &&
-                !supportsInferenceAnimaSmartPatchRegionalTxt2Img(inferenceReady) &&
-                !supportsInferenceAnimaSmartPatchRegionalImg2Img(inferenceReady))
+                !['inpaint', 'outpaint', 'txt2img', 'img2img'].some((mode) =>
+                  supportsInferenceSmartPatchRegionalMode(
+                    inferenceReady,
+                    draft.model?.baseModelFamily,
+                    mode,
+                  ),
+                ))
             ) {
               throw new ProjectGenerationActionError(
                 'GENERATION_RUNTIME_UNAVAILABLE',
                 'The installed worker cannot generate Smart Patches.',
               )
             }
-            let regionalPrepared: PreparedSmartPatchAnimaRegionalInput | null = null
+            let regionalPrepared:
+              | PreparedSmartPatchAnimaRegionalInput
+              | PreparedSmartPatchIllustriousRegionalInput
+              | null = null
             if (regionalCapture) {
               // Existing CPU preparation classifies verified WORLD source/mask before LaMa/models.
               // Batch preparation reuses the same historical lease and requalifies final material.
               const classified = await capture.prepareInput(preparationWorker)
               assertCurrent()
               const mode = classified.mode
-              if (!supportsInferenceAnimaSmartPatchRegionalMode(inferenceReady, mode)) {
+              if (
+                !supportsInferenceSmartPatchRegionalMode(
+                  inferenceReady,
+                  draft.model?.baseModelFamily,
+                  mode,
+                )
+              ) {
                 throw new ProjectGenerationActionError(
                   'GENERATION_RUNTIME_UNAVAILABLE',
                   'The installed worker cannot generate this Regional Smart Patch mode.',
                 )
               }
-              regionalPrepared = await prepareSmartPatchAnimaRegionalInput({
-                capture: regionalCapture,
-                item: plan.items[0],
-                profile:
-                  mode === 'outpaint'
-                    ? ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE
-                    : mode === 'txt2img'
-                      ? ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE
-                      : mode === 'img2img'
-                        ? ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE
-                        : ANIMA_SMART_PATCH_REGIONAL_PROFILE,
-                promptInterpretation: ANIMA_PROMPT_INTERPRETATION,
-              })
+              regionalPrepared =
+                draft.model?.baseModelFamily === 'illustrious'
+                  ? await prepareSmartPatchIllustriousRegionalInput({
+                      capture: regionalCapture,
+                      item: plan.items[0],
+                      profile: `invoke-illustrious-smart-regional-${mode}-v1`,
+                    })
+                  : await prepareSmartPatchAnimaRegionalInput({
+                      capture: regionalCapture,
+                      item: plan.items[0],
+                      profile:
+                        mode === 'outpaint'
+                          ? ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE
+                          : mode === 'txt2img'
+                            ? ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE
+                            : mode === 'img2img'
+                              ? ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE
+                              : ANIMA_SMART_PATCH_REGIONAL_PROFILE,
+                      promptInterpretation: ANIMA_PROMPT_INTERPRETATION,
+                    })
             }
             const prepared = await capture.prepareBatchInput({
               infillResolver: this.options.infillResolver,
@@ -311,7 +333,9 @@ export class ProjectSmartPatchGenerationActionController {
               preparationWorker,
             })
             return regionalPrepared
-              ? await attachSmartPatchAnimaRegionalInput(prepared, regionalPrepared)
+              ? 'compiledPrompts' in regionalPrepared
+                ? await attachSmartPatchAnimaRegionalInput(prepared, regionalPrepared)
+                : await attachSmartPatchIllustriousRegionalInput(prepared, regionalPrepared)
               : prepared
           },
         )

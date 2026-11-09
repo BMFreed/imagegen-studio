@@ -7,8 +7,8 @@ import { isGenerationDenoisingProgress } from '../../shared/projects/generation-
 import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceAnima,
-  supportsInferenceAnimaSmartPatchRegionalMode,
   supportsInferenceDenoisingProgress,
+  supportsInferenceSmartPatchRegionalMode,
 } from '../../shared/projects/inference-worker-capabilities.js'
 
 import { randomUUID } from 'node:crypto'
@@ -37,6 +37,10 @@ import {
   reverifyFrozenSmartPatchInput,
 } from './project-smart-patch-execution.js'
 import {
+  bindSmartPatchIllustriousRegionalExecution,
+  type BoundSmartPatchIllustriousRegionalInput,
+} from './project-smart-patch-illustrious-regional-input.js'
+import {
   bindSmartPatchAnimaRegionalExecution,
   type BoundSmartPatchAnimaRegionalInput,
 } from './project-smart-patch-regional-input.js'
@@ -45,13 +49,20 @@ import {
   captureSmartPatchExecutionRequest,
   requireSmartPatchActualSeed,
 } from './smart-patch-execution-request.js'
-import { hydrateFrozenSmartPatchAnimaRegionalInput } from './smart-patch-frozen-input.js'
+import {
+  hydrateFrozenSmartPatchAnimaRegionalInput,
+  hydrateFrozenSmartPatchIllustriousRegionalInput,
+} from './smart-patch-frozen-input.js'
 import { readSmartPatchModelSourceOutput } from './worker-client.js'
 
 export interface SmartPatchInferenceTransport {
   close: () => Promise<void>
   executeAnimaSmartPatchRegional?: (
     input: BoundSmartPatchAnimaRegionalInput,
+    onProgress?: (progress: GenerationDenoisingProgress) => void,
+  ) => Promise<SmartPatchExecutionResult>
+  executeIllustriousSmartPatchRegional?: (
+    input: BoundSmartPatchIllustriousRegionalInput,
     onProgress?: (progress: GenerationDenoisingProgress) => void,
   ) => Promise<SmartPatchExecutionResult>
   executeSmartPatch: (
@@ -219,9 +230,13 @@ export class SmartPatchGenerationProcessor {
       throw new SmartPatchProcessorError('BUSY', 'A Smart Patch job still has an owner.')
     }
     const regionalExecution = transport.executeAnimaSmartPatchRegional
+    const illustriousRegionalExecution = transport.executeIllustriousSmartPatchRegional
     const captured: SmartPatchInferenceTransport = {
       ...(typeof regionalExecution === 'function'
         ? { executeAnimaSmartPatchRegional: regionalExecution.bind(transport) }
+        : {}),
+      ...(typeof illustriousRegionalExecution === 'function'
+        ? { executeIllustriousSmartPatchRegional: illustriousRegionalExecution.bind(transport) }
         : {}),
       close: transport.close.bind(transport),
       executeSmartPatch: transport.executeSmartPatch.bind(transport),
@@ -395,16 +410,23 @@ export class SmartPatchGenerationProcessor {
     claimed: VerifiedQueuedSmartPatchInput,
   ): Promise<VerifiedSmartPatchWorldCandidate> {
     const payload = claimed.payload
-    const regionalExecution = active.transport.executeAnimaSmartPatchRegional
+    const regionalExecution =
+      payload.item.family === 'illustrious'
+        ? active.transport.executeIllustriousSmartPatchRegional
+        : active.transport.executeAnimaSmartPatchRegional
     await this.assertRunning(active)
     if (
       payload.regional !== undefined &&
-      (!supportsInferenceAnimaSmartPatchRegionalMode(active.transport.ready, payload.mode) ||
+      (!supportsInferenceSmartPatchRegionalMode(
+        active.transport.ready,
+        payload.item.family,
+        payload.mode,
+      ) ||
         !regionalExecution)
     ) {
       throw new SmartPatchProcessorError(
         'INFERENCE_UNAVAILABLE',
-        `The worker has not qualified Anima Smart ${payload.mode === 'outpaint' ? 'OUT' : 'INP'} with Regional Guidance.`,
+        `The worker has not qualified ${payload.item.family} Smart ${payload.mode} with Regional Guidance.`,
       )
     }
     if (payload.item.family === 'anima' && !supportsInferenceAnima(active.transport.ready)) {
@@ -466,13 +488,21 @@ export class SmartPatchGenerationProcessor {
     const regional =
       payload.regional === undefined
         ? null
-        : bindSmartPatchAnimaRegionalExecution(
-            hydrateFrozenSmartPatchAnimaRegionalInput(
-              claimed.bundle.manifest,
-              claimed.bundle.files,
-            ),
-            request,
-          )
+        : payload.item.family === 'illustrious'
+          ? bindSmartPatchIllustriousRegionalExecution(
+              hydrateFrozenSmartPatchIllustriousRegionalInput(
+                claimed.bundle.manifest,
+                claimed.bundle.files,
+              ),
+              request,
+            )
+          : bindSmartPatchAnimaRegionalExecution(
+              hydrateFrozenSmartPatchAnimaRegionalInput(
+                claimed.bundle.manifest,
+                claimed.bundle.files,
+              ),
+              request,
+            )
     await this.assertRunning(active)
     active.dispatched = true
     active.receivingProgress = true
@@ -517,7 +547,17 @@ export class SmartPatchGenerationProcessor {
             'Smart regional dispatch is unavailable.',
           )
         }
-        result = await regionalExecution(regional, onProgress)
+        if ('compiledPrompts' in regional) {
+          if (!active.transport.executeAnimaSmartPatchRegional) {
+            throw new Error('Anima regional transport is unavailable.')
+          }
+          result = await active.transport.executeAnimaSmartPatchRegional(regional, onProgress)
+        } else {
+          if (!active.transport.executeIllustriousSmartPatchRegional) {
+            throw new Error('Illustrious regional transport is unavailable.')
+          }
+          result = await active.transport.executeIllustriousSmartPatchRegional(regional, onProgress)
+        }
       } else {
         result = await active.transport.executeSmartPatch(request, onProgress)
       }

@@ -38,6 +38,12 @@ import { admitSmartPatch, withSmartPatchQueueFixture } from './test-fixtures/sma
 const digest = (value: string | Uint8Array) => createHash('sha256').update(value).digest('hex')
 const prompt = (text: string) => ({ embeddingRefs: [], text })
 
+function animaRegional(material: SmartPatchInputMaterial) {
+  const regional = material.manifest.regional
+  assert.ok(regional && 'compiledPrompts' in regional)
+  return regional
+}
+
 /** Literal authored regional sources; actual frozen, bundle and queue owners remain subjects. */
 function regionalInput(material: SmartPatchInputMaterial): PreparedSmartPatchAnimaRegionalInput {
   const { context: ctx } = material.manifest
@@ -158,7 +164,7 @@ test('new Smart regional material owns ordered raw world alpha and separately si
     Object.keys(regional.files).sort(),
     [...Object.keys(ordinary.files), ...SMART_PATCH_REGIONAL_ALPHA_ROLES].sort(),
   )
-  assert.equal(regional.manifest.regional!.promptInterpretation, ANIMA_PROMPT_INTERPRETATION)
+  assert.equal(animaRegional(regional).promptInterpretation, ANIMA_PROMPT_INTERPRETATION)
   assert.deepEqual(
     regional.manifest.regional!.recipe.regions.map((r) => r.coverage.alpha),
     SMART_PATCH_REGIONAL_ALPHA_ROLES,
@@ -182,7 +188,7 @@ test('new Smart regional material owns ordered raw world alpha and separately si
     assert.equal(regional.manifest.files[role]!.sha256, digest(regional.files[role]))
   }
   assert.deepEqual(
-    regional.manifest.regional!.compiledPrompts.map((p) => [p.sourceId, p.polarity, p.text]),
+    animaRegional(regional).compiledPrompts.map((p) => [p.sourceId, p.polarity, p.text]),
     prepared.compiledPrompts.map((p) => [p.sourceId, p.polarity, p.text]),
   )
   assert.equal(regional.manifest.regional!.recipe.regions[1].negative.source, 'smart-patch')
@@ -216,7 +222,7 @@ test('current private default and explicit fragment marker preserve independentl
   assert.deepEqual(legacyPrivate.compiledPrompts, prepared.compiledPrompts)
   await assert.rejects(attachSmartPatchAnimaRegionalInput(ordinary, legacyPrivate))
   const frozen = await attachSmartPatchAnimaRegionalInput(ordinary, prepared)
-  const malformed = structuredClone(frozen.manifest.regional!)
+  const malformed = structuredClone(animaRegional(frozen))
   malformed.promptInterpretation = 'legacy' as never
   assert.throws(() => captureFrozenSmartPatchAnimaRegionalInputV1(malformed))
 })
@@ -266,7 +272,7 @@ for (const [name, mutate] of [
   [
     'interpretation',
     (m: SmartPatchInputMaterial) => {
-      m.manifest.regional!.promptInterpretation = 'old' as never
+      animaRegional(m).promptInterpretation = 'old' as never
     },
   ],
   [
@@ -308,7 +314,7 @@ for (const [name, mutate] of [
   [
     'method',
     (m: SmartPatchInputMaterial) => {
-      m.manifest.regional!.recipe.sampling.animaMethod = 'dpmpp_2m' as never
+      animaRegional(m).recipe.sampling.animaMethod = 'dpmpp_2m' as never
     },
   ],
   [
@@ -332,15 +338,15 @@ for (const [name, mutate] of [
   [
     'compiled-sign',
     (m: SmartPatchInputMaterial) => {
-      m.manifest.regional!.compiledPrompts = structuredClone(m.manifest.regional!.compiledPrompts)
-      ;(m.manifest.regional!.compiledPrompts as unknown as { polarity: string }[])[3].polarity =
+      animaRegional(m).compiledPrompts = structuredClone(animaRegional(m).compiledPrompts)
+      ;(animaRegional(m).compiledPrompts as unknown as { polarity: string }[])[3].polarity =
         'positive'
     },
   ],
   [
     'reference',
     (m: SmartPatchInputMaterial) => {
-      m.manifest.regional!.recipe.regions[0].referenceImages = [{} as never]
+      m.manifest.regional!.recipe.regions[0].referenceImages = [{}]
     },
   ],
   [
@@ -519,7 +525,7 @@ test('a source Raster owner cannot be reused as a signed region or mask owner', 
   const { regional } = await fixture()
   const sourceId = regional.manifest.context.sourceLayerIds[0]
   assert.ok(sourceId)
-  const metadata = structuredClone(regional.manifest.regional!)
+  const metadata = structuredClone(animaRegional(regional))
   regional.manifest.regional = metadata
   const previous = metadata.recipe.regions[0].regionId
   metadata.recipe.regions[0].regionId = sourceId
