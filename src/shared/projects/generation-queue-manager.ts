@@ -39,6 +39,7 @@ export interface GenerationQueueEntry extends GenerationQueueReview {
     requiresRegionalLora?: boolean
     /** Derived from the frozen selected VAE/effective precision, never the current draft. */
     requiresRegionalVae?: boolean
+    requiresSmartPatchRegional?: boolean
     sampling: GenerationQueueSamplingDetails
     size: { height: number; width: number }
   } | null
@@ -127,6 +128,7 @@ const EntrySchema = v.pipe(
         prompt: text,
         requiresRegionalLora: v.optional(v.boolean()),
         requiresRegionalVae: v.optional(v.boolean()),
+        requiresSmartPatchRegional: v.optional(v.boolean()),
         sampling: v.union([
           v.strictObject({
             cfgRescale: v.optional(v.pipe(v.number(), v.finite(), v.minValue(0), v.maxValue(0.99))),

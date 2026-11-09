@@ -56,7 +56,6 @@ import {
   type PromptEmbeddingSelection,
 } from '../../shared/projects/prompt-embeddings.js'
 import {
-  getRegionalGuidanceGenerationUnavailableReason,
   type ProjectRegionalGuidanceChange,
   type ProjectRegionalGuidanceOwner,
   type ProjectRegionalGuidancePromptChange,
@@ -66,6 +65,7 @@ import {
   getInvokeRegionalGenerationUnavailableReason,
   hasEnabledRegionalGuidance,
 } from '../../shared/projects/regional-invoke-generation.js'
+import { getSmartPatchRegionalGenerationUnavailableReason } from '../../shared/projects/smart-patch-regional-guidance.js'
 
 import {
   X as CancelIcon,
@@ -2417,7 +2417,13 @@ function commitInternalAfterUpdate() {
 
 const generationBlockingReason = computed(() => {
   const regionalReason = activePatch.value
-    ? getRegionalGuidanceGenerationUnavailableReason(props.tab)
+    ? getSmartPatchRegionalGenerationUnavailableReason({
+        document: props.tab,
+        iterations: imagesPerClick.value ?? 0,
+        patch: { ...activePatch.value, generationDraft: props.generationDraft },
+        runtimeSupported: props.generationState?.animaSmartPatchRegionalSupported === true,
+        targetMode: smartTargetState.value?.mode,
+      })
     : getInvokeRegionalGenerationUnavailableReason({
         animaRegionalImg2ImgSupported: props.generationState?.animaRegionalImg2ImgSupported,
         animaRegionalLoraSupported: props.generationState?.animaRegionalLoraSupported,

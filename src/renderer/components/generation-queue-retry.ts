@@ -10,6 +10,7 @@ type RetryState = Pick<
   | 'animaRegionalOutpaintSupported'
   | 'animaRegionalSamplingSupported'
   | 'animaRegionalSupported'
+  | 'animaSmartPatchRegionalSupported'
   | 'animaSupported'
   | 'outpaintSupported'
   | 'regionalCfgRescaleSupported'
@@ -40,6 +41,7 @@ export function generationQueueRetryReason(
   frozenCfgRescale = 0,
   frozenAnimaMethod?: string | null,
   frozenPredictionType?: string | null,
+  requiresSmartPatchRegional = false,
 ): string | null {
   if (
     operation === 'anima-regional-txt2img' ||
@@ -152,6 +154,9 @@ export function generationQueueRetryReason(
     }
     if (state.smartPatchSupported !== true) {
       return 'The current image engine does not support Smart Patch generation.'
+    }
+    if (requiresSmartPatchRegional && state.animaSmartPatchRegionalSupported !== true) {
+      return 'The current image engine does not support this frozen Anima Smart Patch Regional Guidance job.'
     }
     return operation === 'anima-smart-patch' && state.animaSupported !== true
       ? 'The current image engine does not support Smart Patch generation for Anima.'

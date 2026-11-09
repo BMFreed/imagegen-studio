@@ -423,6 +423,7 @@ function retryReason(item: GenerationQueueEntry): string | null {
     item.details?.sampling.cfgRescale,
     item.details?.sampling.animaMethod,
     item.details?.sampling.predictionType,
+    item.details?.requiresSmartPatchRegional,
   )
   if (operationReason) {
     return operationReason

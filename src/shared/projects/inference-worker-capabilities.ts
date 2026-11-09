@@ -464,3 +464,15 @@ export function supportsInferenceIllustriousNoiseProfile(value: unknown): boolea
     value.capabilities.includes('illustrious-noise-profile')
   )
 }
+
+/** Smart INP/regional routing is separately qualified from either existing lane. */
+export function supportsInferenceAnimaSmartPatchRegional(value: unknown): boolean {
+  return (
+    isQualifiedInferenceWorkerReady(value) &&
+    value.workerVersion === '0.14.0' &&
+    supportsInferenceAnima(value) &&
+    value.capabilities.includes('smart-patch-execution') &&
+    value.capabilities.includes('smart-patch-seed-confirmation') &&
+    value.capabilities.includes('anima-smart-patch-regional-inpaint-v1')
+  )
+}

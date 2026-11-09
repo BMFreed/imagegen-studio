@@ -30,6 +30,7 @@ import {
   supportsInferenceAnimaRegionalNegative,
   supportsInferenceAnimaRegionalOutpaint,
   supportsInferenceAnimaRegionalSampling,
+  supportsInferenceAnimaSmartPatchRegional,
   supportsInferenceCFGRescale,
   supportsInferenceEmbeddings,
   supportsInferenceEuler,
@@ -451,6 +452,8 @@ export class ProjectGenerationActionController {
         !this.closed &&
         !!this.options.regional &&
         supportsInferenceAnimaRegional(ready),
+      animaSmartPatchRegionalSupported:
+        !this.blocked && !this.closed && supportsInferenceAnimaSmartPatchRegional(ready),
       animaSupported: !this.blocked && !this.closed && supportsInferenceAnima(ready),
       cfgRescaleSupported: !this.blocked && !this.closed && supportsInferenceCFGRescale(ready),
       documentId,
@@ -1419,7 +1422,9 @@ export class ProjectGenerationActionController {
               ready.workerVersion !== '0.14.0' ||
               !ready.capabilities.includes('smart-patch-execution') ||
               !ready.capabilities.includes('smart-patch-seed-confirmation') ||
-              (frozen.payload.kind === 'anima-smart-patch' && !supportsInferenceAnima(ready))
+              (frozen.payload.kind === 'anima-smart-patch' && !supportsInferenceAnima(ready)) ||
+              (frozen.payload.regional !== undefined &&
+                !supportsInferenceAnimaSmartPatchRegional(ready))
             ) {
               throw new ProjectGenerationActionError(
                 'GENERATION_RUNTIME_UNAVAILABLE',

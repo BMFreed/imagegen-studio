@@ -2535,3 +2535,13 @@ Final source/document/retained-byte audit is CLEAN; ROOT separately closes owned
 process/readers/restoration/dependency gates. All6140 scratch entries survive in
 the verified archive; exact disposal reclaims429,486,080 allocated bytes. The one
 shared runtime/catalog/models and previous qualified refresh remain protected.
+
+## Public original-Anima Smart regional INP
+
+[Public Smart INP research](./phase-4-anima-smart-regional-public-research.md)
+records the additive combination capability and genuine selected-Smart capture
+through raw-alpha bundle, queue/descriptor worker, existing world candidate and
+frozen Retry. It follows current Invoke4875d965 INP/signed regional job ownership
+and saved-input Retry. Selected Smart settings own inherited negative; accepted
+provenance and explicit Add/Save remain unchanged. Qualification and retention
+levels are separate in the note; PP-001/005/007/008 are not promoted.

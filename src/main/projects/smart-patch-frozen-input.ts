@@ -37,6 +37,14 @@ import { validateSrgbPngStream } from './igs-package.js'
 import { resolveIllustriousScheduler } from './illustrious-scheduler.js'
 import { decodeDerivedProjectMaskPng, decodeProjectMaskPng } from './project-mask.js'
 import { validateSmartPatchExecutionDraft } from './project-smart-patch-execution.js'
+import {
+  bindSmartPatchAnimaRegionalExecution,
+  captureFrozenSmartPatchAnimaRegionalInputV1,
+  capturePreparedSmartPatchAnimaRegionalInput,
+  type FrozenSmartPatchAnimaRegionalInputV1,
+  type PreparedSmartPatchAnimaRegionalInput,
+  SMART_PATCH_REGIONAL_ALPHA_ROLES,
+} from './project-smart-patch-regional-input.js'
 import { captureSmartPatchExecutionRequest } from './smart-patch-execution-request.js'
 import { classifyTargetPngAlpha, decodeTargetPngAlpha } from './target-png-mode.js'
 
@@ -66,12 +74,16 @@ export interface FrozenSmartPatchInputV1 {
     'final-contribution-mask.png': FrozenSmartPatchInputFileV1
     'latent-keep-mask.png': FrozenSmartPatchInputFileV1
     'model-source.png'?: FrozenSmartPatchInputFileV1
+    'regional-0.alpha8'?: FrozenSmartPatchInputFileV1
+    'regional-1.alpha8'?: FrozenSmartPatchInputFileV1
+    'regional-2.alpha8'?: FrozenSmartPatchInputFileV1
     'source.png': FrozenSmartPatchInputFileV1
   }
   items: FrozenSmartPatchInputItemV1[]
   kind: 'smart-patch-frozen-input'
   latentMaskHasCoverage: boolean
   mode: SmartPatchGenerationMode
+  regional?: FrozenSmartPatchAnimaRegionalInputV1
   schemaVersion: 1
   sourceAlpha: 'mixed' | 'opaque' | 'transparent'
 }
@@ -149,6 +161,9 @@ const manifestSchema = v.strictObject({
     'final-contribution-mask.png': file,
     'latent-keep-mask.png': file,
     'model-source.png': v.optional(file),
+    'regional-0.alpha8': v.optional(file),
+    'regional-1.alpha8': v.optional(file),
+    'regional-2.alpha8': v.optional(file),
     'source.png': file,
   }),
   items: v.pipe(
@@ -165,6 +180,7 @@ const manifestSchema = v.strictObject({
   kind: v.literal('smart-patch-frozen-input'),
   latentMaskHasCoverage: v.boolean(),
   mode: v.picklist(['txt2img', 'img2img', 'inpaint', 'outpaint']),
+  regional: v.optional(v.unknown()),
   schemaVersion: v.literal(1),
   sourceAlpha: v.picklist(['mixed', 'opaque', 'transparent']),
 })
@@ -283,6 +299,16 @@ export function parseFrozenSmartPatchInputV1(input: unknown): FrozenSmartPatchIn
       item: structuredClone(entry.item),
     } as FrozenSmartPatchInputItemV1
   })
+  if (Object.hasOwn(result, 'regional')) {
+    try {
+      result.regional = captureFrozenSmartPatchAnimaRegionalInputV1(result.regional)
+      assertRegionalMetadataAgreement(result)
+    } catch {
+      refuse('The frozen Smart regional metadata differs from its exact Smart job.')
+    }
+  } else if (SMART_PATCH_REGIONAL_ALPHA_ROLES.some((role) => Object.hasOwn(result.files, role))) {
+    refuse('Regional alpha roles require the explicit frozen Smart regional profile.')
+  }
   return result
 }
 
@@ -393,6 +419,9 @@ export async function parseSmartPatchInputMaterial(
     }
     files[name] = Buffer.from(bytes)
   }
+  if (manifest.regional) {
+    hydrateFrozenSmartPatchAnimaRegionalInput(manifest, files)
+  }
   for (const name of ['source.png', 'model-source.png'] as const) {
     const ref = manifest.files[name]
     if (ref) {
@@ -470,6 +499,171 @@ export async function parseSmartPatchInputMaterial(
     refuse('The frozen Smart Patch mode or numeric KEEP policy differs from its actual inputs.')
   }
   return { files, manifest }
+}
+
+/**
+ * Invoke4875 freezes the compiled root graph for Retry. Adapt that ownership to the existing Smart
+ * manifest commit; raw regions use exact fixed-role bytes. This is operational input, never
+ * accepted-result provenance.
+ */
+export async function attachSmartPatchAnimaRegionalInput(
+  input: SmartPatchInputMaterial,
+  preparedInput: PreparedSmartPatchAnimaRegionalInput,
+): Promise<SmartPatchInputMaterial> {
+  const prepared = capturePreparedSmartPatchAnimaRegionalInput(preparedInput)
+  const manifest = parseFrozenSmartPatchInputV1(input.manifest)
+  if (manifest.regional || prepared.promptInterpretation !== ANIMA_PROMPT_INTERPRETATION) {
+    refuse('Public Smart regional input requires one explicit current prompt interpretation.')
+  }
+  const files: Record<string, Buffer> = {}
+  for (const [name, bytes] of Object.entries(input.files)) {
+    if (!Buffer.isBuffer(bytes)) {
+      refuse('Smart input material requires owned buffers.')
+    }
+    files[name] = Buffer.from(bytes)
+  }
+  const regional: FrozenSmartPatchAnimaRegionalInputV1 = {
+    ...prepared,
+    promptInterpretation: ANIMA_PROMPT_INTERPRETATION,
+    recipe: {
+      ...prepared.recipe,
+      regions: prepared.recipe.regions.map((region, index) => {
+        const role = SMART_PATCH_REGIONAL_ALPHA_ROLES[index]
+        if (!role || Object.hasOwn(files, role) || Object.hasOwn(manifest.files, role)) {
+          refuse('The Smart regional raw alpha role is unavailable.')
+        }
+        const bytes = Buffer.from(region.coverage.alpha)
+        files[role] = bytes
+        manifest.files[role] = {
+          byteSize: bytes.length,
+          height: prepared.recipe.bbox.height,
+          sha256: digest(bytes),
+          width: prepared.recipe.bbox.width,
+        }
+        return { ...region, coverage: { ...region.coverage, alpha: role } }
+      }),
+    },
+  }
+  manifest.regional = regional
+  return await parseSmartPatchInputMaterial(manifest, files)
+}
+
+/** Full pixel qualification of the frozen regional extension, without current Project reads. */
+export function hydrateFrozenSmartPatchAnimaRegionalInput(
+  manifestInput: FrozenSmartPatchInputV1,
+  filesInput: Record<string, Buffer>,
+): PreparedSmartPatchAnimaRegionalInput {
+  const manifest = parseFrozenSmartPatchInputV1(manifestInput)
+  const regional = manifest.regional
+  if (!regional) {
+    refuse('The Smart input has no frozen regional extension.')
+  }
+  try {
+    const prepared = capturePreparedSmartPatchAnimaRegionalInput({
+      ...regional,
+      recipe: {
+        ...regional.recipe,
+        regions: regional.recipe.regions.map((region) => {
+          const role = region.coverage.alpha
+          const file = manifest.files[role]
+          const bytes = filesInput[role]
+          if (
+            !file ||
+            !Buffer.isBuffer(bytes) ||
+            bytes.length !== file.byteSize ||
+            digest(bytes) !== file.sha256
+          ) {
+            refuse('The frozen regional alpha fails its actual byte identity.')
+          }
+          return { ...region, coverage: { ...region.coverage, alpha: new Uint8Array(bytes) } }
+        }),
+      },
+    })
+    bindSmartPatchAnimaRegionalExecution(prepared, requestForEntry(manifest, manifest.items[0]))
+    return prepared
+  } catch {
+    refuse('The frozen Smart regional pixels or complete signed association are invalid.')
+  }
+}
+
+/** Metadata admission explicitly does not attest the alpha bytes. */
+function assertRegionalMetadataAgreement(manifest: FrozenSmartPatchInputV1): void {
+  const regional = manifest.regional!
+  const recipe = regional.recipe
+  const ctx = manifest.context
+  const draft = ctx.generationDraft
+  const model = draft.model
+  const entry = manifest.items[0]
+  if (
+    manifest.mode !== 'inpaint' ||
+    manifest.sourceAlpha !== 'opaque' ||
+    manifest.items.length !== 1 ||
+    entry.family !== 'anima' ||
+    manifest.animaPromptInterpretation !== ANIMA_PROMPT_INTERPRETATION ||
+    regional.promptInterpretation !== ANIMA_PROMPT_INTERPRETATION ||
+    model?.kind !== 'checkpoint' ||
+    model.baseModelFamily !== 'anima' ||
+    model.predictionType !== null ||
+    draft.loras.some((value) => value.enabled) ||
+    draft.vae !== null ||
+    (draft.vaePrecision ?? 'Auto') !== 'Auto' ||
+    (draft.cfgRescale ?? 0) !== 0 ||
+    draft.clipSkip !== undefined ||
+    draft.sampling.sampler !== null ||
+    draft.sampling.scheduler !== null ||
+    !['euler', 'heun'].includes(draft.sampling.animaMethod ?? '') ||
+    recipe.item.iteration !== 0 ||
+    recipe.item.promptPairIndex !== 0 ||
+    recipe.documentId !== ctx.documentId ||
+    recipe.documentRevision !== ctx.documentRevision ||
+    recipe.layerId !== ctx.layerId ||
+    !isDeepStrictEqual(recipe.bbox, ctx.bbox) ||
+    !isDeepStrictEqual(recipe.internalResolution, ctx.internalResolution) ||
+    !isDeepStrictEqual(recipe.smartMask, {
+      maskId: ctx.mask.id,
+      maskRevision: ctx.mask.revision,
+    }) ||
+    recipe.modelSha256 !== model.fileSha256 ||
+    recipe.item.seed !== entry.item.seed ||
+    !isDeepStrictEqual(recipe.item.prompts, entry.item.prompts) ||
+    !isDeepStrictEqual(recipe.globalPrompts, {
+      negative: draft.negativePrompt,
+      positive: draft.positivePrompt,
+    }) ||
+    !isDeepStrictEqual(recipe.sampling, {
+      animaMethod: draft.sampling.animaMethod,
+      cfgScale: draft.sampling.cfgScale,
+      denoisingStrength: draft.sampling.denoisingStrength,
+      steps: draft.sampling.steps,
+    }) ||
+    !isDeepStrictEqual(entry.inference.prompts, {
+      negative: regional.compiledPrompts[1].prompt,
+      positive: regional.compiledPrompts[0].prompt,
+    })
+  ) {
+    refuse('The regional input does not describe this one frozen original Anima Smart INP job.')
+  }
+  if (
+    recipe.regions.some(
+      (region) =>
+        ctx.sourceLayerIds.includes(region.regionId) || ctx.sourceLayerIds.includes(region.maskId),
+    )
+  ) {
+    refuse('Regional owners must remain independent of frozen source Raster owners.')
+  }
+  const expectedRoles = recipe.regions.map((region) => region.coverage.alpha)
+  const actualRoles = SMART_PATCH_REGIONAL_ALPHA_ROLES.filter((role) =>
+    Object.hasOwn(manifest.files, role),
+  )
+  if (!isDeepStrictEqual(expectedRoles, actualRoles)) {
+    refuse('Frozen regional alpha roles must match every ordered region exactly once.')
+  }
+  for (const role of expectedRoles) {
+    const file = manifest.files[role]
+    if (!file || !sameSize(file, ctx.bbox) || file.byteSize !== ctx.bbox.width * ctx.bbox.height) {
+      refuse('A frozen raw regional alpha descriptor differs from its world pixel dimensions.')
+    }
+  }
 }
 
 /** Build only transient validation fields; neither file access nor a new request identity occurs. */

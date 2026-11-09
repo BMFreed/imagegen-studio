@@ -83,7 +83,18 @@ class CapturedAnimaSmartPatchRegionalInput:
 
 def capture_anima_smart_patch_regional_input(value: object) -> CapturedAnimaSmartPatchRegionalInput:
     """Validate the whole Main handoff before model/resource/image callbacks."""
-    data = _object(value, {"schemaVersion", "profile", "recipe", "compiledPrompts", "execution"})
+    data = _object(
+        value,
+        {"schemaVersion", "profile", "recipe", "compiledPrompts", "execution"},
+        {"promptInterpretation"},
+    )
+    if "promptInterpretation" in data:
+        _require(
+            type(data["promptInterpretation"]) is str
+            and data["promptInterpretation"] == "invoke-fragments-v1",
+            "INVALID_REQUEST",
+            "Anima Smart regional prompt interpretation is unsupported.",
+        )
     _require(
         type(data["schemaVersion"]) is int
         and data["schemaVersion"] == 1

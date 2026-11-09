@@ -7,6 +7,7 @@ import { isGenerationDenoisingProgress } from '../../shared/projects/generation-
 import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceAnima,
+  supportsInferenceAnimaSmartPatchRegional,
   supportsInferenceDenoisingProgress,
 } from '../../shared/projects/inference-worker-capabilities.js'
 
@@ -35,15 +36,24 @@ import {
   captureSmartPatchModelResolver,
   reverifyFrozenSmartPatchInput,
 } from './project-smart-patch-execution.js'
+import {
+  bindSmartPatchAnimaRegionalExecution,
+  type BoundSmartPatchAnimaRegionalInput,
+} from './project-smart-patch-regional-input.js'
 import { composeSmartPatchWorldContribution } from './project-smart-patch-world-output.js'
 import {
   captureSmartPatchExecutionRequest,
   requireSmartPatchActualSeed,
 } from './smart-patch-execution-request.js'
+import { hydrateFrozenSmartPatchAnimaRegionalInput } from './smart-patch-frozen-input.js'
 import { readSmartPatchModelSourceOutput } from './worker-client.js'
 
 export interface SmartPatchInferenceTransport {
   close: () => Promise<void>
+  executeAnimaSmartPatchRegional?: (
+    input: BoundSmartPatchAnimaRegionalInput,
+    onProgress?: (progress: GenerationDenoisingProgress) => void,
+  ) => Promise<SmartPatchExecutionResult>
   executeSmartPatch: (
     request: SmartPatchExecutionRequest,
     onProgress?: (progress: GenerationDenoisingProgress) => void,
@@ -208,7 +218,11 @@ export class SmartPatchGenerationProcessor {
     if (this.currentRun || this.active) {
       throw new SmartPatchProcessorError('BUSY', 'A Smart Patch job still has an owner.')
     }
+    const regionalExecution = transport.executeAnimaSmartPatchRegional
     const captured: SmartPatchInferenceTransport = {
+      ...(typeof regionalExecution === 'function'
+        ? { executeAnimaSmartPatchRegional: regionalExecution.bind(transport) }
+        : {}),
       close: transport.close.bind(transport),
       executeSmartPatch: transport.executeSmartPatch.bind(transport),
       ready: structuredClone(transport.ready),
@@ -381,7 +395,17 @@ export class SmartPatchGenerationProcessor {
     claimed: VerifiedQueuedSmartPatchInput,
   ): Promise<VerifiedSmartPatchWorldCandidate> {
     const payload = claimed.payload
+    const regionalExecution = active.transport.executeAnimaSmartPatchRegional
     await this.assertRunning(active)
+    if (
+      payload.regional !== undefined &&
+      (!supportsInferenceAnimaSmartPatchRegional(active.transport.ready) || !regionalExecution)
+    ) {
+      throw new SmartPatchProcessorError(
+        'INFERENCE_UNAVAILABLE',
+        'The worker has not qualified Anima Smart INP with Regional Guidance.',
+      )
+    }
     if (payload.item.family === 'anima' && !supportsInferenceAnima(active.transport.ready)) {
       throw new SmartPatchProcessorError(
         'INFERENCE_UNAVAILABLE',
@@ -438,6 +462,16 @@ export class SmartPatchGenerationProcessor {
       schemaVersion: 1,
       type: 'execute-smart-patch',
     })
+    const regional =
+      payload.regional === undefined
+        ? null
+        : bindSmartPatchAnimaRegionalExecution(
+            hydrateFrozenSmartPatchAnimaRegionalInput(
+              claimed.bundle.manifest,
+              claimed.bundle.files,
+            ),
+            request,
+          )
     await this.assertRunning(active)
     active.dispatched = true
     active.receivingProgress = true
@@ -475,7 +509,17 @@ export class SmartPatchGenerationProcessor {
     }
     let result: SmartPatchExecutionResult
     try {
-      result = await active.transport.executeSmartPatch(request, onProgress)
+      if (regional) {
+        if (!regionalExecution) {
+          throw new SmartPatchProcessorError(
+            'INFERENCE_UNAVAILABLE',
+            'Smart regional dispatch is unavailable.',
+          )
+        }
+        result = await regionalExecution(regional, onProgress)
+      } else {
+        result = await active.transport.executeSmartPatch(request, onProgress)
+      }
     } finally {
       // Numerical progress ends before CPU/world processing, publication or failure cleanup.
       this.clearProgress(active)

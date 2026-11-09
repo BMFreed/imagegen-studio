@@ -13,6 +13,7 @@ import {
   IGS_SAFETY_CEILINGS,
 } from '../../shared/projects/project-schema.js'
 import { assertRegionalGuidanceGenerationAvailable } from '../../shared/projects/regional-guidance.js'
+import { assertSmartPatchRegionalGenerationAvailable } from '../../shared/projects/smart-patch-regional-guidance.js'
 
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
@@ -575,6 +576,9 @@ export class GenerationOrchestrator {
         const captured: SmartPatchInferenceTransport = {
           close: worker.close.bind(worker),
           executeSmartPatch: worker.executeSmartPatch.bind(worker),
+          ...(typeof worker.executeAnimaSmartPatchRegional === 'function'
+            ? { executeAnimaSmartPatchRegional: worker.executeAnimaSmartPatchRegional.bind(worker) }
+            : {}),
           ready: structuredClone(worker.ready),
         }
         await this.enqueueBarrier
@@ -1444,7 +1448,10 @@ export class GenerationOrchestrator {
     tabId: string,
     material: SmartPatchInputMaterial,
   ): Promise<QueuedGenerationItem[]> {
-    this.assertNewGenerationAllowed(tabId)
+    this.assertNewGenerationAllowed(
+      tabId,
+      material.manifest.regional ? material.manifest.context.layerId : undefined,
+    )
     const assertAdmission = this.projects.assertSmartPatchGenerationAdmission?.bind(this.projects)
     if (!assertAdmission) {
       throw new GenerationOrchestratorError(
@@ -1464,7 +1471,10 @@ export class GenerationOrchestrator {
     const assertCurrent = (): void => {
       this.assertGenerationOpen(tabId)
       if (!regionalAdmissionComplete) {
-        this.assertNewGenerationAllowed(tabId)
+        this.assertNewGenerationAllowed(
+          tabId,
+          snapshot.manifest.regional ? context.layerId : undefined,
+        )
       }
       if (
         context.projectKey !== tabId ||
@@ -1951,7 +1961,7 @@ export class GenerationOrchestrator {
   }
 
   /** New admissions only. Existing frozen work remains valid after later regional edits. */
-  private assertNewGenerationAllowed(tabId: string): void {
+  private assertNewGenerationAllowed(tabId: string, smartLayerId?: string): void {
     this.assertGenerationOpen(tabId)
     const owner = this.projects.getOpenDocumentForAcceptance?.(tabId)
     const document = owner?.document ?? this.projects.getOpenTabs().find((tab) => tab.id === tabId)
@@ -1962,7 +1972,16 @@ export class GenerationOrchestrator {
       )
     }
     // Both sources are Main-owned current projections; this check performs no SQL/queue I/O.
-    assertRegionalGuidanceGenerationAvailable(document)
+    if (smartLayerId !== undefined && owner) {
+      assertSmartPatchRegionalGenerationAvailable({
+        document: owner.document,
+        patch: owner.document.layers.find(
+          (layer) => layer.kind === 'smart-patch' && layer.id === smartLayerId,
+        ) as import('../../shared/projects/project-schema.js').IgsSmartPatchLayerV1 | undefined,
+      })
+    } else {
+      assertRegionalGuidanceGenerationAvailable(document)
+    }
   }
 
   private assertOpen(tabId: string): void {

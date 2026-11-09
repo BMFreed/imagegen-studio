@@ -2279,3 +2279,32 @@ provenance. Current public refusal and ordinary/frozen-work independence remain.
 The read-only regional editor still shows Current Canvas authoring context.
 PP-001/005/007/008 remain **«Пока не обещать»**. Runnable results and their exact
 limits are recorded in the linked note; useful visual placement remains separate.
+
+## Public original-Anima Smart regional INP
+
+The [public Smart INP integration](../../../engineering/phase-4-anima-smart-regional-public-research.md)
+uses the existing private Anima consumer through selected Smart Generate. Its
+separate `anima-smart-patch-regional-inpaint-v1` capability is required at fresh
+admission, dispatch and frozen Retry. Scope is one static original-Anima INP
+item, Euler/Heun, processing64–512 divisible by8, no enabled LoRA/TI/references.
+Other Smart modes/families and unsupported inputs refuse explicitly.
+
+Inherited regional negative comes from the selected Smart settings frozen for
+that job. The regional editor's Current Canvas display does not replace the
+executing Patch model, text, seed, resolution or sampling. Existing Anima
+positive-background and global-negative-Everywhere composition is preserved.
+Regional attention permissions remain independent of Smart KEEP and contribution.
+
+The existing durable Smart bundle owns exact ordered raw alpha files alongside
+source/KEEP/other frozen inputs. Retry copies and verifies the whole saved bundle;
+current edits, disabled/deleted regions and a later Project Save cannot replace
+it. No ordinary fallback is allowed if the new capability/method or regional
+material is unavailable. Existing manifests without the extension keep their
+ordinary meaning. No new `.igs` field or queue operation is introduced.
+
+Existing world candidates, explicit Add, Undo/Redo and Save own the result.
+Generate and Retry do not implicitly accept or Save. Accepted provenance, Compare
+and result-derived presets remain ordinary Smart configuration and exclude
+regional operational material. Evidence and qualification limits are recorded
+in the linked note. General visual quality, other modes/resources and
+PP-001/005/007/008 remain **«Пока не обещать»**.

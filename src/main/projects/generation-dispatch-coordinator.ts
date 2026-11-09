@@ -126,6 +126,12 @@ export class GenerationDispatchCoordinator {
             return await this.smartPatch.execution.runNext({
               close: transport.close.bind(transport),
               executeSmartPatch: transport.executeSmartPatch.bind(transport),
+              ...(typeof transport.executeAnimaSmartPatchRegional === 'function'
+                ? {
+                    executeAnimaSmartPatchRegional:
+                      transport.executeAnimaSmartPatchRegional.bind(transport),
+                  }
+                : {}),
               ready: transport.ready,
             })
           }

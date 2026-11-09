@@ -808,7 +808,12 @@ async function mountWiring(page: Page, kind: 'project' | 'queue') {
                 error: null,
                 exportFeedback: null,
                 generationCanceling: false,
-                generationDraft: state.tab.generationDraft,
+                generationDraft: (() => {
+                  const layer = state.tab.layers.find((entry) => entry.id === state.selected)
+                  return layer?.kind === 'smart-patch'
+                    ? layer.generationDraft
+                    : state.tab.generationDraft
+                })(),
                 generationError: null,
                 generationNotice: null,
                 generationProgress: { current: null, revision: 0 },
@@ -978,9 +983,7 @@ test('renderer Generate requires explicit regional support and retains ordinary 
     fixture.selected = id
   })
   await expect(generate).toBeDisabled()
-  await expect(
-    page.getByText(/Disable or delete all enabled regions before generating/),
-  ).toBeVisible()
+  await expect(page.getByText(/requires an original Anima model/)).toBeVisible()
   await page.evaluate(() => {
     const fixture = globalThis.window.regionalWiringFixture
     fixture.tab.regionalGuidance![0]!.enabled = false
@@ -1952,3 +1955,107 @@ for (const source of ['local', 'inherited'] as const) {
     expect(errors).toEqual([])
   })
 }
+
+test('renderer Smart Anima regions use selected Patch and require the combination capability', async ({
+  page,
+}) => {
+  await mountWiring(page, 'project')
+  await page.evaluate(() => {
+    const f = globalThis.window.regionalWiringFixture
+    const draft = JSON.parse(JSON.stringify(f.tab.generationDraft))
+    draft.model.baseModelFamily = 'anima'
+    draft.model.predictionType = null
+    f.catalog[0]!.versions[0]!.baseModelFamily = 'anima'
+    f.catalog[0]!.versions[0]!.predictionType = null
+    draft.positivePrompt = { embeddingRefs: [], text: '(one cat)1.5' }
+    draft.negativePrompt = { embeddingRefs: [], text: 'Smart negative' }
+    draft.loras = []
+    draft.vae = null
+    draft.vaePrecision = 'Auto'
+    draft.sampling = {
+      animaMethod: 'heun',
+      cfgScale: 4,
+      denoisingStrength: 0.5,
+      sampler: null,
+      scheduler: null,
+      steps: 3,
+    }
+    f.tab.layers = [
+      {
+        activeRaster: null,
+        activeRasterSubLayerId: null,
+        blendMode: 'normal',
+        boundingBox: { height: 73, width: 107, x: -13, y: 5 },
+        generationDraft: draft,
+        id: crypto.randomUUID(),
+        internalResolution: { height: 128, width: 264 },
+        kind: 'smart-patch',
+        locked: false,
+        mask: { asset: null, id: crypto.randomUUID(), revision: 0 },
+        maskImageUrl: null,
+        name: 'Selected Anima Smart',
+        opacity: 1,
+        rasterSubLayers: [],
+        status: 'empty',
+        visible: true,
+      },
+    ]
+    f.selected = f.tab.layers[0]!.id
+    f.tab.generationDraft.negativePrompt.text = '{unrelated|Canvas}'
+    f.tab.regionalGuidance![0]!.prompts = {
+      negative: { embeddingRefs: [], text: '{dormant|local}' },
+      positive: { embeddingRefs: [], text: '(red scarf)1.5' },
+      useGlobalNegativePrompt: true,
+    }
+    f.state.smartPatchSupported = true
+    f.state.animaSupported = true
+    f.state.animaSmartPatchRegionalSupported = false
+  })
+  const generate = page.getByRole('button', { exact: true, name: 'Generate' })
+  await expect(generate).toBeDisabled()
+  await expect(page.getByText(/does not support Anima Smart Patch Regional Guidance/)).toBeVisible()
+  await page.evaluate(() => {
+    globalThis.window.regionalWiringFixture.state.animaSmartPatchRegionalSupported = true
+  })
+  await expect(generate).toBeEnabled()
+  await page.evaluate(() => {
+    const f = globalThis.window.regionalWiringFixture
+    const patch = f.tab.layers[0]!
+    if (patch.kind === 'smart-patch') {
+      patch.generationDraft.negativePrompt.text = '{active|Smart}'
+    }
+  })
+  await expect(generate).toBeDisabled()
+  await expect(page.getByText(/requires static prompts/)).toBeVisible()
+})
+
+test('renderer frozen Smart regional Retry uses saved requirement after authoring deletion', async ({
+  page,
+}) => {
+  await mountWiring(page, 'queue')
+  await page.evaluate(() => {
+    const f = globalThis.window.regionalWiringFixture
+    f.queueItem.operation = 'anima-smart-patch'
+    f.queueItem.details!.requiresSmartPatchRegional = true
+    f.state.smartPatchSupported = true
+    f.state.animaSupported = true
+    f.state.animaSmartPatchRegionalSupported = false
+    f.tab.regionalGuidance = []
+    f.epoch += 1
+  })
+  const retry = page.getByRole('button', { exact: true, name: 'Retry job' })
+  await expect(retry).toBeDisabled()
+  await expect(
+    page
+      .getByTestId('queue-job-row')
+      .getByText(/does not support this frozen Anima Smart Patch Regional Guidance job/),
+  ).toBeVisible()
+  await page.evaluate(() => {
+    globalThis.window.regionalWiringFixture.state.animaSmartPatchRegionalSupported = true
+  })
+  await expect(retry).toBeEnabled()
+  await retry.click()
+  await expect
+    .poll(() => page.evaluate(() => globalThis.window.regionalWiringFixture.retryCalls.length))
+    .toBe(1)
+})

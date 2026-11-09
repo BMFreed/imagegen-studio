@@ -1,16 +1,19 @@
+import { ANIMA_PROMPT_INTERPRETATION } from '../../shared/projects/anima-prompt-weighting.js'
 import { planGenerationBatch } from '../../shared/projects/generation-batch-plan.js'
 import { GENERATION_BATCH_JOB_LIMIT } from '../../shared/projects/generation-batch-policy.js'
 import { getEffectiveDynamicPromptSettings } from '../../shared/projects/generation-dynamic-settings.js'
 import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceAnima,
+  supportsInferenceAnimaSmartPatchRegional,
 } from '../../shared/projects/inference-worker-capabilities.js'
-import { assertRegionalGuidanceGenerationAvailable } from '../../shared/projects/regional-guidance.js'
+import { hasEnabledRegionalGuidance } from '../../shared/projects/regional-invoke-generation.js'
 import type {
   ProjectSmartPatchGenerateOptions,
   ProjectSmartPatchGenerateResult,
 } from '../../shared/projects/smart-patch-public-generation.js'
 import { isProjectSmartPatchGenerateOptions } from '../../shared/projects/smart-patch-public-generation.js'
+import { assertSmartPatchRegionalGenerationAvailable } from '../../shared/projects/smart-patch-regional-guidance.js'
 
 import { randomBytes } from 'node:crypto'
 
@@ -22,10 +25,16 @@ import type { GenerationStagingRepository } from './generation-staging.js'
 import type { ProjectGenerationOperationGate } from './project-generation-operation-gate.js'
 import type { ProjectService } from './project-service.js'
 import type { SmartPatchExecutionModelResolver } from './project-smart-patch-execution.js'
+import type { CapturedSmartPatchGenerationInput } from './project-smart-patch-generation-input.js'
 import type { SmartPatchGenerationStagingRepository } from './smart-patch-generation-staging.js'
 
 import { ProjectGenerationActionError } from './generation-action-controller.js'
 import { validateSmartPatchExecutionDraft } from './project-smart-patch-execution.js'
+import {
+  type CapturedSmartPatchRegionalGenerationInput,
+  prepareSmartPatchAnimaRegionalInput,
+} from './project-smart-patch-regional-input.js'
+import { attachSmartPatchAnimaRegionalInput } from './smart-patch-frozen-input.js'
 
 interface Dependencies {
   gate: ProjectGenerationOperationGate
@@ -150,12 +159,21 @@ export class ProjectSmartPatchGenerationActionController {
         'The Project changed. Review this Smart Patch before generating.',
       )
     }
-    assertRegionalGuidanceGenerationAvailable(owner.document)
+    const assertRegional = () =>
+      assertSmartPatchRegionalGenerationAvailable({
+        document: owner.document,
+        iterations: request.iterations,
+        patch: owner.document.layers.find(
+          (layer) => layer.id === request.layerId && layer.kind === 'smart-patch',
+        ) as import('../../shared/projects/project-schema.js').IgsSmartPatchLayerV1 | undefined,
+      })
+    assertRegional()
+    const hasRegions = hasEnabledRegionalGuidance(owner.document)
     let regionalAdmissionComplete = false
     const assertCurrent = () => {
       this.assertOpen()
       if (!regionalAdmissionComplete) {
-        assertRegionalGuidanceGenerationAvailable(owner.document)
+        assertRegional()
       }
       if (this.options.projects.getOpenDocumentForAcceptance(tabId) !== owner) {
         throw new ProjectGenerationActionError(
@@ -173,115 +191,134 @@ export class ProjectSmartPatchGenerationActionController {
     let published: QueuedGenerationItem[] = []
     let cleanupStarted = false
     try {
-      const outcome = await this.options.projects.withCapturedSmartPatchGenerationInput(
-        tabId,
-        request.layerId,
-        async (capture) => {
-          const initial = await this.readImpact(tabId, request)
-          assertCurrent()
-          if (!this.matches(initial, request)) {
-            return this.confirmation(request, initial)
-          }
-          const draft = capture.context.generationDraft
-          const dynamic = getEffectiveDynamicPromptSettings(draft.dynamicPrompt)
-          // Validate/count the whole authored plan before choosing Random or doing CPU/model I/O.
-          const preliminary = planGenerationBatch({
-            baseSeed: 0,
-            iterations: request.iterations,
-            maxJobs: GENERATION_BATCH_JOB_LIMIT,
-            maxPrompts: dynamic.maxPrompts,
-            negativePrompt: draft.negativePrompt.text,
-            positivePrompt: draft.positivePrompt.text,
-            seedBehavior: dynamic.seedBehavior,
+      const prepare = async (
+        capture: CapturedSmartPatchGenerationInput,
+        regionalCapture?: CapturedSmartPatchRegionalGenerationInput,
+      ): Promise<ProjectSmartPatchGenerateResult> => {
+        const initial = await this.readImpact(tabId, request)
+        assertCurrent()
+        if (!this.matches(initial, request)) {
+          return this.confirmation(request, initial)
+        }
+        const draft = capture.context.generationDraft
+        const dynamic = getEffectiveDynamicPromptSettings(draft.dynamicPrompt)
+        // Validate/count the whole authored plan before choosing Random or doing CPU/model I/O.
+        const preliminary = planGenerationBatch({
+          baseSeed: 0,
+          iterations: request.iterations,
+          maxJobs: GENERATION_BATCH_JOB_LIMIT,
+          maxPrompts: dynamic.maxPrompts,
+          negativePrompt: draft.negativePrompt.text,
+          positivePrompt: draft.positivePrompt.text,
+          seedBehavior: dynamic.seedBehavior,
+        })
+        for (const item of preliminary.items) {
+          validateSmartPatchExecutionDraft(capture.context, {
+            prompts: { ...item.prompts },
+            seed: item.seed,
           })
-          for (const item of preliminary.items) {
-            validateSmartPatchExecutionDraft(capture.context, {
-              prompts: { ...item.prompts },
-              seed: item.seed,
+        }
+        const last = await this.options.seedReader.readLastActualSeed(tabId, request.documentId)
+        assertCurrent()
+        const baseSeed =
+          draft.seed.policy === 'fixed'
+            ? draft.seed.value
+            : draft.seed.policy === 'reuse'
+              ? (last ?? capture.context.lastActualSeedSnapshot)
+              : randomBytes(4).readUInt32LE(0)
+        if (
+          baseSeed === null ||
+          !Number.isSafeInteger(baseSeed) ||
+          baseSeed < 0 ||
+          baseSeed > 0xff_ff_ff_ff
+        ) {
+          throw new ProjectGenerationActionError(
+            'GENERATION_SEED_INVALID',
+            'The Smart Patch seed is unavailable. Choose Random or a numeric Fixed seed.',
+          )
+        }
+        const plan = planGenerationBatch({
+          baseSeed,
+          iterations: request.iterations,
+          maxJobs: GENERATION_BATCH_JOB_LIMIT,
+          maxPrompts: dynamic.maxPrompts,
+          negativePrompt: draft.negativePrompt.text,
+          positivePrompt: draft.positivePrompt.text,
+          seedBehavior: dynamic.seedBehavior,
+        })
+        const regionalPrepared = regionalCapture
+          ? await prepareSmartPatchAnimaRegionalInput({
+              capture: regionalCapture,
+              item: plan.items[0],
+              promptInterpretation: ANIMA_PROMPT_INTERPRETATION,
             })
-          }
-          const last = await this.options.seedReader.readLastActualSeed(tabId, request.documentId)
-          assertCurrent()
-          const baseSeed =
-            draft.seed.policy === 'fixed'
-              ? draft.seed.value
-              : draft.seed.policy === 'reuse'
-                ? (last ?? capture.context.lastActualSeedSnapshot)
-                : randomBytes(4).readUInt32LE(0)
-          if (
-            baseSeed === null ||
-            !Number.isSafeInteger(baseSeed) ||
-            baseSeed < 0 ||
-            baseSeed > 0xff_ff_ff_ff
-          ) {
-            throw new ProjectGenerationActionError(
-              'GENERATION_SEED_INVALID',
-              'The Smart Patch seed is unavailable. Choose Random or a numeric Fixed seed.',
-            )
-          }
-          const plan = planGenerationBatch({
-            baseSeed,
-            iterations: request.iterations,
-            maxJobs: GENERATION_BATCH_JOB_LIMIT,
-            maxPrompts: dynamic.maxPrompts,
-            negativePrompt: draft.negativePrompt.text,
-            positivePrompt: draft.positivePrompt.text,
-            seedBehavior: dynamic.seedBehavior,
-          })
-          const material = await this.options.runtime.withSmartPatchGenerationPreparation(
-            this.options.scratchBasePath,
-            async ({ inferenceReady, preparationWorker }) => {
-              assertCurrent()
-              if (
-                !isQualifiedInferenceWorkerReady(inferenceReady) ||
-                inferenceReady.workerVersion !== '0.14.0' ||
-                !inferenceReady.capabilities.includes('smart-patch-execution') ||
-                !inferenceReady.capabilities.includes('smart-patch-seed-confirmation') ||
-                (draft.model?.baseModelFamily === 'anima' &&
-                  !supportsInferenceAnima(inferenceReady))
-              ) {
-                throw new ProjectGenerationActionError(
-                  'GENERATION_RUNTIME_UNAVAILABLE',
-                  'The installed worker cannot generate Smart Patches.',
-                )
-              }
-              return await capture.prepareBatchInput({
-                infillResolver: this.options.infillResolver,
-                items: plan.items.map(({ prompts, seed }) => ({ prompts: { ...prompts }, seed })),
-                modelService: this.options.models,
-                preparationWorker,
-              })
-            },
+          : null
+        const material = await this.options.runtime.withSmartPatchGenerationPreparation(
+          this.options.scratchBasePath,
+          async ({ inferenceReady, preparationWorker }) => {
+            assertCurrent()
+            if (
+              !isQualifiedInferenceWorkerReady(inferenceReady) ||
+              inferenceReady.workerVersion !== '0.14.0' ||
+              !inferenceReady.capabilities.includes('smart-patch-execution') ||
+              !inferenceReady.capabilities.includes('smart-patch-seed-confirmation') ||
+              (draft.model?.baseModelFamily === 'anima' &&
+                !supportsInferenceAnima(inferenceReady)) ||
+              (regionalPrepared !== null &&
+                !supportsInferenceAnimaSmartPatchRegional(inferenceReady))
+            ) {
+              throw new ProjectGenerationActionError(
+                'GENERATION_RUNTIME_UNAVAILABLE',
+                'The installed worker cannot generate Smart Patches.',
+              )
+            }
+            const prepared = await capture.prepareBatchInput({
+              infillResolver: this.options.infillResolver,
+              items: plan.items.map(({ prompts, seed }) => ({ prompts: { ...prompts }, seed })),
+              modelService: this.options.models,
+              preparationWorker,
+            })
+            return regionalPrepared
+              ? await attachSmartPatchAnimaRegionalInput(prepared, regionalPrepared)
+              : prepared
+          },
+        )
+        if (!material) {
+          throw new ProjectGenerationActionError(
+            'GENERATION_RUNTIME_UNAVAILABLE',
+            'Set up a qualified installed image runtime before generating Smart Patches.',
           )
-          if (!material) {
-            throw new ProjectGenerationActionError(
-              'GENERATION_RUNTIME_UNAVAILABLE',
-              'Set up a qualified installed image runtime before generating Smart Patches.',
-            )
-          }
-          assertCurrent()
-          const latest = await this.readImpact(tabId, request)
-          assertCurrent()
-          if (!this.matches(latest, request)) {
-            return this.confirmation(request, latest)
-          }
-          published = await this.options.orchestrator.enqueuePreparedSmartPatchBatch(
+        }
+        assertCurrent()
+        const latest = await this.readImpact(tabId, request)
+        assertCurrent()
+        if (!this.matches(latest, request)) {
+          return this.confirmation(request, latest)
+        }
+        published = await this.options.orchestrator.enqueuePreparedSmartPatchBatch(tabId, material)
+        regionalAdmissionComplete = true
+        assertCurrent()
+        return {
+          batchId: published[0].batchId,
+          documentId: request.documentId,
+          jobIds: published.map(({ id }) => id),
+          kind: 'queued',
+          layerId: request.layerId,
+          targetKind: 'smart-patch',
+          truncated: plan.truncated,
+        } satisfies ProjectSmartPatchGenerateResult
+      }
+      const outcome = hasRegions
+        ? await this.options.projects.withCapturedSmartPatchRegionalGenerationInput(
             tabId,
-            material,
+            request.layerId,
+            (capture) => prepare(capture.smartPatch, capture),
           )
-          regionalAdmissionComplete = true
-          assertCurrent()
-          return {
-            batchId: published[0].batchId,
-            documentId: request.documentId,
-            jobIds: published.map(({ id }) => id),
-            kind: 'queued',
-            layerId: request.layerId,
-            targetKind: 'smart-patch',
-            truncated: plan.truncated,
-          } satisfies ProjectSmartPatchGenerateResult
-        },
-      )
+        : await this.options.projects.withCapturedSmartPatchGenerationInput(
+            tabId,
+            request.layerId,
+            prepare,
+          )
       if (outcome.kind !== 'queued') {
         return outcome
       }

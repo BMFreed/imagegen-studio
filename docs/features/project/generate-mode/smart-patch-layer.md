@@ -1123,3 +1123,12 @@ alpha is projected independently to Anima's processing token grid; it does not
 reuse Smart blur/fade/coherence/KEEP as attention permissions. This checkpoint
 adds no public Smart+regional admission, frozen queue/Retry, Add-as-Variant,
 provenance or quality claim. PP-001/005/007/008 remain **«Пока не обещать»**.
+
+The subsequent [public original-Anima Smart INP slice](../../../engineering/phase-4-anima-smart-regional-public-research.md)
+adds capability-gated Generate and frozen queue/Retry for one static Euler/Heun
+item. It preserves the selected Patch's inherited negative, exact frozen regional
+raw files, source/KEEP and world candidate owners. Disabling/deleting regions or
+editing Smart/Canvas settings after Cancel cannot change Retry. Existing explicit
+Add/history/Save handles acceptance; regional operational inputs remain outside
+accepted provenance/Compare/result-derived presets. This finite subset does not
+qualify other Smart modes/families, enabled LoRA/TI/references or general quality.

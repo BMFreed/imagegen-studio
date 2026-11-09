@@ -35,6 +35,7 @@ interface FrozenQueuedSmartPatchFields {
   files: FrozenSmartPatchInputV1['files']
   latentMaskHasCoverage: boolean
   mode: FrozenSmartPatchInputV1['mode']
+  regional?: FrozenSmartPatchInputV1['regional']
   schemaVersion: 1
   sourceAlpha: FrozenSmartPatchInputV1['sourceAlpha']
 }
@@ -61,6 +62,7 @@ const queuedSchema = v.strictObject({
   kind: v.picklist(['anima-smart-patch', 'illustrious-smart-patch']),
   latentMaskHasCoverage: v.unknown(),
   mode: v.unknown(),
+  regional: v.optional(v.unknown()),
   schemaVersion: v.literal(1),
   sourceAlpha: v.unknown(),
 })
@@ -96,6 +98,7 @@ export function parseFrozenQueuedSmartPatchV1(input: unknown): FrozenQueuedSmart
       ...(queued.animaPromptInterpretation !== undefined
         ? { animaPromptInterpretation: queued.animaPromptInterpretation }
         : {}),
+      ...(Object.hasOwn(queued, 'regional') ? { regional: queued.regional } : {}),
       context: queued.context,
       files: queued.files,
       items: [queued.item],
@@ -119,6 +122,7 @@ export function parseFrozenQueuedSmartPatchV1(input: unknown): FrozenQueuedSmart
     ...(manifest.animaPromptInterpretation !== undefined
       ? { animaPromptInterpretation: manifest.animaPromptInterpretation }
       : {}),
+    ...(manifest.regional !== undefined ? { regional: manifest.regional } : {}),
     bundle: { ...queued.bundle },
     context: manifest.context,
     files: manifest.files,
@@ -153,6 +157,7 @@ export function buildFrozenQueuedSmartPatchV1(
     ...(manifest.animaPromptInterpretation !== undefined
       ? { animaPromptInterpretation: manifest.animaPromptInterpretation }
       : {}),
+    ...(manifest.regional !== undefined ? { regional: manifest.regional } : {}),
     bundle: { id: bundle.id, itemIndex, manifestSha256: bundle.manifestSha256 },
     context: manifest.context,
     files: manifest.files,

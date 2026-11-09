@@ -530,6 +530,7 @@ test('projection scratch is owned immediately before a later projection mutates 
   f.capture.regional.projectMask = async () => {
     if (n++ !== 0) {
       scratch.alpha.fill(255)
+      scratch.intersection = { ...WORLD }
     }
     return scratch
   }

@@ -42,6 +42,7 @@ import { ProjectService } from './project-service.js'
 import { ProjectShadowStore } from './project-shadow.js'
 import { ProjectSmartPatchAcceptance } from './project-smart-patch-acceptance.js'
 import { ProjectSmartPatchGenerationActionController } from './project-smart-patch-generation-action-controller.js'
+import { bindSmartPatchAnimaRegionalExecution } from './project-smart-patch-regional-input.js'
 import { ProjectSmartPatchResultActions } from './project-smart-patch-result-actions.js'
 import { ProjectSmartPatchResultResource } from './project-smart-patch-result-resource.js'
 import { projectVerifiedSmartPatchVariant } from './project-smart-patch-variant-projection.js'
@@ -97,6 +98,7 @@ class ControlledSmartRuntime {
   generated: SmartPatchExecutionRequest[] = []
   maximum = 0
   ready = structuredClone(ready)
+  regionalGenerated: ReturnType<typeof bindSmartPatchAnimaRegionalExecution>[] = []
 
   constructor(readonly preparationWorker: SmartPatchExecutionPreparationWorker) {}
 
@@ -153,6 +155,12 @@ class ControlledSmartRuntime {
     }
     const transport: GenerationWorkerTransport & SmartPatchInferenceTransport = {
       close,
+      executeAnimaSmartPatchRegional: async (input) => {
+        const { execution, ...prepared } = input
+        bindSmartPatchAnimaRegionalExecution(prepared, execution)
+        this.regionalGenerated.push(structuredClone(input))
+        return await transport.executeSmartPatch(execution)
+      },
       executeSmartPatch: async (request) => {
         this.generated.push(structuredClone(request))
         await Promise.race([this.beforeExecution?.(request) ?? Promise.resolve(), stopped.promise])
@@ -2075,7 +2083,7 @@ async function regionalSmartQueueSnapshot(f: PublicFixture) {
 // A committed candidate plus a pending sibling prevents a false green based on an empty queue.
 for (const family of ['illustrious', 'anima'] as const) {
   test(
-    `public ${family} Smart Generate refuses enabled unselected empty or locked zero-overlay regions before planning and stale confirmation`,
+    `public ${family} unsupported regional Smart Generate refuses before planning and stale confirmation even with empty locked zero-overlay regions`,
     options,
     async (t) => {
       await withPublicFixture(family, async (f) => {
@@ -2157,7 +2165,9 @@ for (const family of ['illustrious', 'anima'] as const) {
                 {
                   code: 'GENERATION_REGIONAL_GUIDANCE_UNSUPPORTED',
                   message:
-                    'Regional Guidance generation is not available yet. Disable or delete all enabled regions before generating.',
+                    family === 'illustrious'
+                      ? 'Regional Guidance with Smart Patch currently requires an original Anima model.'
+                      : 'Regional Smart Patch generation requires static prompts without braces.',
                 },
               )
             }
@@ -2361,6 +2371,137 @@ test(
           code: 'GENERATION_INVALID_REQUEST',
         })
         assert.equal((await f.base.queue.listManagerPage()).items.length, batch.jobIds.length + 1)
+      } finally {
+        t.mock.restoreAll()
+      }
+    })
+  },
+)
+
+async function enableAnimaSmartRegions(f: PublicFixture) {
+  f.runtime.ready.capabilities.push('anima-smart-patch-regional-inpaint-v1')
+  await f.service.updateGenerationDraft(
+    f.tabId,
+    { kind: 'positive-prompt', text: '(one cat)1.25 on a bench' },
+    undefined,
+    f.target.id,
+  )
+  await f.service.updateGenerationDraft(
+    f.tabId,
+    { kind: 'negative-prompt', text: 'Smart exclusion' },
+    undefined,
+    f.target.id,
+  )
+  const tab = await f.service.addRegionalGuidance(f.tabId, regionalSmartDocumentOwner(f))
+  return tab.regionalGuidance![0].id
+}
+
+test(
+  'public Anima Smart regions freeze selected job and reach dedicated dispatch/world candidate',
+  options,
+  async () => {
+    await withPublicFixture('anima', async (f) => {
+      const regionId = await enableAnimaSmartRegions(f)
+      const before = structuredClone(f.owner.document)
+      const batch = await queued(f)
+      assert.equal(batch.jobIds.length, 1)
+      const frozen = await f.base.queue.loadVerifiedSmartPatchInput(batch.jobIds[0])
+      assert.ok(frozen.payload.regional)
+      assert.equal(frozen.payload.regional.promptInterpretation, 'invoke-fragments-v1')
+      assert.equal(frozen.payload.regional.recipe.regions[0].regionId, regionId)
+      assert.equal(frozen.payload.regional.recipe.regions[0].negative.source, 'smart-patch')
+      assert.equal(
+        frozen.payload.regional.recipe.regions[0].negative.prompt.text,
+        'Smart exclusion',
+      )
+      assert.equal(frozen.bundle.files['regional-0.alpha8'].length, 128 * 128)
+      assert.equal(
+        (await f.base.queue.getManagerEntry(batch.jobIds[0])).details?.requiresSmartPatchRegional,
+        true,
+      )
+      await drain(f)
+      assert.equal(f.runtime.regionalGenerated.length, 1)
+      assert.equal((await f.base.queue.getManagerEntry(batch.jobIds[0])).status, 'completed')
+      assert.equal((await f.staging.listVerifiedCandidates(f.tabId)).length, 1)
+      assert.deepEqual(f.owner.document, before)
+    })
+  },
+)
+
+test(
+  'public Anima Smart regions refuse an old peer before CPU preparation/SQL',
+  options,
+  async (t) => {
+    await withPublicFixture('anima', async (f) => {
+      await enableAnimaSmartRegions(f)
+      f.runtime.ready.capabilities = f.runtime.ready.capabilities.filter(
+        (x) => x !== 'anima-smart-patch-regional-inpaint-v1',
+      )
+      const cpu = t.mock.method(f.worker, 'composeTarget', async () =>
+        assert.fail('Capability refusal must precede CPU source composition'),
+      )
+      await assert.rejects(f.controller.generate(f.tabId, f.request()), {
+        code: 'GENERATION_RUNTIME_UNAVAILABLE',
+      })
+      assert.equal(cpu.mock.callCount(), 0)
+      assert.equal((await f.base.queue.listManagerPage()).items.length, 0)
+      assert.equal(f.runtime.generated.length, 0)
+    })
+  },
+)
+
+test(
+  'public regional Smart frozen Retry retains bytes/settings after current regions are deleted',
+  options,
+  async (t) => {
+    await withPublicFixture('anima', async (f) => {
+      const regionId = await enableAnimaSmartRegions(f)
+      const batch = await queued(f)
+      const original = await f.base.queue.loadVerifiedSmartPatchInput(batch.jobIds[0])
+      await f.normalActions.cancelJob(await f.base.queue.getManagerEntry(batch.jobIds[0]))
+      const terminal = await f.base.queue.getManagerEntry(batch.jobIds[0])
+      await f.service.deleteRegionalGuidance(f.tabId, {
+        ...regionalSmartDocumentOwner(f),
+        regionId,
+      })
+      await f.service.updateGenerationDraft(
+        f.tabId,
+        { kind: 'negative-prompt', text: 'Later Smart exclusion' },
+        undefined,
+        f.target.id,
+      )
+      await f.service.updateGenerationDraft(
+        f.tabId,
+        { kind: 'seed', policy: 'fixed', value: 999 },
+        undefined,
+        f.target.id,
+      )
+      const capture = t.mock.method(
+        f.service,
+        'withCapturedSmartPatchRegionalGenerationInput',
+        async () => assert.fail('Retry must consume saved regions'),
+      )
+      try {
+        await f.normalActions.retryJob(terminal)
+        const replay = (await f.base.queue.listManagerPage()).items.find(
+          (x) => x.id !== terminal.id,
+        )!
+        await waitForRetryCompletion(f, replay.id)
+        const reloaded = await f.base.queue.loadVerifiedSmartPatchInput(replay.id)
+        assert.deepEqual(reloaded.payload.regional, original.payload.regional)
+        for (const [name, bytes] of Object.entries(original.bundle.files)) {
+          assert.ok(bytes.equals(reloaded.bundle.files[name]))
+        }
+        assert.equal(f.runtime.regionalGenerated.length, 1)
+        assert.equal(
+          f.runtime.regionalGenerated[0].recipe.globalPrompts.negative.text,
+          'Smart exclusion',
+        )
+        assert.equal(
+          f.runtime.regionalGenerated[0].recipe.item.seed,
+          original.payload.item.item.seed,
+        )
+        assert.equal(capture.mock.callCount(), 0)
       } finally {
         t.mock.restoreAll()
       }

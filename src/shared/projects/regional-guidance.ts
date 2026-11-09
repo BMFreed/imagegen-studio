@@ -120,8 +120,8 @@ const ChangeSchema = v.variant('kind', [
 export class RegionalGuidanceGenerationError extends Error {
   readonly code = 'GENERATION_REGIONAL_GUIDANCE_UNSUPPORTED'
 
-  constructor() {
-    super(GENERATION_UNAVAILABLE_REASON)
+  constructor(message = GENERATION_UNAVAILABLE_REASON) {
+    super(message)
     this.name = 'RegionalGuidanceGenerationError'
   }
 }

@@ -26,6 +26,7 @@ export interface ProjectGenerationActionState {
   animaRegionalSamplingSupported?: boolean
   /** Separate finite regional Anima execution support; ordinary Anima never grants it. */
   animaRegionalSupported?: boolean
+  animaSmartPatchRegionalSupported?: boolean
   /** Absent in older responses; never treat absence as native Anima support. */
   animaSupported?: boolean
   /** Advisory only; Main rechecks the actual worker at admission and dispatch. */
@@ -150,6 +151,7 @@ export function isProjectGenerationActionState(
       ],
       [
         'animaSupported',
+        'animaSmartPatchRegionalSupported',
         'animaRegionalSupported',
         'animaRegionalImg2ImgSupported',
         'animaRegionalLoraSupported',
@@ -177,6 +179,8 @@ export function isProjectGenerationActionState(
       ],
     ) ||
     (value['animaSupported'] !== undefined && typeof value['animaSupported'] !== 'boolean') ||
+    (value['animaSmartPatchRegionalSupported'] !== undefined &&
+      typeof value['animaSmartPatchRegionalSupported'] !== 'boolean') ||
     (value['animaRegionalSupported'] !== undefined &&
       typeof value['animaRegionalSupported'] !== 'boolean') ||
     (value['animaRegionalImg2ImgSupported'] !== undefined &&

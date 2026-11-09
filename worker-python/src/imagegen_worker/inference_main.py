@@ -113,6 +113,7 @@ def inference_ready_message(
                     "anima-regional-outpaint-v1",
                     "anima-regional-lora-v1",
                     "anima-regional-negative-v1",
+                    "anima-smart-patch-regional-inpaint-v1",
                 )
                 if runtime is not None and supports_anima_compute(runtime)
                 else ()
@@ -148,8 +149,13 @@ def process_inference_request(
         if private_type in (
             "execute-current-canvas-regional",
             "execute-current-canvas-anima-regional",
+            "execute-anima-smart-patch-regional",
         ):
-            if private_type == "execute-current-canvas-anima-regional":
+            if private_type == "execute-anima-smart-patch-regional":
+                from imagegen_worker.anima_smart_patch_regional_worker import (
+                    execute_anima_smart_patch_regional_request as execute_regional_request,
+                )
+            elif private_type == "execute-current-canvas-anima-regional":
                 from imagegen_worker.anima_regional_worker import (
                     execute_anima_regional_request as execute_regional_request,
                 )
