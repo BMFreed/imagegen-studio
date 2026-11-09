@@ -64,6 +64,8 @@ export interface ProjectGenerationActionState {
   regionalVaeSupported?: boolean
   /** Separate source-conditioned V Euler support; TXT and image support never imply it. */
   regionalVPredictionImageSupported?: boolean
+  /** Separate non-Euler V support; individual EPS samplers and V Euler never imply it. */
+  regionalVPredictionSamplingSupported?: boolean
   /** Explicit objective-aware TXT Euler support; epsilon peers do not imply it. */
   regionalVPredictionSupported?: boolean
   runningJobId: string | null
@@ -166,6 +168,7 @@ export function isProjectGenerationActionState(
         'regionalLoraSupported',
         'regionalVaeSupported',
         'regionalVPredictionImageSupported',
+        'regionalVPredictionSamplingSupported',
         'regionalVPredictionSupported',
         'smartPatchSupported',
       ],
@@ -202,6 +205,8 @@ export function isProjectGenerationActionState(
       typeof value['regionalOutpaintSupported'] !== 'boolean') ||
     (value['regionalVPredictionImageSupported'] !== undefined &&
       typeof value['regionalVPredictionImageSupported'] !== 'boolean') ||
+    (value['regionalVPredictionSamplingSupported'] !== undefined &&
+      typeof value['regionalVPredictionSamplingSupported'] !== 'boolean') ||
     (value['regionalVPredictionSupported'] !== undefined &&
       typeof value['regionalVPredictionSupported'] !== 'boolean') ||
     (value['regionalVaeSupported'] !== undefined &&

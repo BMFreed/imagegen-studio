@@ -1768,3 +1768,317 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     }, fixtureMode)
   })
 }
+
+const V_SAMPLING_CAPABILITY = 'illustrious-regional-v-prediction-sampling-v1'
+const V_SAMPLING_METHODS = [
+  { sampler: 'Euler a', scheduler: 'Normal', worker: 'euler_a' },
+  { sampler: 'DPM++ 2M', scheduler: 'Normal', worker: 'dpmpp_2m' },
+  { sampler: 'DPM++ 2M', scheduler: 'Karras', worker: 'dpmpp_2m_k' },
+] as const
+
+type VSamplingMode = 'img2img' | 'outpaint' | 'txt2img'
+
+async function selectVSampling(
+  f: Fixture,
+  mode: VSamplingMode,
+  method: (typeof V_SAMPLING_METHODS)[number],
+  saved: 'epsilon' | 'v_prediction' = 'v_prediction',
+  resolved: 'epsilon' | 'v_prediction' = saved,
+) {
+  await selectVPrediction(f, saved, resolved)
+  f.controls.ready.capabilities = [
+    ...f.controls.ready.capabilities,
+    V_SAMPLING_CAPABILITY,
+    'illustrious-regional-dpmpp-2m-v1',
+    ...(mode === 'txt2img' ? [] : [V_IMAGE_CAPABILITY]),
+  ]
+  await f.edit((document) => {
+    document.generationDraft.sampling.sampler = method.sampler
+    document.generationDraft.sampling.scheduler = method.scheduler
+  })
+  await f.projects.save(f.tabId)
+}
+
+for (const mode of ['txt2img', 'img2img', 'outpaint'] as const) {
+  const fixtureMode = mode === 'txt2img' ? false : mode === 'img2img' ? true : 'outpaint'
+  for (const method of V_SAMPLING_METHODS) {
+    test(`regional V ${mode} ${method.sampler} ${method.scheduler} freezes the actual method policy and matching initialization through dispatch`, async () => {
+      await withFixture(async (f) => {
+        await selectVSampling(f, mode, method)
+        const authored = structuredClone(f.document())
+        const saved = await readFile(f.packagePath)
+        const result = await queued(f, 2)
+        assert.deepEqual(
+          (await settled(f, result.jobIds)).map((row) => row.status),
+          ['completed', 'completed'],
+        )
+        assert.equal(f.consumed.length, 2)
+        for (const id of result.jobIds) {
+          const frozen = await f.queue.loadVerifiedRegionalInput(id)
+          assert.equal(frozen.input.request.type, `generate-illustrious-${mode}`)
+          assert.equal(frozen.payload.kind, `illustrious-regional-${mode}`)
+          assert.equal(frozen.payload.workerJob.checkpoint.predictionType, 'v_prediction')
+          assert.equal(frozen.payload.context.model.reference.predictionType, 'v_prediction')
+          assert.equal(frozen.payload.workerJob.sampling.scheduler, method.worker)
+          assert.deepEqual(frozen.payload.workerJob.sampling.noiseProfile, {
+            baseSchedule: 'sdxl-scaled-linear-v1',
+            rescaleBetasZeroSnr: false,
+            schemaVersion: 1,
+            timestepSpacing: 'leading',
+          })
+          assert.equal(
+            frozen.payload.initializationProfile,
+            mode === 'txt2img' ? 'invoke-cpu-f32-add-noise-v1' : undefined,
+          )
+          const consumed = f.consumed.find(
+            (entry) => entry.request.job.output.pngPath === frozen.input.request.job.output.pngPath,
+          )
+          assert.ok(consumed)
+          assert.equal(consumed.request.job.sampling.scheduler, method.worker)
+          assert.equal(consumed.request.job.checkpoint.predictionType, 'v_prediction')
+          assert.equal(
+            consumed.initializationProfile,
+            mode === 'txt2img' ? 'invoke-cpu-f32-add-noise-v1' : undefined,
+          )
+          if (
+            consumed.request.type === 'generate-illustrious-img2img' ||
+            consumed.request.type === 'generate-illustrious-outpaint'
+          ) {
+            assert.equal(consumed.request.job.sampling.denoisingStrength, 0.5)
+          }
+          const bytes = await readFile(frozen.input.request.job.target.path)
+          assert.equal(regionalProjectDigest(bytes), frozen.input.request.job.target.sha256)
+        }
+        assert.equal((await f.actions.getState(f.tabId)).regionalVPredictionSamplingSupported, true)
+        assert.deepEqual(f.document(), authored)
+        assert.ok((await readFile(f.packagePath)).equals(saved))
+      }, fixtureMode)
+    })
+  }
+
+  test(`regional V ${mode} sampling legacy peer refuses atomically after actual resolution`, async () => {
+    await withFixture(async (f) => {
+      await selectVSampling(f, mode, V_SAMPLING_METHODS[2])
+      f.controls.ready.capabilities = f.controls.ready.capabilities.filter(
+        (c) => c !== V_SAMPLING_CAPABILITY,
+      )
+      const authored = structuredClone(f.document())
+      const before = await snapshot(f)
+      const saved = await readFile(f.packagePath)
+      await assert.rejects(f.actions.generate(f.tabId, options(f, 2)), {
+        code: 'INFERENCE_UNAVAILABLE',
+        message:
+          'The image engine has not qualified Regional Guidance v_prediction sampling methods.',
+      })
+      assert.deepEqual(await snapshot(f), before)
+      assert.equal(f.calls.checkpoint, 1)
+      assert.equal(f.calls.compose.length, 1)
+      assert.equal(f.consumed.length, 0)
+      assert.deepEqual(f.document(), authored)
+      assert.ok((await readFile(f.packagePath)).equals(saved))
+    }, fixtureMode)
+  })
+
+  test(`regional V ${mode} sampling actual override requires the new peer despite a saved epsilon label`, async () => {
+    await withFixture(async (f) => {
+      await selectVSampling(f, mode, V_SAMPLING_METHODS[0], 'epsilon', 'v_prediction')
+      const capable = structuredClone(f.controls.ready)
+      f.controls.ready.capabilities = capable.capabilities.filter(
+        (c) => c !== V_SAMPLING_CAPABILITY,
+      )
+      const before = await snapshot(f)
+      await assert.rejects(
+        f.actions.generate(f.tabId, options(f)),
+        /qualified Regional Guidance v_prediction sampling methods/,
+      )
+      assert.deepEqual(await snapshot(f), before)
+      f.controls.ready = capable
+      const result = await queued(f)
+      assert.equal((await settled(f, result.jobIds))[0].status, 'completed')
+      const frozen = await f.queue.loadVerifiedRegionalInput(result.jobIds[0])
+      assert.equal(f.document().generationDraft.model?.predictionType, 'epsilon')
+      assert.equal(frozen.payload.workerJob.checkpoint.predictionType, 'v_prediction')
+      assert.equal(frozen.payload.workerJob.sampling.scheduler, 'euler_a')
+      assert.equal(
+        frozen.payload.initializationProfile,
+        mode === 'txt2img' ? 'invoke-cpu-f32-add-noise-v1' : undefined,
+      )
+    }, fixtureMode)
+  })
+
+  test(`regional ${mode} sampling saved V label still resolves epsilon on the unchanged sampler peer`, async () => {
+    await withFixture(async (f) => {
+      await selectVSampling(f, mode, V_SAMPLING_METHODS[1], 'v_prediction', 'epsilon')
+      f.controls.ready.capabilities = f.controls.ready.capabilities.filter(
+        (c) => ![V_IMAGE_CAPABILITY, V_PREDICTION_CAPABILITY, V_SAMPLING_CAPABILITY].includes(c),
+      )
+      const result = await queued(f)
+      assert.equal((await settled(f, result.jobIds))[0].status, 'completed')
+      const frozen = await f.queue.loadVerifiedRegionalInput(result.jobIds[0])
+      assert.equal(f.document().generationDraft.model?.predictionType, 'v_prediction')
+      assert.equal(frozen.payload.workerJob.checkpoint.predictionType, 'epsilon')
+      assert.equal(frozen.payload.workerJob.sampling.scheduler, 'dpmpp_2m')
+      assert.equal((await f.actions.getState(f.tabId)).regionalVPredictionSamplingSupported, false)
+    }, fixtureMode)
+  })
+
+  test(`regional V ${mode} sampling frozen Retry preserves method initializer source and policy after saved Euler edits`, async () => {
+    await withFixture(async (f) => {
+      await selectVSampling(f, mode, V_SAMPLING_METHODS[2])
+      await select(f, true, 'FP32')
+      f.controls.failSeeds.add(123)
+      const result = await queued(f)
+      const [source] = await settled(f, result.jobIds)
+      assert.equal(source.status, 'failed')
+      const frozen = await f.queue.loadVerifiedRegionalInput(source.id)
+      const bytes = await readFile(frozen.input.request.job.target.path)
+      await f.edit((document) => {
+        document.generationDraft.model = null
+        document.generationDraft.vae = structuredClone(f.resources.B.descriptor.reference)
+        document.generationDraft.vaePrecision = 'FP16'
+        document.generationDraft.sampling.sampler = 'Euler'
+        document.generationDraft.sampling.scheduler = 'Normal'
+        document.generationDraft.sampling.denoisingStrength = 0.9
+        document.generationDraft.positivePrompt.text = 'Saved later Euler authoring'
+        document.generationDraft.seed.value = 999
+        document.regionalGuidance = []
+      })
+      await f.projects.save(f.tabId)
+      const authored = structuredClone(f.document())
+      const saved = await readFile(f.packagePath)
+      const before = await snapshot(f)
+      const capable = structuredClone(f.controls.ready)
+      f.controls.ready.capabilities = capable.capabilities.filter(
+        (c) => c !== V_SAMPLING_CAPABILITY,
+      )
+      await assert.rejects(
+        f.actions.retryJob({ id: source.id, statusSequence: source.status_sequence }),
+        { code: 'GENERATION_RUNTIME_UNAVAILABLE' },
+      )
+      assert.deepEqual(await snapshot(f), before)
+      assert.equal(f.consumed.length, 1)
+      f.controls.ready = capable
+      f.controls.failSeeds.clear()
+      await f.actions.retryJob({ id: source.id, statusSequence: source.status_sequence })
+      const retry = (await rows(f)).find((row) => row.id !== source.id)
+      assert.ok(retry)
+      assert.equal((await settled(f, [retry.id]))[0].status, 'completed')
+      const replay = await f.queue.loadVerifiedRegionalInput(retry.id)
+      assert.deepEqual(replay.payload, frozen.payload)
+      const consumed = f.consumed.at(-1)
+      assert.ok(consumed)
+      assert.deepEqual(consumed.recipe, frozen.input.recipe)
+      assert.equal(consumed.request.job.sampling.scheduler, 'dpmpp_2m_k')
+      assert.equal(consumed.request.job.checkpoint.predictionType, 'v_prediction')
+      assert.equal(
+        consumed.initializationProfile,
+        mode === 'txt2img' ? 'invoke-cpu-f32-add-noise-v1' : undefined,
+      )
+      assert.ok((await readFile(replay.input.request.job.target.path)).equals(bytes))
+      assert.equal(f.calls.compose.length, 1)
+      assert.deepEqual(f.document(), authored)
+      assert.ok((await readFile(f.packagePath)).equals(saved))
+    }, fixtureMode)
+  })
+}
+
+for (const mode of ['txt2img', 'img2img', 'outpaint'] as const) {
+  test(`regional V ${mode} sampling actual JSONL legacy peer refuses before staging while qualified peer consumes exact method initializer and source`, async () => {
+    await withFixture(
+      async (f) => {
+        await selectVSampling(f, mode, V_SAMPLING_METHODS[2])
+        const result = await queued(f)
+        assert.equal((await settled(f, result.jobIds))[0].status, 'completed')
+        const frozen = await f.queue.loadVerifiedRegionalInput(result.jobIds[0])
+        const target = await readFile(frozen.input.request.job.target.path)
+        const alpha =
+          mode === 'outpaint'
+            ? deriveOutpaintContributionAlphaV1(decodeTargetPngAlpha(target, 64, 64), 64, 64)
+            : null
+        const output = alpha
+          ? literalSmartPatchColorPng(
+              64,
+              64,
+              Array.from({ length: 4096 }, (_, i) => [17, i % 251, 91, alpha[i]]).flat(),
+              4,
+            )
+          : f.outputBytes
+        const runtime = path.join(f.root, `v-${mode}-sampling-jsonl-runtime`)
+        const scratch = path.join(f.root, `v-${mode}-sampling-jsonl-scratch`)
+        const received = path.join(f.root, `v-${mode}-sampling-jsonl-received.jsonl`)
+        await mkdir(runtime)
+        await mkdir(scratch, { mode: 0o700 })
+        const executable = path.join(runtime, 'python')
+        for (const support of [false, true]) {
+          const ready = {
+            ...f.controls.ready,
+            capabilities: [
+              ...f.controls.ready.capabilities.filter((c) => c !== V_SAMPLING_CAPABILITY),
+              ...(support ? [V_SAMPLING_CAPABILITY] : []),
+              ...(process.platform === 'linux' ? ['linux-owned-inference-v1'] : []),
+            ],
+            pythonVersion: '3.12.13',
+            type: 'ready',
+          }
+          const script = String.raw`#!${process.execPath}
+const fs=require('node:fs'),crypto=require('node:crypto');
+const hash=b=>crypto.createHash('sha256').update(b).digest('hex');
+process.stdout.write(JSON.stringify(${JSON.stringify(ready)})+'\n');
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const wire=JSON.parse(line);if(wire.type!=='execute-current-canvas-regional')throw Error('Wrong owner');
+ const bytes=fs.readFileSync(wire.bundle.path);if(hash(bytes)!==wire.bundle.sha256 || bytes.length!==wire.bundle.byteSize)throw Error('Bundle changed');
+ const bundle=JSON.parse(bytes),request=bundle.request,job=request.job,init=bundle.initializationProfile??null;
+ if(request.type!==${JSON.stringify(`generate-illustrious-${mode}`)} || job.checkpoint.predictionType!=='v_prediction' || job.sampling.scheduler!=='dpmpp_2m_k' || init!==${JSON.stringify(mode === 'txt2img' ? 'invoke-cpu-f32-add-noise-v1' : null)})throw Error('Frozen sampling changed');
+ const source=fs.readFileSync(job.target.path);if(hash(source)!==job.target.sha256 || source.length!==job.target.byteSize)throw Error('Source changed');
+ fs.appendFileSync(${JSON.stringify(received)},JSON.stringify({type:request.type,sampling:job.sampling,init,targetPath:job.target.path,sourceHash:hash(source)})+'\n');
+ fs.writeFileSync(job.output.pngPath,Buffer.from(${JSON.stringify(output.toString('base64'))},'base64'),{flag:'wx'});
+ process.stdout.write(JSON.stringify({type:'generation-done',protocolVersion:'1',requestId:wire.requestId,outputPath:job.output.pngPath,seed:job.sampling.seed})+'\n');
+});
+`
+          await writeFile(executable, script)
+          await chmod(executable, 0o700)
+          const client = await GenerationWorkerClient.start(
+            { pythonExecutable: executable, runtimeRoot: runtime, scratchBasePath: scratch },
+            { requestTimeoutMs: 3000, shutdownWaitMs: 100 },
+          )
+          try {
+            const input = structuredClone(frozen.input)
+            input.request.requestId = randomUUID()
+            if (support) {
+              assert.ok((await client.executeCurrentCanvasRegional(input)).pngBytes.equals(output))
+            } else {
+              await assert.rejects(client.executeCurrentCanvasRegional(input), {
+                code: 'WORKER_VERSION_MISMATCH',
+              })
+              assert.equal(await readFile(received, 'utf8').catch(() => ''), '')
+            }
+            assert.deepEqual(await readdir(scratch), [])
+            assert.deepEqual(
+              (await f.queue.loadVerifiedRegionalInput(result.jobIds[0])).payload,
+              frozen.payload,
+            )
+          } finally {
+            await client.close()
+          }
+        }
+        const records = (await readFile(received, 'utf8'))
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line) as { [key: string]: unknown; targetPath: string })
+        assert.equal(records.length, 1)
+        const record = records[0]
+        assert.equal(path.dirname(path.dirname(record.targetPath)), scratch)
+        assert.ok(path.basename(path.dirname(record.targetPath)).startsWith('regional-request-'))
+        assert.equal(path.basename(record.targetPath), 'target.png')
+        assert.deepEqual(record, {
+          init: mode === 'txt2img' ? 'invoke-cpu-f32-add-noise-v1' : null,
+          sampling: frozen.input.request.job.sampling,
+          sourceHash: regionalProjectDigest(target),
+          targetPath: record.targetPath,
+          type: frozen.input.request.type,
+        })
+      },
+      mode === 'txt2img' ? false : mode === 'img2img' ? true : 'outpaint',
+    )
+  })
+}

@@ -98,6 +98,24 @@ __all__ = ("IllustriousRegionalDenoisingError", "run_current_canvas_regional_den
 
 _Code = Literal["INPUT_INVALID", "PROFILE_INVALID", "UNSUPPORTED", "LIMIT", "SCOPE_CONFLICT"]
 _DenoisingProfile = Literal[
+    "ordinary-canvas-euler-ancestral-v-prediction-invoke-init-txt2img-cpu-v1",
+    "ordinary-canvas-euler-ancestral-v-prediction-invoke-init-txt2img-cuda-fp16-v1",
+    "ordinary-canvas-euler-ancestral-v-prediction-invoke-init-txt2img-cuda-vae-v1",
+    "ordinary-canvas-euler-ancestral-v-prediction-img2img-cpu-v1",
+    "ordinary-canvas-euler-ancestral-v-prediction-img2img-cuda-fp16-v1",
+    "ordinary-canvas-euler-ancestral-v-prediction-img2img-cuda-vae-v1",
+    "ordinary-canvas-euler-ancestral-v-prediction-outpaint-cpu-v1",
+    "ordinary-canvas-euler-ancestral-v-prediction-outpaint-cuda-fp16-v1",
+    "ordinary-canvas-euler-ancestral-v-prediction-outpaint-cuda-vae-v1",
+    "ordinary-canvas-dpmpp-2m-v-prediction-invoke-init-txt2img-cpu-v1",
+    "ordinary-canvas-dpmpp-2m-v-prediction-invoke-init-txt2img-cuda-fp16-v1",
+    "ordinary-canvas-dpmpp-2m-v-prediction-invoke-init-txt2img-cuda-vae-v1",
+    "ordinary-canvas-dpmpp-2m-v-prediction-img2img-cpu-v1",
+    "ordinary-canvas-dpmpp-2m-v-prediction-img2img-cuda-fp16-v1",
+    "ordinary-canvas-dpmpp-2m-v-prediction-img2img-cuda-vae-v1",
+    "ordinary-canvas-dpmpp-2m-v-prediction-outpaint-cpu-v1",
+    "ordinary-canvas-dpmpp-2m-v-prediction-outpaint-cuda-fp16-v1",
+    "ordinary-canvas-dpmpp-2m-v-prediction-outpaint-cuda-vae-v1",
     "ordinary-canvas-euler-txt2img-cpu-v1",
     "ordinary-canvas-euler-txt2img-cuda-fp16-v1",
     "ordinary-canvas-euler-txt2img-cpu-v2",
@@ -182,6 +200,54 @@ def _execution_profile(
 ) -> tuple[_TensorProfile, bool]:
     """Validate the shared finite lane/version pairs before any native work."""
     profiles: dict[_DenoisingProfile, tuple[_TensorProfile, bool]] = {
+        "ordinary-canvas-euler-ancestral-v-prediction-invoke-init-txt2img-cpu-v1": (
+            "cpu-float32-v1",
+            True,
+        ),
+        "ordinary-canvas-euler-ancestral-v-prediction-invoke-init-txt2img-cuda-fp16-v1": (
+            "cuda-float16-v1",
+            True,
+        ),
+        "ordinary-canvas-euler-ancestral-v-prediction-invoke-init-txt2img-cuda-vae-v1": (
+            "cuda-float16-v1",
+            True,
+        ),
+        "ordinary-canvas-euler-ancestral-v-prediction-img2img-cpu-v1": ("cpu-float32-v1", True),
+        "ordinary-canvas-euler-ancestral-v-prediction-img2img-cuda-fp16-v1": (
+            "cuda-float16-v1",
+            True,
+        ),
+        "ordinary-canvas-euler-ancestral-v-prediction-img2img-cuda-vae-v1": (
+            "cuda-float16-v1",
+            True,
+        ),
+        "ordinary-canvas-euler-ancestral-v-prediction-outpaint-cpu-v1": ("cpu-float32-v1", True),
+        "ordinary-canvas-euler-ancestral-v-prediction-outpaint-cuda-fp16-v1": (
+            "cuda-float16-v1",
+            True,
+        ),
+        "ordinary-canvas-euler-ancestral-v-prediction-outpaint-cuda-vae-v1": (
+            "cuda-float16-v1",
+            True,
+        ),
+        "ordinary-canvas-dpmpp-2m-v-prediction-invoke-init-txt2img-cpu-v1": (
+            "cpu-float32-v1",
+            True,
+        ),
+        "ordinary-canvas-dpmpp-2m-v-prediction-invoke-init-txt2img-cuda-fp16-v1": (
+            "cuda-float16-v1",
+            True,
+        ),
+        "ordinary-canvas-dpmpp-2m-v-prediction-invoke-init-txt2img-cuda-vae-v1": (
+            "cuda-float16-v1",
+            True,
+        ),
+        "ordinary-canvas-dpmpp-2m-v-prediction-img2img-cpu-v1": ("cpu-float32-v1", True),
+        "ordinary-canvas-dpmpp-2m-v-prediction-img2img-cuda-fp16-v1": ("cuda-float16-v1", True),
+        "ordinary-canvas-dpmpp-2m-v-prediction-img2img-cuda-vae-v1": ("cuda-float16-v1", True),
+        "ordinary-canvas-dpmpp-2m-v-prediction-outpaint-cpu-v1": ("cpu-float32-v1", True),
+        "ordinary-canvas-dpmpp-2m-v-prediction-outpaint-cuda-fp16-v1": ("cuda-float16-v1", True),
+        "ordinary-canvas-dpmpp-2m-v-prediction-outpaint-cuda-vae-v1": ("cuda-float16-v1", True),
         "ordinary-canvas-euler-txt2img-cpu-v1": ("cpu-float32-v1", False),
         "ordinary-canvas-euler-txt2img-cuda-fp16-v1": ("cuda-float16-v1", False),
         "ordinary-canvas-euler-txt2img-cpu-v2": ("cpu-float32-v1", True),
@@ -273,6 +339,18 @@ def _execution_profile(
 
 def _img2img_profile(denoising_profile: _DenoisingProfile) -> bool:
     return denoising_profile in (
+        "ordinary-canvas-euler-ancestral-v-prediction-img2img-cpu-v1",
+        "ordinary-canvas-euler-ancestral-v-prediction-img2img-cuda-fp16-v1",
+        "ordinary-canvas-euler-ancestral-v-prediction-img2img-cuda-vae-v1",
+        "ordinary-canvas-euler-ancestral-v-prediction-outpaint-cpu-v1",
+        "ordinary-canvas-euler-ancestral-v-prediction-outpaint-cuda-fp16-v1",
+        "ordinary-canvas-euler-ancestral-v-prediction-outpaint-cuda-vae-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-img2img-cpu-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-img2img-cuda-fp16-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-img2img-cuda-vae-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-outpaint-cpu-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-outpaint-cuda-fp16-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-outpaint-cuda-vae-v1",
         "ordinary-canvas-euler-v-prediction-img2img-cpu-v1",
         "ordinary-canvas-euler-v-prediction-img2img-cuda-fp16-v1",
         "ordinary-canvas-euler-v-prediction-img2img-cuda-vae-v1",
@@ -302,6 +380,12 @@ def _img2img_profile(denoising_profile: _DenoisingProfile) -> bool:
 
 def _outpaint_profile(denoising_profile: _DenoisingProfile) -> bool:
     return denoising_profile in (
+        "ordinary-canvas-euler-ancestral-v-prediction-outpaint-cpu-v1",
+        "ordinary-canvas-euler-ancestral-v-prediction-outpaint-cuda-fp16-v1",
+        "ordinary-canvas-euler-ancestral-v-prediction-outpaint-cuda-vae-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-outpaint-cpu-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-outpaint-cuda-fp16-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-outpaint-cuda-vae-v1",
         "ordinary-canvas-euler-v-prediction-outpaint-cpu-v1",
         "ordinary-canvas-euler-v-prediction-outpaint-cuda-fp16-v1",
         "ordinary-canvas-euler-v-prediction-outpaint-cuda-vae-v1",
@@ -326,11 +410,29 @@ def _img2img_strength(value: object) -> float:
     return cast(float, value)
 
 
-# InvokeAI b0ac163b139c432aff4c51078c31c074bf292f72, sd/denoise_latents.py:
+# InvokeAI 4875d96531ca6712b288f6e660fcbb34143408c1, sd/denoise_latents.py:
 # the scheduler consumes the resolved UNet prediction objective. Keep old profiles
 # epsilon-only and opt in through new names, reusing the ordinary native selector.
 def _v_prediction_profile(denoising_profile: _DenoisingProfile) -> bool:
     return denoising_profile in (
+        "ordinary-canvas-euler-ancestral-v-prediction-invoke-init-txt2img-cpu-v1",
+        "ordinary-canvas-euler-ancestral-v-prediction-invoke-init-txt2img-cuda-fp16-v1",
+        "ordinary-canvas-euler-ancestral-v-prediction-invoke-init-txt2img-cuda-vae-v1",
+        "ordinary-canvas-euler-ancestral-v-prediction-img2img-cpu-v1",
+        "ordinary-canvas-euler-ancestral-v-prediction-img2img-cuda-fp16-v1",
+        "ordinary-canvas-euler-ancestral-v-prediction-img2img-cuda-vae-v1",
+        "ordinary-canvas-euler-ancestral-v-prediction-outpaint-cpu-v1",
+        "ordinary-canvas-euler-ancestral-v-prediction-outpaint-cuda-fp16-v1",
+        "ordinary-canvas-euler-ancestral-v-prediction-outpaint-cuda-vae-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-invoke-init-txt2img-cpu-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-invoke-init-txt2img-cuda-fp16-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-invoke-init-txt2img-cuda-vae-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-img2img-cpu-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-img2img-cuda-fp16-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-img2img-cuda-vae-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-outpaint-cpu-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-outpaint-cuda-fp16-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-outpaint-cuda-vae-v1",
         "ordinary-canvas-euler-v-prediction-img2img-cpu-v1",
         "ordinary-canvas-euler-v-prediction-img2img-cuda-fp16-v1",
         "ordinary-canvas-euler-v-prediction-img2img-cuda-vae-v1",
@@ -345,6 +447,12 @@ def _v_prediction_profile(denoising_profile: _DenoisingProfile) -> bool:
 
 def _vae_profile(denoising_profile: _DenoisingProfile) -> bool:
     return denoising_profile in (
+        "ordinary-canvas-euler-ancestral-v-prediction-invoke-init-txt2img-cuda-vae-v1",
+        "ordinary-canvas-euler-ancestral-v-prediction-img2img-cuda-vae-v1",
+        "ordinary-canvas-euler-ancestral-v-prediction-outpaint-cuda-vae-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-invoke-init-txt2img-cuda-vae-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-img2img-cuda-vae-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-outpaint-cuda-vae-v1",
         "ordinary-canvas-euler-v-prediction-img2img-cuda-vae-v1",
         "ordinary-canvas-euler-v-prediction-outpaint-cuda-vae-v1",
         "ordinary-canvas-euler-v-prediction-txt2img-cuda-vae-v1",
@@ -363,6 +471,15 @@ def _vae_profile(denoising_profile: _DenoisingProfile) -> bool:
 
 def _ancestral_profile(denoising_profile: _DenoisingProfile) -> bool:
     return denoising_profile in (
+        "ordinary-canvas-euler-ancestral-v-prediction-invoke-init-txt2img-cpu-v1",
+        "ordinary-canvas-euler-ancestral-v-prediction-invoke-init-txt2img-cuda-fp16-v1",
+        "ordinary-canvas-euler-ancestral-v-prediction-invoke-init-txt2img-cuda-vae-v1",
+        "ordinary-canvas-euler-ancestral-v-prediction-img2img-cpu-v1",
+        "ordinary-canvas-euler-ancestral-v-prediction-img2img-cuda-fp16-v1",
+        "ordinary-canvas-euler-ancestral-v-prediction-img2img-cuda-vae-v1",
+        "ordinary-canvas-euler-ancestral-v-prediction-outpaint-cpu-v1",
+        "ordinary-canvas-euler-ancestral-v-prediction-outpaint-cuda-fp16-v1",
+        "ordinary-canvas-euler-ancestral-v-prediction-outpaint-cuda-vae-v1",
         "ordinary-canvas-euler-ancestral-txt2img-cpu-v1",
         "ordinary-canvas-euler-ancestral-txt2img-cuda-fp16-v1",
         "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cpu-v1",
@@ -380,6 +497,12 @@ def _ancestral_profile(denoising_profile: _DenoisingProfile) -> bool:
 
 def _invoke_initialization_profile(denoising_profile: _DenoisingProfile) -> bool:
     return denoising_profile in (
+        "ordinary-canvas-euler-ancestral-v-prediction-invoke-init-txt2img-cpu-v1",
+        "ordinary-canvas-euler-ancestral-v-prediction-invoke-init-txt2img-cuda-fp16-v1",
+        "ordinary-canvas-euler-ancestral-v-prediction-invoke-init-txt2img-cuda-vae-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-invoke-init-txt2img-cpu-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-invoke-init-txt2img-cuda-fp16-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-invoke-init-txt2img-cuda-vae-v1",
         "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cpu-v1",
         "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cuda-fp16-v1",
         "ordinary-canvas-euler-ancestral-invoke-init-txt2img-cuda-vae-v1",
@@ -391,6 +514,15 @@ def _invoke_initialization_profile(denoising_profile: _DenoisingProfile) -> bool
 
 def _dpmpp_2m_profile(denoising_profile: _DenoisingProfile) -> bool:
     return denoising_profile in (
+        "ordinary-canvas-dpmpp-2m-v-prediction-invoke-init-txt2img-cpu-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-invoke-init-txt2img-cuda-fp16-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-invoke-init-txt2img-cuda-vae-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-img2img-cpu-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-img2img-cuda-fp16-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-img2img-cuda-vae-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-outpaint-cpu-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-outpaint-cuda-fp16-v1",
+        "ordinary-canvas-dpmpp-2m-v-prediction-outpaint-cuda-vae-v1",
         "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cpu-v1",
         "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cuda-fp16-v1",
         "ordinary-canvas-dpmpp-2m-invoke-init-txt2img-cuda-vae-v1",
@@ -463,9 +595,9 @@ def _denoising_parameters(
         "DPM++ 2M requires its own explicit resolved noise policy.",
     )
     _require(
-        not v_prediction or (resolved_noise and not ancestral and not dpmpp_2m),
+        not v_prediction or (resolved_noise and not (ancestral and dpmpp_2m)),
         "PROFILE_INVALID",
-        "V-prediction requires its explicit resolved-noise Euler profile.",
+        "V-prediction requires an explicit resolved-noise native sampling profile.",
     )
     _require(
         type(parameters.steps) is int
@@ -515,7 +647,7 @@ def _denoising_parameters(
         and parameters.prediction_type == ("v_prediction" if v_prediction else "epsilon")
         and (resolved_noise or parameters.noise_profile is None),
         "UNSUPPORTED",
-        "Only explicit Euler/v_prediction is supported."
+        "Only the sampler selected by the explicit v_prediction profile is supported."
         if v_prediction
         else "Only deterministic DPM++ 2M/epsilon is supported."
         if dpmpp_2m
@@ -703,9 +835,9 @@ def _fresh_pipeline(
 ) -> Any:
     diffusers = cast(Any, runtime.diffusers)
     _require(
-        not v_prediction or (resolved_noise and not ancestral and not dpmpp_2m),
+        not v_prediction or (resolved_noise and not (ancestral and dpmpp_2m)),
         "PROFILE_INVALID",
-        "V-prediction requires its explicit resolved-noise Euler profile.",
+        "V-prediction requires an explicit resolved-noise native sampling profile.",
     )
     # V1 retains its fixed policy and three-argument seam. V2 uses only the
     # validated explicit four-field policy, detached again for the selector.
@@ -724,7 +856,7 @@ def _fresh_pipeline(
             and not ancestral
             and type(scheduler) is diffusers.DPMSolverMultistepScheduler
             and scheduler is not pipeline.scheduler
-            and scheduler.config.prediction_type == "epsilon"
+            and scheduler.config.prediction_type == ("v_prediction" if v_prediction else "epsilon")
             and scheduler.config.algorithm_type == "dpmsolver++"
             and type(scheduler.config.solver_order) is int
             and scheduler.config.solver_order == 2
@@ -740,7 +872,9 @@ def _fresh_pipeline(
             and scheduler.config.use_lu_lambdas is False
             and scheduler.config.use_flow_sigmas is False,
             "PROFILE_INVALID",
-            "Scheduler selection must create the exact fresh native epsilon DPM++ 2M policy.",
+            "Scheduler selection must create the exact fresh native v_prediction DPM++ 2M policy."
+            if v_prediction
+            else "Scheduler selection must create the exact fresh native epsilon DPM++ 2M policy.",
         )
     else:
         _require(
@@ -753,7 +887,9 @@ def _fresh_pipeline(
             and scheduler is not pipeline.scheduler
             and scheduler.config.prediction_type == ("v_prediction" if v_prediction else "epsilon"),
             "PROFILE_INVALID",
-            "Scheduler selection must create a fresh native v_prediction Euler instance."
+            "Scheduler selection must create a fresh native v_prediction Euler ancestral instance."
+            if v_prediction and ancestral
+            else "Scheduler selection must create a fresh native v_prediction Euler instance."
             if v_prediction
             else "Scheduler selection must create a fresh native epsilon Euler ancestral instance."
             if ancestral
@@ -1302,8 +1438,8 @@ def run_current_canvas_regional_denoising(
     policy, native int64 timesteps and independent xor step kwargs. Only their
     txt2img profiles select Invoke initialization; image profiles keep the
     source/posterior and native selected-window begin index.
-    Explicit V-prediction Euler image profiles retain that same source/window
-    and mask owner; only the native scheduler objective changes.
+    Explicit V-prediction sampling profiles retain the same initialization,
+    source/window, mask and history owners; only the native objective changes.
     Prepared-image VAE profiles reuse the prevalidated VAE without precision
     mutation; Invoke encode/sample/scale executes before denoiser conversion.
     The original deterministic multistep scheduler retains its own history.
@@ -1346,6 +1482,7 @@ def run_current_canvas_regional_denoising(
             prepared_vae=prepared_vae,
             dpmpp_2m=True,
             invoke_cfg_rescale=invoke_cfg_rescale,
+            **({"v_prediction": True} if v_prediction else {}),
         )
         parameters = replace(parameters, noise_profile=noise_profile)
     elif resolved_noise:
@@ -1357,6 +1494,7 @@ def run_current_canvas_regional_denoising(
                 ancestral=True,
                 prepared_vae=prepared_vae,
                 invoke_cfg_rescale=invoke_cfg_rescale,
+                **({"v_prediction": True} if v_prediction else {}),
             )
             if ancestral
             else _denoising_parameters(
@@ -1474,11 +1612,21 @@ def run_current_canvas_regional_denoising(
             )
         elif dpmpp_2m:
             fresh = _fresh_pipeline(
-                pipeline, parameters, runtime, resolved_noise=True, dpmpp_2m=True
+                pipeline,
+                parameters,
+                runtime,
+                resolved_noise=True,
+                dpmpp_2m=True,
+                **({"v_prediction": True} if v_prediction else {}),
             )
         elif ancestral:
             fresh = _fresh_pipeline(
-                pipeline, parameters, runtime, resolved_noise=True, ancestral=True
+                pipeline,
+                parameters,
+                runtime,
+                resolved_noise=True,
+                ancestral=True,
+                **({"v_prediction": True} if v_prediction else {}),
             )
         else:
             fresh = (

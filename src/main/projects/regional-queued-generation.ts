@@ -642,10 +642,7 @@ function parseRegionalPayload(
       ordinary.kind !== 'illustrious-outpaint') ||
     !(
       ordinary.workerJob.checkpoint.predictionType === 'epsilon' ||
-      (invoke &&
-        ordinary.workerJob.checkpoint.predictionType === 'v_prediction' &&
-        ordinary.workerJob.sampling.scheduler === 'euler' &&
-        initializationProfile === undefined)
+      (invoke && ordinary.workerJob.checkpoint.predictionType === 'v_prediction')
     ) ||
     (invoke && ordinary.workerJob.sampling.cfgScale <= 1) ||
     !samplerMatchesInitialization ||

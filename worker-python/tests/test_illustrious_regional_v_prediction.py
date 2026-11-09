@@ -460,7 +460,7 @@ def test_worker_selects_explicit_v_prediction_profile_and_capability(precision: 
 @pytest.mark.parametrize(
     "changes,kwargs",
     (
-        ({"scheduler": "euler_a"}, {"img2img": True}),
+        ({"scheduler": "dpmpp_2m_sde"}, {"img2img": True}),
         ({}, {"img2img": True, "outpaint": True}),
         ({"scheduler": "euler_a"}, {}),
         ({"scheduler": "dpmpp_2m"}, {}),

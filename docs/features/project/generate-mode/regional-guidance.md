@@ -2202,3 +2202,25 @@ emergency physical closure remain excluded. Source review, retained bytes, ROOT
 runtime and physical release remain separate. This does not broaden V ancestral/
 DPM, independent TXT initialization, Smart/references, visual quality or
 PP-001/005/007/008 readiness.
+
+
+The subsequent [V sampling extension](../../../engineering/phase-4-regional-guidance-v-sampling-research.md)
+joins V-prediction with the existing Euler a/Normal and deterministic DPM++2M
+Normal/Karras owners across TXT/IMG/OUT. Its separate
+`illustrious-regional-v-prediction-sampling-v1` capability requires prior V and
+the independent method/image/OUT/VAE capabilities. Older V capabilities retain
+their Euler meanings. Non-Euler TXT uses the frozen Invoke initializer; images
+carry no TXT initializer. Actual exact-file objective/policy and original frozen
+method/grid/source/strength remain authoritative after draft edits.
+
+ROOT affected union1,736 Main/540 Python/220 browser PASS and six controlled
+semantic REDs with restoration are retained. Nine installed requests/six exact
+own control-Retry PNGs verify Euler a TXT, DPM Normal IMG and DPM Karras OUT at
+512 squared/N30/CFG5/seed123/EmbeddedFP32, image strength0.5. Numeric-progress
+Cancel, clean restart, frozen Retry and explicit Add/Undo/Redo/Save-reopen pass;
+completed progress totals30/15/16. Installed wire/guarded configuration and progress
+do not establish a full trained timestep trace. Source/alpha/RNG/ordinary-only
+provenance owners remain unchanged; OUT sampled canvas-rounding evidence is
+bounded. This finite extension adds no numerical loop, wire/queue schema,
+provenance field or quality/readiness claim. SDE/Smart/references, Anima and
+PP-001/005/007/008 remain open.

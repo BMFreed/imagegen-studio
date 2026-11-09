@@ -358,7 +358,7 @@ for (const [operation, sampler] of [
       )!,
       operation === 'illustrious-regional-img2img'
         ? /v_prediction image job/
-        : /requires TXT Euler/,
+        : /v_prediction sampling method/,
     )
   })
 }
@@ -454,7 +454,7 @@ for (const operation of [
           undefined,
           'v_prediction',
         )!,
-        /requires Euler/,
+        /v_prediction sampling method.*Repair or update/,
       )
     }
     assert.match(
@@ -512,4 +512,81 @@ for (const operation of [
       )
     }
   })
+}
+
+for (const operation of [
+  'illustrious-regional-txt2img',
+  'illustrious-regional-img2img',
+  'illustrious-regional-outpaint',
+] as const) {
+  for (const sampler of ['Euler a', 'DPM++ 2M'] as const) {
+    test(`frozen V ${operation} ${sampler} Retry needs the sampling combination and its existing method owner`, () => {
+      const state = {
+        regionalDpmSupported: true,
+        regionalImg2ImgDpmpp2mSupported: true,
+        regionalImg2ImgEulerASupported: true,
+        regionalImg2ImgSupported: true,
+        regionalInvokeInitializationSupported: true,
+        regionalOutpaintSupported: true,
+        regionalSupported: true,
+        regionalVPredictionImageSupported: true,
+        regionalVPredictionSupported: true,
+      }
+      const reason = (input: { regionalVPredictionSamplingSupported?: boolean } & typeof state) =>
+        generationQueueRetryReason(
+          operation,
+          input,
+          sampler,
+          false,
+          false,
+          0,
+          undefined,
+          'v_prediction',
+        )
+      assert.match(reason(state)!, /v_prediction sampling method.*Repair or update/)
+      assert.match(
+        reason({ ...state, regionalVPredictionSamplingSupported: false })!,
+        /v_prediction sampling method/,
+      )
+      assert.equal(reason({ ...state, regionalVPredictionSamplingSupported: true }), null)
+      const key =
+        operation === 'illustrious-regional-txt2img'
+          ? sampler === 'Euler a'
+            ? 'regionalInvokeInitializationSupported'
+            : 'regionalDpmSupported'
+          : sampler === 'Euler a'
+            ? 'regionalImg2ImgEulerASupported'
+            : 'regionalImg2ImgDpmpp2mSupported'
+      assert.notEqual(
+        reason({ ...state, [key]: false, regionalVPredictionSamplingSupported: true }),
+        null,
+      )
+      assert.equal(
+        generationQueueRetryReason(
+          operation,
+          state,
+          sampler,
+          false,
+          false,
+          0,
+          undefined,
+          'epsilon',
+        ),
+        null,
+      )
+      assert.equal(
+        generationQueueRetryReason(
+          operation,
+          state,
+          'Euler',
+          false,
+          false,
+          0,
+          undefined,
+          'v_prediction',
+        ),
+        null,
+      )
+    })
+  }
 }

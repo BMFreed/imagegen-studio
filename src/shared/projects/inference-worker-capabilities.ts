@@ -146,6 +146,15 @@ export function supportsInferenceRegionalVPredictionImage(value: unknown): boole
   )
 }
 
+/** Non-Euler V combinations require their own qualification, plus each existing sampler owner. */
+export function supportsInferenceRegionalVPredictionSampling(value: unknown): boolean {
+  return (
+    supportsInferenceRegionalVPrediction(value) &&
+    isQualifiedInferenceWorkerReady(value) &&
+    value.capabilities.includes('illustrious-regional-v-prediction-sampling-v1')
+  )
+}
+
 /** Ordinary rescale support alone never qualifies the separate regional execution owner. */
 export function supportsInferenceRegionalCFGRescale(value: unknown): boolean {
   return (

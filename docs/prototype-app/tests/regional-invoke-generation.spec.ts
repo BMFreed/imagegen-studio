@@ -1706,7 +1706,9 @@ for (const mode of ['img2img', 'outpaint'] as const) {
     })
     await expect(generate).toBeDisabled()
     await expect(
-      page.getByText('Regional v_prediction requires Euler with the Normal scheduler.'),
+      page.getByText(
+        /Checking image engine support for Regional Guidance v_prediction sampling methods/,
+      ),
     ).toBeVisible()
     await page.evaluate(() => {
       const fixture = globalThis.window.regionalWiringFixture
@@ -1761,6 +1763,112 @@ for (const mode of ['img2img', 'outpaint'] as const) {
       fixture.state.regionalVPredictionImageSupported = false
       fixture.state.regionalVPredictionSupported = false
       fixture.epoch += 1
+    })
+    await expect(retry).toBeEnabled()
+    expect(errors).toEqual([])
+  })
+}
+
+for (const mode of ['txt2img', 'outpaint'] as const) {
+  test(`renderer V ${mode} sampling uses the separate combination and preserves old Euler support`, async ({
+    page,
+  }) => {
+    const errors: string[] = []
+    page.on('pageerror', (cause) => errors.push(cause.message))
+    await mountWiring(page, 'project')
+    await page.evaluate((mode) => {
+      const f = globalThis.window.regionalWiringFixture
+      f.tab.generationDraft.model!.predictionType = 'v_prediction'
+      f.catalog[0]!.versions[0]!.predictionType = 'v_prediction'
+      f.tab.generationDraft.sampling.sampler = 'DPM++ 2M'
+      f.tab.generationDraft.sampling.scheduler = 'Karras'
+      f.tab.generationDraft.sampling.denoisingStrength = 0.5
+      f.targetMode = mode
+      f.tab.primaryBbox.x += 8
+      f.state.regionalVPredictionSupported = true
+      f.state.regionalVPredictionImageSupported = true
+      f.state.regionalVPredictionSamplingSupported = false
+      f.state.regionalDpmSupported = true
+      f.state.regionalInvokeInitializationSupported = true
+      f.state.regionalImg2ImgSupported = true
+      f.state.regionalImg2ImgDpmpp2mSupported = true
+      f.state.regionalOutpaintSupported = true
+    }, mode)
+    const generate = page.getByRole('button', { exact: true, name: 'Generate' })
+    await expect(generate).toBeDisabled()
+    await expect(
+      page.getByText(
+        'The current image engine does not support Regional Guidance v_prediction sampling methods. Repair or update the runtime.',
+      ),
+    ).toBeVisible()
+    await page.evaluate(() => {
+      globalThis.window.regionalWiringFixture.state.regionalVPredictionSamplingSupported = true
+    })
+    await expect(generate).toBeEnabled()
+    await generate.click()
+    expect(
+      await page.evaluate(() => globalThis.window.regionalWiringFixture.generateCalls),
+    ).toEqual([1])
+    await page.evaluate(() => {
+      const f = globalThis.window.regionalWiringFixture
+      f.state.regionalVPredictionSamplingSupported = false
+      f.tab.generationDraft.sampling.sampler = 'Euler'
+      f.tab.generationDraft.sampling.scheduler = 'Normal'
+    })
+    await expect(generate).toBeEnabled()
+    expect(errors).toEqual([])
+  })
+
+  test(`renderer frozen V ${mode} sampling Retry ignores current Euler authoring and needs its recorded method capability`, async ({
+    page,
+  }) => {
+    const errors: string[] = []
+    page.on('pageerror', (cause) => errors.push(cause.message))
+    await mountWiring(page, 'queue')
+    await page.evaluate((mode) => {
+      const f = globalThis.window.regionalWiringFixture
+      f.queueItem.operation =
+        mode === 'txt2img' ? 'illustrious-regional-txt2img' : 'illustrious-regional-outpaint'
+      f.queueItem.details!.sampling.predictionType = 'v_prediction'
+      f.queueItem.details!.sampling.sampler = 'DPM++ 2M'
+      f.queueItem.details!.sampling.scheduler = 'Karras'
+      f.state.regionalSupported = true
+      f.state.regionalVPredictionSupported = true
+      f.state.regionalVPredictionImageSupported = true
+      f.state.regionalVPredictionSamplingSupported = false
+      f.state.regionalDpmSupported = true
+      f.state.regionalImg2ImgSupported = true
+      f.state.regionalImg2ImgDpmpp2mSupported = true
+      f.state.regionalOutpaintSupported = true
+      f.tab.regionalGuidance = []
+      f.tab.generationDraft.model = null
+      f.tab.generationDraft.sampling.sampler = 'Euler'
+      f.tab.generationDraft.sampling.scheduler = 'Normal'
+      f.epoch += 1
+    }, mode)
+    const retry = page.getByRole('button', { exact: true, name: 'Retry job' })
+    await expect(retry).toBeDisabled()
+    await expect(
+      page
+        .getByTestId('queue-job-row')
+        .getByText(/frozen Regional Guidance v_prediction sampling method/),
+    ).toBeVisible()
+    await page.evaluate(() => {
+      const f = globalThis.window.regionalWiringFixture
+      f.state.regionalVPredictionSamplingSupported = true
+      f.epoch += 1
+    })
+    await expect(retry).toBeEnabled()
+    await retry.click()
+    await expect
+      .poll(() => page.evaluate(() => globalThis.window.regionalWiringFixture.retryCalls.length))
+      .toBe(1)
+    await page.evaluate(() => {
+      const f = globalThis.window.regionalWiringFixture
+      f.queueItem.details!.sampling.sampler = 'Euler'
+      f.queueItem.details!.sampling.scheduler = 'Normal'
+      f.state.regionalVPredictionSamplingSupported = false
+      f.epoch += 1
     })
     await expect(retry).toBeEnabled()
     expect(errors).toEqual([])

@@ -5,6 +5,7 @@ import test from 'node:test'
 import {
   supportsInferenceRegionalVPrediction,
   supportsInferenceRegionalVPredictionImage,
+  supportsInferenceRegionalVPredictionSampling,
 } from './inference-worker-capabilities.js'
 import { isProjectGenerationActionState } from './project-generation-actions.js'
 import { createEmptyProjectDocumentV1, type IgsProjectDocumentV1 } from './project-schema.js'
@@ -853,7 +854,7 @@ for (const sampler of ['Euler a', 'DPM++ 2M'] as const) {
     }
     assert.match(
       getInvokeRegionalGenerationUnavailableReason(input)!,
-      /v_prediction requires Euler.*Normal/,
+      /v_prediction sampling methods.*Repair or update/,
     )
     value.generationDraft.model!.predictionType = 'epsilon'
     assert.equal(getInvokeRegionalGenerationUnavailableReason(input), null)
@@ -1011,7 +1012,7 @@ for (const targetMode of ['img2img', 'outpaint'] as const) {
           vPredictionImageSupported: true,
           vPredictionSupported: true,
         })!,
-        /v_prediction requires Euler.*Normal/,
+        /v_prediction sampling methods.*Repair or update/,
       )
     }
   })
@@ -1040,6 +1041,168 @@ test('regional V image action-state field is optional and strictly boolean for l
   for (const regionalVPredictionImageSupported of [null, 0, 'true', {}, []]) {
     assert.equal(
       isProjectGenerationActionState({ ...state, regionalVPredictionImageSupported }),
+      false,
+    )
+  }
+})
+
+const V_SAMPLING_CAPABILITY = 'illustrious-regional-v-prediction-sampling-v1'
+
+test('regional V sampling capability requires the previous objective owner without inferring other method or image owners', () => {
+  const capabilities = [
+    'illustrious-txt2img',
+    'denoising-progress',
+    'candidate-thumbnails',
+    'illustrious-cfg-rescale',
+    'illustrious-img2img',
+    'illustrious-lora',
+    'illustrious-vae-precision',
+    'illustrious-external-vae',
+    'illustrious-embeddings',
+    'illustrious-outpaint',
+    'illustrious-regional-invoke-v1',
+    V_PREDICTION_CAPABILITY,
+    V_SAMPLING_CAPABILITY,
+  ]
+  const ready = {
+    capabilities,
+    protocolVersion: '1',
+    runtimeProfile: 'linux-nvidia',
+    workerVersion: '0.14.0',
+  }
+  assert.equal(supportsInferenceRegionalVPredictionSampling(ready), true)
+  assert.equal(supportsInferenceRegionalVPredictionImage(ready), false)
+  for (const absent of [
+    V_SAMPLING_CAPABILITY,
+    V_PREDICTION_CAPABILITY,
+    'illustrious-regional-invoke-v1',
+  ]) {
+    assert.equal(
+      supportsInferenceRegionalVPredictionSampling({
+        ...ready,
+        capabilities: capabilities.filter((c) => c !== absent),
+      }),
+      false,
+      absent,
+    )
+  }
+  assert.equal(
+    supportsInferenceRegionalVPredictionSampling({ ...ready, workerVersion: '0.13.0' }),
+    false,
+  )
+  assert.equal(
+    supportsInferenceRegionalVPrediction({
+      ...ready,
+      capabilities: capabilities.filter((c) => c !== V_SAMPLING_CAPABILITY),
+    }),
+    true,
+  )
+})
+
+for (const targetMode of ['txt2img', 'img2img', 'outpaint'] as const) {
+  for (const method of [
+    { sampler: 'Euler a', scheduler: 'Normal' },
+    { sampler: 'DPM++ 2M', scheduler: 'Normal' },
+    { sampler: 'DPM++ 2M', scheduler: 'Karras' },
+  ] as const) {
+    test(`regional V ${targetMode} ${method.sampler} ${method.scheduler} requires separate sampling support and keeps Euler and epsilon peers`, () => {
+      const value = document()
+      value.generationDraft.model!.predictionType = 'v_prediction'
+      value.generationDraft.sampling = {
+        ...value.generationDraft.sampling,
+        ...method,
+        denoisingStrength: 0.5,
+      }
+      const before = structuredClone(value)
+      const input = {
+        document: value,
+        dpmSupported: true,
+        img2imgDpmpp2mSupported: true,
+        img2imgEulerASupported: true,
+        img2imgSupported: true,
+        initializationSupported: true,
+        iterations: 1,
+        outpaintSupported: true,
+        runtimeSupported: true,
+        targetMode,
+        vPredictionImageSupported: true,
+        vPredictionSupported: true,
+      }
+      for (const support of [undefined, false, true]) {
+        const actual = getInvokeRegionalGenerationUnavailableReason({
+          ...input,
+          vPredictionSamplingSupported: support,
+        })
+        assert.equal(actual === null, support === true)
+        if (actual) {
+          assert.match(actual, /v_prediction sampling methods.*Repair or update/)
+        }
+      }
+      assert.deepEqual(value, before)
+      value.generationDraft.model!.predictionType = 'epsilon'
+      assert.equal(
+        getInvokeRegionalGenerationUnavailableReason({
+          ...input,
+          vPredictionSamplingSupported: false,
+        }),
+        null,
+      )
+      value.generationDraft.model!.predictionType = 'v_prediction'
+      value.generationDraft.sampling.sampler = 'Euler'
+      value.generationDraft.sampling.scheduler = 'Normal'
+      assert.equal(
+        getInvokeRegionalGenerationUnavailableReason({
+          ...input,
+          vPredictionSamplingSupported: false,
+        }),
+        null,
+      )
+    })
+  }
+}
+
+test('regional V sampling opt-in cannot grant unsupported Euler Karras schedules', () => {
+  const value = document()
+  value.generationDraft.model!.predictionType = 'v_prediction'
+  value.generationDraft.sampling.scheduler = 'Karras'
+  for (const sampler of ['Euler', 'Euler a'] as const) {
+    value.generationDraft.sampling.sampler = sampler
+    assert.match(
+      getInvokeRegionalGenerationUnavailableReason({
+        document: value,
+        iterations: 1,
+        runtimeSupported: true,
+        vPredictionSamplingSupported: true,
+        vPredictionSupported: true,
+      })!,
+      /requires Euler or Euler a with Normal/,
+    )
+  }
+})
+
+test('regional V sampling state is optional strict boolean for old preload responses', () => {
+  const state = {
+    cfgRescaleSupported: true,
+    documentId: randomUUID(),
+    embeddingsSupported: true,
+    error: null,
+    externalVaeSupported: true,
+    img2imgSupported: true,
+    jobs: [],
+    phase: 'idle',
+    runningJobId: null,
+    vaePrecisionSupported: true,
+  }
+  assert.equal(isProjectGenerationActionState(state), true)
+  for (const regionalVPredictionSamplingSupported of [true, false]) {
+    assert.equal(
+      isProjectGenerationActionState({ ...state, regionalVPredictionSamplingSupported }),
+      true,
+    )
+  }
+  for (const regionalVPredictionSamplingSupported of [null, 0, 'true', {}, []]) {
+    assert.equal(
+      isProjectGenerationActionState({ ...state, regionalVPredictionSamplingSupported }),
       false,
     )
   }

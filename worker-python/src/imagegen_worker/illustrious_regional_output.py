@@ -362,6 +362,7 @@ def _generate_current_canvas_regional(
             prepared_vae=prepared_vae,
             dpmpp_2m=True,
             invoke_cfg_rescale=invoke_cfg_rescale,
+            **({"v_prediction": True} if _v_prediction_profile(denoising_profile) else {}),
         )
         parameters = replace(parameters, noise_profile=noise_profile)
     elif resolved_noise:
@@ -373,6 +374,7 @@ def _generate_current_canvas_regional(
                 ancestral=True,
                 prepared_vae=prepared_vae,
                 invoke_cfg_rescale=invoke_cfg_rescale,
+                **({"v_prediction": True} if _v_prediction_profile(denoising_profile) else {}),
             )
             if _ancestral_profile(denoising_profile)
             else _denoising_parameters(
@@ -530,8 +532,8 @@ def generate_current_canvas_regional_img2img(
     """Consume one verified opaque RGB snapshot through the ordinary native image path.
 
     Only the exact img2img command and explicit Euler, Euler a or DPM++ 2M image
-    profiles are admitted. Additive V-prediction profiles admit Euler only and
-    preserve the same source/window/prepared-VAE mechanism.
+    profiles are admitted. Explicit V-prediction profiles select the same native
+    samplers and source/window/prepared-VAE mechanism; older Euler profiles remain Euler-only.
     The unchanged ordinary factory owns training-timestep cutoff and independent
     replayable posterior sampling; its existing compute-dtype noise policy is
     retained. Additive private prepared-VAE profiles adapt Invoke encode/sample/

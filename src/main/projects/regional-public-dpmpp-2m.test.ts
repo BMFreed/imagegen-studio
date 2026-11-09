@@ -60,8 +60,15 @@ type SeedBehavior = 'per-iteration' | 'per-prompt'
  * Existing Studio frozen transport, capture, resource, seed, atomic admission and acceptance owners
  * remain authoritative.
  */
-async function dpmFixture() {
+async function dpmFixture(predictionType: 'epsilon' | 'v_prediction' = 'epsilon') {
   const f = await createRegionalProjectFixture()
+  if (predictionType === 'v_prediction') {
+    const resolve = f.models.resolveVerifiedGenerationCheckpointForPlan.bind(f.models)
+    f.models.resolveVerifiedGenerationCheckpointForPlan = async (reference) => {
+      const exact = await resolve({ ...reference, predictionType: 'epsilon' })
+      return { ...exact, reference: { ...exact.reference, predictionType: 'v_prediction' } }
+    }
+  }
   const resources = {} as Record<Key, Resource>
   for (const [index, key] of (
     ['A', 'B', 'Negative', 'Regional', 'Prefix', 'Dormant'] as const
@@ -282,8 +289,11 @@ async function dpmFixture() {
   }
 }
 
-async function withFixture(use: (f: Fixture) => Promise<void>) {
-  const f = await dpmFixture()
+async function withFixture(
+  use: (f: Fixture) => Promise<void>,
+  predictionType: 'epsilon' | 'v_prediction' = 'epsilon',
+) {
+  const f = await dpmFixture(predictionType)
   try {
     await use(f)
   } finally {
@@ -952,19 +962,39 @@ test('public regional DPM later selected resource failure publishes no partial b
 })
 
 for (const predictionType of ['v_prediction', 'sample'] as const) {
-  test(`public regional DPM keeps unsupported ${predictionType} refusal before work`, async () => {
-    await withFixture(async (f) => {
-      await select(f)
-      await f.edit((document) => {
-        document.generationDraft.model!.predictionType = predictionType
-      })
-      const before = await snapshot(f)
-      await assert.rejects(f.actions.generate(f.tabId, options(f)), {
-        code: 'GENERATION_INVALID_REQUEST',
-      })
-      await assertBeforeWork(f, before)
-    })
-  })
+  test(
+    predictionType === 'v_prediction'
+      ? 'public regional DPM V legacy peer refuses after actual resolution without publication'
+      : `public regional DPM keeps unsupported ${predictionType} refusal before work`,
+    async () => {
+      await withFixture(
+        async (f) => {
+          await select(f)
+          await f.edit((document) => {
+            document.generationDraft.model!.predictionType = predictionType
+          })
+          const before = await snapshot(f)
+          await assert.rejects(f.actions.generate(f.tabId, options(f)), {
+            code:
+              predictionType === 'v_prediction'
+                ? 'INFERENCE_UNAVAILABLE'
+                : 'GENERATION_INVALID_REQUEST',
+          })
+          if (predictionType === 'v_prediction') {
+            assert.deepEqual(await snapshot(f), before)
+            assert.equal(f.calls.compose.length, 1)
+            assert.equal(f.calls.checkpoint, 1)
+            assert.equal(f.calls.embedding, 0)
+            assert.equal(f.consumed.length, 0)
+            assert.deepEqual(await readdir(f.scratch), [])
+          } else {
+            await assertBeforeWork(f, before)
+          }
+        },
+        predictionType === 'v_prediction' ? 'v_prediction' : 'epsilon',
+      )
+    },
+  )
 }
 
 test('public regional DPM support cannot enable the separate SDE method', async () => {

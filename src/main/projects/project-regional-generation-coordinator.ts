@@ -23,6 +23,7 @@ import {
   supportsInferenceRegionalVae,
   supportsInferenceRegionalVPrediction,
   supportsInferenceRegionalVPredictionImage,
+  supportsInferenceRegionalVPredictionSampling,
 } from '../../shared/projects/inference-worker-capabilities.js'
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 import { activePromptEmbeddingRefs } from '../../shared/projects/prompt-embeddings.js'
@@ -907,25 +908,38 @@ export class ProjectRegionalGenerationCoordinator {
             if (prepared.context.model.reference.predictionType === 'v_prediction') {
               // Invoke denoise_latents.py takes the resolved UNet objective, not a saved label.
               // Recheck the actual classified target and exact resolver output before any queue files.
+              const sampling = prepared.context.sampling
+              const supportedMethod =
+                ((sampling.sampler === 'Euler' || sampling.sampler === 'Euler a') &&
+                  sampling.scheduler === 'Normal') ||
+                (sampling.sampler === 'DPM++ 2M' &&
+                  (sampling.scheduler === 'Normal' || sampling.scheduler === 'Karras'))
               if (
                 !compositionProfile ||
-                prepared.context.sampling.sampler !== 'Euler' ||
-                prepared.context.sampling.scheduler !== 'Normal' ||
-                initializationProfile !== undefined
+                !supportedMethod ||
+                initializationProfile !==
+                  (target.mode === 'txt2img' && sampling.sampler !== 'Euler'
+                    ? 'invoke-cpu-f32-add-noise-v1'
+                    : undefined)
               ) {
                 throw unsupported(
-                  'Regional v_prediction requires Euler/Normal and no txt2img initialization.',
+                  'Regional v_prediction requires a supported sampler and its matching TXT or image initialization.',
                 )
               }
               if (
                 !supportsInferenceRegionalVPrediction(ready) ||
-                (target.mode !== 'txt2img' && !supportsInferenceRegionalVPredictionImage(ready))
+                (target.mode !== 'txt2img' && !supportsInferenceRegionalVPredictionImage(ready)) ||
+                (sampling.sampler !== 'Euler' &&
+                  !supportsInferenceRegionalVPredictionSampling(ready))
               ) {
                 throw new ProjectRegionalGenerationError(
                   'INFERENCE_UNAVAILABLE',
-                  target.mode === 'txt2img'
-                    ? 'The image engine has not qualified Regional Guidance v_prediction.'
-                    : 'The image engine has not qualified Regional Guidance v_prediction image modes.',
+                  sampling.sampler !== 'Euler' &&
+                    !supportsInferenceRegionalVPredictionSampling(ready)
+                    ? 'The image engine has not qualified Regional Guidance v_prediction sampling methods.'
+                    : target.mode === 'txt2img'
+                      ? 'The image engine has not qualified Regional Guidance v_prediction.'
+                      : 'The image engine has not qualified Regional Guidance v_prediction image modes.',
                 )
               }
             }
@@ -1126,6 +1140,7 @@ function validateInvokeDraft(document: IgsProjectDocumentV1, iterations = 1): vo
     runtimeSupported: true,
     vaeSupported: true,
     vPredictionImageSupported: true,
+    vPredictionSamplingSupported: true,
     vPredictionSupported: true,
   })
   if (reason) {

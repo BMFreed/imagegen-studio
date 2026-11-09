@@ -777,7 +777,7 @@ def test_worker_refuses_other_v_image_mechanisms_before_loading(mode: str, inval
     )
     if invalid in ("ancestral", "dpm"):
         parameters = replace(
-            parameters, scheduler="euler_a" if invalid == "ancestral" else "dpmpp_2m"
+            parameters, scheduler="heun" if invalid == "ancestral" else "dpmpp_2m_sde"
         )
     elif invalid == "initializer":
         options["initialization_profile"] = "invoke-cpu-f32-add-noise-v1"

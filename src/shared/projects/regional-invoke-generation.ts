@@ -126,6 +126,7 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   targetMode?: 'img2img' | 'outpaint' | 'txt2img' | null
   vaeSupported?: boolean | null
   vPredictionImageSupported?: boolean | null
+  vPredictionSamplingSupported?: boolean | null
   vPredictionSupported?: boolean | null
 }): string | null {
   const regions = input.document.regionalGuidance?.filter((region) => region.enabled) ?? []
@@ -144,8 +145,13 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
     return 'Regional Guidance requires an Illustrious epsilon model on Current Canvas.'
   }
   if (draft.model.predictionType === 'v_prediction') {
-    if (draft.sampling.sampler !== 'Euler' || draft.sampling.scheduler !== 'Normal') {
-      return 'Regional v_prediction requires Euler with the Normal scheduler.'
+    if (!(
+      ((draft.sampling.sampler === 'Euler' || draft.sampling.sampler === 'Euler a') &&
+        draft.sampling.scheduler === 'Normal') ||
+      (draft.sampling.sampler === 'DPM++ 2M' &&
+        (draft.sampling.scheduler === 'Normal' || draft.sampling.scheduler === 'Karras'))
+    )) {
+      return 'Regional v_prediction requires Euler or Euler a with Normal, or DPM++ 2M with Normal or Karras.'
     }
     if (input.vPredictionSupported !== true) {
       return input.vPredictionSupported == null
@@ -159,6 +165,11 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
       return input.vPredictionImageSupported == null
         ? 'Checking image engine support for Regional Guidance v_prediction image modes. Repair or update the runtime if support remains unavailable.'
         : 'The current image engine does not support Regional Guidance v_prediction image modes. Repair or update the runtime.'
+    }
+    if (draft.sampling.sampler !== 'Euler' && input.vPredictionSamplingSupported !== true) {
+      return input.vPredictionSamplingSupported == null
+        ? 'Checking image engine support for Regional Guidance v_prediction sampling methods. Repair or update the runtime if support remains unavailable.'
+        : 'The current image engine does not support Regional Guidance v_prediction sampling methods. Repair or update the runtime.'
     }
   }
   if (input.targetMode === 'outpaint' && input.outpaintSupported !== true) {

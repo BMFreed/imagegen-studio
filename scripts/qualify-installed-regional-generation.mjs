@@ -29,7 +29,10 @@
  * conditioning; ordinary contribution verification and portable source provenance remain their
  * owners. The additive V-prediction profile consults current InvokeAI
  * b0ac163b139c432aff4c51078c31c074bf292f72 sd/denoise_latents.py::get_scheduler: the verified model
- * objective reaches the existing scheduler, independently of noise policy.
+ * objective reaches the existing scheduler, independently of noise policy. The additive V-sampling
+ * profiles consult current InvokeAI4875d96531ca6712b288f6e660fcbb34143408c1 get_scheduler,
+ * init_scheduler, SCHEDULER_MAP and StableDiffusionBackend: existing Euler-a/DPM++2M selection,
+ * initializer/source window and native history remain separate from the UNet objective.
  */
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
@@ -143,18 +146,34 @@ assert.ok(
     'installed-regional-invoke-v-prediction-v1',
     'installed-regional-invoke-v-prediction-img2img-v1',
     'installed-regional-invoke-v-prediction-outpaint-v1',
+    'installed-regional-invoke-v-prediction-euler-a-v1',
+    'installed-regional-invoke-v-prediction-dpmpp-2m-img2img-v1',
+    'installed-regional-invoke-v-prediction-dpmpp-2m-outpaint-v1',
   ].includes(fixture.profile),
 )
+const vPredictionEulerAProfile =
+  fixture.profile === 'installed-regional-invoke-v-prediction-euler-a-v1'
+const vPredictionNormalDpmProfile =
+  fixture.profile === 'installed-regional-invoke-v-prediction-dpmpp-2m-img2img-v1'
+const vPredictionKarrasDpmProfile =
+  fixture.profile === 'installed-regional-invoke-v-prediction-dpmpp-2m-outpaint-v1'
+const vPredictionDpmProfile = vPredictionNormalDpmProfile || vPredictionKarrasDpmProfile
+const vPredictionSamplingProfile = vPredictionEulerAProfile || vPredictionDpmProfile
 const vPredictionImageProfile = [
   'installed-regional-invoke-v-prediction-img2img-v1',
   'installed-regional-invoke-v-prediction-outpaint-v1',
+  'installed-regional-invoke-v-prediction-dpmpp-2m-img2img-v1',
+  'installed-regional-invoke-v-prediction-dpmpp-2m-outpaint-v1',
 ].includes(fixture.profile)
 const vPredictionProfile =
-  vPredictionImageProfile || fixture.profile === 'installed-regional-invoke-v-prediction-v1'
+  vPredictionSamplingProfile ||
+  vPredictionImageProfile ||
+  fixture.profile === 'installed-regional-invoke-v-prediction-v1'
 const predictionType = vPredictionProfile ? 'v_prediction' : 'epsilon'
 const outpaintProfile =
   fixture.profile === 'installed-regional-invoke-outpaint-v1' ||
-  fixture.profile === 'installed-regional-invoke-v-prediction-outpaint-v1'
+  fixture.profile === 'installed-regional-invoke-v-prediction-outpaint-v1' ||
+  vPredictionKarrasDpmProfile
 const imgEulerAProfile = fixture.profile === 'installed-regional-invoke-img2img-euler-a-v1'
 const imgDpmProfile = fixture.profile === 'installed-regional-invoke-img2img-dpmpp-2m-v1'
 const imgVaeProfile = fixture.profile === 'installed-regional-invoke-img2img-vae-v1'
@@ -191,7 +210,7 @@ const globalTiProfile =
   globalLoraProfile || fixture.profile === 'installed-regional-invoke-global-embeddings-v1'
 const multipleResultsProfile = staticBatchProfile || globalTiProfile
 const initializationProfile =
-  multipleResultsProfile || fixture.profile === 'installed-regional-invoke-initialization-v1'
+  vPredictionEulerAProfile || multipleResultsProfile || fixture.profile === 'installed-regional-invoke-initialization-v1'
 const progressProfile =
   vPredictionProfile ||
   imageProfile ||
@@ -202,18 +221,21 @@ const recoveryProfile =
   mainDeathProfile || fixture.profile === 'installed-regional-invoke-recovery-v1'
 const initialization = 'invoke-cpu-f32-add-noise-v1'
 const generationSampler =
-  dpmpp2mProfile || imgDpmProfile
+  vPredictionDpmProfile || dpmpp2mProfile || imgDpmProfile
     ? 'DPM++ 2M'
     : initializationProfile || imgEulerAProfile
       ? 'Euler a'
       : 'Euler'
 const generationScheduler =
-  dpmpp2mProfile || imgDpmProfile
-    ? 'dpmpp_2m_k'
+  vPredictionNormalDpmProfile
+    ? 'dpmpp_2m'
+    : vPredictionKarrasDpmProfile || dpmpp2mProfile || imgDpmProfile
+      ? 'dpmpp_2m_k'
     : initializationProfile || imgEulerAProfile
       ? 'euler_a'
       : 'euler'
-const generationScheduleLabel = dpmpp2mProfile || imgDpmProfile ? 'Karras' : 'Normal'
+const generationScheduleLabel =
+  vPredictionKarrasDpmProfile || dpmpp2mProfile || imgDpmProfile ? 'Karras' : 'Normal'
 const generationCfgRescale = cfgRescaleProfile || imageCfgRescaleProfile ? 0.7 : 0
 assert.ok(
   Number.isSafeInteger(fixture.deadlineSeconds) &&
@@ -256,7 +278,7 @@ if (!vPredictionProfile) {
   for (const key of ['civitaiModelId', 'civitaiVersionId', 'civitaiFileId'])
     assert.ok(Number.isSafeInteger(fixture.checkpoint[key]) && fixture.checkpoint[key] > 0)
 }
-if (vPredictionImageProfile) {
+if (vPredictionImageProfile || vPredictionSamplingProfile) {
   assert.equal(
     fixture.checkpoint.sha256,
     'edca0d656069468ce208440edda4643b8795b6dc500606bb6d0e57eb9a54c89d',
@@ -300,7 +322,11 @@ const bbox = { height: side, width: side, x: -13, y: 5 }
 const imageStrength = 0.5
 // Fixed30 native DPM Karras reference, independently constructed/retained for this
 // fixture; Euler keeps its literal leading oracle. Neither calls the worker selector.
-const imageTimesteps = imgDpmProfile
+// DPM Normal uses N+1 spacing (the existing native N4 test pins801,601,401,201);
+// ROOT's original-native fixed-config probe independently confirms both full N30 grids.
+const imageTimesteps = vPredictionNormalDpmProfile
+  ? Array.from({ length: 30 }, (_, index) => 1 + (30 - index) * Math.floor(1000 / 31))
+  : imgDpmProfile || vPredictionKarrasDpmProfile
   ? [
       999, 975, 949, 923, 894, 863, 830, 795, 757, 716, 672, 624, 572, 517, 458, 397, 334, 273, 214,
       162, 117, 80, 53, 33, 20, 11, 6, 3, 1, 0,
@@ -310,7 +336,7 @@ const imageSelectedTimesteps = imageTimesteps.filter(
   (value) => value < Math.round(1000 * imageStrength),
 )
 const progressTotal = imageProfile ? imageSelectedTimesteps.length : 30
-if (imageProfile) assert.equal(progressTotal, 16)
+if (imageProfile) assert.equal(progressTotal, vPredictionNormalDpmProfile ? 15 : 16)
 const baseGlobalPrompt =
   'a still life of a red apple and a blue ceramic mug on a plain table, two separate objects, soft studio lighting'
 const globalPrompt = dynamicPositiveProfile
@@ -461,7 +487,7 @@ if (imageProfile)
     'src/renderer/components/ProjectRegionalGuidanceRow.vue',
     'src/main/db/migrations/0022_regional_img2img_queue.sql',
   )
-if (vPredictionImageProfile)
+if (vPredictionImageProfile || vPredictionSamplingProfile)
   sourceFiles.push(
     'src/main/projects/illustrious-generation-vae.ts',
     'src/renderer/components/ProjectGenerationAdvancedOptions.vue',
@@ -606,6 +632,14 @@ async function verifyProvision() {
     assert.ok(provision.ready.capabilities.includes('illustrious-regional-vae-v1'))
   if (vPredictionProfile)
     assert.ok(provision.ready.capabilities.includes('illustrious-regional-v-prediction-v1'))
+  if (vPredictionSamplingProfile)
+    for (const capability of [
+      'illustrious-regional-v-prediction-sampling-v1',
+      ...(vPredictionEulerAProfile
+        ? ['illustrious-regional-invoke-init-v1']
+        : ['illustrious-regional-dpmpp-2m-v1', 'illustrious-regional-img2img-dpmpp-2m-v1']),
+    ])
+      assert.ok(provision.ready.capabilities.includes(capability))
   if (vPredictionImageProfile)
     for (const capability of [
       'illustrious-regional-v-prediction-image-v1',
@@ -689,8 +723,10 @@ async function verifyProvision() {
     await exec('git', ['rev-parse', 'HEAD'], { timeout: timeout(10_000) })
   ).stdout.trim()
   report.invokeSource = {
-    revision: vPredictionProfile
-      ? 'b0ac163b139c432aff4c51078c31c074bf292f72'
+    revision: vPredictionSamplingProfile
+      ? '4875d96531ca6712b288f6e660fcbb34143408c1'
+      : vPredictionProfile
+        ? 'b0ac163b139c432aff4c51078c31c074bf292f72'
       : 'a61ac4fb75bec78d92885bf39bcf3ed3900a9bdd',
     paths: [
       'invokeai/frontend/webv1/src/features/controlLayers/konva/CanvasEntity/CanvasEntityAdapterRegionalGuidance.ts',
@@ -769,13 +805,22 @@ async function verifyProvision() {
   await assertRuntimeIdle(appDataRoot, provision.installed.basePrefix)
   if (vPredictionProfile)
     report.invokeSource = {
-      revision: 'b0ac163b139c432aff4c51078c31c074bf292f72',
+      revision: vPredictionSamplingProfile
+        ? '4875d96531ca6712b288f6e660fcbb34143408c1'
+        : 'b0ac163b139c432aff4c51078c31c074bf292f72',
       paths: [
         'invokeai/app/invocations/sd/denoise_latents.py',
         'invokeai/frontend/webv2/src/features/generation/core/graph.ts',
         'invokeai/frontend/webv2/src/features/generation/core/canvas/addRegionalGuidance.ts',
         'invokeai/app/services/session_queue/session_queue_default.py',
         'invokeai/app/invocations/vae/latents_to_image.py',
+        ...(vPredictionSamplingProfile
+          ? [
+              'invokeai/backend/stable_diffusion/schedulers/schedulers.py',
+              'invokeai/backend/stable_diffusion/diffusion_backend.py',
+              'invokeai/app/invocations/latent_noise.py',
+            ]
+          : []),
         ...(vPredictionImageProfile
           ? [
               'invokeai/frontend/webv2/src/features/generation/core/canvas/compileCanvasGraph.ts',
@@ -2550,7 +2595,7 @@ async function prepareCatalogAndProjects() {
         cfgScale: 5,
         denoisingStrength: imageProfile ? imageStrength : null,
         steps: 30,
-        sampler: imgSamplerProfile ? 'Euler' : generationSampler,
+        sampler: imgSamplerProfile || vPredictionSamplingProfile ? 'Euler' : generationSampler,
         scheduler: 'Normal',
       },
     }
@@ -2701,11 +2746,29 @@ async function prepareCatalogAndProjects() {
     report.boundary.preconditions =
       'ROOT registered the exact existing NoobAI V file/version through real ModelRepository before this preserved catalog baseline. Reuse the original file and canonical runtime; no download, model/environment copy, alternate source or injected worker recipe.'
     report.boundary.progress =
-      `Original scalar JSONL and Main/DOM observe ${progressTotal} selected Euler steps from30 requested; Cancel after real completed steps; fresh Retry starts at1 and completes${progressTotal} before PNG.`
+      `Original scalar JSONL and Main/DOM observe ${progressTotal} selected ${generationSampler}/${generationScheduleLabel} steps from30 requested; Cancel after real completed steps; fresh Retry starts at1 and completes${progressTotal} before PNG.`
     report.boundary.exclusions =
       vPredictionImageProfile
         ? `Only exact V checkpoint/${generationMode}/Euler-Normal/EmbeddedFP32/strength0.5 at512-square/CFG5/seed123, with existing source/posterior and ${outpaintProfile ? 'LaMa/keep-mask/RGBA contribution' : 'opaque source/RGB'} owners. No other V samplers, initializer, Smart/reference, visual-quality, Install/Repair, general capacity or public-readiness claim.`
         : 'Only exact V checkpoint/TXT/Euler-Normal/EmbeddedFP32 at512-square/CFG5/seed123. No V IMG/OUT/other samplers, scene quality, spatial-negative/reference, Install/Repair, general capacity or public-readiness claim.'
+    if (vPredictionSamplingProfile) {
+      report.vPrediction.sampling = {
+        combinationCapability: 'illustrious-regional-v-prediction-sampling-v1',
+        sampler: generationSampler,
+        scheduler: generationScheduleLabel,
+        invokeScheduler: generationScheduler,
+        initialization: initializationProfile ? initialization : null,
+        expectedFullTimesteps: imageTimesteps,
+        expectedSelectedTimesteps: imageProfile ? imageSelectedTimesteps : imageTimesteps,
+        expectedProgressTotal: progressTotal,
+        uiChanges: [],
+        originalNativeOwnerReused: true,
+      }
+      report.boundary.exclusions =
+        `Only exact V checkpoint/${generationMode}/${generationSampler}-${generationScheduleLabel}/EmbeddedFP32${imageProfile ? '/strength0.5' : ''} at512-square/CFG5/seed123; explicit existing ${initializationProfile ? 'Invoke TXT initialization' : 'image source/window'} owner. No new numerical solver, history reset, sampler inference, source/noise override, Smart/reference, trained visual quality, all-method/per-mode cross-product, Install/Repair, capacity or public-readiness claim.`
+      report.boundary.preconditions +=
+        ' The new V-sampling capability and existing method/initializer/image prerequisites must be advertised by every executing peer. Actual Sampler/Scheduler UI selection precedes both Generate actions; saved current authoring changes back to Euler/Normal before restarted frozen Retry.'
+    }
     if (vPredictionImageProfile) {
       report.boundary.preconditions +=
         ' Each healthy/canceled Project imports the same retained original PNG through actual UI/Main/installed normalization. Saved source visibility/strength/model/text/region/seed edits cannot replace the frozen image, keep mask, exact resources or policy.'
@@ -4743,6 +4806,14 @@ function assertVPredictionWire(observed, expectedCount = 1) {
       'illustrious-regional-v-prediction-v1',
       'illustrious-regional-vae-v1',
       'illustrious-regional-progress-v1',
+      ...(vPredictionSamplingProfile
+        ? [
+            'illustrious-regional-v-prediction-sampling-v1',
+            ...(vPredictionEulerAProfile
+              ? ['illustrious-regional-invoke-init-v1']
+              : ['illustrious-regional-dpmpp-2m-v1', 'illustrious-regional-img2img-dpmpp-2m-v1']),
+          ]
+        : []),
       ...(vPredictionImageProfile
         ? [
             'illustrious-regional-v-prediction-image-v1',
@@ -4765,7 +4836,7 @@ function assertVPredictionWire(observed, expectedCount = 1) {
     assert.equal(bundle.request.job.vaePrecision, 'FP32')
     assert.deepEqual(bundle.request.job.loras ?? [], [])
     assert.deepEqual(bundle.request.job.sampling.noiseProfile, policy)
-    assert.equal(bundle.request.job.sampling.scheduler, 'euler')
+    assert.equal(bundle.request.job.sampling.scheduler, generationScheduler)
     assert.equal(bundle.request.job.sampling.steps, 30)
     assert.equal(bundle.request.job.sampling.seed, 123)
     assert.equal(bundle.request.job.sampling.cfgScale, 5)
@@ -4776,7 +4847,8 @@ function assertVPredictionWire(observed, expectedCount = 1) {
       assert.equal(bundle.request.job.target.height, side)
     }
     assert.equal(bundle.compositionProfile, 'invoke-canvas-v1')
-    assert.equal(Object.hasOwn(bundle, 'initializationProfile'), false)
+    if (initializationProfile) assert.equal(bundle.initializationProfile, initialization)
+    else assert.equal(Object.hasOwn(bundle, 'initializationProfile'), false)
     assert.deepEqual(bundle.recipe.globalPrompts.positive.embeddingRefs, [])
     assert.deepEqual(bundle.recipe.globalPrompts.negative.embeddingRefs, [])
     for (const region of bundle.recipe.regions) {
@@ -4858,6 +4930,38 @@ async function waitVPredictionCompletion(project, row) {
     .toBe('idle')
   return await job(row.id)
 }
+async function setVPredictionSamplingUi(project, original) {
+  assert.ok(vPredictionSamplingProfile)
+  const before = structuredClone((await current(project)).generationDraft.sampling)
+  const sampler = original ? generationSampler : 'Euler'
+  const scheduler = original ? generationScheduleLabel : 'Normal'
+  assert.equal(before.sampler, original ? 'Euler' : generationSampler)
+  // Use the native keyboard opener so an already focused picker cannot toggle shut.
+  await window.locator('[aria-label="Sampler"] [tabindex="0"]').focus()
+  await window.keyboard.press('Escape')
+  await window.keyboard.press('ArrowDown')
+  await window.getByText(sampler, { exact: true }).last().click()
+  await expect
+    .poll(async () => (await current(project)).generationDraft.sampling.sampler)
+    .toBe(sampler)
+  if ((await current(project)).generationDraft.sampling.scheduler !== scheduler) {
+    await window.locator('[aria-label="Scheduler"] [tabindex="0"]').focus()
+    await window.keyboard.press('Escape')
+    await window.keyboard.press('ArrowDown')
+    await window.getByText(scheduler, { exact: true }).last().click()
+  }
+  await expect
+    .poll(async () => (await current(project)).generationDraft.sampling.scheduler)
+    .toBe(scheduler)
+  report.vPrediction.sampling.uiChanges.push({
+    projectKey: project.id,
+    original,
+    before,
+    after: structuredClone((await current(project)).generationDraft.sampling),
+    normalUi: true,
+    noInjectedRecipe: true,
+  })
+}
 async function generateVPredictionControlCancelRetry(project) {
   const control = projects.find(({ mode }) => mode === 'v-control')
   assert.ok(control && report.lifetimes.length === 0)
@@ -4865,6 +4969,7 @@ async function generateVPredictionControlCancelRetry(project) {
   else await openProject(control)
   await setVaePrecisionUi(control, 'Auto')
   await setVaePrecisionUi(control, 'FP32')
+  if (vPredictionSamplingProfile) await setVPredictionSamplingUi(control, true)
   await save(control)
   control.initialPackageSha256 = await hashFile(control.file)
   await installProgressDomObserver()
@@ -4876,6 +4981,16 @@ async function generateVPredictionControlCancelRetry(project) {
     const state = await api('getGenerationState', owner.id)
     assert.equal(state.regionalVPredictionSupported, true)
     assert.equal(state.regionalVaeSupported, true)
+    if (vPredictionSamplingProfile) {
+      assert.equal(state.regionalVPredictionSamplingSupported, true)
+      if (vPredictionEulerAProfile) assert.equal(state.regionalInvokeInitializationSupported, true)
+      else {
+        assert.equal(state.regionalDpmSupported, true)
+        assert.equal(state.regionalImg2ImgDpmpp2mSupported, true)
+      }
+      assert.equal((await current(owner)).generationDraft.sampling.sampler, generationSampler)
+      assert.equal((await current(owner)).generationDraft.sampling.scheduler, generationScheduleLabel)
+    }
     if (vPredictionImageProfile) {
       assert.equal(state.regionalVPredictionImageSupported, true)
       assert.equal(state.regionalImg2ImgSupported, true)
@@ -4971,6 +5086,11 @@ async function generateVPredictionControlCancelRetry(project) {
   await launch()
   if (vPredictionImageProfile) await prepareImageProject(project)
   else await openProject(project)
+  if (vPredictionSamplingProfile) {
+    await setVPredictionSamplingUi(project, true)
+    await save(project)
+    project.initialPackageSha256 = await hashFile(project.file)
+  }
   await installProgressDomObserver()
   const first = await begin(project)
   await openQueue()
@@ -5011,6 +5131,7 @@ async function generateVPredictionControlCancelRetry(project) {
     await input.fill(value)
     await input.press('Tab')
   }
+  if (vPredictionSamplingProfile) await setVPredictionSamplingUi(project, false)
   const positive = window.getByRole('textbox', { name: 'Positive prompt', exact: true })
   await positive.fill('later ordinary authoring after canceled V prediction')
   await positive.press('Tab')
@@ -5057,6 +5178,10 @@ async function generateVPredictionControlCancelRetry(project) {
   assert.equal(edited.generationDraft.sampling.steps, 2)
   assert.deepEqual(edited.generationDraft.seed, { policy: 'fixed', value: 124 })
   assert.equal(edited.generationDraft.vaePrecision, 'FP16')
+  if (vPredictionSamplingProfile) {
+    assert.equal(edited.generationDraft.sampling.sampler, 'Euler')
+    assert.equal(edited.generationDraft.sampling.scheduler, 'Normal')
+  }
   assert.ok(edited.regionalGuidance.every(({ enabled }) => enabled === false))
   if (vPredictionImageProfile) {
     assert.equal(edited.generationDraft.sampling.denoisingStrength, 0.8)
@@ -5157,7 +5282,7 @@ async function generateVPredictionControlCancelRetry(project) {
     canceledWire.alpha.map(({ sha256 }) => sha256),
   )
   check(
-    `Exact V objective/leading/EmbeddedFP32 reaches three real regional ${generationMode} requests; healthy control and live Cancel precede clean restart and original frozen Retry without additional generation`,
+    `Exact V objective/${generationSampler}-${generationScheduleLabel}/leading/EmbeddedFP32 reaches three real regional ${generationMode} requests; healthy control and live Cancel precede clean restart and original frozen Retry without additional generation`,
   )
   return {
     row: completed,
@@ -8376,6 +8501,16 @@ async function resultsAddSaveReopen(project, completed) {
   await expect(
     window.getByRole('heading', { name: 'Image generation needs repair', exact: true }),
   ).toHaveCount(0)
+  if (vPredictionSamplingProfile) {
+    assert.equal(reopened.generationDraft.sampling.sampler, 'Euler')
+    assert.equal(reopened.generationDraft.sampling.scheduler, 'Normal')
+    assert.equal(accepted.generationProvenance.generationConfiguration.sampling.sampler, generationSampler)
+    assert.equal(accepted.generationProvenance.generationConfiguration.sampling.scheduler, generationScheduleLabel)
+    assert.equal(accepted.generationProvenance.generationConfiguration.sampling.invokeScheduler, generationScheduler)
+    assert.equal(report.vPrediction.sampling.uiChanges.length, 3)
+    assert.deepEqual(report.vPrediction.sampling.uiChanges.map(({ original }) => original), [true, true, false])
+    report.vPrediction.sampling.savedReopenedAssociationVerified = true
+  }
   if (vPredictionImageProfile) {
     assert.equal(reopened.generationDraft.sampling.denoisingStrength, 0.8)
     assert.equal(reopened.generationDraft.model, null)
@@ -9414,7 +9549,7 @@ try {
   assert.equal(report.samplerError, undefined)
   if (imageProfile && !vPredictionImageProfile) await closeImageControl()
   await closeNative('healthy-final')
-  if (vPredictionImageProfile) {
+  if (vPredictionImageProfile || vPredictionSamplingProfile) {
     assert.equal(report.lifetimes.length, 3)
     assert.equal(report.nativeClosures.length, 3)
     assert.ok(
@@ -9465,7 +9600,7 @@ try {
   report.elapsedSeconds = (Date.now() - started) / 1000
   check(
     vPredictionProfile
-      ? `Finite installed exact NoobAI V-prediction ${generationMode} Euler/Normal, EmbeddedFP32${vPredictionImageProfile ? '/strength0.5' : ''}, genuine healthy/progress-Cancel/restarted frozen-Retry, exact independently decoded control ${outpaintProfile ? 'RGBA contribution/source-over' : 'RGB'} and ordinary V provenance through Add/Undo/Redo/Save/reopen${vPredictionImageProfile ? ' with original source preserved after saved hiding' : ''}; no visual-quality/all-method/public-readiness claim`
+      ? `Finite installed exact NoobAI V-prediction ${generationMode} ${generationSampler}/${generationScheduleLabel}, EmbeddedFP32${vPredictionImageProfile ? '/strength0.5' : ''}, genuine healthy/progress-Cancel/restarted frozen-Retry, exact independently decoded control ${outpaintProfile ? 'RGBA contribution/source-over' : 'RGB'} and ordinary V provenance through Add/Undo/Redo/Save/reopen${vPredictionImageProfile ? ' with original source preserved after saved hiding' : ''}; no visual-quality/all-method/public-readiness claim`
       : outpaintProfile
         ? 'Finite installed mixed-alpha regional outpaint with EmbeddedFP16, Euler/Normal, CFG Rescale0.7, exact LaMa, actual imported source and live Cancel/frozen Retry after saved edits completed through verified RGBA contribution, protected-source composition, Results/Add/Undo/Redo/Save ZIP/reopen; no visual-quality or broader model claim'
         : imageProfile

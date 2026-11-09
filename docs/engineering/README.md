@@ -2478,3 +2478,19 @@ The additional one-request/one-PNG failed harness-oracle attempt and emergency
 closure remain excluded. Core/harness source reviews, retained data, ROOT runtime
 and physical release remain distinct. Quality, other V methods, Smart/references
 and PP-001/005/007/008 remain open.
+
+
+## NoobAI V-prediction — existing regional sampling methods
+
+[V Euler a/DPM++2M integration](./phase-4-regional-guidance-v-sampling-research.md)
+adapts current InvokeAI objective/method/source ownership across TXT/IMG/OUT.
+The additive sampling capability preserves older Euler V peers, independent
+method/image/OUT/VAE gates, TXT initializer and frozen Retry. No numerical loop,
+wire field, queue schema or migration changes. ROOT affected union1,736 Main/
+540 Python/220 browser PASS, types/scoped checks/build PASS, and24 GREEN/six
+semantic RED with exact restoration are retained. Nine installed requests/six
+byte-exact own control-Retry PNGs pass 39 checks through Cancel/restart/Retry/
+Add/history/Save-reopen, with completed progress30/15/16. Metadata window oracles
+are distinct from trained per-step observations. Diagnostic attempts, lifecycle,
+source/retained/runtime levels and exclusions are explicit in the note. Quality,
+SDE/Smart/references, Anima and PP-001/005/007/008 remain open.

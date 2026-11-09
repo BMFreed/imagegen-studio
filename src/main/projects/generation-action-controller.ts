@@ -50,6 +50,7 @@ import {
   supportsInferenceRegionalVae,
   supportsInferenceRegionalVPrediction,
   supportsInferenceRegionalVPredictionImage,
+  supportsInferenceRegionalVPredictionSampling,
   supportsInferenceVaePrecision,
 } from '../../shared/projects/inference-worker-capabilities.js'
 import type {
@@ -523,6 +524,11 @@ export class ProjectGenerationActionController {
         !this.closed &&
         !!this.options.regional &&
         supportsInferenceRegionalVPredictionImage(ready),
+      regionalVPredictionSamplingSupported:
+        !this.blocked &&
+        !this.closed &&
+        !!this.options.regional &&
+        supportsInferenceRegionalVPredictionSampling(ready),
       regionalVPredictionSupported:
         !this.blocked &&
         !this.closed &&
@@ -714,6 +720,7 @@ export class ProjectGenerationActionController {
       runtimeSupported: true,
       vaeSupported: true,
       vPredictionImageSupported: true,
+      vPredictionSamplingSupported: true,
       vPredictionSupported: true,
     })
     if (unavailable || !this.options.regional) {
@@ -1567,9 +1574,17 @@ export class ProjectGenerationActionController {
               if (
                 !supportsRegional(ready) ||
                 (frozen.payload.workerJob.checkpoint.predictionType === 'v_prediction' &&
-                  (frozen.payload.workerJob.sampling.scheduler !== 'euler' ||
-                    frozen.payload.initializationProfile !== undefined ||
+                  (!['dpmpp_2m', 'dpmpp_2m_k', 'euler', 'euler_a'].includes(
+                    frozen.payload.workerJob.sampling.scheduler,
+                  ) ||
+                    frozen.payload.initializationProfile !==
+                      (source.operation === 'illustrious-regional-txt2img' &&
+                      frozen.payload.workerJob.sampling.scheduler !== 'euler'
+                        ? 'invoke-cpu-f32-add-noise-v1'
+                        : undefined) ||
                     !supportsInferenceRegionalVPrediction(ready) ||
+                    (frozen.payload.workerJob.sampling.scheduler !== 'euler' &&
+                      !supportsInferenceRegionalVPredictionSampling(ready)) ||
                     (source.operation !== 'illustrious-regional-txt2img' &&
                       !supportsInferenceRegionalVPredictionImage(ready)))) ||
                 (source.operation === 'illustrious-regional-outpaint' &&

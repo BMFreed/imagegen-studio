@@ -47,6 +47,7 @@ import {
   supportsInferenceRegionalVae,
   supportsInferenceRegionalVPrediction,
   supportsInferenceRegionalVPredictionImage,
+  supportsInferenceRegionalVPredictionSampling,
   supportsInferenceVaePrecision,
 } from '../../shared/projects/inference-worker-capabilities.js'
 
@@ -473,15 +474,23 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
         if (
           input.request.job.checkpoint.predictionType === 'v_prediction' &&
           (input.compositionProfile !== 'invoke-canvas-v1' ||
-            input.request.job.sampling.scheduler !== 'euler' ||
-            input.initializationProfile !== undefined ||
+            !['dpmpp_2m', 'dpmpp_2m_k', 'euler', 'euler_a'].includes(
+              input.request.job.sampling.scheduler,
+            ) ||
+            input.initializationProfile !==
+              (input.request.type === 'generate-illustrious-txt2img' &&
+              input.request.job.sampling.scheduler !== 'euler'
+                ? 'invoke-cpu-f32-add-noise-v1'
+                : undefined) ||
             !supportsInferenceRegionalVPrediction(this.ready) ||
+            (input.request.job.sampling.scheduler !== 'euler' &&
+              !supportsInferenceRegionalVPredictionSampling(this.ready)) ||
             (input.request.type !== 'generate-illustrious-txt2img' &&
               !supportsInferenceRegionalVPredictionImage(this.ready)))
         ) {
           throw new GenerationWorkerError(
             'WORKER_VERSION_MISMATCH',
-            'The active worker has not qualified frozen Regional Guidance v_prediction Euler execution.',
+            'The active worker has not qualified this frozen Regional Guidance v_prediction sampling execution.',
           )
         }
         if (

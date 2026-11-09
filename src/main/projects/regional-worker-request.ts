@@ -736,10 +736,16 @@ function validateAgreement(input: v.InferOutput<typeof inputSchema>): void {
   if (
     request.job.checkpoint.predictionType === 'v_prediction' &&
     (input.compositionProfile !== 'invoke-canvas-v1' ||
-      request.job.sampling.scheduler !== 'euler' ||
-      input.initializationProfile !== undefined)
+      !['dpmpp_2m', 'dpmpp_2m_k', 'euler', 'euler_a'].includes(request.job.sampling.scheduler) ||
+      input.initializationProfile !==
+        (request.type === 'generate-illustrious-txt2img' &&
+        request.job.sampling.scheduler !== 'euler'
+          ? 'invoke-cpu-f32-add-noise-v1'
+          : undefined))
   ) {
-    throw invalid('Regional v_prediction requires explicit Invoke Canvas Euler execution.')
+    throw invalid(
+      'Regional v_prediction requires Invoke Canvas and matching sampler initialization.',
+    )
   }
   if (
     request.type !== 'generate-illustrious-txt2img' &&

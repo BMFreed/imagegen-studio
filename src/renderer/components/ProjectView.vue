@@ -2441,6 +2441,7 @@ const generationBlockingReason = computed(() => {
         targetMode: targetState.value?.mode,
         vaeSupported: props.generationState?.regionalVaeSupported,
         vPredictionImageSupported: props.generationState?.regionalVPredictionImageSupported,
+        vPredictionSamplingSupported: props.generationState?.regionalVPredictionSamplingSupported,
         vPredictionSupported: props.generationState?.regionalVPredictionSupported,
       })
   if (regionalReason) {

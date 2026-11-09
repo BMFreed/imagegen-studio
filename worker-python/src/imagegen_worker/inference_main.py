@@ -102,6 +102,7 @@ def inference_ready_message(
             "illustrious-regional-outpaint-v1",
             "illustrious-regional-v-prediction-v1",
             "illustrious-regional-v-prediction-image-v1",
+            "illustrious-regional-v-prediction-sampling-v1",
             *(("linux-owned-inference-v1",) if owner_lifetime else ()),
             *(
                 (
