@@ -2564,3 +2564,21 @@ original-processing-PNG/world-RGBA checks and12 isolated mutation selections
 The note records fixture substitutions, excluded diagnostics, exact evidence and
 retention dependencies. Visual usefulness, other Smart modes/resources, release
 and PP-001/005/007/008 remain unpromoted.
+
+## Private Anima Smart regional TXT/IMG
+
+[Private flow research](./phase-4-anima-smart-regional-flow-research.md) closes
+the missing trusted predictor pass-through to the existing native flow executor,
+following Invoke4875's source graft then common regional collector. Exact private
+profiles preserve TXT no-source/null strength and IMG source/numeric strength,
+zero KEEP, selected-Smart inherited negative and original signed consumers.
+Public INP/OUT frozen type/schema/attachment remain strict; no public TXT/IMG
+capability/admission/Retry or UI change is made.
+
+ROOT179 Main/309 Python PASS,195 warnings, four optional old OUT probes skipped,
+typing and scoped checks accompany genuine Main→private native CUDA inputs and
+CPU/CUDA ordinary controls. Missing-forwarding mutation gives14 GREEN/four
+post-PNG semantic RED with exact INP controls/restoration. The note separates
+fixture diagnostics, real native/file checks, synthetic resource/model setup and
+retained source/data review. Public delivery, trained quality, visual semantics,
+release and PP-001/005/007/008 remain open.

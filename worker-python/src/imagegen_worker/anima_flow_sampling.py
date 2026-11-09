@@ -8,7 +8,11 @@ from typing import cast
 
 from PIL import Image
 
-from imagegen_worker.anima_euler import AnimaEulerResult, execute_captured_anima_plan
+from imagegen_worker.anima_euler import (
+    AnimaEulerResult,
+    AnimaPredictionFactory,
+    execute_captured_anima_plan,
+)
 from imagegen_worker.anima_sampling import (
     AnimaSamplingPlan,
     capture_anima_sampling_base,
@@ -80,8 +84,13 @@ def generate_anima_flow_sampling(
     loras: tuple[GenerationLora, ...] = (),
     tokenizers: AnimaTokenizers | None = None,
     progress: Callable[[int, int], None] | None = None,
+    prediction_factory: AnimaPredictionFactory | None = None,
 ) -> AnimaEulerResult:
     """Internal flow pixels; no public command, output path or admission."""
+    if prediction_factory is not None and not callable(prediction_factory):
+        raise DerivativeError(
+            "INVALID_REQUEST", "Anima flow prediction requires a callable factory."
+        )
     captured = validate_anima_flow_sampling_plan(plan)
     return execute_captured_anima_plan(
         captured,
@@ -92,6 +101,7 @@ def generate_anima_flow_sampling(
         loras=loras,
         tokenizers=tokenizers,
         progress=progress,
+        prediction_factory=prediction_factory,
         initial_sigma=captured.initial_sigma,
         denoiser_factory=(
             None

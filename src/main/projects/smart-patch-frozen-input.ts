@@ -513,6 +513,13 @@ export async function attachSmartPatchAnimaRegionalInput(
   preparedInput: PreparedSmartPatchAnimaRegionalInput,
 ): Promise<SmartPatchInputMaterial> {
   const prepared = capturePreparedSmartPatchAnimaRegionalInput(preparedInput)
+  const { profile } = prepared
+  if (
+    profile !== ANIMA_SMART_PATCH_REGIONAL_PROFILE &&
+    profile !== ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE
+  ) {
+    refuse('Private Smart TXT/IMG regional profiles cannot enter the public frozen bundle.')
+  }
   const manifest = parseFrozenSmartPatchInputV1(input.manifest)
   if (manifest.regional || prepared.promptInterpretation !== ANIMA_PROMPT_INTERPRETATION) {
     refuse('Public Smart regional input requires one explicit current prompt interpretation.')
@@ -526,6 +533,7 @@ export async function attachSmartPatchAnimaRegionalInput(
   }
   const regional: FrozenSmartPatchAnimaRegionalInputV1 = {
     ...prepared,
+    profile,
     promptInterpretation: ANIMA_PROMPT_INTERPRETATION,
     recipe: {
       ...prepared.recipe,

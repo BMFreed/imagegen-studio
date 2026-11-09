@@ -1,6 +1,6 @@
-"""Private original-Anima Smart INP/OUT with independently owned signed regions.
+"""Private original-Anima Smart modes with independently owned signed regions.
 
-InvokeAI 4875d96531ca6712b288f6e660fcbb34143408c1 grafts the prepared INP
+InvokeAI 4875d96531ca6712b288f6e660fcbb34143408c1 grafts the selected mode's
 source/KEEP before adding regional conditioning to that same job denoiser
 (frontend/webv2/src/features/generation/core/canvas/compileCanvasGraph.ts).
 backend/anima/regional_prompting.py normalizes the clipped world mask and resizes
@@ -61,7 +61,14 @@ if TYPE_CHECKING:
 
 _PROFILE = "invoke-anima-smart-regional-inpaint-v1"
 _OUTPAINT_PROFILE = "invoke-anima-smart-regional-outpaint-v1"
-_MODE_BY_PROFILE = {_PROFILE: "inpaint", _OUTPAINT_PROFILE: "outpaint"}
+_TXT2IMG_PROFILE = "invoke-anima-smart-regional-txt2img-v1"
+_IMG2IMG_PROFILE = "invoke-anima-smart-regional-img2img-v1"
+_MODE_BY_PROFILE = {
+    _PROFILE: "inpaint",
+    _OUTPAINT_PROFILE: "outpaint",
+    _TXT2IMG_PROFILE: "txt2img",
+    _IMG2IMG_PROFILE: "img2img",
+}
 _RECIPE_FIELDS = frozenset(
     {"layerId", "internalResolution", "smartMask", "modelSha256", "sampling"}
 )
@@ -104,7 +111,7 @@ def capture_anima_smart_patch_regional_input(value: object) -> CapturedAnimaSmar
         and type(data["profile"]) is str
         and data["profile"] in _MODE_BY_PROFILE,
         "INVALID_REQUEST",
-        "Anima Smart regional input requires an explicit INP or OUT profile.",
+        "Anima Smart regional input requires an explicit supported mode profile.",
     )
     execution_profile = cast(str, data["profile"])
     recipe = _object(
@@ -203,14 +210,16 @@ def capture_anima_smart_patch_regional_input(value: object) -> CapturedAnimaSmar
     )
     policy = cast(AnimaInferenceParameters, command.inference)
     plan = policy.sampling
+    sampling_mode = "txt2img" if command.mode == "txt2img" else "img2img"
+    sampling_strength = None if command.mode == "txt2img" else strength
     _require(
         policy.bundle.checkpoint.sha256 == model_sha
         and (plan.width, plan.height, plan.seed) == (width, height, regional.seed)
-        and plan.mode == "img2img"
+        and plan.mode == sampling_mode
         and plan.scheduler == method
         and plan.steps == steps
         and plan.guidance_scale == cfg
-        and plan.strength == strength
+        and plan.strength == sampling_strength
         and policy.positive_prompt == regional.prompts[0].compiled
         and policy.negative_prompt == regional.prompts[1].compiled,
         "INVALID_REQUEST",
@@ -281,9 +290,12 @@ def _require_captured_command(
         "Anima Smart regional input does not own this original execution command.",
     )
     policy = owned.policy
+    if command.mode != "txt2img":
+        validate_anima_number(policy.sampling.strength, 0, 1)
     _require(
         not policy.loras
-        and policy.sampling.mode == "img2img"
+        and policy.sampling.mode == ("txt2img" if command.mode == "txt2img" else "img2img")
+        and (command.mode != "txt2img" or policy.sampling.strength is None)
         and policy.sampling.scheduler in ("euler", "heun")
         and (policy.sampling.width, policy.sampling.height) == owned.processing_size
         and policy.sampling.seed == owned.regional.seed

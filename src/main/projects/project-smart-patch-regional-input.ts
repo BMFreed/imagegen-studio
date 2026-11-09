@@ -34,8 +34,23 @@ import { captureSmartPatchExecutionRequest } from './smart-patch-execution-reque
 export const ANIMA_SMART_PATCH_REGIONAL_PROFILE = 'invoke-anima-smart-regional-inpaint-v1' as const
 export const ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE =
   'invoke-anima-smart-regional-outpaint-v1' as const
+export const ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE =
+  'invoke-anima-smart-regional-txt2img-v1' as const
+export const ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE =
+  'invoke-anima-smart-regional-img2img-v1' as const
+/** The two public frozen profiles keep their original mode-specific meanings. */
 export type SmartPatchAnimaRegionalProfile =
   typeof ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE | typeof ANIMA_SMART_PATCH_REGIONAL_PROFILE
+export type PreparedSmartPatchAnimaRegionalProfile =
+  | SmartPatchAnimaRegionalProfile
+  | typeof ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE
+  | typeof ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE
+const MODE_BY_PROFILE = {
+  [ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE]: 'img2img',
+  [ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE]: 'outpaint',
+  [ANIMA_SMART_PATCH_REGIONAL_PROFILE]: 'inpaint',
+  [ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE]: 'txt2img',
+} as const
 const MAX_REGIONS = 3
 const MAX_AGGREGATE_TEXT_BYTES = 128 * 1024
 
@@ -83,7 +98,7 @@ export interface CompiledSmartPatchAnimaRegionalPrompt {
 
 export interface PreparedSmartPatchAnimaRegionalInput {
   compiledPrompts: readonly CompiledSmartPatchAnimaRegionalPrompt[]
-  profile: SmartPatchAnimaRegionalProfile
+  profile: PreparedSmartPatchAnimaRegionalProfile
   promptInterpretation?: typeof ANIMA_PROMPT_INTERPRETATION
   recipe: SmartPatchAnimaRegionalRecipe
   schemaVersion: 1
@@ -102,8 +117,9 @@ export type SmartPatchRegionalAlphaRole = (typeof SMART_PATCH_REGIONAL_ALPHA_ROL
 /** Operational metadata only. Actual raw alpha is owned by the existing Smart bundle. */
 export interface FrozenSmartPatchAnimaRegionalInputV1 extends Omit<
   PreparedSmartPatchAnimaRegionalInput,
-  'promptInterpretation' | 'recipe'
+  'profile' | 'promptInterpretation' | 'recipe'
 > {
+  profile: SmartPatchAnimaRegionalProfile
   promptInterpretation: typeof ANIMA_PROMPT_INTERPRETATION
   recipe: Omit<SmartPatchAnimaRegionalRecipe, 'regions'> & {
     regions: (Omit<SmartPatchAnimaRegionalRecipe['regions'][number], 'coverage'> & {
@@ -206,6 +222,8 @@ const preparedSchema = v.strictObject({
   profile: v.picklist([
     ANIMA_SMART_PATCH_REGIONAL_PROFILE,
     ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE,
+    ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE,
+    ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE,
   ]),
   promptInterpretation: v.optional(v.literal(ANIMA_PROMPT_INTERPRETATION)),
   recipe: recipeSchema,
@@ -218,6 +236,10 @@ const frozenCoverage = v.strictObject({
 })
 const frozenPreparedSchema = v.strictObject({
   ...preparedSchema.entries,
+  profile: v.picklist([
+    ANIMA_SMART_PATCH_REGIONAL_PROFILE,
+    ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE,
+  ]),
   promptInterpretation: v.literal(ANIMA_PROMPT_INTERPRETATION),
   recipe: v.strictObject({
     ...recipeSchema.entries,
@@ -240,16 +262,16 @@ type RecipeSources = Omit<SmartPatchAnimaRegionalRecipe, 'regions'> & {
 }
 
 /**
- * Invoke4875 compileCanvasGraph grafts INP first, then regional conditioning into the same job.
- * This private companion freezes selected Smart settings; it grants neither public admission nor
- * queue/variant persistence. World clipping stays with the existing regional lease. Anima's
- * binary/NEAREST processing-token projection belongs to the native consumer, independently of
- * KEEP.
+ * Invoke4875 compileCanvasGraph grafts image sources before the same regional collector for every
+ * mode; TXT needs no source graft. This companion preserves that job association. This private
+ * companion freezes selected Smart settings; it grants neither public admission nor queue/variant
+ * persistence. World clipping stays with the existing regional lease. Anima's binary/NEAREST
+ * processing-token projection belongs to the native consumer, independently of KEEP.
  */
 export async function prepareSmartPatchAnimaRegionalInput(input: {
   capture: CapturedSmartPatchRegionalGenerationInput
   item: PlannedGenerationBatchItem
-  profile?: SmartPatchAnimaRegionalProfile
+  profile?: PreparedSmartPatchAnimaRegionalProfile
   promptInterpretation?: typeof ANIMA_PROMPT_INTERPRETATION
 }): Promise<PreparedSmartPatchAnimaRegionalInput> {
   let document: ReturnType<typeof parseProjectDocumentV1>
@@ -257,7 +279,7 @@ export async function prepareSmartPatchAnimaRegionalInput(input: {
   let snapshot: CapturedRegionalGuidanceInput['snapshot']
   let item: PlannedGenerationBatchItem
   let projectMask: CapturedRegionalGuidanceInput['projectMask']
-  let profile: SmartPatchAnimaRegionalProfile
+  let profile: PreparedSmartPatchAnimaRegionalProfile
   let promptInterpretation: typeof ANIMA_PROMPT_INTERPRETATION | undefined
   try {
     const requestedProfile = input.profile
@@ -273,7 +295,9 @@ export async function prepareSmartPatchAnimaRegionalInput(input: {
   }
   if (
     profile !== ANIMA_SMART_PATCH_REGIONAL_PROFILE &&
-    profile !== ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE
+    profile !== ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE &&
+    profile !== ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE &&
+    profile !== ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE
   ) {
     throw invalid('The Smart regional execution profile is unsupported.')
   }
@@ -410,24 +434,25 @@ export function bindSmartPatchAnimaRegionalExecution(
 ): BoundSmartPatchAnimaRegionalInput {
   const prepared = capturePrepared(input)
   const execution = captureSmartPatchExecutionRequest(executionInput)
-  const expectedMode =
-    prepared.profile === ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE ? 'outpaint' : 'inpaint'
+  const expectedMode = MODE_BY_PROFILE[prepared.profile]
   if (execution.family !== 'anima' || execution.mode !== expectedMode) {
     throw unsupported(
       prepared.profile === ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE
         ? 'Private Smart regional OUT requires an original Anima OUT command.'
-        : 'Private Smart regional execution requires an original Anima INP command.',
+        : prepared.profile === ANIMA_SMART_PATCH_REGIONAL_PROFILE
+          ? 'Private Smart regional execution requires an original Anima INP command.'
+          : `Private Smart regional ${expectedMode} requires its original Anima command.`,
     )
   }
   const { recipe } = prepared
   const expectedPlan = compileAnimaFlowSamplingPlan({
     guidanceScale: recipe.sampling.cfgScale,
     height: recipe.internalResolution.height,
-    mode: 'img2img',
+    mode: expectedMode === 'txt2img' ? 'txt2img' : 'img2img',
     scheduler: recipe.sampling.animaMethod,
     seed: recipe.item.seed,
     steps: recipe.sampling.steps,
-    strength: recipe.sampling.denoisingStrength,
+    strength: expectedMode === 'txt2img' ? null : recipe.sampling.denoisingStrength,
     width: recipe.internalResolution.width,
   })
   if (

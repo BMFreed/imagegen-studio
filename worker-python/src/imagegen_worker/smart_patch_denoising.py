@@ -228,8 +228,8 @@ def run_smart_patch_anima(
 ) -> AnimaEulerResult:
     """Execute prepared Smart Patch inputs through original Anima native models.
 
-    The private regional owner may supply its derived signed predictor for INP.
-    Source preparation and latent KEEP remain independent native owners.
+    The private regional owner may supply its derived signed predictor for each
+    frozen mode. Source preparation and latent KEEP remain independent owners.
     """
     captured = _capture_inputs(inputs)
     sampling = validate_anima_flow_sampling_plan(plan)
@@ -266,8 +266,8 @@ def run_smart_patch_anima(
         "progress": progress,
     }
     if prediction_factory is not None:
-        if captured.mode not in ("inpaint", "outpaint") or not callable(prediction_factory):
-            raise _invalid("The private Smart regional predictor requires INP or OUT.")
+        if not callable(prediction_factory):
+            raise _invalid("The private Smart regional predictor requires a callable factory.")
         arguments["prediction_factory"] = prediction_factory
     if captured.mode in ("inpaint", "outpaint"):
         result = generate_anima_outpaint(

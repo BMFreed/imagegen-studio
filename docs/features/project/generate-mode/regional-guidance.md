@@ -2338,3 +2338,22 @@ semantic RED with old-INP controls and exact source/output restoration. The note
 separates actual runtime, prototype, source review and retained-byte evidence.
 Other Smart modes/resources, visual quality, release and overall
 PP-001/005/007/008 remain **«Пока не обещать»**.
+
+## Private original-Anima Smart regional TXT/IMG
+
+The [private flow extension](../../../engineering/phase-4-anima-smart-regional-flow-research.md)
+reuses current Invoke's all-mode regional collector and Studio's existing native
+flow executor. Explicit TXT/IMG profiles bind the original selected-Smart command:
+TXT has no source and null effective strength; IMG retains its prepared RGB and
+numeric strength window. Both require zero KEEP and retain independently owned
+signed regional permissions. No sampler or numerical loop is added.
+
+ROOT179 Main/309 native Python PASS include genuine saved/reopened Main inputs
+consumed unchanged through the private CUDA frontend and CPU/CUDA literal controls.
+Eighteen isolated mutation selections give14 GREEN/four post-PNG semantic RED
+with exact INP controls/restoration. Four optional old public OUT probes skip;
+fixture corrections,195 warnings and source/retention/runtime limits are explicit
+in the note. Both public frozen type/schema and attachment remain INP/OUT-only;
+no TXT/IMG capability, public descriptor/admission, durable Retry, provenance or
+UI change follows. Public integration, trained/visual quality, release and
+PP-001/005/007/008 remain **«Пока не обещать»**.
