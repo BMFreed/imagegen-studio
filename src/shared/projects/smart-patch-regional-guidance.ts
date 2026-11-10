@@ -49,8 +49,13 @@ export function getSmartPatchRegionalGenerationUnavailableReason(input: {
   if (family !== 'anima' && family !== 'illustrious') {
     return 'Regional Guidance with Smart Patch requires a supported Illustrious or original Anima model.'
   }
-  if (family === 'illustrious' && draft.model?.predictionType !== 'epsilon') {
-    return 'Regional Illustrious Smart Patch currently requires an epsilon checkpoint.'
+  if (
+    family === 'illustrious' &&
+    draft.model?.predictionType !== null &&
+    draft.model?.predictionType !== 'epsilon' &&
+    draft.model?.predictionType !== 'v_prediction'
+  ) {
+    return 'Regional Illustrious Smart Patch requires a supported checkpoint prediction type.'
   }
   if ((input.iterations ?? 1) !== 1) {
     return 'Regional Smart Patch generation currently requires one static image.'
@@ -150,7 +155,7 @@ export function getSmartPatchRegionalGenerationUnavailableReason(input: {
               input.runtimeTxt2ImgSupported === true ||
               input.runtimeImg2ImgSupported === true
   return supported === false
-    ? `The image engine does not support ${family === 'anima' ? 'Anima' : 'Illustrious'} Smart Patch Regional Guidance. Repair or update the runtime.`
+    ? `The image engine does not support ${family === 'anima' ? 'Anima' : draft.model?.predictionType === 'v_prediction' ? 'Illustrious V' : 'Illustrious'} Smart Patch Regional Guidance. Repair or update the runtime.`
     : null
 }
 

@@ -42,9 +42,12 @@ const WORLD = { height: 73, width: 107, x: -13, y: 5 }
 const PROCESSING = { height: 64, width: 72 }
 const MASK_BOUNDS = { height: 2, width: 3, x: -12, y: 6 }
 const ALPHA = Uint8Array.from([0, 1, 127, 128, 254, 255])
-const PROFILES = Object.keys(
-  ILLUSTRIOUS_SMART_REGIONAL_MODES,
-) as SmartPatchIllustriousRegionalProfile[]
+const PROFILES = [
+  'invoke-illustrious-smart-regional-img2img-v1',
+  'invoke-illustrious-smart-regional-inpaint-v1',
+  'invoke-illustrious-smart-regional-outpaint-v1',
+  'invoke-illustrious-smart-regional-txt2img-v1',
+] as const satisfies readonly SmartPatchIllustriousRegionalProfile[]
 type Mutable<T> = T extends (...args: never[]) => unknown
   ? T
   : T extends readonly (infer Entry)[]
@@ -174,7 +177,7 @@ function itemFor(patch: IgsSmartPatchLayerV1): PlannedGenerationBatchItem {
   }
 }
 
-function fixture(profile = PROFILES[0]) {
+function fixture(profile: SmartPatchIllustriousRegionalProfile = PROFILES[0]) {
   const { document } = authored()
   const patch = document.layers[0] as IgsSmartPatchLayerV1
   const calls: string[] = []

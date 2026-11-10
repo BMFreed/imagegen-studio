@@ -270,12 +270,20 @@ export class ProjectSmartPatchGenerationActionController {
               (draft.model?.baseModelFamily === 'anima' &&
                 !supportsInferenceAnima(inferenceReady)) ||
               (regionalCapture !== undefined &&
-                !['inpaint', 'outpaint', 'txt2img', 'img2img'].some((mode) =>
-                  supportsInferenceSmartPatchRegionalMode(
-                    inferenceReady,
-                    draft.model?.baseModelFamily,
-                    mode,
-                  ),
+                !['inpaint', 'outpaint', 'txt2img', 'img2img'].some(
+                  (mode) =>
+                    supportsInferenceSmartPatchRegionalMode(
+                      inferenceReady,
+                      draft.model?.baseModelFamily,
+                      mode,
+                    ) ||
+                    (draft.model?.baseModelFamily === 'illustrious' &&
+                      supportsInferenceSmartPatchRegionalMode(
+                        inferenceReady,
+                        'illustrious',
+                        mode,
+                        'v_prediction',
+                      )),
                 ))
             ) {
               throw new ProjectGenerationActionError(
@@ -283,10 +291,6 @@ export class ProjectSmartPatchGenerationActionController {
                 'The installed worker cannot generate Smart Patches.',
               )
             }
-            let regionalPrepared:
-              | PreparedSmartPatchAnimaRegionalInput
-              | PreparedSmartPatchIllustriousRegionalInput
-              | null = null
             if (regionalCapture) {
               // Existing CPU preparation classifies verified WORLD source/mask before LaMa/models.
               // Batch preparation reuses the same historical lease and requalifies final material.
@@ -298,6 +302,15 @@ export class ProjectSmartPatchGenerationActionController {
                   inferenceReady,
                   draft.model?.baseModelFamily,
                   mode,
+                ) &&
+                !(
+                  draft.model?.baseModelFamily === 'illustrious' &&
+                  supportsInferenceSmartPatchRegionalMode(
+                    inferenceReady,
+                    'illustrious',
+                    mode,
+                    'v_prediction',
+                  )
                 )
               ) {
                 throw new ProjectGenerationActionError(
@@ -305,26 +318,6 @@ export class ProjectSmartPatchGenerationActionController {
                   'The installed worker cannot generate this Regional Smart Patch mode.',
                 )
               }
-              regionalPrepared =
-                draft.model?.baseModelFamily === 'illustrious'
-                  ? await prepareSmartPatchIllustriousRegionalInput({
-                      capture: regionalCapture,
-                      item: plan.items[0],
-                      profile: `invoke-illustrious-smart-regional-${mode}-v1`,
-                    })
-                  : await prepareSmartPatchAnimaRegionalInput({
-                      capture: regionalCapture,
-                      item: plan.items[0],
-                      profile:
-                        mode === 'outpaint'
-                          ? ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE
-                          : mode === 'txt2img'
-                            ? ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE
-                            : mode === 'img2img'
-                              ? ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE
-                              : ANIMA_SMART_PATCH_REGIONAL_PROFILE,
-                      promptInterpretation: ANIMA_PROMPT_INTERPRETATION,
-                    })
             }
             const prepared = await capture.prepareBatchInput({
               infillResolver: this.options.infillResolver,
@@ -332,6 +325,75 @@ export class ProjectSmartPatchGenerationActionController {
               modelService: this.options.models,
               preparationWorker,
             })
+            assertCurrent()
+            let regionalPrepared:
+              | PreparedSmartPatchAnimaRegionalInput
+              | PreparedSmartPatchIllustriousRegionalInput
+              | null = null
+            if (regionalCapture) {
+              const { mode } = prepared.manifest
+              const entry = prepared.manifest.items[0]
+              const predictionType =
+                entry.family === 'illustrious'
+                  ? entry.inference.checkpoint.predictionType
+                  : undefined
+              // The saved model type is advisory. Only the exact-file resolver's material
+              // grants an objective-specific frozen profile, before any queue publication.
+              if (
+                !supportsInferenceSmartPatchRegionalMode(
+                  inferenceReady,
+                  entry.family,
+                  mode,
+                  predictionType,
+                )
+              ) {
+                throw new ProjectGenerationActionError(
+                  'GENERATION_RUNTIME_UNAVAILABLE',
+                  'The installed worker cannot generate this Regional Smart Patch objective and mode.',
+                )
+              }
+              if (entry.family === 'illustrious') {
+                const noiseProfile = entry.inference.sampling.noiseProfile
+                const actualPredictionType = entry.inference.checkpoint.predictionType
+                if (
+                  !noiseProfile ||
+                  (actualPredictionType !== 'epsilon' && actualPredictionType !== 'v_prediction')
+                ) {
+                  throw new ProjectGenerationActionError(
+                    'GENERATION_RUNTIME_UNAVAILABLE',
+                    'The Regional Smart Patch requires its explicit resolved noise policy.',
+                  )
+                }
+                regionalPrepared = await prepareSmartPatchIllustriousRegionalInput({
+                  capture: regionalCapture,
+                  item: plan.items[0],
+                  profile:
+                    actualPredictionType === 'v_prediction'
+                      ? `invoke-illustrious-smart-regional-v-prediction-${mode}-v1`
+                      : `invoke-illustrious-smart-regional-${mode}-v1`,
+                  resolvedPolicy: {
+                    modelSha256: entry.inference.checkpoint.sha256,
+                    noiseProfile,
+                    predictionType: actualPredictionType,
+                  },
+                })
+              } else {
+                regionalPrepared = await prepareSmartPatchAnimaRegionalInput({
+                  capture: regionalCapture,
+                  item: plan.items[0],
+                  profile:
+                    mode === 'outpaint'
+                      ? ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE
+                      : mode === 'txt2img'
+                        ? ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE
+                        : mode === 'img2img'
+                          ? ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE
+                          : ANIMA_SMART_PATCH_REGIONAL_PROFILE,
+                  promptInterpretation: ANIMA_PROMPT_INTERPRETATION,
+                })
+              }
+              assertCurrent()
+            }
             return regionalPrepared
               ? 'compiledPrompts' in regionalPrepared
                 ? await attachSmartPatchAnimaRegionalInput(prepared, regionalPrepared)

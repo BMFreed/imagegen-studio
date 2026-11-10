@@ -487,6 +487,22 @@ export class ProjectGenerationActionController {
         !this.blocked &&
         !this.closed &&
         supportsInferenceIllustriousSmartPatchRegionalMode(ready, 'txt2img'),
+      illustriousSmartPatchRegionalVPredictionImg2ImgSupported:
+        !this.blocked &&
+        !this.closed &&
+        supportsInferenceIllustriousSmartPatchRegionalMode(ready, 'img2img', 'v_prediction'),
+      illustriousSmartPatchRegionalVPredictionOutpaintSupported:
+        !this.blocked &&
+        !this.closed &&
+        supportsInferenceIllustriousSmartPatchRegionalMode(ready, 'outpaint', 'v_prediction'),
+      illustriousSmartPatchRegionalVPredictionSupported:
+        !this.blocked &&
+        !this.closed &&
+        supportsInferenceIllustriousSmartPatchRegionalMode(ready, 'inpaint', 'v_prediction'),
+      illustriousSmartPatchRegionalVPredictionTxt2ImgSupported:
+        !this.blocked &&
+        !this.closed &&
+        supportsInferenceIllustriousSmartPatchRegionalMode(ready, 'txt2img', 'v_prediction'),
       img2imgSupported: !this.blocked && !this.closed && supportsInferenceImg2Img(ready),
       jobs,
       outpaintSupported: !this.blocked && !this.closed && supportsInferenceOutpaint(ready),
@@ -1455,6 +1471,9 @@ export class ProjectGenerationActionController {
                   ready,
                   frozen.payload.item.family,
                   frozen.payload.mode,
+                  frozen.payload.item.family === 'illustrious'
+                    ? frozen.payload.item.inference.checkpoint.predictionType
+                    : undefined,
                 ))
             ) {
               throw new ProjectGenerationActionError(

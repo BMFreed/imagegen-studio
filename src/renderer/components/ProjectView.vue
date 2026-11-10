@@ -2416,26 +2416,41 @@ function commitInternalAfterUpdate() {
 }
 
 const generationBlockingReason = computed(() => {
+  const model = props.generationDraft.model
+  const predictionType = selectedModelVersion.value?.predictionType ?? model?.predictionType
+  const vPrediction = model?.baseModelFamily === 'illustrious' && predictionType === 'v_prediction'
+  const regionalDraft =
+    model?.baseModelFamily === 'illustrious'
+      ? { ...props.generationDraft, model: { ...model, predictionType: predictionType ?? null } }
+      : props.generationDraft
   const regionalReason = activePatch.value
     ? getSmartPatchRegionalGenerationUnavailableReason({
         document: props.tab,
         iterations: imagesPerClick.value ?? 0,
-        patch: { ...activePatch.value, generationDraft: props.generationDraft },
+        patch: { ...activePatch.value, generationDraft: regionalDraft },
         runtimeImg2ImgSupported:
           (props.generationDraft.model?.baseModelFamily === 'illustrious'
-            ? props.generationState?.illustriousSmartPatchRegionalImg2ImgSupported
+            ? vPrediction
+              ? props.generationState?.illustriousSmartPatchRegionalVPredictionImg2ImgSupported
+              : props.generationState?.illustriousSmartPatchRegionalImg2ImgSupported
             : props.generationState?.animaSmartPatchRegionalImg2ImgSupported) === true,
         runtimeOutpaintSupported:
           (props.generationDraft.model?.baseModelFamily === 'illustrious'
-            ? props.generationState?.illustriousSmartPatchRegionalOutpaintSupported
+            ? vPrediction
+              ? props.generationState?.illustriousSmartPatchRegionalVPredictionOutpaintSupported
+              : props.generationState?.illustriousSmartPatchRegionalOutpaintSupported
             : props.generationState?.animaSmartPatchRegionalOutpaintSupported) === true,
         runtimeSupported:
           (props.generationDraft.model?.baseModelFamily === 'illustrious'
-            ? props.generationState?.illustriousSmartPatchRegionalSupported
+            ? vPrediction
+              ? props.generationState?.illustriousSmartPatchRegionalVPredictionSupported
+              : props.generationState?.illustriousSmartPatchRegionalSupported
             : props.generationState?.animaSmartPatchRegionalSupported) === true,
         runtimeTxt2ImgSupported:
           (props.generationDraft.model?.baseModelFamily === 'illustrious'
-            ? props.generationState?.illustriousSmartPatchRegionalTxt2ImgSupported
+            ? vPrediction
+              ? props.generationState?.illustriousSmartPatchRegionalVPredictionTxt2ImgSupported
+              : props.generationState?.illustriousSmartPatchRegionalTxt2ImgSupported
             : props.generationState?.animaSmartPatchRegionalTxt2ImgSupported) === true,
         targetMode: smartTargetState.value?.mode,
       })

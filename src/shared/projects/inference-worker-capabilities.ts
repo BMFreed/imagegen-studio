@@ -527,20 +527,24 @@ export function supportsInferenceAnimaSmartPatchRegionalMode(
           : false
 }
 
-/** Native Illustrious Smart regions require their exact family/mode capability. */
+/** EPS retains its old capability; V requires a separate exact objective/mode grant. */
 export function supportsInferenceIllustriousSmartPatchRegionalMode(
   value: unknown,
   mode: unknown,
+  predictionType: unknown = 'epsilon',
 ): boolean {
   return (
     isQualifiedInferenceWorkerReady(value) &&
     value.workerVersion === '0.14.0' &&
+    (predictionType === 'epsilon' || predictionType === 'v_prediction') &&
     ['img2img', 'inpaint', 'outpaint', 'txt2img'].includes(typeof mode === 'string' ? mode : '') &&
     supportsInferenceEuler(value) &&
     supportsInferenceIllustriousNoiseProfile(value) &&
     value.capabilities.includes('smart-patch-execution') &&
     value.capabilities.includes('smart-patch-seed-confirmation') &&
-    value.capabilities.includes(`illustrious-smart-patch-regional-${String(mode)}-v1`)
+    value.capabilities.includes(
+      `illustrious-smart-patch-regional-${predictionType === 'v_prediction' ? 'v-prediction-' : ''}${String(mode)}-v1`,
+    )
   )
 }
 
@@ -549,9 +553,10 @@ export function supportsInferenceSmartPatchRegionalMode(
   value: unknown,
   family: unknown,
   mode: unknown,
+  predictionType: unknown = 'epsilon',
 ): boolean {
   return family === 'illustrious'
-    ? supportsInferenceIllustriousSmartPatchRegionalMode(value, mode)
+    ? supportsInferenceIllustriousSmartPatchRegionalMode(value, mode, predictionType)
     : family === 'anima'
       ? supportsInferenceAnimaSmartPatchRegionalMode(value, mode)
       : false

@@ -42,6 +42,11 @@ export interface ProjectGenerationActionState {
   /** Absent in older responses; never treat absence as native Anima support. */
   illustriousSmartPatchRegionalSupported?: boolean
   illustriousSmartPatchRegionalTxt2ImgSupported?: boolean
+  illustriousSmartPatchRegionalVPredictionImg2ImgSupported?: boolean
+  illustriousSmartPatchRegionalVPredictionOutpaintSupported?: boolean
+  /** Objective-specific grants; EPS, Canvas V and ordinary Smart never imply these. */
+  illustriousSmartPatchRegionalVPredictionSupported?: boolean
+  illustriousSmartPatchRegionalVPredictionTxt2ImgSupported?: boolean
   img2imgSupported: boolean
   jobs: ProjectGenerationQueueJob[]
   /** Worker capability only. Main verifies the exact local LaMa resource on admission. */
@@ -157,6 +162,10 @@ export function isProjectGenerationActionState(
         'vaePrecisionSupported',
       ],
       [
+        'illustriousSmartPatchRegionalVPredictionSupported',
+        'illustriousSmartPatchRegionalVPredictionOutpaintSupported',
+        'illustriousSmartPatchRegionalVPredictionTxt2ImgSupported',
+        'illustriousSmartPatchRegionalVPredictionImg2ImgSupported',
         'illustriousSmartPatchRegionalSupported',
         'illustriousSmartPatchRegionalOutpaintSupported',
         'illustriousSmartPatchRegionalTxt2ImgSupported',
@@ -192,6 +201,14 @@ export function isProjectGenerationActionState(
         'smartPatchSupported',
       ],
     ) ||
+    (value['illustriousSmartPatchRegionalVPredictionSupported'] !== undefined &&
+      typeof value['illustriousSmartPatchRegionalVPredictionSupported'] !== 'boolean') ||
+    (value['illustriousSmartPatchRegionalVPredictionOutpaintSupported'] !== undefined &&
+      typeof value['illustriousSmartPatchRegionalVPredictionOutpaintSupported'] !== 'boolean') ||
+    (value['illustriousSmartPatchRegionalVPredictionTxt2ImgSupported'] !== undefined &&
+      typeof value['illustriousSmartPatchRegionalVPredictionTxt2ImgSupported'] !== 'boolean') ||
+    (value['illustriousSmartPatchRegionalVPredictionImg2ImgSupported'] !== undefined &&
+      typeof value['illustriousSmartPatchRegionalVPredictionImg2ImgSupported'] !== 'boolean') ||
     (value['illustriousSmartPatchRegionalSupported'] !== undefined &&
       typeof value['illustriousSmartPatchRegionalSupported'] !== 'boolean') ||
     (value['illustriousSmartPatchRegionalOutpaintSupported'] !== undefined &&

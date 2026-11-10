@@ -5,14 +5,17 @@
  * p1 --report RUN/NEW.json [--resume RUN/PREPARE.json] ROOT first builds the app,
  * refreshes/qualifies the one installed worker and applies the outer deadline/RAM guard. This
  * script never provisions, copies models/envs, replaces workers, writes queue rows, or removes its
- * retained fixture.
+ * retained fixture. Fixture predictionType is optional epsilon (default) or v_prediction. V
+ * requires an explicit four-field noiseProfile; epsilon accepts only the existing default
+ * false/leading policy.
  *
  * Mechanism: existing qualify-installed-smart-patch.mjs/native-smoke-window/resource helpers, real
  * public renderer/IPC, RuntimeManager, frozen Smart queue, installed descriptor dispatcher, native
  * inference/world output, journaled explicit Add. Invoke4875d965: compileCanvasGraph grafts the
  * selected source mode before signed regional conditioning; app/invocations/sd/denoise_latents.py
- * keeps signed regional conditioning separate from source/KEEP; its caller is
- * prepareCanvasInvocation.ts.
+ * keeps signed regional conditioning separate from source/KEEP and get_scheduler copies the
+ * resolved model objective independently; its caller is prepareCanvasInvocation.ts. Queue retry
+ * router -> session_queue_default.py::retry_items_by_id clones the saved root graph.
  */
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
@@ -63,15 +66,41 @@ assert.ok(fixtureEntry.isFile() && !fixtureEntry.isSymbolicLink() && fixtureEntr
 assert.equal(await realpath(fixturePath), fixturePath)
 const fixtureBytes = await readFile(fixturePath)
 const fixture = JSON.parse(fixtureBytes.toString('utf8'))
-assert.deepEqual(Object.keys(fixture).sort(), [
-  'modelId',
-  'run',
-  'schemaVersion',
-  'shared',
-  'shortRoot',
-  'versionId',
-])
+const fixtureFields = ['modelId', 'run', 'schemaVersion', 'shared', 'shortRoot', 'versionId']
+for (const field of ['predictionType', 'noiseProfile'])
+  if (Object.hasOwn(fixture, field)) fixtureFields.push(field)
+assert.deepEqual(Object.keys(fixture).sort(), fixtureFields.sort())
 assert.equal(fixture.schemaVersion, 1)
+const PREDICTION_TYPE = Object.hasOwn(fixture, 'predictionType')
+  ? fixture.predictionType
+  : 'epsilon'
+assert.ok(['epsilon', 'v_prediction'].includes(PREDICTION_TYPE))
+const V_PREDICTION = PREDICTION_TYPE === 'v_prediction'
+const DEFAULT_NOISE_PROFILE = {
+  schemaVersion: 1,
+  baseSchedule: 'sdxl-scaled-linear-v1',
+  rescaleBetasZeroSnr: false,
+  timestepSpacing: 'leading',
+}
+assert.ok(
+  !V_PREDICTION || Object.hasOwn(fixture, 'noiseProfile'),
+  'V fixture requires explicit noiseProfile',
+)
+const NOISE_PROFILE = Object.hasOwn(fixture, 'noiseProfile')
+  ? structuredClone(fixture.noiseProfile)
+  : structuredClone(DEFAULT_NOISE_PROFILE)
+assert.ok(NOISE_PROFILE && typeof NOISE_PROFILE === 'object' && !Array.isArray(NOISE_PROFILE))
+assert.deepEqual(Object.keys(NOISE_PROFILE).sort(), [
+  'baseSchedule',
+  'rescaleBetasZeroSnr',
+  'schemaVersion',
+  'timestepSpacing',
+])
+assert.equal(NOISE_PROFILE.schemaVersion, 1)
+assert.equal(NOISE_PROFILE.baseSchedule, 'sdxl-scaled-linear-v1')
+assert.equal(typeof NOISE_PROFILE.rescaleBetasZeroSnr, 'boolean')
+assert.ok(['leading', 'linspace', 'trailing'].includes(NOISE_PROFILE.timestepSpacing))
+if (!V_PREDICTION) assert.deepEqual(NOISE_PROFILE, DEFAULT_NOISE_PROFILE)
 for (const field of ['run', 'shared', 'shortRoot']) {
   const value = fixture[field]
   assert.ok(
@@ -107,16 +136,18 @@ const MODE = options['--mode']
 assert.ok(['txt2img', 'img2img', 'inpaint', 'outpaint'].includes(MODE))
 const MASKED = MODE === 'inpaint' || MODE === 'outpaint'
 const CURRENT_FUTURE_VISIBLE = MODE === 'txt2img' || MODE === 'outpaint'
-const CAPABILITY = `illustrious-smart-patch-regional-${MODE}-v1`
-const PROFILE = `invoke-illustrious-smart-regional-${MODE}-v1`
-const STATE_CAPABILITY =
+const objectivePrefix = V_PREDICTION ? 'v-prediction-' : ''
+const CAPABILITY = `illustrious-smart-patch-regional-${objectivePrefix}${MODE}-v1`
+const PROFILE = `invoke-illustrious-smart-regional-${objectivePrefix}${MODE}-v1`
+const stateModeSuffix =
   MODE === 'txt2img'
-    ? 'illustriousSmartPatchRegionalTxt2ImgSupported'
+    ? 'Txt2ImgSupported'
     : MODE === 'img2img'
-      ? 'illustriousSmartPatchRegionalImg2ImgSupported'
+      ? 'Img2ImgSupported'
       : MODE === 'outpaint'
-        ? 'illustriousSmartPatchRegionalOutpaintSupported'
-        : 'illustriousSmartPatchRegionalSupported'
+        ? 'OutpaintSupported'
+        : 'Supported'
+const STATE_CAPABILITY = `illustriousSmartPatchRegional${V_PREDICTION ? 'VPrediction' : ''}${stateModeSuffix}`
 const EXPECTED_SOURCE_ALPHA =
   MODE === 'txt2img' ? 'transparent' : MODE === 'outpaint' ? 'mixed' : 'opaque'
 const TOTAL_STEPS = MODE === 'txt2img' ? 20 : 10
@@ -140,6 +171,8 @@ if (phase === 'retry') {
   previous = JSON.parse(await readFile(previousPath, 'utf8'))
   assert.equal(previous.profile, 'installed-illustrious-smart-regional-v1')
   assert.equal(previous.mode, MODE)
+  assert.equal(previous.predictionType, PREDICTION_TYPE)
+  assert.deepEqual(previous.noiseProfile, NOISE_PROFILE)
   assert.equal(previous.phase, 'prepare')
   assert.equal(previous.outcome, 'passed')
   assert.equal(previous.fixture.sha256, createHash('sha256').update(fixtureBytes).digest('hex'))
@@ -160,7 +193,9 @@ if (phase === 'retry') {
 } else assert.equal(options['--resume'], undefined)
 const payload = path.join(RUN, 'payloads', label),
   profileRoot = path.join(SHORT, label)
-const title = previous?.project.title ?? `Illustrious Smart ${MODE} regional ${label}`
+const title =
+  previous?.project.title ??
+  `Illustrious${V_PREDICTION ? ' V' : ''} Smart ${MODE} regional ${label}`
 const patchName = `Selected Smart regional ${MODE}`
 const packagePath = path.join(APPDATA, 'workspaces/Uncategorized', `${title}.igs`)
 if (previous) assert.equal(previous.project.packagePath, packagePath)
@@ -174,6 +209,8 @@ const report = {
   schemaVersion: 1,
   profile: 'installed-illustrious-smart-regional-v1',
   mode: MODE,
+  predictionType: PREDICTION_TYPE,
+  noiseProfile: NOISE_PROFILE,
   fixture: { path: fixturePath, sha256: digest(fixtureBytes), ...fixture },
   outcome: 'running',
   phase,
@@ -195,10 +232,8 @@ const report = {
   memory: {},
   ownedQueueIds: [],
   boundary: {
-    actual:
-      'Built renderer Generate/Results/Add/Undo/Redo/Save and Queue Manager Retry; public typed IPC authoring/cancellation; real Main coherent capture/preparation, queue/bundle/receipt, installed Illustrious epsilon CUDA descriptor dispatch, world PNG and saved/reopened accepted variant.',
-    fixture:
-      'One actual portable Project; TXT transparent/null Smart mask, IMG opaque/disjoint Smart mask, INP opaque/covered Smart mask, OUT mixed/covered Smart mask; above-magenta exclusion and initially hidden future opaque source; independently owned regional masks; actual installed Illustrious EPS catalog. No fabricated queue/receipt/runtime/qualifier. Existing managed LaMa is a prerequisite only for OUT.',
+    actual: `Built renderer Generate/Results/Add/Undo/Redo/Save and Queue Manager Retry; public typed IPC authoring/cancellation; real Main coherent capture/preparation, queue/bundle/receipt, installed Illustrious ${PREDICTION_TYPE} CUDA descriptor dispatch, world PNG and saved/reopened accepted variant.`,
+    fixture: `One actual portable Project; TXT transparent/null Smart mask, IMG opaque/disjoint Smart mask, INP opaque/covered Smart mask, OUT mixed/covered Smart mask; above-magenta exclusion and initially hidden future opaque source; independently owned regional masks; actual installed Illustrious ${PREDICTION_TYPE} catalog with unchanged exact-file noise policy. No fabricated queue/receipt/runtime/qualifier. Existing managed LaMa is a prerequisite only for OUT.`,
     inference:
       phase === 'prepare'
         ? 'Three requests: A/B/progress-canceledA; two successful world PNGs. No prompt/seed search.'
@@ -544,6 +579,31 @@ async function launch() {
     .poll(async () => (await api('list')).some((x) => x.id === projectId), { timeout: 30_000 })
     .toBe(true)
   await openProject()
+  await assertCatalogPolicy()
+}
+async function assertCatalogPolicy() {
+  const catalog = await window.evaluate(() => window.api.models.getCatalog())
+  assert.equal(catalog.ok, true, 'Current library catalog must be available')
+  const resource = catalog.value.find((entry) => entry.id === MODEL_ID),
+    version = resource?.versions.find((entry) => entry.id === VERSION_ID)
+  assert.equal(resource?.resourceType, 'checkpoint')
+  assert.equal(version?.baseModelFamily, 'illustrious')
+  assert.equal(version.fileStatus, 'ready')
+  assert.equal(version.sha256, model.fileSha256)
+  assert.equal(version.predictionType, PREDICTION_TYPE)
+  assert.deepEqual(version.noiseProfile?.effective, NOISE_PROFILE)
+  report.catalogPolicy = {
+    localModelId: MODEL_ID,
+    localVersionId: VERSION_ID,
+    sha256: version.sha256,
+    byteSize: version.fileSizeBytes,
+    predictionType: version.predictionType,
+    predictionTypeSource: version.predictionTypeSource,
+    noiseProfile: version.noiseProfile,
+    boundary:
+      'Public read-only ModelService catalog applies actual exact-file overrides/manifest; source labels and saved Project hints are not substituted for this owner.',
+  }
+  checkpoint()
 }
 async function openProject() {
   await window.getByRole('tab', { name: 'Home', exact: true }).click()
@@ -726,14 +786,9 @@ async function capture(labelAt, id, available = true) {
   assert.equal(samplingPolicy.cfgScale, 4)
   assert.equal(samplingPolicy.cfgRescale, 0)
   assert.equal(samplingPolicy.denoisingStrength, MODE === 'txt2img' ? undefined : 0.5)
-  assert.deepEqual(samplingPolicy.noiseProfile, {
-    schemaVersion: 1,
-    baseSchedule: 'sdxl-scaled-linear-v1',
-    rescaleBetasZeroSnr: false,
-    timestepSpacing: 'leading',
-  })
+  assert.deepEqual(samplingPolicy.noiseProfile, NOISE_PROFILE)
   assert.equal(frozen.item.inference.checkpoint.sha256, model.fileSha256)
-  assert.equal(frozen.item.inference.checkpoint.predictionType, 'epsilon')
+  assert.equal(frozen.item.inference.checkpoint.predictionType, PREDICTION_TYPE)
   assert.equal(frozen.item.inference.vae, null)
   assert.equal(frozen.item.inference.vaePrecision, 'Auto')
   assert.deepEqual(frozen.item.inference.loras, [])
@@ -742,6 +797,8 @@ async function capture(labelAt, id, available = true) {
   assert.equal(frozen.regional.promptInterpretation, undefined)
   assert.equal(frozen.animaPromptInterpretation, undefined)
   const recipe = frozen.regional.recipe
+  if (V_PREDICTION) assert.deepEqual(recipe.sampling.noiseProfile, NOISE_PROFILE)
+  else assert.equal(Object.hasOwn(recipe.sampling, 'noiseProfile'), false)
   assert.equal(recipe.layerId, ids.patch)
   assert.equal(recipe.documentId, documentId)
   assert.equal(recipe.globalPrompts.positive.text, POSITIVE)
@@ -954,6 +1011,14 @@ async function acceptA(value) {
     'Regional operational fields must not leak to accepted provenance',
   )
   assert.equal(accepted.generationProvenance.generationConfiguration.mode, MODE)
+  assert.equal(
+    accepted.generationProvenance.generationConfiguration.model.predictionType,
+    PREDICTION_TYPE,
+  )
+  assert.deepEqual(
+    accepted.generationProvenance.generationConfiguration.sampling.noiseProfile,
+    NOISE_PROFILE,
+  )
   assert.equal(
     accepted.generationProvenance.executionResultContext.output.outputMode,
     'contribution',
@@ -1206,11 +1271,13 @@ async function prepareFixture() {
       version = resource?.versions.find((x) => x.id === VERSION_ID)
     assert.equal(resource?.type, 'checkpoint')
     assert.equal(version?.baseModelFamily, 'illustrious')
-    assert.equal(version.predictionType, 'epsilon')
+    // Raw imported labels are advisory. The public ModelService catalog below
+    // must confirm the current exact-file objective/policy before Generate/Retry.
+    report.sourceModelPredictionType = version.predictionType
     model = {
       kind: 'checkpoint',
       baseModelFamily: 'illustrious',
-      predictionType: 'epsilon',
+      predictionType: PREDICTION_TYPE,
       localModelId: MODEL_ID,
       localVersionId: VERSION_ID,
       displayName: resource.displayName,
@@ -1653,6 +1720,10 @@ async function processingWitness(caseRoot, frozen, actualRow) {
     assert.equal(bundle.compiledPrompts, undefined)
     assert.equal(frozen.regional.compiledPrompts, undefined)
     assert.deepEqual(bundle.execution.inference, frozen.item.inference)
+    assert.equal(bundle.execution.inference.checkpoint.predictionType, PREDICTION_TYPE)
+    assert.deepEqual(bundle.execution.inference.sampling.noiseProfile, NOISE_PROFILE)
+    if (V_PREDICTION) assert.deepEqual(bundle.recipe.sampling.noiseProfile, NOISE_PROFILE)
+    else assert.equal(Object.hasOwn(bundle.recipe.sampling, 'noiseProfile'), false)
     for (const [field, role] of [
       ['modelSource', 'model-source.png'],
       ['latentKeepMask', 'latent-keep-mask.png'],
@@ -1859,6 +1930,12 @@ try {
       canceledPayload = JSON.parse(canceled.frozen_payload_json)
     assert.equal(canceledPayload.mode, MODE)
     assert.equal(canceledPayload.regional.profile, PROFILE)
+    assert.equal(canceledPayload.item.inference.checkpoint.predictionType, PREDICTION_TYPE)
+    assert.deepEqual(canceledPayload.item.inference.sampling.noiseProfile, NOISE_PROFILE)
+    if (V_PREDICTION)
+      assert.deepEqual(canceledPayload.regional.recipe.sampling.noiseProfile, NOISE_PROFILE)
+    else
+      assert.equal(Object.hasOwn(canceledPayload.regional.recipe.sampling, 'noiseProfile'), false)
     assert.equal(canceledPayload.regional.recipe.regions[0].negative.prompt.text, LOCAL_A)
     report.canceled = { row: canceled, payload: canceledPayload, cancellation }
     await json(path.join(payload, 'canceled-A.json'), report.canceled)

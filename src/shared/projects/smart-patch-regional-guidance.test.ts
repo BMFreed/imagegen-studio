@@ -79,11 +79,11 @@ test('disabled regions keep ordinary Smart eligibility independent of new capabi
 
 for (const [name, change, expected] of [
   [
-    'Illustrious missing epsilon objective',
+    'Illustrious with Anima sampling fields',
     (x: ReturnType<typeof fixture>) => {
       x.patch.generationDraft.model!.baseModelFamily = 'illustrious'
     },
-    /epsilon/u,
+    /Euler\/Normal/u,
   ],
   [
     'batch',
@@ -545,12 +545,12 @@ for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
   })
 }
 
-test('Illustrious Smart regional guard preserves bounded epsilon Euler Normal policy and selected negatives', () => {
+test('Illustrious Smart regional guard preserves bounded Euler Normal policy and selected negatives', () => {
   const good = illustriousFixture()
   assert.equal(reason(good), null)
   const unsupported = [
     (x: ReturnType<typeof illustriousFixture>) => {
-      x.patch.generationDraft.model!.predictionType = 'v_prediction'
+      x.patch.generationDraft.model!.predictionType = 'sample'
     },
     (x: ReturnType<typeof illustriousFixture>) => {
       x.patch.generationDraft.sampling.sampler = 'Euler a'

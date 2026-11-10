@@ -2504,3 +2504,170 @@ for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
       .toBe(1)
   })
 }
+
+async function mountVSmartRegionalWiring(page: Page, mode: WiringFixture['smartMode']) {
+  await mountWiring(page, 'project')
+  await page.evaluate((mode) => {
+    const f = globalThis.window.regionalWiringFixture
+    const draft = JSON.parse(JSON.stringify(f.tab.generationDraft))
+    // The catalog's current objective, rather than this stale portable label, gates Generate.
+    draft.model.predictionType = 'epsilon'
+    f.catalog[0]!.versions[0]!.predictionType = 'v_prediction'
+    draft.positivePrompt = { embeddingRefs: [], text: 'one white cat' }
+    draft.negativePrompt = { embeddingRefs: [], text: 'Smart V exclusion' }
+    draft.loras = []
+    draft.vae = null
+    draft.vaePrecision = 'Auto'
+    draft.cfgRescale = 0
+    delete draft.clipSkip
+    draft.sampling = {
+      cfgScale: 4,
+      denoisingStrength: 0.5,
+      sampler: 'Euler',
+      scheduler: 'Normal',
+      steps: 3,
+    }
+    const patch = {
+      activeRaster: null,
+      activeRasterSubLayerId: null,
+      blendMode: 'normal' as const,
+      boundingBox: { height: 73, width: 107, x: -13, y: 5 },
+      generationDraft: draft,
+      id: crypto.randomUUID(),
+      internalResolution: { height: 128, width: 136 },
+      kind: 'smart-patch' as const,
+      locked: false,
+      mask: { asset: null, id: crypto.randomUUID(), revision: 0 },
+      maskImageUrl: null,
+      name: 'Selected NoobAI V Smart',
+      opacity: 1,
+      rasterSubLayers: [],
+      status: 'empty' as const,
+      visible: true,
+    }
+    f.tab.layers = [patch]
+    f.selected = patch.id
+    f.smartMode = mode
+    f.tab.generationDraft.negativePrompt.text = '{unrelated|Canvas}'
+    f.tab.regionalGuidance![0]!.prompts = {
+      negative: { embeddingRefs: [], text: '{dormant|local}' },
+      positive: { embeddingRefs: [], text: 'regional cat' },
+      useGlobalNegativePrompt: true,
+    }
+    f.state.smartPatchSupported = true
+    f.state.illustriousSmartPatchRegionalSupported = true
+    f.state.illustriousSmartPatchRegionalOutpaintSupported = true
+    f.state.illustriousSmartPatchRegionalTxt2ImgSupported = true
+    f.state.illustriousSmartPatchRegionalImg2ImgSupported = true
+    f.state.regionalVPredictionSupported = true
+    f.state.regionalVPredictionImageSupported = true
+    f.state.animaSmartPatchRegionalSupported = true
+    f.state.animaSmartPatchRegionalOutpaintSupported = true
+    f.state.animaSmartPatchRegionalTxt2ImgSupported = true
+    f.state.animaSmartPatchRegionalImg2ImgSupported = true
+  }, mode)
+}
+
+for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
+  test(`renderer NoobAI V Smart regional ${mode} uses actual catalog objective and exact V capability`, async ({
+    page,
+  }) => {
+    await mountVSmartRegionalWiring(page, mode)
+    const generate = page.getByRole('button', { exact: true, name: 'Generate' })
+    await expect(generate).toBeDisabled()
+    await expect(page.getByText(/does not support .*Smart Patch Regional Guidance/)).toBeVisible()
+    await page.evaluate((mode) => {
+      const f = globalThis.window.regionalWiringFixture
+      const wrongKey =
+        mode === 'inpaint'
+          ? 'illustriousSmartPatchRegionalVPredictionTxt2ImgSupported'
+          : 'illustriousSmartPatchRegionalVPredictionSupported'
+      f.state[wrongKey] = true
+    }, mode)
+    await expect(generate).toBeDisabled()
+    await page.evaluate((mode) => {
+      const f = globalThis.window.regionalWiringFixture
+      const key =
+        mode === 'inpaint'
+          ? 'illustriousSmartPatchRegionalVPredictionSupported'
+          : mode === 'outpaint'
+            ? 'illustriousSmartPatchRegionalVPredictionOutpaintSupported'
+            : mode === 'txt2img'
+              ? 'illustriousSmartPatchRegionalVPredictionTxt2ImgSupported'
+              : 'illustriousSmartPatchRegionalVPredictionImg2ImgSupported'
+      f.state[key] = true
+    }, mode)
+    await expect(generate).toBeEnabled()
+    await generate.click()
+    expect(
+      await page.evaluate(() => globalThis.window.regionalWiringFixture.generateCalls),
+    ).toEqual([1])
+    await page.evaluate(() => {
+      const patch = globalThis.window.regionalWiringFixture.tab.layers[0]!
+      if (patch.kind === 'smart-patch') {
+        patch.generationDraft.negativePrompt.text = '{active|Smart}'
+      }
+    })
+    await expect(generate).toBeDisabled()
+    await expect(page.getByText(/requires static prompts/)).toBeVisible()
+  })
+
+  test(`renderer frozen NoobAI V Smart regional ${mode} Retry ignores current objective and removed regions`, async ({
+    page,
+  }) => {
+    await mountWiring(page, 'queue')
+    await page.evaluate((mode) => {
+      const f = globalThis.window.regionalWiringFixture
+      f.queueItem.operation = 'illustrious-smart-patch'
+      f.queueItem.details!.sampling = {
+        cfgScale: 4,
+        predictionType: 'v_prediction',
+        sampler: 'Euler',
+        scheduler: 'Normal',
+        seed: 42,
+        steps: 3,
+      }
+      f.queueItem.details!.requiresSmartPatchRegional = true
+      f.queueItem.details!.requiresSmartPatchRegionalOutpaint = mode === 'outpaint'
+      f.queueItem.details!.requiresSmartPatchRegionalTxt2Img = mode === 'txt2img'
+      f.queueItem.details!.requiresSmartPatchRegionalImg2Img = mode === 'img2img'
+      f.state.smartPatchSupported = true
+      f.state.illustriousSmartPatchRegionalSupported = true
+      f.state.illustriousSmartPatchRegionalOutpaintSupported = true
+      f.state.illustriousSmartPatchRegionalTxt2ImgSupported = true
+      f.state.illustriousSmartPatchRegionalImg2ImgSupported = true
+      f.state.regionalVPredictionSupported = true
+      f.state.regionalVPredictionImageSupported = true
+      f.tab.generationDraft.model!.predictionType = 'epsilon'
+      f.catalog[0]!.versions[0]!.predictionType = 'epsilon'
+      f.tab.regionalGuidance = []
+      f.epoch += 1
+    }, mode)
+    const retry = page.getByRole('button', { exact: true, name: 'Retry job' })
+    await expect(retry).toBeDisabled()
+    await expect(
+      page.getByTestId('queue-job-row').getByText(/does not support this frozen .*Smart/),
+    ).toBeVisible()
+    await page.evaluate((mode) => {
+      const f = globalThis.window.regionalWiringFixture
+      const key =
+        mode === 'inpaint'
+          ? 'illustriousSmartPatchRegionalVPredictionSupported'
+          : mode === 'outpaint'
+            ? 'illustriousSmartPatchRegionalVPredictionOutpaintSupported'
+            : mode === 'txt2img'
+              ? 'illustriousSmartPatchRegionalVPredictionTxt2ImgSupported'
+              : 'illustriousSmartPatchRegionalVPredictionImg2ImgSupported'
+      f.state[key] = true
+      f.state.illustriousSmartPatchRegionalSupported = false
+      f.state.illustriousSmartPatchRegionalOutpaintSupported = false
+      f.state.illustriousSmartPatchRegionalTxt2ImgSupported = false
+      f.state.illustriousSmartPatchRegionalImg2ImgSupported = false
+    }, mode)
+    await expect(retry).toBeEnabled()
+    await retry.click()
+    await expect
+      .poll(() => page.evaluate(() => globalThis.window.regionalWiringFixture.retryCalls.length))
+      .toBe(1)
+  })
+}

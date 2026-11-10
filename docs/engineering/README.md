@@ -2642,3 +2642,17 @@ cancellations, exact restarted Retry and8normal closes. Finite epsilon Euler/
 Normal/static/Auto-VAE scope only; source review, retained audit, runtime outcome
 and visual/release readiness remain separate. NoobAI V is the next native consumer;
 other compatible resources/batches/methods/references remain in the linked matrix.
+
+## NoobAI V Smart Regional Euler
+
+[Four-mode V continuation](./phase-4-illustrious-smart-regional-v-prediction-research.md)
+uses actual resolved objective/explicit noise policy and four additive grants,
+preserving EPS/default-only and Anima semantics. ROOT: 736 distinct Main, 252
+Python, 246 browser PASS; full typing/lint/build and post-PNG objective mutation
+pass. Installed: eight phases, 44 checks, 16 requests, 12 world publications,
+four step-1 cancels, four exact restarted Retry and eight normal closes/physical
+exits. The existing V checkpoint uses unchanged false/leading policy; all six
+policies have separate tiny-native lower coverage. Quality, capacity, other
+resources/methods/batches/references and release acceptance remain open; promise
+statuses are unchanged. Next material resource consumer is original-Anima global
+LoRA in Smart Regional, followed by Illustrious EPS/V.

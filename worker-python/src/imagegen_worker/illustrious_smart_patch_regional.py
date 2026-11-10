@@ -27,6 +27,7 @@ from imagegen_worker.illustrious_regional_attention import Everywhere
 from imagegen_worker.illustrious_regional_attention_adapter import TransformerBinding
 from imagegen_worker.illustrious_regional_denoising import (
     _DenoisingProfile,  # pyright: ignore[reportPrivateUsage]
+    _validated_noise_profile,  # pyright: ignore[reportPrivateUsage]
     run_current_canvas_regional_denoising,
 )
 from imagegen_worker.illustrious_regional_geometry import (
@@ -50,6 +51,7 @@ from imagegen_worker.protocol import (
     ExecuteSmartPatchCommand,
     IllustriousInferenceParameters,
     IllustriousNoiseProfile,
+    _illustrious_noise_profile,  # pyright: ignore[reportPrivateUsage]
     parse_request,
 )
 from imagegen_worker.smart_patch_denoising import (
@@ -62,6 +64,11 @@ _MODE_BY_PROFILE = {
     f"invoke-illustrious-smart-regional-{mode}-v1": mode
     for mode in ("txt2img", "img2img", "inpaint", "outpaint")
 }
+_V_PREDICTION_PROFILES = {
+    f"invoke-illustrious-smart-regional-v-prediction-{mode}-v1": mode
+    for mode in ("txt2img", "img2img", "inpaint", "outpaint")
+}
+_MODE_BY_PROFILE.update(_V_PREDICTION_PROFILES)
 _SMART_FIELDS = {"layerId", "internalResolution", "smartMask", "modelSha256", "sampling"}
 
 
@@ -93,10 +100,10 @@ def _number(value: object, minimum: float, maximum: float) -> float:
     return float(cast(float, value))
 
 
-def _policy(policy: IllustriousInferenceParameters) -> None:
+def _policy(policy: IllustriousInferenceParameters, *, v_prediction: bool = False) -> None:
     _require(
         type(policy) is IllustriousInferenceParameters
-        and policy.prediction_type == "epsilon"
+        and policy.prediction_type == ("v_prediction" if v_prediction else "epsilon")
         and policy.scheduler == "euler"
         and policy.cfg_rescale == 0
         and type(policy.cfg_rescale) in (int, float)
@@ -110,11 +117,19 @@ def _policy(policy: IllustriousInferenceParameters) -> None:
         and type(policy.negative_embeddings) is tuple
         and not policy.negative_embeddings
         and type(policy.noise_profile) is IllustriousNoiseProfile
-        and policy.noise_profile
-        == IllustriousNoiseProfile(rescale_betas_zero_snr=False, timestep_spacing="leading"),
-        "Private Illustrious Smart regions require Euler/Normal epsilon, CFG (1,30], "
-        "zero rescale, embedded Auto VAE and no LoRA or TI.",
+        and (
+            v_prediction
+            or policy.noise_profile
+            == IllustriousNoiseProfile(rescale_betas_zero_snr=False, timestep_spacing="leading")
+        ),
+        "Private Illustrious Smart regions require their explicit Euler/Normal objective, "
+        "CFG (1,30], zero rescale, embedded Auto VAE and no LoRA or TI.",
     )
+    if v_prediction:
+        # Invoke get_scheduler copies the resolved model objective independently
+        # of source mode. Reuse the existing exact-file policy validator rather
+        # than deriving zero-SNR or spacing from that objective.
+        _validated_noise_profile(policy.noise_profile)
 
 
 def _world_recipe(captured: CapturedIllustriousSmartPatchRegionalInput) -> dict[str, Any]:
@@ -259,7 +274,8 @@ def capture_illustrious_smart_patch_regional_input(
         "Smart regional command family, mode or processing size differs from its recipe.",
     )
     policy = cast(IllustriousInferenceParameters, command.inference)
-    _policy(policy)
+    v_prediction = data["profile"] in _V_PREDICTION_PROFILES
+    _policy(policy, v_prediction=v_prediction)
     detached = cast(dict[str, Any], json.loads(recipe_json))
     item = _record(detached["item"], {"iteration", "promptPairIndex", "prompts", "seed"})
     _require(
@@ -267,7 +283,9 @@ def capture_illustrious_smart_patch_regional_input(
         "Private Illustrious Smart regions require one static concrete item.",
     )
     sampling = _record(
-        detached["sampling"], {"scheduler", "steps", "cfgScale", "denoisingStrength"}
+        detached["sampling"],
+        {"scheduler", "steps", "cfgScale", "denoisingStrength"}
+        | ({"noiseProfile"} if v_prediction else set()),
     )
     strength = _number(sampling["denoisingStrength"], 0, 1)
     _require(
@@ -275,6 +293,10 @@ def capture_illustrious_smart_patch_regional_input(
         and sampling["scheduler"] == "euler"
         and _integer(sampling["steps"], 1, 200) == policy.steps
         and _number(sampling["cfgScale"], 1, 30) == policy.cfg_scale
+        and (
+            not v_prediction
+            or _illustrious_noise_profile(sampling["noiseProfile"]) == policy.noise_profile
+        )
         and command.denoising_strength == (None if command.mode == "txt2img" else strength),
         "Smart regional model, concrete sampling or effective strength differs from its command.",
     )
@@ -320,7 +342,7 @@ def _require_captured_command(
         and (command.width, command.height) == owned.processing_size,
         "Illustrious Smart regions do not own this original command.",
     )
-    _policy(owned.policy)
+    _policy(owned.policy, v_prediction=owned.execution_profile in _V_PREDICTION_PROFILES)
     return owned
 
 
@@ -358,11 +380,17 @@ def run_prepared_illustrious_smart_patch_regional(
     masked = prepared.mode in ("inpaint", "outpaint")
     image_mode = prepared.mode != "txt2img"
     mode = "outpaint" if masked else "img2img" if image_mode else "txt2img"
-    denoising_profile = cast(
-        _DenoisingProfile,
-        f"ordinary-canvas-euler-{mode}-"
-        + ("cuda-vae-v1" if cuda else "cpu-v2" if not image_mode else "cpu-v1"),
-    )
+    if owned.execution_profile in _V_PREDICTION_PROFILES:
+        denoising_profile = cast(
+            _DenoisingProfile,
+            f"ordinary-canvas-euler-v-prediction-{mode}-" + ("cuda-vae-v1" if cuda else "cpu-v1"),
+        )
+    else:
+        denoising_profile = cast(
+            _DenoisingProfile,
+            f"ordinary-canvas-euler-{mode}-"
+            + ("cuda-vae-v1" if cuda else "cpu-v2" if not image_mode else "cpu-v1"),
+        )
     result = run_current_canvas_regional_denoising(
         _numerical_recipe(_world_recipe(owned), owned.processing_size),
         pipeline=pipeline,

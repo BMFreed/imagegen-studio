@@ -1,4 +1,5 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
+import type { IllustriousNoiseProfileV1 } from '../../shared/projects/illustrious-noise-profile.js'
 import type {
   IgsProjectDocumentV1,
   IgsRasterLayerV1,
@@ -264,11 +265,12 @@ async function withPublicFixture(
   mode: 'img2img' | 'inpaint' | 'outpaint' | 'txt2img' = 'inpaint',
   queueHooks: GenerationQueueTestHooks = {},
   epsilonRegional = false,
+  resolvedNoiseProfile?: IllustriousNoiseProfileV1,
 ) {
   await withSmartPatchQueueFixture(
     family,
     async (base) => {
-      const f = await publicFixture(base, mode, epsilonRegional)
+      const f = await publicFixture(base, mode, epsilonRegional, resolvedNoiseProfile)
       try {
         await run(f)
       } finally {
@@ -289,6 +291,7 @@ async function publicFixture(
   base: Parameters<Parameters<typeof withSmartPatchQueueFixture>[1]>[0],
   mode: 'img2img' | 'inpaint' | 'outpaint' | 'txt2img',
   epsilonRegional = false,
+  resolvedNoiseProfile?: IllustriousNoiseProfileV1,
 ) {
   const repository = new ProjectIndexRepository(base.database.db)
   const shadow = new ProjectShadowStore(path.join(base.root, 'public-autosave'))
@@ -353,11 +356,19 @@ async function publicFixture(
   await service.clearHistory(tab.id)
   const savedBytes = await readFile(owner.filePath)
   const models = { ...base.modelService, ...base.models }
-  if (epsilonRegional) {
+  if (epsilonRegional || resolvedNoiseProfile) {
     const resolve = models.resolveVerifiedGenerationCheckpointForPlan.bind(models)
+    const noiseProfile = resolvedNoiseProfile ? structuredClone(resolvedNoiseProfile) : undefined
     models.resolveVerifiedGenerationCheckpointForPlan = async (reference) => {
       const verified = await resolve(reference)
-      return { ...verified, reference: { ...verified.reference, predictionType: 'epsilon' } }
+      return {
+        ...verified,
+        ...(noiseProfile ? { noiseProfile: structuredClone(noiseProfile) } : {}),
+        reference: {
+          ...verified.reference,
+          ...(epsilonRegional ? { predictionType: 'epsilon' as const } : {}),
+        },
+      }
     }
   }
   const normalProcessor = new GenerationProcessor(base.queue, base.staging, models, base.scratch)
@@ -3031,6 +3042,324 @@ for (const mode of ['txt2img', 'img2img', 'inpaint', 'outpaint'] as const) {
         mode,
         {},
         true,
+      )
+    },
+  )
+}
+
+// Boundary: actual exact-file objective/policy -> public Smart regional admission -> frozen
+// queue/dispatch/world -> explicit acceptance. The saved model label intentionally remains EPS.
+// Neighbors: EPS-only peer, wrong V mode, and an actual EPS resolver behind a saved V label.
+// Mutation: grant V from an EPS string, trust the saved label, or rebuild Retry from current state.
+const vSmartRegionalNoiseProfile: IllustriousNoiseProfileV1 = {
+  baseSchedule: 'sdxl-scaled-linear-v1',
+  rescaleBetasZeroSnr: true,
+  schemaVersion: 1,
+  timestepSpacing: 'trailing',
+}
+
+async function setSmartPredictionHint(
+  f: PublicFixture,
+  predictionType: 'epsilon' | 'v_prediction' | null,
+) {
+  const document = structuredClone(f.owner.document)
+  patch(document, f.target.id).generationDraft.model!.predictionType = predictionType
+  await f.owner.applyDocument(document)
+}
+
+test(
+  'public V regional Smart resolves an absent saved objective hint through the actual library',
+  options,
+  async () => {
+    await withPublicFixture('illustrious', async (f) => {
+      await enableIllustriousSmartRegions(f, [
+        'illustrious-smart-patch-regional-v-prediction-inpaint-v1',
+      ])
+      await setSmartPredictionHint(f, null)
+      const batch = await queued(f)
+      const frozen = await f.base.queue.loadVerifiedSmartPatchInput(batch.jobIds[0])
+      assert.equal(
+        frozen.payload.regional?.profile,
+        'invoke-illustrious-smart-regional-v-prediction-inpaint-v1',
+      )
+      if (frozen.payload.item.family !== 'illustrious') {
+        assert.fail('Library-resolved V must remain in the Illustrious family')
+      }
+      assert.equal(frozen.payload.item.inference.checkpoint.predictionType, 'v_prediction')
+      await drain(f)
+      assert.equal(f.runtime.illustriousRegionalGenerated.length, 1)
+    })
+  },
+)
+
+for (const mode of ['txt2img', 'img2img', 'inpaint', 'outpaint'] as const) {
+  const capability = `illustrious-smart-patch-regional-v-prediction-${mode}-v1`
+  const profile = `invoke-illustrious-smart-regional-v-prediction-${mode}-v1`
+  const epsilonCapability = `illustrious-smart-patch-regional-${mode}-v1`
+  const testOptions = mode === 'outpaint' ? { ...options, ...outpaintRegionalOptions } : options
+  test(
+    `public V regional Smart ${mode} resolves stale EPS hint and preserves exact policy through Add/Save`,
+    testOptions,
+    async () => {
+      await withPublicFixture(
+        'illustrious',
+        async (f) => {
+          const regionId = await enableIllustriousSmartRegions(f, [capability])
+          assert.equal(
+            patch(f.owner.document, f.target.id).generationDraft.model!.predictionType,
+            'epsilon',
+          )
+          await f.service.save(f.tabId)
+          await f.service.clearHistory(f.tabId)
+          const before = structuredClone(f.owner.document)
+          const savedBytes = await readFile(f.owner.filePath)
+          const batch = await queued(f)
+          assert.equal(batch.jobIds.length, 1)
+          const frozen = await f.base.queue.loadVerifiedSmartPatchInput(batch.jobIds[0])
+          assert.equal(frozen.payload.mode, mode)
+          assert.equal(frozen.payload.regional?.profile, profile)
+          assert.equal(frozen.payload.regional?.recipe.family, 'illustrious')
+          assert.equal(frozen.payload.regional?.recipe.regions[0].regionId, regionId)
+          assert.equal(frozen.payload.regional?.recipe.regions[0].negative.source, 'smart-patch')
+          assert.equal(
+            frozen.payload.regional?.recipe.regions[0].negative.prompt.text,
+            'Smart exclusion',
+          )
+          if (frozen.payload.item.family !== 'illustrious') {
+            assert.fail('Resolved V must remain in the Illustrious family')
+          }
+          assert.equal(frozen.payload.item.inference.checkpoint.predictionType, 'v_prediction')
+          assert.deepEqual(
+            frozen.payload.item.inference.sampling.noiseProfile,
+            vSmartRegionalNoiseProfile,
+          )
+          assert.equal(
+            frozen.payload.item.inference.sampling.denoisingStrength,
+            mode === 'txt2img' ? undefined : 0.5,
+          )
+          const details = (await f.base.queue.getManagerEntry(batch.jobIds[0])).details!
+          assert.equal(details.sampling.predictionType, 'v_prediction')
+          await drain(f)
+          assert.equal(f.runtime.illustriousRegionalGenerated.length, 1)
+          assert.equal(f.runtime.regionalGenerated.length, 0)
+          const execution = f.runtime.illustriousRegionalGenerated[0].execution
+          assert.equal(execution.mode, mode)
+          assert.equal(execution.inference.checkpoint.predictionType, 'v_prediction')
+          assert.deepEqual(execution.inference.sampling.noiseProfile, vSmartRegionalNoiseProfile)
+          assert.deepEqual(f.owner.document, before)
+          assert.ok((await readFile(f.owner.filePath)).equals(savedBytes), 'Generate must not Save')
+          const candidates = (await f.results.list(f.tabId)).candidates
+          assert.equal(candidates.length, 1)
+          await f.actions.accept(f.tabId, acceptRequest(f, candidates))
+          const accepted = structuredClone(f.owner.document)
+          const target = patch(accepted, f.target.id)
+          assert.equal(target.rasterSubLayers.length, 1)
+          const provenance = target.rasterSubLayers[0].generationProvenance
+          assert.equal(provenance.generationConfiguration.model.predictionType, 'v_prediction')
+          assert.deepEqual(
+            provenance.layerSourceContext.generationDraft,
+            patch(before, f.target.id).generationDraft,
+          )
+          assert.equal(
+            JSON.stringify(provenance).includes(regionId),
+            false,
+            'Regional input is outside accepted provenance',
+          )
+          assert.deepEqual(accepted.regionalGuidance, before.regionalGuidance)
+          assert.ok((await readFile(f.owner.filePath)).equals(savedBytes), 'Add must not Save')
+          await f.service.undo(f.tabId)
+          assert.deepEqual(f.owner.document.layers, before.layers)
+          await f.service.redo(f.tabId)
+          assert.deepEqual(f.owner.document.layers, accepted.layers)
+          await f.service.save(f.tabId)
+          const reopened = await readIgsPackage(f.owner.filePath)
+          assert.deepEqual(
+            patch(reopened.project, f.target.id).rasterSubLayers,
+            target.rasterSubLayers,
+          )
+          assert.deepEqual(reopened.project.regionalGuidance, before.regionalGuidance)
+        },
+        mode,
+        {},
+        false,
+        vSmartRegionalNoiseProfile,
+      )
+    },
+  )
+  for (const peer of ['epsilon-only', 'wrong-v-mode'] as const) {
+    test(
+      `public V regional Smart ${mode} ${peer} refuses before queue publication`,
+      peer === 'epsilon-only' ? testOptions : options,
+      async (t) => {
+        await withPublicFixture(
+          'illustrious',
+          async (f) => {
+            const supported =
+              peer === 'epsilon-only'
+                ? epsilonCapability
+                : `illustrious-smart-patch-regional-v-prediction-${mode === 'inpaint' ? 'txt2img' : 'inpaint'}-v1`
+            await enableIllustriousSmartRegions(f, [supported])
+            const before = structuredClone(f.owner.document)
+            const savedBytes = await readFile(f.owner.filePath)
+            const resolve = f.models.resolveVerifiedGenerationCheckpointForPlan.bind(f.models)
+            const models = t.mock.method(
+              f.models,
+              'resolveVerifiedGenerationCheckpointForPlan',
+              async (reference: Parameters<typeof resolve>[0]) => {
+                if (peer === 'wrong-v-mode') {
+                  assert.fail(
+                    'Actual mode with no matching objective capability refuses before model resolution',
+                  )
+                }
+                return await resolve(reference)
+              },
+            )
+            try {
+              await assert.rejects(f.controller.generate(f.tabId, f.request()), {
+                code: 'GENERATION_RUNTIME_UNAVAILABLE',
+              })
+              if (peer === 'epsilon-only') {
+                assert.ok(
+                  models.mock.callCount() > 0,
+                  'The actual library objective must be resolved before rejecting a stale EPS hint',
+                )
+              } else {
+                assert.equal(models.mock.callCount(), 0)
+              }
+              assert.equal((await f.base.queue.listManagerPage()).items.length, 0)
+              assert.equal((await f.results.list(f.tabId)).candidates.length, 0)
+              assert.equal(f.runtime.illustriousRegionalGenerated.length, 0)
+              assert.equal(f.runtime.generated.length, 0)
+              assert.deepEqual(f.owner.document, before)
+              assert.ok(
+                (await readFile(f.owner.filePath)).equals(savedBytes),
+                'Refusal must preserve saved Project bytes',
+              )
+            } finally {
+              t.mock.restoreAll()
+            }
+          },
+          mode,
+        )
+      },
+    )
+  }
+  test(
+    `public Smart ${mode} actual EPS resolver keeps EPS profile despite stale V hint`,
+    testOptions,
+    async () => {
+      await withPublicFixture(
+        'illustrious',
+        async (f) => {
+          await enableIllustriousSmartRegions(f, [epsilonCapability])
+          await setSmartPredictionHint(f, 'v_prediction')
+          const batch = await queued(f)
+          const frozen = await f.base.queue.loadVerifiedSmartPatchInput(batch.jobIds[0])
+          assert.equal(
+            frozen.payload.regional?.profile,
+            `invoke-illustrious-smart-regional-${mode}-v1`,
+          )
+          if (frozen.payload.item.family !== 'illustrious') {
+            assert.fail('Resolved EPS must remain in the Illustrious family')
+          }
+          assert.equal(frozen.payload.item.inference.checkpoint.predictionType, 'epsilon')
+          await drain(f)
+          assert.equal(f.runtime.illustriousRegionalGenerated.length, 1)
+          assert.equal(f.runtime.illustriousRegionalGenerated[0].execution.mode, mode)
+        },
+        mode,
+        {},
+        true,
+      )
+    },
+  )
+  test(
+    `public V regional Smart ${mode} frozen Retry requires original V peer after saved authoring edits`,
+    testOptions,
+    async (t) => {
+      await withPublicFixture(
+        'illustrious',
+        async (f) => {
+          const regionId = await enableIllustriousSmartRegions(f, [capability])
+          await setSmartPredictionHint(f, 'v_prediction')
+          const batch = await queued(f)
+          const original = await f.base.queue.loadVerifiedSmartPatchInput(batch.jobIds[0])
+          await f.normalActions.cancelJob(await f.base.queue.getManagerEntry(batch.jobIds[0]))
+          const terminal = await f.base.queue.getManagerEntry(batch.jobIds[0])
+          await f.service.deleteRegionalGuidance(f.tabId, {
+            ...regionalSmartDocumentOwner(f),
+            regionId,
+          })
+          await f.service.updateGenerationDraft(
+            f.tabId,
+            { kind: 'negative-prompt', text: 'Later Smart exclusion' },
+            undefined,
+            f.target.id,
+          )
+          await f.service.updateGenerationDraft(
+            f.tabId,
+            { kind: 'seed', policy: 'fixed', value: 999 },
+            undefined,
+            f.target.id,
+          )
+          await setSmartPredictionHint(f, 'epsilon')
+          await f.service.save(f.tabId)
+          const before = structuredClone(f.owner.document)
+          const savedBytes = await readFile(f.owner.filePath)
+          const capture = t.mock.method(
+            f.service,
+            'withCapturedSmartPatchRegionalGenerationInput',
+            async () => assert.fail('Frozen V Retry cannot recapture current regional authoring'),
+          )
+          const preparation = t.mock.method(
+            f.runtime,
+            'withSmartPatchGenerationPreparation',
+            async () => assert.fail('Frozen V Retry cannot reprepare current source'),
+          )
+          try {
+            f.runtime.ready.capabilities = f.runtime.ready.capabilities.filter(
+              (x) => x !== capability,
+            )
+            f.runtime.ready.capabilities.push(epsilonCapability)
+            await assert.rejects(f.normalActions.retryJob(terminal), {
+              code: 'GENERATION_RUNTIME_UNAVAILABLE',
+            })
+            assert.equal((await f.base.queue.listManagerPage()).items.length, 1)
+            assert.equal((await f.base.queue.getManagerEntry(terminal.id)).status, 'canceled')
+            f.runtime.ready.capabilities.push(capability)
+            await f.normalActions.retryJob(terminal)
+            const retry = (await f.base.queue.listManagerPage()).items.find(
+              (row) => row.id !== terminal.id,
+            )!
+            await waitForRetryCompletion(f, retry.id)
+            const replay = await f.base.queue.loadVerifiedSmartPatchInput(retry.id)
+            assert.equal(replay.payload.regional?.profile, profile)
+            assert.deepEqual(replay.payload.regional, original.payload.regional)
+            assert.deepEqual(replay.payload.item, original.payload.item)
+            for (const [name, bytes] of Object.entries(original.bundle.files)) {
+              assert.ok(bytes.equals(replay.bundle.files[name]), name)
+            }
+            assert.equal(f.runtime.illustriousRegionalGenerated.length, 1)
+            const input = f.runtime.illustriousRegionalGenerated[0]
+            assert.equal(input.execution.inference.checkpoint.predictionType, 'v_prediction')
+            assert.deepEqual(
+              input.execution.inference.sampling.noiseProfile,
+              vSmartRegionalNoiseProfile,
+            )
+            assert.equal(input.recipe.globalPrompts.negative.text, 'Smart exclusion')
+            assert.equal(input.execution.mode, mode)
+            assert.equal(capture.mock.callCount(), 0)
+            assert.equal(preparation.mock.callCount(), 0)
+            assert.deepEqual(f.owner.document, before)
+            assert.ok((await readFile(f.owner.filePath)).equals(savedBytes), 'Retry must not Save')
+          } finally {
+            t.mock.restoreAll()
+          }
+        },
+        mode,
+        {},
+        false,
+        vSmartRegionalNoiseProfile,
       )
     },
   )

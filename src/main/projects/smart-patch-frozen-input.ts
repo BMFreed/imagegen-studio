@@ -44,6 +44,7 @@ import {
   capturePreparedSmartPatchIllustriousRegionalInput,
   type FrozenSmartPatchIllustriousRegionalInputV1,
   ILLUSTRIOUS_SMART_REGIONAL_MODES,
+  isSmartPatchIllustriousRegionalVPredictionProfile,
   type PreparedSmartPatchIllustriousRegionalInput,
 } from './project-smart-patch-illustrious-regional-input.js'
 import {
@@ -817,7 +818,6 @@ function assertIllustriousRegionalMetadataAgreement(manifest: FrozenSmartPatchIn
     manifest.mode !== ILLUSTRIOUS_SMART_REGIONAL_MODES[regional.profile] ||
     model?.kind !== 'checkpoint' ||
     model.baseModelFamily !== 'illustrious' ||
-    model.predictionType !== 'epsilon' ||
     draft.loras.some((value) => value.enabled) ||
     draft.vae !== null ||
     (draft.vaePrecision ?? 'Auto') !== 'Auto' ||
@@ -845,6 +845,12 @@ function assertIllustriousRegionalMetadataAgreement(manifest: FrozenSmartPatchIn
     !isDeepStrictEqual(recipe.sampling, {
       cfgScale: draft.sampling.cfgScale,
       denoisingStrength: draft.sampling.denoisingStrength,
+      ...(isSmartPatchIllustriousRegionalVPredictionProfile(regional.profile)
+        ? {
+            noiseProfile:
+              entry.family === 'illustrious' ? entry.inference.sampling.noiseProfile : undefined,
+          }
+        : {}),
       scheduler: 'euler',
       steps: draft.sampling.steps,
     })

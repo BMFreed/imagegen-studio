@@ -2453,3 +2453,29 @@ All four restarted Retry outputs/inputs match A; all8app lifetimes close normall
 Source review is CLEAN; retained-byte audit/release details live in the note.
 Visual utility, general capacity/release and PP-001/005/007/008 remain
 **«Пока не обещать»**. The official Illustrious XLv0.1 visual gate remains open.
+
+## NoobAI V Smart Regional Euler — finite installed qualification
+
+The [V continuation](../../../engineering/phase-4-illustrious-smart-regional-v-prediction-research.md)
+adds four exact V profiles/capabilities through existing Smart/regional owners.
+Actual resolved objective and explicit noise policy own freeze/dispatch/Retry;
+saved model hints, including null or stale EPS/V, remain advisory. V never implies
+ZTSNR or spacing. Six existing policy combinations have tiny-native lower coverage;
+the installed four-mode campaign uses the unchanged actual false/leading policy.
+EPS profiles retain default-only semantics and reject V-only recipe noise fields.
+Anima and ordinary Smart meanings remain unchanged.
+
+The finite envelope remains Euler/Normal, one static item, embedded Auto VAE,
+CFG(1,30], processing64–512 divisible by8, bounded WORLD geometry and at most
+three regions. Selected-Smart negative, independent regional masks/KEEP,
+explicit acceptance/Save and ordinary-only accepted provenance are preserved.
+ROOT736 distinct Main/252 Python/246 browser PASS; eight installed app lifetimes
+pass44 checks/16 requests/12 world publications/four step-1 cancels, four exact
+restarted Retry and normal/physical exits. Source review, retained-byte checks,
+ROOT native execution and visual acceptance remain distinct.
+
+Compatible resources/batches/other methods, Illustrious reference inference,
+visual utility, full NoobAI matrix/capacity and release acceptance remain open.
+The next resource consumer is original-Anima global LoRA on Smart Regional, then
+Illustrious EPS/V. PP-001/005/007/008 stay **«Пока не обещать»**; official
+Illustrious XLv0.1 visual acceptance is still pending.

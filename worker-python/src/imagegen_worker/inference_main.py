@@ -107,6 +107,10 @@ def inference_ready_message(
             "illustrious-smart-patch-regional-outpaint-v1",
             "illustrious-smart-patch-regional-txt2img-v1",
             "illustrious-smart-patch-regional-img2img-v1",
+            "illustrious-smart-patch-regional-v-prediction-inpaint-v1",
+            "illustrious-smart-patch-regional-v-prediction-outpaint-v1",
+            "illustrious-smart-patch-regional-v-prediction-txt2img-v1",
+            "illustrious-smart-patch-regional-v-prediction-img2img-v1",
             *(("linux-owned-inference-v1",) if owner_lifetime else ()),
             *(
                 (

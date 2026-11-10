@@ -1,5 +1,9 @@
 import type { PlannedGenerationBatchItem } from '../../shared/projects/generation-batch-plan.js'
-import { defaultIllustriousNoiseProfile } from '../../shared/projects/illustrious-noise-profile.js'
+import {
+  defaultIllustriousNoiseProfile,
+  type IllustriousNoiseProfileV1,
+  IllustriousNoiseProfileV1Schema,
+} from '../../shared/projects/illustrious-noise-profile.js'
 import { PROJECT_MASK_MAX_COORDINATE } from '../../shared/projects/project-mask.js'
 import { GenerationPromptSchema } from '../../shared/projects/project-schema.js'
 
@@ -22,14 +26,42 @@ export const ILLUSTRIOUS_SMART_REGIONAL_MODES = {
   'invoke-illustrious-smart-regional-inpaint-v1': 'inpaint',
   'invoke-illustrious-smart-regional-outpaint-v1': 'outpaint',
   'invoke-illustrious-smart-regional-txt2img-v1': 'txt2img',
+  'invoke-illustrious-smart-regional-v-prediction-img2img-v1': 'img2img',
+  'invoke-illustrious-smart-regional-v-prediction-inpaint-v1': 'inpaint',
+  'invoke-illustrious-smart-regional-v-prediction-outpaint-v1': 'outpaint',
+  'invoke-illustrious-smart-regional-v-prediction-txt2img-v1': 'txt2img',
 } as const
 export type SmartPatchIllustriousRegionalProfile = keyof typeof ILLUSTRIOUS_SMART_REGIONAL_MODES
+
+/** Objective and noise are resolved by the existing exact-file library owner, never by naming. */
+export interface SmartPatchIllustriousRegionalResolvedPolicy {
+  modelSha256: string
+  noiseProfile: IllustriousNoiseProfileV1
+  predictionType: 'epsilon' | 'v_prediction'
+}
+
+export function isSmartPatchIllustriousRegionalVPredictionProfile(
+  profile: SmartPatchIllustriousRegionalProfile,
+): boolean {
+  return (
+    profile === 'invoke-illustrious-smart-regional-v-prediction-img2img-v1' ||
+    profile === 'invoke-illustrious-smart-regional-v-prediction-inpaint-v1' ||
+    profile === 'invoke-illustrious-smart-regional-v-prediction-outpaint-v1' ||
+    profile === 'invoke-illustrious-smart-regional-v-prediction-txt2img-v1'
+  )
+}
 
 const integer = (min: number, max = Number.MAX_SAFE_INTEGER) =>
   v.pipe(v.number(), v.safeInteger(), v.minValue(min), v.maxValue(max))
 const numeric = (min: number, max: number) =>
   v.pipe(v.number(), v.finite(), v.minValue(min), v.maxValue(max))
 const uuid = v.pipe(v.string(), v.uuid())
+const sha256 = v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/u))
+const resolvedPolicySchema = v.strictObject({
+  modelSha256: sha256,
+  noiseProfile: IllustriousNoiseProfileV1Schema,
+  predictionType: v.picklist(['epsilon', 'v_prediction']),
+})
 const rect = v.strictObject({
   height: integer(1, 2048),
   width: integer(1, 2048),
@@ -54,7 +86,7 @@ const recipeSchema = v.strictObject({
   }),
   kind: v.literal('smart-patch-regional-recipe'),
   layerId: uuid,
-  modelSha256: v.pipe(v.string(), v.regex(/^[a-f0-9]{64}$/u)),
+  modelSha256: sha256,
   regions: v.array(
     v.strictObject({
       authoredPrompts: v.optional(
@@ -87,6 +119,7 @@ const recipeSchema = v.strictObject({
       v.check((n) => n > 1),
     ),
     denoisingStrength: numeric(0, 1),
+    noiseProfile: v.optional(IllustriousNoiseProfileV1Schema),
     scheduler: v.literal('euler'),
     steps: integer(1, 200),
   }),
@@ -132,13 +165,35 @@ export async function prepareSmartPatchIllustriousRegionalInput(input: {
   capture: CapturedSmartPatchRegionalGenerationInput
   item: PlannedGenerationBatchItem
   profile: SmartPatchIllustriousRegionalProfile
+  resolvedPolicy?: SmartPatchIllustriousRegionalResolvedPolicy
 }): Promise<PreparedSmartPatchIllustriousRegionalInput> {
   const { context, document, item, patch, projectMask } = captureSmartPatchRegionalSources(input)
   const profile = input.profile
+  const requestedPolicy = input.resolvedPolicy
   const draft = patch.generationDraft
+  let policy: SmartPatchIllustriousRegionalResolvedPolicy
+  if (requestedPolicy === undefined) {
+    if (draft.model?.predictionType !== 'epsilon') {
+      throw invalid('V Smart regions require the explicit exact-file resolved policy.')
+    }
+    policy = {
+      modelSha256: draft.model.fileSha256,
+      noiseProfile: defaultIllustriousNoiseProfile(),
+      predictionType: 'epsilon',
+    }
+  } else {
+    const parsed = v.safeParse(resolvedPolicySchema, structuredClone(requestedPolicy))
+    if (!parsed.success) {
+      throw invalid('The resolved Illustrious Smart regional policy is malformed.')
+    }
+    policy = parsed.output
+  }
+  const vPrediction = isSmartPatchIllustriousRegionalVPredictionProfile(profile)
   if (
     draft.model?.baseModelFamily !== 'illustrious' ||
-    draft.model.predictionType !== 'epsilon' ||
+    policy.modelSha256 !== draft.model.fileSha256 ||
+    policy.predictionType !== (vPrediction ? 'v_prediction' : 'epsilon') ||
+    (!vPrediction && !isDeepStrictEqual(policy.noiseProfile, defaultIllustriousNoiseProfile())) ||
     draft.loras.some((lora) => lora.enabled) ||
     draft.vae !== null ||
     (draft.vaePrecision ?? 'Auto') !== 'Auto' ||
@@ -149,7 +204,7 @@ export async function prepareSmartPatchIllustriousRegionalInput(input: {
     draft.sampling.animaMethod != null
   ) {
     throw invalid(
-      'Private Illustrious Smart regions require epsilon Euler/Normal, embedded Auto VAE and no enabled LoRA.',
+      'Private Illustrious Smart regions require their exact objective/policy, Euler/Normal, embedded Auto VAE and no enabled LoRA.',
     )
   }
   const recipe: PreparedSmartPatchIllustriousRegionalInput['recipe'] = {
@@ -191,6 +246,7 @@ export async function prepareSmartPatchIllustriousRegionalInput(input: {
     sampling: {
       cfgScale: draft.sampling.cfgScale!,
       denoisingStrength: draft.sampling.denoisingStrength!,
+      ...(vPrediction ? { noiseProfile: structuredClone(policy.noiseProfile) } : {}),
       scheduler: 'euler',
       steps: draft.sampling.steps!,
     },
@@ -242,11 +298,13 @@ export function assertSmartPatchIllustriousRegionalExecutionAgreement(
     throw invalid('Illustrious regions require their original Smart command.')
   }
   const { recipe } = input
+  validateProfilePolicy(input)
+  const vPrediction = isSmartPatchIllustriousRegionalVPredictionProfile(input.profile)
   const policy = execution.inference
   if (
     execution.mode !== ILLUSTRIOUS_SMART_REGIONAL_MODES[input.profile] ||
     !isDeepStrictEqual(execution.internalResolution, recipe.internalResolution) ||
-    policy.checkpoint.predictionType !== 'epsilon' ||
+    policy.checkpoint.predictionType !== (vPrediction ? 'v_prediction' : 'epsilon') ||
     policy.checkpoint.sha256 !== recipe.modelSha256 ||
     !isDeepStrictEqual(policy.prompts, recipe.item.prompts) ||
     policy.sampling.scheduler !== 'euler' ||
@@ -257,7 +315,10 @@ export function assertSmartPatchIllustriousRegionalExecutionAgreement(
     (execution.mode === 'txt2img'
       ? policy.sampling.denoisingStrength !== undefined
       : policy.sampling.denoisingStrength !== recipe.sampling.denoisingStrength) ||
-    !isDeepStrictEqual(policy.sampling.noiseProfile, defaultIllustriousNoiseProfile()) ||
+    !isDeepStrictEqual(
+      policy.sampling.noiseProfile,
+      vPrediction ? recipe.sampling.noiseProfile : defaultIllustriousNoiseProfile(),
+    ) ||
     (policy.loras?.length ?? 0) !== 0 ||
     (policy.embeddings?.positive.length ?? 0) !== 0 ||
     (policy.embeddings?.negative.length ?? 0) !== 0 ||
@@ -282,6 +343,7 @@ export function captureFrozenSmartPatchIllustriousRegionalInputV1(
     throw invalid('The frozen Illustrious Smart regional input is malformed.')
   }
   const value = parsed.output
+  validateProfilePolicy(value)
   validateSources(value.recipe)
   for (const [index, region] of value.recipe.regions.entries()) {
     const plane = region.coverage
@@ -310,7 +372,22 @@ function parsePrepared(input: unknown): PreparedSmartPatchIllustriousRegionalInp
   if (!parsed.success) {
     throw invalid('The private Illustrious Smart regional input is malformed.')
   }
+  validateProfilePolicy(parsed.output)
   return parsed.output
+}
+
+function validateProfilePolicy(input: {
+  profile: SmartPatchIllustriousRegionalProfile
+  recipe: { sampling: { noiseProfile?: IllustriousNoiseProfileV1 } }
+}): void {
+  const vPrediction = isSmartPatchIllustriousRegionalVPredictionProfile(input.profile)
+  if (
+    vPrediction
+      ? input.recipe.sampling.noiseProfile === undefined
+      : Object.hasOwn(input.recipe.sampling, 'noiseProfile')
+  ) {
+    throw invalid('Only V Smart regional profiles require an explicit independent noise policy.')
+  }
 }
 
 function validateSources(recipe: RecipeSources): void {

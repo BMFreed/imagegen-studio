@@ -19,6 +19,10 @@ type RetryState = Pick<
   | 'illustriousSmartPatchRegionalOutpaintSupported'
   | 'illustriousSmartPatchRegionalSupported'
   | 'illustriousSmartPatchRegionalTxt2ImgSupported'
+  | 'illustriousSmartPatchRegionalVPredictionImg2ImgSupported'
+  | 'illustriousSmartPatchRegionalVPredictionOutpaintSupported'
+  | 'illustriousSmartPatchRegionalVPredictionSupported'
+  | 'illustriousSmartPatchRegionalVPredictionTxt2ImgSupported'
   | 'outpaintSupported'
   | 'regionalCfgRescaleSupported'
   | 'regionalDpmSupported'
@@ -165,24 +169,27 @@ export function generationQueueRetryReason(
     if (state.smartPatchSupported !== true) {
       return 'The current image engine does not support Smart Patch generation.'
     }
-    const family = operation === 'illustrious-smart-patch' ? 'Illustrious' : 'Anima'
-    const prefix = operation === 'illustrious-smart-patch' ? 'illustrious' : 'anima'
-    if (
-      requiresSmartPatchRegionalTxt2Img &&
-      state[`${prefix}SmartPatchRegionalTxt2ImgSupported`] !== true
-    ) {
+    const vPrediction =
+      operation === 'illustrious-smart-patch' && frozenPredictionType === 'v_prediction'
+    const family =
+      operation === 'illustrious-smart-patch'
+        ? vPrediction
+          ? 'Illustrious V'
+          : 'Illustrious'
+        : 'Anima'
+    const prefix =
+      operation === 'illustrious-smart-patch'
+        ? vPrediction
+          ? 'illustriousSmartPatchRegionalVPrediction'
+          : 'illustriousSmartPatchRegional'
+        : 'animaSmartPatchRegional'
+    if (requiresSmartPatchRegionalTxt2Img && state[`${prefix}Txt2ImgSupported`] !== true) {
       return `The current image engine does not support this frozen ${family} Smart TXT Regional Guidance job.`
     }
-    if (
-      requiresSmartPatchRegionalImg2Img &&
-      state[`${prefix}SmartPatchRegionalImg2ImgSupported`] !== true
-    ) {
+    if (requiresSmartPatchRegionalImg2Img && state[`${prefix}Img2ImgSupported`] !== true) {
       return `The current image engine does not support this frozen ${family} Smart IMG Regional Guidance job.`
     }
-    if (
-      requiresSmartPatchRegionalOutpaint &&
-      state[`${prefix}SmartPatchRegionalOutpaintSupported`] !== true
-    ) {
+    if (requiresSmartPatchRegionalOutpaint && state[`${prefix}OutpaintSupported`] !== true) {
       return `The current image engine does not support this frozen ${family} Smart OUT Regional Guidance job.`
     }
     if (
@@ -190,7 +197,7 @@ export function generationQueueRetryReason(
       !requiresSmartPatchRegionalOutpaint &&
       !requiresSmartPatchRegionalTxt2Img &&
       !requiresSmartPatchRegionalImg2Img &&
-      state[`${prefix}SmartPatchRegionalSupported`] !== true
+      state[`${prefix}Supported`] !== true
     ) {
       return `The current image engine does not support this frozen ${family} Smart Patch Regional Guidance job.`
     }

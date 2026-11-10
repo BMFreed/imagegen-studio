@@ -421,6 +421,9 @@ export class SmartPatchGenerationProcessor {
         active.transport.ready,
         payload.item.family,
         payload.mode,
+        payload.item.family === 'illustrious'
+          ? payload.item.inference.checkpoint.predictionType
+          : undefined,
       ) ||
         !regionalExecution)
     ) {
