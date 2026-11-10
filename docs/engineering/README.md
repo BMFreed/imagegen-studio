@@ -1,5 +1,25 @@
 # Engineering Workflow
 
+<!-- regional-reference-inference-current:start -->
+## Latest Illustrious regional reference inference checkpoint
+
+[Current consumer and remaining MVP boundaries](./phase-4-regional-reference-inference-research.md):
+public Current Canvas EPS TXT uses the exact offline Standard ViT-H pair and
+ordered original PNGs through the existing regional/native owners. Frozen PNG
+roles/profile, independent worker grant, whole-group resource fences and
+base-only accepted provenance preserve Retry and explicit Add/Save semantics.
+
+Final built-app cohort:13 checks/four requests/three PNGs/one native-step1 Cancel,
+one exact restarted Retry and three normal physical lifetimes; Add/Undo/Redo/
+Save-reopen and real result-preset exclusion pass. ROOT713 selected Python,
+272 browser,1981 Main plus81 overlapping post-fix cases; CPU mutations20 selections
+=14 GREEN+six post-PNG RED,33 PNG witnesses and exact1637-file restoration.
+Installed scope is official Illustrious XLv0.1,one reference,512/EulerNormal/
+embedded FP16/N6. Compatible extensions, visual usefulness/capacity and release
+runtime/distribution/update/packaged acceptance remain open. PP-001/005/007/008
+stay **«Пока не обещать»**. Previous dated checkpoints below remain historical.
+<!-- regional-reference-inference-current:end -->
+
 <!-- illustrious-smart-regional-lora-current:start -->
 ## Current Illustrious/NoobAI Smart Regional global LoRA — finite qualification
 

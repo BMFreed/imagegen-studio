@@ -1,7 +1,11 @@
 import { planGenerationBatch } from '../../shared/projects/generation-batch-plan.js'
 import { GENERATION_BATCH_JOB_LIMIT } from '../../shared/projects/generation-batch-policy.js'
 import { getEffectiveDynamicPromptSettings } from '../../shared/projects/generation-dynamic-settings.js'
-import { isIllustriousNoiseProfileV1 } from '../../shared/projects/illustrious-noise-profile.js'
+import {
+  defaultIllustriousNoiseProfile,
+  isDefaultIllustriousNoiseProfile,
+  isIllustriousNoiseProfileV1,
+} from '../../shared/projects/illustrious-noise-profile.js'
 import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceAnimaRegional,
@@ -21,6 +25,7 @@ import {
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
   supportsInferenceRegionalOutpaint,
+  supportsInferenceRegionalReferenceImages,
   supportsInferenceRegionalVae,
   supportsInferenceRegionalVPrediction,
   supportsInferenceRegionalVPredictionImage,
@@ -35,11 +40,13 @@ import {
   hasEffectiveAnimaRegionalNegative,
   planInvokeRegionalGenerationBatch,
 } from '../../shared/projects/regional-invoke-generation.js'
+import { hasEnabledRegionalReferenceImages } from '../../shared/projects/regional-reference-inference.js'
 
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
+import type { RegionalReferenceResourceResolver } from '../runtime/inference-auxiliary-resources.js'
 import type { AnimaGenerationModelResolver } from './anima-generation-preparation.js'
 import type { GenerationOrchestrator, PrivateRegionalExecution } from './generation-orchestrator.js'
 import type { QueuedGenerationItem } from './generation-queue.js'
@@ -80,6 +87,7 @@ import {
 } from './outpaint-worker-request.js'
 import { compileCurrentCanvasAnimaRegionalPrompts } from './project-current-canvas-anima-regional-input.js'
 import { prepareCurrentCanvasRegionalRecipe } from './project-current-canvas-regional-recipe.js'
+import { captureCurrentCanvasRegionalReferences } from './project-current-canvas-regional-references.js'
 import {
   prepareNormalGeneration,
   prepareNormalOutpaintGeneration,
@@ -166,6 +174,7 @@ export class ProjectRegionalGenerationCoordinator {
     models: GenerationModelResolver & Partial<AnimaGenerationModelResolver>
     orchestrator: GenerationOrchestrator
     projects: ProjectService
+    regionalReferenceResources?: RegionalReferenceResourceResolver
     scratchBasePath: string
   }
   private readonly pending = new Set<Promise<unknown>>()
@@ -184,9 +193,22 @@ export class ProjectRegionalGenerationCoordinator {
     models: GenerationModelResolver & Partial<AnimaGenerationModelResolver>
     orchestrator: GenerationOrchestrator
     projects: ProjectService
+    regionalReferenceResources?: RegionalReferenceResourceResolver
     scratchBasePath: string
   }) {
-    this.options = { ...options }
+    const references = options.regionalReferenceResources
+    const resolveReferences = references?.resolveVerifiedRegionalReferenceResources
+    this.options = {
+      ...options,
+      ...(references && typeof resolveReferences === 'function'
+        ? {
+            regionalReferenceResources: {
+              resolveVerifiedRegionalReferenceResources: async () =>
+                structuredClone(await resolveReferences.call(references)),
+            },
+          }
+        : {}),
+    }
     // Preserve constructor-owned bindings for legacy Illustrious callers. An Anima-only owner
     // may omit those collaborators; its unrelated capture failure belongs only to that lane.
     try {
@@ -703,6 +725,7 @@ export class ProjectRegionalGenerationCoordinator {
           }
           assertCurrent()
           const document = structuredClone(capture.document)
+          const usesReferences = hasEnabledRegionalReferenceImages(document)
           if (compositionProfile) {
             validateInvokeDraft(document, input.iterations)
           } else {
@@ -735,6 +758,7 @@ export class ProjectRegionalGenerationCoordinator {
             if (
               !isQualifiedInferenceWorkerReady(ready) ||
               !ready.capabilities.includes(capability) ||
+              (usesReferences && !supportsInferenceRegionalReferenceImages(ready)) ||
               (compositionProfile &&
                 (document.generationDraft.cfgRescale ?? 0) !== 0 &&
                 !supportsInferenceRegionalCFGRescale(ready)) ||
@@ -788,6 +812,9 @@ export class ProjectRegionalGenerationCoordinator {
             )
             const target = await capture.composeTarget({ composeTarget })
             assertCurrent()
+            if (usesReferences) {
+              validateInvokeDraft(document, input.iterations, target.mode)
+            }
             if (
               target.mode === 'outpaint' &&
               (!compositionProfile || !supportsInferenceRegionalOutpaint(ready))
@@ -918,6 +945,18 @@ export class ProjectRegionalGenerationCoordinator {
               modelService: this.models,
               target: preparationTarget,
             })
+            if (
+              usesReferences &&
+              (prepared.context.kind !== 'normal-txt2img-preparation' ||
+                prepared.context.model.reference.predictionType !== 'epsilon' ||
+                !isDefaultIllustriousNoiseProfile(
+                  prepared.context.sampling.noiseProfile ?? defaultIllustriousNoiseProfile(),
+                ))
+            ) {
+              throw unsupported(
+                'Regional reference images require epsilon TXT with the default false/leading noise settings.',
+              )
+            }
             if (prepared.context.model.reference.predictionType === 'v_prediction') {
               // Invoke denoise_latents.py takes the resolved UNet objective, not a saved label.
               // Recheck the actual classified target and exact resolver output before any queue files.
@@ -969,10 +1008,22 @@ export class ProjectRegionalGenerationCoordinator {
               positivePrompt: authoredPrompts.positive,
               seedBehavior: dynamic.seedBehavior,
             })
+            const referenceResolver = this.options.regionalReferenceResources
+            if (
+              usesReferences &&
+              typeof referenceResolver?.resolveVerifiedRegionalReferenceResources !== 'function'
+            ) {
+              throw invalid('The exact regional reference resources are unavailable.')
+            }
+            const referenceResources = usesReferences
+              ? await referenceResolver!.resolveVerifiedRegionalReferenceResources()
+              : undefined
+            assertCurrent()
             const materials: {
               context: typeof prepared.context
               item: (typeof plan.items)[number]
               recipe: Awaited<ReturnType<typeof prepareCurrentCanvasRegionalRecipe>>
+              references?: Awaited<ReturnType<typeof captureCurrentCanvasRegionalReferences>>
             }[] = []
             for (const item of plan.items) {
               const context = structuredClone(prepared.context)
@@ -1003,7 +1054,15 @@ export class ProjectRegionalGenerationCoordinator {
                 models: this.models,
               })
               assertCurrent()
-              materials.push({ context, item, recipe })
+              const references = referenceResources
+                ? await captureCurrentCanvasRegionalReferences({
+                    capture: capture.regional,
+                    recipe,
+                    resources: referenceResources,
+                  })
+                : undefined
+              assertCurrent()
+              materials.push({ context, item, recipe, ...(references ? { references } : {}) })
             }
             const consumeRequest = async (request: RegionalGenerationRequestV1) => {
               assertCurrent()
@@ -1012,7 +1071,7 @@ export class ProjectRegionalGenerationCoordinator {
                   'Private regional transport requires a transparent txt2img target.',
                 )
               }
-              const items = materials.map(({ context, item, recipe }, index) => {
+              const items = materials.map(({ context, item, recipe, references }, index) => {
                 const concreteRequest = structuredClone(request)
                 if (index > 0) {
                   concreteRequest.requestId = randomUUID()
@@ -1036,6 +1095,7 @@ export class ProjectRegionalGenerationCoordinator {
                     ...composition,
                     ...(initializationProfile !== undefined ? { initializationProfile } : {}),
                     recipe,
+                    ...(references ? { references } : {}),
                   },
                   request: concreteRequest,
                 }
@@ -1136,7 +1196,11 @@ export class ProjectRegionalGenerationCoordinator {
   }
 }
 
-function validateInvokeDraft(document: IgsProjectDocumentV1, iterations = 1): void {
+function validateInvokeDraft(
+  document: IgsProjectDocumentV1,
+  iterations = 1,
+  targetMode?: 'img2img' | 'outpaint' | 'txt2img',
+): void {
   const reason = getInvokeRegionalGenerationUnavailableReason({
     animaRegionalImg2ImgSupported: true,
     animaRegionalLoraSupported: true,
@@ -1151,7 +1215,9 @@ function validateInvokeDraft(document: IgsProjectDocumentV1, iterations = 1): vo
     initializationSupported: true,
     iterations,
     loraSupported: true,
+    regionalReferenceImagesSupported: true,
     runtimeSupported: true,
+    targetMode,
     vaeSupported: true,
     vPredictionImageSupported: true,
     vPredictionSamplingSupported: true,

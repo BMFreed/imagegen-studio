@@ -150,3 +150,27 @@ adaptation casts latents before scaling and calls the original native VAE once.
 Finite guards precede normalization/clamp and existing RGB publication. Native
 upcast/restore is not applied to borrowed VAE storage. No copied diffusion loop,
 model copy, fallback, tiling, default change or private-profile promotion is added.
+
+InvokeAI Standard SDXL regional reference-image inference
+
+ImageGen Studio's ../illustrious_regional_references.py and the image insertion
+in ../illustrious_regional_attention_adapter.py adapt these InvokeAI sources:
+invokeai/app/invocations/sd/ip_adapter.py
+invokeai/app/invocations/sd/denoise_latents.py
+invokeai/backend/stable_diffusion/extensions/ip_adapter.py
+invokeai/backend/stable_diffusion/diffusion/custom_atttention.py
+invokeai/backend/stable_diffusion/diffusion/regional_ip_data.py
+invokeai/backend/ip_adapter/ip_adapter.py
+invokeai/backend/ip_adapter/ip_attention_weights.py
+Consulted frontend callers: workbench/widgets/canvas/invoke/prepareCanvasInvocation.ts,
+features/generation/core/canvas/addRegionalGuidance.ts and compileCanvasGraph.ts.
+All at InvokeAI commit4875d96531ca6712b288f6e660fcbb34143408c1,
+https://github.com/invoke-ai/InvokeAI/tree/4875d96531ca6712b288f6e660fcbb34143408c1
+Attribution: InvokeAI contributors, Apache License2.0 (LICENSE-InvokeAI.txt).
+
+Modifications: fixed exact offline ViT-H/Standard resources, bounded original PNG
+snapshots with owning masks, standalone vision/projection before UNet loading,
+full native attention registry binding and independent ordered image SDPA terms
+inside the existing native processor's output-projection seam. CFG projects the
+zero vision vector for unconditional image tokens independently of negative text.
+The finite profile uses full/scale1/all steps, no generic adapter UI or Plus path.

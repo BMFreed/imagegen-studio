@@ -88,6 +88,7 @@ def inference_ready_message(
             "smart-patch-seed-confirmation",
             "private-current-canvas-regional-v1",
             "illustrious-regional-invoke-v1",
+            "illustrious-regional-reference-txt2img-v1",
             "illustrious-regional-invoke-init-v1",
             "illustrious-regional-progress-v1",
             "illustrious-regional-lora-v1",

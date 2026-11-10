@@ -54,6 +54,7 @@ import {
   supportsInferenceRegionalInvokeInitialization,
   supportsInferenceRegionalLoras,
   supportsInferenceRegionalOutpaint,
+  supportsInferenceRegionalReferenceImages,
   supportsInferenceRegionalVae,
   supportsInferenceRegionalVPrediction,
   supportsInferenceRegionalVPredictionImage,
@@ -615,6 +616,11 @@ export class ProjectGenerationActionController {
         !this.closed &&
         !!this.options.regional &&
         supportsInferenceRegionalOutpaint(ready),
+      regionalReferenceImagesSupported:
+        !this.blocked &&
+        !this.closed &&
+        !!this.options.regional &&
+        supportsInferenceRegionalReferenceImages(ready),
       regionalSupported:
         !this.blocked && !this.closed && !!this.options.regional && supportsRegional(ready),
       regionalVaeSupported:
@@ -821,6 +827,7 @@ export class ProjectGenerationActionController {
       initializationSupported: true,
       iterations: request.iterations,
       loraSupported: true,
+      regionalReferenceImagesSupported: true,
       runtimeSupported: true,
       vaeSupported: true,
       vPredictionImageSupported: true,
@@ -1691,6 +1698,8 @@ export class ProjectGenerationActionController {
               this.assertDocument(source.projectKey, source.documentId)
               if (
                 !supportsRegional(ready) ||
+                (frozen.payload.referenceProfile !== undefined &&
+                  !supportsInferenceRegionalReferenceImages(ready)) ||
                 (frozen.payload.workerJob.checkpoint.predictionType === 'v_prediction' &&
                   (!['dpmpp_2m', 'dpmpp_2m_k', 'euler', 'euler_a'].includes(
                     frozen.payload.workerJob.sampling.scheduler,

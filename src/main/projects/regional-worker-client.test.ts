@@ -18,6 +18,10 @@ import type { RegionalWorkerInput } from './regional-worker-request.js'
 
 import { GenerationWorkerClient } from './generation-worker-client.js'
 import { OUTPAINT_READY } from './test-fixtures/outpaint-ready.js'
+import {
+  attachRegionalReferences,
+  writeRegionalReferenceResourceFixtures,
+} from './test-fixtures/regional-reference.js'
 
 const sha = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
 
@@ -263,6 +267,8 @@ async function withClient(
       'illustrious-euler',
       'illustrious-noise-profile',
       ...(imageMode ? ['illustrious-regional-invoke-v1'] : []),
+      ...(mode.startsWith('reference-') ? ['illustrious-regional-invoke-v1'] : []),
+      ...(mode === 'reference-done' ? ['illustrious-regional-reference-txt2img-v1'] : []),
       ...(imageMode && mode !== 'img-old'
         ? ['illustrious-regional-img2img-v1', 'illustrious-regional-progress-v1']
         : []),
@@ -283,7 +289,7 @@ const mode=${JSON.stringify(mode)},marker=${JSON.stringify(marker)},observation=
 const output=Buffer.from(${JSON.stringify(output.toString('base64'))},'base64');
 const digest=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
 const writeRecord=(file,value)=>{fs.writeFileSync(file+'.tmp',JSON.stringify(value),{flag:'wx'});fs.renameSync(file+'.tmp',file);};
-const expectedAlpha=${JSON.stringify([sha(regionAlpha), ...(imageMode ? [] : [sha(globalAlpha)])].sort())};
+const expectedAlpha=${JSON.stringify([sha(regionAlpha), ...(imageMode || mode.startsWith('reference-') ? [] : [sha(globalAlpha)])].sort())};
 let active=null,previousProgressRequestId=null;
 if(mode.startsWith('hang')){
  process.on('SIGTERM',()=>writeRecord(term,{bundleAlive:!!active&&fs.existsSync(active.bundle.path),stageAlive:!!active&&fs.existsSync(active.stagingRoot)}));
@@ -297,6 +303,7 @@ function consume(r){
  function walk(value){
   if(!value||typeof value!=='object')return;
   if(value.$alpha8){const ref=value.$alpha8,alpha=fs.readFileSync(ref.path);if(alpha.length!==ref.byteSize||digest(alpha)!==ref.sha256)throw Error('alpha snapshot differs');if(path.dirname(ref.path)!==r.stagingRoot)throw Error('alpha is not owned');alphaHashes.push(digest(alpha));return;}
+  if(value.$referencePng){const ref=value.$referencePng,png=fs.readFileSync(ref.path);if(png.length!==ref.byteSize||digest(png)!==ref.sha256||path.dirname(ref.path)!==r.stagingRoot)throw Error('reference snapshot differs');return;}
   for(const child of Object.values(value))walk(child);
  }
  walk(bundle);
@@ -481,6 +488,43 @@ test('an older private peer refuses regional work before creating an owned stage
     })
     await assert.rejects(readFile(f.marker), { code: 'ENOENT' })
     assert.deepEqual(await readdir(f.scratch), before)
+  })
+})
+
+test('base regional capability cannot authorize references before model I/O or descriptor dispatch', async () => {
+  await withClient('reference-old', async (f) => {
+    attachRegionalReferences(f.input, path.join(f.scratch, '..', 'absent-reference-models'))
+    const before = await readdir(f.scratch)
+    await assert.rejects(f.client.executeCurrentCanvasRegional(f.input), {
+      code: 'WORKER_VERSION_MISMATCH',
+    })
+    await assert.rejects(readFile(f.marker), { code: 'ENOENT' })
+    assert.deepEqual(await readdir(f.scratch), before)
+  })
+})
+
+test('exact reference capability reaches the actual client descriptor exchange and owned RGB output', async () => {
+  await withClient('reference-done', async (f) => {
+    const resources = path.resolve(f.scratch, '..', 'reference-models')
+    attachRegionalReferences(f.input, resources)
+    await writeRegionalReferenceResourceFixtures(resources)
+    const before = structuredClone(f.input)
+    const result = await f.client.executeCurrentCanvasRegional(f.input)
+    assert.deepEqual(f.input, before)
+    assert.deepEqual(result.pngBytes, f.rgb)
+    const observation = await record<
+      Observation & {
+        bundle: { references: { images: { referenceId: string; regionId: string }[] } }
+      }
+    >(f.observation)
+    assert.deepEqual(
+      observation.bundle.references.images.map(({ referenceId, regionId }) => ({
+        referenceId,
+        regionId,
+      })),
+      before.references!.images.map(({ referenceId, regionId }) => ({ referenceId, regionId })),
+    )
+    await assertStageReleased(await record<ChildMarker>(f.marker))
   })
 })
 

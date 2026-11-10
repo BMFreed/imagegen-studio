@@ -1,5 +1,23 @@
 # Open Questions
 
+## Latest reference consumer and actual remaining scope
+
+[Illustrious regional references](./engineering/phase-4-regional-reference-inference-research.md)
+now have a finite public Current Canvas EPS TXT consumer,13-check installed
+qualification and original-PNG/frozen Retry/result-preset evidence. This replaces
+only that part of the earlier inference refusal. Smart EPS/V, both families'
+Smart global LoRA and prior Current Canvas combinations are already implemented.
+Do not recreate those integrations from old roadmap wording.
+
+The [reconciled remaining list](./engineering/phase-4-regional-reference-inference-research.md#reconciled-remaining-mvp-boundaries)
+covers compatible Regional combinations, official Illustrious visual utility/
+capacity, actual Home/workspace/Trash operations, safe hard resource removal and
+remaining Models contexts, full exports, release Install/Repair, packaged Linux/
+NVIDIA delivery/manual updates and joint migration/recovery/NoobAI/MVP acceptance.
+Anima references/TI, inverse auto-negative and generic adapters are not new TODO.
+PP-001/005/007/008 remain **«Пока не обещать»**; no product choice is reopened.
+
+
 <!-- illustrious-smart-regional-lora-current:start -->
 ## Current Illustrious Smart Regional LoRA checkpoint
 

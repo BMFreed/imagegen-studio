@@ -1184,6 +1184,15 @@ export class GenerationQueueRepository {
     ) {
       throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The regional batch count is invalid.')
     }
+    if (
+      input.items.length !== 1 &&
+      input.items.some((item) => item.regional?.references !== undefined)
+    ) {
+      throw new GenerationQueueError(
+        'QUEUE_INPUT_INVALID',
+        'Regional reference images require one static item.',
+      )
+    }
     if (!Buffer.isBuffer(input.items[0]?.prepared?.targetPngBytes)) {
       throw new GenerationQueueError('QUEUE_INPUT_INVALID', 'The batch target is unavailable.')
     }
@@ -3664,6 +3673,9 @@ export class GenerationQueueRepository {
             ...(regional.initializationProfile !== undefined
               ? { initializationProfile: regional.initializationProfile }
               : {}),
+            ...(regional.referenceProfile !== undefined
+              ? { referenceProfile: regional.referenceProfile }
+              : {}),
             kind: regional.compositionProfile
               ? basePayload.kind === 'illustrious-outpaint'
                 ? ('illustrious-regional-outpaint' as const)
@@ -4705,6 +4717,7 @@ function comparableRegionalBatchMaterial(
       },
     },
     outpaintInfill: material.outpaintInfill,
+    referenceProfile: material.referenceProfile,
   }
 }
 
@@ -4937,6 +4950,9 @@ function frozenBatchPayloadJson(
         compositionProfile: regional.compositionProfile,
         ...(regional.initializationProfile !== undefined
           ? { initializationProfile: regional.initializationProfile }
+          : {}),
+        ...(regional.referenceProfile !== undefined
+          ? { referenceProfile: regional.referenceProfile }
           : {}),
         kind:
           base.kind === 'illustrious-outpaint'
@@ -5561,6 +5577,11 @@ function managerDetails(row: Selectable<GenerationQueueItem>): GenerationQueueEn
       modelVersion: context.model.reference.versionName,
       negativePrompt: context.prompts.negative,
       prompt: context.prompts.positive,
+      ...(isInvokeRegionalQueueOperation(payload.kind) &&
+      'referenceProfile' in payload &&
+      payload.referenceProfile !== undefined
+        ? { requiresRegionalReferenceImages: true }
+        : {}),
       ...(isInvokeRegionalQueueOperation(payload.kind) && (payload.workerJob.loras?.length ?? 0) > 0
         ? { requiresRegionalLora: true }
         : {}),

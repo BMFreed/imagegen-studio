@@ -427,6 +427,7 @@ function retryReason(item: GenerationQueueEntry): string | null {
     item.details?.requiresSmartPatchRegionalOutpaint,
     item.details?.requiresSmartPatchRegionalTxt2Img,
     item.details?.requiresSmartPatchRegionalImg2Img,
+    item.details?.requiresRegionalReferenceImages,
   )
   if (operationReason) {
     return operationReason

@@ -8,6 +8,10 @@ import { Readable } from 'node:stream'
 
 import { LAMA_OUTPAINT_ARTIFACT } from '../runtime/lama-manifest.js'
 import {
+  REGIONAL_REFERENCE_ARTIFACTS,
+  REGIONAL_REFERENCE_VISION_CONFIG_ARTIFACT,
+} from '../runtime/regional-reference-manifest.js'
+import {
   ANIMA_BASE_1_0_CHECKPOINT,
   ANIMA_QWEN3_0_6B_ENCODER,
   ANIMA_QWEN_IMAGE_VAE,
@@ -53,7 +57,8 @@ const BLOCKED_IPV6 = new BlockList()
 BLOCKED_IPV6.addSubnet('2001:db8::', 32, 'ipv6')
 BLOCKED_IPV6.addSubnet('2001:10::', 28, 'ipv6')
 
-export type ModelDownloadSource = 'anima-huggingface' | 'civitai' | 'invoke-lama'
+export type ModelDownloadSource =
+  'anima-huggingface' | 'civitai' | 'invoke-lama' | 'invoke-regional-reference'
 
 export interface ModelDownloadInput {
   /** Main-process token. Never pass this object through renderer IPC or a log. */
@@ -66,7 +71,7 @@ export interface ModelDownloadInput {
   readonly source: ModelDownloadSource
   /** App-owned private staging directory; the caller owns the final artifact destination. */
   readonly stagingDirectory: string
-  /** A CivitAI file-specific URL or an exact pinned Anima/LaMa manifest artifact URL. */
+  /** A CivitAI file-specific URL or an exact pinned internal manifest artifact URL. */
   readonly url: string
 }
 
@@ -231,7 +236,14 @@ export class ModelDownloader {
         )
       }
       const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
-      if (/^(text\/|application\/(?:json|xml|xhtml\+xml))/.test(contentType)) {
+      const isExactVisionConfig =
+        input.source === 'invoke-regional-reference' &&
+        input.url === REGIONAL_REFERENCE_VISION_CONFIG_ARTIFACT.url &&
+        /^(?:application\/json|text\/plain)(?:;|$)/.test(contentType)
+      if (
+        /^(text\/|application\/(?:json|xml|xhtml\+xml))/.test(contentType) &&
+        !isExactVisionConfig
+      ) {
         throw new ModelDownloadError(
           'DOWNLOAD_INVALID_RESPONSE',
           'The download did not contain a model file.',
@@ -512,6 +524,21 @@ function validateInitialUrl(input: ModelDownloadInput): URL {
         )
       }
 
+      break
+    }
+    case 'invoke-regional-reference': {
+      const artifact = REGIONAL_REFERENCE_ARTIFACTS.find((entry) => entry.url === input.url)
+      if (
+        artifact === undefined ||
+        input.expectedBytes !== artifact.sizeBytes ||
+        input.expectedSha256 !== artifact.sha256 ||
+        input.bearerToken !== undefined
+      ) {
+        throw new ModelDownloadError(
+          'DOWNLOAD_INVALID_SOURCE',
+          'The regional reference resource source or identity is invalid.',
+        )
+      }
       break
     }
     default: {

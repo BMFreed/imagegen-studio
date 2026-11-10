@@ -103,6 +103,7 @@ import { parseAcceptedGenerationBaseV1 } from './regional-queued-generation.js'
 import {
   captureRegionalWorkerInput,
   RegionalOutpaintInfillSchema,
+  verifyRegionalReferenceWorkerResources,
 } from './regional-worker-request.js'
 import { SmartPatchGenerationProcessor } from './smart-patch-generation-processor.js'
 
@@ -2389,6 +2390,12 @@ export class GenerationOrchestrator {
             stagingSessionId,
           })
           assertCurrent()
+          for (const item of items) {
+            if (item.regional.references) {
+              await verifyRegionalReferenceWorkerResources(item.regional.references)
+              assertCurrent()
+            }
+          }
         },
         projectPath: project.canonicalPath,
         stagingSessionId,

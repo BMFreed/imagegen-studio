@@ -84,8 +84,10 @@ export interface ProjectGenerationActionState {
   regionalInvokeInitializationSupported?: boolean
   /** Explicit public regional LoRA support; absence never enables an active global stack. */
   regionalLoraSupported?: boolean
-  /** Source-bound mixed-alpha regional execution, independently qualified from opaque IMG. */
   regionalOutpaintSupported?: boolean
+  /** Source-bound mixed-alpha regional execution, independently qualified from opaque IMG. */
+  /** Separate exact original-image attention consumer; regional text support never grants it. */
+  regionalReferenceImagesSupported?: boolean
   /** Explicit finite Regional Guidance support; older responses must remain unavailable. */
   regionalSupported?: boolean
   /** Explicit selected-VAE/precision support; legacy Embedded/FP16 needs no new opt-in. */
@@ -214,6 +216,7 @@ export function isProjectGenerationActionState(
         'regionalImg2ImgSupported',
         'regionalImg2ImgVaeSupported',
         'regionalOutpaintSupported',
+        'regionalReferenceImagesSupported',
         'regionalImg2ImgCfgRescaleSupported',
         'regionalImg2ImgEulerASupported',
         'regionalImg2ImgDpmpp2mSupported',
@@ -305,6 +308,8 @@ export function isProjectGenerationActionState(
       typeof value['regionalImg2ImgSupported'] !== 'boolean') ||
     (value['regionalImg2ImgVaeSupported'] !== undefined &&
       typeof value['regionalImg2ImgVaeSupported'] !== 'boolean') ||
+    (value['regionalReferenceImagesSupported'] !== undefined &&
+      typeof value['regionalReferenceImagesSupported'] !== 'boolean') ||
     (value['regionalOutpaintSupported'] !== undefined &&
       typeof value['regionalOutpaintSupported'] !== 'boolean') ||
     (value['regionalVPredictionImageSupported'] !== undefined &&

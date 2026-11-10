@@ -686,6 +686,7 @@ if (!gotInstanceLock) {
             models: modelService,
             orchestrator: recoveredGeneration.orchestrator,
             projects: projectService,
+            regionalReferenceResources: recoveredGeneration.regionalReferenceResources,
             scratchBasePath: path.join(paths.dataRoot, 'scratch'),
           })
         : null

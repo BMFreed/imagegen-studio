@@ -2,10 +2,19 @@ import { LAMA_OUTPAINT_IDENTITY_V1 } from '../../shared/projects/alpha-outpaint.
 import type { AnimaWorkerRequest } from '../../shared/projects/anima-worker-request.js'
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
 import { IllustriousNoiseProfileV1Schema } from '../../shared/projects/illustrious-noise-profile.js'
+import { RegionalReferenceImageSchema } from '../../shared/projects/project-schema.js'
 import {
   type RegionalInitializationProfile,
   RegionalInitializationProfileSchema,
 } from '../../shared/projects/regional-initialization-profile.js'
+import {
+  REGIONAL_REFERENCE_INFERENCE_PROFILE,
+  REGIONAL_REFERENCE_MAX_BYTES,
+  REGIONAL_REFERENCE_MAX_IMAGES,
+  REGIONAL_REFERENCE_MAX_PIXELS,
+  REGIONAL_REFERENCE_MAX_SIDE,
+  REGIONAL_REFERENCE_MAX_TOTAL_BYTES,
+} from '../../shared/projects/regional-reference-inference.js'
 
 import { createHash } from 'node:crypto'
 import { type BigIntStats, constants } from 'node:fs'
@@ -20,6 +29,7 @@ import type { IllustriousOutpaintRequestV1 } from './outpaint-worker-request.js'
 import type { CurrentCanvasRegionalRecipe } from './project-current-canvas-regional-recipe.js'
 import type { VerifiedWorkerImage } from './worker-client.js'
 
+import { verifyInferenceAuxiliaryFiles } from '../runtime/inference-auxiliary-resources.js'
 import {
   type AnimaRegionalWorkerInput,
   captureAnimaRegionalWorkerInput,
@@ -64,7 +74,22 @@ export interface RegionalWorkerInput {
   negativePooledSourceId: string
   positivePooledSourceId: string
   recipe: CurrentCanvasRegionalRecipe
+  references?: RegionalWorkerReferences
   request: RegionalGenerationRequestV1
+}
+
+export interface RegionalWorkerReferences {
+  images: {
+    image: { bytes: Uint8Array; byteSize: number; height: number; sha256: string; width: number }
+    referenceId: string
+    regionId: string
+  }[]
+  profile: typeof REGIONAL_REFERENCE_INFERENCE_PROFILE
+  resources: {
+    adapter: RegionalWorkerFile
+    visionConfig: RegionalWorkerFile
+    visionModel: RegionalWorkerFile
+  }
 }
 
 export type OperationalRegionalWorkerInput = AnimaRegionalWorkerInput | RegionalWorkerInput
@@ -297,13 +322,70 @@ const recipeSchema = v.strictObject({
           source: v.picklist(['current-canvas', 'regional']),
         }),
         positive: v.nullable(prompt),
-        referenceImages: v.optional(v.strictTuple([])),
+        referenceImages: v.optional(
+          v.pipe(v.array(RegionalReferenceImageSchema), v.maxLength(REGIONAL_REFERENCE_MAX_IMAGES)),
+        ),
         regionId: v.pipe(v.string(), v.uuid()),
       }),
     ),
     v.maxLength(3),
   ),
 })
+const referenceResourceSchema = v.strictObject({
+  byteSize: integer(1),
+  path: filePath,
+  sha256: digest,
+})
+const referenceImageSchema = v.strictObject({
+  bytes: ownedAlpha,
+  byteSize: integer(1, REGIONAL_REFERENCE_MAX_BYTES),
+  height: integer(1, REGIONAL_REFERENCE_MAX_SIDE),
+  sha256: digest,
+  width: integer(1, REGIONAL_REFERENCE_MAX_SIDE),
+})
+const referencesSchema = v.strictObject({
+  images: v.pipe(
+    v.array(
+      v.strictObject({
+        image: referenceImageSchema,
+        referenceId: v.pipe(v.string(), v.uuid()),
+        regionId: v.pipe(v.string(), v.uuid()),
+      }),
+    ),
+    v.minLength(1),
+    v.maxLength(REGIONAL_REFERENCE_MAX_IMAGES),
+  ),
+  profile: v.literal(REGIONAL_REFERENCE_INFERENCE_PROFILE),
+  resources: v.strictObject({
+    adapter: v.strictObject({
+      ...referenceResourceSchema.entries,
+      byteSize: integer(1, 1024 ** 3),
+    }),
+    visionConfig: v.strictObject({
+      ...referenceResourceSchema.entries,
+      byteSize: integer(1, 65_536),
+    }),
+    visionModel: v.strictObject({
+      ...referenceResourceSchema.entries,
+      byteSize: integer(1, 3 * 1024 ** 3),
+    }),
+  }),
+})
+
+/** Same descriptor verifier as trusted auxiliary installation; frozen Retry verifies before SQL. */
+export async function verifyRegionalReferenceWorkerResources(
+  references: RegionalWorkerReferences,
+): Promise<void> {
+  await verifyInferenceAuxiliaryFiles(
+    Object.entries(references.resources).map(([role, resource]) => ({
+      byteSize: resource.byteSize,
+      managedPath: resource.path,
+      maximumBytes:
+        role === 'visionConfig' ? 65_536 : role === 'adapter' ? 1024 ** 3 : 3 * 1024 ** 3,
+      sha256: resource.sha256,
+    })),
+  )
+}
 const inputSchema = v.strictObject({
   compositionProfile: v.optional(v.literal('invoke-canvas-v1')),
   globalNegativeCoverage: coverageSchema,
@@ -313,6 +395,7 @@ const inputSchema = v.strictObject({
   negativePooledSourceId: v.string(),
   positivePooledSourceId: v.string(),
   recipe: recipeSchema,
+  references: v.optional(referencesSchema),
   request: requestSchema,
 })
 
@@ -327,6 +410,7 @@ export function captureRegionalWorkerInput(input: RegionalWorkerInput): Regional
     }
     detached = result.output
     validateAgreement(detached)
+    validateReferenceAgreement(detached)
     const dpm =
       detached.request.job.sampling.scheduler === 'dpmpp_2m' ||
       detached.request.job.sampling.scheduler === 'dpmpp_2m_k'
@@ -395,6 +479,7 @@ export async function prepareRegionalWorkerRequest(
     detached.request.job.checkpoint,
     ...(detached.request.job.loras ?? []),
     ...(detached.request.job.vae ? [detached.request.job.vae] : []),
+    ...Object.values(detached.references?.resources ?? {}),
     ...embeddingResources(detached.recipe),
   ]
   for (const resource of sources) {
@@ -455,7 +540,7 @@ export async function prepareRegionalWorkerRequest(
   return await prepareOwnedRegionalWorkerRequest({
     base,
     baseIdentity,
-    materialize: async (operationalRequest, alphaDescriptor) => {
+    materialize: async (operationalRequest, alphaDescriptor, referenceDescriptor) => {
       const request = operationalRequest as RegionalGenerationRequestV1
       const regions = []
       for (const [index, region] of detached.recipe.regions.entries()) {
@@ -498,6 +583,26 @@ export async function prepareRegionalWorkerRequest(
         negativePooledSourceId: detached.negativePooledSourceId,
         positivePooledSourceId: detached.positivePooledSourceId,
         recipe: { ...detached.recipe, regions },
+        ...(detached.references
+          ? {
+              references: {
+                ...detached.references,
+                images: await Promise.all(
+                  detached.references.images.map(async (entry, index) => ({
+                    image: {
+                      $referencePng: {
+                        ...(await referenceDescriptor(entry.image.bytes, `reference-${index}.png`)),
+                        height: entry.image.height,
+                        width: entry.image.width,
+                      },
+                    },
+                    referenceId: entry.referenceId,
+                    regionId: entry.regionId,
+                  })),
+                ),
+              },
+            }
+          : {}),
         request: nativeRequest,
         schemaVersion: 1,
       }
@@ -518,6 +623,7 @@ export async function prepareOwnedRegionalWorkerRequest<
   materialize: (
     request: OperationalRegionalGenerationRequestV1,
     alpha: (samples: Uint8Array, name: string) => Promise<{ $alpha8: RegionalWorkerFile }>,
+    reference: (bytes: Uint8Array, name: string) => Promise<RegionalWorkerFile>,
   ) => Promise<unknown>
   owner?: InferenceWorkerOwner
   request: T
@@ -563,7 +669,22 @@ export async function prepareOwnedRegionalWorkerRequest<
       await writeFile(file, bytes, { flag: 'wx', mode: 0o600 })
       return { $alpha8: descriptor(file, bytes) }
     }
-    const bundle = await input.materialize(request, alphaDescriptor)
+    let referenceBytes = 0
+    const referenceDescriptor = async (pixels: Uint8Array, name: string) => {
+      referenceBytes += pixels.byteLength
+      if (
+        !/^reference-[0-2]\.png$/.test(name) ||
+        pixels.byteLength > REGIONAL_REFERENCE_MAX_BYTES ||
+        referenceBytes > REGIONAL_REFERENCE_MAX_TOTAL_BYTES
+      ) {
+        throw invalid('Regional reference PNGs exceed their fixed roles or independent byte limit.')
+      }
+      const bytes = Buffer.from(pixels)
+      const file = path.join(root, name)
+      await writeFile(file, bytes, { flag: 'wx', mode: 0o600 })
+      return descriptor(file, bytes)
+    }
+    const bundle = await input.materialize(request, alphaDescriptor, referenceDescriptor)
     assertJsonTree(bundle)
     const bytes = Buffer.from(JSON.stringify(bundle), 'utf8')
     if (bytes.length > MAX_BUNDLE_BYTES) {
@@ -729,6 +850,86 @@ export function withinRegionalPath(parent: string, child: string): boolean {
     !relative.startsWith(`..${path.sep}`) &&
     !path.isAbsolute(relative)
   )
+}
+
+/** Invoke's ordered per-image fields retain their owner, original pixels and separate masks. */
+function validateReferenceAgreement(input: v.InferOutput<typeof inputSchema>): void {
+  const authored = input.recipe.regions.flatMap((region) =>
+    (region.referenceImages ?? []).map((reference) => ({ reference, regionId: region.regionId })),
+  )
+  const references = input.references
+  if (references === undefined) {
+    if (authored.length !== 0) {
+      throw invalid(
+        'Regional reference images require their exact execution profile and original PNGs.',
+      )
+    }
+    return
+  }
+  const { job } = input.request
+  if (
+    input.compositionProfile !== 'invoke-canvas-v1' ||
+    input.initializationProfile !== undefined ||
+    input.request.type !== 'generate-illustrious-txt2img' ||
+    job.checkpoint.predictionType !== 'epsilon' ||
+    job.sampling.scheduler !== 'euler' ||
+    (job.sampling.cfgRescale ?? 0) !== 0 ||
+    job.sampling.noiseProfile.rescaleBetasZeroSnr ||
+    job.sampling.noiseProfile.timestepSpacing !== 'leading' ||
+    job.vaePrecision !== 'FP16' ||
+    job.vae != null ||
+    (job.loras?.length ?? 0) !== 0 ||
+    job.bbox.width < 64 ||
+    job.bbox.height < 64 ||
+    job.bbox.width > 512 ||
+    job.bbox.height > 512 ||
+    job.bbox.width % 8 !== 0 ||
+    job.bbox.height % 8 !== 0 ||
+    input.recipe.item.iteration !== 0 ||
+    input.recipe.item.promptPairIndex !== 0 ||
+    input.recipe.globalEmbeddings.positive.length !== 0 ||
+    input.recipe.globalEmbeddings.negative.length !== 0 ||
+    input.recipe.regions.some(
+      (region) =>
+        region.embeddings.positive.length !== 0 || region.embeddings.negative.length !== 0,
+    ) ||
+    authored.length !== references.images.length
+  ) {
+    throw invalid(
+      'Regional reference images require the finite Illustrious EPS TXT Euler/Normal embedded FP16 profile.',
+    )
+  }
+  let aggregate = 0
+  for (const [index, entry] of references.images.entries()) {
+    const owner = authored[index]
+    const image = entry.image
+    const bytes = Buffer.from(image.bytes)
+    aggregate += bytes.length
+    if (
+      entry.regionId !== owner.regionId ||
+      entry.referenceId !== owner.reference.id ||
+      image.width !== owner.reference.asset.width ||
+      image.height !== owner.reference.asset.height ||
+      image.byteSize !== owner.reference.asset.bytes ||
+      image.sha256 !== owner.reference.asset.sha256 ||
+      bytes.length !== image.byteSize ||
+      aggregate > REGIONAL_REFERENCE_MAX_TOTAL_BYTES ||
+      image.width * image.height > REGIONAL_REFERENCE_MAX_PIXELS ||
+      createHash('sha256').update(bytes).digest('hex') !== image.sha256 ||
+      bytes.length < 33 ||
+      !bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) ||
+      bytes.readUInt32BE(8) !== 13 ||
+      bytes.toString('ascii', 12, 16) !== 'IHDR' ||
+      bytes.readUInt32BE(16) !== image.width ||
+      bytes.readUInt32BE(20) !== image.height
+    ) {
+      throw invalid('A regional reference differs from its ordered owner or original PNG identity.')
+    }
+  }
+  const resources = Object.values(references.resources)
+  if (new Set(resources.map((resource) => resource.path)).size !== resources.length) {
+    throw invalid('Regional reference model roles must identify distinct files.')
+  }
 }
 
 function validateAgreement(input: v.InferOutput<typeof inputSchema>): void {

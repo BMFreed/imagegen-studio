@@ -20,12 +20,99 @@ import {
   captureRegionalQueuedMaterial,
   loadRegionalQueuedFiles,
   loadRegionalQueuedInput,
+  parseAcceptedGenerationBaseV1,
+  parseFrozenQueuedRegionalInvokeV1,
   parseFrozenQueuedRegionalV1,
 } from './regional-queued-generation.js'
+import {
+  attachRegionalReferences,
+  REFERENCE_PNG,
+  writeRegionalReferenceResourceFixtures,
+} from './test-fixtures/regional-reference.js'
 
 const sha = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
 const isInvalid = (error: unknown): boolean =>
   error instanceof Error && 'code' in error && error.code === 'QUEUE_INPUT_INVALID'
+
+test('reference queue roles survive frozen reload independently of current authoring and provenance', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'igs-reference-queue-'))
+  const resourcesRoot = await mkdtemp(path.join(tmpdir(), 'igs-reference-models-'))
+  try {
+    const input = inputFixture(root)
+    attachRegionalReferences(input, resourcesRoot)
+    await writeRegionalReferenceResourceFixtures(resourcesRoot)
+    const material = captureRegionalQueuedMaterial(input)
+    const payload = parseFrozenQueuedRegionalInvokeV1(
+      JSON.stringify({
+        ...frozenPayload(input, material.regional),
+        compositionProfile: 'invoke-canvas-v1',
+        kind: 'illustrious-regional-txt2img',
+        referenceProfile: material.referenceProfile,
+      }),
+    )
+    for (const [name, bytes] of Object.entries(material.files)) {
+      await writeFile(path.join(root, name), bytes, { mode: 0o600 })
+    }
+    const expected = structuredClone(input)
+    const loading = loadRegionalQueuedInput(root, payload, input.request)
+    input.references!.images[0].image.bytes.fill(0)
+    input.recipe.regions[0].referenceImages = []
+    const loaded = await loading
+    assert.deepEqual(loaded, expected)
+    assert.deepEqual(Buffer.from(loaded.references!.images[1].image.bytes), REFERENCE_PNG)
+    assert.deepEqual(material.files['reference-0.png'], material.files['reference-1.png'])
+    const base = parseAcceptedGenerationBaseV1(JSON.stringify(payload))
+    assert.equal(base.kind, 'illustrious-txt2img')
+    assert.equal('referenceProfile' in base, false)
+    assert.equal('regional' in base, false)
+    const { referenceProfile: _profile, ...lost } = payload
+    await assert.rejects(loadRegionalQueuedInput(root, lost, expected.request), isInvalid)
+    await writeFile(path.join(root, 'reference-0.png'), Buffer.alloc(REFERENCE_PNG.length))
+    await assert.rejects(loadRegionalQueuedInput(root, payload, expected.request), isInvalid)
+  } finally {
+    await rm(root, { force: true, recursive: true })
+    await rm(resourcesRoot, { force: true, recursive: true })
+  }
+})
+
+test('reference queue refuses crossed PNG roles and orphan profile before ordinary fallback', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'igs-reference-roles-'))
+  try {
+    const input = inputFixture(root)
+    attachRegionalReferences(input, path.join(root, 'external-models'))
+    const material = captureRegionalQueuedMaterial(input)
+    const value = {
+      ...frozenPayload(input, material.regional),
+      compositionProfile: 'invoke-canvas-v1',
+      kind: 'illustrious-regional-txt2img',
+      referenceProfile: material.referenceProfile,
+    }
+    assert.throws(
+      () => parseFrozenQueuedRegionalV1(JSON.stringify({ ...value, kind: 'illustrious-regional' })),
+      isInvalid,
+    )
+    assert.throws(
+      () =>
+        parseFrozenQueuedRegionalInvokeV1(
+          JSON.stringify({ ...value, referenceProfile: 'unsupported' }),
+        ),
+      isInvalid,
+    )
+    const metadata = JSON.parse(material.files['regional.json'].toString('utf8'))
+    metadata.references.images[0].image.$referencePng.file = 'reference-1.png'
+    const bytes = Buffer.from(JSON.stringify(metadata))
+    material.files['regional.json'] = bytes
+    const payload = parseFrozenQueuedRegionalInvokeV1(
+      JSON.stringify({ ...value, regional: { byteSize: bytes.length, sha256: sha(bytes) } }),
+    )
+    for (const [name, content] of Object.entries(material.files)) {
+      await writeFile(path.join(root, name), content, { mode: 0o600 })
+    }
+    await assert.rejects(loadRegionalQueuedInput(root, payload, input.request), isInvalid)
+  } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})
 
 interface Fixture {
   input: RegionalWorkerInput

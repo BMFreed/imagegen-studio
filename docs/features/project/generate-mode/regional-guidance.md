@@ -1,5 +1,55 @@
 # Regional Guidance
 
+<!-- regional-reference-inference-current:start -->
+## Latest checkpoint: Illustrious regional reference TXT — 10.11.2026
+
+[Research, executed evidence and remaining MVP boundaries](../../../engineering/phase-4-regional-reference-inference-research.md).
+The original authored reference PNG now reaches an actual public Current Canvas
+Illustrious EPS TXT consumer through the existing regional conditioning,
+attention, denoising and output owners. This supersedes the earlier blanket
+reference-inference refusal only for this finite combination.
+
+Require `illustrious-regional-reference-txt2img-v1` independently of the base
+public regional grant; freeze `invoke-illustrious-regional-reference-txt2img-v1`.
+Euler/Normal, false/leading noise, CFG(1,30], steps1–200, embedded FP16 VAE,
+64–512 divisible8, one static item, existing text/attention limits and at most
+three original references across at most three enabled regions. Per-PNG32MiB,
+aggregate96MiB; original import dimensions/pixels remain independently bounded.
+Enabled LoRA, active TI, selected VAE, other methods/objectives/modes, dynamic
+prompts/batch and Smart references remain outside this consumer. Anima references,
+inverse auto-negative and generic adapter workflows remain exclusions.
+
+The exact internal Standard SDXL ViT-H adapter/vision pair is verified before
+admission, frozen Retry and offline loading. Each image retains its ordered
+region/reference identity, original PNG SHA/dimensions and its owning Regional
+Guidance Layer's mask;
+identical images and empty/outside masks do not disappear. Image-only regions
+and empty global negative text work. Invoke's fixed full/weight1/all-step image
+terms use separate masked SDPA before the native output projection; unconditional
+image tokens are projected from zero vision embeddings. Masks use alpha>0,
+nearest-to-latent and ceil pooling. Existing text and Smart KEEP/contribution
+owners are unchanged. This does not promise final outside-region RGB equality.
+
+Only operational queue/descriptor metadata gains fixed PNG roles and the private
+profile. There is no new portable field, editor, sampler or queue. Regional
+Guidance remains in the live Project and out of accepted provenance, Compare
+and result presets. Generate/Retry do not Add or Save; frozen Retry ignores
+subsequent saved reference/settings edits. Release runtime Install/Repair is
+still open; the qualification reuses one preprovisioned exact environment/pair.
+
+ROOT: 1981 affected/neighbor Main/shared/Retry PASS plus81 overlapping follow-up;
+713 selected Python PASS, 272 browser PASS. Native CPU mutations:20 selections,
+14 GREEN/six post-PNG semantic RED,33 PNG witnesses, exact1637-file restoration.
+One final installed cohort:13 checks/four requests/three PNGs/one step1 Cancel,
+exact restarted A Retry, explicit Add/Undo/Redo/Save/reopen, real result-preset
+exclusion and three normal physical lifetimes. Official Illustrious XLv0.1,
+one reference,512/EulerNormal/FP16/N6; A/B differ only by the reference and
+change754789 visible RGB channels. Earlier failed setup/fixture attempts and
+4GiB workspace OOM attempts are retained separately. Maximum admitted counts
+are not installed capacity qualification. No visual-usefulness or release/MVP
+acceptance follows. PP-001/005/007/008 remain **«Пока не обещать»**.
+<!-- regional-reference-inference-current:end -->
+
 <!-- illustrious-smart-regional-lora-current:start -->
 ## Current Illustrious/NoobAI Smart Regional global LoRA — 10.11.2026
 

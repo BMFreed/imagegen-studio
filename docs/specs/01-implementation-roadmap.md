@@ -1,5 +1,23 @@
 # Implementation Roadmap
 
+## Latest implementation checkpoint — regional reference TXT
+
+[Finite public Illustrious EPS TXT reference inference](../engineering/phase-4-regional-reference-inference-research.md)
+continues base18d15c2a through existing owners. Actual installed qualification
+passes13 checks/four requests/three PNGs/step1 Cancel/exact restarted Retry and
+three normal lifetimes, including explicit Add/Undo/Redo/Save-reopen and result
+preset exclusion. The independent grant/profile binds original PNGs and exact
+Standard ViT-H resources; compatible scope, visual usefulness/capacity and final
+release acceptance remain open. PP-001/005/007/008 remain «Пока не обещать».
+
+Use the [current code-based remaining list](../engineering/phase-4-regional-reference-inference-research.md#reconciled-remaining-mvp-boundaries),
+not this document's old Phase4 introduction. Public Smart EPS/V, both families'
+Smart global LoRA, Compare/presets and prior Current Canvas regional consumers
+are completed checkpoints. Home/workspace/Trash, hard removal/remaining Models
+contexts, composited exports and runtime/package/update/packaged acceptance
+still have concrete missing owners or release gates.
+
+
 ## Границы плана и исходники-ориентиры
 
 Первый рабочий релиз — одно Linux/NVIDIA desktop-приложение с Illustrious

@@ -56,6 +56,11 @@ from .illustrious_regional_recipe import (
     _Layout,  # pyright: ignore[reportPrivateUsage]
     _recipe_inputs,  # pyright: ignore[reportPrivateUsage]
 )
+from .illustrious_regional_references import (
+    CapturedRegionalReferences,
+    capture_regional_references,
+    prepare_regional_references,
+)
 from .illustrious_regional_vae import (
     prepare_owned_regional_vae,
     verify_regional_vae_resource,
@@ -236,6 +241,7 @@ class RegionalRequest:
     composition_profile: str | None = None
     report_progress: bool = False
     initialization_profile: str | None = None
+    references: CapturedRegionalReferences | None = None
 
 
 def _require(condition: bool, message: str) -> None:
@@ -537,6 +543,12 @@ def parse_regional_request(value: object) -> RegionalRequest:
             if type(cast(object, bundle_value)) is dict
             and "initializationProfile" in cast(dict[str, Any], bundle_value)
             else set[str]()
+        )
+        | (
+            {"references"}
+            if type(cast(object, bundle_value)) is dict
+            and "references" in cast(dict[str, Any], bundle_value)
+            else set[str]()
         ),
         "Private regional bundle",
     )
@@ -658,8 +670,50 @@ def parse_regional_request(value: object) -> RegionalRequest:
     positive = _global_coverage(
         bundle["globalPositiveCoverage"], snapshots, width=bbox.width // 8, height=bbox.height // 8
     )
+    references = None
+    text_recipe = recipe
+    if "references" in bundle:
+        _require(
+            type(command) is GenerateIllustriousTxt2ImgCommand
+            and composition_profile == "invoke-canvas-v1"
+            and initialization_profile is None
+            and parameters.scheduler == "euler"
+            and parameters.cfg_rescale == 0
+            and parameters.prediction_type == "epsilon"
+            and parameters.vae is None
+            and parameters.vae_precision == "FP16"
+            and not parameters.loras
+            and not parameters.positive_embeddings
+            and not parameters.negative_embeddings
+            and 1 < parameters.cfg_scale <= 30
+            and parameters.noise_profile is not None
+            and parameters.noise_profile.rescale_betas_zero_snr is False
+            and parameters.noise_profile.timestep_spacing == "leading"
+            and 64 <= bbox.width <= 512
+            and 64 <= bbox.height <= 512
+            and bundle["layout"] == "cfg-negative-first"
+            and recipe.get("item", {}).get("iteration") == 0
+            and recipe.get("item", {}).get("promptPairIndex") == 0,
+            "References require finite Current Canvas epsilon Euler TXT with embedded FP16 VAE.",
+        )
+
+        def read_reference(descriptor: object, maximum: int) -> bytes:
+            return _snapshot(_descriptor(descriptor, root, maximum))
+
+        references = capture_regional_references(
+            bundle["references"],
+            recipe,
+            root=root,
+            reserved=snapshots.reserved | set(snapshots.descriptors),
+            checkpoint=parameters.checkpoint_path,
+            read_image=read_reference,
+        )
+        # Original authored metadata stays on RegionalRequest. Legacy numerical
+        # recipe validation still refuses references unless this exact transport
+        # and finite profile have bound every authored record above.
+        text_recipe = _reference_text_recipe(recipe)
     bbox, pairs, _, _, _, _ = _recipe_inputs(
-        recipe,
+        text_recipe,
         execution_parameters,
         encoding_profile,
         bundle["layout"],
@@ -679,6 +733,16 @@ def parse_regional_request(value: object) -> RegionalRequest:
         "Checkpoint must be outside private regional staging.",
     )
     _verify_resources(pairs, root, checkpoint)
+    if references is not None:
+        _require(
+            all(
+                pair.resources is not None
+                and not pair.resources.positive
+                and not pair.resources.negative
+                for pair in pairs
+            ),
+            "Reference inference does not admit active textual inversions.",
+        )
     verify_regional_lora_resources(parameters.loras, root, checkpoint)
     if prepared_vae:
         verify_regional_vae_resource(parameters.vae, root, checkpoint)
@@ -695,7 +759,15 @@ def parse_regional_request(value: object) -> RegionalRequest:
         composition_profile=composition_profile,
         report_progress=envelope.get("reportProgress") is True,
         initialization_profile=initialization_profile,
+        references=references,
     )
+
+
+def _reference_text_recipe(recipe: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **recipe,
+        "regions": [{**region, "referenceImages": []} for region in recipe["regions"]],
+    }
 
 
 def install_capture_hooks(pipeline: Any) -> None:
@@ -723,6 +795,13 @@ def execute_regional_request(
     )
     torch = cast(Any, runtime.torch)
     with torch.no_grad():
+        # Invoke encodes images before acquiring the native UNet. No CLIP Vision
+        # or image projection module survives this separate prepass.
+        prepared_references = (
+            prepare_regional_references(request.references, runtime)
+            if request.references is not None
+            else None
+        )
         outpaint = type(request.command) is GenerateIllustriousOutpaintCommand
         prepared_outpaint = (
             prepare_worker_outpaint(cast(GenerateIllustriousOutpaintCommand, request.command))
@@ -786,7 +865,9 @@ def execute_regional_request(
         return cast(
             dict[str, object],
             publish(
-                request.recipe,
+                _reference_text_recipe(request.recipe)
+                if request.references is not None
+                else request.recipe,
                 command=execution_command,
                 pipeline=pipeline,
                 runtime=runtime,
@@ -800,6 +881,7 @@ def execute_regional_request(
                 positive_pooled_source_id=request.positive_pooled_source_id,
                 bindings=bindings,
                 layout=request.layout,
+                **({"references": prepared_references} if prepared_references is not None else {}),
                 **(
                     {"img2img": True, "outpaint": True, "_prepared_outpaint": prepared_outpaint}
                     if outpaint

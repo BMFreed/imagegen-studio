@@ -9,6 +9,13 @@ import {
 import { GENERATION_BATCH_JOB_LIMIT } from './generation-batch-policy.js'
 import { getEffectiveDynamicPromptSettings } from './generation-dynamic-settings.js'
 import { activePromptEmbeddingRefs } from './prompt-embeddings.js'
+import {
+  REGIONAL_REFERENCE_MAX_BYTES,
+  REGIONAL_REFERENCE_MAX_IMAGES,
+  REGIONAL_REFERENCE_MAX_PIXELS,
+  REGIONAL_REFERENCE_MAX_SIDE,
+  REGIONAL_REFERENCE_MAX_TOTAL_BYTES,
+} from './regional-reference-inference.js'
 
 /** Frozen Anima regional composition, shared without importing queue owners. */
 export const ANIMA_REGIONAL_COMPOSITION_PROFILE = 'invoke-krea2-global-support-v1' as const
@@ -140,6 +147,7 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   iterations: number
   loraSupported?: boolean | null
   outpaintSupported?: boolean | null
+  regionalReferenceImagesSupported?: boolean | null
   runtimeSupported?: boolean | null
   targetMode?: 'img2img' | 'outpaint' | 'txt2img' | null
   vaeSupported?: boolean | null
@@ -161,6 +169,82 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
     (draft.model.predictionType !== 'epsilon' && draft.model.predictionType !== 'v_prediction')
   ) {
     return 'Regional Guidance requires an Illustrious epsilon model on Current Canvas.'
+  }
+  const references = regions.flatMap((region) => region.referenceImages ?? [])
+  if (references.length > 0) {
+    // Invoke 4875d965 layerOps.ts → prepareCanvasInvocation.ts → addRegionalGuidance.ts:
+    // consume each original image in order with its owning mask and default full/1/0..1.
+    // Studio's first compatible consumer has an independent finite capability.
+    if (draft.model.predictionType !== 'epsilon') {
+      return 'Regional reference images require an Illustrious epsilon model.'
+    }
+    if (input.targetMode != null && input.targetMode !== 'txt2img') {
+      return 'Regional reference images currently require a transparent txt2img target.'
+    }
+    if (draft.sampling.sampler !== 'Euler' || draft.sampling.scheduler !== 'Normal') {
+      return 'Regional reference images require Euler with the Normal scheduler.'
+    }
+    if ((draft.cfgRescale ?? 0) !== 0) {
+      return 'Regional reference images currently require CFG Rescale 0.'
+    }
+    if (draft.vae !== null || (draft.vaePrecision ?? 'Auto') !== 'FP16') {
+      return 'Regional reference images require the embedded VAE with FP16 precision.'
+    }
+    if (draft.loras.some((lora) => lora.enabled)) {
+      return 'Disable global LoRAs before generating with regional reference images.'
+    }
+    const prompts = [
+      draft.positivePrompt,
+      draft.negativePrompt,
+      ...regions.flatMap((region) => [
+        ...(region.prompts?.positive ? [region.prompts.positive] : []),
+        ...(region.prompts?.useGlobalNegativePrompt === false && region.prompts.negative
+          ? [region.prompts.negative]
+          : []),
+      ]),
+    ]
+    if (input.iterations !== 1 || prompts.some((prompt) => /[{}]/u.test(prompt.text))) {
+      return 'Regional reference images currently require one image and static prompts without braces.'
+    }
+    if (
+      prompts.some(
+        (prompt) => activePromptEmbeddingRefs(prompt.text, prompt.embeddingRefs).length > 0,
+      )
+    ) {
+      return 'Remove active prompt embeddings before generating with regional reference images.'
+    }
+    if (references.length > REGIONAL_REFERENCE_MAX_IMAGES) {
+      return 'Regional reference images support at most 3 images across enabled regions per generation.'
+    }
+    if (
+      references.some(({ asset }) => asset.bytes > REGIONAL_REFERENCE_MAX_BYTES) ||
+      references.reduce((sum, { asset }) => sum + asset.bytes, 0) >
+        REGIONAL_REFERENCE_MAX_TOTAL_BYTES
+    ) {
+      return 'Regional reference images require PNG files no larger than 32 MiB each and 96 MiB in total.'
+    }
+    if (
+      references.some(
+        ({ asset }) =>
+          asset.width > REGIONAL_REFERENCE_MAX_SIDE ||
+          asset.height > REGIONAL_REFERENCE_MAX_SIDE ||
+          asset.width * asset.height > REGIONAL_REFERENCE_MAX_PIXELS,
+      )
+    ) {
+      return 'Regional reference images exceed the supported original image dimensions.'
+    }
+    if (
+      [input.document.primaryBbox.width, input.document.primaryBbox.height].some(
+        (side) => !Number.isSafeInteger(side) || side < 64 || side > 512 || side % 8 !== 0,
+      )
+    ) {
+      return 'Regional reference images require processing dimensions from 64 to 512, divisible by 8.'
+    }
+    if (input.regionalReferenceImagesSupported !== true) {
+      return input.regionalReferenceImagesSupported == null
+        ? 'Checking image engine support for regional reference images. Repair or update the runtime if support remains unavailable.'
+        : 'The current image engine does not support regional reference images. Repair or update the runtime.'
+    }
   }
   if (draft.model.predictionType === 'v_prediction') {
     if (!(
@@ -212,9 +296,6 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
       (draft.sampling.scheduler === 'Normal' || draft.sampling.scheduler === 'Karras'))
   )) {
     return 'Regional Guidance requires Euler or Euler a with the Normal scheduler, or DPM++ 2M with Normal or Karras.'
-  }
-  if (regions.some((region) => (region.referenceImages?.length ?? 0) > 0)) {
-    return 'Remove reference images from enabled regions before generating with Regional Guidance.'
   }
   const { cfgScale, steps } = draft.sampling
   if (cfgScale === null || !Number.isFinite(cfgScale) || cfgScale <= 1 || cfgScale > 30) {

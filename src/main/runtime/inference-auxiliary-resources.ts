@@ -4,6 +4,33 @@ import { lstat, mkdir, open, realpath } from 'node:fs/promises'
 import path from 'node:path'
 
 import { LAMA_OUTPAINT_ARTIFACT } from './lama-manifest.js'
+import {
+  REGIONAL_REFERENCE_ADAPTER_ARTIFACT,
+  REGIONAL_REFERENCE_VISION_CONFIG_ARTIFACT,
+  REGIONAL_REFERENCE_VISION_DIRECTORY,
+  REGIONAL_REFERENCE_VISION_MODEL_ARTIFACT,
+  type RegionalReferenceResourceRole,
+} from './regional-reference-manifest.js'
+
+export type InferenceAuxiliaryResourceRole = 'outpaint-infill' | RegionalReferenceResourceRole
+
+export interface VerifiedRegionalReferenceResource<Role extends RegionalReferenceResourceRole> {
+  readonly byteSize: number
+  readonly managedPath: string
+  readonly role: Role
+  readonly sha256: string
+}
+
+export interface VerifiedRegionalReferenceResources {
+  readonly adapter: VerifiedRegionalReferenceResource<'regional-reference-adapter'>
+  readonly visionConfig: VerifiedRegionalReferenceResource<'regional-reference-vision-config'>
+  readonly visionModel: VerifiedRegionalReferenceResource<'regional-reference-vision-model'>
+}
+
+/** Fixed engine resources only; no renderer paths, discovery, or implicit installation. */
+export interface RegionalReferenceResourceResolver {
+  resolveVerifiedRegionalReferenceResources: () => Promise<VerifiedRegionalReferenceResources>
+}
 
 export interface VerifiedOutpaintInfill {
   readonly byteSize: number
@@ -27,7 +54,9 @@ export class InferenceAuxiliaryResourceError extends Error {
   }
 }
 
-export class InferenceAuxiliaryResources implements OutpaintInfillResolver {
+export class InferenceAuxiliaryResources
+  implements OutpaintInfillResolver, RegionalReferenceResourceResolver
+{
   constructor(private readonly resourcesDirectory: string) {
     assertCanonicalPath(resourcesDirectory)
   }
@@ -47,6 +76,94 @@ export class InferenceAuxiliaryResources implements OutpaintInfillResolver {
       role: LAMA_OUTPAINT_ARTIFACT.role,
       sha256: LAMA_OUTPAINT_ARTIFACT.sha256,
     })
+  }
+
+  async resolveVerifiedRegionalReferenceResources(): Promise<VerifiedRegionalReferenceResources> {
+    const root = await canonicalDirectory(this.resourcesDirectory)
+    const descriptor = <Role extends RegionalReferenceResourceRole>(
+      directory: string,
+      manifest: {
+        readonly filename: string
+        readonly role: Role
+        readonly sha256: string
+        readonly sizeBytes: number
+      },
+    ): VerifiedRegionalReferenceResource<Role> =>
+      Object.freeze({
+        byteSize: manifest.sizeBytes,
+        managedPath: path.join(directory, manifest.filename),
+        role: manifest.role,
+        sha256: manifest.sha256,
+      })
+    try {
+      const vision = await canonicalDirectory(regionalReferenceVisionResourcePath(root))
+      const result = Object.freeze({
+        adapter: descriptor(root, REGIONAL_REFERENCE_ADAPTER_ARTIFACT),
+        visionConfig: descriptor(vision, REGIONAL_REFERENCE_VISION_CONFIG_ARTIFACT),
+        visionModel: descriptor(vision, REGIONAL_REFERENCE_VISION_MODEL_ARTIFACT),
+      })
+      const entries = Object.values(result)
+      await verifyInferenceAuxiliaryFiles(
+        entries.map((entry) => ({
+          ...entry,
+          maximumBytes: auxiliaryArtifactMaximumBytes(entry.role),
+        })),
+      )
+      await canonicalDirectory(root)
+      await canonicalDirectory(vision)
+      return result
+    } catch {
+      throw changed('The exact regional reference inference resources are unavailable or changed.')
+    }
+  }
+}
+
+/** The same whole-group fence applies to fresh resolution and durable frozen Retry. */
+export async function verifyInferenceAuxiliaryFiles(
+  entries: readonly {
+    byteSize: number
+    managedPath: string
+    maximumBytes: number
+    sha256: string
+  }[],
+): Promise<void> {
+  try {
+    const before = await Promise.all(
+      entries.map((entry) => lstat(entry.managedPath, { bigint: true })),
+    )
+    // Hash serially, then recheck the entire group after the final awaited byte verification.
+    for (const entry of entries) {
+      await verifyInferenceAuxiliaryFile(entry, entry.maximumBytes)
+    }
+    for (const [index, entry] of entries.entries()) {
+      const after = await lstat(entry.managedPath, { bigint: true })
+      if (!after.isFile() || !sameIdentity(before[index], after)) {
+        throw changed('The regional reference resources changed during verification.')
+      }
+    }
+  } catch (error) {
+    if (error instanceof InferenceAuxiliaryResourceError) {
+      throw error
+    }
+    throw changed('The exact regional reference resources are unavailable or changed.')
+  }
+}
+
+/** Separate role bounds preserve the existing LaMa verifier/installer ceiling. */
+export function auxiliaryArtifactMaximumBytes(role: InferenceAuxiliaryResourceRole): number {
+  switch (role) {
+    case 'outpaint-infill': {
+      return LAMA_OUTPAINT_ARTIFACT.sizeBytes
+    }
+    case 'regional-reference-adapter': {
+      return REGIONAL_REFERENCE_ADAPTER_ARTIFACT.sizeBytes
+    }
+    case 'regional-reference-vision-config': {
+      return REGIONAL_REFERENCE_VISION_CONFIG_ARTIFACT.sizeBytes
+    }
+    case 'regional-reference-vision-model': {
+      return REGIONAL_REFERENCE_VISION_MODEL_ARTIFACT.sizeBytes
+    }
   }
 }
 
@@ -71,21 +188,46 @@ export function outpaintInfillResourcePath(resourcesDirectory: string): string {
   return path.join(resourcesDirectory, LAMA_OUTPAINT_ARTIFACT.filename)
 }
 
+/** Canonical local-only Transformers directory, separate from runtime environments/cache. */
+export function regionalReferenceVisionResourcePath(resourcesDirectory: string): string {
+  assertCanonicalPath(resourcesDirectory)
+  return path.join(resourcesDirectory, REGIONAL_REFERENCE_VISION_DIRECTORY)
+}
+
+export async function createRegionalReferenceVisionResourceRoot(
+  resourcesDirectory: string,
+): Promise<string> {
+  const parent = await canonicalDirectory(resourcesDirectory)
+  const directory = regionalReferenceVisionResourcePath(parent)
+  await mkdir(directory, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== 'EEXIST') {
+      throw error
+    }
+  })
+  await canonicalDirectory(parent)
+  return await canonicalDirectory(directory)
+}
+
 /**
  * Descriptor-backed verifier for a bounded exact local artifact. The production resolver above
- * supplies only the fixed LaMa manifest; this generic primitive does not install/register
+ * supplies only fixed engine manifests; this generic primitive does not install/register
  * resources.
  */
-export async function verifyInferenceAuxiliaryFile(input: {
-  byteSize: number
-  managedPath: string
-  sha256: string
-}): Promise<void> {
+export async function verifyInferenceAuxiliaryFile(
+  input: {
+    byteSize: number
+    managedPath: string
+    sha256: string
+  },
+  maximumBytes: number = LAMA_OUTPAINT_ARTIFACT.sizeBytes,
+): Promise<void> {
   const { byteSize, managedPath, sha256 } = input
   if (
     !Number.isSafeInteger(byteSize) ||
     byteSize < 1 ||
-    byteSize > LAMA_OUTPAINT_ARTIFACT.sizeBytes ||
+    !Number.isSafeInteger(maximumBytes) ||
+    maximumBytes < 1 ||
+    byteSize > maximumBytes ||
     typeof sha256 !== 'string' ||
     !/^[a-f0-9]{64}$/.test(sha256)
   ) {

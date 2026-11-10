@@ -68,6 +68,7 @@ from .illustrious_regional_recipe import (
     _reservation,  # pyright: ignore[reportPrivateUsage]
     _unet_profile,  # pyright: ignore[reportPrivateUsage]
 )
+from .illustrious_regional_references import PreparedRegionalReferences
 from .illustrious_regional_vae import (
     decode_regional_latents,
     scoped_prepared_img2img_latents,
@@ -1414,6 +1415,7 @@ def run_current_canvas_regional_denoising(
     denoising_strength: float | None = None,
     keep_mask: Image.Image | None = None,
     _smart_patch_source_id: str | None = None,
+    references: PreparedRegionalReferences | None = None,
 ) -> Any:
     """Return the original native pipeline output after all owned state restores.
 
@@ -1468,6 +1470,31 @@ def run_current_canvas_regional_denoising(
     tensor_profile, resolved_noise = _execution_profile(denoising_profile, profile)
     img2img = _img2img_profile(denoising_profile)
     outpaint = _outpaint_profile(denoising_profile)
+    if references is not None:
+        _require(
+            type(references) is PreparedRegionalReferences
+            and not img2img
+            and not outpaint
+            and _smart_patch_source_id is None
+            and denoising_profile
+            in (
+                "ordinary-canvas-euler-txt2img-cpu-v2",
+                "ordinary-canvas-euler-txt2img-cuda-fp16-v2",
+            )
+            and parameters.prediction_type == "epsilon"
+            and parameters.scheduler == "euler"
+            and parameters.vae is None
+            and not parameters.loras
+            and not parameters.positive_embeddings
+            and not parameters.negative_embeddings
+            and parameters.noise_profile is not None
+            and parameters.noise_profile.rescale_betas_zero_snr is False
+            and parameters.noise_profile.timestep_spacing == "leading"
+            and 1 < parameters.cfg_scale <= 30
+            and layout == "cfg-negative-first",
+            "UNSUPPORTED",
+            "References require the explicit finite Current Canvas Euler TXT profile.",
+        )
     ancestral = _ancestral_profile(denoising_profile)
     dpmpp_2m = _dpmpp_2m_profile(denoising_profile)
     v_prediction = _v_prediction_profile(denoising_profile)
@@ -1534,6 +1561,18 @@ def run_current_canvas_regional_denoising(
         positive_pooled_source_id,
         smart_patch_source_id=_smart_patch_source_id,
     )
+    if references is not None:
+        _require(
+            64 <= bbox.width <= 512
+            and 64 <= bbox.height <= 512
+            and all(
+                pair.resources is None
+                or (not pair.resources.positive and not pair.resources.negative)
+                for pair in pairs
+            ),
+            "UNSUPPORTED",
+            "Reference inference geometry or active TI exceeds its finite profile.",
+        )
     if img2img:
         _require(
             cast(Image.Image, image).size == (bbox.width, bbox.height),
@@ -1711,6 +1750,7 @@ def run_current_canvas_regional_denoising(
                 bindings=bindings,
                 plan=plan,
                 tensor_profile=tensor_profile,
+                references=references,
                 **(
                     {
                         "_allow_empty": lambda: (

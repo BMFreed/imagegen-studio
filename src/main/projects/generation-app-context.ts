@@ -11,6 +11,7 @@ import {
   InferenceAuxiliaryResourceError,
   InferenceAuxiliaryResources,
   type OutpaintInfillResolver,
+  type RegionalReferenceResourceResolver,
 } from '../runtime/inference-auxiliary-resources.js'
 import { recoverGenerationRepositories } from './generation-bootstrap.js'
 import { GenerationOrchestrator } from './generation-orchestrator.js'
@@ -33,6 +34,7 @@ export interface RecoveredGenerationServices {
   readonly orchestrator: GenerationOrchestrator
   readonly processor: GenerationProcessor
   readonly queue: GenerationQueueRepository
+  readonly regionalReferenceResources: RegionalReferenceResourceResolver
   readonly smartPatchStaging: SmartPatchGenerationStagingRepository
   readonly staging: GenerationStagingRepository
 }
@@ -113,16 +115,27 @@ export async function createGenerationAppContext(
     )
     // A shared helper failure affects outpaint only; recovered ordinary jobs/history remain usable.
     let infillResolver: OutpaintInfillResolver
+    let regionalReferenceResources: RegionalReferenceResourceResolver
     try {
-      infillResolver = new InferenceAuxiliaryResources(
+      const auxiliary = new InferenceAuxiliaryResources(
         await createInferenceAuxiliaryResourceRoot(dependencies.dataRoot),
       )
+      infillResolver = auxiliary
+      regionalReferenceResources = auxiliary
     } catch {
       infillResolver = {
         resolveVerifiedOutpaintInfill: async () => {
           throw new InferenceAuxiliaryResourceError(
             'GENERATION_RESOURCE_CHANGED',
             'The local LaMa resource storage needs repair before outpaint can run.',
+          )
+        },
+      }
+      regionalReferenceResources = {
+        resolveVerifiedRegionalReferenceResources: async () => {
+          throw new InferenceAuxiliaryResourceError(
+            'GENERATION_RESOURCE_CHANGED',
+            'The local regional reference resource storage needs repair before generation can run.',
           )
         },
       }
@@ -145,7 +158,15 @@ export async function createGenerationAppContext(
       infillResolver,
     )
     return new OwnedGenerationAppContext(
-      { infillResolver, orchestrator, processor, queue, smartPatchStaging, staging },
+      {
+        infillResolver,
+        orchestrator,
+        processor,
+        queue,
+        regionalReferenceResources,
+        smartPatchStaging,
+        staging,
+      },
       null,
     )
   } catch (error) {

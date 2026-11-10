@@ -1,4 +1,4 @@
-"""Private tensor mechanics; no inference/worker integration or model claim.
+"""Scoped native text masks and Invoke regional image-attention residuals.
 
 Supported native profile: Torch 2.7.1 (including its local build suffix),
 Diffusers 0.40.0, exact UNet2DConditionModel/continuous Transformer2DModel,
@@ -64,6 +64,10 @@ from .illustrious_regional_attention import (
     SignedPlan,
     TokenRange,
     plan_illustrious_attention,
+)
+from .illustrious_regional_references import (
+    PreparedRegionalReferences,
+    ProjectedRegionalReference,
 )
 
 __all__ = (
@@ -644,6 +648,102 @@ def _single_unrestricted_bank(plan: AttentionPlan) -> bool:
     return True
 
 
+def _reference_bindings(
+    root: Any,
+    cross: tuple[Any, ...],
+    plan: AttentionPlan,
+    torch: Any,
+    tensor_profile: _TensorProfile,
+    references: PreparedRegionalReferences,
+) -> dict[int, tuple[Any, Any]]:
+    """Bind Invoke's complete processor indices, including the skipped attn1 sites."""
+    _require(
+        type(references) is PreparedRegionalReferences
+        and references.shape == plan.latent_shape
+        and type(references.images) is tuple
+        and 1 <= len(references.images) <= 3
+        and type(references.weights) is dict
+        and all(type(index) is int and index >= 0 for index in references.weights),
+        "INPUT_INVALID",
+        "Invalid prepared regional references.",
+    )
+    registry = getattr(root, "attn_processors", None)
+    _require(
+        type(registry) is dict,
+        "PROFILE_INVALID",
+        "References require the full native UNet attention registry.",
+    )
+    registry = cast(dict[str, Any], registry)
+    expected: dict[int, Any] = {}
+    cross_ids = {id(attention) for attention, _ in cross}
+    for index, name in enumerate(registry):
+        _require(
+            type(name) is str and name.endswith(".processor"),
+            "PROFILE_INVALID",
+            "Invalid native attention registry name.",
+        )
+        attention = root.get_submodule(name.removesuffix(".processor"))
+        _require(
+            attention.processor is registry[name],
+            "PROFILE_INVALID",
+            "Native attention registry differs from its modules.",
+        )
+        if id(attention) in cross_ids:
+            expected[index] = attention
+    _require(
+        len(expected) == len(cross) and references.weights.keys() == expected.keys(),
+        "PROFILE_INVALID",
+        "IP-Adapter K/V must cover every complete native cross-attention index exactly.",
+    )
+    result: dict[int, tuple[Any, Any]] = {}
+    for index, attention in expected.items():
+        weights = references.weights[index]
+        _require(
+            type(weights) is tuple and len(weights) == 2,
+            "INPUT_INVALID",
+            "Invalid reference K/V pair.",
+        )
+        for weight in weights:
+            _tensor(torch, weight, 2, tensor_profile)
+            _require(
+                tuple(weight.shape) == (attention.to_q.out_features, attention.to_k.in_features)
+                and bool(torch.isfinite(weight).all()),
+                "INPUT_INVALID",
+                "Reference K/V width or values differ from the native site.",
+            )
+        result[id(attention)] = weights
+    for reference in references.images:
+        _require(
+            type(reference) is ProjectedRegionalReference,
+            "INPUT_INVALID",
+            "Expected an exact projected reference record.",
+        )
+        for tokens in (reference.conditional, reference.unconditional):
+            _tensor(torch, tokens, 3, tensor_profile)
+            _require(
+                tuple(tokens.shape) == (1, 4, cross[0][0].to_k.in_features)
+                and bool(torch.isfinite(tokens).all()),
+                "INPUT_INVALID",
+                "Invalid four-token image conditioning.",
+            )
+        _require(
+            type(reference.masks) is tuple and len(reference.masks) == 4,
+            "INPUT_INVALID",
+            "Reference masks require four independent levels.",
+        )
+        height, width = plan.latent_shape.height, plan.latent_shape.width
+        for mask in reference.masks:
+            _require(
+                type(mask) is bytes
+                and len(mask) == height * width
+                and all(v in (0, 1) for v in mask),
+                "INPUT_INVALID",
+                "Invalid binary reference mask level.",
+            )
+            height, width = (height + 1) // 2, (width + 1) // 2
+    return result
+
+
 class _Scope:
     """One owner of the finite processor/hook lifecycle; no model math."""
 
@@ -655,6 +755,7 @@ class _Scope:
         plan: AttentionPlan,
         native: tuple[Any, ...],
         tensor_profile: _TensorProfile = "cpu-float32-v1",
+        references: PreparedRegionalReferences | None = None,
     ) -> None:
         self.root, self.modules, self.cross, self.plan, self.native = (
             root,
@@ -664,6 +765,12 @@ class _Scope:
             native,
         )
         self.tensor_profile: _TensorProfile = tensor_profile
+        self.references = references
+        self.reference_weights: dict[int, tuple[Any, Any]] = {}
+        if references is not None:
+            self.reference_weights = _reference_bindings(
+                root, cross, plan, native[0], tensor_profile, references
+            )
         self.thread = threading.get_ident()
         self.hooks: list[Any] = []
         self.processors: list[tuple[Any, Any]] = []
@@ -901,17 +1008,118 @@ class _Processor:
                 attention_mask,
                 scope.tensor_profile,
             )
-            result = self.original(
-                attn,
-                hidden_states,
-                encoder_hidden_states=encoder_hidden_states,
-                attention_mask=(
-                    None
+            # Capture native Q and add Invoke image SDPA immediately before the
+            # native output Linear. Original text/projection/dropout/residual math
+            # remains owned by the original AttnProcessor2_0.
+            handles: list[Any] = []
+            queries: list[Any] = []
+            outputs = [0]
+
+            def capture_query(current: Any, arguments: tuple[Any, ...], value: Any) -> None:
+                scope.guard()
+                _require(
+                    current is attn.to_q and not queries and outputs[0] == 0,
+                    "SCOPE_CONFLICT",
+                    "Reference query capture must occur exactly once.",
+                )
+                _tensor(torch, value, 3, scope.tensor_profile)
+                _require(
+                    tuple(value.shape)
+                    == (
+                        len(scope.plan.batch_signs),
+                        shape.height * shape.width,
+                        attn.to_q.out_features,
+                    ),
+                    "INPUT_INVALID",
+                    "Native reference query shape changed.",
+                )
+                queries.append(value)
+
+            def add_images(current: Any, arguments: tuple[Any, ...]) -> tuple[Any, ...]:
+                scope.guard()
+                _require(
+                    current is attn.to_out[0]
+                    and len(arguments) == 1
+                    and len(queries) == 1
+                    and outputs[0] == 0,
+                    "SCOPE_CONFLICT",
+                    "Reference output insertion requires one exact captured native query.",
+                )
+                outputs[0] += 1
+                hidden = arguments[0]
+                _tensor(torch, hidden, 3, scope.tensor_profile)
+                _require(
+                    tuple(hidden.shape) == tuple(queries[0].shape),
+                    "INPUT_INVALID",
+                    "Native pre-output shape changed.",
+                )
+                head_dim = attn.to_q.out_features // attn.heads
+                query = (
+                    queries[0]
+                    .view(len(scope.plan.batch_signs), -1, attn.heads, head_dim)
+                    .transpose(1, 2)
+                )
+                assert scope.references is not None
+                key_weight, value_weight = scope.reference_weights[id(attn)]
+                for reference in scope.references.images:
+                    tokens = torch.cat(
+                        tuple(
+                            reference.unconditional if sign == "negative" else reference.conditional
+                            for sign in scope.plan.batch_signs
+                        ),
+                        dim=0,
+                    )
+                    key = (
+                        torch.nn.functional.linear(tokens, key_weight)
+                        .view(len(scope.plan.batch_signs), -1, attn.heads, head_dim)
+                        .transpose(1, 2)
+                    )
+                    value = (
+                        torch.nn.functional.linear(tokens, value_weight)
+                        .view(len(scope.plan.batch_signs), -1, attn.heads, head_dim)
+                        .transpose(1, 2)
+                    )
+                    image_hidden = torch.nn.functional.scaled_dot_product_attention(
+                        query, key, value, dropout_p=0.0, is_causal=False
+                    )
+                    image_hidden = (
+                        image_hidden.transpose(1, 2).reshape(hidden.shape).to(query.dtype)
+                    )
+                    mask = torch.tensor(
+                        tuple(reference.masks[_FACTORS.index(self.binding.factor)]),
+                        device=hidden.device,
+                        dtype=hidden.dtype,
+                    ).view(1, -1, 1)
+                    # Invoke's fixed full/scale1/begin0/end1, distinct softmax per ref.
+                    hidden = hidden + (1.0 * image_hidden) * mask
+                _require(
+                    bool(torch.isfinite(hidden).all()),
+                    "INPUT_INVALID",
+                    "Reference attention produced non-finite values.",
+                )
+                return (hidden,)
+
+            try:
+                if scope.references is not None:
+                    handles.append(attn.to_q.register_forward_hook(capture_query))
+                    handles.append(attn.to_out[0].register_forward_pre_hook(add_images))
+                result = self.original(
+                    attn,
+                    hidden_states,
+                    encoder_hidden_states=encoder_hidden_states,
+                    attention_mask=None
                     if attention_mask is None and _single_unrestricted_bank(scope.plan)
-                    else combined
-                ),
-                temb=temb,
-            )
+                    else combined,
+                    temb=temb,
+                )
+                _require(
+                    scope.references is None or (len(queries) == 1 and outputs[0] == 1),
+                    "INPUT_INVALID",
+                    "Native processor omitted the exact reference insertion seam.",
+                )
+            finally:
+                for handle in reversed(handles):
+                    handle.remove()
             scope.consumed += 1
             return result
         except BaseException as error:
@@ -955,6 +1163,7 @@ def scoped_illustrious_regional_attention(
     plan: AttentionPlan,
     tensor_profile: _TensorProfile = "cpu-float32-v1",
     _allow_empty: Callable[[], bool] | None = None,
+    references: PreparedRegionalReferences | None = None,
 ) -> Generator[None]:
     """Temporarily mask every native cross-attention site of one complete root.
 
@@ -984,7 +1193,7 @@ def scoped_illustrious_regional_attention(
             "INPUT_INVALID",
             "An empty-scope attestation must be callable.",
         )
-        scope = _Scope(root, modules, cross, plan, native, tensor_profile)
+        scope = _Scope(root, modules, cross, plan, native, tensor_profile, references)
         for module in modules:
             _OWNERS[id(module)] = owner
     try:

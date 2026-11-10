@@ -1267,12 +1267,22 @@ def test_settled_signature_only_required_inputs_and_no_execution_overrides(denoi
         "denoising_strength",
         "keep_mask",
         "_smart_patch_source_id",
+        "references",
     )
+    # Captured image conditioning is optional; it does not introduce an execution override.
+    assert signature.parameters["references"].default is None
     for name, parameter in signature.parameters.items():
         assert parameter.default is (
             None
             if name
-            in ("on_progress", "image", "denoising_strength", "keep_mask", "_smart_patch_source_id")
+            in (
+                "on_progress",
+                "image",
+                "denoising_strength",
+                "keep_mask",
+                "_smart_patch_source_id",
+                "references",
+            )
             else inspect.Parameter.empty
         )
         assert parameter.kind is (

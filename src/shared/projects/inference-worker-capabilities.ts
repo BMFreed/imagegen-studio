@@ -123,6 +123,16 @@ export function supportsInferenceRegionalDpm(value: unknown): boolean {
   )
 }
 
+/** Original regional images require their own qualified public TXT consumer. */
+export function supportsInferenceRegionalReferenceImages(value: unknown): boolean {
+  return (
+    isQualifiedInferenceWorkerReady(value) &&
+    value.workerVersion === '0.14.0' &&
+    value.capabilities.includes('illustrious-regional-invoke-v1') &&
+    value.capabilities.includes('illustrious-regional-reference-txt2img-v1')
+  )
+}
+
 /** Invoke's UNet objective is frozen explicitly; older epsilon regional peers cannot execute V. */
 export function supportsInferenceRegionalVPrediction(value: unknown): boolean {
   return (

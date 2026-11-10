@@ -31,11 +31,95 @@ import {
   prepareRegionalWorkerRequest,
   readRegionalWorkerResult,
 } from './regional-worker-request.js'
+import { captureRegionalWorkerInput } from './regional-worker-request.js'
 import { decodeTargetPngAlpha } from './target-png-mode.js'
 import { withOutpaintConsumerFixture } from './test-fixtures/outpaint-consumers.js'
 import { OUTPAINT_READY } from './test-fixtures/outpaint-ready.js'
+import {
+  attachRegionalReferences,
+  REFERENCE_PNG,
+  writeRegionalReferenceResourceFixtures,
+} from './test-fixtures/regional-reference.js'
 
 const sha = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
+
+test('reference transport keeps original ordered PNG roles independent of alpha and thumbnails', async () => {
+  await withFixture(async ({ input, root, scratch }) => {
+    const resources = path.join(root, 'reference-models')
+    attachRegionalReferences(input, resources)
+    await writeRegionalReferenceResourceFixtures(resources)
+    const lease = await prepareRegionalWorkerRequest(input, scratch)
+    try {
+      const bundle = JSON.parse(await readFile(lease.wire.bundle.path, 'utf8'))
+      assert.equal(bundle.references.images.length, 2)
+      for (const [index, entry] of bundle.references.images.entries()) {
+        assert.equal(entry.referenceId, input.references!.images[index].referenceId)
+        assert.equal(path.basename(entry.image.$referencePng.path), `reference-${index}.png`)
+        assert.deepEqual(await readFile(entry.image.$referencePng.path), REFERENCE_PNG)
+        assert.equal('bytes' in entry.image, false)
+        assert.equal(entry.image.$referencePng.sha256, sha(REFERENCE_PNG))
+      }
+      assert.notEqual(
+        bundle.references.images[0].image.$referencePng.path,
+        bundle.references.images[1].image.$referencePng.path,
+      )
+      assert.equal(bundle.recipe.regions[0].referenceImages[0].thumbnail.sha256, 'a'.repeat(64))
+    } finally {
+      await lease.dispose()
+    }
+  })
+})
+
+test('reference capture rejects lost or crossed owners, bytes, profile and unsupported numerical lanes', async () => {
+  await withFixture(async ({ input, root }) => {
+    attachRegionalReferences(input, path.join(root, 'reference-models'))
+    const good = captureRegionalWorkerInput(input)
+    input.references!.images[0].image.bytes.fill(0)
+    assert.deepEqual(good.references!.images[0].image.bytes, new Uint8Array(REFERENCE_PNG))
+    const mutations: ((value: RegionalWorkerInput) => void)[] = [
+      (value) => {
+        delete value.references
+      },
+      (value) => {
+        value.references!.images.reverse()
+      },
+      (value) => {
+        value.references!.images[0].regionId = randomUUID()
+      },
+      (value) => {
+        value.references!.images[0].image.bytes[0] = 0
+      },
+      (value) => {
+        value.references!.images[0].image.width = 2
+      },
+      (value) => {
+        value.request.job.sampling.scheduler = 'euler_a'
+      },
+      (value) => {
+        value.request.job.checkpoint.predictionType = 'v_prediction'
+      },
+      (value) => {
+        value.request.job.vaePrecision = 'Auto'
+      },
+      (value) => {
+        value.request.job.sampling.noiseProfile!.rescaleBetasZeroSnr = true
+      },
+      (value) => {
+        value.compositionProfile = undefined
+      },
+      (value) => {
+        value.recipe.regions[0].referenceImages = []
+      },
+    ]
+    for (const mutate of mutations) {
+      const changed = structuredClone(good)
+      mutate(changed)
+      assert.throws(() => captureRegionalWorkerInput(changed), { code: 'INVALID_REQUEST' })
+    }
+    good.recipe.regions[0].coverage.alpha.fill(0)
+    assert.equal(captureRegionalWorkerInput(good).references!.images.length, 2)
+  })
+})
 
 interface Fixture {
   input: RegionalWorkerInput

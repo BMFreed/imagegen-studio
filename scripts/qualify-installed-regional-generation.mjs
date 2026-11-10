@@ -33,6 +33,9 @@
  * profiles consult current InvokeAI4875d96531ca6712b288f6e660fcbb34143408c1 get_scheduler,
  * init_scheduler, SCHEDULER_MAP and StableDiffusionBackend: existing Euler-a/DPM++2M selection,
  * initializer/source window and native history remain separate from the UNet objective.
+ * Reference-image profile freshly follows InvokeAI4875d96531ca6712b288f6e660fcbb34143408c1
+ * compileCanvasGraph -> addRegionalGuidance -> sd/ip_adapter.py and sd/denoise_latents.py callers.
+ * It uses original canonical imported PNGs and the existing Main queue/Retry/acceptance owners.
  */
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
@@ -41,6 +44,7 @@ import { createReadStream, existsSync, readFileSync, writeFileSync } from 'node:
 import { lstat, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { deflateSync, inflateSync } from 'node:zlib'
 
@@ -63,6 +67,7 @@ import { encodeProjectMaskPng } from '../src/main/projects/project-mask.ts'
 import { ProjectSession } from '../src/main/projects/project-session.ts'
 import { IGS_SRGB_ICC_SHA256 } from '../src/shared/projects/color-profile.ts'
 import { isQualifiedInferenceWorkerReady } from '../src/shared/projects/inference-worker-capabilities.ts'
+import { REGIONAL_REFERENCE_INFERENCE_PROFILE } from '../src/shared/projects/regional-reference-inference.ts'
 import { generationTargetSignature } from '../src/shared/projects/project-generation-target-state.ts'
 import { isolateNativeSmokeWindow } from './native-smoke-window.mjs'
 import {
@@ -112,15 +117,21 @@ async function hashFile(file) {
 }
 const fixturePath = process.argv[3]
 const fixture = await jsonFile(fixturePath, 64 * 1024)
-assert.deepEqual(Object.keys(fixture).sort(), [
-  'appData',
-  'artifacts',
-  'checkpoint',
-  'deadlineSeconds',
-  'profile',
-  'provisionReport',
-  'schemaVersion',
-])
+assert.deepEqual(
+  Object.keys(fixture).sort(),
+  [
+    'appData',
+    'artifacts',
+    'checkpoint',
+    'deadlineSeconds',
+    'profile',
+    'provisionReport',
+    'schemaVersion',
+    ...(fixture.profile === 'installed-regional-invoke-reference-images-v1'
+      ? ['referenceImages']
+      : []),
+  ].sort(),
+)
 assert.equal(fixture.schemaVersion, 1)
 assert.ok(
   [
@@ -149,8 +160,10 @@ assert.ok(
     'installed-regional-invoke-v-prediction-euler-a-v1',
     'installed-regional-invoke-v-prediction-dpmpp-2m-img2img-v1',
     'installed-regional-invoke-v-prediction-dpmpp-2m-outpaint-v1',
+    'installed-regional-invoke-reference-images-v1',
   ].includes(fixture.profile),
 )
+const referenceImagesProfile = fixture.profile === 'installed-regional-invoke-reference-images-v1'
 const vPredictionEulerAProfile =
   fixture.profile === 'installed-regional-invoke-v-prediction-euler-a-v1'
 const vPredictionNormalDpmProfile =
@@ -210,8 +223,11 @@ const globalTiProfile =
   globalLoraProfile || fixture.profile === 'installed-regional-invoke-global-embeddings-v1'
 const multipleResultsProfile = staticBatchProfile || globalTiProfile
 const initializationProfile =
-  vPredictionEulerAProfile || multipleResultsProfile || fixture.profile === 'installed-regional-invoke-initialization-v1'
+  vPredictionEulerAProfile ||
+  multipleResultsProfile ||
+  fixture.profile === 'installed-regional-invoke-initialization-v1'
 const progressProfile =
+  referenceImagesProfile ||
   vPredictionProfile ||
   imageProfile ||
   initializationProfile ||
@@ -219,6 +235,8 @@ const progressProfile =
   fixture.profile === 'installed-regional-invoke-progress-v1'
 const recoveryProfile =
   mainDeathProfile || fixture.profile === 'installed-regional-invoke-recovery-v1'
+const multipleLifetimesProfile = recoveryProfile || vPredictionProfile || referenceImagesProfile
+const generationSteps = referenceImagesProfile ? 6 : 30
 const initialization = 'invoke-cpu-f32-add-noise-v1'
 const generationSampler =
   vPredictionDpmProfile || dpmpp2mProfile || imgDpmProfile
@@ -226,11 +244,10 @@ const generationSampler =
     : initializationProfile || imgEulerAProfile
       ? 'Euler a'
       : 'Euler'
-const generationScheduler =
-  vPredictionNormalDpmProfile
-    ? 'dpmpp_2m'
-    : vPredictionKarrasDpmProfile || dpmpp2mProfile || imgDpmProfile
-      ? 'dpmpp_2m_k'
+const generationScheduler = vPredictionNormalDpmProfile
+  ? 'dpmpp_2m'
+  : vPredictionKarrasDpmProfile || dpmpp2mProfile || imgDpmProfile
+    ? 'dpmpp_2m_k'
     : initializationProfile || imgEulerAProfile
       ? 'euler_a'
       : 'euler'
@@ -242,7 +259,8 @@ assert.ok(
     fixture.deadlineSeconds > 0 &&
     fixture.deadlineSeconds <= 1800,
 )
-if (imageProfile || vPredictionProfile) assert.ok(fixture.deadlineSeconds <= 600)
+if (imageProfile || vPredictionProfile || referenceImagesProfile)
+  assert.ok(fixture.deadlineSeconds <= 600)
 const appDataRoot = fixture.appData
 const evidenceRoot = fixture.artifacts
 for (const value of [
@@ -253,8 +271,8 @@ for (const value of [
   fixture.checkpoint.path,
 ]) {
   canonical(value)
-  // V qualification reads the pinned original checkpoint without copying it into owned scratch.
-  if (!(vPredictionProfile && value === fixture.checkpoint.path))
+  // These profiles read the pinned original checkpoint without copying it into owned scratch.
+  if (!((vPredictionProfile || referenceImagesProfile) && value === fixture.checkpoint.path))
     assert.ok(within(artifactRoot, value))
 }
 assert.match(fixture.provisionReport.sha256, /^[a-f0-9]{64}$/)
@@ -317,7 +335,7 @@ const timeout = (maximum = 30_000) => {
   assert.ok(left > 0, 'Overall qualification deadline exceeded')
   return Math.min(maximum, left)
 }
-const side = imageProfile || vPredictionProfile ? 512 : 1024
+const side = imageProfile || vPredictionProfile || referenceImagesProfile ? 512 : 1024
 const bbox = { height: side, width: side, x: -13, y: 5 }
 const imageStrength = 0.5
 // Fixed30 native DPM Karras reference, independently constructed/retained for this
@@ -327,15 +345,15 @@ const imageStrength = 0.5
 const imageTimesteps = vPredictionNormalDpmProfile
   ? Array.from({ length: 30 }, (_, index) => 1 + (30 - index) * Math.floor(1000 / 31))
   : imgDpmProfile || vPredictionKarrasDpmProfile
-  ? [
-      999, 975, 949, 923, 894, 863, 830, 795, 757, 716, 672, 624, 572, 517, 458, 397, 334, 273, 214,
-      162, 117, 80, 53, 33, 20, 11, 6, 3, 1, 0,
-    ]
-  : Array.from({ length: 30 }, (_, index) => 1 + (29 - index) * Math.floor(1000 / 30))
+    ? [
+        999, 975, 949, 923, 894, 863, 830, 795, 757, 716, 672, 624, 572, 517, 458, 397, 334, 273,
+        214, 162, 117, 80, 53, 33, 20, 11, 6, 3, 1, 0,
+      ]
+    : Array.from({ length: 30 }, (_, index) => 1 + (29 - index) * Math.floor(1000 / 30))
 const imageSelectedTimesteps = imageTimesteps.filter(
   (value) => value < Math.round(1000 * imageStrength),
 )
-const progressTotal = imageProfile ? imageSelectedTimesteps.length : 30
+const progressTotal = imageProfile ? imageSelectedTimesteps.length : generationSteps
 if (imageProfile) assert.equal(progressTotal, vPredictionNormalDpmProfile ? 15 : 16)
 const baseGlobalPrompt =
   'a still life of a red apple and a blue ceramic mug on a plain table, two separate objects, soft studio lighting'
@@ -362,6 +380,11 @@ const report = {
   startedAt: new Date(started).toISOString(),
   fixturePath,
   fixtureSha256: await hashFile(fixturePath),
+  harnessSource: {
+    path: fileURLToPath(import.meta.url),
+    byteSize: (await regular(fileURLToPath(import.meta.url))).size,
+    sha256: await hashFile(fileURLToPath(import.meta.url)),
+  },
   appDataRoot,
   evidenceRoot,
   checks: [],
@@ -409,6 +432,7 @@ let globalTi = null
 let globalLoras = null
 let globalVae = null
 let outpaintInfill = null
+let referenceResources = null
 let sampling = Promise.resolve()
 const nativeChecks = []
 const projects = []
@@ -476,6 +500,20 @@ const sourceFiles = [
   'worker-python/src/imagegen_worker/inference_lifetime.py',
   'worker-python/src/imagegen_worker/owned_inference.py',
 ]
+if (referenceImagesProfile)
+  sourceFiles.push(
+    'src/shared/projects/regional-reference-inference.ts',
+    'src/shared/projects/regional-invoke-generation.ts',
+    'src/shared/projects/inference-worker-capabilities.ts',
+    'src/main/projects/project-current-canvas-regional-references.ts',
+    'src/main/runtime/inference-auxiliary-resources.ts',
+    'src/main/runtime/regional-reference-manifest.ts',
+    'src/renderer/components/ProjectRegionalGuidanceRow.vue',
+    'src/renderer/components/ProjectRegionalReferenceImages.vue',
+    'src/renderer/components/result-preset-draft.ts',
+    'worker-python/src/imagegen_worker/illustrious_regional_references.py',
+    'worker-python/src/imagegen_worker/illustrious_regional_attention_adapter.py',
+  )
 if (imageProfile)
   sourceFiles.push(
     'src/shared/projects/regional-invoke-generation.ts',
@@ -597,6 +635,22 @@ async function verifyProvision() {
   assert.equal(provision.ready.workerVersion, '0.14.0')
   for (const cap of ['illustrious-regional-invoke-v1', 'private-current-canvas-regional-v1'])
     assert.ok(provision.ready.capabilities.includes(cap), `Missing installed capability ${cap}`)
+  if (referenceImagesProfile) {
+    assert.ok(provision.ready.capabilities.includes('illustrious-regional-reference-txt2img-v1'))
+    referenceResources = await new InferenceAuxiliaryResources(
+      path.join(appDataRoot, 'inference-resources'),
+    ).resolveVerifiedRegionalReferenceResources()
+    report.referenceResources = {}
+    for (const [key, resource] of Object.entries(referenceResources)) {
+      assert.ok(
+        within(appDataRoot, resource.managedPath) && !within(evidenceRoot, resource.managedPath),
+      )
+      report.referenceResources[key] = {
+        ...resource,
+        stat: statIdentity(await regular(resource.managedPath)),
+      }
+    }
+  }
   if (imageProfile)
     assert.ok(provision.ready.capabilities.includes('illustrious-regional-img2img-v1'))
   if (outpaintProfile) {
@@ -727,7 +781,7 @@ async function verifyProvision() {
       ? '4875d96531ca6712b288f6e660fcbb34143408c1'
       : vPredictionProfile
         ? 'b0ac163b139c432aff4c51078c31c074bf292f72'
-      : 'a61ac4fb75bec78d92885bf39bcf3ed3900a9bdd',
+        : 'a61ac4fb75bec78d92885bf39bcf3ed3900a9bdd',
     paths: [
       'invokeai/frontend/webv1/src/features/controlLayers/konva/CanvasEntity/CanvasEntityAdapterRegionalGuidance.ts',
       'invokeai/app/services/session_queue/session_queue_default.py',
@@ -836,6 +890,17 @@ async function verifyProvision() {
       ],
     }
 
+  if (referenceImagesProfile)
+    report.invokeSource = {
+      revision: '4875d96531ca6712b288f6e660fcbb34143408c1',
+      paths: [
+        'invokeai/frontend/webv2/src/features/generation/core/canvas/compileCanvasGraph.ts',
+        'invokeai/frontend/webv2/src/features/generation/core/canvas/addRegionalGuidance.ts',
+        'invokeai/app/invocations/sd/ip_adapter.py',
+        'invokeai/app/invocations/sd/denoise_latents.py',
+        'invokeai/backend/stable_diffusion/extensions/ip_adapter.py',
+      ],
+    }
   check(
     `Pinned noneditable installed worker, ${sourceModuleCount} Python module hashes, config tree, built bundle and finite launcher agree`,
   )
@@ -1084,7 +1149,9 @@ async function staticBatchControl(row, saved, layer) {
 }
 async function captureImagePreservation() {
   const sql = await sqlSnapshot()
-  assert.ok(sql.queue.length <= 256 && sql.receipts.length <= 128 && sql.cursors.length <= 128)
+  // The reused pool currently has176 protected receipts. Bound this new profile's inventory
+  // explicitly; never delete prior rows or loosen an inference/queue capacity guard to fit it.
+  assert.ok(sql.queue.length <= 256 && sql.receipts.length <= (referenceImagesProfile ? 256 : 128) && sql.cursors.length <= 128)
   assert.ok(
     sql.queue.every(({ status }) => ['completed', 'failed', 'canceled'].includes(status)),
     'Reuse only a physically idle terminal pool',
@@ -1430,9 +1497,11 @@ function ownProgressSql(whole) {
   assert.ok(progressProject?.id && preservationBaseline)
   const ownKeys = imageProfile
     ? [progressProject.id, report.img2img.controlProjectKey]
-    : vPredictionProfile
-      ? [progressProject.id, report.vPrediction.controlProjectKey]
-      : [progressProject.id]
+    : referenceImagesProfile
+      ? [progressProject.id, report.referenceImages.controlProjectKey]
+      : vPredictionProfile
+        ? [progressProject.id, report.vPrediction.controlProjectKey]
+        : [progressProject.id]
   for (const [name, rows] of Object.entries(whole))
     assert.deepEqual(
       rows.filter(({ local_project_key }) => !ownKeys.includes(local_project_key)),
@@ -1471,9 +1540,11 @@ async function verifyProgressPreservation(db) {
           current.seq,
           row.seq +
             (row.name === 'generation_candidate_receipt'
-              ? multipleResultsProfile || imageProfile || vPredictionProfile
-                ? 2
-                : 1
+              ? referenceImagesProfile
+                ? 3
+                : multipleResultsProfile || imageProfile || vPredictionProfile
+                  ? 2
+                  : 1
               : 0),
         )
       } else {
@@ -2382,8 +2453,46 @@ async function prepareCatalogAndProjects() {
   if (globalTiProfile) await prepareGlobalEmbeddingCatalog(new ModelRepository(database.db))
   if (globalLoraProfile) await prepareGlobalLoraCatalog(new ModelRepository(database.db))
   if (vaeSelectionProfile) await prepareGlobalVaeCatalog(new ModelRepository(database.db))
-  if (imageProfile || vPredictionProfile) await captureImagePreservation()
+  if (imageProfile || vPredictionProfile || referenceImagesProfile) await captureImagePreservation()
   else if (progressProfile) await captureProgressPreservation()
+  if (referenceImagesProfile) {
+    assert.deepEqual(Object.keys(fixture.referenceImages).sort(), ['A', 'B'])
+    report.lifetimes = []
+    report.referenceImages = { sources: {}, imports: [], controls: {}, controlProjectKey: null }
+    for (const [key, source] of Object.entries(fixture.referenceImages)) {
+      assert.deepEqual(Object.keys(source).sort(), ['byteSize', 'path', 'sha256'])
+      assert.match(source.sha256, /^[a-f0-9]{64}$/)
+      assert.ok(
+        Number.isSafeInteger(source.byteSize) &&
+          source.byteSize > 0 &&
+          source.byteSize <= 32 * 1024 ** 2,
+      )
+      assert.equal((await regular(source.path)).size, source.byteSize)
+      assert.equal(await hashFile(source.path), source.sha256)
+      assert.ok(!within(evidenceRoot, source.path))
+      const decoded = decodePng(await readFile(source.path))
+      assert.equal(decoded.iccSha256, IGS_SRGB_ICC_SHA256)
+      report.referenceImages.sources[key] = {
+        ...source,
+        stat: statIdentity(await regular(source.path)),
+        width: decoded.width,
+        height: decoded.height,
+        rgbaSha256: decoded.rgbaSha256,
+      }
+    }
+    assert.notEqual(
+      report.referenceImages.sources.A.rgbaSha256,
+      report.referenceImages.sources.B.rgbaSha256,
+    )
+    report.boundary.preconditions =
+      'Original official Illustrious XL v0.1 epsilon checkpoint, existing fixed Standard ViT-H adapter/vision pair, canonical original sRGB PNG A/B, and the preserved installed runtime/catalog. Actual regional reference import/remove UI and installed normalizer run; no recipe, model path or image pixels are injected through IPC. Qualification source PNGs are bounded to1024 per side by the independent decoder.'
+    report.boundary.calls =
+      'Exactly four original regional requests across three physically closed Electron lifetimes: same-Project A and B controls with only the reference changed; A canceled after witnessed native/Main/DOM step1 of6; restarted exact frozen A Retry after saved B/settings edits. Three PNGs; each control is retained then explicitly discarded; only Retry is accepted.'
+    report.boundary.progress =
+      'Native scalar steps1..6 reach Main and existing Project/Queue UI; Cancel follows a genuine step>=1 before completion. No elapsed-time estimate or fabricated native progress.'
+    report.boundary.exclusions =
+      'Finite epsilon TXT512/EulerNormal/N6/CFG5/Fixed123/embeddedFP16/one item/one reference only. Visible RGB inequality establishes reference influence, not aesthetic quality, spatial final-RGB isolation, general capacity, other methods/modes, Smart/Anima references, generic IPAdapter, Install/Repair or public release readiness.'
+  }
   if (recoveryProfile) {
     baselineSql = await sqlSnapshot()
     const priorCount = mainDeathProfile ? 3 : 1
@@ -2554,11 +2663,13 @@ async function prepareCatalogAndProjects() {
   const workspace = path.join(appDataRoot, 'workspaces/Uncategorized')
   await mkdir(workspace, { recursive: true, mode: 0o700 })
   await directory(workspace)
-  for (const mode of vPredictionImageProfile
-    ? ['transparent', 'v-control', outpaintProfile ? 'partial' : 'opaque']
-    : vPredictionProfile
-      ? ['transparent', 'v-control', 'partial']
-    : ['transparent', 'opaque', 'partial']) {
+  for (const mode of referenceImagesProfile
+    ? ['transparent', 'reference-control', 'partial']
+    : vPredictionImageProfile
+      ? ['transparent', 'v-control', outpaintProfile ? 'partial' : 'opaque']
+      : vPredictionProfile
+        ? ['transparent', 'v-control', 'partial']
+        : ['transparent', 'opaque', 'partial']) {
     const title = `Regional ${mode} ${path.basename(evidenceRoot)} ${randomUUID().slice(0, 8)}`
     const file = path.join(workspace, `${title}.igs`)
     assert.equal(existsSync(file), false)
@@ -2594,7 +2705,7 @@ async function prepareCatalogAndProjects() {
       sampling: {
         cfgScale: 5,
         denoisingStrength: imageProfile ? imageStrength : null,
-        steps: 30,
+        steps: generationSteps,
         sampler: imgSamplerProfile || vPredictionSamplingProfile ? 'Euler' : generationSampler,
         scheduler: 'Normal',
       },
@@ -2646,6 +2757,7 @@ async function prepareCatalogAndProjects() {
     if (
       mode !== 'transparent' &&
       mode !== 'v-control' &&
+      mode !== 'reference-control' &&
       !(imageProfile && mode === (outpaintProfile ? 'partial' : 'opaque'))
     ) {
       const id = randomUUID(),
@@ -2741,16 +2853,13 @@ async function prepareCatalogAndProjects() {
       currentNoiseEdit:
         'Clearing the current model removes the current objective/policy selection; no catalog override is mutated.',
     }
-    report.boundary.calls =
-      `Three original native requests across three serial physically closed Electron lifetimes: independent healthy ${generationMode} control, progress-observed Cancel, then restarted frozen Queue Retry; exactly two PNGs.`
+    report.boundary.calls = `Three original native requests across three serial physically closed Electron lifetimes: independent healthy ${generationMode} control, progress-observed Cancel, then restarted frozen Queue Retry; exactly two PNGs.`
     report.boundary.preconditions =
       'ROOT registered the exact existing NoobAI V file/version through real ModelRepository before this preserved catalog baseline. Reuse the original file and canonical runtime; no download, model/environment copy, alternate source or injected worker recipe.'
-    report.boundary.progress =
-      `Original scalar JSONL and Main/DOM observe ${progressTotal} selected ${generationSampler}/${generationScheduleLabel} steps from30 requested; Cancel after real completed steps; fresh Retry starts at1 and completes${progressTotal} before PNG.`
-    report.boundary.exclusions =
-      vPredictionImageProfile
-        ? `Only exact V checkpoint/${generationMode}/Euler-Normal/EmbeddedFP32/strength0.5 at512-square/CFG5/seed123, with existing source/posterior and ${outpaintProfile ? 'LaMa/keep-mask/RGBA contribution' : 'opaque source/RGB'} owners. No other V samplers, initializer, Smart/reference, visual-quality, Install/Repair, general capacity or public-readiness claim.`
-        : 'Only exact V checkpoint/TXT/Euler-Normal/EmbeddedFP32 at512-square/CFG5/seed123. No V IMG/OUT/other samplers, scene quality, spatial-negative/reference, Install/Repair, general capacity or public-readiness claim.'
+    report.boundary.progress = `Original scalar JSONL and Main/DOM observe ${progressTotal} selected ${generationSampler}/${generationScheduleLabel} steps from30 requested; Cancel after real completed steps; fresh Retry starts at1 and completes${progressTotal} before PNG.`
+    report.boundary.exclusions = vPredictionImageProfile
+      ? `Only exact V checkpoint/${generationMode}/Euler-Normal/EmbeddedFP32/strength0.5 at512-square/CFG5/seed123, with existing source/posterior and ${outpaintProfile ? 'LaMa/keep-mask/RGBA contribution' : 'opaque source/RGB'} owners. No other V samplers, initializer, Smart/reference, visual-quality, Install/Repair, general capacity or public-readiness claim.`
+      : 'Only exact V checkpoint/TXT/Euler-Normal/EmbeddedFP32 at512-square/CFG5/seed123. No V IMG/OUT/other samplers, scene quality, spatial-negative/reference, Install/Repair, general capacity or public-readiness claim.'
     if (vPredictionSamplingProfile) {
       report.vPrediction.sampling = {
         combinationCapability: 'illustrious-regional-v-prediction-sampling-v1',
@@ -2764,8 +2873,7 @@ async function prepareCatalogAndProjects() {
         uiChanges: [],
         originalNativeOwnerReused: true,
       }
-      report.boundary.exclusions =
-        `Only exact V checkpoint/${generationMode}/${generationSampler}-${generationScheduleLabel}/EmbeddedFP32${imageProfile ? '/strength0.5' : ''} at512-square/CFG5/seed123; explicit existing ${initializationProfile ? 'Invoke TXT initialization' : 'image source/window'} owner. No new numerical solver, history reset, sampler inference, source/noise override, Smart/reference, trained visual quality, all-method/per-mode cross-product, Install/Repair, capacity or public-readiness claim.`
+      report.boundary.exclusions = `Only exact V checkpoint/${generationMode}/${generationSampler}-${generationScheduleLabel}/EmbeddedFP32${imageProfile ? '/strength0.5' : ''} at512-square/CFG5/seed123; explicit existing ${initializationProfile ? 'Invoke TXT initialization' : 'image source/window'} owner. No new numerical solver, history reset, sampler inference, source/noise override, Smart/reference, trained visual quality, all-method/per-mode cross-product, Install/Repair, capacity or public-readiness claim.`
       report.boundary.preconditions +=
         ' The new V-sampling capability and existing method/initializer/image prerequisites must be advertised by every executing peer. Actual Sampler/Scheduler UI selection precedes both Generate actions; saved current authoring changes back to Euler/Normal before restarted frozen Retry.'
     }
@@ -2827,7 +2935,10 @@ async function observeMemory(label) {
 }
 async function bounds(label, refreshMainDeathProof = false) {
   const value = await boundQualificationProcess(application.process().pid, {
-    deadlineSeconds: recoveryProfile ? activeLifetime.deadlineSeconds : fixture.deadlineSeconds,
+    deadlineSeconds:
+      recoveryProfile || referenceImagesProfile
+        ? activeLifetime.deadlineSeconds
+        : fixture.deadlineSeconds,
     ...(mainDeathProfile
       ? { surviveMainDeath: true, refreshMainDeathProof, deadlineAt: endAt }
       : {}),
@@ -2984,6 +3095,26 @@ async function installObservers() {
           }
           return { ...descriptor, positive, opaque }
         })
+        const referenceImages = ownership.references
+          ? bundle.references.images.map((entry, index) => {
+              const descriptor = entry.image.$referencePng
+              const original = checkedBytes(descriptor, wire.stagingRoot, 32 * 1024 * 1024)
+              if (
+                p.basename(descriptor.path) !== `reference-${index}.png` ||
+                !original.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex')) ||
+                original.readUInt32BE(16) !== descriptor.width ||
+                original.readUInt32BE(20) !== descriptor.height
+              )
+                throw new Error('Original regional reference PNG metadata differs')
+              return {
+                regionId: entry.regionId,
+                referenceId: entry.referenceId,
+                index,
+                ...descriptor,
+                observedSha256: sha(original),
+              }
+            })
+          : undefined
         let ownerMarker
         if (ownership.required || ownership.workerFault) {
           const directory = fs.lstatSync(wire.stagingRoot, { bigint: true })
@@ -3022,6 +3153,7 @@ async function installObservers() {
           bundleJson: bundle,
           target: { ...target, observedSha256: sha(targetBytes) },
           alpha,
+          ...(referenceImages ? { referenceImages } : {}),
           ...(ownerMarker ? { ownerMarker } : {}),
         }
       }
@@ -3335,6 +3467,12 @@ async function installObservers() {
           ? ['projects:add-generation-lora', 'projects:remove-generation-lora']
           : []),
         ...(ownership.vae ? ['projects:set-generation-vae'] : []),
+        ...(ownership.references
+          ? [
+              'projects:import-regional-guidance-reference-image',
+              'projects:update-regional-guidance-reference-image',
+            ]
+          : []),
       ]
       for (const channel of channels) {
         const deadline = Date.now() + 15_000
@@ -3407,6 +3545,7 @@ async function installObservers() {
       vae: vaeSelectionProfile,
       dynamicPositive: dynamicPositiveProfile,
       img2img: imageProfile,
+      references: referenceImagesProfile,
       scratch: path.join(appDataRoot, 'scratch'),
       previous: previousTransport,
       controls: mainDeathControls,
@@ -3942,14 +4081,23 @@ async function screenshot(name) {
   checkpoint()
 }
 async function launch() {
-  if (recoveryProfile || vPredictionProfile) {
+  if (multipleLifetimesProfile) {
     assert.ok(!application, 'A previous native lifetime must finish physically before relaunch')
     assert.equal(nativeChecks.length, 0, 'Physical checks/watchdogs must be scoped to one lifetime')
     activeLifetime = {
       number: report.lifetimes.length + 1,
       startedAt: new Date().toISOString(),
       // Keep each PID/start watchdog within the original overall budget, never reset it at relaunch.
-      deadlineSeconds: Math.max(1, Math.floor(timeout(fixture.deadlineSeconds * 1000) / 1000)),
+      deadlineSeconds: Math.max(
+        1,
+        Math.floor(
+          timeout(
+            (referenceImagesProfile
+              ? Math.min(600, fixture.deadlineSeconds)
+              : fixture.deadlineSeconds) * 1000,
+          ) / 1000,
+        ),
+      ),
     }
     sampling = Promise.resolve()
     memoryGroups.clear()
@@ -4262,7 +4410,7 @@ function assertFrozen(frozen, project, expectedSeed = 123) {
     assert.deepEqual(frozen.context.sampling.noiseProfile, policy)
   }
   assert.equal(frozen.context.model.managedPath, fixture.checkpoint.path)
-  assert.equal(frozen.workerJob.sampling.steps, 30)
+  assert.equal(frozen.workerJob.sampling.steps, generationSteps)
   assert.equal(frozen.workerJob.sampling.seed, expectedSeed)
   assert.equal(frozen.workerJob.sampling.cfgScale, 5)
   if (imageCfgRescaleProfile) {
@@ -4906,10 +5054,7 @@ function assertVPredictionImageSource(wire, captured) {
   assert.equal(wire.bundleJson.request.job.checkpoint.path, fixture.checkpoint.path)
   assert.deepEqual(wire.bundleJson.request.job.checkpoint, captured.frozen.workerJob.checkpoint)
   if (outpaintProfile)
-    assert.equal(
-      target.sha256,
-      captured.frozen.context.conditioning.sourceTarget.sha256,
-    )
+    assert.equal(target.sha256, captured.frozen.context.conditioning.sourceTarget.sha256)
 }
 async function waitVPredictionCompletion(project, row) {
   await expect
@@ -4989,7 +5134,10 @@ async function generateVPredictionControlCancelRetry(project) {
         assert.equal(state.regionalImg2ImgDpmpp2mSupported, true)
       }
       assert.equal((await current(owner)).generationDraft.sampling.sampler, generationSampler)
-      assert.equal((await current(owner)).generationDraft.sampling.scheduler, generationScheduleLabel)
+      assert.equal(
+        (await current(owner)).generationDraft.sampling.scheduler,
+        generationScheduleLabel,
+      )
     }
     if (vPredictionImageProfile) {
       assert.equal(state.regionalVPredictionImageSupported, true)
@@ -5039,7 +5187,9 @@ async function generateVPredictionControlCancelRetry(project) {
   assert.equal(receipt.image_sha256, digest(bytes))
   assert.equal(receipt.image_byte_size, bytes.length)
   const browser = await assertBrowserPixels(candidate.imageUrl, decoded)
-  const contribution = outpaintProfile ? await assertInstalledOutpaint(healthy.captured, bytes) : null
+  const contribution = outpaintProfile
+    ? await assertInstalledOutpaint(healthy.captured, bytes)
+    : null
   await writeFile(path.join(evidenceRoot, 'v-prediction-control.png'), bytes, {
     flag: 'wx',
     mode: 0o600,
@@ -5290,6 +5440,503 @@ async function generateVPredictionControlCancelRetry(project) {
     frozen: retryCaptured.frozen,
     frozenPayloadSha256: retryCaptured.frozenPayloadSha256,
   }
+}
+
+function referenceResourceWires() {
+  return Object.fromEntries(
+    Object.entries(referenceResources).map(([key, resource]) => [
+      key,
+      {
+        byteSize: resource.byteSize,
+        path: resource.managedPath,
+        sha256: resource.sha256,
+      },
+    ]),
+  )
+}
+async function assertCapturedReferences(captured, project, reference) {
+  assert.equal(captured.frozen.referenceProfile, REGIONAL_REFERENCE_INFERENCE_PROFILE)
+  const references = captured.regional.references
+  assert.equal(references.profile, REGIONAL_REFERENCE_INFERENCE_PROFILE)
+  assert.deepEqual(references.resources, referenceResourceWires())
+  assert.equal(references.images.length, 1)
+  const entry = references.images[0],
+    descriptor = entry.image.$referencePng
+  assert.equal(entry.regionId, project.document.regionalGuidance[0].id)
+  assert.equal(entry.referenceId, reference.id)
+  assert.deepEqual(captured.regional.recipe.regions[0].referenceImages, [reference])
+  assert.equal(captured.regional.recipe.regions[1].referenceImages?.length ?? 0, 0)
+  assert.equal(descriptor.file, 'reference-0.png')
+  assert.deepEqual(
+    {
+      byteSize: descriptor.byteSize,
+      width: descriptor.width,
+      height: descriptor.height,
+      sha256: descriptor.sha256,
+    },
+    {
+      byteSize: reference.asset.bytes,
+      width: reference.asset.width,
+      height: reference.asset.height,
+      sha256: reference.asset.sha256,
+    },
+  )
+  assert.notEqual(
+    descriptor.sha256,
+    reference.thumbnail.sha256,
+    'Inference must receive the original canonical PNG, not its thumbnail',
+  )
+  const file = path.join(appDataRoot, 'generation-inputs', captured.row.id, descriptor.file)
+  assert.equal((await regular(file)).size, descriptor.byteSize)
+  assert.equal(await hashFile(file), descriptor.sha256)
+  const image = decodePng(await readFile(file))
+  assert.equal(image.width, descriptor.width)
+  assert.equal(image.height, descriptor.height)
+  assert.equal(image.iccSha256, IGS_SRGB_ICC_SHA256)
+  return {
+    regionId: entry.regionId,
+    referenceId: entry.referenceId,
+    index: 0,
+    ...descriptor,
+    rgbaSha256: image.rgbaSha256,
+  }
+}
+function assertReferenceWire(observed, captured, expectedCount) {
+  assert.deepEqual(observed.faults, [])
+  const wires = regionalWires(observed)
+  assert.equal(wires.length, expectedCount)
+  const wire = wires.at(-1),
+    bundle = wire.bundleJson
+  const ready = observed.workers.find(({ pid }) => pid === wire.pid)?.ready
+  for (const capability of [
+    'illustrious-regional-invoke-v1',
+    'illustrious-regional-reference-txt2img-v1',
+    'illustrious-regional-progress-v1',
+  ])
+    assert.ok(ready.capabilities.includes(capability))
+  assert.equal(bundle.request.type, 'generate-illustrious-txt2img')
+  assert.equal(bundle.request.job.checkpoint.predictionType, 'epsilon')
+  assert.equal(bundle.request.job.checkpoint.sha256, fixture.checkpoint.sha256)
+  assert.equal(bundle.request.job.vaePrecision, 'FP16')
+  assert.equal(bundle.request.job.vae, null)
+  assert.deepEqual(bundle.request.job.loras ?? [], [])
+  assert.deepEqual(bundle.request.job.sampling, captured.frozen.workerJob.sampling)
+  assert.equal(bundle.request.job.sampling.steps, 6)
+  assert.equal(bundle.request.job.sampling.scheduler, 'euler')
+  assert.deepEqual(bundle.request.job.sampling.noiseProfile, policy)
+  assert.equal(bundle.compositionProfile, 'invoke-canvas-v1')
+  assert.equal(bundle.references.profile, REGIONAL_REFERENCE_INFERENCE_PROFILE)
+  assert.deepEqual(bundle.references.resources, referenceResourceWires())
+  assert.equal(wire.referenceImages.length, 1)
+  const actual = wire.referenceImages[0],
+    expected = captured.regional.references.images[0]
+  assert.equal(actual.index, 0)
+  assert.equal(actual.regionId, expected.regionId)
+  assert.equal(actual.referenceId, expected.referenceId)
+  for (const key of ['byteSize', 'sha256', 'width', 'height'])
+    assert.equal(actual[key], expected.image.$referencePng[key])
+  assert.equal(actual.observedSha256, expected.image.$referencePng.sha256)
+  assert.deepEqual(
+    wire.alpha.map(({ sha256 }) => sha256),
+    captured.alphas.map(({ sha256 }) => sha256),
+  )
+  assert.equal(wire.target.observedSha256, captured.targetSha256)
+  assert.equal(wire.reportProgress, true)
+  assert.equal(
+    observed.workers
+      .flatMap(({ writes }) => writes.flatMap(({ lines }) => lines))
+      .filter(({ type }) =>
+        [
+          'generate-illustrious-txt2img',
+          'generate-illustrious-img2img',
+          'generate-illustrious-outpaint',
+        ].includes(type),
+      ).length,
+    0,
+  )
+  return wire
+}
+async function replaceReferenceImageUi(project, key) {
+  const regionId = project.document.regionalGuidance[0].id
+  const surface = window.locator(`[data-regional-guidance-id="${regionId}"]`)
+  const prior = (await current(project)).regionalGuidance[0].referenceImages ?? []
+  for (const reference of prior)
+    await surface
+      .getByRole('button', { name: `Remove reference ${reference.name}`, exact: true })
+      .click()
+  await expect
+    .poll(async () => (await current(project)).regionalGuidance[0].referenceImages?.length ?? 0)
+    .toBe(0)
+  const source = report.referenceImages.sources[key]
+  assert.equal(await hashFile(source.path), source.sha256)
+  // Only the native chooser is substituted. Existing import UI, IPC, normalization and storage run.
+  await application.evaluate(({ dialog }, selectedPath) => {
+    if (globalThis.__regionalReferenceDialog)
+      throw new Error('Reference chooser already controlled')
+    globalThis.__regionalReferenceDialog = dialog.showOpenDialog
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selectedPath] })
+  }, source.path)
+  try {
+    await surface.getByRole('button', { name: 'Add regional reference image', exact: true }).click()
+    await expect
+      .poll(async () => (await current(project)).regionalGuidance[0].referenceImages?.length ?? 0, {
+        timeout: timeout(120_000),
+      })
+      .toBe(1)
+  } finally {
+    await application.evaluate(({ dialog }) => {
+      dialog.showOpenDialog = globalThis.__regionalReferenceDialog
+      delete globalThis.__regionalReferenceDialog
+    })
+  }
+  const imported = (await current(project)).regionalGuidance[0].referenceImages[0]
+  assert.equal(imported.asset.width, source.width)
+  assert.equal(imported.asset.height, source.height)
+  assert.notEqual(imported.asset.sha256, imported.thumbnail.sha256)
+  await save(project)
+  const portable = await readZip(project.file)
+  const reference = portable.project.regionalGuidance[0].referenceImages[0]
+  const original = portable.members.get(reference.asset.path)
+  assert.equal(original.length, reference.asset.bytes)
+  assert.equal(digest(original), reference.asset.sha256)
+  assert.equal(decodePng(original).rgbaSha256, source.rgbaSha256)
+  project.document = portable.project
+  project.initialPackageSha256 = await hashFile(project.file)
+  report.referenceImages.imports.push({
+    projectKey: project.id,
+    source: key,
+    sourceFileSha256: source.sha256,
+    regionId,
+    reference,
+    originalPngSha256: digest(original),
+    originalRgbaSha256: source.rgbaSha256,
+    normalUiImportAndNormalization: true,
+  })
+  return reference
+}
+async function discardReferenceControl(project) {
+  await window.getByRole('button', { name: `Close ${project.title}`, exact: true }).click()
+  const dialog = window.getByRole('dialog', { name: 'Close Project', exact: true })
+  await expect(dialog).toBeVisible()
+  await dialog.getByRole('button', { name: 'Discard Candidates and Close', exact: true }).click()
+  await expect(window.getByRole('tab', { name: project.title, exact: true })).toHaveCount(0)
+  assert.equal((await readZip(project.file)).project.layers.length, 0)
+}
+async function generateReferenceControlCancelRetry(project) {
+  const control = projects.find(({ mode }) => mode === 'reference-control')
+  report.referenceImages.controlProjectKey = control.id
+  const generate = () => window.getByRole('button', { name: 'Generate', exact: true })
+  const begin = async (owner, expectedRows, reference) => {
+    assert.equal((await targetState(owner)).mode, 'txt2img')
+    assert.equal((await api('getGenerationState', owner.id)).regionalReferenceImagesSupported, true)
+    const count = window.locator('input[aria-label="Images per click"]')
+    await count.fill('1')
+    await count.press('Enter')
+    const rows = async () =>
+      (await sqlSnapshot()).queue.filter(({ local_project_key }) => local_project_key === owner.id)
+    assert.equal((await rows()).length, expectedRows)
+    await expect(generate()).toBeEnabled({ timeout: timeout(120_000) })
+    await generate().click()
+    await expect
+      .poll(async () => (await rows()).length, { timeout: timeout(180_000) })
+      .toBe(expectedRows + 1)
+    const row = (await rows()).find(
+      ({ id }) =>
+        !report.referenceImages.controls.A || id !== report.referenceImages.controls.A.row.id,
+    )
+    await expect
+      .poll(async () => (await job(row.id)).status, { timeout: timeout(180_000) })
+      .toBe('running')
+    const captured = await captureFrozen(await job(row.id), owner)
+    const original = await assertCapturedReferences(captured, owner, reference)
+    return { row, captured, original }
+  }
+  await openProject(control)
+  for (const key of ['A', 'B']) {
+    if (key === 'B') await openProject(control)
+    const reference = await replaceReferenceImageUi(control, key)
+    const started = await begin(control, key === 'A' ? 0 : 1, reference)
+    const completed = await waitVPredictionCompletion(control, started.row)
+    const results = await api('listGenerationResults', control.id)
+    assert.equal(results.candidates.length, 1)
+    const candidate = results.candidates[0]
+    assert.equal(candidate.queueItemId, completed.id)
+    const bytes = await fetchPng(candidate.imageUrl),
+      decoded = decodePng(bytes)
+    assert.equal(decoded.channels, 3)
+    assert.equal(decoded.width, side)
+    assert.equal(decoded.height, side)
+    const receipt = (await sqlSnapshot()).receipts.find(
+      ({ queue_item_id }) => queue_item_id === completed.id,
+    )
+    assert.equal(receipt.image_sha256, digest(bytes))
+    assert.equal(receipt.image_byte_size, bytes.length)
+    const observed = await observerSnapshot(),
+      wire = assertReferenceWire(observed, started.captured, key === 'A' ? 1 : 2)
+    const file = path.join(evidenceRoot, `reference-control-${key}.png`)
+    await writeFile(file, bytes, { flag: 'wx', mode: 0o600 })
+    report.referenceImages.controls[key] = {
+      ...started,
+      row: completed,
+      reference,
+      candidate,
+      receipt,
+      file,
+      pngSha256: digest(bytes),
+      rgbaSha256: decoded.rgbaSha256,
+      frames: assertVPredictionCompletion(observed, wire),
+      browser: await assertBrowserPixels(candidate.imageUrl, decoded),
+    }
+    assert.equal(
+      await hashFile(control.file),
+      control.initialPackageSha256,
+      'Generate must not Save',
+    )
+    assert.equal((await current(control)).layers.length, 0, 'Generate must not Add')
+    await discardReferenceControl(control)
+  }
+  const { A, B } = report.referenceImages.controls
+  const semanticControl = (captured) => {
+    const job = structuredClone(captured.frozen.workerJob),
+      regional = structuredClone(captured.regional)
+    delete job.target.path
+    delete regional.recipe.documentRevision
+    for (const region of regional.recipe.regions) delete region.referenceImages
+    delete regional.references.images
+    return { job, regional }
+  }
+  assert.deepEqual(
+    semanticControl(A.captured),
+    semanticControl(B.captured),
+    'A/B must differ only in the authored reference and document revision',
+  )
+  const a = decodePng(await readFile(A.file)),
+    b = decodePng(await readFile(B.file))
+  let changedVisibleRgbChannels = 0
+  for (let i = 0; i < a.rgba.length; i++)
+    if (i % 4 !== 3 && a.rgba[i] !== b.rgba[i]) changedVisibleRgbChannels++
+  assert.ok(
+    changedVisibleRgbChannels > 0,
+    'Changing only the original reference must influence actual visible RGB',
+  )
+  report.referenceImages.causality = {
+    changedVisibleRgbChannels,
+    sameExecutionControls: true,
+    sameProjectAndMasks: true,
+    onlyReferenceChanged: true,
+    aestheticQualityClaimed: false,
+  }
+  await closeVPredictionLifetime('reference-controls-complete')
+  await launch()
+  await openProject(project)
+  const originalA = await replaceReferenceImageUi(project, 'A')
+  await installProgressDomObserver()
+  const first = await begin(project, 0, originalA)
+  assert.equal(first.original.sha256, A.original.sha256)
+  assert.equal(first.captured.targetSha256, A.captured.targetSha256)
+  assert.deepEqual(
+    first.captured.alphas.map(({ sha256 }) => sha256),
+    A.captured.alphas.map(({ sha256 }) => sha256),
+  )
+  await openQueue()
+  const witnessed = await progressProbe(project, first.row, 1)
+  assert.equal(
+    witnessed.snapshot.current.step,
+    1,
+    'This profile must witness native step1 in Main and UI before Cancel',
+  )
+  report.progress = {
+    beforeCancel: {
+      first: witnessed,
+      requestId: regionalWires(await observerSnapshot())[0].requestId,
+    },
+  }
+  await queueRow(first.row.id).getByRole('button', { name: 'Cancel job', exact: true }).click()
+  await expect
+    .poll(async () => (await job(first.row.id)).status, { timeout: timeout(120_000) })
+    .toBe('canceled')
+  await expect
+    .poll(async () => (await api('getGenerationState', project.id)).phase, {
+      timeout: timeout(120_000),
+    })
+    .toBe('idle')
+  await progressAfterCancel(first.row)
+  const canceled = await observerSnapshot(),
+    canceledWire = assertReferenceWire(canceled, first.captured, 1)
+  const frames = canceled.workers
+    .flatMap(({ frames }) => frames ?? [])
+    .filter(({ message }) => message.requestId === canceledWire.requestId)
+  const steps = frames
+    .filter(({ message }) => message.type === 'generation-progress')
+    .map(({ message }) => message.step)
+  assert.ok(steps.length >= 1 && steps.length < 6)
+  assert.deepEqual(
+    steps,
+    Array.from({ length: steps.length }, (_, index) => index + 1),
+  )
+  assert.equal(frames.filter(({ message }) => message.type === 'generation-done').length, 0)
+  assert.equal((await progressSql()).receipts.length, 0)
+  assert.equal(await hashFile(project.file), project.initialPackageSha256)
+  await closeQueue()
+  const editedB = await replaceReferenceImageUi(project, 'B')
+  for (const [label, value] of [
+    ['Steps', '2'],
+    ['Generation seed', '124'],
+  ]) {
+    const input = window.locator(`input[aria-label="${label}"]`)
+    await input.fill(value)
+    await input.press('Tab')
+  }
+  const positive = window.getByRole('textbox', { name: 'Positive prompt', exact: true })
+  await positive.fill('later saved live authoring after reference A cancellation')
+  await positive.press('Tab')
+  for (const region of project.document.regionalGuidance)
+    await window
+      .locator(`[data-regional-guidance-id="${region.id}"]`)
+      .getByRole('button', { name: `Hide ${region.name}`, exact: true })
+      .click()
+  const picker = window.locator('[aria-label="Generation model"]')
+  await picker.hover()
+  await picker.locator('.n-base-clear').click()
+  await expect.poll(async () => (await current(project)).generationDraft.model).toBe(null)
+  await save(project)
+  const edited = await current(project)
+  assert.equal(edited.generationDraft.sampling.steps, 2)
+  assert.deepEqual(edited.generationDraft.seed, { policy: 'fixed', value: 124 })
+  assert.ok(edited.regionalGuidance.every(({ enabled }) => enabled === false))
+  report.currentAuthoringAfterEdit = {
+    generationDraft: edited.generationDraft,
+    regionalGuidance: portableRegions(edited),
+    packageSha256: await hashFile(project.file),
+  }
+  report.referenceImages.canceled = {
+    ...first,
+    row: await job(first.row.id),
+    steps,
+    wire: canceledWire,
+  }
+  report.referenceImages.savedLiveReference = editedB
+  await screenshot('reference-B-settings-saved-before-restart')
+  await closeVPredictionLifetime('reference-canceled-B-saved')
+  await launch()
+  await openProject(project)
+  await installProgressDomObserver()
+  assert.deepEqual((await current(project)).generationDraft, edited.generationDraft)
+  assert.deepEqual(portableRegions(await current(project)), portableRegions(edited))
+  await expect(generate()).toBeDisabled()
+  await openQueue()
+  const retry = queueRow(first.row.id).getByRole('button', { name: 'Retry job', exact: true })
+  await expect(retry).toBeEnabled({ timeout: timeout(120_000) })
+  await retry.click()
+  await expect
+    .poll(async () => (await progressSql()).queue.length, { timeout: timeout(180_000) })
+    .toBe(2)
+  const retried = (await progressSql()).queue.find(({ id }) => id !== first.row.id)
+  assert.equal(retried.frozen_payload_json, first.row.frozen_payload_json)
+  const retryCaptured = await captureFrozen(retried, project)
+  await assertCapturedReferences(retryCaptured, project, originalA)
+  assert.equal(retryCaptured.frozenPayloadSha256, first.captured.frozenPayloadSha256)
+  assert.deepEqual(retryCaptured.regional.references, first.captured.regional.references)
+  report.retry = {
+    firstJobId: first.row.id,
+    retryJobId: retried.id,
+    originalFrozen: first.captured,
+    retryFrozen: retryCaptured,
+  }
+  await closeQueue()
+  const completed = await waitVPredictionCompletion(project, retried)
+  const observed = await observerSnapshot(),
+    wire = assertReferenceWire(observed, retryCaptured, 1)
+  report.referenceImages.retryFrames = assertVPredictionCompletion(observed, wire)
+  assert.equal(
+    await hashFile(project.file),
+    report.currentAuthoringAfterEdit.packageSha256,
+    'Retry must not Save',
+  )
+  assert.deepEqual((await current(project)).generationDraft, edited.generationDraft)
+  assert.deepEqual(portableRegions(await current(project)), portableRegions(edited))
+  const own = await progressSql()
+  assert.equal(own.receipts.length, 1)
+  report.nativeAccounting = {
+    regionalWireCount: 4,
+    completedReceiptCount: 3,
+    canceledSqlCount: 1,
+    nativeLifetimes: 3,
+  }
+  check(
+    'Original canonical A/B references reach native inference with identical controls; actual RGB influence and step1 Cancel precede saved B authoring and restarted exact frozen A Retry',
+    report.referenceImages.causality,
+  )
+  return {
+    row: completed,
+    receipt: own.receipts[0],
+    frozen: retryCaptured.frozen,
+    frozenPayloadSha256: retryCaptured.frozenPayloadSha256,
+  }
+}
+async function saveReferenceResultPreset(project) {
+  const before = await current(project),
+    layer = before.layers.find(({ id }) => id === report.accepted.layerId)
+  await window.getByRole('button', { name: `Layer actions for ${layer.name}`, exact: true }).click()
+  await window.getByRole('menuitem', { name: 'Save Preset from Result', exact: true }).click()
+  const manager = window.getByRole('dialog', { name: 'Preset Manager', exact: true })
+  await expect(manager).toBeVisible()
+  await expect(
+    manager.getByRole('checkbox', { name: 'Include Seed', exact: true }),
+  ).not.toBeChecked()
+  const name = `Reference result ${randomUUID().slice(0, 8)}`
+  await manager.getByRole('textbox', { name: 'Preset name', exact: true }).fill(name)
+  await manager
+    .getByLabel('Preset editor actions', { exact: true })
+    .getByRole('button', { name: 'Create Preset', exact: true })
+    .click()
+  await expect(
+    manager.getByRole('button', { name: `Select preset ${name}`, exact: true }),
+  ).toBeVisible()
+  const response = await window.evaluate(() => window.api.presets.list())
+  assert.equal(response.ok, true)
+  const preset = response.value.find((value) => value.name === name)
+  assert.ok(preset)
+  const stored = await database.db
+    .selectFrom('presets')
+    .selectAll()
+    .where('id', '=', preset.id)
+    .executeTakeFirstOrThrow()
+  assert.deepEqual(JSON.parse(stored.payload_json), preset.payload)
+  assert.deepEqual(preset.payload.prompt, { text: globalPrompt, embeddingRefs: [] })
+  assert.deepEqual(preset.payload.guidance, { cfgScale: 5, steps: 6 })
+  assert.deepEqual(preset.payload.sampling, { sampler: 'Euler', scheduler: 'Normal' })
+  assert.equal(preset.payload.vaePrecision, 'FP16')
+  assert.equal(Object.hasOwn(preset.payload, 'seed'), false)
+  const json = JSON.stringify(preset.payload)
+  for (const forbidden of [
+    'regionalGuidance',
+    'referenceImages',
+    'referenceProfile',
+    'referenceId',
+    'regionId',
+    REGIONAL_REFERENCE_INFERENCE_PROFILE,
+    ...project.document.regionalGuidance.map(({ id }) => id),
+    ...report.referenceImages.imports.map(({ reference }) => reference.asset.sha256),
+    ...Object.values(referenceResources).flatMap(({ managedPath, sha256 }) => [
+      managedPath,
+      sha256,
+    ]),
+  ])
+    assert.equal(json.includes(forbidden), false, `Result preset leaks ${forbidden}`)
+  report.referenceImages.resultPreset = {
+    preset,
+    stored,
+    sourceLayerId: layer.id,
+    referencesExcluded: true,
+  }
+  await manager.getByRole('button', { name: 'Close Preset Manager', exact: true }).click()
+  assert.deepEqual((await current(project)).generationDraft, before.generationDraft)
+  assert.deepEqual(portableRegions(await current(project)), portableRegions(before))
+  assert.equal(await hashFile(project.file), report.accepted.savedPackageSha256)
+  check(
+    'Accepted result creates a real SQLite preset containing frozen base settings with regional images and auxiliary identities excluded',
+  )
 }
 
 async function generateCancelEditRetry(project) {
@@ -7995,7 +8642,7 @@ function assertBaseProvenance(provenance, candidate, frozen) {
       requestedSeedPolicy: 'fixed',
       sampler: generationSampler,
       scheduler: generationScheduleLabel,
-      steps: 30,
+      steps: generationSteps,
       ...(imageProfile ? { denoisingStrength: imageStrength } : {}),
       ...(multipleResultsProfile && frozen.context.sampling.seedBehavior !== undefined
         ? { seedBehavior: frozen.context.sampling.seedBehavior }
@@ -8008,7 +8655,7 @@ function assertBaseProvenance(provenance, candidate, frozen) {
   assert.equal(config.positivePrompt.text, positive.text)
   assert.equal(config.negativePrompt.text, globalNegativePrompt)
   assert.equal(config.sampling.actualSeed, 123)
-  assert.equal(config.sampling.steps, 30)
+  assert.equal(config.sampling.steps, generationSteps)
   assert.equal(config.sampling.cfgScale, 5)
   assert.deepEqual(config.sampling.noiseProfile, policy)
   assert.equal(config.vaePrecision, vaeSelectionProfile || vPredictionProfile ? 'FP32' : 'FP16')
@@ -8058,6 +8705,19 @@ function assertBaseProvenance(provenance, candidate, frozen) {
           ...Object.values(globalVae).map(({ managedPath }) => managedPath),
         ]
       : []),
+    ...(referenceImagesProfile
+      ? [
+          'referenceImages',
+          'referenceProfile',
+          'referenceId',
+          REGIONAL_REFERENCE_INFERENCE_PROFILE,
+          ...report.referenceImages.imports.map(({ reference }) => reference.asset.sha256),
+          ...Object.values(referenceResources).flatMap(({ managedPath, sha256 }) => [
+            managedPath,
+            sha256,
+          ]),
+        ]
+      : []),
   ])
     assert.equal(
       json.includes(forbidden),
@@ -8069,6 +8729,10 @@ function portableRegions(tab) {
   return (tab.regionalGuidance ?? []).map((value) => {
     const region = structuredClone(value)
     delete region.maskImageUrl
+    if (region.referenceImages)
+      region.referenceImages = region.referenceImages.map(
+        ({ thumbnailUrl: _url, ...image }) => image,
+      )
     return region
   })
 }
@@ -8376,7 +9040,7 @@ async function resultsAddSaveReopen(project, completed) {
     )
     assert.deepEqual(
       region.prompts,
-      imageProfile || vPredictionProfile
+      imageProfile || vPredictionProfile || referenceImagesProfile
         ? portableRegions(before)[index].prompts
         : project.document.regionalGuidance[index].prompts,
     )
@@ -8504,11 +9168,23 @@ async function resultsAddSaveReopen(project, completed) {
   if (vPredictionSamplingProfile) {
     assert.equal(reopened.generationDraft.sampling.sampler, 'Euler')
     assert.equal(reopened.generationDraft.sampling.scheduler, 'Normal')
-    assert.equal(accepted.generationProvenance.generationConfiguration.sampling.sampler, generationSampler)
-    assert.equal(accepted.generationProvenance.generationConfiguration.sampling.scheduler, generationScheduleLabel)
-    assert.equal(accepted.generationProvenance.generationConfiguration.sampling.invokeScheduler, generationScheduler)
+    assert.equal(
+      accepted.generationProvenance.generationConfiguration.sampling.sampler,
+      generationSampler,
+    )
+    assert.equal(
+      accepted.generationProvenance.generationConfiguration.sampling.scheduler,
+      generationScheduleLabel,
+    )
+    assert.equal(
+      accepted.generationProvenance.generationConfiguration.sampling.invokeScheduler,
+      generationScheduler,
+    )
     assert.equal(report.vPrediction.sampling.uiChanges.length, 3)
-    assert.deepEqual(report.vPrediction.sampling.uiChanges.map(({ original }) => original), [true, true, false])
+    assert.deepEqual(
+      report.vPrediction.sampling.uiChanges.map(({ original }) => original),
+      [true, true, false],
+    )
     report.vPrediction.sampling.savedReopenedAssociationVerified = true
   }
   if (vPredictionImageProfile) {
@@ -8526,7 +9202,7 @@ async function resultsAddSaveReopen(project, completed) {
     await expect(window.getByRole('button', { name: 'Generate', exact: true })).toBeEnabled({
       timeout: timeout(120_000),
     })
-  } else if (vPredictionProfile) {
+  } else if (vPredictionProfile || referenceImagesProfile) {
     assert.equal((await targetState(project)).mode, 'img2img')
     assert.equal(reopened.generationDraft.model, null)
     await expect(
@@ -8558,7 +9234,7 @@ async function resultsAddSaveReopen(project, completed) {
 }
 
 async function retainObservers(restore) {
-  if (restore && (recoveryProfile || vPredictionProfile) && activeLifetime?.observers)
+  if (restore && multipleLifetimesProfile && activeLifetime?.observers)
     return activeLifetime.observers
   const observed = await observerSnapshot(restore)
   report.observers = observed
@@ -8582,7 +9258,7 @@ async function retainObservers(restore) {
       processIdentities: identities.map(({ pid, start }) => ({ pid, start })),
       groups: [],
     })
-  if ((recoveryProfile || vPredictionProfile) && restore) {
+  if (multipleLifetimesProfile && restore) {
     assert.ok(
       activeLifetime && !activeLifetime.observers,
       'Original slots can be restored only once per lifetime',
@@ -8696,7 +9372,7 @@ async function closeNative(label) {
       processExitCode: nativeProcess.exitCode,
       signalCode: nativeProcess.signalCode,
     })
-    if ((recoveryProfile || vPredictionProfile) && activeLifetime) {
+    if (multipleLifetimesProfile && activeLifetime) {
       activeLifetime.closure = report.nativeClosures.at(-1)
       activeLifetime.finishedAt = new Date().toISOString()
     }
@@ -8740,6 +9416,21 @@ async function finalIdentities() {
     assert.deepEqual(verified, original)
     assert.deepEqual(statIdentity(await regular(verified.managedPath)), stat)
   }
+  if (referenceImagesProfile) {
+    const verified = await new InferenceAuxiliaryResources(
+      path.join(appDataRoot, 'inference-resources'),
+    ).resolveVerifiedRegionalReferenceResources()
+    assert.deepEqual(verified, referenceResources)
+    for (const [key, resource] of Object.entries(verified))
+      assert.deepEqual(
+        statIdentity(await regular(resource.managedPath)),
+        report.referenceResources[key].stat,
+      )
+    for (const source of Object.values(report.referenceImages.sources)) {
+      assert.deepEqual(statIdentity(await regular(source.path)), source.stat)
+      assert.equal(await hashFile(source.path), source.sha256)
+    }
+  }
   if (progressProfile)
     assert.deepEqual(
       await captureFiles(Object.keys(report.progressSourceSha256)),
@@ -8751,7 +9442,63 @@ async function finalIdentities() {
     const whole = recoveryProfile || progressProfile ? await sqlSnapshot(db.db) : null
     if (recoveryProfile) assertBaselineSql(whole)
     if (progressProfile) await verifyProgressPreservation(db.db)
-    if (vPredictionProfile) {
+    if (referenceImagesProfile) {
+      const own = ownProgressSql(whole)
+      assert.equal(own.queue.length, 2)
+      assert.equal(own.queue.filter(({ status }) => status === 'canceled').length, 1)
+      assert.equal(own.queue.filter(({ status }) => status === 'completed').length, 1)
+      assert.ok(
+        own.queue.every(
+          ({ frozen_payload_json }) =>
+            frozen_payload_json === report.retry.originalFrozen.row.frozen_payload_json,
+        ),
+      )
+      assert.equal(own.receipts.length, 1)
+      assert.equal(own.receipts[0].image_sha256, report.output.pngSha256)
+      assert.equal(own.cursors.length, 1)
+      assert.equal(own.cursors[0].actual_seed, 123)
+      for (const control of Object.values(report.referenceImages.controls)) {
+        assert.deepEqual(
+          whole.queue.find(({ id }) => id === control.row.id),
+          control.row,
+        )
+        assert.deepEqual(
+          whole.receipts.find(({ queue_item_id }) => queue_item_id === control.row.id),
+          control.receipt,
+        )
+        assert.equal(await hashFile(control.file), control.pngSha256)
+      }
+      const controlKey = report.referenceImages.controlProjectKey
+      assert.equal(
+        whole.queue.filter(({ local_project_key }) => local_project_key === controlKey).length,
+        2,
+      )
+      assert.equal(
+        whole.receipts.filter(({ local_project_key }) => local_project_key === controlKey).length,
+        2,
+      )
+      const controlCursors = whole.cursors.filter(
+        ({ local_project_key }) => local_project_key === controlKey,
+      )
+      assert.equal(controlCursors.length, 1)
+      assert.equal(
+        controlCursors[0].candidate_id,
+        report.referenceImages.controls.B.receipt.candidate_id,
+      )
+      assert.equal(controlCursors[0].actual_seed, 123)
+      const stored = await db.db
+        .selectFrom('presets')
+        .selectAll()
+        .where('id', '=', report.referenceImages.resultPreset.preset.id)
+        .executeTakeFirstOrThrow()
+      assert.deepEqual(stored, report.referenceImages.resultPreset.stored)
+      assert.equal(
+        (await readZip(projects.find(({ mode }) => mode === 'reference-control').file)).project
+          .layers.length,
+        0,
+      )
+      report.finalSql = own
+    } else if (vPredictionProfile) {
       if (vPredictionImageProfile)
         assert.equal(await hashFile(report.img2img.source.path), report.img2img.source.sha256)
       const own = ownProgressSql(whole)
@@ -9404,10 +10151,30 @@ try {
   await prepareCatalogAndProjects()
   await prepareMainDeathControls()
   await launch()
-  if (!imageProfile && !vPredictionProfile) await targetRefusalControls()
-  if (vPredictionProfile) {
+  if (!imageProfile && !vPredictionProfile && !referenceImagesProfile) await targetRefusalControls()
+  if (referenceImagesProfile) {
+    const project = projects.find(({ mode }) => mode === 'transparent')
+    progressProject = project
+    const completed = await generateReferenceControlCancelRetry(project)
+    await resultsAddSaveReopen(project, completed)
+    assert.equal(report.output.pngSha256, report.referenceImages.controls.A.pngSha256)
+    assert.equal(report.output.rgbaSha256, report.referenceImages.controls.A.rgbaSha256)
+    report.referenceImages.exactRestartedFrozenRetryA = true
+    await saveReferenceResultPreset(project)
+    const observed = await observerSnapshot()
+    for (const [channel, count] of [
+      ['projects:generate', 0],
+      ['projects:retry-generation-job', 1],
+      ['projects:accept-generation-candidates', 1],
+      ['projects:undo', 1],
+      ['projects:redo', 1],
+    ])
+      assert.equal(observed.ipc.filter((entry) => entry.channel === channel).length, count)
+  } else if (vPredictionProfile) {
     const project = projects.find(
-      ({ mode }) => mode === (vPredictionImageProfile ? (outpaintProfile ? 'partial' : 'opaque') : 'transparent'),
+      ({ mode }) =>
+        mode ===
+        (vPredictionImageProfile ? (outpaintProfile ? 'partial' : 'opaque') : 'transparent'),
     )
     progressProject = project
     report.vPrediction.controlProjectKey = projects.find(({ mode }) => mode === 'v-control').id
@@ -9418,8 +10185,7 @@ try {
     assert.equal(report.output.pngSha256, report.vPrediction.control.pngSha256)
     assert.equal(report.output.rgbaSha256, report.vPrediction.control.rgbaSha256)
     report.vPrediction.exactControlRetryRgb = true
-    if (vPredictionImageProfile)
-      report.vPrediction.exactControlRetryRgba = outpaintProfile
+    if (vPredictionImageProfile) report.vPrediction.exactControlRetryRgba = outpaintProfile
     const observed = await observerSnapshot()
     assert.equal(observed.ipc.filter(({ channel }) => channel === 'projects:generate').length, 0)
     assert.equal(
@@ -9549,7 +10315,7 @@ try {
   assert.equal(report.samplerError, undefined)
   if (imageProfile && !vPredictionImageProfile) await closeImageControl()
   await closeNative('healthy-final')
-  if (vPredictionImageProfile || vPredictionSamplingProfile) {
+  if (vPredictionImageProfile || vPredictionSamplingProfile || referenceImagesProfile) {
     assert.equal(report.lifetimes.length, 3)
     assert.equal(report.nativeClosures.length, 3)
     assert.ok(
@@ -9558,6 +10324,27 @@ try {
           confirmed && processExitCode === 0 && signalCode === null,
       ),
     )
+  }
+  if (referenceImagesProfile) {
+    const observed = report.lifetimes.flatMap(({ observers }) => observers.ipc)
+    assert.equal(report.lifetimes.flatMap(({ observers }) => regionalWires(observers)).length, 4)
+    for (const [channel, count] of [
+      ['projects:generate', 3],
+      ['projects:retry-generation-job', 1],
+      ['projects:cancel-generation-job', 1],
+      ['projects:accept-generation-candidates', 1],
+      ['projects:undo', 1],
+      ['projects:redo', 1],
+      ['projects:import-regional-guidance-reference-image', 4],
+      ['projects:update-regional-guidance-reference-image', 2],
+    ])
+      assert.equal(observed.filter((entry) => entry.channel === channel).length, count)
+    assert.ok(
+      observed.every(
+        ({ originalCalls, finished, ok }) => originalCalls === 1 && finished && ok === true,
+      ),
+    )
+    report.referenceImages.normalPhysicalCloseAndExactActionAccounting = true
   }
   if (workerFaultProfile) {
     assert.equal(report.nativeClosures.length, 1)
@@ -9595,33 +10382,36 @@ try {
     }
   }
   await finalIdentities()
+  assert.equal(await hashFile(report.harnessSource.path), report.harnessSource.sha256)
   report.outcome = 'passed'
   report.completedAt = new Date().toISOString()
   report.elapsedSeconds = (Date.now() - started) / 1000
   check(
-    vPredictionProfile
-      ? `Finite installed exact NoobAI V-prediction ${generationMode} ${generationSampler}/${generationScheduleLabel}, EmbeddedFP32${vPredictionImageProfile ? '/strength0.5' : ''}, genuine healthy/progress-Cancel/restarted frozen-Retry, exact independently decoded control ${outpaintProfile ? 'RGBA contribution/source-over' : 'RGB'} and ordinary V provenance through Add/Undo/Redo/Save/reopen${vPredictionImageProfile ? ' with original source preserved after saved hiding' : ''}; no visual-quality/all-method/public-readiness claim`
-      : outpaintProfile
-        ? 'Finite installed mixed-alpha regional outpaint with EmbeddedFP16, Euler/Normal, CFG Rescale0.7, exact LaMa, actual imported source and live Cancel/frozen Retry after saved edits completed through verified RGBA contribution, protected-source composition, Results/Add/Undo/Redo/Save ZIP/reopen; no visual-quality or broader model claim'
-        : imageProfile
-          ? imgVaeProfile
-            ? 'Finite installed opaque regional IMG exact A/FP32 with Euler/Normal and CFG Rescale0.7, actual imported source, observed Cancel/frozen Retry after saved Embedded/FP16 edits, exact healthy-control RGB and accepted ordinary IMG provenance through Add/Undo/Redo/Save/reopen completed; no installed VAE pixel-causality or quality claim'
-            : 'Finite installed opaque regional IMG UI/default RuntimeManager, actual imported source, live numeric Cancel/frozen Retry and exact healthy-control RGB, explicit Add/Undo/Redo/Save/reopen completed; no visual-quality or broader IMG claim'
-          : dynamicPositiveProfile
-            ? 'Finite installed two-expansion global-positive prefix, exact per-item TI, original Cancel/frozen Retry and concrete accepted provenance completed after saved template/options/mask/LoRA/VAE edits; same runtime and three wires/two PNGs'
-            : globalVaeProfile
-              ? 'Finite installed exact VAE A/FP32 with LoRA/TI, observed Cancel, original frozen Retry, two Results and base VAE/precision provenance completed after saved Embedded/FP16 edits; no installed pixel-causality or quality claim'
-              : globalLoraProfile
-                ? 'Finite installed global LoRA/TI batch, observed Cancel, original frozen Retry, two Results and full configured-LoRA/global-only-TI accepted provenance completed; no installed numerical-causality or quality claim'
-                : globalTiProfile
-                  ? 'Finite installed global/region exact TI batch, observed Cancel, frozen Retry, two Results and global-only accepted provenance completed; no new native TI-causality or quality claim'
-                  : staticBatchProfile
-                    ? 'Finite installed two-image static batch, exact frozen identity, distinct Results and reviewed Add/Discard/Undo/Save qualification completed; no quality or throughput claim'
-                    : workerFaultProfile
-                      ? 'Finite installed worker-only fault/normal failure/progress clearing/frozen Retry qualification completed with the same live Main; no visual-quality or capacity claim'
-                      : progressProfile
-                        ? 'Finite installed original scalar progress/Cancel/frozen Retry qualification completed; no visual-quality or capacity claim'
-                        : 'Finite installed public UI Regional qualification completed; evidence supports this exact matrix and no visual-quality or numerical-step claim',
+    referenceImagesProfile
+      ? 'Finite installed official Illustrious epsilon regional references: same-control A/B original PNG influence, native step1 Cancel, saved B/settings and restarted exact frozen A Retry, explicit Add/Undo/Redo/Save/reopen and actual result-preset regional exclusion. No aesthetic-quality, capacity or release-readiness claim'
+      : vPredictionProfile
+        ? `Finite installed exact NoobAI V-prediction ${generationMode} ${generationSampler}/${generationScheduleLabel}, EmbeddedFP32${vPredictionImageProfile ? '/strength0.5' : ''}, genuine healthy/progress-Cancel/restarted frozen-Retry, exact independently decoded control ${outpaintProfile ? 'RGBA contribution/source-over' : 'RGB'} and ordinary V provenance through Add/Undo/Redo/Save/reopen${vPredictionImageProfile ? ' with original source preserved after saved hiding' : ''}; no visual-quality/all-method/public-readiness claim`
+        : outpaintProfile
+          ? 'Finite installed mixed-alpha regional outpaint with EmbeddedFP16, Euler/Normal, CFG Rescale0.7, exact LaMa, actual imported source and live Cancel/frozen Retry after saved edits completed through verified RGBA contribution, protected-source composition, Results/Add/Undo/Redo/Save ZIP/reopen; no visual-quality or broader model claim'
+          : imageProfile
+            ? imgVaeProfile
+              ? 'Finite installed opaque regional IMG exact A/FP32 with Euler/Normal and CFG Rescale0.7, actual imported source, observed Cancel/frozen Retry after saved Embedded/FP16 edits, exact healthy-control RGB and accepted ordinary IMG provenance through Add/Undo/Redo/Save/reopen completed; no installed VAE pixel-causality or quality claim'
+              : 'Finite installed opaque regional IMG UI/default RuntimeManager, actual imported source, live numeric Cancel/frozen Retry and exact healthy-control RGB, explicit Add/Undo/Redo/Save/reopen completed; no visual-quality or broader IMG claim'
+            : dynamicPositiveProfile
+              ? 'Finite installed two-expansion global-positive prefix, exact per-item TI, original Cancel/frozen Retry and concrete accepted provenance completed after saved template/options/mask/LoRA/VAE edits; same runtime and three wires/two PNGs'
+              : globalVaeProfile
+                ? 'Finite installed exact VAE A/FP32 with LoRA/TI, observed Cancel, original frozen Retry, two Results and base VAE/precision provenance completed after saved Embedded/FP16 edits; no installed pixel-causality or quality claim'
+                : globalLoraProfile
+                  ? 'Finite installed global LoRA/TI batch, observed Cancel, original frozen Retry, two Results and full configured-LoRA/global-only-TI accepted provenance completed; no installed numerical-causality or quality claim'
+                  : globalTiProfile
+                    ? 'Finite installed global/region exact TI batch, observed Cancel, frozen Retry, two Results and global-only accepted provenance completed; no new native TI-causality or quality claim'
+                    : staticBatchProfile
+                      ? 'Finite installed two-image static batch, exact frozen identity, distinct Results and reviewed Add/Discard/Undo/Save qualification completed; no quality or throughput claim'
+                      : workerFaultProfile
+                        ? 'Finite installed worker-only fault/normal failure/progress clearing/frozen Retry qualification completed with the same live Main; no visual-quality or capacity claim'
+                        : progressProfile
+                          ? 'Finite installed original scalar progress/Cancel/frozen Retry qualification completed; no visual-quality or capacity claim'
+                          : 'Finite installed public UI Regional qualification completed; evidence supports this exact matrix and no visual-quality or numerical-step claim',
   )
 } catch (error) {
   report.outcome = 'failed'

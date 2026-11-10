@@ -46,6 +46,7 @@ type RetryState = Pick<
   | 'regionalInvokeInitializationSupported'
   | 'regionalLoraSupported'
   | 'regionalOutpaintSupported'
+  | 'regionalReferenceImagesSupported'
   | 'regionalSupported'
   | 'regionalVaeSupported'
   | 'regionalVPredictionImageSupported'
@@ -68,6 +69,7 @@ export function generationQueueRetryReason(
   requiresSmartPatchRegionalOutpaint = false,
   requiresSmartPatchRegionalTxt2Img = false,
   requiresSmartPatchRegionalImg2Img = false,
+  requiresRegionalReferenceImages = false,
 ): string | null {
   if (
     operation === 'anima-regional-txt2img' ||
@@ -108,6 +110,9 @@ export function generationQueueRetryReason(
     }
     if (state.regionalSupported !== true) {
       return 'The current image engine does not support Regional Guidance. Repair or update the runtime.'
+    }
+    if (requiresRegionalReferenceImages && state.regionalReferenceImagesSupported !== true) {
+      return 'The current image engine does not support this frozen regional reference-image job. Repair or update the runtime.'
     }
     if (frozenPredictionType === 'v_prediction') {
       if (!['DPM++ 2M', 'Euler', 'Euler a'].includes(frozenSampler ?? '')) {

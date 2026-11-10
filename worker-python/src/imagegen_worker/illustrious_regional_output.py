@@ -52,6 +52,7 @@ from .illustrious_regional_recipe import (
     _Profile,  # pyright: ignore[reportPrivateUsage]
     _recipe_inputs,  # pyright: ignore[reportPrivateUsage]
 )
+from .illustrious_regional_references import PreparedRegionalReferences
 from .illustrious_regional_vae import validate_regional_vae_output
 from .inference import DenoisingProgressSink, MLRuntime
 from .lama_infill import OUTPAINT_INFILL_BYTE_SIZE, OUTPAINT_INFILL_SHA256
@@ -306,6 +307,7 @@ def _generate_current_canvas_regional(
     img2img: bool = False,
     outpaint: bool = False,
     _prepared_outpaint: tuple[OutpaintConditioning, Image.Image] | None = None,
+    references: PreparedRegionalReferences | None = None,
 ) -> dict[str, object]:
     """Validate one frozen target, run once, and return the original publisher receipt.
 
@@ -439,6 +441,7 @@ def _generate_current_canvas_regional(
         positive_pooled_source_id=positive_pooled_source_id,
         bindings=bindings,
         layout=layout,
+        references=references,
         **({"on_progress": on_progress} if on_progress is not None else {}),
         **(
             {"keep_mask": alpha_conditioning.latent_keep_mask}
@@ -494,6 +497,7 @@ def generate_current_canvas_regional_txt2img(
     bindings: tuple[TransformerBinding, ...],
     layout: _Layout,
     on_progress: DenoisingProgressSink | None = None,
+    references: PreparedRegionalReferences | None = None,
 ) -> dict[str, object]:
     """Verify a transparent target, run once, and return the original PNG receipt."""
     return _generate_current_canvas_regional(
@@ -510,6 +514,7 @@ def generate_current_canvas_regional_txt2img(
         bindings=bindings,
         layout=layout,
         on_progress=on_progress,
+        references=references,
     )
 
 

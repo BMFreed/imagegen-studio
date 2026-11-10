@@ -830,7 +830,7 @@ const RegionalPromptsSchema = v.pipe(
   ),
 )
 
-const RegionalReferenceImageSchema = v.pipe(
+export const RegionalReferenceImageSchema = v.pipe(
   v.strictObject({
     asset: v.strictObject({
       ...MemberRefSchema.entries,

@@ -3,6 +3,13 @@ import {
   type RegionalInitializationProfile,
   RegionalInitializationProfileSchema,
 } from '../../shared/projects/regional-initialization-profile.js'
+import {
+  REGIONAL_REFERENCE_INFERENCE_PROFILE,
+  REGIONAL_REFERENCE_MAX_BYTES,
+  REGIONAL_REFERENCE_MAX_IMAGES,
+  REGIONAL_REFERENCE_MAX_SIDE,
+  REGIONAL_REFERENCE_MAX_TOTAL_BYTES,
+} from '../../shared/projects/regional-reference-inference.js'
 
 import { createHash } from 'node:crypto'
 import { type BigIntStats, constants } from 'node:fs'
@@ -38,12 +45,14 @@ import { frozenVaeFieldsAgree } from './illustrious-generation-vae.js'
 import {
   captureRegionalWorkerInput,
   RegionalOutpaintInfillSchema,
+  verifyRegionalReferenceWorkerResources,
 } from './regional-worker-request.js'
 
 /** Private operational identity, outside normal Generate and accepted-result provenance. */
 export interface FrozenQueuedRegionalV1 extends Omit<FrozenQueuedIllustriousTxt2ImgV1, 'kind'> {
   initializationProfile?: RegionalInitializationProfile
   kind: 'illustrious-regional'
+  referenceProfile?: typeof REGIONAL_REFERENCE_INFERENCE_PROFILE
   regional: { byteSize: number; sha256: string }
 }
 
@@ -60,6 +69,7 @@ export interface FrozenQueuedRegionalInvokeImg2ImgV1 extends Omit<
   compositionProfile: 'invoke-canvas-v1'
   initializationProfile?: never
   kind: 'illustrious-regional-img2img'
+  referenceProfile?: never
   regional: FrozenQueuedRegionalV1['regional']
 }
 
@@ -71,6 +81,7 @@ export interface FrozenQueuedRegionalInvokeOutpaintV1 extends Omit<
   initializationProfile?: never
   kind: 'illustrious-regional-outpaint'
   outpaintInfill: RegionalOutpaintInfill
+  referenceProfile?: never
   regional: FrozenQueuedRegionalV1['regional']
 }
 
@@ -89,6 +100,7 @@ export interface RegionalQueuedMaterial {
   files: Record<string, Buffer>
   initializationProfile?: RegionalInitializationProfile
   outpaintInfill?: RegionalOutpaintInfill
+  referenceProfile?: typeof REGIONAL_REFERENCE_INFERENCE_PROFILE
   regional: FrozenQueuedRegionalV1['regional']
 }
 
@@ -110,6 +122,45 @@ const regionalRef = v.strictObject({
 export const regionalAlphaRefSchema = v.strictObject({
   $alpha8: v.strictObject({ byteSize, file: v.string(), sha256: sha }),
 })
+const regionalReferenceRefSchema = v.strictObject({
+  $referencePng: v.strictObject({
+    byteSize: v.pipe(
+      v.number(),
+      v.safeInteger(),
+      v.minValue(1),
+      v.maxValue(REGIONAL_REFERENCE_MAX_BYTES),
+    ),
+    file: v.string(),
+    height: v.pipe(
+      v.number(),
+      v.safeInteger(),
+      v.minValue(1),
+      v.maxValue(REGIONAL_REFERENCE_MAX_SIDE),
+    ),
+    sha256: sha,
+    width: v.pipe(
+      v.number(),
+      v.safeInteger(),
+      v.minValue(1),
+      v.maxValue(REGIONAL_REFERENCE_MAX_SIDE),
+    ),
+  }),
+})
+const queuedReferencesSchema = v.strictObject({
+  images: v.pipe(
+    v.array(
+      v.strictObject({
+        image: regionalReferenceRefSchema,
+        referenceId: v.string(),
+        regionId: v.string(),
+      }),
+    ),
+    v.minLength(1),
+    v.maxLength(REGIONAL_REFERENCE_MAX_IMAGES),
+  ),
+  profile: v.literal(REGIONAL_REFERENCE_INFERENCE_PROFILE),
+  resources: v.unknown(),
+})
 const metadataSchema = v.strictObject({
   compositionProfile: v.optional(v.literal('invoke-canvas-v1')),
   globalNegativeCoverage: v.unknown(),
@@ -119,6 +170,7 @@ const metadataSchema = v.strictObject({
   negativePooledSourceId: v.string(),
   positivePooledSourceId: v.string(),
   recipe: v.unknown(),
+  references: v.optional(queuedReferencesSchema),
   schemaVersion: v.literal(1),
 })
 type Metadata = v.InferOutput<typeof metadataSchema>
@@ -226,6 +278,7 @@ export function parseAcceptedGenerationBaseV1(json: string): FrozenQueuedGenerat
   const {
     compositionProfile: _profile,
     initializationProfile: _init,
+    referenceProfile: _references,
     regional: _regional,
     ...base
   } = payload
@@ -244,6 +297,22 @@ export function captureRegionalQueuedMaterial(
   const captured = captureRegionalWorkerInput(input)
   assertPublicRegionalGlobalEmbeddingsAgree(captured, context)
   const { alpha, files } = createRegionalQueuedAlphaCollector()
+  const references =
+    captured.references === undefined
+      ? undefined
+      : {
+          ...captured.references,
+          images: captured.references.images.map((entry, index) => {
+            const file = `reference-${index}.png`
+            files[file] = Buffer.from(entry.image.bytes)
+            const { bytes: _bytes, ...identity } = entry.image
+            return {
+              image: { $referencePng: { ...identity, file } },
+              referenceId: entry.referenceId,
+              regionId: entry.regionId,
+            }
+          }),
+        }
   const globalCoverage = (coverage: RegionalWorkerInput['globalNegativeCoverage'], sign: string) =>
     coverage.kind === 'everywhere'
       ? coverage
@@ -255,6 +324,7 @@ export function captureRegionalQueuedMaterial(
     ...(captured.initializationProfile !== undefined
       ? { initializationProfile: captured.initializationProfile }
       : {}),
+    ...(references ? { references } : {}),
     globalNegativeCoverage: globalCoverage(captured.globalNegativeCoverage, 'negative'),
     globalPositiveCoverage: globalCoverage(captured.globalPositiveCoverage, 'positive'),
     layout: captured.layout,
@@ -279,6 +349,7 @@ export function captureRegionalQueuedMaterial(
   }
   files['regional.json'] = bytes
   return {
+    ...(captured.references ? { referenceProfile: captured.references.profile } : {}),
     ...(captured.compositionProfile !== undefined
       ? { compositionProfile: captured.compositionProfile }
       : {}),
@@ -446,6 +517,9 @@ export async function loadRegionalQueuedInput(
     throw invalid('The frozen regional recipe/request association is invalid.')
   }
   assertPublicRegionalGlobalEmbeddingsAgree(captured, capturedPayload.context)
+  if (captured.references) {
+    await verifyRegionalReferenceWorkerResources(captured.references)
+  }
   const { output: _output, target, ...fullJob } = captured.request.job
   let job = fullJob
   if (captured.request.type === 'generate-illustrious-outpaint') {
@@ -473,6 +547,7 @@ export async function loadRegionalQueuedInput(
         ? capturedPayload.compositionProfile
         : undefined) ||
     captured.initializationProfile !== capturedPayload.initializationProfile ||
+    captured.references?.profile !== capturedPayload.referenceProfile ||
     captured.recipe.documentId !== capturedPayload.context.documentId ||
     captured.recipe.documentRevision !== capturedPayload.context.documentRevision
   ) {
@@ -486,7 +561,7 @@ export async function loadOwnedRegionalQueuedFiles<T>(
   root: string,
   regional: { byteSize: number; sha256: string },
   parse: (bytes: Buffer) => T,
-  collect: (metadata: T) => AlphaRef['$alpha8'][],
+  collect: (metadata: T) => (AlphaRef['$alpha8'] & { kind?: 'reference' })[],
 ): Promise<Record<string, Buffer>> {
   const directory = await directoryIdentity(root)
   const snapshots: Snapshot[] = []
@@ -495,9 +570,20 @@ export async function loadOwnedRegionalQueuedFiles<T>(
   const parsed = parse(metadata.bytes)
   const descriptors = collect(parsed)
   let aggregate = 0
+  let referenceAggregate = 0
   const inodes = new Set([inode(metadata.identity)])
   for (const descriptor of descriptors) {
-    aggregate += descriptor.byteSize
+    if (descriptor.kind === 'reference') {
+      referenceAggregate += descriptor.byteSize
+      if (
+        descriptor.byteSize > REGIONAL_REFERENCE_MAX_BYTES ||
+        referenceAggregate > REGIONAL_REFERENCE_MAX_TOTAL_BYTES
+      ) {
+        throw invalid('Frozen regional reference PNGs exceed their independent byte limit.')
+      }
+    } else {
+      aggregate += descriptor.byteSize
+    }
     if (aggregate > MAX_ALPHA_BYTES) {
       throw invalid('Frozen regional alpha exceeds 64 MiB.')
     }
@@ -598,10 +684,19 @@ function parseRegionalPayload(
   ) {
     throw invalid('The frozen regional initialization profile is unsupported.')
   }
+  if (
+    'referenceProfile' in value &&
+    (value.referenceProfile !== REGIONAL_REFERENCE_INFERENCE_PROFILE ||
+      !invoke ||
+      value.kind !== 'illustrious-regional-txt2img')
+  ) {
+    throw invalid('The frozen regional reference profile is unsupported.')
+  }
   const {
     compositionProfile: _profile,
     initializationProfile,
     outpaintInfill,
+    referenceProfile,
     regional: _regional,
     ...base
   } = value
@@ -701,6 +796,9 @@ function parseRegionalPayload(
         ...ordinary,
         compositionProfile: 'invoke-canvas-v1',
         ...initialization,
+        ...(referenceProfile !== undefined
+          ? { referenceProfile: REGIONAL_REFERENCE_INFERENCE_PROFILE }
+          : {}),
         kind: 'illustrious-regional-txt2img',
         regional: parsed.output,
       }
@@ -740,7 +838,9 @@ function parseMetadata(bytes: Buffer): Metadata {
   return parsed.output
 }
 
-function collectAlphaDescriptors(metadata: Metadata): AlphaRef['$alpha8'][] {
+function collectAlphaDescriptors(
+  metadata: Metadata,
+): (AlphaRef['$alpha8'] & { kind?: 'reference' })[] {
   if (
     !record(metadata.recipe) ||
     !Array.isArray(metadata.recipe.regions) ||
@@ -748,7 +848,7 @@ function collectAlphaDescriptors(metadata: Metadata): AlphaRef['$alpha8'][] {
   ) {
     throw invalid('Frozen regional recipe regions are invalid.')
   }
-  const descriptors: AlphaRef['$alpha8'][] = []
+  const descriptors: (AlphaRef['$alpha8'] & { kind?: 'reference' })[] = []
   const collect = (value: unknown, expected: string): void => {
     const result = v.safeParse(regionalAlphaRefSchema, value)
     if (!result.success || result.output.$alpha8.file !== expected) {
@@ -774,6 +874,13 @@ function collectAlphaDescriptors(metadata: Metadata): AlphaRef['$alpha8'][] {
       throw invalid('Frozen global coverage is invalid.')
     }
   }
+  for (const [index, entry] of (metadata.references?.images ?? []).entries()) {
+    const descriptor = entry.image.$referencePng
+    if (descriptor.file !== `reference-${index}.png`) {
+      throw invalid('A frozen regional reference role is invalid.')
+    }
+    descriptors.push({ ...descriptor, kind: 'reference' })
+  }
   return descriptors
 }
 
@@ -796,6 +903,21 @@ function hydrate(
   const recipe = metadata.recipe as Record<string, unknown> & { regions: Record<string, unknown>[] }
   return {
     ...result,
+    ...(metadata.references
+      ? {
+          references: {
+            ...metadata.references,
+            images: metadata.references.images.map((entry) => {
+              const { file, ...identity } = entry.image.$referencePng
+              return {
+                image: { ...identity, bytes: new Uint8Array(files[file]) },
+                referenceId: entry.referenceId,
+                regionId: entry.regionId,
+              }
+            }),
+          },
+        }
+      : {}),
     globalNegativeCoverage: globalCoverage(metadata.globalNegativeCoverage),
     globalPositiveCoverage: globalCoverage(metadata.globalPositiveCoverage),
     recipe: {

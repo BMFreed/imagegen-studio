@@ -35,8 +35,10 @@ export interface GenerationQueueEntry extends GenerationQueueReview {
     modelVersion: string
     negativePrompt: string
     prompt: string
-    /** Derived from the frozen public regional worker stack, including enabled zero weights. */
     requiresRegionalLora?: boolean
+    /** Derived from the frozen public regional worker stack, including enabled zero weights. */
+    /** Derived from the frozen reference profile; current Project edits cannot grant Retry. */
+    requiresRegionalReferenceImages?: boolean
     /** Derived from the frozen selected VAE/effective precision, never the current draft. */
     requiresRegionalVae?: boolean
     requiresSmartPatchRegional?: boolean
@@ -130,6 +132,7 @@ const EntrySchema = v.pipe(
         negativePrompt: text,
         prompt: text,
         requiresRegionalLora: v.optional(v.boolean()),
+        requiresRegionalReferenceImages: v.optional(v.boolean()),
         requiresRegionalVae: v.optional(v.boolean()),
         requiresSmartPatchRegional: v.optional(v.boolean()),
         requiresSmartPatchRegionalImg2Img: v.optional(v.boolean()),

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 
 import {
+  supportsInferenceRegionalReferenceImages,
   supportsInferenceRegionalVPrediction,
   supportsInferenceRegionalVPredictionImage,
   supportsInferenceRegionalVPredictionSampling,
@@ -188,7 +189,7 @@ test('global LoRAs and TI require their support while references refuse and dorm
       },
     },
   ]
-  assert.match(reason(value)!, /reference images from enabled regions/)
+  assert.match(reason(value)!, /Regional reference images/)
   region.enabled = false
   assert.equal(reason(value), null)
 })
@@ -301,6 +302,7 @@ test('regional capability is an optional strict boolean in preload action respon
     'regionalImg2ImgCfgRescaleSupported',
     'regionalLoraSupported',
     'regionalVaeSupported',
+    'regionalReferenceImagesSupported',
   ]) {
     for (const supported of [false, true]) {
       assert.equal(isProjectGenerationActionState({ ...state, [field]: supported }), true)
@@ -1206,4 +1208,205 @@ test('regional V sampling state is optional strict boolean for old preload respo
       false,
     )
   }
+})
+
+test('regional original-image admission is a separate finite EPS TXT lane and leaves disabled references dormant', () => {
+  const value = document()
+  value.primaryBbox.width = value.primaryBbox.height = 512
+  const reference = (index: number) => {
+    const id = randomUUID()
+    return {
+      asset: {
+        bytes: 1024,
+        height: 600,
+        path: `assets/regional-references/${id}/${'a'.repeat(64)}.png`,
+        sha256: 'a'.repeat(64),
+        width: 800,
+      },
+      id,
+      name: `Original ${index}`,
+      sourceFormat: 'PNG' as const,
+      thumbnail: {
+        bytes: 128,
+        height: 96,
+        path: `assets/regional-references/${id}/${'b'.repeat(64)}.webp`,
+        sha256: 'b'.repeat(64),
+        width: 128,
+      },
+    }
+  }
+  value.regionalGuidance![0].referenceImages = [reference(0)]
+  const allowed = (
+    document = value,
+    supported: boolean | null = true,
+    iterations = 1,
+    targetMode: 'img2img' | 'outpaint' | 'txt2img' = 'txt2img',
+  ) =>
+    getInvokeRegionalGenerationUnavailableReason({
+      document,
+      iterations,
+      regionalReferenceImagesSupported: supported,
+      runtimeSupported: true,
+      targetMode,
+      vPredictionSupported: true,
+    })
+  const original = structuredClone(value)
+  assert.equal(allowed(), null)
+  for (const flag of [null, false]) {
+    assert.match(allowed(value, flag)!, /image engine.*regional reference images/)
+  }
+  assert.match(allowed(value, true, 2)!, /one image and static prompts/)
+  for (const mode of ['img2img', 'outpaint'] as const) {
+    assert.match(allowed(value, true, 1, mode)!, /transparent txt2img/)
+  }
+  const changes: [(document: IgsProjectDocumentV1) => void, RegExp][] = [
+    [
+      (v) => {
+        v.generationDraft.model!.predictionType = 'v_prediction'
+      },
+      /epsilon/,
+    ],
+    [
+      (v) => {
+        v.generationDraft.sampling.sampler = 'Euler a'
+      },
+      /Euler with the Normal/,
+    ],
+    [
+      (v) => {
+        v.generationDraft.sampling.scheduler = 'Karras'
+      },
+      /Euler with the Normal/,
+    ],
+    [
+      (v) => {
+        v.generationDraft.cfgRescale = 0.1
+      },
+      /CFG Rescale 0/,
+    ],
+    [
+      (v) => {
+        v.generationDraft.vaePrecision = 'Auto'
+      },
+      /embedded VAE.*FP16/,
+    ],
+    [
+      (v) => {
+        v.generationDraft.loras = [
+          { enabled: true, resource: { ...v.generationDraft.model!, kind: 'lora' }, weight: 0 },
+        ]
+      },
+      /Disable global LoRAs/,
+    ],
+    [
+      (v) => {
+        v.generationDraft.positivePrompt.text = '{one|two}'
+      },
+      /static prompts/,
+    ],
+    [
+      (v) => {
+        v.primaryBbox.width = 520
+      },
+      /64 to 512/,
+    ],
+    [
+      (v) => {
+        v.regionalGuidance![0].referenceImages = [
+          reference(0),
+          reference(1),
+          reference(2),
+          reference(3),
+        ]
+      },
+      /at most 3 images/,
+    ],
+    [
+      (v) => {
+        v.regionalGuidance![0].referenceImages![0].asset.bytes = 32 * 1024 * 1024 + 1
+      },
+      /32 MiB/,
+    ],
+    [
+      (v) => {
+        v.regionalGuidance![0].referenceImages![0].asset.width = 16_385
+      },
+      /original image dimensions/,
+    ],
+    [
+      (v) => {
+        const p = {
+          embeddingRefs: [
+            {
+              resource: { ...v.generationDraft.model!, kind: 'embedding' as const },
+              token: 'active_ti',
+            },
+          ],
+          text: 'active_ti',
+        }
+        v.regionalGuidance![0].prompts = {
+          negative: p,
+          positive: null,
+          useGlobalNegativePrompt: false,
+        }
+      },
+      /active prompt embeddings/,
+    ],
+  ]
+  for (const [change, expected] of changes) {
+    const next = structuredClone(value)
+    change(next)
+    assert.match(allowed(next)!, expected)
+  }
+  assert.deepEqual(value, original)
+  value.regionalGuidance![0].referenceImages.push(reference(1), reference(2))
+  value.regionalGuidance![0].prompts = {
+    negative: { embeddingRefs: [], text: '{dormant|negative}' },
+    positive: null,
+    useGlobalNegativePrompt: true,
+  }
+  assert.equal(allowed(), null, 'Image-only region and dormant local negative remain valid.')
+  value.regionalGuidance![0].enabled = false
+  value.primaryBbox.width = 1024
+  value.generationDraft.model = null
+  assert.equal(allowed(value, false), null)
+})
+
+test('regional reference-image capability never follows from base regional support or a spoofed old peer', () => {
+  const ready = {
+    capabilities: [
+      'illustrious-txt2img',
+      'denoising-progress',
+      'candidate-thumbnails',
+      'illustrious-cfg-rescale',
+      'illustrious-img2img',
+      'illustrious-lora',
+      'illustrious-vae-precision',
+      'illustrious-external-vae',
+      'illustrious-embeddings',
+      'illustrious-outpaint',
+      'illustrious-regional-invoke-v1',
+      'illustrious-regional-reference-txt2img-v1',
+    ],
+    protocolVersion: '1',
+    runtimeProfile: 'linux-nvidia',
+    workerVersion: '0.14.0',
+  }
+  assert.equal(supportsInferenceRegionalReferenceImages(ready), true)
+  for (const cap of [
+    'illustrious-regional-invoke-v1',
+    'illustrious-regional-reference-txt2img-v1',
+  ]) {
+    assert.equal(
+      supportsInferenceRegionalReferenceImages({
+        ...ready,
+        capabilities: ready.capabilities.filter((c) => c !== cap),
+      }),
+      false,
+    )
+  }
+  assert.equal(
+    supportsInferenceRegionalReferenceImages({ ...ready, workerVersion: '0.13.0' }),
+    false,
+  )
 })

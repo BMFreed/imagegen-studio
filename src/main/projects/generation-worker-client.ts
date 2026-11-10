@@ -47,6 +47,7 @@ import {
   supportsInferenceRegionalLoras,
   supportsInferenceRegionalOutpaint,
   supportsInferenceRegionalProgress,
+  supportsInferenceRegionalReferenceImages,
   supportsInferenceRegionalVae,
   supportsInferenceRegionalVPrediction,
   supportsInferenceRegionalVPredictionImage,
@@ -86,6 +87,7 @@ import {
 } from './outpaint-worker-request.js'
 import { hasCompiledAnimaRegionalNegative } from './project-current-canvas-anima-regional-input.js'
 import {
+  captureRegionalWorkerInput,
   type OperationalRegionalGenerationRequestV1,
   type OperationalRegionalWorkerInput,
   prepareRegionalWorkerRequest,
@@ -567,6 +569,13 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
           )
         }
       } else {
+        input = captureRegionalWorkerInput(input)
+        if (input.references && !supportsInferenceRegionalReferenceImages(this.ready)) {
+          throw new GenerationWorkerError(
+            'WORKER_VERSION_MISMATCH',
+            'The active worker has not qualified Illustrious regional reference-image inference.',
+          )
+        }
         if (
           input.request.job.checkpoint.predictionType === 'v_prediction' &&
           (input.compositionProfile !== 'invoke-canvas-v1' ||

@@ -638,3 +638,27 @@ for (const objective of ['epsilon', 'v_prediction'] as const) {
     })
   }
 }
+
+test('reference-image Retry advisory uses its frozen requirement independently of current Project references', () => {
+  const frozen = (supported: boolean | undefined, requires = true) =>
+    generationQueueRetryReason(
+      'illustrious-regional-txt2img',
+      { regionalReferenceImagesSupported: supported, regionalSupported: true },
+      'Euler',
+      false,
+      false,
+      0,
+      undefined,
+      'epsilon',
+      false,
+      false,
+      false,
+      false,
+      requires,
+    )
+  assert.equal(frozen(true), null)
+  for (const flag of [undefined, false]) {
+    assert.match(frozen(flag)!, /frozen regional reference-image job/)
+    assert.equal(frozen(flag, false), null, 'The historical no-reference lane needs no new grant.')
+  }
+})

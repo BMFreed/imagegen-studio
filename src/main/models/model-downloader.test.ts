@@ -11,6 +11,11 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import { LAMA_OUTPAINT_ARTIFACT } from '../runtime/lama-manifest.js'
+import {
+  REGIONAL_REFERENCE_ADAPTER_ARTIFACT,
+  REGIONAL_REFERENCE_ARTIFACTS,
+  REGIONAL_REFERENCE_VISION_CONFIG_ARTIFACT,
+} from '../runtime/regional-reference-manifest.js'
 import { ANIMA_QWEN3_0_6B_ENCODER } from './anima-manifest.js'
 import {
   ModelDownloader,
@@ -166,6 +171,19 @@ function lamaDownload(stagingDirectory: string): ModelDownloadInput {
     source: 'invoke-lama',
     stagingDirectory,
     url: LAMA_OUTPAINT_ARTIFACT.url,
+  }
+}
+
+function referenceDownload(
+  stagingDirectory: string,
+  artifact: (typeof REGIONAL_REFERENCE_ARTIFACTS)[number] = REGIONAL_REFERENCE_ADAPTER_ARTIFACT,
+): ModelDownloadInput {
+  return {
+    expectedBytes: artifact.sizeBytes,
+    expectedSha256: artifact.sha256,
+    source: 'invoke-regional-reference',
+    stagingDirectory,
+    url: artifact.url,
   }
 }
 
@@ -564,6 +582,188 @@ test('LaMa source and exact identity are admitted before any storage, DNS or tra
         )
         assert.equal(resolutions, 0)
         assert.equal(requests, 0)
+        assert.deepEqual(await readdir(stagingDirectory), [])
+      })
+    })
+  }
+})
+
+test('regional reference source admits only the exact three pinned URL, size and SHA tuples before I/O', async (t) => {
+  const invalidInputs: { name: string; override: Partial<ModelDownloadInput> }[] = [
+    { name: 'CivitAI URL', override: { url: FILE_URL } },
+    { name: 'Anima URL', override: { url: ANIMA_QWEN3_0_6B_ENCODER.url } },
+    {
+      name: 'floating revision',
+      override: {
+        url: REGIONAL_REFERENCE_ADAPTER_ARTIFACT.url.replace(
+          REGIONAL_REFERENCE_ADAPTER_ARTIFACT.sourceRevision,
+          'main',
+        ),
+      },
+    },
+    {
+      name: 'different HF repository',
+      override: { url: REGIONAL_REFERENCE_ADAPTER_ARTIFACT.url.replace('InvokeAI/', 'other/') },
+    },
+    {
+      name: 'added query',
+      override: { url: `${REGIONAL_REFERENCE_ADAPTER_ARTIFACT.url}?download=1` },
+    },
+    {
+      name: 'added fragment',
+      override: { url: `${REGIONAL_REFERENCE_ADAPTER_ARTIFACT.url}#weights` },
+    },
+    { name: 'absent size', override: { expectedBytes: undefined } },
+    { name: 'null size', override: { expectedBytes: null } },
+    {
+      name: 'different size',
+      override: { expectedBytes: REGIONAL_REFERENCE_ADAPTER_ARTIFACT.sizeBytes - 1 },
+    },
+    { name: 'absent SHA', override: { expectedSha256: undefined } },
+    { name: 'null SHA', override: { expectedSha256: null } },
+    { name: 'different SHA', override: { expectedSha256: '0'.repeat(64) } },
+    { name: 'CivitAI Bearer', override: { bearerToken: 'secret-token' } },
+    { name: 'empty Bearer', override: { bearerToken: '' } },
+    { name: 'CivitAI source', override: { bearerToken: 'secret-token', source: 'civitai' } },
+    { name: 'Anima source', override: { source: 'anima-huggingface' } },
+    { name: 'LaMa source', override: { source: 'invoke-lama' } },
+    {
+      name: 'config URL with adapter identity',
+      override: { url: REGIONAL_REFERENCE_VISION_CONFIG_ARTIFACT.url },
+    },
+  ]
+  for (const scenario of invalidInputs) {
+    await t.test(scenario.name, async () => {
+      await withStaging(async (stagingDirectory) => {
+        let resolutions = 0
+        let requests = 0
+        const downloader = new ModelDownloader({
+          resolveAddresses: async () => {
+            resolutions++
+            return await PUBLIC_ADDRESSES()
+          },
+          transport: async () => {
+            requests++
+            return fileResponse('abc')
+          },
+        })
+        await expectDownloadError(
+          downloader.download({
+            ...referenceDownload(join(stagingDirectory, 'not-created')),
+            ...scenario.override,
+          }),
+          'DOWNLOAD_INVALID_SOURCE',
+        )
+        assert.equal(resolutions, 0)
+        assert.equal(requests, 0)
+        assert.deepEqual(await readdir(stagingDirectory), [])
+      })
+    })
+  }
+  for (const artifact of REGIONAL_REFERENCE_ARTIFACTS) {
+    await t.test(`exact ${artifact.role}`, async () => {
+      await withStaging(async (stagingDirectory) => {
+        let requests = 0
+        const downloader = new ModelDownloader({
+          resolveAddresses: PUBLIC_ADDRESSES,
+          transport: async (url, options) => {
+            requests++
+            assert.equal(String(url), artifact.url)
+            assert.equal(new Headers(options?.headers).get('Authorization'), null)
+            assert.equal(options?.credentials, 'omit')
+            return new Response(null, { status: 503 })
+          },
+        })
+        await expectDownloadError(
+          downloader.download(referenceDownload(stagingDirectory, artifact)),
+          'DOWNLOAD_HTTP_ERROR',
+        )
+        assert.equal(requests, 1)
+        assert.deepEqual(await readdir(stagingDirectory), [])
+      })
+    })
+  }
+})
+
+test('only the exact vision-config source accepts JSON or plain text before independent hash verification', async (t) => {
+  for (const contentType of ['application/json', 'text/plain; charset=utf-8']) {
+    await t.test(contentType, async () => {
+      await withStaging(async (stagingDirectory) => {
+        const downloader = new ModelDownloader({
+          resolveAddresses: PUBLIC_ADDRESSES,
+          transport: async () =>
+            new Response('x'.repeat(REGIONAL_REFERENCE_VISION_CONFIG_ARTIFACT.sizeBytes), {
+              headers: { 'content-type': contentType },
+            }),
+        })
+        await expectDownloadError(
+          downloader.download(
+            referenceDownload(stagingDirectory, REGIONAL_REFERENCE_VISION_CONFIG_ARTIFACT),
+          ),
+          'DOWNLOAD_HASH_MISMATCH',
+        )
+        await expectDownloadError(
+          downloader.download(referenceDownload(stagingDirectory)),
+          'DOWNLOAD_INVALID_RESPONSE',
+        )
+        await expectDownloadError(
+          downloader.download(lamaDownload(stagingDirectory)),
+          'DOWNLOAD_INVALID_RESPONSE',
+        )
+        assert.deepEqual(await readdir(stagingDirectory), [])
+      })
+    })
+  }
+})
+
+test('reference downloads retain public HTTPS redirect checks and never send authorization', async (t) => {
+  await withStaging(async (stagingDirectory) => {
+    const requests: { authorization: string | null; url: string }[] = []
+    const redirectedUrl = 'https://cdn-lfs.hf.co/objects/vision-model?sig=signed-query'
+    const downloader = new ModelDownloader({
+      resolveAddresses: PUBLIC_ADDRESSES,
+      transport: async (url, options) => {
+        requests.push({
+          authorization: new Headers(options?.headers).get('Authorization'),
+          url: String(url),
+        })
+        return requests.length === 1
+          ? new Response(null, { headers: { location: redirectedUrl }, status: 302 })
+          : fileResponse('abc', REGIONAL_REFERENCE_ADAPTER_ARTIFACT.sizeBytes)
+      },
+    })
+    await expectDownloadError(
+      downloader.download(referenceDownload(stagingDirectory)),
+      'DOWNLOAD_SIZE_MISMATCH',
+    )
+    assert.deepEqual(
+      requests,
+      [REGIONAL_REFERENCE_ADAPTER_ARTIFACT.url, redirectedUrl].map((url) => ({
+        authorization: null,
+        url,
+      })),
+    )
+    assert.deepEqual(await readdir(stagingDirectory), [])
+  })
+  for (const [location, code] of [
+    ['https://127.0.0.1/vision-model', 'DOWNLOAD_UNSAFE_DESTINATION'],
+    ['http://cdn-lfs.hf.co/vision-model', 'DOWNLOAD_INVALID_URL'],
+    ['https://token@cdn-lfs.hf.co/vision-model', 'DOWNLOAD_INVALID_URL'],
+    ['https://cdn-lfs.hf.co:8443/vision-model', 'DOWNLOAD_INVALID_URL'],
+  ]) {
+    await t.test(location, async () => {
+      await withStaging(async (stagingDirectory) => {
+        let requests = 0
+        const downloader = new ModelDownloader({
+          resolveAddresses: async (hostname) =>
+            hostname === '127.0.0.1' ? ['127.0.0.1'] : await PUBLIC_ADDRESSES(),
+          transport: async () => {
+            requests++
+            return new Response(null, { headers: { location }, status: 302 })
+          },
+        })
+        await expectDownloadError(downloader.download(referenceDownload(stagingDirectory)), code)
+        assert.equal(requests, 1)
         assert.deepEqual(await readdir(stagingDirectory), [])
       })
     })

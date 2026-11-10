@@ -21,8 +21,19 @@ import {
   type ModelDownloadSource,
   type VerifiedStagedModelFile,
 } from '../models/model-downloader.js'
-import { verifyInferenceAuxiliaryFile } from './inference-auxiliary-resources.js'
+import {
+  auxiliaryArtifactMaximumBytes,
+  createRegionalReferenceVisionResourceRoot,
+  type InferenceAuxiliaryResourceRole,
+  verifyInferenceAuxiliaryFile,
+} from './inference-auxiliary-resources.js'
 import { LAMA_OUTPAINT_ARTIFACT } from './lama-manifest.js'
+import {
+  REGIONAL_REFERENCE_ADAPTER_ARTIFACT,
+  REGIONAL_REFERENCE_ARTIFACTS,
+  REGIONAL_REFERENCE_VISION_CONFIG_ARTIFACT,
+  REGIONAL_REFERENCE_VISION_MODEL_ARTIFACT,
+} from './regional-reference-manifest.js'
 
 const DEFAULT_PLAN_TTL_MS = 10 * 60 * 1000
 const MAX_PENDING_PLANS = 32
@@ -31,7 +42,7 @@ const activeRoots = new Set<string>()
 /** Internal trusted-Main seam. Renderer-provided manifests and destinations are not accepted. */
 export interface AuxiliaryArtifactManifest {
   readonly filename: string
-  readonly role: 'outpaint-infill'
+  readonly role: InferenceAuxiliaryResourceRole
   readonly sha256: string
   readonly sizeBytes: number
   readonly source: ModelDownloadSource
@@ -41,7 +52,7 @@ export interface AuxiliaryArtifactManifest {
 export interface AuxiliaryInstallationPreview {
   readonly artifact: Readonly<{
     filename: string
-    role: 'outpaint-infill'
+    role: InferenceAuxiliaryResourceRole
     sha256: string
     sizeBytes: number
   }>
@@ -57,7 +68,7 @@ export interface AuxiliaryInstallationResult {
   readonly byteSize: number
   readonly managedPath: string
   readonly reused: boolean
-  readonly role: 'outpaint-infill'
+  readonly role: InferenceAuxiliaryResourceRole
   readonly sha256: string
 }
 
@@ -187,19 +198,25 @@ export class AuxiliaryArtifactInstaller {
       await assertDirectoryIdentity(directory)
       const stagedName = captureDownloadedFile(downloaded, work, this.manifest)
       const stagedPath = path.join(work.visiblePath, stagedName)
-      await verifyInferenceAuxiliaryFile({
-        byteSize: this.manifest.sizeBytes,
-        managedPath: stagedPath,
-        sha256: this.manifest.sha256,
-      })
+      await verifyInferenceAuxiliaryFile(
+        {
+          byteSize: this.manifest.sizeBytes,
+          managedPath: stagedPath,
+          sha256: this.manifest.sha256,
+        },
+        auxiliaryArtifactMaximumBytes(this.manifest.role),
+      )
       assertNotCanceled(signal)
       const publishName = 'publication.ready'
       await copyExactOwnedFile(work, stagedName, publishName, this.manifest, signal)
-      await verifyInferenceAuxiliaryFile({
-        byteSize: this.manifest.sizeBytes,
-        managedPath: path.join(work.visiblePath, publishName),
-        sha256: this.manifest.sha256,
-      })
+      await verifyInferenceAuxiliaryFile(
+        {
+          byteSize: this.manifest.sizeBytes,
+          managedPath: path.join(work.visiblePath, publishName),
+          sha256: this.manifest.sha256,
+        },
+        auxiliaryArtifactMaximumBytes(this.manifest.role),
+      )
       await assertDirectoryIdentity(work)
       await assertDirectoryIdentity(directory)
       const previous = await backupPreviousArtifact(directory, work, this.manifest.filename)
@@ -218,11 +235,14 @@ export class AuxiliaryArtifactInstaller {
           throw failure('AUXILIARY_INVALID_STORAGE', 'The published auxiliary file changed.')
         }
         await directory.handle.sync()
-        await verifyInferenceAuxiliaryFile({
-          byteSize: this.manifest.sizeBytes,
-          managedPath: path.join(this.resourcesDirectory, this.manifest.filename),
-          sha256: this.manifest.sha256,
-        })
+        await verifyInferenceAuxiliaryFile(
+          {
+            byteSize: this.manifest.sizeBytes,
+            managedPath: path.join(this.resourcesDirectory, this.manifest.filename),
+            sha256: this.manifest.sha256,
+          },
+          auxiliaryArtifactMaximumBytes(this.manifest.role),
+        )
         await assertDirectoryIdentity(directory)
       } catch (error) {
         if (renamed) {
@@ -319,11 +339,14 @@ export class AuxiliaryArtifactInstaller {
 
   private async isInstalled(directory: OwnedDirectory): Promise<boolean> {
     try {
-      await verifyInferenceAuxiliaryFile({
-        byteSize: this.manifest.sizeBytes,
-        managedPath: path.join(directory.visiblePath, this.manifest.filename),
-        sha256: this.manifest.sha256,
-      })
+      await verifyInferenceAuxiliaryFile(
+        {
+          byteSize: this.manifest.sizeBytes,
+          managedPath: path.join(directory.visiblePath, this.manifest.filename),
+          sha256: this.manifest.sha256,
+        },
+        auxiliaryArtifactMaximumBytes(this.manifest.role),
+      )
       await assertDirectoryIdentity(directory)
       return true
     } catch (error) {
@@ -378,15 +401,59 @@ export function createLamaAuxiliaryInstaller(
   })
 }
 
+/**
+ * Each artifact keeps the existing private preview/stage/verified-publication operation. Completed
+ * valid files may remain after cancellation; the inference resolver admits only the complete exact
+ * pair. No renderer manifest, inference-time download or group-ready marker exists.
+ */
+export async function createRegionalReferenceAuxiliaryInstallers(
+  resourcesDirectory: string,
+  downloader: Pick<ModelDownloader, 'download'> = new ModelDownloader(),
+): Promise<
+  Readonly<{
+    adapter: AuxiliaryArtifactInstaller
+    visionConfig: AuxiliaryArtifactInstaller
+    visionModel: AuxiliaryArtifactInstaller
+  }>
+> {
+  const visionDirectory = await createRegionalReferenceVisionResourceRoot(resourcesDirectory)
+  return Object.freeze({
+    adapter: new AuxiliaryArtifactInstaller({
+      downloader,
+      manifest: REGIONAL_REFERENCE_ADAPTER_ARTIFACT,
+      resourcesDirectory,
+    }),
+    visionConfig: new AuxiliaryArtifactInstaller({
+      downloader,
+      manifest: REGIONAL_REFERENCE_VISION_CONFIG_ARTIFACT,
+      resourcesDirectory: visionDirectory,
+    }),
+    visionModel: new AuxiliaryArtifactInstaller({
+      downloader,
+      manifest: REGIONAL_REFERENCE_VISION_MODEL_ARTIFACT,
+      resourcesDirectory: visionDirectory,
+    }),
+  })
+}
+
+function isAuxiliaryRole(value: unknown): value is InferenceAuxiliaryResourceRole {
+  return (
+    value === 'outpaint-infill' ||
+    REGIONAL_REFERENCE_ARTIFACTS.some((artifact) => artifact.role === value)
+  )
+}
+
 function captureManifest(input: AuxiliaryArtifactManifest): AuxiliaryArtifactManifest {
   if (
     !/^[a-z0-9][a-z0-9.-]*$/.test(input.filename) ||
-    input.role !== 'outpaint-infill' ||
+    !isAuxiliaryRole(input.role) ||
     !/^[a-f0-9]{64}$/.test(input.sha256) ||
     !Number.isSafeInteger(input.sizeBytes) ||
     input.sizeBytes < 1 ||
-    input.sizeBytes > LAMA_OUTPAINT_ARTIFACT.sizeBytes ||
-    !['anima-huggingface', 'civitai', 'invoke-lama'].includes(input.source) ||
+    input.sizeBytes > auxiliaryArtifactMaximumBytes(input.role) ||
+    !['anima-huggingface', 'civitai', 'invoke-lama', 'invoke-regional-reference'].includes(
+      input.source,
+    ) ||
     typeof input.url !== 'string'
   ) {
     throw failure('AUXILIARY_INVALID_MANIFEST', 'The trusted auxiliary manifest is invalid.')
