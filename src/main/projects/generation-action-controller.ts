@@ -492,6 +492,22 @@ export class ProjectGenerationActionController {
         !this.blocked &&
         !this.closed &&
         supportsInferenceIllustriousSmartPatchRegionalMode(ready, 'img2img'),
+      illustriousSmartPatchRegionalLoraImg2ImgSupported:
+        !this.blocked &&
+        !this.closed &&
+        supportsInferenceIllustriousSmartPatchRegionalMode(ready, 'img2img', 'epsilon', true),
+      illustriousSmartPatchRegionalLoraOutpaintSupported:
+        !this.blocked &&
+        !this.closed &&
+        supportsInferenceIllustriousSmartPatchRegionalMode(ready, 'outpaint', 'epsilon', true),
+      illustriousSmartPatchRegionalLoraSupported:
+        !this.blocked &&
+        !this.closed &&
+        supportsInferenceIllustriousSmartPatchRegionalMode(ready, 'inpaint', 'epsilon', true),
+      illustriousSmartPatchRegionalLoraTxt2ImgSupported:
+        !this.blocked &&
+        !this.closed &&
+        supportsInferenceIllustriousSmartPatchRegionalMode(ready, 'txt2img', 'epsilon', true),
       illustriousSmartPatchRegionalOutpaintSupported:
         !this.blocked &&
         !this.closed &&
@@ -508,6 +524,22 @@ export class ProjectGenerationActionController {
         !this.blocked &&
         !this.closed &&
         supportsInferenceIllustriousSmartPatchRegionalMode(ready, 'img2img', 'v_prediction'),
+      illustriousSmartPatchRegionalVPredictionLoraImg2ImgSupported:
+        !this.blocked &&
+        !this.closed &&
+        supportsInferenceIllustriousSmartPatchRegionalMode(ready, 'img2img', 'v_prediction', true),
+      illustriousSmartPatchRegionalVPredictionLoraOutpaintSupported:
+        !this.blocked &&
+        !this.closed &&
+        supportsInferenceIllustriousSmartPatchRegionalMode(ready, 'outpaint', 'v_prediction', true),
+      illustriousSmartPatchRegionalVPredictionLoraSupported:
+        !this.blocked &&
+        !this.closed &&
+        supportsInferenceIllustriousSmartPatchRegionalMode(ready, 'inpaint', 'v_prediction', true),
+      illustriousSmartPatchRegionalVPredictionLoraTxt2ImgSupported:
+        !this.blocked &&
+        !this.closed &&
+        supportsInferenceIllustriousSmartPatchRegionalMode(ready, 'txt2img', 'v_prediction', true),
       illustriousSmartPatchRegionalVPredictionOutpaintSupported:
         !this.blocked &&
         !this.closed &&
@@ -1491,8 +1523,7 @@ export class ProjectGenerationActionController {
                   frozen.payload.item.family === 'illustrious'
                     ? frozen.payload.item.inference.checkpoint.predictionType
                     : undefined,
-                  frozen.payload.item.family === 'anima' &&
-                    frozen.payload.item.inference.loras.length > 0,
+                  (frozen.payload.item.inference.loras?.length ?? 0) > 0,
                 ))
             ) {
               throw new ProjectGenerationActionError(

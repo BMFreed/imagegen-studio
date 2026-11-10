@@ -2419,8 +2419,7 @@ const generationBlockingReason = computed(() => {
   const model = props.generationDraft.model
   const predictionType = selectedModelVersion.value?.predictionType ?? model?.predictionType
   const vPrediction = model?.baseModelFamily === 'illustrious' && predictionType === 'v_prediction'
-  const animaLora =
-    model?.baseModelFamily === 'anima' && props.generationDraft.loras.some((entry) => entry.enabled)
+  const activeLora = props.generationDraft.loras.some((entry) => entry.enabled)
   const regionalDraft =
     model?.baseModelFamily === 'illustrious'
       ? { ...props.generationDraft, model: { ...model, predictionType: predictionType ?? null } }
@@ -2433,33 +2432,52 @@ const generationBlockingReason = computed(() => {
         runtimeImg2ImgSupported:
           (props.generationDraft.model?.baseModelFamily === 'illustrious'
             ? vPrediction
-              ? props.generationState?.illustriousSmartPatchRegionalVPredictionImg2ImgSupported
-              : props.generationState?.illustriousSmartPatchRegionalImg2ImgSupported
-            : animaLora
+              ? activeLora
+                ? props.generationState
+                    ?.illustriousSmartPatchRegionalVPredictionLoraImg2ImgSupported
+                : props.generationState?.illustriousSmartPatchRegionalVPredictionImg2ImgSupported
+              : activeLora
+                ? props.generationState?.illustriousSmartPatchRegionalLoraImg2ImgSupported
+                : props.generationState?.illustriousSmartPatchRegionalImg2ImgSupported
+            : activeLora
               ? props.generationState?.animaSmartPatchRegionalLoraImg2ImgSupported
               : props.generationState?.animaSmartPatchRegionalImg2ImgSupported) === true,
         runtimeOutpaintSupported:
           (props.generationDraft.model?.baseModelFamily === 'illustrious'
             ? vPrediction
-              ? props.generationState?.illustriousSmartPatchRegionalVPredictionOutpaintSupported
-              : props.generationState?.illustriousSmartPatchRegionalOutpaintSupported
-            : animaLora
+              ? activeLora
+                ? props.generationState
+                    ?.illustriousSmartPatchRegionalVPredictionLoraOutpaintSupported
+                : props.generationState?.illustriousSmartPatchRegionalVPredictionOutpaintSupported
+              : activeLora
+                ? props.generationState?.illustriousSmartPatchRegionalLoraOutpaintSupported
+                : props.generationState?.illustriousSmartPatchRegionalOutpaintSupported
+            : activeLora
               ? props.generationState?.animaSmartPatchRegionalLoraOutpaintSupported
               : props.generationState?.animaSmartPatchRegionalOutpaintSupported) === true,
         runtimeSupported:
           (props.generationDraft.model?.baseModelFamily === 'illustrious'
             ? vPrediction
-              ? props.generationState?.illustriousSmartPatchRegionalVPredictionSupported
-              : props.generationState?.illustriousSmartPatchRegionalSupported
-            : animaLora
+              ? activeLora
+                ? props.generationState?.illustriousSmartPatchRegionalVPredictionLoraSupported
+                : props.generationState?.illustriousSmartPatchRegionalVPredictionSupported
+              : activeLora
+                ? props.generationState?.illustriousSmartPatchRegionalLoraSupported
+                : props.generationState?.illustriousSmartPatchRegionalSupported
+            : activeLora
               ? props.generationState?.animaSmartPatchRegionalLoraSupported
               : props.generationState?.animaSmartPatchRegionalSupported) === true,
         runtimeTxt2ImgSupported:
           (props.generationDraft.model?.baseModelFamily === 'illustrious'
             ? vPrediction
-              ? props.generationState?.illustriousSmartPatchRegionalVPredictionTxt2ImgSupported
-              : props.generationState?.illustriousSmartPatchRegionalTxt2ImgSupported
-            : animaLora
+              ? activeLora
+                ? props.generationState
+                    ?.illustriousSmartPatchRegionalVPredictionLoraTxt2ImgSupported
+                : props.generationState?.illustriousSmartPatchRegionalVPredictionTxt2ImgSupported
+              : activeLora
+                ? props.generationState?.illustriousSmartPatchRegionalLoraTxt2ImgSupported
+                : props.generationState?.illustriousSmartPatchRegionalTxt2ImgSupported
+            : activeLora
               ? props.generationState?.animaSmartPatchRegionalLoraTxt2ImgSupported
               : props.generationState?.animaSmartPatchRegionalTxt2ImgSupported) === true,
         targetMode: smartTargetState.value?.mode,

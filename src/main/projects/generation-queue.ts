@@ -5461,7 +5461,7 @@ function managerDetails(row: Selectable<GenerationQueueItem>): GenerationQueueEn
         ...(payload.regional
           ? {
               requiresSmartPatchRegional: true,
-              ...(selected.family === 'anima' && selected.inference.loras.length > 0
+              ...((selected.inference.loras?.length ?? 0) > 0
                 ? { requiresRegionalLora: true }
                 : {}),
               ...(payload.mode === 'txt2img' ? { requiresSmartPatchRegionalTxt2Img: true } : {}),

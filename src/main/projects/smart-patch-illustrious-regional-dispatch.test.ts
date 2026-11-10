@@ -45,7 +45,12 @@ const ready = {
 const prompt = (text: string) => ({ embeddingRefs: [], text })
 const sha = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex')
 
-async function regionalMaterial(f: SmartPatchQueueFixture, mode: (typeof MODES)[number]) {
+async function regionalMaterial(
+  f: SmartPatchQueueFixture,
+  mode: (typeof MODES)[number],
+  predictionType: 'epsilon' | 'v_prediction' = 'epsilon',
+  weights: number[] = [],
+) {
   const material: SmartPatchInputMaterial = {
     files: Object.fromEntries(
       Object.entries(f.material.files).map(([name, bytes]) => [name, Buffer.from(bytes)]),
@@ -59,7 +64,7 @@ async function regionalMaterial(f: SmartPatchQueueFixture, mode: (typeof MODES)[
   }
   item.inference = {
     ...item.inference,
-    checkpoint: { ...item.inference.checkpoint, predictionType: 'epsilon' },
+    checkpoint: { ...item.inference.checkpoint, predictionType },
     loras: [],
     sampling: {
       ...item.inference.sampling,
@@ -70,11 +75,33 @@ async function regionalMaterial(f: SmartPatchQueueFixture, mode: (typeof MODES)[
     vaePrecision: 'Auto',
   }
   const context = material.manifest.context
-  context.generationDraft.model!.predictionType = 'epsilon'
+  context.generationDraft.model!.predictionType = predictionType
+  context.generationDraft.loras = []
+  for (const [index, weight] of weights.entries()) {
+    const bytes = Buffer.from(`declared exact adapter ${index}, protocol fixture only`)
+    const file = path.join(f.root, `regional-adapter-${index}.bin`)
+    await writeFile(file, bytes, { flag: 'wx', mode: 0o600 })
+    context.generationDraft.loras.push({
+      enabled: true,
+      resource: {
+        ...structuredClone(context.generationDraft.model!),
+        displayName: `Declared adapter ${index}`,
+        fileSha256: sha(bytes),
+        kind: 'lora',
+        localModelId: randomUUID(),
+        localVersionId: randomUUID(),
+        predictionType: null,
+      },
+      weight,
+    })
+    item.inference.loras!.push({ byteSize: bytes.length, path: file, sha256: sha(bytes), weight })
+  }
+  const objective = predictionType === 'v_prediction' ? 'v-prediction-' : ''
+  const stack = weights.length ? 'lora-' : ''
   const positive = prompt('(blue scarf)1.25')
   const negative = structuredClone(context.generationDraft.negativePrompt)
   const prepared = capturePreparedSmartPatchIllustriousRegionalInput({
-    profile: `invoke-illustrious-smart-regional-${mode}-v1`,
+    profile: `invoke-illustrious-smart-regional-${objective}${stack}${mode}-v1`,
     recipe: {
       bbox: { ...context.bbox },
       documentId: context.documentId,
@@ -117,6 +144,9 @@ async function regionalMaterial(f: SmartPatchQueueFixture, mode: (typeof MODES)[
         },
       ],
       sampling: {
+        ...(predictionType === 'v_prediction'
+          ? { noiseProfile: defaultIllustriousNoiseProfile() }
+          : {}),
         cfgScale: item.inference.sampling.cfgScale,
         denoisingStrength: context.generationDraft.sampling.denoisingStrength,
         scheduler: 'euler',
@@ -166,7 +196,12 @@ async function originalRequest(
   }
 }
 
-async function peer(f: SmartPatchQueueFixture, missing?: string, wrongSeed = false) {
+async function peer(
+  f: SmartPatchQueueFixture,
+  missing?: string,
+  wrongSeed = false,
+  capabilities = ready.capabilities,
+) {
   const runtimeRoot = path.join(f.root, 'illustrious-regional-protocol-peer')
   await mkdir(runtimeRoot, { mode: 0o700 })
   const executable = path.join(runtimeRoot, 'python')
@@ -183,7 +218,7 @@ async function peer(f: SmartPatchQueueFixture, missing?: string, wrongSeed = fal
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const args=process.argv.slice(2);
 if(process.platform==='linux' && (args.length!==7 || JSON.stringify(args.slice(0,6))!==JSON.stringify(['-I','-m','imagegen_worker.owned_inference','--parent-pid',String(process.ppid),'--scratch-base'])))process.exit(21);
-const ready=${JSON.stringify(ready)};ready.capabilities=ready.capabilities.filter(x=>x!==${JSON.stringify(missing ?? '')});
+const ready=${JSON.stringify({ ...ready, capabilities })};ready.capabilities=ready.capabilities.filter(x=>x!==${JSON.stringify(missing ?? '')});
 process.stdout.write(JSON.stringify({...ready,type:'ready',pythonVersion:'3.12.13'})+'\n');
 let pending='';process.stdin.setEncoding('utf8');process.stdin.on('data',data=>{pending+=data;while(pending.includes('\n')){
 const split=pending.indexOf('\n'),wire=JSON.parse(pending.slice(0,split));pending=pending.slice(split+1);
@@ -412,5 +447,132 @@ async function literalInference(request: SmartPatchExecutionRequest) {
       sha256: sha(bytes),
       width,
     },
+  }
+}
+
+// The actual client/descriptor/file boundary remains real. Only the numerical protocol peer
+// is substituted. Exact grant selection must use the captured objective and tuple presence;
+// enabled-zero needs the LoRA grant even though its native arithmetic is a no-op.
+for (const predictionType of ['epsilon', 'v_prediction'] as const) {
+  for (const mode of MODES) {
+    const objective = predictionType === 'v_prediction' ? 'v-prediction-' : ''
+    const otherObjective = predictionType === 'epsilon' ? 'v-prediction-' : ''
+    const prefix = `illustrious-smart-patch-regional-${objective}`
+    const common = ready.capabilities.filter(
+      (cap) => !cap.startsWith('illustrious-smart-patch-regional-'),
+    )
+    const cases = [
+      {
+        grant: `${prefix}lora-${mode}-v1`,
+        label: 'signed ordered stack exact grant',
+        pass: true,
+        weights: [-0.7, 0, 0.5],
+      },
+      {
+        grant: `${prefix}lora-${mode}-v1`,
+        label: 'enabled-zero exact grant',
+        pass: true,
+        weights: [0],
+      },
+      {
+        grant: `${prefix}${mode}-v1`,
+        label: 'signed stack legacy grant',
+        pass: false,
+        weights: [-0.7],
+      },
+      {
+        grant: `${prefix}${mode}-v1`,
+        label: 'enabled-zero legacy grant',
+        pass: false,
+        weights: [0],
+      },
+      {
+        grant: `illustrious-smart-patch-regional-${otherObjective}lora-${mode}-v1`,
+        label: 'crossed objective',
+        pass: false,
+        weights: [-0.7],
+      },
+      {
+        grant: `${prefix}lora-${mode === 'txt2img' ? 'img2img' : 'txt2img'}-v1`,
+        label: 'crossed mode',
+        pass: false,
+        weights: [-0.7],
+      },
+      { grant: `${prefix}${mode}-v1`, label: 'empty legacy grant', pass: true, weights: [] },
+      {
+        grant: `${prefix}lora-${mode}-v1`,
+        label: 'empty LoRA-only grant',
+        pass: false,
+        weights: [],
+      },
+    ]
+    for (const scenario of cases) {
+      test(`actual Illustrious Smart regional ${predictionType} ${mode} client: ${scenario.label}`, async () => {
+        await withSmartPatchQueueFixture(
+          'illustrious',
+          async (f) => {
+            const { material, prepared } = await regionalMaterial(
+              f,
+              mode,
+              predictionType,
+              scenario.weights,
+            )
+            const request = await originalRequest(f, material)
+            const bound = bindSmartPatchIllustriousRegionalExecution(prepared, request)
+            const { client, marker } = await peer(f, undefined, false, [...common, scenario.grant])
+            const before = await readdir(request.output.stagingRoot)
+            try {
+              if (!scenario.pass) {
+                await assert.rejects(client.executeIllustriousSmartPatchRegional(bound), {
+                  code: 'WORKER_VERSION_MISMATCH',
+                })
+                assert.deepEqual(await readdir(request.output.stagingRoot), before)
+                await assert.rejects(readFile(marker), { code: 'ENOENT' })
+              } else {
+                const progress: { step: number; totalSteps: number }[] = []
+                const result = await client.executeIllustriousSmartPatchRegional(bound, (value) =>
+                  progress.push(value),
+                )
+                assert.equal(result.actualSeed, request.inference.sampling.seed)
+                const lines = (await readFile(marker, 'utf8')).trim().split('\n')
+                assert.equal(lines.length, 1)
+                const observed = JSON.parse(lines[0])
+                assert.deepEqual(observed.input.execution, request)
+                assert.equal(observed.input.profile, prepared.profile)
+                assert.deepEqual(
+                  observed.input.execution.inference.loras.map(
+                    (row: { weight: number }) => row.weight,
+                  ),
+                  scenario.weights,
+                )
+                assert.deepEqual(
+                  progress,
+                  Array.from({ length: request.inference.sampling.steps }, (_, index) => ({
+                    step: index + 1,
+                    totalSteps: request.inference.sampling.steps,
+                  })),
+                )
+                const descriptor = await readFile(observed.wire.bundle.path)
+                assert.equal(sha(descriptor), observed.wire.bundle.sha256)
+                for (const [index, region] of prepared.recipe.regions.entries()) {
+                  assert.deepEqual(
+                    await readFile(
+                      path.join(request.output.stagingRoot, `regional-${index}.alpha8`),
+                    ),
+                    Buffer.from(region.coverage.alpha),
+                  )
+                }
+                assert.equal(Object.hasOwn(observed.input.recipe, 'loras'), false)
+                assert.equal(observed.input.recipe.regions[0].negative.source, 'smart-patch')
+              }
+            } finally {
+              await client.close()
+            }
+          },
+          {},
+          mode,
+        )
+      })
+    }
   }
 }

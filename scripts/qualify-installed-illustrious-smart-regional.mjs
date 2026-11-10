@@ -9,10 +9,11 @@
  * requires an explicit four-field noiseProfile; epsilon accepts only the existing default
  * false/leading policy. Optional family:'anima' instead requires
  * lora:{modelId,versionId,managedPath,sha256,byteSize}, forbids Illustrious prediction/noise
- * fields, and permits disabledLora:{modelId,versionId,sha256} only for an absent disabled authoring
- * row. Its prepare/retry phases freeze one real adapter at A+.7/B-.7/RetryA+.7. Its independent
- * controls phase uses a new Project with identical numerical authoring: Z enabled0 and clean
- * disabled must match exact processing/world PNG bytes.
+ * fields. Illustrious accepts the same optional lora object for either actual EPS/V objective. Both
+ * LoRA campaigns permit disabledLora:{modelId,versionId,sha256} only for an absent disabled
+ * authoring row. Its prepare/retry phases freeze one real adapter at A+.7/B-.7/RetryA+.7. Its
+ * independent controls phase uses a new Project with identical numerical authoring: Z enabled0 and
+ * clean disabled must match exact processing/world PNG bytes.
  *
  * Mechanism: existing qualify-installed-smart-patch.mjs/native-smoke-window/resource helpers, real
  * public renderer/IPC, RuntimeManager, frozen Smart queue, installed descriptor dispatcher, native
@@ -25,7 +26,12 @@
  * includes enabled0; graph.ts::buildAnimaGraph patches Qwen and transformer before the canvas
  * regional collector copies encoder edges. anima_text_encoder.py/anima_denoise.py use scoped
  * LayerPatcher contexts. Existing qualify-installed-anima-regional-lora.mjs supplies the real
- * ModelService exact adapter qualification pattern; no runtime/model copies or fake aliases.
+ * ModelService exact adapter qualification pattern; no runtime/model copies or fake aliases. Fresh
+ * same-revision SDXL: graph.ts::addLoraCollectionLoader routes the ordered enabled stack to UNet
+ * and both CLIPs; model.py::SDXLLoRACollectionLoader keeps those three model edges and
+ * addRegionalGuidance.ts copies clip/clip2. text_encoder/compel.py and sd/denoise_latents.py apply
+ * the same signed stack before native conditioning and predictions. This harness observes Studio's
+ * existing owned FP32 preparation and frozen logical tuple; it never patches models.
  */
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
@@ -84,9 +90,12 @@ assert.equal(fixture.schemaVersion, 1)
 const FAMILY = Object.hasOwn(fixture, 'family') ? fixture.family : 'illustrious'
 assert.ok(['illustrious', 'anima'].includes(FAMILY))
 const ANIMA = FAMILY === 'anima'
+const LORA = ANIMA || Object.hasOwn(fixture, 'lora')
 const REPORT_PROFILE = ANIMA
   ? 'installed-anima-smart-regional-lora-v1'
-  : 'installed-illustrious-smart-regional-v1'
+  : LORA
+    ? 'installed-illustrious-smart-regional-lora-v1'
+    : 'installed-illustrious-smart-regional-v1'
 const PREDICTION_TYPE = ANIMA
   ? null
   : Object.hasOwn(fixture, 'predictionType')
@@ -96,6 +105,8 @@ assert.ok(ANIMA || ['epsilon', 'v_prediction'].includes(PREDICTION_TYPE))
 if (ANIMA) {
   assert.equal(Object.hasOwn(fixture, 'predictionType'), false)
   assert.equal(Object.hasOwn(fixture, 'noiseProfile'), false)
+}
+if (LORA) {
   assert.ok(fixture.lora)
   assert.deepEqual(Object.keys(fixture.lora).sort(), [
     'byteSize',
@@ -117,7 +128,6 @@ if (ANIMA) {
     assert.notEqual(fixture.disabledLora.modelId, fixture.lora.modelId)
   }
 } else {
-  assert.equal(Object.hasOwn(fixture, 'lora'), false)
   assert.equal(Object.hasOwn(fixture, 'disabledLora'), false)
 }
 const V_PREDICTION = PREDICTION_TYPE === 'v_prediction'
@@ -174,7 +184,7 @@ for (const reference of [fixture.lora, fixture.disabledLora].filter(Boolean))
 const RUN = fixture.run
 const SHARED = fixture.shared
 const SHORT = fixture.shortRoot
-if (ANIMA)
+if (LORA)
   for (const root of [RUN, SHORT])
     assert.equal(
       fixture.lora.managedPath === root ||
@@ -199,9 +209,9 @@ assert.ok(['txt2img', 'img2img', 'inpaint', 'outpaint'].includes(MODE))
 const MASKED = MODE === 'inpaint' || MODE === 'outpaint'
 const CURRENT_FUTURE_VISIBLE = MODE === 'txt2img' || MODE === 'outpaint'
 const objectivePrefix = V_PREDICTION ? 'v-prediction-' : ''
-const CAPABILITY = `${FAMILY}-smart-patch-regional-${ANIMA ? 'lora-' : objectivePrefix}${MODE}-v1`
-const PROFILE = `invoke-${FAMILY}-smart-regional-${ANIMA ? 'lora-' : objectivePrefix}${MODE}-v1`
-const NO_LORA_PROFILE = `invoke-anima-smart-regional-${MODE}-v1`
+const CAPABILITY = `${FAMILY}-smart-patch-regional-${objectivePrefix}${LORA ? 'lora-' : ''}${MODE}-v1`
+const PROFILE = `invoke-${FAMILY}-smart-regional-${objectivePrefix}${LORA ? 'lora-' : ''}${MODE}-v1`
+const NO_LORA_PROFILE = `invoke-${FAMILY}-smart-regional-${objectivePrefix}${MODE}-v1`
 const stateModeSuffix =
   MODE === 'txt2img'
     ? 'Txt2ImgSupported'
@@ -210,13 +220,13 @@ const stateModeSuffix =
       : MODE === 'outpaint'
         ? 'OutpaintSupported'
         : 'Supported'
-const STATE_CAPABILITY = `${FAMILY}SmartPatchRegional${ANIMA ? 'Lora' : V_PREDICTION ? 'VPrediction' : ''}${stateModeSuffix}`
-const CLEAN_STATE_CAPABILITY = `animaSmartPatchRegional${stateModeSuffix}`
+const STATE_CAPABILITY = `${FAMILY}SmartPatchRegional${V_PREDICTION ? 'VPrediction' : ''}${LORA ? 'Lora' : ''}${stateModeSuffix}`
+const CLEAN_STATE_CAPABILITY = `${FAMILY}SmartPatchRegional${V_PREDICTION ? 'VPrediction' : ''}${stateModeSuffix}`
 const EXPECTED_SOURCE_ALPHA =
   MODE === 'txt2img' ? 'transparent' : MODE === 'outpaint' ? 'mixed' : 'opaque'
 const TOTAL_STEPS = MODE === 'txt2img' ? 20 : 10
 const phase = options['--phase']
-assert.ok(phase === 'prepare' || phase === 'retry' || (ANIMA && phase === 'controls'))
+assert.ok(phase === 'prepare' || phase === 'retry' || (LORA && phase === 'controls'))
 const label = options['--label']
 assert.match(label, /^[a-z][a-z0-9]{0,2}$/)
 const reportFile = path.resolve(options['--report'])
@@ -248,7 +258,7 @@ if (phase === 'retry') {
   assert.equal(previous.fixture.sha256, createHash('sha256').update(fixtureBytes).digest('hex'))
   assert.equal(previous.model.localModelId, MODEL_ID)
   assert.equal(previous.model.localVersionId, VERSION_ID)
-  if (ANIMA) assert.ok(previous.animaResources?.lora?.verified)
+  if (LORA) assert.ok(previous[ANIMA ? 'animaResources' : 'illustriousResources']?.lora?.verified)
   assert.equal(previous.harness.path, fileURLToPath(import.meta.url))
   // BEGIN ANIMA_RETRY_ROLE_FIX_COMPATIBILITY_V1
   {
@@ -317,7 +327,7 @@ const payload = path.join(RUN, 'payloads', label),
   profileRoot = path.join(SHORT, label)
 const title =
   previous?.project.title ??
-  `${ANIMA ? 'Anima LoRA' : `Illustrious${V_PREDICTION ? ' V' : ''}`} Smart ${MODE} regional${phase === 'controls' ? ' controls' : ''} ${label}${ANIMA ? ` ${createHash('sha256').update(fixtureBytes).digest('hex').slice(0, 8)}` : ''}`
+  `${ANIMA ? 'Anima LoRA' : `Illustrious${V_PREDICTION ? ' V' : ''}${LORA ? ' LoRA' : ''}`} Smart ${MODE} regional${phase === 'controls' ? ' controls' : ''} ${label}${LORA ? ` ${createHash('sha256').update(fixtureBytes).digest('hex').slice(0, 8)}` : ''}`
 const patchName = `Selected Smart regional ${MODE}`
 const packagePath = path.join(APPDATA, 'workspaces/Uncategorized', `${title}.igs`)
 if (previous) assert.equal(previous.project.packagePath, packagePath)
@@ -356,7 +366,7 @@ const report = {
   ownedQueueIds: [],
   boundary: {
     actual: `Built renderer Generate/Results/Add/Undo/Redo/Save and Queue Manager Retry; public typed IPC authoring/cancellation; real Main coherent capture/preparation, queue/bundle/receipt, installed ${FAMILY} ${PREDICTION_TYPE ?? 'original'} CUDA descriptor dispatch, world PNG and saved/reopened accepted variant.`,
-    fixture: `One actual portable Project per phase pair or fresh controls phase; TXT transparent/null Smart mask, IMG opaque/disjoint Smart mask, INP opaque/covered Smart mask, OUT mixed/covered Smart mask; above-magenta exclusion and initially hidden future opaque source; independently owned regional masks; actual installed ${FAMILY} catalog${ANIMA ? ' and one exact real global adapter' : ' with unchanged exact-file noise policy'}. No fabricated queue/receipt/runtime/qualifier. Existing managed LaMa is a prerequisite only for OUT.`,
+    fixture: `One actual portable Project per phase pair or fresh controls phase; TXT transparent/null Smart mask, IMG opaque/disjoint Smart mask, INP opaque/covered Smart mask, OUT mixed/covered Smart mask; above-magenta exclusion and initially hidden future opaque source; independently owned regional masks; actual installed ${FAMILY} catalog${LORA ? ' and one exact real global adapter' : ' with unchanged exact-file noise policy'}. No fabricated queue/receipt/runtime/qualifier. Existing managed LaMa is a prerequisite only for OUT.`,
     inference:
       phase === 'prepare'
         ? 'Three requests: A/B/progress-canceledA; two successful world PNGs. No prompt/seed search.'
@@ -402,7 +412,7 @@ async function regular(file) {
 const within = (root, value) =>
   value === root || (value.startsWith(`${root}${path.sep}`) && path.resolve(value) === value)
 let application, window, database, marker, provision
-let projectId, documentId, authored, ids, model, animaResources, animaPlan, animaPromptCompiler
+let projectId, documentId, authored, ids, model, loraResources, animaPlan, animaPromptCompiler
 let leftExpected, rightExpected, belowRgba
 let nativeChecks = [],
   sampler,
@@ -426,28 +436,45 @@ async function current() {
 }
 function expectedWeight(labelAt) {
   const weights = { A: 0.7, B: -0.7, 'retry-A': 0.7, Z: 0, clean: null }
-  assert.ok(Object.hasOwn(weights, labelAt), 'Unknown Anima global adapter scenario label')
+  assert.ok(Object.hasOwn(weights, labelAt), 'Unknown global adapter scenario label')
   return weights[labelAt]
 }
-const expectedProfile = (labelAt) => (ANIMA && labelAt === 'clean' ? NO_LORA_PROFILE : PROFILE)
+const expectedProfile = (labelAt) => (LORA && labelAt === 'clean' ? NO_LORA_PROFILE : PROFILE)
 function authoredLoras(labelAt) {
-  if (!ANIMA) return []
+  if (!LORA) return []
   const weight = expectedWeight(labelAt)
   return [
     {
-      resource: structuredClone(animaResources.lora.reference),
+      resource: structuredClone(loraResources.lora.reference),
       enabled: weight !== null,
       weight: weight ?? 0,
     },
-    ...(animaResources.disabledLora
-      ? [{ resource: structuredClone(animaResources.disabledLora), enabled: false, weight: 0.25 }]
+    ...(loraResources.disabledLora
+      ? [{ resource: structuredClone(loraResources.disabledLora), enabled: false, weight: 0.25 }]
       : []),
   ]
 }
+function assertLoraInference(frozen, labelAt) {
+  const weight = expectedWeight(labelAt)
+  assert.equal(frozen.regional.profile, expectedProfile(labelAt))
+  assert.deepEqual(frozen.context.generationDraft.loras, authoredLoras(labelAt))
+  assert.deepEqual(
+    frozen.item.inference.loras,
+    weight === null
+      ? []
+      : [
+          {
+            path: fixture.lora.managedPath,
+            byteSize: fixture.lora.byteSize,
+            sha256: fixture.lora.sha256,
+            weight,
+          },
+        ],
+  )
+}
 function assertAnimaInference(frozen, labelAt) {
   const inference = frozen.item.inference,
-    weight = expectedWeight(labelAt),
-    bundle = animaResources.modelBundle
+    bundle = loraResources.modelBundle
   assert.equal(frozen.item.family, 'anima')
   assert.equal(frozen.regional.profile, expectedProfile(labelAt))
   assert.equal(frozen.regional.promptInterpretation, 'invoke-fragments-v1')
@@ -470,20 +497,7 @@ function assertAnimaInference(frozen, labelAt) {
     },
     vae: { path: bundle.vae.managedPath, byteSize: bundle.vae.byteSize, sha256: bundle.vae.sha256 },
   })
-  assert.deepEqual(frozen.context.generationDraft.loras, authoredLoras(labelAt))
-  assert.deepEqual(
-    inference.loras,
-    weight === null
-      ? []
-      : [
-          {
-            path: fixture.lora.managedPath,
-            byteSize: fixture.lora.byteSize,
-            sha256: fixture.lora.sha256,
-            weight,
-          },
-        ],
-  )
+  assertLoraInference(frozen, labelAt)
   assert.deepEqual(inference.prompts, {
     positive: animaPromptCompiler(POSITIVE, 'invoke-fragments-v1'),
     negative: animaPromptCompiler(NEGATIVE, 'invoke-fragments-v1'),
@@ -497,7 +511,7 @@ function assertAnimaInference(frozen, labelAt) {
  * The original exact resolver, including enabled-zero, qualifies both native model roles and the
  * real adapter.
  */
-async function verifyAnimaResources(repository) {
+async function verifyRegionalLoraResources(repository) {
   const [serviceModule, clientModule, tokenModule] = await Promise.all([
     load('src/main/models/model-service.ts'),
     load('src/main/models/civitai-client.ts'),
@@ -509,18 +523,29 @@ async function verifyAnimaResources(repository) {
     new tokenModule.CivitaiTokenStore({}, APPDATA),
   )
   const reference = await service.resolveGenerationCheckpoint(MODEL_ID, VERSION_ID)
-  assert.equal(reference.baseModelFamily, 'anima')
-  assert.equal(reference.predictionType, null)
-  const modelBundle = await service.resolveVerifiedGenerationAnimaBundleForPlan(reference)
-  assert.equal(modelBundle.architecture, 'anima-base-1.0')
+  assert.equal(reference.baseModelFamily, FAMILY)
+  assert.equal(reference.predictionType, PREDICTION_TYPE)
+  const modelBundle = ANIMA
+    ? await service.resolveVerifiedGenerationAnimaBundleForPlan(reference)
+    : null
+  const checkpoint = ANIMA
+    ? null
+    : await service.resolveVerifiedGenerationCheckpointForPlan(reference)
+  if (ANIMA) assert.equal(modelBundle.architecture, 'anima-base-1.0')
+  else {
+    assert.deepEqual(checkpoint.reference, reference)
+    assert.deepEqual(checkpoint.noiseProfile, NOISE_PROFILE)
+  }
   const loraReference = await service.resolveGenerationLora(
     fixture.lora.modelId,
     fixture.lora.versionId,
   )
   assert.equal(loraReference.kind, 'lora')
-  assert.equal(loraReference.baseModelFamily, 'anima')
+  assert.equal(loraReference.baseModelFamily, FAMILY)
   assert.equal(loraReference.predictionType, null)
-  const verified = await service.resolveVerifiedAnimaGenerationLoraForPlan(loraReference)
+  const verified = ANIMA
+    ? await service.resolveVerifiedAnimaGenerationLoraForPlan(loraReference)
+    : await service.resolveVerifiedGenerationLoraForPlan(loraReference)
   assert.deepEqual(
     {
       path: verified.managedPath,
@@ -558,18 +583,18 @@ async function verifyAnimaResources(repository) {
   }
   const value = {
     reference,
-    modelBundle,
+    ...(ANIMA ? { modelBundle } : { checkpoint }),
     lora: { reference: loraReference, verified },
     disabledLora,
   }
-  if (animaResources)
+  if (loraResources)
     assert.deepEqual(
       value,
-      animaResources,
-      'Original exact Anima resources changed between qualification boundaries',
+      loraResources,
+      'Original exact regional resources changed between qualification boundaries',
     )
-  animaResources = value
-  report.animaResources = value
+  loraResources = value
+  report[ANIMA ? 'animaResources' : 'illustriousResources'] = value
   return value
 }
 function patch(tab) {
@@ -682,8 +707,8 @@ async function bounds(labelAt) {
   assert.equal(readFileSync(`/sys/fs/cgroup${launcher}/memory.swap.max`, 'utf8').trim(), '0')
   maxima.set(launcher, BigInt(launcherMax))
   memoryGroups.set(launcher, 'launcher')
-  if (ANIMA)
-    assert.ok(BigInt(launcherMax) <= 2n * 1024n ** 3n, 'Anima campaign launcher limit exceeds2GiB')
+  if (LORA)
+    assert.ok(BigInt(launcherMax) <= 2n * 1024n ** 3n, 'LoRA campaign launcher limit exceeds2GiB')
   assert.ok(
     [...maxima.values()].reduce((a, b) => a + b, 0n) <= 12n * 1024n ** 3n,
     'Actual unique native + launcher limits exceed aggregate12GiB',
@@ -867,13 +892,13 @@ async function assertCatalogPolicy() {
   assert.equal(version.sha256, model.fileSha256)
   assert.equal(version.predictionType, PREDICTION_TYPE)
   if (!ANIMA) assert.deepEqual(version.noiseProfile?.effective, NOISE_PROFILE)
-  else {
+  if (LORA) {
     const modelModule = await load('src/main/models/model-repository.ts')
-    await verifyAnimaResources(new modelModule.ModelRepository(database.db))
+    await verifyRegionalLoraResources(new modelModule.ModelRepository(database.db))
     const adapter = catalog.value.find((entry) => entry.id === fixture.lora.modelId),
       adapterVersion = adapter?.versions.find((entry) => entry.id === fixture.lora.versionId)
     assert.equal(adapter?.resourceType, 'lora')
-    assert.equal(adapterVersion?.baseModelFamily, 'anima')
+    assert.equal(adapterVersion?.baseModelFamily, FAMILY)
     assert.equal(adapterVersion.fileStatus, 'ready')
     assert.equal(adapterVersion.sha256, fixture.lora.sha256)
     assert.equal(adapterVersion.fileSizeBytes, fixture.lora.byteSize)
@@ -887,7 +912,7 @@ async function assertCatalogPolicy() {
       localVersionId: adapterVersion.id,
       sha256: adapterVersion.sha256,
       byteSize: adapterVersion.fileSizeBytes,
-      exactResolver: animaResources.lora.verified,
+      exactResolver: loraResources.lora.verified,
     }
   }
   report.catalogPolicy = {
@@ -1043,7 +1068,7 @@ async function generate(cancel = false) {
     timeout: 120_000,
   })
   await window.getByRole('button', { name: 'Generate', exact: true }).click()
-  const admission = ANIMA
+  const admission = LORA
     ? {
         startedAt: new Date().toISOString(),
         startedMs: Date.now(),
@@ -1083,7 +1108,7 @@ async function generate(cancel = false) {
         return count
       },
       {
-        timeout: ANIMA ? 240_000 : 120_000,
+        timeout: LORA ? 240_000 : 120_000,
         intervals: [50, 100, 200],
       },
     )
@@ -1134,8 +1159,9 @@ async function capture(labelAt, id, available = true) {
     assert.equal(frozen.item.inference.checkpoint.predictionType, PREDICTION_TYPE)
     assert.equal(frozen.item.inference.vae, null)
     assert.equal(frozen.item.inference.vaePrecision, 'Auto')
-    assert.deepEqual(frozen.item.inference.loras, [])
-    assert.equal(frozen.regional.profile, PROFILE)
+    if (LORA) assertLoraInference(frozen, labelAt)
+    else assert.deepEqual(frozen.item.inference.loras, [])
+    assert.equal(frozen.regional.profile, expectedProfile(labelAt))
     assert.equal(frozen.regional.recipe.family, 'illustrious')
     assert.equal(frozen.regional.promptInterpretation, undefined)
     assert.equal(frozen.animaPromptInterpretation, undefined)
@@ -1149,10 +1175,7 @@ async function capture(labelAt, id, available = true) {
   assert.equal(recipe.globalPrompts.negative.text, NEGATIVE)
   assert.equal(recipe.regions[1].negative.source, 'smart-patch')
   assert.equal(recipe.regions[1].negative.prompt.text, NEGATIVE)
-  assert.equal(
-    recipe.regions[0].negative.prompt.text,
-    !ANIMA && labelAt === 'B' ? LOCAL_B : LOCAL_A,
-  )
+  assert.equal(recipe.regions[0].negative.prompt.text, !LORA && labelAt === 'B' ? LOCAL_B : LOCAL_A)
   assert.deepEqual(
     recipe.regions.map((x) => x.regionId),
     [ids.left, ids.right],
@@ -1297,7 +1320,7 @@ async function changeLocal(text) {
   )
 }
 async function changeLora(weight, enabled = true) {
-  assert.equal(ANIMA, true)
+  assert.equal(LORA, true)
   const identity = { resourceId: fixture.lora.modelId, versionId: fixture.lora.versionId }
   await api(
     'updateGenerationDraft',
@@ -1316,8 +1339,8 @@ async function changeLora(weight, enabled = true) {
   const stack = patch(await current()).generationDraft.loras
   assert.equal(stack[0].weight, weight)
   assert.equal(stack[0].enabled, enabled)
-  assert.deepEqual(stack[0].resource, animaResources.lora.reference)
-  if (animaResources.disabledLora) assert.deepEqual(stack[1], authoredLoras('A')[1])
+  assert.deepEqual(stack[0].resource, loraResources.lora.reference)
+  if (loraResources.disabledLora) assert.deepEqual(stack[1], authoredLoras('A')[1])
 }
 async function discard() {
   const snapshot = await results(),
@@ -1398,11 +1421,12 @@ async function acceptA(value) {
       Object.hasOwn(accepted.generationProvenance.generationConfiguration.sampling, 'noiseProfile'),
       false,
     )
+  }
+  if (LORA)
     assert.deepEqual(
       accepted.generationProvenance.generationConfiguration.loras,
       authoredLoras('A'),
     )
-  }
   assert.equal(
     accepted.generationProvenance.executionResultContext.output.outputMode,
     'contribution',
@@ -1454,7 +1478,7 @@ async function futureEdits() {
     { kind: 'sampling-steps', value: 4 },
   ])
     await api('updateGenerationDraft', projectId, change, undefined, ids.patch)
-  if (ANIMA) await changeLora(-0.2, false)
+  if (LORA) await changeLora(-0.2, false)
   await api('updateSmartPatchLayer', projectId, ids.patch, {
     kind: 'internal-resolution',
     size: { width: 128, height: 128 },
@@ -1555,12 +1579,10 @@ async function buildIdentity() {
     await Promise.all(names.map(async (name) => [name, await hashFile(path.join(REPO, name))])),
   )
 }
-async function animaSourceIdentity() {
+async function regionalSourceIdentity() {
   const names = [
     'src/shared/projects/inference-worker-capabilities.ts',
     'src/shared/projects/smart-patch-regional-guidance.ts',
-    'src/shared/projects/anima-flow-sampling-plan.ts',
-    'src/shared/projects/anima-prompt-weighting.ts',
     'src/main/projects/project-smart-patch-generation-action-controller.ts',
     'src/main/projects/project-smart-patch-regional-input.ts',
     'src/main/projects/project-smart-patch-execution.ts',
@@ -1569,12 +1591,26 @@ async function animaSourceIdentity() {
     'src/main/projects/smart-patch-generation-processor.ts',
     'src/main/projects/generation-action-controller.ts',
     'src/main/projects/generation-queue.ts',
-    'src/main/projects/anima-generation-preparation.ts',
+    'src/main/projects/generation-worker-client.ts',
     'src/main/models/model-service.ts',
-    'worker-python/src/imagegen_worker/anima_smart_patch_regional_worker.py',
-    'worker-python/src/imagegen_worker/anima_smart_patch_regional.py',
-    'worker-python/src/imagegen_worker/anima_lora.py',
     'worker-python/src/imagegen_worker/inference_main.py',
+    ...(ANIMA
+      ? [
+          'src/shared/projects/anima-flow-sampling-plan.ts',
+          'src/shared/projects/anima-prompt-weighting.ts',
+          'src/main/projects/anima-generation-preparation.ts',
+          'worker-python/src/imagegen_worker/anima_smart_patch_regional_worker.py',
+          'worker-python/src/imagegen_worker/anima_smart_patch_regional.py',
+          'worker-python/src/imagegen_worker/anima_lora.py',
+        ]
+      : [
+          'src/main/projects/project-smart-patch-illustrious-regional-input.ts',
+          'worker-python/src/imagegen_worker/smart_patch_execution.py',
+          'worker-python/src/imagegen_worker/illustrious_smart_patch_regional.py',
+          'worker-python/src/imagegen_worker/illustrious_regional_lora.py',
+          'worker-python/src/imagegen_worker/illustrious_regional_denoising.py',
+          'worker-python/src/imagegen_worker/illustrious_smart_patch_regional_worker.py',
+        ]),
   ]
   return Object.fromEntries(
     await Promise.all(names.map(async (name) => [name, await hashFile(path.join(REPO, name))])),
@@ -1637,7 +1673,13 @@ async function verifyProvision() {
           'anima-flow-sampling',
           `anima-smart-patch-regional-${MODE}-v1`,
         ]
-      : ['illustrious-euler', 'illustrious-noise-profile']),
+      : [
+          'illustrious-euler',
+          'illustrious-noise-profile',
+          ...(LORA
+            ? ['illustrious-lora', `illustrious-smart-patch-regional-${objectivePrefix}${MODE}-v1`]
+            : []),
+        ]),
   ])
     assert.ok(ready.capabilities.includes(name))
   await upgrade.assertRuntimeIdle(APPDATA, provision.installed.basePrefix)
@@ -1649,8 +1691,8 @@ async function verifyProvision() {
     workerTree: source,
   }
   report.builtBundles = await buildIdentity()
-  if (ANIMA) {
-    report.sourceFiles = await animaSourceIdentity()
+  if (LORA) {
+    report.sourceFiles = await regionalSourceIdentity()
     report.invokeSource = {
       revision: '4875d96531ca6712b288f6e660fcbb34143408c1',
       paths: [
@@ -1658,9 +1700,19 @@ async function verifyProvision() {
         'invokeai/frontend/webv2/src/features/generation/core/graph.ts',
         'invokeai/frontend/webv2/src/features/generation/core/canvas/addRegionalGuidance.ts',
         'invokeai/frontend/webv2/src/workbench/widgets/canvas/invoke/prepareCanvasInvocation.ts',
-        'invokeai/app/invocations/anima/anima_lora_loader.py',
-        'invokeai/app/invocations/text_encoder/anima_text_encoder.py',
-        'invokeai/app/invocations/anima/anima_denoise.py',
+        'invokeai/frontend/webv2/src/features/generation/core/canvas/compileCanvasGraph.ts',
+        ...(ANIMA
+          ? [
+              'invokeai/app/invocations/anima/anima_lora_loader.py',
+              'invokeai/app/invocations/text_encoder/anima_text_encoder.py',
+              'invokeai/app/invocations/anima/anima_denoise.py',
+            ]
+          : [
+              'invokeai/app/invocations/model.py',
+              'invokeai/app/invocations/text_encoder/compel.py',
+              'invokeai/app/invocations/sd/denoise_latents.py',
+              'invokeai/backend/patches/layer_patcher.py',
+            ]),
       ],
     }
   }
@@ -1672,7 +1724,7 @@ async function verifyProvision() {
     )
     assert.equal(report.installed.reportSha256, previous.installed.reportSha256)
     assert.deepEqual(report.installed.workerTree, previous.installed.workerTree)
-    if (ANIMA) assert.deepEqual(report.sourceFiles, previous.sourceFiles)
+    if (LORA) assert.deepEqual(report.sourceFiles, previous.sourceFiles)
   }
   if (MODE === 'outpaint') {
     const auxiliary = await load('src/main/runtime/inference-auxiliary-resources.ts')
@@ -1719,8 +1771,8 @@ async function prepareFixture() {
     // Raw imported labels are advisory. The public ModelService catalog below
     // must confirm the current exact-file objective/policy before Generate/Retry.
     report.sourceModelPredictionType = version.predictionType
-    model = ANIMA
-      ? (await verifyAnimaResources(repository)).reference
+    model = LORA
+      ? (await verifyRegionalLoraResources(repository)).reference
       : {
           kind: 'checkpoint',
           baseModelFamily: 'illustrious',
@@ -1771,7 +1823,7 @@ async function prepareFixture() {
     negativePrompt: prompt(NEGATIVE),
     dynamicPrompt: { maxPrompts: 1, seedBehavior: 'per-prompt' },
     seed: { policy: 'fixed', value: 123 },
-    loras: ANIMA ? authoredLoras(phase === 'controls' ? 'Z' : 'A') : [],
+    loras: LORA ? authoredLoras(phase === 'controls' ? 'Z' : 'A') : [],
     vae: null,
     vaePrecision: 'Auto',
     cfgRescale: 0,
@@ -1941,7 +1993,7 @@ async function prepareFixture() {
     authored,
     originalPackageSha256: await hashFile(packagePath),
   }
-  if (ANIMA) {
+  if (LORA) {
     const selected = authored.layers.find((entry) => entry.id === ids.patch)
     report.numericalAuthoring = {
       family: FAMILY,
@@ -2042,13 +2094,17 @@ function observe(value, child, command) {
   demand(found.length === 1, 'Observer could not bind completion to one exact owned regional request');
   const bound = found[0], job = bound.bundle;
   const loras = job.execution.inference.loras;
-  const expectedProfile = config.family === 'anima' && loras.length === 0 ? config.noLoraProfile : config.profile;
+  const expectedProfile = config.lora && loras.length === 0 ? config.noLoraProfile : config.profile;
   demand(job.profile === expectedProfile && job.recipe.documentId === config.documentId && job.recipe.layerId === config.layerId, 'Observer captured another profile/document/layer');
   demand(job.execution.family === config.family && job.execution.mode === config.mode && job.execution.output.stagingRoot === bound.root, 'Observer command mode/root differs');
   if (config.family === 'anima') {
     demand(job.promptInterpretation === 'invoke-fragments-v1' && Array.isArray(job.compiledPrompts), 'Observer Anima interpretation differs');
-    demand(loras.length === 0 || (loras.length === 1 && loras[0].path === config.lora.managedPath && loras[0].sha256 === config.lora.sha256 && loras[0].byteSize === config.lora.byteSize && [0.7, -0.7, 0].includes(loras[0].weight)), 'Observer exact global Anima adapter differs');
+  } else {
+    demand(job.execution.inference.checkpoint.predictionType === config.predictionType, 'Observer actual Illustrious objective differs');
+    demand(job.promptInterpretation === undefined && job.compiledPrompts === undefined, 'Observer crossed Anima interpretation');
   }
+  if (config.lora) demand(loras.length === 0 || (loras.length === 1 && loras[0].path === config.lora.managedPath && loras[0].sha256 === config.lora.sha256 && loras[0].byteSize === config.lora.byteSize && [0.7, -0.7, 0].includes(loras[0].weight)), 'Observer exact global adapter differs');
+  else demand(loras.length === 0, 'Observer unexpected global adapter');
   const sourcePath = job.execution.output.pngPath;
   demand(sourcePath === path.join(bound.root, 'model-result.png'), 'Observer output path is not the original fixed processing role');
   privateDirectory(bound.root);
@@ -2260,7 +2316,8 @@ async function createProcessingObserver() {
     mode: MODE,
     profile: PROFILE,
     family: FAMILY,
-    ...(ANIMA ? { noLoraProfile: NO_LORA_PROFILE, lora: fixture.lora } : {}),
+    ...(!ANIMA ? { predictionType: PREDICTION_TYPE } : {}),
+    ...(LORA ? { noLoraProfile: NO_LORA_PROFILE, lora: fixture.lora } : {}),
     width: PROCESSING.width,
     height: PROCESSING.height,
   })
@@ -2381,7 +2438,7 @@ try {
   checkpoint()
   await verifyProvision()
   if (phase === 'controls') {
-    assert.equal(ANIMA, true)
+    assert.equal(LORA, true)
     assert.equal(previous, null)
     await prepareFixture()
     await launch()
@@ -2433,7 +2490,7 @@ try {
       worldRgbaSha256: Z.rgbaSha256,
       independentlyOwnedProject: report.project.projectId,
       numericalAuthoringSha256: report.numericalAuthoringSha256,
-      disabledMissing: animaResources.disabledLora,
+      disabledMissing: loraResources.disabledLora,
     }
     await discard()
     assert.equal((await results()).candidates.length, 0)
@@ -2466,7 +2523,7 @@ try {
       'Generate must not implicitly Save',
     )
     await acceptA(A)
-    if (ANIMA) await changeLora(-0.7)
+    if (LORA) await changeLora(-0.7)
     else await changeLocal(LOCAL_B)
     await saveAndRead('B-authored')
     const beforeB = await hashFile(packagePath)
@@ -2474,11 +2531,11 @@ try {
     assert.equal(await hashFile(packagePath), beforeB)
     for (const name of Object.keys(A.frozen.files))
       assert.ok(A.files[name].equals(B.files[name]), `A/B changed ${name}`)
-    if (ANIMA) assertSameNumericalInputs(A, B, 'weight')
+    if (LORA) assertSameNumericalInputs(A, B, 'weight')
     assert.notEqual(
       A.processing.rgbSha256,
       B.processing.rgbSha256,
-      `The ${ANIMA ? 'global adapter signed-weight' : 'local-negative'} change must reach actual native processing RGB`,
+      `The ${LORA ? 'global adapter signed-weight' : 'local-negative'} change must reach actual native processing RGB`,
     )
     const changed = A.alpha.reduce(
       (n, alpha, i) =>
@@ -2492,12 +2549,12 @@ try {
     )
     assert.ok(
       changed > 0,
-      `${ANIMA ? 'Global adapter signed weight' : 'Local regional-negative'} B must change actual fully-visible world RGB`,
+      `${LORA ? 'Global adapter signed weight' : 'Local regional-negative'} B must change actual fully-visible world RGB`,
     )
-    if (ANIMA) report.globalLoraVisibleRgbChanges = changed
+    if (LORA) report.globalLoraVisibleRgbChanges = changed
     else report.localNegativeVisibleRgbChanges = changed
     await discard()
-    if (ANIMA) await changeLora(0.7)
+    if (LORA) await changeLora(0.7)
     else await changeLocal(LOCAL_A)
     await saveAndRead('A-reset-before-cancel')
     const canceledId = await generate(true)
@@ -2512,7 +2569,7 @@ try {
       result: window.__smartRegionalCancelResult,
     }))
     assert.ok(cancellation.target?.requested && cancellation.target.progress.step > 0)
-    if (ANIMA)
+    if (LORA)
       assert.equal(
         cancellation.target.progress.step,
         1,
@@ -2531,6 +2588,7 @@ try {
     else {
       assert.equal(canceledPayload.item.inference.checkpoint.predictionType, PREDICTION_TYPE)
       assert.deepEqual(canceledPayload.item.inference.sampling.noiseProfile, NOISE_PROFILE)
+      if (LORA) assertLoraInference(canceledPayload, 'A')
     }
     if (V_PREDICTION)
       assert.deepEqual(canceledPayload.regional.recipe.sampling.noiseProfile, NOISE_PROFILE)
@@ -2555,9 +2613,9 @@ try {
     ids = previous.project.ids
     authored = previous.project.authored
     model = previous.model
-    if (ANIMA) {
-      animaResources = previous.animaResources
-      report.animaResources = animaResources
+    if (LORA) {
+      loraResources = previous[ANIMA ? 'animaResources' : 'illustriousResources']
+      report[ANIMA ? 'animaResources' : 'illustriousResources'] = loraResources
       report.numericalAuthoring = previous.numericalAuthoring
       report.numericalAuthoringSha256 = previous.numericalAuthoringSha256
     }
@@ -2572,8 +2630,7 @@ try {
       canceledPayload = previous.canceled.payload
     assert.ok(
       priorA &&
-        (ANIMA ? previous.globalLoraVisibleRgbChanges : previous.localNegativeVisibleRgbChanges) >
-          0,
+        (LORA ? previous.globalLoraVisibleRgbChanges : previous.localNegativeVisibleRgbChanges) > 0,
     )
     const A = {
       ...priorA,
@@ -2588,10 +2645,14 @@ try {
     await launch()
     const currentEdited = await current()
     assert.equal(patch(currentEdited).generationDraft.seed.value, 321)
-    if (ANIMA) {
+    if (LORA) {
       assert.equal(patch(currentEdited).generationDraft.loras[0].weight, -0.2)
       assert.equal(patch(currentEdited).generationDraft.loras[0].enabled, false)
-      assert.equal(patch(currentEdited).generationDraft.sampling.animaMethod, 'heun')
+      if (ANIMA) assert.equal(patch(currentEdited).generationDraft.sampling.animaMethod, 'heun')
+      else {
+        assert.equal(patch(currentEdited).generationDraft.sampling.sampler, 'Euler a')
+        assert.equal(patch(currentEdited).generationDraft.sampling.scheduler, 'Normal')
+      }
     }
     assert.equal(currentEdited.regionalGuidance.filter((x) => x.enabled).length, 0)
     assert.equal(currentEdited.layers.find((x) => x.id === ids.below).opacity, 0.25)
@@ -2649,13 +2710,17 @@ try {
     )
     assert.equal(edited.project.regionalGuidance.length, 1)
     assert.equal(edited.project.regionalGuidance[0].enabled, false)
-    if (ANIMA) {
+    if (LORA) {
       const savedDraft = edited.project.layers.find(
         (entry) => entry.id === ids.patch,
       ).generationDraft
       assert.equal(savedDraft.loras[0].weight, -0.2)
       assert.equal(savedDraft.loras[0].enabled, false)
-      assert.equal(savedDraft.sampling.animaMethod, 'heun')
+      if (ANIMA) assert.equal(savedDraft.sampling.animaMethod, 'heun')
+      else {
+        assert.equal(savedDraft.sampling.sampler, 'Euler a')
+        assert.equal(savedDraft.sampling.scheduler, 'Normal')
+      }
     }
     await exclusive(path.join(payload, 'final-package.igs'), await readFile(packagePath))
     check(
@@ -2682,7 +2747,7 @@ try {
   assert.deepEqual(report.pageErrors, [])
   assert.equal(report.samplerError, undefined)
   await assertObserverClean(phase === 'retry' ? 1 : 2)
-  if (ANIMA) {
+  if (LORA) {
     const owned = (await rows()).filter((entry) => report.ownedQueueIds.includes(entry.id))
     assert.equal(new Set(report.ownedQueueIds).size, report.ownedQueueIds.length)
     assert.equal(owned.length, phase === 'prepare' ? 3 : phase === 'controls' ? 2 : 1)
@@ -2719,8 +2784,8 @@ try {
   assert.equal(report.normalClose?.completed, true)
   assert.equal(report.forcedOwnedClose, undefined)
   assert.equal(report.closeError, undefined)
-  if (ANIMA) {
-    assert.deepEqual(await animaSourceIdentity(), report.sourceFiles)
+  if (LORA) {
+    assert.deepEqual(await regionalSourceIdentity(), report.sourceFiles)
     assert.equal(await hashFile(fixture.lora.managedPath), fixture.lora.sha256)
     report.executed.normalAppLifetimes = report.nativeClosures.filter(
       (entry) => entry.normal && entry.confirmed,

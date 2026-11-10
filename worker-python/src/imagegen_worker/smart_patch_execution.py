@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import os
 import stat
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -228,8 +229,21 @@ def execute_smart_patch(
         policy.seed if isinstance(policy, IllustriousInferenceParameters) else policy.sampling.seed
     )
     if isinstance(policy, IllustriousInferenceParameters):
+        loading_policy = policy
+        if _illustrious_regional is not None:
+            from imagegen_worker.illustrious_regional_lora import (
+                verify_regional_lora_resources,
+            )
+
+            verify_regional_lora_resources(
+                policy.loras, command.staging_root, policy.checkpoint_path
+            )
+            # Invoke supplies the same patched UNet and both CLIPs to global
+            # and regional conditioning. Reuse the Current Canvas owned direct
+            # preparation; ordinary PEFT would alter borrowed native classes.
+            loading_policy = replace(policy, positive_prompt="", negative_prompt="", loras=())
         pipeline, embeddings = inference.load_illustrious_pipeline(
-            policy,
+            loading_policy,
             config_dir=config_dir,
             runtime=runtime,
             mode=command.mode if _illustrious_regional is None else "txt2img",
@@ -252,6 +266,7 @@ def execute_smart_patch(
                 on_progress=on_progress,
             )
         else:
+            from imagegen_worker.illustrious_regional_lora import prepare_regional_loras
             from imagegen_worker.illustrious_regional_vae import prepare_owned_regional_vae
             from imagegen_worker.illustrious_regional_worker import install_capture_hooks
             from imagegen_worker.illustrious_smart_patch_regional import (
@@ -259,6 +274,7 @@ def execute_smart_patch(
                 run_prepared_illustrious_smart_patch_regional,
             )
 
+            prepare_regional_loras(pipeline, policy.loras, torch)
             prepare_owned_regional_vae(pipeline, policy, torch)
             for component in (
                 pipeline.text_encoder,

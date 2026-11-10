@@ -705,3 +705,93 @@ test('genuine ProjectService Save/reopen lease prepares all profiles and survive
     await rm(root, { force: true, recursive: true })
   }
 })
+
+for (const objective of ['epsilon', 'v_prediction'] as const) {
+  for (const mode of ['txt2img', 'img2img', 'inpaint', 'outpaint'] as const) {
+    test(`Illustrious ${objective} Smart ${mode} binds signed and enabled-zero LoRA only with its exact profile`, async () => {
+      const objectivePart = objective === 'v_prediction' ? 'v-prediction-' : ''
+      const profile: SmartPatchIllustriousRegionalProfile = `invoke-illustrious-smart-regional-${objectivePart}lora-${mode}-v1`
+      for (const weight of [-0.7, 0]) {
+        const f = fixture(profile)
+        const patch = f.capture.smartPatch.document.layers[0]
+        assert.equal(patch.kind, 'smart-patch')
+        if (patch.kind !== 'smart-patch') {
+          throw new Error('fixture target')
+        }
+        const adapter = { ...reference(), kind: 'lora' as const }
+        patch.generationDraft.loras = [{ enabled: true, resource: adapter, weight }]
+        f.capture.smartPatch.context.generationDraft = mutable(patch.generationDraft)
+        const noiseProfile = {
+          ...defaultIllustriousNoiseProfile(),
+          ...(objective === 'v_prediction'
+            ? { rescaleBetasZeroSnr: true, timestepSpacing: 'trailing' as const }
+            : {}),
+        }
+        const result = await prepareSmartPatchIllustriousRegionalInput({
+          ...f,
+          resolvedPolicy: {
+            modelSha256: adapter.fileSha256,
+            noiseProfile,
+            predictionType: objective,
+          },
+        })
+        const execution = command(result)
+        execution.inference.checkpoint.predictionType = objective
+        execution.inference.sampling.noiseProfile = noiseProfile
+        execution.inference.loras = [
+          {
+            byteSize: 12,
+            path: '/owned-test/adapter.safetensors',
+            sha256: adapter.fileSha256,
+            weight,
+          },
+        ]
+        const bound = bindSmartPatchIllustriousRegionalExecution(result, execution)
+        assert.deepEqual(bound.execution.inference.loras, execution.inference.loras)
+        assert.deepEqual(
+          bound.recipe.sampling.noiseProfile,
+          objective === 'v_prediction' ? noiseProfile : undefined,
+        )
+        const missing = mutable(execution)
+        missing.inference.loras = []
+        assert.throws(() => bindSmartPatchIllustriousRegionalExecution(result, missing), invalid)
+        const wrong = mutable(result)
+        wrong.profile = `invoke-illustrious-smart-regional-${objectivePart}${mode}-v1`
+        assert.throws(() => bindSmartPatchIllustriousRegionalExecution(wrong, execution), invalid)
+      }
+    })
+
+    test(`Illustrious ${objective} Smart ${mode} LoRA profile refuses empty and disabled-only contexts before pixels`, async () => {
+      const profile: SmartPatchIllustriousRegionalProfile = `invoke-illustrious-smart-regional-${objective === 'v_prediction' ? 'v-prediction-' : ''}lora-${mode}-v1`
+      for (const disabled of [false, true]) {
+        const f = fixture(profile)
+        const patch = f.capture.smartPatch.document.layers[0]
+        if (patch.kind !== 'smart-patch') {
+          throw new Error('fixture target')
+        }
+        patch.generationDraft.loras = disabled
+          ? [
+              {
+                enabled: false,
+                resource: { ...reference(), fileSha256: 'f'.repeat(64), kind: 'lora' },
+                weight: 0,
+              },
+            ]
+          : []
+        f.capture.smartPatch.context.generationDraft = mutable(patch.generationDraft)
+        await assert.rejects(
+          prepareSmartPatchIllustriousRegionalInput({
+            ...f,
+            resolvedPolicy: {
+              modelSha256: patch.generationDraft.model!.fileSha256,
+              noiseProfile: defaultIllustriousNoiseProfile(),
+              predictionType: objective,
+            },
+          }),
+          invalid,
+        )
+        assert.deepEqual(f.calls, [])
+      }
+    })
+  }
+}

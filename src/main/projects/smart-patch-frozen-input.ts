@@ -44,6 +44,7 @@ import {
   capturePreparedSmartPatchIllustriousRegionalInput,
   type FrozenSmartPatchIllustriousRegionalInputV1,
   ILLUSTRIOUS_SMART_REGIONAL_MODES,
+  isSmartPatchIllustriousRegionalLoraProfile,
   isSmartPatchIllustriousRegionalVPredictionProfile,
   type PreparedSmartPatchIllustriousRegionalInput,
 } from './project-smart-patch-illustrious-regional-input.js'
@@ -808,7 +809,8 @@ function assertIllustriousRegionalMetadataAgreement(manifest: FrozenSmartPatchIn
     manifest.mode !== ILLUSTRIOUS_SMART_REGIONAL_MODES[regional.profile] ||
     model?.kind !== 'checkpoint' ||
     model.baseModelFamily !== 'illustrious' ||
-    draft.loras.some((value) => value.enabled) ||
+    draft.loras.some((value) => value.enabled) !==
+      isSmartPatchIllustriousRegionalLoraProfile(regional.profile) ||
     draft.vae !== null ||
     (draft.vaePrecision ?? 'Auto') !== 'Auto' ||
     (draft.cfgRescale ?? 0) !== 0 ||

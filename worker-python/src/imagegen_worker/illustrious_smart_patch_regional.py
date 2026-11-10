@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -69,6 +69,18 @@ _V_PREDICTION_PROFILES = {
     for mode in ("txt2img", "img2img", "inpaint", "outpaint")
 }
 _MODE_BY_PROFILE.update(_V_PREDICTION_PROFILES)
+_LORA_PROFILES = {
+    f"invoke-illustrious-smart-regional-lora-{mode}-v1": mode
+    for mode in ("txt2img", "img2img", "inpaint", "outpaint")
+}
+_V_PREDICTION_LORA_PROFILES = {
+    f"invoke-illustrious-smart-regional-v-prediction-lora-{mode}-v1": mode
+    for mode in ("txt2img", "img2img", "inpaint", "outpaint")
+}
+_MODE_BY_PROFILE.update(_LORA_PROFILES)
+_MODE_BY_PROFILE.update(_V_PREDICTION_LORA_PROFILES)
+_V_PREDICTION_PROFILES.update(_V_PREDICTION_LORA_PROFILES)
+_LORA_PROFILES.update(_V_PREDICTION_LORA_PROFILES)
 _SMART_FIELDS = {"layerId", "internalResolution", "smartMask", "modelSha256", "sampling"}
 
 
@@ -100,7 +112,9 @@ def _number(value: object, minimum: float, maximum: float) -> float:
     return float(cast(float, value))
 
 
-def _policy(policy: IllustriousInferenceParameters, *, v_prediction: bool = False) -> None:
+def _policy(
+    policy: IllustriousInferenceParameters, *, v_prediction: bool = False, loras: bool = False
+) -> None:
     _require(
         type(policy) is IllustriousInferenceParameters
         and policy.prediction_type == ("v_prediction" if v_prediction else "epsilon")
@@ -111,7 +125,7 @@ def _policy(policy: IllustriousInferenceParameters, *, v_prediction: bool = Fals
         and policy.vae is None
         and policy.vae_precision == "Auto"
         and type(policy.loras) is tuple
-        and not policy.loras
+        and bool(policy.loras) is loras
         and type(policy.positive_embeddings) is tuple
         and not policy.positive_embeddings
         and type(policy.negative_embeddings) is tuple
@@ -123,7 +137,7 @@ def _policy(policy: IllustriousInferenceParameters, *, v_prediction: bool = Fals
             == IllustriousNoiseProfile(rescale_betas_zero_snr=False, timestep_spacing="leading")
         ),
         "Private Illustrious Smart regions require their explicit Euler/Normal objective, "
-        "CFG (1,30], zero rescale, embedded Auto VAE and no LoRA or TI.",
+        "CFG (1,30], zero rescale, embedded Auto VAE, exact profile/LoRA presence and no TI.",
     )
     if v_prediction:
         # Invoke get_scheduler copies the resolved model objective independently
@@ -275,7 +289,7 @@ def capture_illustrious_smart_patch_regional_input(
     )
     policy = cast(IllustriousInferenceParameters, command.inference)
     v_prediction = data["profile"] in _V_PREDICTION_PROFILES
-    _policy(policy, v_prediction=v_prediction)
+    _policy(policy, v_prediction=v_prediction, loras=data["profile"] in _LORA_PROFILES)
     detached = cast(dict[str, Any], json.loads(recipe_json))
     item = _record(detached["item"], {"iteration", "promptPairIndex", "prompts", "seed"})
     _require(
@@ -311,7 +325,7 @@ def capture_illustrious_smart_patch_regional_input(
     )
     _recipe_inputs(
         _numerical_recipe(_world_recipe(captured), captured.processing_size),
-        policy,
+        replace(policy, loras=()),
         "ordinary-canvas-invoke-dualclip-exact-ti-shared-readonly-cpu-v1",
         "cfg-negative-first",
         Everywhere(),
@@ -342,7 +356,11 @@ def _require_captured_command(
         and (command.width, command.height) == owned.processing_size,
         "Illustrious Smart regions do not own this original command.",
     )
-    _policy(owned.policy, v_prediction=owned.execution_profile in _V_PREDICTION_PROFILES)
+    _policy(
+        owned.policy,
+        v_prediction=owned.execution_profile in _V_PREDICTION_PROFILES,
+        loras=owned.execution_profile in _LORA_PROFILES,
+    )
     return owned
 
 
@@ -395,7 +413,10 @@ def run_prepared_illustrious_smart_patch_regional(
         _numerical_recipe(_world_recipe(owned), owned.processing_size),
         pipeline=pipeline,
         runtime=runtime,
-        parameters=owned.policy,
+        # The exclusive loader prepares the complete stack on fresh components
+        # before this borrowed native owner. Keep the immutable logical policy;
+        # its detached numerical view must retain the common empty-LoRA ABI.
+        parameters=replace(owned.policy, loras=()),
         profile=encoding_profile,
         denoising_profile=denoising_profile,
         global_negative_coverage=Everywhere(),

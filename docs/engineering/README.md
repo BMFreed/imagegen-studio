@@ -1,5 +1,39 @@
 # Engineering Workflow
 
+<!-- illustrious-smart-regional-lora-current:start -->
+## Current Illustrious/NoobAI Smart Regional global LoRA — finite qualification
+
+[Research and evidence](./phase-4-illustrious-smart-regional-lora-research.md).
+
+Global LoRA now reaches Illustrious/NoobAI Smart Regional TXT/IMG/INP/OUT
+through the existing owned FP32 preparation and dual-CLIP/UNet consumers.
+Eight independent EPS/V×mode profiles/grants preserve legacy empty-stack meanings;
+enabled zero requires its exact resource and LoRA grant, while disabled missing
+rows stay saved without resolution. Selected-Smart negative, independent regional
+masks/KEEP, frozen Retry, explicit Add/Save and ordinary-only accepted provenance
+remain unchanged. No sampler, classifier, queue operation or portable field is added.
+
+ROOT 1250 distinct affected/neighbor Main, 499 selected Python and 270 browser PASS;
+full TS/Vue/Python typing, Ruff, lint and production build PASS. Lint keeps only
+the two unchanged baseline parser exclusions. Actual-client 64 cases reproduce
+36 GREEN/28 semantic RED before the captured objective/tuple fix;238 after-fix
+cases overlap the 1250 final Main cases. Isolated native mutations give 16 selections:
+12 GREEN/four post-PNG semantic RED, 32 PNG witnesses and exact 1627-file restoration.
+Source reviews and independent lower-byte audit are separate from ROOT execution.
+
+One final built-app cohort passes 64 installed checks/24 requests/20 WORLD
+publications/four native-step1 Cancel/four exact restarted Retry/12 normal
+physical lifetimes. The installed selection is EPS TXT/INP +actual NoobAI V IMG/OUT;
+it is not the full eight-combination installed cross. Every selected mode has
+exact enabled-zero/disabled-clean processing PNG and WORLD RGBA equality, explicit
+Add/history/Save-reopen and restarted frozen replay after saved current edits.
+The existing 36692-byte authored Kohya fixture affects UNet and both CLIPs on
+original checkpoints. No trained-adapter quality, visual utility, capacity or
+release/MVP acceptance follows. PP-001/005/007/008 remain **«Пока не обещать»**.
+
+Independent source/document/retained-byte audit CLEAN. ROOT separately confirmed ended readers, physical exit and dependencies, then reclaimed 153,673,728 allocated bytes from its two exact idle payload paths. All 8,293 archived entries and protected SHARED dependencies remain retained.
+<!-- illustrious-smart-regional-lora-current:end -->
+
 ## Current Anima Smart Regional global LoRA — finite qualification and retained evidence
 
 [The four-mode continuation](./phase-4-anima-smart-regional-lora-research.md)
@@ -35,7 +69,7 @@ pairs/16 app lifetimes, including three failed owned attempts. Independent retai
 reclaimed 127,021,056 allocated bytes from its two exact idle payload paths.
 SHARED, managed state and active worker companions remain protected. Earlier dated checkpoints
 retain their historical scopes; this current continuation supersedes their Anima
-Smart enabled-LoRA refusal. Illustrious EPS/V Smart LoRA, regional reference
+Smart enabled-LoRA refusal. Regional reference
 inference, visual utility/capacity and release remain open; PP-001/005/007/008 stay
 **«Пока не обещать»**.
 

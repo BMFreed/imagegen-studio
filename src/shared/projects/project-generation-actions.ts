@@ -43,11 +43,19 @@ export interface ProjectGenerationActionState {
   error: { code: string; message: string } | null
   externalVaeSupported: boolean
   illustriousSmartPatchRegionalImg2ImgSupported?: boolean
+  illustriousSmartPatchRegionalLoraImg2ImgSupported?: boolean
+  illustriousSmartPatchRegionalLoraOutpaintSupported?: boolean
+  illustriousSmartPatchRegionalLoraSupported?: boolean
+  illustriousSmartPatchRegionalLoraTxt2ImgSupported?: boolean
   illustriousSmartPatchRegionalOutpaintSupported?: boolean
   /** Absent in older responses; never treat absence as native Anima support. */
   illustriousSmartPatchRegionalSupported?: boolean
   illustriousSmartPatchRegionalTxt2ImgSupported?: boolean
   illustriousSmartPatchRegionalVPredictionImg2ImgSupported?: boolean
+  illustriousSmartPatchRegionalVPredictionLoraImg2ImgSupported?: boolean
+  illustriousSmartPatchRegionalVPredictionLoraOutpaintSupported?: boolean
+  illustriousSmartPatchRegionalVPredictionLoraSupported?: boolean
+  illustriousSmartPatchRegionalVPredictionLoraTxt2ImgSupported?: boolean
   illustriousSmartPatchRegionalVPredictionOutpaintSupported?: boolean
   /** Objective-specific grants; EPS, Canvas V and ordinary Smart never imply these. */
   illustriousSmartPatchRegionalVPredictionSupported?: boolean
@@ -167,6 +175,14 @@ export function isProjectGenerationActionState(
         'vaePrecisionSupported',
       ],
       [
+        'illustriousSmartPatchRegionalLoraSupported',
+        'illustriousSmartPatchRegionalLoraOutpaintSupported',
+        'illustriousSmartPatchRegionalLoraTxt2ImgSupported',
+        'illustriousSmartPatchRegionalLoraImg2ImgSupported',
+        'illustriousSmartPatchRegionalVPredictionLoraSupported',
+        'illustriousSmartPatchRegionalVPredictionLoraOutpaintSupported',
+        'illustriousSmartPatchRegionalVPredictionLoraTxt2ImgSupported',
+        'illustriousSmartPatchRegionalVPredictionLoraImg2ImgSupported',
         'illustriousSmartPatchRegionalVPredictionSupported',
         'illustriousSmartPatchRegionalVPredictionOutpaintSupported',
         'illustriousSmartPatchRegionalVPredictionTxt2ImgSupported',
@@ -210,6 +226,23 @@ export function isProjectGenerationActionState(
         'smartPatchSupported',
       ],
     ) ||
+    (value['illustriousSmartPatchRegionalLoraSupported'] !== undefined &&
+      typeof value['illustriousSmartPatchRegionalLoraSupported'] !== 'boolean') ||
+    (value['illustriousSmartPatchRegionalLoraOutpaintSupported'] !== undefined &&
+      typeof value['illustriousSmartPatchRegionalLoraOutpaintSupported'] !== 'boolean') ||
+    (value['illustriousSmartPatchRegionalLoraTxt2ImgSupported'] !== undefined &&
+      typeof value['illustriousSmartPatchRegionalLoraTxt2ImgSupported'] !== 'boolean') ||
+    (value['illustriousSmartPatchRegionalLoraImg2ImgSupported'] !== undefined &&
+      typeof value['illustriousSmartPatchRegionalLoraImg2ImgSupported'] !== 'boolean') ||
+    (value['illustriousSmartPatchRegionalVPredictionLoraSupported'] !== undefined &&
+      typeof value['illustriousSmartPatchRegionalVPredictionLoraSupported'] !== 'boolean') ||
+    (value['illustriousSmartPatchRegionalVPredictionLoraOutpaintSupported'] !== undefined &&
+      typeof value['illustriousSmartPatchRegionalVPredictionLoraOutpaintSupported'] !==
+        'boolean') ||
+    (value['illustriousSmartPatchRegionalVPredictionLoraTxt2ImgSupported'] !== undefined &&
+      typeof value['illustriousSmartPatchRegionalVPredictionLoraTxt2ImgSupported'] !== 'boolean') ||
+    (value['illustriousSmartPatchRegionalVPredictionLoraImg2ImgSupported'] !== undefined &&
+      typeof value['illustriousSmartPatchRegionalVPredictionLoraImg2ImgSupported'] !== 'boolean') ||
     (value['illustriousSmartPatchRegionalVPredictionSupported'] !== undefined &&
       typeof value['illustriousSmartPatchRegionalVPredictionSupported'] !== 'boolean') ||
     (value['illustriousSmartPatchRegionalVPredictionOutpaintSupported'] !== undefined &&

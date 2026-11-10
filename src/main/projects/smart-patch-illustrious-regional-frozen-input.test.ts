@@ -1,3 +1,5 @@
+import { defaultIllustriousNoiseProfile } from '../../shared/projects/illustrious-noise-profile.js'
+
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -5,6 +7,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
+import type { SmartPatchExecutionModelResolver } from './project-smart-patch-execution.js'
 import type {
   PreparedSmartPatchIllustriousRegionalInput,
   SmartPatchIllustriousRegionalProfile,
@@ -14,6 +17,7 @@ import type { SmartPatchInputMaterial } from './smart-patch-frozen-input.js'
 
 import { GenerationQueueRepository } from './generation-queue.js'
 import { encodeProjectMaskPng } from './project-mask.js'
+import { reverifyFrozenSmartPatchInput } from './project-smart-patch-execution.js'
 import {
   captureFrozenSmartPatchIllustriousRegionalInputV1,
   capturePreparedSmartPatchIllustriousRegionalInput,
@@ -93,6 +97,9 @@ function prepared(
     sampling: {
       cfgScale: ctx.generationDraft.sampling.cfgScale!,
       denoisingStrength: ctx.generationDraft.sampling.denoisingStrength!,
+      ...(profile.includes('-v-prediction-')
+        ? { noiseProfile: defaultIllustriousNoiseProfile() }
+        : {}),
       scheduler: 'euler',
       steps: ctx.generationDraft.sampling.steps!,
     },
@@ -566,3 +573,248 @@ test('nonzero regional planes cannot retain INP after WORLD Smart mask moves out
     code: 'SMART_PATCH_INPUT_INVALID',
   })
 })
+
+/** Captured declared resources test manifest/reverify ownership, not model-header qualification. */
+async function loraOrdinary(
+  mode: SmartPatchGenerationMode,
+  predictionType: 'epsilon' | 'v_prediction',
+  weights: number[],
+  disabledMissing = false,
+) {
+  const material = await ordinaryInput(mode)
+  const entry = material.manifest.items[0]
+  if (entry.family !== 'illustrious') {
+    assert.fail('Illustrious item required')
+  }
+  entry.inference.checkpoint.predictionType = predictionType
+  entry.inference.sampling.noiseProfile = defaultIllustriousNoiseProfile()
+  const draft = material.manifest.context.generationDraft
+  draft.model!.predictionType = predictionType
+  draft.loras = weights.map((weight, index) => ({
+    enabled: true,
+    resource: {
+      ...structuredClone(draft.model!),
+      fileSha256: String(index + 4).repeat(64),
+      kind: 'lora',
+      localModelId: randomUUID(),
+      localVersionId: randomUUID(),
+      predictionType: null,
+    },
+    weight,
+  }))
+  entry.inference.loras = draft.loras.map((row, index) => ({
+    byteSize: 20 + index,
+    path: `/declared-managed/ill-adapter-${index}.safetensors`,
+    sha256: row.resource.fileSha256,
+    weight: row.weight,
+  }))
+  if (disabledMissing) {
+    draft.loras.push({
+      enabled: false,
+      resource: {
+        ...structuredClone(draft.model!),
+        fileSha256: 'f'.repeat(64),
+        kind: 'lora',
+        localModelId: randomUUID(),
+        localVersionId: randomUUID(),
+        predictionType: null,
+      },
+      weight: -2,
+    })
+  }
+  return material
+}
+
+function loraResolver(material: SmartPatchInputMaterial) {
+  const entry = material.manifest.items[0]
+  if (entry.family !== 'illustrious') {
+    assert.fail('Illustrious item required')
+  }
+  const draft = material.manifest.context.generationDraft
+  const rows = draft.loras.filter((row) => row.enabled)
+  const resolved = entry.inference.loras!.map((lora, index) => ({
+    byteSize: lora.byteSize,
+    managedPath: lora.path,
+    reference: structuredClone(rows[index].resource),
+  }))
+  const calls: string[] = []
+  const unused = async (): Promise<never> => {
+    throw new Error('Unselected resource must not resolve')
+  }
+  const models: SmartPatchExecutionModelResolver = {
+    assertNoUnboundGenerationEmbeddings: async () => undefined,
+    resolveVerifiedAnimaGenerationLoraForPlan: unused,
+    resolveVerifiedGenerationAnimaBundleForPlan: unused,
+    async resolveVerifiedGenerationCheckpointForPlan(saved) {
+      assert.deepEqual(saved, draft.model)
+      return {
+        byteSize: 100,
+        managedPath: entry.inference.checkpoint.path,
+        noiseProfile: defaultIllustriousNoiseProfile(),
+        reference: structuredClone(saved),
+      }
+    },
+    resolveVerifiedGenerationEmbeddingForPlan: unused,
+    async resolveVerifiedGenerationLoraForPlan(saved) {
+      const index = rows.findIndex((row) => row.resource.localModelId === saved.localModelId)
+      assert.notEqual(index, -1)
+      calls.push(saved.fileSha256)
+      return structuredClone(resolved[index])
+    },
+    resolveVerifiedGenerationVaeForPlan: unused,
+  }
+  return { calls, models, resolved }
+}
+
+for (const predictionType of ['epsilon', 'v_prediction'] as const) {
+  for (const mode of MODES) {
+    const objective = predictionType === 'v_prediction' ? 'v-prediction-' : ''
+    const legacy: SmartPatchIllustriousRegionalProfile = `invoke-illustrious-smart-regional-${objective}${mode}-v1`
+    const profile: SmartPatchIllustriousRegionalProfile = `invoke-illustrious-smart-regional-${objective}lora-${mode}-v1`
+    test(`frozen ${predictionType} ${mode} regional LoRA retains signed order/zero/disabled missing through durable reload`, async () => {
+      const ordinary = await loraOrdinary(mode, predictionType, [-0.75, 0, 0.5], true)
+      const input = prepared(ordinary, profile)
+      const material = await attachSmartPatchIllustriousRegionalInput(ordinary, input)
+      assert.equal(Object.hasOwn(material.manifest.regional!.recipe, 'loras'), false)
+      assert.deepEqual(
+        material.manifest.context.generationDraft.loras,
+        ordinary.manifest.context.generationDraft.loras,
+      )
+      const entry = material.manifest.items[0]
+      if (entry.family !== 'illustrious') {
+        assert.fail('Illustrious item required')
+      }
+      assert.deepEqual(
+        entry.inference.loras!.map((row) => row.weight),
+        [-0.75, 0, 0.5],
+      )
+      assertPrepared(
+        hydrateFrozenSmartPatchIllustriousRegionalInput(material.manifest, material.files),
+        input,
+      )
+      const root = await mkdtemp(path.join(tmpdir(), 'igs-ill-smart-lora-'))
+      try {
+        const saved = await new SmartPatchInputBundleRepository(root).publish(material)
+        ordinary.manifest.context.generationDraft.loras.reverse()
+        const loaded = await new SmartPatchInputBundleRepository(root).load(saved.id)
+        assertMaterial(loaded, material)
+      } finally {
+        await rm(root, { force: true, recursive: true })
+      }
+      const r = loraResolver(material)
+      await reverifyFrozenSmartPatchInput(material, r.models)
+      assert.ok(r.calls.includes(entry.inference.loras![1].sha256))
+      assert.equal(
+        r.calls.includes('f'.repeat(64)),
+        false,
+        'Disabled missing row must never resolve',
+      )
+    })
+
+    test(`frozen ${predictionType} ${mode} regional LoRA binds profile presence, order, SHA and weights`, async () => {
+      const ordinary = await loraOrdinary(mode, predictionType, [-0.75, 0, 0.5])
+      const material = await attachSmartPatchIllustriousRegionalInput(
+        ordinary,
+        prepared(ordinary, profile),
+      )
+      const mutations: ((m: SmartPatchInputMaterial) => void)[] = [
+        (m) => {
+          m.manifest.regional!.profile = legacy
+        },
+        (m) => {
+          m.manifest.context.generationDraft.loras[1].enabled = false
+        },
+        (m) => {
+          const e = m.manifest.items[0]
+          if (e.family === 'illustrious') {
+            e.inference.loras!.reverse()
+          }
+        },
+        (m) => {
+          const e = m.manifest.items[0]
+          if (e.family === 'illustrious') {
+            e.inference.loras![0].weight *= -1
+          }
+        },
+        (m) => {
+          const e = m.manifest.items[0]
+          if (e.family === 'illustrious') {
+            e.inference.loras![1].weight = 0.25
+          }
+        },
+        (m) => {
+          const e = m.manifest.items[0]
+          if (e.family === 'illustrious') {
+            e.inference.loras![1].sha256 = 'f'.repeat(64)
+          }
+        },
+        (m) => {
+          const e = m.manifest.items[0]
+          if (e.family === 'illustrious') {
+            e.inference.loras!.splice(1, 1)
+          }
+        },
+        (m) => {
+          const e = m.manifest.items[0]
+          if (e.family === 'illustrious') {
+            e.inference.loras![1].path = e.inference.loras![0].path
+          }
+        },
+      ]
+      for (const mutate of mutations) {
+        const changed = clone(material)
+        mutate(changed)
+        assert.throws(() => parseFrozenSmartPatchInputV1(changed.manifest), {
+          code: 'SMART_PATCH_INPUT_INVALID',
+        })
+        assert.doesNotThrow(() => parseFrozenSmartPatchInputV1(material.manifest))
+      }
+      for (const weights of [[], [0]]) {
+        const control = await loraOrdinary(mode, predictionType, weights, true)
+        const selected = weights.length ? profile : legacy
+        const opposite = weights.length ? legacy : profile
+        const good = await attachSmartPatchIllustriousRegionalInput(
+          control,
+          prepared(control, selected),
+        )
+        good.manifest.regional!.profile = opposite
+        assert.throws(() => parseFrozenSmartPatchInputV1(good.manifest), {
+          code: 'SMART_PATCH_INPUT_INVALID',
+        })
+      }
+    })
+
+    test(`frozen ${predictionType} ${mode} regional LoRA rechecks enabled zero exact file before Retry`, async () => {
+      const ordinary = await loraOrdinary(mode, predictionType, [0], true)
+      const material = await attachSmartPatchIllustriousRegionalInput(
+        ordinary,
+        prepared(ordinary, profile),
+      )
+      for (const key of ['byteSize', 'managedPath', 'reference'] as const) {
+        const r = loraResolver(material)
+        if (key === 'byteSize') {
+          r.resolved[0].byteSize += 1
+        }
+        if (key === 'managedPath') {
+          r.resolved[0].managedPath += '.changed'
+        }
+        if (key === 'reference') {
+          r.resolved[0].reference.fileSha256 = 'f'.repeat(64)
+        }
+        await assert.rejects(reverifyFrozenSmartPatchInput(material, r.models), {
+          code: 'GENERATION_RESOURCE_CHANGED',
+        })
+        await reverifyFrozenSmartPatchInput(material, loraResolver(material).models)
+      }
+      const missing = loraResolver(material)
+      missing.models.resolveVerifiedGenerationLoraForPlan = async () => {
+        throw Object.assign(new Error('Declared enabled-zero unavailable'), {
+          code: 'MODEL_VERSION_UNAVAILABLE',
+        })
+      }
+      await assert.rejects(reverifyFrozenSmartPatchInput(material, missing.models), {
+        code: 'MODEL_VERSION_UNAVAILABLE',
+      })
+    })
+  }
+}

@@ -1,5 +1,59 @@
 # Regional Guidance
 
+<!-- illustrious-smart-regional-lora-current:start -->
+## Current Illustrious/NoobAI Smart Regional global LoRA — 10.11.2026
+
+[Research and evidence](../../../engineering/phase-4-illustrious-smart-regional-lora-research.md). Earlier dated scopes below remain historical; their Illustrious Smart enabled-LoRA refusals are superseded only by this finite lane.
+
+EPS uses `invoke-illustrious-smart-regional-lora-{mode}-v1` and
+`illustrious-smart-patch-regional-lora-{mode}-v1`; V uses
+`invoke-illustrious-smart-regional-v-prediction-lora-{mode}-v1` and
+`illustrious-smart-patch-regional-v-prediction-lora-{mode}-v1`.
+The actual exact-file objective and nonempty enabled tuple, including zero,
+select the grant. Existing resource and whole-bundle owners bind order, SHA,
+weights and distinct paths and reverify at admission, frozen Retry and loading.
+Fresh owned loading has blank prompts/empty LoRA; existing FP32 direct preparation
+precedes hooks and borrowing. The captured command keeps its full tuple; only the
+numerical borrowed view is detached to an empty tuple. Partial preparation failure
+discards the owned pipeline. The common borrowed empty-LoRA contract is unchanged.
+
+Preserve ordinary Kohya up/down/optional-alpha, both 512 MiB serialized-stack and
+per-target-work ceilings, Euler/Normal, embedded Auto VAE, one static item,
+processing 64–512 divisible 8 and existing WORLD/region/text/attention limits.
+EPS keeps false/leading defaults; V keeps its six explicit existing noise policies.
+No TI, references, per-region LoRA routing, batch/dynamic prompts, other methods,
+selected VAE or additional adapter formats are admitted by this slice. Regional
+Guidance stays in the live Project and out of accepted provenance/Compare/presets.
+
+Global LoRA now reaches Illustrious/NoobAI Smart Regional TXT/IMG/INP/OUT
+through the existing owned FP32 preparation and dual-CLIP/UNet consumers.
+Eight independent EPS/V×mode profiles/grants preserve legacy empty-stack meanings;
+enabled zero requires its exact resource and LoRA grant, while disabled missing
+rows stay saved without resolution. Selected-Smart negative, independent regional
+masks/KEEP, frozen Retry, explicit Add/Save and ordinary-only accepted provenance
+remain unchanged. No sampler, classifier, queue operation or portable field is added.
+
+ROOT 1250 distinct affected/neighbor Main, 499 selected Python and 270 browser PASS;
+full TS/Vue/Python typing, Ruff, lint and production build PASS. Lint keeps only
+the two unchanged baseline parser exclusions. Actual-client 64 cases reproduce
+36 GREEN/28 semantic RED before the captured objective/tuple fix;238 after-fix
+cases overlap the 1250 final Main cases. Isolated native mutations give 16 selections:
+12 GREEN/four post-PNG semantic RED, 32 PNG witnesses and exact 1627-file restoration.
+Source reviews and independent lower-byte audit are separate from ROOT execution.
+
+One final built-app cohort passes 64 installed checks/24 requests/20 WORLD
+publications/four native-step1 Cancel/four exact restarted Retry/12 normal
+physical lifetimes. The installed selection is EPS TXT/INP +actual NoobAI V IMG/OUT;
+it is not the full eight-combination installed cross. Every selected mode has
+exact enabled-zero/disabled-clean processing PNG and WORLD RGBA equality, explicit
+Add/history/Save-reopen and restarted frozen replay after saved current edits.
+The existing 36692-byte authored Kohya fixture affects UNet and both CLIPs on
+original checkpoints. No trained-adapter quality, visual utility, capacity or
+release/MVP acceptance follows. PP-001/005/007/008 remain **«Пока не обещать»**.
+
+Independent source/document/retained-byte audit CLEAN. ROOT separately confirmed ended readers, physical exit and dependencies, then reclaimed 153,673,728 allocated bytes from its two exact idle payload paths. All 8,293 archived entries and protected SHARED dependencies remain retained.
+<!-- illustrious-smart-regional-lora-current:end -->
+
 ## Current original-Anima Smart Regional global LoRA — 10.11.2026
 
 The [global LoRA continuation](../../../engineering/phase-4-anima-smart-regional-lora-research.md)

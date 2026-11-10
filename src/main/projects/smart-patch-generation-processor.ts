@@ -424,7 +424,7 @@ export class SmartPatchGenerationProcessor {
         payload.item.family === 'illustrious'
           ? payload.item.inference.checkpoint.predictionType
           : undefined,
-        payload.item.family === 'anima' && payload.item.inference.loras.length > 0,
+        (payload.item.inference.loras?.length ?? 0) > 0,
       ) ||
         !regionalExecution)
     ) {

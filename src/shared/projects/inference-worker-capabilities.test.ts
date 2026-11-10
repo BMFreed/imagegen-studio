@@ -14,6 +14,7 @@ import {
   supportsInferenceEuler,
   supportsInferenceExternalVae,
   supportsInferenceIllustriousNoiseProfile,
+  supportsInferenceIllustriousSmartPatchRegionalMode,
   supportsInferenceImg2Img,
   supportsInferenceLora,
   supportsInferenceOutpaint,
@@ -711,3 +712,89 @@ test('Anima global LoRA Smart regional grants reject unsupported mode and family
     )
   }
 })
+
+for (const objective of ['epsilon', 'v_prediction'] as const) {
+  for (const mode of smartRegionalModes) {
+    test(`Illustrious ${objective} global LoRA Smart regional ${mode} has an independent exact grant`, () => {
+      const prefix = `illustrious-smart-patch-regional-${objective === 'v_prediction' ? 'v-prediction-' : ''}`
+      const cap = `${prefix}lora-${mode}-v1`
+      const baseCap = `${prefix}${mode}-v1`
+      const common = [
+        ...noiseReady.capabilities,
+        'smart-patch-execution',
+        'smart-patch-seed-confirmation',
+      ]
+      const onlyLora = { ...noiseReady, capabilities: [...common, cap] }
+      const old = {
+        ...noiseReady,
+        capabilities: [...common, baseCap, 'regional-lora-v1', 'anima-regional-lora-v1'],
+      }
+      const accepts = (peer: unknown, active: boolean) =>
+        supportsInferenceIllustriousSmartPatchRegionalMode(peer, mode, objective, active)
+      assert.equal(accepts(onlyLora, true), true)
+      assert.equal(accepts(onlyLora, false), false)
+      assert.equal(accepts(old, true), false)
+      assert.equal(accepts(old, false), true)
+      assert.equal(
+        supportsInferenceSmartPatchRegionalMode(onlyLora, 'illustrious', mode, objective, true),
+        true,
+      )
+      for (const other of smartRegionalModes.filter((item) => item !== mode)) {
+        assert.equal(
+          supportsInferenceIllustriousSmartPatchRegionalMode(onlyLora, other, objective, true),
+          false,
+        )
+      }
+      assert.equal(
+        supportsInferenceIllustriousSmartPatchRegionalMode(
+          onlyLora,
+          mode,
+          objective === 'epsilon' ? 'v_prediction' : 'epsilon',
+          true,
+        ),
+        false,
+      )
+      assert.equal(
+        supportsInferenceSmartPatchRegionalMode(onlyLora, 'anima', mode, objective, true),
+        false,
+      )
+      for (const removed of [
+        ...currentCoreCapabilities,
+        'illustrious-euler',
+        'illustrious-noise-profile',
+        'smart-patch-execution',
+        'smart-patch-seed-confirmation',
+        cap,
+      ]) {
+        const peer = {
+          ...onlyLora,
+          capabilities: onlyLora.capabilities.filter((item) => item !== removed),
+        }
+        assert.equal(accepts(peer, true), false, removed)
+      }
+      for (const workerVersion of ['0.13.0', '0.14.1', '0.15.0']) {
+        assert.equal(accepts({ ...onlyLora, workerVersion }, true), false)
+      }
+      for (const peer of [
+        null,
+        { ...onlyLora, protocolVersion: 2 },
+        { ...onlyLora, runtimeProfile: 'cpu' },
+        { ...onlyLora, capabilities: [...onlyLora.capabilities, 1] },
+      ]) {
+        assert.equal(accepts(peer, true), false)
+      }
+      for (const mode of [null, '', 'unsupported', 'txt2img ', 0]) {
+        assert.equal(
+          supportsInferenceIllustriousSmartPatchRegionalMode(onlyLora, mode, objective, true),
+          false,
+        )
+      }
+      for (const predictionType of [null, '', 'sample', 0]) {
+        assert.equal(
+          supportsInferenceIllustriousSmartPatchRegionalMode(onlyLora, mode, predictionType, true),
+          false,
+        )
+      }
+    })
+  }
+}

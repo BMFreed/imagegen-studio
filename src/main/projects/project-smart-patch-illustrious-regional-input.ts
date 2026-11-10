@@ -24,10 +24,18 @@ import { captureSmartPatchExecutionRequest } from './smart-patch-execution-reque
 export const ILLUSTRIOUS_SMART_REGIONAL_MODES = {
   'invoke-illustrious-smart-regional-img2img-v1': 'img2img',
   'invoke-illustrious-smart-regional-inpaint-v1': 'inpaint',
+  'invoke-illustrious-smart-regional-lora-img2img-v1': 'img2img',
+  'invoke-illustrious-smart-regional-lora-inpaint-v1': 'inpaint',
+  'invoke-illustrious-smart-regional-lora-outpaint-v1': 'outpaint',
+  'invoke-illustrious-smart-regional-lora-txt2img-v1': 'txt2img',
   'invoke-illustrious-smart-regional-outpaint-v1': 'outpaint',
   'invoke-illustrious-smart-regional-txt2img-v1': 'txt2img',
   'invoke-illustrious-smart-regional-v-prediction-img2img-v1': 'img2img',
   'invoke-illustrious-smart-regional-v-prediction-inpaint-v1': 'inpaint',
+  'invoke-illustrious-smart-regional-v-prediction-lora-img2img-v1': 'img2img',
+  'invoke-illustrious-smart-regional-v-prediction-lora-inpaint-v1': 'inpaint',
+  'invoke-illustrious-smart-regional-v-prediction-lora-outpaint-v1': 'outpaint',
+  'invoke-illustrious-smart-regional-v-prediction-lora-txt2img-v1': 'txt2img',
   'invoke-illustrious-smart-regional-v-prediction-outpaint-v1': 'outpaint',
   'invoke-illustrious-smart-regional-v-prediction-txt2img-v1': 'txt2img',
 } as const
@@ -47,8 +55,18 @@ export function isSmartPatchIllustriousRegionalVPredictionProfile(
     profile === 'invoke-illustrious-smart-regional-v-prediction-img2img-v1' ||
     profile === 'invoke-illustrious-smart-regional-v-prediction-inpaint-v1' ||
     profile === 'invoke-illustrious-smart-regional-v-prediction-outpaint-v1' ||
-    profile === 'invoke-illustrious-smart-regional-v-prediction-txt2img-v1'
+    profile === 'invoke-illustrious-smart-regional-v-prediction-txt2img-v1' ||
+    profile === 'invoke-illustrious-smart-regional-v-prediction-lora-img2img-v1' ||
+    profile === 'invoke-illustrious-smart-regional-v-prediction-lora-inpaint-v1' ||
+    profile === 'invoke-illustrious-smart-regional-v-prediction-lora-outpaint-v1' ||
+    profile === 'invoke-illustrious-smart-regional-v-prediction-lora-txt2img-v1'
   )
+}
+
+export function isSmartPatchIllustriousRegionalLoraProfile(
+  profile: SmartPatchIllustriousRegionalProfile,
+): boolean {
+  return profile.includes('-regional-lora-') || profile.includes('-v-prediction-lora-')
 }
 
 const integer = (min: number, max = Number.MAX_SAFE_INTEGER) =>
@@ -194,7 +212,8 @@ export async function prepareSmartPatchIllustriousRegionalInput(input: {
     policy.modelSha256 !== draft.model.fileSha256 ||
     policy.predictionType !== (vPrediction ? 'v_prediction' : 'epsilon') ||
     (!vPrediction && !isDeepStrictEqual(policy.noiseProfile, defaultIllustriousNoiseProfile())) ||
-    draft.loras.some((lora) => lora.enabled) ||
+    draft.loras.some((lora) => lora.enabled) !==
+      isSmartPatchIllustriousRegionalLoraProfile(profile) ||
     draft.vae !== null ||
     (draft.vaePrecision ?? 'Auto') !== 'Auto' ||
     (draft.cfgRescale ?? 0) !== 0 ||
@@ -204,7 +223,7 @@ export async function prepareSmartPatchIllustriousRegionalInput(input: {
     draft.sampling.animaMethod != null
   ) {
     throw invalid(
-      'Private Illustrious Smart regions require their exact objective/policy, Euler/Normal, embedded Auto VAE and no enabled LoRA.',
+      'Illustrious Smart regions require their exact objective/LoRA profile, Euler/Normal and embedded Auto VAE.',
     )
   }
   const recipe: PreparedSmartPatchIllustriousRegionalInput['recipe'] = {
@@ -319,7 +338,7 @@ export function assertSmartPatchIllustriousRegionalExecutionAgreement(
       policy.sampling.noiseProfile,
       vPrediction ? recipe.sampling.noiseProfile : defaultIllustriousNoiseProfile(),
     ) ||
-    (policy.loras?.length ?? 0) !== 0 ||
+    (policy.loras?.length ?? 0) > 0 !== isSmartPatchIllustriousRegionalLoraProfile(input.profile) ||
     (policy.embeddings?.positive.length ?? 0) !== 0 ||
     (policy.embeddings?.negative.length ?? 0) !== 0 ||
     policy.vae != null ||

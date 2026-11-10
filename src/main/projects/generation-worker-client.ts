@@ -836,7 +836,14 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     try {
       const captured = captureSmartPatchRegionalWorkerInput(input)
       const request = captured.execution
-      if (!supportsInferenceIllustriousSmartPatchRegionalMode(this.ready, request.mode)) {
+      if (
+        !supportsInferenceIllustriousSmartPatchRegionalMode(
+          this.ready,
+          request.mode,
+          request.inference.checkpoint.predictionType,
+          (request.inference.loras?.length ?? 0) > 0,
+        )
+      ) {
         throw new GenerationWorkerError(
           'WORKER_VERSION_MISMATCH',
           `The active worker has not qualified Illustrious Smart ${request.mode} with Regional Guidance.`,

@@ -590,3 +590,51 @@ for (const operation of [
     })
   }
 }
+
+for (const objective of ['epsilon', 'v_prediction'] as const) {
+  for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
+    test(`Illustrious ${objective} Smart ${mode} Retry uses frozen LoRA presence and exact grant`, () => {
+      const prefix = `illustriousSmartPatchRegional${objective === 'v_prediction' ? 'VPrediction' : ''}`
+      const suffix =
+        mode === 'inpaint'
+          ? 'Supported'
+          : mode === 'outpaint'
+            ? 'OutpaintSupported'
+            : mode === 'txt2img'
+              ? 'Txt2ImgSupported'
+              : 'Img2ImgSupported'
+      const old = { [`${prefix}${suffix}`]: true, smartPatchSupported: true }
+      const exact = { [`${prefix}Lora${suffix}`]: true, smartPatchSupported: true }
+      const reason = (state: typeof old, active: boolean) =>
+        generationQueueRetryReason(
+          'illustrious-smart-patch',
+          state,
+          'Euler',
+          active,
+          false,
+          0,
+          null,
+          objective,
+          true,
+          mode === 'outpaint',
+          mode === 'txt2img',
+          mode === 'img2img',
+        )
+      assert.match(reason(old, true)!, /LoRA/u)
+      assert.equal(reason(exact, true), null)
+      assert.equal(reason(old, false), null)
+      assert.notEqual(reason(exact, false), null)
+      const otherObjective = objective === 'epsilon' ? 'VPrediction' : ''
+      assert.notEqual(
+        reason(
+          {
+            [`illustriousSmartPatchRegional${otherObjective}Lora${suffix}`]: true,
+            smartPatchSupported: true,
+          },
+          true,
+        ),
+        null,
+      )
+    })
+  }
+}

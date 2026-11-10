@@ -68,6 +68,30 @@ ILLUSTRIOUS_SMART_PATCH_REGIONAL_V_PREDICTION_TXT2IMG_CAPABILITY = (
 ILLUSTRIOUS_SMART_PATCH_REGIONAL_V_PREDICTION_IMG2IMG_CAPABILITY = (
     "illustrious-smart-patch-regional-v-prediction-img2img-v1"
 )
+ILLUSTRIOUS_SMART_PATCH_REGIONAL_LORA_INPAINT_CAPABILITY = (
+    "illustrious-smart-patch-regional-lora-inpaint-v1"
+)
+ILLUSTRIOUS_SMART_PATCH_REGIONAL_LORA_OUTPAINT_CAPABILITY = (
+    "illustrious-smart-patch-regional-lora-outpaint-v1"
+)
+ILLUSTRIOUS_SMART_PATCH_REGIONAL_LORA_TXT2IMG_CAPABILITY = (
+    "illustrious-smart-patch-regional-lora-txt2img-v1"
+)
+ILLUSTRIOUS_SMART_PATCH_REGIONAL_LORA_IMG2IMG_CAPABILITY = (
+    "illustrious-smart-patch-regional-lora-img2img-v1"
+)
+ILLUSTRIOUS_SMART_PATCH_REGIONAL_V_PREDICTION_LORA_INPAINT_CAPABILITY = (
+    "illustrious-smart-patch-regional-v-prediction-lora-inpaint-v1"
+)
+ILLUSTRIOUS_SMART_PATCH_REGIONAL_V_PREDICTION_LORA_OUTPAINT_CAPABILITY = (
+    "illustrious-smart-patch-regional-v-prediction-lora-outpaint-v1"
+)
+ILLUSTRIOUS_SMART_PATCH_REGIONAL_V_PREDICTION_LORA_TXT2IMG_CAPABILITY = (
+    "illustrious-smart-patch-regional-v-prediction-lora-txt2img-v1"
+)
+ILLUSTRIOUS_SMART_PATCH_REGIONAL_V_PREDICTION_LORA_IMG2IMG_CAPABILITY = (
+    "illustrious-smart-patch-regional-v-prediction-lora-img2img-v1"
+)
 
 
 @dataclass(frozen=True, slots=True)

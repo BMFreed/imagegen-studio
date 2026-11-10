@@ -266,7 +266,7 @@ async function withPublicFixture(
   queueHooks: GenerationQueueTestHooks = {},
   epsilonRegional = false,
   resolvedNoiseProfile?: IllustriousNoiseProfileV1,
-  animaRegionalLoraResolver = false,
+  regionalLoraResolver = false,
 ) {
   await withSmartPatchQueueFixture(
     family,
@@ -276,7 +276,7 @@ async function withPublicFixture(
         mode,
         epsilonRegional,
         resolvedNoiseProfile,
-        animaRegionalLoraResolver,
+        regionalLoraResolver,
       )
       try {
         await run(f)
@@ -299,7 +299,7 @@ async function publicFixture(
   mode: 'img2img' | 'inpaint' | 'outpaint' | 'txt2img',
   epsilonRegional = false,
   resolvedNoiseProfile?: IllustriousNoiseProfileV1,
-  animaRegionalLoraResolver = false,
+  regionalLoraResolver = false,
 ) {
   const repository = new ProjectIndexRepository(base.database.db)
   const shadow = new ProjectShadowStore(path.join(base.root, 'public-autosave'))
@@ -364,11 +364,33 @@ async function publicFixture(
   await service.clearHistory(tab.id)
   const savedBytes = await readFile(owner.filePath)
   const models = { ...base.modelService, ...base.models }
-  if (animaRegionalLoraResolver) {
+  if (regionalLoraResolver) {
     // Dispatch captures this exact-file resolver during processor construction. Admission mocks
     // below must not accidentally replace the dispatch authority with a stale unused resolver.
-    models.resolveVerifiedAnimaGenerationLoraForPlan =
-      base.modelService.resolveVerifiedAnimaGenerationLoraForPlan.bind(base.modelService)
+    if (target.generationDraft.model?.baseModelFamily === 'illustrious') {
+      // These authored tiny files qualify identity/order/refusals, never trained adapter loading.
+      for (const entry of base.prepared.context.loras) {
+        entry.reference.baseModelFamily = 'illustrious'
+      }
+      models.resolveVerifiedGenerationLoraForPlan = async (reference) => {
+        const entry = base.prepared.context.loras.find(
+          (row) => row.reference.localVersionId === reference.localVersionId,
+        )
+        assert.ok(entry, 'Only declared exact local fixture versions may resolve')
+        assert.deepEqual(reference, entry.reference)
+        const bytes = await readFile(entry.managedPath)
+        assert.equal(digest(bytes), reference.fileSha256, 'The exact managed LoRA bytes changed')
+        assert.equal(bytes.length, entry.byteSize)
+        return structuredClone({
+          byteSize: entry.byteSize,
+          managedPath: entry.managedPath,
+          reference: entry.reference,
+        })
+      }
+    } else {
+      models.resolveVerifiedAnimaGenerationLoraForPlan =
+        base.modelService.resolveVerifiedAnimaGenerationLoraForPlan.bind(base.modelService)
+    }
   }
   if (epsilonRegional || resolvedNoiseProfile) {
     const resolve = models.resolveVerifiedGenerationCheckpointForPlan.bind(models)
@@ -3379,7 +3401,7 @@ for (const mode of ['txt2img', 'img2img', 'inpaint', 'outpaint'] as const) {
   )
 }
 
-async function addAnimaSmartLora(f: PublicFixture, index: number, weight: number) {
+async function addSmartGlobalLora(f: PublicFixture, index: number, weight: number) {
   const entry = f.base.prepared.context.loras[index]
   await f.service.addGenerationLora(f.tabId, entry.reference, f.target.id)
   await f.service.updateGenerationDraft(
@@ -3396,7 +3418,7 @@ async function addAnimaSmartLora(f: PublicFixture, index: number, weight: number
   return entry
 }
 
-async function addDisabledMissingAnimaSmartLora(f: PublicFixture) {
+async function addDisabledMissingSmartGlobalLora(f: PublicFixture) {
   const reference = {
     ...f.base.prepared.context.loras[2].reference,
     displayName: 'Disabled missing Smart LoRA',
@@ -3424,24 +3446,50 @@ async function addDisabledMissingAnimaSmartLora(f: PublicFixture) {
 // restoration belong to the native suite; the controlled peer here does not establish influence.
 // Mutations: filter enabled zero, reorder the active stack, use a base/Canvas/wrong-mode grant,
 // resolve disabled missing resources, recapture Retry, or omit the final exact-resource recheck.
-for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
-  const capability = `anima-smart-patch-regional-lora-${mode}-v1`
-  const baseCapability = `anima-smart-patch-regional-${mode}-v1`
+const smartRegionalLoraCases = (
+  ['anima', 'illustrious-epsilon', 'illustrious-v_prediction'] as const
+).flatMap((variant) =>
+  (['inpaint', 'outpaint', 'txt2img', 'img2img'] as const).map((mode) => ({ mode, variant })),
+)
+for (const { mode, variant } of smartRegionalLoraCases) {
+  const family = variant === 'anima' ? 'anima' : 'illustrious'
+  const epsilonRegional = variant === 'illustrious-epsilon'
+  const noiseProfile =
+    variant === 'illustrious-v_prediction' ? vSmartRegionalNoiseProfile : undefined
+  const label =
+    variant === 'anima' ? 'Anima' : epsilonRegional ? 'Illustrious EPS' : 'Illustrious V'
+  const capPrefix = `${family}-smart-patch-regional-${variant === 'illustrious-v_prediction' ? 'v-prediction-' : ''}`
+  const profilePrefix = `invoke-${family}-smart-regional-${variant === 'illustrious-v_prediction' ? 'v-prediction-' : ''}`
+  const canvasCapability = `${family}-regional-lora-v1`
+  const loraResolverKey =
+    family === 'anima'
+      ? 'resolveVerifiedAnimaGenerationLoraForPlan'
+      : 'resolveVerifiedGenerationLoraForPlan'
+  const regionalGenerated = (f: PublicFixture) =>
+    family === 'anima' ? f.runtime.regionalGenerated : f.runtime.illustriousRegionalGenerated
+  const otherRegionalGenerated = (f: PublicFixture) =>
+    family === 'anima' ? f.runtime.illustriousRegionalGenerated : f.runtime.regionalGenerated
+  const enableRegions = async (f: PublicFixture) =>
+    family === 'anima'
+      ? await enableAnimaSmartRegions(f)
+      : await enableIllustriousSmartRegions(f, [])
+  const capability = `${capPrefix}lora-${mode}-v1`
+  const baseCapability = `${capPrefix}${mode}-v1`
   const testOptions = mode === 'outpaint' ? outpaintRegionalOptions : options
 
   test(
-    `public Anima LoRA regional Smart ${mode} preserves signed/zero order through explicit Add and portable save`,
+    `public ${label} LoRA regional Smart ${mode} preserves signed/zero order through explicit Add and portable save`,
     testOptions,
     async () => {
       await withPublicFixture(
-        'anima',
+        family,
         async (f) => {
-          const regionId = await enableAnimaSmartRegions(f)
+          const regionId = await enableRegions(f)
           f.runtime.ready.capabilities.push(capability)
           // Deliberately differ from fixture/catalog order, and retain enabled zero as a resource.
-          const zero = await addAnimaSmartLora(f, 1, 0)
-          const signed = await addAnimaSmartLora(f, 0, -0.7)
-          await addDisabledMissingAnimaSmartLora(f)
+          const zero = await addSmartGlobalLora(f, 1, 0)
+          const signed = await addSmartGlobalLora(f, 0, -0.7)
+          await addDisabledMissingSmartGlobalLora(f)
           await f.service.save(f.tabId)
           await f.service.clearHistory(f.tabId)
           const before = structuredClone(f.owner.document)
@@ -3451,13 +3499,10 @@ for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
           assert.equal(batch.jobIds.length, 1)
           const frozen = await f.base.queue.loadVerifiedSmartPatchInput(batch.jobIds[0])
           assert.equal(frozen.payload.mode, mode)
-          assert.equal(
-            frozen.payload.regional?.profile,
-            `invoke-anima-smart-regional-lora-${mode}-v1`,
-          )
-          assert.equal(frozen.payload.item.family, 'anima')
-          if (frozen.payload.item.family !== 'anima') {
-            assert.fail('Anima LoRA requires the existing original-Anima execution owner')
+          assert.equal(frozen.payload.regional?.profile, `${profilePrefix}lora-${mode}-v1`)
+          assert.equal(frozen.payload.item.family, family)
+          if (frozen.payload.item.family !== family) {
+            assert.fail('The selected family requires its existing execution owner')
           }
           const expected = [zero, signed].map((entry) => ({
             byteSize: entry.byteSize,
@@ -3474,10 +3519,10 @@ for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
           assert.equal(details.requiresSmartPatchRegionalTxt2Img, mode === 'txt2img' || undefined)
           assert.equal(details.requiresSmartPatchRegionalImg2Img, mode === 'img2img' || undefined)
           await drain(f)
-          assert.equal(f.runtime.regionalGenerated.length, 1)
-          assert.equal(f.runtime.regionalGenerated[0].execution.mode, mode)
-          assert.deepEqual(f.runtime.regionalGenerated[0].execution.inference.loras, expected)
-          assert.equal(f.runtime.illustriousRegionalGenerated.length, 0)
+          assert.equal(regionalGenerated(f).length, 1)
+          assert.equal(regionalGenerated(f)[0].execution.mode, mode)
+          assert.deepEqual(regionalGenerated(f)[0].execution.inference.loras, expected)
+          assert.equal(otherRegionalGenerated(f).length, 0)
           assert.deepEqual(f.owner.document, before)
           assert.ok((await readFile(f.owner.filePath)).equals(saved), 'Generate must not Save')
           const candidates = (await f.results.list(f.tabId)).candidates
@@ -3505,33 +3550,31 @@ for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
         },
         mode,
         {},
-        false,
-        undefined,
+        epsilonRegional,
+        noiseProfile,
         true,
       )
     },
   )
 
   test(
-    `public Anima LoRA regional Smart ${mode} enabled zero refuses base, Canvas and wrong-mode grants before resources/SQL`,
+    `public ${label} LoRA regional Smart ${mode} enabled zero refuses base, Canvas and wrong-mode grants before resources/SQL`,
     options,
     async (t) => {
       await withPublicFixture(
-        'anima',
+        family,
         async (f) => {
-          await enableAnimaSmartRegions(f)
-          await addAnimaSmartLora(f, 1, 0)
+          await enableRegions(f)
+          await addSmartGlobalLora(f, 1, 0)
           f.runtime.ready.capabilities.push(
             baseCapability,
             'anima-lora',
-            'anima-regional-lora-v1',
-            `anima-smart-patch-regional-lora-${mode === 'inpaint' ? 'txt2img' : 'inpaint'}-v1`,
+            canvasCapability,
+            `${capPrefix}lora-${mode === 'inpaint' ? 'txt2img' : 'inpaint'}-v1`,
           )
           const before = await regionalSmartQueueSnapshot(f)
-          const models = t.mock.method(
-            f.models,
-            'resolveVerifiedAnimaGenerationLoraForPlan',
-            async () => assert.fail('Wrong LoRA capability must refuse before LoRA resolution'),
+          const models = t.mock.method(f.models, loraResolverKey, async () =>
+            assert.fail('Wrong LoRA capability must refuse before LoRA resolution'),
           )
           try {
             await assert.rejects(f.controller.generate(f.tabId, f.request()), {
@@ -3539,7 +3582,7 @@ for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
             })
             assert.equal(models.mock.callCount(), 0)
             assert.deepEqual(await regionalSmartQueueSnapshot(f), before)
-            assert.equal(f.runtime.regionalGenerated.length, 0)
+            assert.equal(regionalGenerated(f).length, 0)
             assert.equal(f.runtime.generated.length, 0)
           } finally {
             t.mock.restoreAll()
@@ -3547,33 +3590,33 @@ for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
         },
         mode,
         {},
-        false,
-        undefined,
+        epsilonRegional,
+        noiseProfile,
         true,
       )
     },
   )
 
   test(
-    `public Anima regional Smart ${mode} disabled missing LoRA retains the old empty-stack lane`,
+    `public ${label} regional Smart ${mode} disabled missing LoRA retains the old empty-stack lane`,
     testOptions,
     async () => {
       await withPublicFixture(
-        'anima',
+        family,
         async (f) => {
-          await enableAnimaSmartRegions(f)
+          await enableRegions(f)
           f.runtime.ready.capabilities.push(baseCapability)
-          await addDisabledMissingAnimaSmartLora(f)
+          await addDisabledMissingSmartGlobalLora(f)
           const configured = structuredClone(
             patch(f.owner.document, f.target.id).generationDraft.loras,
           )
-          // The default fixture's unused resolver throws if this disabled resource is touched.
+          // The declared resolver refuses if this disabled missing resource is touched.
           const batch = await queued(f)
           const frozen = await f.base.queue.loadVerifiedSmartPatchInput(batch.jobIds[0])
-          assert.equal(frozen.payload.regional?.profile, `invoke-anima-smart-regional-${mode}-v1`)
-          assert.equal(frozen.payload.item.family, 'anima')
-          if (frozen.payload.item.family !== 'anima') {
-            assert.fail('Original Anima fixture required')
+          assert.equal(frozen.payload.regional?.profile, `${profilePrefix}${mode}-v1`)
+          assert.equal(frozen.payload.item.family, family)
+          if (frozen.payload.item.family !== family) {
+            assert.fail('Selected family fixture required')
           }
           assert.deepEqual(frozen.payload.item.inference.loras, [])
           assert.deepEqual(frozen.payload.context.generationDraft.loras, configured)
@@ -3582,25 +3625,29 @@ for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
             true,
           )
           await drain(f)
-          assert.deepEqual(f.runtime.regionalGenerated[0].execution.inference.loras, [])
+          assert.deepEqual(regionalGenerated(f)[0].execution.inference.loras, [])
         },
         mode,
+        {},
+        epsilonRegional,
+        noiseProfile,
+        true,
       )
     },
   )
 
   test(
-    `public Anima LoRA regional Smart ${mode} frozen Retry ignores reordered current resources and deleted regions`,
+    `public ${label} LoRA regional Smart ${mode} frozen Retry ignores reordered current resources and deleted regions`,
     testOptions,
     async (t) => {
       await withPublicFixture(
-        'anima',
+        family,
         async (f) => {
-          const regionId = await enableAnimaSmartRegions(f)
+          const regionId = await enableRegions(f)
           f.runtime.ready.capabilities.push(capability)
-          const zero = await addAnimaSmartLora(f, 1, 0)
-          const signed = await addAnimaSmartLora(f, 0, -0.7)
-          await addDisabledMissingAnimaSmartLora(f)
+          const zero = await addSmartGlobalLora(f, 1, 0)
+          const signed = await addSmartGlobalLora(f, 0, -0.7)
+          await addDisabledMissingSmartGlobalLora(f)
           const batch = await queued(f)
           const original = await f.base.queue.loadVerifiedSmartPatchInput(batch.jobIds[0])
           await f.normalActions.cancelJob(await f.base.queue.getManagerEntry(batch.jobIds[0]))
@@ -3619,8 +3666,8 @@ for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
               f.target.id,
             )
           }
-          await addAnimaSmartLora(f, 0, 1.2)
-          await addAnimaSmartLora(f, 1, 0.4)
+          await addSmartGlobalLora(f, 0, 1.2)
+          await addSmartGlobalLora(f, 1, 0.4)
           await f.service.updateGenerationDraft(
             f.tabId,
             { kind: 'seed', policy: 'fixed', value: 999 },
@@ -3650,7 +3697,7 @@ for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
             f.runtime.ready.capabilities = f.runtime.ready.capabilities.filter(
               (x) => x !== capability,
             )
-            f.runtime.ready.capabilities.push(baseCapability, 'anima-regional-lora-v1')
+            f.runtime.ready.capabilities.push(baseCapability, canvasCapability)
             const beforeRefusal = await regionalSmartQueueSnapshot(f)
             await assert.rejects(f.normalActions.retryJob(terminal), {
               code: 'GENERATION_RUNTIME_UNAVAILABLE',
@@ -3669,10 +3716,10 @@ for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
             for (const [name, bytes] of Object.entries(original.bundle.files)) {
               assert.ok(bytes.equals(replay.bundle.files[name]), name)
             }
-            assert.equal(f.runtime.regionalGenerated.length, 1)
-            assert.equal(f.runtime.regionalGenerated[0].execution.mode, mode)
+            assert.equal(regionalGenerated(f).length, 1)
+            assert.equal(regionalGenerated(f)[0].execution.mode, mode)
             assert.deepEqual(
-              f.runtime.regionalGenerated[0].execution.inference,
+              regionalGenerated(f)[0].execution.inference,
               original.payload.item.inference,
             )
             assert.equal(capture.mock.callCount(), 0)
@@ -3685,30 +3732,30 @@ for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
         },
         mode,
         {},
-        false,
-        undefined,
+        epsilonRegional,
+        noiseProfile,
         true,
       )
     },
   )
 
   test(
-    `public Anima LoRA regional Smart ${mode} late enabled-zero resource corruption refuses before SQL and restores exactly`,
+    `public ${label} LoRA regional Smart ${mode} late enabled-zero resource corruption refuses before SQL and restores exactly`,
     testOptions,
     async (t) => {
       await withPublicFixture(
-        'anima',
+        family,
         async (f) => {
-          await enableAnimaSmartRegions(f)
+          await enableRegions(f)
           f.runtime.ready.capabilities.push(capability)
-          const entry = await addAnimaSmartLora(f, 1, 0)
+          const entry = await addSmartGlobalLora(f, 1, 0)
           const bytes = await readFile(entry.managedPath)
           const before = await regionalSmartQueueSnapshot(f)
-          const resolve = f.models.resolveVerifiedAnimaGenerationLoraForPlan.bind(f.models)
+          const resolve = f.models[loraResolverKey].bind(f.models)
           let changed = false
           const resolver = t.mock.method(
             f.models,
-            'resolveVerifiedAnimaGenerationLoraForPlan',
+            loraResolverKey,
             async (reference: Parameters<typeof resolve>[0]) => {
               const verified = await resolve(reference)
               if (!changed) {
@@ -3728,7 +3775,7 @@ for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
               'Final admission must reverify the enabled-zero file',
             )
             assert.deepEqual(await regionalSmartQueueSnapshot(f), before)
-            assert.equal(f.runtime.regionalGenerated.length, 0)
+            assert.equal(regionalGenerated(f).length, 0)
           } finally {
             await writeFile(entry.managedPath, bytes)
             t.mock.restoreAll()
@@ -3737,30 +3784,30 @@ for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
           await queued(f)
           await drain(f)
           assert.equal(
-            f.runtime.regionalGenerated.length,
+            regionalGenerated(f).length,
             1,
             'Restored resource must reach the same consumer',
           )
         },
         mode,
         {},
-        false,
-        undefined,
+        epsilonRegional,
+        noiseProfile,
         true,
       )
     },
   )
 
   test(
-    `public Anima LoRA regional Smart ${mode} frozen Retry refuses changed exact bytes before SQL and resumes after restoration`,
+    `public ${label} LoRA regional Smart ${mode} frozen Retry refuses changed exact bytes before SQL and resumes after restoration`,
     testOptions,
     async () => {
       await withPublicFixture(
-        'anima',
+        family,
         async (f) => {
-          await enableAnimaSmartRegions(f)
+          await enableRegions(f)
           f.runtime.ready.capabilities.push(capability)
-          const entry = await addAnimaSmartLora(f, 0, -0.7)
+          const entry = await addSmartGlobalLora(f, 0, -0.7)
           const batch = await queued(f)
           const original = await f.base.queue.loadVerifiedSmartPatchInput(batch.jobIds[0])
           await f.normalActions.cancelJob(await f.base.queue.getManagerEntry(batch.jobIds[0]))
@@ -3773,7 +3820,7 @@ for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
             await writeFile(entry.managedPath, changed)
             await assert.rejects(f.normalActions.retryJob(terminal))
             assert.deepEqual(await regionalSmartQueueSnapshot(f), before)
-            assert.equal(f.runtime.regionalGenerated.length, 0)
+            assert.equal(regionalGenerated(f).length, 0)
           } finally {
             await writeFile(entry.managedPath, bytes)
           }
@@ -3789,16 +3836,16 @@ for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
           for (const [name, expected] of Object.entries(original.bundle.files)) {
             assert.ok(expected.equals(replay.bundle.files[name]), name)
           }
-          assert.equal(f.runtime.regionalGenerated.length, 1)
+          assert.equal(regionalGenerated(f).length, 1)
           assert.deepEqual(
-            f.runtime.regionalGenerated[0].execution.inference,
+            regionalGenerated(f)[0].execution.inference,
             original.payload.item.inference,
           )
         },
         mode,
         {},
-        false,
-        undefined,
+        epsilonRegional,
+        noiseProfile,
         true,
       )
     },

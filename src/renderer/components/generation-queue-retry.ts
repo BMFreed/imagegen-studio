@@ -20,10 +20,18 @@ type RetryState = Pick<
   | 'animaSmartPatchRegionalTxt2ImgSupported'
   | 'animaSupported'
   | 'illustriousSmartPatchRegionalImg2ImgSupported'
+  | 'illustriousSmartPatchRegionalLoraImg2ImgSupported'
+  | 'illustriousSmartPatchRegionalLoraOutpaintSupported'
+  | 'illustriousSmartPatchRegionalLoraSupported'
+  | 'illustriousSmartPatchRegionalLoraTxt2ImgSupported'
   | 'illustriousSmartPatchRegionalOutpaintSupported'
   | 'illustriousSmartPatchRegionalSupported'
   | 'illustriousSmartPatchRegionalTxt2ImgSupported'
   | 'illustriousSmartPatchRegionalVPredictionImg2ImgSupported'
+  | 'illustriousSmartPatchRegionalVPredictionLoraImg2ImgSupported'
+  | 'illustriousSmartPatchRegionalVPredictionLoraOutpaintSupported'
+  | 'illustriousSmartPatchRegionalVPredictionLoraSupported'
+  | 'illustriousSmartPatchRegionalVPredictionLoraTxt2ImgSupported'
   | 'illustriousSmartPatchRegionalVPredictionOutpaintSupported'
   | 'illustriousSmartPatchRegionalVPredictionSupported'
   | 'illustriousSmartPatchRegionalVPredictionTxt2ImgSupported'
@@ -174,21 +182,30 @@ export function generationQueueRetryReason(
       return 'The current image engine does not support Smart Patch generation.'
     }
     const animaLora = operation === 'anima-smart-patch' && requiresRegionalLora
+    const illustriousLora = operation === 'illustrious-smart-patch' && requiresRegionalLora
     const vPrediction =
       operation === 'illustrious-smart-patch' && frozenPredictionType === 'v_prediction'
     const family =
       operation === 'illustrious-smart-patch'
         ? vPrediction
-          ? 'Illustrious V'
-          : 'Illustrious'
+          ? illustriousLora
+            ? 'Illustrious V LoRA'
+            : 'Illustrious V'
+          : illustriousLora
+            ? 'Illustrious LoRA'
+            : 'Illustrious'
         : animaLora
           ? 'Anima LoRA'
           : 'Anima'
     const prefix =
       operation === 'illustrious-smart-patch'
         ? vPrediction
-          ? 'illustriousSmartPatchRegionalVPrediction'
-          : 'illustriousSmartPatchRegional'
+          ? illustriousLora
+            ? 'illustriousSmartPatchRegionalVPredictionLora'
+            : 'illustriousSmartPatchRegionalVPrediction'
+          : illustriousLora
+            ? 'illustriousSmartPatchRegionalLora'
+            : 'illustriousSmartPatchRegional'
         : animaLora
           ? 'animaSmartPatchRegionalLora'
           : 'animaSmartPatchRegional'

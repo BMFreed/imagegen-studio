@@ -2902,3 +2902,239 @@ for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
       .toBe(1)
   })
 }
+
+async function mountIllustriousLoraSmartRegionalWiring(
+  page: Page,
+  mode: WiringFixture['smartMode'],
+  predictionType: 'epsilon' | 'v_prediction',
+) {
+  await mountVSmartRegionalWiring(page, mode)
+  await page.evaluate((predictionType) => {
+    const f = globalThis.window.regionalWiringFixture
+    const patch = f.tab.layers[0]!
+    if (patch.kind !== 'smart-patch') {
+      throw new Error('Selected Smart fixture required')
+    }
+    const draft = patch.generationDraft
+    // A stale portable hint cannot replace the exact catalog objective used by Generate.
+    draft.model!.predictionType = predictionType === 'epsilon' ? 'v_prediction' : 'epsilon'
+    f.catalog[0]!.versions[0]!.predictionType = predictionType
+    const resource = {
+      ...draft.model!,
+      displayName: 'Installed Smart Illustrious LoRA',
+      kind: 'lora' as const,
+      localModelId: crypto.randomUUID(),
+      localVersionId: crypto.randomUUID(),
+    }
+    const catalog: ModelCatalogItem = JSON.parse(JSON.stringify(f.catalog[0]!))
+    catalog.id = resource.localModelId
+    catalog.name = resource.displayName
+    catalog.resourceType = 'lora'
+    catalog.defaultVersionId = resource.localVersionId
+    catalog.versions[0]!.id = resource.localVersionId
+    f.catalog.push(catalog)
+    draft.loras = [
+      { enabled: true, resource, weight: -0.5 },
+      {
+        enabled: false,
+        resource: {
+          ...resource,
+          displayName: 'Disabled missing Smart Illustrious LoRA',
+          localModelId: crypto.randomUUID(),
+          localVersionId: crypto.randomUUID(),
+        },
+        weight: 0.7,
+      },
+    ]
+    f.tab.generationDraft.loras = []
+    Object.assign(f.state, {
+      illustriousSmartPatchRegionalVPredictionImg2ImgSupported: true,
+      illustriousSmartPatchRegionalVPredictionOutpaintSupported: true,
+      illustriousSmartPatchRegionalVPredictionSupported: true,
+      illustriousSmartPatchRegionalVPredictionTxt2ImgSupported: true,
+      regionalLoraSupported: true,
+      smartPatchSupported: true,
+    })
+  }, predictionType)
+}
+
+// Component mocks qualify advisory wiring only. Exact resources, durable capture and native
+// LoRA arithmetic remain separate Main/worker evidence boundaries.
+for (const predictionType of ['epsilon', 'v_prediction'] as const) {
+  for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
+    test(`renderer Illustrious ${predictionType} LoRA Smart regional ${mode} requires its exact objective/mode grant for signed and zero resources`, async ({
+      page,
+    }) => {
+      await mountIllustriousLoraSmartRegionalWiring(page, mode, predictionType)
+      const generate = page.getByRole('button', { exact: true, name: 'Generate' })
+      await expect(generate).toBeDisabled()
+      await expect(
+        page.getByText(/does not support .*global LoRAs with Smart Patch Regional Guidance/),
+      ).toBeVisible()
+      await page.evaluate(
+        ({ mode, predictionType }) => {
+          const f = globalThis.window.regionalWiringFixture
+          const prefix =
+            predictionType === 'epsilon'
+              ? 'illustriousSmartPatchRegional'
+              : 'illustriousSmartPatchRegionalVPrediction'
+          const wrongSuffix = mode === 'inpaint' ? 'Txt2ImgSupported' : 'Supported'
+          f.state[`${prefix}Lora${wrongSuffix}`] = true
+          const patch = f.tab.layers[0]!
+          if (patch.kind === 'smart-patch') {
+            patch.generationDraft.loras[0]!.weight = 0
+          }
+        },
+        { mode, predictionType },
+      )
+      await expect(generate).toBeDisabled()
+      await page.evaluate(
+        ({ mode, predictionType }) => {
+          const f = globalThis.window.regionalWiringFixture
+          const prefix =
+            predictionType === 'epsilon'
+              ? 'illustriousSmartPatchRegional'
+              : 'illustriousSmartPatchRegionalVPrediction'
+          const suffix =
+            mode === 'inpaint'
+              ? 'Supported'
+              : mode === 'outpaint'
+                ? 'OutpaintSupported'
+                : mode === 'txt2img'
+                  ? 'Txt2ImgSupported'
+                  : 'Img2ImgSupported'
+          f.state[`${prefix}Lora${suffix}`] = true
+          f.state[`${prefix}${suffix}`] = false
+        },
+        { mode, predictionType },
+      )
+      await expect(generate).toBeEnabled()
+      await generate.click()
+      expect(
+        await page.evaluate(() => globalThis.window.regionalWiringFixture.generateCalls),
+      ).toEqual([1])
+      await page.evaluate(() => {
+        const patch = globalThis.window.regionalWiringFixture.tab.layers[0]!
+        if (patch.kind === 'smart-patch') {
+          patch.generationDraft.loras[0]!.enabled = false
+        }
+      })
+      await expect(generate).toBeDisabled()
+      await page.evaluate(
+        ({ mode, predictionType }) => {
+          const f = globalThis.window.regionalWiringFixture
+          const prefix =
+            predictionType === 'epsilon'
+              ? 'illustriousSmartPatchRegional'
+              : 'illustriousSmartPatchRegionalVPrediction'
+          const suffix =
+            mode === 'inpaint'
+              ? 'Supported'
+              : mode === 'outpaint'
+                ? 'OutpaintSupported'
+                : mode === 'txt2img'
+                  ? 'Txt2ImgSupported'
+                  : 'Img2ImgSupported'
+          f.state[`${prefix}${suffix}`] = true
+        },
+        { mode, predictionType },
+      )
+      await expect(generate).toBeEnabled()
+    })
+
+    test(`renderer frozen Illustrious ${predictionType} LoRA Smart regional ${mode} Retry keeps the saved objective and LoRA requirement after current edits`, async ({
+      page,
+    }) => {
+      await mountWiring(page, 'queue')
+      await page.evaluate(
+        ({ mode, predictionType }) => {
+          const f = globalThis.window.regionalWiringFixture
+          f.queueItem.operation = 'illustrious-smart-patch'
+          f.queueItem.details!.sampling = {
+            cfgScale: 4,
+            predictionType,
+            sampler: 'Euler',
+            scheduler: 'Normal',
+            seed: 42,
+            steps: 3,
+          }
+          f.queueItem.details!.requiresRegionalLora = true
+          f.queueItem.details!.requiresSmartPatchRegional = true
+          f.queueItem.details!.requiresSmartPatchRegionalOutpaint = mode === 'outpaint'
+          f.queueItem.details!.requiresSmartPatchRegionalTxt2Img = mode === 'txt2img'
+          f.queueItem.details!.requiresSmartPatchRegionalImg2Img = mode === 'img2img'
+          const other =
+            predictionType === 'epsilon'
+              ? 'illustriousSmartPatchRegionalVPrediction'
+              : 'illustriousSmartPatchRegional'
+          const prefix =
+            predictionType === 'epsilon'
+              ? 'illustriousSmartPatchRegional'
+              : 'illustriousSmartPatchRegionalVPrediction'
+          for (const suffix of [
+            'Supported',
+            'Txt2ImgSupported',
+            'Img2ImgSupported',
+            'OutpaintSupported',
+          ] as const) {
+            f.state[`${other}Lora${suffix}`] = true
+            f.state[`${prefix}${suffix}`] = true
+          }
+          f.state.smartPatchSupported = true
+          f.state.regionalLoraSupported = true
+          f.tab.generationDraft.loras = []
+          f.tab.generationDraft.model!.predictionType =
+            predictionType === 'epsilon' ? 'v_prediction' : 'epsilon'
+          f.tab.regionalGuidance = []
+          f.epoch += 1
+        },
+        { mode, predictionType },
+      )
+      const retry = page.getByRole('button', { exact: true, name: 'Retry job' })
+      await expect(retry).toBeDisabled()
+      await expect(
+        page
+          .getByTestId('queue-job-row')
+          .getByText(/does not support this frozen Illustrious.*LoRA Smart/),
+      ).toBeVisible()
+      await page.evaluate(
+        ({ mode, predictionType }) => {
+          const f = globalThis.window.regionalWiringFixture
+          const prefix =
+            predictionType === 'epsilon'
+              ? 'illustriousSmartPatchRegional'
+              : 'illustriousSmartPatchRegionalVPrediction'
+          const wrongSuffix = mode === 'inpaint' ? 'Txt2ImgSupported' : 'Supported'
+          f.state[`${prefix}Lora${wrongSuffix}`] = true
+        },
+        { mode, predictionType },
+      )
+      await expect(retry).toBeDisabled()
+      await page.evaluate(
+        ({ mode, predictionType }) => {
+          const f = globalThis.window.regionalWiringFixture
+          const prefix =
+            predictionType === 'epsilon'
+              ? 'illustriousSmartPatchRegional'
+              : 'illustriousSmartPatchRegionalVPrediction'
+          const suffix =
+            mode === 'inpaint'
+              ? 'Supported'
+              : mode === 'outpaint'
+                ? 'OutpaintSupported'
+                : mode === 'txt2img'
+                  ? 'Txt2ImgSupported'
+                  : 'Img2ImgSupported'
+          f.state[`${prefix}Lora${suffix}`] = true
+          f.state[`${prefix}${suffix}`] = false
+        },
+        { mode, predictionType },
+      )
+      await expect(retry).toBeEnabled()
+      await retry.click()
+      await expect
+        .poll(() => page.evaluate(() => globalThis.window.regionalWiringFixture.retryCalls.length))
+        .toBe(1)
+    })
+  }
+}

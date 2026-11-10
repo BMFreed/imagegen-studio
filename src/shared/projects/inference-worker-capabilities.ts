@@ -547,11 +547,12 @@ export function supportsInferenceAnimaSmartPatchRegionalMode(
           : false
 }
 
-/** EPS retains its old capability; V requires a separate exact objective/mode grant. */
+/** Objective, mode and enabled global stack each require their exact qualified grant. */
 export function supportsInferenceIllustriousSmartPatchRegionalMode(
   value: unknown,
   mode: unknown,
   predictionType: unknown = 'epsilon',
+  requiresLora = false,
 ): boolean {
   return (
     isQualifiedInferenceWorkerReady(value) &&
@@ -563,7 +564,7 @@ export function supportsInferenceIllustriousSmartPatchRegionalMode(
     value.capabilities.includes('smart-patch-execution') &&
     value.capabilities.includes('smart-patch-seed-confirmation') &&
     value.capabilities.includes(
-      `illustrious-smart-patch-regional-${predictionType === 'v_prediction' ? 'v-prediction-' : ''}${String(mode)}-v1`,
+      `illustrious-smart-patch-regional-${predictionType === 'v_prediction' ? 'v-prediction-' : ''}${requiresLora ? 'lora-' : ''}${String(mode)}-v1`,
     )
   )
 }
@@ -577,8 +578,7 @@ export function supportsInferenceSmartPatchRegionalMode(
   requiresLora = false,
 ): boolean {
   return family === 'illustrious'
-    ? !requiresLora &&
-        supportsInferenceIllustriousSmartPatchRegionalMode(value, mode, predictionType)
+    ? supportsInferenceIllustriousSmartPatchRegionalMode(value, mode, predictionType, requiresLora)
     : family === 'anima'
       ? supportsInferenceAnimaSmartPatchRegionalMode(value, mode, requiresLora)
       : false

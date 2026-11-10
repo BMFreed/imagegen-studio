@@ -230,3 +230,21 @@ test('outpaint advisory flags accept booleans only and never require older respo
     false,
   )
 })
+
+for (const objective of ['', 'VPrediction']) {
+  test(`Illustrious ${objective || 'EPS'} Smart regional LoRA grants survive the action-state boundary independently`, () => {
+    const state = pendingState()
+    for (const mode of ['', 'Outpaint', 'Txt2Img', 'Img2Img']) {
+      const key = `illustriousSmartPatchRegional${objective}Lora${mode}Supported`
+      for (const value of [true, false]) {
+        assert.equal(
+          isProjectGenerationActionState(JSON.parse(JSON.stringify({ ...state, [key]: value }))),
+          true,
+        )
+      }
+      for (const value of [null, 0, 'true', {}]) {
+        assert.equal(isProjectGenerationActionState({ ...state, [key]: value }), false)
+      }
+    }
+  })
+}

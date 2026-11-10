@@ -277,8 +277,7 @@ export class ProjectSmartPatchGenerationActionController {
                       draft.model?.baseModelFamily,
                       mode,
                       undefined,
-                      draft.model?.baseModelFamily === 'anima' &&
-                        draft.loras.some((entry) => entry.enabled),
+                      draft.loras.some((entry) => entry.enabled),
                     ) ||
                     (draft.model?.baseModelFamily === 'illustrious' &&
                       supportsInferenceSmartPatchRegionalMode(
@@ -286,6 +285,7 @@ export class ProjectSmartPatchGenerationActionController {
                         'illustrious',
                         mode,
                         'v_prediction',
+                        draft.loras.some((entry) => entry.enabled),
                       )),
                 ))
             ) {
@@ -306,8 +306,7 @@ export class ProjectSmartPatchGenerationActionController {
                   draft.model?.baseModelFamily,
                   mode,
                   undefined,
-                  draft.model?.baseModelFamily === 'anima' &&
-                    draft.loras.some((entry) => entry.enabled),
+                  draft.loras.some((entry) => entry.enabled),
                 ) &&
                 !(
                   draft.model?.baseModelFamily === 'illustrious' &&
@@ -316,6 +315,7 @@ export class ProjectSmartPatchGenerationActionController {
                     'illustrious',
                     mode,
                     'v_prediction',
+                    draft.loras.some((entry) => entry.enabled),
                   )
                 )
               ) {
@@ -351,7 +351,7 @@ export class ProjectSmartPatchGenerationActionController {
                   entry.family,
                   mode,
                   predictionType,
-                  entry.family === 'anima' && entry.inference.loras.length > 0,
+                  (entry.inference.loras?.length ?? 0) > 0,
                 )
               ) {
                 throw new ProjectGenerationActionError(
@@ -376,8 +376,12 @@ export class ProjectSmartPatchGenerationActionController {
                   item: plan.items[0],
                   profile:
                     actualPredictionType === 'v_prediction'
-                      ? `invoke-illustrious-smart-regional-v-prediction-${mode}-v1`
-                      : `invoke-illustrious-smart-regional-${mode}-v1`,
+                      ? (entry.inference.loras?.length ?? 0) > 0
+                        ? `invoke-illustrious-smart-regional-v-prediction-lora-${mode}-v1`
+                        : `invoke-illustrious-smart-regional-v-prediction-${mode}-v1`
+                      : (entry.inference.loras?.length ?? 0) > 0
+                        ? `invoke-illustrious-smart-regional-lora-${mode}-v1`
+                        : `invoke-illustrious-smart-regional-${mode}-v1`,
                   resolvedPolicy: {
                     modelSha256: entry.inference.checkpoint.sha256,
                     noiseProfile,
@@ -389,7 +393,7 @@ export class ProjectSmartPatchGenerationActionController {
                   capture: regionalCapture,
                   item: plan.items[0],
                   profile:
-                    entry.inference.loras.length > 0
+                    (entry.inference.loras?.length ?? 0) > 0
                       ? `invoke-anima-smart-regional-lora-${mode}-v1`
                       : mode === 'outpaint'
                         ? ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE

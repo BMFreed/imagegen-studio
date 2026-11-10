@@ -1,5 +1,39 @@
 # Open Questions
 
+<!-- illustrious-smart-regional-lora-current:start -->
+## Current Illustrious Smart Regional LoRA checkpoint
+
+[Finite public continuation](./engineering/phase-4-illustrious-smart-regional-lora-research.md) connects EPS/V global LoRA in all four Smart modes.
+
+Global LoRA now reaches Illustrious/NoobAI Smart Regional TXT/IMG/INP/OUT
+through the existing owned FP32 preparation and dual-CLIP/UNet consumers.
+Eight independent EPS/V×mode profiles/grants preserve legacy empty-stack meanings;
+enabled zero requires its exact resource and LoRA grant, while disabled missing
+rows stay saved without resolution. Selected-Smart negative, independent regional
+masks/KEEP, frozen Retry, explicit Add/Save and ordinary-only accepted provenance
+remain unchanged. No sampler, classifier, queue operation or portable field is added.
+
+ROOT 1250 distinct affected/neighbor Main, 499 selected Python and 270 browser PASS;
+full TS/Vue/Python typing, Ruff, lint and production build PASS. Lint keeps only
+the two unchanged baseline parser exclusions. Actual-client 64 cases reproduce
+36 GREEN/28 semantic RED before the captured objective/tuple fix;238 after-fix
+cases overlap the 1250 final Main cases. Isolated native mutations give 16 selections:
+12 GREEN/four post-PNG semantic RED, 32 PNG witnesses and exact 1627-file restoration.
+Source reviews and independent lower-byte audit are separate from ROOT execution.
+
+One final built-app cohort passes 64 installed checks/24 requests/20 WORLD
+publications/four native-step1 Cancel/four exact restarted Retry/12 normal
+physical lifetimes. The installed selection is EPS TXT/INP +actual NoobAI V IMG/OUT;
+it is not the full eight-combination installed cross. Every selected mode has
+exact enabled-zero/disabled-clean processing PNG and WORLD RGBA equality, explicit
+Add/history/Save-reopen and restarted frozen replay after saved current edits.
+The existing 36692-byte authored Kohya fixture affects UNet and both CLIPs on
+original checkpoints. No trained-adapter quality, visual utility, capacity or
+release/MVP acceptance follows. PP-001/005/007/008 remain **«Пока не обещать»**.
+
+Independent source/document/retained-byte audit CLEAN. ROOT separately confirmed ended readers, physical exit and dependencies, then reclaimed 153,673,728 allocated bytes from its two exact idle payload paths. All 8,293 archived entries and protected SHARED dependencies remain retained.
+<!-- illustrious-smart-regional-lora-current:end -->
+
 ## Открытые продуктовые детали до первой реализации
 
 По текущему MVP scope блокирующих продуктовых решений не осталось. Если при
@@ -8,11 +42,11 @@
 
 ## Текущая граница реализации — 10.11.2026
 
-Текущая реализация продолжает `c79e7e0f4cb27447955a7c666d44f3c15a800f58`;
+Текущая реализация продолжает `72e5493a8ba604d10997edb1f0c9818537146a86`;
 нового блокирующего продуктового выбора не выявлено. Актуальный конечный список
 обязательных gaps
 зафиксирован в [roadmap checkpoint](./specs/01-implementation-roadmap.md#актуальный-checkpoint-на-10112026):
-Illustrious EPS/V Smart Regional global LoRA, Illustrious regional reference
+Illustrious regional reference
 inference, обещанные оставшиеся совместимые Smart Regional combinations после
 сверки контракта, визуальная/capacity приёмка, Home/workspaces/Project Trash,
 hard resource removal и оставшиеся
@@ -22,7 +56,7 @@ Models contexts, полный image export, release runtime и Electron delivery
 не добавляются в MVP; PP-001/005/007/008 остаются «Пока не обещать».
 
 Public Illustrious Smart Regional EPS и NoobAI V уже имеют finite four-mode
-checkpoints и не являются целиком открытой интеграцией. Текущий
+checkpoints и не являются целиком открытой интеграцией. Предыдущий
 [original-Anima Smart Regional global LoRA](./engineering/phase-4-anima-smart-regional-lora-research.md)
 подключает отдельные mode grants, ordered signed/zero stack и frozen Retry.
 ROOT выполнил lower checks и finite four-mode installed matrix на archived build;

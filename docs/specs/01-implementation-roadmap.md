@@ -48,9 +48,43 @@ MVP, фаза 5 допускает его к первому релизу. Сле
 
 ### Актуальный checkpoint на 10.11.2026
 
+<!-- illustrious-smart-regional-lora-current:start -->
+Current [Illustrious/NoobAI Smart Regional global LoRA](../engineering/phase-4-illustrious-smart-regional-lora-research.md) continues base `72e5493a8ba604d10997edb1f0c9818537146a86`.
+
+Global LoRA now reaches Illustrious/NoobAI Smart Regional TXT/IMG/INP/OUT
+through the existing owned FP32 preparation and dual-CLIP/UNet consumers.
+Eight independent EPS/V×mode profiles/grants preserve legacy empty-stack meanings;
+enabled zero requires its exact resource and LoRA grant, while disabled missing
+rows stay saved without resolution. Selected-Smart negative, independent regional
+masks/KEEP, frozen Retry, explicit Add/Save and ordinary-only accepted provenance
+remain unchanged. No sampler, classifier, queue operation or portable field is added.
+
+ROOT 1250 distinct affected/neighbor Main, 499 selected Python and 270 browser PASS;
+full TS/Vue/Python typing, Ruff, lint and production build PASS. Lint keeps only
+the two unchanged baseline parser exclusions. Actual-client 64 cases reproduce
+36 GREEN/28 semantic RED before the captured objective/tuple fix;238 after-fix
+cases overlap the 1250 final Main cases. Isolated native mutations give 16 selections:
+12 GREEN/four post-PNG semantic RED, 32 PNG witnesses and exact 1627-file restoration.
+Source reviews and independent lower-byte audit are separate from ROOT execution.
+
+One final built-app cohort passes 64 installed checks/24 requests/20 WORLD
+publications/four native-step1 Cancel/four exact restarted Retry/12 normal
+physical lifetimes. The installed selection is EPS TXT/INP +actual NoobAI V IMG/OUT;
+it is not the full eight-combination installed cross. Every selected mode has
+exact enabled-zero/disabled-clean processing PNG and WORLD RGBA equality, explicit
+Add/history/Save-reopen and restarted frozen replay after saved current edits.
+The existing 36692-byte authored Kohya fixture affects UNet and both CLIPs on
+original checkpoints. No trained-adapter quality, visual utility, capacity or
+release/MVP acceptance follows. PP-001/005/007/008 remain **«Пока не обещать»**.
+
+Independent source/document/retained-byte audit CLEAN. ROOT separately confirmed ended readers, physical exit and dependencies, then reclaimed 153,673,728 allocated bytes from its two exact idle payload paths. All 8,293 archived entries and protected SHARED dependencies remain retained.
+
+Illustrious regional reference inference is the next material consumer; authoring/storage already exist. Remaining promised combinations require contract review. Visual/capacity, Home/Trash, resource removal, export and release/compatibility/MVP gates below remain open.
+<!-- illustrious-smart-regional-lora-current:end -->
+
 Public EPS checkpoint опирается на `4b56c127891fe951be44183783b5089e070cdca2`;
 последующий V checkpoint — `c79e7e0f4cb27447955a7c666d44f3c15a800f58`.
-Текущий [original-Anima Smart Regional global LoRA continuation](../engineering/phase-4-anima-smart-regional-lora-research.md)
+Предыдущий [original-Anima Smart Regional global LoRA continuation](../engineering/phase-4-anima-smart-regional-lora-research.md)
 продолжает существующие TXT/IMG/INP/OUT owners: четыре отдельные mode grants и
 profiles, exact ordered enabled stack включая weight 0, frozen Retry и прежняя
 empty/disabled-missing lane. Shared patch scope/RNG/qualified attentions
@@ -90,16 +124,15 @@ continuations также имеют свои checkpoints. Это не общая
 четырьмя отдельными V grants. ROOT736 Main/252 Python/246 browser PASS;
 installed44 checks/16 requests/12 world publications/four step-1 cancels,
 четыре exact restarted Retry и восемь normal closes. EPS meanings сохранены.
-Original-Anima Smart global LoRA — текущая квалификация выше. Следующие
-материальные resource consumers — Illustrious EPS/V Smart global LoRA и
-Illustrious regional reference inference. Конечная матрица остальных совместимых
+Original-Anima Smart global LoRA — текущая квалификация выше. Следующий
+материальный resource consumer — Illustrious regional reference inference. Конечная матрица остальных совместимых
 сочетаний, visual/capacity/release gaps остаётся в linked notes; старый общий
 Anima Smart enabled-LoRA refusal описывает исторический checkpoint.
 
 Оставшиеся обязательные границы:
 
-1. **Regional Guidance consumers:** Illustrious EPS/V Smart global LoRA и остальные
-   совместимые Smart Regional combinations; Illustrious regional reference-image inference. `smart-patch-regional-guidance.ts` пока
+1. **Regional Guidance consumers:** Illustrious regional reference-image inference
+   и оставшиеся обещанные совместимые Smart Regional combinations. `smart-patch-regional-guidance.ts` пока
    допускает original Anima и finite Illustrious EPS/V; `regional-invoke-generation.ts` отклоняет
    reference images. Authoring/storage references уже существуют и не заменяют
    inference. Smart Regional batch/dynamic prompts/resources/sampling нужно

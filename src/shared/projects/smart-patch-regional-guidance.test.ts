@@ -702,31 +702,66 @@ for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
   })
 }
 
-test('Illustrious Smart regional still refuses enabled global LoRAs including zero after the Anima extension', () => {
-  const input = illustriousFixture()
-  const resource = {
-    ...input.patch.generationDraft.model!,
-    displayName: 'Configured Illustrious LoRA',
-    kind: 'lora' as const,
-    localModelId: randomUUID(),
-    localVersionId: randomUUID(),
-  }
-  for (const weight of [-0.7, 0]) {
-    input.patch.generationDraft.loras = [{ enabled: true, resource, weight }]
-    for (const targetMode of ['inpaint', 'outpaint', 'txt2img', 'img2img']) {
-      assert.match(
-        reason({
+for (const predictionType of ['epsilon', 'v_prediction'] as const) {
+  for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
+    test(`Illustrious ${predictionType} Smart regional ${mode} signed and zero stacks require their own advisory`, () => {
+      const input = illustriousFixture()
+      input.patch.generationDraft.model!.predictionType = predictionType
+      const resource = {
+        ...input.patch.generationDraft.model!,
+        displayName: 'Configured global Illustrious LoRA',
+        kind: 'lora' as const,
+        localModelId: randomUUID(),
+        localVersionId: randomUUID(),
+      }
+      const objective = predictionType === 'v_prediction' ? 'v-prediction-' : ''
+      const old = {
+        ...ANIMA_BATCH_READY,
+        capabilities: [
+          ...ANIMA_BATCH_READY.capabilities,
+          'illustrious-outpaint',
+          'illustrious-euler',
+          'illustrious-noise-profile',
+          'smart-patch-execution',
+          'smart-patch-seed-confirmation',
+          `illustrious-smart-patch-regional-${objective}${mode}-v1`,
+        ],
+        workerVersion: '0.14.0',
+      }
+      const exact = {
+        ...old,
+        capabilities: old.capabilities.map((cap) =>
+          cap === `illustrious-smart-patch-regional-${objective}${mode}-v1`
+            ? `illustrious-smart-patch-regional-${objective}lora-${mode}-v1`
+            : cap,
+        ),
+      }
+      const advisory = (peer: unknown) => {
+        const active = input.patch.generationDraft.loras.some((entry) => entry.enabled)
+        const supported = (target: string) =>
+          supportsInferenceIllustriousSmartPatchRegionalMode(peer, target, predictionType, active)
+        return reason({
           ...input,
-          runtimeImg2ImgSupported: true,
-          runtimeOutpaintSupported: true,
-          runtimeSupported: true,
-          runtimeTxt2ImgSupported: true,
-          targetMode,
-        })!,
-        /LoRA/u,
-      )
-    }
+          runtimeImg2ImgSupported: supported('img2img'),
+          runtimeOutpaintSupported: supported('outpaint'),
+          runtimeSupported: supported('inpaint'),
+          runtimeTxt2ImgSupported: supported('txt2img'),
+          targetMode: mode,
+        })
+      }
+      for (const weight of [-0.7, 0]) {
+        input.patch.generationDraft.loras = [{ enabled: true, resource, weight }]
+        assert.match(advisory(old)!, /global LoRAs/u)
+        assert.equal(advisory(exact), null)
+        assert.equal(reason({ ...input, runtimeSupported: undefined, targetMode: mode }), null)
+      }
+      input.patch.generationDraft.loras[0].enabled = false
+      input.patch.generationDraft.loras[0].resource.fileSha256 = 'f'.repeat(64)
+      assert.equal(advisory(old), null)
+      assert.match(advisory(exact)!, /engine/u)
+      input.patch.generationDraft.loras = []
+      assert.equal(advisory(old), null)
+      assert.match(advisory(exact)!, /engine/u)
+    })
   }
-  input.patch.generationDraft.loras[0].enabled = false
-  assert.equal(reason(input), null)
-})
+}
