@@ -6,5 +6,11 @@
     "moduleResolution": "Bundler",
     "types": ["node", "vite/client"]
   },
-  "include": ["src/**/*.ts", "src/**/*.vue", "scripts/**/*.ts", "vite.desktop.config.ts"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.vue",
+    "scripts/**/*.ts",
+    "scripts/qualify-regional-character-visual.mts",
+    "vite.desktop.config.ts"
+  ]
 }

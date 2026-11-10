@@ -1,5 +1,17 @@
 # Regional Guidance
 
+## Current visual gate: fixed reference utility — 11.11.2026
+
+[Actual eight-request experiment and all verdicts](../../../engineering/phase-4-regional-reference-utility-research.md).
+Official Illustrious XLv0.1,512/EulerNormal30/CFG5/embeddedFP16, fixed123/124:
+authored ordinary/no-regions, one image-only full-mask reference A/B and two
+outside-mask controls. All eight original PNGs/native progress/physical exits
+pass; outside A/B and ordinary123 are identical. Both ordinary baselines fail
+the scene rubric; four reference cases yield one narrow PASS/two FAIL/one
+INCONCLUSIVE. Whole gate stays **NOT_QUALIFIED**. This is a direct backend visual
+probe, not another UI/queue/Add/Retry qualification. No defaults or promise
+statuses change; spatial association and maximum capacity remain open.
+
 ## Current checkpoint: Illustrious reference IMG/OUT — 10.11.2026
 
 [Research, actual execution and finite compatibility matrix](../../../engineering/phase-4-regional-reference-image-research.md).

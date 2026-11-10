@@ -1,5 +1,17 @@
 # Engineering Workflow
 
+## Current reference utility experiment — NOT_QUALIFIED
+
+[Fixed eight-request experiment](./phase-4-regional-reference-utility-research.md)
+reuses the installed ordinary/reference owners on official Illustrious XLv0.1,
+512/Euler30/CFG5/FP16, seeds123/124. All eight PNGs and physical exits pass;
+outside-mask A/B and ordinary123 are exact. Blind descriptions followed by ROOT
+assessment find both ordinary baselines FAIL; reference cases1 narrow PASS/two
+FAIL/one INCONCLUSIVE. No reference utility/capacity/MVP acceptance or default
+change follows. The next diagnostic should isolate ordinary512 behavior before
+attributing the result to Regional Guidance. Modified visual `.mts` is now typed
+and linted; only the separate unchanged regional-init parser exclusion remains.
+
 ## Current Illustrious reference IMG/OUT checkpoint
 
 [Research and finite remaining matrix](./phase-4-regional-reference-image-research.md):

@@ -28,6 +28,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import type { VerifiedRegionalReferenceResources } from '../../runtime/inference-auxiliary-resources.js'
+import type { RegionalWorkerInput } from '../regional-worker-request.js'
+
 import { openAppDatabase } from '../../db/database.js'
 import { CivitaiClient } from '../../models/civitai-client.js'
 import { CivitaiTokenStore } from '../../models/civitai-token-store.js'
@@ -39,6 +42,7 @@ import {
   type CurrentCanvasRegionalRecipe,
   prepareCurrentCanvasRegionalRecipe,
 } from '../project-current-canvas-regional-recipe.js'
+import { captureCurrentCanvasRegionalReferences } from '../project-current-canvas-regional-references.js'
 import {
   type PreparedNormalTxt2Img,
   prepareNormalTxt2Img,
@@ -1012,6 +1016,434 @@ export async function produceCharacterVisualProbe<T>(
     return manifest
   } finally {
     // Preserve all payloads on failure. ROOT separately proves physical exit before any cleanup.
+    try {
+      if (worker) {
+        await worker.close()
+      }
+    } finally {
+      try {
+        for (const tab of service.getOpenTabs()) {
+          await service.close(tab.id)
+        }
+      } finally {
+        await database.close()
+      }
+    }
+  }
+}
+
+export const REFERENCE_UTILITY_RUN = path.join(
+  os.homedir(),
+  '.codex/artifacts/imagegen-studio/runs/regional-reference-utility/20261111-fixed-cat',
+)
+export const REFERENCE_UTILITY_CASES = [
+  { image: null, label: 'seed123-baseline', outside: false, seed: 123 },
+  { image: 'A', label: 'seed123-reference-A', outside: false, seed: 123 },
+  { image: 'B', label: 'seed123-reference-B', outside: false, seed: 123 },
+  { image: null, label: 'seed124-baseline', outside: false, seed: 124 },
+  { image: 'A', label: 'seed124-reference-A', outside: false, seed: 124 },
+  { image: 'B', label: 'seed124-reference-B', outside: false, seed: 124 },
+  { image: 'A', label: 'seed123-zero-A', outside: true, seed: 123 },
+  { image: 'B', label: 'seed123-zero-B', outside: true, seed: 123 },
+] as const
+export const REFERENCE_UTILITY_CONTRACT = {
+  base: 'a39bff4fa5c45154175fa412f77f147afa7683d8',
+  bbox: { height: 512, width: 512, x: -13, y: 5 },
+  cases: REFERENCE_UTILITY_CASES,
+  fixedBeforeNativeExecution: true,
+  globalNegative: '',
+  globalPositive:
+    'a simple illustration of one cat head, front view, two pointed ears, two eyes, plain light background',
+  invokeRevision: '4875d96531ca6712b288f6e660fcbb34143408c1',
+  nativeRequestCeiling: 8,
+  profile: 'reference-utility-v1',
+  referenceImages: {
+    A: {
+      byteSize: 4803,
+      sha256: '2631b04caf604bb2529b49344687cde663caca012b88d6a740692ecf52dee6ed',
+    },
+    B: {
+      byteSize: 4804,
+      sha256: 'cc188e8e2fe80a3f820cc8710c7b0f649a2c02eb6260a29e490d19c010c1cf65',
+    },
+  },
+  sampling: {
+    cfgRescale: 0,
+    cfgScale: 5,
+    noiseProfile: NOISE,
+    sampler: 'Euler',
+    scheduler: 'Normal',
+    steps: 30,
+  },
+  schema: 'reference-utility-experiment-v1',
+  schemaVersion: 1,
+  scope:
+    'Direct installed backend, one image-only Regional owner; no UI/queue, spatial association, maximum capacity or human acceptance claim.',
+  vaePrecision: 'FP16',
+} as const
+export type ReferenceUtilityCase = (typeof REFERENCE_UTILITY_CASES)[number]
+export interface ReferenceUtilityUseCase {
+  case: ReferenceUtilityCase
+  models: ModelService
+  prepared: PreparedNormalTxt2Img
+  recipe: CurrentCanvasRegionalRecipe
+  references?: NonNullable<RegionalWorkerInput['references']>
+}
+
+/**
+ * Additive fixed reference experiment. Invoke4875 prepareCanvasInvocation→addRegionalGuidance keeps
+ * image-only owners separate from text; sd/denoise_latents.py prepares their original images before
+ * UNet acquisition. These existing Main services/capture owners produce the input; ROOT's callback
+ * alone executes inference. No ordinary recipe is manufactured by stripping refs.
+ */
+export async function produceReferenceUtilityProbe<T>(options: {
+  pythonExecutable: string
+  referenceImages: Record<'A' | 'B', CharacterVisualFile>
+  resources: VerifiedRegionalReferenceResources
+  run: string
+  runtimeRoot: string
+  useCase: (input: ReferenceUtilityUseCase) => Promise<T>
+}): Promise<unknown> {
+  assert.equal(options.run, REFERENCE_UTILITY_RUN)
+  const bbox = REFERENCE_UTILITY_CONTRACT.bbox
+  const run = options.run
+  await directory(run)
+  await directory(path.join(run, 'payloads'))
+  const data = path.join(run, 'payloads', 'reference-main')
+  await freshDirectory(data)
+  const scratch = path.join(data, 'scratch')
+  await freshDirectory(scratch)
+  for (const name of ['reference-packages', 'reference-targets', 'reference-handoffs']) {
+    await freshDirectory(path.join(run, name))
+  }
+  const database = openAppDatabase(data, path.join(REPO, 'src/main/db/migrations'))
+  const service = new ProjectService({
+    autosaveOptions: { debounceMs: 60_000, leaseRegistry: new ProjectAutosaveLeaseRegistry() },
+    dataRoot: data,
+    repository: new ProjectIndexRepository(database.db),
+    roots: {
+      placeholdersDir: path.join(REPO, 'src/main/projects/placeholders'),
+      scratchDir: scratch,
+    },
+    shadow: new ProjectShadowStore(path.join(data, 'autosave')),
+  })
+  const repository = new ModelRepository(database.db)
+  let networkAttempts = 0
+  const offline = async (): Promise<never> => {
+    networkAttempts++
+    throw new Error('Reference visual probe is offline')
+  }
+  const tokens = new CivitaiTokenStore(
+    {
+      decryptStringAsync: async () => {
+        throw new Error('No token read in visual probe')
+      },
+      encryptStringAsync: async () => {
+        throw new Error('No token write in visual probe')
+      },
+      getSelectedStorageBackend: () => 'test-only-storage',
+      isAsyncEncryptionAvailable: async () => false,
+    },
+    data,
+  )
+  const models = new ModelService(repository, new CivitaiClient(offline), tokens)
+  let worker: ProjectWorkerClient | undefined
+  const cases: unknown[] = []
+  try {
+    const installed = await repository.publishVerifiedInstallation({
+      primary: {
+        file: {
+          managedPath: SOURCE,
+          originalFilename: 'Illustrious-XL-v0.1.safetensors',
+          sha256: SOURCE_SHA256,
+          sizeBytes: SOURCE_BYTES,
+          verifiedAt: new Date().toISOString(),
+        },
+        resource: {
+          displayName: 'Illustrious XL v0.1 (official pinned epsilon)',
+          source: { kind: 'civitai', modelId: 795_765 },
+          sourceMetadata: { testOnlyCatalog: true },
+          type: 'checkpoint',
+        },
+        version: {
+          baseModelFamily: 'illustrious',
+          format: 'safetensors',
+          name: 'v0.1',
+          source: {
+            expectedSha256: SOURCE_SHA256,
+            fileId: 798_303,
+            kind: 'civitai',
+            versionId: 889_818,
+          },
+          sourceMetadata: {},
+        },
+      },
+    })
+    const model = await models.resolveGenerationCheckpoint(
+      installed.resourceId,
+      installed.versionId,
+    )
+    assert.equal(model.fileSha256, SOURCE_SHA256)
+    assert.equal(model.predictionType, 'epsilon')
+    const tab = await service.create({
+      height: 512,
+      title: 'Fixed cat reference utility',
+      width: 512,
+    })
+    const co = () => {
+      const value = service.getOpenDocumentForAcceptance(tab.id)
+      assert.ok(value)
+      return value
+    }
+    const initial = structuredClone(co().document)
+    const maskId = randomUUID()
+    const regionId = randomUUID()
+    const bytes = encodeProjectMaskPng(new Uint8Array(512 * 512).fill(255), 512, 512)
+    const member = `assets/masks/${maskId}/${sha(bytes)}.png`
+    const sources: Record<string, IgsAssetSource> = { [member]: { bytes } }
+    for (const testCase of REFERENCE_UTILITY_CASES) {
+      const owner: IgsRegionalGuidanceV1 = {
+        enabled: true,
+        id: regionId,
+        locked: false,
+        mask: {
+          asset: { bytes: bytes.length, height: 512, path: member, sha256: sha(bytes), width: 512 },
+          bounds: { ...bbox, x: testCase.outside ? bbox.x + bbox.width + 8 : bbox.x },
+          id: maskId,
+          revision: testCase.outside ? 2 : 1,
+        },
+        name: 'Cat reference owner',
+        overlayOpacity: 0,
+        prompts: { negative: prompt(''), positive: null, useGlobalNegativePrompt: false },
+      }
+      const desired = parseProjectDocumentV1({
+        ...initial,
+        documentRevision: co().document.documentRevision,
+        generationDraft: {
+          ...initial.generationDraft,
+          cfgRescale: 0,
+          loras: [],
+          model,
+          negativePrompt: prompt(''),
+          positivePrompt: prompt(REFERENCE_UTILITY_CONTRACT.globalPositive),
+          sampling: {
+            cfgScale: 5,
+            denoisingStrength: null,
+            sampler: 'Euler',
+            scheduler: 'Normal',
+            steps: 30,
+          },
+          seed: { policy: 'fixed', value: testCase.seed },
+          vae: null,
+          vaePrecision: 'FP16',
+        },
+        primaryBbox: bbox,
+        regionalGuidance: testCase.image === null ? [] : [owner],
+      })
+      await co().applyDocument(desired, testCase.image === null ? {} : sources, {
+        expectedDocumentEpoch: co().documentEpoch,
+        expectedDocumentRevision: co().document.documentRevision,
+      })
+      if (testCase.image !== null) {
+        const image = options.referenceImages[testCase.image]
+        const pin = REFERENCE_UTILITY_CONTRACT.referenceImages[testCase.image]
+        assert.equal(image.path, path.join(run, `reference-${testCase.image}.png`))
+        assert.equal(image.byteSize, pin.byteSize)
+        assert.equal(image.sha256, pin.sha256)
+        const imageBytes = await readFile(image.path)
+        assert.equal(imageBytes.length, pin.byteSize)
+        assert.equal(sha(imageBytes), pin.sha256)
+        worker = await ProjectWorkerClient.start(
+          {
+            pythonExecutable: options.pythonExecutable,
+            runtimeRoot: options.runtimeRoot,
+            stagingBasePath: scratch,
+          },
+          { environment: { LANG: 'C.UTF-8', PYTHONDONTWRITEBYTECODE: '1', TMPDIR: scratch } },
+        )
+        await service.importRegionalGuidanceReferenceImage(
+          tab.id,
+          {
+            documentId: co().document.documentId,
+            documentRevision: co().document.documentRevision,
+            regionId,
+          },
+          async () => image.path,
+          worker,
+        )
+        await worker.close()
+        worker = undefined
+        assert.equal(ProjectWorkerClient.hasUnconfirmedExit(), false)
+      }
+      await service.save(tab.id)
+      await service.close(tab.id)
+      assert.equal((await service.open(tab.id)).kind, 'opened')
+      await service.flushAutosave(tab.id)
+      const authored = structuredClone(co().document)
+      assert.equal(co().dirty, false)
+      assert.equal(authored.lastActualSeedSnapshot, initial.lastActualSeedSnapshot)
+      if (testCase.image === null) {
+        assert.deepEqual(authored.regionalGuidance, [])
+      }
+      const packageFile = await writeOwned(
+        path.join(run, 'reference-packages', `${testCase.label}.igs`),
+        await readFile(co().filePath),
+      )
+      await service.withCapturedCurrentCanvasRegionalGenerationInput(tab.id, async (capture) => {
+        capture.assertCurrent()
+        assert.deepEqual(capture.document, authored)
+        worker = await ProjectWorkerClient.start(
+          {
+            pythonExecutable: options.pythonExecutable,
+            runtimeRoot: options.runtimeRoot,
+            stagingBasePath: scratch,
+          },
+          { environment: { LANG: 'C.UTF-8', PYTHONDONTWRITEBYTECODE: '1', TMPDIR: scratch } },
+        )
+        const target = await capture.composeTarget(worker)
+        await worker.close()
+        worker = undefined
+        assert.equal(ProjectWorkerClient.hasUnconfirmedExit(), false)
+        assert.equal(target.mode, 'txt2img')
+        const prepared = await prepareNormalTxt2Img({
+          lastActualSeed: null,
+          modelService: models,
+          target,
+        })
+        const plan = planGenerationBatch({
+          baseSeed: testCase.seed,
+          iterations: 1,
+          maxJobs: 1,
+          maxPrompts: 1,
+          negativePrompt: prepared.context.prompts.negative,
+          positivePrompt: prepared.context.prompts.positive,
+          seedBehavior: 'per-iteration',
+        })
+        const recipe = await prepareCurrentCanvasRegionalRecipe({
+          capture: capture.regional,
+          job: {
+            bbox,
+            documentId: authored.documentId,
+            documentRevision: authored.documentRevision,
+            family: 'illustrious',
+            item: plan.items[0],
+          },
+          models,
+        })
+        assert.equal(recipe.regions.length, testCase.image === null ? 0 : 1)
+        if (testCase.image !== null) {
+          const region = recipe.regions[0]
+          assert.equal(region.regionId, regionId)
+          assert.equal(region.maskId, maskId)
+          assert.equal(region.positive, null)
+          assert.equal(region.coverage.kind, testCase.outside ? 'outside' : 'covered')
+          assert.ok(region.coverage.alpha.every((value) => value === (testCase.outside ? 0 : 255)))
+          assert.equal(region.referenceImages!.length, 1)
+        }
+        const references =
+          testCase.image === null
+            ? undefined
+            : await captureCurrentCanvasRegionalReferences({
+                capture: capture.regional,
+                mode: 'txt2img',
+                recipe,
+                resources: options.resources,
+              })
+        const ownedPrepared = clonePrepared(prepared)
+        const ownedRecipe = structuredClone(recipe)
+        const captured = {
+          case: testCase,
+          models,
+          prepared: ownedPrepared,
+          recipe: ownedRecipe,
+          ...(references ? { references: structuredClone(references) } : {}),
+        }
+        const before = sha(
+          serialized({
+            prepared: captured.prepared,
+            recipe: captured.recipe,
+            references: captured.references,
+          }),
+        )
+        const targetFile = await writeOwned(
+          path.join(run, 'reference-targets', `${testCase.label}.png`),
+          ownedPrepared.targetPngBytes,
+        )
+        const handoff = await writeJson(
+          path.join(run, 'reference-handoffs', `${testCase.label}.json`),
+          {
+            authoredDocument: authored,
+            case: testCase,
+            package: packageFile,
+            prepared: ownedPrepared,
+            recipe: ownedRecipe,
+            references,
+            target: targetFile,
+          },
+        )
+        const result = await options.useCase(captured)
+        assert.equal(
+          sha(
+            serialized({
+              prepared: captured.prepared,
+              recipe: captured.recipe,
+              references: captured.references,
+            }),
+          ),
+          before,
+        )
+        capture.assertCurrent()
+        assert.deepEqual(co().document, authored)
+        assert.equal(co().dirty, false)
+        const reopened = await readIgsPackage(co().filePath)
+        assert.deepEqual(reopened.project, authored)
+        for (const table of [
+          'generation_queue_item',
+          'generation_candidate_receipt',
+          'generation_seed_cursor',
+        ]) {
+          // Table discovery keeps the private-store no-queue assertion tied to the real schema.
+          const present = await sql<{
+            name: string
+          }>`select name from sqlite_master where type='table' and name=${table}`.execute(
+            database.db,
+          )
+          assert.equal(present.rows.length, 1, `Missing private-store table ${table}`)
+          if (present.rows.length) {
+            assert.equal(
+              (
+                await sql<{
+                  count: number
+                }>`select count(*) as count from ${sql.table(table)}`.execute(database.db)
+              ).rows[0].count,
+              0,
+            )
+          }
+        }
+        cases.push({
+          case: testCase,
+          handoff,
+          label: testCase.label,
+          package: packageFile,
+          result,
+          target: targetFile,
+        })
+      })
+    }
+    assert.equal(cases.length, 8)
+    assert.equal(networkAttempts, 0)
+    const manifest = {
+      cases,
+      nativeRequestCeiling: 8,
+      networkAttempts,
+      noSharedDatabaseWrites: true,
+      profile: 'main-reference-utility-v1',
+      schemaVersion: 1,
+      visualAcceptance: 'pending',
+    }
+    await writeJson(path.join(run, 'main-reference-utility.json'), manifest)
+    return manifest
+  } finally {
     try {
       if (worker) {
         await worker.close()

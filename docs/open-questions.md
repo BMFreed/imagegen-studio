@@ -1,5 +1,14 @@
 # Open Questions
 
+## Current visual diagnosis
+
+[Fixed reference utility](./engineering/phase-4-regional-reference-utility-research.md)
+executes eight installed-worker requests with exact outside-mask controls, but
+both ordinary512 baselines fail before Regional Guidance. Whole visual gate is
+NOT_QUALIFIED; no further prompt/seed/sampler tuning follows inspection. A
+same-prompt ordinary512/1024 diagnostic is the next falsifiable comparison, not
+an already demonstrated cause or permission to widen reference guards.
+
 ## Latest reference consumer and actual remaining scope
 
 [Illustrious regional references](./engineering/phase-4-regional-reference-image-research.md)

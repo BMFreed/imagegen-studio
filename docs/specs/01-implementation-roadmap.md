@@ -1,5 +1,13 @@
 # Implementation Roadmap
 
+## Latest visual checkpoint — reference utility NOT_QUALIFIED
+
+[Fixed eight-request experiment](../engineering/phase-4-regional-reference-utility-research.md)
+completes all native requests/PNGs and exact outside-mask controls. Both ordinary
+512 baselines fail; the four reference cases do not pass the whole visual gate.
+This narrows the next ordinary-path diagnosis and does not justify another
+adapter rewrite, default tuning, new mandatory combinations or MVP promotion.
+
 ## Latest implementation checkpoint — regional reference IMG/OUT
 
 [Finite public Illustrious EPS IMG/OUT reference inference](../engineering/phase-4-regional-reference-image-research.md)

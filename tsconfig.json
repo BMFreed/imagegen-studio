@@ -13,6 +13,7 @@
     "prettier.config.ts",
     "vite.desktop.config.ts",
     "src/**/*.ts",
-    "scripts/**/*.ts"
+    "scripts/**/*.ts",
+    "scripts/qualify-regional-character-visual.mts"
   ]
 }
