@@ -49,9 +49,29 @@ MVP, фаза 5 допускает его к первому релизу. Сле
 ### Актуальный checkpoint на 10.11.2026
 
 Public EPS checkpoint опирается на `4b56c127891fe951be44183783b5089e070cdca2`;
-последующий V outcome и его source/evidence pins приведены в новом note ниже.
+последующий V checkpoint — `c79e7e0f4cb27447955a7c666d44f3c15a800f58`.
+Текущий [original-Anima Smart Regional global LoRA continuation](../engineering/phase-4-anima-smart-regional-lora-research.md)
+продолжает существующие TXT/IMG/INP/OUT owners: четыре отдельные mode grants и
+profiles, exact ordered enabled stack включая weight 0, frozen Retry и прежняя
+empty/disabled-missing lane. Shared patch scope/RNG/qualified attentions
+используются повторно; per-region LoRA, TI, Anima references, batch и расширение
+методов не добавляются. ROOT 997 distinct Main (973+24 client cases)/407 distinct
+Python/254 browser PASS, final typing/lint/build PASS; isolated 36 selections дают 32 GREEN/четыре
+post-PNG semantic RED с точным restoration. Source-only reviews CLEAN в своих
+границах. Оригинальная archived-build four-mode matrix прошла 64 checks/24 requests/
+20 world publications/четыре step-1 Cancel/четыре exact restarted Retry/12 normal
+physical lifetimes; все четыре zero/clean PNG/RGBA совпадают. После snapshot
+исправлен один client-guard argument: 16 semantic RED/eight empty GREEN →24 GREEN,
+62 client/neighbor PASS. Final build меняет только Main; отдельный final TXT
+control cohort дал 5 checks/2 requests/2 world/1 normal lifetime и совпал с original
+TXT controls. Qualified aggregate 69 checks/26 requests/22 world/13 normal не означает four-mode rerun на final
+build. ROOT retention-r1 выполнен PASS; independent retained-byte audit CLEAN.
+После отдельных process/dependency/reader guards ROOT освободил 127,021,056 bytes,
+сохранив архив всех 7,258 entries и protected shared dependencies. Numerical influence не закрывает visual utility/capacity/release.
+PP-001/005/007/008 остаются **«Пока не обещать»**.
+
 Исторические checkpoints ниже описывают состояние на момент своего выполнения;
-их «следующий owner» не является актуальным backlog. Последний завершённый
+их «следующий owner» не является актуальным backlog. Ранее завершённый
 [public Anima Smart regional TXT/IMG](../engineering/phase-4-anima-smart-regional-flow-public-research.md)
 дополняет уже подключённые INP/OUT. Ordinary Smart обеих семей, variants,
 freshness, frozen Retry, orphan Raster Add, accepted history, Smart Save Current,
@@ -70,14 +90,16 @@ continuations также имеют свои checkpoints. Это не общая
 четырьмя отдельными V grants. ROOT736 Main/252 Python/246 browser PASS;
 installed44 checks/16 requests/12 world publications/four step-1 cancels,
 четыре exact restarted Retry и восемь normal closes. EPS meanings сохранены.
-Следующий материальный resource consumer — global LoRA в Smart Regional:
-original Anima, затем Illustrious EPS/V. Конечная матрица остальных совместимых
-сочетаний, visual/capacity/release gaps остаётся в linked notes.
+Original-Anima Smart global LoRA — текущая квалификация выше. Следующие
+материальные resource consumers — Illustrious EPS/V Smart global LoRA и
+Illustrious regional reference inference. Конечная матрица остальных совместимых
+сочетаний, visual/capacity/release gaps остаётся в linked notes; старый общий
+Anima Smart enabled-LoRA refusal описывает исторический checkpoint.
 
 Оставшиеся обязательные границы:
 
-1. **Regional Guidance consumers:** оставшиеся совместимые Smart
-   Regional combinations; Illustrious regional reference-image inference. `smart-patch-regional-guidance.ts` пока
+1. **Regional Guidance consumers:** Illustrious EPS/V Smart global LoRA и остальные
+   совместимые Smart Regional combinations; Illustrious regional reference-image inference. `smart-patch-regional-guidance.ts` пока
    допускает original Anima и finite Illustrious EPS/V; `regional-invoke-generation.ts` отклоняет
    reference images. Authoring/storage references уже существуют и не заменяют
    inference. Smart Regional batch/dynamic prompts/resources/sampling нужно

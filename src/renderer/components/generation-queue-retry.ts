@@ -11,6 +11,10 @@ type RetryState = Pick<
   | 'animaRegionalSamplingSupported'
   | 'animaRegionalSupported'
   | 'animaSmartPatchRegionalImg2ImgSupported'
+  | 'animaSmartPatchRegionalLoraImg2ImgSupported'
+  | 'animaSmartPatchRegionalLoraOutpaintSupported'
+  | 'animaSmartPatchRegionalLoraSupported'
+  | 'animaSmartPatchRegionalLoraTxt2ImgSupported'
   | 'animaSmartPatchRegionalOutpaintSupported'
   | 'animaSmartPatchRegionalSupported'
   | 'animaSmartPatchRegionalTxt2ImgSupported'
@@ -169,6 +173,7 @@ export function generationQueueRetryReason(
     if (state.smartPatchSupported !== true) {
       return 'The current image engine does not support Smart Patch generation.'
     }
+    const animaLora = operation === 'anima-smart-patch' && requiresRegionalLora
     const vPrediction =
       operation === 'illustrious-smart-patch' && frozenPredictionType === 'v_prediction'
     const family =
@@ -176,13 +181,17 @@ export function generationQueueRetryReason(
         ? vPrediction
           ? 'Illustrious V'
           : 'Illustrious'
-        : 'Anima'
+        : animaLora
+          ? 'Anima LoRA'
+          : 'Anima'
     const prefix =
       operation === 'illustrious-smart-patch'
         ? vPrediction
           ? 'illustriousSmartPatchRegionalVPrediction'
           : 'illustriousSmartPatchRegional'
-        : 'animaSmartPatchRegional'
+        : animaLora
+          ? 'animaSmartPatchRegionalLora'
+          : 'animaSmartPatchRegional'
     if (requiresSmartPatchRegionalTxt2Img && state[`${prefix}Txt2ImgSupported`] !== true) {
       return `The current image engine does not support this frozen ${family} Smart TXT Regional Guidance job.`
     }

@@ -5,6 +5,8 @@ import {
   isQualifiedInferenceWorkerReady,
   supportsInferenceAnima,
   supportsInferenceAnimaOutpaint,
+  supportsInferenceAnimaSmartPatchRegionalLoraMode,
+  supportsInferenceAnimaSmartPatchRegionalMode,
   supportsInferenceCandidateThumbnails,
   supportsInferenceCFGRescale,
   supportsInferenceDenoisingProgress,
@@ -15,6 +17,7 @@ import {
   supportsInferenceImg2Img,
   supportsInferenceLora,
   supportsInferenceOutpaint,
+  supportsInferenceSmartPatchRegionalMode,
   supportsInferenceVaePrecision,
 } from './inference-worker-capabilities.js'
 
@@ -558,5 +561,153 @@ test('noise profile requires exact 0.14 and complete native capabilities while r
     { ...noiseReady, capabilities: [...noiseReady.capabilities, 1] },
   ]) {
     assert.equal(supportsInferenceIllustriousNoiseProfile(peer), false)
+  }
+})
+
+const smartRegionalModes = ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const
+const animaSmartRegionalCommon = {
+  ...noiseReady,
+  capabilities: [
+    ...noiseReady.capabilities,
+    'smart-patch-execution',
+    'smart-patch-seed-confirmation',
+  ],
+}
+
+for (const mode of smartRegionalModes) {
+  const loraCapability = `anima-smart-patch-regional-lora-${mode}-v1`
+  const baseCapability = `anima-smart-patch-regional-${mode}-v1`
+
+  test(`Anima global LoRA Smart regional ${mode} requires its exact grant independently of old and Canvas grants`, () => {
+    const old = {
+      ...animaSmartRegionalCommon,
+      capabilities: [
+        ...animaSmartRegionalCommon.capabilities,
+        ...smartRegionalModes.map((item) => `anima-smart-patch-regional-${item}-v1`),
+        'anima-regional-lora-v1',
+        ...smartRegionalModes
+          .filter((item) => item !== mode)
+          .map((item) => `anima-smart-patch-regional-lora-${item}-v1`),
+      ],
+    }
+    assert.equal(supportsInferenceAnimaSmartPatchRegionalMode(old, mode), true)
+    assert.equal(supportsInferenceAnimaSmartPatchRegionalMode(old, mode, false), true)
+    assert.equal(supportsInferenceAnimaSmartPatchRegionalLoraMode(old, mode), false)
+    assert.equal(supportsInferenceAnimaSmartPatchRegionalMode(old, mode, true), false)
+    assert.equal(supportsInferenceSmartPatchRegionalMode(old, 'anima', mode, null, true), false)
+
+    const onlyLora = {
+      ...animaSmartRegionalCommon,
+      capabilities: [...animaSmartRegionalCommon.capabilities, loraCapability],
+    }
+    assert.equal(supportsInferenceAnimaSmartPatchRegionalLoraMode(onlyLora, mode), true)
+    assert.equal(supportsInferenceAnimaSmartPatchRegionalMode(onlyLora, mode, true), true)
+    assert.equal(supportsInferenceSmartPatchRegionalMode(onlyLora, 'anima', mode, null, true), true)
+    assert.equal(supportsInferenceAnimaSmartPatchRegionalMode(onlyLora, mode), false)
+    assert.equal(supportsInferenceSmartPatchRegionalMode(onlyLora, 'anima', mode), false)
+    for (const other of smartRegionalModes.filter((item) => item !== mode)) {
+      assert.equal(
+        supportsInferenceAnimaSmartPatchRegionalMode(onlyLora, other, true),
+        false,
+        other,
+      )
+    }
+    const both = { ...onlyLora, capabilities: [...onlyLora.capabilities, baseCapability] }
+    assert.equal(supportsInferenceAnimaSmartPatchRegionalMode(both, mode, false), true)
+    assert.equal(supportsInferenceAnimaSmartPatchRegionalMode(both, mode, true), true)
+    // A valid Illustrious objective/mode grant must not grant the unsupported LoRA composition.
+    const illustrious = {
+      ...both,
+      capabilities: [
+        ...both.capabilities,
+        `illustrious-smart-patch-regional-${mode}-v1`,
+        `illustrious-smart-patch-regional-v-prediction-${mode}-v1`,
+      ],
+    }
+    for (const objective of ['epsilon', 'v_prediction']) {
+      assert.equal(
+        supportsInferenceSmartPatchRegionalMode(illustrious, 'illustrious', mode, objective),
+        true,
+      )
+      assert.equal(
+        supportsInferenceSmartPatchRegionalMode(illustrious, 'illustrious', mode, objective, true),
+        false,
+      )
+    }
+  })
+
+  test(`Anima global LoRA Smart regional ${mode} requires every common native prerequisite and exact qualified version`, () => {
+    const ready = {
+      ...animaSmartRegionalCommon,
+      capabilities: [...animaSmartRegionalCommon.capabilities, loraCapability],
+    }
+    for (const removed of [
+      ...currentCoreCapabilities,
+      ...animaCapabilities,
+      'illustrious-outpaint',
+      'smart-patch-execution',
+      'smart-patch-seed-confirmation',
+      loraCapability,
+    ]) {
+      const peer = {
+        ...ready,
+        capabilities: ready.capabilities.filter((item) => item !== removed),
+      }
+      assert.equal(supportsInferenceAnimaSmartPatchRegionalLoraMode(peer, mode), false, removed)
+      assert.equal(supportsInferenceAnimaSmartPatchRegionalMode(peer, mode, true), false, removed)
+      assert.equal(
+        supportsInferenceSmartPatchRegionalMode(peer, 'anima', mode, null, true),
+        false,
+        removed,
+      )
+    }
+    for (const workerVersion of ['0.11.0', '0.12.0', '0.13.0', '0.14.1', '0.15.0']) {
+      const peer = { ...ready, workerVersion }
+      assert.equal(
+        supportsInferenceAnimaSmartPatchRegionalLoraMode(peer, mode),
+        false,
+        workerVersion,
+      )
+      assert.equal(
+        supportsInferenceAnimaSmartPatchRegionalMode(peer, mode, true),
+        false,
+        workerVersion,
+      )
+    }
+    for (const peer of [
+      null,
+      undefined,
+      [],
+      { ...ready, protocolVersion: 1 },
+      { ...ready, protocolVersion: '2' },
+      { ...ready, runtimeProfile: 'cpu' },
+      { ...ready, capabilities: null },
+      { ...ready, capabilities: [...ready.capabilities, 1] },
+    ]) {
+      assert.equal(supportsInferenceAnimaSmartPatchRegionalLoraMode(peer, mode), false)
+      assert.equal(supportsInferenceSmartPatchRegionalMode(peer, 'anima', mode, null, true), false)
+    }
+  })
+}
+
+test('Anima global LoRA Smart regional grants reject unsupported mode and family identities', () => {
+  const ready = {
+    ...animaSmartRegionalCommon,
+    capabilities: [
+      ...animaSmartRegionalCommon.capabilities,
+      ...smartRegionalModes.map((mode) => `anima-smart-patch-regional-lora-${mode}-v1`),
+      'anima-smart-patch-regional-lora-unsupported-v1',
+    ],
+  }
+  for (const mode of [null, undefined, '', 'unsupported', 'txt2img ', 0, {}, ['inpaint']]) {
+    assert.equal(supportsInferenceAnimaSmartPatchRegionalLoraMode(ready, mode), false)
+    assert.equal(supportsInferenceAnimaSmartPatchRegionalMode(ready, mode, true), false)
+    assert.equal(supportsInferenceSmartPatchRegionalMode(ready, 'anima', mode, null, true), false)
+  }
+  for (const family of [null, undefined, '', 'sdxl', 'anima-qwen35', 'Anima', 0]) {
+    assert.equal(
+      supportsInferenceSmartPatchRegionalMode(ready, family, 'inpaint', null, true),
+      false,
+    )
   }
 })

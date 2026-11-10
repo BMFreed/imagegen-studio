@@ -57,6 +57,10 @@ ANIMA_SMART_PATCH_REGIONAL_CAPABILITY = "anima-smart-patch-regional-inpaint-v1"
 ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_CAPABILITY = "anima-smart-patch-regional-outpaint-v1"
 ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_CAPABILITY = "anima-smart-patch-regional-txt2img-v1"
 ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_CAPABILITY = "anima-smart-patch-regional-img2img-v1"
+ANIMA_SMART_PATCH_REGIONAL_LORA_CAPABILITY = "anima-smart-patch-regional-lora-inpaint-v1"
+ANIMA_SMART_PATCH_REGIONAL_LORA_OUTPAINT_CAPABILITY = "anima-smart-patch-regional-lora-outpaint-v1"
+ANIMA_SMART_PATCH_REGIONAL_LORA_TXT2IMG_CAPABILITY = "anima-smart-patch-regional-lora-txt2img-v1"
+ANIMA_SMART_PATCH_REGIONAL_LORA_IMG2IMG_CAPABILITY = "anima-smart-patch-regional-lora-img2img-v1"
 PROMPT_INTERPRETATION = "invoke-fragments-v1"
 
 

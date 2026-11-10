@@ -59,6 +59,24 @@ function pendingState(): ProjectGenerationActionState {
   }
 }
 
+test('Anima Smart regional LoRA mode grants survive the action-state boundary independently', () => {
+  const keys = [
+    'animaSmartPatchRegionalLoraSupported',
+    'animaSmartPatchRegionalLoraOutpaintSupported',
+    'animaSmartPatchRegionalLoraTxt2ImgSupported',
+    'animaSmartPatchRegionalLoraImg2ImgSupported',
+  ] as const
+  for (const key of keys) {
+    for (const value of [false, true]) {
+      const state = { ...pendingState(), [key]: value }
+      assert.equal(isProjectGenerationActionState(JSON.parse(JSON.stringify(state))), true)
+    }
+    for (const value of [null, 0, 'true', {}]) {
+      assert.equal(isProjectGenerationActionState({ ...pendingState(), [key]: value }), false)
+    }
+  }
+})
+
 test('action state validates native Anima support without breaking older advisory responses', () => {
   assert.equal(isProjectGenerationActionState(pendingState()), true)
   for (const animaSupported of [false, true]) {

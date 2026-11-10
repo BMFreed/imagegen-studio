@@ -8,16 +8,30 @@
 
 ## Текущая граница реализации — 10.11.2026
 
-Сверка кода на `c976e57f2d729d6095f88cbab54bdd6f00bddbb8` не выявила нового
-блокирующего продуктового выбора. Актуальный конечный список обязательных gaps
+Текущая реализация продолжает `c79e7e0f4cb27447955a7c666d44f3c15a800f58`;
+нового блокирующего продуктового выбора не выявлено. Актуальный конечный список
+обязательных gaps
 зафиксирован в [roadmap checkpoint](./specs/01-implementation-roadmap.md#актуальный-checkpoint-на-10112026):
-Illustrious Smart Regional и regional reference inference, обещанные оставшиеся
-Smart Regional combinations после сверки контракта, визуальная/capacity
-приёмка, Home/workspaces/Project Trash, hard resource removal и оставшиеся
+Illustrious EPS/V Smart Regional global LoRA, Illustrious regional reference
+inference, обещанные оставшиеся совместимые Smart Regional combinations после
+сверки контракта, визуальная/capacity приёмка, Home/workspaces/Project Trash,
+hard resource removal и оставшиеся
 Models contexts, полный image export, release runtime и Electron delivery,
 итоговая compatibility/recovery/NoobAI/MVP acceptance. Private source consumer
 не означает public readiness. Anima references и generic ControlNet/IP-Adapter
 не добавляются в MVP; PP-001/005/007/008 остаются «Пока не обещать».
+
+Public Illustrious Smart Regional EPS и NoobAI V уже имеют finite four-mode
+checkpoints и не являются целиком открытой интеграцией. Текущий
+[original-Anima Smart Regional global LoRA](./engineering/phase-4-anima-smart-regional-lora-research.md)
+подключает отдельные mode grants, ordered signed/zero stack и frozen Retry.
+ROOT выполнил lower checks и finite four-mode installed matrix на archived build;
+последующий one-argument client guard fix имеет directed RED→GREEN checks и
+отдельный final-build TXT control cohort, а не повтор всей matrix на final build.
+Это уточняет прежний отказ enabled Anima LoRA, сохраняя старую empty/disabled
+lane и остальные ограничения. Retention-r1 выполнен, independent retained-byte
+audit CLEAN; ROOT cleanup завершён после retention и process/dependency gates. Numerical influence и exact zero/clean controls не
+закрывают visual utility, capacity/release или readiness.
 
 Последующие checkpoints закрыли ordinary Smart, Compare/Preset и Current Canvas
 regional integrations, перечисленные в roadmap; их не нужно реализовывать

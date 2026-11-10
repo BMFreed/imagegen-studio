@@ -580,3 +580,153 @@ test('Illustrious Smart regional guard preserves bounded Euler Normal policy and
   good.document.regionalGuidance![0].prompts!.negative!.text = 'local exclusion'
   assert.equal(reason(good), null)
 })
+
+const animaSmartLoraAdvisoryReady = {
+  ...ANIMA_BATCH_READY,
+  capabilities: [
+    ...ANIMA_BATCH_READY.capabilities,
+    'illustrious-outpaint',
+    'smart-patch-execution',
+    'smart-patch-seed-confirmation',
+    'anima-regional-lora-v1',
+    'anima-smart-patch-regional-inpaint-v1',
+    'anima-smart-patch-regional-outpaint-v1',
+    'anima-smart-patch-regional-txt2img-v1',
+    'anima-smart-patch-regional-img2img-v1',
+  ],
+  workerVersion: '0.14.0',
+}
+
+function advisoryForAnimaSmartPeer(
+  input: ReturnType<typeof fixture>,
+  ready: unknown,
+  mode: string,
+) {
+  // The UI supplies flags for the selected active stack; Main independently rechecks the real
+  // peer after CPU source classification. This helper makes that preselected advisory explicit.
+  const requiresLora = input.patch.generationDraft.loras.some((entry) => entry.enabled)
+  return reason({
+    ...input,
+    runtimeImg2ImgSupported: supportsInferenceAnimaSmartPatchRegionalMode(
+      ready,
+      'img2img',
+      requiresLora,
+    ),
+    runtimeOutpaintSupported: supportsInferenceAnimaSmartPatchRegionalMode(
+      ready,
+      'outpaint',
+      requiresLora,
+    ),
+    runtimeSupported: supportsInferenceAnimaSmartPatchRegionalMode(ready, 'inpaint', requiresLora),
+    runtimeTxt2ImgSupported: supportsInferenceAnimaSmartPatchRegionalMode(
+      ready,
+      'txt2img',
+      requiresLora,
+    ),
+    targetMode: mode,
+  })
+}
+
+for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
+  test(`Anima Smart regional ${mode} signed and enabled-zero global LoRAs require their own advisory grant`, () => {
+    const input = fixture()
+    const reference = {
+      ...input.patch.generationDraft.model!,
+      displayName: 'Configured global Anima LoRA',
+      kind: 'lora' as const,
+      localModelId: randomUUID(),
+      localVersionId: randomUUID(),
+    }
+    const wrong = {
+      ...animaSmartLoraAdvisoryReady,
+      capabilities: [
+        ...animaSmartLoraAdvisoryReady.capabilities,
+        `anima-smart-patch-regional-lora-${mode === 'inpaint' ? 'txt2img' : 'inpaint'}-v1`,
+      ],
+    }
+    const exact = {
+      ...wrong,
+      // No empty-stack grant is needed once this exact LoRA composition is qualified.
+      capabilities: [
+        ...wrong.capabilities.filter(
+          (capability) =>
+            !/^anima-smart-patch-regional-(?:inpaint|outpaint|txt2img|img2img)-v1$/u.test(
+              capability,
+            ),
+        ),
+        `anima-smart-patch-regional-lora-${mode}-v1`,
+      ],
+    }
+    for (const weight of [-0.7, 0]) {
+      input.patch.generationDraft.loras = [{ enabled: true, resource: reference, weight }]
+      assert.match(advisoryForAnimaSmartPeer(input, wrong, mode)!, /engine/u)
+      assert.equal(advisoryForAnimaSmartPeer(input, exact, mode), null)
+      // Undefined support is the metadata-only Main preflight, not a worker grant.
+      assert.equal(reason({ ...input, runtimeSupported: undefined, targetMode: mode }), null)
+    }
+  })
+
+  test(`Anima Smart regional ${mode} disabled missing global LoRA keeps the old empty-stack advisory`, () => {
+    const input = fixture()
+    input.patch.generationDraft.loras = [
+      {
+        enabled: false,
+        resource: {
+          ...input.patch.generationDraft.model!,
+          displayName: 'Disabled missing global Anima LoRA',
+          fileSha256: 'f'.repeat(64),
+          kind: 'lora',
+          localModelId: randomUUID(),
+          localVersionId: randomUUID(),
+        },
+        weight: 0,
+      },
+    ]
+    assert.equal(advisoryForAnimaSmartPeer(input, animaSmartLoraAdvisoryReady, mode), null)
+    const onlyLora = {
+      ...animaSmartLoraAdvisoryReady,
+      capabilities: [
+        ...animaSmartLoraAdvisoryReady.capabilities.filter(
+          (capability) =>
+            !/^anima-smart-patch-regional-(?:inpaint|outpaint|txt2img|img2img)-v1$/u.test(
+              capability,
+            ),
+        ),
+        `anima-smart-patch-regional-lora-${mode}-v1`,
+      ],
+    }
+    assert.match(advisoryForAnimaSmartPeer(input, onlyLora, mode)!, /engine/u)
+    input.patch.generationDraft.loras = []
+    assert.equal(advisoryForAnimaSmartPeer(input, animaSmartLoraAdvisoryReady, mode), null)
+    assert.match(advisoryForAnimaSmartPeer(input, onlyLora, mode)!, /engine/u)
+  })
+}
+
+test('Illustrious Smart regional still refuses enabled global LoRAs including zero after the Anima extension', () => {
+  const input = illustriousFixture()
+  const resource = {
+    ...input.patch.generationDraft.model!,
+    displayName: 'Configured Illustrious LoRA',
+    kind: 'lora' as const,
+    localModelId: randomUUID(),
+    localVersionId: randomUUID(),
+  }
+  for (const weight of [-0.7, 0]) {
+    input.patch.generationDraft.loras = [{ enabled: true, resource, weight }]
+    for (const targetMode of ['inpaint', 'outpaint', 'txt2img', 'img2img']) {
+      assert.match(
+        reason({
+          ...input,
+          runtimeImg2ImgSupported: true,
+          runtimeOutpaintSupported: true,
+          runtimeSupported: true,
+          runtimeTxt2ImgSupported: true,
+          targetMode,
+        })!,
+        /LoRA/u,
+      )
+    }
+  }
+  input.patch.generationDraft.loras[0].enabled = false
+  assert.equal(reason(input), null)
+})

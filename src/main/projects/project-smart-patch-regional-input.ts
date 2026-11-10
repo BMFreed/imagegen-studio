@@ -38,19 +38,58 @@ export const ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE =
   'invoke-anima-smart-regional-txt2img-v1' as const
 export const ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE =
   'invoke-anima-smart-regional-img2img-v1' as const
+export const ANIMA_SMART_PATCH_REGIONAL_LORA_INPAINT_PROFILE =
+  'invoke-anima-smart-regional-lora-inpaint-v1' as const
+export const ANIMA_SMART_PATCH_REGIONAL_LORA_OUTPAINT_PROFILE =
+  'invoke-anima-smart-regional-lora-outpaint-v1' as const
+export const ANIMA_SMART_PATCH_REGIONAL_LORA_TXT2IMG_PROFILE =
+  'invoke-anima-smart-regional-lora-txt2img-v1' as const
+export const ANIMA_SMART_PATCH_REGIONAL_LORA_IMG2IMG_PROFILE =
+  'invoke-anima-smart-regional-lora-img2img-v1' as const
 /** Each public frozen profile keeps its exact original Smart execution mode. */
 export type SmartPatchAnimaRegionalProfile =
   | typeof ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE
+  | typeof ANIMA_SMART_PATCH_REGIONAL_LORA_IMG2IMG_PROFILE
+  | typeof ANIMA_SMART_PATCH_REGIONAL_LORA_INPAINT_PROFILE
+  | typeof ANIMA_SMART_PATCH_REGIONAL_LORA_OUTPAINT_PROFILE
+  | typeof ANIMA_SMART_PATCH_REGIONAL_LORA_TXT2IMG_PROFILE
   | typeof ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE
   | typeof ANIMA_SMART_PATCH_REGIONAL_PROFILE
   | typeof ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE
 export type PreparedSmartPatchAnimaRegionalProfile = SmartPatchAnimaRegionalProfile
-const MODE_BY_PROFILE = {
+export const ANIMA_SMART_REGIONAL_MODES = {
   [ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE]: 'img2img',
+  [ANIMA_SMART_PATCH_REGIONAL_LORA_IMG2IMG_PROFILE]: 'img2img',
+  [ANIMA_SMART_PATCH_REGIONAL_LORA_INPAINT_PROFILE]: 'inpaint',
+  [ANIMA_SMART_PATCH_REGIONAL_LORA_OUTPAINT_PROFILE]: 'outpaint',
+  [ANIMA_SMART_PATCH_REGIONAL_LORA_TXT2IMG_PROFILE]: 'txt2img',
   [ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE]: 'outpaint',
   [ANIMA_SMART_PATCH_REGIONAL_PROFILE]: 'inpaint',
   [ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE]: 'txt2img',
 } as const
+
+/** Invoke4875 graphBuilder.getActiveCompatibleLoras includes enabled weight-zero rows. */
+export function isSmartPatchAnimaRegionalLoraProfile(
+  profile: SmartPatchAnimaRegionalProfile,
+): boolean {
+  return (
+    profile === ANIMA_SMART_PATCH_REGIONAL_LORA_IMG2IMG_PROFILE ||
+    profile === ANIMA_SMART_PATCH_REGIONAL_LORA_INPAINT_PROFILE ||
+    profile === ANIMA_SMART_PATCH_REGIONAL_LORA_OUTPAINT_PROFILE ||
+    profile === ANIMA_SMART_PATCH_REGIONAL_LORA_TXT2IMG_PROFILE
+  )
+}
+
+const PROFILES = [
+  ANIMA_SMART_PATCH_REGIONAL_PROFILE,
+  ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE,
+  ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE,
+  ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE,
+  ANIMA_SMART_PATCH_REGIONAL_LORA_INPAINT_PROFILE,
+  ANIMA_SMART_PATCH_REGIONAL_LORA_OUTPAINT_PROFILE,
+  ANIMA_SMART_PATCH_REGIONAL_LORA_TXT2IMG_PROFILE,
+  ANIMA_SMART_PATCH_REGIONAL_LORA_IMG2IMG_PROFILE,
+] as const
 const MAX_REGIONS = 3
 const MAX_AGGREGATE_TEXT_BYTES = 128 * 1024
 
@@ -219,12 +258,7 @@ const preparedSchema = v.strictObject({
       text: v.string(),
     }),
   ),
-  profile: v.picklist([
-    ANIMA_SMART_PATCH_REGIONAL_PROFILE,
-    ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE,
-    ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE,
-    ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE,
-  ]),
+  profile: v.picklist(PROFILES),
   promptInterpretation: v.optional(v.literal(ANIMA_PROMPT_INTERPRETATION)),
   recipe: recipeSchema,
   schemaVersion: v.literal(1),
@@ -236,12 +270,7 @@ const frozenCoverage = v.strictObject({
 })
 const frozenPreparedSchema = v.strictObject({
   ...preparedSchema.entries,
-  profile: v.picklist([
-    ANIMA_SMART_PATCH_REGIONAL_PROFILE,
-    ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE,
-    ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE,
-    ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE,
-  ]),
+  profile: v.picklist(PROFILES),
   promptInterpretation: v.literal(ANIMA_PROMPT_INTERPRETATION),
   recipe: v.strictObject({
     ...recipeSchema.entries,
@@ -336,7 +365,7 @@ export async function prepareSmartPatchAnimaRegionalInput(input: {
   const profile =
     requestedProfile === undefined ? ANIMA_SMART_PATCH_REGIONAL_PROFILE : requestedProfile
   const promptInterpretation = input.promptInterpretation
-  if (!Object.hasOwn(MODE_BY_PROFILE, profile)) {
+  if (!Object.hasOwn(ANIMA_SMART_REGIONAL_MODES, profile)) {
     throw invalid('The Smart regional execution profile is unsupported.')
   }
   if (promptInterpretation !== undefined && promptInterpretation !== ANIMA_PROMPT_INTERPRETATION) {
@@ -350,8 +379,10 @@ export async function prepareSmartPatchAnimaRegionalInput(input: {
   ) {
     throw unsupported('Private Smart regional INP requires an original Anima checkpoint.')
   }
-  if (draft.loras.some((entry) => entry.enabled)) {
-    throw unsupported('Private Smart regional INP does not admit enabled LoRAs.')
+  if (
+    draft.loras.some((entry) => entry.enabled) !== isSmartPatchAnimaRegionalLoraProfile(profile)
+  ) {
+    throw unsupported('The Smart regional profile differs from its enabled global LoRA policy.')
   }
   if (
     draft.vae !== null ||
@@ -439,7 +470,7 @@ export function bindSmartPatchAnimaRegionalExecution(
 ): BoundSmartPatchAnimaRegionalInput {
   const prepared = capturePrepared(input)
   const execution = captureSmartPatchExecutionRequest(executionInput)
-  const expectedMode = MODE_BY_PROFILE[prepared.profile]
+  const expectedMode = ANIMA_SMART_REGIONAL_MODES[prepared.profile]
   if (execution.family !== 'anima' || execution.mode !== expectedMode) {
     throw unsupported(
       prepared.profile === ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE
@@ -469,8 +500,11 @@ export function bindSmartPatchAnimaRegionalExecution(
   ) {
     throw invalid('The prepared Smart execution differs from its frozen regional target.')
   }
-  if (execution.inference.loras.length !== 0) {
-    throw unsupported('Private Smart regional INP does not admit enabled LoRAs.')
+  if (
+    execution.inference.loras.length > 0 !==
+    isSmartPatchAnimaRegionalLoraProfile(prepared.profile)
+  ) {
+    throw unsupported('The Smart regional profile differs from its original global LoRA policy.')
   }
   return { ...prepared, execution }
 }

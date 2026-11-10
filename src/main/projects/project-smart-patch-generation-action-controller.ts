@@ -276,6 +276,9 @@ export class ProjectSmartPatchGenerationActionController {
                       inferenceReady,
                       draft.model?.baseModelFamily,
                       mode,
+                      undefined,
+                      draft.model?.baseModelFamily === 'anima' &&
+                        draft.loras.some((entry) => entry.enabled),
                     ) ||
                     (draft.model?.baseModelFamily === 'illustrious' &&
                       supportsInferenceSmartPatchRegionalMode(
@@ -302,6 +305,9 @@ export class ProjectSmartPatchGenerationActionController {
                   inferenceReady,
                   draft.model?.baseModelFamily,
                   mode,
+                  undefined,
+                  draft.model?.baseModelFamily === 'anima' &&
+                    draft.loras.some((entry) => entry.enabled),
                 ) &&
                 !(
                   draft.model?.baseModelFamily === 'illustrious' &&
@@ -345,6 +351,7 @@ export class ProjectSmartPatchGenerationActionController {
                   entry.family,
                   mode,
                   predictionType,
+                  entry.family === 'anima' && entry.inference.loras.length > 0,
                 )
               ) {
                 throw new ProjectGenerationActionError(
@@ -382,13 +389,15 @@ export class ProjectSmartPatchGenerationActionController {
                   capture: regionalCapture,
                   item: plan.items[0],
                   profile:
-                    mode === 'outpaint'
-                      ? ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE
-                      : mode === 'txt2img'
-                        ? ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE
-                        : mode === 'img2img'
-                          ? ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE
-                          : ANIMA_SMART_PATCH_REGIONAL_PROFILE,
+                    entry.inference.loras.length > 0
+                      ? `invoke-anima-smart-regional-lora-${mode}-v1`
+                      : mode === 'outpaint'
+                        ? ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE
+                        : mode === 'txt2img'
+                          ? ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE
+                          : mode === 'img2img'
+                            ? ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE
+                            : ANIMA_SMART_PATCH_REGIONAL_PROFILE,
                   promptInterpretation: ANIMA_PROMPT_INTERPRETATION,
                 })
               }

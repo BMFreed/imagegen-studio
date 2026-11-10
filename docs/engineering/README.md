@@ -1,5 +1,44 @@
 # Engineering Workflow
 
+## Current Anima Smart Regional global LoRA — finite qualification and retained evidence
+
+[The four-mode continuation](./phase-4-anima-smart-regional-lora-research.md)
+joins existing ordered global LoRA/resource/scoped patch/RNG owners to original
+Anima Smart Regional. Each mode has its own additive profile/grant; enabled zero
+remains an exact resource, disabled missing rows retain the old empty-stack lane.
+Selected-Smart negative, independent regional masks/KEEP, explicit Add/Save and
+ordinary-only accepted provenance remain unchanged. No per-region LoRA, TI,
+Anima references, batch or method expansion is introduced.
+
+ROOT reports 997 distinct Main (973+24 actual-client cases)/407 distinct Python/
+254 browser PASS, two existing Python opt-in skips, full typing/Ruff/lint/build
+PASS including final typecheck-r3/lint-r2/build-r2. Isolated mutation: 36 selections,
+32 GREEN/four post-PNG semantic RED with exact restoration; source-only reviews
+are CLEAN within scope. The original archived-build four-mode installed matrix
+passes 64 checks/24 requests/20 world publications/four step-1 cancels/four exact
+restarted Retry/12 normal physical lifetimes. All four zero/clean PNG/RGBA controls
+are exact; signed RGB contrasts establish influence, not visual utility.
+
+After that snapshot, one client-guard argument is corrected to inspect captured
+LoRA presence: 16 semantic RED/eight empty GREEN become all 24 GREEN; client files
+and neighbors pass 62 cases. Only Main differs in the final build; four other
+recorded members are byte identical. Separate final-build TXT controls pass five
+checks/two requests/two world publications/one normal lifetime and match the
+original TXT controls. The qualified union is 69 checks/26 requests/22 world
+publications/13 normal lifetimes; the four-mode matrix was
+not repeated on the final build. Failed attempts and setup failures are excluded
+and retained, including successful Retry followed by terminal harness errors.
+
+Executed ROOT retention-r1 verifies 385 copied files with logical SQLite-WAL,
+Pillow, source and bundle checks for 10 Projects/28 rows/24 receipts/28 bundles/24 processing-world
+pairs/16 app lifetimes, including three failed owned attempts. Independent retained-byte audit is CLEAN; ROOT retained all 7,258 entries and
+reclaimed 127,021,056 allocated bytes from its two exact idle payload paths.
+SHARED, managed state and active worker companions remain protected. Earlier dated checkpoints
+retain their historical scopes; this current continuation supersedes their Anima
+Smart enabled-LoRA refusal. Illustrious EPS/V Smart LoRA, regional reference
+inference, visual utility/capacity and release remain open; PP-001/005/007/008 stay
+**«Пока не обещать»**.
+
 ## Private prepared-VAE image encoding
 
 [Private encode owner](./phase-4-regional-guidance-img2img-vae-research.md) adapts Invoke image→VAE dtype→native posterior→scale→denoiser cast without changing borrowed VAE storage. New private CUDA profiles reuse existing prepared decode; public IMG remains Embedded FP16. ROOT551 PASS/619 warnings (45 new cases; four trained calls+one aggregate), strict typing and source review CLEAN. All encoder/decode precision oracles and exact FP32 repeat pass; isolated mutation gives5 GREEN/one semantic RED. Final retained-byte review is CLEAN; ROOT confirms15 ended units/readers/dependencies, retains all4502 archive entries and reclaims50,290,688 bytes from its exact scratch tree. Public selected/FP32 IMG remains the next owner.

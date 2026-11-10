@@ -27,6 +27,11 @@ export interface ProjectGenerationActionState {
   /** Separate finite regional Anima execution support; ordinary Anima never grants it. */
   animaRegionalSupported?: boolean
   animaSmartPatchRegionalImg2ImgSupported?: boolean
+  animaSmartPatchRegionalLoraImg2ImgSupported?: boolean
+  animaSmartPatchRegionalLoraOutpaintSupported?: boolean
+  /** Enabled global LoRA stacks require an exact qualified Smart/regional mode. */
+  animaSmartPatchRegionalLoraSupported?: boolean
+  animaSmartPatchRegionalLoraTxt2ImgSupported?: boolean
   animaSmartPatchRegionalOutpaintSupported?: boolean
   animaSmartPatchRegionalSupported?: boolean
   animaSmartPatchRegionalTxt2ImgSupported?: boolean
@@ -171,6 +176,10 @@ export function isProjectGenerationActionState(
         'illustriousSmartPatchRegionalTxt2ImgSupported',
         'illustriousSmartPatchRegionalImg2ImgSupported',
         'animaSupported',
+        'animaSmartPatchRegionalLoraSupported',
+        'animaSmartPatchRegionalLoraOutpaintSupported',
+        'animaSmartPatchRegionalLoraTxt2ImgSupported',
+        'animaSmartPatchRegionalLoraImg2ImgSupported',
         'animaSmartPatchRegionalTxt2ImgSupported',
         'animaSmartPatchRegionalImg2ImgSupported',
         'animaSmartPatchRegionalOutpaintSupported',
@@ -218,6 +227,14 @@ export function isProjectGenerationActionState(
     (value['illustriousSmartPatchRegionalImg2ImgSupported'] !== undefined &&
       typeof value['illustriousSmartPatchRegionalImg2ImgSupported'] !== 'boolean') ||
     (value['animaSupported'] !== undefined && typeof value['animaSupported'] !== 'boolean') ||
+    (value['animaSmartPatchRegionalLoraSupported'] !== undefined &&
+      typeof value['animaSmartPatchRegionalLoraSupported'] !== 'boolean') ||
+    (value['animaSmartPatchRegionalLoraOutpaintSupported'] !== undefined &&
+      typeof value['animaSmartPatchRegionalLoraOutpaintSupported'] !== 'boolean') ||
+    (value['animaSmartPatchRegionalLoraTxt2ImgSupported'] !== undefined &&
+      typeof value['animaSmartPatchRegionalLoraTxt2ImgSupported'] !== 'boolean') ||
+    (value['animaSmartPatchRegionalLoraImg2ImgSupported'] !== undefined &&
+      typeof value['animaSmartPatchRegionalLoraImg2ImgSupported'] !== 'boolean') ||
     (value['animaSmartPatchRegionalTxt2ImgSupported'] !== undefined &&
       typeof value['animaSmartPatchRegionalTxt2ImgSupported'] !== 'boolean') ||
     (value['animaSmartPatchRegionalImg2ImgSupported'] !== undefined &&

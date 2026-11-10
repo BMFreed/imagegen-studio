@@ -511,11 +511,31 @@ export function supportsInferenceAnimaSmartPatchRegionalImg2Img(value: unknown):
   )
 }
 
+/** Global enabled LoRA, including zero, requires its own exact Smart-mode grant. */
+export function supportsInferenceAnimaSmartPatchRegionalLoraMode(
+  value: unknown,
+  mode: unknown,
+): boolean {
+  return (
+    isQualifiedInferenceWorkerReady(value) &&
+    value.workerVersion === '0.14.0' &&
+    supportsInferenceAnima(value) &&
+    value.capabilities.includes('smart-patch-execution') &&
+    value.capabilities.includes('smart-patch-seed-confirmation') &&
+    ['img2img', 'inpaint', 'outpaint', 'txt2img'].includes(typeof mode === 'string' ? mode : '') &&
+    value.capabilities.includes(`anima-smart-patch-regional-lora-${String(mode)}-v1`)
+  )
+}
+
 /** Call only with the actual classified or strictly parsed frozen Smart mode. */
 export function supportsInferenceAnimaSmartPatchRegionalMode(
   value: unknown,
   mode: unknown,
+  requiresLora = false,
 ): boolean {
+  if (requiresLora) {
+    return supportsInferenceAnimaSmartPatchRegionalLoraMode(value, mode)
+  }
   return mode === 'inpaint'
     ? supportsInferenceAnimaSmartPatchRegional(value)
     : mode === 'outpaint'
@@ -554,10 +574,12 @@ export function supportsInferenceSmartPatchRegionalMode(
   family: unknown,
   mode: unknown,
   predictionType: unknown = 'epsilon',
+  requiresLora = false,
 ): boolean {
   return family === 'illustrious'
-    ? supportsInferenceIllustriousSmartPatchRegionalMode(value, mode, predictionType)
+    ? !requiresLora &&
+        supportsInferenceIllustriousSmartPatchRegionalMode(value, mode, predictionType)
     : family === 'anima'
-      ? supportsInferenceAnimaSmartPatchRegionalMode(value, mode)
+      ? supportsInferenceAnimaSmartPatchRegionalMode(value, mode, requiresLora)
       : false
 }

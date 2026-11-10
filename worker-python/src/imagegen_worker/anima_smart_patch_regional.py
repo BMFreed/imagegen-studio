@@ -7,6 +7,12 @@ backend/anima/regional_prompting.py normalizes the clipped world mask and resize
 NEAREST directly to the actual processing image-token grid. KEEP is neither a
 regional mask nor an intersection/fade applied to one.
 
+The same Invoke revision's graph.ts/addRegionalGuidance.ts reuse the ordered
+LoRA-bearing encoder edges for global and regional conditioning; Anima denoise
+holds LayerPatcher through its denoiser. The original Studio LoRA sampling scope
+already covers both encoders and denoising. Explicit additive profiles admit
+that existing scope without broadening the original no-LoRA profiles.
+
 This complete-input frontend is not a worker command, admission capability,
 queue payload or provenance record. Main owns capture/planner/resource lineage;
 the existing Smart owner verifies exact files, loads the native CUDA models and
@@ -24,6 +30,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from imagegen_worker.anima_euler import AnimaEulerResult, validate_anima_number
 from imagegen_worker.anima_regional import (
+    _LORA_RNG_OWNER,  # pyright: ignore[reportPrivateUsage]
     _MODEL_OWNERS,  # pyright: ignore[reportPrivateUsage]
     _capture_regional_recipe,  # pyright: ignore[reportPrivateUsage]
     _Input,  # pyright: ignore[reportPrivateUsage]
@@ -63,11 +70,22 @@ _PROFILE = "invoke-anima-smart-regional-inpaint-v1"
 _OUTPAINT_PROFILE = "invoke-anima-smart-regional-outpaint-v1"
 _TXT2IMG_PROFILE = "invoke-anima-smart-regional-txt2img-v1"
 _IMG2IMG_PROFILE = "invoke-anima-smart-regional-img2img-v1"
+_LORA_PROFILE = "invoke-anima-smart-regional-lora-inpaint-v1"
+_LORA_OUTPAINT_PROFILE = "invoke-anima-smart-regional-lora-outpaint-v1"
+_LORA_TXT2IMG_PROFILE = "invoke-anima-smart-regional-lora-txt2img-v1"
+_LORA_IMG2IMG_PROFILE = "invoke-anima-smart-regional-lora-img2img-v1"
+_LORA_PROFILES = frozenset(
+    {_LORA_PROFILE, _LORA_OUTPAINT_PROFILE, _LORA_TXT2IMG_PROFILE, _LORA_IMG2IMG_PROFILE}
+)
 _MODE_BY_PROFILE = {
     _PROFILE: "inpaint",
     _OUTPAINT_PROFILE: "outpaint",
     _TXT2IMG_PROFILE: "txt2img",
     _IMG2IMG_PROFILE: "img2img",
+    _LORA_PROFILE: "inpaint",
+    _LORA_OUTPAINT_PROFILE: "outpaint",
+    _LORA_TXT2IMG_PROFILE: "txt2img",
+    _LORA_IMG2IMG_PROFILE: "img2img",
 }
 _RECIPE_FIELDS = frozenset(
     {"layerId", "internalResolution", "smartMask", "modelSha256", "sampling"}
@@ -226,9 +244,9 @@ def capture_anima_smart_patch_regional_input(value: object) -> CapturedAnimaSmar
         "Anima Smart execution model, concrete prompts, seed or sampling differ from its recipe.",
     )
     _require(
-        type(policy.loras) is tuple and not policy.loras,
+        type(policy.loras) is tuple and bool(policy.loras) == (execution_profile in _LORA_PROFILES),
         "GENERATION_PROMPT_UNSUPPORTED",
-        "Private Anima Smart regions do not admit LoRA.",
+        "Anima Smart regional LoRAs require the exact nonempty-stack mode profile.",
     )
     # Keep the old private command ceiling, independently of the larger in-memory
     # world alpha planes. No new field enters its JSONL or durable manifest.
@@ -293,7 +311,8 @@ def _require_captured_command(
     if command.mode != "txt2img":
         validate_anima_number(policy.sampling.strength, 0, 1)
     _require(
-        not policy.loras
+        type(policy.loras) is tuple
+        and bool(policy.loras) == (owned.execution_profile in _LORA_PROFILES)
         and policy.sampling.mode == ("txt2img" if command.mode == "txt2img" else "img2img")
         and (command.mode != "txt2img" or policy.sampling.strength is None)
         and policy.sampling.scheduler in ("euler", "heun")
@@ -368,7 +387,13 @@ def run_prepared_anima_smart_patch_regional(
     )
     policy = cast(AnimaInferenceParameters, owned.command.inference)
     with _reserve(
-        (models.transformer, models.text_conditioner, models.qwen3_encoder, models.vae),
+        (
+            models.transformer,
+            models.text_conditioner,
+            models.qwen3_encoder,
+            models.vae,
+            *((_LORA_RNG_OWNER,) if policy.loras else ()),
+        ),
         _MODEL_OWNERS,
     ):
         torch, attentions = _model_profile(models, runtime, profile)
@@ -410,6 +435,7 @@ def run_prepared_anima_smart_patch_regional(
                     models,
                     owned_tokenizers,
                     positive_mask,
+                    attentions if policy.loras else None,
                     **cast(Any, {} if negative_mask is None else {"negative_mask": negative_mask}),
                 )
             )
@@ -419,6 +445,7 @@ def run_prepared_anima_smart_patch_regional(
                 anima_prompt_payload(policy.negative_prompt),
                 models,
                 prepared,
+                loras=policy.loras,
                 tokenizers=owned_tokenizers,
                 progress=progress,
                 **cast(Any, {} if factory is None else {"prediction_factory": factory}),

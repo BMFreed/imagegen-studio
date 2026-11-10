@@ -12,7 +12,10 @@ import path from 'node:path'
 import test from 'node:test'
 
 import type { SmartPatchExecutionModelResolver } from './project-smart-patch-execution.js'
-import type { BoundSmartPatchAnimaRegionalInput } from './project-smart-patch-regional-input.js'
+import type {
+  BoundSmartPatchAnimaRegionalInput,
+  SmartPatchAnimaRegionalProfile,
+} from './project-smart-patch-regional-input.js'
 import type { SmartPatchExecutionRequest } from './smart-patch-execution-request.js'
 import type { SmartPatchInferenceTransport } from './smart-patch-generation-processor.js'
 import type { SmartPatchQueueFixture } from './test-fixtures/smart-patch-queue.js'
@@ -25,6 +28,7 @@ import {
 } from './project-smart-patch-regional-input.js'
 import {
   attachSmartPatchAnimaRegionalInput,
+  captureSmartPatchInputMaterial,
   type SmartPatchInputMaterial,
 } from './smart-patch-frozen-input.js'
 import { SmartPatchGenerationProcessor } from './smart-patch-generation-processor.js'
@@ -34,7 +38,10 @@ import {
   prepareSmartPatchRegionalWorkerRequest,
 } from './smart-patch-regional-worker-request.js'
 import { OUTPAINT_READY } from './test-fixtures/outpaint-ready.js'
-import { literalSmartPatchColorPng } from './test-fixtures/smart-patch-input-material.js'
+import {
+  literalSmartPatchColorPng,
+  literalSmartPatchPreparedInput,
+} from './test-fixtures/smart-patch-input-material.js'
 import { admitSmartPatch, withSmartPatchQueueFixture } from './test-fixtures/smart-patch-queue.js'
 import { createSourceOutputWorkerOwner } from './test-fixtures/source-output-worker.js'
 
@@ -59,7 +66,10 @@ const prompt = (text: string) => ({ embeddingRefs: [], text })
 const compile = (text: string) =>
   compileAnimaPromptWeightingForInterpretation(text, ANIMA_PROMPT_INTERPRETATION)
 
-async function regionalMaterial(f: SmartPatchQueueFixture) {
+async function regionalMaterial(
+  f: SmartPatchQueueFixture,
+  profile: SmartPatchAnimaRegionalProfile = ANIMA_SMART_PATCH_REGIONAL_PROFILE,
+) {
   const material: SmartPatchInputMaterial = {
     files: Object.fromEntries(
       Object.entries(f.material.files).map(([name, bytes]) => [name, Buffer.from(bytes)]),
@@ -111,7 +121,7 @@ async function regionalMaterial(f: SmartPatchQueueFixture) {
         text: negative.text,
       },
     ],
-    profile: ANIMA_SMART_PATCH_REGIONAL_PROFILE,
+    profile,
     promptInterpretation: ANIMA_PROMPT_INTERPRETATION,
     recipe: {
       bbox: structuredClone(context.bbox),
@@ -155,7 +165,9 @@ async function regionalMaterial(f: SmartPatchQueueFixture) {
       sampling: {
         animaMethod: item.inference.sampling.scheduler,
         cfgScale: item.inference.sampling.guidanceScale,
-        denoisingStrength: item.inference.sampling.strength,
+        // The recipe retains authored Smart settings even when TXT's effective plan has null
+        // strength. Frozen metadata checks this numeric value against the selected draft.
+        denoisingStrength: context.generationDraft.sampling.denoisingStrength,
         steps: item.inference.sampling.steps,
       },
       smartMask: { maskId: context.mask.id, maskRevision: context.mask.revision },
@@ -175,7 +187,8 @@ async function originalRequest(
   if (item.family !== 'anima') {
     assert.fail('Anima fixture')
   }
-  for (const name of ['model-source.png', 'latent-keep-mask.png']) {
+  const source = material.manifest.files['model-source.png']
+  for (const name of ['latent-keep-mask.png', ...(source ? ['model-source.png'] : [])]) {
     await writeFile(path.join(root, name), material.files[name], { flag: 'wx', mode: 0o600 })
   }
   return {
@@ -186,11 +199,8 @@ async function originalRequest(
       ...material.manifest.files['latent-keep-mask.png'],
       path: path.join(root, 'latent-keep-mask.png'),
     },
-    mode: 'inpaint',
-    modelSource: {
-      ...material.manifest.files['model-source.png']!,
-      path: path.join(root, 'model-source.png'),
-    },
+    mode: material.manifest.mode,
+    modelSource: source ? { ...source, path: path.join(root, 'model-source.png') } : null,
     output: { pngPath: path.join(root, 'model-result.png'), stagingRoot: root },
     protocolVersion: '1',
     requestId: randomUUID(),
@@ -199,7 +209,12 @@ async function originalRequest(
   }
 }
 
-async function peer(f: SmartPatchQueueFixture, missing?: string, mode = 'done') {
+async function peer(
+  f: SmartPatchQueueFixture,
+  missing?: string,
+  mode = 'done',
+  capabilities: readonly string[] = ready.capabilities,
+) {
   const runtimeRoot = path.join(f.root, 'regional-protocol-peer')
   await mkdir(runtimeRoot, { mode: 0o700 })
   const executable = path.join(runtimeRoot, 'python')
@@ -216,7 +231,7 @@ async function peer(f: SmartPatchQueueFixture, missing?: string, mode = 'done') 
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const args=process.argv.slice(2);
 if(process.platform==='linux' && (args.length!==7 || JSON.stringify(args.slice(0,6))!==JSON.stringify(['-I','-m','imagegen_worker.owned_inference','--parent-pid',String(process.ppid),'--scratch-base']))) process.exit(21);
-const ready=${JSON.stringify(ready)};ready.capabilities=ready.capabilities.filter(x=>x!==${JSON.stringify(missing ?? '')});
+const ready=${JSON.stringify({ ...ready, capabilities })};ready.capabilities=ready.capabilities.filter(x=>x!==${JSON.stringify(missing ?? '')});
 process.stdout.write(JSON.stringify({...ready,type:'ready',pythonVersion:'3.12.13'})+'\n');
 let pending='';process.stdin.setEncoding('utf8');process.stdin.on('data',data=>{pending+=data;while(pending.includes('\n')){
  const split=pending.indexOf('\n'),wire=JSON.parse(pending.slice(0,split));pending=pending.slice(split+1);
@@ -660,3 +675,233 @@ test('unconfirmed regional inference exit retains source KEEP and all sidecars u
     }
   })
 })
+
+async function clientRegionalMaterial(
+  f: SmartPatchQueueFixture,
+  mode: SmartPatchExecutionRequest['mode'],
+  loraWeight?: number,
+) {
+  // Reuse the declared mode-specific source/KEEP fixture and genuine frozen capture. The
+  // client still verifies its real tiny files and PNGs; the client transport is not mocked.
+  const { executions, prepared } = literalSmartPatchPreparedInput('anima', mode)
+  const original = f.material.manifest.items[0]
+  const execution = executions[0]
+  const request = execution.request
+  if (original.family !== 'anima' || request.family !== 'anima') {
+    assert.fail('The directed client fixture requires original Anima')
+  }
+  prepared.context.generationDraft.model = structuredClone(
+    f.material.manifest.context.generationDraft.model,
+  )
+  request.inference = {
+    ...request.inference,
+    model: structuredClone(original.inference.model),
+    prompts: {
+      negative: compile(execution.item.prompts.negative),
+      positive: compile(execution.item.prompts.positive),
+    },
+  }
+  if (loraWeight !== undefined) {
+    const lora = f.prepared.context.loras[loraWeight === 0 ? 1 : 0]
+    prepared.context.generationDraft.loras = [
+      {
+        enabled: true,
+        resource: structuredClone(lora.reference),
+        weight: loraWeight,
+      },
+    ]
+    request.inference = {
+      ...request.inference,
+      loras: [
+        {
+          byteSize: lora.byteSize,
+          path: lora.managedPath,
+          sha256: lora.reference.fileSha256,
+          weight: loraWeight,
+        },
+      ],
+    }
+  }
+  const material = await captureSmartPatchInputMaterial(prepared, executions)
+  if (mode === 'txt2img') {
+    assert.equal(material.manifest.sourceAlpha, 'transparent')
+    assert.equal(Object.hasOwn(material.files, 'model-source.png'), false)
+    assert.equal(request.modelSource, null)
+    assert.equal(request.inference.sampling.strength, null)
+    assert.equal(typeof prepared.context.generationDraft.sampling.denoisingStrength, 'number')
+  }
+  const profile: SmartPatchAnimaRegionalProfile =
+    loraWeight === undefined
+      ? `invoke-anima-smart-regional-${mode}-v1`
+      : `invoke-anima-smart-regional-lora-${mode}-v1`
+  return await regionalMaterial({ ...f, material }, profile)
+}
+
+// Directed transport boundary: the actual GenerationWorkerClient must select its grant from
+// the captured active inference tuple, including enabled zero. The child substitutes only the
+// protocol peer/numerical result; genuine capture, file checks, descriptor writes and exchange
+// remain the subject. These cases do not qualify trained LoRA influence or native patch cleanup.
+// Mutation/control: omitting requiresLora at the client's own guard rejects new-only signed/zero
+// work and wrongly sends old-only nonempty work; both legacy empty-stack controls stay unchanged.
+for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
+  const commonCapabilities = ready.capabilities.filter(
+    (capability) =>
+      !/^anima-smart-patch-regional-(?:lora-)?(?:inpaint|outpaint|txt2img|img2img)-v1$/u.test(
+        capability,
+      ),
+  )
+  const legacyCapability = `anima-smart-patch-regional-${mode}-v1`
+  const loraCapability = `anima-smart-patch-regional-lora-${mode}-v1`
+  for (const weight of [-0.7, 0]) {
+    test(`actual Anima Smart regional ${mode} client sends weight ${weight} with only its exact new LoRA grant`, async () => {
+      await withSmartPatchQueueFixture('anima', async (f) => {
+        const { material, prepared } = await clientRegionalMaterial(f, mode, weight)
+        const request = await originalRequest(f, material)
+        const bound = bindSmartPatchAnimaRegionalExecution(prepared, request)
+        const { client, marker } = await peer(f, undefined, 'done', [
+          ...commonCapabilities,
+          loraCapability,
+        ])
+        try {
+          const progress: GenerationDenoisingProgress[] = []
+          const result = await client.executeAnimaSmartPatchRegional(bound, (value) =>
+            progress.push(value),
+          )
+          assert.equal(result.actualSeed, request.inference.sampling.seed)
+          assert.equal(result.output.path, request.output.pngPath)
+          const lines = (await readFile(marker, 'utf8')).trim().split('\n')
+          assert.equal(
+            lines.length,
+            1,
+            'The actual client must send one dedicated descriptor command',
+          )
+          const observed = JSON.parse(lines[0])
+          const expectedInput = {
+            ...bound,
+            recipe: {
+              ...bound.recipe,
+              regions: bound.recipe.regions.map((region, index) => ({
+                ...region,
+                coverage: {
+                  ...region.coverage,
+                  alpha: {
+                    $alpha8: {
+                      byteSize: region.coverage.alpha.length,
+                      path: path.join(request.output.stagingRoot, `regional-${index}.alpha8`),
+                      sha256: sha(region.coverage.alpha),
+                    },
+                  },
+                },
+              })),
+            },
+          }
+          assert.deepEqual(observed.input, expectedInput)
+          assert.equal(observed.input.profile, `invoke-anima-smart-regional-lora-${mode}-v1`)
+          assert.deepEqual(observed.input.execution, request)
+          assert.deepEqual(
+            observed.input.execution.inference.loras.map((lora: { weight: number }) => lora.weight),
+            [weight],
+          )
+          const bundlePath = path.join(request.output.stagingRoot, 'smart-regional.json')
+          const bundle = await readFile(bundlePath)
+          assert.deepEqual(JSON.parse(bundle.toString('utf8')), expectedInput)
+          assert.deepEqual(observed.wire, {
+            bundle: { byteSize: bundle.length, path: bundlePath, sha256: sha(bundle) },
+            protocolVersion: '1',
+            reportProgress: true,
+            requestId: request.requestId,
+            stagingRoot: request.output.stagingRoot,
+            type: 'execute-anima-smart-patch-regional',
+          })
+          assert.deepEqual(
+            progress,
+            Array.from({ length: request.inference.sampling.totalSteps }, (_, index) => ({
+              step: index + 1,
+              totalSteps: request.inference.sampling.totalSteps,
+            })),
+          )
+          assert.deepEqual(
+            await readFile(request.latentKeepMask.path),
+            material.files['latent-keep-mask.png'],
+          )
+          if (request.modelSource) {
+            assert.deepEqual(
+              await readFile(request.modelSource.path),
+              material.files['model-source.png'],
+            )
+          } else {
+            assert.equal(mode, 'txt2img')
+            await assert.rejects(
+              readFile(path.join(request.output.stagingRoot, 'model-source.png')),
+              { code: 'ENOENT' },
+            )
+          }
+          for (const [index, region] of prepared.recipe.regions.entries()) {
+            assert.deepEqual(
+              await readFile(path.join(request.output.stagingRoot, `regional-${index}.alpha8`)),
+              Buffer.from(region.coverage.alpha),
+            )
+          }
+        } finally {
+          await client.close()
+        }
+      })
+    })
+
+    test(`actual Anima Smart regional ${mode} client refuses weight ${weight} on an old-only peer before descriptor writes or wire`, async () => {
+      await withSmartPatchQueueFixture('anima', async (f) => {
+        const { material, prepared } = await clientRegionalMaterial(f, mode, weight)
+        const request = await originalRequest(f, material)
+        const bound = bindSmartPatchAnimaRegionalExecution(prepared, request)
+        const { client, marker } = await peer(f, undefined, 'done', [
+          ...commonCapabilities,
+          legacyCapability,
+        ])
+        const initial = await readdir(request.output.stagingRoot)
+        try {
+          await assert.rejects(client.executeAnimaSmartPatchRegional(bound), {
+            code: 'WORKER_VERSION_MISMATCH',
+          })
+          assert.deepEqual(await readdir(request.output.stagingRoot), initial)
+          await assert.rejects(readFile(marker), { code: 'ENOENT' })
+        } finally {
+          await client.close()
+        }
+      })
+    })
+  }
+
+  for (const kind of ['legacy', 'lora-only'] as const) {
+    test(`actual Anima Smart regional ${mode} empty-stack client retains ${kind} peer eligibility`, async () => {
+      await withSmartPatchQueueFixture('anima', async (f) => {
+        const { material, prepared } = await clientRegionalMaterial(f, mode)
+        const request = await originalRequest(f, material)
+        const bound = bindSmartPatchAnimaRegionalExecution(prepared, request)
+        const { client, marker } = await peer(f, undefined, 'done', [
+          ...commonCapabilities,
+          kind === 'legacy' ? legacyCapability : loraCapability,
+        ])
+        const initial = await readdir(request.output.stagingRoot)
+        try {
+          assert.deepEqual(bound.execution.inference.loras, [])
+          if (kind === 'legacy') {
+            const result = await client.executeAnimaSmartPatchRegional(bound)
+            assert.equal(result.actualSeed, request.inference.sampling.seed)
+            const observed = JSON.parse((await readFile(marker, 'utf8')).trim())
+            assert.equal(observed.wire.type, 'execute-anima-smart-patch-regional')
+            assert.equal(observed.input.profile, `invoke-anima-smart-regional-${mode}-v1`)
+            assert.deepEqual(observed.input.execution, request)
+          } else {
+            await assert.rejects(client.executeAnimaSmartPatchRegional(bound), {
+              code: 'WORKER_VERSION_MISMATCH',
+            })
+            assert.deepEqual(await readdir(request.output.stagingRoot), initial)
+            await assert.rejects(readFile(marker), { code: 'ENOENT' })
+          }
+        } finally {
+          await client.close()
+        }
+      })
+    })
+  }
+}

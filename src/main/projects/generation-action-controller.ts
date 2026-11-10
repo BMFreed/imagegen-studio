@@ -32,6 +32,7 @@ import {
   supportsInferenceAnimaRegionalSampling,
   supportsInferenceAnimaSmartPatchRegional,
   supportsInferenceAnimaSmartPatchRegionalImg2Img,
+  supportsInferenceAnimaSmartPatchRegionalLoraMode,
   supportsInferenceAnimaSmartPatchRegionalOutpaint,
   supportsInferenceAnimaSmartPatchRegionalTxt2Img,
   supportsInferenceCFGRescale,
@@ -459,6 +460,22 @@ export class ProjectGenerationActionController {
         supportsInferenceAnimaRegional(ready),
       animaSmartPatchRegionalImg2ImgSupported:
         !this.blocked && !this.closed && supportsInferenceAnimaSmartPatchRegionalImg2Img(ready),
+      animaSmartPatchRegionalLoraImg2ImgSupported:
+        !this.blocked &&
+        !this.closed &&
+        supportsInferenceAnimaSmartPatchRegionalLoraMode(ready, 'img2img'),
+      animaSmartPatchRegionalLoraOutpaintSupported:
+        !this.blocked &&
+        !this.closed &&
+        supportsInferenceAnimaSmartPatchRegionalLoraMode(ready, 'outpaint'),
+      animaSmartPatchRegionalLoraSupported:
+        !this.blocked &&
+        !this.closed &&
+        supportsInferenceAnimaSmartPatchRegionalLoraMode(ready, 'inpaint'),
+      animaSmartPatchRegionalLoraTxt2ImgSupported:
+        !this.blocked &&
+        !this.closed &&
+        supportsInferenceAnimaSmartPatchRegionalLoraMode(ready, 'txt2img'),
       animaSmartPatchRegionalOutpaintSupported:
         !this.blocked && !this.closed && supportsInferenceAnimaSmartPatchRegionalOutpaint(ready),
       animaSmartPatchRegionalSupported:
@@ -1474,6 +1491,8 @@ export class ProjectGenerationActionController {
                   frozen.payload.item.family === 'illustrious'
                     ? frozen.payload.item.inference.checkpoint.predictionType
                     : undefined,
+                  frozen.payload.item.family === 'anima' &&
+                    frozen.payload.item.inference.loras.length > 0,
                 ))
             ) {
               throw new ProjectGenerationActionError(

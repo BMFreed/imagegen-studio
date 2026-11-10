@@ -2671,3 +2671,234 @@ for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
       .toBe(1)
   })
 }
+
+async function mountAnimaLoraSmartRegionalWiring(page: Page, mode: WiringFixture['smartMode']) {
+  await mountWiring(page, 'project')
+  await page.evaluate((mode) => {
+    const f = globalThis.window.regionalWiringFixture
+    const draft = JSON.parse(JSON.stringify(f.tab.generationDraft))
+    draft.model.baseModelFamily = 'anima'
+    draft.model.predictionType = null
+    f.catalog[0]!.versions[0]!.baseModelFamily = 'anima'
+    f.catalog[0]!.versions[0]!.predictionType = null
+    draft.positivePrompt = { embeddingRefs: [], text: '(one cat)1.25' }
+    draft.negativePrompt = { embeddingRefs: [], text: 'Smart LoRA exclusion' }
+    const resource = {
+      ...draft.model,
+      displayName: 'Installed Smart Anima LoRA',
+      kind: 'lora' as const,
+      localModelId: crypto.randomUUID(),
+      localVersionId: crypto.randomUUID(),
+    }
+    const catalog: ModelCatalogItem = JSON.parse(JSON.stringify(f.catalog[0]!))
+    catalog.id = resource.localModelId
+    catalog.name = resource.displayName
+    catalog.resourceType = 'lora'
+    catalog.defaultVersionId = resource.localVersionId
+    catalog.versions[0]!.id = resource.localVersionId
+    f.catalog.push(catalog)
+    draft.loras = [
+      { enabled: true, resource, weight: -0.5 },
+      {
+        enabled: false,
+        resource: {
+          ...resource,
+          displayName: 'Disabled missing Smart Anima LoRA',
+          localModelId: crypto.randomUUID(),
+          localVersionId: crypto.randomUUID(),
+        },
+        weight: 0.7,
+      },
+    ]
+    draft.vae = null
+    draft.vaePrecision = 'Auto'
+    draft.cfgRescale = 0
+    delete draft.clipSkip
+    draft.sampling = {
+      animaMethod: 'euler',
+      cfgScale: 4,
+      denoisingStrength: 0.5,
+      sampler: null,
+      scheduler: null,
+      steps: 3,
+    }
+    const patch = {
+      activeRaster: null,
+      activeRasterSubLayerId: null,
+      blendMode: 'normal' as const,
+      boundingBox: { height: 73, width: 107, x: -13, y: 5 },
+      generationDraft: draft,
+      id: crypto.randomUUID(),
+      internalResolution: { height: 128, width: 136 },
+      kind: 'smart-patch' as const,
+      locked: false,
+      mask: { asset: null, id: crypto.randomUUID(), revision: 0 },
+      maskImageUrl: null,
+      name: 'Selected Anima LoRA Smart',
+      opacity: 1,
+      rasterSubLayers: [],
+      status: 'empty' as const,
+      visible: true,
+    }
+    f.tab.layers = [patch]
+    f.selected = patch.id
+    f.smartMode = mode
+    // Current Canvas may be invalid without affecting the selected Smart job's frozen settings.
+    f.tab.generationDraft.negativePrompt.text = '{unrelated|Canvas}'
+    f.tab.generationDraft.loras = []
+    f.tab.regionalGuidance![0]!.prompts = {
+      negative: { embeddingRefs: [], text: '{dormant|local}' },
+      positive: { embeddingRefs: [], text: 'regional cat' },
+      useGlobalNegativePrompt: true,
+    }
+    Object.assign(f.state, {
+      animaRegionalLoraSupported: true,
+      animaSmartPatchRegionalImg2ImgSupported: true,
+      animaSmartPatchRegionalOutpaintSupported: true,
+      animaSmartPatchRegionalSupported: true,
+      animaSmartPatchRegionalTxt2ImgSupported: true,
+      animaSupported: true,
+      loraSupported: true,
+      regionalLoraSupported: true,
+      smartPatchSupported: true,
+    })
+  }, mode)
+}
+
+// These component mocks prove exact-mode eligibility and saved-requirement forwarding; native
+// LoRA influence, resource verification and persistence are exercised by the separate Main/native owners.
+for (const mode of ['inpaint', 'outpaint', 'txt2img', 'img2img'] as const) {
+  test(`renderer Anima LoRA Smart regional ${mode} requires its exact grant for signed and enabled-zero resources`, async ({
+    page,
+  }) => {
+    await mountAnimaLoraSmartRegionalWiring(page, mode)
+    const generate = page.getByRole('button', { exact: true, name: 'Generate' })
+    await expect(generate).toBeDisabled()
+    await expect(page.getByText(/does not support .*Smart.*Regional Guidance/)).toBeVisible()
+    await page.evaluate((mode) => {
+      const f = globalThis.window.regionalWiringFixture
+      const wrongKey =
+        mode === 'inpaint'
+          ? 'animaSmartPatchRegionalLoraTxt2ImgSupported'
+          : 'animaSmartPatchRegionalLoraSupported'
+      f.state[wrongKey] = true
+      const patch = f.tab.layers[0]!
+      if (patch.kind === 'smart-patch') {
+        patch.generationDraft.loras[0]!.weight = 0
+      }
+    }, mode)
+    await expect(generate).toBeDisabled()
+    await page.evaluate((mode) => {
+      const f = globalThis.window.regionalWiringFixture
+      const key =
+        mode === 'inpaint'
+          ? 'animaSmartPatchRegionalLoraSupported'
+          : mode === 'outpaint'
+            ? 'animaSmartPatchRegionalLoraOutpaintSupported'
+            : mode === 'txt2img'
+              ? 'animaSmartPatchRegionalLoraTxt2ImgSupported'
+              : 'animaSmartPatchRegionalLoraImg2ImgSupported'
+      f.state[key] = true
+      // The new exact LoRA mode grant is independent from the old empty-stack mode grant.
+      f.state.animaSmartPatchRegionalSupported = false
+      f.state.animaSmartPatchRegionalOutpaintSupported = false
+      f.state.animaSmartPatchRegionalTxt2ImgSupported = false
+      f.state.animaSmartPatchRegionalImg2ImgSupported = false
+    }, mode)
+    await expect(generate).toBeEnabled()
+    await generate.click()
+    expect(
+      await page.evaluate(() => globalThis.window.regionalWiringFixture.generateCalls),
+    ).toEqual([1])
+    await page.evaluate(() => {
+      const f = globalThis.window.regionalWiringFixture
+      const patch = f.tab.layers[0]!
+      if (patch.kind === 'smart-patch') {
+        patch.generationDraft.loras[0]!.enabled = false
+      }
+    })
+    await expect(generate).toBeDisabled()
+    await page.evaluate((mode) => {
+      const f = globalThis.window.regionalWiringFixture
+      const key =
+        mode === 'inpaint'
+          ? 'animaSmartPatchRegionalSupported'
+          : mode === 'outpaint'
+            ? 'animaSmartPatchRegionalOutpaintSupported'
+            : mode === 'txt2img'
+              ? 'animaSmartPatchRegionalTxt2ImgSupported'
+              : 'animaSmartPatchRegionalImg2ImgSupported'
+      f.state[key] = true
+    }, mode)
+    await expect(generate).toBeEnabled()
+  })
+
+  test(`renderer frozen Anima LoRA Smart regional ${mode} Retry uses saved LoRA and mode requirements after current edits`, async ({
+    page,
+  }) => {
+    await mountWiring(page, 'queue')
+    await page.evaluate((mode) => {
+      const f = globalThis.window.regionalWiringFixture
+      f.queueItem.operation = 'anima-smart-patch'
+      f.queueItem.details!.sampling = {
+        animaMethod: 'euler',
+        cfgScale: 4,
+        seed: 42,
+        steps: 3,
+      }
+      f.queueItem.details!.requiresRegionalLora = true
+      f.queueItem.details!.requiresSmartPatchRegional = true
+      f.queueItem.details!.requiresSmartPatchRegionalOutpaint = mode === 'outpaint'
+      f.queueItem.details!.requiresSmartPatchRegionalTxt2Img = mode === 'txt2img'
+      f.queueItem.details!.requiresSmartPatchRegionalImg2Img = mode === 'img2img'
+      Object.assign(f.state, {
+        animaRegionalLoraSupported: true,
+        animaSmartPatchRegionalImg2ImgSupported: true,
+        animaSmartPatchRegionalOutpaintSupported: true,
+        animaSmartPatchRegionalSupported: true,
+        animaSmartPatchRegionalTxt2ImgSupported: true,
+        animaSupported: true,
+        regionalLoraSupported: true,
+        smartPatchSupported: true,
+      })
+      f.tab.generationDraft.loras = []
+      f.tab.regionalGuidance = []
+      f.epoch += 1
+    }, mode)
+    const retry = page.getByRole('button', { exact: true, name: 'Retry job' })
+    await expect(retry).toBeDisabled()
+    await expect(
+      page.getByTestId('queue-job-row').getByText(/does not support this frozen Anima LoRA Smart/),
+    ).toBeVisible()
+    await page.evaluate((mode) => {
+      const f = globalThis.window.regionalWiringFixture
+      const wrongKey =
+        mode === 'inpaint'
+          ? 'animaSmartPatchRegionalLoraTxt2ImgSupported'
+          : 'animaSmartPatchRegionalLoraSupported'
+      f.state[wrongKey] = true
+    }, mode)
+    await expect(retry).toBeDisabled()
+    await page.evaluate((mode) => {
+      const f = globalThis.window.regionalWiringFixture
+      const key =
+        mode === 'inpaint'
+          ? 'animaSmartPatchRegionalLoraSupported'
+          : mode === 'outpaint'
+            ? 'animaSmartPatchRegionalLoraOutpaintSupported'
+            : mode === 'txt2img'
+              ? 'animaSmartPatchRegionalLoraTxt2ImgSupported'
+              : 'animaSmartPatchRegionalLoraImg2ImgSupported'
+      f.state[key] = true
+      f.state.animaSmartPatchRegionalSupported = false
+      f.state.animaSmartPatchRegionalOutpaintSupported = false
+      f.state.animaSmartPatchRegionalTxt2ImgSupported = false
+      f.state.animaSmartPatchRegionalImg2ImgSupported = false
+    }, mode)
+    await expect(retry).toBeEnabled()
+    await retry.click()
+    await expect
+      .poll(() => page.evaluate(() => globalThis.window.regionalWiringFixture.retryCalls.length))
+      .toBe(1)
+  })
+}

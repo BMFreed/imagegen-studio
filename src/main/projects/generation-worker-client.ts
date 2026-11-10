@@ -465,7 +465,13 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
     try {
       const captured = captureSmartPatchRegionalWorkerInput(input)
       const request = captured.execution
-      if (!supportsInferenceAnimaSmartPatchRegionalMode(this.ready, request.mode)) {
+      if (
+        !supportsInferenceAnimaSmartPatchRegionalMode(
+          this.ready,
+          request.mode,
+          request.inference.loras.length > 0,
+        )
+      ) {
         throw new GenerationWorkerError(
           'WORKER_VERSION_MISMATCH',
           `The active worker has not qualified Anima Smart ${request.mode === 'outpaint' ? 'OUT' : 'INP'} with Regional Guidance.`,

@@ -95,7 +95,7 @@ export function getSmartPatchRegionalGenerationUnavailableReason(input: {
       ? 'Regional Smart Patch generation requires native Anima Euler or Heun and embedded Auto VAE.'
       : 'Regional Illustrious Smart Patch requires Euler/Normal, CFG greater than 1 and embedded Auto VAE.'
   }
-  if (draft.loras.some((entry) => entry.enabled)) {
+  if (family !== 'anima' && draft.loras.some((entry) => entry.enabled)) {
     return 'Regional Smart Patch generation does not support enabled LoRAs yet.'
   }
   if (regions.some((region) => (region.referenceImages?.length ?? 0) > 0)) {
@@ -155,7 +155,7 @@ export function getSmartPatchRegionalGenerationUnavailableReason(input: {
               input.runtimeTxt2ImgSupported === true ||
               input.runtimeImg2ImgSupported === true
   return supported === false
-    ? `The image engine does not support ${family === 'anima' ? 'Anima' : draft.model?.predictionType === 'v_prediction' ? 'Illustrious V' : 'Illustrious'} Smart Patch Regional Guidance. Repair or update the runtime.`
+    ? `The image engine does not support ${family === 'anima' ? (draft.loras.some((entry) => entry.enabled) ? 'Anima global LoRAs with' : 'Anima') : draft.model?.predictionType === 'v_prediction' ? 'Illustrious V' : 'Illustrious'} Smart Patch Regional Guidance. Repair or update the runtime.`
     : null
 }
 

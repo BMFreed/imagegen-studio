@@ -48,14 +48,12 @@ import {
   type PreparedSmartPatchIllustriousRegionalInput,
 } from './project-smart-patch-illustrious-regional-input.js'
 import {
-  ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE,
-  ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE,
-  ANIMA_SMART_PATCH_REGIONAL_PROFILE,
-  ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE,
+  ANIMA_SMART_REGIONAL_MODES,
   bindSmartPatchAnimaRegionalExecution,
   captureFrozenSmartPatchAnimaRegionalInputV1,
   capturePreparedSmartPatchAnimaRegionalInput,
   type FrozenSmartPatchAnimaRegionalInputV1,
+  isSmartPatchAnimaRegionalLoraProfile,
   type PreparedSmartPatchAnimaRegionalInput,
   SMART_PATCH_REGIONAL_ALPHA_ROLES,
 } from './project-smart-patch-regional-input.js'
@@ -533,12 +531,7 @@ export async function attachSmartPatchAnimaRegionalInput(
 ): Promise<SmartPatchInputMaterial> {
   const prepared = capturePreparedSmartPatchAnimaRegionalInput(preparedInput)
   const { profile } = prepared
-  if (
-    profile !== ANIMA_SMART_PATCH_REGIONAL_PROFILE &&
-    profile !== ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE &&
-    profile !== ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE &&
-    profile !== ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE
-  ) {
+  if (!Object.hasOwn(ANIMA_SMART_REGIONAL_MODES, profile)) {
     refuse('The public Smart regional profile is unsupported.')
   }
   const manifest = parseFrozenSmartPatchInputV1(input.manifest)
@@ -710,19 +703,15 @@ function assertAnimaRegionalMetadataAgreement(manifest: FrozenSmartPatchInputV1)
   const draft = ctx.generationDraft
   const model = draft.model
   const entry = manifest.items[0]
+  const expectedMode = ANIMA_SMART_REGIONAL_MODES[regional.profile]
   const matchingMode =
-    (regional.profile === ANIMA_SMART_PATCH_REGIONAL_TXT2IMG_PROFILE &&
-      manifest.mode === 'txt2img' &&
-      manifest.sourceAlpha === 'transparent') ||
-    (regional.profile === ANIMA_SMART_PATCH_REGIONAL_IMG2IMG_PROFILE &&
-      manifest.mode === 'img2img' &&
-      manifest.sourceAlpha === 'opaque') ||
-    (regional.profile === ANIMA_SMART_PATCH_REGIONAL_PROFILE &&
-      manifest.mode === 'inpaint' &&
-      manifest.sourceAlpha === 'opaque') ||
-    (regional.profile === ANIMA_SMART_PATCH_REGIONAL_OUTPAINT_PROFILE &&
-      manifest.mode === 'outpaint' &&
-      manifest.sourceAlpha === 'mixed')
+    manifest.mode === expectedMode &&
+    manifest.sourceAlpha ===
+      (expectedMode === 'txt2img'
+        ? 'transparent'
+        : expectedMode === 'outpaint'
+          ? 'mixed'
+          : 'opaque')
   if (
     !matchingMode ||
     manifest.items.length !== 1 ||
@@ -732,7 +721,8 @@ function assertAnimaRegionalMetadataAgreement(manifest: FrozenSmartPatchInputV1)
     model?.kind !== 'checkpoint' ||
     model.baseModelFamily !== 'anima' ||
     model.predictionType !== null ||
-    draft.loras.some((value) => value.enabled) ||
+    draft.loras.some((value) => value.enabled) !==
+      isSmartPatchAnimaRegionalLoraProfile(regional.profile) ||
     draft.vae !== null ||
     (draft.vaePrecision ?? 'Auto') !== 'Auto' ||
     (draft.cfgRescale ?? 0) !== 0 ||

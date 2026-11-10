@@ -1,5 +1,112 @@
 # Regional Guidance
 
+## Current original-Anima Smart Regional global LoRA — 10.11.2026
+
+The [global LoRA continuation](../../../engineering/phase-4-anima-smart-regional-lora-research.md)
+connects the existing original-Anima Smart Regional TXT/IMG/INP/OUT consumers to
+the ordinary ordered global LoRA owner. This is the current implementation
+boundary; earlier dated checkpoints below retain their historical evidence and
+enabled-LoRA refusals. Finite installed qualification is achieved with the
+build-lineage limits below. Independent retained-byte audit is CLEAN and ROOT
+cleanup is complete. Numerical influence does not establish visual usefulness.
+
+Each mode independently requires `anima-smart-patch-regional-lora-{mode}-v1`
+and its matching frozen `invoke-anima-smart-regional-lora-{mode}-v1` profile,
+where `{mode}` is `txt2img`, `img2img`, `inpaint` or `outpaint`. Ordinary Anima,
+Current Canvas regional LoRA, another Smart mode and the old empty-stack grants
+cannot authorize this composition. A nonempty active ordered inference tuple,
+including enabled weight zero, selects the new profile. Empty active tuples and
+disabled missing rows retain the old profiles and capability meanings; disabled
+rows remain in the configured selected-Smart context without resource resolution.
+
+Enabled rows retain signed weights and order and require exact file identities
+even at weight zero. Existing resource owners reverify them before SQL admission,
+frozen Retry and native loading. Retry consumes the original whole bundle and
+ordered tuple after current authoring edits. The existing `requiresRegionalLora`
+queue detail carries the saved requirement; no portable field, queue operation,
+sampler, classifier or acceptance owner is added.
+
+Fresh Invoke revision `4875d96531ca6712b288f6e660fcbb34143408c1` supplies enabled
+selection, ordered Anima transformer/Qwen loaders, regional encoder edges and
+scoped patching; paths and callers are recorded in the research note. Studio
+reuses its shared LoRA patch scope and RNG reservation through conditioning and
+denoising, passing prequalified attentions into the existing prediction factory.
+Failure and Cancel retain restoration of model tensors/processors, PEFT state,
+tokenizers and RNG before the next job.
+
+The finite policy remains original Anima, one static item, Euler/Heun, embedded
+Auto VAE, processing 64–512 divisible by 8, bounded WORLD geometry, at most three
+regions and the existing text/context/attention budgets. Per-region LoRA routing,
+active TI, Anima reference inference, batch/dynamic prompts and other methods
+remain outside this slice. Selected frozen Smart settings own inherited negative;
+each region owns its mask independently of Smart KEEP/contribution. Generate and
+Retry never implicitly Add or Save. Regional Guidance remains in the live Project
+and outside accepted-result provenance, Compare and result-derived presets.
+
+ROOT reports 997 distinct Main PASS: 973 earlier distinct cases plus 24 directed
+actual-client cases. The initial lower run had 969 PASS and four fixture failures;
+corrected fixture-only code then passed all 46 cases in its file without adding
+those cases a second time.
+Python has 407 distinct PASS (77 new, 326 neighbors and four additional enabled-zero
+controls in the isolated baseline), with two existing external-fixture opt-in
+skips. All 254 browser cases pass. Final full TS/Vue typecheck-r3, lint-r2 and
+app build-r2 pass; Python typing/Ruff also pass. Lint retains only the two
+unchanged baseline parser exclusions.
+The isolated mutation has 36 selections: 32 GREEN and four signed post-PNG semantic
+RED, with empty/zero controls and exact source restoration. Source-only reviews
+are CLEAN within their scopes; these evidence levels remain separate from native
+installed inference and visual quality.
+
+ROOT's original four-mode installed campaign passes 64 checks across 24 requests,
+20 world publications, four native-step-1 cancellations, four exact restarted
+Retry and 12 normal, physically exited app lifetimes. Explicit Add/Undo/Redo/
+Save-reopen passes. Changing only signed weight changes visible RGB channels:
+TXT 19,752; IMG 22,813; INP 12,259; OUT 19,702. All four enabled-zero/disabled-clean
+controls match both processing PNG and world RGBA exactly. These are influence,
+scope-release and replay controls, not visual-quality acceptance.
+
+That campaign uses its archived source/build snapshot. After it, the actual
+client's own capability guard gains exactly one argument, captured
+`inference.loras.length > 0`, matching the already-correct admission/processor
+owners. Its 24 directed cases first produce 16 semantic RED and eight empty-stack
+GREEN, then all 24 GREEN after the fix; the complete client files and neighbors
+pass 62 cases. The earlier TXT fixture/null-strength setup failures and a tsx
+socket-path setup failure are excluded from semantic evidence. In the final
+build comparison only Main differs; the other four recorded members are byte
+identical. A separate final-build TXT control cohort passes five checks, two
+requests, two world publications and one normal/physical app lifetime. Its
+zero/clean PNG/RGBA are exact, and the source helper compares them with the
+original TXT controls. The qualified union is 69 checks/26 requests/22 world
+publications/13 normal lifetimes. It is not a rerun of all four modes on the final
+build; source lineage and the final TXT cohort remain explicit.
+
+Failed attempts remain retained separately: an existing-Project filename guard
+with zero apps/requests; a 120-second pre-SQL timeout with zero rows and forced
+physical close; a successful TXT Retry followed by terminal `EACCES`; and a
+successful IMG Retry followed by an incorrect CPU derivative-role assertion.
+The latter two add retained rows but remain failed attempts. The harness role
+repair admits a single exact predecessor SHA and reconstructs its 114,350-byte
+source from two checked blocks; other resume guards stay unchanged. No default,
+model, worker or numerical inference change follows. Earlier source-derived
+pre-SQL hashing volume and passive diagnostics remain distinct from throughput
+or acceptance. The 240-second SQL predicate stays inside the unchanged
+600-second phase, with launcher ≤2 GiB/native ≤10 GiB/aggregate ≤12 GiB and zero swap.
+
+ROOT's executed retention-r1 passes copy, logical SQLite/WAL, Pillow, source and
+bundle checks: 385 copied files retain 10 Projects, 28 rows, 24 receipts,
+28 bundles, 24 processing/world pairs and 16 app lifetimes, including three failed
+owned attempts. The filename refusal owned no app. This is completed retention
+verification. The independent source/document/retained-byte audit is CLEAN,
+including all 24 processing/WORLD pairs and 7,258 archive entries. ROOT separately
+verified physical exit, restoration, readers and incoming dependencies, then
+reclaimed 127,021,056 allocated bytes from its two exact idle payload paths.
+Shared runtime/models/managed state and active worker companions stay protected.
+
+Remaining consumers include compatible Illustrious EPS/V Smart global LoRA and
+Illustrious regional reference inference, followed by the contracted compatibility
+matrix. Official Illustrious XL v0.1 visual usefulness, capacity and release/MVP
+acceptance remain open. PP-001/005/007/008 stay **«Пока не обещать»**.
+
 ## Anima signed negatives — finite installed integration
 
 The [signed-negative extension](../../../engineering/phase-4-anima-regional-negative-research.md)

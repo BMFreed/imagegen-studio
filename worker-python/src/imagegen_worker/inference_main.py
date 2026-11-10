@@ -125,6 +125,10 @@ def inference_ready_message(
                     "anima-smart-patch-regional-outpaint-v1",
                     "anima-smart-patch-regional-txt2img-v1",
                     "anima-smart-patch-regional-img2img-v1",
+                    "anima-smart-patch-regional-lora-inpaint-v1",
+                    "anima-smart-patch-regional-lora-outpaint-v1",
+                    "anima-smart-patch-regional-lora-txt2img-v1",
+                    "anima-smart-patch-regional-lora-img2img-v1",
                 )
                 if runtime is not None and supports_anima_compute(runtime)
                 else ()
