@@ -1,7 +1,23 @@
 # Engineering Workflow
 
+## Current Illustrious reference IMG/OUT checkpoint
+
+[Research and finite remaining matrix](./phase-4-regional-reference-image-research.md):
+independent mode grants/profiles join the existing Current Canvas source and
+reference owners. ROOT324 affected Main plus36 overlapping post-fix cases,
+230 selected Python and274 browser PASS; typing/lint/build PASS. Isolated
+mutation16 selections =13 GREEN/three post-PNG RED,40 PNG witnesses.
+Two final installed cohorts pass26 checks/eight requests/six PNGs/two native
+Cancels/two exact restarted Retries/six normal physical lifetimes, explicit
+Add/history/Save-reopen and result-preset exclusion. Failed attempts are separate.
+Visual usefulness/capacity and release/MVP acceptance remain open. Contracts do
+not imply an unrestricted Regional combination matrix. PP statuses stay unchanged.
+Independent retained-byte audit CLEAN; all4502 entries retained. ROOT separately
+confirms exits/dependencies and reclaims249720832 allocated bytes from two exact
+own payload paths. Active shared runtime/resources/Projects/rows remain protected.
+
 <!-- regional-reference-inference-current:start -->
-## Latest Illustrious regional reference inference checkpoint
+## Previous Illustrious regional reference TXT checkpoint
 
 [Current consumer and remaining MVP boundaries](./phase-4-regional-reference-inference-research.md):
 public Current Canvas EPS TXT uses the exact offline Standard ViT-H pair and

@@ -2,7 +2,7 @@ import {
   createEmptyProjectDocumentV1,
   type IgsRegionalGuidanceReferenceImageV1,
 } from '../../shared/projects/project-schema.js'
-import { REGIONAL_REFERENCE_INFERENCE_PROFILE } from '../../shared/projects/regional-reference-inference.js'
+import { regionalReferenceProfileForMode } from '../../shared/projects/regional-reference-inference.js'
 
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
@@ -127,13 +127,13 @@ async function fixture() {
       },
     },
   })
-  return { capture, document, png, reads, recipe }
+  return { capture, document, mode: 'txt2img' as const, png, reads, recipe }
 }
 
 test('capture forwards ordered original canonical PNGs with distinct owners and exact zero masks', async () => {
   const f = await fixture()
   const result = await captureCurrentCanvasRegionalReferences({ ...f, resources })
-  assert.equal(result.profile, REGIONAL_REFERENCE_INFERENCE_PROFILE)
+  assert.equal(result.profile, regionalReferenceProfileForMode('txt2img'))
   assert.equal(result.images.length, 2)
   assert.deepEqual(
     f.reads,
@@ -205,13 +205,20 @@ test('capture freezes all original descriptors and image order before asynchrono
     path: r.referenceImages![0].asset.path,
     ref: r.referenceImages![0].id,
   }))
-  const pending = captureCurrentCanvasRegionalReferences({ ...f, resources })
+  const input: Parameters<typeof captureCurrentCanvasRegionalReferences>[0] = {
+    ...f,
+    mode: 'img2img',
+    resources,
+  }
+  const pending = captureCurrentCanvasRegionalReferences(input)
   await started
+  input.mode = 'outpaint'
   f.document.regionalGuidance!.reverse()
   f.recipe.regions.reverse()
   f.document.regionalGuidance![0].referenceImages = []
   release()
   const result = await pending
+  assert.equal(result.profile, regionalReferenceProfileForMode('img2img'))
   assert.deepEqual(
     result.images.map((r) => ({ id: r.regionId, ref: r.referenceId })),
     expected.map(({ id, ref }) => ({ id, ref })),

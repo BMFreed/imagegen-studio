@@ -12,6 +12,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 import gc
+import hashlib
 import importlib
 import math
 import os
@@ -25,9 +26,10 @@ from PIL import Image
 
 from imagegen_worker import illustrious_regional_references as references
 from imagegen_worker import illustrious_regional_worker as worker
-from imagegen_worker import inference_main
+from imagegen_worker import inference_main, outpaint_worker_assets
 from imagegen_worker.derivatives import SRGB_ICC_PROFILE, DerivativeError
 from imagegen_worker.illustrious_regional_attention import Shape
+from imagegen_worker.lama_infill import OUTPAINT_INFILL_BYTE_SIZE, OUTPAINT_INFILL_SHA256
 from test_illustrious_regional_conditioning import _bindings  # pyright: ignore[reportPrivateUsage]
 from test_illustrious_regional_denoising import (
     _observe,  # pyright: ignore[reportPrivateUsage]
@@ -51,6 +53,9 @@ def _case(
     zero: bool = False,
     image_only: bool = False,
     alternate: bool = False,
+    mode: str = "txt2img",
+    strength: float = 1.0,
+    source_marker: int = 0,
 ) -> Any:
     directory.mkdir(parents=True)
     case = _ordinary_case(directory)
@@ -141,10 +146,77 @@ def _case(
         )
     region["referenceImages"] = authored
     case.bundle["references"] = {
-        "profile": references.REFERENCE_PROFILE,
+        "profile": f"invoke-illustrious-regional-reference-{mode}-v1",
         "resources": resources,
         "images": images,
     }
+    case.mode = mode
+    if mode != "txt2img":
+        case.request["type"] = f"generate-illustrious-{mode}"
+        job = case.request["job"]
+        job["sampling"]["denoisingStrength"] = strength
+        source = Image.frombytes(
+            "RGB",
+            (64, 64),
+            bytes(
+                (x * (11 + c * 4) + y * (7 + c * 6) + source_marker * 61 + c * 53) % 256
+                for y in range(64)
+                for x in range(64)
+                for c in range(3)
+            ),
+        ).convert("RGBA")
+        if mode == "outpaint":
+            source.putalpha(
+                Image.frombytes(
+                    "L",
+                    (64, 64),
+                    bytes(
+                        0 if x < 16 else 127 if x == 16 else 255
+                        for _y in range(64)
+                        for x in range(64)
+                    ),
+                )
+            )
+        source.save(case.target, icc_profile=SRGB_ICC_PROFILE)
+        case.target.chmod(0o600)
+        job["target"].update(_descriptor(case.target))
+        case.source = source
+        if mode == "outpaint":
+            lama = auxiliary / "explicit-test-lama.pt"
+            lama.write_bytes(b"explicit tiny infill collaborator, not trained LaMa")
+            frozen = {
+                "role": "outpaint-infill",
+                "byteSize": OUTPAINT_INFILL_BYTE_SIZE,
+                "sha256": OUTPAINT_INFILL_SHA256,
+            }
+            job["infillResource"] = {**frozen, "path": str(lama)}
+            job["conditioning"] = {
+                "kind": "alpha-outpaint-conditioning",
+                "schemaVersion": 1,
+                "bbox": copy.deepcopy(bbox),
+                "sourceTarget": {
+                    key: value for key, value in job["target"].items() if key != "path"
+                },
+                "keepMask": {
+                    "format": "alpha8",
+                    "polarity": "keep",
+                    "width": 64,
+                    "height": 64,
+                    "byteSize": 4096,
+                    "sha256": hashlib.sha256(source.getchannel("A").tobytes()).hexdigest(),
+                },
+                "policy": {
+                    "version": 1,
+                    "edgeRadius": 16,
+                    "fadeDistance": 16,
+                    "infillMethod": "lama",
+                    "maskBlur": "gaussian-weighted-max",
+                    "minimumDenoise": 0,
+                    "outputMode": "contribution",
+                },
+                "infillResource": frozen,
+            }
+            job["conditioning"]["sourceTarget"]["format"] = "png"
     _seal(case)
     return case
 
@@ -303,10 +375,18 @@ def _tiny_model_loader(native: Any, records: Any) -> Any:
 def _run(
     case: Any, native: Any, monkeypatch: pytest.MonkeyPatch, *, failure: str | None = None
 ) -> Any:
-    records = SimpleNamespace(originals=[], prepared=[], before_output=[])
+    records = SimpleNamespace(originals=[], prepared=[], before_output=[], encodes=[], infills=[])
     original_prepare = worker.prepare_regional_references
-    original_publish = worker.generate_current_canvas_regional_txt2img
+    mode = getattr(case, "mode", "txt2img")
+    publisher = {
+        "txt2img": "generate_current_canvas_regional_txt2img",
+        "img2img": "generate_current_canvas_regional_img2img",
+        "outpaint": "_generate_current_canvas_regional",
+    }[mode]
+    original_publish = getattr(worker, publisher)
     linear_forward = native.torch.nn.Linear.forward
+    vae_type = cast(Any, type(native.pipeline.vae))
+    vae_encode = vae_type.encode
     first = next(
         module
         for module in native.pipeline.unet.modules()
@@ -332,14 +412,35 @@ def _run(
             kwargs.pop("profile")
             == "ordinary-canvas-invoke-dualclip-exact-ti-shared-readonly-cuda-fp16-v1"
         )
-        assert kwargs.pop("denoising_profile") == "ordinary-canvas-euler-txt2img-cuda-fp16-v2"
+        suffix = "v2" if mode == "txt2img" else "v1"
+        assert kwargs.pop("denoising_profile") == f"ordinary-canvas-euler-{mode}-cuda-fp16-{suffix}"
         kwargs["command"] = dataclasses.replace(kwargs["command"], vae_precision="Auto")
         return original_publish(
             recipe,
             profile="ordinary-canvas-invoke-dualclip-exact-ti-shared-readonly-cpu-v1",
-            denoising_profile="ordinary-canvas-euler-txt2img-cpu-v2",
+            denoising_profile=f"ordinary-canvas-euler-{mode}-cpu-{suffix}",
             **kwargs,
         )
+
+    def encode(current: Any, *args: Any, **kwargs: Any) -> Any:
+        if current is native.pipeline.vae:
+            records.encodes.append(args[0].detach().clone())
+        return vae_encode(current, *args, **kwargs)
+
+    def load_lama(path: Path, **kwargs: Any) -> Any:
+        assert path == Path(case.request["job"]["infillResource"]["path"])
+        assert kwargs == {
+            "expected_sha256": OUTPAINT_INFILL_SHA256,
+            "expected_byte_size": OUTPAINT_INFILL_BYTE_SIZE,
+            "device": "cpu",
+        }
+
+        def infill(source: Image.Image) -> Image.Image:
+            assert source.mode == "RGBA" and source.tobytes() == case.source.tobytes()
+            records.infills.append(source.copy())
+            return source.convert("RGB")
+
+        return SimpleNamespace(infill=infill)
 
     def linear(current: Any, value: Any) -> Any:
         if current is first.to_out[0]:
@@ -364,7 +465,10 @@ def _run(
         patch.setattr(worker, "prepare_regional_references", prepare)
         patch.setattr(worker, "load_illustrious_pipeline", load)
         patch.setattr(worker, "qualify_bindings", qualify)
-        patch.setattr(worker, "generate_current_canvas_regional_txt2img", publish)
+        patch.setattr(worker, publisher, publish)
+        patch.setattr(vae_type, "encode", encode)
+        if mode == "outpaint":
+            patch.setattr(outpaint_worker_assets, "load_local_lama", load_lama)
         patch.setattr(native.torch.nn.Linear, "forward", linear)
         patch.setattr(native.torch.nn.Module, "register_forward_pre_hook", register_output)
         with _preserved(native), _observe(denoising, native, patch) as seen:

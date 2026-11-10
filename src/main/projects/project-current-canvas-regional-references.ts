@@ -1,10 +1,11 @@
 import {
-  REGIONAL_REFERENCE_INFERENCE_PROFILE,
   REGIONAL_REFERENCE_MAX_BYTES,
   REGIONAL_REFERENCE_MAX_IMAGES,
   REGIONAL_REFERENCE_MAX_PIXELS,
   REGIONAL_REFERENCE_MAX_SIDE,
   REGIONAL_REFERENCE_MAX_TOTAL_BYTES,
+  type RegionalReferenceInferenceMode,
+  regionalReferenceProfileForMode,
 } from '../../shared/projects/regional-reference-inference.js'
 
 import { createHash } from 'node:crypto'
@@ -24,6 +25,7 @@ export type CapturedCurrentCanvasRegionalReferences = NonNullable<RegionalWorker
  */
 export async function captureCurrentCanvasRegionalReferences(input: {
   capture: CapturedRegionalGuidanceInput
+  mode: RegionalReferenceInferenceMode
   recipe: CurrentCanvasRegionalRecipe
   resources: VerifiedRegionalReferenceResources
 }): Promise<CapturedCurrentCanvasRegionalReferences> {
@@ -32,6 +34,7 @@ export async function captureCurrentCanvasRegionalReferences(input: {
   const assets = structuredClone(input.capture.assets)
   const readAsset = input.capture.readAsset.bind(input.capture)
   const resources = structuredClone(input.resources)
+  const profile = regionalReferenceProfileForMode(input.mode)
   const regions = (snapshot.regionalGuidance ?? []).filter((region) => region.enabled)
   if (
     recipe.family !== 'illustrious' ||
@@ -103,7 +106,7 @@ export async function captureCurrentCanvasRegionalReferences(input: {
   const { adapter, visionConfig, visionModel } = resources
   return {
     images,
-    profile: REGIONAL_REFERENCE_INFERENCE_PROFILE,
+    profile,
     resources: {
       adapter: { byteSize: adapter.byteSize, path: adapter.managedPath, sha256: adapter.sha256 },
       visionConfig: {

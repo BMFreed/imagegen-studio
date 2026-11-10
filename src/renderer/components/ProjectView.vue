@@ -2502,9 +2502,13 @@ const generationBlockingReason = computed(() => {
         iterations: imagesPerClick.value ?? 0,
         loraSupported: props.generationState?.regionalLoraSupported,
         outpaintSupported: props.generationState?.regionalOutpaintSupported,
+        regionalReferenceImagesImg2ImgSupported:
+          props.generationState?.regionalReferenceImagesImg2ImgSupported,
+        regionalReferenceImagesOutpaintSupported:
+          props.generationState?.regionalReferenceImagesOutpaintSupported,
         regionalReferenceImagesSupported: props.generationState?.regionalReferenceImagesSupported,
         runtimeSupported: props.generationState?.regionalSupported,
-        targetMode: targetState.value?.mode,
+        targetMode: targetState.value?.mode ?? null,
         vaeSupported: props.generationState?.regionalVaeSupported,
         vPredictionImageSupported: props.generationState?.regionalVPredictionImageSupported,
         vPredictionSamplingSupported: props.generationState?.regionalVPredictionSamplingSupported,

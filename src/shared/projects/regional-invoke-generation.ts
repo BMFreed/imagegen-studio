@@ -147,6 +147,8 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   iterations: number
   loraSupported?: boolean | null
   outpaintSupported?: boolean | null
+  regionalReferenceImagesImg2ImgSupported?: boolean | null
+  regionalReferenceImagesOutpaintSupported?: boolean | null
   regionalReferenceImagesSupported?: boolean | null
   runtimeSupported?: boolean | null
   targetMode?: 'img2img' | 'outpaint' | 'txt2img' | null
@@ -174,12 +176,10 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
   if (references.length > 0) {
     // Invoke 4875d965 layerOps.ts → prepareCanvasInvocation.ts → addRegionalGuidance.ts:
     // consume each original image in order with its owning mask and default full/1/0..1.
-    // Studio's first compatible consumer has an independent finite capability.
+    // compileCanvasGraph.ts grafts IMG source latents / OUT alpha-infill before that common
+    // collector. Each Studio composition has an independent finite capability.
     if (draft.model.predictionType !== 'epsilon') {
       return 'Regional reference images require an Illustrious epsilon model.'
-    }
-    if (input.targetMode != null && input.targetMode !== 'txt2img') {
-      return 'Regional reference images currently require a transparent txt2img target.'
     }
     if (draft.sampling.sampler !== 'Euler' || draft.sampling.scheduler !== 'Normal') {
       return 'Regional reference images require Euler with the Normal scheduler.'
@@ -240,8 +240,19 @@ export function getInvokeRegionalGenerationUnavailableReason(input: {
     ) {
       return 'Regional reference images require processing dimensions from 64 to 512, divisible by 8.'
     }
-    if (input.regionalReferenceImagesSupported !== true) {
-      return input.regionalReferenceImagesSupported == null
+    // Main omits mode only during its pre-composition authored-state check. The renderer
+    // supplies explicit null until the actual CPU target classifier has a result.
+    if (input.targetMode === null) {
+      return 'Checking the Current Canvas target mode for regional reference images.'
+    }
+    const supported =
+      input.targetMode === 'img2img'
+        ? input.regionalReferenceImagesImg2ImgSupported
+        : input.targetMode === 'outpaint'
+          ? input.regionalReferenceImagesOutpaintSupported
+          : input.regionalReferenceImagesSupported
+    if (supported !== true) {
+      return supported == null
         ? 'Checking image engine support for regional reference images. Repair or update the runtime if support remains unavailable.'
         : 'The current image engine does not support regional reference images. Repair or update the runtime.'
     }

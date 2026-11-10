@@ -3139,7 +3139,7 @@ for (const predictionType of ['epsilon', 'v_prediction'] as const) {
   }
 }
 
-test('renderer regional references require their exact TXT capability and use actual source classification', async ({
+test('renderer regional references require the exact actual TXT/IMG/OUT capability', async ({
   page,
 }) => {
   await mountWiring(page, 'project')
@@ -3171,6 +3171,10 @@ test('renderer regional references require their exact TXT capability and use ac
     ]
     f.state.regionalSupported = true
     f.state.regionalReferenceImagesSupported = false
+    f.state.regionalReferenceImagesImg2ImgSupported = false
+    f.state.regionalReferenceImagesOutpaintSupported = false
+    f.state.regionalImg2ImgSupported = true
+    f.state.regionalOutpaintSupported = true
     f.targetMode = 'txt2img'
   })
   const generate = page.getByRole('button', { exact: true, name: 'Generate' })
@@ -3194,42 +3198,80 @@ test('renderer regional references require their exact TXT capability and use ac
   })
   await expect(generate).toBeDisabled()
   await expect(
-    page.getByLabel('Generation actions').getByText(/transparent txt2img target/),
+    page.getByLabel('Generation actions').getByText(/does not support regional reference images/),
   ).toBeVisible()
   await page.evaluate(() => {
-    globalThis.window.regionalWiringFixture.tab.regionalGuidance![0]!.enabled = false
+    globalThis.window.regionalWiringFixture.state.regionalReferenceImagesImg2ImgSupported = true
+  })
+  await expect(generate).toBeEnabled()
+  await generate.click()
+  await page.evaluate(() => {
+    const f = globalThis.window.regionalWiringFixture
+    f.targetMode = 'outpaint'
+    f.tab.primaryBbox.x += 8
+  })
+  await expect(generate).toBeDisabled()
+  await expect(
+    page.getByLabel('Generation actions').getByText(/does not support regional reference images/),
+  ).toBeVisible()
+  await page.evaluate(() => {
+    globalThis.window.regionalWiringFixture.state.regionalReferenceImagesOutpaintSupported = true
+  })
+  await expect(generate).toBeEnabled()
+  await generate.click()
+  expect(await page.evaluate(() => globalThis.window.regionalWiringFixture.generateCalls)).toEqual([
+    1, 1, 1,
+  ])
+  await page.evaluate(() => {
+    const f = globalThis.window.regionalWiringFixture
+    f.state.regionalReferenceImagesSupported = false
+    f.state.regionalReferenceImagesImg2ImgSupported = false
+    f.state.regionalReferenceImagesOutpaintSupported = false
+    f.tab.regionalGuidance![0]!.enabled = false
   })
   await expect(generate).toBeEnabled()
 })
 
-test('renderer frozen reference-image Retry retains its separate requirement after current references are removed', async ({
-  page,
-}) => {
-  await mountWiring(page, 'queue')
-  await page.evaluate(() => {
-    const f = globalThis.window.regionalWiringFixture
-    f.queueItem.operation = 'illustrious-regional-txt2img'
-    f.queueItem.details!.requiresRegionalReferenceImages = true
-    f.tab.regionalGuidance = []
-    f.state.regionalSupported = true
-    f.state.regionalReferenceImagesSupported = false
-    f.epoch += 1
+for (const mode of ['txt2img', 'img2img', 'outpaint'] as const) {
+  test(`renderer frozen reference-image ${mode} Retry retains its exact requirement after current references are removed`, async ({
+    page,
+  }) => {
+    await mountWiring(page, 'queue')
+    await page.evaluate((mode) => {
+      const f = globalThis.window.regionalWiringFixture
+      f.queueItem.operation = `illustrious-regional-${mode}`
+      f.queueItem.details!.requiresRegionalReferenceImages = true
+      f.tab.regionalGuidance = []
+      f.state.regionalSupported = true
+      f.state.regionalImg2ImgSupported = true
+      f.state.regionalOutpaintSupported = true
+      f.state.regionalReferenceImagesSupported = mode !== 'txt2img'
+      f.state.regionalReferenceImagesImg2ImgSupported = mode !== 'img2img'
+      f.state.regionalReferenceImagesOutpaintSupported = mode !== 'outpaint'
+      f.epoch += 1
+    }, mode)
+    const retry = page.getByRole('button', { exact: true, name: 'Retry job' })
+    await expect(retry).toBeDisabled()
+    await expect(
+      page
+        .getByRole('region', { name: 'Generation jobs' })
+        .getByText(/frozen regional reference-image job/),
+    ).toBeVisible()
+    await page.evaluate((mode) => {
+      const f = globalThis.window.regionalWiringFixture
+      if (mode === 'txt2img') {
+        f.state.regionalReferenceImagesSupported = true
+      } else if (mode === 'img2img') {
+        f.state.regionalReferenceImagesImg2ImgSupported = true
+      } else {
+        f.state.regionalReferenceImagesOutpaintSupported = true
+      }
+      f.epoch += 1
+    }, mode)
+    await expect(retry).toBeEnabled()
+    await retry.click()
+    await expect
+      .poll(() => page.evaluate(() => globalThis.window.regionalWiringFixture.retryCalls.length))
+      .toBe(1)
   })
-  const retry = page.getByRole('button', { exact: true, name: 'Retry job' })
-  await expect(retry).toBeDisabled()
-  await expect(
-    page
-      .getByRole('region', { name: 'Generation jobs' })
-      .getByText(/frozen regional reference-image job/),
-  ).toBeVisible()
-  await page.evaluate(() => {
-    const f = globalThis.window.regionalWiringFixture
-    f.state.regionalReferenceImagesSupported = true
-    f.epoch += 1
-  })
-  await expect(retry).toBeEnabled()
-  await retry.click()
-  await expect
-    .poll(() => page.evaluate(() => globalThis.window.regionalWiringFixture.retryCalls.length))
-    .toBe(1)
-})
+}

@@ -89,6 +89,8 @@ def inference_ready_message(
             "private-current-canvas-regional-v1",
             "illustrious-regional-invoke-v1",
             "illustrious-regional-reference-txt2img-v1",
+            "illustrious-regional-reference-img2img-v1",
+            "illustrious-regional-reference-outpaint-v1",
             "illustrious-regional-invoke-init-v1",
             "illustrious-regional-progress-v1",
             "illustrious-regional-lora-v1",

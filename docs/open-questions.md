@@ -2,10 +2,11 @@
 
 ## Latest reference consumer and actual remaining scope
 
-[Illustrious regional references](./engineering/phase-4-regional-reference-inference-research.md)
-now have a finite public Current Canvas EPS TXT consumer,13-check installed
-qualification and original-PNG/frozen Retry/result-preset evidence. This replaces
-only that part of the earlier inference refusal. Smart EPS/V, both families'
+[Illustrious regional references](./engineering/phase-4-regional-reference-image-research.md)
+now have finite public Current Canvas EPS TXT/IMG/OUT consumers. The new IMG/OUT
+cohorts pass26 installed checks with exact source/reference frozen Retry and
+explicit Add/Save/result-preset evidence. This replaces only those parts of the
+earlier inference refusal. Smart EPS/V, both families'
 Smart global LoRA and prior Current Canvas combinations are already implemented.
 Do not recreate those integrations from old roadmap wording.
 
@@ -16,6 +17,11 @@ remaining Models contexts, full exports, release Install/Repair, packaged Linux/
 NVIDIA delivery/manual updates and joint migration/recovery/NoobAI/MVP acceptance.
 Anima references/TI, inverse auto-negative and generic adapters are not new TODO.
 PP-001/005/007/008 remain **«Пока не обещать»**; no product choice is reopened.
+
+The [finite contract matrix](./engineering/phase-4-regional-reference-image-research.md#finite-remaining-regional-scope)
+does not infer every Regional×Smart×resource×method×batch intersection as a new
+mandatory feature. Actual visual usefulness/compatibility/capacity remain an
+explicit acceptance gap; the inspected old TXT calibration remains NOT_QUALIFIED.
 
 
 <!-- illustrious-smart-regional-lora-current:start -->
@@ -65,7 +71,7 @@ Independent source/document/retained-byte audit CLEAN. ROOT separately confirmed
 обязательных gaps
 зафиксирован в [roadmap checkpoint](./specs/01-implementation-roadmap.md#актуальный-checkpoint-на-10112026):
 Illustrious regional reference
-inference, обещанные оставшиеся совместимые Smart Regional combinations после
+visual/compatibility/capacity acceptance, обещанные совместимые combinations после
 сверки контракта, визуальная/capacity приёмка, Home/workspaces/Project Trash,
 hard resource removal и оставшиеся
 Models contexts, полный image export, release runtime и Electron delivery,

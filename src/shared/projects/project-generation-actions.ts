@@ -85,6 +85,10 @@ export interface ProjectGenerationActionState {
   /** Explicit public regional LoRA support; absence never enables an active global stack. */
   regionalLoraSupported?: boolean
   regionalOutpaintSupported?: boolean
+  /** Separate source-conditioned reference combination; TXT references do not imply it. */
+  regionalReferenceImagesImg2ImgSupported?: boolean
+  /** Separate alpha/infill reference combination; opaque IMG references do not imply it. */
+  regionalReferenceImagesOutpaintSupported?: boolean
   /** Source-bound mixed-alpha regional execution, independently qualified from opaque IMG. */
   /** Separate exact original-image attention consumer; regional text support never grants it. */
   regionalReferenceImagesSupported?: boolean
@@ -217,6 +221,8 @@ export function isProjectGenerationActionState(
         'regionalImg2ImgVaeSupported',
         'regionalOutpaintSupported',
         'regionalReferenceImagesSupported',
+        'regionalReferenceImagesImg2ImgSupported',
+        'regionalReferenceImagesOutpaintSupported',
         'regionalImg2ImgCfgRescaleSupported',
         'regionalImg2ImgEulerASupported',
         'regionalImg2ImgDpmpp2mSupported',
@@ -310,6 +316,10 @@ export function isProjectGenerationActionState(
       typeof value['regionalImg2ImgVaeSupported'] !== 'boolean') ||
     (value['regionalReferenceImagesSupported'] !== undefined &&
       typeof value['regionalReferenceImagesSupported'] !== 'boolean') ||
+    (value['regionalReferenceImagesImg2ImgSupported'] !== undefined &&
+      typeof value['regionalReferenceImagesImg2ImgSupported'] !== 'boolean') ||
+    (value['regionalReferenceImagesOutpaintSupported'] !== undefined &&
+      typeof value['regionalReferenceImagesOutpaintSupported'] !== 'boolean') ||
     (value['regionalOutpaintSupported'] !== undefined &&
       typeof value['regionalOutpaintSupported'] !== 'boolean') ||
     (value['regionalVPredictionImageSupported'] !== undefined &&

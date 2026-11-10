@@ -570,7 +570,17 @@ export class GenerationWorkerClient implements GenerationWorkerTransport {
         }
       } else {
         input = captureRegionalWorkerInput(input)
-        if (input.references && !supportsInferenceRegionalReferenceImages(this.ready)) {
+        if (
+          input.references &&
+          !supportsInferenceRegionalReferenceImages(
+            this.ready,
+            input.request.type === 'generate-illustrious-outpaint'
+              ? 'outpaint'
+              : input.request.type === 'generate-illustrious-img2img'
+                ? 'img2img'
+                : 'txt2img',
+          )
+        ) {
           throw new GenerationWorkerError(
             'WORKER_VERSION_MISMATCH',
             'The active worker has not qualified Illustrious regional reference-image inference.',

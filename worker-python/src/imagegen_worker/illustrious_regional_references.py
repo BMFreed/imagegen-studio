@@ -33,6 +33,9 @@ if TYPE_CHECKING:
     from .inference import MLRuntime
 
 REFERENCE_PROFILE = "invoke-illustrious-regional-reference-txt2img-v1"
+REFERENCE_IMG2IMG_PROFILE = "invoke-illustrious-regional-reference-img2img-v1"
+REFERENCE_OUTPAINT_PROFILE = "invoke-illustrious-regional-reference-outpaint-v1"
+_REFERENCE_PROFILES = (REFERENCE_PROFILE, REFERENCE_IMG2IMG_PROFILE, REFERENCE_OUTPAINT_PROFILE)
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _MAX_IMAGE_BYTES = 32 * 1024 * 1024
 _MAX_RESOURCE_BYTES = {"adapter": 1024**3, "visionModel": 3 * 1024**3, "visionConfig": 65536}
@@ -174,10 +177,14 @@ def capture_regional_references(
     reserved: set[Path],
     checkpoint: Path,
     read_image: Any,
+    expected_profile: str = REFERENCE_PROFILE,
 ) -> CapturedRegionalReferences:
     """Bind ordered operational image snapshots to the original authoring records."""
     record = _record(value, {"profile", "resources", "images"}, "regional references")
-    _require(record["profile"] == REFERENCE_PROFILE, "Unsupported reference inference profile.")
+    _require(
+        expected_profile in _REFERENCE_PROFILES and record["profile"] == expected_profile,
+        "Reference inference profile does not match its exact target mode.",
+    )
     resource_values = _record(
         record["resources"], {"adapter", "visionConfig", "visionModel"}, "reference resources"
     )

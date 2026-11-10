@@ -1,5 +1,6 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
 import type { GenerationDenoisingProgress } from '../../shared/projects/generation-progress.js'
+import { regionalReferenceProfileForMode } from '../../shared/projects/regional-reference-inference.js'
 
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 
@@ -139,7 +140,7 @@ async function withClient(
       new URL('../../../worker-python/src/imagegen_worker/srgb.icc', import.meta.url),
     )
     assert.equal(sha(profile), IGS_SRGB_ICC_SHA256)
-    const imageMode = mode.startsWith('img-')
+    const imageMode = mode.startsWith('img-') || mode.startsWith('reference-img-')
     const target = png(64, 64, false, profile, imageMode ? 255 : 0)
     const rgb = png(64, 64, true, profile)
     const checkpoint = path.join(root, 'checkpoint.safetensors')
@@ -269,6 +270,13 @@ async function withClient(
       ...(imageMode ? ['illustrious-regional-invoke-v1'] : []),
       ...(mode.startsWith('reference-') ? ['illustrious-regional-invoke-v1'] : []),
       ...(mode === 'reference-done' ? ['illustrious-regional-reference-txt2img-v1'] : []),
+      ...(mode === 'reference-img-done' ? ['illustrious-regional-reference-img2img-v1'] : []),
+      ...(mode === 'reference-img-old'
+        ? [
+            'illustrious-regional-reference-txt2img-v1',
+            'illustrious-regional-reference-outpaint-v1',
+          ]
+        : []),
       ...(imageMode && mode !== 'img-old'
         ? ['illustrious-regional-img2img-v1', 'illustrious-regional-progress-v1']
         : []),
@@ -524,6 +532,42 @@ test('exact reference capability reaches the actual client descriptor exchange a
       })),
       before.references!.images.map(({ referenceId, regionId }) => ({ referenceId, regionId })),
     )
+    await assertStageReleased(await record<ChildMarker>(f.marker))
+  })
+})
+
+test('TXT and OUT reference grants cannot authorize regional IMG before descriptor or resource I/O', async () => {
+  await withClient('reference-img-old', async (f) => {
+    attachRegionalReferences(f.input, path.join(f.scratch, '..', 'absent-reference-models'))
+    f.input.references!.profile = regionalReferenceProfileForMode('img2img')
+    const before = await readdir(f.scratch)
+    await assert.rejects(f.client.executeCurrentCanvasRegional(f.input), {
+      code: 'WORKER_VERSION_MISMATCH',
+    })
+    await assert.rejects(readFile(f.marker), { code: 'ENOENT' })
+    assert.deepEqual(await readdir(f.scratch), before)
+  })
+})
+
+test('independent IMG reference grant reaches native-peer descriptor exchange with frozen source strength', async () => {
+  await withClient('reference-img-done', async (f) => {
+    const resources = path.resolve(f.scratch, '..', 'reference-models')
+    attachRegionalReferences(f.input, resources)
+    f.input.references!.profile = regionalReferenceProfileForMode('img2img')
+    await writeRegionalReferenceResourceFixtures(resources)
+    const result = await f.client.executeCurrentCanvasRegional(f.input)
+    assert.ok(result.pngBytes.equals(f.rgb))
+    const observation = await record<
+      Observation & {
+        bundle: { references: { profile: string } }
+      }
+    >(f.observation)
+    assert.equal(observation.bundle.request.type, 'generate-illustrious-img2img')
+    assert.equal(observation.bundle.references.profile, regionalReferenceProfileForMode('img2img'))
+    if (observation.bundle.request.type !== 'generate-illustrious-img2img') {
+      assert.fail('Expected the exact source-conditioned command.')
+    }
+    assert.equal(observation.bundle.request.job.sampling.denoisingStrength, 0.5)
     await assertStageReleased(await record<ChildMarker>(f.marker))
   })
 })

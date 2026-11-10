@@ -662,3 +662,41 @@ test('reference-image Retry advisory uses its frozen requirement independently o
     assert.equal(frozen(flag, false), null, 'The historical no-reference lane needs no new grant.')
   }
 })
+
+for (const mode of ['img2img', 'outpaint'] as const) {
+  test(`frozen ${mode} reference Retry requires its exact grant independently of TXT and the opposite mode`, () => {
+    const state = {
+      regionalImg2ImgSupported: true,
+      regionalOutpaintSupported: true,
+      regionalReferenceImagesImg2ImgSupported: true,
+      regionalReferenceImagesOutpaintSupported: true,
+      regionalReferenceImagesSupported: true,
+      regionalSupported: true,
+    }
+    const field =
+      mode === 'img2img'
+        ? 'regionalReferenceImagesImg2ImgSupported'
+        : 'regionalReferenceImagesOutpaintSupported'
+    const reason = (supported: boolean | undefined, requires = true) =>
+      generationQueueRetryReason(
+        `illustrious-regional-${mode}`,
+        { ...state, [field]: supported },
+        'Euler',
+        false,
+        false,
+        0,
+        undefined,
+        'epsilon',
+        false,
+        false,
+        false,
+        false,
+        requires,
+      )
+    assert.equal(reason(true), null)
+    for (const flag of [undefined, false]) {
+      assert.match(reason(flag)!, /frozen regional reference-image job/)
+      assert.equal(reason(flag, false), null)
+    }
+  })
+}

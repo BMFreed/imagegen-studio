@@ -57,6 +57,9 @@ from .illustrious_regional_recipe import (
     _recipe_inputs,  # pyright: ignore[reportPrivateUsage]
 )
 from .illustrious_regional_references import (
+    REFERENCE_IMG2IMG_PROFILE,
+    REFERENCE_OUTPAINT_PROFILE,
+    REFERENCE_PROFILE,
     CapturedRegionalReferences,
     capture_regional_references,
     prepare_regional_references,
@@ -674,8 +677,7 @@ def parse_regional_request(value: object) -> RegionalRequest:
     text_recipe = recipe
     if "references" in bundle:
         _require(
-            type(command) is GenerateIllustriousTxt2ImgCommand
-            and composition_profile == "invoke-canvas-v1"
+            composition_profile == "invoke-canvas-v1"
             and initialization_profile is None
             and parameters.scheduler == "euler"
             and parameters.cfg_rescale == 0
@@ -694,7 +696,8 @@ def parse_regional_request(value: object) -> RegionalRequest:
             and bundle["layout"] == "cfg-negative-first"
             and recipe.get("item", {}).get("iteration") == 0
             and recipe.get("item", {}).get("promptPairIndex") == 0,
-            "References require finite Current Canvas epsilon Euler TXT with embedded FP16 VAE.",
+            "References require finite Current Canvas epsilon Euler TXT/IMG/OUT "
+            "with embedded FP16 VAE.",
         )
 
         def read_reference(descriptor: object, maximum: int) -> bytes:
@@ -707,6 +710,11 @@ def parse_regional_request(value: object) -> RegionalRequest:
             reserved=snapshots.reserved | set(snapshots.descriptors),
             checkpoint=parameters.checkpoint_path,
             read_image=read_reference,
+            expected_profile=REFERENCE_OUTPAINT_PROFILE
+            if outpaint
+            else REFERENCE_IMG2IMG_PROFILE
+            if img2img
+            else REFERENCE_PROFILE,
         )
         # Original authored metadata stays on RegionalRequest. Legacy numerical
         # recipe validation still refuses references unless this exact transport

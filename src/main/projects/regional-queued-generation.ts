@@ -4,11 +4,16 @@ import {
   RegionalInitializationProfileSchema,
 } from '../../shared/projects/regional-initialization-profile.js'
 import {
+  REGIONAL_REFERENCE_IMG2IMG_PROFILE,
   REGIONAL_REFERENCE_INFERENCE_PROFILE,
   REGIONAL_REFERENCE_MAX_BYTES,
   REGIONAL_REFERENCE_MAX_IMAGES,
   REGIONAL_REFERENCE_MAX_SIDE,
   REGIONAL_REFERENCE_MAX_TOTAL_BYTES,
+  REGIONAL_REFERENCE_OUTPAINT_PROFILE,
+  REGIONAL_REFERENCE_PROFILES,
+  type RegionalReferenceInferenceProfile,
+  regionalReferenceProfileForMode,
 } from '../../shared/projects/regional-reference-inference.js'
 
 import { createHash } from 'node:crypto'
@@ -69,7 +74,7 @@ export interface FrozenQueuedRegionalInvokeImg2ImgV1 extends Omit<
   compositionProfile: 'invoke-canvas-v1'
   initializationProfile?: never
   kind: 'illustrious-regional-img2img'
-  referenceProfile?: never
+  referenceProfile?: typeof REGIONAL_REFERENCE_IMG2IMG_PROFILE
   regional: FrozenQueuedRegionalV1['regional']
 }
 
@@ -81,7 +86,7 @@ export interface FrozenQueuedRegionalInvokeOutpaintV1 extends Omit<
   initializationProfile?: never
   kind: 'illustrious-regional-outpaint'
   outpaintInfill: RegionalOutpaintInfill
-  referenceProfile?: never
+  referenceProfile?: typeof REGIONAL_REFERENCE_OUTPAINT_PROFILE
   regional: FrozenQueuedRegionalV1['regional']
 }
 
@@ -100,7 +105,7 @@ export interface RegionalQueuedMaterial {
   files: Record<string, Buffer>
   initializationProfile?: RegionalInitializationProfile
   outpaintInfill?: RegionalOutpaintInfill
-  referenceProfile?: typeof REGIONAL_REFERENCE_INFERENCE_PROFILE
+  referenceProfile?: RegionalReferenceInferenceProfile
   regional: FrozenQueuedRegionalV1['regional']
 }
 
@@ -158,7 +163,7 @@ const queuedReferencesSchema = v.strictObject({
     v.minLength(1),
     v.maxLength(REGIONAL_REFERENCE_MAX_IMAGES),
   ),
-  profile: v.literal(REGIONAL_REFERENCE_INFERENCE_PROFILE),
+  profile: v.picklist(REGIONAL_REFERENCE_PROFILES),
   resources: v.unknown(),
 })
 const metadataSchema = v.strictObject({
@@ -261,6 +266,7 @@ export function parseAcceptedGenerationBaseV1(json: string): FrozenQueuedGenerat
       compositionProfile: _profile,
       initializationProfile: _init,
       outpaintInfill: _infill,
+      referenceProfile: _references,
       regional: _regional,
       ...base
     } = payload
@@ -270,6 +276,7 @@ export function parseAcceptedGenerationBaseV1(json: string): FrozenQueuedGenerat
     const {
       compositionProfile: _profile,
       initializationProfile: _init,
+      referenceProfile: _references,
       regional: _regional,
       ...base
     } = payload
@@ -686,9 +693,15 @@ function parseRegionalPayload(
   }
   if (
     'referenceProfile' in value &&
-    (value.referenceProfile !== REGIONAL_REFERENCE_INFERENCE_PROFILE ||
-      !invoke ||
-      value.kind !== 'illustrious-regional-txt2img')
+    (!invoke ||
+      value.referenceProfile !==
+        regionalReferenceProfileForMode(
+          value.kind === 'illustrious-regional-outpaint'
+            ? 'outpaint'
+            : value.kind === 'illustrious-regional-img2img'
+              ? 'img2img'
+              : 'txt2img',
+        ))
   ) {
     throw invalid('The frozen regional reference profile is unsupported.')
   }
@@ -773,6 +786,9 @@ function parseRegionalPayload(
       ...ordinary,
       compositionProfile: 'invoke-canvas-v1',
       kind: 'illustrious-regional-outpaint',
+      ...(referenceProfile !== undefined
+        ? { referenceProfile: REGIONAL_REFERENCE_OUTPAINT_PROFILE }
+        : {}),
       outpaintInfill: v.parse(RegionalOutpaintInfillSchema, outpaintInfill),
       regional: parsed.output,
     }
@@ -785,6 +801,9 @@ function parseRegionalPayload(
       ...ordinary,
       compositionProfile: 'invoke-canvas-v1',
       kind: 'illustrious-regional-img2img',
+      ...(referenceProfile !== undefined
+        ? { referenceProfile: REGIONAL_REFERENCE_IMG2IMG_PROFILE }
+        : {}),
       regional: parsed.output,
     }
   }

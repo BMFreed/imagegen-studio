@@ -1473,13 +1473,15 @@ def run_current_canvas_regional_denoising(
     if references is not None:
         _require(
             type(references) is PreparedRegionalReferences
-            and not img2img
-            and not outpaint
             and _smart_patch_source_id is None
             and denoising_profile
             in (
                 "ordinary-canvas-euler-txt2img-cpu-v2",
                 "ordinary-canvas-euler-txt2img-cuda-fp16-v2",
+                "ordinary-canvas-euler-img2img-cpu-v1",
+                "ordinary-canvas-euler-img2img-cuda-fp16-v1",
+                "ordinary-canvas-euler-outpaint-cpu-v1",
+                "ordinary-canvas-euler-outpaint-cuda-fp16-v1",
             )
             and parameters.prediction_type == "epsilon"
             and parameters.scheduler == "euler"
@@ -1493,7 +1495,7 @@ def run_current_canvas_regional_denoising(
             and 1 < parameters.cfg_scale <= 30
             and layout == "cfg-negative-first",
             "UNSUPPORTED",
-            "References require the explicit finite Current Canvas Euler TXT profile.",
+            "References require an explicit finite Current Canvas Euler TXT/IMG/OUT profile.",
         )
     ancestral = _ancestral_profile(denoising_profile)
     dpmpp_2m = _dpmpp_2m_profile(denoising_profile)

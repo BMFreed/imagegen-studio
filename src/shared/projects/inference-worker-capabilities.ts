@@ -123,13 +123,22 @@ export function supportsInferenceRegionalDpm(value: unknown): boolean {
   )
 }
 
-/** Original regional images require their own qualified public TXT consumer. */
-export function supportsInferenceRegionalReferenceImages(value: unknown): boolean {
+/**
+ * Each reference/source composition requires its own grant. Invoke 4875d965 compileCanvasGraph.ts
+ * joins the adapter after graftImageToImage/graftOutpaint. The default preserves the original
+ * explicitly TXT-only capability helper.
+ */
+export function supportsInferenceRegionalReferenceImages(
+  value: unknown,
+  mode: 'img2img' | 'outpaint' | 'txt2img' = 'txt2img',
+): boolean {
   return (
     isQualifiedInferenceWorkerReady(value) &&
     value.workerVersion === '0.14.0' &&
     value.capabilities.includes('illustrious-regional-invoke-v1') &&
-    value.capabilities.includes('illustrious-regional-reference-txt2img-v1')
+    value.capabilities.includes(`illustrious-regional-reference-${mode}-v1`) &&
+    (mode === 'txt2img' || supportsInferenceRegionalImg2Img(value)) &&
+    (mode !== 'outpaint' || supportsInferenceRegionalOutpaint(value))
   )
 }
 

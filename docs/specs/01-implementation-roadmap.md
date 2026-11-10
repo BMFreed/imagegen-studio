@@ -1,14 +1,14 @@
 # Implementation Roadmap
 
-## Latest implementation checkpoint — regional reference TXT
+## Latest implementation checkpoint — regional reference IMG/OUT
 
-[Finite public Illustrious EPS TXT reference inference](../engineering/phase-4-regional-reference-inference-research.md)
-continues base18d15c2a through existing owners. Actual installed qualification
-passes13 checks/four requests/three PNGs/step1 Cancel/exact restarted Retry and
-three normal lifetimes, including explicit Add/Undo/Redo/Save-reopen and result
-preset exclusion. The independent grant/profile binds original PNGs and exact
-Standard ViT-H resources; compatible scope, visual usefulness/capacity and final
-release acceptance remain open. PP-001/005/007/008 remain «Пока не обещать».
+[Finite public Illustrious EPS IMG/OUT reference inference](../engineering/phase-4-regional-reference-image-research.md)
+continues the completed TXT consumer through existing owners. Two installed
+cohorts pass26 checks/eight requests/six PNGs/two step1 Cancels/two exact restarted
+Retries/six normal lifetimes, including explicit Add/Undo/Redo/Save-reopen and
+result-preset exclusion. Independent mode grants/profiles bind original source,
+reference PNGs and exact offline Standard ViT-H resources. Visual usefulness/
+capacity and release acceptance remain open; PP statuses do not change.
 
 Use the [current code-based remaining list](../engineering/phase-4-regional-reference-inference-research.md#reconciled-remaining-mvp-boundaries),
 not this document's old Phase4 introduction. Public Smart EPS/V, both families'
@@ -16,6 +16,12 @@ Smart global LoRA, Compare/presets and prior Current Canvas regional consumers
 are completed checkpoints. Home/workspace/Trash, hard removal/remaining Models
 contexts, composited exports and runtime/package/update/packaged acceptance
 still have concrete missing owners or release gates.
+
+The [finite Regional compatibility matrix](../engineering/phase-4-regional-reference-image-research.md#finite-remaining-regional-scope)
+distinguishes explicit promises, unqualified intersections and negative scope.
+Do not turn every temporary resource/method/batch/Smart-reference guard into a
+mandatory new feature. Fixed visual/compatibility/capacity acceptance is still
+required; pixel inequality, Retry and source audit do not close it.
 
 
 ## Границы плана и исходники-ориентиры

@@ -8,12 +8,14 @@ import {
   RegionalInitializationProfileSchema,
 } from '../../shared/projects/regional-initialization-profile.js'
 import {
-  REGIONAL_REFERENCE_INFERENCE_PROFILE,
   REGIONAL_REFERENCE_MAX_BYTES,
   REGIONAL_REFERENCE_MAX_IMAGES,
   REGIONAL_REFERENCE_MAX_PIXELS,
   REGIONAL_REFERENCE_MAX_SIDE,
   REGIONAL_REFERENCE_MAX_TOTAL_BYTES,
+  REGIONAL_REFERENCE_PROFILES,
+  type RegionalReferenceInferenceProfile,
+  regionalReferenceProfileForMode,
 } from '../../shared/projects/regional-reference-inference.js'
 
 import { createHash } from 'node:crypto'
@@ -84,7 +86,7 @@ export interface RegionalWorkerReferences {
     referenceId: string
     regionId: string
   }[]
-  profile: typeof REGIONAL_REFERENCE_INFERENCE_PROFILE
+  profile: RegionalReferenceInferenceProfile
   resources: {
     adapter: RegionalWorkerFile
     visionConfig: RegionalWorkerFile
@@ -355,7 +357,7 @@ const referencesSchema = v.strictObject({
     v.minLength(1),
     v.maxLength(REGIONAL_REFERENCE_MAX_IMAGES),
   ),
-  profile: v.literal(REGIONAL_REFERENCE_INFERENCE_PROFILE),
+  profile: v.picklist(REGIONAL_REFERENCE_PROFILES),
   resources: v.strictObject({
     adapter: v.strictObject({
       ...referenceResourceSchema.entries,
@@ -870,7 +872,14 @@ function validateReferenceAgreement(input: v.InferOutput<typeof inputSchema>): v
   if (
     input.compositionProfile !== 'invoke-canvas-v1' ||
     input.initializationProfile !== undefined ||
-    input.request.type !== 'generate-illustrious-txt2img' ||
+    references.profile !==
+      regionalReferenceProfileForMode(
+        input.request.type === 'generate-illustrious-outpaint'
+          ? 'outpaint'
+          : input.request.type === 'generate-illustrious-img2img'
+            ? 'img2img'
+            : 'txt2img',
+      ) ||
     job.checkpoint.predictionType !== 'epsilon' ||
     job.sampling.scheduler !== 'euler' ||
     (job.sampling.cfgRescale ?? 0) !== 0 ||
@@ -896,7 +905,7 @@ function validateReferenceAgreement(input: v.InferOutput<typeof inputSchema>): v
     authored.length !== references.images.length
   ) {
     throw invalid(
-      'Regional reference images require the finite Illustrious EPS TXT Euler/Normal embedded FP16 profile.',
+      'Regional reference images require the matching finite Illustrious EPS mode profile with Euler/Normal and embedded FP16 VAE.',
     )
   }
   let aggregate = 0

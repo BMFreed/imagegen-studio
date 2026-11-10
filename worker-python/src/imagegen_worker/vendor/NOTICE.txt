@@ -174,3 +174,6 @@ full native attention registry binding and independent ordered image SDPA terms
 inside the existing native processor's output-projection seam. CFG projects the
 zero vision vector for unconditional image tokens independently of negative text.
 The finite profile uses full/scale1/all steps, no generic adapter UI or Plus path.
+Separate exact TXT/IMG/OUT reference profiles retain compileCanvasGraph's existing
+image-to-latents/strength and alpha-outpaint grafts, then use that same regional
+attention owner; original TXT profile semantics and native samplers are unchanged.

@@ -303,6 +303,8 @@ test('regional capability is an optional strict boolean in preload action respon
     'regionalLoraSupported',
     'regionalVaeSupported',
     'regionalReferenceImagesSupported',
+    'regionalReferenceImagesImg2ImgSupported',
+    'regionalReferenceImagesOutpaintSupported',
   ]) {
     for (const supported of [false, true]) {
       assert.equal(isProjectGenerationActionState({ ...state, [field]: supported }), true)
@@ -1210,7 +1212,7 @@ test('regional V sampling state is optional strict boolean for old preload respo
   }
 })
 
-test('regional original-image admission is a separate finite EPS TXT lane and leaves disabled references dormant', () => {
+test('regional original-image admission has independent finite EPS mode grants and leaves disabled references dormant', () => {
   const value = document()
   value.primaryBbox.width = value.primaryBbox.height = 512
   const reference = (index: number) => {
@@ -1241,10 +1243,15 @@ test('regional original-image admission is a separate finite EPS TXT lane and le
     supported: boolean | null = true,
     iterations = 1,
     targetMode: 'img2img' | 'outpaint' | 'txt2img' = 'txt2img',
+    sourceSupported?: boolean | null,
   ) =>
     getInvokeRegionalGenerationUnavailableReason({
       document,
+      img2imgSupported: true,
       iterations,
+      outpaintSupported: true,
+      regionalReferenceImagesImg2ImgSupported: sourceSupported,
+      regionalReferenceImagesOutpaintSupported: sourceSupported,
       regionalReferenceImagesSupported: supported,
       runtimeSupported: true,
       targetMode,
@@ -1257,7 +1264,17 @@ test('regional original-image admission is a separate finite EPS TXT lane and le
   }
   assert.match(allowed(value, true, 2)!, /one image and static prompts/)
   for (const mode of ['img2img', 'outpaint'] as const) {
-    assert.match(allowed(value, true, 1, mode)!, /transparent txt2img/)
+    assert.match(allowed(value, true, 1, mode)!, /image engine.*regional reference images/)
+    const image = structuredClone(value)
+    image.generationDraft.sampling.denoisingStrength = 0.5
+    assert.equal(
+      allowed(image, false, 1, mode, true),
+      null,
+      'TXT references are not an image prerequisite.',
+    )
+    for (const flag of [null, false]) {
+      assert.match(allowed(image, true, 1, mode, flag)!, /image engine.*regional reference images/)
+    }
   }
   const changes: [(document: IgsProjectDocumentV1) => void, RegExp][] = [
     [
@@ -1387,6 +1404,10 @@ test('regional reference-image capability never follows from base regional suppo
       'illustrious-outpaint',
       'illustrious-regional-invoke-v1',
       'illustrious-regional-reference-txt2img-v1',
+      'illustrious-regional-reference-img2img-v1',
+      'illustrious-regional-reference-outpaint-v1',
+      'illustrious-regional-img2img-v1',
+      'illustrious-regional-outpaint-v1',
     ],
     protocolVersion: '1',
     runtimeProfile: 'linux-nvidia',
@@ -1409,4 +1430,37 @@ test('regional reference-image capability never follows from base regional suppo
     supportsInferenceRegionalReferenceImages({ ...ready, workerVersion: '0.13.0' }),
     false,
   )
+  for (const mode of ['txt2img', 'img2img', 'outpaint'] as const) {
+    assert.equal(supportsInferenceRegionalReferenceImages(ready, mode), true)
+    for (const absent of [
+      'illustrious-regional-invoke-v1',
+      `illustrious-regional-reference-${mode}-v1`,
+      ...(mode !== 'txt2img' ? ['illustrious-regional-img2img-v1'] : []),
+      ...(mode === 'outpaint' ? ['illustrious-regional-outpaint-v1'] : []),
+    ]) {
+      assert.equal(
+        supportsInferenceRegionalReferenceImages(
+          {
+            ...ready,
+            capabilities: ready.capabilities.filter((c) => c !== absent),
+          },
+          mode,
+        ),
+        false,
+        `${mode} must refuse without ${absent}`,
+      )
+    }
+    const onlyMode = {
+      ...ready,
+      capabilities: ready.capabilities.filter(
+        (cap) =>
+          !cap.startsWith('illustrious-regional-reference-') ||
+          cap === `illustrious-regional-reference-${mode}-v1`,
+      ),
+    }
+    assert.equal(supportsInferenceRegionalReferenceImages(onlyMode, mode), true)
+    for (const other of ['txt2img', 'img2img', 'outpaint'] as const) {
+      assert.equal(supportsInferenceRegionalReferenceImages(onlyMode, other), mode === other)
+    }
+  }
 })

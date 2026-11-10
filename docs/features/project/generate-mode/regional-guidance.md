@@ -1,7 +1,40 @@
 # Regional Guidance
 
+## Current checkpoint: Illustrious reference IMG/OUT — 10.11.2026
+
+[Research, actual execution and finite compatibility matrix](../../../engineering/phase-4-regional-reference-image-research.md).
+The existing EPS Current Canvas reference consumer now covers opaque IMG and
+mixed-alpha OUT through the same source/conditioning/attention/denoising/output
+owners. Each requires its own `illustrious-regional-reference-{img2img,outpaint}-v1`
+grant and `invoke-illustrious-regional-reference-{img2img,outpaint}-v1` frozen
+profile. Original TXT semantics remain unchanged. Exact composed mode, captured
+profile, saved operation and actual worker command must agree.
+
+Keep EPS/EulerNormal/default false-leading/CFG(1,30]/Rescale0/embeddedFP16,
+64–512 divisible8, static singleton, three regions/three original references and
+the existing independent image/source/text/attention/resource budgets. No LoRA,
+active TI, selected VAE, other objective/method, dynamic/batch or Smart references
+are admitted by this continuation. Regional masks remain distinct from OUT
+source alpha/KEEP/contribution. Regional state stays live-Project-only and outside
+accepted provenance/Compare/result presets; Generate/Retry do not Add/Save.
+
+ROOT324 affected Main PASS plus36 overlapping post-fix cases;230 selected Python
+and274 browser PASS, full typing/lint/build PASS. Isolated CPU mutation16
+selections:13 GREEN/three post-PNG RED,40 PNG witnesses and exact restoration.
+Final IMG+OUT installed cohorts:26 checks/eight requests/six PNGs/two step1
+Cancels/two exact restarted Retries/six normal physical lifetimes. Explicit
+Add/Undo/Redo/Save/reopen and real result-preset exclusion pass. Official v0.1,
+one reference,512/N6/strength0.5/FP16 only; failed attempts remain separate.
+
+Visual usefulness remains **NOT_QUALIFIED**. The old TXT calibration PNGs were
+freshly inspected, not rerun; causal differences do not establish quality or
+maximum capacity. Core contracts permit explicit refusal of unsupported
+intersections and do not promise a complete Cartesian product. See the linked
+finite matrix before inventing further mandatory combinations. PP-001/005/007/008
+remain **«Пока не обещать»**. Earlier checkpoints below retain their dated scope.
+
 <!-- regional-reference-inference-current:start -->
-## Latest checkpoint: Illustrious regional reference TXT — 10.11.2026
+## Previous checkpoint: Illustrious regional reference TXT — 10.11.2026
 
 [Research, executed evidence and remaining MVP boundaries](../../../engineering/phase-4-regional-reference-inference-research.md).
 The original authored reference PNG now reaches an actual public Current Canvas

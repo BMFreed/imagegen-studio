@@ -46,6 +46,8 @@ type RetryState = Pick<
   | 'regionalInvokeInitializationSupported'
   | 'regionalLoraSupported'
   | 'regionalOutpaintSupported'
+  | 'regionalReferenceImagesImg2ImgSupported'
+  | 'regionalReferenceImagesOutpaintSupported'
   | 'regionalReferenceImagesSupported'
   | 'regionalSupported'
   | 'regionalVaeSupported'
@@ -111,7 +113,13 @@ export function generationQueueRetryReason(
     if (state.regionalSupported !== true) {
       return 'The current image engine does not support Regional Guidance. Repair or update the runtime.'
     }
-    if (requiresRegionalReferenceImages && state.regionalReferenceImagesSupported !== true) {
+    const referenceImagesSupported =
+      operation === 'illustrious-regional-outpaint'
+        ? state.regionalReferenceImagesOutpaintSupported
+        : operation === 'illustrious-regional-img2img'
+          ? state.regionalReferenceImagesImg2ImgSupported
+          : state.regionalReferenceImagesSupported
+    if (requiresRegionalReferenceImages && referenceImagesSupported !== true) {
       return 'The current image engine does not support this frozen regional reference-image job. Repair or update the runtime.'
     }
     if (frozenPredictionType === 'v_prediction') {

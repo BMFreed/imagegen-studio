@@ -616,6 +616,16 @@ export class ProjectGenerationActionController {
         !this.closed &&
         !!this.options.regional &&
         supportsInferenceRegionalOutpaint(ready),
+      regionalReferenceImagesImg2ImgSupported:
+        !this.blocked &&
+        !this.closed &&
+        !!this.options.regional &&
+        supportsInferenceRegionalReferenceImages(ready, 'img2img'),
+      regionalReferenceImagesOutpaintSupported:
+        !this.blocked &&
+        !this.closed &&
+        !!this.options.regional &&
+        supportsInferenceRegionalReferenceImages(ready, 'outpaint'),
       regionalReferenceImagesSupported:
         !this.blocked &&
         !this.closed &&
@@ -827,6 +837,8 @@ export class ProjectGenerationActionController {
       initializationSupported: true,
       iterations: request.iterations,
       loraSupported: true,
+      regionalReferenceImagesImg2ImgSupported: true,
+      regionalReferenceImagesOutpaintSupported: true,
       regionalReferenceImagesSupported: true,
       runtimeSupported: true,
       vaeSupported: true,
@@ -1699,7 +1711,14 @@ export class ProjectGenerationActionController {
               if (
                 !supportsRegional(ready) ||
                 (frozen.payload.referenceProfile !== undefined &&
-                  !supportsInferenceRegionalReferenceImages(ready)) ||
+                  !supportsInferenceRegionalReferenceImages(
+                    ready,
+                    source.operation === 'illustrious-regional-outpaint'
+                      ? 'outpaint'
+                      : source.operation === 'illustrious-regional-img2img'
+                        ? 'img2img'
+                        : 'txt2img',
+                  )) ||
                 (frozen.payload.workerJob.checkpoint.predictionType === 'v_prediction' &&
                   (!['dpmpp_2m', 'dpmpp_2m_k', 'euler', 'euler_a'].includes(
                     frozen.payload.workerJob.sampling.scheduler,

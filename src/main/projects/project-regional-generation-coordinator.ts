@@ -758,7 +758,6 @@ export class ProjectRegionalGenerationCoordinator {
             if (
               !isQualifiedInferenceWorkerReady(ready) ||
               !ready.capabilities.includes(capability) ||
-              (usesReferences && !supportsInferenceRegionalReferenceImages(ready)) ||
               (compositionProfile &&
                 (document.generationDraft.cfgRescale ?? 0) !== 0 &&
                 !supportsInferenceRegionalCFGRescale(ready)) ||
@@ -814,6 +813,12 @@ export class ProjectRegionalGenerationCoordinator {
             assertCurrent()
             if (usesReferences) {
               validateInvokeDraft(document, input.iterations, target.mode)
+              if (!supportsInferenceRegionalReferenceImages(ready, target.mode)) {
+                throw new ProjectRegionalGenerationError(
+                  'INFERENCE_UNAVAILABLE',
+                  'The image engine has not qualified regional reference images for this target mode.',
+                )
+              }
             }
             if (
               target.mode === 'outpaint' &&
@@ -947,14 +952,13 @@ export class ProjectRegionalGenerationCoordinator {
             })
             if (
               usesReferences &&
-              (prepared.context.kind !== 'normal-txt2img-preparation' ||
-                prepared.context.model.reference.predictionType !== 'epsilon' ||
+              (prepared.context.model.reference.predictionType !== 'epsilon' ||
                 !isDefaultIllustriousNoiseProfile(
                   prepared.context.sampling.noiseProfile ?? defaultIllustriousNoiseProfile(),
                 ))
             ) {
               throw unsupported(
-                'Regional reference images require epsilon TXT with the default false/leading noise settings.',
+                'Regional reference images require epsilon with the default false/leading noise settings.',
               )
             }
             if (prepared.context.model.reference.predictionType === 'v_prediction') {
@@ -1057,6 +1061,7 @@ export class ProjectRegionalGenerationCoordinator {
               const references = referenceResources
                 ? await captureCurrentCanvasRegionalReferences({
                     capture: capture.regional,
+                    mode: target.mode,
                     recipe,
                     resources: referenceResources,
                   })
@@ -1212,9 +1217,13 @@ function validateInvokeDraft(
     document,
     dpmSupported: true,
     embeddingsSupported: true,
+    img2imgSupported: true,
     initializationSupported: true,
     iterations,
     loraSupported: true,
+    outpaintSupported: true,
+    regionalReferenceImagesImg2ImgSupported: true,
+    regionalReferenceImagesOutpaintSupported: true,
     regionalReferenceImagesSupported: true,
     runtimeSupported: true,
     targetMode,

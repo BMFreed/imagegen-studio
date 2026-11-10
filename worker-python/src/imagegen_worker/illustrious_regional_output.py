@@ -533,6 +533,7 @@ def generate_current_canvas_regional_img2img(
     bindings: tuple[TransformerBinding, ...],
     layout: _Layout,
     on_progress: DenoisingProgressSink | None = None,
+    references: PreparedRegionalReferences | None = None,
 ) -> dict[str, object]:
     """Consume one verified opaque RGB snapshot through the ordinary native image path.
 
@@ -562,6 +563,7 @@ def generate_current_canvas_regional_img2img(
         bindings=bindings,
         layout=layout,
         on_progress=on_progress,
+        references=references,
         img2img=True,
     )
 
@@ -581,6 +583,7 @@ def generate_current_canvas_regional_outpaint(
     bindings: tuple[TransformerBinding, ...],
     layout: _Layout,
     on_progress: DenoisingProgressSink | None = None,
+    references: PreparedRegionalReferences | None = None,
 ) -> dict[str, object]:
     """Verify mixed alpha and exact LaMa, run once, publish the owned RGBA contribution.
 
@@ -602,6 +605,7 @@ def generate_current_canvas_regional_outpaint(
         bindings=bindings,
         layout=layout,
         on_progress=on_progress,
+        references=references,
         img2img=True,
         outpaint=True,
     )
