@@ -370,3 +370,34 @@ test('Rename preload transports opaque Project identity and a name, validating f
   ]
   assert.equal((await f.api.projects.list()).ok, false)
 })
+
+test('Home browse timestamps accept legacy or canonical nullable metadata and reject malformed replies', async () => {
+  const f = await fixture()
+  const summary = {
+    bbox: null,
+    health: 'ready',
+    id: `project-v1-${'f'.repeat(64)}`,
+    previewStatus: 'empty',
+    recoveryStatus: 'none',
+    thumbnailUrl: null,
+    title: 'Time metadata',
+    workspaceId: randomUUID(),
+  }
+  for (const fields of [
+    {},
+    { lastOpenedAt: null, modifiedAt: null },
+    { lastOpenedAt: '2026-11-11T01:02:03.000Z', modifiedAt: '1969-01-01T00:00:00.000Z' },
+  ]) {
+    f.state.value = [{ ...summary, ...fields }]
+    assert.equal((await f.api.projects.list()).ok, true)
+  }
+  for (const fields of [
+    { lastOpenedAt: 0 },
+    { modifiedAt: 'yesterday' },
+    { modifiedAt: '2026-11-11' },
+    { lastOpenedAt: 'x'.repeat(1000) },
+  ]) {
+    f.state.value = [{ ...summary, ...fields }]
+    assert.equal((await f.api.projects.list()).ok, false)
+  }
+})

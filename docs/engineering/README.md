@@ -1,6 +1,17 @@
 # Engineering Workflow
 
-## Current clean-open Rename checkpoint
+## Current Home browse checkpoint
+
+[Home search/sort/status](./phase-4-home-project-browse-research.md) connects nullable saved/cached Main timestamps
+and the existing pure Invoke view pipeline to approved Vue/Naive controls. App
+retains query controls across Home remount and scope changes; Reset keeps sort.
+Open/recovery/attention are independent, including unavailable-workspace and
+preview-only controls. No package/lifecycle/schema/inference write is introduced.
+Missing-entry Remove/Locate/Relink, selected Inspector/full preview/grid, remaining
+Models/export/runtime/release and visual/MVP acceptance remain separate. Public
+statuses stay unchanged; executed evidence is bounded in the linked note.
+
+## Previous clean-open Rename checkpoint
 
 [Clean-open Project Rename](./phase-4-clean-open-rename-research.md) keeps live tab/canvas history/assets through
 exact metadata rebind and same-live Retry. Lifecycle title is outside canvas Undo;

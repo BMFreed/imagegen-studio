@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import {
+  lstat,
   mkdir,
   mkdtemp,
   readdir,
@@ -702,5 +703,62 @@ test('explicit Close preserves a pending Rename journal for a new Service lifeti
       assert.equal(opened.tab.title, 'Restart Name')
     }
     assert.equal(await f.repository.relocations.get(tab.id), null)
+  })
+})
+
+test('Home browse timestamps project active, pending and Trash metadata without rewriting durable snapshots', async () => {
+  await withFixture(async (f) => {
+    const record = await closedProject(f)
+    assert.equal((await f.service.open(record.localProjectKey)).kind, 'opened')
+    await f.service.close(record.localProjectKey)
+    const opened = (await f.repository.getProject(record.localProjectKey))!
+    const stamp = await lstat(record.canonicalPath, { bigint: true })
+    const modifiedAt = new Date(Number(stamp.mtimeNs / 1_000_000n)).toISOString()
+    const expected = { lastOpenedAt: opened.lastOpenedAt, modifiedAt }
+    const [active] = await f.service.list(f.workspace.id)
+    assert.deepEqual({ lastOpenedAt: active.lastOpenedAt, modifiedAt: active.modifiedAt }, expected)
+    const target = await destination(f)
+    Object.defineProperty(f.repository, 'relocations', {
+      configurable: true,
+      value: new ProjectRelocationStore(f.database.db, {
+        afterRename: async () => {
+          throw new Error('Controlled pending Move')
+        },
+      }),
+    })
+    assert.equal((await f.service.moveProject(record.localProjectKey, target.id)).kind, 'pending')
+    const before = await f.database.db
+      .selectFrom('project_relocation')
+      .selectAll()
+      .executeTakeFirstOrThrow()
+    const [pending] = await f.service.list(f.workspace.id)
+    assert.deepEqual(
+      { lastOpenedAt: pending.lastOpenedAt, modifiedAt: pending.modifiedAt },
+      expected,
+    )
+    assert.deepEqual(
+      await f.database.db.selectFrom('project_relocation').selectAll().executeTakeFirstOrThrow(),
+      before,
+    )
+    Object.defineProperty(f.repository, 'relocations', {
+      configurable: true,
+      value: new ProjectRelocationStore(f.database.db),
+    })
+    await f.service.moveProject(record.localProjectKey, target.id)
+    await f.service.trashProject(record.localProjectKey)
+    const lifecycle = await f.database.db
+      .selectFrom('project_file_lifecycle')
+      .selectAll()
+      .executeTakeFirstOrThrow()
+    const [trash] = await f.service.listTrash()
+    assert.deepEqual({ lastOpenedAt: trash.lastOpenedAt, modifiedAt: trash.modifiedAt }, expected)
+    assert.deepEqual(
+      await f.database.db
+        .selectFrom('project_file_lifecycle')
+        .selectAll()
+        .executeTakeFirstOrThrow(),
+      lifecycle,
+    )
+    assert.equal('modifiedAt' in JSON.parse(lifecycle.project_json), false)
   })
 })

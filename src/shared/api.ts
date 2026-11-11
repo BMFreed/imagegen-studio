@@ -320,6 +320,9 @@ export interface ProjectSummary {
   bbox: Pick<IgsRectV1, 'height' | 'width'> | null
   health: 'corrupt' | 'missing' | 'ready' | 'unsupported_schema'
   id: string
+  /** Last verified/cached Home metadata; omitted only by older message producers. */
+  lastOpenedAt?: string | null
+  modifiedAt?: string | null
   pendingMove?: { message: string; workspaceId: string }
   pendingRename?: { message: string; name: string }
   previewStatus: 'empty' | 'rendered' | 'unavailable' | null

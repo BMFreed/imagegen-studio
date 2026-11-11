@@ -198,6 +198,7 @@ import {
   composeFrozenGenerationTarget,
   type FrozenGenerationTarget,
 } from './project-generation-target.js'
+import { canonicalHomeTimestamp, fileMtimeToHomeTimestamp } from './project-home-metadata.js'
 import {
   canonicalProjectPath,
   localProjectRecoveryKey,
@@ -2253,9 +2254,15 @@ export class ProjectService {
       }
     }
     const records = await this.options.repository.listProjects(workspaceId)
+    const modifiedTimes = await this.options.repository.listProjectModifiedTimes(workspaceId)
     const active = await Promise.all(
       records.map(
-        async (record) => await this.toSummary(record, readableWorkspaces.has(record.workspaceId)),
+        async (record) =>
+          await this.toSummary(
+            record,
+            readableWorkspaces.has(record.workspaceId),
+            modifiedTimes.get(record.localProjectKey) ?? null,
+          ),
       ),
     )
     const pending = (await this.options.repository.relocations.list()).filter(
@@ -2270,6 +2277,8 @@ export class ProjectService {
             : null,
         health: 'ready',
         id: move.localProjectKey,
+        lastOpenedAt: canonicalHomeTimestamp(move.project.lastOpenedAt),
+        modifiedAt: fileMtimeToHomeTimestamp(move.sourceWitness.mtimeNs),
         ...(move.kind === 'rename'
           ? {
               pendingRename: {
@@ -2319,6 +2328,8 @@ export class ProjectService {
           fileName: path.basename(entry.canonicalPath),
           health: record.fileHealth,
           id: entry.localProjectKey,
+          lastOpenedAt: canonicalHomeTimestamp(record.lastOpenedAt),
+          modifiedAt: fileMtimeToHomeTimestamp(entry.fileWitness?.mtimeNs),
           originalWorkspaceDirectoryPath: entry.workspaceDirectoryPath,
           originalWorkspaceName: workspace?.displayName ?? entry.workspaceName,
           previewStatus: record.previewStatus,
@@ -4962,6 +4973,7 @@ export class ProjectService {
   private async toSummary(
     record: ProjectIndexRecord,
     workspaceReadable: boolean,
+    modifiedAt: string | null,
   ): Promise<ProjectSummary> {
     let recoveryStatus: ProjectSummary['recoveryStatus'] = 'none'
     let recoveryReason: string | undefined
@@ -5006,6 +5018,8 @@ export class ProjectService {
           : null,
       health: record.fileHealth,
       id: record.localProjectKey,
+      lastOpenedAt: canonicalHomeTimestamp(record.lastOpenedAt),
+      modifiedAt,
       previewStatus: record.previewStatus,
       recoveryStatus,
       thumbnailUrl:

@@ -1,7 +1,7 @@
 /** Real built Home/IPC/SQLite/.igs qualification. OS picker replies are controlled; the catalog race wraps IPC entry and delegates unchanged to the original handler, then restores its identity. */
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   chmodSync,
   existsSync,
@@ -12,6 +12,7 @@ import {
   readdirSync,
   realpathSync,
   renameSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs'
 import os from 'node:os'
@@ -20,7 +21,10 @@ import { promisify } from 'node:util'
 
 import { _electron as electron, expect } from '@playwright/test'
 import { openAppDatabase } from '../src/main/db/database.ts'
-import { readIgsPackage } from '../src/main/projects/igs-package.ts'
+import { readIgsPackage, saveIgsPackage } from '../src/main/projects/igs-package.ts'
+import { readProjectPlaceholders } from '../src/main/projects/project-placeholders.ts'
+import { ProjectShadowStore } from '../src/main/projects/project-shadow.ts'
+import { parseProjectDocumentV1 } from '../src/shared/projects/project-schema.ts'
 import { ProjectSession } from '../src/main/projects/project-session.ts'
 import { isolateNativeSmokeWindow } from './native-smoke-window.mjs'
 import {
@@ -28,13 +32,14 @@ import {
   confirmQualificationProcessExit,
 } from './qualification-resource-limits.mjs'
 
-assert.ok([4, 5].includes(process.argv.length), 'Use --report-file ABSOLUTE_NEW_OWNED_REPORT [--trash-only|--locations-only|--move-only|--relocation-only|--open-rename-only]')
+assert.ok([4, 5].includes(process.argv.length), 'Use --report-file ABSOLUTE_NEW_OWNED_REPORT [--trash-only|--locations-only|--move-only|--relocation-only|--open-rename-only|--browse-only]')
 const trashOnly = process.argv[4] === '--trash-only'
 const locationsOnly = process.argv[4] === '--locations-only'
 const moveOnly = process.argv[4] === '--move-only'
 const relocationOnly = process.argv[4] === '--relocation-only'
 const openRenameOnly = process.argv[4] === '--open-rename-only'
-if (process.argv.length === 5) assert.ok(trashOnly || locationsOnly || moveOnly || relocationOnly || openRenameOnly)
+const browseOnly = process.argv[4] === '--browse-only'
+if (process.argv.length === 5) assert.ok(trashOnly || locationsOnly || moveOnly || relocationOnly || openRenameOnly || browseOnly)
 assert.equal(process.argv[2], '--report-file')
 const reportFile = process.argv[3]
 const evidenceRoot = path.dirname(reportFile)
@@ -53,7 +58,7 @@ const execute = promisify(execFile)
 const digest = (file) => createHash('sha256').update(readFileSync(file)).digest('hex')
 const report = {
   outcome: 'running',
-  mode: openRenameOnly ? 'open-rename-only' : relocationOnly ? 'relocation-only' : moveOnly ? 'move-only' : locationsOnly ? 'locations-only' : trashOnly ? 'trash-only' : 'catalog-workspaces-and-trash',
+  mode: browseOnly ? 'browse-only' : openRenameOnly ? 'open-rename-only' : relocationOnly ? 'relocation-only' : moveOnly ? 'move-only' : locationsOnly ? 'locations-only' : trashOnly ? 'trash-only' : 'catalog-workspaces-and-trash',
   startedAt: new Date().toISOString(),
   payloads: [payload],
   checks: [],
@@ -61,14 +66,18 @@ const report = {
   nativeClosures: [],
   resourceChecks: [],
   pageErrors: [],
-  boundary:
-    'Locations-only uses controlled OS shell callbacks; it qualifies Main path selection and UI, not file-manager window UX. Relocation/open-Rename uses exact owned fs syscall interception to chmod its own packages and delegates to originals for actual EACCES; stack, journal phase, identities and modes must restore. Actual built renderer/preload/Main/SQLite and Project package writers/loaders. OS picker replies are controlled; OS dialog UX and arbitrary permission races are not qualified. No ML.',
+  boundary: browseOnly
+    ? 'Browse-only qualifies actual built Home/IPC/SQLite and real package timestamps. Controlled owned-file mtimes prepare sort inputs; verified recovery shadow and preview-unavailable package are prepared through real writers while the app is physically closed. This is not crash recovery acceptance. Exact owned missing-file/workspace renames are restored; no model/runtime or foreign data changes. OS picker replies are controlled.'
+    : 'Locations-only uses controlled OS shell callbacks; it qualifies Main path selection and UI, not file-manager window UX. Relocation/open-Rename uses exact owned fs syscall interception to chmod its own packages and delegates to originals for actual EACCES; stack, journal phase, identities and modes must restore. Actual built renderer/preload/Main/SQLite and Project package writers/loaders. OS picker replies are controlled; OS dialog UX and arbitrary permission races are not qualified. No ML.',
   sourceSha256: Object.fromEntries(
     [
       'scripts/smoke-home-workspaces.mjs',
       'src/main/index.ts',
       'src/preload/index.ts',
       'src/main/projects/project-index.ts',
+      'src/main/projects/project-home-metadata.ts',
+      'src/main/projects/project-shadow.ts',
+      'src/shared/projects/home-project-browse.ts',
       'src/main/projects/project-service.ts',
       'src/main/projects/project-identity.ts',
       'src/main/projects/project-location-registry.ts',
@@ -76,6 +85,8 @@ const report = {
       'src/main/projects/project-session.ts',
       'src/main/projects/project-autosave.ts',
       'src/main/projects/igs-package.ts',
+      'src/main/projects/project-placeholders.ts',
+      'src/shared/projects/project-schema.ts',
       'src/main/db/database.ts',
       'src/main/db/migrations/0028_project_relocation.sql',
       'src/main/db/migrations/0029_project_rename.sql',
@@ -1602,6 +1613,221 @@ async function manageRelocation() {
   await browse()
   check('recovered Project opens by original key; subsequent explicit edit Save and renamed-title reopen use only authoritative destinations')
 }
+/** Read-only Home browse consumer with real timestamps and independent saved/recovery conditions. */
+async function manageBrowse() {
+  const summaries = await api('list', registered.id)
+  const find = (title) => {
+    const value = summaries.find((project) => project.title === title)
+    assert.ok(value)
+    return value
+  }
+  const recent = find('Move Project')
+  const recovery = find('Copy Project')
+  const missing = find('Workspace Project')
+  const records = Object.fromEntries(await Promise.all(summaries.map(async (project) => [project.id, await indexRecord(project.id)])))
+  const files = Object.fromEntries(summaries.map((project) => [project.id, records[project.id].canonical_path]))
+  const originalHashes = Object.fromEntries(summaries.map((project) => [project.id, digest(files[project.id])]))
+  const dates = new Map([
+    [missing.id, '2020-03-03T00:00:00.000Z'],
+    [recovery.id, '2020-02-02T00:00:00.000Z'],
+    [recent.id, '2020-01-01T00:00:00.000Z'],
+  ])
+  for (const project of summaries) {
+    const date = new Date(dates.get(project.id))
+    utimesSync(files[project.id], date, date)
+  }
+  const sortControl = () => window.getByLabel('Sort by', { exact: true })
+  const statusControl = () => window.getByLabel('Status', { exact: true })
+  const searchControl = () => window.getByRole('textbox', { name: 'Search projects', exact: true })
+  const resetControl = () => window.getByLabel('Project browser controls', { exact: true }).getByRole('button', { name: 'Reset filters', exact: true })
+  const rowIds = () => window.locator('.project-row:visible').evaluateAll((rows) => rows.map((row) => row.getAttribute('data-project-id')))
+  async function rows(expected) {
+    await expect.poll(rowIds).toEqual(expected)
+  }
+  async function choose(control, label) {
+    await control.click()
+    await window.locator('.n-base-select-option:visible').filter({ hasText: new RegExp(`^${label}$`) }).click()
+    await expect(control).toContainText(label)
+  }
+  async function refresh() {
+    await window.getByRole('button', { name: 'Refresh projects', exact: true }).click()
+  }
+  async function browseWorkspace() {
+    await showHome()
+    await home().locator('.workspace-select').filter({ hasText: registered.displayName }).click()
+    await expect(window.getByRole('heading', { name: registered.displayName, exact: true })).toBeVisible()
+  }
+  async function browseAll() {
+    await showHome()
+    await home().getByRole('button', { name: 'Projects', exact: true }).click()
+    await expect(window.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible()
+  }
+  async function openUi(project) {
+    await window.getByRole('button', { name: `Open ${project.title}`, exact: true }).click()
+    await expect(window.getByRole('tab', { name: project.title, exact: true })).toHaveAttribute('aria-selected', 'true')
+  }
+  async function assertControls(search, sort, status) {
+    await expect(searchControl()).toHaveValue(search)
+    await expect(sortControl()).toContainText(sort)
+    await expect(statusControl()).toContainText(status)
+  }
+  await refresh()
+  let actual = await api('list', registered.id)
+  for (const value of actual) {
+    assert.equal(value.modifiedAt, dates.get(value.id))
+    assert.equal(digest(files[value.id]), originalHashes[value.id])
+  }
+  // Actual Main Open calls produce the operational last-opened timestamps; no DB update seam.
+  const openedTimes = []
+  for (const project of [recovery, missing, recent]) {
+    await openUi(project)
+    await closeProject(project.title)
+    await showHome()
+    const value = (await api('list', registered.id)).find(({ id }) => id === project.id)
+    assert.ok(value.lastOpenedAt && Number.isFinite(Date.parse(value.lastOpenedAt)))
+    openedTimes.push(value.lastOpenedAt)
+  }
+  assert.ok(openedTimes[0] < openedTimes[1] && openedTimes[1] < openedTimes[2])
+  await refresh()
+  await assertControls('', 'Last opened', 'All statuses')
+  await rows([recent.id, missing.id, recovery.id])
+  await choose(sortControl(), 'Name')
+  await rows([recovery.id, recent.id, missing.id])
+  await choose(sortControl(), 'Modified')
+  await rows([missing.id, recovery.id, recent.id])
+  actual = await api('list', registered.id)
+  for (const value of actual) assert.equal(value.modifiedAt, dates.get(value.id), 'Open and browse must not manufacture package-modified times')
+  check('real Main last-opened and saved file mtimes drive the three visible Home sort orders', { openedTimes, summaries: actual })
+  await searchControl().fill(' Trash Workspace ')
+  await rows([])
+  await expect(window.getByText('No projects match this search or filter', { exact: true })).toBeVisible()
+  await expect(resetControl()).toBeEnabled()
+  await resetControl().click()
+  await assertControls('', 'Modified', 'All statuses')
+  await rows([missing.id, recovery.id, recent.id])
+  check('Home search matches trimmed Project names only; no-match Reset clears filters but retains selected sort')
+  await openUi(recent)
+  await showHome()
+  await choose(statusControl(), 'Open')
+  await rows([recent.id])
+  await searchControl().fill(' MOVE ')
+  await rows([recent.id])
+  await screenshot('browse-open-narrow', 900, 620)
+  await window.getByRole('tab', { name: recent.title, exact: true }).click()
+  await expect(window.getByRole('tab', { name: recent.title, exact: true })).toHaveAttribute('aria-selected', 'true')
+  await showHome()
+  await assertControls(' MOVE ', 'Modified', 'Open')
+  await rows([recent.id])
+  check('Open filter follows the actual tab registry and Home query controls survive Project remount')
+  await browseAll()
+  await assertControls(' MOVE ', 'Modified', 'Open')
+  await rows([recent.id])
+  await trashView()
+  await assertControls(' MOVE ', 'Modified', 'Open')
+  await rows([])
+  await browseWorkspace()
+  await assertControls(' MOVE ', 'Modified', 'Open')
+  await rows([recent.id])
+  await resetControl().click()
+  await assertControls('', 'Modified', 'All statuses')
+  await rows([missing.id, recovery.id, recent.id])
+  await closeProject(recent.title)
+  await choose(statusControl(), 'Open')
+  await rows([])
+  await resetControl().click()
+  await screenshot('browse-controls-wide', 1440, 900)
+  check('workspace Projects and Trash browse switches preserve search status and sort; Reset retains sort and closing a tab updates Open')
+  for (const project of summaries) assert.equal(digest(files[project.id]), originalHashes[project.id])
+  check('read-only Home sorting filtering remount and Open/Close preserve all three saved package bytes')
+  await close('browse-first-normal')
+
+  // These are explicit real disk preconditions prepared while the app is physically closed,
+  // not a simulated crash and not a mocked Home/API result.
+  const saved = await readIgsPackage(files[recovery.id])
+  const shadowDocument = parseProjectDocumentV1({
+    ...saved.project,
+    documentRevision: randomUUID(),
+    primaryBbox: { ...saved.project.primaryBbox, x: 8 },
+  })
+  const shadow = new ProjectShadowStore(path.join(appData, 'autosave'))
+  await shadow.write({ projectPath: files[recovery.id], savedDocument: saved.project, document: shadowDocument })
+  const inspection = await shadow.inspect({ projectPath: files[recovery.id], savedPackage: await readIgsPackage(files[recovery.id]) })
+  assert.equal(inspection.status, 'recoverable')
+  assert.equal(digest(files[recovery.id]), originalHashes[recovery.id])
+  const previewOriginal = await readIgsPackage(files[recent.id])
+  const raster = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGO06bnDwMDAxMDAwMDAAAATOgGonVuaBAAAAABJRU5ErkJggg==', 'base64')
+  const layerId = randomUUID()
+  const assetPath = `assets/layers/${layerId}.png`
+  const previewDocument = parseProjectDocumentV1({
+    ...previewOriginal.project,
+    documentRevision: randomUUID(),
+    layers: [{ id: layerId, kind: 'raster', name: 'Saved preview control', visible: true, locked: false, opacity: 1, blendMode: 'normal', transform: { rotationDegrees: 0, scaleX: 1, scaleY: 1, x: 0, y: 0 }, asset: { path: assetPath, bytes: raster.length, width: 2, height: 2, sha256: createHash('sha256').update(raster).digest('hex') } }],
+  })
+  const placeholder = await readProjectPlaceholders(path.resolve('src/main/projects/placeholders'), 'unavailable')
+  await saveIgsPackage(files[recent.id], { project: previewDocument, assets: { [assetPath]: { bytes: raster } }, preview: { ...placeholder, rect: { x: 0, y: 0, width: 2, height: 2 }, status: 'unavailable' } })
+  const previewHash = digest(files[recent.id])
+  const retainedMissing = path.join(payload, 'browse-missing-retained.igs')
+  renameSync(files[missing.id], retainedMissing)
+  assert.equal(digest(retainedMissing), originalHashes[missing.id])
+  const disconnected = `${folder}-browse-disconnected`
+  try {
+    await launch('browse-conditions')
+    await browseWorkspace()
+    actual = await api('list', registered.id)
+    assert.equal(actual.find(({ id }) => id === missing.id).health, 'missing')
+    assert.equal(actual.find(({ id }) => id === recovery.id).recoveryStatus, 'recoverable')
+    assert.equal(actual.find(({ id }) => id === recent.id).health, 'ready')
+    assert.equal(actual.find(({ id }) => id === recent.id).previewStatus, 'unavailable')
+    await choose(sortControl(), 'Name')
+    await choose(statusControl(), 'Recovery available')
+    await rows([recovery.id])
+    await screenshot('browse-recovery-only', 900, 620)
+    check('Recovery filter consumes a real verified document shadow without including the missing-file or preview-unavailable controls', { summaries: actual, recoveryPreparation: 'real ProjectShadowStore.write while app closed; not crash qualification' })
+    await choose(statusControl(), 'Needs attention')
+    await rows([missing.id])
+    check('Needs attention includes the actual missing file and excludes independent recovery-only and saved-preview-unavailable Projects')
+    await choose(statusControl(), 'All statuses')
+    await rows([recovery.id, recent.id, missing.id])
+    await screenshot('browse-independent-conditions', 1440, 900)
+    await choose(statusControl(), 'Needs attention')
+    renameSync(folder, disconnected)
+    await refresh()
+    await expect.poll(async () => (await api('listWorkspaces')).find(({ id }) => id === registered.id)?.availability).toBe('missing')
+    await rows([recovery.id, recent.id, missing.id])
+    await expect(window.getByText(/workspace folder is missing/)).toBeVisible()
+    await screenshot('browse-unavailable-workspace', 900, 620)
+    check('workspace availability independently adds every cached Project to Needs attention without rewriting file health')
+    renameSync(disconnected, folder)
+    await refresh()
+    await expect.poll(async () => (await api('listWorkspaces')).find(({ id }) => id === registered.id)?.availability).toBe('available')
+    await rows([missing.id])
+    await choose(statusControl(), 'Recovery available')
+    await rows([recovery.id])
+    assert.equal(digest(files[recovery.id]), originalHashes[recovery.id])
+    assert.equal(digest(files[recent.id]), previewHash)
+    assert.equal(digest(retainedMissing), originalHashes[missing.id])
+    check('restoring workspace access restores independent filter membership and preserves Project and shadow bytes')
+    renameSync(retainedMissing, files[missing.id])
+    await refresh()
+    await choose(statusControl(), 'Needs attention')
+    await rows([])
+    await resetControl().click()
+    await assertControls('', 'Name', 'All statuses')
+    await rows([recovery.id, recent.id, missing.id])
+    await screenshot('browse-restored-home', 1440, 900)
+    const restored = await api('list', registered.id)
+    assert.ok(restored.every((project) => project.health === 'ready'))
+    assert.equal(restored.find(({ id }) => id === recovery.id).recoveryStatus, 'recoverable')
+    assert.equal(restored.find(({ id }) => id === recent.id).previewStatus, 'unavailable')
+    report.browseFixtureRestoration = { sourceDirectory: folder, disconnectedAbsent: !existsSync(disconnected), missingSource: files[missing.id], missingRetainedAbsent: !existsSync(retainedMissing), missingSourceSha256: digest(files[missing.id]), recoveryPackageSha256: digest(files[recovery.id]), previewPackageSha256: digest(files[recent.id]) }
+    persist()
+    check('restored missing file reappears by its stable key; empty attention Reset keeps Name sort and all original package owners')
+  } finally {
+    // Restore only the exact owned fault paths, including when a UI assertion fails.
+    if (existsSync(disconnected)) renameSync(disconnected, folder)
+    if (existsSync(retainedMissing)) renameSync(retainedMissing, files[missing.id])
+  }
+}
 async function prepareManagedProjects() {
   await picker(folder)
   await home().getByRole('button', { name: 'Add Workspace', exact: true }).click()
@@ -1621,7 +1847,7 @@ async function prepareManagedProjects() {
 persist()
 try {
   await launch('first')
-  if (trashOnly || locationsOnly || moveOnly || relocationOnly || openRenameOnly) {
+  if (trashOnly || locationsOnly || moveOnly || relocationOnly || openRenameOnly || browseOnly) {
     await prepareManagedProjects()
   } else {
   assert.deepEqual(await api('list'), [])
@@ -1804,15 +2030,17 @@ try {
   )
   await manageWorkspace()
   }
-  if (relocationOnly || openRenameOnly) await manageRelocation()
+  if (browseOnly) await manageBrowse()
+  else if (relocationOnly || openRenameOnly) await manageRelocation()
   else if (moveOnly) await manageMove()
   else if (locationsOnly) await manageLocations()
   else await manageTrash()
   await close('restart-normal')
   assert.deepEqual(report.pageErrors, [])
-  assert.equal(report.nativeClosures.length, relocationOnly || openRenameOnly || moveOnly ? 3 : locationsOnly ? 2 : trashOnly ? 4 : 6)
+  assert.equal(report.nativeClosures.length, browseOnly ? 2 : relocationOnly || openRenameOnly || moveOnly ? 3 : locationsOnly ? 2 : trashOnly ? 4 : 6)
   if (relocationOnly) assert.equal(report.checks.length, 13)
   if (openRenameOnly) assert.equal(report.checks.length, 11)
+  if (browseOnly) assert.equal(report.checks.length, 11)
   report.outcome = 'passed'
   report.finishedAt = new Date().toISOString()
   persist()

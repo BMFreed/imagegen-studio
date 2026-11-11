@@ -2,6 +2,16 @@
 
 ## Production checkpoint
 
+[Production browse controls](../engineering/phase-4-home-project-browse-research.md)
+connect name-only search, Last opened/Name/Modified sorting and independent
+Open/Recovery available/Needs attention filters to actual Main metadata. Unknown
+times stay last; equal values use stable name/identity ties. Reset clears search
+and status while retaining sort. App-owned session state survives Home remount
+and workspace/Projects/Trash switches, without a new persistent global setting.
+Needs attention means unhealthy file or unavailable/absent workspace; recovery and
+preview availability remain independent. Selection/Inspector/grid/full preview,
+Locate/Relink and cache-only missing-entry removal remain separate consumers.
+
 [Clean-open Rename](../engineering/phase-4-clean-open-rename-research.md) now keeps
 the live Project tab and canvas Undo/Redo while changing title and filename.
 Lifecycle name stays current through later Undo/Redo/Save. Dirty/unsynced drafts
@@ -43,7 +53,7 @@ Main serializes catalog lifecycle commands, and removal affects derived indexes
 without deleting folders, Project files or operational generation/recovery data.
 The [catalog/destinations stage](../engineering/phase-4-home-workspaces-research.md)
 already connects Add, aggregate/scoped browsing and explicit Create/Import folders.
-Project rename/move, folder locate/relink and remaining
+Identity-preserving folder/file locate/relink and remaining
 Home presentation remain continuations. Full Home/MVP promise is not promoted.
 
 ## Feature
@@ -700,8 +710,9 @@ MVP does not include:
   The production Home list now loads the embedded thumbnail through a signed
   local resource and offers the explicit rebuild action for `unavailable`
   previews; Electron smoke verifies the resulting package and visible image.
-  The broader card selection, Inspector zoom/pan, workspace controls and
-  filters in this contract remain outside that production slice.
+  That preview slice did not establish the broader card selection, Inspector
+  zoom/pan or grid. Production filters/sorts and workspace operations are covered
+  by the newer checkpoints above; full selected-project preview remains open.
 - Home preview supports zoom and pan without showing inactive generation/canvas controls, and its Inspector can be collapsed.
 - Workspace sidebar and Inspector widths are mouse-resizable within bounded ranges; the Inspector resize handle is unavailable while collapsed.
 - An already-open selected project uses `Switch to Project` and focuses its existing tab.

@@ -1,5 +1,10 @@
 <script setup lang="ts">
 import type { ProjectSummary } from '../../shared/api.js'
+import {
+  type HomeProjectSort,
+  type HomeProjectStatus,
+  selectHomeProjects,
+} from '../../shared/projects/home-project-browse.js'
 import type { ProjectTrashSummary } from '../../shared/projects/project-trash.js'
 import type { ProjectWorkspaceSummary } from '../../shared/projects/project-workspaces.js'
 
@@ -14,9 +19,21 @@ import {
   Plus as PlusIcon,
   Bookmark as PresetsIcon,
   Refresh as RefreshIcon,
+  FilterOff as ResetIcon,
   Trash as TrashIcon,
 } from '@vicons/tabler'
-import { NAlert, NButton, NDropdown, NEmpty, NIcon, NInput, NSpin, NTag } from 'naive-ui'
+import {
+  NAlert,
+  NButton,
+  NDropdown,
+  NEmpty,
+  NIcon,
+  NInput,
+  NSelect,
+  NSpin,
+  NTag,
+  NText,
+} from 'naive-ui'
 import { computed, ref, watch } from 'vue'
 
 import IconButton from '../../../docs/prototype-app/src/components/IconButton.vue'
@@ -37,6 +54,9 @@ const props = defineProps<{
   workspacesLoading: boolean
 }>()
 const workspaceId = defineModel<string | null>('workspaceId', { required: true })
+const search = defineModel<string>('search', { required: true })
+const sort = defineModel<HomeProjectSort>('sort', { required: true })
+const status = defineModel<HomeProjectStatus>('status', { required: true })
 
 const emit = defineEmits<{
   addWorkspace: []
@@ -59,8 +79,23 @@ const emit = defineEmits<{
   workspaceSettings: [workspaceId: string]
 }>()
 
-const search = ref('')
 const displayProjects = computed(() => (props.trashView ? props.trashProjects : props.projects))
+const sortOptions = [
+  { label: 'Last opened', value: 'lastOpened' },
+  { label: 'Name', value: 'name' },
+  { label: 'Modified', value: 'modified' },
+]
+const statusOptions = [
+  { label: 'All statuses', value: 'all' },
+  { label: 'Open', value: 'open' },
+  { label: 'Recovery available', value: 'recovery' },
+  { label: 'Needs attention', value: 'attention' },
+]
+const hasActiveFilters = computed(() => search.value.trim() !== '' || status.value !== 'all')
+function resetFilters() {
+  search.value = ''
+  status.value = 'all'
+}
 function trashSummary(project: ProjectSummary): ProjectTrashSummary | null {
   return props.trashView && 'trashId' in project ? (project as ProjectTrashSummary) : null
 }
@@ -197,12 +232,16 @@ function canRebuildPreview(project: ProjectSummary): boolean {
   )
 }
 
-const visibleProjects = computed(() => {
-  const query = search.value.trim().toLocaleLowerCase()
-  return query
-    ? displayProjects.value.filter((project) => project.title.toLocaleLowerCase().includes(query))
-    : displayProjects.value
-})
+const visibleProjects = computed(() =>
+  selectHomeProjects({
+    openProjectIds: props.openProjectIds ?? [],
+    projects: displayProjects.value,
+    search: search.value,
+    sort: sort.value,
+    status: status.value,
+    workspaces: props.workspaces,
+  }),
+)
 
 function previewLabel(project: ProjectSummary): string | null {
   if (project.pendingMove || project.pendingRename || project.health !== 'ready') {
@@ -391,7 +430,7 @@ function recoveryLabel(project: ProjectSummary): string | null {
                   : (selectedWorkspace?.displayName ?? 'Workspace')
             }}
           </h1>
-          <span class="project-count">{{ displayProjects.length }}</span>
+          <span class="project-count">{{ visibleProjects.length }}</span>
         </div>
         <IconButton
           :icon="RefreshIcon"
@@ -432,14 +471,31 @@ function recoveryLabel(project: ProjectSummary): string | null {
         >
           {{ trashError }} Refresh to try again.
         </NAlert>
-        <NInput
-          v-model:value="search"
-          aria-label="Search projects"
-          class="project-search"
-          clearable
-          :disabled="displayProjects.length === 0"
-          placeholder="Search projects"
-        />
+        <div aria-label="Project browser controls" class="browser-toolbar">
+          <label class="toolbar-field toolbar-field--search">
+            <NText class="toolbar-label" depth="3">Name</NText>
+            <NInput
+              v-model:value="search"
+              clearable
+              :inputProps="{ 'aria-label': 'Search projects' }"
+              placeholder="Search projects"
+            />
+          </label>
+          <label class="toolbar-field">
+            <NText class="toolbar-label" depth="3">Sort by</NText>
+            <NSelect v-model:value="sort" aria-label="Sort by" :options="sortOptions" />
+          </label>
+          <label class="toolbar-field">
+            <NText class="toolbar-label" depth="3">Status</NText>
+            <NSelect v-model:value="status" aria-label="Status" :options="statusOptions" />
+          </label>
+          <IconButton
+            :disabled="!hasActiveFilters"
+            :icon="ResetIcon"
+            label="Reset filters"
+            @click="resetFilters"
+          />
+        </div>
 
         <div v-if="loading && displayProjects.length === 0" class="browser-state">
           <NSpin size="small" />
@@ -455,9 +511,9 @@ function recoveryLabel(project: ProjectSummary): string | null {
           </NEmpty>
         </div>
         <div v-else-if="visibleProjects.length === 0" class="browser-state">
-          <NEmpty description="No projects match your search">
+          <NEmpty description="No projects match this search or filter">
             <template v-slot:extra>
-              <NButton secondary @click="search = ''">Clear search</NButton>
+              <NButton secondary @click="resetFilters">Reset filters</NButton>
             </template>
           </NEmpty>
         </div>
@@ -834,10 +890,28 @@ function recoveryLabel(project: ProjectSummary): string | null {
   margin-bottom: 16px;
 }
 
-.project-search {
+.browser-toolbar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 140px 180px auto;
+  align-items: end;
+  gap: 8px;
   flex: 0 0 auto;
-  max-width: 440px;
+  max-width: 920px;
   margin-bottom: 18px;
+}
+
+.toolbar-field {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.toolbar-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
 }
 
 .browser-state {
@@ -943,6 +1017,20 @@ function recoveryLabel(project: ProjectSummary): string | null {
     flex-wrap: wrap;
     justify-content: flex-end;
     max-width: 160px;
+  }
+
+  .browser-toolbar {
+    grid-template-columns: minmax(140px, 1fr) 120px 160px auto;
+  }
+}
+
+@media (max-width: 800px) {
+  .browser-toolbar {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  }
+
+  .toolbar-field--search {
+    grid-column: 1 / -1;
   }
 }
 </style>

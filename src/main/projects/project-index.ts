@@ -22,6 +22,7 @@ import path from 'node:path'
 import type { DB } from '../db/database.types.js'
 
 import { IgsPackageError, readIgsPackage } from './igs-package.js'
+import { fileMtimeToHomeTimestamp } from './project-home-metadata.js'
 import {
   canonicalProjectPath,
   localProjectRecoveryKey,
@@ -328,6 +329,18 @@ export class ProjectIndexRepository {
     return await withProjectPathLock(
       canonicalPath,
       async () => await this.indexSavedLocked(canonicalPath, workspaceId, options),
+    )
+  }
+
+  /** One read-only projection for Home sorting; paths and frozen lifecycle snapshots stay separate. */
+  async listProjectModifiedTimes(workspaceId?: string): Promise<Map<string, string | null>> {
+    let query = this.db.selectFrom('project_index').select(['local_project_key', 'file_mtime_ns'])
+    if (workspaceId !== undefined) {
+      query = query.where('workspace_id', '=', workspaceId)
+    }
+    const rows = await query.execute()
+    return new Map(
+      rows.map((row) => [row.local_project_key, fileMtimeToHomeTimestamp(row.file_mtime_ns)]),
     )
   }
 

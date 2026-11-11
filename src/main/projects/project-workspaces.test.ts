@@ -130,6 +130,14 @@ test('workspace registration persists canonical folder metadata and scans only d
     const opened = await fixture.service.open(projects[0].id)
     assert.equal(opened.kind, 'opened')
     await fixture.service.close(projects[0].id)
+    const afterOpen = await fixture.service.list(added.id)
+    assert.equal(projects[0].lastOpenedAt, null)
+    assert.equal(typeof afterOpen[0].lastOpenedAt, 'string')
+    assert.equal(
+      afterOpen[0].lastOpenedAt,
+      (await fixture.repository.getProject(projects[0].id))!.lastOpenedAt,
+    )
+    assert.deepEqual(afterOpen, [{ ...projects[0], lastOpenedAt: afterOpen[0].lastOpenedAt }])
     await fixture.reopen()
     const workspaces = await fixture.service.listWorkspaces()
     assert.equal(workspaces[0].id, 'uncategorized')
@@ -137,7 +145,7 @@ test('workspace registration persists canonical folder metadata and scans only d
       workspaces.find((workspace) => workspace.id === added.id),
       added,
     )
-    assert.deepEqual(await fixture.service.list(added.id), projects)
+    assert.deepEqual(await fixture.service.list(added.id), afterOpen)
   })
 })
 

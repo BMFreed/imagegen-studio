@@ -39,6 +39,7 @@ import type {
   AcceptedResultHistoryReference,
 } from '../shared/projects/accepted-result-history.js'
 import type { GenerationProgressSnapshot } from '../shared/projects/generation-progress.js'
+import type { HomeProjectSort, HomeProjectStatus } from '../shared/projects/home-project-browse.js'
 import type { ProjectAcceptedResultTarget } from '../shared/projects/project-accepted-results.js'
 import {
   generationTargetSignature,
@@ -319,6 +320,10 @@ const queueResultNavigationError = ref<string | null>(null)
 const generationResultFocusByTab = ref<Record<string, GenerationResultFocusRequest>>({})
 const modelManagerFocus = ref<ModelManagerFocus | null>(null)
 const projects = ref<ProjectSummary[]>([])
+// Home is remounted on Project navigation; browse controls belong to the app session.
+const homeProjectSearch = ref('')
+const homeProjectSort = ref<HomeProjectSort>('lastOpened')
+const homeProjectStatus = ref<HomeProjectStatus>('all')
 const trashProjects = ref<ProjectTrashSummary[]>([])
 const trashLoading = ref(false)
 const trashError = ref<string | null>(null)
@@ -5174,6 +5179,9 @@ onBeforeUnmount(() => {
         </NAlert>
         <HomeView
           v-if="activeDocument === 'home' && homeOpen"
+          v-model:search="homeProjectSearch"
+          v-model:sort="homeProjectSort"
+          v-model:status="homeProjectStatus"
           v-model:workspaceId="browseWorkspaceId"
           :busy="pendingProjectAction !== null || windowClosePending"
           :error="homeError"

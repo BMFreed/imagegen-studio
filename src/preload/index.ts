@@ -46,6 +46,7 @@ import {
   isRasterGenerationData,
   type RasterGenerationData,
 } from '../shared/projects/generation-settings-comparison.js'
+import { isHomeProjectTimestamp } from '../shared/projects/home-project-browse.js'
 import { isIllustriousNoiseProfileV1 } from '../shared/projects/illustrious-noise-profile.js'
 import { isProjectAcceptedResults } from '../shared/projects/project-accepted-results.js'
 import {
@@ -727,6 +728,8 @@ function isProjectSummary(value: unknown): value is ProjectSummary {
       (isRecord(value.pendingMove) &&
         isProjectWorkspaceId(value.pendingMove.workspaceId) &&
         typeof value.pendingMove.message === 'string')) &&
+    (value.lastOpenedAt === undefined || isHomeProjectTimestamp(value.lastOpenedAt)) &&
+    (value.modifiedAt === undefined || isHomeProjectTimestamp(value.modifiedAt)) &&
     isProjectId(value.id) &&
     isProjectWorkspaceId(value.workspaceId) &&
     typeof value.title === 'string' &&
