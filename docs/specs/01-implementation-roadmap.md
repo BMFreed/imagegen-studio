@@ -1,12 +1,22 @@
 # Implementation Roadmap
 
-## Current workspace management checkpoint
+## Current Project Trash checkpoint
+
+[Authoritative Trash lifecycle](../engineering/phase-4-project-trash-research.md) connects Home Move to Trash,
+Restore and confirmed Delete Permanently through real Main/SQLite/filesystem owners.
+Trash survives workspace unregister/index eviction/re-Add; positive deletion intent,
+frozen source witnesses and startup recovery protect pending purges. Open Projects
+and unresolved generation/results are refused. Project rename/move, remaining Home
+presentation, Models/export/release and visual/MVP acceptance remain open; PP statuses
+are unchanged. Executed evidence and limits are recorded in the linked note.
+
+## Previous workspace management checkpoint
 
 [Production metadata management](../engineering/phase-4-workspace-management-research.md)
 connects workspace Settings and confirmed unregister to existing Main/repository
 owners. Default/open guards and a catalog lifecycle fence protect index removal;
-folders, packages and operational generation/recovery data survive. Project moves,
-Trash, remaining Home/Models/export/release and visual acceptance remain open.
+folders, packages and operational generation/recovery data survive. At that checkpoint Project moves, Trash and the remaining Home/Models/export/release
+and visual acceptance were separate continuations.
 
 ## Previous Home catalog slice
 

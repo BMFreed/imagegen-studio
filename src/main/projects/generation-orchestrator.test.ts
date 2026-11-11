@@ -1926,3 +1926,52 @@ test(
     })
   },
 )
+
+test(
+  'maintenance fences release only their own lease on success and failure',
+  { skip: !devRuntimeRoot() },
+  async () => {
+    await withFixture(async (fixture) => {
+      const failure = new Error('maintenance failed')
+      for (const fails of [false, true]) {
+        const use = async () => {
+          assert.throws(() => fixture.orchestrator.reopenProjectGeneration(fixture.tabId), {
+            code: 'PROJECT_GENERATION_CLOSING',
+          })
+          if (fails) {
+            throw failure
+          }
+          return 'done'
+        }
+        if (fails) {
+          await assert.rejects(
+            fixture.orchestrator.withProjectMaintenanceFence(fixture.tabId, use),
+            (error) => error === failure,
+          )
+        } else {
+          assert.equal(
+            await fixture.orchestrator.withProjectMaintenanceFence(fixture.tabId, use),
+            'done',
+          )
+        }
+        assert.doesNotThrow(() => fixture.orchestrator.reopenProjectGeneration(fixture.tabId))
+        await fixture.orchestrator.fenceProjectGeneration(fixture.tabId)
+        if (fails) {
+          await assert.rejects(
+            fixture.orchestrator.withProjectMaintenanceFence(fixture.tabId, use),
+            (error) => error === failure,
+          )
+        } else {
+          assert.equal(
+            await fixture.orchestrator.withProjectMaintenanceFence(fixture.tabId, use),
+            'done',
+          )
+        }
+        assert.throws(() => fixture.orchestrator.reopenProjectGeneration(fixture.tabId), {
+          code: 'PROJECT_GENERATION_CLOSING',
+        })
+        fixture.orchestrator.releaseProjectGenerationFence(fixture.tabId)
+      }
+    })
+  },
+)

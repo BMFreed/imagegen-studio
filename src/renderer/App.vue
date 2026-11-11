@@ -46,6 +46,7 @@ import {
   type ProjectGenerationTargetState,
 } from '../shared/projects/project-generation-target-state.js'
 import type { IgsRectV1, IgsRegionalGuidanceV1 } from '../shared/projects/project-schema.js'
+import type { ProjectTrashSummary } from '../shared/projects/project-trash.js'
 import {
   DEFAULT_PROJECT_WORKSPACE_ID,
   type ProjectWorkspaceAddInput,
@@ -107,6 +108,7 @@ import {
   projectWorkspaceDestinationOptions,
   projectWorkspaceDestinationProblem,
 } from './components/project-workspace-destinations.js'
+import ProjectTrashModal from './components/ProjectTrashModal.vue'
 import ProjectView from './components/ProjectView.vue'
 import { RegionalPromptSync } from './components/regional-prompt-sync.js'
 import {
@@ -177,6 +179,7 @@ type PendingSmartReview =
   | { kind: 'accept'; request: ProjectSmartPatchAcceptRequest; tabId: string }
   | { kind: 'discard'; request: ProjectSmartPatchDiscardRequest; tabId: string }
 type PendingProjectAction =
+  | { kind: 'delete-project' | 'restore-trash' | 'trash'; projectId: string }
   | { kind: 'open' | 'rebuild'; projectId: string }
   | {
       kind:
@@ -302,6 +305,10 @@ const queueResultNavigationError = ref<string | null>(null)
 const generationResultFocusByTab = ref<Record<string, GenerationResultFocusRequest>>({})
 const modelManagerFocus = ref<ModelManagerFocus | null>(null)
 const projects = ref<ProjectSummary[]>([])
+const trashProjects = ref<ProjectTrashSummary[]>([])
+const trashLoading = ref(false)
+const trashError = ref<string | null>(null)
+const selectedTrashView = ref(false)
 const workspaces = ref<ProjectWorkspaceSummary[]>([])
 const workspacesLoading = ref(false)
 const workspacesError = ref<string | null>(null)
@@ -409,6 +416,16 @@ const closeError = ref<string | null>(null)
 const showNewProject = ref(false)
 const newProjectError = ref<string | null>(null)
 const newProjectWorkspaceId = ref(DEFAULT_PROJECT_WORKSPACE_ID)
+const showProjectTrashAction = ref(false)
+const trashActionProject = ref<ProjectSummary | ProjectTrashSummary | null>(null)
+const trashDialogKind = ref<'delete' | 'trash'>('trash')
+const trashActionError = ref<string | null>(null)
+const trashPendingMessage = ref<string | null>(null)
+const trashActionBlocked = computed(
+  () =>
+    trashDialogKind.value === 'trash' &&
+    projectTabs.value.some(({ id }) => id === trashActionProject.value?.id),
+)
 const showAddWorkspace = ref(false)
 const addWorkspaceError = ref<string | null>(null)
 const showWorkspaceSettings = ref(false)
@@ -444,6 +461,7 @@ let unsubscribeProgress: (() => void) | undefined
 let unsubscribeGeneration: (() => void) | undefined
 let projectListRequest = 0
 let workspacesRequest = 0
+let trashRequest = 0
 let modelCatalogRequest = 0
 let rendererDisposed = false
 
@@ -523,6 +541,7 @@ function smartPresetOwnerCurrent(owner: SmartPatchPresetApplicationOwner, applyi
       (modelManagerOpen.value && !presetModelHandoff.value) ||
       showNewProject.value ||
       showAddWorkspace.value ||
+      showProjectTrashAction.value ||
       showWorkspaceSettings.value ||
       showRemoveWorkspace.value ||
       importDialogVisible.value ||
@@ -717,6 +736,7 @@ function saveSmartPatchCurrentAsPreset(tabId: string) {
         modelManagerOpen.value ||
         showNewProject.value ||
         showAddWorkspace.value ||
+        showProjectTrashAction.value ||
         showWorkspaceSettings.value ||
         showRemoveWorkspace.value ||
         importDialogVisible.value ||
@@ -1876,6 +1896,7 @@ watch(
     () => modelManagerOpen.value && !presetModelHandoff.value,
     () => showNewProject.value,
     () => showAddWorkspace.value,
+    () => showProjectTrashAction.value,
     () => showWorkspaceSettings.value,
     () => showRemoveWorkspace.value,
     () => importDialogVisible.value,
@@ -3371,35 +3392,54 @@ async function onTabKeydown(event: KeyboardEvent, documentId: string) {
 async function refreshProjects() {
   const request = ++projectListRequest
   const workspaceId = selectedWorkspaceId.value
+  const trashView = selectedTrashView.value
   projectsLoading.value = true
   homeError.value = null
   const catalogRefresh = refreshWorkspaces()
+  const trashRefresh = refreshTrash()
+  const current = () =>
+    !rendererDisposed &&
+    request === projectListRequest &&
+    selectedWorkspaceId.value === workspaceId &&
+    selectedTrashView.value === trashView
   try {
-    const list = await apiValue(() => projectApi().list(workspaceId ?? undefined))
-    if (
-      !rendererDisposed &&
-      request === projectListRequest &&
-      selectedWorkspaceId.value === workspaceId
-    ) {
-      projects.value = list
+    if (trashView) {
+      await trashRefresh
+    } else {
+      const list = await apiValue(() => projectApi().list(workspaceId ?? undefined))
+      if (current()) {
+        projects.value = list
+      }
     }
   } catch (cause) {
-    if (
-      !rendererDisposed &&
-      request === projectListRequest &&
-      selectedWorkspaceId.value === workspaceId
-    ) {
+    if (current()) {
       homeError.value = errorMessage(cause)
     }
   } finally {
-    if (
-      !rendererDisposed &&
-      request === projectListRequest &&
-      selectedWorkspaceId.value === workspaceId
-    ) {
+    if (current()) {
       projectsLoading.value = false
     }
-    await catalogRefresh
+    await Promise.all([catalogRefresh, trashRefresh])
+  }
+}
+
+async function refreshTrash() {
+  const request = ++trashRequest
+  trashLoading.value = true
+  trashError.value = null
+  try {
+    const list = await apiValue(() => projectApi().listTrash())
+    if (!rendererDisposed && request === trashRequest) {
+      trashProjects.value = list
+    }
+  } catch (cause) {
+    if (!rendererDisposed && request === trashRequest) {
+      trashError.value = errorMessage(cause)
+    }
+  } finally {
+    if (!rendererDisposed && request === trashRequest) {
+      trashLoading.value = false
+    }
   }
 }
 
@@ -3424,12 +3464,117 @@ async function refreshWorkspaces() {
 }
 
 async function selectWorkspace(id: string | null, refreshEvenIfSelected = false) {
-  if (id === selectedWorkspaceId.value && !refreshEvenIfSelected) {
+  if (id === selectedWorkspaceId.value && !selectedTrashView.value && !refreshEvenIfSelected) {
     return
   }
+  selectedTrashView.value = false
   selectedWorkspaceId.value = id
   projects.value = []
   await refreshProjects()
+}
+
+async function selectTrash() {
+  if (pendingProjectAction.value || windowClosePending.value) {
+    return
+  }
+  selectedTrashView.value = true
+  selectedWorkspaceId.value = null
+  await refreshProjects()
+}
+
+function beginTrashProject(project: ProjectSummary) {
+  if (showProjectTrashAction.value || pendingProjectAction.value || windowClosePending.value) {
+    return
+  }
+  queueResultNavigator.cancelProjectOpen()
+  trashActionProject.value = { ...project }
+  trashDialogKind.value = 'trash'
+  trashActionError.value = null
+  trashPendingMessage.value = null
+  showProjectTrashAction.value = true
+}
+
+function beginDeleteProject(project: ProjectTrashSummary) {
+  if (showProjectTrashAction.value || pendingProjectAction.value || windowClosePending.value) {
+    return
+  }
+  queueResultNavigator.cancelProjectOpen()
+  trashActionProject.value = { ...project }
+  trashDialogKind.value = 'delete'
+  trashActionError.value = null
+  trashPendingMessage.value = project.deletionStatus === 'deleting' ? project.deletionError : null
+  showProjectTrashAction.value = true
+}
+
+async function switchTrashProject() {
+  const project = trashActionProject.value
+  if (!project || pendingProjectAction.value || windowClosePending.value) {
+    return
+  }
+  showProjectTrashAction.value = false
+  await openProject(project.id)
+}
+
+async function confirmProjectTrashAction() {
+  const project = trashActionProject.value
+  const kind = trashDialogKind.value
+  if (
+    !showProjectTrashAction.value ||
+    !project ||
+    pendingProjectAction.value ||
+    windowClosePending.value ||
+    (kind === 'trash' && trashActionBlocked.value)
+  ) {
+    return
+  }
+  const projectId = project.id
+  pendingProjectAction.value = { kind: kind === 'trash' ? 'trash' : 'delete-project', projectId }
+  trashActionError.value = null
+  try {
+    if (kind === 'trash') {
+      await apiValue(() => projectApi().trashProject(projectId))
+      showProjectTrashAction.value = false
+    } else {
+      if (!('trashId' in project)) {
+        throw new Error('Refresh Trash and select the project again.')
+      }
+      const result = await apiValue(() =>
+        projectApi().deleteProjectPermanently(projectId, project.trashId, true),
+      )
+      if (result.kind === 'pending') {
+        trashPendingMessage.value = result.message
+      } else {
+        showProjectTrashAction.value = false
+      }
+    }
+    await refreshProjects()
+  } catch (cause) {
+    trashActionError.value = errorMessage(cause)
+  } finally {
+    pendingProjectAction.value = null
+  }
+}
+
+async function restoreTrashedProject(project: ProjectTrashSummary) {
+  if (
+    pendingProjectAction.value ||
+    windowClosePending.value ||
+    project.deletionStatus === 'deleting'
+  ) {
+    return
+  }
+  const projectId = project.id
+  const trashId = project.trashId
+  pendingProjectAction.value = { kind: 'restore-trash', projectId }
+  homeError.value = null
+  try {
+    await apiValue(() => projectApi().restoreProject(projectId, trashId))
+    await refreshProjects()
+  } catch (cause) {
+    homeError.value = errorMessage(cause)
+  } finally {
+    pendingProjectAction.value = null
+  }
 }
 
 function beginAddWorkspace() {
@@ -3444,6 +3589,7 @@ function beginAddWorkspace() {
 async function addWorkspace(input: ProjectWorkspaceAddInput) {
   if (
     !showAddWorkspace.value ||
+    showProjectTrashAction.value ||
     showWorkspaceSettings.value ||
     showRemoveWorkspace.value ||
     pendingProjectAction.value ||
@@ -3564,7 +3710,7 @@ function beginNewProject() {
   newProjectError.value = null
   newProjectWorkspaceId.value = defaultProjectWorkspaceId(
     workspaces.value,
-    selectedWorkspaceId.value,
+    selectedTrashView.value ? null : selectedWorkspaceId.value,
   )
   showNewProject.value = true
   void refreshWorkspaces()
@@ -3711,7 +3857,10 @@ async function selectImport() {
     return
   }
   pendingProjectAction.value = { kind: 'import-select' }
-  const destinationId = defaultProjectWorkspaceId(workspaces.value, selectedWorkspaceId.value)
+  const destinationId = defaultProjectWorkspaceId(
+    workspaces.value,
+    selectedTrashView.value ? null : selectedWorkspaceId.value,
+  )
   void refreshWorkspaces()
   homeError.value = null
   try {
@@ -4461,6 +4610,7 @@ function onAppKeydown(event: KeyboardEvent) {
     presetApplyOpen.value ||
     showNewProject.value ||
     showAddWorkspace.value ||
+    showProjectTrashAction.value ||
     showWorkspaceSettings.value ||
     showRemoveWorkspace.value ||
     importDialogVisible.value ||
@@ -4742,17 +4892,26 @@ onBeforeUnmount(() => {
           :loading="projectsLoading"
           :pendingAction="pendingHomeAction"
           :projects
+          :trashError
+          :trashLoading
+          :trashProjects
+          :trashView="selectedTrashView"
           :workspaces
           :workspacesError
           :workspacesLoading
           @addWorkspace="beginAddWorkspace"
+          @browseProjects="selectWorkspace(null, true)"
+          @browseTrash="selectTrash"
           @createProject="beginNewProject"
+          @deleteProject="beginDeleteProject"
           @importProject="selectImport"
           @manageModels="openModelManager()"
           @managePresets="openPresetManager"
           @openProject="openProject"
           @rebuildPreview="rebuildProjectPreview"
           @refresh="refreshProjects"
+          @restoreProject="restoreTrashedProject"
+          @trashProject="beginTrashProject"
           @workspaceSettings="beginWorkspaceSettings"
         />
         <ProjectView
@@ -5040,6 +5199,17 @@ onBeforeUnmount(() => {
         @add="addWorkspace"
       />
 
+      <ProjectTrashModal
+        v-model:show="showProjectTrashAction"
+        :blocked="trashActionBlocked"
+        :busy="pendingProjectAction !== null || windowClosePending"
+        :error="trashActionError"
+        :kind="trashDialogKind"
+        :pendingMessage="trashPendingMessage"
+        :project="trashActionProject"
+        @confirm="confirmProjectTrashAction"
+        @switchProject="switchTrashProject"
+      />
       <WorkspaceSettingsModal
         v-model:show="showWorkspaceSettings"
         :busy="pendingProjectAction !== null || windowClosePending"

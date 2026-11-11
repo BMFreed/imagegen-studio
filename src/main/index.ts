@@ -237,6 +237,7 @@ import {
   type ProjectTemporaryRecoveryInspection,
   unavailableTemporaryRecovery,
 } from './projects/project-temporary-recovery.js'
+import { ProjectTrashStoreError } from './projects/project-trash-store.js'
 import { RasterImportError } from './projects/raster-import.js'
 import {
   readGenerationAcceptanceKind,
@@ -813,6 +814,41 @@ if (!gotInstanceLock) {
         projectGenerationGate,
       )
       openImportedProject = (projectId) => projectGenerationRecovery.open(projectId)
+      async function withClosedProjectTrash<T>(
+        projectId: string,
+        use: () => Promise<T>,
+      ): Promise<T> {
+        return await projectGenerationGate.run(projectId, async () => {
+          if (projectService.getOpenTabs().some((tab) => tab.id === projectId)) {
+            throw new ProjectServiceError(
+              'PROJECT_ALREADY_OPEN',
+              'Close the Project before moving it to Trash or deleting it.',
+            )
+          }
+          const services = generationLifecycleServices
+          if (!services) {
+            throw new ProjectServiceError(
+              'PROJECT_INVALID_INPUT',
+              'Generation recovery cannot be inspected. Repair recovery storage before changing Project Trash.',
+            )
+          }
+          return await services.orchestrator.withProjectMaintenanceFence(projectId, async () => {
+            const unfinished = await services.queue.listUnfinishedByProject(projectId)
+            const candidates = await services.staging.listOwnedCandidates(projectId)
+            if (
+              unfinished.length ||
+              candidates.length ||
+              acceptanceRecovery?.hasPendingHandoff(projectId)
+            ) {
+              throw new ProjectServiceError(
+                'PROJECT_INVALID_INPUT',
+                'Open the Project and resolve its pending generation or results before moving it to Trash or deleting it.',
+              )
+            }
+            return await use()
+          })
+        })
+      }
       const reconcileOpenedProject = async (
         tabId: string,
         wasOpen: boolean,
@@ -1387,14 +1423,18 @@ if (!gotInstanceLock) {
       const workspaceCatalogChannels = new Set<string>([
         ipcChannels.projects.addWorkspace,
         ipcChannels.projects.create,
+        ipcChannels.projects.deleteProjectPermanently,
         ipcChannels.projects.finishImport,
         ipcChannels.projects.list,
+        ipcChannels.projects.listTrash,
         ipcChannels.projects.listWorkspaces,
         ipcChannels.projects.open,
         ipcChannels.projects.rebuildPreview,
         ipcChannels.projects.removeWorkspace,
         ipcChannels.projects.resolveRecovery,
+        ipcChannels.projects.restoreProject,
         ipcChannels.projects.selectImport,
+        ipcChannels.projects.trashProject,
         ipcChannels.projects.updateWorkspace,
       ])
       function registerProjectHandler<T>(
@@ -1464,6 +1504,7 @@ if (!gotInstanceLock) {
               error instanceof ProjectAutosaveError ||
               error instanceof ProjectSessionError ||
               error instanceof ProjectIndexError ||
+              error instanceof ProjectTrashStoreError ||
               error instanceof ProjectIdentityError ||
               error instanceof ProjectShadowError ||
               error instanceof RasterImportError ||
@@ -1511,6 +1552,32 @@ if (!gotInstanceLock) {
       )
       registerProjectHandler(ipcChannels.projects.listWorkspaces, noArgs, () =>
         projectService.listWorkspaces(),
+      )
+      registerProjectHandler(ipcChannels.projects.listTrash, noArgs, () =>
+        projectService.listTrash(),
+      )
+      registerProjectHandler(ipcChannels.projects.trashProject, oneProjectId, (id) =>
+        withClosedProjectTrash(id as string, () => projectService.trashProject(id as string)),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.restoreProject,
+        (args) => args.length === 2 && isProjectId(args[0]) && isProjectDocumentId(args[1]),
+        (id, trashId) =>
+          projectGenerationGate.run(id as string, () =>
+            projectService.restoreProject(id as string, trashId as string),
+          ),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.deleteProjectPermanently,
+        (args) =>
+          args.length === 3 &&
+          isProjectId(args[0]) &&
+          isProjectDocumentId(args[1]) &&
+          args[2] === true,
+        (id, trashId) =>
+          withClosedProjectTrash(id as string, () =>
+            projectService.deleteProjectPermanently(id as string, trashId as string),
+          ),
       )
       registerProjectHandler(
         ipcChannels.projects.updateWorkspace,

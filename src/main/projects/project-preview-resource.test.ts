@@ -169,3 +169,49 @@ test('a symlinked cache directory is ignored while the verified .igs remains rea
     await rm(directory, { force: true, recursive: true })
   }
 })
+
+test('thumbnail rechecks lifecycle under its file lock after a concurrent positive delete commit', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'igs-home-trash-preview-'))
+  const database = openAppDatabase(directory, migrations)
+  try {
+    const repository = new ProjectIndexRepository(database.db)
+    const workspace = await repository.ensureDefaultWorkspace(directory)
+    const filePath = path.join(workspace.directoryPath, 'Trash Preview.igs')
+    await ProjectSession.create(filePath, 'Trash Preview', {
+      placeholdersDir,
+      scratchDir: path.join(directory, 'scratch'),
+    })
+    const record = await repository.indexSaved(filePath, workspace.id)
+    assert.ok(record.thumbnailSha256)
+    const request = { projectId: record.localProjectKey, thumbnailSha256: record.thumbnailSha256 }
+    const cacheRoot = path.join(directory, 'previews', 'project-thumbnails')
+    const source = await readFile(filePath)
+    await repository.trash.moveToTrash(record, workspace, () => undefined)
+    const entry = await repository.trash.get(record.localProjectKey)
+    assert.ok(entry)
+    assert.equal((await readProjectThumbnail(request, repository, cacheRoot)).status, 200)
+    const denied = await readProjectThumbnail(
+      request,
+      {
+        getProject: (id) => repository.getProject(id),
+        getProjectForPreview: (id) => repository.getProjectForPreview(id),
+        workspaceById: async (id) => {
+          // Real commit after the resource's initial authority read, before it takes the lock.
+          await repository.trash.beginPermanentDelete(
+            record.localProjectKey,
+            entry.trashId,
+            () => undefined,
+          )
+          return await repository.workspaceById(id)
+        },
+      },
+      cacheRoot,
+    )
+    assert.equal(denied.status, 404)
+    assert.deepEqual(await readFile(filePath), source)
+    assert.equal((await repository.trash.get(record.localProjectKey))!.state, 'deleting')
+  } finally {
+    await database.close()
+    await rm(directory, { force: true, recursive: true })
+  }
+})

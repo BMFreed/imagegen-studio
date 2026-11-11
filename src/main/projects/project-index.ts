@@ -28,6 +28,7 @@ import {
   ProjectIdentityError,
 } from './project-identity.js'
 import { withProjectPathLock } from './project-path-lock.js'
+import { ProjectTrashStore } from './project-trash-store.js'
 
 export const UNCATEGORIZED_WORKSPACE_ID = 'uncategorized'
 
@@ -90,6 +91,7 @@ export class ProjectIndexError extends Error {
       | 'INDEX_CURSOR_INVALID'
       | 'INDEX_FILE_CHANGED'
       | 'INDEX_OUTSIDE_WORKSPACE'
+      | 'PROJECT_TRASHED'
       | 'WORKSPACE_INVALID_INPUT'
       | 'WORKSPACE_NAME_EXISTS'
       | 'WORKSPACE_PATH_CONFLICT'
@@ -106,7 +108,11 @@ export class ProjectIndexError extends Error {
 
 /** Rebuildable Home metadata. No Project pixels or layer document live in SQLite. */
 export class ProjectIndexRepository {
-  constructor(private readonly db: Kysely<DB>) {}
+  readonly trash: ProjectTrashStore
+
+  constructor(private readonly db: Kysely<DB>) {
+    this.trash = new ProjectTrashStore(db)
+  }
 
   /** Metadata checks and insertion share Invoke's transaction boundary; the folder is external. */
   async addWorkspace(
@@ -236,8 +242,40 @@ export class ProjectIndexRepository {
       .selectAll()
       .where('local_project_key', '=', projectId)
       .where('trashed_at', 'is', null)
+      .where((eb) =>
+        eb.not(
+          eb.exists(
+            eb
+              .selectFrom('project_file_lifecycle')
+              .select('local_project_key')
+              .whereRef(
+                'project_file_lifecycle.local_project_key',
+                '=',
+                'project_index.local_project_key',
+              ),
+          ),
+        ),
+      )
       .executeTakeFirst()
     return row ? indexRecord(row) : null
+  }
+
+  /** Trash thumbnails remain read-only; pending permanent deletion never publishes a resource. */
+  async getProjectForPreview(projectId: string): Promise<ProjectIndexRecord | null> {
+    if (!/^project-v1-[a-f0-9]{64}$/.test(projectId)) {
+      return null
+    }
+    const lifecycle = await this.trash.get(projectId)
+    if (!lifecycle) {
+      return await this.getProject(projectId)
+    }
+    if (lifecycle.state !== 'trashed') {
+      return null
+    }
+    const workspace = (await this.listWorkspaces()).find(
+      (candidate) => candidate.directoryPath === lifecycle.workspaceDirectoryPath,
+    )
+    return workspace ? { ...lifecycle.project, workspaceId: workspace.id } : null
   }
 
   async getSavedAcceptedResult(
@@ -259,16 +297,37 @@ export class ProjectIndexRepository {
     )
   }
 
-  async indexSaved(filePath: string, workspaceId: string): Promise<ProjectIndexRecord> {
+  async indexSaved(
+    filePath: string,
+    workspaceId: string,
+    options: { expectedDocumentId?: string } = {},
+  ): Promise<ProjectIndexRecord> {
     const canonicalPath = await canonicalProjectPath(filePath)
     return await withProjectPathLock(
       canonicalPath,
-      async () => await this.indexSavedLocked(canonicalPath, workspaceId),
+      async () => await this.indexSavedLocked(canonicalPath, workspaceId, options),
     )
   }
 
   async listProjects(workspaceId?: string): Promise<ProjectIndexRecord[]> {
-    let query = this.db.selectFrom('project_index').selectAll().where('trashed_at', 'is', null)
+    let query = this.db
+      .selectFrom('project_index')
+      .selectAll()
+      .where('trashed_at', 'is', null)
+      .where((eb) =>
+        eb.not(
+          eb.exists(
+            eb
+              .selectFrom('project_file_lifecycle')
+              .select('local_project_key')
+              .whereRef(
+                'project_file_lifecycle.local_project_key',
+                '=',
+                'project_index.local_project_key',
+              ),
+          ),
+        ),
+      )
     if (workspaceId) {
       query = query.where('workspace_id', '=', workspaceId)
     }
@@ -429,6 +488,9 @@ export class ProjectIndexRepository {
       }
       const filePath = path.join(workspace.directoryPath, entry.name)
       seen.add(filePath)
+      if (await this.trash.get(localProjectRecoveryKey(filePath))) {
+        continue
+      }
       try {
         await this.indexSaved(filePath, workspaceId)
       } catch (error) {
@@ -627,6 +689,7 @@ export class ProjectIndexRepository {
   private async indexSavedLocked(
     canonicalPath: string,
     workspaceId: string,
+    options: { expectedDocumentId?: string },
   ): Promise<ProjectIndexRecord> {
     const workspace = await this.workspaceById(workspaceId)
     if (path.dirname(canonicalPath) !== workspace.directoryPath) {
@@ -644,6 +707,12 @@ export class ProjectIndexRepository {
     const now = new Date().toISOString()
     const key = localProjectRecoveryKey(canonicalPath)
     const project = packageResult.project
+    if (options.expectedDocumentId && project.documentId !== options.expectedDocumentId) {
+      throw new ProjectIndexError(
+        'INDEX_FILE_CHANGED',
+        'The trashed file was replaced by another Project document.',
+      )
+    }
     const thumbnailSha256 = packageResult.manifest.members.find(
       (member) => member.path === 'preview/thumbnail.webp',
     )?.sha256
@@ -700,9 +769,20 @@ export class ProjectIndexRepository {
       ]
     })
     await this.db.transaction().execute(async (transaction) => {
+      const lifecycle = await transaction
+        .selectFrom('project_file_lifecycle')
+        .select(['state', 'trashed_at'])
+        .where('local_project_key', '=', key)
+        .executeTakeFirst()
+      if (lifecycle?.state === 'deleting') {
+        throw new ProjectIndexError(
+          'PROJECT_TRASHED',
+          'Permanent deletion of this Project is pending.',
+        )
+      }
       await transaction
         .insertInto('project_index')
-        .values({ ...values, last_opened_at: null, trashed_at: null })
+        .values({ ...values, last_opened_at: null, trashed_at: lifecycle?.trashed_at ?? null })
         .onConflict((conflict) =>
           conflict.column('local_project_key').doUpdateSet({
             bbox_height: values.bbox_height,
@@ -720,6 +800,7 @@ export class ProjectIndexRepository {
             preview_status: values.preview_status,
             preview_thumbnail_sha256: values.preview_thumbnail_sha256,
             search_name: values.search_name,
+            ...(lifecycle ? { trashed_at: lifecycle.trashed_at } : {}),
             workspace_id: values.workspace_id,
           }),
         )
@@ -779,41 +860,52 @@ export class ProjectIndexRepository {
           : 'corrupt'
     const name = existing?.display_name ?? (path.basename(filePath, '.igs') || 'Untitled Project')
     const now = new Date().toISOString()
-    await this.db
-      .insertInto('project_index')
-      .values({
-        bbox_height: existing?.bbox_height ?? null,
-        bbox_width: existing?.bbox_width ?? null,
-        canonical_path: filePath,
-        diagnostic_code: diagnosticCode,
-        display_name: name,
-        document_id: existing?.document_id ?? null,
-        document_revision: existing?.document_revision ?? null,
-        file_fingerprint: null,
-        file_health: health,
-        file_mtime_ns: null,
-        file_size_bytes: null,
-        indexed_at: now,
-        last_opened_at: existing?.last_opened_at ?? null,
-        local_project_key: key,
-        preview_status: existing?.preview_status ?? null,
-        preview_thumbnail_sha256: null,
-        search_name: normalizeSearchName(name),
-        trashed_at: existing?.trashed_at ?? null,
-        workspace_id: workspaceId,
-      })
-      .onConflict((conflict) =>
-        conflict.column('local_project_key').doUpdateSet({
+    await this.db.transaction().execute(async (transaction) => {
+      if (
+        await transaction
+          .selectFrom('project_file_lifecycle')
+          .select('local_project_key')
+          .where('local_project_key', '=', key)
+          .executeTakeFirst()
+      ) {
+        return
+      }
+      await transaction
+        .insertInto('project_index')
+        .values({
+          bbox_height: existing?.bbox_height ?? null,
+          bbox_width: existing?.bbox_width ?? null,
+          canonical_path: filePath,
           diagnostic_code: diagnosticCode,
+          display_name: name,
+          document_id: existing?.document_id ?? null,
+          document_revision: existing?.document_revision ?? null,
           file_fingerprint: null,
           file_health: health,
           file_mtime_ns: null,
           file_size_bytes: null,
           indexed_at: now,
+          last_opened_at: existing?.last_opened_at ?? null,
+          local_project_key: key,
+          preview_status: existing?.preview_status ?? null,
           preview_thumbnail_sha256: null,
-        }),
-      )
-      .execute()
+          search_name: normalizeSearchName(name),
+          trashed_at: existing?.trashed_at ?? null,
+          workspace_id: workspaceId,
+        })
+        .onConflict((conflict) =>
+          conflict.column('local_project_key').doUpdateSet({
+            diagnostic_code: diagnosticCode,
+            file_fingerprint: null,
+            file_health: health,
+            file_mtime_ns: null,
+            file_size_bytes: null,
+            indexed_at: now,
+            preview_thumbnail_sha256: null,
+          }),
+        )
+        .execute()
+    })
   }
 }
 
@@ -851,6 +943,16 @@ function savedResultQuery(db: Kysely<DB>) {
     ])
     .where('project.file_health', '=', 'ready')
     .where('project.trashed_at', 'is', null)
+    .where((eb) =>
+      eb.not(
+        eb.exists(
+          eb
+            .selectFrom('project_file_lifecycle as lifecycle')
+            .select('lifecycle.local_project_key')
+            .whereRef('lifecycle.local_project_key', '=', 'project.local_project_key'),
+        ),
+      ),
+    )
     .where('project.file_fingerprint', 'is not', null)
     .$narrowType<{ fileFingerprint: string }>()
 }

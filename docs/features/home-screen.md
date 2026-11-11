@@ -2,6 +2,15 @@
 
 ## Production checkpoint
 
+[Project Trash](../engineering/phase-4-project-trash-research.md) connects the real
+Home Trash scope, Restore and confirmed permanent deletion. Authoritative lifecycle
+rows survive derived index loss and workspace unregister/re-Add. Open Projects and
+unresolved operational generation/results block Trash/delete; original source paths
+stay in place until confirmed permanent deletion. Pending purges retain recovery
+intent across normal restart. Present unhealthy files without a trusted fingerprint are refused at Trash
+publication; their broader lifecycle remains a Home continuation. See the research
+note for executed evidence and limits.
+
 [Workspace management](../engineering/phase-4-workspace-management-research.md)
 adds name/color Settings and confirmed registration removal through real Main/SQLite
 commands. Uncat name/removal are protected; any live Project blocks unregister.
@@ -9,7 +18,7 @@ Main serializes catalog lifecycle commands, and removal affects derived indexes
 without deleting folders, Project files or operational generation/recovery data.
 The [catalog/destinations stage](../engineering/phase-4-home-workspaces-research.md)
 already connects Add, aggregate/scoped browsing and explicit Create/Import folders.
-Project rename/move, Trash, folder locate/reveal, workspace tab markers and remaining
+Project rename/move, folder locate/reveal, workspace tab markers and remaining
 Home presentation remain continuations. Full Home/MVP promise is not promoted.
 
 ## Feature
@@ -428,14 +437,14 @@ flowchart TD
 
 ## App-Managed Trash
 
-`Move to Trash` is a reversible ImageGen Studio lifecycle state rather than an immediate system deletion. Trashed projects remain indexed with `trashedAt`, disappear from Projects and workspace results, and appear in the dedicated Trash view. Any currently open project is blocked from moving to Trash and offers `Switch to Project` instead.
+`Move to Trash` is a reversible ImageGen Studio lifecycle state rather than an immediate system deletion. Trashed projects retain authoritative lifecycle metadata independent of the derived Home index, disappear from Projects and workspace results, and appear in the dedicated Trash view. Their `.igs` file stays at its original path; unregistering a workspace does not silently restore them. Any currently open project is blocked from moving to Trash and offers `Switch to Project` instead.
 
 Trash actions are:
 
 - `Restore Project`, which returns the project to its previous workspace;
 - `Delete Permanently`, which removes the indexed project and its managed file after destructive confirmation.
 
-Open projects must still be closed before moving them to Trash. Workspace counters exclude trashed projects.
+Open projects must still be closed before moving them to Trash. Workspace counters exclude trashed projects. Restore requires the original canonical folder to be registered and its source Project available; it never implicitly adds a workspace or redirects to Uncategorized. A permanent deletion that has committed but cannot finish stays visible as pending with Retry Delete and cannot be restored. Repairing access allows guarded startup recovery to finish that committed deletion.
 
 ## Read-Only Preview Flow
 

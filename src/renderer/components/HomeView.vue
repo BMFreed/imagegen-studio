@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ProjectSummary } from '../../shared/api.js'
+import type { ProjectTrashSummary } from '../../shared/projects/project-trash.js'
 import type { ProjectWorkspaceSummary } from '../../shared/projects/project-workspaces.js'
 
 import {
@@ -13,6 +14,7 @@ import {
   Plus as PlusIcon,
   Bookmark as PresetsIcon,
   Refresh as RefreshIcon,
+  Trash as TrashIcon,
 } from '@vicons/tabler'
 import { NAlert, NButton, NDropdown, NEmpty, NIcon, NInput, NSpin, NTag } from 'naive-ui'
 import { computed, ref, watch } from 'vue'
@@ -25,29 +27,57 @@ const props = defineProps<{
   loading: boolean
   pendingAction: { kind: 'open' | 'rebuild'; projectId: string } | null
   projects: ProjectSummary[]
+  trashError: string | null
+  trashLoading: boolean
+  trashProjects: ProjectTrashSummary[]
+  trashView: boolean
   workspaces: ProjectWorkspaceSummary[]
   workspacesError: string | null
   workspacesLoading: boolean
 }>()
 const workspaceId = defineModel<string | null>('workspaceId', { required: true })
 
-defineEmits<{
+const emit = defineEmits<{
   addWorkspace: []
+  browseProjects: []
+  browseTrash: []
   createProject: []
+  deleteProject: [project: ProjectTrashSummary]
   importProject: []
   manageModels: []
   managePresets: []
   openProject: [projectId: string]
   rebuildPreview: [projectId: string]
   refresh: []
+  restoreProject: [project: ProjectTrashSummary]
+  trashProject: [project: ProjectSummary]
   workspaceSettings: [workspaceId: string]
 }>()
 
 const search = ref('')
+const displayProjects = computed(() => (props.trashView ? props.trashProjects : props.projects))
+function trashSummary(project: ProjectSummary): ProjectTrashSummary | null {
+  return props.trashView && 'trashId' in project ? (project as ProjectTrashSummary) : null
+}
+function requestRestore(project: ProjectSummary) {
+  const trashed = trashSummary(project)
+  if (trashed) {
+    emit('restoreProject', trashed)
+  }
+}
+function requestDelete(project: ProjectSummary) {
+  const trashed = trashSummary(project)
+  if (trashed) {
+    emit('deleteProject', trashed)
+  }
+}
 const selectedWorkspace = computed(() =>
   props.workspaces.find(({ id }) => id === workspaceId.value),
 )
 const workspaceProblem = computed(() => {
+  if (props.trashView) {
+    return null
+  }
   const workspace = selectedWorkspace.value
   if (!workspaceId.value) {
     const unavailable = props.workspaces.filter(({ availability }) => availability !== 'available')
@@ -86,6 +116,7 @@ function workspaceStatus(workspace: ProjectWorkspaceSummary) {
 function projectWorkspaceName(project: ProjectSummary) {
   return (
     props.workspaces.find(({ id }) => id === project.workspaceId)?.displayName ??
+    trashSummary(project)?.originalWorkspaceName ??
     'Workspace unavailable'
   )
 }
@@ -114,6 +145,7 @@ function markThumbnailFailed(url: string | null): void {
 
 function canRebuildPreview(project: ProjectSummary): boolean {
   return (
+    !props.trashView &&
     project.health === 'ready' &&
     project.previewStatus === 'unavailable' &&
     (project.recoveryStatus === 'none' || project.recoveryStatus === 'unavailable')
@@ -123,8 +155,8 @@ function canRebuildPreview(project: ProjectSummary): boolean {
 const visibleProjects = computed(() => {
   const query = search.value.trim().toLocaleLowerCase()
   return query
-    ? props.projects.filter((project) => project.title.toLocaleLowerCase().includes(query))
-    : props.projects
+    ? displayProjects.value.filter((project) => project.title.toLocaleLowerCase().includes(query))
+    : displayProjects.value
 })
 
 function previewLabel(project: ProjectSummary): string | null {
@@ -206,15 +238,27 @@ function recoveryLabel(project: ProjectSummary): string | null {
         Import Project
       </NButton>
       <NButton
-        :aria-pressed="workspaceId === null"
+        :aria-pressed="!trashView && workspaceId === null"
         :bordered="false"
         class="sidebar-action workspace-select"
         :disabled="busy"
-        :secondary="workspaceId === null"
-        @click="workspaceId = null"
+        :secondary="!trashView && workspaceId === null"
+        @click="$emit('browseProjects')"
       >
         <template v-slot:icon><NIcon :component="AllIcon" /></template>
         Projects
+      </NButton>
+      <NButton
+        :aria-pressed="trashView"
+        :bordered="false"
+        class="sidebar-action workspace-select"
+        :disabled="busy"
+        :secondary="trashView"
+        @click="$emit('browseTrash')"
+      >
+        <template v-slot:icon><NIcon :component="TrashIcon" /></template>
+        <span>Trash</span>
+        <span class="workspace-count">{{ trashProjects.length }}</span>
       </NButton>
       <div class="workspace-heading">
         <h2>Workspaces</h2>
@@ -229,11 +273,11 @@ function recoveryLabel(project: ProjectSummary): string | null {
       <div aria-label="Workspaces" class="workspace-list">
         <div v-for="workspace of workspaces" :key="workspace.id" class="workspace-row">
           <NButton
-            :aria-pressed="workspaceId === workspace.id"
+            :aria-pressed="!trashView && workspaceId === workspace.id"
             :bordered="false"
             class="sidebar-action workspace-select"
             :disabled="busy"
-            :secondary="workspaceId === workspace.id"
+            :secondary="!trashView && workspaceId === workspace.id"
             :title="workspace.directoryPath"
             @click="workspaceId = workspace.id"
           >
@@ -286,15 +330,19 @@ function recoveryLabel(project: ProjectSummary): string | null {
         <div class="browser-title">
           <h1>
             {{
-              workspaceId === null ? 'Projects' : (selectedWorkspace?.displayName ?? 'Workspace')
+              trashView
+                ? 'Trash'
+                : workspaceId === null
+                  ? 'Projects'
+                  : (selectedWorkspace?.displayName ?? 'Workspace')
             }}
           </h1>
-          <span class="project-count">{{ projects.length }}</span>
+          <span class="project-count">{{ displayProjects.length }}</span>
         </div>
         <IconButton
           :icon="RefreshIcon"
           label="Refresh projects"
-          :loading="loading || workspacesLoading"
+          :loading="loading || workspacesLoading || trashLoading"
           @click="$emit('refresh')"
         />
       </header>
@@ -321,22 +369,31 @@ function recoveryLabel(project: ProjectSummary): string | null {
         >
           {{ workspaceProblem }}
         </NAlert>
+        <NAlert
+          v-if="trashError"
+          key="n-alert-4"
+          class="browser-error"
+          title="Trash unavailable"
+          type="warning"
+        >
+          {{ trashError }} Refresh to try again.
+        </NAlert>
         <NInput
           v-model:value="search"
           aria-label="Search projects"
           class="project-search"
           clearable
-          :disabled="projects.length === 0"
+          :disabled="displayProjects.length === 0"
           placeholder="Search projects"
         />
 
-        <div v-if="loading && projects.length === 0" class="browser-state">
+        <div v-if="loading && displayProjects.length === 0" class="browser-state">
           <NSpin size="small" />
         </div>
-        <div v-else-if="projects.length === 0" class="browser-state">
-          <NEmpty description="No projects yet">
+        <div v-else-if="displayProjects.length === 0" class="browser-state">
+          <NEmpty :description="trashView ? 'Trash is empty' : 'No projects yet'">
             <template v-slot:icon><NIcon :component="FolderIcon" /></template>
-            <template v-slot:extra>
+            <template v-if="!trashView" v-slot:extra>
               <NButton :disabled="busy" secondary @click="$emit('createProject')">
                 New Project
               </NButton>
@@ -353,8 +410,10 @@ function recoveryLabel(project: ProjectSummary): string | null {
         <div v-else class="project-list" role="list">
           <article
             v-for="project of visibleProjects"
-            :key="project.id"
+            :key="trashSummary(project)?.trashId ?? project.id"
             class="project-row"
+            :data-project-id="project.id"
+            :data-trash-id="trashSummary(project)?.trashId"
             role="listitem"
           >
             <div aria-hidden="true" class="project-thumbnail">
@@ -371,27 +430,78 @@ function recoveryLabel(project: ProjectSummary): string | null {
             <div class="project-details">
               <div class="project-name-line">
                 <strong :title="project.title">{{ project.title }}</strong>
-                <NTag v-if="healthLabel(project)" size="small" type="warning">
+                <NTag v-if="trashView" key="trash" size="small" type="warning">
+                  {{
+                    trashSummary(project)?.deletionStatus === 'deleting'
+                      ? 'Deletion pending'
+                      : 'In Trash'
+                  }}
+                </NTag>
+                <NTag v-if="healthLabel(project)" key="health" size="small" type="warning">
                   {{ healthLabel(project) }}
                 </NTag>
-                <NTag v-if="recoveryLabel(project)" key="n-tag-2" size="small" type="warning">
+                <NTag
+                  v-if="!trashView && recoveryLabel(project)"
+                  key="recovery"
+                  size="small"
+                  type="warning"
+                >
                   {{ recoveryLabel(project) }}
                 </NTag>
               </div>
               <div class="project-meta">
-                <span class="project-workspace" :title="projectWorkspaceName(project)">
+                <span
+                  class="project-workspace"
+                  :title="
+                    trashSummary(project)?.originalWorkspaceDirectoryPath ??
+                    projectWorkspaceName(project)
+                  "
+                >
                   {{ projectWorkspaceName(project) }}
+                </span>
+                <span
+                  v-if="trashView"
+                  class="project-file-name"
+                  :title="trashSummary(project)?.fileName"
+                >
+                  {{ trashSummary(project)?.fileName }}
                 </span>
                 <span v-if="project.bbox">
                   {{ project.bbox.width }} × {{ project.bbox.height }}
                 </span>
                 <span v-if="previewLabel(project)">{{ previewLabel(project) }}</span>
               </div>
-              <span v-if="project.recoveryReason" class="project-diagnostic">
+              <span
+                v-if="trashView && trashSummary(project)?.deletionError"
+                class="project-diagnostic"
+              >
+                {{ trashSummary(project)?.deletionError }}
+              </span>
+              <span v-if="!trashView && project.recoveryReason" class="project-diagnostic">
                 {{ project.recoveryReason }}
               </span>
             </div>
             <div class="project-actions">
+              <template v-if="trashSummary(project)">
+                <NButton
+                  :aria-label="`Restore ${project.title}`"
+                  :disabled="busy || trashSummary(project)?.deletionStatus === 'deleting'"
+                  size="small"
+                  @click="requestRestore(project)"
+                >
+                  Restore Project
+                </NButton>
+                <NButton
+                  :aria-label="`Delete ${project.title} permanently`"
+                  :disabled="busy"
+                  quaternary
+                  size="small"
+                  type="error"
+                  @click="requestDelete(project)"
+                >
+                  Delete Permanently
+                </NButton>
+              </template>
               <NButton
                 v-if="canRebuildPreview(project)"
                 :aria-label="`Rebuild preview for ${project.title}`"
@@ -407,6 +517,8 @@ function recoveryLabel(project: ProjectSummary): string | null {
                 Rebuild Preview
               </NButton>
               <NButton
+                v-if="!trashView"
+                key="n-button-2"
                 :aria-label="`Open ${project.title}`"
                 class="open-project"
                 :disabled="busy || project.health !== 'ready'"
@@ -416,6 +528,22 @@ function recoveryLabel(project: ProjectSummary): string | null {
               >
                 Open
               </NButton>
+              <NDropdown
+                v-if="!trashView"
+                :disabled="busy"
+                :options="[{ key: 'trash', label: 'Move to Trash' }]"
+                trigger="click"
+                @select="$emit('trashProject', project)"
+              >
+                <span class="project-menu">
+                  <IconButton
+                    compact
+                    :disabled="busy"
+                    :icon="DotsIcon"
+                    :label="`${project.title} project actions`"
+                  />
+                </span>
+              </NDropdown>
             </div>
           </article>
         </div>
@@ -495,6 +623,7 @@ function recoveryLabel(project: ProjectSummary): string | null {
   min-width: 0;
 }
 
+.project-menu,
 .workspace-menu {
   display: inline-flex;
 }
@@ -679,6 +808,14 @@ function recoveryLabel(project: ProjectSummary): string | null {
 .project-meta {
   flex-wrap: wrap;
   row-gap: 4px;
+}
+
+.project-file-name {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .project-workspace {

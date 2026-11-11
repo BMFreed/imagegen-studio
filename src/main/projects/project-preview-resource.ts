@@ -67,7 +67,8 @@ export function parseProjectThumbnailImageUrl(
 /** Serve only the current indexed package's embedded preview, using a disposable SHA cache. */
 export async function readProjectThumbnail(
   request: ProjectThumbnailResourceRequest,
-  repository: Pick<ProjectIndexRepository, 'getProject' | 'workspaceById'>,
+  repository: Partial<Pick<ProjectIndexRepository, 'getProjectForPreview'>> &
+    Pick<ProjectIndexRepository, 'getProject' | 'workspaceById'>,
   cacheRoot: string,
 ): Promise<Response> {
   if (!projectIdPattern.test(request.projectId) || !sha256Pattern.test(request.thumbnailSha256)) {
@@ -75,7 +76,9 @@ export async function readProjectThumbnail(
   }
   let record: ProjectIndexRecord | null
   try {
-    record = await repository.getProject(request.projectId)
+    record = repository.getProjectForPreview
+      ? await repository.getProjectForPreview(request.projectId)
+      : await repository.getProject(request.projectId)
   } catch {
     return unavailable(503)
   }
@@ -98,7 +101,20 @@ export async function readProjectThumbnail(
       return unavailable(404)
     }
     return await withProjectPathLock(canonical, async () => {
-      if ((await fileFingerprint(canonical)) !== record.fileFingerprint) {
+      // A positive delete commit can win this lock after the initial lookup. Re-read its
+      // authority before any cache/package bytes; begin/finish delete use this same lock.
+      const current = repository.getProjectForPreview
+        ? await repository.getProjectForPreview(request.projectId)
+        : await repository.getProject(request.projectId)
+      if (
+        !current ||
+        current.fileHealth !== 'ready' ||
+        current.canonicalPath !== canonical ||
+        current.workspaceId !== record.workspaceId ||
+        current.fileFingerprint !== record.fileFingerprint ||
+        current.thumbnailSha256 !== request.thumbnailSha256 ||
+        (await fileFingerprint(canonical)) !== current.fileFingerprint
+      ) {
         return unavailable(404)
       }
       const cacheDirectory = await safeCacheDirectory(cacheRoot).catch(() => null)
@@ -117,7 +133,7 @@ export async function readProjectThumbnail(
           await archive.extractMemberToFile(thumbnailMemberPath, cachePath).catch(() => undefined)
         }
       }
-      if ((await fileFingerprint(canonical)) !== record.fileFingerprint) {
+      if ((await fileFingerprint(canonical)) !== current.fileFingerprint) {
         return unavailable(404)
       }
       return new Response(new Uint8Array(bytes), {

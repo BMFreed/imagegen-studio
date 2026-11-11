@@ -86,6 +86,10 @@ import {
   projectAssetReferences,
   projectOwnedIds,
 } from '../../shared/projects/project-schema.js'
+import type {
+  ProjectTrashDeleteResult,
+  ProjectTrashSummary,
+} from '../../shared/projects/project-trash.js'
 import {
   isProjectWorkspaceId,
   type ProjectWorkspaceAddInput,
@@ -345,6 +349,9 @@ export class ProjectServiceError extends Error {
       | 'PROJECT_RECOVERY_UNAVAILABLE'
       | 'PROJECT_SAVE_IN_PROGRESS'
       | 'PROJECT_TARGET_CHANGED'
+      | 'PROJECT_TRASH_CONFLICT'
+      | 'PROJECT_TRASH_DELETE_PENDING'
+      | 'PROJECT_TRASHED'
       | 'PROJECT_VAE_NOT_SELECTED'
       | 'PROJECT_VAE_RELINK_MISMATCH'
       | 'PROJECT_WORKER_UNAVAILABLE',
@@ -814,6 +821,32 @@ export class ProjectService {
           }
         : {}),
     }
+  }
+
+  async deleteProjectPermanently(
+    projectId: string,
+    trashId: string,
+  ): Promise<ProjectTrashDeleteResult> {
+    assertProjectId(projectId)
+    if (!isProjectDocumentId(trashId)) {
+      throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'The Trash identity is invalid.')
+    }
+    await this.initialize()
+    const entry = await this.options.repository.trash.get(projectId)
+    if (!entry || entry.trashId !== trashId) {
+      throw new ProjectServiceError(
+        'PROJECT_TRASH_CONFLICT',
+        'This Trash item changed. Refresh Trash and try again.',
+      )
+    }
+    const guard = () => this.assertClosedForLifecycle(projectId, entry.canonicalPath)
+    guard()
+    const committed = await this.options.repository.trash.beginPermanentDelete(
+      projectId,
+      trashId,
+      guard,
+    )
+    return await this.options.repository.trash.finishPermanentDelete(committed)
   }
 
   async deleteRegionalGuidance(
@@ -2148,6 +2181,8 @@ export class ProjectService {
   async initialize(): Promise<void> {
     if (!this.initialization) {
       this.initialization = (async () => {
+        // Positive durable deletion commits recover before any scanner can rediscover a file.
+        await this.options.repository.trash.recoverCommittedDeletes()
         await this.options.repository.ensureDefaultWorkspace(this.options.dataRoot)
         await this.scanWorkspaceIfAvailable(UNCATEGORIZED_WORKSPACE_ID)
       })().catch((error: unknown) => {
@@ -2182,6 +2217,51 @@ export class ProjectService {
       records.map(
         async (record) => await this.toSummary(record, readableWorkspaces.has(record.workspaceId)),
       ),
+    )
+  }
+
+  /** Lifecycle snapshots are authoritative even if their workspace registration was removed. */
+  async listTrash(): Promise<ProjectTrashSummary[]> {
+    await this.initialize()
+    const workspaces = await this.options.repository.listWorkspaces()
+    const records = await this.options.repository.trash.list()
+    return await Promise.all(
+      records.map(async (entry): Promise<ProjectTrashSummary> => {
+        const workspace = workspaces.find(
+          (candidate) => candidate.directoryPath === entry.workspaceDirectoryPath,
+        )
+        const readable =
+          workspace &&
+          (await this.options.repository.workspaceAvailability(workspace)).availability ===
+            'available'
+        const record = entry.project
+        return {
+          bbox:
+            record.bboxWidth !== null && record.bboxHeight !== null
+              ? { height: record.bboxHeight, width: record.bboxWidth }
+              : null,
+          deletionError: entry.deletionError,
+          deletionStatus: entry.state,
+          fileName: path.basename(entry.canonicalPath),
+          health: record.fileHealth,
+          id: entry.localProjectKey,
+          originalWorkspaceDirectoryPath: entry.workspaceDirectoryPath,
+          originalWorkspaceName: workspace?.displayName ?? entry.workspaceName,
+          previewStatus: record.previewStatus,
+          recoveryStatus: 'none',
+          thumbnailUrl:
+            entry.state === 'trashed' &&
+            readable &&
+            record.fileHealth === 'ready' &&
+            record.thumbnailSha256
+              ? projectThumbnailImageUrl(entry.localProjectKey, record.thumbnailSha256)
+              : null,
+          title: record.displayName,
+          trashedAt: entry.trashedAt,
+          trashId: entry.trashId,
+          workspaceId: workspace?.id ?? record.workspaceId,
+        }
+      }),
     )
   }
 
@@ -2241,6 +2321,8 @@ export class ProjectService {
 
   async open(projectId: string): Promise<ProjectOpenResult> {
     assertProjectId(projectId)
+    await this.initialize()
+    await this.assertProjectNotTrashed(projectId)
     const rebuilding = this.rebuilding.get(projectId)
     if (rebuilding) {
       await rebuilding.catch(() => undefined)
@@ -2338,6 +2420,8 @@ export class ProjectService {
     worker: Pick<ProjectWorkerClient, 'composePreview'>,
   ): Promise<ProjectRebuildResult> {
     assertProjectId(projectId)
+    await this.initialize()
+    await this.assertProjectNotTrashed(projectId)
     if (this.rebuilding.has(projectId)) {
       throw new ProjectServiceError(
         'PROJECT_REBUILD_IN_PROGRESS',
@@ -2790,6 +2874,60 @@ export class ProjectService {
     return tab
   }
 
+  async restoreProject(projectId: string, trashId: string): Promise<void> {
+    assertProjectId(projectId)
+    if (!isProjectDocumentId(trashId)) {
+      throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'The Trash identity is invalid.')
+    }
+    await this.initialize()
+    const entry = await this.options.repository.trash.get(projectId)
+    if (!entry || entry.trashId !== trashId) {
+      throw new ProjectServiceError(
+        'PROJECT_TRASH_CONFLICT',
+        'This Trash item changed. Refresh Trash and try again.',
+      )
+    }
+    if (entry.state !== 'trashed') {
+      throw new ProjectServiceError(
+        'PROJECT_TRASH_DELETE_PENDING',
+        'A committed permanent deletion cannot be restored.',
+      )
+    }
+    this.assertClosedForLifecycle(projectId, entry.canonicalPath)
+    const workspace = (await this.options.repository.listWorkspaces()).find(
+      (candidate) => candidate.directoryPath === entry.workspaceDirectoryPath,
+    )
+    if (!workspace) {
+      throw new ProjectServiceError(
+        'PROJECT_NOT_FOUND',
+        'The original workspace is no longer registered. Add that exact folder again before restoring this Project.',
+      )
+    }
+    if (
+      (await this.options.repository.workspaceAvailability(workspace)).availability !== 'available'
+    ) {
+      throw new ProjectServiceError(
+        'PROJECT_NOT_READY',
+        'The original workspace folder is unavailable. Restore access before restoring this Project.',
+      )
+    }
+    const canonical = await canonicalProjectPath(entry.canonicalPath)
+    if (canonical !== entry.canonicalPath || path.dirname(canonical) !== workspace.directoryPath) {
+      throw new ProjectServiceError(
+        'PROJECT_IDENTITY_MISMATCH',
+        'The trashed Project path was replaced or redirected. Restore its original file before continuing.',
+      )
+    }
+    await this.options.repository.indexSaved(
+      entry.canonicalPath,
+      workspace.id,
+      entry.project.documentId ? { expectedDocumentId: entry.project.documentId } : {},
+    )
+    await this.options.repository.trash.restore(projectId, trashId, workspace.id, () =>
+      this.assertClosedForLifecycle(projectId, entry.canonicalPath),
+    )
+  }
+
   /** A preflight capability check; ordinary Open/recovery still owns document creation. */
   async reviewAcceptedResult(reference: AcceptedResultHistoryReference): Promise<boolean> {
     if (!isAcceptedResultHistoryReference(reference)) {
@@ -2834,6 +2972,7 @@ export class ProjectService {
   async selectImport(sourcePath: string): Promise<ProjectImportSelection> {
     await this.initialize()
     const selected = await inspectImportSource(sourcePath)
+    await this.assertProjectNotTrashed(localProjectRecoveryKey(selected.sourcePath))
     const workspace = (await this.options.repository.listWorkspaces()).find(
       (candidate) => path.dirname(selected.sourcePath) === candidate.directoryPath,
     )
@@ -2945,6 +3084,33 @@ export class ProjectService {
       throw error
     }
     return toTab(tabId, coordinator)
+  }
+
+  async trashProject(projectId: string): Promise<void> {
+    assertProjectId(projectId)
+    await this.initialize()
+    this.assertClosedForLifecycle(projectId)
+    const existing = await this.options.repository.trash.get(projectId)
+    if (existing) {
+      if (existing.state === 'deleting') {
+        throw new ProjectServiceError(
+          'PROJECT_TRASH_DELETE_PENDING',
+          'Permanent deletion is already pending for this Project.',
+        )
+      }
+      return
+    }
+    const record = await this.options.repository.getProject(projectId)
+    if (!record) {
+      throw new ProjectServiceError(
+        'PROJECT_NOT_FOUND',
+        'This Project is not in the library. Refresh Home and try again.',
+      )
+    }
+    const workspace = await this.options.repository.workspaceById(record.workspaceId)
+    await this.options.repository.trash.moveToTrash(record, workspace, () =>
+      this.assertClosedForLifecycle(projectId, record.canonicalPath),
+    )
   }
 
   async undo(tabId: string): Promise<ProjectTab> {
@@ -3936,6 +4102,40 @@ export class ProjectService {
     })
   }
 
+  private assertClosedForLifecycle(projectId: string, canonicalPath?: string): void {
+    if (
+      this.opening.has(projectId) ||
+      this.openTabs.has(projectId) ||
+      [...this.openTabs.values()].some((coordinator) => coordinator.filePath === canonicalPath)
+    ) {
+      throw new ProjectServiceError(
+        'PROJECT_ALREADY_OPEN',
+        'Close this Project before changing its Trash state. Switch to Project to review it.',
+      )
+    }
+    if (this.rebuilding.has(projectId)) {
+      throw new ProjectServiceError(
+        'PROJECT_REBUILD_IN_PROGRESS',
+        'Wait for the Project preview rebuild before changing Trash state.',
+      )
+    }
+    if (this.saving.has(projectId)) {
+      throw new ProjectServiceError(
+        'PROJECT_SAVE_IN_PROGRESS',
+        'Wait for Project Save before changing Trash state.',
+      )
+    }
+  }
+
+  private async assertProjectNotTrashed(projectId: string): Promise<void> {
+    if (await this.options.repository.trash.get(projectId)) {
+      throw new ProjectServiceError(
+        'PROJECT_TRASHED',
+        'Restore this Project from Trash before opening or rebuilding it.',
+      )
+    }
+  }
+
   private captureRegionalGuidanceDocument(
     tabId: string,
     owner: ProjectRegionalGuidanceDocumentOwner,
@@ -4134,6 +4334,7 @@ export class ProjectService {
 
   private async requireReadyRecord(projectId: string): Promise<ProjectIndexRecord> {
     await this.initialize()
+    await this.assertProjectNotTrashed(projectId)
     const indexed = await this.options.repository.getProject(projectId)
     if (!indexed) {
       throw new ProjectServiceError('PROJECT_NOT_FOUND', 'This Project is not in the library.')

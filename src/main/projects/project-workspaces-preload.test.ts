@@ -145,3 +145,56 @@ test('workspace management preload forwards explicit identity/confirmation and v
   f.state.value = { ...value, availability: 'missing', writable: true }
   assert.equal((await f.api.projects.updateWorkspace(value.id, input)).ok, false)
 })
+
+test('Trash preload keeps the lifecycle owner and actual filename and validates pending deletion replies', async () => {
+  const f = await fixture()
+  const id = `project-v1-${'b'.repeat(64)}`
+  const trashId = randomUUID()
+  const item = {
+    bbox: null,
+    deletionError: null,
+    deletionStatus: 'trashed',
+    fileName: 'project-actual-uuid.igs',
+    health: 'ready',
+    id,
+    originalWorkspaceDirectoryPath: '/trusted/workspace',
+    originalWorkspaceName: 'Uncategorized',
+    previewStatus: 'empty',
+    recoveryStatus: 'none',
+    thumbnailUrl: null,
+    title: 'Readable title',
+    trashedAt: '2026-11-11T00:00:00.000Z',
+    trashId,
+    workspaceId: 'uncategorized',
+  }
+  f.state.value = [item]
+  const list = await f.api.projects.listTrash()
+  assert.equal(list.ok, true)
+  if (list.ok) {
+    assert.equal(list.value[0].fileName, 'project-actual-uuid.igs')
+  }
+  for (const patch of [
+    { trashId: '../file' },
+    { deletionStatus: 'unknown' },
+    { trashedAt: 'invalid' },
+    { deletionError: 3 },
+  ]) {
+    f.state.value = [{ ...item, ...patch }]
+    assert.equal((await f.api.projects.listTrash()).ok, false)
+  }
+  f.state.value = undefined
+  assert.equal((await f.api.projects.trashProject(id)).ok, true)
+  assert.equal((await f.api.projects.restoreProject(id, trashId)).ok, true)
+  f.state.value = {
+    kind: 'pending',
+    message: 'The original file is unavailable; deletion remains pending.',
+  }
+  assert.equal((await f.api.projects.deleteProjectPermanently(id, trashId, true)).ok, true)
+  assert.deepEqual(f.calls.slice(-3), [
+    { args: [id], channel: ipcChannels.projects.trashProject },
+    { args: [id, trashId], channel: ipcChannels.projects.restoreProject },
+    { args: [id, trashId, true], channel: ipcChannels.projects.deleteProjectPermanently },
+  ])
+  f.state.value = { kind: 'pending', message: null }
+  assert.equal((await f.api.projects.deleteProjectPermanently(id, trashId, true)).ok, false)
+})

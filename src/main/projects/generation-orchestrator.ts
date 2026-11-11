@@ -1943,6 +1943,19 @@ export class GenerationOrchestrator {
     }
   }
 
+  /** Caller holds the Project operation gate; a scoped maintenance lease preserves older fences. */
+  async withProjectMaintenanceFence<T>(tabId: string, use: () => Promise<T>): Promise<T> {
+    const alreadyFenced = this.fencedProjects.has(tabId)
+    await this.fenceProjectGeneration(tabId)
+    try {
+      return await use()
+    } finally {
+      if (!alreadyFenced) {
+        this.releaseProjectGenerationFence(tabId)
+      }
+    }
+  }
+
   private assertAcceptanceDocument(tabId: string, documentId: string): void {
     this.assertOpen(tabId)
     if (

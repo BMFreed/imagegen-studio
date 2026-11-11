@@ -37,6 +37,7 @@ import type {
   IgsRegionalGuidanceV1,
   IgsSmartPatchLayerV1,
 } from './projects/project-schema.js'
+import type { ProjectTrashDeleteResult, ProjectTrashSummary } from './projects/project-trash.js'
 import type {
   ProjectWorkspaceAddInput,
   ProjectWorkspaceSummary,
@@ -97,6 +98,7 @@ export type {
   ProjectGenerationActionState,
   ProjectGenerationQueueJob,
 } from './projects/project-generation-actions.js'
+export type { ProjectTrashDeleteResult, ProjectTrashSummary } from './projects/project-trash.js'
 export type {
   ProjectWorkspaceAddInput,
   ProjectWorkspaceSummary,
@@ -178,6 +180,7 @@ export const ipcChannels = {
     close: 'projects:close',
     create: 'projects:create',
     deleteGenerationJob: 'projects:delete-generation-job',
+    deleteProjectPermanently: 'projects:delete-permanently',
     deleteRegionalGuidance: 'projects:delete-regional-guidance',
     discardAndClose: 'projects:discard-and-close',
     discardSmartPatchGenerationResults: 'projects:discard-smart-patch-generation-results',
@@ -207,6 +210,7 @@ export const ipcChannels = {
     list: 'projects:list',
     listGenerationResults: 'projects:list-generation-results',
     listSmartPatchGenerationResults: 'projects:list-smart-patch-generation-results',
+    listTrash: 'projects:list-trash',
     listWorkspaces: 'projects:list-workspaces',
     moveRasterLayer: 'projects:move-raster-layer',
     open: 'projects:open',
@@ -221,6 +225,7 @@ export const ipcChannels = {
     removeGenerationLora: 'projects:remove-generation-lora',
     removeWorkspace: 'projects:remove-workspace',
     resolveRecovery: 'projects:resolve-recovery',
+    restoreProject: 'projects:restore',
     retryGenerationJob: 'projects:retry-generation-job',
     reviewAcceptedResult: 'projects:review-accepted-result',
     save: 'projects:save',
@@ -232,6 +237,7 @@ export const ipcChannels = {
     setGenerationVae: 'projects:set-generation-vae',
     setPrimaryBbox: 'projects:set-primary-bbox',
     tabsChanged: 'projects:tabs-changed',
+    trashProject: 'projects:trash',
     undo: 'projects:undo',
     updateGenerationDraft: 'projects:update-generation-draft',
     updateRasterLayer: 'projects:update-raster-layer',
@@ -595,6 +601,11 @@ export interface ProjectApi {
   close: (tabId: string, confirmCloseImpact?: boolean) => Promise<ApiResult<void>>
   create: (options: ProjectCreateInput) => Promise<ApiResult<ProjectTab>>
   deleteGenerationJob: (review: GenerationQueueReview) => Promise<ApiResult<void>>
+  deleteProjectPermanently: (
+    projectId: string,
+    trashId: string,
+    confirmed: boolean,
+  ) => Promise<ApiResult<ProjectTrashDeleteResult>>
   deleteRegionalGuidance: (
     tabId: string,
     owner: ProjectRegionalGuidanceOwner,
@@ -692,6 +703,7 @@ export interface ProjectApi {
   listSmartPatchGenerationResults: (
     tabId: string,
   ) => Promise<ApiResult<ProjectSmartPatchResultsSnapshot>>
+  listTrash: () => Promise<ApiResult<ProjectTrashSummary[]>>
   listWorkspaces: () => Promise<ApiResult<ProjectWorkspaceSummary[]>>
   moveRasterLayer: (
     tabId: string,
@@ -731,6 +743,7 @@ export interface ProjectApi {
     projectId: string,
     decision: 'discard' | 'recover',
   ) => Promise<ApiResult<ProjectTab>>
+  restoreProject: (projectId: string, trashId: string) => Promise<ApiResult<void>>
   retryGenerationJob: (review: GenerationQueueReview) => Promise<ApiResult<void>>
   reviewAcceptedResult: (reference: AcceptedResultHistoryReference) => Promise<ApiResult<boolean>>
   save: (tabId: string) => Promise<ApiResult<ProjectSaveResult>>
@@ -755,6 +768,7 @@ export interface ProjectApi {
     targetLayerId?: string,
   ) => Promise<ApiResult<ProjectTab>>
   setPrimaryBbox: (tabId: string, rect: IgsRectV1) => Promise<ApiResult<ProjectTab>>
+  trashProject: (projectId: string) => Promise<ApiResult<void>>
   undo: (tabId: string) => Promise<ApiResult<ProjectTab>>
   updateGenerationDraft: (
     tabId: string,

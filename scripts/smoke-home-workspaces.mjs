@@ -1,8 +1,9 @@
-/** Real built Home/IPC/SQLite/.igs qualification. Only OS picker replies are controlled. */
+/** Real built Home/IPC/SQLite/.igs qualification. OS picker replies are controlled; the catalog race wraps IPC entry and delegates unchanged to the original handler, then restores its identity. */
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -27,7 +28,9 @@ import {
   confirmQualificationProcessExit,
 } from './qualification-resource-limits.mjs'
 
-assert.equal(process.argv.length, 4, 'Use --report-file ABSOLUTE_NEW_OWNED_REPORT')
+assert.ok([4, 5].includes(process.argv.length), 'Use --report-file ABSOLUTE_NEW_OWNED_REPORT [--trash-only]')
+const trashOnly = process.argv.length === 5
+if (trashOnly) assert.equal(process.argv[4], '--trash-only')
 assert.equal(process.argv[2], '--report-file')
 const reportFile = process.argv[3]
 const evidenceRoot = path.dirname(reportFile)
@@ -46,6 +49,7 @@ const execute = promisify(execFile)
 const digest = (file) => createHash('sha256').update(readFileSync(file)).digest('hex')
 const report = {
   outcome: 'running',
+  mode: trashOnly ? 'trash-only' : 'catalog-workspaces-and-trash',
   startedAt: new Date().toISOString(),
   payloads: [payload],
   checks: [],
@@ -70,6 +74,12 @@ const report = {
       'src/renderer/components/AddWorkspaceModal.vue',
       'src/renderer/components/WorkspaceSettingsModal.vue',
       'src/main/projects/project-path-lock.ts',
+      'src/main/projects/project-trash-store.ts',
+      'src/main/projects/project-preview-resource.ts',
+      'src/shared/projects/project-trash.ts',
+      'src/renderer/components/ProjectTrashModal.vue',
+      'src/main/projects/generation-orchestrator.ts',
+      'src/main/db/migrations/0027_project_file_lifecycle.sql',
       'src/renderer/components/NewProjectModal.vue',
       'src/renderer/components/project-workspace-destinations.ts',
       'src/renderer/styles/global.css',
@@ -467,9 +477,226 @@ async function manageWorkspace() {
   await screenshot('workspace-rediscovered', 900, 620)
   check('re-register discovers exact canonical identities and original committed packages')
 }
+
+const trashModal = () => window.getByRole('dialog', { name: 'Move Project to Trash', exact: true })
+const deleteModal = () =>
+  window.getByRole('dialog', { name: 'Delete Project Permanently', exact: true })
+async function trashView() {
+  await showHome()
+  await home()
+    .getByRole('button', { name: /^Trash(?:\s+\d+)?$/ })
+    .click()
+  await expect(window.getByRole('heading', { name: 'Trash', exact: true })).toBeVisible()
+}
+async function requestTrash(title) {
+  await showHome()
+  await window.getByRole('button', { name: `${title} project actions`, exact: true }).click()
+  await window
+    .locator('.n-dropdown-option-body__label')
+    .filter({ hasText: /^Move to Trash$/ })
+    .click()
+  await expect(trashModal()).toBeVisible()
+}
+async function performTrash(title) {
+  await requestTrash(title)
+  await trashModal().getByRole('button', { name: 'Move to Trash', exact: true }).click()
+  await expect(trashModal()).toHaveCount(0)
+}
+async function manageTrash() {
+  registered = (await api('listWorkspaces')).find(({ isDefault }) => !isDefault)
+  const rows = await api('list', registered.id)
+  const first = rows.find(({ title }) => title === 'Workspace Project')
+  const second = rows.find(({ title }) => title === 'Copy Project')
+  const third = rows.find(({ title }) => title === 'Move Project')
+  const files = Object.fromEntries(
+    await Promise.all(
+      rows.map(async (row) => [row.id, (await indexRecord(row.id)).canonical_path]),
+    ),
+  )
+  const hashes = Object.fromEntries(Object.entries(files).map(([id, file]) => [id, digest(file)]))
+  await window.getByRole('button', { name: 'Open Workspace Project', exact: true }).click()
+  await expect(window.getByRole('tab', { name: 'Workspace Project', exact: true })).toBeVisible()
+  await requestTrash('Workspace Project')
+  await expect(
+    trashModal().getByRole('button', { name: 'Move to Trash', exact: true }),
+  ).toHaveCount(0)
+  await trashModal().getByRole('button', { name: 'Switch to Project', exact: true }).click()
+  await expect(trashModal()).toHaveCount(0)
+  assert.deepEqual(await api('listTrash'), [])
+  await closeProject('Workspace Project')
+  await showHome()
+  check('open Project Trash uses Switch to Project and never changes lifecycle')
+  await performTrash('Workspace Project')
+  const firstTrash = (await api('listTrash')).find(({ id }) => id === first.id)
+  assert.ok(firstTrash)
+  assert.equal(digest(files[first.id]), hashes[first.id])
+  assert.equal((await api('list')).length, 2)
+  const deniedOpen = await window.evaluate((id) => window.api.projects.open(id), first.id)
+  assert.equal(deniedOpen.ok, false)
+  await trashView()
+  await expect(window.locator(`[data-project-id="${first.id}"]`)).toHaveAttribute(
+    'data-trash-id',
+    firstTrash.trashId,
+  )
+  await screenshot('trash-one', 900, 620)
+  await home().getByRole('button', { name: 'New Project', exact: true }).click()
+  await expect(newModal().getByLabel('Project workspace', { exact: true })).toContainText(
+    'Uncategorized',
+  )
+  await newModal().getByRole('button', { name: 'Cancel', exact: true }).click()
+  assert.equal((await api('list')).length, 2)
+  check(
+    'actual Trash hides active rows/counts, denies Open, preserves source and defaults New Project to Uncat',
+  )
+  await settings(registered.displayName)
+  await requestRemove()
+  await removeModal().getByRole('button', { name: 'Remove Workspace', exact: true }).click()
+  await expect(removeModal()).toHaveCount(0)
+  assert.equal((await api('listTrash')).length, 1)
+  await trashView()
+  await window.getByRole('button', { name: 'Restore Workspace Project', exact: true }).click()
+  await expect(window.getByRole('alert').filter({ hasText: /no longer registered/i })).toBeVisible()
+  assert.equal(digest(files[first.id]), hashes[first.id])
+  assert.equal((await api('listTrash')).length, 1)
+  await close('trash-unregistered-normal')
+  await launch('trash-restarted')
+  assert.equal((await api('listTrash'))[0].trashId, firstTrash.trashId)
+  check(
+    'Trash authority survives unregister and normal restart; Restore refuses missing registration without retarget',
+  )
+  await picker(folder)
+  await home().getByRole('button', { name: 'Add Workspace', exact: true }).click()
+  await addModal()
+    .getByRole('textbox', { name: 'Workspace name', exact: true })
+    .fill('Trash Restored Workspace')
+  await addModal().getByRole('button', { name: 'Choose Folder and Add', exact: true }).click()
+  await expect(addModal()).toHaveCount(0)
+  registered = (await api('listWorkspaces')).find(({ isDefault }) => !isDefault)
+  assert.equal((await api('list', registered.id)).length, 2)
+  await trashView()
+  await window.getByRole('button', { name: 'Restore Workspace Project', exact: true }).click()
+  await expect.poll(() => api('listTrash')).toEqual([])
+  assert.equal((await api('list', registered.id)).length, 3)
+  assert.equal(digest(files[first.id]), hashes[first.id])
+  await home().getByRole('button', { name: 'Projects', exact: true }).click()
+  await window.getByRole('button', { name: 'Open Workspace Project', exact: true }).click()
+  await expect(window.getByRole('tab', { name: 'Workspace Project', exact: true })).toBeVisible()
+  assert.doesNotMatch(
+    JSON.stringify(await api('getGenerationState', first.id)),
+    /PROJECT_GENERATION_CLOSING|close has not committed/,
+  )
+  await closeProject('Workspace Project')
+  await showHome()
+  check(
+    'Restore after exact-folder re-Add preserves canonical identity/bytes and reopens without weakening generation fences',
+  )
+  await performTrash('Workspace Project')
+  await trashView()
+  const finalFirst = (await api('listTrash'))[0]
+  assert.notEqual(finalFirst.trashId, firstTrash.trashId)
+  const stale = await window.evaluate(
+    ({ id, trashId }) => window.api.projects.deleteProjectPermanently(id, trashId, true),
+    firstTrash,
+  )
+  assert.equal(stale.ok, false)
+  assert.equal(digest(files[first.id]), hashes[first.id])
+  await window
+    .getByRole('button', { name: 'Delete Workspace Project permanently', exact: true })
+    .click()
+  await expect(deleteModal()).toContainText(path.basename(files[first.id]))
+  await deleteModal().getByRole('button', { name: 'Cancel', exact: true }).click()
+  const noConfirm = await window.evaluate(
+    ({ id, trashId }) => window.api.projects.deleteProjectPermanently(id, trashId, false),
+    finalFirst,
+  )
+  assert.equal(noConfirm.ok, false)
+  assert.equal(digest(files[first.id]), hashes[first.id])
+  check('stale Trash UUID, Cancel and missing confirmation preserve the exact source file')
+  await window
+    .getByRole('button', { name: 'Delete Workspace Project permanently', exact: true })
+    .click()
+  await screenshot('delete-confirmation', 1440, 900)
+  await deleteModal().getByRole('button', { name: 'Delete Permanently', exact: true }).click()
+  await expect(deleteModal()).toHaveCount(0)
+  assert.equal(existsSync(files[first.id]), false)
+  assert.deepEqual(await api('listTrash'), [])
+  assert.equal(
+    (await api('list')).some(({ id }) => id === first.id),
+    false,
+  )
+  assert.equal(digest(files[second.id]), hashes[second.id])
+  assert.equal(digest(files[third.id]), hashes[third.id])
+  check('confirmed permanent delete removes only the frozen managed file and its lifecycle/index')
+  await home().getByRole('button', { name: 'Projects', exact: true }).click()
+  await performTrash('Move Project')
+  await trashView()
+  const pendingTrash = (await api('listTrash'))[0]
+  chmodSync(folder, 0o500)
+  try {
+    await window
+      .getByRole('button', { name: 'Delete Move Project permanently', exact: true })
+      .click()
+    await deleteModal().getByRole('button', { name: 'Delete Permanently', exact: true }).click()
+    await expect(
+      deleteModal().getByRole('button', { name: 'Retry Delete', exact: true }),
+    ).toBeVisible()
+    assert.equal((await api('listTrash'))[0].deletionStatus, 'deleting')
+    assert.equal(digest(files[third.id]), hashes[third.id])
+    await screenshot('delete-pending', 900, 620)
+    await deleteModal().getByRole('button', { name: 'Close', exact: true }).click()
+    await close('delete-pending-normal')
+    await launch('delete-pending-restarted')
+    const retained = (await api('listTrash'))[0]
+    assert.equal(retained.trashId, pendingTrash.trashId)
+    assert.equal(retained.deletionStatus, 'deleting')
+    assert.equal(digest(files[third.id]), hashes[third.id])
+    check('readonly purge keeps positive pending journal/source across actual normal restart')
+  } finally {
+    chmodSync(folder, 0o700)
+  }
+  await close('delete-repaired-normal')
+  await launch('delete-repaired-restarted')
+  assert.deepEqual(await api('listTrash'), [])
+  assert.equal(existsSync(files[third.id]), false)
+  const active = await api('list')
+  assert.deepEqual(
+    active.map(({ id }) => id),
+    [second.id],
+  )
+  assert.equal(digest(files[second.id]), hashes[second.id])
+  assert.equal(
+    readFileSync(path.join(folder, 'keep.txt'), 'utf8'),
+    'Non-project file must survive unregister.\n',
+  )
+  await trashView()
+  await expect(window.getByText('Trash is empty', { exact: true })).toBeVisible()
+  await screenshot('trash-empty-recovered', 900, 620)
+  check(
+    'startup after permission repair completes only committed purge before scanning without reviving deleted rows',
+  )
+}
+async function prepareTrashOnly() {
+  await picker(folder)
+  await home().getByRole('button', { name: 'Add Workspace', exact: true }).click()
+  await addModal().getByRole('textbox', { name: 'Workspace name', exact: true }).fill('Trash Workspace')
+  await addModal().getByRole('button', { name: 'Choose Folder and Add', exact: true }).click()
+  await expect(addModal()).toHaveCount(0)
+  registered = (await api('listWorkspaces')).find(({ isDefault }) => !isDefault)
+  for (const title of ['Workspace Project', 'Copy Project', 'Move Project']) {
+    const tab = await api('create', { title, width: 640, height: 512, workspaceId: registered.id })
+    await api('close', tab.id, false)
+  }
+  writeFileSync(path.join(folder, 'keep.txt'), 'Non-project file must survive unregister.\n')
+  await window.getByRole('button', { name: 'Refresh projects', exact: true }).click()
+  await expect(window.getByRole('button', { name: 'Open Workspace Project', exact: true })).toBeVisible()
+  check('Trash-only fixtures use actual registered workspace and three Main-created closed packages')
+}
 persist()
 try {
   await launch('first')
+  if (trashOnly) {
+    await prepareTrashOnly()
+  } else {
   assert.deepEqual(await api('list'), [])
   await picker(null)
   await home().getByRole('button', { name: 'Add Workspace', exact: true }).click()
@@ -649,9 +876,11 @@ try {
     'available',
   )
   await manageWorkspace()
+  }
+  await manageTrash()
   await close('restart-normal')
   assert.deepEqual(report.pageErrors, [])
-  assert.equal(report.nativeClosures.length, 3)
+  assert.equal(report.nativeClosures.length, trashOnly ? 4 : 6)
   report.outcome = 'passed'
   report.finishedAt = new Date().toISOString()
   persist()

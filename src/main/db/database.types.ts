@@ -201,6 +201,24 @@ export interface ProjectAcceptedResultIndex {
   output_width: number
 }
 
+export interface ProjectFileLifecycle {
+  canonical_path: string
+  delete_committed_at: string | null
+  delete_operation_id: string | null
+  deletion_error: string | null
+  file_missing: number
+  file_witness_json: string
+  local_project_key: string
+  parent_witness_json: string
+  project_json: string
+  state: string
+  trash_id: string
+  trashed_at: string
+  updated_at: string
+  workspace_directory_path: string
+  workspace_name: string
+}
+
 export interface ProjectIndex {
   bbox_height: number | null
   bbox_width: number | null
@@ -256,6 +274,7 @@ export interface DB {
   model_version_dependency: ModelVersionDependency
   presets: Presets
   project_accepted_result_index: ProjectAcceptedResultIndex
+  project_file_lifecycle: ProjectFileLifecycle
   project_index: ProjectIndex
   project_workspace: ProjectWorkspace
   schema_migrations: SchemaMigrations

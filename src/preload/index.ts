@@ -25,6 +25,8 @@ import type {
   ProjectSmartPatchLayerView,
   ProjectSummary,
   ProjectTab,
+  ProjectTrashDeleteResult,
+  ProjectTrashSummary,
   ProjectWorkspaceSummary,
   RuntimeStatus,
   StudioApi,
@@ -742,6 +744,28 @@ function isProjectWorkspaceSummary(value: unknown): value is ProjectWorkspaceSum
   )
 }
 
+function isProjectTrashSummary(value: unknown): value is ProjectTrashSummary {
+  return (
+    isProjectSummary(value) &&
+    isRecord(value) &&
+    isProjectDocumentId(value.trashId) &&
+    typeof value.trashedAt === 'string' &&
+    Number.isFinite(Date.parse(value.trashedAt)) &&
+    typeof value.fileName === 'string' &&
+    typeof value.originalWorkspaceDirectoryPath === 'string' &&
+    typeof value.originalWorkspaceName === 'string' &&
+    (value.deletionStatus === 'trashed' || value.deletionStatus === 'deleting') &&
+    (value.deletionError === null || typeof value.deletionError === 'string')
+  )
+}
+
+function isProjectTrashDeleteResult(value: unknown): value is ProjectTrashDeleteResult {
+  return (
+    isRecord(value) &&
+    (value.kind === 'deleted' || (value.kind === 'pending' && typeof value.message === 'string'))
+  )
+}
+
 function isProjectThumbnailUrl(value: unknown): value is string {
   if (typeof value !== 'string' || !value.startsWith('igs-preview://thumbnail/')) {
     return false
@@ -1219,6 +1243,12 @@ const api: StudioApi = {
     create: (options) => invokeProject(ipcChannels.projects.create, [options], isProjectTab),
     deleteGenerationJob: (review) =>
       invokeProject(ipcChannels.projects.deleteGenerationJob, [review], isVoid),
+    deleteProjectPermanently: (projectId, trashId, confirmed) =>
+      invokeProject(
+        ipcChannels.projects.deleteProjectPermanently,
+        [projectId, trashId, confirmed],
+        isProjectTrashDeleteResult,
+      ),
     deleteRegionalGuidance: (tabId, owner) =>
       invokeRegionalGuidance(ipcChannels.projects.deleteRegionalGuidance, tabId, owner),
     discardAndClose: (tabId, confirmCloseImpact = false) =>
@@ -1406,6 +1436,13 @@ const api: StudioApi = {
         [tabId],
         isProjectSmartPatchResultsSnapshot,
       ),
+    listTrash: () =>
+      invokeProject(
+        ipcChannels.projects.listTrash,
+        [],
+        (value): value is ProjectTrashSummary[] =>
+          Array.isArray(value) && value.every(isProjectTrashSummary),
+      ),
     listWorkspaces: () =>
       invokeProject(
         ipcChannels.projects.listWorkspaces,
@@ -1517,6 +1554,8 @@ const api: StudioApi = {
       invokeProject(ipcChannels.projects.removeWorkspace, [workspaceId, confirmed], isVoid),
     resolveRecovery: (projectId, decision) =>
       invokeProject(ipcChannels.projects.resolveRecovery, [projectId, decision], isProjectTab),
+    restoreProject: (projectId, trashId) =>
+      invokeProject(ipcChannels.projects.restoreProject, [projectId, trashId], isVoid),
     retryGenerationJob: (review) =>
       invokeProject(ipcChannels.projects.retryGenerationJob, [review], isVoid),
     reviewAcceptedResult: (reference) =>
@@ -1560,6 +1599,8 @@ const api: StudioApi = {
       ),
     setPrimaryBbox: (tabId, rect) =>
       invokeProject(ipcChannels.projects.setPrimaryBbox, [tabId, rect], isProjectTab),
+    trashProject: (projectId) =>
+      invokeProject(ipcChannels.projects.trashProject, [projectId], isVoid),
     undo: (tabId) => invokeProject(ipcChannels.projects.undo, [tabId], isProjectTab),
     updateGenerationDraft: (tabId, change, historyGroupId, targetLayerId) =>
       invokeProject(
