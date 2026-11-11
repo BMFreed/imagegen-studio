@@ -135,7 +135,7 @@ import {
 } from '../../shared/projects/smart-result-preset.js'
 
 import { createHash, randomUUID } from 'node:crypto'
-import { type BigIntStats, constants, lstatSync } from 'node:fs'
+import { type BigIntStats, constants, lstatSync, realpathSync } from 'node:fs'
 import { link, lstat, mkdir, mkdtemp, open, realpath, rm, unlink } from 'node:fs/promises'
 import path from 'node:path'
 
@@ -378,6 +378,7 @@ export class ProjectService {
     ProjectAutosaveCoordinator,
     Omit<SmartPatchPresetApplicationReview, 'generationDraft'> & { documentEpoch: number }
   >()
+  private readonly tabWorkspaceIds = new Map<string, string>()
   private readonly targetModes = new WeakMap<
     ProjectAutosaveCoordinator,
     { key: string; mode: NonNullable<ProjectGenerationTargetState['mode']> }
@@ -412,7 +413,7 @@ export class ProjectService {
       {},
       { expectedDocumentRevision: document.documentRevision },
     )
-    return toTab(tabId, coordinator)
+    return this.toTab(tabId, coordinator)
   }
 
   async addRegionalGuidance(
@@ -450,7 +451,7 @@ export class ProjectService {
         expectedDocumentRevision: owner.documentRevision,
       },
     )
-    return toTab(tabId, captured.coordinator)
+    return this.toTab(tabId, captured.coordinator)
   }
 
   async addSmartPatchLayer(tabId: string): Promise<ProjectTab> {
@@ -484,7 +485,7 @@ export class ProjectService {
       {},
       { expectedDocumentRevision: document.documentRevision },
     )
-    return toTab(tabId, coordinator)
+    return this.toTab(tabId, coordinator)
   }
 
   /** Only Main's folder picker may supply this path; IPC sends metadata and opaque IDs. */
@@ -619,14 +620,14 @@ export class ProjectService {
       JSON.stringify(next.generationDraft) === JSON.stringify(document.generationDraft) &&
       JSON.stringify(next.primaryBbox) === JSON.stringify(document.primaryBbox)
     ) {
-      return toTab(tabId, coordinator)
+      return this.toTab(tabId, coordinator)
     }
     await coordinator.applyDocument(
       { ...document, ...next },
       {},
       { expectedDocumentRevision: document.documentRevision },
     )
-    return toTab(tabId, coordinator)
+    return this.toTab(tabId, coordinator)
   }
 
   /** The caller owns the shared Project gate; a review remains retryable until publication. */
@@ -712,7 +713,7 @@ export class ProjectService {
     if (this.smartPatchPresetReviews.get(coordinator) === review) {
       this.smartPatchPresetReviews.delete(coordinator)
     }
-    return toTab(tabId, coordinator)
+    return this.toTab(tabId, coordinator)
   }
 
   /** New jobs only: frozen Retry and read-only source/settings consumers remain independent. */
@@ -753,7 +754,7 @@ export class ProjectService {
   async clearHistory(tabId: string): Promise<ProjectTab> {
     const coordinator = this.requireTab(tabId)
     await coordinator.clearHistory()
-    return toTab(tabId, coordinator)
+    return this.toTab(tabId, coordinator)
   }
 
   async close(tabId: string): Promise<void> {
@@ -775,6 +776,7 @@ export class ProjectService {
     await coordinator.close()
     this.smartPatchPresetReviews.delete(coordinator)
     this.openTabs.delete(tabId)
+    this.tabWorkspaceIds.delete(tabId)
   }
 
   async create(input: ProjectCreateInput): Promise<ProjectTab> {
@@ -810,10 +812,11 @@ export class ProjectService {
       this.options.shadow,
       this.options.autosaveOptions,
     )
+    this.tabWorkspaceIds.set(session.localRecoveryKey, workspace.id)
     this.openTabs.set(session.localRecoveryKey, coordinator)
     await this.markOpenedBestEffort(session.filePath)
     return {
-      ...toTab(session.localRecoveryKey, coordinator),
+      ...this.toTab(session.localRecoveryKey, coordinator),
       ...(session.creationDirectorySynced === false
         ? {
             storageWarning:
@@ -884,7 +887,7 @@ export class ProjectService {
         expectedDocumentRevision: owner.documentRevision,
       },
     )
-    return toTab(tabId, captured.coordinator)
+    return this.toTab(tabId, captured.coordinator)
   }
 
   async discardAndClose(tabId: string): Promise<void> {
@@ -903,6 +906,7 @@ export class ProjectService {
     this.openTabs.set(tabId, clean)
     await clean.close()
     this.openTabs.delete(tabId)
+    this.tabWorkspaceIds.delete(tabId)
   }
 
   async duplicateRegionalGuidance(
@@ -1034,7 +1038,7 @@ export class ProjectService {
         expectedDocumentEpoch: captured.documentEpoch,
         expectedDocumentRevision: owner.documentRevision,
       })
-      return toTab(tabId, captured.coordinator)
+      return this.toTab(tabId, captured.coordinator)
     } finally {
       if (staging) {
         await rm(staging, { force: true, recursive: true }).catch((error: unknown) =>
@@ -1099,7 +1103,7 @@ export class ProjectService {
         JSON.stringify(rendered.bounds) === JSON.stringify(current.bounds) &&
         Buffer.from(rendered.alpha).equals(Buffer.from(current.alpha)))
     ) {
-      return toTab(tabId, captured.coordinator)
+      return this.toTab(tabId, captured.coordinator)
     }
     const revision = region.mask.revision + 1
     if (!Number.isSafeInteger(revision)) {
@@ -1147,7 +1151,7 @@ export class ProjectService {
       expectedDocumentEpoch: captured.documentEpoch,
       expectedDocumentRevision: request.documentRevision,
     })
-    return toTab(tabId, captured.coordinator)
+    return this.toTab(tabId, captured.coordinator)
   }
 
   /** Publish one captured gesture. Pixels and paths are created only by Main. */
@@ -1221,7 +1225,7 @@ export class ProjectService {
         patch.boundingBox.width === rect.width &&
         patch.boundingBox.height === rect.height
       ) {
-        return toTab(tabId, coordinator)
+        return this.toTab(tabId, coordinator)
       }
       await coordinator.applyDocument(
         {
@@ -1233,7 +1237,7 @@ export class ProjectService {
         {},
         { expectedDocumentEpoch: epoch, expectedDocumentRevision: document.documentRevision },
       )
-      return toTab(tabId, coordinator)
+      return this.toTab(tabId, coordinator)
     }
     const rendered = applyProjectMaskEdit(current, request.edit)
     if (
@@ -1243,7 +1247,7 @@ export class ProjectService {
         JSON.stringify(rendered.bounds) === JSON.stringify(current.bounds) &&
         Buffer.from(rendered.alpha).equals(Buffer.from(current.alpha)))
     ) {
-      return toTab(tabId, coordinator)
+      return this.toTab(tabId, coordinator)
     }
     const revision = patch.mask.revision + 1
     if (!Number.isSafeInteger(revision)) {
@@ -1289,7 +1293,7 @@ export class ProjectService {
       sources,
       { expectedDocumentEpoch: epoch, expectedDocumentRevision: document.documentRevision },
     )
-    return toTab(tabId, coordinator)
+    return this.toTab(tabId, coordinator)
   }
 
   /** Publish a validated copy before considering removal of the external source. */
@@ -1472,7 +1476,7 @@ export class ProjectService {
     const coordinator = this.requireTab(tabId)
     const assertCurrent = () => {
       const current = this.openTabs.get(tabId)
-      const signature = current ? generationTargetSignature(toTab(tabId, current)) : null
+      const signature = current ? generationTargetSignature(this.toTab(tabId, current)) : null
       if (
         current !== coordinator ||
         current?.document.documentId !== documentId ||
@@ -1595,7 +1599,7 @@ export class ProjectService {
   }
 
   getOpenTabs(): ProjectTab[] {
-    return [...this.openTabs].map(([id, coordinator]) => toTab(id, coordinator))
+    return [...this.openTabs].map(([id, coordinator]) => this.toTab(id, coordinator))
   }
 
   /** Read portable result settings and current pixel mode without admitting a generation or edit. */
@@ -1660,7 +1664,7 @@ export class ProjectService {
     let currentMode: RasterGenerationData['currentMode'] = null
     if (withWorker) {
       try {
-        const signature = generationTargetSignature(toTab(tabId, coordinator))
+        const signature = generationTargetSignature(this.toTab(tabId, coordinator))
         if (!signature) {
           throw new Error('The generation area inputs are unavailable.')
         }
@@ -1928,7 +1932,7 @@ export class ProjectService {
     }
     const generationConfiguration = structuredClone(provenance.generationConfiguration)
     const documentEpoch = coordinator.documentEpoch
-    const signature = generationTargetSignature(toTab(tabId, coordinator))
+    const signature = generationTargetSignature(this.toTab(tabId, coordinator))
     const assertCurrent = () => {
       const current = this.openTabs.get(tabId)
       const currentResult = current ? resolveResult(current.document) : null
@@ -1940,7 +1944,7 @@ export class ProjectService {
         !currentResult ||
         currentResult.id !== result.id ||
         currentResult.asset.sha256 !== request.assetSha256 ||
-        generationTargetSignature(toTab(tabId, current)) !== signature
+        generationTargetSignature(this.toTab(tabId, current)) !== signature
       ) {
         throw new ProjectServiceError(
           'PROJECT_COMPARISON_CHANGED',
@@ -2087,7 +2091,7 @@ export class ProjectService {
       await coordinator.applyDocument(prepared.document, prepared.assetSources, {
         expectedDocumentRevision: prepared.baseDocumentRevision,
       })
-      return toTab(tabId, coordinator)
+      return this.toTab(tabId, coordinator)
     } finally {
       // Source ownership transfers to the coordinator before applyDocument resolves. A cleanup
       // failure must not report a committed document edit as a failed import.
@@ -2168,7 +2172,7 @@ export class ProjectService {
         expectedDocumentEpoch: captured.documentEpoch,
         expectedDocumentRevision: owner.documentRevision,
       })
-      return toTab(tabId, captured.coordinator)
+      return this.toTab(tabId, captured.coordinator)
     } finally {
       await prepared
         .dispose()
@@ -2304,7 +2308,7 @@ export class ProjectService {
       )
     }
     if (index === targetIndex) {
-      return toTab(tabId, coordinator)
+      return this.toTab(tabId, coordinator)
     }
     // The coordinator document is shared with acceptance/undo readers. Never mutate it before
     // the revision-guarded apply, or a concurrent operation can observe an uncommitted reorder.
@@ -2316,7 +2320,7 @@ export class ProjectService {
       {},
       { expectedDocumentRevision: document.documentRevision },
     )
-    return toTab(tabId, coordinator)
+    return this.toTab(tabId, coordinator)
   }
 
   async open(projectId: string): Promise<ProjectOpenResult> {
@@ -2329,7 +2333,7 @@ export class ProjectService {
     }
     const existing = this.openTabs.get(projectId)
     if (existing) {
-      return { kind: 'opened', tab: toTab(projectId, existing) }
+      return { kind: 'opened', tab: this.toTab(projectId, existing) }
     }
     const pending = this.opening.get(projectId)
     if (pending) {
@@ -2440,7 +2444,7 @@ export class ProjectService {
   async redo(tabId: string): Promise<ProjectTab> {
     const coordinator = this.requireTab(tabId)
     await coordinator.redo()
-    return toTab(tabId, coordinator)
+    return this.toTab(tabId, coordinator)
   }
 
   /** Relink one saved embedding literal without rewriting copied resource metadata. */
@@ -2520,7 +2524,7 @@ export class ProjectService {
       linked.localModelId === saved.localModelId &&
       linked.localVersionId === saved.localVersionId
     ) {
-      return toTab(tabId, coordinator)
+      return this.toTab(tabId, coordinator)
     }
     await coordinator.applyDocument(
       scope.replace({
@@ -2538,7 +2542,7 @@ export class ProjectService {
         expectedDocumentRevision: document.documentRevision,
       },
     )
-    return toTab(tabId, coordinator)
+    return this.toTab(tabId, coordinator)
   }
 
   /** Link one saved LoRA without replacing its settings or copied metadata. */
@@ -2596,7 +2600,7 @@ export class ProjectService {
       saved.localModelId === linked.localModelId &&
       saved.localVersionId === linked.localVersionId
     ) {
-      return toTab(tabId, coordinator)
+      return this.toTab(tabId, coordinator)
     }
     await coordinator.applyDocument(
       scope.replace({
@@ -2608,7 +2612,7 @@ export class ProjectService {
       {},
       { expectedDocumentRevision: document.documentRevision },
     )
-    return toTab(tabId, coordinator)
+    return this.toTab(tabId, coordinator)
   }
 
   /**
@@ -2666,14 +2670,14 @@ export class ProjectService {
       saved.localModelId === linked.localModelId &&
       saved.localVersionId === linked.localVersionId
     ) {
-      return toTab(tabId, coordinator)
+      return this.toTab(tabId, coordinator)
     }
     await coordinator.applyDocument(
       scope.replace({ ...draft, model: linked }),
       {},
       { expectedDocumentRevision: document.documentRevision },
     )
-    return toTab(tabId, coordinator)
+    return this.toTab(tabId, coordinator)
   }
 
   /** Verify portable VAE identity, then replace only its local registry IDs. */
@@ -2732,14 +2736,14 @@ export class ProjectService {
       saved.localModelId === linked.localModelId &&
       saved.localVersionId === linked.localVersionId
     ) {
-      return toTab(tabId, coordinator)
+      return this.toTab(tabId, coordinator)
     }
     await coordinator.applyDocument(
       scope.replace({ ...draft, vae: linked }),
       {},
       { expectedDocumentRevision: document.documentRevision },
     )
-    return toTab(tabId, coordinator)
+    return this.toTab(tabId, coordinator)
   }
 
   async removeGenerationLora(
@@ -2760,7 +2764,7 @@ export class ProjectService {
       {},
       { expectedDocumentRevision: document.documentRevision },
     )
-    return toTab(tabId, coordinator)
+    return this.toTab(tabId, coordinator)
   }
 
   /** Main serializes this metadata lifecycle with Open/Create/Import/scan admission. */
@@ -2865,9 +2869,10 @@ export class ProjectService {
                 expectedCanonicalPath: record.canonicalPath,
               },
             )
+    this.tabWorkspaceIds.set(projectId, record.workspaceId)
     this.openTabs.set(projectId, coordinator)
     await this.markOpenedBestEffort(record.canonicalPath)
-    const tab = toTab(projectId, coordinator)
+    const tab = this.toTab(projectId, coordinator)
     if (temporary.kind === 'unavailable') {
       tab.storageWarning = temporary.reason
     }
@@ -2928,6 +2933,99 @@ export class ProjectService {
     )
   }
 
+  /** Invoke-style authoritative record lookup; the desktop shell is an explicit adapter. */
+  async revealProject(projectId: string, showItemInFolder: (file: string) => void): Promise<void> {
+    assertProjectId(projectId)
+    await this.initialize()
+    const record = await this.options.repository.getProject(projectId)
+    if (!record) {
+      throw new ProjectServiceError(
+        'PROJECT_NOT_FOUND',
+        'This Project is no longer available in Home. Refresh and try again.',
+      )
+    }
+    const workspace = await this.options.repository.workspaceById(record.workspaceId)
+    if (
+      (await this.options.repository.workspaceAvailability(workspace)).availability !== 'available'
+    ) {
+      throw new ProjectServiceError(
+        'PROJECT_NOT_READY',
+        'The workspace folder is unavailable. Restore access and try again.',
+      )
+    }
+    await withProjectPathLock(record.canonicalPath, async () => {
+      const current = await this.options.repository.getProject(projectId)
+      if (
+        !current ||
+        current.canonicalPath !== record.canonicalPath ||
+        current.workspaceId !== workspace.id
+      ) {
+        throw new ProjectServiceError(
+          'PROJECT_NOT_FOUND',
+          'This Project changed. Refresh Home and try again.',
+        )
+      }
+      try {
+        const parent = lstatSync(workspace.directoryPath)
+        const file = lstatSync(current.canonicalPath)
+        if (
+          !parent.isDirectory() ||
+          parent.isSymbolicLink() ||
+          realpathSync(workspace.directoryPath) !== workspace.directoryPath ||
+          path.dirname(current.canonicalPath) !== workspace.directoryPath ||
+          localProjectRecoveryKey(current.canonicalPath) !== projectId ||
+          !file.isFile() ||
+          file.isSymbolicLink() ||
+          realpathSync(current.canonicalPath) !== current.canonicalPath
+        ) {
+          throw new Error('Unavailable Project location')
+        }
+        // No await between final path checks and handing this one indexed file to the shell.
+        showItemInFolder(current.canonicalPath)
+      } catch {
+        throw new ProjectServiceError(
+          'PROJECT_NOT_READY',
+          'The Project location could not be shown. Check that its original file and workspace folder are available.',
+        )
+      }
+    })
+  }
+
+  async revealWorkspace(
+    workspaceId: string,
+    openFolder: (directory: string) => Promise<string>,
+  ): Promise<void> {
+    await this.initialize()
+    const workspace = await this.options.repository.workspaceById(workspaceId)
+    if (
+      (await this.options.repository.workspaceAvailability(workspace)).availability !== 'available'
+    ) {
+      throw new ProjectServiceError(
+        'PROJECT_NOT_READY',
+        'The workspace folder is unavailable. Restore access and try again.',
+      )
+    }
+    try {
+      const current = lstatSync(workspace.directoryPath)
+      if (
+        !current.isDirectory() ||
+        current.isSymbolicLink() ||
+        realpathSync(workspace.directoryPath) !== workspace.directoryPath
+      ) {
+        throw new Error('Unavailable workspace')
+      }
+      const message = await openFolder(workspace.directoryPath)
+      if (message) {
+        throw new Error('File manager unavailable')
+      }
+    } catch {
+      throw new ProjectServiceError(
+        'PROJECT_NOT_READY',
+        'The workspace folder could not be opened. Check folder access and your file manager, then try again.',
+      )
+    }
+  }
+
   /** A preflight capability check; ordinary Open/recovery still owns document creation. */
   async reviewAcceptedResult(reference: AcceptedResultHistoryReference): Promise<boolean> {
     if (!isAcceptedResultHistoryReference(reference)) {
@@ -2965,7 +3063,7 @@ export class ProjectService {
   async sealPromptHistory(tabId: string, historyGroupId?: string): Promise<ProjectTab> {
     const coordinator = this.requireTab(tabId)
     await coordinator.sealHistoryGroup(historyGroupId)
-    return toTab(tabId, coordinator)
+    return this.toTab(tabId, coordinator)
   }
 
   /** Call only with a path returned by Electron's main-process file picker. */
@@ -3016,14 +3114,14 @@ export class ProjectService {
         previous.localVersionId === model.localVersionId &&
         previous.fileSha256 === model.fileSha256)
     ) {
-      return toTab(tabId, coordinator)
+      return this.toTab(tabId, coordinator)
     }
     await coordinator.applyDocument(
       scope.replace({ ...draft, model }),
       {},
       { expectedDocumentRevision: document.documentRevision },
     )
-    return toTab(tabId, coordinator)
+    return this.toTab(tabId, coordinator)
   }
 
   /** Capture the Project before main verifies an ID-only external VAE selection. */
@@ -3063,14 +3161,14 @@ export class ProjectService {
         previous.localVersionId === vae.localVersionId &&
         previous.fileSha256 === vae.fileSha256)
     ) {
-      return toTab(tabId, coordinator)
+      return this.toTab(tabId, coordinator)
     }
     await coordinator.applyDocument(
       scope.replace({ ...draft, vae }),
       {},
       { expectedDocumentRevision: document.documentRevision },
     )
-    return toTab(tabId, coordinator)
+    return this.toTab(tabId, coordinator)
   }
 
   async setPrimaryBbox(tabId: string, rect: IgsRectV1): Promise<ProjectTab> {
@@ -3083,7 +3181,7 @@ export class ProjectService {
       }
       throw error
     }
-    return toTab(tabId, coordinator)
+    return this.toTab(tabId, coordinator)
   }
 
   async trashProject(projectId: string): Promise<void> {
@@ -3116,7 +3214,7 @@ export class ProjectService {
   async undo(tabId: string): Promise<ProjectTab> {
     const coordinator = this.requireTab(tabId)
     await coordinator.undo()
-    return toTab(tabId, coordinator)
+    return this.toTab(tabId, coordinator)
   }
 
   async updateGenerationDraft(
@@ -3147,7 +3245,7 @@ export class ProjectService {
     switch (change.kind) {
       case 'anima-method': {
         if (draft.sampling.animaMethod === (change.value ?? undefined)) {
-          return toTab(tabId, coordinator)
+          return this.toTab(tabId, coordinator)
         }
         nextDraft = { ...draft, sampling: { ...draft.sampling } }
         if (change.value === null) {
@@ -3159,7 +3257,7 @@ export class ProjectService {
       }
       case 'cfg-rescale': {
         if (draft.cfgRescale === (change.value ?? undefined)) {
-          return toTab(tabId, coordinator)
+          return this.toTab(tabId, coordinator)
         }
         nextDraft = { ...draft }
         if (change.value === null) {
@@ -3171,7 +3269,7 @@ export class ProjectService {
       }
       case 'denoising-strength': {
         if (draft.sampling.denoisingStrength === change.value) {
-          return toTab(tabId, coordinator)
+          return this.toTab(tabId, coordinator)
         }
         nextDraft = { ...draft, sampling: { ...draft.sampling, denoisingStrength: change.value } }
         break
@@ -3182,7 +3280,7 @@ export class ProjectService {
           before.maxPrompts === change.value.maxPrompts &&
           before.seedBehavior === change.value.seedBehavior
         ) {
-          return toTab(tabId, coordinator)
+          return this.toTab(tabId, coordinator)
         }
         nextDraft = { ...draft, dynamicPrompt: { ...change.value } }
         break
@@ -3193,7 +3291,7 @@ export class ProjectService {
         const lora = draft.loras[index]
         const field = change.kind === 'lora-enabled' ? 'enabled' : 'weight'
         if (lora[field] === change.value) {
-          return toTab(tabId, coordinator)
+          return this.toTab(tabId, coordinator)
         }
         nextDraft = {
           ...draft,
@@ -3205,7 +3303,7 @@ export class ProjectService {
       }
       case 'sampling-cfg-scale': {
         if (draft.sampling.cfgScale === change.value) {
-          return toTab(tabId, coordinator)
+          return this.toTab(tabId, coordinator)
         }
         nextDraft = {
           ...draft,
@@ -3218,7 +3316,7 @@ export class ProjectService {
           draft.sampling.sampler === change.sampler &&
           draft.sampling.scheduler === change.scheduler
         ) {
-          return toTab(tabId, coordinator)
+          return this.toTab(tabId, coordinator)
         }
         nextDraft = {
           ...draft,
@@ -3228,7 +3326,7 @@ export class ProjectService {
       }
       case 'sampling-steps': {
         if (draft.sampling.steps === change.value) {
-          return toTab(tabId, coordinator)
+          return this.toTab(tabId, coordinator)
         }
         nextDraft = {
           ...draft,
@@ -3238,7 +3336,7 @@ export class ProjectService {
       }
       case 'seed': {
         if (draft.seed.policy === change.policy && draft.seed.value === change.value) {
-          return toTab(tabId, coordinator)
+          return this.toTab(tabId, coordinator)
         }
         nextDraft = {
           ...draft,
@@ -3248,7 +3346,7 @@ export class ProjectService {
       }
       case 'vae-precision': {
         if (draft.vaePrecision === (change.value ?? undefined)) {
-          return toTab(tabId, coordinator)
+          return this.toTab(tabId, coordinator)
         }
         nextDraft = { ...draft }
         if (change.value === null) {
@@ -3292,7 +3390,7 @@ export class ProjectService {
           )
         }
         if (JSON.stringify(before) === JSON.stringify(prompt)) {
-          return toTab(tabId, coordinator)
+          return this.toTab(tabId, coordinator)
         }
         nextDraft = {
           ...draft,
@@ -3309,7 +3407,7 @@ export class ProjectService {
         historyGroupId,
       },
     )
-    return toTab(tabId, coordinator)
+    return this.toTab(tabId, coordinator)
   }
 
   async updateRasterLayer(
@@ -3367,7 +3465,7 @@ export class ProjectService {
       updated.opacity === layer.opacity &&
       updated.blendMode === layer.blendMode
     ) {
-      return toTab(tabId, coordinator)
+      return this.toTab(tabId, coordinator)
     }
     const layers = [...document.layers]
     layers[index] = updated
@@ -3376,7 +3474,7 @@ export class ProjectService {
       {},
       { expectedDocumentRevision: document.documentRevision },
     )
-    return toTab(tabId, coordinator)
+    return this.toTab(tabId, coordinator)
   }
 
   async updateRegionalGuidance(
@@ -3423,7 +3521,7 @@ export class ProjectService {
       }
     }
     if (JSON.stringify(next) === JSON.stringify(region)) {
-      return toTab(tabId, captured.coordinator)
+      return this.toTab(tabId, captured.coordinator)
     }
     await captured.coordinator.applyDocument(
       {
@@ -3439,7 +3537,7 @@ export class ProjectService {
         expectedDocumentRevision: owner.documentRevision,
       },
     )
-    return toTab(tabId, captured.coordinator)
+    return this.toTab(tabId, captured.coordinator)
   }
 
   /** Regional authoring only; neither this edit nor its history can enable conditioning. */
@@ -3487,7 +3585,7 @@ export class ProjectService {
     switch (change.kind) {
       case 'block': {
         if (Boolean(prompts[change.polarity]) === change.present) {
-          return toTab(tabId, captured.coordinator)
+          return this.toTab(tabId, captured.coordinator)
         }
         prompts[change.polarity] = change.present ? { embeddingRefs: [], text: '' } : null
         if (change.polarity === 'negative') {
@@ -3547,7 +3645,7 @@ export class ProjectService {
       nextRegion.prompts = prompts
     }
     if (JSON.stringify(nextRegion) === JSON.stringify(region)) {
-      return toTab(tabId, captured.coordinator)
+      return this.toTab(tabId, captured.coordinator)
     }
     const next = {
       ...captured.document,
@@ -3568,7 +3666,7 @@ export class ProjectService {
           : {}),
       },
     )
-    return toTab(tabId, captured.coordinator)
+    return this.toTab(tabId, captured.coordinator)
   }
 
   async updateRegionalGuidanceReferenceImage(
@@ -3604,7 +3702,7 @@ export class ProjectService {
       )
     }
     if (change.kind === 'move' && change.targetIndex === index) {
-      return toTab(tabId, captured.coordinator)
+      return this.toTab(tabId, captured.coordinator)
     }
     const [reference] = references.splice(index, 1)
     if (change.kind === 'move') {
@@ -3632,7 +3730,7 @@ export class ProjectService {
         expectedDocumentRevision: owner.documentRevision,
       },
     )
-    return toTab(tabId, captured.coordinator)
+    return this.toTab(tabId, captured.coordinator)
   }
 
   async updateSmartPatchLayer(
@@ -3671,7 +3769,7 @@ export class ProjectService {
         const settings = resolveProjectMaskSettings(patch.maskSettings)
         const key = change.kind === 'mask-blur' ? 'blur' : 'padding'
         if (settings[key] === change.value) {
-          return toTab(tabId, coordinator)
+          return this.toTab(tabId, coordinator)
         }
         next.maskSettings = { ...settings, [key]: change.value }
         break
@@ -3691,7 +3789,7 @@ export class ProjectService {
           settings.edgeSize === change.value.edgeSize &&
           settings.minimumDenoise === change.value.minimumDenoise
         ) {
-          return toTab(tabId, coordinator)
+          return this.toTab(tabId, coordinator)
         }
         next.coherenceSettings = { ...change.value }
         break
@@ -3714,7 +3812,7 @@ export class ProjectService {
       }
     }
     if (JSON.stringify(next) === JSON.stringify(patch)) {
-      return toTab(tabId, coordinator)
+      return this.toTab(tabId, coordinator)
     }
     await coordinator.applyDocument(
       {
@@ -3724,7 +3822,7 @@ export class ProjectService {
       {},
       { expectedDocumentRevision: document.documentRevision },
     )
-    return toTab(tabId, coordinator)
+    return this.toTab(tabId, coordinator)
   }
 
   /** Exact current member edits use the existing document/history asset owner. */
@@ -3775,14 +3873,14 @@ export class ProjectService {
       case 'rename': {
         const name = change.name.trim()
         if (patch.rasterSubLayers[index].name === name) {
-          return toTab(tabId, coordinator)
+          return this.toTab(tabId, coordinator)
         }
         next.rasterSubLayers[index] = { ...patch.rasterSubLayers[index], name }
         break
       }
       case 'select': {
         if (patch.activeRasterSubLayerId === change.variantId) {
-          return toTab(tabId, coordinator)
+          return this.toTab(tabId, coordinator)
         }
         next.activeRasterSubLayerId = change.variantId
         break
@@ -3799,7 +3897,7 @@ export class ProjectService {
         expectedDocumentRevision: document.documentRevision,
       },
     )
-    return toTab(tabId, coordinator)
+    return this.toTab(tabId, coordinator)
   }
 
   async updateWorkspace(
@@ -4239,9 +4337,10 @@ export class ProjectService {
         expectedCanonicalPath: record.canonicalPath,
       },
     )
+    this.tabWorkspaceIds.set(projectId, record.workspaceId)
     this.openTabs.set(projectId, coordinator)
     await this.markOpenedBestEffort(record.canonicalPath)
-    const tab = toTab(projectId, coordinator)
+    const tab = this.toTab(projectId, coordinator)
     if (temporary.kind === 'unavailable') {
       tab.storageWarning = temporary.reason
     }
@@ -4446,7 +4545,7 @@ export class ProjectService {
       directorySynced: saved.directorySynced,
       recoveryStatus: saved.recovery.status,
       reloadRequired: saved.reloadRequired,
-      tab: toTab(tabId, coordinator),
+      tab: this.toTab(tabId, coordinator),
       ...(saved.recovery.status === 'failed'
         ? { recoveryError: saved.recovery.error.message }
         : {}),
@@ -4521,6 +4620,10 @@ export class ProjectService {
       workspaceId: record.workspaceId,
       ...(recoveryReason ? { recoveryReason } : {}),
     }
+  }
+
+  private toTab(id: string, coordinator: ProjectAutosaveCoordinator): ProjectTab {
+    return { ...toTab(id, coordinator), workspaceId: this.tabWorkspaceIds.get(id) }
   }
 
   private async toWorkspaceSummary(

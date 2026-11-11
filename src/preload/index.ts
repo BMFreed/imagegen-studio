@@ -473,6 +473,7 @@ function isProjectTab(value: unknown): value is ProjectTab {
     isProjectDocumentId(value.documentId) &&
     isProjectDocumentId(value.documentRevision) &&
     typeof value.title === 'string' &&
+    (value.workspaceId === undefined || isProjectWorkspaceId(value.workspaceId)) &&
     typeof value.canUndo === 'boolean' &&
     typeof value.canRedo === 'boolean' &&
     isGenerationDraft(value.generationDraft) &&
@@ -1558,6 +1559,10 @@ const api: StudioApi = {
       invokeProject(ipcChannels.projects.restoreProject, [projectId, trashId], isVoid),
     retryGenerationJob: (review) =>
       invokeProject(ipcChannels.projects.retryGenerationJob, [review], isVoid),
+    revealProject: (projectId) =>
+      invokeProject(ipcChannels.projects.revealProject, [projectId], isVoid),
+    revealWorkspace: (workspaceId) =>
+      invokeProject(ipcChannels.projects.revealWorkspace, [workspaceId], isVoid),
     reviewAcceptedResult: (reference) =>
       invokeProject(
         ipcChannels.projects.reviewAcceptedResult,

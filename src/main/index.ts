@@ -1433,6 +1433,8 @@ if (!gotInstanceLock) {
         ipcChannels.projects.removeWorkspace,
         ipcChannels.projects.resolveRecovery,
         ipcChannels.projects.restoreProject,
+        ipcChannels.projects.revealProject,
+        ipcChannels.projects.revealWorkspace,
         ipcChannels.projects.selectImport,
         ipcChannels.projects.trashProject,
         ipcChannels.projects.updateWorkspace,
@@ -1578,6 +1580,15 @@ if (!gotInstanceLock) {
           withClosedProjectTrash(id as string, () =>
             projectService.deleteProjectPermanently(id as string, trashId as string),
           ),
+      )
+      registerProjectHandler(ipcChannels.projects.revealProject, oneProjectId, (id) =>
+        projectService.revealProject(id as string, (file) => shell.showItemInFolder(file)),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.revealWorkspace,
+        (args) => args.length === 1 && isProjectWorkspaceId(args[0]),
+        (id) =>
+          projectService.revealWorkspace(id as string, (directory) => shell.openPath(directory)),
       )
       registerProjectHandler(
         ipcChannels.projects.updateWorkspace,

@@ -50,6 +50,8 @@ const emit = defineEmits<{
   rebuildPreview: [projectId: string]
   refresh: []
   restoreProject: [project: ProjectTrashSummary]
+  revealProject: [projectId: string]
+  revealWorkspace: [workspaceId: string]
   trashProject: [project: ProjectSummary]
   workspaceSettings: [workspaceId: string]
 }>()
@@ -69,6 +71,20 @@ function requestDelete(project: ProjectSummary) {
   const trashed = trashSummary(project)
   if (trashed) {
     emit('deleteProject', trashed)
+  }
+}
+function requestProjectAction(key: number | string, project: ProjectSummary) {
+  if (key === 'reveal') {
+    emit('revealProject', project.id)
+  } else if (key === 'trash') {
+    emit('trashProject', project)
+  }
+}
+function requestWorkspaceAction(key: number | string, workspaceId: string) {
+  if (key === 'reveal') {
+    emit('revealWorkspace', workspaceId)
+  } else if (key === 'settings') {
+    emit('workspaceSettings', workspaceId)
   }
 }
 const selectedWorkspace = computed(() =>
@@ -298,9 +314,12 @@ function recoveryLabel(project: ProjectSummary): string | null {
           </NButton>
           <NDropdown
             :disabled="busy"
-            :options="[{ key: 'settings', label: 'Workspace Settings' }]"
+            :options="[
+              { key: 'settings', label: 'Workspace Settings' },
+              { key: 'reveal', label: 'Show in Folder' },
+            ]"
             trigger="click"
-            @select="$emit('workspaceSettings', workspace.id)"
+            @select="requestWorkspaceAction($event, workspace.id)"
           >
             <span class="workspace-menu">
               <IconButton
@@ -531,9 +550,12 @@ function recoveryLabel(project: ProjectSummary): string | null {
               <NDropdown
                 v-if="!trashView"
                 :disabled="busy"
-                :options="[{ key: 'trash', label: 'Move to Trash' }]"
+                :options="[
+                  { key: 'reveal', label: 'Show in Folder' },
+                  { key: 'trash', label: 'Move to Trash' },
+                ]"
                 trigger="click"
-                @select="$emit('trashProject', project)"
+                @select="requestProjectAction($event, project)"
               >
                 <span class="project-menu">
                   <IconButton

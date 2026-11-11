@@ -227,6 +227,8 @@ export const ipcChannels = {
     resolveRecovery: 'projects:resolve-recovery',
     restoreProject: 'projects:restore',
     retryGenerationJob: 'projects:retry-generation-job',
+    revealProject: 'projects:reveal',
+    revealWorkspace: 'projects:reveal-workspace',
     reviewAcceptedResult: 'projects:review-accepted-result',
     save: 'projects:save',
     saveGenerationCandidateImage: 'projects:save-generation-candidate-image',
@@ -340,6 +342,8 @@ export interface ProjectTab {
   regionalGuidance?: ProjectRegionalGuidanceLayerView[]
   storageWarning?: string
   title: string
+  /** Main-owned workspace; optional for legacy tab messages. */
+  workspaceId?: string
 }
 
 /** Read-only current accepted rasters: layerId is a Raster Layer or nested variant UUID. */
@@ -745,6 +749,8 @@ export interface ProjectApi {
   ) => Promise<ApiResult<ProjectTab>>
   restoreProject: (projectId: string, trashId: string) => Promise<ApiResult<void>>
   retryGenerationJob: (review: GenerationQueueReview) => Promise<ApiResult<void>>
+  revealProject: (projectId: string) => Promise<ApiResult<void>>
+  revealWorkspace: (workspaceId: string) => Promise<ApiResult<void>>
   reviewAcceptedResult: (reference: AcceptedResultHistoryReference) => Promise<ApiResult<boolean>>
   save: (tabId: string) => Promise<ApiResult<ProjectSaveResult>>
   saveGenerationCandidateImage: (

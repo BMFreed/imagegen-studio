@@ -49,6 +49,7 @@ import type { IgsRectV1, IgsRegionalGuidanceV1 } from '../shared/projects/projec
 import type { ProjectTrashSummary } from '../shared/projects/project-trash.js'
 import {
   DEFAULT_PROJECT_WORKSPACE_ID,
+  PROJECT_WORKSPACE_COLORS,
   type ProjectWorkspaceAddInput,
   type ProjectWorkspaceSummary,
 } from '../shared/projects/project-workspaces.js'
@@ -179,7 +180,7 @@ type PendingSmartReview =
   | { kind: 'accept'; request: ProjectSmartPatchAcceptRequest; tabId: string }
   | { kind: 'discard'; request: ProjectSmartPatchDiscardRequest; tabId: string }
 type PendingProjectAction =
-  | { kind: 'delete-project' | 'restore-trash' | 'trash'; projectId: string }
+  | { kind: 'delete-project' | 'restore-trash' | 'reveal-project' | 'trash'; projectId: string }
   | { kind: 'open' | 'rebuild'; projectId: string }
   | {
       kind:
@@ -208,6 +209,7 @@ type PendingProjectAction =
         | 'recover'
         | 'workspace-add'
         | 'workspace-remove'
+        | 'workspace-reveal'
         | 'workspace-update'
     }
 
@@ -310,6 +312,7 @@ const trashLoading = ref(false)
 const trashError = ref<string | null>(null)
 const selectedTrashView = ref(false)
 const workspaces = ref<ProjectWorkspaceSummary[]>([])
+const workspaceMarkerColors: ReadonlySet<string> = new Set(PROJECT_WORKSPACE_COLORS)
 const workspacesLoading = ref(false)
 const workspacesError = ref<string | null>(null)
 const selectedWorkspaceId = ref<string | null>(null)
@@ -3186,6 +3189,11 @@ function replaceTab(tab: ProjectTab) {
   }
 }
 
+function projectTabWorkspace(tab: ProjectTab): ProjectWorkspaceSummary | null {
+  const workspace = workspaces.value.find(({ id }) => id === tab.workspaceId)
+  return workspace && workspaceMarkerColors.has(workspace.color) ? workspace : null
+}
+
 function focusTab(tab: ProjectTab, preserveResultOpen = false) {
   if (!preserveResultOpen) {
     cancelAcceptedHistoryNavigation()
@@ -3492,6 +3500,36 @@ function beginTrashProject(project: ProjectSummary) {
   trashActionError.value = null
   trashPendingMessage.value = null
   showProjectTrashAction.value = true
+}
+
+async function revealProject(projectId: string) {
+  if (pendingProjectAction.value || windowClosePending.value) {
+    return
+  }
+  pendingProjectAction.value = { kind: 'reveal-project', projectId }
+  homeError.value = null
+  try {
+    await apiValue(() => projectApi().revealProject(projectId))
+  } catch (cause) {
+    homeError.value = errorMessage(cause)
+  } finally {
+    pendingProjectAction.value = null
+  }
+}
+
+async function revealWorkspace(workspaceId: string) {
+  if (pendingProjectAction.value || windowClosePending.value) {
+    return
+  }
+  pendingProjectAction.value = { kind: 'workspace-reveal' }
+  homeError.value = null
+  try {
+    await apiValue(() => projectApi().revealWorkspace(workspaceId))
+  } catch (cause) {
+    homeError.value = errorMessage(cause)
+  } finally {
+    pendingProjectAction.value = null
+  }
 }
 
 function beginDeleteProject(project: ProjectTrashSummary) {
@@ -4848,7 +4886,14 @@ onBeforeUnmount(() => {
           @click="activateDocument(tab.id)"
           @keydown="onTabKeydown($event, tab.id)"
         >
-          <span aria-hidden="true" class="project-marker" />
+          <span
+            v-if="projectTabWorkspace(tab)"
+            aria-hidden="true"
+            class="project-marker"
+            :class="`project-marker--${projectTabWorkspace(tab)?.color}`"
+            :data-workspace-id="tab.workspaceId"
+            :title="projectTabWorkspace(tab)?.displayName"
+          />
           <span class="tab-title" :title="tab.title">{{ tab.title }}</span>
           <span v-if="tab.dirty" aria-label="Unsaved changes" class="tab-dirty">•</span>
           <NButton
@@ -4911,6 +4956,8 @@ onBeforeUnmount(() => {
           @rebuildPreview="rebuildProjectPreview"
           @refresh="refreshProjects"
           @restoreProject="restoreTrashedProject"
+          @revealProject="revealProject"
+          @revealWorkspace="revealWorkspace"
           @trashProject="beginTrashProject"
           @workspaceSettings="beginWorkspaceSettings"
         />
@@ -5653,7 +5700,22 @@ onBeforeUnmount(() => {
   width: 8px;
   height: 8px;
   border-radius: 2px;
-  background: var(--app-tab-active-text);
+}
+
+.project-marker--green {
+  background: var(--workspace-green);
+}
+.project-marker--blue {
+  background: var(--workspace-blue);
+}
+.project-marker--amber {
+  background: var(--workspace-amber);
+}
+.project-marker--violet {
+  background: var(--workspace-violet);
+}
+.project-marker--teal {
+  background: var(--workspace-teal);
 }
 
 .tab-dirty {

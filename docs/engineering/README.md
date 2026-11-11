@@ -1,6 +1,17 @@
 # Engineering Workflow
 
-## Current Project Trash checkpoint
+## Current Home locations checkpoint
+
+[Show in Folder and tab workspace markers](./phase-4-home-locations-research.md) connect ID-only
+Home commands to validated Main-owned locations and the desktop shell adapter.
+Tabs use authoritative workspace ownership independent of the Home browse scope;
+catalog color changes and restart/reopen are qualified. ROOT203 affected PASS,
+typing/lint/build PASS and final native6checks/two normal physical lifetimes PASS.
+OS shell callbacks are controlled; file-manager window UX is outside this evidence.
+Rename/Move requires separate path identity migration preserving frozen Retry/recovery;
+no title-only shortcut or promise promotion was introduced.
+
+## Previous Project Trash checkpoint
 
 [Authoritative Trash lifecycle](./phase-4-project-trash-research.md) connects Home Move to Trash,
 Restore and confirmed Delete Permanently through real Main/SQLite/filesystem owners.

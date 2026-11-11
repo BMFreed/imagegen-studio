@@ -28,9 +28,10 @@ import {
   confirmQualificationProcessExit,
 } from './qualification-resource-limits.mjs'
 
-assert.ok([4, 5].includes(process.argv.length), 'Use --report-file ABSOLUTE_NEW_OWNED_REPORT [--trash-only]')
-const trashOnly = process.argv.length === 5
-if (trashOnly) assert.equal(process.argv[4], '--trash-only')
+assert.ok([4, 5].includes(process.argv.length), 'Use --report-file ABSOLUTE_NEW_OWNED_REPORT [--trash-only|--locations-only]')
+const trashOnly = process.argv[4] === '--trash-only'
+const locationsOnly = process.argv[4] === '--locations-only'
+if (process.argv.length === 5) assert.ok(trashOnly || locationsOnly)
 assert.equal(process.argv[2], '--report-file')
 const reportFile = process.argv[3]
 const evidenceRoot = path.dirname(reportFile)
@@ -49,7 +50,7 @@ const execute = promisify(execFile)
 const digest = (file) => createHash('sha256').update(readFileSync(file)).digest('hex')
 const report = {
   outcome: 'running',
-  mode: trashOnly ? 'trash-only' : 'catalog-workspaces-and-trash',
+  mode: locationsOnly ? 'locations-only' : trashOnly ? 'trash-only' : 'catalog-workspaces-and-trash',
   startedAt: new Date().toISOString(),
   payloads: [payload],
   checks: [],
@@ -58,7 +59,7 @@ const report = {
   resourceChecks: [],
   pageErrors: [],
   boundary:
-    'Actual built renderer/preload/Main/SQLite and Project package writers/loaders. Only OS picker replies are controlled; OS dialog UX and arbitrary permission races are not qualified. No ML.',
+    'Locations-only uses controlled OS shell callbacks; it qualifies Main path selection and UI, not file-manager window UX. Actual built renderer/preload/Main/SQLite and Project package writers/loaders. Only OS picker replies are controlled; OS dialog UX and arbitrary permission races are not qualified. No ML.',
   sourceSha256: Object.fromEntries(
     [
       'scripts/smoke-home-workspaces.mjs',
@@ -675,7 +676,102 @@ async function manageTrash() {
     'startup after permission repair completes only committed purge before scanning without reviving deleted rows',
   )
 }
-async function prepareTrashOnly() {
+async function manageLocations() {
+  const rows = await api('list', registered.id)
+  const first = rows.find(({ title }) => title === 'Workspace Project')
+  const file = (await indexRecord(first.id)).canonical_path
+  const before = digest(file)
+  await application.evaluate(({ shell }) => {
+    const state = { show: shell.showItemInFolder, open: shell.openPath, calls: [], error: '' }
+    globalThis.__locationsQualification = state
+    shell.showItemInFolder = (file) => state.calls.push({ kind: 'file', path: file })
+    shell.openPath = async (directory) => { state.calls.push({ kind: 'directory', path: directory }); return state.error }
+  })
+  const calls = () => application.evaluate(() => globalThis.__locationsQualification.calls)
+  async function projectReveal() {
+    await showHome()
+    await window.getByRole('button', { name: 'Workspace Project project actions', exact: true }).click()
+    const option = window.locator('.n-dropdown-option-body__label:visible').filter({ hasText: /^Show in Folder$/ })
+    await expect(option).toHaveCount(1)
+    await option.click()
+    await expect(option).toHaveCount(0)
+  }
+  async function workspaceReveal() {
+    await window.getByRole('button', { name: `${registered.displayName} workspace actions`, exact: true }).click()
+    const option = window.locator('.n-dropdown-option-body__label:visible').filter({ hasText: /^Show in Folder$/ })
+    await expect(option).toHaveCount(1)
+    await option.click()
+    await expect(option).toHaveCount(0)
+  }
+  try {
+    await projectReveal()
+    await expect.poll(calls).toEqual([{ kind: 'file', path: file }])
+    await expect(window.getByRole('tab')).toHaveCount(1)
+    assert.equal(digest(file), before)
+    check('actual Home Project reveal reaches shell selector with exact indexed file without opening or saving it')
+    await workspaceReveal()
+    await expect.poll(calls).toEqual([{ kind: 'file', path: file }, { kind: 'directory', path: folder }])
+    const invalid = await window.evaluate(() => window.api.projects.revealProject('/tmp/foreign.igs'))
+    assert.equal(invalid.ok, false)
+    assert.equal((await calls()).length, 2)
+    check('workspace reveal opens exact registered directory; renderer path injection is rejected before shell')
+    await application.evaluate(() => { globalThis.__locationsQualification.error = 'controlled unavailable file manager' })
+    await workspaceReveal()
+    await expect(window.getByRole('alert').filter({ hasText: /could not be opened/i })).toBeVisible()
+    assert.equal(digest(file), before)
+    await screenshot('reveal-error', 900, 620)
+    await application.evaluate(() => { globalThis.__locationsQualification.error = '' })
+    await workspaceReveal()
+    await expect(window.getByRole('alert').filter({ hasText: /could not be opened/i })).toHaveCount(0)
+    check('shell error remains visible in Home and ordinary retry clears it without document effects')
+    await window.getByRole('button', { name: 'Open Workspace Project', exact: true }).click()
+    const marker = window.getByRole('tab', { name: 'Workspace Project', exact: true }).locator('.project-marker')
+    await expect(marker).toHaveAttribute('data-workspace-id', registered.id)
+    await expect(marker).toHaveClass(/project-marker--teal/)
+    await showHome()
+    await home().locator('.workspace-select').filter({ hasText: 'Uncategorized' }).click()
+    await expect(window.getByRole('heading', { name: 'Uncategorized', exact: true })).toBeVisible()
+    await expect(marker).toHaveAttribute('data-workspace-id', registered.id)
+    await settings(registered.displayName)
+    await color('Violet')
+    await saveSettings()
+    await expect(marker).toHaveClass(/project-marker--violet/)
+    await screenshot('workspace-tab-marker', 1440, 900)
+    check('open tab retains authoritative workspace outside current Home scope and follows catalog color changes')
+    await closeProject('Workspace Project')
+    await showHome()
+    await application.evaluate(({ shell }) => { const state = globalThis.__locationsQualification; shell.showItemInFolder = state.show; shell.openPath = state.open; if (shell.showItemInFolder !== state.show || shell.openPath !== state.open) throw new Error('Shell restoration failed'); delete globalThis.__locationsQualification })
+    report.shellRestoredBeforeClose = true
+    persist()
+    await close('locations-first-normal')
+    await launch('locations-restarted')
+    await home().getByRole('button', { name: 'Projects', exact: true }).click()
+    await window.getByRole('button', { name: 'Open Workspace Project', exact: true }).click()
+    const reopened = window.getByRole('tab', { name: 'Workspace Project', exact: true }).locator('.project-marker')
+    await expect(reopened).toHaveAttribute('data-workspace-id', registered.id)
+    await expect(reopened).toHaveClass(/project-marker--violet/)
+    assert.equal(digest(file), before)
+    await showHome()
+    await screenshot('workspace-tab-reopened', 900, 620)
+    await closeProject('Workspace Project')
+    check('normal restart and reopen reproduce workspace ownership/color with exact original package bytes')
+  } finally {
+    // First lifetime's shell patch is process-local; restore before closing or on an early failure.
+    if (application) {
+      const restored = await application.evaluate(({ shell }) => {
+        const state = globalThis.__locationsQualification
+        if (!state) return { kind: 'prior-process-exited' }
+        shell.showItemInFolder = state.show; shell.openPath = state.open
+        const result = { kind: 'restored', show: shell.showItemInFolder === state.show, open: shell.openPath === state.open }
+        delete globalThis.__locationsQualification
+        return result
+      })
+      report.shellRestoration = restored
+      persist()
+    }
+  }
+}
+async function prepareManagedProjects() {
   await picker(folder)
   await home().getByRole('button', { name: 'Add Workspace', exact: true }).click()
   await addModal().getByRole('textbox', { name: 'Workspace name', exact: true }).fill('Trash Workspace')
@@ -689,13 +785,13 @@ async function prepareTrashOnly() {
   writeFileSync(path.join(folder, 'keep.txt'), 'Non-project file must survive unregister.\n')
   await window.getByRole('button', { name: 'Refresh projects', exact: true }).click()
   await expect(window.getByRole('button', { name: 'Open Workspace Project', exact: true })).toBeVisible()
-  check('Trash-only fixtures use actual registered workspace and three Main-created closed packages')
+  check('Fixtures use actual registered workspace and three Main-created closed packages')
 }
 persist()
 try {
   await launch('first')
-  if (trashOnly) {
-    await prepareTrashOnly()
+  if (trashOnly || locationsOnly) {
+    await prepareManagedProjects()
   } else {
   assert.deepEqual(await api('list'), [])
   await picker(null)
@@ -877,10 +973,11 @@ try {
   )
   await manageWorkspace()
   }
-  await manageTrash()
+  if (locationsOnly) await manageLocations()
+  else await manageTrash()
   await close('restart-normal')
   assert.deepEqual(report.pageErrors, [])
-  assert.equal(report.nativeClosures.length, trashOnly ? 4 : 6)
+  assert.equal(report.nativeClosures.length, locationsOnly ? 2 : trashOnly ? 4 : 6)
   report.outcome = 'passed'
   report.finishedAt = new Date().toISOString()
   persist()

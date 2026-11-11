@@ -2,6 +2,12 @@
 
 ## Production checkpoint
 
+[Home locations](../engineering/phase-4-home-locations-research.md) connects Project
+and workspace Show in Folder through validated Main-owned locations; no renderer
+path is accepted. Project tabs use their Main-owned workspace ID and current catalog
+color even while Home browses another scope. Native evidence uses controlled OS shell
+callbacks; actual file-manager window UX is not qualified by that fixture.
+
 [Project Trash](../engineering/phase-4-project-trash-research.md) connects the real
 Home Trash scope, Restore and confirmed permanent deletion. Authoritative lifecycle
 rows survive derived index loss and workspace unregister/re-Add. Open Projects and
@@ -18,7 +24,7 @@ Main serializes catalog lifecycle commands, and removal affects derived indexes
 without deleting folders, Project files or operational generation/recovery data.
 The [catalog/destinations stage](../engineering/phase-4-home-workspaces-research.md)
 already connects Add, aggregate/scoped browsing and explicit Create/Import folders.
-Project rename/move, folder locate/reveal, workspace tab markers and remaining
+Project rename/move, folder locate/relink and remaining
 Home presentation remain continuations. Full Home/MVP promise is not promoted.
 
 ## Feature

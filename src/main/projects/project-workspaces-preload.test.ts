@@ -1,5 +1,6 @@
 import type { ProjectWorkspaceSummary, StudioApi } from '../../shared/api.js'
 import { ipcChannels } from '../../shared/api.js'
+import { createEmptyProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 
 import { build } from 'esbuild'
 import assert from 'node:assert/strict'
@@ -197,4 +198,48 @@ test('Trash preload keeps the lifecycle owner and actual filename and validates 
   ])
   f.state.value = { kind: 'pending', message: null }
   assert.equal((await f.api.projects.deleteProjectPermanently(id, trashId, true)).ok, false)
+})
+
+test('reveal preload sends opaque IDs only and validates void responses', async () => {
+  const f = await fixture()
+  const id = `project-v1-${'a'.repeat(64)}`
+  const workspaceId = randomUUID()
+  f.state.value = undefined
+  assert.equal((await f.api.projects.revealProject(id)).ok, true)
+  assert.equal((await f.api.projects.revealWorkspace(workspaceId)).ok, true)
+  assert.deepEqual(f.calls, [
+    { args: [id], channel: ipcChannels.projects.revealProject },
+    { args: [workspaceId], channel: ipcChannels.projects.revealWorkspace },
+  ])
+  f.state.value = '/unexpected/filesystem/path'
+  assert.equal((await f.api.projects.revealProject(id)).ok, false)
+})
+
+test('tab workspace identity is additive for legacy messages and strict when supplied', async () => {
+  const f = await fixture()
+  const document = createEmptyProjectDocumentV1({ title: 'Tab owner' })
+  const tab = {
+    acceptedResults: [],
+    autosaveError: null,
+    canRedo: false,
+    canUndo: false,
+    dirty: false,
+    documentId: document.documentId,
+    documentRevision: document.documentRevision,
+    generationDraft: document.generationDraft,
+    id: `project-v1-${'b'.repeat(64)}`,
+    lastActualSeedSnapshot: null,
+    layers: [],
+    primaryBbox: document.primaryBbox,
+    title: document.title,
+  }
+  const request = { height: 64, title: 'Tab owner', width: 64 }
+  for (const workspaceId of [undefined, randomUUID(), 'uncategorized']) {
+    f.state.value = { ...tab, ...(workspaceId === undefined ? {} : { workspaceId }) }
+    assert.equal((await f.api.projects.create(request)).ok, true)
+  }
+  for (const workspaceId of [null, '../foreign', 5, 'trash']) {
+    f.state.value = { ...tab, workspaceId }
+    assert.equal((await f.api.projects.create(request)).ok, false)
+  }
 })
