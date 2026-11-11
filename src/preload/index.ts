@@ -1513,6 +1513,8 @@ const api: StudioApi = {
         [tabId, identity, targetLayerId ?? null],
         isProjectTab,
       ),
+    removeWorkspace: (workspaceId, confirmed) =>
+      invokeProject(ipcChannels.projects.removeWorkspace, [workspaceId, confirmed], isVoid),
     resolveRecovery: (projectId, decision) =>
       invokeProject(ipcChannels.projects.resolveRecovery, [projectId, decision], isProjectTab),
     retryGenerationJob: (review) =>
@@ -1600,6 +1602,12 @@ const api: StudioApi = {
         ipcChannels.projects.updateSmartPatchVariant,
         [tabId, layerId, change],
         isProjectTab,
+      ),
+    updateWorkspace: (workspaceId, input) =>
+      invokeProject(
+        ipcChannels.projects.updateWorkspace,
+        [workspaceId, input],
+        isProjectWorkspaceSummary,
       ),
   },
   runtime: {

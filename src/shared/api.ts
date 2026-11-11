@@ -219,6 +219,7 @@ export const ipcChannels = {
     relinkGenerationModel: 'projects:relink-generation-model',
     relinkGenerationVae: 'projects:relink-generation-vae',
     removeGenerationLora: 'projects:remove-generation-lora',
+    removeWorkspace: 'projects:remove-workspace',
     resolveRecovery: 'projects:resolve-recovery',
     retryGenerationJob: 'projects:retry-generation-job',
     reviewAcceptedResult: 'projects:review-accepted-result',
@@ -239,6 +240,7 @@ export const ipcChannels = {
     updateRegionalGuidanceReferenceImage: 'projects:update-regional-guidance-reference-image',
     updateSmartPatchLayer: 'projects:update-smart-patch-layer',
     updateSmartPatchVariant: 'projects:update-smart-patch-variant',
+    updateWorkspace: 'projects:update-workspace',
     windowCloseDecisionPending: 'projects:window-close-decision-pending',
     windowCloseEditorReady: 'projects:window-close-editor-ready',
     windowCloseReady: 'projects:window-close-ready',
@@ -724,6 +726,7 @@ export interface ProjectApi {
     identity: ProjectLoraIdentity,
     targetLayerId?: string,
   ) => Promise<ApiResult<ProjectTab>>
+  removeWorkspace: (workspaceId: string, confirmed: boolean) => Promise<ApiResult<void>>
   resolveRecovery: (
     projectId: string,
     decision: 'discard' | 'recover',
@@ -789,6 +792,10 @@ export interface ProjectApi {
     layerId: string,
     change: ProjectSmartPatchVariantChange,
   ) => Promise<ApiResult<ProjectTab>>
+  updateWorkspace: (
+    workspaceId: string,
+    input: ProjectWorkspaceAddInput,
+  ) => Promise<ApiResult<ProjectWorkspaceSummary>>
 }
 
 export type ModelResourceType = 'checkpoint' | 'embedding' | 'lora' | 'upscaler' | 'vae'

@@ -79,6 +79,7 @@ import type {
 import type { ModelManagerFocus } from './components/model-manager-focus.js'
 import type { PresetCreateIntent } from './components/preset-create-intent.js'
 
+import { AppLayer } from '../../docs/prototype-app/src/theme/app-layers.js'
 import {
   type AcceptedHistoryFocusRequest,
   acceptedHistoryLayerAvailable,
@@ -137,6 +138,7 @@ import {
   type SmartResultPresetSource,
   smartResultPresetSourceCurrent,
 } from './components/smart-result-preset-source.js'
+import WorkspaceSettingsModal from './components/WorkspaceSettingsModal.vue'
 import { imageGenNaiveTheme } from './theme/naive-theme.js'
 
 type RecoveryDecision = Extract<ProjectOpenResult, { kind: 'recovery-required' }>
@@ -175,7 +177,6 @@ type PendingSmartReview =
   | { kind: 'accept'; request: ProjectSmartPatchAcceptRequest; tabId: string }
   | { kind: 'discard'; request: ProjectSmartPatchDiscardRequest; tabId: string }
 type PendingProjectAction =
-  | { kind: 'create' | 'import-finish' | 'import-select' | 'recover' | 'workspace-add' }
   | { kind: 'open' | 'rebuild'; projectId: string }
   | {
       kind:
@@ -195,6 +196,16 @@ type PendingProjectAction =
         | 'save'
         | 'undo'
       tabId: string
+    }
+  | {
+      kind:
+        | 'create'
+        | 'import-finish'
+        | 'import-select'
+        | 'recover'
+        | 'workspace-add'
+        | 'workspace-remove'
+        | 'workspace-update'
     }
 
 const homeOpen = ref(true)
@@ -400,6 +411,12 @@ const newProjectError = ref<string | null>(null)
 const newProjectWorkspaceId = ref(DEFAULT_PROJECT_WORKSPACE_ID)
 const showAddWorkspace = ref(false)
 const addWorkspaceError = ref<string | null>(null)
+const showWorkspaceSettings = ref(false)
+const settingsWorkspace = ref<ProjectWorkspaceSummary | null>(null)
+const workspaceSettingsError = ref<string | null>(null)
+const showRemoveWorkspace = ref(false)
+const removingWorkspace = ref<ProjectWorkspaceSummary | null>(null)
+const removeWorkspaceError = ref<string | null>(null)
 const importTransfer = ref<ImportTransfer | null>(null)
 const importDialogVisible = ref(false)
 const importChoice = ref<'copy' | 'move'>('move')
@@ -506,6 +523,8 @@ function smartPresetOwnerCurrent(owner: SmartPatchPresetApplicationOwner, applyi
       (modelManagerOpen.value && !presetModelHandoff.value) ||
       showNewProject.value ||
       showAddWorkspace.value ||
+      showWorkspaceSettings.value ||
+      showRemoveWorkspace.value ||
       importDialogVisible.value ||
       recoveryDecision.value ||
       closingTabId.value ||
@@ -698,6 +717,8 @@ function saveSmartPatchCurrentAsPreset(tabId: string) {
         modelManagerOpen.value ||
         showNewProject.value ||
         showAddWorkspace.value ||
+        showWorkspaceSettings.value ||
+        showRemoveWorkspace.value ||
         importDialogVisible.value ||
         recoveryDecision.value ||
         closingTabId.value ||
@@ -1855,6 +1876,8 @@ watch(
     () => modelManagerOpen.value && !presetModelHandoff.value,
     () => showNewProject.value,
     () => showAddWorkspace.value,
+    () => showWorkspaceSettings.value,
+    () => showRemoveWorkspace.value,
     () => importDialogVisible.value,
     () => recoveryDecision.value,
     () => closingTabId.value,
@@ -3400,8 +3423,8 @@ async function refreshWorkspaces() {
   }
 }
 
-async function selectWorkspace(id: string | null) {
-  if (id === selectedWorkspaceId.value) {
+async function selectWorkspace(id: string | null, refreshEvenIfSelected = false) {
+  if (id === selectedWorkspaceId.value && !refreshEvenIfSelected) {
     return
   }
   selectedWorkspaceId.value = id
@@ -3419,7 +3442,13 @@ function beginAddWorkspace() {
 }
 
 async function addWorkspace(input: ProjectWorkspaceAddInput) {
-  if (!showAddWorkspace.value || pendingProjectAction.value || windowClosePending.value) {
+  if (
+    !showAddWorkspace.value ||
+    showWorkspaceSettings.value ||
+    showRemoveWorkspace.value ||
+    pendingProjectAction.value ||
+    windowClosePending.value
+  ) {
     return
   }
   pendingProjectAction.value = { kind: 'workspace-add' }
@@ -3434,6 +3463,97 @@ async function addWorkspace(input: ProjectWorkspaceAddInput) {
     await selectWorkspace(workspace.id)
   } catch (cause) {
     addWorkspaceError.value = errorMessage(cause)
+  } finally {
+    pendingProjectAction.value = null
+  }
+}
+
+function beginWorkspaceSettings(workspaceId: string) {
+  if (pendingProjectAction.value || windowClosePending.value) {
+    return
+  }
+  const workspace = workspaces.value.find(({ id }) => id === workspaceId)
+  if (!workspace) {
+    homeError.value = 'This workspace is no longer registered. Refresh the workspace list.'
+    return
+  }
+  queueResultNavigator.cancelProjectOpen()
+  settingsWorkspace.value = { ...workspace }
+  workspaceSettingsError.value = null
+  showWorkspaceSettings.value = true
+}
+
+async function saveWorkspaceSettings(input: ProjectWorkspaceAddInput) {
+  const workspace = settingsWorkspace.value
+  if (
+    !showWorkspaceSettings.value ||
+    !workspace ||
+    pendingProjectAction.value ||
+    windowClosePending.value
+  ) {
+    return
+  }
+  const workspaceId = workspace.id
+  pendingProjectAction.value = { kind: 'workspace-update' }
+  workspaceSettingsError.value = null
+  try {
+    const updated = await apiValue(() => projectApi().updateWorkspace(workspaceId, { ...input }))
+    workspaces.value = workspaces.value.map((item) => (item.id === workspaceId ? updated : item))
+    settingsWorkspace.value = { ...updated }
+    showWorkspaceSettings.value = false
+    await refreshProjects()
+  } catch (cause) {
+    workspaceSettingsError.value = errorMessage(cause)
+  } finally {
+    pendingProjectAction.value = null
+  }
+}
+
+function requestWorkspaceRemoval() {
+  const workspace = settingsWorkspace.value
+  if (
+    !showWorkspaceSettings.value ||
+    !workspace ||
+    workspace.isDefault ||
+    pendingProjectAction.value ||
+    windowClosePending.value
+  ) {
+    return
+  }
+  removingWorkspace.value = { ...workspace }
+  removeWorkspaceError.value = null
+  showWorkspaceSettings.value = false
+  showRemoveWorkspace.value = true
+}
+
+function cancelWorkspaceRemoval() {
+  if (!pendingProjectAction.value && !windowClosePending.value) {
+    showRemoveWorkspace.value = false
+    removeWorkspaceError.value = null
+  }
+}
+
+async function removeWorkspace() {
+  const workspace = removingWorkspace.value
+  if (
+    !showRemoveWorkspace.value ||
+    !workspace ||
+    workspace.isDefault ||
+    pendingProjectAction.value ||
+    windowClosePending.value
+  ) {
+    return
+  }
+  const workspaceId = workspace.id
+  pendingProjectAction.value = { kind: 'workspace-remove' }
+  removeWorkspaceError.value = null
+  try {
+    await apiValue(() => projectApi().removeWorkspace(workspaceId, true))
+    workspaces.value = workspaces.value.filter(({ id }) => id !== workspaceId)
+    showRemoveWorkspace.value = false
+    await selectWorkspace(DEFAULT_PROJECT_WORKSPACE_ID, true)
+  } catch (cause) {
+    removeWorkspaceError.value = errorMessage(cause)
   } finally {
     pendingProjectAction.value = null
   }
@@ -4341,6 +4461,8 @@ function onAppKeydown(event: KeyboardEvent) {
     presetApplyOpen.value ||
     showNewProject.value ||
     showAddWorkspace.value ||
+    showWorkspaceSettings.value ||
+    showRemoveWorkspace.value ||
     importDialogVisible.value ||
     recoveryDecision.value ||
     closingTabId.value ||
@@ -4631,6 +4753,7 @@ onBeforeUnmount(() => {
           @openProject="openProject"
           @rebuildPreview="rebuildProjectPreview"
           @refresh="refreshProjects"
+          @workspaceSettings="beginWorkspaceSettings"
         />
         <ProjectView
           v-else-if="activeTab"
@@ -4916,6 +5039,58 @@ onBeforeUnmount(() => {
         :error="addWorkspaceError"
         @add="addWorkspace"
       />
+
+      <WorkspaceSettingsModal
+        v-model:show="showWorkspaceSettings"
+        :busy="pendingProjectAction !== null || windowClosePending"
+        :error="workspaceSettingsError"
+        :workspace="settingsWorkspace"
+        @remove="requestWorkspaceRemoval"
+        @save="saveWorkspaceSettings"
+      />
+
+      <NModal
+        :closeOnEsc="pendingProjectAction === null && !windowClosePending"
+        :maskClosable="false"
+        :show="showRemoveWorkspace"
+        :zIndex="AppLayer.dialog"
+        @update:show="!$event && cancelWorkspaceRemoval()"
+      >
+        <NCard
+          aria-label="Remove Workspace"
+          class="dialog-card"
+          contentScrollable
+          role="dialog"
+          size="small"
+          title="Remove Workspace"
+        >
+          <p>
+            Remove
+            <strong>{{ removingWorkspace?.displayName }}</strong>
+            from Home? Its folder and .igs files will stay on disk. Projects from this workspace
+            will no longer appear in Home.
+          </p>
+          <NAlert v-if="removeWorkspaceError" role="alert" type="error">
+            {{ removeWorkspaceError }}
+          </NAlert>
+          <div class="dialog-actions">
+            <NButton
+              :disabled="pendingProjectAction !== null || windowClosePending"
+              @click="cancelWorkspaceRemoval"
+            >
+              Cancel
+            </NButton>
+            <NButton
+              :disabled="pendingProjectAction !== null || windowClosePending"
+              :loading="pendingProjectAction?.kind === 'workspace-remove'"
+              type="error"
+              @click="removeWorkspace"
+            >
+              Remove Workspace
+            </NButton>
+          </div>
+        </NCard>
+      </NModal>
 
       <NewProjectModal
         v-model:show="showNewProject"

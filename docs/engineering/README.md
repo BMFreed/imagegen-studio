@@ -1,13 +1,21 @@
 # Engineering Workflow
 
-## Current production Home workspace slice
+## Current workspace management checkpoint
+
+[Production metadata management](./phase-4-workspace-management-research.md)
+connects workspace Settings and confirmed unregister to existing Main/repository
+owners. Default/open guards and a catalog lifecycle fence protect index removal;
+folders, packages and operational generation/recovery data survive. Project moves,
+Trash, remaining Home/Models/export/release and visual acceptance remain open.
+
+## Previous production Home catalog slice
 
 [Workspace catalog and destinations](./phase-4-home-workspaces-research.md)
 connect the existing folder scanner/SQLite metadata to Add/select/aggregate Home
 and explicit New Project/Import destinations. Missing folders retain cached rows
 with recovery unavailable; Save/rebuild/recovery retain the actual workspace.
-Rename/removal/moving/Trash, remaining Home presentation and release acceptance
-remain separate. Inference visual gates below and PP statuses stay unchanged.
+At that checkpoint rename/removal/moving/Trash, remaining Home presentation
+and release acceptance were separate. Inference visual gates below and PP statuses stay unchanged.
 
 ## Current ordinary CLIP operator checkpoint
 

@@ -68,6 +68,8 @@ const report = {
       'src/renderer/App.vue',
       'src/renderer/components/HomeView.vue',
       'src/renderer/components/AddWorkspaceModal.vue',
+      'src/renderer/components/WorkspaceSettingsModal.vue',
+      'src/main/projects/project-path-lock.ts',
       'src/renderer/components/NewProjectModal.vue',
       'src/renderer/components/project-workspace-destinations.ts',
       'src/renderer/styles/global.css',
@@ -260,6 +262,211 @@ async function importUi(source, choice) {
   assert.equal(path.dirname((await indexRecord(value.id)).canonical_path), folder)
   return value
 }
+
+const settingsModal = () => window.getByRole('dialog', { name: 'Workspace Settings', exact: true })
+const removeModal = () => window.getByRole('dialog', { name: 'Remove Workspace', exact: true })
+async function settings(name) {
+  await showHome()
+  await home()
+    .getByRole('button', { name: `${name} workspace actions`, exact: true })
+    .click()
+  await window
+    .locator('.n-dropdown-option-body__label')
+    .filter({ hasText: /^Workspace Settings$/ })
+    .click()
+  await expect(settingsModal()).toBeVisible()
+}
+async function color(value) {
+  await settingsModal().getByLabel('Workspace color', { exact: true }).click()
+  await window
+    .locator('.n-base-select-option')
+    .filter({ hasText: new RegExp(`^${value}$`) })
+    .click()
+}
+async function saveSettings() {
+  await settingsModal().getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(settingsModal()).toHaveCount(0)
+}
+async function requestRemove() {
+  await settingsModal().getByRole('button', { name: 'Remove Workspace', exact: true }).click()
+  await expect(removeModal()).toBeVisible()
+}
+async function manageWorkspace() {
+  writeFileSync(path.join(folder, 'keep.txt'), 'Non-project file must survive unregister.\n')
+  const before = Object.fromEntries(
+    readdirSync(folder).map((name) => [name, digest(path.join(folder, name))]),
+  )
+  const assertFiles = () =>
+    assert.deepEqual(
+      Object.fromEntries(
+        readdirSync(folder).map((name) => [name, digest(path.join(folder, name))]),
+      ),
+      before,
+    )
+  const projectIds = (await api('list', registered.id)).map(({ id }) => id).sort()
+  await settings('Uncategorized')
+  await expect(
+    settingsModal().getByRole('textbox', { name: 'Workspace name', exact: true }),
+  ).toBeDisabled()
+  await expect(
+    settingsModal().getByRole('button', { name: 'Remove Workspace', exact: true }),
+  ).toHaveCount(0)
+  await color('Blue')
+  await saveSettings()
+  assert.equal((await api('listWorkspaces')).find(({ isDefault }) => isDefault).color, 'blue')
+  check('default workspace allows color with immutable name and no Remove control')
+  await settings(registered.displayName)
+  const nameInput = settingsModal().getByRole('textbox', { name: 'Workspace name', exact: true })
+  await nameInput.fill('Uncategorized')
+  await settingsModal().getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(settingsModal().getByRole('alert')).toContainText('already exists')
+  await expect(nameInput).toHaveValue('Uncategorized')
+  await settingsModal().getByRole('button', { name: 'Cancel', exact: true }).click()
+  assert.equal(
+    (await api('listWorkspaces')).find(({ id }) => id === registered.id).displayName,
+    registered.displayName,
+  )
+  check('duplicate settings failure retains draft; Cancel preserves saved metadata')
+  await settings(registered.displayName)
+  await settingsModal()
+    .getByRole('textbox', { name: 'Workspace name', exact: true })
+    .fill('Managed Workspace')
+  await color('Violet')
+  await screenshot('workspace-settings', 900, 620)
+  await saveSettings()
+  registered = (await api('listWorkspaces')).find(({ id }) => id === registered.id)
+  assert.equal(registered.displayName, 'Managed Workspace')
+  assert.equal(registered.color, 'violet')
+  assertFiles()
+  await close('metadata-saved-normal')
+  await launch('management-restart')
+  const saved = (await api('listWorkspaces')).find(({ id }) => id === registered.id)
+  assert.equal(saved.displayName, 'Managed Workspace')
+  assert.equal(saved.color, 'violet')
+  assert.equal((await api('listWorkspaces')).find(({ isDefault }) => isDefault).color, 'blue')
+  assertFiles()
+  check(
+    'name and color persist across normal native restart without changing folder or project bytes',
+  )
+  await window.getByRole('button', { name: 'Open Workspace Project', exact: true }).click()
+  await expect(window.getByRole('tab', { name: 'Workspace Project', exact: true })).toBeVisible()
+  await settings(registered.displayName)
+  await requestRemove()
+  await removeModal().getByRole('button', { name: 'Remove Workspace', exact: true }).click()
+  await expect(removeModal().getByRole('alert')).toContainText(/close.*projects/i)
+  await screenshot('workspace-open-refusal', 900, 620)
+  assert.equal((await api('list', registered.id)).length, 3)
+  assertFiles()
+  await removeModal().getByRole('button', { name: 'Cancel', exact: true }).click()
+  await closeProject('Workspace Project')
+  check('confirmed Remove refuses an actual open Project and preserves registration/index/files')
+  // Hold only the OS picker reply and observe actual IPC entry. No Main/service/database owner is replaced.
+  await application.evaluate(({ dialog, ipcMain }) => {
+    const state = {
+      oldDialog: dialog.showOpenDialog,
+      oldRemove: ipcMain._invokeHandlers.get('projects:remove-workspace'),
+      entered: false,
+      release: null,
+    }
+    globalThis.__workspaceQualification = state
+    dialog.showOpenDialog = () =>
+      new Promise((resolve) => {
+        state.release = resolve
+      })
+    ipcMain._invokeHandlers.set('projects:remove-workspace', (...args) => {
+      state.entered = true
+      return state.oldRemove(...args)
+    })
+  })
+  try {
+    await window.evaluate(() => {
+      window.__qualifiedImport = window.api.projects.selectImport()
+    })
+    await expect
+      .poll(() => application.evaluate(() => typeof globalThis.__workspaceQualification.release))
+      .toBe('function')
+    await window.evaluate((id) => {
+      window.__qualifiedRemove = window.api.projects.removeWorkspace(id, true)
+    }, registered.id)
+    await expect
+      .poll(() => application.evaluate(() => globalThis.__workspaceQualification.entered))
+      .toBe(true)
+    await application.evaluate(
+      (_electron, file) =>
+        globalThis.__workspaceQualification.release({ canceled: false, filePaths: [file] }),
+      (await indexRecord(created.id)).canonical_path,
+    )
+    const [opened, removal] = await window.evaluate(() =>
+      Promise.all([window.__qualifiedImport, window.__qualifiedRemove]),
+    )
+    assert.equal(opened.ok, true)
+    assert.equal(opened.value.kind, 'opened')
+    assert.equal(opened.value.result.kind, 'opened')
+    assert.equal(removal.ok, false)
+    assert.equal(removal.error.code, 'WORKSPACE_PROJECT_OPEN')
+    assert.equal((await api('list', registered.id)).length, 3)
+    assertFiles()
+    await api('close', created.id, false)
+  } finally {
+    const restored = await application.evaluate(({ dialog, ipcMain }) => {
+      const state = globalThis.__workspaceQualification
+      state.release?.({ canceled: true, filePaths: [] })
+      dialog.showOpenDialog = state.oldDialog
+      ipcMain._invokeHandlers.set('projects:remove-workspace', state.oldRemove)
+      const proof = {
+        dialog: dialog.showOpenDialog === state.oldDialog,
+        handler: ipcMain._invokeHandlers.get('projects:remove-workspace') === state.oldRemove,
+      }
+      delete globalThis.__workspaceQualification
+      return proof
+    })
+    assert.deepEqual(restored, { dialog: true, handler: true })
+    report.ipcRestoration = restored
+    persist()
+  }
+  check(
+    'actual Main catalog fence serializes pending known-file Import/Open before unregister guard',
+  )
+  const unconfirmed = await window.evaluate(
+    (id) => window.api.projects.removeWorkspace(id, false),
+    registered.id,
+  )
+  assert.equal(unconfirmed.ok, false)
+  assert.equal(unconfirmed.error.code, 'IPC_INVALID_CALLER')
+  await settings(registered.displayName)
+  await requestRemove()
+  await removeModal().getByRole('button', { name: 'Cancel', exact: true }).click()
+  assert.equal((await api('list', registered.id)).length, 3)
+  assertFiles()
+  check('Cancel and missing confirmation do not unregister or alter file bytes')
+  await settings(registered.displayName)
+  await requestRemove()
+  await screenshot('workspace-remove-confirmation', 1440, 900)
+  await removeModal().getByRole('button', { name: 'Remove Workspace', exact: true }).click()
+  await expect(removeModal()).toHaveCount(0)
+  await expect(window.getByRole('heading', { name: 'Uncategorized', exact: true })).toBeVisible()
+  assert.equal((await api('listWorkspaces')).length, 1)
+  assert.deepEqual(await api('list'), [])
+  assertFiles()
+  check('confirmed unregister removes metadata only and selects Uncategorized')
+  await picker(folder)
+  await home().getByRole('button', { name: 'Add Workspace', exact: true }).click()
+  await addModal()
+    .getByRole('textbox', { name: 'Workspace name', exact: true })
+    .fill('Reconnected Workspace')
+  await addModal().getByRole('button', { name: 'Choose Folder and Add', exact: true }).click()
+  await expect(addModal()).toHaveCount(0)
+  const readded = (await api('listWorkspaces')).find(({ isDefault }) => !isDefault)
+  assert.ok(readded && readded.id !== registered.id)
+  assert.deepEqual((await api('list', readded.id)).map(({ id }) => id).sort(), projectIds)
+  assertFiles()
+  assert.equal(
+    (await readIgsPackage((await indexRecord(created.id)).canonical_path)).project.primaryBbox.x,
+    -16,
+  )
+  await screenshot('workspace-rediscovered', 900, 620)
+  check('re-register discovers exact canonical identities and original committed packages')
+}
 persist()
 try {
   await launch('first')
@@ -282,10 +489,9 @@ try {
   registered = (await api('listWorkspaces')).find((workspace) => !workspace.isDefault)
   assert.ok(registered)
   assert.equal(registered.directoryPath, folder)
-  await expect(home().getByRole('button', { name: /Qualification Workspace/ })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  )
+  await expect(
+    home().locator('.workspace-select').filter({ hasText: 'Qualification Workspace' }),
+  ).toHaveAttribute('aria-pressed', 'true')
   check('real Add Workspace registers canonical folder and selects it', registered)
   const invalid = await window.evaluate(() =>
     window.api.projects.addWorkspace({
@@ -363,9 +569,7 @@ try {
   await home().getByRole('button', { name: 'Projects', exact: true }).click()
   assert.equal((await api('list')).length, 3)
   assert.equal((await api('list', 'uncategorized')).length, 0)
-  await home()
-    .getByRole('button', { name: /Uncategorized/ })
-    .click()
+  await home().locator('.workspace-select').filter({ hasText: 'Uncategorized' }).click()
   await expect(window.getByText('No projects yet', { exact: true })).toBeVisible()
   await window.getByRole('button', { name: 'Open saved generations', exact: true }).click()
   const history = window.getByRole('dialog', { name: 'Saved generations', exact: true })
@@ -444,9 +648,10 @@ try {
     (await api('listWorkspaces')).find((workspace) => workspace.id === registered.id).availability,
     'available',
   )
+  await manageWorkspace()
   await close('restart-normal')
   assert.deepEqual(report.pageErrors, [])
-  assert.equal(report.nativeClosures.length, 2)
+  assert.equal(report.nativeClosures.length, 3)
   report.outcome = 'passed'
   report.finishedAt = new Date().toISOString()
   persist()

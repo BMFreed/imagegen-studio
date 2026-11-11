@@ -1,12 +1,20 @@
 # Implementation Roadmap
 
-## Latest Home implementation slice
+## Current workspace management checkpoint
+
+[Production metadata management](../engineering/phase-4-workspace-management-research.md)
+connects workspace Settings and confirmed unregister to existing Main/repository
+owners. Default/open guards and a catalog lifecycle fence protect index removal;
+folders, packages and operational generation/recovery data survive. Project moves,
+Trash, remaining Home/Models/export/release and visual acceptance remain open.
+
+## Previous Home catalog slice
 
 [Production workspace catalog and destinations](../engineering/phase-4-home-workspaces-research.md)
 continue Phase4 through existing schema/scanner/Create/Import owners. This finite
 slice adds folder registration, selection and cross-workspace browsing with
-explicit writable destinations. Rename/removal/project moves/Trash, tab markers
-and remaining Home/Model Manager/export/release work remain open. Historical
+explicit writable destinations. At that checkpoint rename/removal/project moves/Trash, tab markers
+and remaining Home/Model Manager/export/release work remained open. Historical
 regional and ordinary visual checkpoints below retain their evidence limits.
 
 ## Latest ordinary encoding checkpoint

@@ -6,6 +6,7 @@ import {
 import { isProjectDocumentId } from '../../shared/projects/project-generation-actions.js'
 import { IgsSchemaError, projectRasterAssets } from '../../shared/projects/project-schema.js'
 import {
+  isProjectWorkspaceId,
   parseProjectWorkspaceAddInput,
   type ProjectWorkspaceAddInput,
   type ProjectWorkspaceSummary,
@@ -92,6 +93,8 @@ export class ProjectIndexError extends Error {
       | 'WORKSPACE_INVALID_INPUT'
       | 'WORKSPACE_NAME_EXISTS'
       | 'WORKSPACE_PATH_CONFLICT'
+      | 'WORKSPACE_PROJECT_OPEN'
+      | 'WORKSPACE_PROTECTED'
       | 'WORKSPACE_READ_ONLY'
       | 'WORKSPACE_UNAVAILABLE',
     message: string,
@@ -361,6 +364,42 @@ export class ProjectIndexRepository {
       .execute()
   }
 
+  /** Forget only rebuildable registrations, adapting Invoke's guarded metadata transaction. */
+  async removeWorkspace(
+    workspaceId: string,
+    assertNoOpenProjects: (workspace: ProjectWorkspaceRecord) => void,
+  ): Promise<void> {
+    if (!isProjectWorkspaceId(workspaceId)) {
+      throw new ProjectIndexError('WORKSPACE_INVALID_INPUT', 'The workspace ID is invalid.')
+    }
+    await this.db.transaction().execute(async (transaction) => {
+      const row = await transaction
+        .selectFrom('project_workspace')
+        .selectAll()
+        .where('id', '=', workspaceId)
+        .executeTakeFirst()
+      if (!row) {
+        throw new ProjectIndexError(
+          'WORKSPACE_UNAVAILABLE',
+          'The Project workspace is unavailable.',
+        )
+      }
+      if (row.id === UNCATEGORIZED_WORKSPACE_ID || row.is_default === 1) {
+        throw new ProjectIndexError('WORKSPACE_PROTECTED', 'Uncategorized cannot be removed.')
+      }
+      const workspace = workspaceRecord(row)
+      assertNoOpenProjects(workspace)
+      // Only the derived accepted-result index cascades. Operational records and files survive.
+      await transaction
+        .deleteFrom('project_index')
+        .where('workspace_id', '=', workspaceId)
+        .execute()
+      assertNoOpenProjects(workspace)
+      await transaction.deleteFrom('project_workspace').where('id', '=', workspaceId).execute()
+      assertNoOpenProjects(workspace)
+    })
+  }
+
   async requireWritableWorkspace(workspaceId: string): Promise<ProjectWorkspaceRecord> {
     const workspace = await this.workspaceById(workspaceId)
     await this.assertWritableWorkspace(workspace)
@@ -432,6 +471,66 @@ export class ProjectIndexRepository {
       }
     }
     return await this.listProjects(workspaceId)
+  }
+
+  /** Keep the immutable folder identity while changing bounded named-record metadata. */
+  async updateWorkspace(
+    workspaceId: string,
+    input: ProjectWorkspaceAddInput,
+  ): Promise<ProjectWorkspaceRecord> {
+    if (!isProjectWorkspaceId(workspaceId)) {
+      throw new ProjectIndexError('WORKSPACE_INVALID_INPUT', 'The workspace ID is invalid.')
+    }
+    let parsed: ProjectWorkspaceAddInput
+    try {
+      parsed = parseProjectWorkspaceAddInput(input)
+    } catch {
+      throw new ProjectIndexError('WORKSPACE_INVALID_INPUT', 'The workspace details are invalid.')
+    }
+    return await this.db.transaction().execute(async (transaction) => {
+      const rows = await transaction.selectFrom('project_workspace').selectAll().execute()
+      const current = rows.find((row) => row.id === workspaceId)
+      if (!current) {
+        throw new ProjectIndexError(
+          'WORKSPACE_UNAVAILABLE',
+          'The Project workspace is unavailable.',
+        )
+      }
+      if (
+        (current.id === UNCATEGORIZED_WORKSPACE_ID || current.is_default === 1) &&
+        parsed.displayName !== current.display_name
+      ) {
+        throw new ProjectIndexError('WORKSPACE_PROTECTED', 'Uncategorized cannot be renamed.')
+      }
+      if (
+        rows.some(
+          (row) =>
+            row.id !== workspaceId &&
+            normalizeSearchName(row.display_name.trim()) ===
+              normalizeSearchName(parsed.displayName),
+        )
+      ) {
+        throw new ProjectIndexError(
+          'WORKSPACE_NAME_EXISTS',
+          'A workspace with this name already exists.',
+        )
+      }
+      await transaction
+        .updateTable('project_workspace')
+        .set({
+          color: parsed.color,
+          display_name: parsed.displayName,
+          updated_at: new Date().toISOString(),
+        })
+        .where('id', '=', workspaceId)
+        .execute()
+      const saved = await transaction
+        .selectFrom('project_workspace')
+        .selectAll()
+        .where('id', '=', workspaceId)
+        .executeTakeFirstOrThrow()
+      return workspaceRecord(saved)
+    })
   }
 
   async workspaceAvailability(

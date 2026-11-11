@@ -199,6 +199,7 @@ import {
   streamSavedProjectMask,
   streamStagedProjectMask,
 } from './projects/project-mask-resource.js'
+import { withProjectPathLock } from './projects/project-path-lock.js'
 import {
   parseProjectThumbnailImageUrl,
   readProjectThumbnail,
@@ -1381,6 +1382,21 @@ if (!gotInstanceLock) {
           (rect.height as number) <= IGS_SAFETY_CEILINGS.rasterDimension
         )
       }
+      // The catalog directory is a separate lock key from each Project file. Import's internal
+      // Open callback takes only the existing Project gate, so it cannot re-enter this lock.
+      const workspaceCatalogChannels = new Set<string>([
+        ipcChannels.projects.addWorkspace,
+        ipcChannels.projects.create,
+        ipcChannels.projects.finishImport,
+        ipcChannels.projects.list,
+        ipcChannels.projects.listWorkspaces,
+        ipcChannels.projects.open,
+        ipcChannels.projects.rebuildPreview,
+        ipcChannels.projects.removeWorkspace,
+        ipcChannels.projects.resolveRecovery,
+        ipcChannels.projects.selectImport,
+        ipcChannels.projects.updateWorkspace,
+      ])
       function registerProjectHandler<T>(
         channel: string,
         validate: (args: unknown[]) => boolean,
@@ -1398,7 +1414,10 @@ if (!gotInstanceLock) {
             }
           }
           try {
-            return { ok: true, value: await handler(...args) }
+            const value = workspaceCatalogChannels.has(channel)
+              ? await withProjectPathLock(paths.dataRoot, () => handler(...args))
+              : await handler(...args)
+            return { ok: true, value }
           } catch (error) {
             if (
               channel === ipcChannels.projects.generate ||
@@ -1492,6 +1511,18 @@ if (!gotInstanceLock) {
       )
       registerProjectHandler(ipcChannels.projects.listWorkspaces, noArgs, () =>
         projectService.listWorkspaces(),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.updateWorkspace,
+        (args) =>
+          args.length === 2 && isProjectWorkspaceId(args[0]) && isProjectWorkspaceAddInput(args[1]),
+        (id, input) =>
+          projectService.updateWorkspace(id as string, parseProjectWorkspaceAddInput(input)),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.removeWorkspace,
+        (args) => args.length === 2 && isProjectWorkspaceId(args[0]) && args[1] === true,
+        (id) => projectService.removeWorkspace(id as string),
       )
       registerProjectHandler(
         ipcChannels.projects.addWorkspace,

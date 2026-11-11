@@ -2,14 +2,15 @@
 
 ## Production checkpoint
 
-[Workspace catalog and destinations](../engineering/phase-4-home-workspaces-research.md)
-connect Add Workspace, aggregate/scoped browsing and explicit New Project/Import
-destinations to the existing Main/SQLite/filesystem owners. Production uses the
-OS folder picker, not a renderer-authored path. Missing/inaccessible folders
-remain registered with cached rows and recovery unavailable; readonly folders
-remain browseable. Rename/remove registration, moving projects, Trash, tab color
-markers and the rest of the approved Home presentation remain continuations.
-This checkpoint does not promote the full Home or public MVP promise.
+[Workspace management](../engineering/phase-4-workspace-management-research.md)
+adds name/color Settings and confirmed registration removal through real Main/SQLite
+commands. Uncat name/removal are protected; any live Project blocks unregister.
+Main serializes catalog lifecycle commands, and removal affects derived indexes
+without deleting folders, Project files or operational generation/recovery data.
+The [catalog/destinations stage](../engineering/phase-4-home-workspaces-research.md)
+already connects Add, aggregate/scoped browsing and explicit Create/Import folders.
+Project rename/move, Trash, folder locate/reveal, workspace tab markers and remaining
+Home presentation remain continuations. Full Home/MVP promise is not promoted.
 
 ## Feature
 

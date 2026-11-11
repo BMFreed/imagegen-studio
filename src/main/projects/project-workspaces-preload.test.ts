@@ -129,3 +129,19 @@ test('project list requires workspace ownership and import forwards explicit des
     { args: ['import-token', 'move', 'uncategorized'], channel: ipcChannels.projects.finishImport },
   ])
 })
+
+test('workspace management preload forwards explicit identity/confirmation and validates saved metadata', async () => {
+  const f = await fixture()
+  const value = workspace()
+  const input = { color: 'violet' as const, displayName: 'Renamed' }
+  f.state.value = { ...value, ...input }
+  assert.equal((await f.api.projects.updateWorkspace(value.id, input)).ok, true)
+  f.state.value = undefined
+  assert.equal((await f.api.projects.removeWorkspace(value.id, true)).ok, true)
+  assert.deepEqual(f.calls, [
+    { args: [value.id, input], channel: ipcChannels.projects.updateWorkspace },
+    { args: [value.id, true], channel: ipcChannels.projects.removeWorkspace },
+  ])
+  f.state.value = { ...value, availability: 'missing', writable: true }
+  assert.equal((await f.api.projects.updateWorkspace(value.id, input)).ok, false)
+})

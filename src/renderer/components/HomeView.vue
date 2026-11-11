@@ -5,6 +5,7 @@ import type { ProjectWorkspaceSummary } from '../../shared/projects/project-work
 import {
   AlertTriangle as AlertIcon,
   LayoutGrid as AllIcon,
+  DotsVertical as DotsIcon,
   Folder as FolderIcon,
   FolderPlus as FolderPlusIcon,
   Upload as ImportIcon,
@@ -13,7 +14,7 @@ import {
   Bookmark as PresetsIcon,
   Refresh as RefreshIcon,
 } from '@vicons/tabler'
-import { NAlert, NButton, NEmpty, NIcon, NInput, NSpin, NTag } from 'naive-ui'
+import { NAlert, NButton, NDropdown, NEmpty, NIcon, NInput, NSpin, NTag } from 'naive-ui'
 import { computed, ref, watch } from 'vue'
 
 import IconButton from '../../../docs/prototype-app/src/components/IconButton.vue'
@@ -39,6 +40,7 @@ defineEmits<{
   openProject: [projectId: string]
   rebuildPreview: [projectId: string]
   refresh: []
+  workspaceSettings: [workspaceId: string]
 }>()
 
 const search = ref('')
@@ -225,32 +227,47 @@ function recoveryLabel(project: ProjectSummary): string | null {
         />
       </div>
       <div aria-label="Workspaces" class="workspace-list">
-        <NButton
-          v-for="workspace of workspaces"
-          :key="workspace.id"
-          :aria-pressed="workspaceId === workspace.id"
-          :bordered="false"
-          class="sidebar-action workspace-select"
-          :disabled="busy"
-          :secondary="workspaceId === workspace.id"
-          :title="workspace.directoryPath"
-          @click="workspaceId = workspace.id"
-        >
-          <template v-slot:icon>
-            <NIcon v-if="workspace.availability !== 'available'" :component="AlertIcon" />
-            <span
-              v-else
-              aria-hidden="true"
-              class="workspace-marker"
-              :class="`workspace-marker--${workspace.color}`"
-            />
-          </template>
-          <span class="workspace-name">{{ workspace.displayName }}</span>
-          <span v-if="workspaceStatus(workspace)" class="workspace-status">
-            {{ workspaceStatus(workspace) }}
-          </span>
-          <span class="workspace-count">{{ workspace.projectCount }}</span>
-        </NButton>
+        <div v-for="workspace of workspaces" :key="workspace.id" class="workspace-row">
+          <NButton
+            :aria-pressed="workspaceId === workspace.id"
+            :bordered="false"
+            class="sidebar-action workspace-select"
+            :disabled="busy"
+            :secondary="workspaceId === workspace.id"
+            :title="workspace.directoryPath"
+            @click="workspaceId = workspace.id"
+          >
+            <template v-slot:icon>
+              <NIcon v-if="workspace.availability !== 'available'" :component="AlertIcon" />
+              <span
+                v-else
+                aria-hidden="true"
+                class="workspace-marker"
+                :class="`workspace-marker--${workspace.color}`"
+              />
+            </template>
+            <span class="workspace-name">{{ workspace.displayName }}</span>
+            <span v-if="workspaceStatus(workspace)" class="workspace-status">
+              {{ workspaceStatus(workspace) }}
+            </span>
+            <span class="workspace-count">{{ workspace.projectCount }}</span>
+          </NButton>
+          <NDropdown
+            :disabled="busy"
+            :options="[{ key: 'settings', label: 'Workspace Settings' }]"
+            trigger="click"
+            @select="$emit('workspaceSettings', workspace.id)"
+          >
+            <span class="workspace-menu">
+              <IconButton
+                compact
+                :disabled="busy"
+                :icon="DotsIcon"
+                :label="`${workspace.displayName} workspace actions`"
+              />
+            </span>
+          </NDropdown>
+        </div>
         <NSpin v-if="workspacesLoading && workspaces.length === 0" size="small" />
       </div>
       <h2 class="tools-heading">Tools</h2>
@@ -468,6 +485,18 @@ function recoveryLabel(project: ProjectSummary): string | null {
   gap: 4px;
   min-width: 0;
   margin-top: 7px;
+}
+
+.workspace-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.workspace-menu {
+  display: inline-flex;
 }
 
 .workspace-select :deep(.n-button__content) {

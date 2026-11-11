@@ -2679,6 +2679,25 @@ export class ProjectService {
     return toTab(tabId, coordinator)
   }
 
+  /** Main serializes this metadata lifecycle with Open/Create/Import/scan admission. */
+  async removeWorkspace(workspaceId: string): Promise<void> {
+    await this.initialize()
+    await this.options.repository.removeWorkspace(workspaceId, (workspace) => {
+      for (const coordinator of this.openTabs.values()) {
+        const relative = path.relative(workspace.directoryPath, coordinator.filePath)
+        if (
+          relative === '' ||
+          (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+        ) {
+          throw new ProjectIndexError(
+            'WORKSPACE_PROJECT_OPEN',
+            'Close projects from this workspace before removing its registration.',
+          )
+        }
+      }
+    })
+  }
+
   async resolveRecovery(
     projectId: string,
     decision: 'discard' | 'recover',
@@ -3615,6 +3634,15 @@ export class ProjectService {
       },
     )
     return toTab(tabId, coordinator)
+  }
+
+  async updateWorkspace(
+    workspaceId: string,
+    input: ProjectWorkspaceAddInput,
+  ): Promise<ProjectWorkspaceSummary> {
+    await this.initialize()
+    const workspace = await this.options.repository.updateWorkspace(workspaceId, input)
+    return await this.toWorkspaceSummary(workspace)
   }
 
   /** One private authored Canvas/region lease; admission and generation policy remain separate. */
