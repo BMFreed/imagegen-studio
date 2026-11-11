@@ -1,6 +1,16 @@
 # Engineering Workflow
 
-## Current closed Project Move checkpoint
+## Current open Project relocation checkpoint
+
+[Clean-open Move and closed Rename](./phase-4-open-project-relocation-research.md) extend the stable location owner.
+Move retains the live tab/history/readers and fences pending generation/edits;
+explicit Close and startup recovery preserve durable intent. Closed Rename changes
+title and filename together with exact asset/preview/frozen-input preservation.
+Open/dirty Rename, cross-device/deferred recovery relocation, remaining Home,
+Models/export/runtime/release and visual/MVP gates remain open. Public promise
+statuses stay unchanged; executed evidence and limitations are in the linked note.
+
+## Previous closed Project Move checkpoint
 
 [Stable identity and workspace Move](./phase-4-project-workspace-move-research.md) connects closed ready Projects
 on the same filesystem through positive journal/recovery, binding/retired-key authority

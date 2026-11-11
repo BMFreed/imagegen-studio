@@ -21,6 +21,7 @@ import {
   regionalReferenceMembers,
   verifyRegionalReferenceAssetSource,
 } from './igs-package.js'
+import { canonicalProjectPath } from './project-identity.js'
 import { readProjectMaskSource } from './project-mask.js'
 import {
   type ProjectRebuildPreviewInput,
@@ -56,6 +57,18 @@ export type CoordinatedSaveOutcome = ProjectSaveOutcome & {
     | { error: Error; status: 'failed' }
 }
 
+/** Held across the physical move, metadata repoint, live rebind and durable journal finalize. */
+export interface ProjectRelocationReservation {
+  /** Explicit tab/app close only: preserve durable recovery and scratch, without an old-path write. */
+  abandonForShutdown: () => Promise<void>
+  /** Check the same clean document/epoch without assuming which physical move phase committed. */
+  assertCurrent: () => void
+  /** Rebind after metadata commit; keep edits fenced until release after journal finalization. */
+  rebind: () => Promise<void>
+  /** Before moving, prove the source unchanged; after rebind, prove the destination unchanged. */
+  release: () => void
+}
+
 type AssetRef = { bytes: number; height?: number; path: string; sha256: string; width?: number }
 
 type PendingSource = { ref: AssetRef; source: IgsAssetSource }
@@ -83,7 +96,7 @@ export class ProjectAutosaveError extends Error {
   }
 }
 
-/** A main-process Project tab owns one canonical path until it closes. */
+/** A main-process Project tab owns its physical path, plus a reserved destination during Move. */
 export class ProjectAutosaveLeaseRegistry {
   private readonly active = new Set<string>()
 
@@ -147,6 +160,9 @@ export class ProjectAutosaveCoordinator {
   get lastAutosaveError(): Error | null {
     return this.autosaveError
   }
+  get relocationPending(): boolean {
+    return this.relocationPendingState
+  }
 
   private activeSave: Promise<CoordinatedSaveOutcome> | undefined
 
@@ -172,6 +188,10 @@ export class ProjectAutosaveCoordinator {
   private releaseEditGate: (() => void) | undefined
 
   private releaseLease: (() => void) | undefined
+
+  private relocationPendingState = false
+
+  private relocationReservation: ProjectRelocationReservation | undefined
 
   private readonly saveBaseSources = new Map<string, PendingSource>()
 
@@ -493,7 +513,7 @@ export class ProjectAutosaveCoordinator {
   /** Graceful Discard Changes; reopen the saved package as a fresh session. */
   async discardChanges(roots: ProjectSessionRoots): Promise<ProjectAutosaveCoordinator> {
     this.assertOpen()
-    if (this.activeSave) {
+    if (this.activeSave || this.editGate) {
       throw new ProjectAutosaveError('SAVE_IN_PROGRESS', 'Wait for Project Save to finish.')
     }
     this.closed = true
@@ -530,6 +550,12 @@ export class ProjectAutosaveCoordinator {
   /** Force pending dirty state to the durable shadow, or remove it after exact undo. */
   async flush(): Promise<ProjectShadowCommit | null> {
     this.assertOpen()
+    if (this.relocationPending) {
+      throw new ProjectAutosaveError(
+        'SAVE_IN_PROGRESS',
+        'Wait for the Project operation to finish.',
+      )
+    }
     this.clearTimer()
     try {
       if (this.rebasing && this.activeSave) {
@@ -572,6 +598,131 @@ export class ProjectAutosaveCoordinator {
     return 'sourcePath' in pending.source
       ? { sourcePath: pending.source.sourcePath }
       : { bytes: Buffer.from(pending.source.bytes) }
+  }
+
+  /**
+   * Reserve a second physical-path lease before Invoke-style file mutation. The existing gate keeps
+   * prepared edits, Undo/Redo and Save behind the durable move, retaining this coordinator and
+   * every history/source map. A failed committed move deliberately leaves this held.
+   */
+  async prepareRelocation(destinationPath: string): Promise<ProjectRelocationReservation> {
+    this.assertOpen()
+    if (this.activeSave || this.editGate) {
+      throw new ProjectAutosaveError(
+        'SAVE_IN_PROGRESS',
+        'Wait for the Project operation to finish.',
+      )
+    }
+    if (this.session.dirty) {
+      throw new ProjectSessionError('PROJECT_DIRTY', 'Save the Project changes before moving it.')
+    }
+    const sourcePath = this.filePath
+    const document = this.document
+    const epoch = this.documentEpoch
+    this.relocationPendingState = true
+    this.editGate = new Promise<void>((resolve) => {
+      this.releaseEditGate = resolve
+    })
+    this.clearTimer()
+    let releaseDestination: (() => void) | undefined
+    try {
+      const canonicalDestination = await canonicalProjectPath(destinationPath, {
+        allowNewFile: true,
+      })
+      if (canonicalDestination !== destinationPath || canonicalDestination === sourcePath) {
+        throw new ProjectAutosaveError(
+          'EDIT_CONFLICT',
+          'Choose a different canonical Project location.',
+        )
+      }
+      releaseDestination = (this.options.leaseRegistry ?? processLeases).acquire(
+        canonicalDestination,
+      )
+      await this.historyCleanup
+      await this.pendingWrite
+      this.assertOpen()
+      this.session.assertCurrentLocation(sourcePath)
+      let rebound = false
+      let active = true
+      const assertOwned = (): void => {
+        this.assertOpen()
+        if (!active || this.relocationReservation !== reservation) {
+          throw new ProjectAutosaveError(
+            'EDIT_CONFLICT',
+            'This Project move reservation is no longer active.',
+          )
+        }
+      }
+      const assertCurrent = (): void => {
+        assertOwned()
+        if (
+          this.documentEpoch !== epoch ||
+          this.dirty ||
+          !sameDocument(this.document, document) ||
+          this.filePath !== (rebound ? canonicalDestination : sourcePath)
+        ) {
+          throw new ProjectAutosaveError(
+            'EDIT_CONFLICT',
+            'The reserved Project changed during its move.',
+          )
+        }
+      }
+      const reservation: ProjectRelocationReservation = {
+        abandonForShutdown: async () => {
+          assertOwned()
+          // No queueWrite, old-path read, shadow removal or uncertain source cleanup here. The
+          // persisted Move journal remains authoritative for the next explicit Retry/startup.
+          this.closed = true
+          this.clearTimer()
+          active = false
+          this.relocationReservation = undefined
+          this.relocationPendingState = false
+          this.releaseLease?.()
+          this.releaseLease = undefined
+          releaseDestination?.()
+          releaseDestination = undefined
+          this.past.length = 0
+          this.future.length = 0
+          this.historyGroup = undefined
+          this.releasePreparedEdits()
+        },
+        assertCurrent,
+        rebind: async () => {
+          assertCurrent()
+          if (rebound) {
+            this.session.assertCurrentLocation(canonicalDestination)
+            return
+          }
+          await this.session.rebindLocation(canonicalDestination, sourcePath)
+          rebound = true
+          assertCurrent()
+        },
+        release: () => {
+          assertCurrent()
+          this.session.assertCurrentLocation(rebound ? canonicalDestination : sourcePath)
+          if (rebound) {
+            this.releaseLease?.()
+            this.releaseLease = releaseDestination
+          } else {
+            releaseDestination?.()
+          }
+          releaseDestination = undefined
+          active = false
+          this.relocationReservation = undefined
+          this.relocationPendingState = false
+          this.releasePreparedEdits()
+        },
+      }
+      this.relocationReservation = reservation
+      assertCurrent()
+      return reservation
+    } catch (error) {
+      releaseDestination?.()
+      this.relocationReservation = undefined
+      this.relocationPendingState = false
+      this.releasePreparedEdits()
+      throw error
+    }
   }
 
   /** Keep document edits behind the same gate while preview-only maintenance commits. */
@@ -770,6 +921,7 @@ export class ProjectAutosaveCoordinator {
   async sealHistoryGroup(historyGroupId?: string): Promise<void> {
     this.assertOpen()
     await this.waitForGroupedEdits(historyGroupId)
+    await this.editGate
     this.assertOpen()
     if (historyGroupId === undefined || this.historyGroup?.id === historyGroupId) {
       this.sealHistoryGroupNow()

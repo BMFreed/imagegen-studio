@@ -225,6 +225,7 @@ export const ipcChannels = {
     relinkGenerationVae: 'projects:relink-generation-vae',
     removeGenerationLora: 'projects:remove-generation-lora',
     removeWorkspace: 'projects:remove-workspace',
+    renameProject: 'projects:rename',
     resolveRecovery: 'projects:resolve-recovery',
     restoreProject: 'projects:restore',
     retryGenerationJob: 'projects:retry-generation-job',
@@ -320,6 +321,7 @@ export interface ProjectSummary {
   health: 'corrupt' | 'missing' | 'ready' | 'unsupported_schema'
   id: string
   pendingMove?: { message: string; workspaceId: string }
+  pendingRename?: { message: string; name: string }
   previewStatus: 'empty' | 'rendered' | 'unavailable' | null
   recoveryReason?: string
   recoveryStatus: 'invalid' | 'none' | 'recoverable' | 'stale' | 'unavailable'
@@ -342,6 +344,7 @@ export interface ProjectTab {
   layers: ProjectLayerView[]
   primaryBbox: IgsRectV1
   regionalGuidance?: ProjectRegionalGuidanceLayerView[]
+  relocationPending?: boolean
   storageWarning?: string
   title: string
   /** Main-owned workspace; optional for legacy tab messages. */
@@ -563,6 +566,7 @@ export type ProjectCandidateExportResult =
   { fileName: string; kind: 'saved' } | { kind: 'canceled' }
 
 export type ProjectMoveResult = { kind: 'moved' } | { kind: 'pending'; message: string }
+export type ProjectRenameResult = { kind: 'pending'; message: string } | { kind: 'renamed' }
 
 export interface ProjectApi {
   acceptGenerationCandidates: (
@@ -748,6 +752,7 @@ export interface ProjectApi {
     targetLayerId?: string,
   ) => Promise<ApiResult<ProjectTab>>
   removeWorkspace: (workspaceId: string, confirmed: boolean) => Promise<ApiResult<void>>
+  renameProject: (projectId: string, name: string) => Promise<ApiResult<ProjectRenameResult>>
   resolveRecovery: (
     projectId: string,
     decision: 'discard' | 'recover',

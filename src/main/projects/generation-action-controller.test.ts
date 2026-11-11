@@ -54,6 +54,7 @@ import { ProjectGenerationClose } from './project-generation-close.js'
 import { ProjectGenerationOperationGate } from './project-generation-operation-gate.js'
 import { GenerationPreparationError } from './project-generation-preparation.js'
 import { ProjectIndexRepository } from './project-index.js'
+import { ProjectRelocationStore } from './project-relocation-store.js'
 import { ProjectService } from './project-service.js'
 import { ProjectShadowStore } from './project-shadow.js'
 
@@ -76,6 +77,7 @@ type Fixture = {
   database: AppDatabase
   dispatch: GenerationDispatchCoordinator
   documentId: string
+  index: ProjectIndexRepository
   modelService: ModelService
   orchestrator: GenerationOrchestrator
   packagePath: string
@@ -488,6 +490,7 @@ async function withFixture(
       database,
       dispatch,
       documentId,
+      index,
       modelService,
       orchestrator,
       packagePath,
@@ -2793,6 +2796,150 @@ test('Queue Manager Retry uses frozen operation and preserves old candidates and
       5,
       'one reviewed source creates one attempt',
     )
+  })
+})
+
+test('pending live Move after row repoint refuses frozen Retry before runtime and admits the same job after finalization', async () => {
+  await withFixture(async (fixture) => {
+    const { controller, database, index, projects, queue, root, runtime, staging, tabId } = fixture
+    await projects.updateGenerationDraft(tabId, {
+      kind: 'positive-prompt',
+      text: 'Frozen move control',
+    })
+    await projects.updateGenerationDraft(tabId, { kind: 'negative-prompt', text: 'blur' })
+    await projects.save(tabId)
+    runtime.beforeGenerate = async () => {
+      throw new Error('Controlled failed ordinary job for relocation Retry')
+    }
+    assert.equal(
+      (await controller.generate(tabId, { documentId: fixture.documentId, iterations: 1 })).kind,
+      'queued',
+    )
+    await waitForState(
+      controller,
+      tabId,
+      (state) => state.phase === 'idle' && state.jobs.length === 0,
+    )
+    runtime.beforeGenerate = null
+    const originalPage = await controller.getQueue()
+    assert.equal(originalPage.items.length, 1)
+    const source = originalPage.items[0]
+    assert.equal(source.status, 'failed')
+    const review = { id: source.id, statusSequence: source.statusSequence }
+    const frozen = await queue.loadVerifiedInput(source.id)
+    const sourceTarget = await readFile(frozen.targetPath)
+    const originalInputTree = await componentPrivateTree(path.join(root, 'generation-inputs'))
+    const savedBytes = await readFile(fixture.packagePath)
+    assert.deepEqual(await staging.listVerifiedCandidates(tabId), [])
+    const owner = projects.getOpenDocumentForAcceptance(tabId)!
+    const directory = path.join(root, 'move-retry-destination')
+    await mkdir(directory)
+    const destination = await projects.addWorkspace(
+      { color: 'blue', displayName: 'Retry destination' },
+      directory,
+    )
+    Object.defineProperty(index, 'relocations', {
+      configurable: true,
+      value: new ProjectRelocationStore(database.db, {
+        beforeFinalize: async () => {
+          throw new Error('Controlled interruption after live rebind and terminal-row repoint')
+        },
+      }),
+    })
+    try {
+      assert.equal((await projects.moveProject(tabId, destination.id)).kind, 'pending')
+      const movedPath = path.join(directory, path.basename(fixture.packagePath))
+      const movedRow = await database.db
+        .selectFrom('generation_queue_item')
+        .selectAll()
+        .where('id', '=', source.id)
+        .executeTakeFirstOrThrow()
+      assert.equal(movedRow.status, 'failed')
+      assert.equal(movedRow.status_sequence, review.statusSequence)
+      assert.equal(
+        movedRow.canonical_project_path,
+        movedPath,
+        'the refusal must reach the already-repointed, physically valid destination',
+      )
+      assert.equal(owner.filePath, movedPath)
+      assert.equal(owner.relocationPending, true)
+      assert.equal(projects.getOpenDocumentForAcceptance(tabId), null)
+      assert.equal(projects.getOpenDocumentId(tabId), null)
+      assert.deepEqual(await readFile(movedPath), savedBytes)
+      await assert.rejects(readFile(fixture.packagePath), { code: 'ENOENT' })
+      const rowsBeforeRetry = await database.db
+        .selectFrom('generation_queue_item')
+        .selectAll()
+        .orderBy('id')
+        .execute()
+      const inputsBeforeRetry = await componentPrivateTree(path.join(root, 'generation-inputs'))
+      assert.deepEqual(inputsBeforeRetry, originalInputTree)
+      const admissionCount = runtime.admissionCount
+      const leaseCount = runtime.leaseCount
+      const generatedCount = runtime.generated.length
+      await assert.rejects(controller.retryJob(review), { code: 'GENERATION_DOCUMENT_CHANGED' })
+      assert.equal(
+        runtime.admissionCount,
+        admissionCount,
+        'pending relocation refuses before runtime admission',
+      )
+      assert.equal(runtime.leaseCount, leaseCount)
+      assert.equal(runtime.generated.length, generatedCount)
+      assert.deepEqual(
+        await database.db.selectFrom('generation_queue_item').selectAll().orderBy('id').execute(),
+        rowsBeforeRetry,
+      )
+      assert.deepEqual(
+        await componentPrivateTree(path.join(root, 'generation-inputs')),
+        inputsBeforeRetry,
+      )
+      assert.deepEqual(await readFile(frozen.targetPath), sourceTarget)
+      assert.deepEqual(await readFile(movedPath), savedBytes)
+      assert.ok(await index.relocations.get(tabId))
+      Object.defineProperty(index, 'relocations', {
+        configurable: true,
+        value: new ProjectRelocationStore(database.db),
+      })
+      assert.deepEqual(await projects.moveProject(tabId, destination.id), { kind: 'moved' })
+      assert.equal(projects.getOpenDocumentForAcceptance(tabId), owner)
+      assert.equal(projects.getOpenDocumentId(tabId), fixture.documentId)
+      assert.equal(owner.relocationPending, false)
+      await controller.retryJob(review)
+      await waitForState(
+        controller,
+        tabId,
+        (state) => state.phase === 'idle' && state.jobs.length === 0,
+      )
+      const retriedPage = await controller.getQueue()
+      assert.equal(retriedPage.counts.failed, 1)
+      assert.equal(retriedPage.counts.completed, 1)
+      const retry = retriedPage.items.find((item) => item.id !== source.id)!
+      assert.ok(retry)
+      const copied = await queue.loadVerifiedInput(retry.id)
+      assert.equal(copied.item.projectPath, movedPath)
+      assert.deepEqual(copied.payload, frozen.payload)
+      assert.deepEqual(await readFile(copied.targetPath), sourceTarget)
+      const preserved = await database.db
+        .selectFrom('generation_queue_item')
+        .selectAll()
+        .where('id', '=', source.id)
+        .executeTakeFirstOrThrow()
+      assert.equal(preserved.frozen_payload_json, movedRow.frozen_payload_json)
+      assert.equal(preserved.status_sequence, review.statusSequence + 1)
+      assert.equal(runtime.generated.length, generatedCount + 1)
+      assert.equal(runtime.generated.at(-1)!.job.prompts.positive, 'Frozen move control')
+      assert.equal(runtime.generated.at(-1)!.job.sampling.seed, 42)
+      assert.deepEqual(await readFile(movedPath), savedBytes)
+      await assert.rejects(readFile(fixture.packagePath), { code: 'ENOENT' })
+    } finally {
+      Object.defineProperty(index, 'relocations', {
+        configurable: true,
+        value: new ProjectRelocationStore(database.db),
+      })
+      if (owner.relocationPending) {
+        await projects.close(tabId)
+      }
+    }
   })
 })
 

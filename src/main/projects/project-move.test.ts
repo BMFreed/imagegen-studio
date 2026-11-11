@@ -182,15 +182,14 @@ test('reusing the former filename creates a different identity instead of steali
   })
 })
 
-test('Move refuses clean and dirty live Projects without implicit close or Save', async () => {
+test('Move refuses dirty live Projects without implicit close or Save', async () => {
   await withFixture(async (f) => {
     const target = await destination(f)
     const tab = await f.service.create({ ...createInput, workspaceId: f.workspace.id })
     const record = (await f.repository.getProject(tab.id))!
     const bytes = await readFile(record.canonicalPath)
-    await assert.rejects(f.service.moveProject(tab.id, target.id), { code: 'PROJECT_ALREADY_OPEN' })
     await f.service.setPrimaryBbox(tab.id, { height: 64, width: 64, x: 5, y: 5 })
-    await assert.rejects(f.service.moveProject(tab.id, target.id), { code: 'PROJECT_ALREADY_OPEN' })
+    await assert.rejects(f.service.moveProject(tab.id, target.id), { code: 'PROJECT_DIRTY' })
     assert.equal(f.service.getOpenTabs()[0].dirty, true)
     assert.deepEqual(await readFile(record.canonicalPath), bytes)
     assert.deepEqual(await f.repository.relocations.list(), [])
@@ -407,5 +406,179 @@ test('permanent deletion retires moved key while a different file can reuse the 
     const [former] = await f.service.list(f.workspace.id)
     assert.notEqual(former.id, record.localProjectKey)
     assert.notEqual(former.id, current.id)
+  })
+})
+
+test('closed Rename changes both filename and title, preserves member bytes and stable identity across reopen', async () => {
+  await withFixture(async (f) => {
+    const record = await closedProject(f)
+    const before = await readIgsPackage(record.canonicalPath)
+    const members = new Map<string, Buffer>()
+    for (const member of before.manifest.members) {
+      if (member.path !== 'project.json') {
+        members.set(member.path, await before.readMember(member.path))
+      }
+    }
+    assert.deepEqual(await f.service.renameProject(record.localProjectKey, ' Renamed Project '), {
+      kind: 'renamed',
+    })
+    const newPath = path.join(f.directory, 'Renamed Project.igs')
+    const after = await readIgsPackage(newPath)
+    assert.equal(after.project.title, 'Renamed Project')
+    assert.equal(after.project.documentId, before.project.documentId)
+    assert.notEqual(after.project.documentRevision, before.project.documentRevision)
+    assert.deepEqual(
+      {
+        ...after.project,
+        documentRevision: before.project.documentRevision,
+        title: before.project.title,
+      },
+      before.project,
+    )
+    assert.deepEqual(after.manifest.preview, before.manifest.preview)
+    for (const [name, bytes] of members) {
+      assert.deepEqual(await after.readMember(name), bytes)
+    }
+    await assert.rejects(readFile(record.canonicalPath), { code: 'ENOENT' })
+    assert.equal(localProjectRecoveryKey(newPath), record.localProjectKey)
+    assert.deepEqual(
+      (await f.service.list(f.workspace.id)).map((v) => [v.id, v.title]),
+      [[record.localProjectKey, 'Renamed Project']],
+    )
+    const exact = await readFile(newPath)
+    assert.deepEqual(await f.service.renameProject(record.localProjectKey, 'Renamed Project'), {
+      kind: 'renamed',
+    })
+    assert.deepEqual(await readFile(newPath), exact)
+    const opened = await f.service.open(record.localProjectKey)
+    assert.equal(opened.kind, 'opened')
+    if (opened.kind !== 'opened') {
+      throw new Error('Expected opened')
+    }
+    assert.equal(opened.tab.title, 'Renamed Project')
+    assert.equal(opened.tab.canUndo, false)
+    assert.equal(opened.tab.documentId, record.documentId)
+  })
+})
+
+test('Rename refuses clean/dirty open Projects and malformed or colliding filenames without writing', async () => {
+  await withFixture(async (f) => {
+    const tab = await f.service.create({ ...createInput, workspaceId: f.workspace.id })
+    const record = (await f.repository.getProject(tab.id))!
+    const bytes = await readFile(record.canonicalPath)
+    await assert.rejects(f.service.renameProject(tab.id, 'Open rename'), {
+      code: 'PROJECT_ALREADY_OPEN',
+    })
+    await f.service.setPrimaryBbox(tab.id, { height: 64, width: 64, x: 9, y: 9 })
+    await assert.rejects(f.service.renameProject(tab.id, 'Dirty rename'), {
+      code: 'PROJECT_ALREADY_OPEN',
+    })
+    assert.deepEqual(await readFile(record.canonicalPath), bytes)
+    await f.service.discardAndClose(tab.id)
+    for (const name of ['', '../escape', 'a/b', 'x\0y', 'a'.repeat(252)]) {
+      await assert.rejects(f.service.renameProject(tab.id, name), { code: 'PROJECT_INVALID_INPUT' })
+    }
+    const foreign = path.join(f.directory, 'Occupied.igs')
+    await writeFile(foreign, 'foreign')
+    await assert.rejects(f.service.renameProject(tab.id, 'Occupied'))
+    assert.deepEqual(await readFile(record.canonicalPath), bytes)
+    assert.equal(await readFile(foreign, 'utf8'), 'foreign')
+    assert.deepEqual(await f.repository.relocations.list(), [])
+  })
+})
+
+test('pending Rename remains source-scoped and resumes only the original name after metadata publication', async () => {
+  await withFixture(async (f) => {
+    const record = await closedProject(f)
+    Object.defineProperty(f.repository, 'relocations', {
+      configurable: true,
+      value: new ProjectRelocationStore(f.database.db, {
+        afterMetadataRename: async () => {
+          throw new Error('Controlled interruption after metadata commit')
+        },
+      }),
+    })
+    assert.equal(
+      (await f.service.renameProject(record.localProjectKey, 'Pending Rename')).kind,
+      'pending',
+    )
+    assert.equal(
+      (await readIgsPackage(path.join(f.directory, 'Pending Rename.igs'))).project.title,
+      'Pending Rename',
+    )
+    const [summary] = await f.service.list(f.workspace.id)
+    assert.equal(summary.id, record.localProjectKey)
+    assert.equal(summary.pendingRename?.name, 'Pending Rename')
+    assert.equal(summary.pendingMove, undefined)
+    await assert.rejects(f.service.open(record.localProjectKey), { code: 'PROJECT_NOT_READY' })
+    await assert.rejects(f.service.renameProject(record.localProjectKey, 'Other name'), {
+      code: 'PROJECT_NOT_READY',
+    })
+    const target = await destination(f)
+    await assert.rejects(f.service.moveProject(record.localProjectKey, target.id), {
+      code: 'PROJECT_NOT_READY',
+    })
+    await assert.rejects(f.service.removeWorkspace(f.workspace.id), { code: 'PROJECT_NOT_READY' })
+    Object.defineProperty(f.repository, 'relocations', {
+      configurable: true,
+      value: new ProjectRelocationStore(f.database.db),
+    })
+    const recovered = f.makeService()
+    assert.deepEqual(
+      (await recovered.list(f.workspace.id)).map((v) => [v.id, v.title]),
+      [[record.localProjectKey, 'Pending Rename']],
+    )
+    assert.deepEqual(await f.repository.relocations.list(), [])
+    assert.equal((await recovered.open(record.localProjectKey)).kind, 'opened')
+  })
+})
+
+test('Rename normalizes a real exact-saved dirty shadow before changing title/revision', async () => {
+  await withFixture(async (f) => {
+    const tab = await f.service.create({ ...createInput, workspaceId: f.workspace.id })
+    const record = (await f.repository.getProject(tab.id))!
+    const original = (await readIgsPackage(record.canonicalPath)).project
+    await f.service.setPrimaryBbox(tab.id, { height: 64, width: 64, x: 16, y: 8 })
+    await f.service.save(tab.id)
+    await f.service.close(tab.id)
+    const saved = (await readIgsPackage(record.canonicalPath)).project
+    // The actual pre-Save snapshot whose package commit won before markClean publication.
+    await f.shadow.write({
+      document: saved,
+      projectPath: record.canonicalPath,
+      savedDocument: original,
+    })
+    assert.equal(
+      JSON.parse(await readFile(path.join(f.dataRoot, 'autosave', tab.id, 'manifest.json'), 'utf8'))
+        .state,
+      'dirty',
+    )
+    assert.deepEqual(await f.service.renameProject(tab.id, 'Saved Shadow Rename'), {
+      kind: 'renamed',
+    })
+    const opened = await f.service.open(tab.id)
+    assert.equal(opened.kind, 'opened')
+    if (opened.kind !== 'opened') {
+      throw new Error('Rename must not create stale recovery')
+    }
+    assert.equal(opened.tab.primaryBbox.x, 16)
+    assert.equal(opened.tab.title, 'Saved Shadow Rename')
+  })
+})
+
+test('case-only Rename excludes only its own source from the final collision check', async () => {
+  await withFixture(async (f) => {
+    const record = await closedProject(f)
+    assert.deepEqual(await f.service.renameProject(record.localProjectKey, 'Scene'), {
+      kind: 'renamed',
+    })
+    assert.deepEqual(await f.service.renameProject(record.localProjectKey, 'scene'), {
+      kind: 'renamed',
+    })
+    const finalPath = path.join(f.directory, 'scene.igs')
+    assert.equal((await readIgsPackage(finalPath)).project.title, 'scene')
+    assert.equal(localProjectRecoveryKey(finalPath), record.localProjectKey)
+    await assert.rejects(readFile(path.join(f.directory, 'Scene.igs')), { code: 'ENOENT' })
+    assert.deepEqual(await f.repository.relocations.list(), [])
   })
 })

@@ -45,6 +45,7 @@ import {
   hashGenerationTargetSignature,
   type ProjectGenerationTargetState,
 } from '../shared/projects/project-generation-target-state.js'
+import { validateProjectRenameName } from '../shared/projects/project-rename.js'
 import type { IgsRectV1, IgsRegionalGuidanceV1 } from '../shared/projects/project-schema.js'
 import type { ProjectTrashSummary } from '../shared/projects/project-trash.js'
 import {
@@ -113,6 +114,7 @@ import {
 import ProjectTrashModal from './components/ProjectTrashModal.vue'
 import ProjectView from './components/ProjectView.vue'
 import { RegionalPromptSync } from './components/regional-prompt-sync.js'
+import RenameProjectModal from './components/RenameProjectModal.vue'
 import {
   createResultPresetIntent,
   createSmartResultPresetIntent,
@@ -181,10 +183,6 @@ type PendingSmartReview =
   | { kind: 'accept'; request: ProjectSmartPatchAcceptRequest; tabId: string }
   | { kind: 'discard'; request: ProjectSmartPatchDiscardRequest; tabId: string }
 type PendingProjectAction =
-  | {
-      kind: 'delete-project' | 'move-project' | 'restore-trash' | 'reveal-project' | 'trash'
-      projectId: string
-    }
   | { kind: 'open' | 'rebuild'; projectId: string }
   | {
       kind:
@@ -215,6 +213,16 @@ type PendingProjectAction =
         | 'workspace-remove'
         | 'workspace-reveal'
         | 'workspace-update'
+    }
+  | {
+      kind:
+        | 'delete-project'
+        | 'move-project'
+        | 'rename-project'
+        | 'restore-trash'
+        | 'reveal-project'
+        | 'trash'
+      projectId: string
     }
 
 const homeOpen = ref(true)
@@ -430,7 +438,18 @@ const frozenMoveWorkspace = ref<Pick<ProjectWorkspaceSummary, 'displayName' | 'i
 const moveProjectError = ref<string | null>(null)
 const movePendingMessage = ref<string | null>(null)
 const moveProjectBlocked = computed(() =>
-  projectTabs.value.some(({ id }) => id === movingProject.value?.id),
+  projectTabs.value.some(
+    ({ dirty, id }) => id === movingProject.value?.id && (dirty || projectHasPendingDraft(id)),
+  ),
+)
+const showRenameProject = ref(false)
+const renamingProject = ref<ProjectSummary | null>(null)
+const projectRenameName = ref('')
+const frozenProjectRenameName = ref<string | null>(null)
+const projectRenameError = ref<string | null>(null)
+const renamePendingMessage = ref<string | null>(null)
+const renameProjectBlocked = computed(() =>
+  projectTabs.value.some(({ id }) => id === renamingProject.value?.id),
 )
 const showProjectTrashAction = ref(false)
 const trashActionProject = ref<ProjectSummary | ProjectTrashSummary | null>(null)
@@ -559,6 +578,7 @@ function smartPresetOwnerCurrent(owner: SmartPatchPresetApplicationOwner, applyi
       showAddWorkspace.value ||
       showProjectTrashAction.value ||
       showMoveProject.value ||
+      showRenameProject.value ||
       showWorkspaceSettings.value ||
       showRemoveWorkspace.value ||
       importDialogVisible.value ||
@@ -755,6 +775,7 @@ function saveSmartPatchCurrentAsPreset(tabId: string) {
         showAddWorkspace.value ||
         showProjectTrashAction.value ||
         showMoveProject.value ||
+        showRenameProject.value ||
         showWorkspaceSettings.value ||
         showRemoveWorkspace.value ||
         importDialogVisible.value ||
@@ -1916,6 +1937,7 @@ watch(
     () => showAddWorkspace.value,
     () => showProjectTrashAction.value,
     () => showMoveProject.value,
+    () => showRenameProject.value,
     () => showWorkspaceSettings.value,
     () => showRemoveWorkspace.value,
     () => importDialogVisible.value,
@@ -2003,6 +2025,13 @@ function rotatePromptHistoryGroup(tabId: string) {
 }
 
 async function flushProjectDraft(tabId: string) {
+  if (projectTabs.value.find((tab) => tab.id === tabId)?.relocationPending) {
+    // Move admitted only a settled clean tab. Its coordinator is now fenced until Retry/Close.
+    if (projectHasPendingDraft(tabId)) {
+      throw new Error('Resolve the pending Project draft before closing this tab.')
+    }
+    return
+  }
   await regionalPromptSync.flush(tabId)
   await draftSync.flush(tabId)
   replaceTab(await apiValue(() => projectApi().sealPromptHistory(tabId)))
@@ -2019,6 +2048,7 @@ async function generateProject(tabId: string, iterations: number) {
   const state = generationStatesByTab.value[tabId]
   if (
     !tab ||
+    tab.relocationPending ||
     pendingProjectAction.value !== null ||
     windowClosePending.value ||
     reloadRequiredIds.value.has(tabId) ||
@@ -2056,6 +2086,7 @@ async function generateSmartPatchProject(tabId: string, layerId: string, iterati
   const tab = projectTabs.value.find((candidate) => candidate.id === tabId)
   if (
     !tab ||
+    tab.relocationPending ||
     pendingProjectAction.value ||
     windowClosePending.value ||
     reloadRequiredIds.value.has(tabId) ||
@@ -3506,9 +3537,80 @@ async function selectTrash() {
   await refreshProjects()
 }
 
+function beginRenameProject(project: ProjectSummary) {
+  if (
+    showRenameProject.value ||
+    showMoveProject.value ||
+    showProjectTrashAction.value ||
+    pendingProjectAction.value ||
+    windowClosePending.value ||
+    project.pendingMove ||
+    (!project.pendingRename &&
+      !projectTabs.value.some(({ id }) => id === project.id) &&
+      (project.health !== 'ready' || project.recoveryStatus !== 'none'))
+  ) {
+    return
+  }
+  queueResultNavigator.cancelProjectOpen()
+  renamingProject.value = { ...project }
+  frozenProjectRenameName.value = project.pendingRename?.name ?? null
+  projectRenameName.value = project.pendingRename?.name ?? project.title
+  projectRenameError.value = null
+  renamePendingMessage.value = project.pendingRename?.message ?? null
+  showRenameProject.value = true
+}
+
+async function switchRenamingProject() {
+  const project = renamingProject.value
+  if (!project || pendingProjectAction.value || windowClosePending.value) {
+    return
+  }
+  showRenameProject.value = false
+  await openProject(project.id)
+}
+
+async function confirmRenameProject() {
+  const project = renamingProject.value
+  if (
+    !showRenameProject.value ||
+    !project ||
+    renameProjectBlocked.value ||
+    pendingProjectAction.value ||
+    windowClosePending.value
+  ) {
+    return
+  }
+  const name = frozenProjectRenameName.value ?? projectRenameName.value.trim()
+  const validationError = validateProjectRenameName(name)
+  if (validationError) {
+    projectRenameError.value = validationError
+    return
+  }
+  // Retry the same Project/name even if the first reply is lost in transport.
+  frozenProjectRenameName.value = name
+  projectRenameName.value = name
+  const projectId = project.id
+  pendingProjectAction.value = { kind: 'rename-project', projectId }
+  projectRenameError.value = null
+  try {
+    const result = await apiValue(() => projectApi().renameProject(projectId, name))
+    if (result.kind === 'pending') {
+      renamePendingMessage.value = result.message
+    } else {
+      showRenameProject.value = false
+    }
+    await refreshProjects()
+  } catch (cause) {
+    projectRenameError.value = errorMessage(cause)
+  } finally {
+    pendingProjectAction.value = null
+  }
+}
+
 function beginMoveProject(project: ProjectSummary) {
   if (
     showMoveProject.value ||
+    showRenameProject.value ||
     showProjectTrashAction.value ||
     pendingProjectAction.value ||
     windowClosePending.value
@@ -3603,6 +3705,7 @@ function beginTrashProject(project: ProjectSummary) {
   if (
     showProjectTrashAction.value ||
     showMoveProject.value ||
+    showRenameProject.value ||
     pendingProjectAction.value ||
     windowClosePending.value
   ) {
@@ -3650,6 +3753,7 @@ function beginDeleteProject(project: ProjectTrashSummary) {
   if (
     showProjectTrashAction.value ||
     showMoveProject.value ||
+    showRenameProject.value ||
     pendingProjectAction.value ||
     windowClosePending.value
   ) {
@@ -3748,6 +3852,7 @@ async function addWorkspace(input: ProjectWorkspaceAddInput) {
     !showAddWorkspace.value ||
     showProjectTrashAction.value ||
     showMoveProject.value ||
+    showRenameProject.value ||
     showWorkspaceSettings.value ||
     showRemoveWorkspace.value ||
     pendingProjectAction.value ||
@@ -4583,7 +4688,11 @@ async function closeProjectTab(
 }
 
 async function saveProject(tabId: string, closeAfter = false) {
-  if (pendingProjectAction.value !== null || windowClosePending.value) {
+  if (
+    pendingProjectAction.value !== null ||
+    windowClosePending.value ||
+    projectTabs.value.find(({ id }) => id === tabId)?.relocationPending
+  ) {
     return
   }
   if (draftValidity.value[tabId] === false) {
@@ -4763,6 +4872,7 @@ function onAppKeydown(event: KeyboardEvent) {
   const tab = activeTab.value
   if (
     !tab ||
+    tab.relocationPending ||
     modelManagerOpen.value ||
     presetManagerOpen.value ||
     presetApplyOpen.value ||
@@ -4770,6 +4880,7 @@ function onAppKeydown(event: KeyboardEvent) {
     showAddWorkspace.value ||
     showProjectTrashAction.value ||
     showMoveProject.value ||
+    showRenameProject.value ||
     showWorkspaceSettings.value ||
     showRemoveWorkspace.value ||
     importDialogVisible.value ||
@@ -4892,6 +5003,12 @@ onMounted(() => {
           await regionalPromptSync.flushAll()
           await draftSync.flushAll()
           for (const tab of projectTabs.value) {
+            if (tab.relocationPending) {
+              if (projectHasPendingDraft(tab.id)) {
+                throw new Error('Resolve the pending Project draft before closing the app.')
+              }
+              continue
+            }
             replaceTab(await apiValue(() => projectApi().sealPromptHistory(tab.id)))
             rotatePromptHistoryGroup(tab.id)
           }
@@ -5056,6 +5173,7 @@ onBeforeUnmount(() => {
           :busy="pendingProjectAction !== null || windowClosePending"
           :error="homeError"
           :loading="projectsLoading"
+          :openProjectIds="projectTabs.map(({ id }) => id)"
           :pendingAction="pendingHomeAction"
           :projects
           :trashError
@@ -5077,6 +5195,7 @@ onBeforeUnmount(() => {
           @openProject="openProject"
           @rebuildPreview="rebuildProjectPreview"
           @refresh="refreshProjects"
+          @renameProject="beginRenameProject"
           @restoreProject="restoreTrashedProject"
           @revealProject="revealProject"
           @revealWorkspace="revealWorkspace"
@@ -5092,9 +5211,17 @@ onBeforeUnmount(() => {
           :acceptedHistoryFocus="
             acceptedHistoryFocus?.projectKey === activeTab.id ? acceptedHistoryFocus : null
           "
-          :busy="pendingProjectAction !== null || windowClosePending"
+          :busy="
+            pendingProjectAction !== null ||
+            windowClosePending ||
+            Boolean(activeTab.relocationPending)
+          "
           :draftPending="Boolean(generationDraftOverlays[activeDraftOwnerKey])"
-          :error="tabErrors[activeTab.id] ?? null"
+          :error="
+            activeTab.relocationPending
+              ? 'This Project has a pending move. Finish it from Home to continue editing. You can also close this tab.'
+              : (tabErrors[activeTab.id] ?? null)
+          "
           :exportFeedback="exportFeedbackByTab[activeTab.id] ?? null"
           :generationCanceling="generationCanceling[activeTab.id] ?? false"
           :generationDraft="activeGenerationDraft ?? activeTab.generationDraft"
@@ -5381,6 +5508,19 @@ onBeforeUnmount(() => {
         :workspacesLoading
         @move="confirmMoveProject"
         @switchProject="switchMovingProject"
+      />
+
+      <RenameProjectModal
+        v-model:name="projectRenameName"
+        v-model:show="showRenameProject"
+        :blocked="renameProjectBlocked"
+        :busy="pendingProjectAction !== null || windowClosePending"
+        :error="projectRenameError"
+        :frozenName="frozenProjectRenameName"
+        :pendingMessage="renamePendingMessage"
+        :project="renamingProject"
+        @rename="confirmRenameProject"
+        @switchProject="switchRenamingProject"
       />
 
       <ProjectTrashModal

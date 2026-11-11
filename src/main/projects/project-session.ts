@@ -13,6 +13,7 @@ import {
 } from '../../shared/projects/project-schema.js'
 
 import { randomUUID } from 'node:crypto'
+import { lstatSync, realpathSync } from 'node:fs'
 import { lstat, mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import path from 'node:path'
 
@@ -99,8 +100,12 @@ export class ProjectSession {
   get document(): IgsProjectDocumentV1 {
     return structuredClone(this.current)
   }
+  get filePath(): string {
+    return this.currentFilePath
+  }
   private createdDirectorySynced: boolean | null = null
   private current: IgsProjectDocumentV1
+  private currentFilePath: string
   private reloadRequired = false
   private saved: IgsProjectDocumentV1
 
@@ -109,13 +114,14 @@ export class ProjectSession {
   private savedPackage: IgsPackageReadResult
 
   private constructor(
-    readonly filePath: string,
+    filePath: string,
     readonly localRecoveryKey: string,
     private readonly roots: ProjectSessionRoots,
     initial: IgsPackageReadResult,
     fingerprint: string,
   ) {
     this.current = initial.project
+    this.currentFilePath = filePath
     this.saved = initial.project
     this.savedFingerprint = fingerprint
     this.savedPackage = initial
@@ -205,6 +211,68 @@ export class ProjectSession {
           ? this.current.documentRevision
           : randomUUID()
     this.current = parseProjectDocumentV1({ ...candidate, documentRevision: revision })
+  }
+
+  /** Synchronous cancellation/finalization guard while a coordinator holds its edit gate. */
+  assertCurrentLocation(expectedPath: string): void {
+    this.assertRebuildReady()
+    if (
+      this.filePath !== expectedPath ||
+      savingPaths.has(this.filePath) ||
+      realpathSync(expectedPath) !== expectedPath ||
+      localProjectRecoveryKey(expectedPath) !== this.localRecoveryKey ||
+      fileFingerprintSync(expectedPath) !== this.savedFingerprint
+    ) {
+      throw new ProjectSessionError(
+        'PROJECT_EXTERNAL_CHANGE',
+        'The saved Project no longer matches its reserved location.',
+      )
+    }
+  }
+
+  /**
+   * Adapt a committed Invoke-style file/metadata move to this live package reader. The owning
+   * coordinator must hold both physical-path leases and its edit gate until journal finalization.
+   * Documents and history stay in memory; only verified package readers and location change.
+   */
+  async rebindLocation(destinationPath: string, expectedSourcePath: string): Promise<void> {
+    this.assertRebuildReady()
+    if (this.filePath !== expectedSourcePath || savingPaths.has(this.filePath)) {
+      throw new ProjectSessionError(
+        'PROJECT_EXTERNAL_CHANGE',
+        'The Project location changed during its move.',
+      )
+    }
+    const canonicalPath = await canonicalProjectPath(destinationPath)
+    if (
+      canonicalPath !== destinationPath ||
+      localProjectRecoveryKey(canonicalPath) !== this.localRecoveryKey
+    ) {
+      throw new ProjectSessionError(
+        'PROJECT_EXTERNAL_CHANGE',
+        'The moved Project does not have its original local identity.',
+      )
+    }
+    const before = await fileFingerprint(canonicalPath)
+    const movedPackage = await readIgsPackage(canonicalPath)
+    const after = await fileFingerprint(canonicalPath)
+    this.assertRebuildReady()
+    if (
+      this.filePath !== expectedSourcePath ||
+      savingPaths.has(this.filePath) ||
+      before !== after ||
+      JSON.stringify(movedPackage.project) !== JSON.stringify(this.saved) ||
+      JSON.stringify(movedPackage.manifest) !== JSON.stringify(this.savedPackage.manifest) ||
+      localProjectRecoveryKey(canonicalPath) !== this.localRecoveryKey
+    ) {
+      throw new ProjectSessionError(
+        'PROJECT_EXTERNAL_CHANGE',
+        'The moved Project does not match the open saved package.',
+      )
+    }
+    this.savedPackage = movedPackage
+    this.savedFingerprint = after
+    this.currentFilePath = canonicalPath
   }
 
   /**
@@ -498,6 +566,14 @@ function assetsCount(assets: Record<string, IgsAssetSource>): number {
 
 async function fileFingerprint(filePath: string): Promise<string> {
   const stats = await lstat(filePath, { bigint: true })
+  if (!stats.isFile() || stats.isSymbolicLink()) {
+    throw new ProjectSessionError('PROJECT_EXTERNAL_CHANGE', 'The Project is not a file.')
+  }
+  return `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}`
+}
+
+function fileFingerprintSync(filePath: string): string {
+  const stats = lstatSync(filePath, { bigint: true })
   if (!stats.isFile() || stats.isSymbolicLink()) {
     throw new ProjectSessionError('PROJECT_EXTERNAL_CHANGE', 'The Project is not a file.')
   }

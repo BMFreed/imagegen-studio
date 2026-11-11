@@ -2,13 +2,24 @@ import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.
 
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { copyFile, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  copyFile,
+  mkdtemp,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
+import { openAppDatabase } from '../db/database.js'
 import { readIgsPackage } from './igs-package.js'
 import { ProjectAutosaveCoordinator, ProjectAutosaveLeaseRegistry } from './project-autosave.js'
+import { localProjectRecoveryKey, refreshProjectLocationRegistry } from './project-identity.js'
 import { withProjectPathLock } from './project-path-lock.js'
 import { readProjectPlaceholders } from './project-placeholders.js'
 import { ProjectSession } from './project-session.js'
@@ -97,6 +108,227 @@ function deferred(): { promise: Promise<void>; release: () => void } {
   })
   return { promise, release }
 }
+
+async function bindMovedProject(
+  database: ReturnType<typeof openAppDatabase>,
+  localProjectKey: string,
+  destinationPath: string,
+  documentId: string,
+): Promise<void> {
+  await database.db
+    .insertInto('project_identity_binding')
+    .values({
+      canonical_path: destinationPath,
+      document_id: documentId,
+      local_project_key: localProjectKey,
+    })
+    .execute()
+  refreshProjectLocationRegistry(database.db)
+}
+
+test('clean relocation retains Undo, Redo and retained raster sources in the same coordinator', async () => {
+  await withProject(async ({ directory, projectPath, roots, shadow }) => {
+    const database = openAppDatabase(directory, path.resolve('src/main/db/migrations'))
+    try {
+      const leases = new ProjectAutosaveLeaseRegistry()
+      const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow, {
+        leaseRegistry: leases,
+      })
+      const imported = withRaster(coordinator.document)
+      await coordinator.applyDocument(imported.document, {
+        [imported.assetPath]: { bytes: raster },
+      })
+      await coordinator.save()
+      await coordinator.applyDocument({ ...coordinator.document, layers: [], title: 'Empty saved' })
+      await coordinator.save()
+      await coordinator.applyDocument({ ...coordinator.document, title: 'Future title' })
+      await coordinator.undo()
+      const cleanDocument = coordinator.document
+      const cleanEpoch = coordinator.documentEpoch
+      assert.equal(coordinator.canUndo, true)
+      assert.equal(coordinator.canRedo, true)
+      const destination = path.join(directory, 'moved.igs')
+      const stableKey = localProjectRecoveryKey(projectPath)
+      const reservation = await coordinator.prepareRelocation(destination)
+      assert.equal(coordinator.relocationPending, true)
+      assert.equal(coordinator.canUndo, false)
+      assert.equal(coordinator.canRedo, false)
+      await assert.rejects(coordinator.save(), { code: 'SAVE_IN_PROGRESS' })
+      await assert.rejects(coordinator.flush(), { code: 'SAVE_IN_PROGRESS' })
+      await assert.rejects(coordinator.discardChanges(roots), { code: 'SAVE_IN_PROGRESS' })
+      await rename(projectPath, destination)
+      await bindMovedProject(database, stableKey, destination, cleanDocument.documentId)
+      await reservation.rebind()
+      await reservation.rebind()
+      reservation.assertCurrent()
+      assert.equal(coordinator.filePath, destination)
+      assert.equal(coordinator.documentEpoch, cleanEpoch)
+      assert.deepEqual(coordinator.document, cleanDocument)
+      assert.equal(coordinator.relocationPending, true)
+      assert.throws(() => leases.acquire(projectPath), { code: 'PROJECT_ALREADY_OPEN' })
+      assert.throws(() => leases.acquire(destination), { code: 'PROJECT_ALREADY_OPEN' })
+      reservation.release()
+      assert.equal(coordinator.relocationPending, false)
+      assert.equal(coordinator.canUndo, true)
+      assert.equal(coordinator.canRedo, true)
+      const releaseOriginal = leases.acquire(projectPath)
+      releaseOriginal()
+      await coordinator.redo()
+      assert.equal(coordinator.document.title, 'Future title')
+      await coordinator.undo()
+      await coordinator.undo()
+      assert.equal(coordinator.document.layers.length, 1)
+      assert.equal((await coordinator.save()).recovery.status, 'clean')
+      assert.deepEqual(
+        await (await readIgsPackage(destination)).readMember(imported.assetPath),
+        raster,
+      )
+      await assert.rejects(readFile(projectPath), { code: 'ENOENT' })
+      await coordinator.close()
+      const reopened = await ProjectAutosaveCoordinator.open(destination, roots, shadow, {
+        leaseRegistry: leases,
+      })
+      assert.equal(reopened.document.layers.length, 1)
+      await reopened.close()
+    } finally {
+      await database.close()
+    }
+  })
+})
+
+test('relocation cancellation releases only its destination and waits for unchanged source proof', async () => {
+  await withProject(async ({ directory, projectPath, roots, shadow }) => {
+    const leases = new ProjectAutosaveLeaseRegistry()
+    const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow, {
+      leaseRegistry: leases,
+    })
+    const destination = path.join(directory, 'moved.igs')
+    const reservation = await coordinator.prepareRelocation(destination)
+    let committed = false
+    const preparedEdit = coordinator
+      .applyDocument({ ...coordinator.document, title: 'Queued edit' })
+      .then(() => {
+        committed = true
+      })
+    await Promise.resolve()
+    assert.equal(committed, false)
+    assert.throws(() => leases.acquire(destination), { code: 'PROJECT_ALREADY_OPEN' })
+    reservation.release()
+    await preparedEdit
+    assert.equal(coordinator.document.title, 'Queued edit')
+    assert.throws(() => leases.acquire(projectPath), { code: 'PROJECT_ALREADY_OPEN' })
+    const releaseDestination = leases.acquire(destination)
+    releaseDestination()
+    await coordinator.undo()
+    await coordinator.close()
+  })
+})
+
+test('dirty and leased destinations fail before a relocation scope or physical move is published', async () => {
+  await withProject(async ({ directory, projectPath, roots, shadow }) => {
+    const leases = new ProjectAutosaveLeaseRegistry()
+    const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow, {
+      leaseRegistry: leases,
+    })
+    const destination = path.join(directory, 'moved.igs')
+    await coordinator.applyDocument({ ...coordinator.document, title: 'Dirty' })
+    await assert.rejects(coordinator.prepareRelocation(destination), { code: 'PROJECT_DIRTY' })
+    assert.equal(coordinator.relocationPending, false)
+    await coordinator.undo()
+    const releaseDestination = leases.acquire(destination)
+    await assert.rejects(coordinator.prepareRelocation(destination), {
+      code: 'PROJECT_ALREADY_OPEN',
+    })
+    assert.equal(coordinator.relocationPending, false)
+    assert.equal(coordinator.canRedo, true)
+    assert.equal((await readIgsPackage(projectPath)).project.title, 'Saved')
+    releaseDestination()
+    await coordinator.close()
+  })
+})
+
+test('failed live rebind keeps both leases and edits fenced until exact repaired retry finalizes', async () => {
+  await withProject(async ({ directory, projectPath, roots, shadow }) => {
+    const database = openAppDatabase(directory, path.resolve('src/main/db/migrations'))
+    try {
+      const leases = new ProjectAutosaveLeaseRegistry()
+      const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow, {
+        leaseRegistry: leases,
+      })
+      const destination = path.join(directory, 'moved.igs')
+      const stableKey = localProjectRecoveryKey(projectPath)
+      const reservation = await coordinator.prepareRelocation(destination)
+      await rename(projectPath, destination)
+      await assert.rejects(reservation.rebind(), { code: 'PROJECT_EXTERNAL_CHANGE' })
+      assert.throws(() => reservation.release(), { code: 'ENOENT' })
+      assert.equal(coordinator.filePath, projectPath)
+      assert.equal(coordinator.relocationPending, true)
+      assert.throws(() => leases.acquire(projectPath), { code: 'PROJECT_ALREADY_OPEN' })
+      assert.throws(() => leases.acquire(destination), { code: 'PROJECT_ALREADY_OPEN' })
+      let committed = false
+      const preparedEdit = coordinator
+        .applyDocument({ ...coordinator.document, title: 'After finalize' })
+        .then(() => {
+          committed = true
+        })
+      await bindMovedProject(database, stableKey, destination, coordinator.document.documentId)
+      await reservation.rebind()
+      await Promise.resolve()
+      assert.equal(committed, false)
+      assert.equal(coordinator.document.title, 'Saved')
+      assert.equal(coordinator.relocationPending, true)
+      reservation.release()
+      await preparedEdit
+      assert.equal(coordinator.document.title, 'After finalize')
+      await coordinator.save()
+      assert.equal((await readIgsPackage(destination)).project.title, 'After finalize')
+      await coordinator.close()
+    } finally {
+      await database.close()
+    }
+  })
+})
+
+test('explicit shutdown abandons a failed move without old-path writes or retained-source cleanup', async () => {
+  await withProject(async ({ directory, projectPath, roots, shadow }) => {
+    const leases = new ProjectAutosaveLeaseRegistry()
+    const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow, {
+      leaseRegistry: leases,
+    })
+    const imported = withRaster(coordinator.document)
+    await coordinator.applyDocument(imported.document, { [imported.assetPath]: { bytes: raster } })
+    await coordinator.save()
+    await coordinator.applyDocument({ ...coordinator.document, layers: [] })
+    await coordinator.save()
+    const retained = (await readdir(roots.scratchDir)).find((entry) =>
+      entry.startsWith('igs-save-base-'),
+    )
+    assert.ok(retained)
+    const retainedAsset = path.join(roots.scratchDir, retained, '0.asset')
+    assert.deepEqual(await readFile(retainedAsset), raster)
+    const destination = path.join(directory, 'moved.igs')
+    const reservation = await coordinator.prepareRelocation(destination)
+    await rename(projectPath, destination)
+    await assert.rejects(reservation.rebind(), { code: 'PROJECT_EXTERNAL_CHANGE' })
+    const waitingEdit = coordinator.applyDocument({
+      ...coordinator.document,
+      title: 'Must not publish',
+    })
+    const rejectedEdit = assert.rejects(waitingEdit, { code: 'COORDINATOR_CLOSED' })
+    await reservation.abandonForShutdown()
+    await rejectedEdit
+    assert.equal(coordinator.relocationPending, false)
+    assert.equal(coordinator.canUndo, false)
+    assert.equal(coordinator.canRedo, false)
+    assert.deepEqual(await readFile(retainedAsset), raster)
+    await assert.rejects(readFile(projectPath), { code: 'ENOENT' })
+    assert.equal((await readIgsPackage(destination)).project.title, 'Saved')
+    const releaseOriginal = leases.acquire(projectPath)
+    const releaseDestination = leases.acquire(destination)
+    releaseOriginal()
+    releaseDestination()
+  })
+})
 
 test('debounced dirty document recovers after restart without changing saved .igs', async () => {
   await withProject(async ({ projectPath, roots, shadow }) => {

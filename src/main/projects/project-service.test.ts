@@ -49,6 +49,7 @@ import { ProjectAutosaveLeaseRegistry, type ProjectAutosaveOptions } from './pro
 import { ProjectIndexRepository } from './project-index.js'
 import { parseProjectLayerImageUrl, streamStagedProjectLayer } from './project-layer-resource.js'
 import { readProjectPlaceholders } from './project-placeholders.js'
+import { ProjectRelocationStore } from './project-relocation-store.js'
 import { ProjectService } from './project-service.js'
 import { ProjectSession } from './project-session.js'
 import { ProjectShadowStore } from './project-shadow.js'
@@ -1655,6 +1656,265 @@ async function withService(
     await database.close()
     await rm(dataRoot, { force: true, recursive: true })
   }
+}
+
+test('clean-open Move keeps the tab owner and both history directions, then Save writes only the destination', async () => {
+  let saveReads = 0
+  await withService(
+    async ({ dataRoot, repository, service, shadow }) => {
+      const destinationDirectory = path.join(dataRoot, 'move-destination')
+      await mkdir(destinationDirectory)
+      const destination = await service.addWorkspace(
+        { color: 'blue', displayName: 'Move destination' },
+        destinationDirectory,
+      )
+      const created = await service.create({ height: 64, title: 'Live history', width: 64 })
+      const owner = service.getOpenDocumentForAcceptance(created.id)!
+      const initialDocument = owner.document
+      await service.updateGenerationDraft(created.id, {
+        kind: 'positive-prompt',
+        text: 'Saved prompt',
+      })
+      await service.save(created.id)
+      await service.setPrimaryBbox(created.id, { height: 64, width: 64, x: 11, y: 0 })
+      await service.save(created.id)
+      await service.updateGenerationDraft(created.id, {
+        kind: 'negative-prompt',
+        text: 'Future negative',
+      })
+      const clean = await service.undo(created.id)
+      await service.flushAutosave(created.id)
+      assert.equal(clean.dirty, false)
+      assert.equal(clean.canUndo, true)
+      assert.equal(clean.canRedo, true)
+      const source = (await repository.getProject(created.id))!
+      const sourceBytes = await readFile(source.canonicalPath)
+      const beforeDocument = owner.document
+      const beforeEpoch = owner.documentEpoch
+      // Retain a real clean marker, including the ordinary post-Save crash-window path. It is keyed
+      // by stable local identity and must remain valid without storing/repointing a physical path.
+      await shadow.write({
+        document: beforeDocument,
+        projectPath: source.canonicalPath,
+        savedDocument: initialDocument,
+      })
+      assert.equal(
+        (await shadow.markClean(source.canonicalPath, beforeDocument.documentRevision)).cleaned,
+        true,
+      )
+      const shadowManifestPath = path.join(dataRoot, 'autosave', created.id, 'manifest.json')
+      const shadowManifest = await readFile(shadowManifestPath)
+      const readsBeforeMove = saveReads
+      assert.deepEqual(await service.moveProject(created.id, destination.id), { kind: 'moved' })
+      assert.equal(saveReads, readsBeforeMove, 'Move must not perform an implicit Save')
+      assert.equal(service.getOpenDocumentForAcceptance(created.id), owner)
+      assert.equal(owner.documentEpoch, beforeEpoch)
+      assert.deepEqual(owner.document, beforeDocument)
+      const [movedTab] = service.getOpenTabs()
+      assert.equal(movedTab.id, created.id)
+      assert.equal(movedTab.documentId, created.documentId)
+      assert.equal(movedTab.documentRevision, clean.documentRevision)
+      assert.equal(movedTab.workspaceId, destination.id)
+      assert.equal(Boolean(movedTab.relocationPending), false)
+      assert.equal(movedTab.canUndo, true)
+      assert.equal(movedTab.canRedo, true)
+      assert.equal(movedTab.dirty, false)
+      const movedPath = path.join(destination.directoryPath, path.basename(source.canonicalPath))
+      assert.equal(owner.filePath, movedPath)
+      assert.deepEqual(await readFile(movedPath), sourceBytes)
+      await assert.rejects(readFile(source.canonicalPath), { code: 'ENOENT' })
+      assert.deepEqual(await readFile(shadowManifestPath), shadowManifest)
+      assert.equal(
+        (
+          await shadow.inspect({
+            projectPath: movedPath,
+            savedPackage: await readIgsPackage(movedPath),
+          })
+        ).status,
+        'clean',
+      )
+      assert.deepEqual(await repository.relocations.list(), [])
+      assert.equal((await repository.getProject(created.id))!.canonicalPath, movedPath)
+      assert.equal(
+        (await service.redo(created.id)).generationDraft.negativePrompt.text,
+        'Future negative',
+      )
+      await service.undo(created.id)
+      assert.equal((await service.undo(created.id)).primaryBbox.x, 0)
+      const saved = await service.save(created.id)
+      assert.equal(saved.committed, true)
+      assert.equal(saved.tab.workspaceId, destination.id)
+      assert.equal((await readIgsPackage(movedPath)).project.primaryBbox.x, 0)
+      assert.equal(
+        (await readIgsPackage(movedPath)).project.generationDraft.positivePrompt.text,
+        'Saved prompt',
+      )
+      await assert.rejects(readFile(source.canonicalPath), { code: 'ENOENT' })
+      await service.close(created.id)
+      const reopened = await service.open(created.id)
+      assert.equal(reopened.kind, 'opened')
+      assert.ok(reopened.kind === 'opened')
+      assert.equal(reopened.tab.workspaceId, destination.id)
+      assert.equal(reopened.tab.primaryBbox.x, 0)
+      assert.equal(reopened.tab.canUndo, false)
+      assert.equal(reopened.tab.canRedo, false)
+      await service.close(created.id)
+    },
+    {},
+    async () => {
+      saveReads += 1
+      return null
+    },
+  )
+})
+
+test('dirty-open Move refuses without Save, file publication or losing the current edit', async () => {
+  let saveReads = 0
+  await withService(
+    async ({ dataRoot, repository, service }) => {
+      const destinationDirectory = path.join(dataRoot, 'dirty-move-destination')
+      await mkdir(destinationDirectory)
+      const destination = await service.addWorkspace(
+        { color: 'teal', displayName: 'Dirty move destination' },
+        destinationDirectory,
+      )
+      const created = await service.create({ height: 64, title: 'Dirty stays here', width: 64 })
+      const owner = service.getOpenDocumentForAcceptance(created.id)!
+      const source = (await repository.getProject(created.id))!
+      const sourceBytes = await readFile(source.canonicalPath)
+      const dirty = await service.setPrimaryBbox(created.id, { height: 64, width: 64, x: 73, y: 0 })
+      await assert.rejects(service.moveProject(created.id, destination.id), {
+        code: 'PROJECT_DIRTY',
+      })
+      assert.equal(saveReads, 0)
+      assert.equal(service.getOpenDocumentForAcceptance(created.id), owner)
+      assert.deepEqual(service.getOpenTabs(), [dirty])
+      assert.equal(owner.relocationPending, false)
+      assert.deepEqual(await readFile(source.canonicalPath), sourceBytes)
+      assert.deepEqual(await readdir(destinationDirectory), [])
+      assert.deepEqual(await repository.relocations.list(), [])
+      assert.equal((await repository.getProject(created.id))!.canonicalPath, source.canonicalPath)
+      assert.equal((await service.undo(created.id)).dirty, false)
+      await service.close(created.id)
+    },
+    {},
+    async () => {
+      saveReads += 1
+      return null
+    },
+  )
+})
+
+for (const seam of ['afterRename', 'beforeFinalize'] as const) {
+  test(`pending clean-open Move at ${seam} fences edits and Save until explicit close and next-lifetime recovery`, async () => {
+    let saveReads = 0
+    await withService(
+      async ({ database, dataRoot, repository, service, shadow }) => {
+        const destinationDirectory = path.join(dataRoot, 'pending-move-destination')
+        await mkdir(destinationDirectory)
+        const destination = await service.addWorkspace(
+          { color: 'violet', displayName: 'Pending move destination' },
+          destinationDirectory,
+        )
+        const created = await service.create({ height: 64, title: 'Pending live owner', width: 64 })
+        await service.setPrimaryBbox(created.id, { height: 64, width: 64, x: 19, y: 0 })
+        await service.undo(created.id)
+        await service.flushAutosave(created.id)
+        const owner = service.getOpenDocumentForAcceptance(created.id)!
+        const cleanDocument = owner.document
+        const source = (await repository.getProject(created.id))!
+        const sourceBytes = await readFile(source.canonicalPath)
+        Object.defineProperty(repository, 'relocations', {
+          configurable: true,
+          value: new ProjectRelocationStore(database.db, {
+            [seam]: async () => {
+              throw new Error(`Controlled live Move interruption: ${seam}`)
+            },
+          }),
+        })
+        assert.equal((await service.moveProject(created.id, destination.id)).kind, 'pending')
+        const [held] = service.getOpenTabs()
+        assert.equal(held.id, created.id)
+        assert.equal(held.relocationPending, true)
+        assert.equal(held.canUndo, false)
+        assert.equal(held.canRedo, false)
+        assert.equal(held.dirty, false)
+        assert.deepEqual(owner.document, cleanDocument)
+        assert.equal(owner.relocationPending, true)
+        assert.equal(service.getOpenDocumentId(created.id), null)
+        assert.equal(service.getOpenDocumentForAcceptance(created.id), null)
+        assert.equal(saveReads, 0)
+        for (const operation of [
+          () => service.setPrimaryBbox(created.id, { height: 64, width: 64, x: 999, y: 0 }),
+          () =>
+            service.updateGenerationDraft(created.id, {
+              kind: 'positive-prompt',
+              text: 'Must not publish',
+            }),
+          () => service.save(created.id),
+          () => service.flushAutosave(created.id),
+          () => service.undo(created.id),
+          () => service.redo(created.id),
+        ]) {
+          await assert.rejects(operation(), { code: 'PROJECT_NOT_READY' })
+        }
+        assert.equal(saveReads, 0)
+        assert.deepEqual(owner.document, cleanDocument)
+        const intent = await repository.relocations.get(created.id)
+        assert.ok(intent)
+        assert.equal(
+          intent.destinationPath,
+          path.join(destinationDirectory, path.basename(source.canonicalPath)),
+        )
+        assert.deepEqual(await readFile(intent.destinationPath), sourceBytes)
+        await assert.rejects(readFile(source.canonicalPath), { code: 'ENOENT' })
+        await service.close(created.id)
+        assert.deepEqual(service.getOpenTabs(), [])
+        assert.ok(
+          await repository.relocations.get(created.id),
+          'explicit close must retain durable Move intent',
+        )
+        await assert.rejects(owner.applyDocument({ ...cleanDocument, title: 'Closed owner' }), {
+          code: 'COORDINATOR_CLOSED',
+        })
+        Object.defineProperty(repository, 'relocations', {
+          configurable: true,
+          value: new ProjectRelocationStore(database.db),
+        })
+        const restarted = new ProjectService({
+          autosaveOptions: { debounceMs: 0, leaseRegistry: new ProjectAutosaveLeaseRegistry() },
+          dataRoot,
+          repository,
+          roots: { placeholdersDir, scratchDir: path.join(dataRoot, 'scratch') },
+          shadow,
+        })
+        await restarted.initialize()
+        assert.deepEqual(await repository.relocations.list(), [])
+        const reopened = await restarted.open(created.id)
+        assert.equal(reopened.kind, 'opened')
+        assert.ok(reopened.kind === 'opened')
+        assert.equal(reopened.tab.id, created.id)
+        assert.equal(reopened.tab.documentId, cleanDocument.documentId)
+        assert.equal(reopened.tab.documentRevision, cleanDocument.documentRevision)
+        assert.equal(reopened.tab.workspaceId, destination.id)
+        assert.equal(reopened.tab.canUndo, false)
+        assert.equal(reopened.tab.canRedo, false)
+        assert.equal(Boolean(reopened.tab.relocationPending), false)
+        assert.deepEqual(
+          restarted.getOpenDocumentForAcceptance(created.id)!.document,
+          cleanDocument,
+        )
+        assert.deepEqual(await readFile(intent.destinationPath), sourceBytes)
+        await assert.rejects(readFile(source.canonicalPath), { code: 'ENOENT' })
+        await restarted.close(created.id)
+      },
+      {},
+      async () => {
+        saveReads += 1
+        return null
+      },
+    )
+  })
 }
 
 async function openLegacyDynamicDraft(dataRoot: string, service: ProjectService) {

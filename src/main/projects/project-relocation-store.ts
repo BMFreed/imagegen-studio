@@ -1,8 +1,17 @@
 import { isProjectDocumentId } from '../../shared/projects/project-generation-actions.js'
-import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
+import { normalizeProjectRenameName } from '../../shared/projects/project-rename.js'
+import {
+  IGS_SAFETY_CEILINGS,
+  IGS_SCHEMA_VERSION,
+  type IgsManifestV1,
+  type IgsProjectDocumentV1,
+  parseProjectDocumentV1,
+  projectAssetReferences,
+  validateIgsPackageMetadataV1,
+} from '../../shared/projects/project-schema.js'
 import { isProjectWorkspaceId } from '../../shared/projects/project-workspaces.js'
 
-import type { Kysely, Transaction } from 'kysely'
+import type { Insertable, Kysely, Selectable, Transaction } from 'kysely'
 import type { BigIntStats } from 'node:fs'
 
 import { createHash, randomUUID } from 'node:crypto'
@@ -17,13 +26,14 @@ import {
   realpathSync,
   renameSync,
 } from 'node:fs'
-import { open } from 'node:fs/promises'
+import { mkdtemp, open, rm } from 'node:fs/promises'
 import path from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 
 import type { DB } from '../db/database.types.js'
 import type { ProjectIndexRecord, ProjectWorkspaceRecord } from './project-index.js'
 
-import { readIgsPackage } from './igs-package.js'
+import { type IgsAssetSource, readIgsPackage, saveIgsPackage } from './igs-package.js'
 import { localProjectRecoveryKey, refreshProjectLocationRegistry } from './project-identity.js'
 import { withProjectPathLock } from './project-path-lock.js'
 
@@ -32,9 +42,11 @@ export interface ProjectRelocationRecord {
   destinationPath: string
   documentId: string
   errorMessage: string | null
+  kind: 'move' | 'rename'
   localProjectKey: string
   operationId: string
   project: ProjectIndexRecord
+  rename: RenameDescriptor | null
   sourceParentWitness: ParentWitness
   sourcePath: string
   sourceSha256: string
@@ -42,9 +54,18 @@ export interface ProjectRelocationRecord {
   sourceWorkspaceId: string
   state: 'moved' | 'moving' | 'planned'
   targetParentWitness: ParentWitness
+  targetSha256: string | null
+  targetWitness: FileWitness | null
   targetWorkspaceId: string
 }
 export type ProjectRelocationResult = { kind: 'moved' } | { kind: 'pending'; message: string }
+interface RenameDescriptor {
+  members: IgsManifestV1['members']
+  preview: IgsManifestV1['preview']
+  projectJson: string
+  targetDocumentRevision: string
+  targetTitle: string
+}
 interface ParentWitness {
   dev: string
   ino: string
@@ -56,11 +77,15 @@ interface FileWitness extends ParentWitness {
 }
 interface StoreOptions {
   afterDatabaseRepoint?: (record: ProjectRelocationRecord) => Promise<void>
+  /** The renamed package is committed; a crash here must recover from its planned descriptor. */
+  afterMetadataRename?: (record: ProjectRelocationRecord) => Promise<void>
   afterRename?: (record: ProjectRelocationRecord) => Promise<void>
   beforeDatabaseRepoint?: (record: ProjectRelocationRecord) => Promise<void>
   /** Causal seam; fresh synchronous source/destination guards follow before rename. */
   beforeFinalFileCheck?: (record: ProjectRelocationRecord) => Promise<void>
   beforeFinalize?: (record: ProjectRelocationRecord) => Promise<void>
+  /** Causal seam; source digest and synchronous destination guards follow before replacement. */
+  beforeMetadataReplace?: (record: ProjectRelocationRecord) => Promise<void>
 }
 export class ProjectRelocationStoreError extends Error {
   constructor(
@@ -69,6 +94,16 @@ export class ProjectRelocationStoreError extends Error {
   ) {
     super(message)
     this.name = 'ProjectRelocationStoreError'
+  }
+}
+
+function witness(s: BigIntStats): FileWitness {
+  return {
+    ctimeNs: s.ctimeNs.toString(),
+    dev: s.dev.toString(),
+    ino: s.ino.toString(),
+    mtimeNs: s.mtimeNs.toString(),
+    size: s.size.toString(),
   }
 }
 
@@ -85,6 +120,176 @@ export class ProjectRelocationStore {
     targetWorkspace: ProjectWorkspaceRecord,
     guardSync: () => void,
   ): Promise<ProjectRelocationRecord> {
+    return await this.beginRelocation(project, sourceWorkspace, targetWorkspace, guardSync, null)
+  }
+
+  async beginRename(
+    project: ProjectIndexRecord,
+    workspace: ProjectWorkspaceRecord,
+    name: string,
+    guardSync: () => void,
+  ): Promise<ProjectRelocationRecord> {
+    const title = normalizeProjectRenameName(name)
+    if (title === null) {
+      throw invalid()
+    }
+    return await this.beginRelocation(project, workspace, workspace, guardSync, title)
+  }
+
+  async finishMove(
+    input: ProjectRelocationRecord,
+    guardSync: () => void = () => undefined,
+    beforeFinalize?: () => Promise<void>,
+  ): Promise<ProjectRelocationResult> {
+    input = structuredClone(input)
+    assertKey(input.localProjectKey)
+    assertUuid(input.operationId)
+    return await withMoveLocks(input.sourcePath, input.destinationPath, async () => {
+      const current = await this.get(input.localProjectKey)
+      if (!current || !sameAuthority(input, current)) {
+        throw conflict()
+      }
+      const record = current
+      try {
+        guardSync()
+        // Never perform a filesystem effect without rereading positive authority first.
+        await this.db
+          .transaction()
+          .execute((transaction) => assertOperationalRows(transaction, record))
+        await this.db
+          .updateTable('project_relocation')
+          .set({ error_message: null, state: 'moving', updated_at: new Date().toISOString() })
+          .where('local_project_key', '=', record.localProjectKey)
+          .where('operation_id', '=', record.operationId)
+          .execute()
+        const fresh = await this.get(record.localProjectKey)
+        if (!fresh || !sameAuthority(record, fresh)) {
+          throw conflict()
+        }
+        const source = entryNow(record.sourcePath)
+        const destination = entryNow(record.destinationPath)
+        if (source && destination && record.sourcePath !== record.destinationPath) {
+          throw changed()
+        }
+        if (!source && !destination) {
+          throw changed()
+        }
+        if (source && record.sourcePath !== record.destinationPath) {
+          await hashChecked(record.sourcePath, record.sourceWitness, true, record.sourceSha256)
+          await this.options.beforeFinalFileCheck?.(record)
+          const finalAuthority = await this.get(record.localProjectKey)
+          if (!finalAuthority || !sameAuthority(record, finalAuthority)) {
+            throw conflict()
+          }
+          guardSync()
+          renameCheckedNow(record)
+          await this.options.afterRename?.(record)
+        }
+        if (record.kind === 'rename') {
+          await this.finishMetadataRename(record, guardSync)
+        }
+        // Move retains the original inode/digest. Rename retains its verified replacement witness.
+        await verifyCompleted(record)
+        syncCompletedNow(record)
+        await this.db
+          .updateTable('project_relocation')
+          .set({ state: 'moved', updated_at: new Date().toISOString() })
+          .where('local_project_key', '=', record.localProjectKey)
+          .where('operation_id', '=', record.operationId)
+          .execute()
+        await this.options.beforeDatabaseRepoint?.(record)
+        await verifyCompleted(record)
+        const moved = completedWitnessNow(record)
+        guardSync()
+        await this.db.transaction().execute(async (transaction) => {
+          const row = await transaction
+            .selectFrom('project_relocation')
+            .selectAll()
+            .where('local_project_key', '=', record.localProjectKey)
+            .executeTakeFirst()
+          if (!row || !sameAuthority(record, fromRow(row))) {
+            throw conflict()
+          }
+          await assertOperationalRows(transaction, record)
+          guardSync()
+          await repoint(transaction, record, moved)
+          guardSync()
+        })
+        refreshProjectLocationRegistry(this.db)
+        await this.options.afterDatabaseRepoint?.(record)
+        await beforeFinalize?.()
+        await this.options.beforeFinalize?.(record)
+        await verifyCompleted(record)
+        completedWitnessNow(record)
+        guardSync()
+        await this.db.transaction().execute(async (transaction) => {
+          const row = await transaction
+            .selectFrom('project_relocation')
+            .selectAll()
+            .where('local_project_key', '=', record.localProjectKey)
+            .executeTakeFirst()
+          if (!row || !sameAuthority(record, fromRow(row))) {
+            throw conflict()
+          }
+          await assertOperationalRows(transaction, record)
+          guardSync()
+          await transaction
+            .deleteFrom('project_relocation')
+            .where('local_project_key', '=', record.localProjectKey)
+            .where('operation_id', '=', record.operationId)
+            .execute()
+        })
+        return { kind: 'moved' }
+      } catch (error) {
+        const message =
+          error instanceof ProjectRelocationStoreError
+            ? error.message
+            : `Project ${record.kind === 'rename' ? 'Rename' : 'Move'} could not finish. Its recovery record was kept; restore access to the workspace and try again.`
+        await this.db
+          .updateTable('project_relocation')
+          .set({ error_message: message, updated_at: new Date().toISOString() })
+          .where('local_project_key', '=', record.localProjectKey)
+          .where('operation_id', '=', record.operationId)
+          .execute()
+          .catch(() => undefined)
+        return { kind: 'pending', message }
+      }
+    })
+  }
+
+  async get(projectId: string): Promise<ProjectRelocationRecord | null> {
+    assertKey(projectId)
+    const row = await this.db
+      .selectFrom('project_relocation')
+      .selectAll()
+      .where('local_project_key', '=', projectId)
+      .executeTakeFirst()
+    return row ? fromRow(row) : null
+  }
+
+  async list(): Promise<ProjectRelocationRecord[]> {
+    return (
+      await this.db
+        .selectFrom('project_relocation')
+        .selectAll()
+        .orderBy('created_at')
+        .orderBy('local_project_key')
+        .execute()
+    ).map(fromRow)
+  }
+
+  async recoverPendingMoves(guardSync?: (record: ProjectRelocationRecord) => void): Promise<void> {
+    for (const record of await this.list()) {
+      await this.finishMove(record, () => guardSync?.(record))
+    }
+  }
+  private async beginRelocation(
+    project: ProjectIndexRecord,
+    sourceWorkspace: ProjectWorkspaceRecord,
+    targetWorkspace: ProjectWorkspaceRecord,
+    guardSync: () => void,
+    title: string | null,
+  ): Promise<ProjectRelocationRecord> {
     project = structuredClone(project)
     sourceWorkspace = structuredClone(sourceWorkspace)
     targetWorkspace = structuredClone(targetWorkspace)
@@ -95,7 +300,9 @@ export class ProjectRelocationStore {
       !isProjectWorkspaceId(sourceWorkspace.id) ||
       !isProjectWorkspaceId(targetWorkspace.id) ||
       sourceWorkspace.id !== project.workspaceId ||
-      sourceWorkspace.id === targetWorkspace.id ||
+      (title === null
+        ? sourceWorkspace.id === targetWorkspace.id
+        : sourceWorkspace.id !== targetWorkspace.id) ||
       path.dirname(project.canonicalPath) !== sourceWorkspace.directoryPath ||
       !canonical(targetWorkspace.directoryPath)
     ) {
@@ -106,7 +313,7 @@ export class ProjectRelocationStore {
     }
     const destinationPath = path.join(
       targetWorkspace.directoryPath,
-      path.basename(project.canonicalPath),
+      title === null ? path.basename(project.canonicalPath) : `${title}.igs`,
     )
     return await withMoveLocks(project.canonicalPath, destinationPath, async () => {
       guardSync()
@@ -118,7 +325,7 @@ export class ProjectRelocationStore {
           'Move requires both workspaces to be on the same filesystem.',
         )
       }
-      assertNoCollision(destinationPath)
+      assertNoCollision(destinationPath, title !== null ? project.canonicalPath : undefined)
       const source = entryNow(project.canonicalPath)
       if (
         !source ||
@@ -140,6 +347,8 @@ export class ProjectRelocationStore {
         throw invalid()
       }
       const sourceSha256 = await hashChecked(project.canonicalPath, sourceWitness, true)
+      const rename: RenameDescriptor | null =
+        title === null ? null : makeRenameDescriptor(portable.manifest, portable.project, title)
       guardSync()
       assertParentsNow(
         sourceWorkspace.directoryPath,
@@ -147,7 +356,7 @@ export class ProjectRelocationStore {
         targetWorkspace.directoryPath,
         targetParentWitness,
       )
-      assertNoCollision(destinationPath)
+      assertNoCollision(destinationPath, title !== null ? project.canonicalPath : undefined)
       if (!sameOriginal(entryNow(project.canonicalPath), sourceWitness)) {
         throw changed()
       }
@@ -157,9 +366,11 @@ export class ProjectRelocationStore {
         destinationPath,
         documentId,
         errorMessage: null,
+        kind: rename ? 'rename' : 'move',
         localProjectKey: project.localProjectKey,
         operationId: randomUUID(),
         project,
+        rename,
         sourceParentWitness,
         sourcePath: project.canonicalPath,
         sourceSha256,
@@ -167,6 +378,8 @@ export class ProjectRelocationStore {
         sourceWorkspaceId: sourceWorkspace.id,
         state: 'planned',
         targetParentWitness,
+        targetSha256: null,
+        targetWitness: null,
         targetWorkspaceId: targetWorkspace.id,
       }
       await this.db.transaction().execute(async (transaction) => {
@@ -207,149 +420,113 @@ export class ProjectRelocationStore {
       return record
     })
   }
-
-  async finishMove(
-    input: ProjectRelocationRecord,
-    guardSync: () => void = () => undefined,
-  ): Promise<ProjectRelocationResult> {
-    input = structuredClone(input)
-    assertKey(input.localProjectKey)
-    assertUuid(input.operationId)
-    return await withMoveLocks(input.sourcePath, input.destinationPath, async () => {
-      const current = await this.get(input.localProjectKey)
-      if (!current || !sameAuthority(input, current)) {
-        throw conflict()
+  private async finishMetadataRename(
+    record: ProjectRelocationRecord,
+    guardSync: () => void,
+  ): Promise<void> {
+    const descriptor = record.rename
+    if (!descriptor) {
+      throw invalid()
+    }
+    if (record.targetWitness) {
+      await verifyCompleted(record)
+      return
+    }
+    if (sameMoved(entryNow(record.destinationPath), record.sourceWitness)) {
+      await hashChecked(record.destinationPath, record.sourceWitness, false, record.sourceSha256)
+      originalMetadataWitnessNow(record)
+      const portable = await readIgsPackage(record.destinationPath)
+      const project = parseProjectDocumentV1(JSON.parse(descriptor.projectJson))
+      if (
+        !isDeepStrictEqual(
+          { ...portable.project, documentRevision: null, title: null },
+          { ...project, documentRevision: null, title: null },
+        ) ||
+        !isDeepStrictEqual(portable.manifest.preview, descriptor.preview) ||
+        !isDeepStrictEqual(
+          sortedMembers(portable.manifest.members.filter((m) => m.path !== 'project.json')),
+          descriptor.members.filter((m) => m.path !== 'project.json'),
+        )
+      ) {
+        throw changed()
       }
-      const record = current
+      const scratch = await mkdtemp(path.join(path.dirname(record.destinationPath), '.igs-rename-'))
       try {
-        guardSync()
-        // Never perform a filesystem effect without rereading positive authority first.
-        await this.db
-          .transaction()
-          .execute((transaction) => assertOperationalRows(transaction, record))
-        await this.db
-          .updateTable('project_relocation')
-          .set({ error_message: null, state: 'moving', updated_at: new Date().toISOString() })
-          .where('local_project_key', '=', record.localProjectKey)
-          .where('operation_id', '=', record.operationId)
-          .execute()
-        const fresh = await this.get(record.localProjectKey)
-        if (!fresh || !sameAuthority(record, fresh)) {
-          throw conflict()
+        const assets: Record<string, IgsAssetSource> = {}
+        let index = 0
+        for (const memberPath of new Set(projectAssetReferences(project).map((m) => m.path))) {
+          const destination = path.join(scratch, `${index++}.member`)
+          await portable.extractMemberToFile(memberPath, destination)
+          assets[memberPath] = { sourcePath: destination }
         }
-        const source = entryNow(record.sourcePath)
-        const destination = entryNow(record.destinationPath)
-        if (source && destination) {
-          throw changed()
-        }
-        if (!source && !destination) {
-          throw changed()
-        }
-        if (source) {
-          await hashChecked(record.sourcePath, record.sourceWitness, true, record.sourceSha256)
-          await this.options.beforeFinalFileCheck?.(record)
-          const finalAuthority = await this.get(record.localProjectKey)
-          if (!finalAuthority || !sameAuthority(record, finalAuthority)) {
-            throw conflict()
-          }
-          guardSync()
-          renameCheckedNow(record)
-          await this.options.afterRename?.(record)
-        }
-        // Destination-only recovery must prove the exact original inode, data and source digest.
-        await hashChecked(record.destinationPath, record.sourceWitness, false, record.sourceSha256)
-        syncMovedNow(record)
-        await this.db
-          .updateTable('project_relocation')
-          .set({ state: 'moved', updated_at: new Date().toISOString() })
-          .where('local_project_key', '=', record.localProjectKey)
-          .where('operation_id', '=', record.operationId)
-          .execute()
-        await this.options.beforeDatabaseRepoint?.(record)
-        await hashChecked(record.destinationPath, record.sourceWitness, false, record.sourceSha256)
-        const moved = movedWitnessNow(record)
-        guardSync()
-        await this.db.transaction().execute(async (transaction) => {
-          const row = await transaction
-            .selectFrom('project_relocation')
-            .selectAll()
-            .where('local_project_key', '=', record.localProjectKey)
-            .executeTakeFirst()
-          if (!row || !sameAuthority(record, fromRow(row))) {
-            throw conflict()
-          }
-          await assertOperationalRows(transaction, record)
-          guardSync()
-          await repoint(transaction, record, moved)
-          guardSync()
+        await saveIgsPackage(
+          record.destinationPath,
+          {
+            assets,
+            preview: {
+              merged: await portable.readMember('preview/merged.png'),
+              rect: descriptor.preview.rect,
+              status: descriptor.preview.status,
+              thumbnail: await portable.readMember('preview/thumbnail.webp'),
+            },
+            project,
+            projectJson: Buffer.from(descriptor.projectJson, 'utf8'),
+          },
+          {
+            beforeRename: async () => {
+              await this.options.beforeMetadataReplace?.(record)
+              await hashChecked(
+                record.destinationPath,
+                record.sourceWitness,
+                false,
+                record.sourceSha256,
+              )
+              const authority = await this.get(record.localProjectKey)
+              if (!authority || !sameAuthority(record, authority)) {
+                throw conflict()
+              }
+              guardSync()
+              originalMetadataWitnessNow(record)
+            },
+          },
+        )
+        await this.options.afterMetadataRename?.(record)
+      } finally {
+        await rm(scratch, { force: true, recursive: true }).catch((error: unknown) => {
+          process.emitWarning(`Project Rename scratch cleanup failed: ${String(error)}`)
         })
-        refreshProjectLocationRegistry(this.db)
-        await this.options.afterDatabaseRepoint?.(record)
-        await this.options.beforeFinalize?.(record)
-        await hashChecked(record.destinationPath, record.sourceWitness, false, record.sourceSha256)
-        movedWitnessNow(record)
-        guardSync()
-        await this.db.transaction().execute(async (transaction) => {
-          const row = await transaction
-            .selectFrom('project_relocation')
-            .selectAll()
-            .where('local_project_key', '=', record.localProjectKey)
-            .executeTakeFirst()
-          if (!row || !sameAuthority(record, fromRow(row))) {
-            throw conflict()
-          }
-          await assertOperationalRows(transaction, record)
-          guardSync()
-          await transaction
-            .deleteFrom('project_relocation')
-            .where('local_project_key', '=', record.localProjectKey)
-            .where('operation_id', '=', record.operationId)
-            .execute()
-        })
-        return { kind: 'moved' }
-      } catch (error) {
-        const message =
-          error instanceof ProjectRelocationStoreError
-            ? error.message
-            : 'Project Move could not finish. Its recovery record was kept; restore access to both workspaces and try again.'
-        await this.db
-          .updateTable('project_relocation')
-          .set({ error_message: message, updated_at: new Date().toISOString() })
-          .where('local_project_key', '=', record.localProjectKey)
-          .where('operation_id', '=', record.operationId)
-          .execute()
-          .catch(() => undefined)
-        return { kind: 'pending', message }
       }
-    })
-  }
-
-  async get(projectId: string): Promise<ProjectRelocationRecord | null> {
-    assertKey(projectId)
-    const row = await this.db
-      .selectFrom('project_relocation')
-      .selectAll()
-      .where('local_project_key', '=', projectId)
-      .executeTakeFirst()
-    return row ? fromRow(row) : null
-  }
-  async list(): Promise<ProjectRelocationRecord[]> {
-    return (
-      await this.db
+    }
+    // The planned exact document/member descriptor is durable before the IGS commit point.
+    // It covers a crash after package replacement but before this replacement witness is stored.
+    const target = await verifyRenamedPackage(record)
+    guardSync()
+    await this.db.transaction().execute(async (transaction) => {
+      const row = await transaction
         .selectFrom('project_relocation')
         .selectAll()
-        .orderBy('created_at')
-        .orderBy('local_project_key')
+        .where('local_project_key', '=', record.localProjectKey)
+        .executeTakeFirst()
+      if (!row || !sameAuthority(record, fromRow(row))) {
+        throw conflict()
+      }
+      await assertOperationalRows(transaction, record)
+      guardSync()
+      await transaction
+        .updateTable('project_relocation')
+        .set({
+          target_sha256: target.sha256,
+          target_witness_json: JSON.stringify(target.witness),
+          updated_at: new Date().toISOString(),
+        })
+        .where('local_project_key', '=', record.localProjectKey)
+        .where('operation_id', '=', record.operationId)
         .execute()
-    ).map(fromRow)
-  }
-  async recoverPendingMoves(guardSync?: (record: ProjectRelocationRecord) => void): Promise<void> {
-    for (const record of await this.list()) {
-      await this.finishMove(record, () => guardSync?.(record))
-    }
+    })
+    record.targetSha256 = target.sha256
+    record.targetWitness = target.witness
   }
 }
-
 async function assertOperationalRows(
   db: Kysely<DB> | Transaction<DB>,
   record: ProjectRelocationRecord,
@@ -504,9 +681,9 @@ async function repoint(
     bbox_width: p.bboxWidth,
     canonical_path: record.destinationPath,
     diagnostic_code: null,
-    display_name: p.displayName,
+    display_name: record.rename?.targetTitle ?? p.displayName,
     document_id: record.documentId,
-    document_revision: p.documentRevision,
+    document_revision: record.rename?.targetDocumentRevision ?? p.documentRevision,
     file_fingerprint: fingerprint(moved),
     file_health: 'ready',
     file_mtime_ns: moved.mtimeNs,
@@ -516,7 +693,7 @@ async function repoint(
     local_project_key: record.localProjectKey,
     preview_status: p.previewStatus,
     preview_thumbnail_sha256: p.thumbnailSha256,
-    search_name: p.displayName.normalize('NFKC').toLowerCase(),
+    search_name: (record.rename?.targetTitle ?? p.displayName).normalize('NFKC').toLowerCase(),
     trashed_at: null,
     workspace_id: record.targetWorkspaceId,
   }
@@ -541,8 +718,11 @@ async function withMoveLocks<T>(
   destination: string,
   use: () => Promise<T>,
 ): Promise<T> {
-  if (!canonical(source) || !canonical(destination) || source === destination) {
+  if (!canonical(source) || !canonical(destination)) {
     throw invalid()
+  }
+  if (source === destination) {
+    return await withProjectPathLock(source, use)
   }
   const [first, second] = [source, destination].sort()
   return await withProjectPathLock(first, () => withProjectPathLock(second, use))
@@ -619,7 +799,87 @@ function unsigned(value: unknown): value is string {
 function signed(value: unknown): value is string {
   return typeof value === 'string' && /^-?\d{1,30}$/.test(value)
 }
-function fromRow(row: DB['project_relocation']): ProjectRelocationRecord {
+function sortedMembers(members: IgsManifestV1['members']): IgsManifestV1['members'] {
+  return [...members].sort((a, b) => a.path.localeCompare(b.path))
+}
+function makeRenameDescriptor(
+  manifest: IgsManifestV1,
+  source: IgsProjectDocumentV1,
+  title: string,
+): RenameDescriptor {
+  const project = parseProjectDocumentV1({ ...source, documentRevision: randomUUID(), title })
+  const projectJson = JSON.stringify(project)
+  return {
+    members: sortedMembers(
+      manifest.members.map((member) =>
+        member.path === 'project.json'
+          ? {
+              bytes: Buffer.byteLength(projectJson),
+              path: member.path,
+              sha256: createHash('sha256').update(projectJson).digest('hex'),
+            }
+          : member,
+      ),
+    ),
+    preview: structuredClone(manifest.preview),
+    projectJson,
+    targetDocumentRevision: project.documentRevision,
+    targetTitle: title,
+  }
+}
+function parseRenameDescriptor(input: string, source: ProjectIndexRecord): RenameDescriptor {
+  if (
+    Buffer.byteLength(input) >
+    2 * IGS_SAFETY_CEILINGS.projectJsonBytes + IGS_SAFETY_CEILINGS.manifestJsonBytes + 4096
+  ) {
+    throw invalid()
+  }
+  const value: unknown = JSON.parse(input)
+  if (!value || typeof value !== 'object') {
+    throw invalid()
+  }
+  const o = value as Record<string, unknown>
+  if (
+    Object.keys(o).sort().join(',') !==
+      'members,preview,projectJson,targetDocumentRevision,targetTitle' ||
+    typeof o.projectJson !== 'string' ||
+    Buffer.byteLength(o.projectJson) > IGS_SAFETY_CEILINGS.projectJsonBytes ||
+    normalizeProjectRenameName(o.targetTitle) !== o.targetTitle
+  ) {
+    throw invalid()
+  }
+  const project = parseProjectDocumentV1(JSON.parse(o.projectJson))
+  const { manifest } = validateIgsPackageMetadataV1(
+    {
+      documentId: project.documentId,
+      documentRevision: project.documentRevision,
+      members: o.members,
+      preview: o.preview,
+      schemaVersion: IGS_SCHEMA_VERSION,
+    },
+    project,
+  )
+  const documentMember = manifest.members.find((member) => member.path === 'project.json')
+  if (
+    project.documentId !== source.documentId ||
+    project.documentRevision !== o.targetDocumentRevision ||
+    project.documentRevision === source.documentRevision ||
+    project.title !== o.targetTitle ||
+    documentMember?.bytes !== Buffer.byteLength(o.projectJson) ||
+    documentMember.sha256 !== createHash('sha256').update(o.projectJson).digest('hex') ||
+    !isDeepStrictEqual(o.members, sortedMembers(manifest.members))
+  ) {
+    throw invalid()
+  }
+  return {
+    members: manifest.members,
+    preview: manifest.preview,
+    projectJson: o.projectJson,
+    targetDocumentRevision: project.documentRevision,
+    targetTitle: project.title,
+  }
+}
+function fromRow(row: Selectable<DB['project_relocation']>): ProjectRelocationRecord {
   try {
     if (Buffer.byteLength(row.project_json) > IGS_SAFETY_CEILINGS.manifestJsonBytes) {
       throw invalid()
@@ -629,17 +889,29 @@ function fromRow(row: DB['project_relocation']): ProjectRelocationRecord {
     const sourceParentWitness = parseWitness(row.source_parent_witness_json, false)
     const targetParentWitness = parseWitness(row.target_parent_witness_json, false)
     const sourceWitness = parseWitness(row.source_witness_json, true)
+    const rename = row.rename_json === null ? null : parseRenameDescriptor(row.rename_json, project)
+    const targetWitness =
+      row.target_witness_json === null ? null : parseWitness(row.target_witness_json, true)
     assertKey(row.local_project_key)
     assertUuid(row.operation_id)
     assertUuid(row.document_id)
     if (
       !canonical(row.source_path) ||
       !canonical(row.destination_path) ||
-      row.source_path === row.destination_path ||
-      path.basename(row.source_path) !== path.basename(row.destination_path) ||
+      !['move', 'rename'].includes(row.operation_kind) ||
+      (row.operation_kind === 'move'
+        ? rename !== null ||
+          row.source_path === row.destination_path ||
+          targetWitness !== null ||
+          row.target_sha256 !== null ||
+          path.basename(row.source_path) !== path.basename(row.destination_path) ||
+          row.source_workspace_id === row.target_workspace_id
+        : rename === null ||
+          path.basename(row.destination_path) !== `${rename.targetTitle}.igs` ||
+          row.source_workspace_id !== row.target_workspace_id ||
+          path.dirname(row.source_path) !== path.dirname(row.destination_path)) ||
       !isProjectWorkspaceId(row.source_workspace_id) ||
       !isProjectWorkspaceId(row.target_workspace_id) ||
-      row.source_workspace_id === row.target_workspace_id ||
       row.local_project_key !== project.localProjectKey ||
       row.document_id !== project.documentId ||
       row.source_path !== project.canonicalPath ||
@@ -648,6 +920,11 @@ function fromRow(row: DB['project_relocation']): ProjectRelocationRecord {
       sourceParentWitness.dev !== targetParentWitness.dev ||
       sourceWitness.dev !== sourceParentWitness.dev ||
       !/^[a-f0-9]{64}$/.test(row.source_sha256) ||
+      (targetWitness === null
+        ? row.target_sha256 !== null
+        : row.target_sha256 === null ||
+          !/^[a-f0-9]{64}$/.test(row.target_sha256) ||
+          targetWitness.dev !== targetParentWitness.dev) ||
       !['moved', 'moving', 'planned'].includes(row.state) ||
       !Number.isFinite(Date.parse(row.created_at)) ||
       !(row.error_message === null || typeof row.error_message === 'string')
@@ -659,9 +936,11 @@ function fromRow(row: DB['project_relocation']): ProjectRelocationRecord {
       destinationPath: row.destination_path,
       documentId: row.document_id,
       errorMessage: row.error_message,
+      kind: row.operation_kind as ProjectRelocationRecord['kind'],
       localProjectKey: row.local_project_key,
       operationId: row.operation_id,
       project,
+      rename,
       sourceParentWitness,
       sourcePath: row.source_path,
       sourceSha256: row.source_sha256,
@@ -669,13 +948,15 @@ function fromRow(row: DB['project_relocation']): ProjectRelocationRecord {
       sourceWorkspaceId: row.source_workspace_id,
       state: row.state as ProjectRelocationRecord['state'],
       targetParentWitness,
+      targetSha256: row.target_sha256,
+      targetWitness,
       targetWorkspaceId: row.target_workspace_id,
     }
   } catch {
     throw invalid()
   }
 }
-function toRow(r: ProjectRelocationRecord, now: string): DB['project_relocation'] {
+function toRow(r: ProjectRelocationRecord, now: string): Insertable<DB['project_relocation']> {
   return {
     created_at: r.createdAt,
     destination_path: r.destinationPath,
@@ -683,7 +964,9 @@ function toRow(r: ProjectRelocationRecord, now: string): DB['project_relocation'
     error_message: r.errorMessage,
     local_project_key: r.localProjectKey,
     operation_id: r.operationId,
+    operation_kind: r.kind,
     project_json: JSON.stringify(r.project),
+    rename_json: r.rename === null ? null : JSON.stringify(r.rename),
     source_parent_witness_json: JSON.stringify(r.sourceParentWitness),
     source_path: r.sourcePath,
     source_sha256: r.sourceSha256,
@@ -691,24 +974,29 @@ function toRow(r: ProjectRelocationRecord, now: string): DB['project_relocation'
     source_workspace_id: r.sourceWorkspaceId,
     state: r.state,
     target_parent_witness_json: JSON.stringify(r.targetParentWitness),
+    target_sha256: r.targetSha256,
+    target_witness_json: r.targetWitness === null ? null : JSON.stringify(r.targetWitness),
     target_workspace_id: r.targetWorkspaceId,
     updated_at: now,
   }
 }
 function sameAuthority(a: ProjectRelocationRecord, b: ProjectRelocationRecord): boolean {
   return (
-    JSON.stringify({ ...a, errorMessage: null, state: 'planned' }) ===
-    JSON.stringify({ ...b, errorMessage: null, state: 'planned' })
+    JSON.stringify({
+      ...a,
+      errorMessage: null,
+      state: 'planned',
+      targetSha256: null,
+      targetWitness: null,
+    }) ===
+    JSON.stringify({
+      ...b,
+      errorMessage: null,
+      state: 'planned',
+      targetSha256: null,
+      targetWitness: null,
+    })
   )
-}
-function witness(s: BigIntStats): FileWitness {
-  return {
-    ctimeNs: s.ctimeNs.toString(),
-    dev: s.dev.toString(),
-    ino: s.ino.toString(),
-    mtimeNs: s.mtimeNs.toString(),
-    size: s.size.toString(),
-  }
 }
 function fingerprint(w: FileWitness): string {
   return [w.dev, w.ino, w.size, w.mtimeNs, w.ctimeNs].join(':')
@@ -762,11 +1050,13 @@ function assertParentsNow(a: string, aw: ParentWitness, b: string, bw: ParentWit
   sameParent(a, aw)
   sameParent(b, bw)
 }
-function assertNoCollision(p: string): void {
+function assertNoCollision(p: string, allowedPath?: string): void {
   if (
-    entryNow(p) ||
+    (p !== allowedPath && entryNow(p)) ||
     readdirSync(path.dirname(p)).some(
-      (name) => name.toLowerCase() === path.basename(p).toLowerCase(),
+      (name) =>
+        path.join(path.dirname(p), name) !== allowedPath &&
+        name.toLowerCase() === path.basename(p).toLowerCase(),
     )
   ) {
     throw new ProjectRelocationStoreError(
@@ -838,7 +1128,7 @@ function renameCheckedNow(r: ProjectRelocationRecord): void {
       }
     }
     assertParentsNow(parents[0], r.sourceParentWitness, parents[1], r.targetParentWitness)
-    assertNoCollision(r.destinationPath)
+    assertNoCollision(r.destinationPath, r.kind === 'rename' ? r.sourcePath : undefined)
     if (
       !sameOriginal(entryNow(r.sourcePath), r.sourceWitness) ||
       realpathSync(r.sourcePath) !== r.sourcePath
@@ -852,6 +1142,82 @@ function renameCheckedNow(r: ProjectRelocationRecord): void {
       closeSync(fd)
     }
   }
+}
+async function verifyRenamedPackage(
+  r: ProjectRelocationRecord,
+): Promise<{ sha256: string; witness: FileWitness }> {
+  if (!r.rename || r.kind !== 'rename') {
+    throw invalid()
+  }
+  assertParentsNow(
+    path.dirname(r.sourcePath),
+    r.sourceParentWitness,
+    path.dirname(r.destinationPath),
+    r.targetParentWitness,
+  )
+  const current = entryNow(r.destinationPath)
+  if (
+    (r.sourcePath !== r.destinationPath && entryNow(r.sourcePath)) ||
+    !current ||
+    !regular(current) ||
+    current.dev.toString() !== r.targetParentWitness.dev ||
+    realpathSync(r.destinationPath) !== r.destinationPath
+  ) {
+    throw changed()
+  }
+  const expected = r.targetWitness ?? witness(current)
+  const sha256 = await hashChecked(r.destinationPath, expected, true, r.targetSha256 ?? undefined)
+  const portable = await readIgsPackage(r.destinationPath)
+  const projectJson = await portable.readMember('project.json')
+  if (
+    !projectJson.equals(Buffer.from(r.rename.projectJson, 'utf8')) ||
+    !isDeepStrictEqual(sortedMembers(portable.manifest.members), r.rename.members) ||
+    !isDeepStrictEqual(portable.manifest.preview, r.rename.preview)
+  ) {
+    throw changed()
+  }
+  await hashChecked(r.destinationPath, expected, true, sha256)
+  assertParentsNow(
+    path.dirname(r.sourcePath),
+    r.sourceParentWitness,
+    path.dirname(r.destinationPath),
+    r.targetParentWitness,
+  )
+  if (r.sourcePath !== r.destinationPath && entryNow(r.sourcePath)) {
+    throw changed()
+  }
+  return { sha256, witness: expected }
+}
+async function verifyCompleted(r: ProjectRelocationRecord): Promise<void> {
+  if (r.kind === 'move') {
+    await hashChecked(r.destinationPath, r.sourceWitness, false, r.sourceSha256)
+  } else {
+    if (!r.targetWitness || !r.targetSha256) {
+      throw invalid()
+    }
+    await hashChecked(r.destinationPath, r.targetWitness, true, r.targetSha256)
+  }
+}
+function completedWitnessNow(r: ProjectRelocationRecord): FileWitness {
+  if (r.kind === 'move') {
+    return movedWitnessNow(r)
+  }
+  assertParentsNow(
+    path.dirname(r.sourcePath),
+    r.sourceParentWitness,
+    path.dirname(r.destinationPath),
+    r.targetParentWitness,
+  )
+  const current = entryNow(r.destinationPath)
+  if (
+    !r.targetWitness ||
+    (r.sourcePath !== r.destinationPath && entryNow(r.sourcePath)) ||
+    !sameOriginal(current, r.targetWitness) ||
+    realpathSync(r.destinationPath) !== r.destinationPath
+  ) {
+    throw changed()
+  }
+  return witness(current!)
 }
 function movedWitnessNow(r: ProjectRelocationRecord): FileWitness {
   assertParentsNow(
@@ -869,8 +1235,27 @@ function movedWitnessNow(r: ProjectRelocationRecord): FileWitness {
   }
   return witness(moved!)
 }
-function syncMovedNow(r: ProjectRelocationRecord): void {
-  movedWitnessNow(r)
+function originalMetadataWitnessNow(r: ProjectRelocationRecord): FileWitness {
+  if (r.sourcePath !== r.destinationPath) {
+    return movedWitnessNow(r)
+  }
+  assertParentsNow(
+    path.dirname(r.sourcePath),
+    r.sourceParentWitness,
+    path.dirname(r.destinationPath),
+    r.targetParentWitness,
+  )
+  const current = entryNow(r.destinationPath)
+  if (
+    !sameOriginal(current, r.sourceWitness) ||
+    realpathSync(r.destinationPath) !== r.destinationPath
+  ) {
+    throw changed()
+  }
+  return witness(current!)
+}
+function syncCompletedNow(r: ProjectRelocationRecord): void {
+  completedWitnessNow(r)
   const paths = [r.destinationPath, path.dirname(r.sourcePath), path.dirname(r.destinationPath)]
   for (const p of paths) {
     const fd = openSync(

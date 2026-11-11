@@ -258,7 +258,9 @@ export interface ProjectRelocation {
   error_message: string | null
   local_project_key: string
   operation_id: string
+  operation_kind: Generated<string>
   project_json: string
+  rename_json: string | null
   source_parent_witness_json: string
   source_path: string
   source_sha256: string
@@ -266,6 +268,8 @@ export interface ProjectRelocation {
   source_workspace_id: string
   state: string
   target_parent_witness_json: string
+  target_sha256: string | null
+  target_witness_json: string | null
   target_workspace_id: string
   updated_at: string
 }

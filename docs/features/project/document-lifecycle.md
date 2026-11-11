@@ -8,6 +8,19 @@ Related contracts: [Home](../home-screen.md) owns workspaces, import/relink and
 app-managed Trash; [Data Storage](../../specs/03-data-storage.md) owns the `.igs`
 package and derived indexes; [Undo/Redo](./undo-redo.md) owns session history.
 
+## Current relocation boundary
+
+[Clean-open Move and closed Rename](../../engineering/phase-4-open-project-relocation-research.md)
+retain stable local identity. Move preserves the live coordinator, document epoch,
+Undo/Redo and historical asset sources; only the verified physical package readers
+and workspace ownership change. Both physical leases/edit gate stay held until
+journal finalization. Pending clean tabs allow explicit Close without an old-path
+shadow write; startup recovery owns the durable operation. Generation identity
+getters refuse admission during the held move, including frozen Queue Retry.
+Closed Rename normalizes an exact-saved dirty crash-window shadow through
+`markClean` before changing title/revision; stale/unknown recovery still refuses.
+Rename does not reinterpret open history; open/dirty Rename remains unimplemented.
+
 ## Feature
 
 An opened `.igs` Project has an explicit saved revision, in-memory document state,

@@ -58,6 +58,7 @@ import {
   isProjectGenerationTargetState,
   type ProjectGenerationTargetState,
 } from '../shared/projects/project-generation-target-state.js'
+import { validateProjectRenameName } from '../shared/projects/project-rename.js'
 import {
   IGS_SAFETY_CEILINGS,
   isProjectRegionalGuidanceV1,
@@ -474,6 +475,7 @@ function isProjectTab(value: unknown): value is ProjectTab {
     isProjectDocumentId(value.documentRevision) &&
     typeof value.title === 'string' &&
     (value.workspaceId === undefined || isProjectWorkspaceId(value.workspaceId)) &&
+    (value.relocationPending === undefined || typeof value.relocationPending === 'boolean') &&
     typeof value.canUndo === 'boolean' &&
     typeof value.canRedo === 'boolean' &&
     isGenerationDraft(value.generationDraft) &&
@@ -714,6 +716,13 @@ function isProjectImportFinishResult(value: unknown): value is ProjectImportFini
 function isProjectSummary(value: unknown): value is ProjectSummary {
   return (
     isRecord(value) &&
+    !(value.pendingRename !== undefined && value.pendingMove !== undefined) &&
+    (value.pendingRename === undefined ||
+      (isRecord(value.pendingRename) &&
+        typeof value.pendingRename.name === 'string' &&
+        value.pendingRename.name === value.pendingRename.name.trim() &&
+        validateProjectRenameName(value.pendingRename.name) === null &&
+        typeof value.pendingRename.message === 'string')) &&
     (value.pendingMove === undefined ||
       (isRecord(value.pendingMove) &&
         isProjectWorkspaceId(value.pendingMove.workspaceId) &&
@@ -1566,6 +1575,15 @@ const api: StudioApi = {
       ),
     removeWorkspace: (workspaceId, confirmed) =>
       invokeProject(ipcChannels.projects.removeWorkspace, [workspaceId, confirmed], isVoid),
+    renameProject: (projectId, name) =>
+      invokeProject(
+        ipcChannels.projects.renameProject,
+        [projectId, name],
+        (value): value is import('../shared/api.js').ProjectRenameResult =>
+          isRecord(value) &&
+          (value.kind === 'renamed' ||
+            (value.kind === 'pending' && typeof value.message === 'string')),
+      ),
     resolveRecovery: (projectId, decision) =>
       invokeProject(ipcChannels.projects.resolveRecovery, [projectId, decision], isProjectTab),
     restoreProject: (projectId, trashId) =>

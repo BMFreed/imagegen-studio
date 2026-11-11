@@ -70,6 +70,7 @@ import {
 import { resolveProjectMaskSettings } from '../../shared/projects/project-mask-settings.js'
 import type { ProjectMaskBitmap } from '../../shared/projects/project-mask.js'
 import { ProjectMaskError } from '../../shared/projects/project-mask.js'
+import { normalizeProjectRenameName } from '../../shared/projects/project-rename.js'
 import {
   createEmptyProjectDocumentV1,
   IGS_MIMETYPE,
@@ -181,6 +182,7 @@ import {
   ProjectAutosaveCoordinator,
   ProjectAutosaveError,
   type ProjectAutosaveOptions,
+  type ProjectRelocationReservation,
 } from './project-autosave.js'
 import {
   type CapturedCurrentCanvasRegionalGenerationInput,
@@ -369,6 +371,10 @@ export class ProjectServiceError extends Error {
  */
 export class ProjectService {
   private initialization: Promise<void> | undefined
+  private readonly liveRelocations = new Map<
+    string,
+    { coordinator: ProjectAutosaveCoordinator; reservation: ProjectRelocationReservation }
+  >()
   private readonly opening = new Map<string, Promise<ProjectOpenResult>>()
   private readonly openTabs = new Map<string, ProjectAutosaveCoordinator>()
   private readonly pendingImports = new Map<string, PendingProjectImport>()
@@ -767,7 +773,20 @@ export class ProjectService {
     if (saving) {
       await saving.catch(() => undefined)
     }
-    const coordinator = this.requireTab(tabId)
+    assertProjectId(tabId)
+    const coordinator = this.openTabs.get(tabId)
+    if (!coordinator) {
+      throw new ProjectServiceError('PROJECT_NOT_OPEN', 'This Project tab is not open.')
+    }
+    const relocation = this.liveRelocations.get(tabId)
+    if (relocation) {
+      await relocation.reservation.abandonForShutdown()
+      this.liveRelocations.delete(tabId)
+      this.smartPatchPresetReviews.delete(coordinator)
+      this.openTabs.delete(tabId)
+      this.tabWorkspaceIds.delete(tabId)
+      return
+    }
     if (coordinator.dirty) {
       throw new ProjectServiceError(
         'PROJECT_DIRTY',
@@ -1603,14 +1622,13 @@ export class ProjectService {
 
   /** Main-only acceptance owner. Never expose this coordinator or its paths through IPC. */
   getOpenDocumentForAcceptance(tabId: string): ProjectAutosaveCoordinator | null {
-    return PROJECT_ID_PATTERN.test(tabId) ? (this.openTabs.get(tabId) ?? null) : null
+    const coordinator = PROJECT_ID_PATTERN.test(tabId) ? this.openTabs.get(tabId) : undefined
+    return coordinator && !coordinator.relocationPending ? coordinator : null
   }
 
   /** Main-only identity for linking local recovery to the document actually open in this tab. */
   getOpenDocumentId(tabId: string): string | null {
-    return PROJECT_ID_PATTERN.test(tabId)
-      ? (this.openTabs.get(tabId)?.document.documentId ?? null)
-      : null
+    return this.getOpenDocumentForAcceptance(tabId)?.document.documentId ?? null
   }
 
   getOpenTabs(): ProjectTab[] {
@@ -2252,12 +2270,22 @@ export class ProjectService {
             : null,
         health: 'ready',
         id: move.localProjectKey,
-        pendingMove: {
-          message:
-            move.errorMessage ??
-            'The Project move is pending. Restore workspace access and retry the original move.',
-          workspaceId: move.targetWorkspaceId,
-        },
+        ...(move.kind === 'rename'
+          ? {
+              pendingRename: {
+                message:
+                  move.errorMessage ?? 'The Project rename is pending. Retry the original name.',
+                name: move.rename!.targetTitle,
+              },
+            }
+          : {
+              pendingMove: {
+                message:
+                  move.errorMessage ??
+                  'The Project move is pending. Retry its original destination.',
+                workspaceId: move.targetWorkspaceId,
+              },
+            }),
         previewStatus: 'unavailable',
         recoveryStatus: 'none',
         thumbnailUrl: null,
@@ -2336,15 +2364,13 @@ export class ProjectService {
     await this.initialize()
     const pending = await this.options.repository.relocations.get(projectId)
     if (pending) {
-      if (pending.targetWorkspaceId !== workspaceId) {
+      if (pending.kind !== 'move' || pending.targetWorkspaceId !== workspaceId) {
         throw new ProjectServiceError(
           'PROJECT_NOT_READY',
-          'Finish the pending move to its original destination before choosing another workspace.',
+          'Finish the pending Project operation with its original destination first.',
         )
       }
-      return await this.options.repository.relocations.finishMove(pending, () =>
-        this.assertRelocationQuiescent(projectId, pending.sourcePath),
-      )
+      return await this.finishLiveMove(pending)
     }
     const record = await this.options.repository.getProject(projectId)
     if (!record || record.fileHealth !== 'ready') {
@@ -2353,7 +2379,11 @@ export class ProjectService {
         'Only an available saved Project can be moved. Refresh Home and try again.',
       )
     }
-    const guard = () => this.assertRelocationQuiescent(projectId, record.canonicalPath)
+    const coordinator = this.openTabs.get(projectId)
+    const guard = () => {
+      this.assertRelocationQuiescent(projectId, record.canonicalPath, coordinator)
+      this.liveRelocations.get(projectId)?.reservation.assertCurrent()
+    }
     guard()
     if (record.workspaceId === workspaceId) {
       return { kind: 'moved' }
@@ -2369,23 +2399,42 @@ export class ProjectService {
         )
       }
     }
-    const recovery = await ProjectAutosaveCoordinator.inspectRecovery(
-      record.canonicalPath,
-      this.options.shadow,
-    )
-    if (recovery.status !== 'absent' && recovery.status !== 'clean') {
-      throw new ProjectServiceError(
-        'PROJECT_RECOVERY_UNAVAILABLE',
-        'Open the Project and resolve its document recovery before moving it.',
+    try {
+      if (coordinator) {
+        const reservation = await coordinator.prepareRelocation(
+          path.join(target.directoryPath, path.basename(record.canonicalPath)),
+        )
+        this.liveRelocations.set(projectId, { coordinator, reservation })
+      }
+      guard()
+      const recovery = await ProjectAutosaveCoordinator.inspectRecovery(
+        record.canonicalPath,
+        this.options.shadow,
       )
+      if (recovery.status !== 'absent' && recovery.status !== 'clean') {
+        throw new ProjectServiceError(
+          'PROJECT_RECOVERY_UNAVAILABLE',
+          'Open the Project and resolve its document recovery before moving it.',
+        )
+      }
+      const prepared = await this.options.repository.relocations.beginMove(
+        record,
+        source,
+        target,
+        guard,
+      )
+      return await this.finishLiveMove(prepared)
+    } catch (error) {
+      // Once intent exists, only Retry or explicit Close can release the live reservation.
+      if (!(await this.options.repository.relocations.get(projectId))) {
+        const live = this.liveRelocations.get(projectId)
+        if (live) {
+          live.reservation.release()
+          this.liveRelocations.delete(projectId)
+        }
+      }
+      throw error
     }
-    const prepared = await this.options.repository.relocations.beginMove(
-      record,
-      source,
-      target,
-      guard,
-    )
-    return await this.options.repository.relocations.finishMove(prepared, guard)
   }
 
   async moveRasterLayer(tabId: string, layerId: string, targetIndex: number): Promise<ProjectTab> {
@@ -2902,6 +2951,82 @@ export class ProjectService {
         }
       }
     })
+  }
+
+  async renameProject(
+    projectId: string,
+    name: string,
+  ): Promise<import('../../shared/api.js').ProjectRenameResult> {
+    assertProjectId(projectId)
+    const title = normalizeProjectRenameName(name)
+    if (!title) {
+      throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'Choose a valid Project name.')
+    }
+    await this.initialize()
+    const pending = await this.options.repository.relocations.get(projectId)
+    if (pending) {
+      if (pending.kind !== 'rename' || pending.rename?.targetTitle !== title) {
+        throw new ProjectServiceError(
+          'PROJECT_NOT_READY',
+          'Finish the pending Project operation with its original name or destination first.',
+        )
+      }
+      const result = await this.options.repository.relocations.finishMove(pending, () =>
+        this.assertRelocationQuiescent(projectId, pending.sourcePath),
+      )
+      return result.kind === 'moved' ? { kind: 'renamed' } : result
+    }
+    const record = await this.options.repository.getProject(projectId)
+    if (!record || record.fileHealth !== 'ready') {
+      throw new ProjectServiceError(
+        'PROJECT_NOT_READY',
+        'Only an available saved Project can be renamed.',
+      )
+    }
+    const guard = () => this.assertRelocationQuiescent(projectId, record.canonicalPath)
+    guard()
+    if (record.displayName === title && path.basename(record.canonicalPath) === `${title}.igs`) {
+      return { kind: 'renamed' }
+    }
+    const workspace = await this.options.repository.workspaceById(record.workspaceId)
+    const availability = await this.options.repository.workspaceAvailability(workspace)
+    if (availability.availability !== 'available' || !availability.writable) {
+      throw new ProjectServiceError(
+        'PROJECT_NOT_READY',
+        'The workspace folder must be available and writable before Rename.',
+      )
+    }
+    const recovery = await ProjectAutosaveCoordinator.inspectRecovery(
+      record.canonicalPath,
+      this.options.shadow,
+    )
+    if (recovery.status !== 'absent' && recovery.status !== 'clean') {
+      throw new ProjectServiceError(
+        'PROJECT_RECOVERY_UNAVAILABLE',
+        'Open the Project and resolve its document recovery before Rename.',
+      )
+    }
+    // Save may have committed this exact shadow before its clean marker was published.
+    // Normalize through the existing owner before title/revision change can make it stale.
+    const clean = await this.options.shadow.markClean(
+      record.canonicalPath,
+      record.documentRevision!,
+    )
+    if (!clean.directorySynced) {
+      throw new ProjectServiceError(
+        'PROJECT_RECOVERY_UNAVAILABLE',
+        'The saved recovery marker could not be confirmed on disk. Retry Rename after restoring storage access.',
+      )
+    }
+    guard()
+    const prepared = await this.options.repository.relocations.beginRename(
+      record,
+      workspace,
+      title,
+      guard,
+    )
+    const result = await this.options.repository.relocations.finishMove(prepared, guard)
+    return result.kind === 'moved' ? { kind: 'renamed' } : result
   }
 
   async resolveRecovery(
@@ -4379,8 +4504,29 @@ export class ProjectService {
   }
 
   /** Inspect both exact existing staging owners, including invalid/deferred entries. Never clean. */
-  private assertRelocationQuiescent(projectId: string, canonicalPath: string): void {
-    this.assertClosedForLifecycle(projectId, canonicalPath)
+  private assertRelocationQuiescent(
+    projectId: string,
+    canonicalPath: string,
+    allowedCoordinator?: ProjectAutosaveCoordinator,
+  ): void {
+    if (!allowedCoordinator) {
+      this.assertClosedForLifecycle(projectId, canonicalPath)
+    } else if (
+      this.openTabs.get(projectId) !== allowedCoordinator ||
+      this.opening.has(projectId) ||
+      this.saving.has(projectId) ||
+      this.rebuilding.has(projectId) ||
+      [...this.openTabs.entries()].some(
+        ([id, coordinator]) => id !== projectId && coordinator.filePath === canonicalPath,
+      )
+    ) {
+      throw new ProjectServiceError(
+        'PROJECT_NOT_READY',
+        'Wait for the Project operation to finish.',
+      )
+    } else if (allowedCoordinator.dirty) {
+      throw new ProjectServiceError('PROJECT_DIRTY', 'Save or close the Project before moving it.')
+    }
     try {
       const root = lstatSync(this.options.dataRoot)
       if (
@@ -4450,6 +4596,28 @@ export class ProjectService {
     }
     assertCurrent()
     return { assertCurrent, coordinator, document, documentEpoch }
+  }
+
+  private async finishLiveMove(
+    record: import('./project-relocation-store.js').ProjectRelocationRecord,
+  ): Promise<ProjectMoveResult> {
+    const projectId = record.localProjectKey
+    const live = this.liveRelocations.get(projectId)
+    const guard = () => {
+      this.assertRelocationQuiescent(projectId, record.sourcePath, live?.coordinator)
+      live?.reservation.assertCurrent()
+    }
+    const result = await this.options.repository.relocations.finishMove(record, guard, async () => {
+      if (live) {
+        await live.reservation.rebind()
+        this.tabWorkspaceIds.set(projectId, record.targetWorkspaceId)
+      }
+    })
+    if (result.kind === 'moved' && live) {
+      live.reservation.release()
+      this.liveRelocations.delete(projectId)
+    }
+    return result
   }
 
   private async inspectTemporaryRecovery(
@@ -4664,6 +4832,12 @@ export class ProjectService {
     if (!coordinator) {
       throw new ProjectServiceError('PROJECT_NOT_OPEN', 'This Project tab is not open.')
     }
+    if (coordinator.relocationPending) {
+      throw new ProjectServiceError(
+        'PROJECT_NOT_READY',
+        'This Project has a pending move. Finish it from Home or close this tab.',
+      )
+    }
     return coordinator
   }
 
@@ -4817,7 +4991,11 @@ export class ProjectService {
   }
 
   private toTab(id: string, coordinator: ProjectAutosaveCoordinator): ProjectTab {
-    return { ...toTab(id, coordinator), workspaceId: this.tabWorkspaceIds.get(id) }
+    return {
+      ...toTab(id, coordinator),
+      relocationPending: coordinator.relocationPending,
+      workspaceId: this.tabWorkspaceIds.get(id),
+    }
   }
 
   private async toWorkspaceSummary(

@@ -3,12 +3,14 @@ import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.
 
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { copyFile, mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
+import { copyFile, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
+import { openAppDatabase } from '../db/database.js'
 import { readIgsPackage } from './igs-package.js'
+import { refreshProjectLocationRegistry } from './project-identity.js'
 import { withProjectPathLock } from './project-path-lock.js'
 import { readProjectPlaceholders } from './project-placeholders.js'
 import { ProjectSession } from './project-session.js'
@@ -46,6 +48,109 @@ async function withSession(
     await rm(directory, { force: true, recursive: true })
   }
 }
+
+test('committed location rebind preserves the session and refreshes saved asset readers for later Save', async () => {
+  await withSession(async (session, directory) => {
+    const database = openAppDatabase(directory, path.resolve('src/main/db/migrations'))
+    try {
+      const source = session.filePath
+      const id = randomUUID()
+      const member = `assets/layers/${id}.png`
+      session.applyDocument({
+        ...session.document,
+        layers: [
+          {
+            asset: {
+              bytes: raster.length,
+              height: 2,
+              path: member,
+              sha256: sha256(raster),
+              width: 2,
+            },
+            blendMode: 'normal',
+            id,
+            kind: 'raster',
+            locked: false,
+            name: 'Saved raster',
+            opacity: 1,
+            transform: { rotationDegrees: 0, scaleX: 1, scaleY: 1, x: 0, y: 0 },
+            visible: true,
+          },
+        ],
+      })
+      await session.save({ assets: { [member]: { bytes: raster } }, lastActualSeedSnapshot: 915 })
+      const savedDocument = session.document
+      session.assertCurrentLocation(source)
+      const destination = path.join(directory, 'moved.igs')
+      await rename(source, destination)
+      await database.db
+        .insertInto('project_identity_binding')
+        .values({
+          canonical_path: destination,
+          document_id: session.document.documentId,
+          local_project_key: session.localRecoveryKey,
+        })
+        .execute()
+      refreshProjectLocationRegistry(database.db)
+      await session.rebindLocation(destination, source)
+      assert.equal(session.filePath, destination)
+      assert.equal(session.dirty, false)
+      assert.deepEqual(session.document, savedDocument)
+      session.assertCurrentLocation(destination)
+      session.applyDocument({ ...session.document, title: 'Saved after Move' })
+      assert.equal((await session.save()).reloadRequired, false)
+      const reopened = await readIgsPackage(destination)
+      assert.equal(reopened.project.title, 'Saved after Move')
+      assert.equal(reopened.project.lastActualSeedSnapshot, 915)
+      assert.deepEqual(await reopened.readMember(member), raster)
+      await assert.rejects(readFile(source), { code: 'ENOENT' })
+    } finally {
+      await database.close()
+    }
+  })
+})
+
+test('rebind rejects a moved package with another document and leaves the original session retryable', async () => {
+  await withSession(async (session, directory) => {
+    const database = openAppDatabase(directory, path.resolve('src/main/db/migrations'))
+    try {
+      const source = session.filePath
+      const destination = path.join(directory, 'moved.igs')
+      const original = await readFile(source)
+      const originalDocument = session.document
+      await rename(source, destination)
+      await assert.rejects(session.rebindLocation(destination, source), {
+        code: 'PROJECT_EXTERNAL_CHANGE',
+      })
+      await database.db
+        .insertInto('project_identity_binding')
+        .values({
+          canonical_path: destination,
+          document_id: originalDocument.documentId,
+          local_project_key: session.localRecoveryKey,
+        })
+        .execute()
+      refreshProjectLocationRegistry(database.db)
+      const other = await ProjectSession.create(path.join(directory, 'other.igs'), 'Other', {
+        placeholdersDir: bundledPlaceholders,
+        scratchDir: path.join(directory, 'scratch'),
+      })
+      await copyFile(other.filePath, destination)
+      await assert.rejects(session.rebindLocation(destination, source), {
+        code: 'PROJECT_EXTERNAL_CHANGE',
+      })
+      assert.equal(session.filePath, source)
+      assert.equal(session.dirty, false)
+      assert.deepEqual(session.document, originalDocument)
+      await writeFile(destination, original)
+      await session.rebindLocation(destination, source)
+      session.assertCurrentLocation(destination)
+      assert.deepEqual(session.document, originalDocument)
+    } finally {
+      await database.close()
+    }
+  })
+})
 
 test('initial preset authoring is detached before asynchronous creation and present in the first saved package', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'igs-session-initial-'))

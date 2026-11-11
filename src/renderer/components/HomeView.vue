@@ -25,6 +25,7 @@ const props = defineProps<{
   busy: boolean
   error: string | null
   loading: boolean
+  openProjectIds?: string[]
   pendingAction: { kind: 'open' | 'rebuild'; projectId: string } | null
   projects: ProjectSummary[]
   trashError: string | null
@@ -50,6 +51,7 @@ const emit = defineEmits<{
   openProject: [projectId: string]
   rebuildPreview: [projectId: string]
   refresh: []
+  renameProject: [project: ProjectSummary]
   restoreProject: [project: ProjectTrashSummary]
   revealProject: [projectId: string]
   revealWorkspace: [workspaceId: string]
@@ -74,6 +76,12 @@ function requestDelete(project: ProjectSummary) {
     emit('deleteProject', trashed)
   }
 }
+function canRequestRename(project: ProjectSummary) {
+  return (
+    props.openProjectIds?.includes(project.id) ||
+    (project.health === 'ready' && project.recoveryStatus === 'none')
+  )
+}
 function requestProjectAction(key: number | string, project: ProjectSummary) {
   if (project.pendingMove) {
     if (key === 'move') {
@@ -81,10 +89,18 @@ function requestProjectAction(key: number | string, project: ProjectSummary) {
     }
     return
   }
+  if (project.pendingRename) {
+    if (key === 'rename') {
+      emit('renameProject', project)
+    }
+    return
+  }
   if (key === 'reveal') {
     emit('revealProject', project.id)
   } else if (key === 'move' && project.health === 'ready') {
     emit('moveProject', project)
+  } else if (key === 'rename' && canRequestRename(project)) {
+    emit('renameProject', project)
   } else if (key === 'trash') {
     emit('trashProject', project)
   }
@@ -157,6 +173,7 @@ watch(
 function showThumbnail(project: ProjectSummary): boolean {
   return (
     !project.pendingMove &&
+    !project.pendingRename &&
     project.health === 'ready' &&
     project.thumbnailUrl !== null &&
     !failedThumbnailUrls.value.has(project.thumbnailUrl)
@@ -173,6 +190,7 @@ function canRebuildPreview(project: ProjectSummary): boolean {
   return (
     !props.trashView &&
     !project.pendingMove &&
+    !project.pendingRename &&
     project.health === 'ready' &&
     project.previewStatus === 'unavailable' &&
     (project.recoveryStatus === 'none' || project.recoveryStatus === 'unavailable')
@@ -187,7 +205,7 @@ const visibleProjects = computed(() => {
 })
 
 function previewLabel(project: ProjectSummary): string | null {
-  if (project.pendingMove || project.health !== 'ready') {
+  if (project.pendingMove || project.pendingRename || project.health !== 'ready') {
     return null
   }
   switch (project.previewStatus) {
@@ -209,6 +227,9 @@ function previewLabel(project: ProjectSummary): string | null {
 function healthLabel(project: ProjectSummary): string | null {
   if (project.pendingMove) {
     return 'Move pending'
+  }
+  if (project.pendingRename) {
+    return 'Rename pending'
   }
   switch (project.health) {
     case 'corrupt': {
@@ -474,7 +495,12 @@ function recoveryLabel(project: ProjectSummary): string | null {
                   {{ healthLabel(project) }}
                 </NTag>
                 <NTag
-                  v-if="!trashView && !project.pendingMove && recoveryLabel(project)"
+                  v-if="
+                    !trashView &&
+                    !project.pendingMove &&
+                    !project.pendingRename &&
+                    recoveryLabel(project)
+                  "
                   key="recovery"
                   size="small"
                   type="warning"
@@ -513,8 +539,16 @@ function recoveryLabel(project: ProjectSummary): string | null {
               <span v-if="!trashView && project.pendingMove" class="project-diagnostic">
                 {{ project.pendingMove.message }}
               </span>
+              <span v-if="!trashView && project.pendingRename" class="project-diagnostic">
+                {{ project.pendingRename.message }}
+              </span>
               <span
-                v-if="!trashView && !project.pendingMove && project.recoveryReason"
+                v-if="
+                  !trashView &&
+                  !project.pendingMove &&
+                  !project.pendingRename &&
+                  project.recoveryReason
+                "
                 class="project-diagnostic"
               >
                 {{ project.recoveryReason }}
@@ -560,7 +594,11 @@ function recoveryLabel(project: ProjectSummary): string | null {
                 key="n-button-2"
                 :aria-label="`Open ${project.title}`"
                 class="open-project"
-                :disabled="busy || Boolean(project.pendingMove) || project.health !== 'ready'"
+                :disabled="
+                  busy ||
+                  Boolean(project.pendingMove || project.pendingRename) ||
+                  project.health !== 'ready'
+                "
                 :loading="pendingAction?.kind === 'open' && pendingAction.projectId === project.id"
                 size="small"
                 @click="$emit('openProject', project.id)"
@@ -573,15 +611,22 @@ function recoveryLabel(project: ProjectSummary): string | null {
                 :options="
                   project.pendingMove
                     ? [{ key: 'move', label: 'Retry Move' }]
-                    : [
-                        {
-                          key: 'move',
-                          label: 'Move to Workspace',
-                          disabled: project.health !== 'ready',
-                        },
-                        { key: 'reveal', label: 'Show in Folder' },
-                        { key: 'trash', label: 'Move to Trash' },
-                      ]
+                    : project.pendingRename
+                      ? [{ key: 'rename', label: 'Retry Rename' }]
+                      : [
+                          {
+                            key: 'rename',
+                            label: 'Rename',
+                            disabled: !canRequestRename(project),
+                          },
+                          {
+                            key: 'move',
+                            label: 'Move to Workspace',
+                            disabled: project.health !== 'ready',
+                          },
+                          { key: 'reveal', label: 'Show in Folder' },
+                          { key: 'trash', label: 'Move to Trash' },
+                        ]
                 "
                 trigger="click"
                 @select="requestProjectAction($event, project)"

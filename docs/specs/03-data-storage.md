@@ -16,6 +16,12 @@ ImageGen Studio остаётся однопользовательским deskto
 
 ## Current local relocation identity checkpoint
 
+[Clean-open Move and closed Rename](../engineering/phase-4-open-project-relocation-research.md)
+extend the existing journal with live rebind and operation-kind/expected Rename
+metadata. Migration0029 preserves legacy Move rows; no portable schema version or
+immutable generation payload changes. Rename uses exact existing members/preview
+through the IGS writer. Open title/Undo Rename and release migration remain gaps.
+
 [Closed Project Move](../engineering/phase-4-project-workspace-move-research.md)
 preserves an existing opaque local Project key while authoritatively binding its new
 physical canonical path. Ordinary legacy paths retain their compatibility path hash;

@@ -57,6 +57,7 @@ import {
 } from '../shared/projects/project-generation-actions.js'
 import { isGenerationTargetKey } from '../shared/projects/project-generation-target-state.js'
 import { ProjectMaskError } from '../shared/projects/project-mask.js'
+import { validateProjectRenameName } from '../shared/projects/project-rename.js'
 import { IGS_SAFETY_CEILINGS, IgsSchemaError } from '../shared/projects/project-schema.js'
 import type { IgsRectV1 } from '../shared/projects/project-schema.js'
 import {
@@ -818,9 +819,11 @@ if (!gotInstanceLock) {
       async function withClosedProjectMaintenance<T>(
         projectId: string,
         use: () => Promise<T>,
+        allowCleanOpen = false,
       ): Promise<T> {
         return await projectGenerationGate.run(projectId, async () => {
-          if (projectService.getOpenTabs().some((tab) => tab.id === projectId)) {
+          const tab = projectService.getOpenTabs().find((candidate) => candidate.id === projectId)
+          if (tab && (!allowCleanOpen || tab.dirty)) {
             throw new ProjectServiceError(
               'PROJECT_ALREADY_OPEN',
               'Close the Project before changing its location or Trash state.',
@@ -1433,6 +1436,7 @@ if (!gotInstanceLock) {
         ipcChannels.projects.open,
         ipcChannels.projects.rebuildPreview,
         ipcChannels.projects.removeWorkspace,
+        ipcChannels.projects.renameProject,
         ipcChannels.projects.resolveRecovery,
         ipcChannels.projects.restoreProject,
         ipcChannels.projects.revealProject,
@@ -1561,9 +1565,30 @@ if (!gotInstanceLock) {
       registerProjectHandler(
         ipcChannels.projects.moveProject,
         (args) => args.length === 2 && isProjectId(args[0]) && isProjectWorkspaceId(args[1]),
-        (id, workspaceId) =>
+        async (id, workspaceId) => {
+          try {
+            return await withClosedProjectMaintenance(
+              id as string,
+              () => projectService.moveProject(id as string, workspaceId as string),
+              true,
+            )
+          } finally {
+            if (!window.isDestroyed()) {
+              window.webContents.send(
+                ipcChannels.projects.tabsChanged,
+                projectService.getOpenTabs(),
+              )
+            }
+          }
+        },
+      )
+      registerProjectHandler(
+        ipcChannels.projects.renameProject,
+        (args) =>
+          args.length === 2 && isProjectId(args[0]) && validateProjectRenameName(args[1]) === null,
+        (id, name) =>
           withClosedProjectMaintenance(id as string, () =>
-            projectService.moveProject(id as string, workspaceId as string),
+            projectService.renameProject(id as string, name as string),
           ),
       )
       registerProjectHandler(ipcChannels.projects.listTrash, noArgs, () =>

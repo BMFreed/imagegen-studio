@@ -244,6 +244,40 @@ test('tab workspace identity is additive for legacy messages and strict when sup
   }
 })
 
+test('tab relocation state is additive for legacy messages and strictly boolean when supplied', async () => {
+  const f = await fixture()
+  const document = createEmptyProjectDocumentV1({ title: 'Moving tab' })
+  const tab = {
+    acceptedResults: [],
+    autosaveError: null,
+    canRedo: false,
+    canUndo: false,
+    dirty: false,
+    documentId: document.documentId,
+    documentRevision: document.documentRevision,
+    generationDraft: document.generationDraft,
+    id: `project-v1-${'e'.repeat(64)}`,
+    lastActualSeedSnapshot: null,
+    layers: [],
+    primaryBbox: document.primaryBbox,
+    title: document.title,
+  }
+  for (const relocationPending of [undefined, false, true]) {
+    f.state.value = { ...tab, relocationPending }
+    assert.equal(
+      (await f.api.projects.create({ height: 64, title: 'Moving tab', width: 64 })).ok,
+      true,
+    )
+  }
+  for (const relocationPending of [null, 1, 'true']) {
+    f.state.value = { ...tab, relocationPending }
+    assert.equal(
+      (await f.api.projects.create({ height: 64, title: 'Moving tab', width: 64 })).ok,
+      false,
+    )
+  }
+})
+
 test('Move preload transports only stable Project and target workspace IDs and validates pending results', async () => {
   const f = await fixture()
   const id = `project-v1-${'c'.repeat(64)}`
@@ -285,4 +319,54 @@ test('Home preload preserves a finite pending Move projection and rejects arbitr
     f.state.value = [{ ...summary, pendingMove }]
     assert.equal((await f.api.projects.list()).ok, false)
   }
+})
+
+test('Rename preload transports opaque Project identity and a name, validating finite pending replies', async () => {
+  const f = await fixture()
+  const id = `project-v1-${'f'.repeat(64)}`
+  for (const value of [{ kind: 'renamed' }, { kind: 'pending', message: 'Retry original name' }]) {
+    f.state.value = value
+    assert.equal((await f.api.projects.renameProject(id, 'New name')).ok, true)
+  }
+  assert.deepEqual(f.calls[0], {
+    args: [id, 'New name'],
+    channel: ipcChannels.projects.renameProject,
+  })
+  for (const value of [
+    { kind: 'moved' },
+    { kind: 'pending' },
+    { kind: 'pending', message: null },
+  ]) {
+    f.state.value = value
+    assert.equal((await f.api.projects.renameProject(id, 'New name')).ok, false)
+  }
+  const summary = {
+    bbox: null,
+    health: 'ready',
+    id,
+    previewStatus: 'unavailable',
+    recoveryStatus: 'none',
+    thumbnailUrl: null,
+    title: 'Old name',
+    workspaceId: randomUUID(),
+  }
+  f.state.value = [{ ...summary, pendingRename: { message: 'Pending', name: 'New name' } }]
+  assert.equal((await f.api.projects.list()).ok, true)
+  for (const pendingRename of [
+    { message: 'Pending', name: '../outside' },
+    { message: 'Pending', name: ' Untrimmed ' },
+    { name: 'New name' },
+    { message: 'Pending', name: 4 },
+  ]) {
+    f.state.value = [{ ...summary, pendingRename }]
+    assert.equal((await f.api.projects.list()).ok, false)
+  }
+  f.state.value = [
+    {
+      ...summary,
+      pendingMove: { message: 'Other operation', workspaceId: randomUUID() },
+      pendingRename: { message: 'Pending', name: 'New name' },
+    },
+  ]
+  assert.equal((await f.api.projects.list()).ok, false)
 })

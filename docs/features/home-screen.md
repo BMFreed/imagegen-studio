@@ -2,12 +2,18 @@
 
 ## Production checkpoint
 
-[Closed Project Move](../engineering/phase-4-project-workspace-move-research.md)
-connects same-filesystem workspace moves for closed ready saved Projects, preserving
-stable local identity and exact frozen Retry inputs. Pending moves remain visible
-with their original target and retry; startup recovers before scanning. Open Projects,
-active work and unresolved document/generation recovery are refused without implicit
-Save/close/discard. Clean-open Move, Rename and cross-filesystem transfer remain gaps.
+[Open Project relocation](../engineering/phase-4-open-project-relocation-research.md)
+extends the existing same-filesystem Move to clean open Projects while retaining
+the same tab, Undo/Redo and package readers. Pending live moves fence edits and
+generation until original-target Retry or explicit Close; startup recovers the
+journal before scanning. Dirty Projects and unresolved document/generation
+recovery are refused without implicit Save/close/discard.
+
+Closed saved Project Rename now changes both title and `.igs` filename, preserving
+assets/previews and immutable provenance. Pending Rename freezes the original
+name; Open and conflicting operations stay blocked. Open/dirty Rename and
+cross-filesystem transfer remain gaps. These finite checkpoints do not promote
+PP-007 or complete the Home contract.
 
 [Home locations](../engineering/phase-4-home-locations-research.md) connects Project
 and workspace Show in Folder through validated Main-owned locations; no renderer

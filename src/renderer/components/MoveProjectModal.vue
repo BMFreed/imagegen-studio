@@ -64,7 +64,7 @@ function move() {
     >
       <p v-if="blocked">
         <strong>{{ project?.title }}</strong>
-        is open. Close the project before moving it to another workspace.
+        has unsaved changes. Save or close the Project before moving it to another workspace.
       </p>
       <template v-else>
         <p v-if="pendingMessage">
