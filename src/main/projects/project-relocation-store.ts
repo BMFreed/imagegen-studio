@@ -16,6 +16,7 @@ import type { BigIntStats } from 'node:fs'
 
 import { createHash, randomUUID } from 'node:crypto'
 import {
+  accessSync,
   closeSync,
   constants,
   fstatSync,
@@ -33,8 +34,18 @@ import { isDeepStrictEqual } from 'node:util'
 import type { DB } from '../db/database.types.js'
 import type { ProjectIndexRecord, ProjectWorkspaceRecord } from './project-index.js'
 
-import { type IgsAssetSource, readIgsPackage, saveIgsPackage } from './igs-package.js'
-import { localProjectRecoveryKey, refreshProjectLocationRegistry } from './project-identity.js'
+import {
+  type IgsAssetSource,
+  type IgsPackageReadResult,
+  readIgsPackage,
+  saveIgsPackage,
+} from './igs-package.js'
+import {
+  localProjectRecoveryKey,
+  rawPathDerivedProjectRecoveryKey,
+  refreshProjectLocationRegistry,
+} from './project-identity.js'
+import { assertProjectLocationRegistryCompatible } from './project-location-registry.js'
 import { withProjectPathLock } from './project-path-lock.js'
 
 export interface ProjectRelocationRecord {
@@ -86,7 +97,20 @@ interface StoreOptions {
   beforeFinalize?: (record: ProjectRelocationRecord) => Promise<void>
   /** Causal seam; source digest and synchronous destination guards follow before replacement. */
   beforeMetadataReplace?: (record: ProjectRelocationRecord) => Promise<void>
+  /** Test seam before the final candidate/absence checks and atomic metadata-only repoint. */
+  beforeRelinkCommit?: () => Promise<void>
 }
+type RepointOwner = Pick<
+  ProjectRelocationRecord,
+  | 'destinationPath'
+  | 'documentId'
+  | 'localProjectKey'
+  | 'project'
+  | 'rename'
+  | 'sourcePath'
+  | 'sourceWorkspaceId'
+  | 'targetWorkspaceId'
+>
 export class ProjectRelocationStoreError extends Error {
   constructor(
     readonly code: 'PROJECT_MOVE_CONFLICT' | 'PROJECT_MOVE_INVALID' | 'PROJECT_MOVE_PENDING',
@@ -282,6 +306,144 @@ export class ProjectRelocationStore {
     for (const record of await this.list()) {
       await this.finishMove(record, () => guardSync?.(record))
     }
+  }
+
+  /** Reconnect an already-existing file through the same stable-name repoint; never move it. */
+  async relinkMissingProject(
+    project: ProjectIndexRecord,
+    sourceWorkspace: ProjectWorkspaceRecord,
+    targetWorkspace: ProjectWorkspaceRecord,
+    candidatePath: string,
+    guardSync: () => void,
+    validateCandidate: (saved: IgsPackageReadResult, candidateKey: string) => Promise<void>,
+  ): Promise<void> {
+    project = structuredClone(project)
+    sourceWorkspace = structuredClone(sourceWorkspace)
+    targetWorkspace = structuredClone(targetWorkspace)
+    assertKey(project.localProjectKey)
+    assertUuid(project.documentId)
+    assertUuid(project.documentRevision)
+    if (
+      project.fileHealth !== 'missing' ||
+      !canonical(project.canonicalPath) ||
+      !canonical(candidatePath) ||
+      project.canonicalPath === candidatePath ||
+      path.extname(candidatePath).toLowerCase() !== '.igs' ||
+      path.extname(project.canonicalPath).toLowerCase() !== '.igs' ||
+      !isProjectWorkspaceId(sourceWorkspace.id) ||
+      !isProjectWorkspaceId(targetWorkspace.id) ||
+      sourceWorkspace.id !== project.workspaceId ||
+      path.dirname(project.canonicalPath) !== sourceWorkspace.directoryPath ||
+      path.dirname(candidatePath) !== targetWorkspace.directoryPath ||
+      localProjectRecoveryKey(project.canonicalPath) !== project.localProjectKey
+    ) {
+      throw new ProjectRelocationStoreError(
+        'PROJECT_MOVE_INVALID',
+        'The missing Project or located file could not be verified. Refresh Home and choose its saved file again.',
+      )
+    }
+    await withMoveLocks(project.canonicalPath, candidatePath, async () => {
+      guardSync()
+      const sourceParent = readableParent(sourceWorkspace.directoryPath)
+      const targetParent = readableParent(targetWorkspace.directoryPath)
+      const assertFiles = () => {
+        guardSync()
+        assertReadableParent(sourceWorkspace.directoryPath, sourceParent)
+        assertReadableParent(targetWorkspace.directoryPath, targetParent)
+        if (entryNow(project.canonicalPath) !== null) {
+          throw changed()
+        }
+        // ENOENT from a vanished parent cannot authorize adoption of another file.
+        assertReadableParent(sourceWorkspace.directoryPath, sourceParent)
+      }
+      assertFiles()
+      const candidate = entryNow(candidatePath)
+      if (!candidate || !regular(candidate) || realpathSync(candidatePath) !== candidatePath) {
+        throw changed()
+      }
+      const candidateWitness = witness(candidate)
+      const saved = await readIgsPackage(candidatePath)
+      assertFiles()
+      if (
+        saved.project.documentId !== project.documentId ||
+        saved.project.documentRevision !== project.documentRevision
+      ) {
+        throw changed()
+      }
+      const candidateKey = rawPathDerivedProjectRecoveryKey(candidatePath)
+      const digest = await hashChecked(candidatePath, candidateWitness, true)
+      assertFiles()
+      await validateCandidate(saved, candidateKey)
+      assertFiles()
+      const thumbnailSha256 = saved.manifest.members.find(
+        (member) => member.path === 'preview/thumbnail.webp',
+      )?.sha256
+      if (!thumbnailSha256) {
+        throw changed()
+      }
+      const owner: RepointOwner = {
+        destinationPath: candidatePath,
+        documentId: project.documentId,
+        localProjectKey: project.localProjectKey,
+        project: {
+          ...project,
+          bboxHeight: saved.project.primaryBbox.height,
+          bboxWidth: saved.project.primaryBbox.width,
+          displayName: saved.project.title,
+          previewStatus: saved.manifest.preview.status,
+          thumbnailSha256,
+        },
+        rename: null,
+        sourcePath: project.canonicalPath,
+        sourceWorkspaceId: sourceWorkspace.id,
+        targetWorkspaceId: targetWorkspace.id,
+      }
+      await this.db.transaction().execute(async (transaction) => {
+        const original = await transaction
+          .selectFrom('project_index')
+          .selectAll()
+          .where('local_project_key', '=', project.localProjectKey)
+          .executeTakeFirst()
+        guardSync()
+        if (
+          !original ||
+          original.canonical_path !== project.canonicalPath ||
+          original.workspace_id !== sourceWorkspace.id ||
+          original.document_id !== project.documentId ||
+          original.document_revision !== project.documentRevision ||
+          original.file_health !== 'missing' ||
+          original.trashed_at !== null
+        ) {
+          throw conflict()
+        }
+        await assertRelinkDestination(transaction, owner, candidateKey, candidateWitness)
+        guardSync()
+        await assertOperationalRows(transaction, owner)
+        guardSync()
+        await validateCandidate(saved, candidateKey)
+        assertFiles()
+        await this.options.beforeRelinkCommit?.()
+        await hashChecked(candidatePath, candidateWitness, true, digest)
+        assertFiles()
+        await repoint(transaction, owner, candidateWitness)
+        assertFiles()
+        if (!sameOriginal(entryNow(candidatePath), candidateWitness)) {
+          throw changed()
+        }
+        assertProjectLocationRegistryCompatible(this.db)
+        guardSync()
+      })
+      // A post-commit projection failure stays fail-closed; it cannot undo committed SQLite.
+      refreshProjectLocationRegistry(this.db)
+    }).catch((error: unknown) => {
+      if (error instanceof ProjectRelocationStoreError) {
+        throw new ProjectRelocationStoreError(
+          error.code === 'PROJECT_MOVE_INVALID' ? error.code : 'PROJECT_MOVE_CONFLICT',
+          'The missing Project or located file changed, or the selected location already belongs to another Project. Refresh Home and choose its saved file again. No file was moved or replaced.',
+        )
+      }
+      throw error
+    })
   }
   private async beginRelocation(
     project: ProjectIndexRecord,
@@ -527,9 +689,110 @@ export class ProjectRelocationStore {
     record.targetWitness = target.witness
   }
 }
+async function assertRelinkDestination(
+  db: Transaction<DB>,
+  owner: RepointOwner,
+  candidateKey: string,
+  candidateWitness: FileWitness,
+): Promise<void> {
+  const paths = [owner.sourcePath, owner.destinationPath]
+  const relocation = await db
+    .selectFrom('project_relocation')
+    .select('local_project_key')
+    .where((eb) =>
+      eb.or([
+        eb('local_project_key', 'in', [owner.localProjectKey, candidateKey]),
+        eb('source_path', 'in', paths),
+        eb('destination_path', 'in', paths),
+      ]),
+    )
+    .executeTakeFirst()
+  const retired = await db
+    .selectFrom('project_identity_retired_key')
+    .select('local_project_key')
+    .where('local_project_key', 'in', [owner.localProjectKey, candidateKey])
+    .executeTakeFirst()
+  const bindings = await db
+    .selectFrom('project_identity_binding')
+    .selectAll()
+    .where((eb) =>
+      eb.or([
+        eb('local_project_key', '=', candidateKey),
+        eb('canonical_path', '=', owner.destinationPath),
+      ]),
+    )
+    .execute()
+  if (
+    relocation ||
+    retired ||
+    bindings.some(
+      (binding) =>
+        binding.local_project_key !== owner.localProjectKey ||
+        binding.canonical_path !== owner.sourcePath ||
+        binding.document_id !== owner.documentId,
+    )
+  ) {
+    throw conflict()
+  }
+  if (candidateKey !== owner.localProjectKey) {
+    // A derived key with any operational history is an owner, not a disposable scan cache.
+    for (const table of [
+      'generation_queue_item',
+      'generation_candidate_receipt',
+      'generation_acceptance_journal',
+      'project_file_lifecycle',
+      'generation_seed_cursor',
+      'generation_staging_discarded_session',
+    ] as const) {
+      if (
+        await db
+          .selectFrom(table)
+          .select('local_project_key')
+          .where('local_project_key', '=', candidateKey)
+          .executeTakeFirst()
+      ) {
+        throw conflict()
+      }
+    }
+  }
+  const indexed = await db
+    .selectFrom('project_index')
+    .selectAll()
+    .where((eb) =>
+      eb.or([
+        eb('local_project_key', '=', candidateKey),
+        eb('canonical_path', '=', owner.destinationPath),
+      ]),
+    )
+    .execute()
+  for (const row of indexed) {
+    if (
+      row.local_project_key === owner.localProjectKey &&
+      row.canonical_path === owner.sourcePath
+    ) {
+      continue
+    }
+    if (
+      row.local_project_key !== candidateKey ||
+      candidateKey === owner.localProjectKey ||
+      row.canonical_path !== owner.destinationPath ||
+      row.workspace_id !== owner.targetWorkspaceId ||
+      row.document_id !== owner.documentId ||
+      row.document_revision !== owner.project.documentRevision ||
+      row.file_health !== 'ready' ||
+      row.file_fingerprint !== fingerprint(candidateWitness) ||
+      row.trashed_at !== null ||
+      row.last_opened_at !== null
+    ) {
+      throw conflict()
+    }
+    // Keep the authoritative missing identity; this row was only an unowned scan projection.
+    await db.deleteFrom('project_index').where('local_project_key', '=', candidateKey).execute()
+  }
+}
 async function assertOperationalRows(
   db: Kysely<DB> | Transaction<DB>,
-  record: ProjectRelocationRecord,
+  record: RepointOwner,
 ): Promise<void> {
   const paths = [record.sourcePath, record.destinationPath]
   const workspaces = await db
@@ -658,7 +921,7 @@ async function assertOperationalRows(
 }
 async function repoint(
   db: Transaction<DB>,
-  record: ProjectRelocationRecord,
+  record: RepointOwner,
   moved: FileWitness,
 ): Promise<void> {
   await db
@@ -1039,6 +1302,21 @@ function parentOf(p: string): ParentWitness {
     throw changed()
   }
   return { dev: s.dev.toString(), ino: s.ino.toString() }
+}
+function readableParent(p: string): ParentWitness {
+  const result = parentOf(p)
+  const s = lstatSync(p)
+  if ((s.mode & 0o444) === 0 || (s.mode & 0o111) === 0) {
+    throw changed()
+  }
+  accessSync(p, constants.R_OK | constants.X_OK)
+  return result
+}
+function assertReadableParent(p: string, expected: ParentWitness): void {
+  const current = readableParent(p)
+  if (current.dev !== expected.dev || current.ino !== expected.ino) {
+    throw changed()
+  }
 }
 function sameParent(p: string, expected: ParentWitness): void {
   const current = parentOf(p)

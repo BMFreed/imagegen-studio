@@ -93,6 +93,17 @@ export function attachProjectLocationRegistry(
   }
 }
 
+/** Validate a draft repoint inside its transaction without publishing uncommitted identity. */
+export function assertProjectLocationRegistryCompatible(db: Kysely<DB>): void {
+  const owner = requireOwner(db)
+  const snapshot = readSnapshot(owner.sqlite)
+  if (owner.group.snapshot.tablePresent && !snapshot.tablePresent) {
+    throw unavailable('The authoritative Project identity table is missing.')
+  }
+  // The same precommit projection used by ensureProjectLocationIdentity; do not publish a draft.
+  project({ ...owner.group, failed: false, snapshot })
+}
+
 /** Call synchronously after a committed relocation transaction, before releasing admission. */
 export function refreshProjectLocationRegistry(db: Kysely<DB>): void {
   const owner = requireOwner(db)

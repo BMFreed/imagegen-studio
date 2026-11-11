@@ -1467,6 +1467,12 @@ const api: StudioApi = {
         (value): value is ProjectWorkspaceSummary[] =>
           Array.isArray(value) && value.every(isProjectWorkspaceSummary),
       ),
+    locateProject: (projectId) =>
+      invokeProject(
+        ipcChannels.projects.locateProject,
+        [projectId],
+        (value): value is boolean => typeof value === 'boolean',
+      ),
     moveProject: (projectId, workspaceId) =>
       invokeProject(
         ipcChannels.projects.moveProject,

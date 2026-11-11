@@ -201,7 +201,20 @@ export class ProjectShadowStore {
     projectPath: string
     savedPackage: IgsPackageReadResult
   }): Promise<ProjectShadowInspection> {
-    const { directory, key } = await this.identify(input.projectPath)
+    const { key } = await this.identify(input.projectPath)
+    return await this.inspectByLocalKey({ localProjectKey: key, savedPackage: input.savedPackage })
+  }
+
+  /** Read the retained owner before rebinding an externally moved file; never create/discard. */
+  async inspectByLocalKey(input: {
+    localProjectKey: string
+    savedPackage: IgsPackageReadResult
+  }): Promise<ProjectShadowInspection> {
+    const key = input.localProjectKey
+    if (!LOCAL_KEY_PATTERN.test(key)) {
+      throw new ProjectShadowError('SHADOW_INVALID_REQUEST', 'The Project recovery key is invalid.')
+    }
+    const directory = path.join(this.root, key)
     return await withKeyLock(key, async () => {
       let manifest: ShadowManifest | null
       try {

@@ -65,6 +65,7 @@ const emit = defineEmits<{
   createProject: []
   deleteProject: [project: ProjectTrashSummary]
   importProject: []
+  locateProject: [project: ProjectSummary]
   manageModels: []
   managePresets: []
   moveProject: [project: ProjectSummary]
@@ -118,7 +119,7 @@ function canRequestRename(project: ProjectSummary) {
     (project.health === 'ready' && project.recoveryStatus === 'none')
   )
 }
-function canRemoveMissingProject(project: ProjectSummary) {
+function canManageMissingProject(project: ProjectSummary) {
   return (
     !props.trashView &&
     project.health === 'missing' &&
@@ -151,7 +152,9 @@ function requestProjectAction(key: number | string, project: ProjectSummary) {
     emit('renameProject', project)
   } else if (key === 'trash') {
     emit('trashProject', project)
-  } else if (key === 'remove-missing' && canRemoveMissingProject(project)) {
+  } else if (key === 'locate' && canManageMissingProject(project)) {
+    emit('locateProject', project)
+  } else if (key === 'remove-missing' && canManageMissingProject(project)) {
     emit('removeMissingProject', project)
   }
 }
@@ -697,8 +700,11 @@ function recoveryLabel(project: ProjectSummary): string | null {
                           },
                           { key: 'reveal', label: 'Show in Folder' },
                           { key: 'trash', label: 'Move to Trash' },
-                          ...(canRemoveMissingProject(project)
-                            ? [{ key: 'remove-missing', label: 'Remove from Home' }]
+                          ...(canManageMissingProject(project)
+                            ? [
+                                { key: 'locate', label: 'Locate Project' },
+                                { key: 'remove-missing', label: 'Remove from Home' },
+                              ]
                             : []),
                         ]
                 "

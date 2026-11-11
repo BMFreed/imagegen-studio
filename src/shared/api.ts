@@ -212,6 +212,7 @@ export const ipcChannels = {
     listSmartPatchGenerationResults: 'projects:list-smart-patch-generation-results',
     listTrash: 'projects:list-trash',
     listWorkspaces: 'projects:list-workspaces',
+    locateProject: 'projects:locate',
     moveProject: 'projects:move-workspace',
     moveRasterLayer: 'projects:move-raster-layer',
     open: 'projects:open',
@@ -721,6 +722,7 @@ export interface ProjectApi {
   ) => Promise<ApiResult<ProjectSmartPatchResultsSnapshot>>
   listTrash: () => Promise<ApiResult<ProjectTrashSummary[]>>
   listWorkspaces: () => Promise<ApiResult<ProjectWorkspaceSummary[]>>
+  locateProject: (projectId: string) => Promise<ApiResult<boolean>>
   moveProject: (projectId: string, workspaceId: string) => Promise<ApiResult<ProjectMoveResult>>
   moveRasterLayer: (
     tabId: string,

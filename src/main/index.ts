@@ -820,25 +820,29 @@ if (!gotInstanceLock) {
         projectId: string,
         use: () => Promise<T>,
         allowCleanOpen = false,
-        removingMissingEntry = false,
+        missingEntryAction: 'locate' | 'remove' | null = null,
       ): Promise<T> {
         return await projectGenerationGate.run(projectId, async () => {
           const tab = projectService.getOpenTabs().find((candidate) => candidate.id === projectId)
           if (tab && (!allowCleanOpen || tab.dirty)) {
             throw new ProjectServiceError(
               'PROJECT_ALREADY_OPEN',
-              removingMissingEntry
-                ? 'Close the Project before removing its missing entry from Home.'
-                : 'Close the Project before changing its location or Trash state.',
+              missingEntryAction === 'locate'
+                ? 'Close the Project before locating its missing file.'
+                : missingEntryAction === 'remove'
+                  ? 'Close the Project before removing its missing entry from Home.'
+                  : 'Close the Project before changing its location or Trash state.',
             )
           }
           const services = generationLifecycleServices
           if (!services) {
             throw new ProjectServiceError(
               'PROJECT_INVALID_INPUT',
-              removingMissingEntry
-                ? 'Generation recovery cannot be inspected. Restore access before removing the missing entry from Home.'
-                : 'Generation recovery cannot be inspected. Repair recovery storage before changing Project location or Trash state.',
+              missingEntryAction === 'locate'
+                ? 'Generation recovery cannot be inspected. Restore access before locating the missing Project file.'
+                : missingEntryAction === 'remove'
+                  ? 'Generation recovery cannot be inspected. Restore access before removing the missing entry from Home.'
+                  : 'Generation recovery cannot be inspected. Repair recovery storage before changing Project location or Trash state.',
             )
           }
           return await services.orchestrator.withProjectMaintenanceFence(projectId, async () => {
@@ -851,9 +855,11 @@ if (!gotInstanceLock) {
             ) {
               throw new ProjectServiceError(
                 'PROJECT_INVALID_INPUT',
-                removingMissingEntry
-                  ? 'Restore access to the Project and resolve its pending generation or results before removing its missing entry from Home.'
-                  : 'Open the Project and resolve its pending generation or results before changing its location or Trash state.',
+                missingEntryAction === 'locate'
+                  ? 'Restore access to the Project and resolve its pending generation or results before locating its missing file.'
+                  : missingEntryAction === 'remove'
+                    ? 'Restore access to the Project and resolve its pending generation or results before removing its missing entry from Home.'
+                    : 'Open the Project and resolve its pending generation or results before changing its location or Trash state.',
               )
             }
             return await use()
@@ -1439,6 +1445,7 @@ if (!gotInstanceLock) {
         ipcChannels.projects.list,
         ipcChannels.projects.listTrash,
         ipcChannels.projects.listWorkspaces,
+        ipcChannels.projects.locateProject,
         ipcChannels.projects.moveProject,
         ipcChannels.projects.open,
         ipcChannels.projects.rebuildPreview,
@@ -1653,6 +1660,24 @@ if (!gotInstanceLock) {
         (id, input) =>
           projectService.updateWorkspace(id as string, parseProjectWorkspaceAddInput(input)),
       )
+      registerProjectHandler(ipcChannels.projects.locateProject, oneProjectId, (id) =>
+        withClosedProjectMaintenance(
+          id as string,
+          () =>
+            projectService.locateProject(id as string, async () => {
+              const selection = await dialog.showOpenDialog(window, {
+                filters: [{ extensions: ['igs'], name: 'ImageGen Studio Project' }],
+                properties: ['openFile'],
+                title: 'Locate Project',
+              })
+              return selection.canceled || selection.filePaths.length !== 1
+                ? null
+                : selection.filePaths[0]
+            }),
+          false,
+          'locate',
+        ),
+      )
       registerProjectHandler(
         ipcChannels.projects.removeMissingProject,
         (args) => args.length === 2 && isProjectId(args[0]) && args[1] === true,
@@ -1661,7 +1686,7 @@ if (!gotInstanceLock) {
             id as string,
             () => projectService.removeMissingProject(id as string),
             false,
-            true,
+            'remove',
           ),
       )
       registerProjectHandler(

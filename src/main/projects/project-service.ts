@@ -203,6 +203,7 @@ import {
   canonicalProjectPath,
   localProjectRecoveryKey,
   ProjectIdentityError,
+  rawPathDerivedProjectRecoveryKey,
 } from './project-identity.js'
 import {
   ProjectIndexError,
@@ -2364,6 +2365,92 @@ export class ProjectService {
       summaries.push(summary)
     }
     return summaries
+  }
+
+  /** Explicit OS selection reconnects a closed missing Project without importing or saving it. */
+  async locateProject(
+    projectId: string,
+    selectFile: () => Promise<string | null>,
+  ): Promise<boolean> {
+    assertProjectId(projectId)
+    await this.initialize()
+    const record = await this.options.repository.getProject(projectId)
+    if (
+      !record ||
+      record.fileHealth !== 'missing' ||
+      !record.documentId ||
+      !record.documentRevision
+    ) {
+      throw new ProjectServiceError(
+        'PROJECT_NOT_READY',
+        'Locate requires a missing Project with a known saved identity. Refresh Home or import the file separately.',
+      )
+    }
+    const source = await this.options.repository.workspaceById(record.workspaceId)
+    if (
+      (await this.options.repository.workspaceAvailability(source)).availability !== 'available'
+    ) {
+      throw new ProjectServiceError(
+        'PROJECT_NOT_READY',
+        'Restore access to the original workspace before locating this Project.',
+      )
+    }
+    this.assertRelocationQuiescent(projectId, record.canonicalPath)
+    const candidatePath = await selectFile()
+    if (candidatePath === null) {
+      return false
+    }
+    if (typeof candidatePath !== 'string' || !path.isAbsolute(candidatePath)) {
+      throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'Choose an .igs Project file.')
+    }
+    const target = (await this.options.repository.listWorkspaces()).find(
+      (workspace) => workspace.directoryPath === path.dirname(candidatePath),
+    )
+    if (!target) {
+      throw new ProjectServiceError(
+        'PROJECT_NOT_READY',
+        'Choose a file directly inside a registered workspace. Add its workspace first, or use Import Project.',
+      )
+    }
+    const derivedKey = rawPathDerivedProjectRecoveryKey(candidatePath)
+    const guard = () => {
+      this.assertRelocationQuiescent(projectId, record.canonicalPath)
+      this.assertRelocationQuiescent(derivedKey, candidatePath)
+    }
+    await this.options.repository.relocations.relinkMissingProject(
+      record,
+      source,
+      target,
+      candidatePath,
+      guard,
+      async (saved, candidateKey) => {
+        guard()
+        if (candidateKey !== projectId) {
+          const candidateRecovery = await this.options.shadow.inspectByLocalKey({
+            localProjectKey: candidateKey,
+            savedPackage: saved,
+          })
+          if (candidateRecovery.status !== 'absent') {
+            throw new ProjectServiceError(
+              'PROJECT_RECOVERY_UNAVAILABLE',
+              'The selected file has its own recovery owner. Open it separately instead of relinking it.',
+            )
+          }
+        }
+        const recovery = await this.options.shadow.inspectByLocalKey({
+          localProjectKey: projectId,
+          savedPackage: saved,
+        })
+        if (!['absent', 'clean', 'recoverable'].includes(recovery.status)) {
+          throw new ProjectServiceError(
+            'PROJECT_RECOVERY_UNAVAILABLE',
+            'The selected saved document does not match this Project recovery, or recovery could not be verified. Its recovery data was kept.',
+          )
+        }
+        guard()
+      },
+    )
+    return true
   }
 
   /** Lifecycle snapshots are authoritative even if their workspace registration was removed. */

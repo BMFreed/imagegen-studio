@@ -417,3 +417,24 @@ test('Remove from Home preload transports opaque identity and explicit confirmat
     assert.equal((await f.api.projects.removeMissingProject(id, true)).ok, false)
   }
 })
+
+test('Locate Project preload sends only opaque identity and validates boolean linked or canceled replies', async () => {
+  const f = await fixture()
+  const id = `project-v1-${'a'.repeat(64)}`
+  for (const value of [true, false]) {
+    f.state.value = value
+    const reply = await f.api.projects.locateProject(id)
+    assert.equal(reply.ok, true)
+    if (reply.ok) {
+      assert.equal(reply.value, value)
+    }
+  }
+  assert.deepEqual(f.calls, [
+    { args: [id], channel: ipcChannels.projects.locateProject },
+    { args: [id], channel: ipcChannels.projects.locateProject },
+  ])
+  for (const value of [null, undefined, 'true', 1, { located: true }]) {
+    f.state.value = value
+    assert.equal((await f.api.projects.locateProject(id)).ok, false)
+  }
+})

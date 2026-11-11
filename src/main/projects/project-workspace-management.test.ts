@@ -18,7 +18,9 @@ import path from 'node:path'
 import test from 'node:test'
 
 import { openAppDatabase } from '../db/database.js'
+import { readIgsPackage, saveIgsPackage } from './igs-package.js'
 import { ProjectAutosaveLeaseRegistry } from './project-autosave.js'
+import { localProjectRecoveryKey, refreshProjectLocationRegistry } from './project-identity.js'
 import { ProjectIndexRepository } from './project-index.js'
 import { ProjectService } from './project-service.js'
 import { ProjectSession } from './project-session.js'
@@ -666,5 +668,217 @@ test('missing Home removal refuses open Projects and rolled-back final guards ke
     )
     assert.deepEqual(await f.repository.getProject(tab.id), missing)
     assert.equal((await f.service.list(f.workspace.id))[0].health, 'ready')
+  })
+})
+
+async function locateFixture(f: Fixture) {
+  const project = await acceptedProject(f)
+  const record = await f.repository.getProject(project.id)
+  assert.ok(record)
+  const saved = await readIgsPackage(record.canonicalPath)
+  const shadow = new ProjectShadowStore(path.join(f.dataRoot, 'autosave'))
+  await shadow.write({
+    document: {
+      ...saved.project,
+      documentRevision: randomUUID(),
+      primaryBbox: { ...saved.project.primaryBbox, x: 8 },
+    },
+    projectPath: record.canonicalPath,
+    savedDocument: saved.project,
+  })
+  const shadowBytes = await bytesIn(path.join(f.dataRoot, 'autosave'))
+  const bytes = await readFile(record.canonicalPath)
+  const candidate = path.join(f.directory, 'Located project.igs')
+  await rename(record.canonicalPath, candidate)
+  const summaries = await f.service.list(f.workspace.id)
+  const disposable = summaries.find(({ id }) => id !== project.id)
+  assert.ok(disposable)
+  assert.equal(disposable.lastOpenedAt, null)
+  assert.equal(summaries.find(({ id }) => id === project.id)?.health, 'missing')
+  return {
+    bytes,
+    candidate,
+    disposable,
+    project,
+    record,
+    saved: await readIgsPackage(candidate),
+    shadow,
+    shadowBytes,
+  }
+}
+
+test('Locate reconnects the saved identity and real recovery without file writes or implicit Open', async () => {
+  await withFixture(async (f) => {
+    const p = await locateFixture(f)
+    const now = new Date().toISOString()
+    await f.database.db
+      .insertInto('generation_queue_item')
+      .values({
+        batch_id: randomUUID(),
+        canonical_project_path: p.record.canonicalPath,
+        created_at: now,
+        document_id: p.saved.project.documentId,
+        document_revision: p.saved.project.documentRevision,
+        error_code: 'FIXTURE',
+        error_message: 'Retained terminal queue control',
+        finished_at: now,
+        frozen_payload_json: JSON.stringify({ retainedSource: p.record.canonicalPath }),
+        id: randomUUID(),
+        local_project_key: p.project.id,
+        operation: 'illustrious-txt2img',
+        staging_session_id: randomUUID(),
+        started_at: null,
+        status: 'failed',
+        status_sequence: 0,
+        updated_at: now,
+      })
+      .execute()
+    const queue = await f.database.db.selectFrom('generation_queue_item').selectAll().execute()
+    assert.equal(await f.service.locateProject(p.project.id, async () => p.candidate), true)
+    assert.deepEqual(f.service.getOpenTabs(), [])
+    assert.equal(await f.repository.getProject(p.disposable.id), null)
+    const record = await f.repository.getProject(p.project.id)
+    assert.equal(record?.canonicalPath, p.candidate)
+    assert.equal(record?.documentRevision, p.record.documentRevision)
+    const binding = await f.database.db
+      .selectFrom('project_identity_binding')
+      .selectAll()
+      .where('local_project_key', '=', p.project.id)
+      .executeTakeFirstOrThrow()
+    assert.equal(binding.canonical_path, p.candidate)
+    assert.deepEqual(
+      await f.database.db.selectFrom('generation_queue_item').selectAll().execute(),
+      queue.map((row) => ({ ...row, canonical_project_path: p.candidate })),
+    )
+    assert.ok(
+      (await readFile(p.candidate)).equals(p.bytes),
+      'Relink preserves the exact package bytes',
+    )
+    assert.deepEqual(await bytesIn(path.join(f.dataRoot, 'autosave')), p.shadowBytes)
+    const reloaded = (await f.makeService().list(f.workspace.id))[0]
+    assert.equal(reloaded.id, p.project.id)
+    assert.equal(reloaded.recoveryStatus, 'recoverable')
+    assert.equal((await f.repository.listSavedAcceptedResults(p.project.id)).length, 1)
+    const inspection = await p.shadow.inspect({ projectPath: p.candidate, savedPackage: p.saved })
+    assert.equal(inspection.status, 'recoverable')
+    if (inspection.status === 'recoverable') {
+      assert.equal(inspection.document.primaryBbox.x, 8)
+    }
+  })
+})
+
+test('Locate Cancel and wrong selected document leave both owners and shadow exact', async () => {
+  await withFixture(async (f) => {
+    const p = await locateFixture(f)
+    const rows = await f.repository.listProjects()
+    assert.equal(await f.service.locateProject(p.project.id, async () => null), false)
+    assert.deepEqual(await f.repository.listProjects(), rows)
+    const wrongPath = path.join(f.directory, 'Other project.igs')
+    await ProjectSession.create(wrongPath, 'Different saved Project', f.roots)
+    await assert.rejects(
+      f.service.locateProject(p.project.id, async () => wrongPath),
+      { code: 'PROJECT_MOVE_CONFLICT' },
+    )
+    const session = await ProjectSession.open(p.candidate, f.roots)
+    session.applyDocument({
+      ...session.document,
+      primaryBbox: { ...session.document.primaryBbox, x: 16 },
+    })
+    await session.save()
+    await assert.rejects(
+      f.service.locateProject(p.project.id, async () => p.candidate),
+      { code: 'PROJECT_MOVE_CONFLICT' },
+    )
+    assert.equal(
+      (await f.repository.getProject(p.project.id))?.canonicalPath,
+      p.record.canonicalPath,
+    )
+    assert.deepEqual(await bytesIn(path.join(f.dataRoot, 'autosave')), p.shadowBytes)
+    assert.deepEqual(f.service.getOpenTabs(), [])
+  })
+})
+
+test('Locate validates exact retained recovery base even when candidate repeats document ID and revision', async () => {
+  await withFixture(async (f) => {
+    const p = await locateFixture(f)
+    const assetPaths = p.saved.manifest.members.filter(({ path: member }) =>
+      member.startsWith('assets/'),
+    )
+    const assets = Object.fromEntries(
+      await Promise.all(
+        assetPaths.map(async ({ path: member }) => [
+          member,
+          { bytes: await p.saved.readMember(member) },
+        ]),
+      ),
+    )
+    await saveIgsPackage(p.candidate, {
+      assets,
+      preview: {
+        merged: await p.saved.readMember('preview/merged.png'),
+        rect: p.saved.manifest.preview.rect,
+        status: p.saved.manifest.preview.status,
+        thumbnail: await p.saved.readMember('preview/thumbnail.webp'),
+      },
+      project: { ...p.saved.project, title: 'Different document with reused revision' },
+    })
+    await f.service.list(f.workspace.id)
+    const before = await f.repository.listProjects()
+    await assert.rejects(
+      f.service.locateProject(p.project.id, async () => p.candidate),
+      { code: 'PROJECT_RECOVERY_UNAVAILABLE' },
+    )
+    assert.deepEqual(await f.repository.listProjects(), before)
+    assert.deepEqual(await bytesIn(path.join(f.dataRoot, 'autosave')), p.shadowBytes)
+    const keyInspection = await p.shadow.inspectByLocalKey({
+      localProjectKey: p.project.id,
+      savedPackage: await readIgsPackage(p.candidate),
+    })
+    assert.equal(keyInspection.status, 'stale')
+    await assert.rejects(
+      p.shadow.inspectByLocalKey({ localProjectKey: '../../foreign', savedPackage: p.saved }),
+      { code: 'SHADOW_INVALID_REQUEST' },
+    )
+  })
+})
+
+test('Locate rolls back when another active database profile already owns the candidate location', async () => {
+  await withFixture(async (f) => {
+    const p = await locateFixture(f)
+    const before = await f.repository.listProjects()
+    const bindings = await f.database.db
+      .selectFrom('project_identity_binding')
+      .selectAll()
+      .execute()
+    const otherRoot = path.join(f.root, 'other-profile')
+    await mkdir(otherRoot)
+    const other = openAppDatabase(otherRoot, migrations)
+    const otherKey = `project-v1-${createHash('sha256').update(randomUUID()).digest('hex')}`
+    try {
+      await other.db
+        .insertInto('project_identity_binding')
+        .values({
+          canonical_path: p.candidate,
+          document_id: p.saved.project.documentId,
+          local_project_key: otherKey,
+        })
+        .execute()
+      refreshProjectLocationRegistry(other.db)
+      await assert.rejects(
+        f.service.locateProject(p.project.id, async () => p.candidate),
+        { code: 'PROJECT_PATH_UNAVAILABLE' },
+      )
+      assert.deepEqual(await f.repository.listProjects(), before)
+      assert.deepEqual(
+        await f.database.db.selectFrom('project_identity_binding').selectAll().execute(),
+        bindings,
+      )
+      assert.equal(localProjectRecoveryKey(p.record.canonicalPath), p.project.id)
+      assert.equal(localProjectRecoveryKey(p.candidate), otherKey)
+      assert.deepEqual(await bytesIn(path.join(f.dataRoot, 'autosave')), p.shadowBytes)
+      assert.ok((await readFile(p.candidate)).equals(p.bytes))
+    } finally {
+      await other.close()
+    }
   })
 })

@@ -218,6 +218,7 @@ type PendingProjectAction =
   | {
       kind:
         | 'delete-project'
+        | 'locate-project'
         | 'move-project'
         | 'remove-missing-project'
         | 'rename-project'
@@ -483,7 +484,7 @@ const removeMissingProjectError = ref<string | null>(null)
 const removeMissingProjectEligible = computed(() => {
   const captured = removingMissingProject.value
   const current = projects.value.find(({ id }) => id === captured?.id)
-  return Boolean(current && canRemoveMissingProject(current))
+  return Boolean(current && canManageMissingProject(current))
 })
 const importTransfer = ref<ImportTransfer | null>(null)
 const importDialogVisible = ref(false)
@@ -3744,7 +3745,7 @@ function beginTrashProject(project: ProjectSummary) {
   showProjectTrashAction.value = true
 }
 
-function canRemoveMissingProject(project: ProjectSummary) {
+function canManageMissingProject(project: ProjectSummary) {
   return (
     !selectedTrashView.value &&
     project.health === 'missing' &&
@@ -3757,11 +3758,41 @@ function canRemoveMissingProject(project: ProjectSummary) {
   )
 }
 
+async function locateProject(project: ProjectSummary) {
+  const current = projects.value.find(({ id }) => id === project.id)
+  if (
+    !current ||
+    !canManageMissingProject(current) ||
+    showRemoveMissingProject.value ||
+    showProjectTrashAction.value ||
+    showMoveProject.value ||
+    showRenameProject.value ||
+    pendingProjectAction.value ||
+    windowClosePending.value
+  ) {
+    return
+  }
+  queueResultNavigator.cancelProjectOpen()
+  const projectId = current.id
+  pendingProjectAction.value = { kind: 'locate-project', projectId }
+  homeError.value = null
+  try {
+    const located = await apiValue(() => projectApi().locateProject(projectId))
+    if (located) {
+      await refreshProjects()
+    }
+  } catch (cause) {
+    homeError.value = errorMessage(cause)
+  } finally {
+    pendingProjectAction.value = null
+  }
+}
+
 function beginRemoveMissingProject(project: ProjectSummary) {
   const current = projects.value.find(({ id }) => id === project.id)
   if (
     !current ||
-    !canRemoveMissingProject(current) ||
+    !canManageMissingProject(current) ||
     showRemoveMissingProject.value ||
     showProjectTrashAction.value ||
     showMoveProject.value ||
@@ -5286,6 +5317,7 @@ onBeforeUnmount(() => {
           @createProject="beginNewProject"
           @deleteProject="beginDeleteProject"
           @importProject="selectImport"
+          @locateProject="locateProject"
           @manageModels="openModelManager()"
           @managePresets="openPresetManager"
           @moveProject="beginMoveProject"
