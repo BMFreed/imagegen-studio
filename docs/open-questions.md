@@ -1,6 +1,17 @@
 # Open Questions
 
-## Current ordinary resolution diagnosis
+## Current ordinary encoding finding
+
+[Original Invoke CLIP operators](./engineering/phase-4-ordinary-invoke-conditioning-research.md)
+match Studio exactly for the fixed unweighted prompt/empty negative on the
+same components/runtime:16 tensor pairs, one load, zero denoising/new images.
+This closes that encoding comparison; it does not compare Invoke model loading,
+whole dependency versions, weighted prompts or source-default noise policy.
+No current defect or default change follows. Visual/reference utility, capacity
+and release acceptance remain open; further experiments need a new finite
+hypothesis rather than repeating the previous noise/attention matrices.
+
+## Previous ordinary resolution diagnosis
 
 [Four fixed ordinary512/1024 requests](./engineering/phase-4-ordinary-resolution-research.md)
 reproduce both historical512 PNGs exactly. Both1024 results are INCONCLUSIVE

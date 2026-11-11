@@ -1,5 +1,14 @@
 # Engineering Workflow
 
+## Current ordinary CLIP operator checkpoint
+
+[Current Invoke encoding comparison](./phase-4-ordinary-invoke-conditioning-research.md)
+executes original source against the same actual Studio CLIPs: one load,
+three forwards per lane,16 exact raw pairs. No UNet/denoise/VAE/image calls.
+The fixed unweighted text encoding agrees on the common pinned runtime;
+whole Invoke/default-noise/weighted/visual parity is not established. No
+production change or promise promotion follows; prior visual gates remain open.
+
 ## Current ordinary resolution diagnostic — NOT_QUALIFIED
 
 [Fixed four-request diagnostic](./phase-4-ordinary-resolution-research.md) keeps

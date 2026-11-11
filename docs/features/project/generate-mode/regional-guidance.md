@@ -1,6 +1,14 @@
 # Regional Guidance
 
-## Current ordinary resolution diagnosis — 11.11.2026
+## Current ordinary text-encoding comparison — 11.11.2026
+
+[Current Invoke CLIP operators on the common runtime](../../../engineering/phase-4-ordinary-invoke-conditioning-research.md)
+match the fixed Studio global-only pair exactly (16 raw tensor pairs). One model
+load/six encoder forwards, zero denoising/new images; no regional consumer,
+reference resolution guard, production default or public readiness changes.
+Visual usefulness/spatial/capacity and release acceptance remain open.
+
+## Previous ordinary resolution diagnosis — 11.11.2026
 
 [Fixed ordinary512/1024 diagnostic](../../../engineering/phase-4-ordinary-resolution-research.md)
 replays both512 controls exactly and completes four native outputs/exits.

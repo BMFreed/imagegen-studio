@@ -1,5 +1,13 @@
 # Implementation Roadmap
 
+## Latest ordinary encoding checkpoint
+
+[Current Invoke-source CLIP comparison](../engineering/phase-4-ordinary-invoke-conditioning-research.md)
+adds the previously unmeasured real encoding boundary:16 exact tensor pairs,
+one load/six CLIP forwards, no denoising/images. It supplies no conditioning
+rewrite or default change. Visual/release acceptance remains open; source
+operators on a common runtime are not full installed-Invoke equivalence.
+
 ## Latest ordinary resolution diagnostic — NOT_QUALIFIED
 
 [Fixed four-request comparison](../engineering/phase-4-ordinary-resolution-research.md)
