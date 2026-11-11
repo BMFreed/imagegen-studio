@@ -1,6 +1,14 @@
 # Regional Guidance
 
-## Current visual gate: fixed reference utility — 11.11.2026
+## Current ordinary resolution diagnosis — 11.11.2026
+
+[Fixed ordinary512/1024 diagnostic](../../../engineering/phase-4-ordinary-resolution-research.md)
+replays both512 controls exactly and completes four native outputs/exits.
+Both1024 images remain INCONCLUSIVE under the fixed scene rubric. This is no
+reference1024 qualification or guard extension: regional utility/spatial/capacity
+and release acceptance remain open. Ordinary Invoke parity is the next diagnosis.
+
+## Previous visual gate: fixed reference utility — 11.11.2026
 
 [Actual eight-request experiment and all verdicts](../../../engineering/phase-4-regional-reference-utility-research.md).
 Official Illustrious XLv0.1,512/EulerNormal30/CFG5/embeddedFP16, fixed123/124:

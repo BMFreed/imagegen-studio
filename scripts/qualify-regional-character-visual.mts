@@ -35,10 +35,15 @@ import { withIllustriousTxt2ImgRequest } from '../src/main/projects/illustrious-
 import { captureInferenceWorkerOwner } from '../src/main/projects/inference-worker-ownership.js'
 import {
   type CharacterVisualProbeUseCase,
+  ORDINARY_RESOLUTION_CONTRACT,
+  ORDINARY_RESOLUTION_RUN,
+  type OrdinaryResolutionUseCase,
   produceCharacterVisualProbe,
+  produceOrdinaryResolutionProbe,
   produceReferenceUtilityProbe,
   REFERENCE_UTILITY_CONTRACT,
   REFERENCE_UTILITY_RUN,
+  type ReferenceUtilityUseCase,
 } from '../src/main/projects/test-fixtures/regional-guidance-character-visual-probe.js'
 import { readSmartPatchModelSourceOutput } from '../src/main/projects/worker-client.js'
 import { InferenceAuxiliaryResources } from '../src/main/runtime/inference-auxiliary-resources.js'
@@ -193,6 +198,10 @@ interface ReferenceUtilityFixture extends Omit<Fixture, 'deadlineSeconds' | 'pro
   profile: 'reference-utility-v1'
   referenceImages: Record<'A' | 'B', { byteSize: number; path: string; sha256: string }>
 }
+interface OrdinaryResolutionFixture extends Omit<Fixture, 'deadlineSeconds' | 'profile'> {
+  deadlineSeconds: 600
+  profile: 'ordinary-resolution-v1'
+}
 interface CaseOutcome {
   condition: string
   confirmedWorkerExit: true
@@ -213,6 +222,9 @@ export async function qualifyRegionalCharacterVisual(fixturePath: string): Promi
   assert.equal(process.arch, 'x64')
   assert.ok(within(ARTIFACT_ROOT, canonicalPath(fixturePath)))
   const fixtureFile = await json(fixturePath, 64 * 1024)
+  if (fixtureFile.value.profile === 'ordinary-resolution-v1') {
+    return qualifyOrdinaryResolution(fixturePath, fixtureFile)
+  }
   if (fixtureFile.value.profile === 'reference-utility-v1') {
     return qualifyReferenceUtility(fixturePath, fixtureFile)
   }
@@ -871,6 +883,66 @@ export function referenceUtilityFixtureFrom(
     schemaVersion: 1,
   }
 }
+export function ordinaryResolutionFixtureFrom(
+  value: Record<string, unknown>,
+): OrdinaryResolutionFixture {
+  keys(value, [
+    'schemaVersion',
+    'profile',
+    'artifacts',
+    'appData',
+    'provisionReport',
+    'checkpoint',
+    'contract',
+    'deadlineSeconds',
+  ])
+  assert.equal(value.schemaVersion, 1)
+  assert.equal(value.profile, 'ordinary-resolution-v1')
+  assert.equal(value.artifacts, ORDINARY_RESOLUTION_RUN)
+  assert.equal(
+    value.appData,
+    path.join(ARTIFACT_ROOT, 'shared/regional-public-worker-014-20261103/data/imagegen-studio'),
+  )
+  assert.equal(value.deadlineSeconds, 600)
+  const checkpoint = record(value.checkpoint, 'checkpoint')
+  keys(checkpoint, [
+    'path',
+    'sha256',
+    'byteSize',
+    'modelName',
+    'versionName',
+    'civitaiModelId',
+    'civitaiVersionId',
+    'civitaiFileId',
+  ])
+  assert.equal(
+    checkpoint.path,
+    path.join(
+      ARTIFACT_ROOT,
+      'shared/illustrious-epsilon-source-20261026/Illustrious-XL-v0.1.safetensors',
+    ),
+  )
+  assert.equal(checkpoint.sha256, CHECKPOINT_SHA256)
+  assert.equal(checkpoint.byteSize, CHECKPOINT_BYTES)
+  assert.equal(checkpoint.civitaiModelId, 795_765)
+  assert.equal(checkpoint.civitaiVersionId, 889_818)
+  assert.equal(checkpoint.civitaiFileId, 798_303)
+  assert.equal(checkpoint.modelName, 'Illustrious XL v0.1 (official pinned epsilon)')
+  assert.equal(checkpoint.versionName, 'v0.1')
+  const contract = descriptor(value.contract)
+  assert.equal(contract.path, path.join(ORDINARY_RESOLUTION_RUN, 'experiment-contract.json'))
+  return {
+    appData: canonicalPath(value.appData),
+    artifacts: ORDINARY_RESOLUTION_RUN,
+    checkpoint: { ...checkpoint, path: canonicalPath(checkpoint.path) } as unknown as Checkpoint,
+    contract,
+    deadlineSeconds: 600,
+    profile: 'ordinary-resolution-v1',
+    provisionReport: descriptor(value.provisionReport),
+    schemaVersion: 1,
+  }
+}
+
 function digest(value: string | Uint8Array): string {
   return createHash('sha256').update(value).digest('hex')
 }
@@ -1026,9 +1098,34 @@ async function qualifyReferenceUtility(
   fixturePath: string,
   fixtureFile: { sha256: string; value: Record<string, unknown> },
 ): Promise<unknown> {
-  const fixture = referenceUtilityFixtureFrom(fixtureFile.value)
-  assert.equal(fixturePath, path.join(REFERENCE_UTILITY_RUN, 'fixture.json'))
-  assert.equal(fixture.contract.path, path.join(REFERENCE_UTILITY_RUN, 'experiment-contract.json'))
+  return qualifyFixedUtility(
+    fixturePath,
+    fixtureFile,
+    referenceUtilityFixtureFrom(fixtureFile.value),
+  )
+}
+async function qualifyOrdinaryResolution(
+  fixturePath: string,
+  fixtureFile: { sha256: string; value: Record<string, unknown> },
+): Promise<unknown> {
+  return qualifyFixedUtility(
+    fixturePath,
+    fixtureFile,
+    ordinaryResolutionFixtureFrom(fixtureFile.value),
+  )
+}
+async function qualifyFixedUtility(
+  fixturePath: string,
+  fixtureFile: { sha256: string; value: Record<string, unknown> },
+  fixture: OrdinaryResolutionFixture | ReferenceUtilityFixture,
+): Promise<unknown> {
+  const resolution = fixture.profile === 'ordinary-resolution-v1'
+  const contractExpected = resolution ? ORDINARY_RESOLUTION_CONTRACT : REFERENCE_UTILITY_CONTRACT
+  const run = resolution ? ORDINARY_RESOLUTION_RUN : REFERENCE_UTILITY_RUN
+  const prefix = resolution ? 'resolution' : 'reference'
+  const ceiling = contractExpected.nativeRequestCeiling
+  assert.equal(fixturePath, path.join(run, 'fixture.json'))
+  assert.equal(fixture.contract.path, path.join(run, 'experiment-contract.json'))
   assert.equal(
     fixture.appData,
     path.join(ARTIFACT_ROOT, 'shared/regional-public-worker-014-20261103/data/imagegen-studio'),
@@ -1043,7 +1140,7 @@ async function qualifyReferenceUtility(
   await directory(fixture.artifacts)
   const contract = await json(fixture.contract.path, 64 * 1024)
   assert.equal(contract.sha256, fixture.contract.sha256)
-  assert.deepEqual(contract.value, REFERENCE_UTILITY_CONTRACT)
+  assert.deepEqual(contract.value, contractExpected)
   const revision = (
     await execute('git', ['rev-parse', 'HEAD'], {
       cwd: REPOSITORY,
@@ -1058,8 +1155,8 @@ async function qualifyReferenceUtility(
       timeout: 10_000,
     })
   ).stdout.trim()
-  assert.equal(revision, REFERENCE_UTILITY_CONTRACT.base)
-  assert.equal(invokeRevision, REFERENCE_UTILITY_CONTRACT.invokeRevision)
+  assert.equal(revision, contractExpected.base)
+  assert.equal(invokeRevision, contractExpected.invokeRevision)
   const bounds = await assertUpgradeBounds({ maxRuntimeSeconds: 600 })
   const mainGroup = groupFrom(await readFile(`/proc/${process.pid}/cgroup`, 'utf8'))
   const initialSources = await sourceCensus()
@@ -1081,23 +1178,39 @@ async function qualifyReferenceUtility(
   }
   const checkpoint = await snapshot(fixture.checkpoint.path, CHECKPOINT_BYTES, false)
   assert.equal(checkpoint.sha256, CHECKPOINT_SHA256)
-  for (const image of Object.values(fixture.referenceImages)) {
-    const captured = await snapshot(image.path, image.byteSize, false)
-    assert.equal(captured.byteSize, image.byteSize)
-    assert.equal(captured.sha256, image.sha256)
+  const pinnedImages =
+    'referenceImages' in fixture
+      ? fixture.referenceImages
+      : ORDINARY_RESOLUTION_CONTRACT.historical512
+  const imagesWitness = async () => {
+    for (const image of Object.values(pinnedImages)) {
+      const captured = await snapshot(image.path, image.byteSize, false)
+      assert.equal(captured.byteSize, image.byteSize)
+      assert.equal(captured.sha256, image.sha256)
+    }
   }
+  await imagesWitness()
   const installed = await installation(fixture)
-  assert.ok(
-    (installed.ready.capabilities as string[]).includes(
-      'illustrious-regional-reference-txt2img-v1',
-    ),
-  )
+  if (!resolution) {
+    assert.ok(
+      (installed.ready.capabilities as string[]).includes(
+        'illustrious-regional-reference-txt2img-v1',
+      ),
+    )
+  }
   const auxiliary = new InferenceAuxiliaryResources(
     path.join(fixture.appData, 'inference-resources'),
   )
-  const resources = await auxiliary.resolveVerifiedRegionalReferenceResources()
-  const outputRoot = path.join(fixture.artifacts, 'reference-outputs')
-  const scratchBasePath = path.join(fixture.artifacts, 'payloads', 'reference-worker-scratch')
+  const resources = resolution
+    ? undefined
+    : await auxiliary.resolveVerifiedRegionalReferenceResources()
+  const resourcesWitness = async () => {
+    if (resources) {
+      assert.deepEqual(await auxiliary.resolveVerifiedRegionalReferenceResources(), resources)
+    }
+  }
+  const outputRoot = path.join(fixture.artifacts, `${prefix}-outputs`)
+  const scratchBasePath = path.join(fixture.artifacts, 'payloads', `${prefix}-worker-scratch`)
   await mkdir(outputRoot, { mode: 0o700 })
   await mkdir(scratchBasePath, { mode: 0o700 })
   const outcomes: Record<string, unknown>[] = []
@@ -1106,7 +1219,7 @@ async function qualifyReferenceUtility(
   let attempted = 0
   let failure: unknown
   let submitted = 0
-  await exclusive(path.join(fixture.artifacts, 'reference-run-start.json'), {
+  await exclusive(path.join(fixture.artifacts, `${prefix}-run-start.json`), {
     bounds,
     checkpoint: fixture.checkpoint,
     contract: fixture.contract,
@@ -1115,218 +1228,239 @@ async function qualifyReferenceUtility(
     installation: installed,
     mainGroup,
     resources,
-    schema: 'reference-utility-backend-v1',
-    scope: REFERENCE_UTILITY_CONTRACT.scope,
+    schema: resolution ? 'ordinary-resolution-backend-v1' : 'reference-utility-backend-v1',
+    scope: contractExpected.scope,
     source: { files: initialSources, invokeRevision, revision },
     visualStatus: 'pending',
   })
   try {
-    const manifest = await produceReferenceUtilityProbe({
+    const useCase = async (input: OrdinaryResolutionUseCase | ReferenceUtilityUseCase) => {
+      const testCase = input.case
+      const side = 'side' in testCase ? testCase.side : 512
+      const bbox = { height: side, width: side, x: -13, y: 5 }
+      assert.deepEqual(testCase, contractExpected.cases[attempted])
+      assert.ok(attempted < ceiling && Date.now() - startedAt < 600_000)
+      await sourceWitness()
+      await resourcesWitness()
+      await assertRuntimeIdle(fixture.appData, installed.basePrefix)
+      const intent = {
+        case: testCase,
+        contractSha256: contract.sha256,
+        nativeRequestCeiling: ceiling,
+        preparedSha256: digest(encoded(input.prepared)),
+        recipeSha256: digest(encoded(input.recipe)),
+        referencesSha256: input.references ? digest(encoded(input.references)) : null,
+      }
+      await exclusive(path.join(fixture.artifacts, `${testCase.label}.intent.json`), intent)
+      attempted++
+      const beforeChildren = new Set(await children())
+      let client: GenerationWorkerClient | undefined
+      let worker: Awaited<ReturnType<typeof captureInferenceWorkerOwner>> | undefined
+      let closed = false
+      let nativeSubmitted = false
+      let error: unknown
+      let result: unknown
+      const progress: GenerationDenoisingProgress[] = []
+      try {
+        client = await GenerationWorkerClient.start(
+          {
+            pythonExecutable: installed.pythonExecutable,
+            runtimeRoot: installed.runtimeRoot,
+            scratchBasePath,
+          },
+          {
+            environment: {
+              IGS_SDXL_CONFIG_DIR: installed.configDir,
+              LANG: 'C.UTF-8',
+              LC_ALL: 'C.UTF-8',
+              PYTHONDONTWRITEBYTECODE: '1',
+              TOKENIZERS_PARALLELISM: 'false',
+            },
+            requestTimeoutMs: Math.max(1, 600_000 - (Date.now() - startedAt)),
+            startupTimeoutMs: Math.min(120_000, Math.max(1, 600_000 - (Date.now() - startedAt))),
+          },
+        )
+        const created = (await children()).filter((pid) => !beforeChildren.has(pid))
+        assert.equal(created.length, 1)
+        worker = await captureInferenceWorkerOwner(created[0])
+        assert.equal(
+          groupFrom(await readFile(`/proc/${worker.worker.pid}/cgroup`, 'utf8')),
+          mainGroup,
+        )
+        assert.deepEqual(client.ready, installed.ready)
+        const activeClient = client
+        const onProgress = (value: GenerationDenoisingProgress) => {
+          assert.equal(value.step, progress.length + 1)
+          assert.equal(value.totalSteps, 30)
+          progress.push({ ...value })
+        }
+        result = await withIllustriousTxt2ImgRequest({
+          modelService: input.models,
+          prepared: input.prepared,
+          ready: client.ready,
+          scratchBasePath,
+          use: async (request) => {
+            assert.deepEqual(request.job.bbox, bbox)
+            assert.equal(request.job.target.width, side)
+            assert.equal(request.job.target.height, side)
+            assert.equal(request.job.checkpoint.path, fixture.checkpoint.path)
+            assert.equal(request.job.checkpoint.predictionType, 'epsilon')
+            assert.equal(request.job.sampling.seed, testCase.seed)
+            assert.equal(request.job.sampling.steps, 30)
+            assert.equal(request.job.sampling.scheduler, 'euler')
+            assert.equal(request.job.sampling.cfgScale, 5)
+            assert.deepEqual(
+              request.job.sampling.noiseProfile,
+              contractExpected.sampling.noiseProfile,
+            )
+            assert.equal(request.job.sampling.cfgRescale ?? 0, 0)
+            assert.equal(request.job.vaePrecision, 'FP16')
+            assert.equal(request.job.prompts.positive, contractExpected.globalPositive)
+            assert.equal(request.job.prompts.negative, '')
+            assert.ok(
+              !request.job.loras?.length &&
+                !request.job.vae &&
+                !request.job.embeddings?.positive.length &&
+                !request.job.embeddings?.negative.length,
+            )
+            await exclusive(path.join(fixture.artifacts, `${testCase.label}.request.json`), {
+              ...intent,
+              recipe: input.recipe,
+              references: input.references,
+              request,
+              worker,
+            })
+            assert.ok(submitted < ceiling)
+            let pngBytes: Buffer
+            if (testCase.image === null) {
+              assert.deepEqual(input.recipe.regions, [])
+              assert.equal(input.references, undefined)
+              nativeSubmitted = true
+              submitted++
+              const response = record(
+                await activeClient.generate(request, onProgress),
+                'ordinary response',
+              )
+              assert.equal(response.type, 'generation-done')
+              assert.equal(response.requestId, request.requestId)
+              const file = await snapshot(request.job.output.pngPath, MAX_PNG_BYTES, false)
+              pngBytes = await readSmartPatchModelSourceOutput(request.job.output.pngPath, {
+                byteSize: file.byteSize,
+                colorSpace: 'srgb',
+                height: side,
+                iccSha256: IGS_SRGB_ICC_SHA256,
+                path: request.job.output.pngPath,
+                sha256: file.sha256,
+                width: side,
+              })
+            } else {
+              assert.ok(input.references)
+              assert.equal(input.recipe.regions.length, 1)
+              nativeSubmitted = true
+              submitted++
+              const response = await activeClient.executeCurrentCanvasRegional(
+                {
+                  compositionProfile: 'invoke-canvas-v1',
+                  globalNegativeCoverage: { kind: 'everywhere' },
+                  globalPositiveCoverage: { kind: 'everywhere' },
+                  layout: 'cfg-negative-first',
+                  negativePooledSourceId: 'current-canvas',
+                  positivePooledSourceId: 'current-canvas',
+                  recipe: input.recipe,
+                  references: input.references,
+                  request,
+                },
+                onProgress,
+              )
+              assert.equal(response.seed, testCase.seed)
+              assert.equal(response.output.width, side)
+              assert.equal(response.output.height, side)
+              assert.equal(response.output.iccSha256, IGS_SRGB_ICC_SHA256)
+              pngBytes = response.pngBytes
+              assert.equal(pngBytes.length, response.output.byteSize)
+              assert.equal(digest(pngBytes), response.output.sha256)
+            }
+            assert.equal(progress.length, 30)
+            const decoded = decodedRgb(pngBytes, side)
+            pixels.set(testCase.label, Buffer.from(decoded.rgb))
+            const destination = path.join(outputRoot, `${testCase.label}.png`)
+            await writeFile(destination, pngBytes, { flag: 'wx', mode: 0o600 })
+            const output = {
+              byteSize: pngBytes.length,
+              path: destination,
+              rgbSha256: decoded.rgbSha256,
+              sha256: digest(pngBytes),
+            }
+            await exclusive(path.join(fixture.artifacts, `${testCase.label}.completion.json`), {
+              ...intent,
+              output,
+              progress,
+              requestId: request.requestId,
+            })
+            if (resolution && side === 512) {
+              const historical =
+                ORDINARY_RESOLUTION_CONTRACT.historical512[
+                  testCase.seed === 123 ? 'seed123' : 'seed124'
+                ]
+              assert.equal(output.byteSize, historical.byteSize, '512 replay output size changed')
+              assert.equal(output.sha256, historical.sha256, '512 replay output PNG bytes changed')
+            }
+            return output
+          },
+        })
+        return result
+      } catch (cause) {
+        error = cause
+        throw cause
+      } finally {
+        try {
+          if (client) {
+            await client.close()
+            if (worker) {
+              await physicalExit(worker.worker.pid)
+            }
+            assert.equal(GenerationWorkerClient.hasUnconfirmedStartExit(), false)
+            closed = true
+          }
+        } finally {
+          const outcome = {
+            ...intent,
+            confirmedWorkerExit: closed,
+            error: error instanceof Error ? { message: error.message, name: error.name } : error,
+            progress,
+            result,
+            submitted: nativeSubmitted,
+            visualStatus: 'pending',
+          }
+          outcomes.push(outcome)
+          await exclusive(path.join(fixture.artifacts, `${testCase.label}.outcome.json`), outcome)
+        }
+      }
+    }
+    const common = {
       pythonExecutable: installed.pythonExecutable,
-      referenceImages: fixture.referenceImages,
-      resources,
       run: fixture.artifacts,
       runtimeRoot: installed.runtimeRoot,
-      useCase: async (input) => {
-        const testCase = input.case
-        assert.deepEqual(testCase, REFERENCE_UTILITY_CONTRACT.cases[attempted])
-        assert.ok(attempted < 8 && Date.now() - startedAt < 600_000)
-        await sourceWitness()
-        assert.deepEqual(await auxiliary.resolveVerifiedRegionalReferenceResources(), resources)
-        await assertRuntimeIdle(fixture.appData, installed.basePrefix)
-        const intent = {
-          case: testCase,
-          contractSha256: contract.sha256,
-          nativeRequestCeiling: 8,
-          preparedSha256: digest(encoded(input.prepared)),
-          recipeSha256: digest(encoded(input.recipe)),
-          referencesSha256: input.references ? digest(encoded(input.references)) : null,
-        }
-        await exclusive(path.join(fixture.artifacts, `${testCase.label}.intent.json`), intent)
-        attempted++
-        const beforeChildren = new Set(await children())
-        let client: GenerationWorkerClient | undefined
-        let worker: Awaited<ReturnType<typeof captureInferenceWorkerOwner>> | undefined
-        let closed = false
-        let nativeSubmitted = false
-        let error: unknown
-        let result: unknown
-        const progress: GenerationDenoisingProgress[] = []
-        try {
-          client = await GenerationWorkerClient.start(
-            {
-              pythonExecutable: installed.pythonExecutable,
-              runtimeRoot: installed.runtimeRoot,
-              scratchBasePath,
-            },
-            {
-              environment: {
-                IGS_SDXL_CONFIG_DIR: installed.configDir,
-                LANG: 'C.UTF-8',
-                LC_ALL: 'C.UTF-8',
-                PYTHONDONTWRITEBYTECODE: '1',
-                TOKENIZERS_PARALLELISM: 'false',
-              },
-              requestTimeoutMs: Math.max(1, 600_000 - (Date.now() - startedAt)),
-              startupTimeoutMs: Math.min(120_000, Math.max(1, 600_000 - (Date.now() - startedAt))),
-            },
-          )
-          const created = (await children()).filter((pid) => !beforeChildren.has(pid))
-          assert.equal(created.length, 1)
-          worker = await captureInferenceWorkerOwner(created[0])
-          assert.equal(
-            groupFrom(await readFile(`/proc/${worker.worker.pid}/cgroup`, 'utf8')),
-            mainGroup,
-          )
-          assert.deepEqual(client.ready, installed.ready)
-          const activeClient = client
-          const onProgress = (value: GenerationDenoisingProgress) => {
-            assert.equal(value.step, progress.length + 1)
-            assert.equal(value.totalSteps, 30)
-            progress.push({ ...value })
-          }
-          result = await withIllustriousTxt2ImgRequest({
-            modelService: input.models,
-            prepared: input.prepared,
-            ready: client.ready,
-            scratchBasePath,
-            use: async (request) => {
-              assert.deepEqual(request.job.bbox, REFERENCE_UTILITY_CONTRACT.bbox)
-              assert.equal(request.job.checkpoint.path, fixture.checkpoint.path)
-              assert.equal(request.job.checkpoint.predictionType, 'epsilon')
-              assert.equal(request.job.sampling.seed, testCase.seed)
-              assert.equal(request.job.sampling.steps, 30)
-              assert.equal(request.job.sampling.scheduler, 'euler')
-              assert.equal(request.job.sampling.cfgScale, 5)
-              assert.deepEqual(
-                request.job.sampling.noiseProfile,
-                REFERENCE_UTILITY_CONTRACT.sampling.noiseProfile,
-              )
-              assert.equal(request.job.sampling.cfgRescale ?? 0, 0)
-              assert.equal(request.job.vaePrecision, 'FP16')
-              assert.equal(request.job.prompts.positive, REFERENCE_UTILITY_CONTRACT.globalPositive)
-              assert.equal(request.job.prompts.negative, '')
-              assert.ok(
-                !request.job.loras?.length &&
-                  !request.job.vae &&
-                  !request.job.embeddings?.positive.length &&
-                  !request.job.embeddings?.negative.length,
-              )
-              await exclusive(path.join(fixture.artifacts, `${testCase.label}.request.json`), {
-                ...intent,
-                recipe: input.recipe,
-                references: input.references,
-                request,
-                worker,
-              })
-              assert.ok(submitted < 8)
-              let pngBytes: Buffer
-              if (testCase.image === null) {
-                assert.deepEqual(input.recipe.regions, [])
-                assert.equal(input.references, undefined)
-                nativeSubmitted = true
-                submitted++
-                const response = record(
-                  await activeClient.generate(request, onProgress),
-                  'ordinary response',
-                )
-                assert.equal(response.type, 'generation-done')
-                assert.equal(response.requestId, request.requestId)
-                const file = await snapshot(request.job.output.pngPath, MAX_PNG_BYTES, false)
-                pngBytes = await readSmartPatchModelSourceOutput(request.job.output.pngPath, {
-                  byteSize: file.byteSize,
-                  colorSpace: 'srgb',
-                  height: 512,
-                  iccSha256: IGS_SRGB_ICC_SHA256,
-                  path: request.job.output.pngPath,
-                  sha256: file.sha256,
-                  width: 512,
-                })
-              } else {
-                assert.ok(input.references)
-                assert.equal(input.recipe.regions.length, 1)
-                nativeSubmitted = true
-                submitted++
-                const response = await activeClient.executeCurrentCanvasRegional(
-                  {
-                    compositionProfile: 'invoke-canvas-v1',
-                    globalNegativeCoverage: { kind: 'everywhere' },
-                    globalPositiveCoverage: { kind: 'everywhere' },
-                    layout: 'cfg-negative-first',
-                    negativePooledSourceId: 'current-canvas',
-                    positivePooledSourceId: 'current-canvas',
-                    recipe: input.recipe,
-                    references: input.references,
-                    request,
-                  },
-                  onProgress,
-                )
-                assert.equal(response.seed, testCase.seed)
-                assert.equal(response.output.width, 512)
-                assert.equal(response.output.height, 512)
-                assert.equal(response.output.iccSha256, IGS_SRGB_ICC_SHA256)
-                pngBytes = response.pngBytes
-                assert.equal(pngBytes.length, response.output.byteSize)
-                assert.equal(digest(pngBytes), response.output.sha256)
-              }
-              assert.equal(progress.length, 30)
-              const decoded = decodedRgb(pngBytes, 512)
-              pixels.set(testCase.label, Buffer.from(decoded.rgb))
-              const destination = path.join(outputRoot, `${testCase.label}.png`)
-              await writeFile(destination, pngBytes, { flag: 'wx', mode: 0o600 })
-              const output = {
-                byteSize: pngBytes.length,
-                path: destination,
-                rgbSha256: decoded.rgbSha256,
-                sha256: digest(pngBytes),
-              }
-              await exclusive(path.join(fixture.artifacts, `${testCase.label}.completion.json`), {
-                ...intent,
-                output,
-                progress,
-                requestId: request.requestId,
-              })
-              return output
-            },
-          })
-          return result
-        } catch (cause) {
-          error = cause
-          throw cause
-        } finally {
-          try {
-            if (client) {
-              await client.close()
-              if (worker) {
-                await physicalExit(worker.worker.pid)
-              }
-              assert.equal(GenerationWorkerClient.hasUnconfirmedStartExit(), false)
-              closed = true
-            }
-          } finally {
-            const outcome = {
-              ...intent,
-              confirmedWorkerExit: closed,
-              error: error instanceof Error ? { message: error.message, name: error.name } : error,
-              progress,
-              result,
-              submitted: nativeSubmitted,
-              visualStatus: 'pending',
-            }
-            outcomes.push(outcome)
-            await exclusive(path.join(fixture.artifacts, `${testCase.label}.outcome.json`), outcome)
-          }
-        }
-      },
-    })
-    assert.equal(submitted, 8)
-    assert.equal(outcomes.length, 8)
-    assert.ok(
-      pixels.get('seed123-zero-A')!.equals(pixels.get('seed123-zero-B')!),
-      'Only original reference changed under a wholly outside owned mask; zero outputs must match exactly.',
-    )
+      useCase,
+    }
+    const manifest = resolution
+      ? await produceOrdinaryResolutionProbe(common)
+      : await produceReferenceUtilityProbe({
+          ...common,
+          referenceImages: fixture.referenceImages,
+          resources: resources!,
+        })
+    assert.equal(submitted, ceiling)
+    assert.equal(outcomes.length, ceiling)
+    if (!resolution) {
+      assert.ok(
+        pixels.get('seed123-zero-A')!.equals(pixels.get('seed123-zero-B')!),
+        'Only original reference changed under a wholly outside owned mask; zero outputs must match exactly.',
+      )
+    }
     await sourceWitness()
-    assert.deepEqual(await auxiliary.resolveVerifiedRegionalReferenceResources(), resources)
+    await resourcesWitness()
+    await imagesWitness()
     assert.equal(
       (await snapshot(fixture.checkpoint.path, CHECKPOINT_BYTES, false)).sha256,
       checkpoint.sha256,
@@ -1334,41 +1468,50 @@ async function qualifyReferenceUtility(
     await assertRuntimeIdle(fixture.appData, installed.basePrefix)
     return {
       manifest,
-      ordinaryZeroRgbEqualityObservedOnly: pixels
-        .get('seed123-baseline')!
-        .equals(pixels.get('seed123-zero-A')!),
+      ordinaryZeroRgbEqualityObservedOnly: resolution
+        ? null
+        : pixels.get('seed123-baseline')!.equals(pixels.get('seed123-zero-A')!),
+      ...(resolution ? { historical512Replay: true } : {}),
       outcomes,
       visualStatus: 'pending',
-      zeroReferenceEquality: true,
+      zeroReferenceEquality: resolution ? null : true,
     }
   } catch (cause) {
     failure = cause
     throw cause
   } finally {
-    await exclusive(path.join(fixture.artifacts, 'reference-utility-report.json'), {
-      attempted,
-      contract: fixture.contract,
-      elapsedSeconds: (Date.now() - startedAt) / 1000,
-      error: failure instanceof Error ? { message: failure.message, name: failure.name } : failure,
-      fixture: { path: fixturePath, sha256: fixtureFile.sha256 },
-      ordinaryZeroRgbEqualityObservedOnly:
-        pixels.has('seed123-baseline') && pixels.has('seed123-zero-A')
-          ? pixels.get('seed123-baseline')!.equals(pixels.get('seed123-zero-A')!)
-          : null,
-      outcomes,
-      profile: fixture.profile,
-      resources,
-      schema: 'reference-utility-backend-v1',
-      scope: REFERENCE_UTILITY_CONTRACT.scope,
-      source: { files: initialSources, invokeRevision, revision },
-      status: failure ? 'failed' : 'mechanical-pass',
-      submitted,
-      visualStatus: 'pending',
-      zeroReferenceEquality:
-        pixels.has('seed123-zero-A') && pixels.has('seed123-zero-B')
-          ? pixels.get('seed123-zero-A')!.equals(pixels.get('seed123-zero-B')!)
-          : null,
-    })
+    await exclusive(
+      path.join(
+        fixture.artifacts,
+        resolution ? 'ordinary-resolution-report.json' : 'reference-utility-report.json',
+      ),
+      {
+        attempted,
+        contract: fixture.contract,
+        elapsedSeconds: (Date.now() - startedAt) / 1000,
+        error:
+          failure instanceof Error ? { message: failure.message, name: failure.name } : failure,
+        fixture: { path: fixturePath, sha256: fixtureFile.sha256 },
+        ordinaryZeroRgbEqualityObservedOnly:
+          pixels.has('seed123-baseline') && pixels.has('seed123-zero-A')
+            ? pixels.get('seed123-baseline')!.equals(pixels.get('seed123-zero-A')!)
+            : null,
+        outcomes,
+        profile: fixture.profile,
+        resources,
+        ...(resolution ? { historical512Replay: !failure && submitted === ceiling } : {}),
+        schema: resolution ? 'ordinary-resolution-backend-v1' : 'reference-utility-backend-v1',
+        scope: contractExpected.scope,
+        source: { files: initialSources, invokeRevision, revision },
+        status: failure ? 'failed' : 'mechanical-pass',
+        submitted,
+        visualStatus: 'pending',
+        zeroReferenceEquality:
+          pixels.has('seed123-zero-A') && pixels.has('seed123-zero-B')
+            ? pixels.get('seed123-zero-A')!.equals(pixels.get('seed123-zero-B')!)
+            : null,
+      },
+    )
   }
 }
 
@@ -1480,7 +1623,9 @@ async function sourceCensus(
   return result
 }
 
-async function installation(fixture: Fixture | ReferenceUtilityFixture) {
+async function installation(
+  fixture: Fixture | OrdinaryResolutionFixture | ReferenceUtilityFixture,
+) {
   const provisionFile = await json(fixture.provisionReport.path)
   assert.equal(provisionFile.sha256, fixture.provisionReport.sha256)
   const provision = provisionFile.value

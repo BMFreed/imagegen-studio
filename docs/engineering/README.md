@@ -1,5 +1,14 @@
 # Engineering Workflow
 
+## Current ordinary resolution diagnostic — NOT_QUALIFIED
+
+[Fixed four-request diagnostic](./phase-4-ordinary-resolution-research.md) keeps
+prompt/seeds/settings and SDXL1024 micro-conditioning fixed while changing real
+processing512/1024. Both512 originals replay exactly;1024 gives two ambiguous
+fantastical/creature heads, not two scene PASS. Four native exits/120steps pass;
+15guards, typing/lint and source review pass. No default/reference guard or PP
+status changes. An ordinary Invoke parity diagnosis remains open.
+
 ## Current reference utility experiment — NOT_QUALIFIED
 
 [Fixed eight-request experiment](./phase-4-regional-reference-utility-research.md)

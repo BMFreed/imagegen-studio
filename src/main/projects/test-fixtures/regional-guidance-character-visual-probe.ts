@@ -1104,16 +1104,117 @@ export async function produceReferenceUtilityProbe<T>(options: {
   runtimeRoot: string
   useCase: (input: ReferenceUtilityUseCase) => Promise<T>
 }): Promise<unknown> {
-  assert.equal(options.run, REFERENCE_UTILITY_RUN)
-  const bbox = REFERENCE_UTILITY_CONTRACT.bbox
+  return produceFixedUtilityProbe({
+    ...options,
+    spec: {
+      cases: REFERENCE_UTILITY_CASES,
+      contract: REFERENCE_UTILITY_CONTRACT,
+      prefix: 'reference',
+      run: REFERENCE_UTILITY_RUN,
+    },
+  })
+}
+
+export const ORDINARY_RESOLUTION_RUN = path.join(
+  os.homedir(),
+  '.codex/artifacts/imagegen-studio/runs/ordinary-resolution/20261111-fixed-cat',
+)
+export const ORDINARY_RESOLUTION_CASES = [
+  { image: null, label: 'seed123-512', outside: false, seed: 123, side: 512 },
+  { image: null, label: 'seed123-1024', outside: false, seed: 123, side: 1024 },
+  { image: null, label: 'seed124-512', outside: false, seed: 124, side: 512 },
+  { image: null, label: 'seed124-1024', outside: false, seed: 124, side: 1024 },
+] as const
+export const ORDINARY_RESOLUTION_CONTRACT = {
+  base: '88acee7d0e84c390b5697add124f18fb5f9a343a',
+  bboxOrigin: { x: -13, y: 5 },
+  cases: ORDINARY_RESOLUTION_CASES,
+  fixedBeforeNativeExecution: true,
+  globalNegative: '',
+  globalPositive: REFERENCE_UTILITY_CONTRACT.globalPositive,
+  historical512: {
+    seed123: {
+      byteSize: 331_817,
+      path: path.join(REFERENCE_UTILITY_RUN, 'reference-outputs/seed123-baseline.png'),
+      sha256: '32f0aae657ef7f7f17aae6394173286a6a299aaf7afa6a26d7522016435d0968',
+    },
+    seed124: {
+      byteSize: 276_645,
+      path: path.join(REFERENCE_UTILITY_RUN, 'reference-outputs/seed124-baseline.png'),
+      sha256: '8da408c89da102d75c4f9725abddd6242942a86d40e3f2c1d48d36e15436ae47',
+    },
+  },
+  invokeRevision: '4875d96531ca6712b288f6e660fcbb34143408c1',
+  microConditioning: { crop: [0, 0], negativeSize: [1024, 1024], positiveSize: [1024, 1024] },
+  nativeRequestCeiling: 4,
+  profile: 'ordinary-resolution-v1',
+  sampling: REFERENCE_UTILITY_CONTRACT.sampling,
+  schema: 'ordinary-resolution-experiment-v1',
+  schemaVersion: 1,
+  scope:
+    'Direct installed ordinary backend; processing size only. No regional/reference, matched-spatial-noise, UI/queue, general quality or human acceptance claim.',
+  vaePrecision: 'FP16',
+} as const
+export type OrdinaryResolutionCase = (typeof ORDINARY_RESOLUTION_CASES)[number]
+export type OrdinaryResolutionUseCase = Omit<ReferenceUtilityUseCase, 'case'> & {
+  case: OrdinaryResolutionCase
+}
+interface FixedUtilityCase {
+  image: 'A' | 'B' | null
+  label: string
+  outside: boolean
+  seed: number
+  side?: 1024 | 512
+}
+/**
+ * Invoke4875 core/graph.ts→compileCanvasGraph separates processing/noise dimensions from the
+ * default1024 SDXLCompelPromptInvocation time IDs. This probe keeps inference.py's existing fixed
+ * positive/negative1024 policy. Same seed across shapes is not identical spatial noise.
+ */
+export async function produceOrdinaryResolutionProbe<T>(options: {
+  pythonExecutable: string
+  run: string
+  runtimeRoot: string
+  useCase: (input: OrdinaryResolutionUseCase) => Promise<T>
+}): Promise<unknown> {
+  return produceFixedUtilityProbe({
+    ...options,
+    spec: {
+      cases: ORDINARY_RESOLUTION_CASES,
+      contract: ORDINARY_RESOLUTION_CONTRACT,
+      prefix: 'resolution',
+      run: ORDINARY_RESOLUTION_RUN,
+    },
+  })
+}
+async function produceFixedUtilityProbe<C extends FixedUtilityCase, T>(options: {
+  pythonExecutable: string
+  referenceImages?: Record<'A' | 'B', CharacterVisualFile>
+  resources?: VerifiedRegionalReferenceResources
+  run: string
+  runtimeRoot: string
+  spec: {
+    cases: readonly C[]
+    contract: typeof ORDINARY_RESOLUTION_CONTRACT | typeof REFERENCE_UTILITY_CONTRACT
+    prefix: 'reference' | 'resolution'
+    run: string
+  }
+  useCase: (input: Omit<ReferenceUtilityUseCase, 'case'> & { case: C }) => Promise<T>
+}): Promise<unknown> {
+  const { spec } = options
+  assert.equal(options.run, spec.run)
   const run = options.run
   await directory(run)
   await directory(path.join(run, 'payloads'))
-  const data = path.join(run, 'payloads', 'reference-main')
+  const data = path.join(run, 'payloads', `${spec.prefix}-main`)
   await freshDirectory(data)
   const scratch = path.join(data, 'scratch')
   await freshDirectory(scratch)
-  for (const name of ['reference-packages', 'reference-targets', 'reference-handoffs']) {
+  for (const name of [
+    `${spec.prefix}-packages`,
+    `${spec.prefix}-targets`,
+    `${spec.prefix}-handoffs`,
+  ]) {
     await freshDirectory(path.join(run, name))
   }
   const database = openAppDatabase(data, path.join(REPO, 'src/main/db/migrations'))
@@ -1187,7 +1288,10 @@ export async function produceReferenceUtilityProbe<T>(options: {
     assert.equal(model.predictionType, 'epsilon')
     const tab = await service.create({
       height: 512,
-      title: 'Fixed cat reference utility',
+      title:
+        spec.prefix === 'reference'
+          ? 'Fixed cat reference utility'
+          : 'Fixed cat ordinary resolution',
       width: 512,
     })
     const co = () => {
@@ -1201,7 +1305,9 @@ export async function produceReferenceUtilityProbe<T>(options: {
     const bytes = encodeProjectMaskPng(new Uint8Array(512 * 512).fill(255), 512, 512)
     const member = `assets/masks/${maskId}/${sha(bytes)}.png`
     const sources: Record<string, IgsAssetSource> = { [member]: { bytes } }
-    for (const testCase of REFERENCE_UTILITY_CASES) {
+    for (const testCase of spec.cases) {
+      const side = testCase.side ?? 512
+      const bbox = { height: side, width: side, x: -13, y: 5 }
       const owner: IgsRegionalGuidanceV1 = {
         enabled: true,
         id: regionId,
@@ -1225,7 +1331,7 @@ export async function produceReferenceUtilityProbe<T>(options: {
           loras: [],
           model,
           negativePrompt: prompt(''),
-          positivePrompt: prompt(REFERENCE_UTILITY_CONTRACT.globalPositive),
+          positivePrompt: prompt(spec.contract.globalPositive),
           sampling: {
             cfgScale: 5,
             denoisingStrength: null,
@@ -1245,6 +1351,7 @@ export async function produceReferenceUtilityProbe<T>(options: {
         expectedDocumentRevision: co().document.documentRevision,
       })
       if (testCase.image !== null) {
+        assert.ok(options.referenceImages)
         const image = options.referenceImages[testCase.image]
         const pin = REFERENCE_UTILITY_CONTRACT.referenceImages[testCase.image]
         assert.equal(image.path, path.join(run, `reference-${testCase.image}.png`))
@@ -1286,7 +1393,7 @@ export async function produceReferenceUtilityProbe<T>(options: {
         assert.deepEqual(authored.regionalGuidance, [])
       }
       const packageFile = await writeOwned(
-        path.join(run, 'reference-packages', `${testCase.label}.igs`),
+        path.join(run, `${spec.prefix}-packages`, `${testCase.label}.igs`),
         await readFile(co().filePath),
       )
       await service.withCapturedCurrentCanvasRegionalGenerationInput(tab.id, async (capture) => {
@@ -1347,7 +1454,10 @@ export async function produceReferenceUtilityProbe<T>(options: {
                 capture: capture.regional,
                 mode: 'txt2img',
                 recipe,
-                resources: options.resources,
+                resources: (() => {
+                  assert.ok(options.resources)
+                  return options.resources
+                })(),
               })
         const ownedPrepared = clonePrepared(prepared)
         const ownedRecipe = structuredClone(recipe)
@@ -1366,11 +1476,11 @@ export async function produceReferenceUtilityProbe<T>(options: {
           }),
         )
         const targetFile = await writeOwned(
-          path.join(run, 'reference-targets', `${testCase.label}.png`),
+          path.join(run, `${spec.prefix}-targets`, `${testCase.label}.png`),
           ownedPrepared.targetPngBytes,
         )
         const handoff = await writeJson(
-          path.join(run, 'reference-handoffs', `${testCase.label}.json`),
+          path.join(run, `${spec.prefix}-handoffs`, `${testCase.label}.json`),
           {
             authoredDocument: authored,
             case: testCase,
@@ -1430,18 +1540,27 @@ export async function produceReferenceUtilityProbe<T>(options: {
         })
       })
     }
-    assert.equal(cases.length, 8)
+    assert.equal(cases.length, spec.contract.nativeRequestCeiling)
     assert.equal(networkAttempts, 0)
     const manifest = {
       cases,
-      nativeRequestCeiling: 8,
+      nativeRequestCeiling: spec.contract.nativeRequestCeiling,
       networkAttempts,
       noSharedDatabaseWrites: true,
-      profile: 'main-reference-utility-v1',
+      profile:
+        spec.prefix === 'reference' ? 'main-reference-utility-v1' : 'main-ordinary-resolution-v1',
       schemaVersion: 1,
       visualAcceptance: 'pending',
     }
-    await writeJson(path.join(run, 'main-reference-utility.json'), manifest)
+    await writeJson(
+      path.join(
+        run,
+        spec.prefix === 'reference'
+          ? 'main-reference-utility.json'
+          : 'main-ordinary-resolution.json',
+      ),
+      manifest,
+    )
     return manifest
   } finally {
     try {

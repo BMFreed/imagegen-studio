@@ -1,6 +1,15 @@
 # Open Questions
 
-## Current visual diagnosis
+## Current ordinary resolution diagnosis
+
+[Four fixed ordinary512/1024 requests](./engineering/phase-4-ordinary-resolution-research.md)
+reproduce both historical512 PNGs exactly. Both1024 results are INCONCLUSIVE
+under the unchanged single-cat-head rubric. Resolution alone does not close
+this scene gate or isolate a Studio-only defect; ordinary Invoke parity of
+noise/conditioning/scheduler remains the next finite diagnosis. No tuning,
+reference guard widening or PP promotion follows.
+
+## Previous reference utility diagnosis
 
 [Fixed reference utility](./engineering/phase-4-regional-reference-utility-research.md)
 executes eight installed-worker requests with exact outside-mask controls, but

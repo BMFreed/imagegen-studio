@@ -1,6 +1,14 @@
 # Implementation Roadmap
 
-## Latest visual checkpoint — reference utility NOT_QUALIFIED
+## Latest ordinary resolution diagnostic — NOT_QUALIFIED
+
+[Fixed four-request comparison](../engineering/phase-4-ordinary-resolution-research.md)
+passes exact512 replay/native/source mechanics, but both1024 scenes remain
+INCONCLUSIVE. Processing resolution changes the images without closing the
+scene gate. Ordinary Invoke parity diagnosis remains open; defaults, reference
+scope and promise readiness do not change.
+
+## Previous visual checkpoint — reference utility NOT_QUALIFIED
 
 [Fixed eight-request experiment](../engineering/phase-4-regional-reference-utility-research.md)
 completes all native requests/PNGs and exact outside-mask controls. Both ordinary
