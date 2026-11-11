@@ -213,6 +213,7 @@ export const ipcChannels = {
     listTrash: 'projects:list-trash',
     listWorkspaces: 'projects:list-workspaces',
     locateProject: 'projects:locate',
+    locateWorkspace: 'projects:locate-workspace',
     moveProject: 'projects:move-workspace',
     moveRasterLayer: 'projects:move-raster-layer',
     open: 'projects:open',
@@ -723,6 +724,7 @@ export interface ProjectApi {
   listTrash: () => Promise<ApiResult<ProjectTrashSummary[]>>
   listWorkspaces: () => Promise<ApiResult<ProjectWorkspaceSummary[]>>
   locateProject: (projectId: string) => Promise<ApiResult<boolean>>
+  locateWorkspace: (workspaceId: string) => Promise<ApiResult<boolean>>
   moveProject: (projectId: string, workspaceId: string) => Promise<ApiResult<ProjectMoveResult>>
   moveRasterLayer: (
     tabId: string,

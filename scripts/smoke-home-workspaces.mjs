@@ -33,7 +33,7 @@ import {
   confirmQualificationProcessExit,
 } from './qualification-resource-limits.mjs'
 
-assert.ok([4, 5].includes(process.argv.length), 'Use --report-file ABSOLUTE_NEW_OWNED_REPORT [--trash-only|--locations-only|--move-only|--relocation-only|--open-rename-only|--browse-only|--forget-only|--locate-only]')
+assert.ok([4, 5].includes(process.argv.length), 'Use --report-file ABSOLUTE_NEW_OWNED_REPORT [--trash-only|--locations-only|--move-only|--relocation-only|--open-rename-only|--browse-only|--forget-only|--locate-only|--workspace-locate-only]')
 const trashOnly = process.argv[4] === '--trash-only'
 const locationsOnly = process.argv[4] === '--locations-only'
 const moveOnly = process.argv[4] === '--move-only'
@@ -42,7 +42,8 @@ const openRenameOnly = process.argv[4] === '--open-rename-only'
 const browseOnly = process.argv[4] === '--browse-only'
 const forgetOnly = process.argv[4] === '--forget-only'
 const locateOnly = process.argv[4] === '--locate-only'
-if (process.argv.length === 5) assert.ok(trashOnly || locationsOnly || moveOnly || relocationOnly || openRenameOnly || browseOnly || forgetOnly || locateOnly)
+const workspaceLocateOnly = process.argv[4] === '--workspace-locate-only'
+if (process.argv.length === 5) assert.ok(trashOnly || locationsOnly || moveOnly || relocationOnly || openRenameOnly || browseOnly || forgetOnly || locateOnly || workspaceLocateOnly)
 assert.equal(process.argv[2], '--report-file')
 const reportFile = process.argv[3]
 const evidenceRoot = path.dirname(reportFile)
@@ -61,7 +62,7 @@ const execute = promisify(execFile)
 const digest = (file) => createHash('sha256').update(readFileSync(file)).digest('hex')
 const report = {
   outcome: 'running',
-  mode: locateOnly ? 'locate-only' : forgetOnly ? 'forget-only' : browseOnly ? 'browse-only' : openRenameOnly ? 'open-rename-only' : relocationOnly ? 'relocation-only' : moveOnly ? 'move-only' : locationsOnly ? 'locations-only' : trashOnly ? 'trash-only' : 'catalog-workspaces-and-trash',
+  mode: workspaceLocateOnly ? 'workspace-locate-only' : locateOnly ? 'locate-only' : forgetOnly ? 'forget-only' : browseOnly ? 'browse-only' : openRenameOnly ? 'open-rename-only' : relocationOnly ? 'relocation-only' : moveOnly ? 'move-only' : locationsOnly ? 'locations-only' : trashOnly ? 'trash-only' : 'catalog-workspaces-and-trash',
   startedAt: new Date().toISOString(),
   payloads: [payload],
   checks: [],
@@ -69,7 +70,9 @@ const report = {
   nativeClosures: [],
   resourceChecks: [],
   pageErrors: [],
-  boundary: locateOnly
+  boundary: workspaceLocateOnly
+    ? 'Workspace Locate uses actual built Home/preload/Main/SQLite and real packages/shadow writers. Whole-folder external rename and dirty shadow are prepared only while physically closed, not crash qualification. Controlled Locate Workspace Folder picker delegates every nonmatching dialog and restores exact callback identity. All cached Project keys and workspace metadata remain associated with the chosen folder; Locate never imports, opens, adds or saves. Later explicit Recover/Save is a separate consumer and its original bytes are retained first. Native operational tables are observed empty controls; nonempty terminal path/frozen-payload ownership is separate integration evidence. No ML, foreign process or filesystem data.'
+    : locateOnly
     ? 'Locate-only uses actual built Home/preload/Main/SQLite and real package/shadow writers. OS picker replies are controlled with exact Locate Project options and restored callback identities; Main API replies are real. Closed-app shadow preparation and external file rename are not crash qualification. Relink does not Save/Open; later explicit Recover and Save qualify the retained recovery consumer separately. Successful external relocation remains the current coherent bound path. Native operational tables are observed empty controls; nonempty queue/receipt ownership is separate integration evidence. No ML or foreign data.'
     : forgetOnly
     ? 'Forget-only qualifies actual built Home/preload/Main/SQLite and real package/recovery writers. Closed-app missing/recovery preparation is controlled and is not a crash qualification. Missing-file and workspace renames are exact owned paths and restored; no unlink, ML, foreign data or API response mocks. Internal malformed-arity validation is called with the real owned WebContents/frame; OS picker replies are controlled. Native queue tables are observed controls; nonempty queue preservation is a separate integration boundary.'
@@ -1622,6 +1625,318 @@ async function manageRelocation() {
   await browse()
   check('recovered Project opens by original key; subsequent explicit edit Save and renamed-title reopen use only authoritative destinations')
 }
+/** Atomic folder reconnect through actual Main ownership and the ordinary recovery consumer. */
+async function manageWorkspaceLocate() {
+  const projects = await api('list', registered.id)
+  const original = projects.find(({ title }) => title === 'Workspace Project')
+  assert.ok(original)
+  assert.equal(projects.length, 3)
+  const workspaceBefore = (await api('listWorkspaces')).find(({ id }) => id === registered.id)
+  assert.ok(workspaceBefore && !workspaceBefore.isDefault)
+  const catalogBefore = await database.db.selectFrom('project_workspace').selectAll().orderBy('id').execute()
+  const workspaceBeforeRow = catalogBefore.find(({ id }) => id === registered.id)
+  const records = Object.fromEntries(await Promise.all(projects.map(async (project) => [project.id, await indexRecord(project.id)])))
+  const oldFiles = Object.fromEntries(projects.map((project) => [project.id, records[project.id].canonical_path]))
+  const originalHashes = Object.fromEntries(projects.map((project) => [project.id, digest(oldFiles[project.id])]))
+  const foundFolder = path.join(payload, 'found-workspace')
+  const wrongFolder = path.join(payload, 'wrong-empty-workspace')
+  const foundFiles = Object.fromEntries(projects.map((project) => [project.id, path.join(foundFolder, path.basename(oldFiles[project.id]))]))
+  const row = (id) => window.locator(`.project-row[data-project-id="${id}"]`)
+  const option = () => window.locator('.n-dropdown-option-body__label:visible').filter({ hasText: /^Locate Folder$/ })
+  const warningAction = () => window.locator('.project-browser').getByRole('button', { name: 'Locate Folder', exact: true })
+  const recoveryDialog = () => window.getByRole('dialog', { name: 'Recovery available', exact: true })
+  const operationalTables = ['project_identity_retired_key', 'project_relocation', 'project_file_lifecycle', 'generation_queue_item', 'generation_candidate_receipt', 'generation_seed_cursor', 'generation_staging_discarded_session']
+  const operationalRows = async () => Object.fromEntries(await Promise.all(operationalTables.map(async (table) => [table, await database.db.selectFrom(table).selectAll().execute()])))
+  const indexRows = () => database.db.selectFrom('project_index').selectAll().where('workspace_id', '=', registered.id).orderBy('local_project_key').execute()
+  const pickerRestorations = []
+  let guardPickerRestoration
+  async function browse() {
+    await showHome()
+    await home().locator('.workspace-select').filter({ hasText: registered.displayName }).click()
+    await expect(window.getByRole('heading', { name: registered.displayName, exact: true })).toBeVisible()
+    await expect(home().locator('.workspace-select').filter({ hasText: registered.displayName })).toHaveAttribute('aria-pressed', 'true')
+  }
+  async function refresh() {
+    await window.getByRole('button', { name: 'Refresh projects', exact: true }).click()
+    await expect(window.getByRole('button', { name: 'Refresh projects', exact: true })).toBeEnabled()
+  }
+  async function menu() {
+    await home().getByRole('button', { name: `${registered.displayName} workspace actions`, exact: true }).click()
+  }
+  function shadowTree(directory) {
+    const result = []
+    function walk(current) {
+      for (const entry of readdirSync(current, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+        const file = path.join(current, entry.name)
+        assert.equal(lstatSync(file).isSymbolicLink(), false)
+        if (entry.isDirectory()) walk(file)
+        else {
+          assert.ok(entry.isFile())
+          result.push({ path: path.relative(directory, file), bytes: lstatSync(file).size, sha256: digest(file) })
+        }
+      }
+    }
+    walk(directory)
+    return result
+  }
+  async function installPicker(selectedPath) {
+    await application.evaluate(({ dialog }, selectedPath) => {
+      if (globalThis.__igsWorkspaceLocatePicker) throw new Error('Workspace Locate picker observer already installed')
+      const state = { original: dialog.showOpenDialog, calls: [], wrapper: null }
+      state.wrapper = async (owner, options) => {
+        if (options.title !== 'Locate Workspace Folder') return state.original(owner, options)
+        if (JSON.stringify(options.properties) !== JSON.stringify(['openDirectory'])) throw new Error('Wrong Locate Workspace Folder picker properties')
+        state.calls.push({ title: options.title, properties: options.properties, selectedPath })
+        return selectedPath === null ? { canceled: true, filePaths: [] } : { canceled: false, filePaths: [selectedPath] }
+      }
+      globalThis.__igsWorkspaceLocatePicker = state
+      dialog.showOpenDialog = state.wrapper
+    }, selectedPath)
+  }
+  async function restorePicker() {
+    const value = await application.evaluate(({ dialog }) => {
+      const state = globalThis.__igsWorkspaceLocatePicker
+      if (!state || dialog.showOpenDialog !== state.wrapper) throw new Error('Workspace Locate picker observer identity changed')
+      dialog.showOpenDialog = state.original
+      delete globalThis.__igsWorkspaceLocatePicker
+      return { restored: dialog.showOpenDialog === state.original, calls: state.calls }
+    })
+    assert.equal(value.restored, true)
+    return value
+  }
+  async function request(selectedPath) {
+    await installPicker(selectedPath)
+    try {
+      await expect(warningAction()).toBeVisible()
+      await warningAction().click()
+      await expect.poll(() => application.evaluate(() => globalThis.__igsWorkspaceLocatePicker.calls.length)).toBe(1)
+      await expect(window.getByRole('button', { name: 'Refresh projects', exact: true })).toBeEnabled()
+    } finally {
+      pickerRestorations.push(await restorePicker())
+    }
+  }
+  function assertPackagesExact() {
+    for (const project of projects) assert.equal(digest(foundFiles[project.id]), originalHashes[project.id])
+  }
+
+  await browse()
+  await menu()
+  await expect(option()).toHaveCount(0)
+  await window.keyboard.press('Escape')
+  await installPicker(null)
+  let present, protectedDefault, invalid, extra
+  try {
+    present = await window.evaluate((id) => window.api.projects.locateWorkspace(id), registered.id)
+    protectedDefault = await window.evaluate(() => window.api.projects.locateWorkspace('uncategorized'))
+    invalid = await window.evaluate(() => window.api.projects.locateWorkspace('/tmp/renderer-directory'))
+    extra = await application.evaluate(async ({ ipcMain, BrowserWindow }, id) => {
+      const webContents = BrowserWindow.getAllWindows()[0].webContents
+      const handler = ipcMain._invokeHandlers.get('projects:locate-workspace')
+      if (!handler) throw new Error('Missing production Locate Workspace handler')
+      return await handler({ sender: webContents, senderFrame: webContents.mainFrame }, id, '/tmp/renderer-directory')
+    }, registered.id)
+    for (const value of [present, protectedDefault, invalid, extra]) assert.equal(value.ok, false)
+    assert.equal(await application.evaluate(() => globalThis.__igsWorkspaceLocatePicker.calls.length), 0)
+  } finally {
+    guardPickerRestoration = await restorePicker()
+  }
+  for (const project of projects) assert.equal(digest(oldFiles[project.id]), originalHashes[project.id])
+  assert.equal((await api('listWorkspaces')).length, catalogBefore.length)
+  check('healthy workspace omits Locate Folder; present, protected default, renderer path and extra IPC arguments refuse before any directory picker', { present, protectedDefault, invalid, extra, guardPickerRestoration })
+  await close('workspace-locate-fixtures-normal')
+
+  const saved = await readIgsPackage(oldFiles[original.id])
+  const dirty = parseProjectDocumentV1({ ...saved.project, documentRevision: randomUUID(), primaryBbox: { ...saved.project.primaryBbox, x: 8 } })
+  const shadow = new ProjectShadowStore(path.join(appData, 'autosave'))
+  await shadow.write({ projectPath: oldFiles[original.id], savedDocument: saved.project, document: dirty })
+  assert.equal((await shadow.inspect({ projectPath: oldFiles[original.id], savedPackage: saved })).status, 'recoverable')
+  const shadowDirectory = path.join(appData, 'autosave', original.id)
+  const shadowBefore = shadowTree(shadowDirectory)
+  assert.ok(shadowBefore.length >= 2)
+  const retainedSavedPath = path.join(payload, 'workspace-locate-retained-before-recovery.igs')
+  const retainedShadowDirectory = path.join(payload, 'workspace-locate-retained-shadow-before-recovery')
+  writeFileSync(retainedSavedPath, readFileSync(oldFiles[original.id]), { flag: 'wx' })
+  for (const entry of shadowBefore) {
+    const retained = path.join(retainedShadowDirectory, entry.path)
+    mkdirSync(path.dirname(retained), { recursive: true })
+    writeFileSync(retained, readFileSync(path.join(shadowDirectory, entry.path)), { flag: 'wx' })
+  }
+  assert.equal(digest(retainedSavedPath), originalHashes[original.id])
+  assert.deepEqual(shadowTree(retainedShadowDirectory), shadowBefore)
+  const ignoredFile = path.join(foundFolder, 'keep.txt')
+  const ignoredHash = digest(path.join(folder, 'keep.txt'))
+  assert.equal(existsSync(foundFolder), false)
+  mkdirSync(wrongFolder)
+  renameSync(folder, foundFolder)
+  let reconnected = false
+  try {
+    await launch('workspace-locate-action')
+    await browse()
+    await refresh()
+    const unavailable = (await api('listWorkspaces')).find(({ id }) => id === registered.id)
+    assert.equal(unavailable.availability, 'missing')
+    assert.equal(unavailable.directoryPath, folder)
+    assert.equal(unavailable.projectCount, 3)
+    const beforeIndex = await indexRows()
+    const beforeOperational = await operationalRows()
+    const beforeBindings = await database.db.selectFrom('project_identity_binding').selectAll().orderBy('local_project_key').execute()
+    const beforeCatalog = await database.db.selectFrom('project_workspace').selectAll().orderBy('id').execute()
+    assert.equal(beforeIndex.length, 3)
+    for (const project of projects) await expect(row(project.id)).toBeVisible()
+    await expect(warningAction()).toBeVisible()
+    await menu()
+    await expect(option()).toBeVisible()
+    await window.keyboard.press('Escape')
+    assert.equal(existsSync(folder), false)
+    assertPackagesExact()
+    assert.deepEqual(shadowTree(shadowDirectory), shadowBefore)
+    await screenshot('workspace-locate-missing', 900, 620)
+    check('closed-prepared whole-folder relocation keeps all three cached Project owners and real recovery while the unavailable workspace exposes Locate Folder')
+
+    await request(null)
+    assert.deepEqual(await indexRows(), beforeIndex)
+    assert.deepEqual(await database.db.selectFrom('project_workspace').selectAll().orderBy('id').execute(), beforeCatalog)
+    assert.deepEqual(await operationalRows(), beforeOperational)
+    assert.deepEqual(await database.db.selectFrom('project_identity_binding').selectAll().orderBy('local_project_key').execute(), beforeBindings)
+    assertPackagesExact()
+    assert.deepEqual(shadowTree(shadowDirectory), shadowBefore)
+    check('public Locate Folder picker Cancel retains workspace registration, every Project row and all original package and recovery bytes')
+
+    await request(wrongFolder)
+    await expect(window.locator('.home-view').getByRole('alert').filter({ hasText: 'Project action failed' })).toBeVisible()
+    assert.deepEqual(await indexRows(), beforeIndex)
+    assert.deepEqual(await database.db.selectFrom('project_workspace').selectAll().orderBy('id').execute(), beforeCatalog)
+    assert.deepEqual(await operationalRows(), beforeOperational)
+    assert.deepEqual(await database.db.selectFrom('project_identity_binding').selectAll().orderBy('local_project_key').execute(), beforeBindings)
+    assertPackagesExact()
+    assert.deepEqual(shadowTree(shadowDirectory), shadowBefore)
+    await screenshot('workspace-locate-wrong-folder', 900, 620)
+    check('real Main rejects a folder missing the complete saved Project set and leaves every cached owner, binding and recovery untouched')
+
+    await request(foundFolder)
+    const restoredWorkspace = (await api('listWorkspaces')).find(({ id }) => id === registered.id)
+    assert.equal(restoredWorkspace.directoryPath, foundFolder)
+    reconnected = true
+    assert.equal(restoredWorkspace.availability, 'available')
+    assert.equal(restoredWorkspace.projectCount, 3)
+    for (const field of ['id', 'displayName', 'color', 'isDefault']) assert.equal(restoredWorkspace[field], workspaceBefore[field])
+    const restoredProjects = await api('list', registered.id)
+    assert.deepEqual(restoredProjects.map(({ id }) => id).sort(), projects.map(({ id }) => id).sort())
+    assert.equal((await api('listWorkspaces')).length, catalogBefore.length)
+    const reboundRecords = Object.fromEntries(await Promise.all(projects.map(async (project) => [project.id, await indexRecord(project.id)])))
+    for (const project of projects) {
+      const rebound = reboundRecords[project.id]
+      assert.equal(rebound.canonical_path, foundFiles[project.id])
+      assert.equal(rebound.workspace_id, registered.id)
+      assert.equal(rebound.document_id, records[project.id].document_id)
+      assert.equal(rebound.document_revision, records[project.id].document_revision)
+      assert.equal(rebound.last_opened_at, records[project.id].last_opened_at)
+      assert.equal(rebound.file_health, 'ready')
+      await expect(window.getByRole('tab', { name: project.title, exact: true })).toHaveCount(0)
+    }
+    const bindings = await database.db.selectFrom('project_identity_binding').selectAll().orderBy('local_project_key').execute()
+    const projectIds = new Set(projects.map(({ id }) => id))
+    assert.deepEqual(bindings.filter((binding) => !projectIds.has(binding.local_project_key)), beforeBindings.filter((binding) => !projectIds.has(binding.local_project_key)))
+    for (const project of projects) {
+      const binding = bindings.find(({ local_project_key }) => local_project_key === project.id)
+      assert.ok(binding)
+      assert.equal(binding.canonical_path, foundFiles[project.id])
+      assert.equal(binding.document_id, records[project.id].document_id)
+    }
+    const reboundCatalog = await database.db.selectFrom('project_workspace').selectAll().orderBy('id').execute()
+    assert.deepEqual(reboundCatalog.filter(({ id }) => id !== registered.id), beforeCatalog.filter(({ id }) => id !== registered.id))
+    const reboundWorkspaceRow = reboundCatalog.find(({ id }) => id === registered.id)
+    for (const field of ['id', 'display_name', 'color', 'is_default', 'created_at']) assert.equal(reboundWorkspaceRow[field], workspaceBeforeRow[field])
+    assert.equal(reboundWorkspaceRow.directory_path, foundFolder)
+    assert.deepEqual(await operationalRows(), beforeOperational)
+    assertPackagesExact()
+    assert.equal(digest(ignoredFile), ignoredHash)
+    assert.equal(existsSync(folder), false)
+    assert.deepEqual(shadowTree(shadowDirectory), shadowBefore)
+    await expect(row(original.id).getByText('Recovery available', { exact: true })).toBeVisible()
+    await expect(home().locator('.workspace-select').filter({ hasText: registered.displayName })).toHaveAttribute('aria-pressed', 'true')
+    await screenshot('workspace-locate-reconnected', 1440, 900)
+    check('one explicit Locate Folder retains workspace ID name color and all three Project keys while rebinding every path without Add Open Save or package and recovery writes', { workspaceBefore: workspaceBeforeRow, workspaceAfter: reboundWorkspaceRow, recordsBefore: records, recordsAfter: reboundRecords, bindings, observedOperationalRows: beforeOperational, nativeOperationalControl: 'Observed native tables are empty controls; nonempty terminal queue/receipt and frozen payload preservation are separate integration evidence.' })
+    await close('workspace-locate-reconnected-normal')
+
+    await launch('workspace-locate-restart')
+    await browse()
+    await refresh()
+    const coldWorkspace = (await api('listWorkspaces')).find(({ id }) => id === registered.id)
+    assert.equal(coldWorkspace.directoryPath, foundFolder)
+    assert.equal(coldWorkspace.availability, 'available')
+    assert.deepEqual((await api('list', registered.id)).map(({ id }) => id).sort(), projects.map(({ id }) => id).sort())
+    for (const project of projects) assert.equal((await indexRecord(project.id)).canonical_path, foundFiles[project.id])
+    assertPackagesExact()
+    assert.deepEqual(shadowTree(shadowDirectory), shadowBefore)
+    assert.deepEqual(await operationalRows(), beforeOperational)
+    await expect(row(original.id).getByText('Recovery available', { exact: true })).toBeVisible()
+    check('a new native lifetime restores the relocated workspace and every stable Project key with exact saved packages and retained recovery')
+
+    await row(original.id).getByRole('button', { name: `Open ${original.title}`, exact: true }).click()
+    await expect(recoveryDialog()).toBeVisible()
+    await expect(recoveryDialog().getByRole('button', { name: 'Recover', exact: true })).toBeEnabled()
+    assertPackagesExact()
+    await screenshot('workspace-locate-recovery-decision', 1440, 900)
+    check('normal Open in the relocated folder reaches the original recovery decision without changing any saved Project')
+    await recoveryDialog().getByRole('button', { name: 'Recover', exact: true }).click()
+    await expect(recoveryDialog()).toHaveCount(0)
+    await expect(window.getByRole('tab', { name: original.title, exact: true })).toBeVisible()
+    await expect(window.getByText('Unsaved changes', { exact: true })).toBeVisible()
+    const recovered = await api('open', original.id)
+    assert.equal(recovered.kind, 'opened')
+    assert.equal(recovered.tab.id, original.id)
+    assert.equal(recovered.tab.documentId, saved.project.documentId)
+    assert.equal(recovered.tab.primaryBbox.x, 8)
+    assert.equal(recovered.tab.dirty, true)
+    assertPackagesExact()
+    await screenshot('workspace-locate-recovered-dirty', 900, 620, false)
+    check('explicit Recover reads the preserved shadow through the original key and leaves every located saved package unchanged', { recoveredTab: recovered.tab })
+
+    await window.getByRole('button', { name: 'Save Project', exact: true }).click()
+    await expect(window.getByText('Saved', { exact: true })).toBeVisible()
+    const explicitlySaved = await readIgsPackage(foundFiles[original.id])
+    assert.equal(explicitlySaved.project.documentId, saved.project.documentId)
+    assert.equal(explicitlySaved.project.primaryBbox.x, 8)
+    assert.notEqual(digest(foundFiles[original.id]), originalHashes[original.id])
+    await closeProject(original.title)
+    await browse()
+    await refresh()
+    await row(original.id).getByRole('button', { name: `Open ${original.title}`, exact: true }).click()
+    await expect(window.getByRole('tab', { name: original.title, exact: true })).toBeVisible()
+    await expect(recoveryDialog()).toHaveCount(0)
+    const reopened = await api('open', original.id)
+    assert.equal(reopened.kind, 'opened')
+    assert.equal(reopened.tab.id, original.id)
+    assert.equal(reopened.tab.primaryBbox.x, 8)
+    assert.equal(reopened.tab.dirty, false)
+    await screenshot('workspace-locate-saved-reopened', 1440, 900, false)
+    await closeProject(original.title)
+    await browse()
+    const unchangedNeighbors = Object.fromEntries(projects.filter(({ id }) => id !== original.id).map((project) => [foundFiles[project.id], originalHashes[project.id]]))
+    for (const [file, hash] of Object.entries(unchangedNeighbors)) assert.equal(digest(file), hash)
+    assert.equal(digest(ignoredFile), ignoredHash)
+    assert.equal(existsSync(folder), false)
+    report.workspaceLocateFixtureRestoration = { sourceDirectory: folder, oldDirectoryAbsent: !existsSync(folder), foundDirectory: foundFolder, workspaceId: registered.id, workspaceBefore: workspaceBeforeRow, workspaceAfter: reboundWorkspaceRow, stableProjectIds: projects.map(({ id }) => id), recoveryProjectId: original.id, oldFiles, foundFiles, originalPackageHashes: originalHashes, retainedSavedPath, retainedShadowDirectory, explicitlySavedPackageSha256: digest(foundFiles[original.id]), explicitlySavedDocumentId: explicitlySaved.project.documentId, explicitlySavedDocumentRevision: explicitlySaved.project.documentRevision, explicitlySavedBbox: explicitlySaved.project.primaryBbox, shadowDirectory, shadowBeforeExplicitRecover: shadowBefore, shadowAfterExplicitSave: existsSync(shadowDirectory) ? shadowTree(shadowDirectory) : [], shadowRemovedAfterExplicitSave: !existsSync(shadowDirectory), pickerRestorations, guardPickerRestoration, observedOperationalRows: beforeOperational, unchangedNeighborFiles: unchangedNeighbors, ignoredFile, ignoredFileSha256: ignoredHash, successfulWorkspaceRemainsBound: true }
+    persist()
+    check('only explicit Save publishes recovered changes in the located folder; normal close and reopen retain workspace and Project identities with exact neighbors')
+  } catch (error) {
+    if (window && !window.isClosed() && await window.getByRole('tab', { name: original.title, exact: true }).count()) {
+      await window.screenshot({ path: path.join(evidenceRoot, `${path.basename(reportFile, '.json')}-workspace-locate-before-discard.png`) })
+      const result = await api('discardAndClose', original.id, true)
+      report.workspaceLocateFailedOwnDraftCleanup = { projectId: original.id, result, explicitDiscard: true }
+      persist()
+    }
+    throw error
+  } finally {
+    // Keep the successful registration coherent. Only undo preparation when no SQL rebind exists.
+    const stored = database
+      ? await database.db.selectFrom('project_workspace').select('directory_path').where('id', '=', registered.id).executeTakeFirst()
+      : null
+    if (!reconnected && stored?.directory_path !== foundFolder && existsSync(foundFolder) && !existsSync(folder)) renameSync(foundFolder, folder)
+  }
+}
+
 /** Read-only Home browse consumer with real timestamps and independent saved/recovery conditions. */
 async function manageLocate() {
   const projects = await api('list', registered.id)
@@ -2317,7 +2632,7 @@ async function prepareManagedProjects() {
 persist()
 try {
   await launch('first')
-  if (trashOnly || locationsOnly || moveOnly || relocationOnly || openRenameOnly || browseOnly || forgetOnly || locateOnly) {
+  if (trashOnly || locationsOnly || moveOnly || relocationOnly || openRenameOnly || browseOnly || forgetOnly || locateOnly || workspaceLocateOnly) {
     await prepareManagedProjects()
   } else {
   assert.deepEqual(await api('list'), [])
@@ -2500,7 +2815,8 @@ try {
   )
   await manageWorkspace()
   }
-  if (locateOnly) await manageLocate()
+  if (workspaceLocateOnly) await manageWorkspaceLocate()
+  else if (locateOnly) await manageLocate()
   else if (forgetOnly) await manageForget()
   else if (browseOnly) await manageBrowse()
   else if (relocationOnly || openRenameOnly) await manageRelocation()
@@ -2509,12 +2825,13 @@ try {
   else await manageTrash()
   await close('restart-normal')
   assert.deepEqual(report.pageErrors, [])
-  assert.equal(report.nativeClosures.length, browseOnly ? 2 : locateOnly || forgetOnly || relocationOnly || openRenameOnly || moveOnly ? 3 : locationsOnly ? 2 : trashOnly ? 4 : 6)
+  assert.equal(report.nativeClosures.length, browseOnly ? 2 : workspaceLocateOnly || locateOnly || forgetOnly || relocationOnly || openRenameOnly || moveOnly ? 3 : locationsOnly ? 2 : trashOnly ? 4 : 6)
   if (relocationOnly) assert.equal(report.checks.length, 13)
   if (openRenameOnly) assert.equal(report.checks.length, 11)
   if (browseOnly) assert.equal(report.checks.length, 11)
   if (forgetOnly) assert.equal(report.checks.length, 11)
   if (locateOnly) assert.equal(report.checks.length, 10)
+  if (workspaceLocateOnly) assert.equal(report.checks.length, 10)
   report.outcome = 'passed'
   report.finishedAt = new Date().toISOString()
   persist()

@@ -211,6 +211,7 @@ type PendingProjectAction =
         | 'import-select'
         | 'recover'
         | 'workspace-add'
+        | 'workspace-locate'
         | 'workspace-remove'
         | 'workspace-reveal'
         | 'workspace-update'
@@ -4001,6 +4002,39 @@ async function addWorkspace(input: ProjectWorkspaceAddInput) {
   }
 }
 
+async function locateWorkspace(workspaceId: string) {
+  const workspace = workspaces.value.find(({ id }) => id === workspaceId)
+  if (
+    !workspace ||
+    workspace.isDefault ||
+    workspace.availability === 'available' ||
+    showAddWorkspace.value ||
+    showWorkspaceSettings.value ||
+    showRemoveWorkspace.value ||
+    showRemoveMissingProject.value ||
+    showProjectTrashAction.value ||
+    showMoveProject.value ||
+    showRenameProject.value ||
+    pendingProjectAction.value ||
+    windowClosePending.value
+  ) {
+    return
+  }
+  queueResultNavigator.cancelProjectOpen()
+  pendingProjectAction.value = { kind: 'workspace-locate' }
+  homeError.value = null
+  try {
+    const located = await apiValue(() => projectApi().locateWorkspace(workspaceId))
+    if (located) {
+      await refreshProjects()
+    }
+  } catch (cause) {
+    homeError.value = errorMessage(cause)
+  } finally {
+    pendingProjectAction.value = null
+  }
+}
+
 function beginWorkspaceSettings(workspaceId: string) {
   if (pendingProjectAction.value || windowClosePending.value) {
     return
@@ -5318,6 +5352,7 @@ onBeforeUnmount(() => {
           @deleteProject="beginDeleteProject"
           @importProject="selectImport"
           @locateProject="locateProject"
+          @locateWorkspace="locateWorkspace"
           @manageModels="openModelManager()"
           @managePresets="openPresetManager"
           @moveProject="beginMoveProject"

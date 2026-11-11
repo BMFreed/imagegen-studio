@@ -14,6 +14,7 @@ import { isProjectWorkspaceId } from '../../shared/projects/project-workspaces.j
 import type { Insertable, Kysely, Selectable, Transaction } from 'kysely'
 import type { BigIntStats } from 'node:fs'
 
+import { sql } from 'kysely'
 import { createHash, randomUUID } from 'node:crypto'
 import {
   accessSync,
@@ -99,6 +100,8 @@ interface StoreOptions {
   beforeMetadataReplace?: (record: ProjectRelocationRecord) => Promise<void>
   /** Test seam before the final candidate/absence checks and atomic metadata-only repoint. */
   beforeRelinkCommit?: () => Promise<void>
+  /** Causal seam after draft workspace/index repoint, before final file/registry commit guards. */
+  beforeWorkspaceRelinkCommit?: () => Promise<void>
 }
 type RepointOwner = Pick<
   ProjectRelocationRecord,
@@ -111,6 +114,17 @@ type RepointOwner = Pick<
   | 'sourceWorkspaceId'
   | 'targetWorkspaceId'
 >
+interface WorkspaceRepoint {
+  destinationDirectory: string
+  sourceDirectory: string
+  workspaceId: string
+}
+interface WorkspaceRelinkPlan {
+  candidateKey: string
+  candidateWitness: FileWitness
+  digest: string
+  owner: RepointOwner
+}
 export class ProjectRelocationStoreError extends Error {
   constructor(
     readonly code: 'PROJECT_MOVE_CONFLICT' | 'PROJECT_MOVE_INVALID' | 'PROJECT_MOVE_PENDING',
@@ -445,6 +459,292 @@ export class ProjectRelocationStore {
       throw error
     })
   }
+  /** Atomically reconnect a missing flat folder and every proven saved owner; never move files. */
+  async relinkMissingWorkspace(
+    workspace: ProjectWorkspaceRecord,
+    projects: ProjectIndexRecord[],
+    candidateDirectory: string,
+    guardSync: () => void,
+    validateCandidate: (
+      project: ProjectIndexRecord,
+      saved: IgsPackageReadResult,
+      candidateKey: string,
+    ) => Promise<void>,
+  ): Promise<void> {
+    workspace = structuredClone(workspace)
+    projects = structuredClone(projects)
+    if (
+      !isProjectWorkspaceId(workspace.id) ||
+      workspace.id === 'uncategorized' ||
+      !canonical(workspace.directoryPath) ||
+      !canonical(candidateDirectory) ||
+      workspace.directoryPath === candidateDirectory
+    ) {
+      throw workspaceRelinkInvalid()
+    }
+    const keys = new Set<string>()
+    const names = new Set<string>()
+    for (const project of projects) {
+      assertKey(project.localProjectKey)
+      assertUuid(project.documentId)
+      assertUuid(project.documentRevision)
+      const name = path.basename(project.canonicalPath)
+      if (
+        !canonical(project.canonicalPath) ||
+        path.dirname(project.canonicalPath) !== workspace.directoryPath ||
+        path.extname(name).toLowerCase() !== '.igs' ||
+        project.workspaceId !== workspace.id ||
+        !['missing', 'ready'].includes(project.fileHealth) ||
+        keys.has(project.localProjectKey) ||
+        names.has(name) ||
+        localProjectRecoveryKey(project.canonicalPath) !== project.localProjectKey
+      ) {
+        throw workspaceRelinkInvalid()
+      }
+      keys.add(project.localProjectKey)
+      names.add(name)
+    }
+    // Reject catalog ancestors (including the caller's catalog lock directory) before taking
+    // folder keys. Repeat inside the transaction to fence any changed registration snapshot.
+    const registrationPaths = await this.db
+      .selectFrom('project_workspace')
+      .select(['id', 'directory_path'])
+      .execute()
+    if (
+      registrationPaths.some(
+        (row) =>
+          row.id !== workspace.id &&
+          (directoriesOverlap(row.directory_path, candidateDirectory) ||
+            directoriesOverlap(row.directory_path, workspace.directoryPath)),
+      )
+    ) {
+      throw workspaceRelinkConflict()
+    }
+    const lockPaths = [workspace.directoryPath, candidateDirectory]
+    for (const project of projects) {
+      lockPaths.push(
+        project.canonicalPath,
+        path.join(candidateDirectory, path.basename(project.canonicalPath)),
+      )
+    }
+    await withRelocationLocks(lockPaths, async () => {
+      guardSync()
+      const sourceAncestor = missingWorkspaceAncestor(workspace.directoryPath)
+      const targetWitness = readableParent(candidateDirectory)
+      const expectedNames = [...names].sort()
+      const assertFolders = () => {
+        guardSync()
+        assertReadableParent(sourceAncestor.directory, sourceAncestor.witness)
+        if (entryNow(workspace.directoryPath) !== null) {
+          throw workspaceRelinkConflict()
+        }
+        assertReadableParent(sourceAncestor.directory, sourceAncestor.witness)
+        assertReadableParent(candidateDirectory, targetWitness)
+        if (!isDeepStrictEqual(workspaceProjectNames(candidateDirectory), expectedNames)) {
+          throw workspaceRelinkConflict()
+        }
+      }
+      assertFolders()
+      const mapping: WorkspaceRepoint = {
+        destinationDirectory: candidateDirectory,
+        sourceDirectory: workspace.directoryPath,
+        workspaceId: workspace.id,
+      }
+      const plans: WorkspaceRelinkPlan[] = []
+      // Keep only compact verified metadata/witnesses; do not hold every parsed package in memory.
+      for (const project of projects) {
+        const destinationPath = path.join(candidateDirectory, path.basename(project.canonicalPath))
+        const candidate = entryNow(destinationPath)
+        if (
+          !candidate ||
+          !regular(candidate) ||
+          realpathSync(destinationPath) !== destinationPath
+        ) {
+          throw workspaceRelinkConflict()
+        }
+        const candidateWitness = witness(candidate)
+        const saved = await readIgsPackage(destinationPath)
+        assertFolders()
+        assertSavedWorkspaceProject(project, saved)
+        const digest = await hashChecked(destinationPath, candidateWitness, true)
+        assertFolders()
+        const candidateKey = rawPathDerivedProjectRecoveryKey(destinationPath)
+        await validateCandidate(project, saved, candidateKey)
+        assertFolders()
+        const thumbnailSha256 = saved.manifest.members.find(
+          (member) => member.path === 'preview/thumbnail.webp',
+        )?.sha256
+        if (!thumbnailSha256) {
+          throw workspaceRelinkConflict()
+        }
+        plans.push({
+          candidateKey,
+          candidateWitness,
+          digest,
+          owner: {
+            destinationPath,
+            documentId: saved.project.documentId,
+            localProjectKey: project.localProjectKey,
+            project: {
+              ...project,
+              bboxHeight: saved.project.primaryBbox.height,
+              bboxWidth: saved.project.primaryBbox.width,
+              displayName: saved.project.title,
+              previewStatus: saved.manifest.preview.status,
+              thumbnailSha256,
+            },
+            rename: null,
+            sourcePath: project.canonicalPath,
+            sourceWorkspaceId: workspace.id,
+            targetWorkspaceId: workspace.id,
+          },
+        })
+      }
+      await this.db.transaction().execute(async (transaction) => {
+        const registered = await transaction
+          .selectFrom('project_workspace')
+          .selectAll()
+          .where('id', '=', workspace.id)
+          .executeTakeFirst()
+        if (
+          !registered ||
+          registered.is_default !== 0 ||
+          registered.directory_path !== workspace.directoryPath ||
+          registered.display_name !== workspace.displayName ||
+          registered.color !== workspace.color
+        ) {
+          throw workspaceRelinkConflict()
+        }
+        const registrations = await transaction
+          .selectFrom('project_workspace')
+          .selectAll()
+          .execute()
+        if (
+          registrations.some(
+            (row) =>
+              row.id !== workspace.id && directoriesOverlap(row.directory_path, candidateDirectory),
+          )
+        ) {
+          throw workspaceRelinkConflict()
+        }
+        const indexed = await transaction
+          .selectFrom('project_index')
+          .selectAll()
+          .where('workspace_id', '=', workspace.id)
+          .execute()
+        const expected = new Map(projects.map((project) => [project.localProjectKey, project]))
+        if (
+          indexed.length !== projects.length ||
+          indexed.some((row) => {
+            const project = expected.get(row.local_project_key)
+            return !project || row.trashed_at !== null || !sameIndexedProject(row, project)
+          })
+        ) {
+          throw workspaceRelinkConflict()
+        }
+        await assertWorkspaceOperationalCoverage(transaction, workspace, candidateDirectory, plans)
+        assertFolders()
+        for (const plan of plans) {
+          const saved = await readIgsPackage(plan.owner.destinationPath)
+          assertSavedWorkspaceProject(plan.owner.project, saved)
+          await validateCandidate(
+            expected.get(plan.owner.localProjectKey)!,
+            saved,
+            plan.candidateKey,
+          )
+          assertFolders()
+          await assertRelinkDestination(
+            transaction,
+            plan.owner,
+            plan.candidateKey,
+            plan.candidateWitness,
+          )
+          await assertOperationalRows(transaction, plan.owner, mapping)
+          assertFolders()
+          await hashChecked(plan.owner.destinationPath, plan.candidateWitness, true, plan.digest)
+          assertFolders()
+          await repoint(transaction, plan.owner, plan.candidateWitness)
+          assertFolders()
+        }
+        await transaction
+          .updateTable('project_workspace')
+          .set({ directory_path: candidateDirectory, updated_at: new Date().toISOString() })
+          .where('id', '=', workspace.id)
+          .execute()
+        await this.options.beforeWorkspaceRelinkCommit?.()
+        assertFolders()
+        for (const plan of plans) {
+          await hashChecked(plan.owner.destinationPath, plan.candidateWitness, true, plan.digest)
+          assertFolders()
+        }
+        const finalWorkspace = await transaction
+          .selectFrom('project_workspace')
+          .selectAll()
+          .where('id', '=', workspace.id)
+          .executeTakeFirst()
+        if (
+          !finalWorkspace ||
+          finalWorkspace.directory_path !== candidateDirectory ||
+          finalWorkspace.is_default !== 0 ||
+          finalWorkspace.display_name !== workspace.displayName ||
+          finalWorkspace.color !== workspace.color
+        ) {
+          throw workspaceRelinkConflict()
+        }
+        const finalRows = await transaction
+          .selectFrom('project_index')
+          .selectAll()
+          .where('workspace_id', '=', workspace.id)
+          .execute()
+        const finalPlans = new Map(plans.map((plan) => [plan.owner.localProjectKey, plan]))
+        if (
+          finalRows.length !== plans.length ||
+          finalRows.some((row) => {
+            const plan = finalPlans.get(row.local_project_key)
+            return (
+              !plan ||
+              row.canonical_path !== plan.owner.destinationPath ||
+              row.document_id !== plan.owner.documentId ||
+              row.document_revision !== plan.owner.project.documentRevision ||
+              row.file_health !== 'ready' ||
+              row.trashed_at !== null
+            )
+          })
+        ) {
+          throw workspaceRelinkConflict()
+        }
+        await assertWorkspaceOperationalCoverage(transaction, workspace, candidateDirectory, plans)
+        const finalRegistrations = await transaction
+          .selectFrom('project_workspace')
+          .selectAll()
+          .execute()
+        if (
+          finalRegistrations.some(
+            (row) =>
+              row.id !== workspace.id && directoriesOverlap(row.directory_path, candidateDirectory),
+          )
+        ) {
+          throw workspaceRelinkConflict()
+        }
+        assertFolders()
+        for (const plan of plans) {
+          if (!sameOriginal(entryNow(plan.owner.destinationPath), plan.candidateWitness)) {
+            throw workspaceRelinkConflict()
+          }
+        }
+        assertProjectLocationRegistryCompatible(this.db)
+        guardSync()
+      })
+      // As for single-file Locate, a postcommit projection failure cannot undo committed SQL.
+      refreshProjectLocationRegistry(this.db)
+    }).catch((error: unknown) => {
+      if (error instanceof ProjectRelocationStoreError) {
+        throw workspaceRelinkConflict()
+      }
+      throw error
+    })
+  }
+
   private async beginRelocation(
     project: ProjectIndexRecord,
     sourceWorkspace: ProjectWorkspaceRecord,
@@ -689,6 +989,240 @@ export class ProjectRelocationStore {
     record.targetWitness = target.witness
   }
 }
+function workspaceRelinkConflict(): ProjectRelocationStoreError {
+  return new ProjectRelocationStoreError(
+    'PROJECT_MOVE_CONFLICT',
+    'The workspace or one of its saved Projects changed, is incomplete, or has another owner. Restore access and choose the original complete folder again. No file was moved or replaced.',
+  )
+}
+function workspaceRelinkInvalid(): ProjectRelocationStoreError {
+  return new ProjectRelocationStoreError(
+    'PROJECT_MOVE_INVALID',
+    'Choose the original folder for a missing non-default workspace with known saved Project identities.',
+  )
+}
+function missingWorkspaceAncestor(directory: string): {
+  directory: string
+  witness: ParentWitness
+} {
+  if (entryNow(directory) !== null) {
+    throw workspaceRelinkConflict()
+  }
+  let ancestor = path.dirname(directory)
+  for (;;) {
+    try {
+      return { directory: ancestor, witness: readableParent(ancestor) }
+    } catch (error) {
+      if (
+        (error as NodeJS.ErrnoException).code !== 'ENOENT' ||
+        ancestor === path.dirname(ancestor)
+      ) {
+        throw error
+      }
+      ancestor = path.dirname(ancestor)
+    }
+  }
+}
+function workspaceProjectNames(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true })
+    .filter((entry) => !entry.isDirectory() && path.extname(entry.name).toLowerCase() === '.igs')
+    .map((entry) => entry.name)
+    .sort()
+}
+function directoriesOverlap(first: string, second: string): boolean {
+  const contains = (parent: string, child: string) => {
+    const relative = path.relative(parent, child)
+    return (
+      relative === '' ||
+      (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`))
+    )
+  }
+  return contains(first, second) || contains(second, first)
+}
+function assertSavedWorkspaceProject(
+  project: ProjectIndexRecord,
+  saved: IgsPackageReadResult,
+): void {
+  if (
+    saved.project.documentId !== project.documentId ||
+    saved.project.documentRevision !== project.documentRevision
+  ) {
+    throw workspaceRelinkConflict()
+  }
+}
+function sameIndexedProject(
+  row: Selectable<DB['project_index']>,
+  project: ProjectIndexRecord,
+): boolean {
+  return (
+    row.bbox_height === project.bboxHeight &&
+    row.bbox_width === project.bboxWidth &&
+    row.canonical_path === project.canonicalPath &&
+    row.diagnostic_code === project.diagnosticCode &&
+    row.display_name === project.displayName &&
+    row.document_id === project.documentId &&
+    row.document_revision === project.documentRevision &&
+    row.file_fingerprint === project.fileFingerprint &&
+    row.file_health === project.fileHealth &&
+    row.last_opened_at === project.lastOpenedAt &&
+    row.local_project_key === project.localProjectKey &&
+    row.preview_status === project.previewStatus &&
+    row.preview_thumbnail_sha256 === project.thumbnailSha256 &&
+    row.workspace_id === project.workspaceId
+  )
+}
+function workspaceCoverage(
+  table: string,
+  column: string,
+  workspaceId: string,
+  directories: string[],
+) {
+  const prefixes = directories.map((directory) =>
+    directory.endsWith(path.sep) ? directory : `${directory}${path.sep}`,
+  )
+  const ref = sql.ref(`${table}.${column}`)
+  // SQL length handles Unicode paths; no LIKE wildcards or one-placeholder-per-Project limit.
+  return sql<boolean>`(
+    EXISTS (SELECT 1 FROM project_index AS workspace_project
+      WHERE workspace_project.workspace_id = ${workspaceId}
+      AND workspace_project.local_project_key = ${sql.ref(`${table}.local_project_key`)})
+    OR ${ref} = ${directories[0]} OR ${ref} = ${directories[1]}
+    OR substr(${ref}, 1, length(${prefixes[0]})) = ${prefixes[0]}
+    OR substr(${ref}, 1, length(${prefixes[1]})) = ${prefixes[1]}
+  )`
+}
+async function assertWorkspaceOperationalCoverage(
+  db: Transaction<DB>,
+  workspace: ProjectWorkspaceRecord,
+  candidateDirectory: string,
+  plans: WorkspaceRelinkPlan[],
+): Promise<void> {
+  const directories = [workspace.directoryPath, candidateDirectory]
+  const byKey = new Map(plans.map((plan) => [plan.owner.localProjectKey, plan.owner]))
+  const owns = (key: string, file: string) => {
+    const owner = byKey.get(key)
+    return owner && (file === owner.sourcePath || file === owner.destinationPath) ? owner : null
+  }
+  const relocations = await db
+    .selectFrom('project_relocation')
+    .select('local_project_key')
+    .where((eb) =>
+      eb.or([
+        eb('source_workspace_id', '=', workspace.id),
+        eb('target_workspace_id', '=', workspace.id),
+        workspaceCoverage('project_relocation', 'source_path', workspace.id, directories),
+        workspaceCoverage('project_relocation', 'destination_path', workspace.id, directories),
+      ]),
+    )
+    .executeTakeFirst()
+  const lifecycle = await db
+    .selectFrom('project_file_lifecycle')
+    .select('local_project_key')
+    .where((eb) =>
+      eb.or([
+        workspaceCoverage('project_file_lifecycle', 'canonical_path', workspace.id, directories),
+        eb('workspace_directory_path', 'in', directories),
+        sql<boolean>`json_extract(project_json, '$.workspaceId') = ${workspace.id}`,
+      ]),
+    )
+    .executeTakeFirst()
+  const acceptance = await db
+    .selectFrom('generation_acceptance_journal')
+    .select('local_project_key')
+    .where(
+      workspaceCoverage(
+        'generation_acceptance_journal',
+        'canonical_project_path',
+        workspace.id,
+        directories,
+      ),
+    )
+    .executeTakeFirst()
+  if (relocations || lifecycle || acceptance) {
+    throw workspaceRelinkConflict()
+  }
+  const bindings = await db
+    .selectFrom('project_identity_binding')
+    .selectAll()
+    .where(
+      workspaceCoverage('project_identity_binding', 'canonical_path', workspace.id, directories),
+    )
+    .execute()
+  if (
+    bindings.some(
+      (row) => owns(row.local_project_key, row.canonical_path)?.documentId !== row.document_id,
+    )
+  ) {
+    throw workspaceRelinkConflict()
+  }
+  const indexed = await db
+    .selectFrom('project_index')
+    .select(['local_project_key', 'canonical_path', 'document_id', 'trashed_at'])
+    .where(workspaceCoverage('project_index', 'canonical_path', workspace.id, directories))
+    .execute()
+  if (
+    indexed.some(
+      (row) =>
+        row.trashed_at !== null ||
+        owns(row.local_project_key, row.canonical_path)?.documentId !== row.document_id,
+    )
+  ) {
+    throw workspaceRelinkConflict()
+  }
+  const queue = await db
+    .selectFrom('generation_queue_item')
+    .select(['local_project_key', 'canonical_project_path', 'document_id', 'status'])
+    .where(
+      workspaceCoverage(
+        'generation_queue_item',
+        'canonical_project_path',
+        workspace.id,
+        directories,
+      ),
+    )
+    .execute()
+  if (
+    queue.some(
+      (row) =>
+        owns(row.local_project_key, row.canonical_project_path)?.documentId !== row.document_id ||
+        !['canceled', 'completed', 'failed'].includes(row.status),
+    )
+  ) {
+    throw workspaceRelinkConflict()
+  }
+  const receipts = await db
+    .selectFrom('generation_candidate_receipt')
+    .select(['local_project_key', 'canonical_project_path', 'status'])
+    .where(
+      workspaceCoverage(
+        'generation_candidate_receipt',
+        'canonical_project_path',
+        workspace.id,
+        directories,
+      ),
+    )
+    .execute()
+  if (
+    receipts.some(
+      (row) =>
+        !owns(row.local_project_key, row.canonical_project_path) || row.status !== 'completed',
+    )
+  ) {
+    throw workspaceRelinkConflict()
+  }
+}
+async function withRelocationLocks<T>(paths: string[], use: () => Promise<T>): Promise<T> {
+  const ordered = [...new Set(paths)].sort()
+  if (ordered.some((value) => !canonical(value))) {
+    throw workspaceRelinkInvalid()
+  }
+  const acquire = async (index: number): Promise<T> =>
+    index === ordered.length
+      ? await use()
+      : await withProjectPathLock(ordered[index], () => acquire(index + 1))
+  return await acquire(0)
+}
+
 async function assertRelinkDestination(
   db: Transaction<DB>,
   owner: RepointOwner,
@@ -793,6 +1327,7 @@ async function assertRelinkDestination(
 async function assertOperationalRows(
   db: Kysely<DB> | Transaction<DB>,
   record: RepointOwner,
+  workspaceRepoint?: WorkspaceRepoint,
 ): Promise<void> {
   const paths = [record.sourcePath, record.destinationPath]
   const workspaces = await db
@@ -800,7 +1335,21 @@ async function assertOperationalRows(
     .selectAll()
     .where('id', 'in', [record.sourceWorkspaceId, record.targetWorkspaceId])
     .execute()
-  if (
+  if (workspaceRepoint) {
+    if (
+      record.sourceWorkspaceId !== workspaceRepoint.workspaceId ||
+      record.targetWorkspaceId !== workspaceRepoint.workspaceId ||
+      path.dirname(record.sourcePath) !== workspaceRepoint.sourceDirectory ||
+      path.dirname(record.destinationPath) !== workspaceRepoint.destinationDirectory ||
+      !workspaces.some(
+        (row) =>
+          row.id === workspaceRepoint.workspaceId &&
+          row.directory_path === workspaceRepoint.sourceDirectory,
+      )
+    ) {
+      throw conflict()
+    }
+  } else if (
     !workspaces.some(
       (w) =>
         w.id === record.sourceWorkspaceId && w.directory_path === path.dirname(record.sourcePath),

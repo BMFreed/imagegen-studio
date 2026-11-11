@@ -820,29 +820,33 @@ if (!gotInstanceLock) {
         projectId: string,
         use: () => Promise<T>,
         allowCleanOpen = false,
-        missingEntryAction: 'locate' | 'remove' | null = null,
+        missingEntryAction: 'locate-workspace' | 'locate' | 'remove' | null = null,
       ): Promise<T> {
         return await projectGenerationGate.run(projectId, async () => {
           const tab = projectService.getOpenTabs().find((candidate) => candidate.id === projectId)
           if (tab && (!allowCleanOpen || tab.dirty)) {
             throw new ProjectServiceError(
               'PROJECT_ALREADY_OPEN',
-              missingEntryAction === 'locate'
-                ? 'Close the Project before locating its missing file.'
-                : missingEntryAction === 'remove'
-                  ? 'Close the Project before removing its missing entry from Home.'
-                  : 'Close the Project before changing its location or Trash state.',
+              missingEntryAction === 'locate-workspace'
+                ? 'Close all Projects from this workspace before locating its folder.'
+                : missingEntryAction === 'locate'
+                  ? 'Close the Project before locating its missing file.'
+                  : missingEntryAction === 'remove'
+                    ? 'Close the Project before removing its missing entry from Home.'
+                    : 'Close the Project before changing its location or Trash state.',
             )
           }
           const services = generationLifecycleServices
           if (!services) {
             throw new ProjectServiceError(
               'PROJECT_INVALID_INPUT',
-              missingEntryAction === 'locate'
-                ? 'Generation recovery cannot be inspected. Restore access before locating the missing Project file.'
-                : missingEntryAction === 'remove'
-                  ? 'Generation recovery cannot be inspected. Restore access before removing the missing entry from Home.'
-                  : 'Generation recovery cannot be inspected. Repair recovery storage before changing Project location or Trash state.',
+              missingEntryAction === 'locate-workspace'
+                ? 'Generation recovery cannot be inspected. Restore access before locating the workspace folder.'
+                : missingEntryAction === 'locate'
+                  ? 'Generation recovery cannot be inspected. Restore access before locating the missing Project file.'
+                  : missingEntryAction === 'remove'
+                    ? 'Generation recovery cannot be inspected. Restore access before removing the missing entry from Home.'
+                    : 'Generation recovery cannot be inspected. Repair recovery storage before changing Project location or Trash state.',
             )
           }
           return await services.orchestrator.withProjectMaintenanceFence(projectId, async () => {
@@ -855,11 +859,13 @@ if (!gotInstanceLock) {
             ) {
               throw new ProjectServiceError(
                 'PROJECT_INVALID_INPUT',
-                missingEntryAction === 'locate'
-                  ? 'Restore access to the Project and resolve its pending generation or results before locating its missing file.'
-                  : missingEntryAction === 'remove'
-                    ? 'Restore access to the Project and resolve its pending generation or results before removing its missing entry from Home.'
-                    : 'Open the Project and resolve its pending generation or results before changing its location or Trash state.',
+                missingEntryAction === 'locate-workspace'
+                  ? 'Restore access and resolve pending generation or results for every Project before locating the workspace folder.'
+                  : missingEntryAction === 'locate'
+                    ? 'Restore access to the Project and resolve its pending generation or results before locating its missing file.'
+                    : missingEntryAction === 'remove'
+                      ? 'Restore access to the Project and resolve its pending generation or results before removing its missing entry from Home.'
+                      : 'Open the Project and resolve its pending generation or results before changing its location or Trash state.',
               )
             }
             return await use()
@@ -1446,6 +1452,7 @@ if (!gotInstanceLock) {
         ipcChannels.projects.listTrash,
         ipcChannels.projects.listWorkspaces,
         ipcChannels.projects.locateProject,
+        ipcChannels.projects.locateWorkspace,
         ipcChannels.projects.moveProject,
         ipcChannels.projects.open,
         ipcChannels.projects.rebuildPreview,
@@ -1677,6 +1684,36 @@ if (!gotInstanceLock) {
           false,
           'locate',
         ),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.locateWorkspace,
+        (args) => args.length === 1 && isProjectWorkspaceId(args[0]),
+        (id) =>
+          projectService.locateWorkspace(
+            id as string,
+            async () => {
+              const selection = await dialog.showOpenDialog(window, {
+                properties: ['openDirectory'],
+                title: 'Locate Workspace Folder',
+              })
+              return selection.canceled || selection.filePaths.length !== 1
+                ? null
+                : selection.filePaths[0]
+            },
+            (ids, use) => {
+              const projectIds = [...ids].sort()
+              const withNext = (index: number): Promise<boolean> =>
+                index === projectIds.length
+                  ? use()
+                  : withClosedProjectMaintenance(
+                      projectIds[index],
+                      () => withNext(index + 1),
+                      false,
+                      'locate-workspace',
+                    )
+              return withNext(0)
+            },
+          ),
       )
       registerProjectHandler(
         ipcChannels.projects.removeMissingProject,

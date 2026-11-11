@@ -2,13 +2,23 @@
 
 ## Production checkpoint
 
+[Locate Folder](../engineering/phase-4-home-workspace-locate-research.md)
+reconnects a missing non-default workspace to the exact cached saved-Project set.
+One transaction preserves its workspace ID/name/color and all Project keys while
+updating locations. Recovery stays at the same keys; later Open/Recover/Save is
+explicit. The selected folder must contain all matching `.igs` filenames and no
+extra `.igs`; incompatible/pending/Trash/orphan owners refuse the entire change.
+`Uncategorized` retains its app-managed path. Wider compatibility/capacity and
+Inspector/full preview remain separate acceptance work.
+
 [Locate Project](../engineering/phase-4-home-project-locate-research.md) reconnects
 a missing closed Project to its same saved document ID/revision in a registered
 workspace. Explicit OS selection preserves the original local key and verified
 document recovery; an unused scanned destination row can be replaced by that
 owner. Independent owners and incompatible recovery refuse. Locate does not
 import, open, Add or Save; later recovery uses the ordinary explicit flow.
-Unavailable-workspace folder Locate and broader Home presentation remain open.
+Folder Locate has a later finite checkpoint above; broader Home presentation
+remains open.
 
 [Missing-file Remove from Home](../engineering/phase-4-home-missing-remove-research.md)
 connects the missing row's menu to an explicit confirmation and guarded Main
@@ -26,7 +36,7 @@ and status while retaining sort. App-owned session state survives Home remount
 and workspace/Projects/Trash switches, without a new persistent global setting.
 Needs attention means unhealthy file or unavailable/absent workspace; recovery and
 preview availability remain independent. Selection/Inspector/grid/full preview
-and unavailable-workspace folder Locate remain separate consumers.
+remain separate consumers.
 
 [Clean-open Rename](../engineering/phase-4-clean-open-rename-research.md) now keeps
 the live Project tab and canvas Undo/Redo while changing title and filename.
@@ -69,8 +79,8 @@ Main serializes catalog lifecycle commands, and removal affects derived indexes
 without deleting folders, Project files or operational generation/recovery data.
 The [catalog/destinations stage](../engineering/phase-4-home-workspaces-research.md)
 already connects Add, aggregate/scoped browsing and explicit Create/Import folders.
-Unavailable-workspace folder Locate and remaining
-Home presentation remain continuations. Full Home/MVP promise is not promoted.
+The later folder-Locate checkpoint above is separate from these registration
+operations. Remaining Home presentation and full Home/MVP acceptance stay open.
 
 ## Feature
 

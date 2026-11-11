@@ -2453,6 +2453,158 @@ export class ProjectService {
     return true
   }
 
+  /** Reconnect the registration and every cached Project in one existing location transaction. */
+  async locateWorkspace(
+    workspaceId: string,
+    selectDirectory: () => Promise<string | null>,
+    withProjects?: (ids: string[], use: () => Promise<boolean>) => Promise<boolean>,
+  ): Promise<boolean> {
+    if (!isProjectWorkspaceId(workspaceId)) {
+      throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'The workspace ID is invalid.')
+    }
+    await this.initialize()
+    const workspace = await this.options.repository.workspaceById(workspaceId)
+    if (workspaceId === UNCATEGORIZED_WORKSPACE_ID) {
+      throw new ProjectServiceError(
+        'PROJECT_NOT_READY',
+        'Uncategorized uses its app-managed folder. Restore that folder at its original location.',
+      )
+    }
+    if (workspace.directoryPath === this.options.dataRoot) {
+      throw new ProjectServiceError(
+        'PROJECT_NOT_READY',
+        'The application data folder cannot be relocated as a workspace.',
+      )
+    }
+    const projects = await this.options.repository.listProjects(workspaceId)
+    if (
+      projects.some(
+        (project) =>
+          !project.documentId ||
+          !project.documentRevision ||
+          !['missing', 'ready'].includes(project.fileHealth),
+      )
+    ) {
+      throw new ProjectServiceError(
+        'PROJECT_NOT_READY',
+        'Some cached Projects cannot be verified. Restore or repair the original workspace before locating its folder.',
+      )
+    }
+    const ids = new Set(projects.map((project) => project.localProjectKey))
+    let selected: string | null = null
+    const under = (directory: string, file: string) => {
+      const relative = path.relative(directory, file)
+      return (
+        relative === '' ||
+        (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+      )
+    }
+    const guard = () => {
+      for (const [id, coordinator] of this.openTabs) {
+        if (
+          ids.has(id) ||
+          under(workspace.directoryPath, coordinator.filePath) ||
+          (selected !== null && under(selected, coordinator.filePath))
+        ) {
+          throw new ProjectServiceError(
+            'PROJECT_NOT_READY',
+            'Close every Project from this workspace before locating its folder.',
+          )
+        }
+      }
+      if (
+        projects.some(
+          (project) =>
+            this.opening.has(project.localProjectKey) ||
+            this.saving.has(project.localProjectKey) ||
+            this.rebuilding.has(project.localProjectKey),
+        )
+      ) {
+        throw new ProjectServiceError(
+          'PROJECT_NOT_READY',
+          'Wait for workspace Project operations to finish before locating its folder.',
+        )
+      }
+      try {
+        lstatSync(workspace.directoryPath)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          return
+        }
+        throw new ProjectServiceError(
+          'PROJECT_NOT_READY',
+          'The original workspace cannot be inspected. Restore access before locating another folder.',
+        )
+      }
+      throw new ProjectServiceError(
+        'PROJECT_NOT_READY',
+        'The original workspace folder still exists. Restore access or Refresh instead of locating another folder.',
+      )
+    }
+    const connect = async () => {
+      guard()
+      for (const project of projects) {
+        this.assertRelocationQuiescent(project.localProjectKey, project.canonicalPath)
+      }
+      selected = await selectDirectory()
+      if (selected === null) {
+        return false
+      }
+      if (typeof selected !== 'string' || !path.isAbsolute(selected)) {
+        throw new ProjectServiceError(
+          'PROJECT_INVALID_INPUT',
+          'Choose an existing workspace folder.',
+        )
+      }
+      if (selected === this.options.dataRoot) {
+        throw new ProjectServiceError(
+          'PROJECT_NOT_READY',
+          'Choose a workspace folder outside the application data root.',
+        )
+      }
+      await this.options.repository.relocations.relinkMissingWorkspace(
+        workspace,
+        projects,
+        selected,
+        guard,
+        async (project, saved, candidateKey) => {
+          guard()
+          this.assertRelocationQuiescent(project.localProjectKey, project.canonicalPath)
+          this.assertRelocationQuiescent(
+            candidateKey,
+            path.join(selected!, path.basename(project.canonicalPath)),
+          )
+          if (candidateKey !== project.localProjectKey) {
+            const candidateRecovery = await this.options.shadow.inspectByLocalKey({
+              localProjectKey: candidateKey,
+              savedPackage: saved,
+            })
+            if (candidateRecovery.status !== 'absent') {
+              throw new ProjectServiceError(
+                'PROJECT_RECOVERY_UNAVAILABLE',
+                'A selected Project has its own recovery owner. No workspace links were changed.',
+              )
+            }
+          }
+          const recovery = await this.options.shadow.inspectByLocalKey({
+            localProjectKey: project.localProjectKey,
+            savedPackage: saved,
+          })
+          if (!['absent', 'clean', 'recoverable'].includes(recovery.status)) {
+            throw new ProjectServiceError(
+              'PROJECT_RECOVERY_UNAVAILABLE',
+              'A selected saved Project does not match its retained recovery, or recovery cannot be verified. No recovery was discarded.',
+            )
+          }
+          guard()
+        },
+      )
+      return true
+    }
+    guard()
+    return withProjects ? await withProjects([...ids].sort(), connect) : await connect()
+  }
+
   /** Lifecycle snapshots are authoritative even if their workspace registration was removed. */
   async moveProject(projectId: string, workspaceId: string): Promise<ProjectMoveResult> {
     assertProjectId(projectId)

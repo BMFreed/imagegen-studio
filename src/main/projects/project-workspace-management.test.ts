@@ -114,9 +114,9 @@ async function bytesIn(directory: string): Promise<Record<string, string>> {
   return result
 }
 
-async function acceptedProject(f: Fixture) {
+async function acceptedProject(f: Fixture, fileName = 'accepted.igs') {
   const session = await ProjectSession.create(
-    path.join(f.directory, 'accepted.igs'),
+    path.join(f.directory, fileName),
     'Accepted management fixture',
     f.roots,
   )
@@ -152,7 +152,11 @@ async function acceptedProject(f: Fixture) {
     ],
   })
   await session.save({ assets: { [assetPath]: { bytes } } })
-  const [project] = await f.service.list(f.workspace.id)
+  const summaries = await f.service.list(f.workspace.id)
+  const record = (await f.repository.listProjects(f.workspace.id)).find(
+    ({ canonicalPath }) => canonicalPath === session.filePath,
+  )
+  const project = summaries.find(({ id }) => id === record?.localProjectKey)
   assert.ok(project)
   return project
 }
@@ -880,5 +884,237 @@ test('Locate rolls back when another active database profile already owns the ca
     } finally {
       await other.close()
     }
+  })
+})
+
+async function missingWorkspaceFixture(f: Fixture, dirtyRecovery = true) {
+  const first = await acceptedProject(f)
+  await acceptedProject(f, 'second.igs')
+  await f.service.renameProject(first.id, 'Bound workspace Project')
+  await f.service.list(f.workspace.id)
+  const projects = await f.repository.listProjects(f.workspace.id)
+  assert.equal(projects.length, 2)
+  const owner = projects.find(({ localProjectKey }) => localProjectKey === first.id)!
+  if (dirtyRecovery) {
+    const saved = await readIgsPackage(owner.canonicalPath)
+    await new ProjectShadowStore(path.join(f.dataRoot, 'autosave')).write({
+      document: {
+        ...saved.project,
+        documentRevision: randomUUID(),
+        primaryBbox: { ...saved.project.primaryBbox, x: 8 },
+      },
+      projectPath: owner.canonicalPath,
+      savedDocument: saved.project,
+    })
+  }
+  const workspace = await f.repository.workspaceById(f.workspace.id)
+  const files = await bytesIn(f.directory)
+  const recovery = await bytesIn(path.join(f.dataRoot, 'autosave'))
+  const located = path.join(f.root, 'located-workspace')
+  await rename(f.directory, located)
+  return { files, first, located, owner, projects, recovery, workspace }
+}
+
+test('Workspace Locate preserves the registration, all Project keys and retained recovery without implicit file writes', async () => {
+  await withFixture(async (f) => {
+    const p = await missingWorkspaceFixture(f)
+    const now = new Date().toISOString()
+    await f.database.db
+      .insertInto('generation_queue_item')
+      .values({
+        batch_id: randomUUID(),
+        canonical_project_path: p.owner.canonicalPath,
+        created_at: now,
+        document_id: p.owner.documentId!,
+        document_revision: p.owner.documentRevision!,
+        error_code: 'FIXTURE',
+        error_message: 'Retained terminal workspace control',
+        finished_at: now,
+        frozen_payload_json: JSON.stringify({ source: p.owner.canonicalPath }),
+        id: randomUUID(),
+        local_project_key: p.owner.localProjectKey,
+        operation: 'illustrious-txt2img',
+        staging_session_id: randomUUID(),
+        started_at: null,
+        status: 'failed',
+        status_sequence: 0,
+        updated_at: now,
+      })
+      .execute()
+    const queue = await f.database.db.selectFrom('generation_queue_item').selectAll().execute()
+    const accepted = await Promise.all(
+      p.projects.map((project) => f.repository.listSavedAcceptedResults(project.localProjectKey)),
+    )
+    assert.deepEqual(
+      accepted.map((rows) => rows.length),
+      [1, 1],
+    )
+    await chmod(p.located, 0o500)
+    let fenced = false
+    try {
+      assert.equal(
+        await f.service.locateWorkspace(
+          f.workspace.id,
+          async () => p.located,
+          async (ids, use) => {
+            assert.deepEqual(ids, p.projects.map(({ localProjectKey }) => localProjectKey).sort())
+            fenced = true
+            return await use()
+          },
+        ),
+        true,
+      )
+    } finally {
+      await chmod(p.located, 0o700)
+    }
+    assert.equal(fenced, true)
+    assert.deepEqual(f.service.getOpenTabs(), [])
+    assert.deepEqual(await f.repository.workspaceById(f.workspace.id), {
+      ...p.workspace,
+      directoryPath: p.located,
+    })
+    const reloaded = await f.makeService().list(f.workspace.id)
+    assert.deepEqual(
+      reloaded.map(({ id }) => id).sort(),
+      p.projects.map(({ localProjectKey }) => localProjectKey).sort(),
+    )
+    assert.equal(reloaded.find(({ id }) => id === p.first.id)?.recoveryStatus, 'recoverable')
+    for (let index = 0; index < p.projects.length; index++) {
+      const original = p.projects[index]
+      const current = await f.repository.getProject(original.localProjectKey)
+      assert.ok(current)
+      assert.equal(
+        current.canonicalPath,
+        path.join(p.located, path.basename(original.canonicalPath)),
+      )
+      assert.equal(localProjectRecoveryKey(current.canonicalPath), original.localProjectKey)
+      assert.equal(current.documentRevision, original.documentRevision)
+      assert.deepEqual(
+        await f.repository.listSavedAcceptedResults(original.localProjectKey),
+        accepted[index].map((row) => ({
+          ...row,
+          canonicalPath: current.canonicalPath,
+          fileFingerprint: current.fileFingerprint,
+        })),
+      )
+    }
+    assert.deepEqual(
+      await f.database.db.selectFrom('generation_queue_item').selectAll().execute(),
+      queue.map((row) => ({
+        ...row,
+        canonical_project_path: path.join(p.located, path.basename(row.canonical_project_path)),
+      })),
+    )
+    assert.deepEqual(await bytesIn(p.located), p.files)
+    assert.deepEqual(await bytesIn(path.join(f.dataRoot, 'autosave')), p.recovery)
+  })
+})
+
+test('Workspace Locate Cancel, default, application root and source reappearance leave all metadata unchanged', async () => {
+  await withFixture(async (f) => {
+    const p = await missingWorkspaceFixture(f)
+    const index = await f.repository.listProjects(f.workspace.id)
+    let selected = false
+    await assert.rejects(
+      f.service.locateWorkspace('uncategorized', async () => {
+        selected = true
+        return p.located
+      }),
+      { code: 'PROJECT_NOT_READY' },
+    )
+    assert.equal(selected, false)
+    assert.equal(await f.service.locateWorkspace(f.workspace.id, async () => null), false)
+    await assert.rejects(
+      f.service.locateWorkspace(f.workspace.id, async () => f.dataRoot),
+      { code: 'PROJECT_NOT_READY' },
+    )
+    await assert.rejects(
+      f.service.locateWorkspace(f.workspace.id, async () => {
+        await mkdir(f.directory)
+        return p.located
+      }),
+      { code: 'PROJECT_NOT_READY' },
+    )
+    await rm(f.directory, { recursive: true })
+    assert.deepEqual(await f.repository.workspaceById(f.workspace.id), p.workspace)
+    assert.deepEqual(await f.repository.listProjects(f.workspace.id), index)
+    assert.deepEqual(await bytesIn(p.located), p.files)
+    assert.deepEqual(await bytesIn(path.join(f.dataRoot, 'autosave')), p.recovery)
+  })
+})
+
+test('Workspace Locate rolls back earlier Project repoints when a later SQL write fails', async () => {
+  await withFixture(async (f) => {
+    const p = await missingWorkspaceFixture(f)
+    const before = await f.repository.listProjects(f.workspace.id)
+    const bindings = await f.database.db
+      .selectFrom('project_identity_binding')
+      .selectAll()
+      .execute()
+    const key = p.projects.at(-1)!.localProjectKey
+    assert.match(key, /^project-v1-[a-f0-9]{64}$/)
+    await sql
+      .raw(
+        `CREATE TRIGGER refuse_workspace_repoint AFTER UPDATE OF canonical_path ON project_index WHEN NEW.local_project_key = '${key}' BEGIN SELECT RAISE(ABORT, 'owned later Project write fault'); END`,
+      )
+      .execute(f.database.db)
+    try {
+      await assert.rejects(
+        f.service.locateWorkspace(f.workspace.id, async () => p.located),
+        /owned later Project write fault/,
+      )
+      assert.deepEqual(await f.repository.workspaceById(f.workspace.id), p.workspace)
+      assert.deepEqual(await f.repository.listProjects(f.workspace.id), before)
+      assert.deepEqual(
+        await f.database.db.selectFrom('project_identity_binding').selectAll().execute(),
+        bindings,
+      )
+      for (const project of p.projects) {
+        assert.equal(localProjectRecoveryKey(project.canonicalPath), project.localProjectKey)
+      }
+      assert.deepEqual(await bytesIn(p.located), p.files)
+      assert.deepEqual(await bytesIn(path.join(f.dataRoot, 'autosave')), p.recovery)
+    } finally {
+      await sql.raw('DROP TRIGGER refuse_workspace_repoint').execute(f.database.db)
+    }
+  })
+})
+
+test('Workspace Locate refuses a selected saved document that disagrees with retained recovery base', async () => {
+  await withFixture(async (f) => {
+    const p = await missingWorkspaceFixture(f)
+    const file = path.join(p.located, path.basename(p.owner.canonicalPath))
+    const saved = await readIgsPackage(file)
+    const members = saved.manifest.members.filter(({ path: member }) =>
+      member.startsWith('assets/'),
+    )
+    const assets = Object.fromEntries(
+      await Promise.all(
+        members.map(async ({ path: member }) => [
+          member,
+          { bytes: await saved.readMember(member) },
+        ]),
+      ),
+    )
+    await saveIgsPackage(file, {
+      assets,
+      preview: {
+        merged: await saved.readMember('preview/merged.png'),
+        rect: saved.manifest.preview.rect,
+        status: saved.manifest.preview.status,
+        thumbnail: await saved.readMember('preview/thumbnail.webp'),
+      },
+      project: { ...saved.project, title: 'Reused revision with a different document' },
+    })
+    const before = await f.repository.listProjects(f.workspace.id)
+    const files = await bytesIn(p.located)
+    await assert.rejects(
+      f.service.locateWorkspace(f.workspace.id, async () => p.located),
+      { code: 'PROJECT_RECOVERY_UNAVAILABLE' },
+    )
+    assert.deepEqual(await f.repository.workspaceById(f.workspace.id), p.workspace)
+    assert.deepEqual(await f.repository.listProjects(f.workspace.id), before)
+    assert.deepEqual(await bytesIn(p.located), files)
+    assert.deepEqual(await bytesIn(path.join(f.dataRoot, 'autosave')), p.recovery)
   })
 })

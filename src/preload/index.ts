@@ -1473,6 +1473,12 @@ const api: StudioApi = {
         [projectId],
         (value): value is boolean => typeof value === 'boolean',
       ),
+    locateWorkspace: (workspaceId) =>
+      invokeProject(
+        ipcChannels.projects.locateWorkspace,
+        [workspaceId],
+        (value): value is boolean => typeof value === 'boolean',
+      ),
     moveProject: (projectId, workspaceId) =>
       invokeProject(
         ipcChannels.projects.moveProject,

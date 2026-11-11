@@ -1,12 +1,21 @@
 # Implementation Roadmap
 
-## Current Locate Project checkpoint
+## Current workspace Locate Folder checkpoint
+
+[Locate Folder](../engineering/phase-4-home-workspace-locate-research.md) reconnects
+a missing non-default workspace with one atomic catalog/Project-key/terminal-path
+repoint. Exact cached saved-Project set, original identity/recovery, explicit later
+Open/Recover/Save and full rollback have finite checks. Strict current exclusions
+and capacity/compatibility limits do not promote public promise statuses. Inspector/
+full preview and remaining Models/export/runtime/release/visual acceptance follow.
+
+## Previous Locate Project checkpoint
 
 [Locate Project](../engineering/phase-4-home-project-locate-research.md) reconnects
 the same saved document through existing guarded location repoint, preserving
 stable key and verified document recovery. Trusted OS selection, unowned scanned
 candidate adoption and explicit later Open/Recover/Save have finite checks.
-Folder Locate, Inspector/full preview and remaining MVP acceptance stay open;
+Inspector/full preview and remaining MVP acceptance stay open;
 current owner/version/recovery exclusions do not promote public statuses.
 
 ## Previous missing-file Home checkpoint
@@ -15,7 +24,7 @@ current owner/version/recovery exclusions do not promote public statuses.
 only a proven missing file's derived index entry through existing catalog/Project/
 generation fences and a guarded transaction. Explicit confirmation, Cancel/error,
 retained identity/recovery and ordinary same-key rediscovery have finite checks.
-Folder Locate, Inspector/full preview and remaining MVP acceptance stay open;
+Inspector/full preview and remaining MVP acceptance stay open;
 public statuses are unchanged. Executed evidence and limits live in the note.
 
 ## Previous Home browse checkpoint
@@ -25,7 +34,7 @@ and the existing pure Invoke view pipeline to approved Vue/Naive controls. App
 retains query controls across Home remount and scope changes; Reset keeps sort.
 Open/recovery/attention are independent, including unavailable-workspace and
 preview-only controls. No package/lifecycle/schema/inference write is introduced.
-Folder Locate, selected Inspector/full preview/grid, remaining
+Selected Inspector/full preview/grid, remaining
 Models/export/runtime/release and visual/MVP acceptance remain separate. Public
 statuses stay unchanged; executed evidence is bounded in the linked note.
 

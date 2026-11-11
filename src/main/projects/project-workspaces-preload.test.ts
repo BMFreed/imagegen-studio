@@ -438,3 +438,24 @@ test('Locate Project preload sends only opaque identity and validates boolean li
     assert.equal((await f.api.projects.locateProject(id)).ok, false)
   }
 })
+
+test('Locate Folder preload sends only workspace identity and validates boolean connected or canceled replies', async () => {
+  const f = await fixture()
+  const id = randomUUID()
+  for (const value of [true, false]) {
+    f.state.value = value
+    const reply = await f.api.projects.locateWorkspace(id)
+    assert.equal(reply.ok, true)
+    if (reply.ok) {
+      assert.equal(reply.value, value)
+    }
+  }
+  assert.deepEqual(f.calls, [
+    { args: [id], channel: ipcChannels.projects.locateWorkspace },
+    { args: [id], channel: ipcChannels.projects.locateWorkspace },
+  ])
+  for (const value of [null, undefined, 'true', 1, { located: true }]) {
+    f.state.value = value
+    assert.equal((await f.api.projects.locateWorkspace(id)).ok, false)
+  }
+})

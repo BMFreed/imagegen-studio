@@ -66,6 +66,7 @@ const emit = defineEmits<{
   deleteProject: [project: ProjectTrashSummary]
   importProject: []
   locateProject: [project: ProjectSummary]
+  locateWorkspace: [workspaceId: string]
   manageModels: []
   managePresets: []
   moveProject: [project: ProjectSummary]
@@ -159,11 +160,30 @@ function requestProjectAction(key: number | string, project: ProjectSummary) {
   }
 }
 function requestWorkspaceAction(key: number | string, workspaceId: string) {
-  if (key === 'reveal') {
-    emit('revealWorkspace', workspaceId)
-  } else if (key === 'settings') {
-    emit('workspaceSettings', workspaceId)
+  switch (key) {
+    case 'locate': {
+      const workspace = props.workspaces.find(({ id }) => id === workspaceId)
+      if (!props.busy && workspace && canLocateWorkspace(workspace)) {
+        emit('locateWorkspace', workspace.id)
+      }
+
+      break
+    }
+    case 'reveal': {
+      emit('revealWorkspace', workspaceId)
+
+      break
+    }
+    case 'settings': {
+      emit('workspaceSettings', workspaceId)
+
+      break
+    }
+    // No default
   }
+}
+function canLocateWorkspace(workspace: ProjectWorkspaceSummary): boolean {
+  return !workspace.isDefault && workspace.availability !== 'available'
 }
 const selectedWorkspace = computed(() =>
   props.workspaces.find(({ id }) => id === workspaceId.value),
@@ -409,6 +429,7 @@ function recoveryLabel(project: ProjectSummary): string | null {
             :options="[
               { key: 'settings', label: 'Workspace Settings' },
               { key: 'reveal', label: 'Show in Folder' },
+              ...(canLocateWorkspace(workspace) ? [{ key: 'locate', label: 'Locate Folder' }] : []),
             ]"
             trigger="click"
             @select="requestWorkspaceAction($event, workspace.id)"
@@ -479,6 +500,16 @@ function recoveryLabel(project: ProjectSummary): string | null {
           type="warning"
         >
           {{ workspaceProblem }}
+          <NButton
+            v-if="selectedWorkspace && canLocateWorkspace(selectedWorkspace)"
+            :disabled="busy"
+            size="tiny"
+            text
+            type="primary"
+            @click="$emit('locateWorkspace', selectedWorkspace.id)"
+          >
+            Locate Folder
+          </NButton>
         </NAlert>
         <NAlert
           v-if="trashError"
