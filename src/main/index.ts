@@ -1586,10 +1586,22 @@ if (!gotInstanceLock) {
         ipcChannels.projects.renameProject,
         (args) =>
           args.length === 2 && isProjectId(args[0]) && validateProjectRenameName(args[1]) === null,
-        (id, name) =>
-          withClosedProjectMaintenance(id as string, () =>
-            projectService.renameProject(id as string, name as string),
-          ),
+        async (id, name) => {
+          try {
+            return await withClosedProjectMaintenance(
+              id as string,
+              () => projectService.renameProject(id as string, name as string),
+              true,
+            )
+          } finally {
+            if (!window.isDestroyed()) {
+              window.webContents.send(
+                ipcChannels.projects.tabsChanged,
+                projectService.getOpenTabs(),
+              )
+            }
+          }
+        },
       )
       registerProjectHandler(ipcChannels.projects.listTrash, noArgs, () =>
         projectService.listTrash(),

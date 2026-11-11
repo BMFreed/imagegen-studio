@@ -1,6 +1,8 @@
 import type { PresetPayload } from '../../shared/presets/preset-schema.js'
 import { initializeProjectGenerationPayload } from '../../shared/projects/project-create.js'
+import { normalizeProjectRenameName } from '../../shared/projects/project-rename.js'
 import type {
+  IgsManifestV1,
   IgsPreviewRectV1,
   IgsProjectDocumentV1,
   IgsRectV1,
@@ -16,6 +18,7 @@ import { randomUUID } from 'node:crypto'
 import { lstatSync, realpathSync } from 'node:fs'
 import { lstat, mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
 import path from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 
 import {
   type IgsAssetSource,
@@ -233,10 +236,34 @@ export class ProjectSession {
   /**
    * Adapt a committed Invoke-style file/metadata move to this live package reader. The owning
    * coordinator must hold both physical-path leases and its edit gate until journal finalization.
-   * Documents and history stay in memory; only verified package readers and location change.
+   * Move leaves documents intact. Rename adopts only the exact planned saved title/revision; the
+   * coordinator keeps history and rebases its lifecycle title outside canvas undo.
    */
-  async rebindLocation(destinationPath: string, expectedSourcePath: string): Promise<void> {
+  async rebindLocation(
+    destinationPath: string,
+    expectedSourcePath: string,
+    expectedRenamedDocument?: IgsProjectDocumentV1,
+  ): Promise<void> {
     this.assertRebuildReady()
+    const expected =
+      expectedRenamedDocument === undefined
+        ? undefined
+        : parseProjectDocumentV1(structuredClone(expectedRenamedDocument))
+    if (
+      expected &&
+      (normalizeProjectRenameName(expected.title) !== expected.title ||
+        path.basename(destinationPath) !== `${expected.title}.igs` ||
+        expected.documentRevision === this.saved.documentRevision ||
+        !isDeepStrictEqual(
+          { ...expected, documentRevision: null, title: null },
+          { ...this.saved, documentRevision: null, title: null },
+        ))
+    ) {
+      throw new ProjectSessionError(
+        'PROJECT_EXTERNAL_CHANGE',
+        'The Rename document does not match the saved Project.',
+      )
+    }
     if (this.filePath !== expectedSourcePath || savingPaths.has(this.filePath)) {
       throw new ProjectSessionError(
         'PROJECT_EXTERNAL_CHANGE',
@@ -261,14 +288,27 @@ export class ProjectSession {
       this.filePath !== expectedSourcePath ||
       savingPaths.has(this.filePath) ||
       before !== after ||
-      JSON.stringify(movedPackage.project) !== JSON.stringify(this.saved) ||
-      JSON.stringify(movedPackage.manifest) !== JSON.stringify(this.savedPackage.manifest) ||
+      !isDeepStrictEqual(movedPackage.project, expected ?? this.saved) ||
+      (expected
+        ? !isDeepStrictEqual(
+            renameInvariantManifest(movedPackage.manifest),
+            renameInvariantManifest(this.savedPackage.manifest),
+          )
+        : !isDeepStrictEqual(movedPackage.manifest, this.savedPackage.manifest)) ||
       localProjectRecoveryKey(canonicalPath) !== this.localRecoveryKey
     ) {
       throw new ProjectSessionError(
         'PROJECT_EXTERNAL_CHANGE',
         'The moved Project does not match the open saved package.',
       )
+    }
+    if (expected) {
+      // Lifecycle name metadata follows the file; operational seed bookkeeping remains live.
+      this.current = parseProjectDocumentV1({
+        ...movedPackage.project,
+        lastActualSeedSnapshot: this.current.lastActualSeedSnapshot,
+      })
+      this.saved = movedPackage.project
     }
     this.savedPackage = movedPackage
     this.savedFingerprint = after
@@ -578,6 +618,17 @@ function fileFingerprintSync(filePath: string): string {
     throw new ProjectSessionError('PROJECT_EXTERNAL_CHANGE', 'The Project is not a file.')
   }
   return `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}`
+}
+
+/** Rename may replace project.json and its revision; every other portable member stays exact. */
+function renameInvariantManifest(manifest: IgsManifestV1) {
+  return {
+    ...manifest,
+    documentRevision: null,
+    members: manifest.members
+      .filter((member) => member.path !== 'project.json')
+      .sort((a, b) => a.path.localeCompare(b.path)),
+  }
 }
 
 function contentKey(document: IgsProjectDocumentV1): string {

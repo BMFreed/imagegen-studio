@@ -449,7 +449,9 @@ const frozenProjectRenameName = ref<string | null>(null)
 const projectRenameError = ref<string | null>(null)
 const renamePendingMessage = ref<string | null>(null)
 const renameProjectBlocked = computed(() =>
-  projectTabs.value.some(({ id }) => id === renamingProject.value?.id),
+  projectTabs.value.some(
+    ({ dirty, id }) => id === renamingProject.value?.id && (dirty || projectHasPendingDraft(id)),
+  ),
 )
 const showProjectTrashAction = ref(false)
 const trashActionProject = ref<ProjectSummary | ProjectTrashSummary | null>(null)
@@ -2026,7 +2028,7 @@ function rotatePromptHistoryGroup(tabId: string) {
 
 async function flushProjectDraft(tabId: string) {
   if (projectTabs.value.find((tab) => tab.id === tabId)?.relocationPending) {
-    // Move admitted only a settled clean tab. Its coordinator is now fenced until Retry/Close.
+    // File operations admit only a settled clean tab, now fenced until Retry/Close.
     if (projectHasPendingDraft(tabId)) {
       throw new Error('Resolve the pending Project draft before closing this tab.')
     }
@@ -3598,6 +3600,9 @@ async function confirmRenameProject() {
       renamePendingMessage.value = result.message
     } else {
       showRenameProject.value = false
+      if (projectTabs.value.some(({ id }) => id === projectId)) {
+        rotatePromptHistoryGroup(projectId)
+      }
     }
     await refreshProjects()
   } catch (cause) {
@@ -5219,7 +5224,7 @@ onBeforeUnmount(() => {
           :draftPending="Boolean(generationDraftOverlays[activeDraftOwnerKey])"
           :error="
             activeTab.relocationPending
-              ? 'This Project has a pending move. Finish it from Home to continue editing. You can also close this tab.'
+              ? 'This Project has a pending file operation. Finish it from Home to continue editing. You can also close this tab.'
               : (tabErrors[activeTab.id] ?? null)
           "
           :exportFeedback="exportFeedbackByTab[activeTab.id] ?? null"

@@ -1,6 +1,16 @@
 # Engineering Workflow
 
-## Current open Project relocation checkpoint
+## Current clean-open Rename checkpoint
+
+[Clean-open Project Rename](./phase-4-clean-open-rename-research.md) keeps live tab/canvas history/assets through
+exact metadata rebind and same-live Retry. Lifecycle title is outside canvas Undo;
+dirty/pending drafts require explicit Save/close. Same-path lease, held edits,
+normal Close/restart and frozen generation identity guards use existing owners.
+Dirty Rename, cross-device/deferred recovery relocation, remaining Home/Models/
+export/runtime/release and visual/MVP acceptance remain open. Public statuses stay
+unchanged; source/runtime/retention evidence is kept distinct in the linked note.
+
+## Previous open Project relocation checkpoint
 
 [Clean-open Move and closed Rename](./phase-4-open-project-relocation-research.md) extend the stable location owner.
 Move retains the live tab/history/readers and fences pending generation/edits;

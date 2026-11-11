@@ -125,6 +125,8 @@ Not undoable:
 - worker completion;
 - focusing, checkbox-selecting or discarding staging candidates;
 - opening/closing project files;
+- app-managed Project Rename/Move lifecycle: canvas Undo/Redo keeps the current
+  filename/title; Rename is not a canvas edit or an implicit document Save;
 - autosave writes;
 - crash recovery load;
 - project file validation;
@@ -197,6 +199,14 @@ This checkpoint covers production document edits already implemented. Smart
 Patch variants, Regional Guidance, mask gestures and several Canvas operations
 remain prototype behavior, so their Undo semantics are not yet production
 evidence. Project history remains transient and is never written into `.igs`.
+
+[Clean-open Rename](../../engineering/phase-4-clean-open-rename-research.md) adapts
+Invoke's name-outside-history policy to whole-document Studio snapshots. It keeps
+the same tab/history/assets and rebases only top-level title over past, future and
+focus baseline. Rename adds no Undo step and increments the live document epoch
+once; prepared edits captured before metadata publication conflict. Same-live
+Retry is idempotent. Dirty/unsynced Projects require explicit Save/close first;
+no canvas edit or immutable nested provenance is rewritten by Rename.
 
 ## Vue Prototype Coverage
 

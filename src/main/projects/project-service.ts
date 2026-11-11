@@ -2971,9 +2971,7 @@ export class ProjectService {
           'Finish the pending Project operation with its original name or destination first.',
         )
       }
-      const result = await this.options.repository.relocations.finishMove(pending, () =>
-        this.assertRelocationQuiescent(projectId, pending.sourcePath),
-      )
+      const result = await this.finishLiveMove(pending)
       return result.kind === 'moved' ? { kind: 'renamed' } : result
     }
     const record = await this.options.repository.getProject(projectId)
@@ -2983,7 +2981,11 @@ export class ProjectService {
         'Only an available saved Project can be renamed.',
       )
     }
-    const guard = () => this.assertRelocationQuiescent(projectId, record.canonicalPath)
+    const coordinator = this.openTabs.get(projectId)
+    const guard = () => {
+      this.assertRelocationQuiescent(projectId, record.canonicalPath, coordinator)
+      this.liveRelocations.get(projectId)?.reservation.assertCurrent()
+    }
     guard()
     if (record.displayName === title && path.basename(record.canonicalPath) === `${title}.igs`) {
       return { kind: 'renamed' }
@@ -2996,37 +2998,56 @@ export class ProjectService {
         'The workspace folder must be available and writable before Rename.',
       )
     }
-    const recovery = await ProjectAutosaveCoordinator.inspectRecovery(
-      record.canonicalPath,
-      this.options.shadow,
-    )
-    if (recovery.status !== 'absent' && recovery.status !== 'clean') {
-      throw new ProjectServiceError(
-        'PROJECT_RECOVERY_UNAVAILABLE',
-        'Open the Project and resolve its document recovery before Rename.',
+    try {
+      if (coordinator) {
+        const reservation = await coordinator.prepareRelocation(
+          path.join(workspace.directoryPath, `${title}.igs`),
+          { renameTitle: title },
+        )
+        this.liveRelocations.set(projectId, { coordinator, reservation })
+      }
+      guard()
+      const recovery = await ProjectAutosaveCoordinator.inspectRecovery(
+        record.canonicalPath,
+        this.options.shadow,
       )
-    }
-    // Save may have committed this exact shadow before its clean marker was published.
-    // Normalize through the existing owner before title/revision change can make it stale.
-    const clean = await this.options.shadow.markClean(
-      record.canonicalPath,
-      record.documentRevision!,
-    )
-    if (!clean.directorySynced) {
-      throw new ProjectServiceError(
-        'PROJECT_RECOVERY_UNAVAILABLE',
-        'The saved recovery marker could not be confirmed on disk. Retry Rename after restoring storage access.',
+      if (recovery.status !== 'absent' && recovery.status !== 'clean') {
+        throw new ProjectServiceError(
+          'PROJECT_RECOVERY_UNAVAILABLE',
+          'Open the Project and resolve its document recovery before Rename.',
+        )
+      }
+      // Save may have committed this exact shadow before its clean marker was published.
+      // Normalize through the existing owner before title/revision change can make it stale.
+      const clean = await this.options.shadow.markClean(
+        record.canonicalPath,
+        record.documentRevision!,
       )
+      if (!clean.directorySynced) {
+        throw new ProjectServiceError(
+          'PROJECT_RECOVERY_UNAVAILABLE',
+          'The saved recovery marker could not be confirmed on disk. Retry Rename after restoring storage access.',
+        )
+      }
+      guard()
+      const prepared = await this.options.repository.relocations.beginRename(
+        record,
+        workspace,
+        title,
+        guard,
+      )
+      const result = await this.finishLiveMove(prepared)
+      return result.kind === 'moved' ? { kind: 'renamed' } : result
+    } catch (error) {
+      if (!(await this.options.repository.relocations.get(projectId))) {
+        const live = this.liveRelocations.get(projectId)
+        if (live) {
+          live.reservation.release()
+          this.liveRelocations.delete(projectId)
+        }
+      }
+      throw error
     }
-    guard()
-    const prepared = await this.options.repository.relocations.beginRename(
-      record,
-      workspace,
-      title,
-      guard,
-    )
-    const result = await this.options.repository.relocations.finishMove(prepared, guard)
-    return result.kind === 'moved' ? { kind: 'renamed' } : result
   }
 
   async resolveRecovery(
@@ -4525,7 +4546,10 @@ export class ProjectService {
         'Wait for the Project operation to finish.',
       )
     } else if (allowedCoordinator.dirty) {
-      throw new ProjectServiceError('PROJECT_DIRTY', 'Save or close the Project before moving it.')
+      throw new ProjectServiceError(
+        'PROJECT_DIRTY',
+        'Save or close the Project before changing its saved file.',
+      )
     }
     try {
       const root = lstatSync(this.options.dataRoot)
@@ -4609,7 +4633,11 @@ export class ProjectService {
     }
     const result = await this.options.repository.relocations.finishMove(record, guard, async () => {
       if (live) {
-        await live.reservation.rebind()
+        await live.reservation.rebind(
+          record.kind === 'rename'
+            ? parseProjectDocumentV1(JSON.parse(record.rename!.projectJson))
+            : undefined,
+        )
         this.tabWorkspaceIds.set(projectId, record.targetWorkspaceId)
       }
     })
@@ -4835,7 +4863,7 @@ export class ProjectService {
     if (coordinator.relocationPending) {
       throw new ProjectServiceError(
         'PROJECT_NOT_READY',
-        'This Project has a pending move. Finish it from Home or close this tab.',
+        'This Project has a pending file operation. Finish it from Home or close this tab.',
       )
     }
     return coordinator

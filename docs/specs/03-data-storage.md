@@ -16,11 +16,18 @@ ImageGen Studio остаётся однопользовательским deskto
 
 ## Current local relocation identity checkpoint
 
+[Clean-open Rename](../engineering/phase-4-clean-open-rename-research.md) reuses the
+same durable metadata descriptor/journal without a new migration or package schema.
+The live owner adopts only the exact metadata target, retains both path leases
+until finalize, and keeps current lifecycle title over canvas Undo/Redo. Dirty
+Rename and release/rollback qualification remain separate.
+
 [Clean-open Move and closed Rename](../engineering/phase-4-open-project-relocation-research.md)
 extend the existing journal with live rebind and operation-kind/expected Rename
 metadata. Migration0029 preserves legacy Move rows; no portable schema version or
 immutable generation payload changes. Rename uses exact existing members/preview
-through the IGS writer. Open title/Undo Rename and release migration remain gaps.
+through the IGS writer. Clean-open title/history Rename is extended by the newer
+checkpoint above; dirty Rename and release migration remain gaps.
 
 [Closed Project Move](../engineering/phase-4-project-workspace-move-research.md)
 preserves an existing opaque local Project key while authoritatively binding its new

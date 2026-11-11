@@ -2,6 +2,12 @@
 
 ## Production checkpoint
 
+[Clean-open Rename](../engineering/phase-4-clean-open-rename-research.md) now keeps
+the live Project tab and canvas Undo/Redo while changing title and filename.
+Lifecycle name stays current through later Undo/Redo/Save. Dirty/unsynced drafts
+still require explicit Save/close; same-live frozen Retry and normal Close/restart
+use the existing positive journal and reservations. No implicit document Save.
+
 [Open Project relocation](../engineering/phase-4-open-project-relocation-research.md)
 extends the existing same-filesystem Move to clean open Projects while retaining
 the same tab, Undo/Redo and package readers. Pending live moves fence edits and
@@ -9,9 +15,9 @@ generation until original-target Retry or explicit Close; startup recovers the
 journal before scanning. Dirty Projects and unresolved document/generation
 recovery are refused without implicit Save/close/discard.
 
-Closed saved Project Rename now changes both title and `.igs` filename, preserving
+Closed and clean-open saved Project Rename changes both title and `.igs` filename, preserving
 assets/previews and immutable provenance. Pending Rename freezes the original
-name; Open and conflicting operations stay blocked. Open/dirty Rename and
+name; Open and conflicting operations stay blocked. Dirty Rename and
 cross-filesystem transfer remain gaps. These finite checkpoints do not promote
 PP-007 or complete the Home contract.
 

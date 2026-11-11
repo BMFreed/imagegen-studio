@@ -19,7 +19,12 @@ shadow write; startup recovery owns the durable operation. Generation identity
 getters refuse admission during the held move, including frozen Queue Retry.
 Closed Rename normalizes an exact-saved dirty crash-window shadow through
 `markClean` before changing title/revision; stale/unknown recovery still refuses.
-Rename does not reinterpret open history; open/dirty Rename remains unimplemented.
+[Clean-open Rename](../../engineering/phase-4-clean-open-rename-research.md) follows
+Invoke lifecycle name semantics: top-level title rebases over retained history,
+while nested provenance/content remains exact. New saved revision/readers are
+adopted only from the exact journal target; operational seed metadata stays live.
+Rename is outside canvas Undo, adds no history step and increments the document
+epoch once. Dirty/unsynced Rename remains refused without implicit Save.
 
 ## Feature
 

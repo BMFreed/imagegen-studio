@@ -1,3 +1,4 @@
+import { normalizeProjectRenameName } from '../../shared/projects/project-rename.js'
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 import {
   IGS_SAFETY_CEILINGS,
@@ -11,6 +12,7 @@ import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import { mkdir, mkdtemp, open, realpath, rm, rmdir, unlink } from 'node:fs/promises'
 import path from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 
 import type { ProjectShadowStore } from './project-shadow.js'
 import type { ProjectShadowCommit, ProjectShadowInspection } from './project-shadow.js'
@@ -63,8 +65,8 @@ export interface ProjectRelocationReservation {
   abandonForShutdown: () => Promise<void>
   /** Check the same clean document/epoch without assuming which physical move phase committed. */
   assertCurrent: () => void
-  /** Rebind after metadata commit; keep edits fenced until release after journal finalization. */
-  rebind: () => Promise<void>
+  /** Rebind after metadata commit; Rename requires its exact planned document. Keep the gate. */
+  rebind: (expectedRenamedDocument?: IgsProjectDocumentV1) => Promise<void>
   /** Before moving, prove the source unchanged; after rebind, prove the destination unchanged. */
   release: () => void
 }
@@ -605,8 +607,15 @@ export class ProjectAutosaveCoordinator {
    * prepared edits, Undo/Redo and Save behind the durable move, retaining this coordinator and
    * every history/source map. A failed committed move deliberately leaves this held.
    */
-  async prepareRelocation(destinationPath: string): Promise<ProjectRelocationReservation> {
+  async prepareRelocation(
+    destinationPath: string,
+    options: { renameTitle?: string } = {},
+  ): Promise<ProjectRelocationReservation> {
     this.assertOpen()
+    const renameTitle = options.renameTitle
+    if (renameTitle !== undefined && normalizeProjectRenameName(renameTitle) !== renameTitle) {
+      throw new ProjectAutosaveError('EDIT_CONFLICT', 'Choose a valid Project name.')
+    }
     if (this.activeSave || this.editGate) {
       throw new ProjectAutosaveError(
         'SAVE_IN_PROGRESS',
@@ -619,6 +628,8 @@ export class ProjectAutosaveCoordinator {
     const sourcePath = this.filePath
     const document = this.document
     const epoch = this.documentEpoch
+    let expectedDocument = document
+    let expectedEpoch = epoch
     this.relocationPendingState = true
     this.editGate = new Promise<void>((resolve) => {
       this.releaseEditGate = resolve
@@ -629,20 +640,26 @@ export class ProjectAutosaveCoordinator {
       const canonicalDestination = await canonicalProjectPath(destinationPath, {
         allowNewFile: true,
       })
-      if (canonicalDestination !== destinationPath || canonicalDestination === sourcePath) {
+      if (
+        canonicalDestination !== destinationPath ||
+        (canonicalDestination === sourcePath && renameTitle === undefined)
+      ) {
         throw new ProjectAutosaveError(
           'EDIT_CONFLICT',
           'Choose a different canonical Project location.',
         )
       }
-      releaseDestination = (this.options.leaseRegistry ?? processLeases).acquire(
-        canonicalDestination,
-      )
+      if (canonicalDestination !== sourcePath) {
+        releaseDestination = (this.options.leaseRegistry ?? processLeases).acquire(
+          canonicalDestination,
+        )
+      }
       await this.historyCleanup
       await this.pendingWrite
       this.assertOpen()
       this.session.assertCurrentLocation(sourcePath)
       let rebound = false
+      let committedRenameDocument: IgsProjectDocumentV1 | undefined
       let active = true
       const assertOwned = (): void => {
         this.assertOpen()
@@ -656,9 +673,9 @@ export class ProjectAutosaveCoordinator {
       const assertCurrent = (): void => {
         assertOwned()
         if (
-          this.documentEpoch !== epoch ||
+          this.documentEpoch !== expectedEpoch ||
           this.dirty ||
-          !sameDocument(this.document, document) ||
+          !sameDocument(this.document, expectedDocument) ||
           this.filePath !== (rebound ? canonicalDestination : sourcePath)
         ) {
           throw new ProjectAutosaveError(
@@ -687,20 +704,60 @@ export class ProjectAutosaveCoordinator {
           this.releasePreparedEdits()
         },
         assertCurrent,
-        rebind: async () => {
+        rebind: async (input) => {
           assertCurrent()
+          const expected =
+            input === undefined ? undefined : parseProjectDocumentV1(structuredClone(input))
+          if (
+            (renameTitle === undefined) !== (expected === undefined) ||
+            (expected && expected.title !== renameTitle)
+          ) {
+            throw new ProjectAutosaveError(
+              'EDIT_CONFLICT',
+              'The Rename target does not match its reservation.',
+            )
+          }
           if (rebound) {
+            if (!isDeepStrictEqual(expected, committedRenameDocument)) {
+              throw new ProjectAutosaveError(
+                'EDIT_CONFLICT',
+                'The committed Rename target changed during Retry.',
+              )
+            }
             this.session.assertCurrentLocation(canonicalDestination)
             return
           }
-          await this.session.rebindLocation(canonicalDestination, sourcePath)
+          // Invoke name metadata is outside undo snapshots. Adapt whole-document snapshots by
+          // changing only their lifecycle title; assets and immutable nested provenance remain exact.
+          const titleSnapshot = (snapshot: IgsProjectDocumentV1): IgsProjectDocumentV1 => ({
+            ...snapshot,
+            title: expected!.title,
+          })
+          const renamedPast = expected ? this.past.map(titleSnapshot) : undefined
+          const renamedFuture = expected ? this.future.map(titleSnapshot) : undefined
+          const renamedGroup =
+            expected && this.historyGroup
+              ? { ...this.historyGroup, baseline: titleSnapshot(this.historyGroup.baseline) }
+              : undefined
+          await this.session.rebindLocation(canonicalDestination, sourcePath, expected)
+          if (expected) {
+            this.baseDocument = expected
+            this.past.splice(0, this.past.length, ...renamedPast!)
+            this.future.splice(0, this.future.length, ...renamedFuture!)
+            this.historyGroup = renamedGroup
+            this.editGeneration += 1
+            this.historyEpoch += 1
+            expectedEpoch = this.documentEpoch
+            expectedDocument = this.document
+            committedRenameDocument = expected
+          }
           rebound = true
           assertCurrent()
         },
         release: () => {
           assertCurrent()
           this.session.assertCurrentLocation(rebound ? canonicalDestination : sourcePath)
-          if (rebound) {
+          if (rebound && canonicalDestination !== sourcePath) {
             this.releaseLease?.()
             this.releaseLease = releaseDestination
           } else {

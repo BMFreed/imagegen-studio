@@ -60,7 +60,7 @@ async function fixture() {
     async cleanup() {
       for (const owner of services) {
         for (const tab of owner.getOpenTabs()) {
-          await owner.discardAndClose(tab.id)
+          await (tab.relocationPending ? owner.close(tab.id) : owner.discardAndClose(tab.id))
         }
       }
       await database.close()
@@ -461,17 +461,14 @@ test('closed Rename changes both filename and title, preserves member bytes and 
   })
 })
 
-test('Rename refuses clean/dirty open Projects and malformed or colliding filenames without writing', async () => {
+test('Rename refuses dirty open Projects and malformed or colliding filenames without writing', async () => {
   await withFixture(async (f) => {
     const tab = await f.service.create({ ...createInput, workspaceId: f.workspace.id })
     const record = (await f.repository.getProject(tab.id))!
     const bytes = await readFile(record.canonicalPath)
-    await assert.rejects(f.service.renameProject(tab.id, 'Open rename'), {
-      code: 'PROJECT_ALREADY_OPEN',
-    })
     await f.service.setPrimaryBbox(tab.id, { height: 64, width: 64, x: 9, y: 9 })
     await assert.rejects(f.service.renameProject(tab.id, 'Dirty rename'), {
-      code: 'PROJECT_ALREADY_OPEN',
+      code: 'PROJECT_DIRTY',
     })
     assert.deepEqual(await readFile(record.canonicalPath), bytes)
     await f.service.discardAndClose(tab.id)
@@ -580,5 +577,130 @@ test('case-only Rename excludes only its own source from the final collision che
     assert.equal(localProjectRecoveryKey(finalPath), record.localProjectKey)
     await assert.rejects(readFile(path.join(f.directory, 'Scene.igs')), { code: 'ENOENT' })
     assert.deepEqual(await f.repository.relocations.list(), [])
+  })
+})
+
+for (const samePath of [false, true]) {
+  test(`clean-open Rename keeps both canvas history directions and title on later Save (same path ${samePath})`, async () => {
+    await withFixture(async (f) => {
+      const tab = await f.service.create({ ...createInput, workspaceId: f.workspace.id })
+      const record = (await f.repository.getProject(tab.id))!
+      const owner = f.service.getOpenDocumentForAcceptance(tab.id)!
+      await f.service.setPrimaryBbox(tab.id, { height: 64, width: 64, x: 8, y: 0 })
+      await f.service.save(tab.id)
+      await f.service.setPrimaryBbox(tab.id, { height: 64, width: 64, x: 16, y: 0 })
+      const clean = await f.service.undo(tab.id)
+      assert.equal(clean.dirty, false)
+      assert.equal(clean.canUndo, true)
+      assert.equal(clean.canRedo, true)
+      const original = (await readIgsPackage(record.canonicalPath)).project
+      const epoch = owner.documentEpoch
+      const name = samePath ? path.basename(record.canonicalPath, '.igs') : 'Live Rename'
+      const destination = path.join(f.directory, `${name}.igs`)
+      assert.deepEqual(await f.service.renameProject(tab.id, name), { kind: 'renamed' })
+      assert.equal(f.service.getOpenDocumentForAcceptance(tab.id), owner)
+      const current = f.service.getOpenTabs()[0]
+      assert.equal(current.id, tab.id)
+      assert.equal(current.documentId, tab.documentId)
+      assert.equal(current.title, name)
+      assert.equal(current.dirty, false)
+      assert.equal(current.canUndo, true)
+      assert.equal(current.canRedo, true)
+      assert.equal(owner.documentEpoch, epoch + 1)
+      const renamed = (await readIgsPackage(destination)).project
+      assert.deepEqual(
+        { ...renamed, documentRevision: original.documentRevision, title: original.title },
+        original,
+      )
+      assert.equal((await f.service.undo(tab.id)).primaryBbox.x, 0)
+      assert.equal(f.service.getOpenTabs()[0].title, name)
+      await f.service.save(tab.id)
+      assert.equal((await readIgsPackage(destination)).project.title, name)
+      assert.equal((await f.service.redo(tab.id)).primaryBbox.x, 8)
+      assert.equal((await f.service.redo(tab.id)).primaryBbox.x, 16)
+      assert.equal(f.service.getOpenTabs()[0].title, name)
+      await f.service.save(tab.id)
+      const after = (await readIgsPackage(destination)).project
+      assert.equal(after.title, name)
+      assert.equal(after.primaryBbox.x, 16)
+      if (!samePath) {
+        await assert.rejects(readFile(record.canonicalPath), { code: 'ENOENT' })
+      }
+      await f.service.close(tab.id)
+      const reopened = await f.service.open(tab.id)
+      assert.equal(reopened.kind, 'opened')
+      if (reopened.kind === 'opened') {
+        assert.equal(reopened.tab.title, name)
+      }
+    })
+  })
+}
+
+for (const seam of ['afterMetadataRename', 'beforeFinalize'] as const) {
+  test(`pending live Rename at ${seam} fences identity and retries same name preserving history`, async () => {
+    await withFixture(async (f) => {
+      const tab = await f.service.create({ ...createInput, workspaceId: f.workspace.id })
+      await f.service.setPrimaryBbox(tab.id, { height: 64, width: 64, x: 8, y: 0 })
+      await f.service.save(tab.id)
+      const owner = f.service.getOpenDocumentForAcceptance(tab.id)!
+      Object.defineProperty(f.repository, 'relocations', {
+        configurable: true,
+        value: new ProjectRelocationStore(f.database.db, {
+          [seam]: async () => {
+            throw new Error('Controlled interruption')
+          },
+        }),
+      })
+      assert.equal((await f.service.renameProject(tab.id, 'Held Name')).kind, 'pending')
+      assert.equal(f.service.getOpenTabs()[0].relocationPending, true)
+      assert.equal(f.service.getOpenDocumentId(tab.id), null)
+      await assert.rejects(f.service.save(tab.id), { code: 'PROJECT_NOT_READY' })
+      await assert.rejects(f.service.undo(tab.id), { code: 'PROJECT_NOT_READY' })
+      await assert.rejects(f.service.renameProject(tab.id, 'Other Name'), {
+        code: 'PROJECT_NOT_READY',
+      })
+      Object.defineProperty(f.repository, 'relocations', {
+        configurable: true,
+        value: new ProjectRelocationStore(f.database.db),
+      })
+      assert.deepEqual(await f.service.renameProject(tab.id, 'Held Name'), { kind: 'renamed' })
+      assert.equal(f.service.getOpenDocumentForAcceptance(tab.id), owner)
+      assert.equal((await f.service.undo(tab.id)).primaryBbox.x, 0)
+      assert.equal(f.service.getOpenTabs()[0].title, 'Held Name')
+      await f.service.save(tab.id)
+      assert.equal(
+        (await readIgsPackage(path.join(f.directory, 'Held Name.igs'))).project.title,
+        'Held Name',
+      )
+    })
+  })
+}
+
+test('explicit Close preserves a pending Rename journal for a new Service lifetime', async () => {
+  await withFixture(async (f) => {
+    const tab = await f.service.create({ ...createInput, workspaceId: f.workspace.id })
+    Object.defineProperty(f.repository, 'relocations', {
+      configurable: true,
+      value: new ProjectRelocationStore(f.database.db, {
+        beforeFinalize: async () => {
+          throw new Error('Controlled interruption')
+        },
+      }),
+    })
+    assert.equal((await f.service.renameProject(tab.id, 'Restart Name')).kind, 'pending')
+    await f.service.close(tab.id)
+    assert.equal(f.service.getOpenTabs().length, 0)
+    assert.ok(await f.repository.relocations.get(tab.id))
+    Object.defineProperty(f.repository, 'relocations', {
+      configurable: true,
+      value: new ProjectRelocationStore(f.database.db),
+    })
+    const recovered = f.makeService()
+    const opened = await recovered.open(tab.id)
+    assert.equal(opened.kind, 'opened')
+    if (opened.kind === 'opened') {
+      assert.equal(opened.tab.title, 'Restart Name')
+    }
+    assert.equal(await f.repository.relocations.get(tab.id), null)
   })
 })

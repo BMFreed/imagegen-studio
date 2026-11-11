@@ -28,12 +28,13 @@ import {
   confirmQualificationProcessExit,
 } from './qualification-resource-limits.mjs'
 
-assert.ok([4, 5].includes(process.argv.length), 'Use --report-file ABSOLUTE_NEW_OWNED_REPORT [--trash-only|--locations-only|--move-only|--relocation-only]')
+assert.ok([4, 5].includes(process.argv.length), 'Use --report-file ABSOLUTE_NEW_OWNED_REPORT [--trash-only|--locations-only|--move-only|--relocation-only|--open-rename-only]')
 const trashOnly = process.argv[4] === '--trash-only'
 const locationsOnly = process.argv[4] === '--locations-only'
 const moveOnly = process.argv[4] === '--move-only'
 const relocationOnly = process.argv[4] === '--relocation-only'
-if (process.argv.length === 5) assert.ok(trashOnly || locationsOnly || moveOnly || relocationOnly)
+const openRenameOnly = process.argv[4] === '--open-rename-only'
+if (process.argv.length === 5) assert.ok(trashOnly || locationsOnly || moveOnly || relocationOnly || openRenameOnly)
 assert.equal(process.argv[2], '--report-file')
 const reportFile = process.argv[3]
 const evidenceRoot = path.dirname(reportFile)
@@ -52,7 +53,7 @@ const execute = promisify(execFile)
 const digest = (file) => createHash('sha256').update(readFileSync(file)).digest('hex')
 const report = {
   outcome: 'running',
-  mode: relocationOnly ? 'relocation-only' : moveOnly ? 'move-only' : locationsOnly ? 'locations-only' : trashOnly ? 'trash-only' : 'catalog-workspaces-and-trash',
+  mode: openRenameOnly ? 'open-rename-only' : relocationOnly ? 'relocation-only' : moveOnly ? 'move-only' : locationsOnly ? 'locations-only' : trashOnly ? 'trash-only' : 'catalog-workspaces-and-trash',
   startedAt: new Date().toISOString(),
   payloads: [payload],
   checks: [],
@@ -61,7 +62,7 @@ const report = {
   resourceChecks: [],
   pageErrors: [],
   boundary:
-    'Locations-only uses controlled OS shell callbacks; it qualifies Main path selection and UI, not file-manager window UX. Relocation-only uses exact owned fs syscall interception to chmod its own packages and delegates to originals for actual EACCES; stack, journal phase, identities and modes must restore. Actual built renderer/preload/Main/SQLite and Project package writers/loaders. OS picker replies are controlled; OS dialog UX and arbitrary permission races are not qualified. No ML.',
+    'Locations-only uses controlled OS shell callbacks; it qualifies Main path selection and UI, not file-manager window UX. Relocation/open-Rename uses exact owned fs syscall interception to chmod its own packages and delegates to originals for actual EACCES; stack, journal phase, identities and modes must restore. Actual built renderer/preload/Main/SQLite and Project package writers/loaders. OS picker replies are controlled; OS dialog UX and arbitrary permission races are not qualified. No ML.',
   sourceSha256: Object.fromEntries(
     [
       'scripts/smoke-home-workspaces.mjs',
@@ -222,14 +223,8 @@ async function screenshot(name, width, height) {
     .toEqual([width, height])
   await window.evaluate(() => document.fonts.ready.then(() => undefined))
   await window.mouse.move(0, 0)
-  await window.evaluate(async () => {
-    await Promise.all(
-      document
-        .getAnimations()
-        .filter((animation) => Number.isFinite(animation.effect?.getComputedTiming().iterations))
-        .map((animation) => animation.finished.catch(() => undefined)),
-    )
-  })
+  // Playwright settles finite animations for the capture. Do not await every page
+  // animation's finished promise: a paused animation can hold the harness indefinitely.
   for (const dialog of await window.getByRole('dialog').all()) {
     if (await dialog.isVisible()) {
       await expect
@@ -244,7 +239,7 @@ async function screenshot(name, width, height) {
   }
   await expect.poll(() => home().evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true)
   const file = path.join(evidenceRoot, `${path.basename(reportFile, '.json')}-${name}.png`)
-  await window.screenshot({ path: file })
+  await window.screenshot({ path: file, animations: 'disabled' })
   report.screenshots.push({ file, width, height, sha256: digest(file) })
   persist()
 }
@@ -1072,6 +1067,32 @@ async function manageRelocation() {
           }
           return state.originalOpen(...args)
         }
+      } else if (paths.kind === 'open-rename') {
+        fs.promises.rename = async (from, to) => {
+          const result = await state.originalRename(from, to)
+          if (to === paths.to && from !== paths.from) {
+            if (!String(from).startsWith(`${paths.parent}/.${paths.fileName}.`) || !String(from).endsWith('.tmp')) throw new Error('Unexpected metadata replacement path')
+            state.metadataRenames++
+          }
+          return result
+        }
+        fs.open = (...args) => {
+          if (args[0] === paths.to && state.metadataRenames === 1) {
+            state.destinationArchiveOpens++
+            const stack = consumerStack('Owned open Rename live-rebind boundary')
+            if (state.fired === 0 && /rebindLocation/.test(stack)) {
+              state.fired++
+              state.stack = stack
+              fs.chmodSync(paths.parent, 0o000)
+              const callback = args.at(-1)
+              args[args.length - 1] = (error, ...rest) => {
+                state.deniedCode = error?.code ?? null
+                callback(error, ...rest)
+              }
+            }
+          }
+          return state.originalOpen(...args)
+        }
       } else {
         fs.promises.rename = async (from, to) => {
           const result = await state.originalRename(from, to)
@@ -1137,7 +1158,7 @@ async function manageRelocation() {
     await expect(moveModal().getByLabel('Destination workspace', { exact: true }).locator('.n-base-selection')).toHaveClass(/n-base-selection--disabled/)
     await moveModal().getByRole('button', { name: 'Close', exact: true }).click()
     await window.getByRole('tab', { name: project.title, exact: true }).click()
-    await expect(window.getByText('This Project has a pending move. Finish it from Home to continue editing. You can also close this tab.', { exact: true })).toBeVisible()
+    await expect(window.getByText('This Project has a pending file operation. Finish it from Home to continue editing. You can also close this tab.', { exact: true })).toBeVisible()
     await expect(window.getByRole('button', { name: 'Save Project', exact: true })).toBeDisabled()
     await expect(window.getByRole('button', { name: 'Generate', exact: true })).toBeDisabled()
     const failures = await window.evaluate(async ({ id, documentId }) => {
@@ -1163,6 +1184,252 @@ async function manageRelocation() {
       ? 'real EACCES at live rebind retains moved journal; UI/Main fence edits Save Generate and explicit tab Close preserves recovery'
       : 'second real live-rebind EACCES leaves pending clean tab for normal native window Close', { id: project.id, source: from, destination: to, sha256: beforeHash, fault })
     return beforeHash
+  }
+
+  if (openRenameOnly) {
+    const controlTitle = 'Open Renamed Project'
+    const retryTitle = 'Retry Renamed Project'
+    const closedTitle = 'Closed Pending Rename'
+    const coldTitle = 'Cold Recovered Rename'
+    const controlPath = path.join(folder, `${controlTitle}.igs`)
+    const retryPath = path.join(folder, `${retryTitle}.igs`)
+    const closedPath = path.join(folder, `${closedTitle}.igs`)
+    const coldPath = path.join(folder, `${coldTitle}.igs`)
+    const widthInput = () => window.locator('input[aria-label="Generation area width"]')
+    async function changeWidth(width) {
+      await widthInput().fill(String(width))
+      await widthInput().press('Enter')
+      await expect(window.getByText('Unsaved changes', { exact: true })).toBeVisible()
+    }
+    async function saveUi() {
+      await window.getByRole('button', { name: 'Save Project', exact: true }).click()
+      await expect(window.getByText('Saved', { exact: true })).toBeVisible()
+    }
+    async function prepareHistory(project) {
+      await browse(source)
+      await open(project.title, project.id)
+      await changeWidth(648)
+      await saveUi()
+      await changeWidth(656)
+      await window.getByRole('button', { name: 'Undo', exact: true }).click()
+      await expect(window.getByText('Saved', { exact: true })).toBeVisible()
+      const value = await api('open', project.id)
+      assert.equal(value.kind, 'opened')
+      assert.equal(value.tab.dirty, false)
+      assert.equal(value.tab.primaryBbox.width, 648)
+      assert.equal(value.tab.canUndo, true)
+      assert.equal(value.tab.canRedo, true)
+      return value.tab
+    }
+    async function historySave(title, id, file) {
+      await window.getByRole('tab', { name: title, exact: true }).click()
+      for (const [direction, width] of [['Undo', 640], ['Redo', 648], ['Redo', 656], ['Undo', 648]]) {
+        await window.getByRole('button', { name: direction, exact: true }).click()
+        await saveUi()
+        const saved = await readIgsPackage(file)
+        assert.equal(saved.project.title, title)
+        assert.equal(saved.project.primaryBbox.width, width)
+      }
+      const value = await api('open', id)
+      assert.equal(value.kind, 'opened')
+      assert.equal(value.tab.title, title)
+      assert.equal(value.tab.dirty, false)
+      assert.equal(value.tab.canUndo, true)
+      assert.equal(value.tab.canRedo, true)
+    }
+    async function pendingRename(project, from, to, title, capture = false) {
+      await browse(source)
+      const before = await open(project.title, project.id)
+      const beforePackage = await packageState(from)
+      const mode = lstatSync(path.dirname(to)).mode & 0o777
+      await browse(source)
+      await request(project.title, 'Rename', renameModal)
+      await renameModal().getByRole('textbox', { name: 'Project name', exact: true }).fill(title)
+      await installFault('open-rename', from, to)
+      let fault
+      let live
+      let witness
+      try {
+        await renameModal().getByRole('button', { name: 'Rename', exact: true }).click()
+        await expect(renameModal().getByRole('button', { name: 'Retry Rename', exact: true })).toBeVisible()
+        const row = await journal(project.id)
+        assert.equal(row.operation_kind, 'rename')
+        assert.equal(row.state, 'moved')
+        assert.notEqual(row.target_witness_json, null)
+        witness = JSON.parse(row.target_witness_json)
+        assert.equal(row.source_path, from)
+        assert.equal(row.destination_path, to)
+        assert.equal((await indexRecord(project.id)).canonical_path, to)
+        assert.equal(existsSync(from), false)
+        await expect.poll(async () => (await currentTab(project.id))?.relocationPending).toBe(true)
+        live = await currentTab(project.id)
+        assert.equal(live.title, before.title)
+        assert.equal(live.documentId, before.documentId)
+        assert.equal(live.documentRevision, before.documentRevision)
+        assert.equal(live.dirty, false)
+      } finally {
+        fault = await restoreFault(path.dirname(to), mode)
+      }
+      const afterModeRestore = lstatSync(to, { bigint: true })
+      assert.deepEqual(Object.fromEntries(Object.keys(witness).map((key) => [key, afterModeRestore[key].toString()])), witness, 'Directory permission restoration must not mutate the captured target witness')
+      assert.equal(fault.physicalRenames, 1)
+      assert.equal(fault.metadataRenames, 1)
+      assert.equal(fault.fired, 1)
+      assert.equal(fault.deniedCode, 'EACCES')
+      assert.match(fault.stack, /rebindLocation/, 'Fault must reach the live renamed-session consumer after metadata and SQL repoint')
+      const afterPackage = await packageState(to)
+      assertRenameContent(beforePackage, afterPackage, title)
+      const frozenInput = renameModal().getByRole('textbox', { name: 'Project name', exact: true })
+      await expect(frozenInput).toBeDisabled()
+      await expect(frozenInput).toHaveValue(title)
+      if (capture) await screenshot('open-rename-pending-frozen', 900, 620)
+      await renameModal().getByRole('button', { name: 'Close', exact: true }).click()
+      await browse(source)
+      await expect(window.getByRole('button', { name: `Open ${project.title}`, exact: true })).toBeDisabled()
+      const conflict = await window.evaluate(({ id, name }) => window.api.projects.renameProject(id, name), { id: project.id, name: `${title} other` })
+      assert.equal(conflict.ok, false)
+      assert.equal(conflict.error.code, 'PROJECT_NOT_READY')
+      assert.equal(digest(to), afterPackage.sha256)
+      await request(project.title, 'Retry Rename', renameModal)
+      await expect(renameModal().getByRole('textbox', { name: 'Project name', exact: true })).toHaveValue(title)
+      await expect(renameModal().getByRole('textbox', { name: 'Project name', exact: true })).toBeDisabled()
+      await renameModal().getByRole('button', { name: 'Close', exact: true }).click()
+      await window.getByRole('tab', { name: project.title, exact: true }).click()
+      await expect(window.getByText('This Project has a pending file operation. Finish it from Home to continue editing. You can also close this tab.', { exact: true })).toBeVisible()
+      await expect(window.getByRole('button', { name: 'Save Project', exact: true })).toBeDisabled()
+      await expect(window.getByRole('button', { name: 'Generate', exact: true })).toBeDisabled()
+      const failures = await window.evaluate(async ({ id, documentId }) => Promise.all([
+        window.api.projects.setPrimaryBbox(id, { height: 512, width: 640, x: 91, y: -91 }),
+        window.api.projects.save(id),
+        window.api.projects.generate(id, { documentId, iterations: 1 }),
+      ]), { id: project.id, documentId: before.documentId })
+      assert.ok(failures.every((result) => !result.ok))
+      assert.deepEqual(failures.map((result) => result.error.code), ['PROJECT_NOT_READY', 'PROJECT_NOT_READY', 'GENERATION_DOCUMENT_CHANGED'])
+      assert.equal(digest(to), afterPackage.sha256)
+      assert.equal(existsSync(from), false)
+      await browse(source)
+      return { before, beforePackage, afterPackage, live, fault }
+    }
+
+    await watchTabs()
+    await browse(source)
+    await open(moved.title, moved.id)
+    const originalControlHash = digest(movedSource)
+    await changeWidth(648)
+    await browse(source)
+    await request(moved.title, 'Rename', renameModal)
+    await expect(renameModal().getByText(/has unsaved changes/)).toBeVisible()
+    await expect(renameModal().getByRole('button', { name: 'Rename', exact: true })).toHaveCount(0)
+    const dirtyRefusal = await window.evaluate((id) => window.api.projects.renameProject(id, 'Refused Dirty Rename'), moved.id)
+    assert.equal(dirtyRefusal.ok, false)
+    assert.equal(dirtyRefusal.error.code, 'PROJECT_ALREADY_OPEN')
+    assert.equal(digest(movedSource), originalControlHash)
+    assert.equal(await journal(moved.id), undefined)
+    await screenshot('open-rename-dirty-blocker', 900, 620)
+    await renameModal().getByRole('button', { name: 'Switch to Project', exact: true }).click()
+    await window.getByRole('button', { name: 'Undo', exact: true }).click()
+    await expect(window.getByText('Saved', { exact: true })).toBeVisible()
+    check('dirty open Rename is visibly refused through Home and Main without implicit Save or path mutation')
+
+    const clean = await prepareHistory(moved)
+    const beforeControl = await packageState(movedSource)
+    await browse(source)
+    await request(moved.title, 'Rename', renameModal)
+    await renameModal().getByRole('textbox', { name: 'Project name', exact: true }).fill(controlTitle)
+    await screenshot('open-rename-confirmation', 900, 620)
+    await renameModal().getByRole('button', { name: 'Rename', exact: true }).click()
+    await expect(renameModal()).toHaveCount(0)
+    await expect.poll(async () => (await currentTab(moved.id))?.title).toBe(controlTitle)
+    const rebound = await currentTab(moved.id)
+    assert.deepEqual({ id: rebound.id, documentId: rebound.documentId, title: rebound.title, dirty: rebound.dirty, undo: rebound.canUndo, redo: rebound.canRedo, workspace: rebound.workspaceId }, { id: clean.id, documentId: clean.documentId, title: controlTitle, dirty: false, undo: true, redo: true, workspace: source.id })
+    assert.notEqual(rebound.documentRevision, clean.documentRevision)
+    await expect(window.getByRole('tab', { name: moved.title, exact: true })).toHaveCount(0)
+    await expect(window.getByRole('tab', { name: controlTitle, exact: true }).locator('.project-marker')).toHaveAttribute('data-workspace-id', source.id)
+    const renamedControl = await packageState(controlPath)
+    assertRenameContent(beforeControl, renamedControl, controlTitle)
+    assert.equal(renamedControl.project.documentRevision, rebound.documentRevision)
+    assert.equal(existsSync(movedSource), false)
+    assert.equal(await journal(moved.id), undefined)
+    await screenshot('open-rename-live-title', 1440, 900)
+    check('clean-open Rename keeps tab document identity and both history directions while changing title filename and saved revision', { id: moved.id, before: beforeControl, after: renamedControl, tab: rebound })
+    await historySave(controlTitle, moved.id, controlPath)
+    assert.equal(existsSync(movedSource), false)
+    check('live Undo Redo and original future canvas state survive Rename and every explicit Save retains the new title and path')
+    await closeProject(controlTitle)
+    await close('open-rename-first-normal')
+
+    await launch('open-rename-faults')
+    await watchTabs()
+    const retryClean = await prepareHistory(renamed)
+    const retryPending = await pendingRename(renamed, renameSource, retryPath, retryTitle, true)
+    check('real EACCES during renamed-session rebind keeps post-SQL intent and frozen name while UI and Main fence editing Save and Generate', { id: renamed.id, fault: retryPending.fault, before: retryPending.beforePackage, after: retryPending.afterPackage })
+    await request(renamed.title, 'Retry Rename', renameModal)
+    await renameModal().getByRole('button', { name: 'Retry Rename', exact: true }).click()
+    await expect(renameModal()).toHaveCount(0)
+    await expect.poll(async () => (await currentTab(renamed.id))?.title).toBe(retryTitle)
+    const retried = await currentTab(renamed.id)
+    assert.deepEqual({ id: retried.id, documentId: retried.documentId, dirty: retried.dirty, undo: retried.canUndo, redo: retried.canRedo }, { id: retryClean.id, documentId: retryClean.documentId, dirty: false, undo: true, redo: true })
+    assert.equal(retried.documentRevision, retryPending.afterPackage.project.documentRevision)
+    assert.equal(digest(retryPath), retryPending.afterPackage.sha256)
+    assert.equal(await journal(renamed.id), undefined)
+    check('same-live frozen Rename Retry adopts the already-published exact package and preserves the existing tab history')
+    await historySave(retryTitle, renamed.id, retryPath)
+    assert.equal(existsSync(renameSource), false)
+    const retryFinalHash = digest(retryPath)
+    await closeProject(retryTitle)
+    check('same-live Retry retains Undo Redo and later Save uses the renamed title and destination only')
+
+    const renamedControlSummary = { ...moved, title: controlTitle }
+    const closedPendingRename = await pendingRename(renamedControlSummary, controlPath, closedPath, closedTitle)
+    await closeProject(controlTitle)
+    assert.ok(await journal(moved.id))
+    check('explicit pending Rename tab Close preserves durable intent without an old-path write', { id: moved.id, fault: closedPendingRename.fault })
+    await prepareHistory(closedPending)
+    const coldPendingRename = await pendingRename(closedPending, closedSource, coldPath, coldTitle)
+    assert.equal((await currentTab(closedPending.id)).relocationPending, true)
+    const pendingRows = await database.db.selectFrom('project_relocation').selectAll().execute()
+    assert.deepEqual(pendingRows.map((row) => row.local_project_key).sort(), [moved.id, closedPending.id].sort())
+    await screenshot('open-rename-pending-home', 1440, 900)
+    check('pending Rename survives dialog Close and retains a fenced clean tab for normal app Close', { id: closedPending.id, fault: coldPendingRename.fault, journals: pendingRows })
+    await close('open-rename-pending-normal')
+
+    await launch('open-rename-recovered')
+    await watchTabs()
+    assert.deepEqual(await database.db.selectFrom('project_relocation').selectAll().execute(), [])
+    assert.equal((await indexRecord(moved.id)).canonical_path, closedPath)
+    assert.equal((await indexRecord(closedPending.id)).canonical_path, coldPath)
+    assert.equal((await indexRecord(renamed.id)).canonical_path, retryPath)
+    assert.equal(digest(closedPath), closedPendingRename.afterPackage.sha256)
+    assert.equal(digest(coldPath), coldPendingRename.afterPackage.sha256)
+    assert.equal(digest(retryPath), retryFinalHash)
+    for (const stale of [movedSource, controlPath, closedSource, renameSource]) assert.equal(existsSync(stale), false)
+    await browse(source)
+    await expect(window.getByText('Rename pending', { exact: true })).toHaveCount(0)
+    await expect(window.getByRole('button', { name: `Open ${closedTitle}`, exact: true })).toBeEnabled()
+    await expect(window.getByRole('button', { name: `Open ${coldTitle}`, exact: true })).toBeEnabled()
+    await screenshot('open-rename-recovered-home', 1440, 900)
+    check('cold startup completes both live and explicitly closed Rename intents with exact package bytes stable keys and no stale paths')
+    const recoveredControl = await open(closedTitle, moved.id)
+    assert.equal(recoveredControl.documentId, clean.documentId)
+    assert.equal(recoveredControl.title, closedTitle)
+    assert.equal(recoveredControl.canUndo, false)
+    assert.equal(recoveredControl.canRedo, false)
+    await changeWidth(664)
+    await saveUi()
+    assert.equal((await readIgsPackage(closedPath)).project.title, closedTitle)
+    assert.equal((await readIgsPackage(closedPath)).project.primaryBbox.width, 664)
+    assert.equal(existsSync(controlPath), false)
+    await closeProject(closedTitle)
+    await browse(source)
+    const recoveredCold = await open(coldTitle, closedPending.id)
+    assert.equal(recoveredCold.documentId, coldPendingRename.before.documentId)
+    assert.equal(recoveredCold.title, coldTitle)
+    assert.equal(recoveredCold.canUndo, false)
+    assert.equal(recoveredCold.canRedo, false)
+    await closeProject(coldTitle)
+    await browse(source)
+    check('recovered Rename opens the original document with transient history reset and explicit later Save retains authoritative title and path')
+    return
   }
 
   await watchTabs()
@@ -1192,11 +1459,11 @@ async function manageRelocation() {
   const cleanHash = digest(movedSource)
   await browse(source)
   await request(moved.title, 'Rename', renameModal)
-  await expect(renameModal().getByText(/is open. Close the Project/)).toBeVisible()
-  await expect(renameModal().getByRole('button', { name: 'Rename', exact: true })).toHaveCount(0)
-  await renameModal().getByRole('button', { name: 'Switch to Project', exact: true }).click()
+  await expect(renameModal().getByRole('textbox', { name: 'Project name', exact: true })).toBeEnabled()
+  await expect(renameModal().getByRole('button', { name: 'Rename', exact: true })).toBeEnabled()
+  await renameModal().getByRole('button', { name: 'Cancel', exact: true }).click()
   assert.equal(digest(movedSource), cleanHash)
-  check('clean open Rename has explicit Close/Switch blocker without implicit Save or tab replacement')
+  check('clean open Rename offers the confirmation without implicit Save or tab replacement')
   await browse(source)
   await request(moved.title, 'Move to Workspace', moveModal)
   await chooseDestination(target)
@@ -1354,7 +1621,7 @@ async function prepareManagedProjects() {
 persist()
 try {
   await launch('first')
-  if (trashOnly || locationsOnly || moveOnly || relocationOnly) {
+  if (trashOnly || locationsOnly || moveOnly || relocationOnly || openRenameOnly) {
     await prepareManagedProjects()
   } else {
   assert.deepEqual(await api('list'), [])
@@ -1537,14 +1804,15 @@ try {
   )
   await manageWorkspace()
   }
-  if (relocationOnly) await manageRelocation()
+  if (relocationOnly || openRenameOnly) await manageRelocation()
   else if (moveOnly) await manageMove()
   else if (locationsOnly) await manageLocations()
   else await manageTrash()
   await close('restart-normal')
   assert.deepEqual(report.pageErrors, [])
-  assert.equal(report.nativeClosures.length, relocationOnly || moveOnly ? 3 : locationsOnly ? 2 : trashOnly ? 4 : 6)
+  assert.equal(report.nativeClosures.length, relocationOnly || openRenameOnly || moveOnly ? 3 : locationsOnly ? 2 : trashOnly ? 4 : 6)
   if (relocationOnly) assert.equal(report.checks.length, 13)
+  if (openRenameOnly) assert.equal(report.checks.length, 11)
   report.outcome = 'passed'
   report.finishedAt = new Date().toISOString()
   persist()

@@ -381,7 +381,7 @@ function retryReason(item: GenerationQueueEntry): string | null {
     return 'Open the original Project to retry its frozen job.'
   }
   if (tab.relocationPending) {
-    return 'Finish this Project move from Home before retrying its frozen job.'
+    return 'Finish this Project file operation from Home before retrying its frozen job.'
   }
   if (tab.documentId !== item.documentId) {
     return 'The open Project is a different document. Open the original document to retry this job.'

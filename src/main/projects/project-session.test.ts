@@ -1,4 +1,5 @@
 import type { PresetPayload } from '../../shared/presets/preset-schema.js'
+import { projectAssetReferences } from '../../shared/projects/project-schema.js'
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 
 import assert from 'node:assert/strict'
@@ -9,7 +10,7 @@ import path from 'node:path'
 import test from 'node:test'
 
 import { openAppDatabase } from '../db/database.js'
-import { readIgsPackage } from './igs-package.js'
+import { readIgsPackage, saveIgsPackage } from './igs-package.js'
 import { refreshProjectLocationRegistry } from './project-identity.js'
 import { withProjectPathLock } from './project-path-lock.js'
 import { readProjectPlaceholders } from './project-placeholders.js'
@@ -47,6 +48,31 @@ async function withSession(
   } finally {
     await rm(directory, { force: true, recursive: true })
   }
+}
+
+/** Real portable metadata publication; Core journal/repoint is tested in its own owner. */
+async function commitRenamePackage(
+  sourcePath: string,
+  destinationPath: string,
+  title: string,
+): Promise<IgsProjectDocumentV1> {
+  const original = await readIgsPackage(sourcePath)
+  const document = { ...original.project, documentRevision: randomUUID(), title }
+  const assets: Record<string, { bytes: Buffer }> = {}
+  for (const member of projectAssetReferences(original.project)) {
+    assets[member.path] = { bytes: await original.readMember(member.path) }
+  }
+  const preview = {
+    merged: await original.readMember('preview/merged.png'),
+    rect: original.manifest.preview.rect,
+    status: original.manifest.preview.status,
+    thumbnail: await original.readMember('preview/thumbnail.webp'),
+  }
+  if (sourcePath !== destinationPath) {
+    await rename(sourcePath, destinationPath)
+  }
+  await saveIgsPackage(destinationPath, { assets, preview, project: document })
+  return document
 }
 
 test('committed location rebind preserves the session and refreshes saved asset readers for later Save', async () => {
@@ -107,6 +133,142 @@ test('committed location rebind preserves the session and refreshes saved asset 
     } finally {
       await database.close()
     }
+  })
+})
+
+test('Rename rebind adopts only exact saved name metadata and refreshes retained raster readers for later Save', async () => {
+  await withSession(async (session, directory) => {
+    const database = openAppDatabase(directory, path.resolve('src/main/db/migrations'))
+    try {
+      const source = session.filePath
+      const id = randomUUID()
+      const member = `assets/layers/${id}.png`
+      session.applyDocument({
+        ...session.document,
+        layers: [
+          {
+            asset: {
+              bytes: raster.length,
+              height: 2,
+              path: member,
+              sha256: sha256(raster),
+              width: 2,
+            },
+            blendMode: 'normal',
+            id,
+            kind: 'raster',
+            locked: false,
+            name: 'Saved raster',
+            opacity: 1,
+            transform: { rotationDegrees: 0, scaleX: 1, scaleY: 1, x: 0, y: 0 },
+            visible: true,
+          },
+        ],
+      })
+      await session.save({ assets: { [member]: { bytes: raster } }, lastActualSeedSnapshot: 915 })
+      const original = session.document
+      const destination = path.join(directory, 'Renamed.igs')
+      const expected = await commitRenamePackage(source, destination, 'Renamed')
+      await database.db
+        .insertInto('project_identity_binding')
+        .values({
+          canonical_path: destination,
+          document_id: original.documentId,
+          local_project_key: session.localRecoveryKey,
+        })
+        .execute()
+      refreshProjectLocationRegistry(database.db)
+      await session.rebindLocation(destination, source, expected)
+      session.assertCurrentLocation(destination)
+      assert.equal(session.dirty, false)
+      assert.equal(session.document.lastActualSeedSnapshot, 915)
+      assert.deepEqual(
+        { ...session.document, documentRevision: original.documentRevision, title: original.title },
+        original,
+      )
+      session.applyDocument({
+        ...session.document,
+        primaryBbox: { ...session.document.primaryBbox, x: 19 },
+      })
+      await session.save()
+      const saved = await readIgsPackage(destination)
+      assert.equal(saved.project.title, 'Renamed')
+      assert.equal(saved.project.primaryBbox.x, 19)
+      assert.equal(saved.project.lastActualSeedSnapshot, 915)
+      assert.deepEqual(await saved.readMember(member), raster)
+      await assert.rejects(readFile(source), { code: 'ENOENT' })
+    } finally {
+      await database.close()
+    }
+  })
+})
+
+test('Rename rebind rejects changed canvas data and a valid foreign preview member without mutating the live session', async () => {
+  await withSession(async (session, directory) => {
+    const database = openAppDatabase(directory, path.resolve('src/main/db/migrations'))
+    try {
+      const source = session.filePath
+      const original = session.document
+      const destination = path.join(directory, 'Exact Name.igs')
+      const expected = await commitRenamePackage(source, destination, 'Exact Name')
+      await database.db
+        .insertInto('project_identity_binding')
+        .values({
+          canonical_path: destination,
+          document_id: original.documentId,
+          local_project_key: session.localRecoveryKey,
+        })
+        .execute()
+      refreshProjectLocationRegistry(database.db)
+      await assert.rejects(
+        session.rebindLocation(destination, source, {
+          ...expected,
+          primaryBbox: { ...expected.primaryBbox, x: 9 },
+        }),
+        { code: 'PROJECT_EXTERNAL_CHANGE' },
+      )
+      assert.deepEqual(session.document, original)
+      assert.equal(session.filePath, source)
+      const portable = await readIgsPackage(destination)
+      const preview = {
+        merged: await portable.readMember('preview/merged.png'),
+        rect: portable.manifest.preview.rect,
+        status: portable.manifest.preview.status,
+        thumbnail: await portable.readMember('preview/thumbnail.webp'),
+      }
+      await saveIgsPackage(destination, {
+        preview: { ...preview, merged: transparentRaster },
+        project: expected,
+      })
+      await assert.rejects(session.rebindLocation(destination, source, expected), {
+        code: 'PROJECT_EXTERNAL_CHANGE',
+      })
+      assert.deepEqual(session.document, original)
+      assert.equal(session.filePath, source)
+      await saveIgsPackage(destination, { preview, project: expected })
+      await session.rebindLocation(destination, source, expected)
+      assert.equal(session.document.title, 'Exact Name')
+      assert.equal(session.dirty, false)
+    } finally {
+      await database.close()
+    }
+  })
+})
+
+test('same-path Rename requires its explicit exact metadata descriptor and adopts a new clean saved revision', async () => {
+  await withSession(async (session) => {
+    const original = session.document
+    const source = session.filePath
+    const expected = await commitRenamePackage(source, source, 'project')
+    await assert.rejects(session.rebindLocation(source, source), {
+      code: 'PROJECT_EXTERNAL_CHANGE',
+    })
+    assert.deepEqual(session.document, original)
+    await session.rebindLocation(source, source, expected)
+    assert.equal(session.document.title, 'project')
+    assert.equal(session.document.documentRevision, expected.documentRevision)
+    assert.equal(session.dirty, false)
+    session.assertCurrentLocation(source)
   })
 })
 

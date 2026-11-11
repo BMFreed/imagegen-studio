@@ -49,7 +49,7 @@ function rename() {
     >
       <p v-if="blocked">
         <strong>{{ project?.title }}</strong>
-        is open. Close the Project before renaming it.
+        has unsaved changes. Save or close the Project before renaming it.
       </p>
       <template v-else>
         <p v-if="pendingMessage">

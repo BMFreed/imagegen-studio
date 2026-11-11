@@ -1,3 +1,4 @@
+import { projectAssetReferences } from '../../shared/projects/project-schema.js'
 import type { IgsProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 
 import assert from 'node:assert/strict'
@@ -17,7 +18,7 @@ import path from 'node:path'
 import test from 'node:test'
 
 import { openAppDatabase } from '../db/database.js'
-import { readIgsPackage } from './igs-package.js'
+import { readIgsPackage, saveIgsPackage } from './igs-package.js'
 import { ProjectAutosaveCoordinator, ProjectAutosaveLeaseRegistry } from './project-autosave.js'
 import { localProjectRecoveryKey, refreshProjectLocationRegistry } from './project-identity.js'
 import { withProjectPathLock } from './project-path-lock.js'
@@ -126,6 +127,31 @@ async function bindMovedProject(
   refreshProjectLocationRegistry(database.db)
 }
 
+/** Real portable metadata publication; Core journal/repoint is tested in its own owner. */
+async function commitRenamePackage(
+  sourcePath: string,
+  destinationPath: string,
+  title: string,
+): Promise<IgsProjectDocumentV1> {
+  const original = await readIgsPackage(sourcePath)
+  const document = { ...original.project, documentRevision: randomUUID(), title }
+  const assets: Record<string, { bytes: Buffer }> = {}
+  for (const member of projectAssetReferences(original.project)) {
+    assets[member.path] = { bytes: await original.readMember(member.path) }
+  }
+  const preview = {
+    merged: await original.readMember('preview/merged.png'),
+    rect: original.manifest.preview.rect,
+    status: original.manifest.preview.status,
+    thumbnail: await original.readMember('preview/thumbnail.webp'),
+  }
+  if (sourcePath !== destinationPath) {
+    await rename(sourcePath, destinationPath)
+  }
+  await saveIgsPackage(destinationPath, { assets, preview, project: document })
+  return document
+}
+
 test('clean relocation retains Undo, Redo and retained raster sources in the same coordinator', async () => {
   await withProject(async ({ directory, projectPath, roots, shadow }) => {
     const database = openAppDatabase(directory, path.resolve('src/main/db/migrations'))
@@ -190,6 +216,244 @@ test('clean relocation retains Undo, Redo and retained raster sources in the sam
       })
       assert.equal(reopened.document.layers.length, 1)
       await reopened.close()
+    } finally {
+      await database.close()
+    }
+  })
+})
+
+test('clean Rename rebases only lifecycle title over Undo and Redo and preserves retained raster Save sources', async () => {
+  await withProject(async ({ directory, projectPath, roots, shadow }) => {
+    const database = openAppDatabase(directory, path.resolve('src/main/db/migrations'))
+    const leases = new ProjectAutosaveLeaseRegistry()
+    try {
+      const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow, {
+        leaseRegistry: leases,
+      })
+      const imported = withRaster(coordinator.document)
+      await coordinator.applyDocument(imported.document, {
+        [imported.assetPath]: { bytes: raster },
+      })
+      await coordinator.save()
+      await coordinator.applyDocument({ ...coordinator.document, layers: [] })
+      await coordinator.save()
+      await coordinator.applyDocument({
+        ...coordinator.document,
+        primaryBbox: { ...coordinator.document.primaryBbox, x: 23 },
+      })
+      await coordinator.undo()
+      const original = coordinator.document
+      const epoch = coordinator.documentEpoch
+      assert.equal(coordinator.dirty, false)
+      assert.equal(coordinator.canUndo, true)
+      assert.equal(coordinator.canRedo, true)
+      const destination = path.join(directory, 'Renamed.igs')
+      const reservation = await coordinator.prepareRelocation(destination, {
+        renameTitle: 'Renamed',
+      })
+      const expected = await commitRenamePackage(projectPath, destination, 'Renamed')
+      await bindMovedProject(
+        database,
+        localProjectRecoveryKey(projectPath),
+        destination,
+        original.documentId,
+      )
+      await reservation.rebind(expected)
+      assert.equal(coordinator.documentEpoch, epoch + 1)
+      assert.equal(coordinator.document.title, 'Renamed')
+      assert.equal(coordinator.document.documentRevision, expected.documentRevision)
+      assert.equal(coordinator.dirty, false)
+      assert.deepEqual(
+        {
+          ...coordinator.document,
+          documentRevision: original.documentRevision,
+          title: original.title,
+        },
+        original,
+      )
+      await reservation.rebind(structuredClone(expected))
+      assert.equal(coordinator.documentEpoch, epoch + 1)
+      await assert.rejects(reservation.rebind({ ...expected, documentRevision: randomUUID() }), {
+        code: 'EDIT_CONFLICT',
+      })
+      await assert.rejects(coordinator.undo(), { code: 'SAVE_IN_PROGRESS' })
+      assert.throws(() => leases.acquire(projectPath), { code: 'PROJECT_ALREADY_OPEN' })
+      assert.throws(() => leases.acquire(destination), { code: 'PROJECT_ALREADY_OPEN' })
+      reservation.release()
+      assert.equal(coordinator.canUndo, true)
+      assert.equal(coordinator.canRedo, true)
+      await coordinator.redo()
+      assert.equal(coordinator.document.title, 'Renamed')
+      assert.equal(coordinator.document.primaryBbox.x, 23)
+      await coordinator.undo()
+      assert.equal(coordinator.document.title, 'Renamed')
+      assert.equal(coordinator.document.documentRevision, expected.documentRevision)
+      assert.equal(coordinator.dirty, false)
+      await coordinator.undo()
+      assert.equal(coordinator.document.title, 'Renamed')
+      assert.equal(coordinator.document.layers.length, 1)
+      assert.equal((await coordinator.save()).recovery.status, 'clean')
+      const saved = await readIgsPackage(destination)
+      assert.equal(saved.project.title, 'Renamed')
+      assert.deepEqual(await saved.readMember(imported.assetPath), raster)
+      await assert.rejects(readFile(projectPath), { code: 'ENOENT' })
+      await coordinator.close()
+    } finally {
+      await database.close()
+    }
+  })
+})
+
+test('same-path metadata Rename retains its original physical lease through finalize and ordinary close', async () => {
+  await withProject(async ({ projectPath, roots, shadow }) => {
+    const leases = new ProjectAutosaveLeaseRegistry()
+    const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow, {
+      leaseRegistry: leases,
+    })
+    const initial = coordinator.document
+    await coordinator.applyDocument(
+      { ...initial, primaryBbox: { ...initial.primaryBbox, x: 13 } },
+      {},
+      { historyGroupId: 'returned-clean-group' },
+    )
+    await coordinator.applyDocument(
+      { ...coordinator.document, primaryBbox: initial.primaryBbox },
+      {},
+      { historyGroupId: 'returned-clean-group' },
+    )
+    assert.equal(coordinator.dirty, false)
+    assert.equal(coordinator.canUndo, false)
+    await assert.rejects(coordinator.prepareRelocation(projectPath), { code: 'EDIT_CONFLICT' })
+    const reservation = await coordinator.prepareRelocation(projectPath, { renameTitle: 'project' })
+    const expected = await commitRenamePackage(projectPath, projectPath, 'project')
+    await reservation.rebind(expected)
+    reservation.release()
+    assert.equal(coordinator.document.title, 'project')
+    assert.equal(coordinator.dirty, false)
+    assert.equal(
+      coordinator.canUndo,
+      false,
+      'A returned-clean prompt baseline must not become a phantom Rename step',
+    )
+    await coordinator.sealHistoryGroup('returned-clean-group')
+    assert.equal(coordinator.canUndo, false)
+    assert.equal(coordinator.canRedo, false)
+    assert.throws(() => leases.acquire(projectPath), { code: 'PROJECT_ALREADY_OPEN' })
+    await coordinator.close()
+    const release = leases.acquire(projectPath)
+    release()
+  })
+})
+
+test('Rename conflicts an already-prepared edit and increments its document epoch only once after rebind', async () => {
+  await withProject(async ({ directory, projectPath, roots, shadow }) => {
+    const database = openAppDatabase(directory, path.resolve('src/main/db/migrations'))
+    const entered = deferred()
+    const proceed = deferred()
+    try {
+      const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow, {
+        beforeEditCommit: async (document) => {
+          if (document.primaryBbox.x === 99) {
+            entered.release()
+            await proceed.promise
+          }
+        },
+        leaseRegistry: new ProjectAutosaveLeaseRegistry(),
+      })
+      const captured = coordinator.document
+      const epoch = coordinator.documentEpoch
+      const stale = coordinator.applyDocument(
+        { ...captured, primaryBbox: { ...captured.primaryBbox, x: 99 } },
+        {},
+        { expectedDocumentEpoch: epoch, expectedDocumentRevision: captured.documentRevision },
+      )
+      const rejected = assert.rejects(stale, { code: 'EDIT_CONFLICT' })
+      await entered.promise
+      const destination = path.join(directory, 'Fresh Name.igs')
+      const reservation = await coordinator.prepareRelocation(destination, {
+        renameTitle: 'Fresh Name',
+      })
+      const expected = await commitRenamePackage(projectPath, destination, 'Fresh Name')
+      await bindMovedProject(
+        database,
+        localProjectRecoveryKey(projectPath),
+        destination,
+        captured.documentId,
+      )
+      await reservation.rebind(expected)
+      proceed.release()
+      reservation.release()
+      await rejected
+      assert.equal(coordinator.document.title, 'Fresh Name')
+      assert.equal(coordinator.document.primaryBbox.x, captured.primaryBbox.x)
+      assert.equal(coordinator.documentEpoch, epoch + 1)
+      assert.equal(coordinator.canUndo, false)
+      assert.equal(coordinator.canRedo, false)
+      await coordinator.close()
+    } finally {
+      proceed.release()
+      await database.close()
+    }
+  })
+})
+
+test('failed Rename rebind holds both leases until exact retry and explicit pending close preserves retained history assets', async () => {
+  await withProject(async ({ directory, projectPath, roots, shadow }) => {
+    const database = openAppDatabase(directory, path.resolve('src/main/db/migrations'))
+    const leases = new ProjectAutosaveLeaseRegistry()
+    try {
+      const coordinator = await ProjectAutosaveCoordinator.open(projectPath, roots, shadow, {
+        leaseRegistry: leases,
+      })
+      const imported = withRaster(coordinator.document)
+      await coordinator.applyDocument(imported.document, {
+        [imported.assetPath]: { bytes: raster },
+      })
+      await coordinator.save()
+      await coordinator.applyDocument({ ...coordinator.document, layers: [] })
+      await coordinator.save()
+      const retained = (await readdir(roots.scratchDir)).find((entry) =>
+        entry.startsWith('igs-save-base-'),
+      )
+      assert.ok(retained)
+      const retainedAsset = path.join(roots.scratchDir, retained, '0.asset')
+      const original = coordinator.document
+      const epoch = coordinator.documentEpoch
+      const destination = path.join(directory, 'Retry Name.igs')
+      const reservation = await coordinator.prepareRelocation(destination, {
+        renameTitle: 'Retry Name',
+      })
+      const expected = await commitRenamePackage(projectPath, destination, 'Retry Name')
+      await bindMovedProject(
+        database,
+        localProjectRecoveryKey(projectPath),
+        destination,
+        original.documentId,
+      )
+      await assert.rejects(
+        reservation.rebind({ ...expected, primaryBbox: { ...expected.primaryBbox, x: 8 } }),
+        { code: 'PROJECT_EXTERNAL_CHANGE' },
+      )
+      assert.deepEqual(coordinator.document, original)
+      assert.equal(coordinator.documentEpoch, epoch)
+      assert.equal(coordinator.relocationPending, true)
+      assert.throws(() => leases.acquire(projectPath), { code: 'PROJECT_ALREADY_OPEN' })
+      assert.throws(() => leases.acquire(destination), { code: 'PROJECT_ALREADY_OPEN' })
+      await reservation.rebind(expected)
+      assert.equal(coordinator.documentEpoch, epoch + 1)
+      const waiting = coordinator.applyDocument({
+        ...coordinator.document,
+        primaryBbox: { ...coordinator.document.primaryBbox, x: 91 },
+      })
+      const rejected = assert.rejects(waiting, { code: 'COORDINATOR_CLOSED' })
+      await reservation.abandonForShutdown()
+      await rejected
+      assert.deepEqual(await readFile(retainedAsset), raster)
+      assert.equal((await readIgsPackage(destination)).project.title, 'Retry Name')
+      const releaseSource = leases.acquire(projectPath)
+      releaseSource()
+      const releaseTarget = leases.acquire(destination)
+      releaseTarget()
     } finally {
       await database.close()
     }
