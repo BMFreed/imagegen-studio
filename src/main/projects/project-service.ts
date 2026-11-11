@@ -87,6 +87,11 @@ import {
   projectOwnedIds,
 } from '../../shared/projects/project-schema.js'
 import {
+  isProjectWorkspaceId,
+  type ProjectWorkspaceAddInput,
+  type ProjectWorkspaceSummary,
+} from '../../shared/projects/project-workspaces.js'
+import {
   type GenerationPrompt,
   type PromptEmbeddingSelection,
   reconcilePromptEmbeddings,
@@ -191,7 +196,12 @@ import {
   localProjectRecoveryKey,
   ProjectIdentityError,
 } from './project-identity.js'
-import { type ProjectIndexRecord, UNCATEGORIZED_WORKSPACE_ID } from './project-index.js'
+import {
+  ProjectIndexError,
+  type ProjectIndexRecord,
+  type ProjectWorkspaceRecord,
+  UNCATEGORIZED_WORKSPACE_ID,
+} from './project-index.js'
 import {
   projectLayerImageUrl,
   type ProjectLayerResourceRequest,
@@ -468,6 +478,18 @@ export class ProjectService {
       { expectedDocumentRevision: document.documentRevision },
     )
     return toTab(tabId, coordinator)
+  }
+
+  /** Only Main's folder picker may supply this path; IPC sends metadata and opaque IDs. */
+  async addWorkspace(
+    input: ProjectWorkspaceAddInput,
+    trustedPickerDirectoryPath: string,
+  ): Promise<ProjectWorkspaceSummary> {
+    await this.initialize()
+    const workspace = await this.options.repository.addWorkspace(input, trustedPickerDirectoryPath)
+    // The registration remains recoverable when the external folder disappears after Add.
+    await this.scanWorkspaceIfAvailable(workspace.id)
+    return await this.toWorkspaceSummary(workspace)
   }
 
   /**
@@ -749,9 +771,11 @@ export class ProjectService {
   }
 
   async create(input: ProjectCreateInput): Promise<ProjectTab> {
-    const { generationPayload, primaryBbox, title } = parseCreateInput(input)
+    const { generationPayload, primaryBbox, title, workspaceId } = parseCreateInput(input)
     await this.initialize()
-    const workspace = await this.options.repository.workspaceById(UNCATEGORIZED_WORKSPACE_ID)
+    const workspace = await this.options.repository.requireWritableWorkspace(
+      workspaceId ?? UNCATEGORIZED_WORKSPACE_ID,
+    )
     // A random basename avoids path traversal, invalid filename characters and title collisions.
     // createOnly in ProjectSession still rejects an unexpected UUID collision.
     const filePath = path.join(workspace.directoryPath, `project-${randomUUID()}.igs`)
@@ -770,7 +794,7 @@ export class ProjectService {
     } catch {
       throw new ProjectServiceError(
         'PROJECT_CREATED_NOT_INDEXED',
-        'The .igs file was created in Uncategorized, but Home could not index it. Retry loading Home to rediscover the file.',
+        'The .igs file was created in its workspace, but Home could not index it. Retry loading Home to rediscover the file.',
       )
     }
     const coordinator = await ProjectAutosaveCoordinator.attach(
@@ -1239,9 +1263,13 @@ export class ProjectService {
   async finishImport(
     importId: string,
     choice: 'copy' | 'move',
+    workspaceId?: string,
   ): Promise<ProjectImportFinishResult> {
     if (choice !== 'copy' && choice !== 'move') {
       throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'Choose Move or Copy.')
+    }
+    if (workspaceId !== undefined && !isProjectWorkspaceId(workspaceId)) {
+      throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'The workspace ID is invalid.')
     }
     const selected = this.pendingImports.get(importId)
     if (!selected) {
@@ -1258,7 +1286,9 @@ export class ProjectService {
     if (!sameImportSource(current, selected)) {
       throw sourceChanged()
     }
-    const workspace = await this.options.repository.workspaceById(UNCATEGORIZED_WORKSPACE_ID)
+    const workspace = await this.options.repository.requireWritableWorkspace(
+      workspaceId ?? UNCATEGORIZED_WORKSPACE_ID,
+    )
     await assertImportWorkspace(workspace.directoryPath)
     const stagedPath = path.join(workspace.directoryPath, `.import-${randomUUID()}.tmp`)
     let destinationPath: string | undefined
@@ -1272,6 +1302,7 @@ export class ProjectService {
         throw sourceChanged()
       }
       await assertImportWorkspace(workspace.directoryPath)
+      await this.options.repository.requireWritableWorkspace(workspace.id)
       destinationPath = await publishImportedFile(
         stagedPath,
         workspace.directoryPath,
@@ -1299,7 +1330,7 @@ export class ProjectService {
     } catch {
       throw new ProjectServiceError(
         'PROJECT_IMPORTED_NOT_INDEXED',
-        'The Project was copied into Uncategorized, but Home could not index it. The source was kept; reload Home to rediscover the imported file.',
+        'The Project was copied into its workspace, but Home could not index it. The source was kept; reload Home to rediscover the imported file.',
       )
     }
     let result: ProjectOpenResult
@@ -1308,7 +1339,7 @@ export class ProjectService {
     } catch {
       throw new ProjectServiceError(
         'PROJECT_IMPORTED_NOT_OPENED',
-        'The Project was copied into Uncategorized, but could not be opened. The source was kept; reload Home and open the imported Project.',
+        'The Project was copied into its workspace, but could not be opened. The source was kept; reload Home and open the imported Project.',
       )
     }
 
@@ -2118,7 +2149,7 @@ export class ProjectService {
     if (!this.initialization) {
       this.initialization = (async () => {
         await this.options.repository.ensureDefaultWorkspace(this.options.dataRoot)
-        await this.options.repository.scanWorkspace(UNCATEGORIZED_WORKSPACE_ID)
+        await this.scanWorkspaceIfAvailable(UNCATEGORIZED_WORKSPACE_ID)
       })().catch((error: unknown) => {
         this.initialization = undefined
         throw error
@@ -2127,10 +2158,42 @@ export class ProjectService {
     await this.initialization
   }
 
-  async list(): Promise<ProjectSummary[]> {
+  async list(workspaceId?: string): Promise<ProjectSummary[]> {
     await this.initialize()
-    const records = await this.options.repository.scanWorkspace(UNCATEGORIZED_WORKSPACE_ID)
-    return await Promise.all(records.map(async (record) => await this.toSummary(record)))
+    if (workspaceId !== undefined && !isProjectWorkspaceId(workspaceId)) {
+      throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'The workspace ID is invalid.')
+    }
+    const workspaces =
+      workspaceId === undefined
+        ? await this.options.repository.listWorkspaces()
+        : [await this.options.repository.workspaceById(workspaceId)]
+    const readableWorkspaces = new Set<string>()
+    for (const workspace of workspaces) {
+      await this.scanWorkspaceIfAvailable(workspace.id)
+      if (
+        (await this.options.repository.workspaceAvailability(workspace)).availability ===
+        'available'
+      ) {
+        readableWorkspaces.add(workspace.id)
+      }
+    }
+    const records = await this.options.repository.listProjects(workspaceId)
+    return await Promise.all(
+      records.map(
+        async (record) => await this.toSummary(record, readableWorkspaces.has(record.workspaceId)),
+      ),
+    )
+  }
+
+  async listWorkspaces(): Promise<ProjectWorkspaceSummary[]> {
+    await this.initialize()
+    const workspaces = await this.options.repository.listWorkspaces()
+    const summaries: ProjectWorkspaceSummary[] = []
+    for (const workspace of workspaces) {
+      await this.scanWorkspaceIfAvailable(workspace.id)
+      summaries.push(await this.toWorkspaceSummary(workspace))
+    }
+    return summaries
   }
 
   async moveRasterLayer(tabId: string, layerId: string, targetIndex: number): Promise<ProjectTab> {
@@ -2752,8 +2815,10 @@ export class ProjectService {
   async selectImport(sourcePath: string): Promise<ProjectImportSelection> {
     await this.initialize()
     const selected = await inspectImportSource(sourcePath)
-    const workspace = await this.options.repository.workspaceById(UNCATEGORIZED_WORKSPACE_ID)
-    if (path.dirname(selected.sourcePath) === workspace.directoryPath) {
+    const workspace = (await this.options.repository.listWorkspaces()).find(
+      (candidate) => path.dirname(selected.sourcePath) === candidate.directoryPath,
+    )
+    if (workspace) {
       await this.options.repository.indexSaved(selected.sourcePath, workspace.id)
       return {
         kind: 'opened',
@@ -4025,7 +4090,7 @@ export class ProjectService {
         })
     let indexWarning: string | undefined
     try {
-      await this.options.repository.indexSaved(record.canonicalPath, UNCATEGORIZED_WORKSPACE_ID)
+      await this.options.repository.indexSaved(record.canonicalPath, record.workspaceId)
     } catch {
       indexWarning = 'The Home and saved accepted-result indexes could not be refreshed.'
     }
@@ -4041,7 +4106,11 @@ export class ProjectService {
 
   private async requireReadyRecord(projectId: string): Promise<ProjectIndexRecord> {
     await this.initialize()
-    const records = await this.options.repository.scanWorkspace(UNCATEGORIZED_WORKSPACE_ID)
+    const indexed = await this.options.repository.getProject(projectId)
+    if (!indexed) {
+      throw new ProjectServiceError('PROJECT_NOT_FOUND', 'This Project is not in the library.')
+    }
+    const records = await this.options.repository.scanWorkspace(indexed.workspaceId)
     const record = records.find((candidate) => candidate.localProjectKey === projectId)
     if (!record) {
       throw new ProjectServiceError('PROJECT_NOT_FOUND', 'This Project is not in the library.')
@@ -4127,7 +4196,16 @@ export class ProjectService {
     )
     let indexWarning: string | undefined
     try {
-      await this.options.repository.indexSaved(coordinator.filePath, UNCATEGORIZED_WORKSPACE_ID)
+      const workspace = (await this.options.repository.listWorkspaces()).find(
+        (candidate) => candidate.directoryPath === path.dirname(coordinator.filePath),
+      )
+      if (!workspace) {
+        throw new ProjectIndexError(
+          'INDEX_OUTSIDE_WORKSPACE',
+          'The Project workspace is not registered.',
+        )
+      }
+      await this.options.repository.indexSaved(coordinator.filePath, workspace.id)
     } catch {
       // The .igs has already committed. Reporting Save as failed would invite a second Save and
       // misstate the saved revision; a later Home scan rebuilds this derived row.
@@ -4147,10 +4225,27 @@ export class ProjectService {
     }
   }
 
-  private async toSummary(record: ProjectIndexRecord): Promise<ProjectSummary> {
+  private async scanWorkspaceIfAvailable(workspaceId: string): Promise<void> {
+    try {
+      await this.options.repository.scanWorkspace(workspaceId)
+    } catch (error) {
+      if (!(error instanceof ProjectIndexError && error.code === 'WORKSPACE_UNAVAILABLE')) {
+        throw error
+      }
+    }
+  }
+
+  private async toSummary(
+    record: ProjectIndexRecord,
+    workspaceReadable: boolean,
+  ): Promise<ProjectSummary> {
     let recoveryStatus: ProjectSummary['recoveryStatus'] = 'none'
     let recoveryReason: string | undefined
-    if (record.fileHealth === 'ready' && !this.openTabs.has(record.localProjectKey)) {
+    if (!workspaceReadable) {
+      recoveryStatus = 'unavailable'
+      recoveryReason =
+        'The workspace folder is unavailable. Restore access before inspecting Project recovery.'
+    } else if (record.fileHealth === 'ready' && !this.openTabs.has(record.localProjectKey)) {
       try {
         const inspection = await ProjectAutosaveCoordinator.inspectRecovery(
           record.canonicalPath,
@@ -4190,11 +4285,23 @@ export class ProjectService {
       previewStatus: record.previewStatus,
       recoveryStatus,
       thumbnailUrl:
-        record.fileHealth === 'ready' && record.thumbnailSha256
+        workspaceReadable && record.fileHealth === 'ready' && record.thumbnailSha256
           ? projectThumbnailImageUrl(record.localProjectKey, record.thumbnailSha256)
           : null,
       title: record.displayName,
+      workspaceId: record.workspaceId,
       ...(recoveryReason ? { recoveryReason } : {}),
+    }
+  }
+
+  private async toWorkspaceSummary(
+    workspace: ProjectWorkspaceRecord,
+  ): Promise<ProjectWorkspaceSummary> {
+    return {
+      ...workspace,
+      ...(await this.options.repository.workspaceAvailability(workspace)),
+      isDefault: workspace.id === UNCATEGORIZED_WORKSPACE_ID,
+      projectCount: (await this.options.repository.listProjects(workspace.id)).length,
     }
   }
 }
@@ -4361,15 +4468,16 @@ function parseCreateInput(input: unknown): {
   generationPayload?: ProjectCreateInput['generationPayload']
   primaryBbox: IgsRectV1
   title: string
+  workspaceId?: string
 } {
   try {
-    const { generationPayload, height, title, width } = parseProjectCreateInput(input)
+    const { generationPayload, height, title, width, workspaceId } = parseProjectCreateInput(input)
     const primaryBbox = { height, width, x: 0, y: 0 }
     initializeProjectGenerationPayload(
       createEmptyProjectDocumentV1({ primaryBbox, title }),
       generationPayload,
     )
-    return { generationPayload, primaryBbox, title }
+    return { generationPayload, primaryBbox, title, workspaceId }
   } catch {
     throw new ProjectServiceError(
       'PROJECT_INVALID_INPUT',

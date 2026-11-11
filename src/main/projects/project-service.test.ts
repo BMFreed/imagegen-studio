@@ -3077,7 +3077,8 @@ test('a default workspace redirected before New Project cannot create a file out
     await rename(workspace.directoryPath, `${workspace.directoryPath}.saved`)
     await symlink(outside, workspace.directoryPath)
     await assert.rejects(service.create({ height: 512, title: 'Outside attempt', width: 512 }), {
-      code: 'PROJECT_INVALID_PATH',
+      // Destination validation now refuses before the Session can attempt a write.
+      code: 'WORKSPACE_UNAVAILABLE',
     })
     assert.deepEqual(await readdir(outside), [])
   })
@@ -3514,7 +3515,7 @@ test('import rejects a symlinked file and a redirected workspace without publish
     await rename(workspace.directoryPath, `${workspace.directoryPath}.original`)
     await symlink(elsewhere, workspace.directoryPath)
     await assert.rejects(service.finishImport(selected.importId, 'copy'), {
-      code: 'PROJECT_INVALID_PATH',
+      code: 'WORKSPACE_UNAVAILABLE',
     })
     assert.deepEqual(await readdir(elsewhere), [])
     assert.equal((await readIgsPackage(sourcePath)).project.title, 'External')

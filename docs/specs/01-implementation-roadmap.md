@@ -1,5 +1,14 @@
 # Implementation Roadmap
 
+## Latest Home implementation slice
+
+[Production workspace catalog and destinations](../engineering/phase-4-home-workspaces-research.md)
+continue Phase4 through existing schema/scanner/Create/Import owners. This finite
+slice adds folder registration, selection and cross-workspace browsing with
+explicit writable destinations. Rename/removal/project moves/Trash, tab markers
+and remaining Home/Model Manager/export/release work remain open. Historical
+regional and ordinary visual checkpoints below retain their evidence limits.
+
 ## Latest ordinary encoding checkpoint
 
 [Current Invoke-source CLIP comparison](../engineering/phase-4-ordinary-invoke-conditioning-research.md)

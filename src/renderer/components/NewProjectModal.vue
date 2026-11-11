@@ -2,6 +2,7 @@
 import type { ModelCatalogItem, ProjectCreateInput } from '../../shared/api.js'
 import type { PresetRecord, PresetSectionKey } from '../../shared/presets/preset-schema.js'
 import { IGS_SAFETY_CEILINGS } from '../../shared/projects/project-schema.js'
+import type { ProjectWorkspaceSummary } from '../../shared/projects/project-workspaces.js'
 
 import {
   NAlert,
@@ -31,6 +32,10 @@ import {
 } from './new-project-preset-draft.js'
 import { presetNeedsAttention, presetNumericInputValid, sectionLabels } from './preset-editor.js'
 import PresetPayloadEditor from './PresetPayloadEditor.vue'
+import {
+  projectWorkspaceDestinationOptions,
+  projectWorkspaceDestinationProblem,
+} from './project-workspace-destinations.js'
 import { resizeDimension } from './resolution-control.js'
 import ResolutionControl from './ResolutionControl.vue'
 
@@ -39,14 +44,32 @@ const props = defineProps<{
   catalog: ModelCatalogItem[]
   catalogReady: boolean
   createError: string | null
+  initialWorkspaceId: string
   presets: PresetRecord[]
   presetsError: string | null
   presetsLoading: boolean
+  workspaces: ProjectWorkspaceSummary[]
+  workspacesError: string | null
+  workspacesLoading: boolean
 }>()
 const show = defineModel<boolean>('show', { required: true })
-const emit = defineEmits<{ create: [input: ProjectCreateInput]; refreshPresets: [] }>()
+const emit = defineEmits<{
+  create: [input: ProjectCreateInput]
+  refreshPresets: []
+  refreshWorkspaces: []
+}>()
 const formId = useId()
 const title = ref('')
+const workspaceId = ref(props.initialWorkspaceId)
+const workspaceOptions = computed(() =>
+  projectWorkspaceDestinationOptions(props.workspaces, workspaceId.value),
+)
+const workspaceProblem = computed(() =>
+  props.workspacesLoading
+    ? null
+    : (props.workspacesError ??
+      projectWorkspaceDestinationProblem(props.workspaces, workspaceId.value)),
+)
 const state = ref(emptyNewProjectPresetState())
 const expandedSections = ref<PresetSectionKey[]>([])
 const editorValid = ref(true)
@@ -66,14 +89,22 @@ const presetOptions = computed(() => [
   ...activePresets.value.map((preset) => ({ label: preset.name, value: preset.id })),
 ])
 const request = computed(() => {
+  if (
+    props.workspacesLoading ||
+    props.workspacesError ||
+    projectWorkspaceDestinationProblem(props.workspaces, workspaceId.value)
+  ) {
+    return null
+  }
   try {
-    return newProjectCreateRequest(
+    const input = newProjectCreateRequest(
       state.value,
       title.value,
       customization.value
         ? editorValid.value
         : plainValidity.value.width && plainValidity.value.height,
     )
+    return input ? { ...input, workspaceId: workspaceId.value } : null
   } catch {
     return null
   }
@@ -113,6 +144,7 @@ watch(show, (visible) => {
     return
   }
   title.value = ''
+  workspaceId.value = props.initialWorkspaceId
   state.value = emptyNewProjectPresetState()
   expandedSections.value = []
   editorValid.value = true
@@ -294,6 +326,29 @@ function sectionSummary(section: PresetSectionKey) {
                 placeholder="Untitled Project"
               />
             </NFormItem>
+            <NFormItem
+              :feedback="workspaceProblem ?? undefined"
+              label="Workspace"
+              :validationStatus="workspaceProblem ? 'error' : undefined"
+            >
+              <NSelect
+                v-model:value="workspaceId"
+                aria-label="Project workspace"
+                :disabled="busy || workspacesLoading"
+                :loading="workspacesLoading"
+                :options="workspaceOptions"
+                placeholder="Choose a writable workspace"
+              />
+            </NFormItem>
+            <NButton
+              v-if="workspaceProblem"
+              :disabled="busy || workspacesLoading"
+              size="tiny"
+              tertiary
+              @click="emit('refreshWorkspaces')"
+            >
+              Refresh workspaces
+            </NButton>
             <NFormItem label="Generation preset">
               <NSelect
                 aria-label="Generation preset"

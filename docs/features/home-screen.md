@@ -1,5 +1,16 @@
 # Home Screen
 
+## Production checkpoint
+
+[Workspace catalog and destinations](../engineering/phase-4-home-workspaces-research.md)
+connect Add Workspace, aggregate/scoped browsing and explicit New Project/Import
+destinations to the existing Main/SQLite/filesystem owners. Production uses the
+OS folder picker, not a renderer-authored path. Missing/inaccessible folders
+remain registered with cached rows and recovery unavailable; readonly folders
+remain browseable. Rename/remove registration, moving projects, Trash, tab color
+markers and the rest of the approved Home presentation remain continuations.
+This checkpoint does not promote the full Home or public MVP promise.
+
 ## Feature
 
 `Home` is the app's start and project-organization screen.

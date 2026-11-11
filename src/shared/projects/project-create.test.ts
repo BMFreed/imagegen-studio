@@ -13,6 +13,20 @@ import { createEmptyProjectDocumentV1 } from './project-schema.js'
 
 const dimensions = { height: 768, title: '  New Project  ', width: 1024 }
 
+test('a selected local workspace survives Create parsing without entering the portable document', () => {
+  for (const workspaceId of ['uncategorized', '39e2cf23-2e17-4bce-a4c7-83b2d4b29fb7']) {
+    const input = parseProjectCreateInput({ ...dimensions, workspaceId })
+    assert.equal(input.workspaceId, workspaceId)
+    assert.equal(
+      Object.hasOwn(initializeProjectGenerationPayload(document()), 'workspaceId'),
+      false,
+    )
+  }
+  for (const workspaceId of ['', '../folder', 'projects', null, 2, 'unknown-workspace']) {
+    assert.equal(isProjectCreateInput({ ...dimensions, workspaceId }), false)
+  }
+})
+
 function document() {
   return createEmptyProjectDocumentV1({
     primaryBbox: { height: 768, width: 1024, x: 0, y: 0 },

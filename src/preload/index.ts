@@ -25,6 +25,7 @@ import type {
   ProjectSmartPatchLayerView,
   ProjectSummary,
   ProjectTab,
+  ProjectWorkspaceSummary,
   RuntimeStatus,
   StudioApi,
 } from '../shared/api.js'
@@ -61,6 +62,7 @@ import {
   isProjectSmartPatchMaskV1,
 } from '../shared/projects/project-schema.js'
 import type { IgsProjectDocumentV1, IgsRectV1 } from '../shared/projects/project-schema.js'
+import { isProjectWorkspaceId } from '../shared/projects/project-workspaces.js'
 import {
   isProjectRegionalGuidanceChange,
   isProjectRegionalGuidanceDocumentOwner,
@@ -710,6 +712,7 @@ function isProjectSummary(value: unknown): value is ProjectSummary {
   return (
     isRecord(value) &&
     isProjectId(value.id) &&
+    isProjectWorkspaceId(value.workspaceId) &&
     typeof value.title === 'string' &&
     ['corrupt', 'missing', 'ready', 'unsupported_schema'].includes(String(value.health)) &&
     (value.previewStatus === null ||
@@ -720,6 +723,22 @@ function isProjectSummary(value: unknown): value is ProjectSummary {
       String(value.recoveryStatus),
     ) &&
     (value.recoveryReason === undefined || typeof value.recoveryReason === 'string')
+  )
+}
+
+function isProjectWorkspaceSummary(value: unknown): value is ProjectWorkspaceSummary {
+  return (
+    isRecord(value) &&
+    isProjectWorkspaceId(value.id) &&
+    typeof value.displayName === 'string' &&
+    typeof value.directoryPath === 'string' &&
+    typeof value.color === 'string' &&
+    typeof value.isDefault === 'boolean' &&
+    ['available', 'inaccessible', 'missing'].includes(String(value.availability)) &&
+    typeof value.writable === 'boolean' &&
+    (value.availability === 'available' || value.writable === false) &&
+    Number.isSafeInteger(value.projectCount) &&
+    (value.projectCount as number) >= 0
   )
 }
 
@@ -1152,6 +1171,13 @@ const api: StudioApi = {
       invokeRegionalGuidance(ipcChannels.projects.addRegionalGuidance, tabId, owner),
     addSmartPatchLayer: (tabId) =>
       invokeProject(ipcChannels.projects.addSmartPatchLayer, [tabId], isProjectTab),
+    addWorkspace: (input) =>
+      invokeProject(
+        ipcChannels.projects.addWorkspace,
+        [input],
+        (value): value is ProjectWorkspaceSummary | null =>
+          value === null || isProjectWorkspaceSummary(value),
+      ),
     applyPreset: (tabId, request) =>
       invokeProject(ipcChannels.projects.applyPreset, [tabId, request], isProjectTab),
     applySmartPatchPreset: (tabId, request) => {
@@ -1213,10 +1239,10 @@ const api: StudioApi = {
         [tabId, layerId, request],
         isProjectTab,
       ),
-    finishImport: (importId, choice) =>
+    finishImport: (importId, choice, workspaceId) =>
       invokeProject(
         ipcChannels.projects.finishImport,
-        [importId, choice],
+        workspaceId === undefined ? [importId, choice] : [importId, choice, workspaceId],
         isProjectImportFinishResult,
       ),
     generate: (tabId, options) =>
@@ -1362,10 +1388,10 @@ const api: StudioApi = {
       ),
     importRegionalGuidanceReferenceImage: (tabId, owner) =>
       invokeRegionalReferenceImage(true, tabId, owner),
-    list: () =>
+    list: (workspaceId) =>
       invokeProject(
         ipcChannels.projects.list,
-        [],
+        workspaceId === undefined ? [] : [workspaceId],
         (value): value is ProjectSummary[] => Array.isArray(value) && value.every(isProjectSummary),
       ),
     listGenerationResults: (tabId) =>
@@ -1379,6 +1405,13 @@ const api: StudioApi = {
         ipcChannels.projects.listSmartPatchGenerationResults,
         [tabId],
         isProjectSmartPatchResultsSnapshot,
+      ),
+    listWorkspaces: () =>
+      invokeProject(
+        ipcChannels.projects.listWorkspaces,
+        [],
+        (value): value is ProjectWorkspaceSummary[] =>
+          Array.isArray(value) && value.every(isProjectWorkspaceSummary),
       ),
     moveRasterLayer: (tabId, layerId, targetIndex) =>
       invokeProject(

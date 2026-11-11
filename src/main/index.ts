@@ -59,6 +59,11 @@ import { isGenerationTargetKey } from '../shared/projects/project-generation-tar
 import { ProjectMaskError } from '../shared/projects/project-mask.js'
 import { IGS_SAFETY_CEILINGS, IgsSchemaError } from '../shared/projects/project-schema.js'
 import type { IgsRectV1 } from '../shared/projects/project-schema.js'
+import {
+  isProjectWorkspaceAddInput,
+  isProjectWorkspaceId,
+  parseProjectWorkspaceAddInput,
+} from '../shared/projects/project-workspaces.js'
 import { reconcilePromptEmbeddings } from '../shared/projects/prompt-embeddings.js'
 import {
   isProjectRegionalGuidanceChange,
@@ -1480,7 +1485,29 @@ if (!gotInstanceLock) {
         })
       }
 
-      registerProjectHandler(ipcChannels.projects.list, noArgs, () => projectService.list())
+      registerProjectHandler(
+        ipcChannels.projects.list,
+        (args) => args.length === 0 || (args.length === 1 && isProjectWorkspaceId(args[0])),
+        (workspaceId) => projectService.list(workspaceId as string | undefined),
+      )
+      registerProjectHandler(ipcChannels.projects.listWorkspaces, noArgs, () =>
+        projectService.listWorkspaces(),
+      )
+      registerProjectHandler(
+        ipcChannels.projects.addWorkspace,
+        (args) => args.length === 1 && isProjectWorkspaceAddInput(args[0]),
+        async (input) => {
+          const metadata = parseProjectWorkspaceAddInput(input)
+          const selection = await dialog.showOpenDialog(window, {
+            properties: ['openDirectory', 'createDirectory'],
+            title: 'Add Workspace',
+          })
+          if (selection.canceled || selection.filePaths.length !== 1) {
+            return null
+          }
+          return projectService.addWorkspace(metadata, selection.filePaths[0])
+        },
+      )
       registerProjectHandler(
         ipcChannels.projects.getAcceptedResultHistory,
         (args) => args.length === 1 && (args[0] === null || isAcceptedResultHistoryCursor(args[0])),
@@ -1817,12 +1844,15 @@ if (!gotInstanceLock) {
       registerProjectHandler(
         ipcChannels.projects.finishImport,
         (args) =>
-          args.length === 2 && isImportId(args[0]) && (args[1] === 'move' || args[1] === 'copy'),
-        async (importId, choice) => {
+          (args.length === 2 || (args.length === 3 && isProjectWorkspaceId(args[2]))) &&
+          isImportId(args[0]) &&
+          (args[1] === 'move' || args[1] === 'copy'),
+        async (importId, choice, workspaceId) => {
           const previouslyOpen = new Set(projectService.getOpenTabs().map((tab) => tab.id))
           const imported = await projectService.finishImport(
             importId as string,
             choice as 'copy' | 'move',
+            workspaceId as string | undefined,
           )
           if (imported.result.kind === 'opened') {
             const warning = await reconcileOpenedProject(

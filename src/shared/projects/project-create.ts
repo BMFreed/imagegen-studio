@@ -7,6 +7,7 @@ import {
   type IgsProjectDocumentV1,
   parseProjectDocumentV1,
 } from './project-schema.js'
+import { isProjectWorkspaceId } from './project-workspaces.js'
 
 export interface ProjectCreateInput {
   /** Selected reusable settings only; no stored preset identity or live link. */
@@ -14,6 +15,8 @@ export interface ProjectCreateInput {
   height: number
   title: string
   width: number
+  /** Local destination only; never part of the portable Project document. */
+  workspaceId?: string
 }
 
 const DimensionSchema = v.pipe(
@@ -32,6 +35,7 @@ const CreateSchema = v.strictObject({
     v.nonEmpty(),
   ),
   width: DimensionSchema,
+  workspaceId: v.optional(v.custom<string>(isProjectWorkspaceId)),
 })
 
 /** Main and IPC share one strict authoring boundary; no resource availability is inferred here. */
@@ -53,6 +57,7 @@ export function parseProjectCreateInput(input: unknown): ProjectCreateInput {
     title: parsed.title,
     width: parsed.width,
     ...(generationPayload === undefined ? {} : { generationPayload }),
+    ...(parsed.workspaceId === undefined ? {} : { workspaceId: parsed.workspaceId }),
   }
 }
 

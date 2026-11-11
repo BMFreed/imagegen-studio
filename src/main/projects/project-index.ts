@@ -5,10 +5,17 @@ import {
 } from '../../shared/projects/accepted-result-history.js'
 import { isProjectDocumentId } from '../../shared/projects/project-generation-actions.js'
 import { IgsSchemaError, projectRasterAssets } from '../../shared/projects/project-schema.js'
+import {
+  parseProjectWorkspaceAddInput,
+  type ProjectWorkspaceAddInput,
+  type ProjectWorkspaceSummary,
+} from '../../shared/projects/project-workspaces.js'
 
 import type { Kysely } from 'kysely'
 
-import { lstat, mkdir, readdir, realpath } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { constants } from 'node:fs'
+import { access, lstat, mkdir, readdir, realpath } from 'node:fs/promises'
 import path from 'node:path'
 
 import type { DB } from '../db/database.types.js'
@@ -82,6 +89,10 @@ export class ProjectIndexError extends Error {
       | 'INDEX_CURSOR_INVALID'
       | 'INDEX_FILE_CHANGED'
       | 'INDEX_OUTSIDE_WORKSPACE'
+      | 'WORKSPACE_INVALID_INPUT'
+      | 'WORKSPACE_NAME_EXISTS'
+      | 'WORKSPACE_PATH_CONFLICT'
+      | 'WORKSPACE_READ_ONLY'
       | 'WORKSPACE_UNAVAILABLE',
     message: string,
   ) {
@@ -94,11 +105,92 @@ export class ProjectIndexError extends Error {
 export class ProjectIndexRepository {
   constructor(private readonly db: Kysely<DB>) {}
 
+  /** Metadata checks and insertion share Invoke's transaction boundary; the folder is external. */
+  async addWorkspace(
+    input: ProjectWorkspaceAddInput,
+    trustedPickerDirectoryPath: string,
+  ): Promise<ProjectWorkspaceRecord> {
+    let parsed: ProjectWorkspaceAddInput
+    try {
+      parsed = parseProjectWorkspaceAddInput(input)
+    } catch {
+      throw new ProjectIndexError('WORKSPACE_INVALID_INPUT', 'The workspace details are invalid.')
+    }
+    if (
+      typeof trustedPickerDirectoryPath !== 'string' ||
+      !path.isAbsolute(trustedPickerDirectoryPath)
+    ) {
+      throw new ProjectIndexError('WORKSPACE_UNAVAILABLE', 'Choose an existing workspace folder.')
+    }
+    let directoryPath: string
+    try {
+      directoryPath = await realpath(trustedPickerDirectoryPath)
+    } catch (error) {
+      if (!isUnavailablePathError(error)) {
+        throw error
+      }
+      throw new ProjectIndexError('WORKSPACE_UNAVAILABLE', 'The workspace folder is unavailable.')
+    }
+    const record = { ...parsed, directoryPath, id: randomUUID() }
+    await this.assertWritableWorkspace(record)
+    return await this.db.transaction().execute(async (transaction) => {
+      const existing = await transaction.selectFrom('project_workspace').selectAll().execute()
+      if (
+        existing.some(
+          (row) =>
+            normalizeSearchName(row.display_name.trim()) ===
+            normalizeSearchName(parsed.displayName),
+        )
+      ) {
+        throw new ProjectIndexError(
+          'WORKSPACE_NAME_EXISTS',
+          'A workspace with this name already exists.',
+        )
+      }
+      if (existing.some((row) => pathsOverlap(row.directory_path, directoryPath))) {
+        throw new ProjectIndexError(
+          'WORKSPACE_PATH_CONFLICT',
+          'Workspace folders cannot overlap or contain one another.',
+        )
+      }
+      const now = new Date().toISOString()
+      await transaction
+        .insertInto('project_workspace')
+        .values({
+          color: record.color,
+          created_at: now,
+          directory_path: directoryPath,
+          display_name: record.displayName,
+          id: record.id,
+          is_default: 0,
+          updated_at: now,
+        })
+        .execute()
+      return record
+    })
+  }
+
   async ensureDefaultWorkspace(dataRoot: string): Promise<ProjectWorkspaceRecord> {
     if (!path.isAbsolute(dataRoot)) {
       throw new ProjectIndexError('WORKSPACE_UNAVAILABLE', 'Application data path is invalid.')
     }
     const appRoot = await realpath(dataRoot)
+    const expectedPath = path.join(appRoot, 'workspaces', 'Uncategorized')
+    const existing = await this.db
+      .selectFrom('project_workspace')
+      .selectAll()
+      .where('id', '=', UNCATEGORIZED_WORKSPACE_ID)
+      .executeTakeFirst()
+    if (existing) {
+      if (existing.directory_path !== expectedPath) {
+        throw new ProjectIndexError(
+          'WORKSPACE_UNAVAILABLE',
+          'The default workspace moved without a managed migration.',
+        )
+      }
+      // A registered missing folder is recoverable metadata, not permission to recreate it.
+      return workspaceRecord(existing)
+    }
     const workspacesRoot = await ensureDirectory(appRoot, 'workspaces')
     const directoryPath = await ensureDirectory(workspacesRoot, 'Uncategorized')
     const record: ProjectWorkspaceRecord = {
@@ -250,12 +342,29 @@ export class ProjectIndexRepository {
     })
   }
 
+  async listWorkspaces(): Promise<ProjectWorkspaceRecord[]> {
+    const rows = await this.db
+      .selectFrom('project_workspace')
+      .selectAll()
+      .orderBy('is_default', 'desc')
+      .orderBy('display_name')
+      .orderBy('id')
+      .execute()
+    return rows.map(workspaceRecord)
+  }
+
   async markOpened(canonicalPath: string): Promise<void> {
     await this.db
       .updateTable('project_index')
       .set({ last_opened_at: new Date().toISOString() })
       .where('canonical_path', '=', canonicalPath)
       .execute()
+  }
+
+  async requireWritableWorkspace(workspaceId: string): Promise<ProjectWorkspaceRecord> {
+    const workspace = await this.workspaceById(workspaceId)
+    await this.assertWritableWorkspace(workspace)
+    return workspace
   }
 
   /** Rescan can reconstruct a lost index without the old database or preview cache. */
@@ -325,6 +434,49 @@ export class ProjectIndexRepository {
     return await this.listProjects(workspaceId)
   }
 
+  async workspaceAvailability(
+    workspace: ProjectWorkspaceRecord,
+  ): Promise<Pick<ProjectWorkspaceSummary, 'availability' | 'writable'>> {
+    let mode: number
+    try {
+      const entry = await lstat(workspace.directoryPath)
+      mode = entry.mode
+      if (
+        !entry.isDirectory() ||
+        entry.isSymbolicLink() ||
+        (await realpath(workspace.directoryPath)) !== workspace.directoryPath
+      ) {
+        return { availability: 'inaccessible', writable: false }
+      }
+      if ((mode & 0o444) === 0 || (mode & 0o111) === 0) {
+        return { availability: 'inaccessible', writable: false }
+      }
+      await access(workspace.directoryPath, constants.R_OK | constants.X_OK)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (isUnavailablePathError(error)) {
+        return {
+          availability: code === 'ENOENT' || code === 'ENOTDIR' ? 'missing' : 'inaccessible',
+          writable: false,
+        }
+      }
+      throw error
+    }
+    // Explicit read-only filesystem permissions remain a refusal even for a privileged launcher.
+    if ((mode & 0o222) === 0) {
+      return { availability: 'available', writable: false }
+    }
+    try {
+      await access(workspace.directoryPath, constants.W_OK | constants.X_OK)
+      return { availability: 'available', writable: true }
+    } catch (error) {
+      if (isUnavailablePathError(error)) {
+        return { availability: 'available', writable: false }
+      }
+      throw error
+    }
+  }
+
   async workspaceById(workspaceId: string): Promise<ProjectWorkspaceRecord> {
     const row = await this.db
       .selectFrom('project_workspace')
@@ -334,12 +486,7 @@ export class ProjectIndexRepository {
     if (!row) {
       throw new ProjectIndexError('WORKSPACE_UNAVAILABLE', 'The Project workspace is unavailable.')
     }
-    return {
-      color: row.color,
-      directoryPath: row.directory_path,
-      displayName: row.display_name,
-      id: row.id,
-    }
+    return workspaceRecord(row)
   }
 
   protected async indexUnhealthy(
@@ -360,6 +507,22 @@ export class ProjectIndexRepository {
       }
       await this.indexUnhealthyLocked(filePath, workspaceId, currentDiagnostic)
     })
+  }
+
+  private async assertWritableWorkspace(workspace: ProjectWorkspaceRecord): Promise<void> {
+    const state = await this.workspaceAvailability(workspace)
+    if (state.availability !== 'available') {
+      throw new ProjectIndexError(
+        'WORKSPACE_UNAVAILABLE',
+        'The selected workspace folder is unavailable.',
+      )
+    }
+    if (!state.writable) {
+      throw new ProjectIndexError(
+        'WORKSPACE_READ_ONLY',
+        'The selected workspace folder is read-only.',
+      )
+    }
   }
 
   private async indexSavedLocked(
@@ -612,6 +775,28 @@ function indexRecord(row: DB['project_index']): ProjectIndexRecord {
   }
 }
 
+function workspaceRecord(
+  row: Pick<DB['project_workspace'], 'color' | 'directory_path' | 'display_name' | 'id'>,
+): ProjectWorkspaceRecord {
+  return {
+    color: row.color,
+    directoryPath: row.directory_path,
+    displayName: row.display_name,
+    id: row.id,
+  }
+}
+
+function pathsOverlap(first: string, second: string): boolean {
+  const contains = (parent: string, child: string): boolean => {
+    const relative = path.relative(parent, child)
+    return (
+      relative === '' ||
+      (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative))
+    )
+  }
+  return contains(first, second) || contains(second, first)
+}
+
 async function ensureDirectory(parent: string, name: string): Promise<string> {
   const directory = path.join(parent, name)
   await mkdir(directory, { recursive: true })
@@ -628,10 +813,13 @@ async function assertWorkspaceDirectory(directory: string): Promise<void> {
     if (
       !entry.isDirectory() ||
       entry.isSymbolicLink() ||
+      (entry.mode & 0o444) === 0 ||
+      (entry.mode & 0o111) === 0 ||
       (await realpath(directory)) !== directory
     ) {
       throw new ProjectIndexError('WORKSPACE_UNAVAILABLE', 'The Project workspace path is unsafe.')
     }
+    await access(directory, constants.R_OK | constants.X_OK)
   } catch (error) {
     if (isUnavailablePathError(error)) {
       throw new ProjectIndexError('WORKSPACE_UNAVAILABLE', 'The Project workspace is unavailable.')
@@ -671,7 +859,7 @@ async function diagnoseCurrentFile(filePath: string): Promise<string | null> {
 }
 
 function isUnavailablePathError(error: unknown): boolean {
-  return ['EACCES', 'ENOENT', 'ENOTDIR', 'EPERM'].includes(
+  return ['EACCES', 'ELOOP', 'ENOENT', 'ENOTDIR', 'EPERM', 'EROFS'].includes(
     (error as NodeJS.ErrnoException).code ?? '',
   )
 }

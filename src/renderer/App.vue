@@ -46,6 +46,11 @@ import {
   type ProjectGenerationTargetState,
 } from '../shared/projects/project-generation-target-state.js'
 import type { IgsRectV1, IgsRegionalGuidanceV1 } from '../shared/projects/project-schema.js'
+import {
+  DEFAULT_PROJECT_WORKSPACE_ID,
+  type ProjectWorkspaceAddInput,
+  type ProjectWorkspaceSummary,
+} from '../shared/projects/project-workspaces.js'
 import { WINDOW_CLOSE_CANCELED_MESSAGE } from '../shared/window-close.js'
 
 import { Home as HomeIcon, X as XIcon } from '@vicons/tabler'
@@ -56,10 +61,12 @@ import {
   NCard,
   NConfigProvider,
   NEmpty,
+  NFormItem,
   NIcon,
   NModal,
   NRadio,
   NRadioGroup,
+  NSelect,
 } from 'naive-ui'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, toRaw, watch } from 'vue'
 
@@ -78,6 +85,7 @@ import {
   resolveAcceptedHistoryTarget,
 } from './components/accepted-history-navigation.js'
 import AcceptedResultsBrowser from './components/AcceptedResultsBrowser.vue'
+import AddWorkspaceModal from './components/AddWorkspaceModal.vue'
 import AppChrome from './components/AppChrome.vue'
 import ApplyPresetModal from './components/ApplyPresetModal.vue'
 import {
@@ -93,6 +101,11 @@ import PresetManager from './components/PresetManager.vue'
 import { draftOwnerKey, ProjectDraftSync } from './components/project-draft-sync.js'
 import { resolveSelectedProjectEntity } from './components/project-layer-context.js'
 import { createProjectPresetIntent } from './components/project-preset-draft.js'
+import {
+  defaultProjectWorkspaceId,
+  projectWorkspaceDestinationOptions,
+  projectWorkspaceDestinationProblem,
+} from './components/project-workspace-destinations.js'
 import ProjectView from './components/ProjectView.vue'
 import { RegionalPromptSync } from './components/regional-prompt-sync.js'
 import {
@@ -162,7 +175,7 @@ type PendingSmartReview =
   | { kind: 'accept'; request: ProjectSmartPatchAcceptRequest; tabId: string }
   | { kind: 'discard'; request: ProjectSmartPatchDiscardRequest; tabId: string }
 type PendingProjectAction =
-  | { kind: 'create' | 'import-finish' | 'import-select' | 'recover' }
+  | { kind: 'create' | 'import-finish' | 'import-select' | 'recover' | 'workspace-add' }
   | { kind: 'open' | 'rebuild'; projectId: string }
   | {
       kind:
@@ -278,6 +291,18 @@ const queueResultNavigationError = ref<string | null>(null)
 const generationResultFocusByTab = ref<Record<string, GenerationResultFocusRequest>>({})
 const modelManagerFocus = ref<ModelManagerFocus | null>(null)
 const projects = ref<ProjectSummary[]>([])
+const workspaces = ref<ProjectWorkspaceSummary[]>([])
+const workspacesLoading = ref(false)
+const workspacesError = ref<string | null>(null)
+const selectedWorkspaceId = ref<string | null>(null)
+const browseWorkspaceId = computed({
+  get: () => selectedWorkspaceId.value,
+  set: (id: string | null) => {
+    if (!pendingProjectAction.value && !windowClosePending.value) {
+      void selectWorkspace(id)
+    }
+  },
+})
 const projectTabs = ref<ProjectTab[]>([])
 const modelCatalog = ref<ModelCatalogItem[]>([])
 const modelCatalogError = ref<string | null>(null)
@@ -372,9 +397,22 @@ const closeImpact = ref<ProjectCloseImpact | null>(null)
 const closeError = ref<string | null>(null)
 const showNewProject = ref(false)
 const newProjectError = ref<string | null>(null)
+const newProjectWorkspaceId = ref(DEFAULT_PROJECT_WORKSPACE_ID)
+const showAddWorkspace = ref(false)
+const addWorkspaceError = ref<string | null>(null)
 const importTransfer = ref<ImportTransfer | null>(null)
 const importDialogVisible = ref(false)
 const importChoice = ref<'copy' | 'move'>('move')
+const importWorkspaceId = ref(DEFAULT_PROJECT_WORKSPACE_ID)
+const importWorkspaceOptions = computed(() =>
+  projectWorkspaceDestinationOptions(workspaces.value, importWorkspaceId.value),
+)
+const importWorkspaceProblem = computed(() =>
+  workspacesLoading.value
+    ? null
+    : (workspacesError.value ??
+      projectWorkspaceDestinationProblem(workspaces.value, importWorkspaceId.value)),
+)
 
 const status = ref<RuntimeStatus | null>(null)
 const runtimeError = ref<string | null>(null)
@@ -388,6 +426,7 @@ const generationProgress = ref<GenerationProgressSnapshot>({ current: null, revi
 let unsubscribeProgress: (() => void) | undefined
 let unsubscribeGeneration: (() => void) | undefined
 let projectListRequest = 0
+let workspacesRequest = 0
 let modelCatalogRequest = 0
 let rendererDisposed = false
 
@@ -466,6 +505,7 @@ function smartPresetOwnerCurrent(owner: SmartPatchPresetApplicationOwner, applyi
       presetManagerOpen.value ||
       (modelManagerOpen.value && !presetModelHandoff.value) ||
       showNewProject.value ||
+      showAddWorkspace.value ||
       importDialogVisible.value ||
       recoveryDecision.value ||
       closingTabId.value ||
@@ -657,6 +697,7 @@ function saveSmartPatchCurrentAsPreset(tabId: string) {
         presetApplyOpen.value ||
         modelManagerOpen.value ||
         showNewProject.value ||
+        showAddWorkspace.value ||
         importDialogVisible.value ||
         recoveryDecision.value ||
         closingTabId.value ||
@@ -1407,7 +1448,9 @@ async function readAcceptedHistoryPage(
   refresh: boolean,
 ) {
   if (refresh) {
-    projects.value = await apiValue(() => projectApi().list())
+    // History scans all workspaces, while Home keeps its independently selected scope.
+    await apiValue(() => projectApi().list())
+    await refreshProjects()
   }
   return await apiValue(() => projectApi().getAcceptedResultHistory(cursor))
 }
@@ -1811,6 +1854,7 @@ watch(
     () => presetManagerOpen.value,
     () => modelManagerOpen.value && !presetModelHandoff.value,
     () => showNewProject.value,
+    () => showAddWorkspace.value,
     () => importDialogVisible.value,
     () => recoveryDecision.value,
     () => closingTabId.value,
@@ -3303,28 +3347,107 @@ async function onTabKeydown(event: KeyboardEvent, documentId: string) {
 
 async function refreshProjects() {
   const request = ++projectListRequest
+  const workspaceId = selectedWorkspaceId.value
   projectsLoading.value = true
   homeError.value = null
+  const catalogRefresh = refreshWorkspaces()
   try {
-    const list = await apiValue(() => projectApi().list())
-    if (request === projectListRequest) {
+    const list = await apiValue(() => projectApi().list(workspaceId ?? undefined))
+    if (
+      !rendererDisposed &&
+      request === projectListRequest &&
+      selectedWorkspaceId.value === workspaceId
+    ) {
       projects.value = list
     }
   } catch (cause) {
-    if (request === projectListRequest) {
+    if (
+      !rendererDisposed &&
+      request === projectListRequest &&
+      selectedWorkspaceId.value === workspaceId
+    ) {
       homeError.value = errorMessage(cause)
     }
   } finally {
-    if (request === projectListRequest) {
+    if (
+      !rendererDisposed &&
+      request === projectListRequest &&
+      selectedWorkspaceId.value === workspaceId
+    ) {
       projectsLoading.value = false
     }
+    await catalogRefresh
+  }
+}
+
+async function refreshWorkspaces() {
+  const request = ++workspacesRequest
+  workspacesLoading.value = true
+  workspacesError.value = null
+  try {
+    const catalog = await apiValue(() => projectApi().listWorkspaces())
+    if (!rendererDisposed && request === workspacesRequest) {
+      workspaces.value = catalog
+    }
+  } catch (cause) {
+    if (!rendererDisposed && request === workspacesRequest) {
+      workspacesError.value = errorMessage(cause)
+    }
+  } finally {
+    if (!rendererDisposed && request === workspacesRequest) {
+      workspacesLoading.value = false
+    }
+  }
+}
+
+async function selectWorkspace(id: string | null) {
+  if (id === selectedWorkspaceId.value) {
+    return
+  }
+  selectedWorkspaceId.value = id
+  projects.value = []
+  await refreshProjects()
+}
+
+function beginAddWorkspace() {
+  if (pendingProjectAction.value || windowClosePending.value) {
+    return
+  }
+  queueResultNavigator.cancelProjectOpen()
+  addWorkspaceError.value = null
+  showAddWorkspace.value = true
+}
+
+async function addWorkspace(input: ProjectWorkspaceAddInput) {
+  if (!showAddWorkspace.value || pendingProjectAction.value || windowClosePending.value) {
+    return
+  }
+  pendingProjectAction.value = { kind: 'workspace-add' }
+  addWorkspaceError.value = null
+  try {
+    const workspace = await apiValue(() => projectApi().addWorkspace({ ...input }))
+    if (!workspace) {
+      return
+    }
+    workspaces.value = [...workspaces.value.filter(({ id }) => id !== workspace.id), workspace]
+    showAddWorkspace.value = false
+    await selectWorkspace(workspace.id)
+  } catch (cause) {
+    addWorkspaceError.value = errorMessage(cause)
+  } finally {
+    pendingProjectAction.value = null
   }
 }
 
 function beginNewProject() {
   queueResultNavigator.cancelProjectOpen()
   newProjectError.value = null
+  newProjectWorkspaceId.value = defaultProjectWorkspaceId(
+    workspaces.value,
+    selectedWorkspaceId.value,
+  )
   showNewProject.value = true
+  void refreshWorkspaces()
   void refreshPresetCatalog()
   void refreshModelCatalog()
 }
@@ -3334,6 +3457,14 @@ async function createProject(input: ProjectCreateInput) {
     return
   }
   const captured: ProjectCreateInput = JSON.parse(JSON.stringify(input))
+  const destinationProblem = captured.workspaceId
+    ? projectWorkspaceDestinationProblem(workspaces.value, captured.workspaceId)
+    : 'Choose a workspace before creating the project.'
+  if (workspacesLoading.value || workspacesError.value || destinationProblem) {
+    newProjectError.value =
+      workspacesError.value ?? destinationProblem ?? 'Wait for workspaces to finish loading.'
+    return
+  }
   pendingProjectAction.value = { kind: 'create' }
   newProjectError.value = null
   try {
@@ -3460,6 +3591,8 @@ async function selectImport() {
     return
   }
   pendingProjectAction.value = { kind: 'import-select' }
+  const destinationId = defaultProjectWorkspaceId(workspaces.value, selectedWorkspaceId.value)
+  void refreshWorkspaces()
   homeError.value = null
   try {
     const selection = await apiValue(() => projectApi().selectImport())
@@ -3480,6 +3613,7 @@ async function selectImport() {
       return
     }
     importChoice.value = 'move'
+    importWorkspaceId.value = destinationId
     importTransfer.value = selection
     importDialogVisible.value = true
   } catch (cause) {
@@ -3510,10 +3644,15 @@ async function finishImport() {
   if (!transfer || pendingProjectAction.value !== null) {
     return
   }
+  if (workspacesLoading.value || workspacesError.value || importWorkspaceProblem.value) {
+    return
+  }
+  const workspaceId = importWorkspaceId.value
+  const choice = importChoice.value
   pendingProjectAction.value = { kind: 'import-finish' }
   try {
     const finished = await apiValue(() =>
-      projectApi().finishImport(transfer.importId, importChoice.value),
+      projectApi().finishImport(transfer.importId, choice, workspaceId),
     )
     importDialogVisible.value = false
     const warning = [
@@ -4201,6 +4340,7 @@ function onAppKeydown(event: KeyboardEvent) {
     presetManagerOpen.value ||
     presetApplyOpen.value ||
     showNewProject.value ||
+    showAddWorkspace.value ||
     importDialogVisible.value ||
     recoveryDecision.value ||
     closingTabId.value ||
@@ -4474,11 +4614,16 @@ onBeforeUnmount(() => {
         </NAlert>
         <HomeView
           v-if="activeDocument === 'home' && homeOpen"
+          v-model:workspaceId="browseWorkspaceId"
           :busy="pendingProjectAction !== null || windowClosePending"
           :error="homeError"
           :loading="projectsLoading"
           :pendingAction="pendingHomeAction"
           :projects
+          :workspaces
+          :workspacesError
+          :workspacesLoading
+          @addWorkspace="beginAddWorkspace"
           @createProject="beginNewProject"
           @importProject="selectImport"
           @manageModels="openModelManager()"
@@ -4712,9 +4857,36 @@ onBeforeUnmount(() => {
           <p>
             Add
             <strong>{{ importTransfer?.title }}</strong>
-            ({{ importTransfer?.fileName }}) to Uncategorized before opening it.
+            ({{ importTransfer?.fileName }}) to a workspace before opening it.
           </p>
-          <NRadioGroup v-model:value="importChoice" aria-label="Import method">
+          <NFormItem
+            :feedback="importWorkspaceProblem ?? undefined"
+            label="Workspace"
+            :validationStatus="importWorkspaceProblem ? 'error' : undefined"
+          >
+            <NSelect
+              v-model:value="importWorkspaceId"
+              aria-label="Import workspace"
+              :disabled="pendingProjectAction !== null || workspacesLoading"
+              :loading="workspacesLoading"
+              :options="importWorkspaceOptions"
+              placeholder="Choose a writable workspace"
+            />
+          </NFormItem>
+          <NButton
+            v-if="importWorkspaceProblem"
+            :disabled="pendingProjectAction !== null || workspacesLoading"
+            size="tiny"
+            tertiary
+            @click="refreshWorkspaces"
+          >
+            Refresh workspaces
+          </NButton>
+          <NRadioGroup
+            v-model:value="importChoice"
+            aria-label="Import method"
+            :disabled="pendingProjectAction !== null"
+          >
             <NRadio value="move">Move the file here</NRadio>
             <NRadio value="copy">Keep the original and copy it here</NRadio>
           </NRadioGroup>
@@ -4723,7 +4895,11 @@ onBeforeUnmount(() => {
               Cancel
             </NButton>
             <NButton
-              :disabled="pendingProjectAction !== null"
+              :disabled="
+                pendingProjectAction !== null ||
+                workspacesLoading ||
+                Boolean(importWorkspaceProblem)
+              "
               :loading="pendingProjectAction?.kind === 'import-finish'"
               type="primary"
               @click="finishImport"
@@ -4734,17 +4910,29 @@ onBeforeUnmount(() => {
         </NCard>
       </NModal>
 
+      <AddWorkspaceModal
+        v-model:show="showAddWorkspace"
+        :busy="pendingProjectAction !== null || windowClosePending"
+        :error="addWorkspaceError"
+        @add="addWorkspace"
+      />
+
       <NewProjectModal
         v-model:show="showNewProject"
         :busy="pendingProjectAction !== null || windowClosePending"
         :catalog="modelCatalog"
         :catalogReady="modelCatalogLoaded && !modelCatalogLoading && modelCatalogError === null"
         :createError="newProjectError"
+        :initialWorkspaceId="newProjectWorkspaceId"
         :presets="presetCatalog"
         :presetsError="presetCatalogError"
         :presetsLoading="presetCatalogLoading"
+        :workspaces
+        :workspacesError
+        :workspacesLoading
         @create="createProject"
         @refreshPresets="refreshPresetCatalog"
+        @refreshWorkspaces="refreshWorkspaces"
       />
 
       <NModal

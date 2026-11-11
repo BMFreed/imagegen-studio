@@ -37,6 +37,10 @@ import type {
   IgsRegionalGuidanceV1,
   IgsSmartPatchLayerV1,
 } from './projects/project-schema.js'
+import type {
+  ProjectWorkspaceAddInput,
+  ProjectWorkspaceSummary,
+} from './projects/project-workspaces.js'
 import type { PromptEmbeddingSelection } from './projects/prompt-embeddings.js'
 import type {
   ProjectRegionalGuidanceChange,
@@ -93,6 +97,10 @@ export type {
   ProjectGenerationActionState,
   ProjectGenerationQueueJob,
 } from './projects/project-generation-actions.js'
+export type {
+  ProjectWorkspaceAddInput,
+  ProjectWorkspaceSummary,
+} from './projects/project-workspaces.js'
 export type {
   ProjectRegionalGuidanceChange,
   ProjectRegionalGuidanceDocumentOwner,
@@ -160,6 +168,7 @@ export const ipcChannels = {
     addGenerationLora: 'projects:add-generation-lora',
     addRegionalGuidance: 'projects:add-regional-guidance',
     addSmartPatchLayer: 'projects:add-smart-patch-layer',
+    addWorkspace: 'projects:add-workspace',
     applyPreset: 'projects:apply-preset',
     applySmartPatchPreset: 'projects:apply-smart-patch-preset',
     cancelCurrentGeneration: 'projects:cancel-current-generation',
@@ -198,6 +207,7 @@ export const ipcChannels = {
     list: 'projects:list',
     listGenerationResults: 'projects:list-generation-results',
     listSmartPatchGenerationResults: 'projects:list-smart-patch-generation-results',
+    listWorkspaces: 'projects:list-workspaces',
     moveRasterLayer: 'projects:move-raster-layer',
     open: 'projects:open',
     prepareWindowClose: 'projects:prepare-window-close',
@@ -303,6 +313,7 @@ export interface ProjectSummary {
   recoveryStatus: 'invalid' | 'none' | 'recoverable' | 'stale' | 'unavailable'
   thumbnailUrl: string | null
   title: string
+  workspaceId: string
 }
 
 export interface ProjectTab {
@@ -563,6 +574,9 @@ export interface ProjectApi {
     owner: ProjectRegionalGuidanceDocumentOwner,
   ) => Promise<ApiResult<ProjectTab>>
   addSmartPatchLayer: (tabId: string) => Promise<ApiResult<ProjectTab>>
+  addWorkspace: (
+    input: ProjectWorkspaceAddInput,
+  ) => Promise<ApiResult<ProjectWorkspaceSummary | null>>
   applyPreset: (tabId: string, request: PresetApplicationRequest) => Promise<ApiResult<ProjectTab>>
   applySmartPatchPreset: (
     tabId: string,
@@ -605,6 +619,7 @@ export interface ProjectApi {
   finishImport: (
     importId: string,
     choice: 'copy' | 'move',
+    workspaceId?: string,
   ) => Promise<ApiResult<ProjectImportFinishResult>>
   generate: (
     tabId: string,
@@ -670,11 +685,12 @@ export interface ProjectApi {
     tabId: string,
     owner: ProjectRegionalGuidanceOwner,
   ) => Promise<ApiResult<ProjectTab | null>>
-  list: () => Promise<ApiResult<ProjectSummary[]>>
+  list: (workspaceId?: string) => Promise<ApiResult<ProjectSummary[]>>
   listGenerationResults: (tabId: string) => Promise<ApiResult<ProjectGenerationResultsSnapshot>>
   listSmartPatchGenerationResults: (
     tabId: string,
   ) => Promise<ApiResult<ProjectSmartPatchResultsSnapshot>>
+  listWorkspaces: () => Promise<ApiResult<ProjectWorkspaceSummary[]>>
   moveRasterLayer: (
     tabId: string,
     layerId: string,
