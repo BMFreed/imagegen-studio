@@ -32,14 +32,15 @@ import {
   confirmQualificationProcessExit,
 } from './qualification-resource-limits.mjs'
 
-assert.ok([4, 5].includes(process.argv.length), 'Use --report-file ABSOLUTE_NEW_OWNED_REPORT [--trash-only|--locations-only|--move-only|--relocation-only|--open-rename-only|--browse-only]')
+assert.ok([4, 5].includes(process.argv.length), 'Use --report-file ABSOLUTE_NEW_OWNED_REPORT [--trash-only|--locations-only|--move-only|--relocation-only|--open-rename-only|--browse-only|--forget-only]')
 const trashOnly = process.argv[4] === '--trash-only'
 const locationsOnly = process.argv[4] === '--locations-only'
 const moveOnly = process.argv[4] === '--move-only'
 const relocationOnly = process.argv[4] === '--relocation-only'
 const openRenameOnly = process.argv[4] === '--open-rename-only'
 const browseOnly = process.argv[4] === '--browse-only'
-if (process.argv.length === 5) assert.ok(trashOnly || locationsOnly || moveOnly || relocationOnly || openRenameOnly || browseOnly)
+const forgetOnly = process.argv[4] === '--forget-only'
+if (process.argv.length === 5) assert.ok(trashOnly || locationsOnly || moveOnly || relocationOnly || openRenameOnly || browseOnly || forgetOnly)
 assert.equal(process.argv[2], '--report-file')
 const reportFile = process.argv[3]
 const evidenceRoot = path.dirname(reportFile)
@@ -58,7 +59,7 @@ const execute = promisify(execFile)
 const digest = (file) => createHash('sha256').update(readFileSync(file)).digest('hex')
 const report = {
   outcome: 'running',
-  mode: browseOnly ? 'browse-only' : openRenameOnly ? 'open-rename-only' : relocationOnly ? 'relocation-only' : moveOnly ? 'move-only' : locationsOnly ? 'locations-only' : trashOnly ? 'trash-only' : 'catalog-workspaces-and-trash',
+  mode: forgetOnly ? 'forget-only' : browseOnly ? 'browse-only' : openRenameOnly ? 'open-rename-only' : relocationOnly ? 'relocation-only' : moveOnly ? 'move-only' : locationsOnly ? 'locations-only' : trashOnly ? 'trash-only' : 'catalog-workspaces-and-trash',
   startedAt: new Date().toISOString(),
   payloads: [payload],
   checks: [],
@@ -66,7 +67,9 @@ const report = {
   nativeClosures: [],
   resourceChecks: [],
   pageErrors: [],
-  boundary: browseOnly
+  boundary: forgetOnly
+    ? 'Forget-only qualifies actual built Home/preload/Main/SQLite and real package/recovery writers. Closed-app missing/recovery preparation is controlled and is not a crash qualification. Missing-file and workspace renames are exact owned paths and restored; no unlink, ML, foreign data or API response mocks. Internal malformed-arity validation is called with the real owned WebContents/frame; OS picker replies are controlled. Native queue tables are observed controls; nonempty queue preservation is a separate integration boundary.'
+    : browseOnly
     ? 'Browse-only qualifies actual built Home/IPC/SQLite and real package timestamps. Controlled owned-file mtimes prepare sort inputs; verified recovery shadow and preview-unavailable package are prepared through real writers while the app is physically closed. This is not crash recovery acceptance. Exact owned missing-file/workspace renames are restored; no model/runtime or foreign data changes. OS picker replies are controlled.'
     : 'Locations-only uses controlled OS shell callbacks; it qualifies Main path selection and UI, not file-manager window UX. Relocation/open-Rename uses exact owned fs syscall interception to chmod its own packages and delegates to originals for actual EACCES; stack, journal phase, identities and modes must restore. Actual built renderer/preload/Main/SQLite and Project package writers/loaders. OS picker replies are controlled; OS dialog UX and arbitrary permission races are not qualified. No ML.',
   sourceSha256: Object.fromEntries(
@@ -1614,6 +1617,213 @@ async function manageRelocation() {
   check('recovered Project opens by original key; subsequent explicit edit Save and renamed-title reopen use only authoritative destinations')
 }
 /** Read-only Home browse consumer with real timestamps and independent saved/recovery conditions. */
+async function manageForget() {
+  const projects = await api('list', registered.id)
+  const missing = projects.find(({ title }) => title === 'Workspace Project')
+  const healthy = projects.find(({ title }) => title === 'Copy Project')
+  const openControl = projects.find(({ title }) => title === 'Move Project')
+  assert.ok(missing && healthy && openControl)
+  const records = Object.fromEntries(await Promise.all(projects.map(async (project) => [project.id, await indexRecord(project.id)])))
+  const files = Object.fromEntries(projects.map((project) => [project.id, records[project.id].canonical_path]))
+  const hashes = Object.fromEntries(projects.map((project) => [project.id, digest(files[project.id])]))
+  const missingFile = files[missing.id]
+  const retainedMissing = path.join(payload, 'forget-missing-retained.igs')
+  const retainedOpen = path.join(payload, 'forget-open-retained.igs')
+  const disconnected = `${folder}-forget-disconnected`
+  const modal = () => window.getByRole('dialog', { name: 'Remove from Home', exact: true })
+  const option = () => window.locator('.n-dropdown-option-body__label:visible').filter({ hasText: /^Remove from Home$/ })
+  const projectRow = (id) => window.locator(`.project-row[data-project-id="${id}"]`)
+  async function refresh() {
+    await window.getByRole('button', { name: 'Refresh projects', exact: true }).click()
+  }
+  async function browseWorkspace() {
+    await showHome()
+    await home().locator('.workspace-select').filter({ hasText: registered.displayName }).click()
+    await expect(window.getByRole('heading', { name: registered.displayName, exact: true })).toBeVisible()
+  }
+  async function menu(project) {
+    await window.getByRole('button', { name: `${project.title} project actions`, exact: true }).click()
+  }
+  async function request() {
+    await menu(missing)
+    await expect(option()).toBeVisible()
+    await option().click()
+    await expect(modal()).toBeVisible()
+  }
+  async function refuse(id) {
+    const value = await window.evaluate((id) => window.api.projects.removeMissingProject(id, true), id)
+    assert.equal(value.ok, false, JSON.stringify(value))
+    assert.ok(value.error.code && value.error.message)
+    return value
+  }
+  async function noAction(project) {
+    await menu(project)
+    await expect(option()).toHaveCount(0)
+    await window.keyboard.press('Escape')
+  }
+  const durableTables = ['project_identity_binding', 'project_identity_retired_key', 'project_relocation', 'project_file_lifecycle', 'generation_queue_item', 'generation_candidate_receipt', 'generation_seed_cursor', 'generation_staging_discarded_session']
+  async function operationalRows() {
+    return Object.fromEntries(await Promise.all(durableTables.map(async (table) => [table, await database.db.selectFrom(table).selectAll().execute()])))
+  }
+  function tree(directory) {
+    assert.ok(existsSync(directory), directory)
+    const entries = []
+    function walk(current) {
+      for (const entry of readdirSync(current, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+        const file = path.join(current, entry.name)
+        assert.equal(lstatSync(file).isSymbolicLink(), false)
+        if (entry.isDirectory()) walk(file)
+        else {
+          assert.ok(entry.isFile())
+          entries.push({ path: path.relative(directory, file), bytes: lstatSync(file).size, sha256: digest(file) })
+        }
+      }
+    }
+    walk(directory)
+    return entries
+  }
+  await browseWorkspace()
+  await noAction(healthy)
+  const presentRefusal = await refuse(healthy.id)
+  assert.equal(digest(files[healthy.id]), hashes[healthy.id])
+  assert.ok(await indexRecord(healthy.id))
+  check('healthy saved Project omits Remove from Home and real Main refuses a present package', { refusal: presentRefusal })
+  const invalid = await window.evaluate(async (id) => [
+    await window.api.projects.removeMissingProject(id, false),
+    await window.api.projects.removeMissingProject('/tmp/not-an-authorized-project.igs', true),
+  ], missing.id)
+  const malformed = await application.evaluate(async ({ ipcMain, BrowserWindow }, id) => {
+    const main = BrowserWindow.getAllWindows()[0].webContents
+    const handler = ipcMain._invokeHandlers.get('projects:remove-missing')
+    if (!handler) throw new Error('Missing production Remove from Home IPC handler')
+    return handler({ sender: main, senderFrame: main.mainFrame }, id, true, 'extra')
+  }, missing.id)
+  for (const result of [...invalid, malformed]) assert.equal(result.ok, false, JSON.stringify(result))
+  assert.deepEqual(await indexRecord(missing.id), records[missing.id])
+  check('confirmation false, injected renderer path and extra IPC argument are refused before removing any cached row', { invalid, malformed })
+  await close('forget-fixtures-normal')
+
+  // Actual shadow writer prepares retained unsaved work while every native actor is closed.
+  // Missing file preparation is an owned external rename, never an unlink or a mocked API reply.
+  const saved = await readIgsPackage(missingFile)
+  const document = parseProjectDocumentV1({ ...saved.project, documentRevision: randomUUID(), primaryBbox: { ...saved.project.primaryBbox, x: 8 } })
+  const shadow = new ProjectShadowStore(path.join(appData, 'autosave'))
+  await shadow.write({ projectPath: missingFile, savedDocument: saved.project, document })
+  const inspection = await shadow.inspect({ projectPath: missingFile, savedPackage: saved })
+  assert.equal(inspection.status, 'recoverable')
+  const shadowDirectory = path.join(appData, 'autosave', missing.id)
+  const shadowBefore = tree(shadowDirectory)
+  assert.ok(shadowBefore.length >= 2, 'The native preservation control is a nonempty real recovery shadow')
+  renameSync(missingFile, retainedMissing)
+  try {
+    await launch('forget-action')
+    await browseWorkspace()
+    await refresh()
+    await expect(projectRow(missing.id).getByText('File missing', { exact: true })).toBeVisible()
+    assert.equal((await api('list', registered.id)).find(({ id }) => id === missing.id).health, 'missing')
+    assert.equal(digest(retainedMissing), hashes[missing.id])
+    assert.deepEqual(tree(shadowDirectory), shadowBefore)
+    await screenshot('forget-missing', 900, 620)
+    check('actual missing Project remains visible with its exact closed-prepared package and nonempty verified recovery shadow')
+    const missingRecord = await indexRecord(missing.id)
+    await request()
+    await expect(modal()).toContainText(missing.title)
+    await screenshot('forget-confirm', 1440, 900)
+    await modal().getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(modal()).toHaveCount(0)
+    await expect(projectRow(missing.id)).toBeVisible()
+    assert.deepEqual(await indexRecord(missing.id), missingRecord)
+    assert.deepEqual(tree(shadowDirectory), shadowBefore)
+    check('canceling the public Remove from Home confirmation preserves the missing row and recovery bytes')
+
+    renameSync(folder, disconnected)
+    await refresh()
+    await expect.poll(async () => (await api('listWorkspaces')).find(({ id }) => id === registered.id)?.availability).toBe('missing')
+    await noAction(missing)
+    const unavailableRefusal = await refuse(missing.id)
+    assert.ok(await indexRecord(missing.id))
+    await screenshot('forget-unavailable', 900, 620)
+    renameSync(disconnected, folder)
+    await refresh()
+    await expect.poll(async () => (await api('listWorkspaces')).find(({ id }) => id === registered.id)?.availability).toBe('available')
+    check('unavailable workspace suppresses removal and real Main refuses to confuse inaccessible ownership with a missing file', { refusal: unavailableRefusal })
+
+    await window.getByRole('button', { name: `Open ${openControl.title}`, exact: true }).click()
+    await expect(window.getByRole('tab', { name: openControl.title, exact: true })).toBeVisible()
+    await showHome()
+    renameSync(files[openControl.id], retainedOpen)
+    await refresh()
+    await expect(projectRow(openControl.id).getByText('File missing', { exact: true })).toBeVisible()
+    await noAction(openControl)
+    const openRefusal = await refuse(openControl.id)
+    assert.ok(await indexRecord(openControl.id))
+    renameSync(retainedOpen, files[openControl.id])
+    await refresh()
+    await closeProject(openControl.title)
+    await showHome()
+    assert.equal(digest(files[openControl.id]), hashes[openControl.id])
+    check('an actually open missing Project suppresses removal and Main keeps its tab and cached owner until explicit normal close', { refusal: openRefusal })
+
+    await request()
+    const beforeRefusal = await operationalRows()
+    renameSync(retainedMissing, missingFile)
+    await modal().getByRole('button', { name: 'Remove from Home', exact: true }).click()
+    await expect(modal()).toBeVisible()
+    await expect(modal().getByRole('alert')).toBeVisible()
+    await expect(modal().getByRole('button', { name: 'Remove from Home', exact: true })).toBeEnabled()
+    assert.ok(await indexRecord(missing.id))
+    assert.equal(digest(missingFile), hashes[missing.id])
+    assert.deepEqual(await operationalRows(), beforeRefusal)
+    assert.deepEqual(tree(shadowDirectory), shadowBefore)
+    await screenshot('forget-present-refusal', 900, 620)
+    check('file restored after confirmation opens is revalidated by Main; visible refusal keeps the dialog, package, index and operational records')
+
+    renameSync(missingFile, retainedMissing)
+    const beforeRemoval = await operationalRows()
+    await modal().getByRole('button', { name: 'Remove from Home', exact: true }).click()
+    await expect(modal()).toHaveCount(0)
+    await expect(projectRow(missing.id)).toHaveCount(0)
+    assert.equal(await database.db.selectFrom('project_index').selectAll().where('local_project_key', '=', missing.id).executeTakeFirst(), undefined)
+    assert.deepEqual(await operationalRows(), beforeRemoval)
+    assert.deepEqual(tree(shadowDirectory), shadowBefore)
+    assert.equal(digest(retainedMissing), hashes[missing.id])
+    assert.equal(existsSync(missingFile), false)
+    await screenshot('forget-removed', 1440, 900)
+    check('explicit retry removes only the missing cached row; retained package, nonempty recovery shadow and observed operational tables remain exact', { operationalRows: beforeRemoval, shadowBefore, shadowDirectory, nativeQueueControl: 'observed existing rows; nonempty queue/receipt controls are separate integration evidence' })
+    await close('forget-removed-normal')
+
+    await launch('forget-restart')
+    await browseWorkspace()
+    await refresh()
+    await expect(projectRow(missing.id)).toHaveCount(0)
+    assert.equal((await api('list', registered.id)).some(({ id }) => id === missing.id), false)
+    assert.equal(await database.db.selectFrom('project_index').selectAll().where('local_project_key', '=', missing.id).executeTakeFirst(), undefined)
+    assert.deepEqual(await operationalRows(), beforeRemoval)
+    assert.deepEqual(tree(shadowDirectory), shadowBefore)
+    assert.equal(digest(retainedMissing), hashes[missing.id])
+    check('new native lifetime and explicit Refresh keep the forgotten missing entry absent without deleting its retained work')
+    renameSync(retainedMissing, missingFile)
+    await refresh()
+    await expect(projectRow(missing.id)).toBeVisible()
+    await expect(projectRow(missing.id).getByText('Recovery available', { exact: true })).toBeVisible()
+    const restored = (await api('list', registered.id)).find(({ id }) => id === missing.id)
+    assert.equal(restored.health, 'ready')
+    assert.equal(restored.recoveryStatus, 'recoverable')
+    assert.equal((await indexRecord(missing.id)).canonical_path, missingFile)
+    for (const project of projects) assert.equal(digest(files[project.id]), hashes[project.id])
+    assert.deepEqual(tree(shadowDirectory), shadowBefore)
+    assert.deepEqual(await operationalRows(), beforeRemoval)
+    await screenshot('forget-rediscovered', 1440, 900)
+    report.forgetFixtureRestoration = { sourceDirectory: folder, disconnectedAbsent: !existsSync(disconnected), missingFile, retainedMissingAbsent: !existsSync(retainedMissing), openFile: files[openControl.id], retainedOpenAbsent: !existsSync(retainedOpen), stableProjectId: missing.id, restoredPackageSha256: digest(missingFile), originalPackageSha256: hashes[missing.id], allPackageHashes: hashes, files, shadowDirectory, shadowBefore, operationalRows: beforeRemoval }
+    persist()
+    check('restored file is rediscovered by Refresh with the same stable identity, exact saved bytes and preserved real Recovery available candidate')
+  } finally {
+    if (existsSync(disconnected)) renameSync(disconnected, folder)
+    if (existsSync(retainedMissing)) renameSync(retainedMissing, missingFile)
+    if (existsSync(retainedOpen)) renameSync(retainedOpen, files[openControl.id])
+  }
+}
+
 async function manageBrowse() {
   const summaries = await api('list', registered.id)
   const find = (title) => {
@@ -1847,7 +2057,7 @@ async function prepareManagedProjects() {
 persist()
 try {
   await launch('first')
-  if (trashOnly || locationsOnly || moveOnly || relocationOnly || openRenameOnly || browseOnly) {
+  if (trashOnly || locationsOnly || moveOnly || relocationOnly || openRenameOnly || browseOnly || forgetOnly) {
     await prepareManagedProjects()
   } else {
   assert.deepEqual(await api('list'), [])
@@ -2030,17 +2240,19 @@ try {
   )
   await manageWorkspace()
   }
-  if (browseOnly) await manageBrowse()
+  if (forgetOnly) await manageForget()
+  else if (browseOnly) await manageBrowse()
   else if (relocationOnly || openRenameOnly) await manageRelocation()
   else if (moveOnly) await manageMove()
   else if (locationsOnly) await manageLocations()
   else await manageTrash()
   await close('restart-normal')
   assert.deepEqual(report.pageErrors, [])
-  assert.equal(report.nativeClosures.length, browseOnly ? 2 : relocationOnly || openRenameOnly || moveOnly ? 3 : locationsOnly ? 2 : trashOnly ? 4 : 6)
+  assert.equal(report.nativeClosures.length, browseOnly ? 2 : forgetOnly || relocationOnly || openRenameOnly || moveOnly ? 3 : locationsOnly ? 2 : trashOnly ? 4 : 6)
   if (relocationOnly) assert.equal(report.checks.length, 13)
   if (openRenameOnly) assert.equal(report.checks.length, 11)
   if (browseOnly) assert.equal(report.checks.length, 11)
+  if (forgetOnly) assert.equal(report.checks.length, 11)
   report.outcome = 'passed'
   report.finishedAt = new Date().toISOString()
   persist()

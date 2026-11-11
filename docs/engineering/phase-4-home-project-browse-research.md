@@ -149,7 +149,7 @@ disposal, dependencies and reclaimed allocation. Audit and cleanup outcomes must
 be read from those final records, not inferred from this procedure.
 
 For a fresh execution, build the qualified source and use
-`node scripts/smoke-home-workspaces.mjs --report-file ABSOLUTE_NEW_OWNED_REPORT --browse-only`
+`pnpm exec tsx scripts/smoke-home-workspaces.mjs --report-file ABSOLUTE_NEW_OWNED_REPORT --browse-only`
 under the recorded bounded controller/short owned TMPDIR. Re-inventory disk and
 processes first. Do not reuse an old native report or resume removed raw paths.
 For retrospective inspection, reconstruct only into a new owned artifact path

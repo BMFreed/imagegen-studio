@@ -219,6 +219,7 @@ type PendingProjectAction =
       kind:
         | 'delete-project'
         | 'move-project'
+        | 'remove-missing-project'
         | 'rename-project'
         | 'restore-trash'
         | 'reveal-project'
@@ -476,6 +477,14 @@ const workspaceSettingsError = ref<string | null>(null)
 const showRemoveWorkspace = ref(false)
 const removingWorkspace = ref<ProjectWorkspaceSummary | null>(null)
 const removeWorkspaceError = ref<string | null>(null)
+const showRemoveMissingProject = ref(false)
+const removingMissingProject = ref<ProjectSummary | null>(null)
+const removeMissingProjectError = ref<string | null>(null)
+const removeMissingProjectEligible = computed(() => {
+  const captured = removingMissingProject.value
+  const current = projects.value.find(({ id }) => id === captured?.id)
+  return Boolean(current && canRemoveMissingProject(current))
+})
 const importTransfer = ref<ImportTransfer | null>(null)
 const importDialogVisible = ref(false)
 const importChoice = ref<'copy' | 'move'>('move')
@@ -588,6 +597,7 @@ function smartPresetOwnerCurrent(owner: SmartPatchPresetApplicationOwner, applyi
       showRenameProject.value ||
       showWorkspaceSettings.value ||
       showRemoveWorkspace.value ||
+      showRemoveMissingProject.value ||
       importDialogVisible.value ||
       recoveryDecision.value ||
       closingTabId.value ||
@@ -785,6 +795,7 @@ function saveSmartPatchCurrentAsPreset(tabId: string) {
         showRenameProject.value ||
         showWorkspaceSettings.value ||
         showRemoveWorkspace.value ||
+        showRemoveMissingProject.value ||
         importDialogVisible.value ||
         recoveryDecision.value ||
         closingTabId.value ||
@@ -1947,6 +1958,7 @@ watch(
     () => showRenameProject.value,
     () => showWorkspaceSettings.value,
     () => showRemoveWorkspace.value,
+    () => showRemoveMissingProject.value,
     () => importDialogVisible.value,
     () => recoveryDecision.value,
     () => closingTabId.value,
@@ -3546,6 +3558,7 @@ async function selectTrash() {
 
 function beginRenameProject(project: ProjectSummary) {
   if (
+    showRemoveMissingProject.value ||
     showRenameProject.value ||
     showMoveProject.value ||
     showProjectTrashAction.value ||
@@ -3619,6 +3632,7 @@ async function confirmRenameProject() {
 
 function beginMoveProject(project: ProjectSummary) {
   if (
+    showRemoveMissingProject.value ||
     showMoveProject.value ||
     showRenameProject.value ||
     showProjectTrashAction.value ||
@@ -3713,6 +3727,7 @@ async function confirmMoveProject() {
 
 function beginTrashProject(project: ProjectSummary) {
   if (
+    showRemoveMissingProject.value ||
     showProjectTrashAction.value ||
     showMoveProject.value ||
     showRenameProject.value ||
@@ -3727,6 +3742,72 @@ function beginTrashProject(project: ProjectSummary) {
   trashActionError.value = null
   trashPendingMessage.value = null
   showProjectTrashAction.value = true
+}
+
+function canRemoveMissingProject(project: ProjectSummary) {
+  return (
+    !selectedTrashView.value &&
+    project.health === 'missing' &&
+    !project.pendingMove &&
+    !project.pendingRename &&
+    !projectTabs.value.some(({ id }) => id === project.id) &&
+    workspaces.value.some(
+      (workspace) => workspace.id === project.workspaceId && workspace.availability === 'available',
+    )
+  )
+}
+
+function beginRemoveMissingProject(project: ProjectSummary) {
+  const current = projects.value.find(({ id }) => id === project.id)
+  if (
+    !current ||
+    !canRemoveMissingProject(current) ||
+    showRemoveMissingProject.value ||
+    showProjectTrashAction.value ||
+    showMoveProject.value ||
+    showRenameProject.value ||
+    pendingProjectAction.value ||
+    windowClosePending.value
+  ) {
+    return
+  }
+  queueResultNavigator.cancelProjectOpen()
+  removingMissingProject.value = { ...current }
+  removeMissingProjectError.value = null
+  showRemoveMissingProject.value = true
+}
+
+function cancelMissingProjectRemoval() {
+  if (!pendingProjectAction.value && !windowClosePending.value) {
+    showRemoveMissingProject.value = false
+    removeMissingProjectError.value = null
+  }
+}
+
+async function removeMissingProject() {
+  const project = removingMissingProject.value
+  if (
+    !showRemoveMissingProject.value ||
+    !project ||
+    !removeMissingProjectEligible.value ||
+    pendingProjectAction.value ||
+    windowClosePending.value
+  ) {
+    return
+  }
+  const projectId = project.id
+  pendingProjectAction.value = { kind: 'remove-missing-project', projectId }
+  removeMissingProjectError.value = null
+  try {
+    await apiValue(() => projectApi().removeMissingProject(projectId, true))
+    projects.value = projects.value.filter(({ id }) => id !== projectId)
+    showRemoveMissingProject.value = false
+    await refreshProjects()
+  } catch (cause) {
+    removeMissingProjectError.value = errorMessage(cause)
+  } finally {
+    pendingProjectAction.value = null
+  }
 }
 
 async function revealProject(projectId: string) {
@@ -3761,6 +3842,7 @@ async function revealWorkspace(workspaceId: string) {
 
 function beginDeleteProject(project: ProjectTrashSummary) {
   if (
+    showRemoveMissingProject.value ||
     showProjectTrashAction.value ||
     showMoveProject.value ||
     showRenameProject.value ||
@@ -3865,6 +3947,7 @@ async function addWorkspace(input: ProjectWorkspaceAddInput) {
     showRenameProject.value ||
     showWorkspaceSettings.value ||
     showRemoveWorkspace.value ||
+    showRemoveMissingProject.value ||
     pendingProjectAction.value ||
     windowClosePending.value
   ) {
@@ -4893,6 +4976,7 @@ function onAppKeydown(event: KeyboardEvent) {
     showRenameProject.value ||
     showWorkspaceSettings.value ||
     showRemoveWorkspace.value ||
+    showRemoveMissingProject.value ||
     importDialogVisible.value ||
     recoveryDecision.value ||
     closingTabId.value ||
@@ -5208,6 +5292,7 @@ onBeforeUnmount(() => {
           @openProject="openProject"
           @rebuildPreview="rebuildProjectPreview"
           @refresh="refreshProjects"
+          @removeMissingProject="beginRemoveMissingProject"
           @renameProject="beginRenameProject"
           @restoreProject="restoreTrashedProject"
           @revealProject="revealProject"
@@ -5594,6 +5679,54 @@ onBeforeUnmount(() => {
               @click="removeWorkspace"
             >
               Remove Workspace
+            </NButton>
+          </div>
+        </NCard>
+      </NModal>
+
+      <NModal
+        :closeOnEsc="pendingProjectAction === null && !windowClosePending"
+        :maskClosable="false"
+        :show="showRemoveMissingProject"
+        :zIndex="AppLayer.dialog"
+        @update:show="!$event && cancelMissingProjectRemoval()"
+      >
+        <NCard
+          aria-label="Remove from Home"
+          class="dialog-card"
+          contentScrollable
+          role="dialog"
+          size="small"
+          title="Remove from Home"
+        >
+          <p>
+            Remove the missing entry for
+            <strong>{{ removingMissingProject?.title }}</strong>
+            from Home? This only clears its cached listing. Project files and recovery data are
+            kept. If the file returns to its workspace, Refresh can show it again.
+          </p>
+          <NAlert v-if="!removeMissingProjectEligible" type="warning">
+            The Project or workspace state changed. Cancel and refresh Home before trying again.
+          </NAlert>
+          <NAlert v-if="removeMissingProjectError" key="n-alert-2" type="error">
+            {{ removeMissingProjectError }}
+          </NAlert>
+          <div class="dialog-actions">
+            <NButton
+              :disabled="pendingProjectAction !== null || windowClosePending"
+              @click="cancelMissingProjectRemoval"
+            >
+              Cancel
+            </NButton>
+            <NButton
+              :disabled="
+                !removeMissingProjectEligible || pendingProjectAction !== null || windowClosePending
+              "
+              :loading="pendingProjectAction?.kind === 'remove-missing-project'"
+              type="error"
+              @click="removeMissingProject"
+            >
+              Remove from Home
             </NButton>
           </div>
         </NCard>

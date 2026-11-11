@@ -2935,6 +2935,34 @@ export class ProjectService {
     return this.toTab(tabId, coordinator)
   }
 
+  /** Main's existing catalog/generation fences serialize this cache-only lifecycle action. */
+  async removeMissingProject(projectId: string): Promise<void> {
+    assertProjectId(projectId)
+    await this.initialize()
+    const record = await this.options.repository.getProject(projectId)
+    if (!record || record.fileHealth !== 'missing') {
+      throw new ProjectServiceError(
+        'PROJECT_NOT_READY',
+        'Only a missing Project entry can be removed from Home. Refresh Home and try again.',
+      )
+    }
+    const assertClosed = () => {
+      if (
+        this.openTabs.has(projectId) ||
+        this.opening.has(projectId) ||
+        this.rebuilding.has(projectId) ||
+        this.saving.has(projectId) ||
+        [...this.openTabs.values()].some((tab) => tab.filePath === record.canonicalPath)
+      ) {
+        throw new ProjectServiceError(
+          'PROJECT_NOT_READY',
+          'Close the Project and wait for its operations before removing its Home entry.',
+        )
+      }
+    }
+    await this.options.repository.removeMissingProject(record, assertClosed)
+  }
+
   /** Main serializes this metadata lifecycle with Open/Create/Import/scan admission. */
   async removeWorkspace(workspaceId: string): Promise<void> {
     await this.initialize()

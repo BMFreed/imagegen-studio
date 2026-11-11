@@ -1,13 +1,22 @@
 # Implementation Roadmap
 
-## Current Home browse checkpoint
+## Current missing-file Home checkpoint
+
+[Remove from Home](../engineering/phase-4-home-missing-remove-research.md) forgets
+only a proven missing file's derived index entry through existing catalog/Project/
+generation fences and a guarded transaction. Explicit confirmation, Cancel/error,
+retained identity/recovery and ordinary same-key rediscovery have finite checks.
+Locate/Relink, Inspector/full preview and remaining MVP acceptance stay open;
+public statuses are unchanged. Executed evidence and limits live in the note.
+
+## Previous Home browse checkpoint
 
 [Home search/sort/status](../engineering/phase-4-home-project-browse-research.md) connects nullable saved/cached Main timestamps
 and the existing pure Invoke view pipeline to approved Vue/Naive controls. App
 retains query controls across Home remount and scope changes; Reset keeps sort.
 Open/recovery/attention are independent, including unavailable-workspace and
 preview-only controls. No package/lifecycle/schema/inference write is introduced.
-Missing-entry Remove/Locate/Relink, selected Inspector/full preview/grid, remaining
+Locate/Relink, selected Inspector/full preview/grid, remaining
 Models/export/runtime/release and visual/MVP acceptance remain separate. Public
 statuses stay unchanged; executed evidence is bounded in the linked note.
 

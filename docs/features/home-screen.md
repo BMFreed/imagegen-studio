@@ -2,6 +2,14 @@
 
 ## Production checkpoint
 
+[Missing-file Remove from Home](../engineering/phase-4-home-missing-remove-research.md)
+connects the missing row's menu to an explicit confirmation and guarded Main
+transaction. It forgets only the derived Home entry after fresh absence checks in
+an available workspace; location identity and recovery survive. Returning the
+original file and Refresh rediscover the same key. Present files, unavailable
+parents, open Projects and pending operations are refused. Locate/Relink remains
+a separate consumer; this checkpoint does not qualify full Home/MVP acceptance.
+
 [Production browse controls](../engineering/phase-4-home-project-browse-research.md)
 connect name-only search, Last opened/Name/Modified sorting and independent
 Open/Recovery available/Needs attention filters to actual Main metadata. Unknown
@@ -9,8 +17,8 @@ times stay last; equal values use stable name/identity ties. Reset clears search
 and status while retaining sort. App-owned session state survives Home remount
 and workspace/Projects/Trash switches, without a new persistent global setting.
 Needs attention means unhealthy file or unavailable/absent workspace; recovery and
-preview availability remain independent. Selection/Inspector/grid/full preview,
-Locate/Relink and cache-only missing-entry removal remain separate consumers.
+preview availability remain independent. Selection/Inspector/grid/full preview
+and Locate/Relink remain separate consumers.
 
 [Clean-open Rename](../engineering/phase-4-clean-open-rename-research.md) now keeps
 the live Project tab and canvas Undo/Redo while changing title and filename.

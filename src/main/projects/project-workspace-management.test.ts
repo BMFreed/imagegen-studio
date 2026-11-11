@@ -1,7 +1,18 @@
 import { sql } from 'kysely'
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { renameSync } from 'node:fs'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -430,5 +441,230 @@ test('the final registry guard aborts and rolls back rows already removed inside
     assert.deepEqual(await f.repository.getProject(project.id), row)
     assert.deepEqual(await f.repository.listSavedAcceptedResults(project.id), accepted)
     assert.equal((await f.service.listWorkspaces()).length, 2)
+  })
+})
+
+test('missing Home removal preserves operational identity and recovery; restored bytes reindex the same accepted Project', async () => {
+  await withFixture(async (f) => {
+    const retiredControl = await f.service.create({
+      ...createInput,
+      title: 'Retired control',
+      workspaceId: f.workspace.id,
+    })
+    await f.service.close(retiredControl.id)
+    await f.service.trashProject(retiredControl.id)
+    const trash = (await f.service.listTrash()).find(({ id }) => id === retiredControl.id)
+    assert.ok(trash)
+    await f.service.deleteProjectPermanently(trash.id, trash.trashId)
+    const project = await acceptedProject(f)
+    await f.service.renameProject(project.id, 'Renamed accepted fixture')
+    await f.service.list(f.workspace.id)
+    const record = await f.repository.getProject(project.id)
+    assert.ok(record)
+    const accepted = await f.repository.listSavedAcceptedResults(project.id)
+    assert.equal(accepted.length, 1)
+    const original = await readFile(record.canonicalPath)
+    const session = await ProjectSession.open(record.canonicalPath, f.roots)
+    const shadow = new ProjectShadowStore(path.join(f.dataRoot, 'autosave'))
+    await shadow.write({
+      document: {
+        ...session.document,
+        documentRevision: randomUUID(),
+        primaryBbox: { ...session.document.primaryBbox, x: 8 },
+      },
+      projectPath: record.canonicalPath,
+      savedDocument: session.document,
+    })
+    const now = new Date().toISOString()
+    await f.database.db
+      .insertInto('generation_queue_item')
+      .values({
+        batch_id: randomUUID(),
+        canonical_project_path: record.canonicalPath,
+        created_at: now,
+        document_id: session.document.documentId,
+        document_revision: session.document.documentRevision,
+        error_code: 'FIXTURE',
+        error_message: 'Opaque retained terminal storage control',
+        finished_at: now,
+        frozen_payload_json: '{}',
+        id: randomUUID(),
+        local_project_key: project.id,
+        operation: 'illustrious-txt2img',
+        staging_session_id: randomUUID(),
+        started_at: null,
+        status: 'failed',
+        status_sequence: 0,
+        updated_at: now,
+      })
+      .execute()
+    const queue = await f.database.db.selectFrom('generation_queue_item').selectAll().execute()
+    const bindings = await f.database.db
+      .selectFrom('project_identity_binding')
+      .selectAll()
+      .execute()
+    const retired = await f.database.db
+      .selectFrom('project_identity_retired_key')
+      .selectAll()
+      .execute()
+    assert.ok(bindings.length > 0)
+    assert.ok(retired.length > 0)
+    const recoveryBytes = await bytesIn(path.join(f.dataRoot, 'autosave'))
+    const retained = path.join(f.root, 'retained.igs')
+    await rename(record.canonicalPath, retained)
+    assert.equal((await f.service.list(f.workspace.id))[0].health, 'missing')
+    await f.service.removeMissingProject(project.id)
+    assert.equal(await f.repository.getProject(project.id), null)
+    assert.deepEqual(await f.repository.listSavedAcceptedResults(project.id), [])
+    assert.deepEqual(await f.makeService().list(f.workspace.id), [])
+    assert.deepEqual(
+      await f.database.db.selectFrom('generation_queue_item').selectAll().execute(),
+      queue,
+    )
+    assert.deepEqual(
+      await f.database.db.selectFrom('project_identity_binding').selectAll().execute(),
+      bindings,
+    )
+    assert.deepEqual(
+      await f.database.db.selectFrom('project_identity_retired_key').selectAll().execute(),
+      retired,
+    )
+    assert.deepEqual(await bytesIn(path.join(f.dataRoot, 'autosave')), recoveryBytes)
+    assert.deepEqual(await readFile(retained), original)
+    await rename(retained, record.canonicalPath)
+    const restored = (await f.service.list(f.workspace.id))[0]
+    assert.equal(restored.id, project.id)
+    assert.equal(restored.recoveryStatus, 'recoverable')
+    const restoredRecord = await f.repository.getProject(project.id)
+    assert.ok(restoredRecord)
+    assert.deepEqual(
+      await f.repository.listSavedAcceptedResults(project.id),
+      accepted.map((result) => ({ ...result, fileFingerprint: restoredRecord.fileFingerprint })),
+    )
+    assert.deepEqual(await readFile(record.canonicalPath), original)
+    assert.deepEqual(await bytesIn(path.join(f.dataRoot, 'autosave')), recoveryBytes)
+  })
+})
+
+test('missing Home removal refuses stale missing when any file directory or dangling symlink reappears', async () => {
+  await withFixture(async (f) => {
+    const tab = await f.service.create({ ...createInput, workspaceId: f.workspace.id })
+    await f.service.close(tab.id)
+    const record = await f.repository.getProject(tab.id)
+    assert.ok(record)
+    const retained = path.join(f.root, 'retained.igs')
+    await assert.rejects(f.service.removeMissingProject(tab.id), { code: 'PROJECT_NOT_READY' })
+    await rename(record.canonicalPath, retained)
+    await f.service.list(f.workspace.id)
+    const missing = await f.repository.getProject(tab.id)
+    const bytes = await readFile(retained)
+    for (const kind of ['saved', 'corrupt', 'directory', 'symlink']) {
+      if (kind === 'saved') {
+        await writeFile(record.canonicalPath, bytes)
+      }
+      if (kind === 'corrupt') {
+        await writeFile(record.canonicalPath, 'existing damaged package')
+      }
+      if (kind === 'directory') {
+        await mkdir(record.canonicalPath)
+      }
+      if (kind === 'symlink') {
+        await symlink(path.join(f.root, 'absent-target'), record.canonicalPath)
+      }
+      try {
+        await assert.rejects(f.service.removeMissingProject(tab.id), { code: 'INDEX_FILE_CHANGED' })
+        assert.deepEqual(await f.repository.getProject(tab.id), missing)
+      } finally {
+        await rm(record.canonicalPath, { recursive: true })
+      }
+    }
+    await rename(retained, record.canonicalPath)
+    assert.deepEqual(await readFile(record.canonicalPath), bytes)
+  })
+})
+
+test('missing Home removal requires an available canonical parent and accepts readable readonly workspaces', async () => {
+  await withFixture(async (f) => {
+    const tab = await f.service.create({ ...createInput, workspaceId: f.workspace.id })
+    await f.service.close(tab.id)
+    const record = await f.repository.getProject(tab.id)
+    assert.ok(record)
+    await rename(record.canonicalPath, path.join(f.root, 'retained.igs'))
+    await f.service.list(f.workspace.id)
+    const before = await f.repository.getProject(tab.id)
+    const disconnected = `${f.directory}-disconnected`
+    await rename(f.directory, disconnected)
+    try {
+      await assert.rejects(f.service.removeMissingProject(tab.id), {
+        code: 'WORKSPACE_UNAVAILABLE',
+      })
+      await symlink(disconnected, f.directory)
+      await assert.rejects(f.service.removeMissingProject(tab.id), {
+        code: 'WORKSPACE_UNAVAILABLE',
+      })
+      await rm(f.directory)
+      assert.deepEqual(await f.repository.getProject(tab.id), before)
+    } finally {
+      await rename(disconnected, f.directory)
+    }
+    await chmod(f.directory, 0o000)
+    try {
+      await assert.rejects(f.service.removeMissingProject(tab.id), {
+        code: 'WORKSPACE_UNAVAILABLE',
+      })
+      assert.deepEqual(await f.repository.getProject(tab.id), before)
+    } finally {
+      await chmod(f.directory, 0o500)
+    }
+    try {
+      await f.service.removeMissingProject(tab.id)
+      assert.equal(await f.repository.getProject(tab.id), null)
+    } finally {
+      await chmod(f.directory, 0o700)
+    }
+  })
+})
+
+test('missing Home removal refuses open Projects and rolled-back final guards keep derived rows', async () => {
+  await withFixture(async (f) => {
+    const tab = await f.service.create({ ...createInput, workspaceId: f.workspace.id })
+    const record = await f.repository.getProject(tab.id)
+    assert.ok(record)
+    const retained = path.join(f.root, 'retained.igs')
+    await rename(record.canonicalPath, retained)
+    try {
+      await f.service.list(f.workspace.id)
+      await assert.rejects(f.service.removeMissingProject(tab.id), { code: 'PROJECT_NOT_READY' })
+    } finally {
+      await rename(retained, record.canonicalPath)
+      await f.service.close(tab.id)
+    }
+    await rename(record.canonicalPath, retained)
+    await f.service.list(f.workspace.id)
+    const missing = await f.repository.getProject(tab.id)
+    assert.ok(missing)
+    const refusal = new Error('final closed-owner guard')
+    let checks = 0
+    await assert.rejects(
+      f.repository.removeMissingProject(missing, () => {
+        if (++checks === 4) {
+          throw refusal
+        }
+      }),
+      (error) => error === refusal,
+    )
+    assert.equal(checks, 4)
+    assert.deepEqual(await f.repository.getProject(tab.id), missing)
+    checks = 0
+    await assert.rejects(
+      f.repository.removeMissingProject(missing, () => {
+        if (++checks === 3) {
+          renameSync(retained, record.canonicalPath)
+        }
+      }),
+      { code: 'INDEX_FILE_CHANGED' },
+    )
+    assert.deepEqual(await f.repository.getProject(tab.id), missing)
+    assert.equal((await f.service.list(f.workspace.id))[0].health, 'ready')
   })
 })

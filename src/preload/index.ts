@@ -1576,6 +1576,8 @@ const api: StudioApi = {
         [tabId, identity, targetLayerId ?? null],
         isProjectTab,
       ),
+    removeMissingProject: (projectId, confirmed) =>
+      invokeProject(ipcChannels.projects.removeMissingProject, [projectId, confirmed], isVoid),
     removeWorkspace: (workspaceId, confirmed) =>
       invokeProject(ipcChannels.projects.removeWorkspace, [workspaceId, confirmed], isVoid),
     renameProject: (projectId, name) =>

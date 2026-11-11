@@ -472,6 +472,83 @@ export class ProjectIndexRepository {
       .execute()
   }
 
+  /** Forget a proven missing file's derived Home row; recovery/location owners are untouched. */
+  async removeMissingProject(
+    expected: ProjectIndexRecord,
+    assertClosed: () => void,
+  ): Promise<void> {
+    await withProjectPathLock(expected.canonicalPath, async () => {
+      await this.db.transaction().execute(async (transaction) => {
+        const row = await transaction
+          .selectFrom('project_index')
+          .selectAll()
+          .where('local_project_key', '=', expected.localProjectKey)
+          .executeTakeFirst()
+        const workspace = row
+          ? await transaction
+              .selectFrom('project_workspace')
+              .selectAll()
+              .where('id', '=', row.workspace_id)
+              .executeTakeFirst()
+          : undefined
+        const lifecycle = await transaction
+          .selectFrom('project_file_lifecycle')
+          .select('local_project_key')
+          .where('local_project_key', '=', expected.localProjectKey)
+          .executeTakeFirst()
+        const relocation = await transaction
+          .selectFrom('project_relocation')
+          .select('local_project_key')
+          .where('local_project_key', '=', expected.localProjectKey)
+          .executeTakeFirst()
+        if (
+          !row ||
+          !workspace ||
+          row.canonical_path !== expected.canonicalPath ||
+          row.workspace_id !== expected.workspaceId ||
+          row.file_health !== 'missing' ||
+          row.trashed_at !== null ||
+          lifecycle ||
+          relocation ||
+          path.dirname(row.canonical_path) !== workspace.directory_path ||
+          path.extname(row.canonical_path).toLowerCase() !== '.igs'
+        ) {
+          throw new ProjectIndexError(
+            'INDEX_FILE_CHANGED',
+            'Refresh Home before removing this missing entry.',
+          )
+        }
+        const assertMissing = async () => {
+          assertClosed()
+          await assertWorkspaceDirectory(workspace.directory_path)
+          try {
+            await lstat(row.canonical_path)
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+              throw error
+            }
+            // ENOENT can also mean the parent disappeared. Recheck its canonical access.
+            await assertWorkspaceDirectory(workspace.directory_path)
+            assertClosed()
+            return
+          }
+          throw new ProjectIndexError(
+            'INDEX_FILE_CHANGED',
+            'The Project path exists again. Refresh Home to inspect it before removing an entry.',
+          )
+        }
+        await assertMissing()
+        // Only the derived accepted-result index cascades, as for Remove Workspace.
+        await transaction
+          .deleteFrom('project_index')
+          .where('local_project_key', '=', row.local_project_key)
+          .execute()
+        // Any reappearance or operation admitted during the await rolls the transaction back.
+        await assertMissing()
+      })
+    })
+  }
+
   /** Forget only rebuildable registrations, adapting Invoke's guarded metadata transaction. */
   async removeWorkspace(
     workspaceId: string,

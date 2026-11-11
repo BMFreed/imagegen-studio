@@ -224,6 +224,7 @@ export const ipcChannels = {
     relinkGenerationModel: 'projects:relink-generation-model',
     relinkGenerationVae: 'projects:relink-generation-vae',
     removeGenerationLora: 'projects:remove-generation-lora',
+    removeMissingProject: 'projects:remove-missing',
     removeWorkspace: 'projects:remove-workspace',
     renameProject: 'projects:rename',
     resolveRecovery: 'projects:resolve-recovery',
@@ -754,6 +755,7 @@ export interface ProjectApi {
     identity: ProjectLoraIdentity,
     targetLayerId?: string,
   ) => Promise<ApiResult<ProjectTab>>
+  removeMissingProject: (projectId: string, confirmed: boolean) => Promise<ApiResult<void>>
   removeWorkspace: (workspaceId: string, confirmed: boolean) => Promise<ApiResult<void>>
   renameProject: (projectId: string, name: string) => Promise<ApiResult<ProjectRenameResult>>
   resolveRecovery: (

@@ -71,6 +71,7 @@ const emit = defineEmits<{
   openProject: [projectId: string]
   rebuildPreview: [projectId: string]
   refresh: []
+  removeMissingProject: [project: ProjectSummary]
   renameProject: [project: ProjectSummary]
   restoreProject: [project: ProjectTrashSummary]
   revealProject: [projectId: string]
@@ -117,6 +118,18 @@ function canRequestRename(project: ProjectSummary) {
     (project.health === 'ready' && project.recoveryStatus === 'none')
   )
 }
+function canRemoveMissingProject(project: ProjectSummary) {
+  return (
+    !props.trashView &&
+    project.health === 'missing' &&
+    !project.pendingMove &&
+    !project.pendingRename &&
+    !props.openProjectIds?.includes(project.id) &&
+    props.workspaces.some(
+      (workspace) => workspace.id === project.workspaceId && workspace.availability === 'available',
+    )
+  )
+}
 function requestProjectAction(key: number | string, project: ProjectSummary) {
   if (project.pendingMove) {
     if (key === 'move') {
@@ -138,6 +151,8 @@ function requestProjectAction(key: number | string, project: ProjectSummary) {
     emit('renameProject', project)
   } else if (key === 'trash') {
     emit('trashProject', project)
+  } else if (key === 'remove-missing' && canRemoveMissingProject(project)) {
+    emit('removeMissingProject', project)
   }
 }
 function requestWorkspaceAction(key: number | string, workspaceId: string) {
@@ -682,6 +697,9 @@ function recoveryLabel(project: ProjectSummary): string | null {
                           },
                           { key: 'reveal', label: 'Show in Folder' },
                           { key: 'trash', label: 'Move to Trash' },
+                          ...(canRemoveMissingProject(project)
+                            ? [{ key: 'remove-missing', label: 'Remove from Home' }]
+                            : []),
                         ]
                 "
                 trigger="click"

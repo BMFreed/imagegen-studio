@@ -401,3 +401,19 @@ test('Home browse timestamps accept legacy or canonical nullable metadata and re
     assert.equal((await f.api.projects.list()).ok, false)
   }
 })
+
+test('Remove from Home preload transports opaque identity and explicit confirmation, accepting only void success', async () => {
+  const f = await fixture()
+  const id = `project-v1-${'a'.repeat(64)}`
+  f.state.value = undefined
+  assert.equal((await f.api.projects.removeMissingProject(id, true)).ok, true)
+  assert.equal((await f.api.projects.removeMissingProject(id, false)).ok, true)
+  assert.deepEqual(f.calls, [
+    { args: [id, true], channel: ipcChannels.projects.removeMissingProject },
+    { args: [id, false], channel: ipcChannels.projects.removeMissingProject },
+  ])
+  for (const value of [null, true, { removed: true }]) {
+    f.state.value = value
+    assert.equal((await f.api.projects.removeMissingProject(id, true)).ok, false)
+  }
+})
