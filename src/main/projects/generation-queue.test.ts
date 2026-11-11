@@ -30,6 +30,9 @@ import {
   withIllustriousTxt2ImgRequest,
 } from './illustrious-txt2img-job.js'
 import { localProjectRecoveryKey } from './project-identity.js'
+import { ProjectIndexRepository } from './project-index.js'
+import { ProjectRelocationStore } from './project-relocation-store.js'
+import { ProjectSession } from './project-session.js'
 import { capturedEmbeddingFieldsFixture } from './test-fixtures/generation-embeddings.js'
 
 const migrations = path.resolve('src/main/db/migrations')
@@ -3526,6 +3529,90 @@ test('legacy noise policy is the immutable baseline; new neutral jobs work with 
       { code: 'GENERATION_SAMPLING_UNSUPPORTED' },
     )
   } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
+test('real Project Move preserves terminal ordinary frozen input and restarted Retry under its stable key', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-queue-move-retry-'))
+  let database = openAppDatabase(root, migrations)
+  try {
+    const { prepared } = await fixture(root)
+    const repository = new ProjectIndexRepository(database.db)
+    const sourceWorkspace = await repository.ensureDefaultWorkspace(root)
+    const destinationDirectory = path.join(root, 'destination-workspace')
+    await mkdir(destinationDirectory)
+    const targetWorkspace = await repository.addWorkspace(
+      { color: 'violet', displayName: 'Retry destination' },
+      destinationDirectory,
+    )
+    const sourcePath = path.join(sourceWorkspace.directoryPath, 'Frozen Retry.igs')
+    const session = await ProjectSession.create(
+      sourcePath,
+      'Frozen Retry',
+      {
+        placeholdersDir: path.resolve('src/main/projects/placeholders'),
+        scratchDir: path.join(root, 'project-scratch'),
+      },
+      prepared.context.bbox,
+    )
+    prepared.context.documentId = session.document.documentId
+    prepared.context.documentRevision = session.document.documentRevision
+    const project = await repository.indexSaved(sourcePath, sourceWorkspace.id)
+    const originalPackage = await readFile(sourcePath)
+    const queue = new GenerationQueueRepository(database.db, root)
+    await queue.recoverAfterRestart()
+    const admitted = await enqueueFixture(root, queue, prepared, sourcePath)
+    await queue.cancel(admitted.id)
+    const original = await queue.loadVerifiedInput(admitted.id)
+    const originalTarget = await readFile(original.targetPath)
+    const originalRow = await database.db
+      .selectFrom('generation_queue_item')
+      .selectAll()
+      .where('id', '=', admitted.id)
+      .executeTakeFirstOrThrow()
+    const store = new ProjectRelocationStore(database.db)
+    const move = await store.beginMove(project, sourceWorkspace, targetWorkspace, () => undefined)
+    assert.deepEqual(await store.finishMove(move), { kind: 'moved' })
+    await assert.rejects(readFile(sourcePath), { code: 'ENOENT' })
+    assert.deepEqual(await readFile(move.destinationPath), originalPackage)
+    assert.equal(localProjectRecoveryKey(move.destinationPath), admitted.localProjectKey)
+    assert.deepEqual(
+      await database.db
+        .selectFrom('generation_queue_item')
+        .selectAll()
+        .where('id', '=', admitted.id)
+        .executeTakeFirstOrThrow(),
+      { ...originalRow, canonical_project_path: move.destinationPath },
+    )
+    const relocated = await queue.loadVerifiedInput(admitted.id)
+    assert.equal(relocated.item.projectPath, move.destinationPath)
+    assert.equal(relocated.item.localProjectKey, original.item.localProjectKey)
+    assert.deepEqual(relocated.payload, original.payload)
+    assert.deepEqual(await readFile(relocated.targetPath), originalTarget)
+    await database.close()
+    database = openAppDatabase(root, migrations)
+    const restarted = new GenerationQueueRepository(database.db, root)
+    await restarted.recoverAfterRestart()
+    const source = await restarted.loadVerifiedInput(admitted.id)
+    assert.equal(source.item.projectPath, move.destinationPath)
+    assert.deepEqual(source.payload, original.payload)
+    const retry = await restarted.retryTerminal(source.item.id, source.item.statusSequence)
+    const retried = await restarted.loadVerifiedInput(retry.id)
+    assert.notEqual(retry.id, admitted.id)
+    assert.notEqual(retry.stagingSessionId, admitted.stagingSessionId)
+    assert.equal(retry.localProjectKey, admitted.localProjectKey)
+    assert.equal(retry.projectPath, move.destinationPath)
+    assert.deepEqual(retried.payload, original.payload)
+    assert.deepEqual(await readFile(retried.targetPath), originalTarget)
+    assert.equal(retried.payload.workerJob.sampling.seed, prepared.context.sampling.seed)
+    assert.deepEqual(await readFile(move.destinationPath), originalPackage)
+    assert.equal(
+      (await database.db.selectFrom('project_relocation').selectAll().execute()).length,
+      0,
+    )
+  } finally {
+    await database.close()
     await rm(root, { force: true, recursive: true })
   }
 })

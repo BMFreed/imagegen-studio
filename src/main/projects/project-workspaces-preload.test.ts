@@ -243,3 +243,46 @@ test('tab workspace identity is additive for legacy messages and strict when sup
     assert.equal((await f.api.projects.create(request)).ok, false)
   }
 })
+
+test('Move preload transports only stable Project and target workspace IDs and validates pending results', async () => {
+  const f = await fixture()
+  const id = `project-v1-${'c'.repeat(64)}`
+  const target = randomUUID()
+  f.state.value = { kind: 'moved' }
+  assert.equal((await f.api.projects.moveProject(id, target)).ok, true)
+  f.state.value = { kind: 'pending', message: 'Restore access to the original destination.' }
+  assert.equal((await f.api.projects.moveProject(id, target)).ok, true)
+  assert.deepEqual(f.calls[0], { args: [id, target], channel: ipcChannels.projects.moveProject })
+  for (const value of [
+    { kind: 'pending' },
+    { kind: 'pending', message: null },
+    { kind: 'copied' },
+  ]) {
+    f.state.value = value
+    assert.equal((await f.api.projects.moveProject(id, target)).ok, false)
+  }
+})
+
+test('Home preload preserves a finite pending Move projection and rejects arbitrary target paths', async () => {
+  const f = await fixture()
+  const summary = {
+    bbox: { height: 64, width: 64 },
+    health: 'ready',
+    id: `project-v1-${'d'.repeat(64)}`,
+    previewStatus: 'unavailable',
+    recoveryStatus: 'none',
+    thumbnailUrl: null,
+    title: 'Pending Move',
+    workspaceId: randomUUID(),
+  }
+  f.state.value = [{ ...summary, pendingMove: { message: 'Pending', workspaceId: randomUUID() } }]
+  assert.equal((await f.api.projects.list()).ok, true)
+  for (const pendingMove of [
+    { message: 'Pending', workspaceId: '/tmp/foreign' },
+    { workspaceId: randomUUID() },
+    { message: null, workspaceId: randomUUID() },
+  ]) {
+    f.state.value = [{ ...summary, pendingMove }]
+    assert.equal((await f.api.projects.list()).ok, false)
+  }
+})

@@ -22,7 +22,7 @@ import path from 'node:path'
 import type { DB } from '../db/database.types.js'
 import type { ProjectIndexRecord, ProjectWorkspaceRecord } from './project-index.js'
 
-import { localProjectRecoveryKey } from './project-identity.js'
+import { localProjectRecoveryKey, refreshProjectLocationRegistry } from './project-identity.js'
 import { withProjectPathLock } from './project-path-lock.js'
 
 export interface ProjectTrashRecord {
@@ -183,6 +183,7 @@ export class ProjectTrashStore {
       ) {
         throw conflict()
       }
+      let finalized = false
       try {
         await this.options.beforeFinalFileCheck?.(record)
         const current = await this.get(record.localProjectKey)
@@ -209,6 +210,17 @@ export class ProjectTrashStore {
             if (!row || !sameAuthority(fromRow(row), record)) {
               throw conflict()
             }
+            // Preserve Invoke's non-reused stable-name property after freeing the physical slot.
+            // Queue/history remains separately owned; a later file must not inherit this key.
+            await transaction
+              .insertInto('project_identity_retired_key')
+              .values({ local_project_key: record.localProjectKey })
+              .onConflict((conflict) => conflict.column('local_project_key').doNothing())
+              .execute()
+            await transaction
+              .deleteFrom('project_identity_binding')
+              .where('local_project_key', '=', record.localProjectKey)
+              .execute()
             await transaction
               .deleteFrom('project_file_lifecycle')
               .where('local_project_key', '=', record.localProjectKey)
@@ -217,11 +229,18 @@ export class ProjectTrashStore {
               .where('state', '=', 'deleting')
               .execute()
           })
+          finalized = true
+          refreshProjectLocationRegistry(this.db)
         } finally {
           closeSync(parentFd)
         }
         return { kind: 'deleted' }
       } catch (error) {
+        // The file and positive journal are already durably finalized. A poisoned identity
+        // projection must fail closed for later operations, not invent a pending delete row.
+        if (finalized) {
+          return { kind: 'deleted' }
+        }
         const message = pendingMessage(error)
         // Preserve the journal on every failure, including an inability to save its diagnostic.
         await this.db

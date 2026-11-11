@@ -219,6 +219,16 @@ export interface ProjectFileLifecycle {
   workspace_name: string
 }
 
+export interface ProjectIdentityBinding {
+  canonical_path: string
+  document_id: string
+  local_project_key: string
+}
+
+export interface ProjectIdentityRetiredKey {
+  local_project_key: string
+}
+
 export interface ProjectIndex {
   bbox_height: number | null
   bbox_width: number | null
@@ -239,6 +249,25 @@ export interface ProjectIndex {
   search_name: string
   trashed_at: string | null
   workspace_id: string
+}
+
+export interface ProjectRelocation {
+  created_at: string
+  destination_path: string
+  document_id: string
+  error_message: string | null
+  local_project_key: string
+  operation_id: string
+  project_json: string
+  source_parent_witness_json: string
+  source_path: string
+  source_sha256: string
+  source_witness_json: string
+  source_workspace_id: string
+  state: string
+  target_parent_witness_json: string
+  target_workspace_id: string
+  updated_at: string
 }
 
 export interface ProjectWorkspace {
@@ -275,7 +304,10 @@ export interface DB {
   presets: Presets
   project_accepted_result_index: ProjectAcceptedResultIndex
   project_file_lifecycle: ProjectFileLifecycle
+  project_identity_binding: ProjectIdentityBinding
+  project_identity_retired_key: ProjectIdentityRetiredKey
   project_index: ProjectIndex
+  project_relocation: ProjectRelocation
   project_workspace: ProjectWorkspace
   schema_migrations: SchemaMigrations
 }

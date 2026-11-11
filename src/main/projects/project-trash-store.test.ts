@@ -491,3 +491,18 @@ test('an indexed missing source cannot freeze a later occupant under its stale T
     assert.deepEqual(await readFile(f.project.canonicalPath), foreign)
   })
 })
+
+test('committed deletion does not invent a pending row if postcommit identity refresh requires repair', async () => {
+  await withFixture(async (f) => {
+    const record = await committed(f)
+    await sql`CREATE TRIGGER corrupt_retirement AFTER DELETE ON project_file_lifecycle
+      BEGIN INSERT INTO project_identity_binding (local_project_key, canonical_path, document_id)
+      VALUES (OLD.local_project_key, OLD.canonical_path, json_extract(OLD.project_json, '$.documentId')); END`.execute(
+      f.database.db,
+    )
+    assert.deepEqual(await f.store.finishPermanentDelete(record), { kind: 'deleted' })
+    await assert.rejects(readFile(record.canonicalPath), { code: 'ENOENT' })
+    assert.equal(await f.store.get(record.localProjectKey), null)
+    assert.throws(() => localProjectRecoveryKey(record.canonicalPath), /identity|location|storage/i)
+  })
+})

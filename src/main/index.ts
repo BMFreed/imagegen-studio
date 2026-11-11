@@ -214,6 +214,7 @@ import {
   streamSavedProjectRegionalReferenceThumbnail,
   streamStagedProjectRegionalReferenceThumbnail,
 } from './projects/project-regional-reference-resource.js'
+import { ProjectRelocationStoreError } from './projects/project-relocation-store.js'
 import { ProjectService, ProjectServiceError } from './projects/project-service.js'
 import { ProjectSessionError } from './projects/project-session.js'
 import { ProjectShadowError, ProjectShadowStore } from './projects/project-shadow.js'
@@ -814,7 +815,7 @@ if (!gotInstanceLock) {
         projectGenerationGate,
       )
       openImportedProject = (projectId) => projectGenerationRecovery.open(projectId)
-      async function withClosedProjectTrash<T>(
+      async function withClosedProjectMaintenance<T>(
         projectId: string,
         use: () => Promise<T>,
       ): Promise<T> {
@@ -822,14 +823,14 @@ if (!gotInstanceLock) {
           if (projectService.getOpenTabs().some((tab) => tab.id === projectId)) {
             throw new ProjectServiceError(
               'PROJECT_ALREADY_OPEN',
-              'Close the Project before moving it to Trash or deleting it.',
+              'Close the Project before changing its location or Trash state.',
             )
           }
           const services = generationLifecycleServices
           if (!services) {
             throw new ProjectServiceError(
               'PROJECT_INVALID_INPUT',
-              'Generation recovery cannot be inspected. Repair recovery storage before changing Project Trash.',
+              'Generation recovery cannot be inspected. Repair recovery storage before changing Project location or Trash state.',
             )
           }
           return await services.orchestrator.withProjectMaintenanceFence(projectId, async () => {
@@ -842,7 +843,7 @@ if (!gotInstanceLock) {
             ) {
               throw new ProjectServiceError(
                 'PROJECT_INVALID_INPUT',
-                'Open the Project and resolve its pending generation or results before moving it to Trash or deleting it.',
+                'Open the Project and resolve its pending generation or results before changing its location or Trash state.',
               )
             }
             return await use()
@@ -1428,6 +1429,7 @@ if (!gotInstanceLock) {
         ipcChannels.projects.list,
         ipcChannels.projects.listTrash,
         ipcChannels.projects.listWorkspaces,
+        ipcChannels.projects.moveProject,
         ipcChannels.projects.open,
         ipcChannels.projects.rebuildPreview,
         ipcChannels.projects.removeWorkspace,
@@ -1507,6 +1509,7 @@ if (!gotInstanceLock) {
               error instanceof ProjectSessionError ||
               error instanceof ProjectIndexError ||
               error instanceof ProjectTrashStoreError ||
+              error instanceof ProjectRelocationStoreError ||
               error instanceof ProjectIdentityError ||
               error instanceof ProjectShadowError ||
               error instanceof RasterImportError ||
@@ -1555,11 +1558,19 @@ if (!gotInstanceLock) {
       registerProjectHandler(ipcChannels.projects.listWorkspaces, noArgs, () =>
         projectService.listWorkspaces(),
       )
+      registerProjectHandler(
+        ipcChannels.projects.moveProject,
+        (args) => args.length === 2 && isProjectId(args[0]) && isProjectWorkspaceId(args[1]),
+        (id, workspaceId) =>
+          withClosedProjectMaintenance(id as string, () =>
+            projectService.moveProject(id as string, workspaceId as string),
+          ),
+      )
       registerProjectHandler(ipcChannels.projects.listTrash, noArgs, () =>
         projectService.listTrash(),
       )
       registerProjectHandler(ipcChannels.projects.trashProject, oneProjectId, (id) =>
-        withClosedProjectTrash(id as string, () => projectService.trashProject(id as string)),
+        withClosedProjectMaintenance(id as string, () => projectService.trashProject(id as string)),
       )
       registerProjectHandler(
         ipcChannels.projects.restoreProject,
@@ -1577,7 +1588,7 @@ if (!gotInstanceLock) {
           isProjectDocumentId(args[1]) &&
           args[2] === true,
         (id, trashId) =>
-          withClosedProjectTrash(id as string, () =>
+          withClosedProjectMaintenance(id as string, () =>
             projectService.deleteProjectPermanently(id as string, trashId as string),
           ),
       )

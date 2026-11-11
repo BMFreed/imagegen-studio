@@ -28,10 +28,11 @@ import {
   confirmQualificationProcessExit,
 } from './qualification-resource-limits.mjs'
 
-assert.ok([4, 5].includes(process.argv.length), 'Use --report-file ABSOLUTE_NEW_OWNED_REPORT [--trash-only|--locations-only]')
+assert.ok([4, 5].includes(process.argv.length), 'Use --report-file ABSOLUTE_NEW_OWNED_REPORT [--trash-only|--locations-only|--move-only]')
 const trashOnly = process.argv[4] === '--trash-only'
 const locationsOnly = process.argv[4] === '--locations-only'
-if (process.argv.length === 5) assert.ok(trashOnly || locationsOnly)
+const moveOnly = process.argv[4] === '--move-only'
+if (process.argv.length === 5) assert.ok(trashOnly || locationsOnly || moveOnly)
 assert.equal(process.argv[2], '--report-file')
 const reportFile = process.argv[3]
 const evidenceRoot = path.dirname(reportFile)
@@ -50,7 +51,7 @@ const execute = promisify(execFile)
 const digest = (file) => createHash('sha256').update(readFileSync(file)).digest('hex')
 const report = {
   outcome: 'running',
-  mode: locationsOnly ? 'locations-only' : trashOnly ? 'trash-only' : 'catalog-workspaces-and-trash',
+  mode: moveOnly ? 'move-only' : locationsOnly ? 'locations-only' : trashOnly ? 'trash-only' : 'catalog-workspaces-and-trash',
   startedAt: new Date().toISOString(),
   payloads: [payload],
   checks: [],
@@ -67,6 +68,12 @@ const report = {
       'src/preload/index.ts',
       'src/main/projects/project-index.ts',
       'src/main/projects/project-service.ts',
+      'src/main/projects/project-identity.ts',
+      'src/main/projects/project-location-registry.ts',
+      'src/main/projects/project-relocation-store.ts',
+      'src/main/db/database.ts',
+      'src/main/db/migrations/0028_project_relocation.sql',
+      'src/renderer/components/MoveProjectModal.vue',
       'src/shared/projects/project-create.ts',
       'src/shared/projects/project-workspaces.ts',
       'src/shared/api.ts',
@@ -771,6 +778,133 @@ async function manageLocations() {
     }
   }
 }
+async function manageMove() {
+  const source = registered
+  const destinationFolder = path.join(payload, 'move-destination')
+  mkdirSync(destinationFolder)
+  await picker(destinationFolder)
+  await home().getByRole('button', { name: 'Add Workspace', exact: true }).click()
+  await addModal().getByRole('textbox', { name: 'Workspace name', exact: true }).fill('Move destination')
+  await addModal().getByRole('button', { name: 'Choose Folder and Add', exact: true }).click()
+  await expect(addModal()).toHaveCount(0)
+  const target = (await api('listWorkspaces')).find((v) => v.directoryPath === destinationFolder)
+  const rows = await api('list', source.id)
+  const first = rows.find((v) => v.title === 'Workspace Project')
+  const pendingProject = rows.find((v) => v.title === 'Move Project')
+  const sourceFile = (await indexRecord(first.id)).canonical_path
+  const pendingSource = (await indexRecord(pendingProject.id)).canonical_path
+  const destinationFile = path.join(destinationFolder, path.basename(sourceFile))
+  const pendingDestination = path.join(destinationFolder, path.basename(pendingSource))
+  const originalHash = digest(sourceFile)
+  const pendingHash = digest(pendingSource)
+  const moveModal = () => window.getByRole('dialog', { name: 'Move Project', exact: true })
+  async function browseSource() {
+    await showHome()
+    await home().locator('.workspace-select').filter({ hasText: source.displayName }).click()
+    await expect(window.getByRole('heading', { name: source.displayName, exact: true })).toBeVisible()
+  }
+  async function requestMove(title, retry = false) {
+    await window.getByRole('button', { name: `${title} project actions`, exact: true }).click()
+    const option = window.locator('.n-dropdown-option-body__label:visible').filter({ hasText: retry ? /^Retry Move$/ : /^Move to Workspace$/ })
+    await option.click()
+    await expect(moveModal()).toBeVisible()
+  }
+  async function chooseTarget() {
+    await moveModal().getByLabel('Destination workspace', { exact: true }).click()
+    await window.locator('.n-base-select-option:visible').filter({ hasText: 'Move destination' }).click()
+  }
+  await browseSource()
+  await window.getByRole('button', { name: 'Open Workspace Project', exact: true }).click()
+  await expect(window.getByRole('tab', { name: 'Workspace Project', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await showHome()
+  await expect(home()).toBeVisible()
+  await requestMove('Workspace Project')
+  await expect(moveModal().getByRole('button', { name: 'Switch to Project', exact: true })).toBeVisible()
+  await expect(moveModal().getByRole('button', { name: 'Move Project', exact: true })).toHaveCount(0)
+  await moveModal().getByRole('button', { name: 'Switch to Project', exact: true }).click()
+  await closeProject('Workspace Project')
+  await browseSource()
+  check('actual open Project Move refuses and offers Switch without implicit Save or close')
+  await requestMove('Workspace Project')
+  await chooseTarget()
+  await screenshot('move-confirmation', 900, 620)
+  await moveModal().getByRole('button', { name: 'Move Project', exact: true }).click()
+  await expect(moveModal()).toHaveCount(0)
+  assert.equal(existsSync(sourceFile), false)
+  assert.equal(digest(destinationFile), originalHash)
+  assert.equal((await api('list', source.id)).length, 2)
+  assert.equal((await api('list', target.id))[0].id, first.id)
+  await expect(window.getByRole('button', { name: 'Open Workspace Project', exact: true })).toHaveCount(0)
+  check('public closed Move publishes exact package in selected workspace with stable ID and clears source scope row')
+  await close('moved-first-normal')
+  await launch('move-restarted')
+  await home().getByRole('button', { name: 'Projects', exact: true }).click()
+  await window.getByRole('button', { name: 'Open Workspace Project', exact: true }).click()
+  await expect(window.getByRole('tab', { name: 'Workspace Project', exact: true }).locator('.project-marker')).toHaveAttribute('data-workspace-id', target.id)
+  assert.equal((await api('list', target.id))[0].id, first.id)
+  assert.equal(digest(destinationFile), originalHash)
+  await api('setPrimaryBbox', first.id, { height: 512, width: 640, x: 9, y: -9 })
+  await api('save', first.id)
+  assert.equal((await readIgsPackage(destinationFile)).project.primaryBbox.x, 9)
+  assert.equal(existsSync(sourceFile), false)
+  await closeProject('Workspace Project')
+  await browseSource()
+  check('cold restart reopens stable identity with target tab marker; explicit edit/Save writes only new canonical location')
+  await application.evaluate(async (_electron, paths) => {
+    const fs = process.getBuiltinModule('fs')
+    const state = { original: fs.renameSync, fired: 0 }
+    globalThis.__moveQualification = state
+    fs.renameSync = (from, to) => {
+      if (from === paths.source && to === paths.destination && state.fired === 0) { state.fired++; fs.chmodSync(paths.parent, 0o500) }
+      return state.original(from, to)
+    }
+  }, { source: pendingSource, destination: pendingDestination, parent: destinationFolder })
+  try {
+    await requestMove('Move Project')
+    await chooseTarget()
+    await moveModal().getByRole('button', { name: 'Move Project', exact: true }).click()
+    await expect(moveModal().getByRole('button', { name: 'Retry Move', exact: true })).toBeVisible()
+    assert.equal(await application.evaluate(() => globalThis.__moveQualification.fired), 1)
+    assert.equal(digest(pendingSource), pendingHash)
+    assert.equal(existsSync(pendingDestination), false)
+    await screenshot('move-pending', 900, 620)
+    await moveModal().getByRole('button', { name: 'Close', exact: true }).click()
+    await expect(window.getByText('Move pending', { exact: true })).toBeVisible()
+    await requestMove('Move Project', true)
+    await expect(moveModal().getByRole('button', { name: 'Retry Move', exact: true })).toBeVisible()
+    await moveModal().getByRole('button', { name: 'Close', exact: true }).click()
+    for (const id of [source.id, target.id]) {
+      const result = await window.evaluate((workspaceId) => window.api.projects.removeWorkspace(workspaceId, true), id)
+      assert.equal(result.ok, false)
+    }
+    assert.equal((await api('list', source.id)).find((v) => v.id === pendingProject.id).pendingMove.workspaceId, target.id)
+    check('real rename EACCES after durable intent keeps visible frozen pending Move and protects both workspaces without discard')
+  } finally {
+    chmodSync(destinationFolder, 0o700)
+    const restored = await application.evaluate(async () => {
+      const fs = process.getBuiltinModule('fs')
+      const state = globalThis.__moveQualification
+      fs.renameSync = state.original
+      const result = fs.renameSync === state.original
+      delete globalThis.__moveQualification
+      return result
+    })
+    assert.equal(restored, true)
+    report.moveFsRestored = restored
+    persist()
+  }
+  await close('move-pending-normal')
+  await launch('move-recovered')
+  assert.equal(existsSync(pendingSource), false)
+  assert.equal(digest(pendingDestination), pendingHash)
+  assert.equal((await api('list', source.id)).length, 1)
+  assert.equal((await api('list', target.id)).length, 2)
+  assert.equal((await api('list', target.id)).find((v) => v.id === pendingProject.id).pendingMove, undefined)
+  await home().getByRole('button', { name: 'Projects', exact: true }).click()
+  await expect(window.getByText('Move pending', { exact: true })).toHaveCount(0)
+  await screenshot('move-recovered', 1440, 900)
+  check('startup resumes only original pending Move before scan and retains exact package/stable ID after normal restart')
+}
 async function prepareManagedProjects() {
   await picker(folder)
   await home().getByRole('button', { name: 'Add Workspace', exact: true }).click()
@@ -790,7 +924,7 @@ async function prepareManagedProjects() {
 persist()
 try {
   await launch('first')
-  if (trashOnly || locationsOnly) {
+  if (trashOnly || locationsOnly || moveOnly) {
     await prepareManagedProjects()
   } else {
   assert.deepEqual(await api('list'), [])
@@ -973,11 +1107,12 @@ try {
   )
   await manageWorkspace()
   }
-  if (locationsOnly) await manageLocations()
+  if (moveOnly) await manageMove()
+  else if (locationsOnly) await manageLocations()
   else await manageTrash()
   await close('restart-normal')
   assert.deepEqual(report.pageErrors, [])
-  assert.equal(report.nativeClosures.length, locationsOnly ? 2 : trashOnly ? 4 : 6)
+  assert.equal(report.nativeClosures.length, moveOnly ? 3 : locationsOnly ? 2 : trashOnly ? 4 : 6)
   report.outcome = 'passed'
   report.finishedAt = new Date().toISOString()
   persist()

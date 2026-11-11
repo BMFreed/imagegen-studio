@@ -19,6 +19,8 @@ import path from 'node:path'
 
 import type { DB } from './database.types.js'
 
+import { attachProjectLocationRegistry } from '../projects/project-location-registry.js'
+
 export interface AppDatabase {
   close: () => Promise<void>
   db: Kysely<DB>
@@ -53,7 +55,23 @@ export function openAppDatabase(dataRoot: string, migrationsDir: string): AppDat
   }
 
   const db = new Kysely<DB>({ dialect: new SqliteDialect({ database: sqlite }) })
-  return { close: () => db.destroy(), db, filePath }
+  let releaseIdentityRegistry: () => void
+  try {
+    // Load authoritative locations before callers can scan, validate queue rows or inspect recovery.
+    releaseIdentityRegistry = attachProjectLocationRegistry(db, sqlite, filePath)
+  } catch (error) {
+    sqlite.close()
+    throw error
+  }
+  let closing: Promise<void> | undefined
+  return {
+    close: () => {
+      closing ??= db.destroy().then(() => releaseIdentityRegistry())
+      return closing
+    },
+    db,
+    filePath,
+  }
 }
 
 function canonicalOwnedDataRoot(dataRoot: string): string {

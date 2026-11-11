@@ -46,6 +46,7 @@ const emit = defineEmits<{
   importProject: []
   manageModels: []
   managePresets: []
+  moveProject: [project: ProjectSummary]
   openProject: [projectId: string]
   rebuildPreview: [projectId: string]
   refresh: []
@@ -74,8 +75,16 @@ function requestDelete(project: ProjectSummary) {
   }
 }
 function requestProjectAction(key: number | string, project: ProjectSummary) {
+  if (project.pendingMove) {
+    if (key === 'move') {
+      emit('moveProject', project)
+    }
+    return
+  }
   if (key === 'reveal') {
     emit('revealProject', project.id)
+  } else if (key === 'move' && project.health === 'ready') {
+    emit('moveProject', project)
   } else if (key === 'trash') {
     emit('trashProject', project)
   }
@@ -147,6 +156,7 @@ watch(
 
 function showThumbnail(project: ProjectSummary): boolean {
   return (
+    !project.pendingMove &&
     project.health === 'ready' &&
     project.thumbnailUrl !== null &&
     !failedThumbnailUrls.value.has(project.thumbnailUrl)
@@ -162,6 +172,7 @@ function markThumbnailFailed(url: string | null): void {
 function canRebuildPreview(project: ProjectSummary): boolean {
   return (
     !props.trashView &&
+    !project.pendingMove &&
     project.health === 'ready' &&
     project.previewStatus === 'unavailable' &&
     (project.recoveryStatus === 'none' || project.recoveryStatus === 'unavailable')
@@ -176,7 +187,7 @@ const visibleProjects = computed(() => {
 })
 
 function previewLabel(project: ProjectSummary): string | null {
-  if (project.health !== 'ready') {
+  if (project.pendingMove || project.health !== 'ready') {
     return null
   }
   switch (project.previewStatus) {
@@ -196,6 +207,9 @@ function previewLabel(project: ProjectSummary): string | null {
 }
 
 function healthLabel(project: ProjectSummary): string | null {
+  if (project.pendingMove) {
+    return 'Move pending'
+  }
   switch (project.health) {
     case 'corrupt': {
       return 'File damaged'
@@ -460,7 +474,7 @@ function recoveryLabel(project: ProjectSummary): string | null {
                   {{ healthLabel(project) }}
                 </NTag>
                 <NTag
-                  v-if="!trashView && recoveryLabel(project)"
+                  v-if="!trashView && !project.pendingMove && recoveryLabel(project)"
                   key="recovery"
                   size="small"
                   type="warning"
@@ -496,7 +510,13 @@ function recoveryLabel(project: ProjectSummary): string | null {
               >
                 {{ trashSummary(project)?.deletionError }}
               </span>
-              <span v-if="!trashView && project.recoveryReason" class="project-diagnostic">
+              <span v-if="!trashView && project.pendingMove" class="project-diagnostic">
+                {{ project.pendingMove.message }}
+              </span>
+              <span
+                v-if="!trashView && !project.pendingMove && project.recoveryReason"
+                class="project-diagnostic"
+              >
                 {{ project.recoveryReason }}
               </span>
             </div>
@@ -540,7 +560,7 @@ function recoveryLabel(project: ProjectSummary): string | null {
                 key="n-button-2"
                 :aria-label="`Open ${project.title}`"
                 class="open-project"
-                :disabled="busy || project.health !== 'ready'"
+                :disabled="busy || Boolean(project.pendingMove) || project.health !== 'ready'"
                 :loading="pendingAction?.kind === 'open' && pendingAction.projectId === project.id"
                 size="small"
                 @click="$emit('openProject', project.id)"
@@ -550,10 +570,19 @@ function recoveryLabel(project: ProjectSummary): string | null {
               <NDropdown
                 v-if="!trashView"
                 :disabled="busy"
-                :options="[
-                  { key: 'reveal', label: 'Show in Folder' },
-                  { key: 'trash', label: 'Move to Trash' },
-                ]"
+                :options="
+                  project.pendingMove
+                    ? [{ key: 'move', label: 'Retry Move' }]
+                    : [
+                        {
+                          key: 'move',
+                          label: 'Move to Workspace',
+                          disabled: project.health !== 'ready',
+                        },
+                        { key: 'reveal', label: 'Show in Folder' },
+                        { key: 'trash', label: 'Move to Trash' },
+                      ]
+                "
                 trigger="click"
                 @select="requestProjectAction($event, project)"
               >

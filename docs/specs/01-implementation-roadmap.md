@@ -1,6 +1,16 @@
 # Implementation Roadmap
 
-## Current Home locations checkpoint
+## Current closed Project Move checkpoint
+
+[Stable identity and workspace Move](../engineering/phase-4-project-workspace-move-research.md) connects closed ready Projects
+on the same filesystem through positive journal/recovery, binding/retired-key authority
+and unchanged frozen inputs. Pending rows retain frozen Retry Move; no automatic Save,
+close, cancel or discard. ROOT524 affected PASS, ordinary plus both Smart family cold
+Retry consumers PASS; typing/lint/build and final native6checks/three normal physical
+lifetimes PASS. Clean-open Move, Rename and other relocation intersections remain open;
+public promise/MVP status is unchanged. Retained source/runtime evidence stays distinct.
+
+## Previous Home locations checkpoint
 
 [Show in Folder and tab workspace markers](../engineering/phase-4-home-locations-research.md) connect ID-only
 Home commands to validated Main-owned locations and the desktop shell adapter.

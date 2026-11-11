@@ -14,6 +14,21 @@ ImageGen Studio остаётся однопользовательским deskto
 
 Это важное ограничение влияет на выбор persistence-слоя: локальная embedded database предпочтительнее клиент-серверной БД.
 
+## Current local relocation identity checkpoint
+
+[Closed Project Move](../engineering/phase-4-project-workspace-move-research.md)
+preserves an existing opaque local Project key while authoritatively binding its new
+physical canonical path. Ordinary legacy paths retain their compatibility path hash;
+reused locations get a distinct durable binding after package validation. SQLite0028
+loads active bindings/retired keys before any consumers, journals pending relocation
+and repoints mutable queue/receipt paths without changing frozen bundles, seed,
+shadow bytes or portable `.igs` provenance. These local identity/lifecycle records
+are authoritative app state independent of the derived Home index; `.igs` remains
+the document/pixel/settings source of truth. Index rebuild cannot reconstruct lost
+local ownership, queues or lifecycle intent. After permanent deletion, the location
+is released and the old key retired so a different file cannot inherit its history.
+No physical old-path redirects or virtual filesystem locations are created.
+
 ## Источники истины
 
 SQLite — источник истины для:
@@ -40,7 +55,7 @@ Project file `.igs` — источник истины для конкретно�
 - the last-actual-seed snapshot as of the most recent explicit Project Save;
 - references на модели, LoRA, VAE и другие внешние ресурсы.
 
-SQLite не хранит сам canvas project и его слои как основной документ. Для проектов SQLite может хранить только индексируемые и восстанавливаемые поля: путь к `.igs`, workspace id/path, project thumbnail cache key/path, last opened time, modified time, display name, нормализованное display name для поиска, optional `trashed_at`, file health `ready`/`missing`/`corrupt`/`unsupported_schema` и похожую служебную информацию. Home search в MVP ищет только по display name и не требует индексации prompts, model names или generation settings.
+SQLite не хранит сам canvas project и его слои как основной документ. Производный Home index включает: путь к `.igs`, workspace id/path, project thumbnail cache key/path, last opened time, modified time, display name, нормализованное display name для поиска, optional `trashed_at`, file health `ready`/`missing`/`corrupt`/`unsupported_schema` и похожую служебную информацию. Home search в MVP ищет только по display name и не требует индексации prompts, model names или generation settings.
 
 Project `open` state не хранится в index row: Home вычисляет его по in-memory document-tab registry. `recovery_available` отражает наличие валидированного незавершённого document shadow или completed staging recovery после сбоя, а не обычный autosave progress.
 
@@ -87,7 +102,7 @@ Workspace — обычная папка на диске. В MVP workspace не �
 
 Новый проект без другого явно выбранного writable workspace физически создаётся в `Uncategorized`. При открытии `.igs` вне известных workspace'ов пользователь должен переместить или скопировать файл в `Uncategorized` либо другой выбранный workspace. До подтверждённого move/copy такой файл не индексируется и не открывается. Приложение не создаёт implicit workspace из родительской папки и не хранит внешние пути как виртуальные элементы `Uncategorized`.
 
-Home использует app-managed Trash lifecycle. `Move to Trash` сохраняет project index row, исходный `workspaceId` и `trashedAt`, исключает запись из `Projects` и workspace counters и показывает её только в Trash view. `Restore Project` очищает `trashedAt` и возвращает проект в прежний workspace. Физическое удаление managed `.igs` и index row происходит только после отдельного `Delete Permanently` confirmation. Открытый project нельзя переместить в Trash.
+Home использует app-managed Trash lifecycle с отдельной authoritative записью, независимой от производного index и workspace registration. `Move to Trash` сохраняет исходную canonical location и snapshot workspace, исключает Project из `Projects` и активных workspace counters и показывает его только в Trash. Restore требует зарегистрированную исходную папку и проверенный source; он не выполняет implicit Add и не подменяет workspace на Uncategorized. Физическое удаление managed `.igs` происходит только после отдельного `Delete Permanently` confirmation и сохраняет positive recovery intent при незавершённом purge. Финализация удаляет lifecycle journal, освобождает active location binding и retires local key; queue/recovery имеют своих владельцев. Открытый Project нельзя переместить в Trash.
 
 `.igs` — переносимый рабочий формат ImageGen Studio. Базовый формат для MVP:
 

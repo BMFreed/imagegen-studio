@@ -1,0 +1,411 @@
+import assert from 'node:assert/strict'
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  unlink,
+  writeFile,
+} from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import test from 'node:test'
+
+import { openAppDatabase } from '../db/database.js'
+import { readIgsPackage } from './igs-package.js'
+import { ProjectAutosaveLeaseRegistry } from './project-autosave.js'
+import { localProjectRecoveryKey } from './project-identity.js'
+import { ProjectIndexRepository, UNCATEGORIZED_WORKSPACE_ID } from './project-index.js'
+import { ProjectRelocationStore } from './project-relocation-store.js'
+import { ProjectService } from './project-service.js'
+import { ProjectShadowStore } from './project-shadow.js'
+
+const migrations = path.resolve('src/main/db/migrations')
+const createInput = { height: 64, title: 'Move fixture', width: 64 }
+type Fixture = Awaited<ReturnType<typeof fixture>>
+
+async function fixture() {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'igs-project-move-'))
+  const dataRoot = path.join(root, 'data')
+  const directory = path.join(root, 'workspace')
+  await mkdir(dataRoot)
+  await mkdir(directory)
+  const database = openAppDatabase(dataRoot, migrations)
+  const repository = new ProjectIndexRepository(database.db)
+  const shadow = new ProjectShadowStore(path.join(dataRoot, 'autosave'))
+  const services: ProjectService[] = []
+  const makeService = () => {
+    const service = new ProjectService({
+      autosaveOptions: { debounceMs: 0, leaseRegistry: new ProjectAutosaveLeaseRegistry() },
+      dataRoot,
+      repository,
+      roots: {
+        placeholdersDir: path.resolve('src/main/projects/placeholders'),
+        scratchDir: path.join(dataRoot, 'scratch'),
+      },
+      shadow,
+    })
+    services.push(service)
+    return service
+  }
+  const service = makeService()
+  const workspace = await service.addWorkspace(
+    { color: 'blue', displayName: 'Move source' },
+    directory,
+  )
+  return {
+    async cleanup() {
+      for (const owner of services) {
+        for (const tab of owner.getOpenTabs()) {
+          await owner.discardAndClose(tab.id)
+        }
+      }
+      await database.close()
+      await rm(root, { force: true, recursive: true })
+    },
+    database,
+    dataRoot,
+    directory,
+    makeService,
+    repository,
+    root,
+    service,
+    shadow,
+    workspace,
+  }
+}
+async function withFixture(run: (f: Fixture) => Promise<void>) {
+  const f = await fixture()
+  try {
+    await run(f)
+  } finally {
+    await f.cleanup()
+  }
+}
+async function closedProject(f: Fixture) {
+  const tab = await f.service.create({ ...createInput, workspaceId: f.workspace.id })
+  await f.service.close(tab.id)
+  const record = await f.repository.getProject(tab.id)
+  assert.ok(record)
+  return record
+}
+async function treeBytes(directory: string): Promise<Record<string, Buffer>> {
+  const result: Record<string, Buffer> = {}
+  async function visit(current: string) {
+    const entries = await readdir(current, { withFileTypes: true }).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return []
+      }
+      throw error
+    })
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      const target = path.join(current, entry.name)
+      assert.equal(entry.isSymbolicLink(), false)
+      if (entry.isDirectory()) {
+        await visit(target)
+      } else {
+        assert.equal(entry.isFile(), true)
+        result[path.relative(directory, target)] = await readFile(target)
+      }
+    }
+  }
+  await visit(directory)
+  return result
+}
+
+async function destination(f: Fixture) {
+  const directory = path.join(f.root, 'destination')
+  await mkdir(directory)
+  return await f.service.addWorkspace({ color: 'violet', displayName: 'Destination' }, directory)
+}
+
+test('closed Project Move preserves stable identity and exact package through scoped browsing, reopen, Save and workspace re-Add', async () => {
+  await withFixture(async (f) => {
+    const record = await closedProject(f)
+    const target = await destination(f)
+    const bytes = await readFile(record.canonicalPath)
+    const newPath = path.join(target.directoryPath, path.basename(record.canonicalPath))
+    assert.deepEqual(await f.service.moveProject(record.localProjectKey, target.id), {
+      kind: 'moved',
+    })
+    assert.deepEqual(await readFile(newPath), bytes)
+    await assert.rejects(readFile(record.canonicalPath), { code: 'ENOENT' })
+    assert.equal(localProjectRecoveryKey(newPath), record.localProjectKey)
+    assert.deepEqual(await f.service.list(f.workspace.id), [])
+    assert.deepEqual(
+      (await f.service.list(target.id)).map((v) => v.id),
+      [record.localProjectKey],
+    )
+    const opened = await f.service.open(record.localProjectKey)
+    assert.equal(opened.kind, 'opened')
+    if (opened.kind !== 'opened') {
+      throw new Error('Expected opened')
+    }
+    assert.equal(opened.tab.workspaceId, target.id)
+    assert.equal(opened.tab.documentId, record.documentId)
+    await f.service.setPrimaryBbox(record.localProjectKey, { height: 64, width: 64, x: 8, y: -8 })
+    await f.service.save(record.localProjectKey)
+    await f.service.close(record.localProjectKey)
+    assert.equal((await readIgsPackage(newPath)).project.primaryBbox.x, 8)
+    await assert.rejects(readFile(record.canonicalPath), { code: 'ENOENT' })
+    await f.service.removeWorkspace(target.id)
+    const readded = await f.service.addWorkspace(
+      { color: 'teal', displayName: 'Re-added destination' },
+      target.directoryPath,
+    )
+    assert.deepEqual(
+      (await f.service.list(readded.id)).map((v) => v.id),
+      [record.localProjectKey],
+    )
+  })
+})
+
+test('reusing the former filename creates a different identity instead of stealing moved ownership', async () => {
+  await withFixture(async (f) => {
+    const record = await closedProject(f)
+    const bytes = await readFile(record.canonicalPath)
+    const target = await destination(f)
+    await f.service.moveProject(record.localProjectKey, target.id)
+    await writeFile(record.canonicalPath, bytes)
+    const [replacement] = await f.service.list(f.workspace.id)
+    assert.ok(replacement)
+    assert.notEqual(replacement.id, record.localProjectKey)
+    assert.equal(localProjectRecoveryKey(record.canonicalPath), replacement.id)
+    assert.equal((await f.service.list(target.id))[0].id, record.localProjectKey)
+    assert.deepEqual(
+      await readFile(path.join(target.directoryPath, path.basename(record.canonicalPath))),
+      bytes,
+    )
+  })
+})
+
+test('Move refuses clean and dirty live Projects without implicit close or Save', async () => {
+  await withFixture(async (f) => {
+    const target = await destination(f)
+    const tab = await f.service.create({ ...createInput, workspaceId: f.workspace.id })
+    const record = (await f.repository.getProject(tab.id))!
+    const bytes = await readFile(record.canonicalPath)
+    await assert.rejects(f.service.moveProject(tab.id, target.id), { code: 'PROJECT_ALREADY_OPEN' })
+    await f.service.setPrimaryBbox(tab.id, { height: 64, width: 64, x: 5, y: 5 })
+    await assert.rejects(f.service.moveProject(tab.id, target.id), { code: 'PROJECT_ALREADY_OPEN' })
+    assert.equal(f.service.getOpenTabs()[0].dirty, true)
+    assert.deepEqual(await readFile(record.canonicalPath), bytes)
+    assert.deepEqual(await f.repository.relocations.list(), [])
+  })
+})
+
+test('unverified and deferred generation payloads in either exact staging owner block Move without cleanup', async () => {
+  for (const owner of ['generation-staging', 'smart-patch-staging']) {
+    await withFixture(async (f) => {
+      const record = await closedProject(f)
+      const target = await destination(f)
+      const directory = path.join(f.dataRoot, 'recovery', owner, record.localProjectKey)
+      await mkdir(directory, { recursive: true })
+      await writeFile(
+        path.join(directory, 'unverified-payload'),
+        'Retained, not an available candidate',
+      )
+      await assert.rejects(f.service.moveProject(record.localProjectKey, target.id), {
+        code: 'PROJECT_RECOVERY_UNAVAILABLE',
+      })
+      assert.equal(
+        await readFile(path.join(directory, 'unverified-payload'), 'utf8'),
+        'Retained, not an available candidate',
+      )
+      assert.deepEqual(await f.repository.relocations.list(), [])
+    })
+  }
+})
+
+test('pending Move remains visible after dialog close, blocks both unregisters and resumes original target only', async () => {
+  await withFixture(async (f) => {
+    const record = await closedProject(f)
+    const target = await destination(f)
+    const bytes = await readFile(record.canonicalPath)
+    Object.defineProperty(f.repository, 'relocations', {
+      configurable: true,
+      value: new ProjectRelocationStore(f.database.db, {
+        afterRename: async () => {
+          throw new Error('Controlled interruption')
+        },
+      }),
+    })
+    assert.equal((await f.service.moveProject(record.localProjectKey, target.id)).kind, 'pending')
+    const [pending] = await f.service.list(f.workspace.id)
+    assert.equal(pending.id, record.localProjectKey)
+    assert.equal(pending.pendingMove?.workspaceId, target.id)
+    assert.equal(
+      (await f.service.listWorkspaces()).find((v) => v.id === f.workspace.id)?.projectCount,
+      1,
+    )
+    await assert.rejects(f.service.open(record.localProjectKey), { code: 'PROJECT_NOT_READY' })
+    await assert.rejects(f.service.removeWorkspace(f.workspace.id), { code: 'PROJECT_NOT_READY' })
+    await assert.rejects(f.service.removeWorkspace(target.id), { code: 'PROJECT_NOT_READY' })
+    await assert.rejects(
+      f.service.moveProject(record.localProjectKey, UNCATEGORIZED_WORKSPACE_ID),
+      { code: 'PROJECT_NOT_READY' },
+    )
+    Object.defineProperty(f.repository, 'relocations', {
+      configurable: true,
+      value: new ProjectRelocationStore(f.database.db),
+    })
+    assert.deepEqual(await f.service.moveProject(record.localProjectKey, target.id), {
+      kind: 'moved',
+    })
+    assert.deepEqual(
+      await readFile(path.join(target.directoryPath, path.basename(record.canonicalPath))),
+      bytes,
+    )
+    assert.deepEqual(await f.service.list(f.workspace.id), [])
+    assert.equal((await f.service.list(target.id))[0].id, record.localProjectKey)
+  })
+})
+
+test('startup recovery completes a real interrupted physical Move before scanner publication', async () => {
+  await withFixture(async (f) => {
+    const record = await closedProject(f)
+    const target = await destination(f)
+    const bytes = await readFile(record.canonicalPath)
+    const fault = new ProjectRelocationStore(f.database.db, {
+      afterDatabaseRepoint: async () => {
+        throw new Error('Lost completion')
+      },
+    })
+    const intent = await fault.beginMove(record, f.workspace, target, () => undefined)
+    assert.equal((await fault.finishMove(intent)).kind, 'pending')
+    const restarted = f.makeService()
+    const rows = await restarted.list()
+    assert.deepEqual(
+      rows.map((v) => v.id),
+      [record.localProjectKey],
+    )
+    assert.equal(rows[0].workspaceId, target.id)
+    assert.equal(rows[0].pendingMove, undefined)
+    assert.deepEqual(
+      await readFile(path.join(target.directoryPath, path.basename(record.canonicalPath))),
+      bytes,
+    )
+  })
+})
+
+test('a replaced app-data symlink cannot hide retained staging payloads from Move admission', async () => {
+  await withFixture(async (f) => {
+    const record = await closedProject(f)
+    const target = await destination(f)
+    const retained = `${f.dataRoot}-retained`
+    const foreign = path.join(f.root, 'foreign-data')
+    await mkdir(foreign)
+    await rename(f.dataRoot, retained)
+    await symlink(foreign, f.dataRoot)
+    try {
+      await assert.rejects(f.service.moveProject(record.localProjectKey, target.id), {
+        code: 'PROJECT_RECOVERY_UNAVAILABLE',
+      })
+      assert.deepEqual(await f.repository.relocations.list(), [])
+    } finally {
+      await unlink(f.dataRoot)
+      await rename(retained, f.dataRoot)
+    }
+  })
+})
+
+test('pending source and destination locations stay reserved against indexing and external import publication', async () => {
+  await withFixture(async (f) => {
+    const record = await closedProject(f)
+    const target = await destination(f)
+    await f.repository.relocations.beginMove(record, f.workspace, target, () => undefined)
+    await assert.rejects(f.repository.indexSaved(record.canonicalPath, f.workspace.id), {
+      code: 'PROJECT_MOVE_PENDING',
+    })
+    const external = path.join(f.root, path.basename(record.canonicalPath))
+    const bytes = await readFile(record.canonicalPath)
+    await writeFile(external, bytes)
+    const selected = await f.service.selectImport(external)
+    assert.ok(selected && selected.kind === 'transfer-required')
+    const imported = await f.service.finishImport(selected.importId, 'copy', target.id)
+    assert.ok(imported)
+    const intended = path.join(target.directoryPath, path.basename(record.canonicalPath))
+    await assert.rejects(readFile(intended), { code: 'ENOENT' })
+    assert.deepEqual(await readFile(external), bytes)
+    assert.equal((await f.repository.relocations.list()).length, 1)
+  })
+})
+
+test('Import of a valid reused former filename allocates its new identity without requiring prior rescan', async () => {
+  await withFixture(async (f) => {
+    const record = await closedProject(f)
+    const bytes = await readFile(record.canonicalPath)
+    const target = await destination(f)
+    await f.service.moveProject(record.localProjectKey, target.id)
+    await writeFile(record.canonicalPath, bytes)
+    const selected = await f.service.selectImport(record.canonicalPath)
+    assert.ok(selected && selected.kind === 'opened')
+    assert.equal((await f.service.list(target.id))[0].id, record.localProjectKey)
+    const [clone] = await f.service.list(f.workspace.id)
+    assert.notEqual(clone.id, record.localProjectKey)
+    assert.equal(f.service.getOpenTabs()[0].id, clone.id)
+  })
+})
+
+test('unhealthy reuse of a former filename isolates only that file and repair receives a distinct identity', async () => {
+  await withFixture(async (f) => {
+    const record = await closedProject(f)
+    const bytes = await readFile(record.canonicalPath)
+    const target = await destination(f)
+    await f.service.moveProject(record.localProjectKey, target.id)
+    const neighbor = await closedProject(f)
+    await writeFile(record.canonicalPath, 'Unsupported or corrupt replacement')
+    assert.deepEqual(
+      (await f.service.list(f.workspace.id)).map((v) => v.id),
+      [neighbor.localProjectKey],
+    )
+    assert.equal((await f.service.list(target.id))[0].id, record.localProjectKey)
+    await writeFile(record.canonicalPath, bytes)
+    const repaired = (await f.service.list(f.workspace.id)).find(
+      (v) => v.id !== neighbor.localProjectKey,
+    )
+    assert.ok(repaired)
+    assert.notEqual(repaired.id, record.localProjectKey)
+  })
+})
+
+test('permanent deletion retires moved key while a different file can reuse the freed current location', async () => {
+  await withFixture(async (f) => {
+    const record = await closedProject(f)
+    const target = await destination(f)
+    const bytes = await readFile(record.canonicalPath)
+    await f.service.moveProject(record.localProjectKey, target.id)
+    const newPath = path.join(target.directoryPath, path.basename(record.canonicalPath))
+    await f.service.trashProject(record.localProjectKey)
+    const [trashed] = await f.service.listTrash()
+    assert.deepEqual(await f.service.deleteProjectPermanently(trashed.id, trashed.trashId), {
+      kind: 'deleted',
+    })
+    assert.equal(
+      await f.database.db
+        .selectFrom('project_identity_binding')
+        .selectAll()
+        .where('local_project_key', '=', record.localProjectKey)
+        .executeTakeFirst(),
+      undefined,
+    )
+    assert.ok(
+      await f.database.db
+        .selectFrom('project_identity_retired_key')
+        .selectAll()
+        .where('local_project_key', '=', record.localProjectKey)
+        .executeTakeFirst(),
+    )
+    // A portable copy has the same document UUID but must still have fresh local ownership.
+    await writeFile(newPath, bytes)
+    const [current] = await f.service.list(target.id)
+    assert.notEqual(current.id, record.localProjectKey)
+    await writeFile(record.canonicalPath, bytes)
+    const [former] = await f.service.list(f.workspace.id)
+    assert.notEqual(former.id, record.localProjectKey)
+    assert.notEqual(former.id, current.id)
+  })
+})

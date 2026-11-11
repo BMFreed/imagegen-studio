@@ -5,6 +5,7 @@ import type {
   ProjectImportFinishResult,
   ProjectImportSelection,
   ProjectLoraIdentity,
+  ProjectMoveResult,
   ProjectOpenResult,
   ProjectRasterLayerChange,
   ProjectRasterLayerView,
@@ -135,7 +136,7 @@ import {
 } from '../../shared/projects/smart-result-preset.js'
 
 import { createHash, randomUUID } from 'node:crypto'
-import { type BigIntStats, constants, lstatSync, realpathSync } from 'node:fs'
+import { type BigIntStats, constants, lstatSync, readdirSync, realpathSync } from 'node:fs'
 import { link, lstat, mkdir, mkdtemp, open, realpath, rm, unlink } from 'node:fs/promises'
 import path from 'node:path'
 
@@ -788,6 +789,16 @@ export class ProjectService {
     // A random basename avoids path traversal, invalid filename characters and title collisions.
     // createOnly in ProjectSession still rejects an unexpected UUID collision.
     const filePath = path.join(workspace.directoryPath, `project-${randomUUID()}.igs`)
+    if (
+      (await this.options.repository.relocations.list()).some(
+        (move) => move.sourcePath === filePath || move.destinationPath === filePath,
+      )
+    ) {
+      throw new ProjectServiceError(
+        'PROJECT_NOT_READY',
+        'That Project location is reserved by a pending move. Try again.',
+      )
+    }
     const session = await ProjectSession.create(
       filePath,
       title,
@@ -1344,6 +1355,10 @@ export class ProjectService {
         stagedPath,
         workspace.directoryPath,
         selected.fileName,
+        async (candidate) =>
+          (await this.options.repository.relocations.list()).some(
+            (move) => move.sourcePath === candidate || move.destinationPath === candidate,
+          ),
       )
     } finally {
       await unlink(stagedPath).catch((error: unknown) => {
@@ -2186,6 +2201,9 @@ export class ProjectService {
     if (!this.initialization) {
       this.initialization = (async () => {
         // Positive durable deletion commits recover before any scanner can rediscover a file.
+        await this.options.repository.relocations.recoverPendingMoves((record) =>
+          this.assertRelocationQuiescent(record.localProjectKey, record.sourcePath),
+        )
         await this.options.repository.trash.recoverCommittedDeletes()
         await this.options.repository.ensureDefaultWorkspace(this.options.dataRoot)
         await this.scanWorkspaceIfAvailable(UNCATEGORIZED_WORKSPACE_ID)
@@ -2217,14 +2235,38 @@ export class ProjectService {
       }
     }
     const records = await this.options.repository.listProjects(workspaceId)
-    return await Promise.all(
+    const active = await Promise.all(
       records.map(
         async (record) => await this.toSummary(record, readableWorkspaces.has(record.workspaceId)),
       ),
     )
+    const pending = (await this.options.repository.relocations.list()).filter(
+      (move) => workspaceId === undefined || move.sourceWorkspaceId === workspaceId,
+    )
+    return [
+      ...active,
+      ...pending.map((move): ProjectSummary => ({
+        bbox:
+          move.project.bboxWidth && move.project.bboxHeight
+            ? { height: move.project.bboxHeight, width: move.project.bboxWidth }
+            : null,
+        health: 'ready',
+        id: move.localProjectKey,
+        pendingMove: {
+          message:
+            move.errorMessage ??
+            'The Project move is pending. Restore workspace access and retry the original move.',
+          workspaceId: move.targetWorkspaceId,
+        },
+        previewStatus: 'unavailable',
+        recoveryStatus: 'none',
+        thumbnailUrl: null,
+        title: move.project.displayName,
+        workspaceId: move.sourceWorkspaceId,
+      })),
+    ]
   }
 
-  /** Lifecycle snapshots are authoritative even if their workspace registration was removed. */
   async listTrash(): Promise<ProjectTrashSummary[]> {
     await this.initialize()
     const workspaces = await this.options.repository.listWorkspaces()
@@ -2272,12 +2314,78 @@ export class ProjectService {
   async listWorkspaces(): Promise<ProjectWorkspaceSummary[]> {
     await this.initialize()
     const workspaces = await this.options.repository.listWorkspaces()
+    const pendingMoves = await this.options.repository.relocations.list()
     const summaries: ProjectWorkspaceSummary[] = []
     for (const workspace of workspaces) {
       await this.scanWorkspaceIfAvailable(workspace.id)
-      summaries.push(await this.toWorkspaceSummary(workspace))
+      const summary = await this.toWorkspaceSummary(workspace)
+      summary.projectCount += pendingMoves.filter(
+        (move) => move.sourceWorkspaceId === workspace.id,
+      ).length
+      summaries.push(summary)
     }
     return summaries
+  }
+
+  /** Lifecycle snapshots are authoritative even if their workspace registration was removed. */
+  async moveProject(projectId: string, workspaceId: string): Promise<ProjectMoveResult> {
+    assertProjectId(projectId)
+    if (!isProjectWorkspaceId(workspaceId)) {
+      throw new ProjectServiceError('PROJECT_INVALID_INPUT', 'Choose a destination workspace.')
+    }
+    await this.initialize()
+    const pending = await this.options.repository.relocations.get(projectId)
+    if (pending) {
+      if (pending.targetWorkspaceId !== workspaceId) {
+        throw new ProjectServiceError(
+          'PROJECT_NOT_READY',
+          'Finish the pending move to its original destination before choosing another workspace.',
+        )
+      }
+      return await this.options.repository.relocations.finishMove(pending, () =>
+        this.assertRelocationQuiescent(projectId, pending.sourcePath),
+      )
+    }
+    const record = await this.options.repository.getProject(projectId)
+    if (!record || record.fileHealth !== 'ready') {
+      throw new ProjectServiceError(
+        'PROJECT_NOT_READY',
+        'Only an available saved Project can be moved. Refresh Home and try again.',
+      )
+    }
+    const guard = () => this.assertRelocationQuiescent(projectId, record.canonicalPath)
+    guard()
+    if (record.workspaceId === workspaceId) {
+      return { kind: 'moved' }
+    }
+    const source = await this.options.repository.workspaceById(record.workspaceId)
+    const target = await this.options.repository.workspaceById(workspaceId)
+    for (const workspace of [source, target]) {
+      const availability = await this.options.repository.workspaceAvailability(workspace)
+      if (availability.availability !== 'available' || !availability.writable) {
+        throw new ProjectServiceError(
+          'PROJECT_NOT_READY',
+          'Both workspace folders must be available and writable before moving this Project.',
+        )
+      }
+    }
+    const recovery = await ProjectAutosaveCoordinator.inspectRecovery(
+      record.canonicalPath,
+      this.options.shadow,
+    )
+    if (recovery.status !== 'absent' && recovery.status !== 'clean') {
+      throw new ProjectServiceError(
+        'PROJECT_RECOVERY_UNAVAILABLE',
+        'Open the Project and resolve its document recovery before moving it.',
+      )
+    }
+    const prepared = await this.options.repository.relocations.beginMove(
+      record,
+      source,
+      target,
+      guard,
+    )
+    return await this.options.repository.relocations.finishMove(prepared, guard)
   }
 
   async moveRasterLayer(tabId: string, layerId: string, targetIndex: number): Promise<ProjectTab> {
@@ -2770,6 +2878,16 @@ export class ProjectService {
   /** Main serializes this metadata lifecycle with Open/Create/Import/scan admission. */
   async removeWorkspace(workspaceId: string): Promise<void> {
     await this.initialize()
+    if (
+      (await this.options.repository.relocations.list()).some(
+        (move) => move.sourceWorkspaceId === workspaceId || move.targetWorkspaceId === workspaceId,
+      )
+    ) {
+      throw new ProjectServiceError(
+        'PROJECT_NOT_READY',
+        'Finish the pending Project move before removing either workspace registration.',
+      )
+    }
     await this.options.repository.removeWorkspace(workspaceId, (workspace) => {
       for (const coordinator of this.openTabs.values()) {
         const relative = path.relative(workspace.directoryPath, coordinator.filePath)
@@ -3070,7 +3188,27 @@ export class ProjectService {
   async selectImport(sourcePath: string): Promise<ProjectImportSelection> {
     await this.initialize()
     const selected = await inspectImportSource(sourcePath)
-    await this.assertProjectNotTrashed(localProjectRecoveryKey(selected.sourcePath))
+    if (
+      (await this.options.repository.relocations.list()).some(
+        (move) =>
+          move.sourcePath === selected.sourcePath || move.destinationPath === selected.sourcePath,
+      )
+    ) {
+      throw new ProjectServiceError(
+        'PROJECT_NOT_READY',
+        'This Project has a pending move. Finish it before importing or opening either location.',
+      )
+    }
+    if (
+      (await this.options.repository.trash.list()).some(
+        (entry) => entry.canonicalPath === selected.sourcePath,
+      )
+    ) {
+      throw new ProjectServiceError(
+        'PROJECT_TRASHED',
+        'Restore this Project from Trash before importing it.',
+      )
+    }
     const workspace = (await this.options.repository.listWorkspaces()).find(
       (candidate) => path.dirname(selected.sourcePath) === candidate.directoryPath,
     )
@@ -4226,11 +4364,67 @@ export class ProjectService {
   }
 
   private async assertProjectNotTrashed(projectId: string): Promise<void> {
+    if (await this.options.repository.relocations.get(projectId)) {
+      throw new ProjectServiceError(
+        'PROJECT_NOT_READY',
+        'A Project move is pending. Restore workspace access and retry that move before opening this Project.',
+      )
+    }
     if (await this.options.repository.trash.get(projectId)) {
       throw new ProjectServiceError(
         'PROJECT_TRASHED',
         'Restore this Project from Trash before opening or rebuilding it.',
       )
+    }
+  }
+
+  /** Inspect both exact existing staging owners, including invalid/deferred entries. Never clean. */
+  private assertRelocationQuiescent(projectId: string, canonicalPath: string): void {
+    this.assertClosedForLifecycle(projectId, canonicalPath)
+    try {
+      const root = lstatSync(this.options.dataRoot)
+      if (
+        !root.isDirectory() ||
+        root.isSymbolicLink() ||
+        realpathSync(this.options.dataRoot) !== this.options.dataRoot
+      ) {
+        throw new Error('Unsafe recovery root')
+      }
+    } catch {
+      throw new ProjectServiceError(
+        'PROJECT_RECOVERY_UNAVAILABLE',
+        'Project recovery storage could not be verified. Restore access before moving this Project.',
+      )
+    }
+    for (const owner of ['generation-staging', 'smart-patch-staging']) {
+      let current = this.options.dataRoot
+      for (const component of ['recovery', owner, projectId]) {
+        current = path.join(current, component)
+        let entry
+        try {
+          entry = lstatSync(current)
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+            break
+          }
+          throw new ProjectServiceError(
+            'PROJECT_RECOVERY_UNAVAILABLE',
+            'Generation recovery storage could not be inspected. Restore access before moving this Project.',
+          )
+        }
+        if (!entry.isDirectory() || entry.isSymbolicLink() || realpathSync(current) !== current) {
+          throw new ProjectServiceError(
+            'PROJECT_RECOVERY_UNAVAILABLE',
+            'Generation recovery storage could not be verified. Resolve recovery before moving this Project.',
+          )
+        }
+        if (component === projectId && readdirSync(current).length > 0) {
+          throw new ProjectServiceError(
+            'PROJECT_RECOVERY_UNAVAILABLE',
+            'This Project retains generation recovery files. Resolve its results and recovery before moving it; no data will be discarded automatically.',
+          )
+        }
+      }
     }
   }
 
@@ -5099,10 +5293,14 @@ async function publishImportedFile(
   stagedPath: string,
   workspacePath: string,
   originalName: string,
+  isReserved: (candidate: string) => Promise<boolean>,
 ): Promise<string> {
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const fileName = attempt === 0 ? originalName : `project-${randomUUID()}.igs`
     const destination = path.join(workspacePath, fileName)
+    if (await isReserved(destination)) {
+      continue
+    }
     try {
       // A hard link publishes the fsynced staged bytes without replacing an existing Project.
       await link(stagedPath, destination)

@@ -2,6 +2,13 @@
 
 ## Production checkpoint
 
+[Closed Project Move](../engineering/phase-4-project-workspace-move-research.md)
+connects same-filesystem workspace moves for closed ready saved Projects, preserving
+stable local identity and exact frozen Retry inputs. Pending moves remain visible
+with their original target and retry; startup recovers before scanning. Open Projects,
+active work and unresolved document/generation recovery are refused without implicit
+Save/close/discard. Clean-open Move, Rename and cross-filesystem transfer remain gaps.
+
 [Home locations](../engineering/phase-4-home-locations-research.md) connects Project
 and workspace Show in Folder through validated Main-owned locations; no renderer
 path is accepted. Project tabs use their Main-owned workspace ID and current catalog

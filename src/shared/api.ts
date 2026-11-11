@@ -212,6 +212,7 @@ export const ipcChannels = {
     listSmartPatchGenerationResults: 'projects:list-smart-patch-generation-results',
     listTrash: 'projects:list-trash',
     listWorkspaces: 'projects:list-workspaces',
+    moveProject: 'projects:move-workspace',
     moveRasterLayer: 'projects:move-raster-layer',
     open: 'projects:open',
     prepareWindowClose: 'projects:prepare-window-close',
@@ -318,6 +319,7 @@ export interface ProjectSummary {
   bbox: Pick<IgsRectV1, 'height' | 'width'> | null
   health: 'corrupt' | 'missing' | 'ready' | 'unsupported_schema'
   id: string
+  pendingMove?: { message: string; workspaceId: string }
   previewStatus: 'empty' | 'rendered' | 'unavailable' | null
   recoveryReason?: string
   recoveryStatus: 'invalid' | 'none' | 'recoverable' | 'stale' | 'unavailable'
@@ -560,6 +562,8 @@ export interface ProjectGenerationResultsSnapshot {
 export type ProjectCandidateExportResult =
   { fileName: string; kind: 'saved' } | { kind: 'canceled' }
 
+export type ProjectMoveResult = { kind: 'moved' } | { kind: 'pending'; message: string }
+
 export interface ProjectApi {
   acceptGenerationCandidates: (
     tabId: string,
@@ -709,6 +713,7 @@ export interface ProjectApi {
   ) => Promise<ApiResult<ProjectSmartPatchResultsSnapshot>>
   listTrash: () => Promise<ApiResult<ProjectTrashSummary[]>>
   listWorkspaces: () => Promise<ApiResult<ProjectWorkspaceSummary[]>>
+  moveProject: (projectId: string, workspaceId: string) => Promise<ApiResult<ProjectMoveResult>>
   moveRasterLayer: (
     tabId: string,
     layerId: string,

@@ -99,6 +99,7 @@ import {
 import GenerationQueueManager from './components/GenerationQueueManager.vue'
 import HomeView from './components/HomeView.vue'
 import ModelManager from './components/ModelManager.vue'
+import MoveProjectModal from './components/MoveProjectModal.vue'
 import NewProjectModal from './components/NewProjectModal.vue'
 import PresetManager from './components/PresetManager.vue'
 import { draftOwnerKey, ProjectDraftSync } from './components/project-draft-sync.js'
@@ -180,7 +181,10 @@ type PendingSmartReview =
   | { kind: 'accept'; request: ProjectSmartPatchAcceptRequest; tabId: string }
   | { kind: 'discard'; request: ProjectSmartPatchDiscardRequest; tabId: string }
 type PendingProjectAction =
-  | { kind: 'delete-project' | 'restore-trash' | 'reveal-project' | 'trash'; projectId: string }
+  | {
+      kind: 'delete-project' | 'move-project' | 'restore-trash' | 'reveal-project' | 'trash'
+      projectId: string
+    }
   | { kind: 'open' | 'rebuild'; projectId: string }
   | {
       kind:
@@ -419,6 +423,15 @@ const closeError = ref<string | null>(null)
 const showNewProject = ref(false)
 const newProjectError = ref<string | null>(null)
 const newProjectWorkspaceId = ref(DEFAULT_PROJECT_WORKSPACE_ID)
+const showMoveProject = ref(false)
+const movingProject = ref<ProjectSummary | null>(null)
+const moveWorkspaceId = ref<string | null>(null)
+const frozenMoveWorkspace = ref<Pick<ProjectWorkspaceSummary, 'displayName' | 'id'> | null>(null)
+const moveProjectError = ref<string | null>(null)
+const movePendingMessage = ref<string | null>(null)
+const moveProjectBlocked = computed(() =>
+  projectTabs.value.some(({ id }) => id === movingProject.value?.id),
+)
 const showProjectTrashAction = ref(false)
 const trashActionProject = ref<ProjectSummary | ProjectTrashSummary | null>(null)
 const trashDialogKind = ref<'delete' | 'trash'>('trash')
@@ -545,6 +558,7 @@ function smartPresetOwnerCurrent(owner: SmartPatchPresetApplicationOwner, applyi
       showNewProject.value ||
       showAddWorkspace.value ||
       showProjectTrashAction.value ||
+      showMoveProject.value ||
       showWorkspaceSettings.value ||
       showRemoveWorkspace.value ||
       importDialogVisible.value ||
@@ -740,6 +754,7 @@ function saveSmartPatchCurrentAsPreset(tabId: string) {
         showNewProject.value ||
         showAddWorkspace.value ||
         showProjectTrashAction.value ||
+        showMoveProject.value ||
         showWorkspaceSettings.value ||
         showRemoveWorkspace.value ||
         importDialogVisible.value ||
@@ -1900,6 +1915,7 @@ watch(
     () => showNewProject.value,
     () => showAddWorkspace.value,
     () => showProjectTrashAction.value,
+    () => showMoveProject.value,
     () => showWorkspaceSettings.value,
     () => showRemoveWorkspace.value,
     () => importDialogVisible.value,
@@ -3490,8 +3506,106 @@ async function selectTrash() {
   await refreshProjects()
 }
 
+function beginMoveProject(project: ProjectSummary) {
+  if (
+    showMoveProject.value ||
+    showProjectTrashAction.value ||
+    pendingProjectAction.value ||
+    windowClosePending.value
+  ) {
+    return
+  }
+  queueResultNavigator.cancelProjectOpen()
+  movingProject.value = { ...project }
+  const pending = project.pendingMove
+  const pendingDestination = pending
+    ? workspaces.value.find(({ id }) => id === pending.workspaceId)
+    : null
+  frozenMoveWorkspace.value = pending
+    ? {
+        displayName: pendingDestination?.displayName ?? 'Unavailable workspace',
+        id: pending.workspaceId,
+      }
+    : null
+  moveWorkspaceId.value =
+    pending?.workspaceId ??
+    workspaces.value.find(
+      (workspace) =>
+        workspace.id !== project.workspaceId &&
+        workspace.availability === 'available' &&
+        workspace.writable,
+    )?.id ??
+    null
+  moveProjectError.value =
+    pending && !pendingDestination
+      ? 'The destination workspace is unavailable. Restore its registration before retrying this move.'
+      : null
+  movePendingMessage.value = pending?.message ?? null
+  showMoveProject.value = true
+  void refreshWorkspaces()
+}
+
+async function switchMovingProject() {
+  const project = movingProject.value
+  if (!project || pendingProjectAction.value || windowClosePending.value) {
+    return
+  }
+  showMoveProject.value = false
+  await openProject(project.id)
+}
+
+async function confirmMoveProject() {
+  const project = movingProject.value
+  if (
+    !showMoveProject.value ||
+    !project ||
+    moveProjectBlocked.value ||
+    pendingProjectAction.value ||
+    windowClosePending.value
+  ) {
+    return
+  }
+  const destination =
+    frozenMoveWorkspace.value ??
+    workspaces.value.find(
+      (workspace) =>
+        workspace.id === moveWorkspaceId.value &&
+        workspace.id !== project.workspaceId &&
+        workspace.availability === 'available' &&
+        workspace.writable,
+    )
+  if (!destination) {
+    moveProjectError.value = 'Choose an available writable destination workspace.'
+    return
+  }
+  // The ID and destination remain the same across retries, including a transport error.
+  frozenMoveWorkspace.value = { displayName: destination.displayName, id: destination.id }
+  const projectId = project.id
+  const destinationId = destination.id
+  pendingProjectAction.value = { kind: 'move-project', projectId }
+  moveProjectError.value = null
+  try {
+    const result = await apiValue(() => projectApi().moveProject(projectId, destinationId))
+    if (result.kind === 'pending') {
+      movePendingMessage.value = result.message
+    } else {
+      showMoveProject.value = false
+    }
+    await refreshProjects()
+  } catch (cause) {
+    moveProjectError.value = errorMessage(cause)
+  } finally {
+    pendingProjectAction.value = null
+  }
+}
+
 function beginTrashProject(project: ProjectSummary) {
-  if (showProjectTrashAction.value || pendingProjectAction.value || windowClosePending.value) {
+  if (
+    showProjectTrashAction.value ||
+    showMoveProject.value ||
+    pendingProjectAction.value ||
+    windowClosePending.value
+  ) {
     return
   }
   queueResultNavigator.cancelProjectOpen()
@@ -3533,7 +3647,12 @@ async function revealWorkspace(workspaceId: string) {
 }
 
 function beginDeleteProject(project: ProjectTrashSummary) {
-  if (showProjectTrashAction.value || pendingProjectAction.value || windowClosePending.value) {
+  if (
+    showProjectTrashAction.value ||
+    showMoveProject.value ||
+    pendingProjectAction.value ||
+    windowClosePending.value
+  ) {
     return
   }
   queueResultNavigator.cancelProjectOpen()
@@ -3628,6 +3747,7 @@ async function addWorkspace(input: ProjectWorkspaceAddInput) {
   if (
     !showAddWorkspace.value ||
     showProjectTrashAction.value ||
+    showMoveProject.value ||
     showWorkspaceSettings.value ||
     showRemoveWorkspace.value ||
     pendingProjectAction.value ||
@@ -4649,6 +4769,7 @@ function onAppKeydown(event: KeyboardEvent) {
     showNewProject.value ||
     showAddWorkspace.value ||
     showProjectTrashAction.value ||
+    showMoveProject.value ||
     showWorkspaceSettings.value ||
     showRemoveWorkspace.value ||
     importDialogVisible.value ||
@@ -4952,6 +5073,7 @@ onBeforeUnmount(() => {
           @importProject="selectImport"
           @manageModels="openModelManager()"
           @managePresets="openPresetManager"
+          @moveProject="beginMoveProject"
           @openProject="openProject"
           @rebuildPreview="rebuildProjectPreview"
           @refresh="refreshProjects"
@@ -5244,6 +5366,21 @@ onBeforeUnmount(() => {
         :busy="pendingProjectAction !== null || windowClosePending"
         :error="addWorkspaceError"
         @add="addWorkspace"
+      />
+
+      <MoveProjectModal
+        v-model:show="showMoveProject"
+        v-model:workspaceId="moveWorkspaceId"
+        :blocked="moveProjectBlocked"
+        :busy="pendingProjectAction !== null || windowClosePending"
+        :error="moveProjectError"
+        :frozenWorkspace="frozenMoveWorkspace"
+        :pendingMessage="movePendingMessage"
+        :project="movingProject"
+        :workspaces
+        :workspacesLoading
+        @move="confirmMoveProject"
+        @switchProject="switchMovingProject"
       />
 
       <ProjectTrashModal

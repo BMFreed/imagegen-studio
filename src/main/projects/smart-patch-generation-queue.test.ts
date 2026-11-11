@@ -6,7 +6,8 @@ import type { KyselyPlugin } from 'kysely'
 
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
@@ -15,8 +16,11 @@ import type { SmartPatchExecutionModelResolver } from './project-smart-patch-exe
 import type { SmartPatchInputMaterial } from './smart-patch-frozen-input.js'
 import type { AnimaStagingFixture } from './test-fixtures/anima-staging.js'
 
+import { openAppDatabase } from '../db/database.js'
 import { GenerationQueueRepository } from './generation-queue.js'
 import { localProjectRecoveryKey } from './project-identity.js'
+import { ProjectIndexRepository } from './project-index.js'
+import { ProjectRelocationStore } from './project-relocation-store.js'
 import { SmartPatchInputBundleRepository } from './project-smart-patch-input-bundle.js'
 import { captureSmartPatchInputMaterial } from './smart-patch-frozen-input.js'
 import { enqueueAnimaStagingBatch, withAnimaStagingFixture } from './test-fixtures/anima-staging.js'
@@ -615,3 +619,108 @@ test('dedicated Smart Patch and ordinary claims contend for the same actual SQL 
     await preserved(f)
   })
 })
+
+for (const family of ['illustrious', 'anima'] as const) {
+  test(`real Project Move preserves ${family} Smart frozen bundle bytes and cold-restarted terminal Retry`, async () => {
+    await fixture(family, async (f) => {
+      const targetDirectory = await mkdtemp(path.join(os.tmpdir(), 'igs-smart-move-destination-'))
+      let reopened: ReturnType<typeof openAppDatabase> | undefined
+      try {
+        const repository = new ProjectIndexRepository(f.database.db)
+        const sourceWorkspace = await repository.addWorkspace(
+          { color: 'blue', displayName: 'Smart source' },
+          path.dirname(f.projectPath),
+        )
+        const targetWorkspace = await repository.addWorkspace(
+          { color: 'violet', displayName: 'Smart destination' },
+          targetDirectory,
+        )
+        const project = await repository.indexSaved(f.projectPath, sourceWorkspace.id)
+        const originalPackage = await readFile(f.projectPath)
+        const items = await admit(f)
+        for (const item of items) {
+          await f.queue.cancel(item.id)
+        }
+        const source = await f.queue.loadVerifiedSmartPatchInput(items[0].id)
+        const originalRow = await f.database.db
+          .selectFrom('generation_queue_item')
+          .selectAll()
+          .where('id', '=', source.item.id)
+          .executeTakeFirstOrThrow()
+        const originalFiles = Object.fromEntries(
+          Object.entries(source.bundle.files).map(([name, bytes]) => [name, Buffer.from(bytes)]),
+        )
+        const originalManifest = structuredClone(source.bundle.manifest)
+        const store = new ProjectRelocationStore(f.database.db)
+        const move = await store.beginMove(
+          project,
+          sourceWorkspace,
+          targetWorkspace,
+          () => undefined,
+        )
+        assert.deepEqual(await store.finishMove(move), { kind: 'moved' })
+        await assert.rejects(readFile(f.projectPath), { code: 'ENOENT' })
+        assert.deepEqual(await readFile(move.destinationPath), originalPackage)
+        assert.equal(localProjectRecoveryKey(move.destinationPath), source.item.localProjectKey)
+        assert.deepEqual(
+          await f.database.db
+            .selectFrom('generation_queue_item')
+            .selectAll()
+            .where('id', '=', source.item.id)
+            .executeTakeFirstOrThrow(),
+          { ...originalRow, canonical_project_path: move.destinationPath },
+        )
+        const relocated = await f.queue.loadVerifiedSmartPatchInput(source.item.id)
+        assert.equal(relocated.item.projectPath, move.destinationPath)
+        assert.deepEqual(relocated.payload, source.payload)
+        assert.deepEqual(relocated.bundle.manifest, originalManifest)
+        assert.deepEqual(relocated.bundle.files, originalFiles)
+        await f.database.close()
+        reopened = openAppDatabase(f.root, path.resolve('src/main/db/migrations'))
+        const restarted = new GenerationQueueRepository(reopened.db, f.root)
+        await restarted.recoverAfterRestart()
+        const reloaded = await restarted.loadVerifiedSmartPatchInput(source.item.id)
+        assert.equal(reloaded.item.projectPath, move.destinationPath)
+        assert.equal(reloaded.payload.context.projectKey, source.payload.context.projectKey)
+        assert.deepEqual(reloaded.bundle.manifest, originalManifest)
+        assert.deepEqual(reloaded.bundle.files, originalFiles)
+        const retried = await restarted.retryPreparedSmartPatchTerminal(
+          reloaded.item.id,
+          reloaded.item.statusSequence,
+          { assertCurrent: () => undefined, modelService: f.models },
+        )
+        const retryInput = await restarted.loadVerifiedSmartPatchInput(retried.id)
+        assert.notEqual(retried.id, source.item.id)
+        assert.notEqual(retried.stagingSessionId, source.item.stagingSessionId)
+        assert.equal(retried.localProjectKey, source.item.localProjectKey)
+        assert.equal(retried.projectPath, move.destinationPath)
+        assert.notEqual(retryInput.bundle.id, source.bundle.id)
+        assert.deepEqual(retryInput.bundle.manifest, originalManifest)
+        assert.deepEqual(retryInput.bundle.files, originalFiles)
+        assert.deepEqual(retryInput.payload, {
+          ...source.payload,
+          bundle: { ...source.payload.bundle, id: retryInput.bundle.id },
+        })
+        for (const [name, bytes] of Object.entries(originalFiles)) {
+          assert.deepEqual(
+            await readFile(path.join(queueRoot(f), retryInput.bundle.id, name)),
+            bytes,
+          )
+        }
+        assert.deepEqual(
+          await readFile(path.join(queueRoot(f), retryInput.bundle.id, 'manifest.json')),
+          await readFile(path.join(queueRoot(f), source.bundle.id, 'manifest.json')),
+        )
+        assert.equal(retryInput.payload.item.item.seed, source.payload.item.item.seed)
+        assert.deepEqual(await readFile(move.destinationPath), originalPackage)
+        assert.equal(
+          (await reopened.db.selectFrom('project_relocation').selectAll().execute()).length,
+          0,
+        )
+      } finally {
+        await reopened?.close()
+        await rm(targetDirectory, { force: true, recursive: true })
+      }
+    })
+  })
+}

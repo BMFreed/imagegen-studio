@@ -27,7 +27,12 @@ import {
   localProjectRecoveryKey,
   ProjectIdentityError,
 } from './project-identity.js'
+import {
+  ensureProjectLocationIdentity,
+  hasRelocatedKeyCollision,
+} from './project-location-registry.js'
 import { withProjectPathLock } from './project-path-lock.js'
+import { ProjectRelocationStore } from './project-relocation-store.js'
 import { ProjectTrashStore } from './project-trash-store.js'
 
 export const UNCATEGORIZED_WORKSPACE_ID = 'uncategorized'
@@ -91,6 +96,7 @@ export class ProjectIndexError extends Error {
       | 'INDEX_CURSOR_INVALID'
       | 'INDEX_FILE_CHANGED'
       | 'INDEX_OUTSIDE_WORKSPACE'
+      | 'PROJECT_MOVE_PENDING'
       | 'PROJECT_TRASHED'
       | 'WORKSPACE_INVALID_INPUT'
       | 'WORKSPACE_NAME_EXISTS'
@@ -108,10 +114,12 @@ export class ProjectIndexError extends Error {
 
 /** Rebuildable Home metadata. No Project pixels or layer document live in SQLite. */
 export class ProjectIndexRepository {
+  readonly relocations: ProjectRelocationStore
   readonly trash: ProjectTrashStore
 
   constructor(private readonly db: Kysely<DB>) {
     this.trash = new ProjectTrashStore(db)
+    this.relocations = new ProjectRelocationStore(db)
   }
 
   /** Metadata checks and insertion share Invoke's transaction boundary; the folder is external. */
@@ -256,6 +264,20 @@ export class ProjectIndexRepository {
           ),
         ),
       )
+      .where((eb) =>
+        eb.not(
+          eb.exists(
+            eb
+              .selectFrom('project_relocation')
+              .select('local_project_key')
+              .whereRef(
+                'project_relocation.local_project_key',
+                '=',
+                'project_index.local_project_key',
+              ),
+          ),
+        ),
+      )
       .executeTakeFirst()
     return row ? indexRecord(row) : null
   }
@@ -328,6 +350,20 @@ export class ProjectIndexRepository {
           ),
         ),
       )
+    query = query.where((eb) =>
+      eb.not(
+        eb.exists(
+          eb
+            .selectFrom('project_relocation')
+            .select('local_project_key')
+            .whereRef(
+              'project_relocation.local_project_key',
+              '=',
+              'project_index.local_project_key',
+            ),
+        ),
+      ),
+    )
     if (workspaceId) {
       query = query.where('workspace_id', '=', workspaceId)
     }
@@ -481,6 +517,9 @@ export class ProjectIndexRepository {
         throw error
       },
     )
+    const movingPaths = new Set(
+      (await this.relocations.list()).flatMap((entry) => [entry.sourcePath, entry.destinationPath]),
+    )
     const seen = new Set<string>()
     for (const entry of entries) {
       if (!entry.isFile() || path.extname(entry.name).toLowerCase() !== '.igs') {
@@ -488,7 +527,15 @@ export class ProjectIndexRepository {
       }
       const filePath = path.join(workspace.directoryPath, entry.name)
       seen.add(filePath)
-      if (await this.trash.get(localProjectRecoveryKey(filePath))) {
+      const lifecycle = await this.db
+        .selectFrom('project_file_lifecycle')
+        .select('local_project_key')
+        .where('canonical_path', '=', filePath)
+        .executeTakeFirst()
+      if (
+        movingPaths.has(filePath) ||
+        (lifecycle && (await this.trash.get(lifecycle.local_project_key)))
+      ) {
         continue
       }
       try {
@@ -691,6 +738,16 @@ export class ProjectIndexRepository {
     workspaceId: string,
     options: { expectedDocumentId?: string },
   ): Promise<ProjectIndexRecord> {
+    if (
+      (await this.relocations.list()).some(
+        (move) => move.sourcePath === canonicalPath || move.destinationPath === canonicalPath,
+      )
+    ) {
+      throw new ProjectIndexError(
+        'PROJECT_MOVE_PENDING',
+        'This Project location is reserved by a pending move.',
+      )
+    }
     const workspace = await this.workspaceById(workspaceId)
     if (path.dirname(canonicalPath) !== workspace.directoryPath) {
       throw new ProjectIndexError(
@@ -705,7 +762,6 @@ export class ProjectIndexRepository {
       throw new ProjectIndexError('INDEX_FILE_CHANGED', 'The Project changed during indexing.')
     }
     const now = new Date().toISOString()
-    const key = localProjectRecoveryKey(canonicalPath)
     const project = packageResult.project
     if (options.expectedDocumentId && project.documentId !== options.expectedDocumentId) {
       throw new ProjectIndexError(
@@ -713,6 +769,7 @@ export class ProjectIndexRepository {
         'The trashed file was replaced by another Project document.',
       )
     }
+    const key = await ensureProjectLocationIdentity(this.db, canonicalPath, project.documentId)
     const thumbnailSha256 = packageResult.manifest.members.find(
       (member) => member.path === 'preview/thumbnail.webp',
     )?.sha256
@@ -846,6 +903,11 @@ export class ProjectIndexRepository {
     workspaceId: string,
     diagnosticCode: string,
   ): Promise<void> {
+    // An unreadable replacement has no validated document ID for a fresh binding. Keep the
+    // moved identity reserved and isolate this one path until its package can be validated.
+    if (hasRelocatedKeyCollision(filePath)) {
+      return
+    }
     const key = localProjectRecoveryKey(filePath)
     const existing = await this.db
       .selectFrom('project_index')
@@ -950,6 +1012,16 @@ function savedResultQuery(db: Kysely<DB>) {
             .selectFrom('project_file_lifecycle as lifecycle')
             .select('lifecycle.local_project_key')
             .whereRef('lifecycle.local_project_key', '=', 'project.local_project_key'),
+        ),
+      ),
+    )
+    .where((eb) =>
+      eb.not(
+        eb.exists(
+          eb
+            .selectFrom('project_relocation as relocating')
+            .select('relocating.local_project_key')
+            .whereRef('relocating.local_project_key', '=', 'project.local_project_key'),
         ),
       ),
     )

@@ -2,6 +2,10 @@ import { createHash } from 'node:crypto'
 import { lstat, realpath } from 'node:fs/promises'
 import path from 'node:path'
 
+import { resolveProjectLocationKey } from './project-location-registry.js'
+
+export { refreshProjectLocationRegistry } from './project-location-registry.js'
+
 export class ProjectIdentityError extends Error {
   constructor(
     readonly code: 'PROJECT_INVALID_PATH' | 'PROJECT_PATH_UNAVAILABLE',
@@ -55,6 +59,11 @@ export async function canonicalProjectPath(
 }
 
 export function localProjectRecoveryKey(canonicalPath: string): string {
+  return resolveProjectLocationKey(canonicalPath, rawPathDerivedProjectRecoveryKey(canonicalPath))
+}
+
+/** Initial compatibility identity; relocation preserves this key independently of current path. */
+export function rawPathDerivedProjectRecoveryKey(canonicalPath: string): string {
   if (!path.isAbsolute(canonicalPath) || path.normalize(canonicalPath) !== canonicalPath) {
     throw new ProjectIdentityError('PROJECT_INVALID_PATH', 'The project path is not canonical.')
   }

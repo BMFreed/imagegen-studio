@@ -714,6 +714,10 @@ function isProjectImportFinishResult(value: unknown): value is ProjectImportFini
 function isProjectSummary(value: unknown): value is ProjectSummary {
   return (
     isRecord(value) &&
+    (value.pendingMove === undefined ||
+      (isRecord(value.pendingMove) &&
+        isProjectWorkspaceId(value.pendingMove.workspaceId) &&
+        typeof value.pendingMove.message === 'string')) &&
     isProjectId(value.id) &&
     isProjectWorkspaceId(value.workspaceId) &&
     typeof value.title === 'string' &&
@@ -1450,6 +1454,15 @@ const api: StudioApi = {
         [],
         (value): value is ProjectWorkspaceSummary[] =>
           Array.isArray(value) && value.every(isProjectWorkspaceSummary),
+      ),
+    moveProject: (projectId, workspaceId) =>
+      invokeProject(
+        ipcChannels.projects.moveProject,
+        [projectId, workspaceId],
+        (value): value is import('../shared/api.js').ProjectMoveResult =>
+          isRecord(value) &&
+          (value.kind === 'moved' ||
+            (value.kind === 'pending' && typeof value.message === 'string')),
       ),
     moveRasterLayer: (tabId, layerId, targetIndex) =>
       invokeProject(
