@@ -60,6 +60,7 @@ const props = defineProps<{
 }>()
 const workspaceId = defineModel<string | null>('workspaceId', { required: true })
 const search = defineModel<string>('search', { required: true })
+const selectedProjectId = defineModel<string | null>('selectedProjectId', { required: true })
 const sort = defineModel<HomeProjectSort>('sort', { required: true })
 const status = defineModel<HomeProjectStatus>('status', { required: true })
 const inspectorCollapsed = defineModel<boolean>('inspectorCollapsed', { required: true })
@@ -394,7 +395,6 @@ const visibleProjects = computed(() =>
     workspaces: props.workspaces,
   }),
 )
-const selectedProjectId = ref<string | null>(null)
 const contextProjectId = ref<string | null>(null)
 const contextMenuX = ref(0)
 const contextMenuY = ref(0)
@@ -421,14 +421,18 @@ watch(
     closeContextMenu()
   },
 )
-watch(visibleProjects, (projects) => {
-  if (!projects.some(({ id }) => id === selectedProjectId.value)) {
-    selectedProjectId.value = null
-  }
-  if (!projects.some(({ id }) => id === contextProjectId.value)) {
-    closeContextMenu()
-  }
-})
+watch(
+  visibleProjects,
+  (projects) => {
+    if (!projects.some(({ id }) => id === selectedProjectId.value)) {
+      selectedProjectId.value = null
+    }
+    if (!projects.some(({ id }) => id === contextProjectId.value)) {
+      closeContextMenu()
+    }
+  },
+  { immediate: true },
+)
 watch(() => [props.busy, viewMode.value], closeContextMenu)
 function selectBrowse(kind: 'projects' | 'trash') {
   closeContextMenu()

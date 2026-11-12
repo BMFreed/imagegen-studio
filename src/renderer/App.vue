@@ -330,6 +330,7 @@ const modelManagerFocus = ref<ModelManagerFocus | null>(null)
 const projects = ref<ProjectSummary[]>([])
 // Home is remounted on Project navigation; browse controls belong to the app session.
 const homeProjectSearch = ref('')
+const homeSelectedProjectId = ref<string | null>(null)
 const homeProjectSort = ref<HomeProjectSort>('lastOpened')
 const homeProjectStatus = ref<HomeProjectStatus>('all')
 const homeInspectorCollapsed = ref(false)
@@ -345,6 +346,9 @@ const workspaceMarkerColors: ReadonlySet<string> = new Set(PROJECT_WORKSPACE_COL
 const workspacesLoading = ref(false)
 const workspacesError = ref<string | null>(null)
 const selectedWorkspaceId = ref<string | null>(null)
+watch([selectedWorkspaceId, selectedTrashView], () => {
+  homeSelectedProjectId.value = null
+})
 const browseWorkspaceId = computed({
   get: () => selectedWorkspaceId.value,
   set: (id: string | null) => {
@@ -5459,6 +5463,7 @@ onBeforeUnmount(() => {
           v-model:browserPaneSize="homeBrowserPaneSize"
           v-model:inspectorCollapsed="homeInspectorCollapsed"
           v-model:search="homeProjectSearch"
+          v-model:selectedProjectId="homeSelectedProjectId"
           v-model:sidebarPaneSize="homeSidebarPaneSize"
           v-model:sort="homeProjectSort"
           v-model:status="homeProjectStatus"

@@ -1,6 +1,14 @@
 # Engineering Workflow
 
-## Current Home Create/Import checkpoint
+## Current Home selection checkpoint
+
+[Selected Project continuity](./phase-4-home-selection-research.md) preserves the selected visible Project
+through Home remount within the App session. Scope/filter invalidation and immediate
+remount validation prevent hidden-ID resurrection. Preview camera and cross-launch
+settings are separate; richer filename metadata and full Home/MVP acceptance stay
+open. Public promise statuses are unchanged.
+
+## Previous Home Create/Import checkpoint
 
 [Home Create and Import current placement](./phase-4-home-entry-current-research.md) connects the existing dialogs/picker/transfer/recovery
 results to Home replacement after success. Already-open Import focuses its unique

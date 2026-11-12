@@ -2,6 +2,13 @@
 
 ## Production checkpoint
 
+[Selected Project continuity](../engineering/phase-4-home-selection-research.md)
+retains the selected visible row and Inspector owner through Project navigation
+and Home Close/reopen in the same App session. Scope changes and disappearing or
+filtered-out rows clear selection without selecting another row; remount validates
+a retained ID immediately. Ordinary refresh keeps valid cached selection. This
+does not add cross-launch selection or preview camera persistence.
+
 [Home Create/Import](../engineering/phase-4-home-entry-current-research.md) uses the
 accepted Current presentation: a newly created or imported Project replaces Home
 after success, ahead of other Project tabs. Import of an already-open Project
