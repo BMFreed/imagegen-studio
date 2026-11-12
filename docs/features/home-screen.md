@@ -2,6 +2,14 @@
 
 ## Production checkpoint
 
+[Home Create/Import](../engineering/phase-4-home-entry-current-research.md) uses the
+accepted Current presentation: a newly created or imported Project replaces Home
+after success, ahead of other Project tabs. Import of an already-open Project
+focuses its existing tab without removing Home or reordering. Import retains its
+presentation intent through destination and explicit recovery; Cancel/errors keep
+Home. No separate New Tab chooser is added. Domain Create/Import/Move/Copy/recovery
+and their validation remain unchanged.
+
 [Home opening](../engineering/phase-4-home-opening-research.md) connects Grid/List
 double click, Enter and Open to current replacement after success. Ctrl/Cmd/middle
 click and Open in New Tab retain Home and insert beside it; already-open Projects
@@ -9,7 +17,7 @@ only focus their existing tab. Explicit recovery retains the selected target;
 Cancel/failure leaves Home, and stale results preserve newer navigation. Closed
 unavailable/Trash guards remain; an already-open unavailable Project can be focused
 without another Main Open. Main snapshots preserve presentation order. This is
-the Home browser consumer; Import/New Project target parity remains separate.
+the Home browser consumer; Create/Import have the later finite checkpoint above.
 
 [Home grid/list and resize](../engineering/phase-4-home-grid-research.md) adds the approved Grid
 and List controls to the real catalog. Both views retain the same selected Project

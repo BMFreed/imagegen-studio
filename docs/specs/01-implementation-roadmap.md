@@ -1,12 +1,20 @@
 # Implementation Roadmap
 
-## Current Home opening checkpoint
+## Current Home Create/Import checkpoint
+
+[Home Create and Import current placement](../engineering/phase-4-home-entry-current-research.md) connects the existing dialogs/picker/transfer/recovery
+results to Home replacement after success. Already-open Import focuses its unique
+existing tab. No new target chooser or Main/storage behavior is introduced. Richer
+metadata, session continuity and full Home/MVP acceptance remain separate; public
+promise statuses are unchanged.
+
+## Previous Home opening checkpoint
 
 [Home opening gestures and targets](../engineering/phase-4-home-opening-research.md) connect current/new-tab
 presentation to the existing Main Open and explicit recovery flow. Already-open
 Projects focus their unique tab; captured targets survive recovery, and stale
 Open results preserve newer Home/focus. Main snapshots retain Renderer tab order.
-Import/New Project target parity, richer metadata, cross-launch preferences and
+Richer metadata, cross-launch preferences and
 full Home/MVP acceptance remain separate; public promise statuses are unchanged.
 
 ## Previous Home grid/list and resize checkpoint

@@ -149,11 +149,11 @@ import WorkspaceSettingsModal from './components/WorkspaceSettingsModal.vue'
 import { imageGenNaiveTheme } from './theme/naive-theme.js'
 
 type RecoveryDecision = Extract<ProjectOpenResult, { kind: 'recovery-required' }>
-type HomeOpenIntent = {
+type HomePresentationIntent = {
   epoch: number
-  projectId: string
   target: 'current' | 'new'
 }
+type HomeOpenIntent = HomePresentationIntent & { projectId: string }
 type ImportTransfer = Extract<ProjectImportSelection, { kind: 'transfer-required' }>
 type CandidateSelection = { candidateIds: string[]; focusedCandidateId: string | null }
 type PendingAcceptance = {
@@ -448,6 +448,12 @@ const closingTabId = ref<string | null>(null)
 const closeImpact = ref<ProjectCloseImpact | null>(null)
 const closeError = ref<string | null>(null)
 const showNewProject = ref(false)
+const newProjectHomeIntent = ref<HomePresentationIntent | null>(null)
+watch(showNewProject, (visible) => {
+  if (!visible) {
+    newProjectHomeIntent.value = null
+  }
+})
 const newProjectError = ref<string | null>(null)
 const newProjectWorkspaceId = ref(DEFAULT_PROJECT_WORKSPACE_ID)
 const showMoveProject = ref(false)
@@ -500,6 +506,7 @@ const removeMissingProjectEligible = computed(() => {
 })
 const importTransfer = ref<ImportTransfer | null>(null)
 const importDialogVisible = ref(false)
+const importHomeIntent = ref<HomePresentationIntent | null>(null)
 const importChoice = ref<'copy' | 'move'>('move')
 const importWorkspaceId = ref(DEFAULT_PROJECT_WORKSPACE_ID)
 const importWorkspaceOptions = computed(() =>
@@ -4151,6 +4158,7 @@ async function removeWorkspace() {
 
 function beginNewProject() {
   queueResultNavigator.cancelProjectOpen()
+  newProjectHomeIntent.value = captureHomePresentationIntent()
   newProjectError.value = null
   newProjectWorkspaceId.value = defaultProjectWorkspaceId(
     workspaces.value,
@@ -4167,6 +4175,7 @@ async function createProject(input: ProjectCreateInput) {
     return
   }
   const captured: ProjectCreateInput = JSON.parse(JSON.stringify(input))
+  const homeIntent = newProjectHomeIntent.value
   const destinationProblem = captured.workspaceId
     ? projectWorkspaceDestinationProblem(workspaces.value, captured.workspaceId)
     : 'Choose a workspace before creating the project.'
@@ -4180,7 +4189,11 @@ async function createProject(input: ProjectCreateInput) {
   try {
     const tab = await apiValue(() => projectApi().create(captured))
     showNewProject.value = false
-    focusTab(tab)
+    if (homeIntent) {
+      focusHomeOpenedTab(tab, homeIntent)
+    } else {
+      focusTab(tab)
+    }
     if (tab.storageWarning) {
       globalNotice.value = tab.storageWarning
     }
@@ -4192,7 +4205,13 @@ async function createProject(input: ProjectCreateInput) {
   }
 }
 
-function homeOpenIntentCurrent(intent: HomeOpenIntent): boolean {
+function captureHomePresentationIntent(): HomePresentationIntent | null {
+  return homeOpen.value && activeDocument.value === 'home'
+    ? { epoch: homePresentationEpoch, target: 'current' }
+    : null
+}
+
+function homeOpenIntentCurrent(intent: HomePresentationIntent): boolean {
   return (
     !rendererDisposed &&
     !windowClosePending.value &&
@@ -4202,14 +4221,18 @@ function homeOpenIntentCurrent(intent: HomeOpenIntent): boolean {
   )
 }
 
-function focusHomeOpenedTab(tab: ProjectTab, intent: HomeOpenIntent) {
+function focusHomeOpenedTab(tab: ProjectTab, intent: HomePresentationIntent) {
   if (!homeOpenIntentCurrent(intent)) {
     if (!rendererDisposed && !windowClosePending.value) {
       replaceTab(tab)
     }
     return
   }
+  const alreadyOpen = projectTabs.value.some(({ id }) => id === tab.id)
   focusTab(tab)
+  if (alreadyOpen) {
+    return
+  }
   const index = projectTabs.value.findIndex(({ id }) => id === tab.id)
   if (index > 0) {
     projectTabs.value.splice(index, 1)
@@ -4350,6 +4373,7 @@ async function selectImport() {
     return
   }
   pendingProjectAction.value = { kind: 'import-select' }
+  const homeIntent = captureHomePresentationIntent()
   const destinationId = defaultProjectWorkspaceId(
     workspaces.value,
     selectedTrashView.value ? null : selectedWorkspaceId.value,
@@ -4363,13 +4387,19 @@ async function selectImport() {
     }
     if (selection.kind === 'opened') {
       if (selection.result.kind === 'opened') {
-        focusTab(selection.result.tab)
+        if (homeIntent) {
+          focusHomeOpenedTab(selection.result.tab, homeIntent)
+        } else {
+          focusTab(selection.result.tab)
+        }
         if (selection.result.tab.storageWarning) {
           globalNotice.value = selection.result.tab.storageWarning
         }
       } else {
         recoveryDecision.value = selection.result
-        homeRecoveryIntent.value = null
+        homeRecoveryIntent.value = homeIntent
+          ? { ...homeIntent, projectId: selection.result.projectId }
+          : null
         recoveryError.value = null
       }
       await refreshProjects()
@@ -4378,6 +4408,7 @@ async function selectImport() {
     importChoice.value = 'move'
     importWorkspaceId.value = destinationId
     importTransfer.value = selection
+    importHomeIntent.value = homeIntent
     importDialogVisible.value = true
   } catch (cause) {
     homeError.value = errorMessage(cause)
@@ -4392,6 +4423,7 @@ async function cancelImport() {
     return
   }
   importDialogVisible.value = false
+  importHomeIntent.value = null
   try {
     const result = await projectApi().cancelImport(transfer.importId)
     if (!result.ok) {
@@ -4400,6 +4432,11 @@ async function cancelImport() {
   } catch (cause) {
     homeError.value = errorMessage(cause)
   }
+}
+
+function clearImportTransfer() {
+  importTransfer.value = null
+  importHomeIntent.value = null
 }
 
 async function finishImport() {
@@ -4412,6 +4449,7 @@ async function finishImport() {
   }
   const workspaceId = importWorkspaceId.value
   const choice = importChoice.value
+  const homeIntent = importHomeIntent.value
   pendingProjectAction.value = { kind: 'import-finish' }
   try {
     const finished = await apiValue(() =>
@@ -4428,10 +4466,16 @@ async function finishImport() {
       globalNotice.value = warning
     }
     if (finished.result.kind === 'opened') {
-      focusTab(finished.result.tab)
+      if (homeIntent) {
+        focusHomeOpenedTab(finished.result.tab, homeIntent)
+      } else {
+        focusTab(finished.result.tab)
+      }
     } else {
       recoveryDecision.value = finished.result
-      homeRecoveryIntent.value = null
+      homeRecoveryIntent.value = homeIntent
+        ? { ...homeIntent, projectId: finished.result.projectId }
+        : null
       recoveryError.value = null
     }
     await refreshProjects()
@@ -5674,7 +5718,7 @@ onBeforeUnmount(() => {
         :closeOnEsc="pendingProjectAction?.kind !== 'import-finish'"
         :maskClosable="false"
         :show="importDialogVisible"
-        @afterLeave="importTransfer = null"
+        @afterLeave="clearImportTransfer"
         @update:show="!$event && cancelImport()"
       >
         <NCard
