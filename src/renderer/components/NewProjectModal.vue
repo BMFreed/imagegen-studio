@@ -18,6 +18,7 @@ import {
 } from 'naive-ui'
 import { computed, nextTick, ref, useId, watch } from 'vue'
 
+import type { ModelManagerFocus } from './model-manager-focus.js'
 import type { AspectRatioState } from './resolution-control.js'
 
 import { AppLayer } from '../../../docs/prototype-app/src/theme/app-layers.js'
@@ -30,7 +31,8 @@ import {
   selectNewProjectPreset,
   setNewProjectPresetSection,
 } from './new-project-preset-draft.js'
-import { presetNeedsAttention, presetNumericInputValid, sectionLabels } from './preset-editor.js'
+import { presetNumericInputValid, sectionLabels } from './preset-editor.js'
+import { newProjectPresetModelRows } from './preset-model-handoff.js'
 import PresetPayloadEditor from './PresetPayloadEditor.vue'
 import {
   projectWorkspaceDestinationOptions,
@@ -48,6 +50,7 @@ const props = defineProps<{
   presets: PresetRecord[]
   presetsError: string | null
   presetsLoading: boolean
+  suspended: boolean
   workspaces: ProjectWorkspaceSummary[]
   workspacesError: string | null
   workspacesLoading: boolean
@@ -55,10 +58,15 @@ const props = defineProps<{
 const show = defineModel<boolean>('show', { required: true })
 const emit = defineEmits<{
   create: [input: ProjectCreateInput]
+  manageModels: [focus: ModelManagerFocus]
   refreshPresets: []
   refreshWorkspaces: []
+  suspended: []
 }>()
 const formId = useId()
+const modalRoot = ref<HTMLElement | null>(null)
+let handoffTrigger: HTMLElement | null = null
+let handoffActionKey: string | null = null
 const title = ref('')
 const workspaceId = ref(props.initialWorkspaceId)
 const workspaceOptions = computed(() =>
@@ -116,16 +124,9 @@ const nameProblem = computed(() =>
       ? 'Project name is too long.'
       : undefined,
 )
-const selectedResourceAttention = computed(() => {
-  const current = customization.value
-  if (!current) {
-    return false
-  }
-  const payload = Object.fromEntries(
-    current.selectedSections.map((section) => [section, current.payload[section]]),
-  )
-  return presetNeedsAttention({ payload }, props.catalog, props.catalogReady)
-})
+const resourceModelRows = computed(() =>
+  newProjectPresetModelRows(state.value, props.catalog, props.catalogReady),
+)
 const changedSections = computed(() =>
   sections.value.filter(
     (section) =>
@@ -140,6 +141,8 @@ const allExpanded = computed(
 )
 
 watch(show, (visible) => {
+  handoffTrigger = null
+  handoffActionKey = null
   if (!visible) {
     return
   }
@@ -154,7 +157,7 @@ watch(show, (visible) => {
   dialogRevision.value += 1
 })
 function selectPreset(id: string) {
-  if (props.busy) {
+  if (props.busy || props.suspended) {
     return
   }
   const preset = id === 'none' ? null : activePresets.value.find((candidate) => candidate.id === id)
@@ -170,29 +173,61 @@ function selectPreset(id: string) {
   dialogRevision.value += 1
 }
 function setUsed(section: PresetSectionKey, selected: boolean) {
-  if (!props.busy) {
+  if (!props.busy && !props.suspended) {
     setNewProjectPresetSection(state.value, section, selected)
   }
 }
 function resetSection(section: PresetSectionKey) {
-  if (!props.busy) {
+  if (!props.busy && !props.suspended) {
     resetNewProjectPresetSection(state.value, section)
   }
 }
 function resetAll() {
-  if (!props.busy) {
+  if (!props.busy && !props.suspended) {
     resetNewProjectPreset(state.value)
   }
 }
 function close() {
-  if (!props.busy) {
+  if (!props.busy && !props.suspended) {
     show.value = false
   }
 }
 function create() {
-  if (!props.busy && request.value) {
+  if (!props.busy && !props.suspended && request.value) {
     emit('create', JSON.parse(JSON.stringify(request.value)) as ProjectCreateInput)
   }
+}
+function requestModels(focus: ModelManagerFocus, actionKey: string, event: MouseEvent) {
+  if (!show.value || props.busy || props.suspended) {
+    return
+  }
+  handoffTrigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
+  handoffActionKey = actionKey
+  emit('manageModels', focus)
+}
+function afterLeave() {
+  if (show.value && props.suspended) {
+    emit('suspended')
+  }
+}
+function afterEnter() {
+  if (!handoffActionKey || !show.value || props.suspended) {
+    return
+  }
+  const restored = Array.from(
+    modalRoot.value?.querySelectorAll<HTMLButtonElement>('[data-new-project-model-action]') ?? [],
+  ).find((button) => button.dataset.newProjectModelAction === handoffActionKey && !button.disabled)
+  const target =
+    handoffTrigger?.isConnected &&
+    modalRoot.value?.contains(handoffTrigger) &&
+    !handoffTrigger.hasAttribute('disabled') &&
+    handoffTrigger.dataset.newProjectModelAction === handoffActionKey
+      ? handoffTrigger
+      : (restored ??
+        modalRoot.value?.querySelector<HTMLInputElement>('input[aria-label="Project name"]'))
+  handoffTrigger = null
+  handoffActionKey = null
+  target?.focus({ preventScroll: true })
 }
 function clearPlainRaw() {
   plainRaw.value = {}
@@ -227,7 +262,7 @@ function focusDimension(event: Event) {
 }
 function updateDimension(event: Event, blur = false) {
   const target = dimensionTarget(event)
-  if (!target || props.busy || customization.value) {
+  if (!target || props.busy || props.suspended || customization.value) {
     return
   }
   const { dimension, input } = target
@@ -287,13 +322,17 @@ function sectionSummary(section: PresetSectionKey) {
 
 <template>
   <NModal
-    :closeOnEsc="!busy"
+    :closeOnEsc="!busy && !suspended"
+    displayDirective="show"
     :maskClosable="false"
-    :show
+    :show="show && !suspended"
     :zIndex="AppLayer.dialog"
+    @afterEnter="afterEnter"
+    @afterLeave="afterLeave"
     @update:show="!$event && close()"
   >
     <div
+      ref="modalRoot"
       aria-label="New Project"
       aria-modal="true"
       class="home-modal"
@@ -302,7 +341,12 @@ function sectionSummary(section: PresetSectionKey) {
     >
       <header class="modal-header"><h2>New Project</h2></header>
       <NScrollbar class="modal-scroll">
-        <NForm :id="formId" :disabled="busy" labelPlacement="top" @submit.prevent="create">
+        <NForm
+          :id="formId"
+          :disabled="busy || suspended"
+          labelPlacement="top"
+          @submit.prevent="create"
+        >
           <div class="modal-form">
             <NAlert
               v-if="createError"
@@ -384,12 +428,41 @@ function sectionSummary(section: PresetSectionKey) {
                 for this project. The saved preset will not change.
               </NAlert>
               <NAlert
-                v-if="selectedResourceAttention"
-                aria-label="New Project preset resources need attention"
+                v-if="!catalogReady || resourceModelRows.length"
+                :aria-label="
+                  catalogReady
+                    ? 'New Project preset resources need attention'
+                    : 'New Project resource catalog unavailable'
+                "
+                role="alert"
                 type="warning"
               >
-                Selected settings reference an unavailable or incompatible resource. You can create
-                this project and repair the settings before generating.
+                <template v-if="catalogReady">
+                  Selected settings reference an unavailable or incompatible resource. You can
+                  create this project and repair the settings before generating.
+                </template>
+                <template v-else>
+                  Resource catalog is unavailable. Selected references remain unchanged.
+                </template>
+                <div aria-label="New Project resource diagnostics">
+                  <div v-for="row of resourceModelRows" :key="row.actionKey" class="resource-row">
+                    <span>
+                      {{ sectionLabels[row.section] }}: {{ row.focus.resource?.resourceName }} ·
+                      {{ row.focus.resource?.versionName }}
+                    </span>
+                    <NButton
+                      :aria-label="`Open ${row.focus.resource?.resourceName} in Models`"
+                      class="resource-action"
+                      :data-new-project-model-action="row.actionKey"
+                      :disabled="busy || suspended"
+                      size="small"
+                      text
+                      @click="requestModels(row.focus, row.actionKey, $event)"
+                    >
+                      Open in Models
+                    </NButton>
+                  </div>
+                </div>
               </NAlert>
               <div class="preset-toolbar">
                 <NText class="toolbar-summary" depth="3">
@@ -502,6 +575,20 @@ function sectionSummary(section: PresetSectionKey) {
 </template>
 
 <style scoped>
+.resource-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+.resource-row > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.resource-action {
+  flex-shrink: 0;
+}
 .home-modal {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;

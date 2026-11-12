@@ -55,13 +55,33 @@ const emit = defineEmits<{ afterClose: [] }>()
 const props = defineProps<{ focus: ModelManagerFocus | null }>()
 const focusedResource = computed(() => props.focus?.resource ?? null)
 const focusedFromPresetManager = computed(() => props.focus?.origin === 'preset-manager')
+const focusedFromNewProject = computed(() => props.focus?.origin === 'new-project')
 const focusedFromPreset = computed(
-  () => props.focus?.origin === 'preset' || focusedFromPresetManager.value,
+  () =>
+    props.focus?.origin === 'preset' ||
+    focusedFromPresetManager.value ||
+    focusedFromNewProject.value,
 )
 const unchangedPresetSelection = computed(() =>
-  focusedFromPresetManager.value
-    ? 'The Preset draft is unchanged.'
-    : 'The Apply selection is unchanged.',
+  focusedFromNewProject.value
+    ? 'The New Project settings are unchanged.'
+    : focusedFromPresetManager.value
+      ? 'The Preset draft is unchanged.'
+      : 'The Apply selection is unchanged.',
+)
+const focusedPresetContext = computed(() =>
+  focusedFromNewProject.value
+    ? 'New Project'
+    : focusedFromPresetManager.value
+      ? 'the Preset draft'
+      : 'Apply',
+)
+const focusedPresetEditor = computed(() =>
+  focusedFromNewProject.value
+    ? 'New Project'
+    : focusedFromPresetManager.value
+      ? 'Preset Manager'
+      : 'Apply',
 )
 const focusedPresetReady = computed(
   () =>
@@ -1106,10 +1126,10 @@ onBeforeUnmount(() => {
           {{ focusedFromPreset ? unchangedPresetSelection : 'The Project selection is unchanged.' }}
         </NAlert>
         <NAlert v-else key="n-alert-5" title="Preset resource unavailable" type="warning">
-          The exact file referenced by {{ focusedFromPresetManager ? 'the Preset draft' : 'Apply' }}
+          The exact file referenced by {{ focusedPresetContext }}
           is unavailable or does not match this library version.
           {{ unchangedPresetSelection }} Repair the exact resource or explicitly replace it in
-          {{ focusedFromPresetManager ? 'Preset Manager' : 'Apply' }}.
+          {{ focusedPresetEditor }}.
         </NAlert>
       </div>
 
@@ -1426,11 +1446,13 @@ onBeforeUnmount(() => {
                               type="info"
                             >
                               {{
-                                focusedFromPresetManager
-                                  ? 'Referenced by Preset draft'
-                                  : focusedFromPreset
-                                    ? 'Selected for Apply'
-                                    : 'Selected in Project'
+                                focusedFromNewProject
+                                  ? 'Used by New Project'
+                                  : focusedFromPresetManager
+                                    ? 'Referenced by Preset draft'
+                                    : focusedFromPreset
+                                      ? 'Selected for Apply'
+                                      : 'Selected in Project'
                               }}
                             </NTag>
                             <NTag

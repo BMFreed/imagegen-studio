@@ -1,6 +1,15 @@
 # Implementation Roadmap
 
-## Current Preset Manager Models checkpoint
+## Current New Project Models checkpoint
+
+[New Project resource handoff](../engineering/phase-4-new-project-models-research.md)
+connects used temporary preset references to the same exact Models manager. The
+retained form keeps title/workspace, source copy, Use mask and raw fields through
+current catalog settlement. Background chrome/Home/tabs stay inert during the
+handoff. Missing resources remain advisory; only explicit Create writes a Project.
+Finite evidence and public readiness remain separate.
+
+## Previous Preset Manager Models checkpoint
 
 [Exact-resource Models handoff](../engineering/phase-4-preset-manager-models-research.md) connects the global Models menu
 and active Preset Manager drafts to the canonical manager. Logical editor/session
@@ -374,9 +383,9 @@ Anima Smart enabled-LoRA refusal описывает исторический che
    production checkpoints выше. Не повторять их как отсутствующие consumers;
    совместная compatibility/capacity и итоговая Home/MVP acceptance остаются отдельными.
 4. **Model Manager:** hard Remove Local Resource с running/pending/reference/
-   shared-file guards; missing accepted-result resources и New Project handoff.
-   Global Models menu и active Preset Manager exact-resource return имеют новый
-   finite checkpoint выше. Project checkpoint/LoRA/VAE/embedding navigation,
+   shared-file guards; missing accepted-result resources → Models.
+   Global Models menu, active Preset Manager и New Project exact-resource return
+   имеют finite checkpoints выше. Project checkpoint/LoRA/VAE/embedding navigation,
    Project Apply diagnostic return и installed artwork уже подключены; не
    ставить их повторно в TODO. Deleted-preset read-only browse не добавлен этим срезом.
 5. **Image export:** `Export As` по visible-content bounds с active Smart

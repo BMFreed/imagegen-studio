@@ -11,7 +11,7 @@ export interface ModelManagerResourceFocus {
 export interface ModelManagerFocus {
   /** Preset diagnostics retain the expected exact file, rather than just nominal local IDs. */
   expectedResource?: NonNullable<ProjectTab['generationDraft']['model']>
-  origin?: 'preset-manager' | 'preset'
+  origin?: 'new-project' | 'preset-manager' | 'preset'
   resource: ModelManagerResourceFocus | null
   resourceType: ModelResourceType
 }

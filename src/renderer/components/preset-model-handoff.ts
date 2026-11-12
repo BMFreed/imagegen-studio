@@ -2,6 +2,8 @@ import type { ModelCatalogItem } from '../../shared/api.js'
 import type { PresetApplicationDiagnostic } from '../../shared/presets/preset-application.js'
 import type { PresetSectionKey } from '../../shared/presets/preset-schema.js'
 
+import type { NewProjectPresetState } from './new-project-preset-draft.js'
+
 import { type ModelManagerFocus, modelManagerFocusFor } from './model-manager-focus.js'
 import {
   type EditablePresetDefinition,
@@ -38,6 +40,31 @@ export function presetManagerModelRows(
   catalog: ModelCatalogItem[],
   catalogReady: boolean,
 ) {
+  return editableResourceModelRows(definition, catalog, catalogReady, 'preset-manager')
+}
+
+/** Only settings used by the detached New Project copy contribute diagnostics. */
+export function newProjectPresetModelRows(
+  state: NewProjectPresetState,
+  catalog: ModelCatalogItem[],
+  catalogReady: boolean,
+) {
+  const customization = state.customization
+  if (!customization) {
+    return []
+  }
+  const payload = Object.fromEntries(
+    customization.selectedSections.map((section) => [section, customization.payload[section]]),
+  )
+  return editableResourceModelRows({ payload }, catalog, catalogReady, 'new-project')
+}
+
+function editableResourceModelRows(
+  definition: Pick<EditablePresetDefinition, 'payload'>,
+  catalog: ModelCatalogItem[],
+  catalogReady: boolean,
+  origin: 'new-project' | 'preset-manager',
+) {
   const references = catalogReady
     ? presetUnavailableResources(definition, catalog, true)
     : presetResourceReferences(definition)
@@ -48,11 +75,14 @@ export function presetManagerModelRows(
       return []
     }
     seen.add(actionKey)
-    return [{ actionKey, focus: resourceFocus(resource, 'preset-manager'), section }]
+    return [{ actionKey, focus: resourceFocus(resource, origin), section }]
   })
 }
 
-function resourceFocus(resource: Resource, origin: 'preset-manager' | 'preset'): ModelManagerFocus {
+function resourceFocus(
+  resource: Resource,
+  origin: NonNullable<ModelManagerFocus['origin']>,
+): ModelManagerFocus {
   return {
     ...modelManagerFocusFor(resource.kind, resource),
     expectedResource: JSON.parse(JSON.stringify(resource)) as Resource,

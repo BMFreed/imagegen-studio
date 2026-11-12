@@ -242,6 +242,18 @@ Typecheck, lint, build and visual checks are recorded separately in the checkpoi
 This initialization flow does not qualify
 accepted-result projection, Models handoff or Smart Patch sources/targets.
 
+The later [New Project Models checkpoint](../engineering/phase-4-new-project-models-research.md)
+adds exact `Open in Models` actions for current references in used sections, without
+parsing unrelated unfinished fields. Unused sections retain their values but do
+not produce warnings/actions. Unknown catalog state has its own warning and can
+browse known used refs. The temporary source copy, name/workspace, Use mask,
+expansion, reset baseline and raw values stay mounted through the visit; a current
+catalog read and actual Models dismissal precede return. Background actions cannot
+replace this pending form. Exact repair removes only the resolved diagnostic;
+otherwise focus returns to the same action. Project name is the repair fallback.
+Missing resources remain advisory and source presets are never written by browsing
+or Create. Creation still goes only through explicit Create Project.
+
 ## Save Current As Preset
 
 `Save Current as Preset` opens the Preset Manager in create mode. The current project is copied into an editable transient preset definition and shown as a pinned `Draft` row. The draft is not part of the catalog, filters, sorting or workflow counts, and no record or ID exists until the user clicks `Create Preset`.
@@ -596,8 +608,8 @@ is displayed separately and can still browse known refs. The same session/editor
 stays mounted through the staged Models visit; dirty state, values, source intent,
 filters and layout remain. Models input does not trigger hidden preset Save.
 Repair only removes a diagnostic when the exact reference becomes available;
-replacement and Save remain explicit. Deleted read-only presets and New Project
-handoff are outside this finite consumer.
+replacement and Save remain explicit. Deleted read-only presets remain outside
+this consumer; New Project's selected-only return is the separate checkpoint above.
 
 Presets should store enough copied display metadata to remain understandable after a resource is removed.
 

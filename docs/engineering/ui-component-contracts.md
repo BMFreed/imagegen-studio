@@ -23,6 +23,16 @@ import — app-overlay + 1, а родительский Preset dirty-close guard
 Порядок не зависит от auto-z-index Naive или порядка повторных teleport. Executable evidence:
 [Manager Models checkpoint](./phase-4-preset-manager-models-research.md).
 
+New Project использует тот же handoff с собственным presentation epoch и
+`origin: 'new-project'`. `newProjectPresetModelRows` проецирует только текущие
+Use sections через существующий authoring availability owner. Logical show,
+editor key и raw values сохраняются, а presentation show освобождает trap.
+App shell inert блокирует chrome/Home/tabs до current catalog settlement и
+Models dismissal; teleported Models остаётся интерактивным. После exact repair
+focus fallback — Project name, иначе точная diagnostic action. Missing resources
+не становятся Create admission gate. Граница:
+[New Project Models checkpoint](./phase-4-new-project-models-research.md).
+
 Production Preset Manager принимает detached `PresetCreateIntent` от текущего
 Project, выбранного Smart Patch draft или принятого результата. Общий session/editor владеет transient
 draft, Cancel/guards/Create/retry; source mapper владеет содержимым копии.

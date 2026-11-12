@@ -300,10 +300,12 @@ const presetModelHandoff = ref<
     } & (
       | { application: NonNullable<typeof presetApplication.value>; origin: 'apply' }
       | { managerEpoch: number; origin: 'manager' }
+      | { newProjectEpoch: number; origin: 'new-project' }
     ))
   | null
 >(null)
 let presetManagerModelsEpoch = 0
+let newProjectModelsEpoch = 0
 const presetApplyTab = computed(() => {
   const application = presetApplication.value
   return application
@@ -472,6 +474,17 @@ watch(showNewProject, (visible) => {
     newProjectHomeIntent.value = null
   }
 })
+watch(
+  showNewProject,
+  (visible) => {
+    ++newProjectModelsEpoch
+    if (!visible && presetModelHandoff.value?.origin === 'new-project') {
+      presetModelHandoff.value = null
+      modelManagerOpen.value = false
+    }
+  },
+  { flush: 'sync' },
+)
 const newProjectError = ref<string | null>(null)
 const newProjectWorkspaceId = ref(DEFAULT_PROJECT_WORKSPACE_ID)
 const showMoveProject = ref(false)
@@ -608,6 +621,9 @@ function hasGenerationCloseImpact(impact: ProjectCloseImpact | null): boolean {
 }
 
 function openModelManager(focus: ModelManagerFocus | null = null, fromPresetHandoff = false) {
+  if (presetModelHandoff.value?.origin === 'new-project' && !fromPresetHandoff) {
+    return
+  }
   if (presetModelHandoff.value && !fromPresetHandoff) {
     if (presetModelHandoff.value.origin === 'apply') {
       presetApplyOpen.value = false
@@ -675,6 +691,17 @@ function presetApplyClosed() {
   projectView.value?.focusPresetApply()
 }
 function currentPresetModelHandoff(request: NonNullable<typeof presetModelHandoff.value>) {
+  if (request.origin === 'new-project') {
+    return (
+      presetModelHandoff.value === request &&
+      showNewProject.value &&
+      request.newProjectEpoch === newProjectModelsEpoch &&
+      !modelManagerOpen.value &&
+      !rendererDisposed &&
+      !pendingProjectAction.value &&
+      !windowClosePending.value
+    )
+  }
   if (request.origin === 'manager') {
     return (
       presetModelHandoff.value === request &&
@@ -760,6 +787,26 @@ function openSuspendedPresetModels() {
   }
   request.phase = 'models'
   openModelManager(request.focus, true)
+}
+function openNewProjectResourceModels(focus: ModelManagerFocus) {
+  if (
+    !showNewProject.value ||
+    presetModelHandoff.value ||
+    modelManagerOpen.value ||
+    pendingProjectAction.value ||
+    windowClosePending.value ||
+    rendererDisposed
+  ) {
+    return
+  }
+  presetModelHandoff.value = {
+    catalogSettled: false,
+    focus: JSON.parse(JSON.stringify(focus)) as ModelManagerFocus,
+    managerHidden: false,
+    newProjectEpoch: newProjectModelsEpoch,
+    origin: 'new-project',
+    phase: 'suspending',
+  }
 }
 function resumePresetAfterModels() {
   const request = presetModelHandoff.value
@@ -4258,7 +4305,12 @@ function beginNewProject() {
 }
 
 async function createProject(input: ProjectCreateInput) {
-  if (!showNewProject.value || pendingProjectAction.value !== null || windowClosePending.value) {
+  if (
+    !showNewProject.value ||
+    presetModelHandoff.value?.origin === 'new-project' ||
+    pendingProjectAction.value !== null ||
+    windowClosePending.value
+  ) {
     return
   }
   const captured: ProjectCreateInput = JSON.parse(JSON.stringify(input))
@@ -5438,7 +5490,7 @@ onBeforeUnmount(() => {
 
 <template>
   <NConfigProvider :theme="darkTheme" :themeOverrides="imageGenNaiveTheme">
-    <div class="app-shell">
+    <div class="app-shell" :inert="presetModelHandoff?.origin === 'new-project'">
       <AppChrome
         :canRedo="
           Boolean(activeTab?.canRedo) &&
@@ -6036,12 +6088,15 @@ onBeforeUnmount(() => {
         :presets="presetCatalog"
         :presetsError="presetCatalogError"
         :presetsLoading="presetCatalogLoading"
+        :suspended="presetModelHandoff?.origin === 'new-project'"
         :workspaces
         :workspacesError
         :workspacesLoading
         @create="createProject"
+        @manageModels="openNewProjectResourceModels"
         @refreshPresets="refreshPresetCatalog"
         @refreshWorkspaces="refreshWorkspaces"
+        @suspended="openSuspendedPresetModels"
       />
 
       <NModal

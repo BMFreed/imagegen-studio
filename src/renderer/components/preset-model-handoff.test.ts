@@ -7,7 +7,11 @@ import {
   parsePresetApplicationPayload,
   presetApplicationDiagnostics,
 } from '../../shared/presets/preset-application.js'
-import type { PresetPayload, PresetSectionKey } from '../../shared/presets/preset-schema.js'
+import type {
+  PresetPayload,
+  PresetRecord,
+  PresetSectionKey,
+} from '../../shared/presets/preset-schema.js'
 import { createEmptyProjectDocumentV1 } from '../../shared/projects/project-schema.js'
 
 import assert from 'node:assert/strict'
@@ -15,12 +19,19 @@ import test from 'node:test'
 import { reactive } from 'vue'
 
 import {
+  emptyNewProjectPresetState,
+  newProjectCreateRequest,
+  selectNewProjectPreset,
+  setNewProjectPresetSection,
+} from './new-project-preset-draft.js'
+import {
   type EditablePresetDefinition,
   emptyPresetDefinition,
   presetNeedsAttention,
   validatePresetDefinition,
 } from './preset-editor.js'
 import {
+  newProjectPresetModelRows,
   presetDiagnosticModelFocus,
   presetDiagnosticModelRows,
   presetManagerModelRows,
@@ -101,6 +112,26 @@ function missingPayload(): PresetPayload {
       text: '<positive>',
     },
     vae: resource('vae'),
+  }
+}
+
+function sourcePresetRecord(payload: PresetPayload = missingPayload()): PresetRecord {
+  return {
+    deletedAt: null,
+    description: 'Saved source description',
+    expiresAt: null,
+    favorite: false,
+    id: '11111111-1111-4111-8111-111111111111',
+    name: 'New Project source',
+    payload: {
+      guidance: { cfgScale: 5, steps: 28 },
+      seed: { policy: 'fixed', value: 0 },
+      size: { height: 896, width: 1536 },
+      ...payload,
+    },
+    tags: ['portrait'],
+    updatedAt: '2026-11-13T00:00:00.000Z',
+    workflow: 'textToImage',
   }
 }
 
@@ -542,4 +573,238 @@ test('Manager focus copies Vue-proxied references without mutating the source dr
   model.focus.resource!.resourceName = 'Browsing label'
   model.focus.resource!.versionId = 'Browsing version'
   assert.equal(JSON.stringify({ catalog, definition, source }), before)
+})
+
+test('New Project snapshot routes its five used resource locations with exact identities shared by Manager and Apply', () => {
+  const source = sourcePresetRecord()
+  const state = selectNewProjectPreset(source)
+  const before = structuredClone({ source, state })
+  const rows = newProjectPresetModelRows(state, [], true)
+  const manager = presetManagerModelRows({ payload: state.customization!.payload }, [], true)
+  assert.equal(rows.length, 5)
+  assert.deepEqual(
+    rows.map(({ focus, section }) => ({ focus, section })),
+    manager.map(({ focus, section }) => ({
+      focus: { ...focus, origin: 'new-project' },
+      section,
+    })),
+  )
+  assert.deepEqual(
+    rows.map(({ actionKey }) => actionKey),
+    manager.map(({ actionKey }) => actionKey),
+  )
+  for (const row of rows) {
+    const apply = presetDiagnosticModelRows([
+      {
+        blocking: true,
+        code: 'RESOURCE_MISSING',
+        message: 'The exact resource is unavailable.',
+        resource: row.focus.expectedResource!,
+        section: row.section,
+      },
+    ])[0]
+    assert.equal(row.actionKey, apply.actionKey)
+    assert.equal(apply.focus!.origin, 'preset')
+  }
+  assert.deepEqual(newProjectPresetModelRows(emptyNewProjectPresetState(), [], false), [])
+  assert.deepEqual({ source, state }, before)
+})
+
+test('New Project Use suppresses each resource section without discarding its copied values', () => {
+  const state = selectNewProjectPreset(sourcePresetRecord())
+  const customization = state.customization!
+  const before = structuredClone({
+    initial: customization.initialPayload,
+    payload: customization.payload,
+    source: customization.source,
+  })
+  const sections = ['prompt', 'negativePrompt', 'model', 'loras', 'vae'] as const
+  for (const section of sections) {
+    setNewProjectPresetSection(state, section, false)
+    const rows = newProjectPresetModelRows(state, [], true)
+    assert.equal(
+      rows.some((row) => row.section === section),
+      false,
+      section,
+    )
+    assert.equal(rows.length, 4)
+    setNewProjectPresetSection(state, section, true)
+    assert.equal(newProjectPresetModelRows(state, [], true).length, 5)
+  }
+  for (const section of sections) {
+    setNewProjectPresetSection(state, section, false)
+  }
+  assert.deepEqual(newProjectPresetModelRows(state, [], true), [])
+  assert.deepEqual(
+    {
+      initial: customization.initialPayload,
+      payload: customization.payload,
+      source: customization.source,
+    },
+    before,
+  )
+})
+
+test('New Project navigation follows current edited references instead of either saved source snapshot', () => {
+  const source = sourcePresetRecord()
+  const state = selectNewProjectPreset(source)
+  const customization = state.customization!
+  const edited = missingPayload()
+  edited.model = resource('checkpoint', '-edited')
+  edited.loras![0].resource = resource('lora', '-edited')
+  edited.prompt!.embeddingRefs[0].resource = resource('embedding', '-positive-edited')
+  edited.negativePrompt!.embeddingRefs[0].resource = resource('embedding', '-negative-edited')
+  edited.vae = resource('vae', '-edited')
+  customization.payload = { ...customization.payload, ...edited }
+  source.payload.model = resource('checkpoint', '-changed-elsewhere')
+  const before = structuredClone({ source, state })
+  const rows = newProjectPresetModelRows(state, [], true)
+  assert.deepEqual(
+    rows.map(({ focus }) => focus.expectedResource),
+    [
+      edited.model,
+      edited.vae,
+      edited.loras![0].resource,
+      edited.prompt!.embeddingRefs[0].resource,
+      edited.negativePrompt!.embeddingRefs[0].resource,
+    ],
+  )
+  assert.equal(customization.initialPayload.model!.localVersionId, 'checkpoint-exact')
+  assert.equal(customization.source.payload.model!.localVersionId, 'checkpoint-exact')
+  assert.deepEqual({ source, state }, before)
+})
+
+test('New Project navigation survives unfinished used fields without requiring a valid Create request', () => {
+  const state = selectNewProjectPreset(sourcePresetRecord())
+  const customization = state.customization!
+  customization.payload.guidance = { cfgScale: null, steps: null }
+  customization.payload.size = { height: null, width: 1536 }
+  customization.payload.seed = { policy: 'fixed', value: null }
+  customization.payload.loras![0].weight = null
+  setNewProjectPresetSection(state, 'seed', true)
+  const before = structuredClone(state)
+  assert.throws(() => newProjectCreateRequest(state, ''))
+  assert.throws(() => newProjectCreateRequest(state, 'Valid name', false))
+  const rows = newProjectPresetModelRows(state, [], true)
+  assert.equal(rows.length, 5)
+  assert.deepEqual(
+    rows.find(({ section }) => section === 'loras')!.focus.expectedResource,
+    resource('lora'),
+  )
+  assert.deepEqual(state, before)
+})
+
+test('New Project heals only exact ready references and retains authoring family policy from used Model', () => {
+  const ref = resource('checkpoint')
+  const state = selectNewProjectPreset(sourcePresetRecord({ model: ref }))
+  const wrongSha = catalogItem(ref)
+  wrongSha.versions[0].sha256 = 'b'.repeat(64)
+  const defaultOnly = catalogItem(ref)
+  defaultOnly.versions[0].id = defaultOnly.defaultVersionId!
+  const wrongFamily = catalogItem(ref)
+  wrongFamily.versions[0].baseModelFamily = 'anima'
+  const corrupt = catalogItem(ref)
+  corrupt.versions[0].fileStatus = 'corrupt'
+  const before = structuredClone(state)
+  for (const item of [wrongSha, defaultOnly, wrongFamily, corrupt]) {
+    const rows = newProjectPresetModelRows(state, [item], true)
+    assert.equal(rows.length, 1)
+    assert.deepEqual(rows[0].focus.expectedResource, ref)
+    assert.equal(rows[0].focus.resource!.versionId, ref.localVersionId)
+  }
+  const exact = catalogItem(ref)
+  exact.versions[0].dependencyIssues = ['unavailable companion']
+  exact.versions[0].predictionType = 'v_prediction'
+  assert.deepEqual(newProjectPresetModelRows(state, [exact], true), [])
+  assert.deepEqual(state, before)
+
+  const lora = resource('lora')
+  const model = { ...ref, baseModelFamily: 'anima' as const, predictionType: null }
+  const mixed = selectNewProjectPreset(
+    sourcePresetRecord({ loras: [{ enabled: false, resource: lora, weight: -0.5 }], model }),
+  )
+  const catalog = [catalogItem(model), catalogItem(lora)]
+  assert.deepEqual(
+    newProjectPresetModelRows(mixed, catalog, true).map(({ section }) => section),
+    ['loras'],
+  )
+  setNewProjectPresetSection(mixed, 'model', false)
+  assert.deepEqual(
+    newProjectPresetModelRows(mixed, catalog, true),
+    [],
+    'an unused Model cannot impose its family on selected references',
+  )
+  assert.deepEqual(mixed.customization!.payload.model, model)
+})
+
+test('New Project unknown catalog enumerates only known used refs and preserves action identity after settlement', () => {
+  const state = selectNewProjectPreset(sourcePresetRecord())
+  for (const section of ['model', 'negativePrompt', 'vae'] as const) {
+    setNewProjectPresetSection(state, section, false)
+  }
+  const refs = [resource('lora'), resource('embedding', '-positive')]
+  const staleReady = refs.map(catalogItem)
+  const unknown = newProjectPresetModelRows(state, staleReady, false)
+  const missing = newProjectPresetModelRows(state, [], true)
+  assert.deepEqual(newProjectPresetModelRows(state, [], false), unknown)
+  assert.deepEqual(
+    unknown.map(({ section }) => section),
+    ['loras', 'prompt'],
+  )
+  assert.deepEqual(
+    unknown.map(({ actionKey }) => actionKey),
+    missing.map(({ actionKey }) => actionKey),
+  )
+  assert.ok(unknown.every((row) => !Object.hasOwn(row, 'diagnostic')))
+  assert.deepEqual(newProjectPresetModelRows(state, staleReady, true), [])
+  state.customization!.payload.loras = []
+  state.customization!.payload.prompt = { embeddingRefs: [], text: 'Literal prompt only' }
+  assert.deepEqual(newProjectPresetModelRows(state, [], false), [])
+})
+
+test('New Project deduplicates per section while retaining signed disabled LoRAs and both embedding polarities', () => {
+  const lora = resource('lora')
+  const embedding = resource('embedding')
+  const prompt = {
+    embeddingRefs: [
+      { resource: embedding, token: '<first>' },
+      { resource: embedding, token: '<second>' },
+    ],
+    text: '<first> <second>',
+  }
+  const state = selectNewProjectPreset(
+    sourcePresetRecord({
+      loras: [
+        { enabled: false, resource: lora, weight: -0.75 },
+        { enabled: true, resource: lora, weight: 0 },
+      ],
+      negativePrompt: prompt,
+      prompt,
+    }),
+  )
+  const before = structuredClone(state)
+  const rows = newProjectPresetModelRows(state, [], true)
+  assert.deepEqual(
+    rows.map(({ section }) => section),
+    ['loras', 'prompt', 'negativePrompt'],
+  )
+  assert.notEqual(rows[1].actionKey, rows[2].actionKey)
+  assert.deepEqual(rows[0].focus.expectedResource, lora)
+  assert.deepEqual(state, before)
+})
+
+test('New Project focus copies Vue-proxied references without mutating source, customization or catalog', () => {
+  const source = reactive(sourcePresetRecord())
+  const state = reactive(selectNewProjectPreset(source))
+  const catalog = reactive([catalogItem(resource('checkpoint'))])
+  const before = JSON.stringify({ catalog, source, state })
+  const rows = newProjectPresetModelRows(state, catalog, false)
+  const model = rows.find(({ section }) => section === 'model')!
+  assert.notEqual(model.focus.expectedResource, state.customization!.payload.model)
+  assert.deepEqual(model.focus.expectedResource, source.payload.model)
+  model.focus.expectedResource!.displayName = 'Temporary browse name'
+  model.focus.expectedResource!.fileSha256 = 'f'.repeat(64)
+  model.focus.resource!.resourceName = 'Temporary browse label'
+  model.focus.resource!.versionId = 'Temporary browse version'
+  assert.equal(JSON.stringify({ catalog, source, state }), before)
 })

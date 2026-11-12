@@ -1,6 +1,15 @@
 # Engineering Workflow
 
-## Current Preset Manager Models checkpoint
+## Current New Project Models checkpoint
+
+[New Project resource handoff](./phase-4-new-project-models-research.md) connects
+used temporary preset references to the same exact Models manager. The retained
+form keeps title/workspace, source copy, Use mask and raw fields through current
+catalog settlement. Background chrome/Home/tabs stay inert during the handoff.
+Missing resources remain advisory; only explicit Create writes the Project.
+Finite execution/retention evidence is recorded separately from MVP readiness.
+
+## Previous Preset Manager Models checkpoint
 
 [Exact-resource Models handoff](./phase-4-preset-manager-models-research.md) connects the global Models menu
 and active Preset Manager drafts to the canonical manager. Logical editor/session

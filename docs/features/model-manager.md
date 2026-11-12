@@ -37,8 +37,10 @@ The separate production Electron Model Manager implements local CivitAI URL
 install, exact-version repair, SQLite catalog/queue, manual update check and
 default selection. Production Project now selects an installed checkpoint and
 exact version from that catalog and preserves the chosen reference in `.igs`.
-Worker loading, LoRA/VAE/embedding Project controls and Preset/Result handoff
-remain later-phase work.
+Later checkpoints connect worker loading, Project LoRA/VAE/embedding controls and
+Project Apply/active Preset Manager resource navigation. New Project's temporary
+preset consumer is described below; accepted-result resource navigation and safe
+hard removal remain separate work.
 
 Useful InvokeAI areas:
 
@@ -150,8 +152,17 @@ raw invalid fields, filters and editor DOM while Models owns focus. Missing or
 incompatible refs remain saveable. Model Manager labels this origin as a Preset
 draft; it does not select Default or replace a reference. A fresh current catalog
 read and modal dismissal precede return; unresolved diagnostics regain their action
-focus, resolved ones fall back to Close Preset Manager. New Project and
-accepted-result missing-resource navigation remain separate consumers.
+focus, resolved ones fall back to Close Preset Manager.
+
+[New Project handoff](../engineering/phase-4-new-project-models-research.md) uses
+only references in used sections of its current temporary preset copy. It retains
+the name, workspace, source/reset baseline, Use mask, expansion and unfinished raw
+fields. Unknown catalog availability is explicit; missing refs remain Create-valid.
+Models receives complete expected identity and labels the origin as New Project;
+it does not select Default or create/save anything. Return waits for dismissal and
+the current catalog read, with exact action focus or Project name fallback after
+repair. Background actions stay inert throughout the visit and return interval.
+Accepted-result missing-resource navigation remains a separate consumer.
 
 Opening Model Manager should not close the current `Project` tab, should not affect project undo/redo and should not mutate active generation settings unless the user explicitly chooses a model/resource from a Generate selector.
 
