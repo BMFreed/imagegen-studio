@@ -1,6 +1,14 @@
 # Engineering Workflow
 
-## Current workspace Locate Folder checkpoint
+## Current Home Inspector checkpoint
+
+[Selected Project Inspector](./phase-4-home-inspector-research.md) connects list selection
+to the real saved merged PNG through existing guarded media authority. Source-version
+capabilities, explicit Open/recovery and source-keyed zoom/pan/fit/reset have finite
+checks; grid, panel resize and broader navigation/metadata remain separate. Public
+promise statuses and full Home/MVP acceptance are unchanged.
+
+## Previous workspace Locate Folder checkpoint
 
 [Locate Folder](./phase-4-home-workspace-locate-research.md) reconnects a missing
 non-default workspace with one atomic catalog/Project-key/terminal-path repoint.

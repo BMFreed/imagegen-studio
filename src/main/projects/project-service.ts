@@ -229,7 +229,10 @@ import {
   readProjectMaskSource,
 } from './project-mask.js'
 import { withProjectPathLock } from './project-path-lock.js'
-import { projectThumbnailImageUrl } from './project-preview-resource.js'
+import {
+  projectMergedPreviewImageUrl,
+  projectThumbnailImageUrl,
+} from './project-preview-resource.js'
 import { buildProjectPreview } from './project-preview.js'
 import { compositionRasterLayers, withFrozenRasterComposition } from './project-raster-snapshot.js'
 import {
@@ -2334,6 +2337,18 @@ export class ProjectService {
           originalWorkspaceDirectoryPath: entry.workspaceDirectoryPath,
           originalWorkspaceName: workspace?.displayName ?? entry.workspaceName,
           previewStatus: record.previewStatus,
+          previewUrl:
+            entry.state === 'trashed' &&
+            readable &&
+            record.fileHealth === 'ready' &&
+            record.thumbnailSha256 &&
+            record.fileFingerprint
+              ? projectMergedPreviewImageUrl(
+                  entry.localProjectKey,
+                  record.thumbnailSha256,
+                  record.fileFingerprint,
+                )
+              : null,
           recoveryStatus: 'none',
           thumbnailUrl:
             entry.state === 'trashed' &&
@@ -5288,6 +5303,17 @@ export class ProjectService {
       lastOpenedAt: canonicalHomeTimestamp(record.lastOpenedAt),
       modifiedAt,
       previewStatus: record.previewStatus,
+      previewUrl:
+        workspaceReadable &&
+        record.fileHealth === 'ready' &&
+        record.thumbnailSha256 &&
+        record.fileFingerprint
+          ? projectMergedPreviewImageUrl(
+              record.localProjectKey,
+              record.thumbnailSha256,
+              record.fileFingerprint,
+            )
+          : null,
       recoveryStatus,
       thumbnailUrl:
         workspaceReadable && record.fileHealth === 'ready' && record.thumbnailSha256

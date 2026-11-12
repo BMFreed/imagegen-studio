@@ -327,6 +327,7 @@ const projects = ref<ProjectSummary[]>([])
 const homeProjectSearch = ref('')
 const homeProjectSort = ref<HomeProjectSort>('lastOpened')
 const homeProjectStatus = ref<HomeProjectStatus>('all')
+const homeInspectorCollapsed = ref(false)
 const trashProjects = ref<ProjectTrashSummary[]>([])
 const trashLoading = ref(false)
 const trashError = ref<string | null>(null)
@@ -5328,6 +5329,7 @@ onBeforeUnmount(() => {
         </NAlert>
         <HomeView
           v-if="activeDocument === 'home' && homeOpen"
+          v-model:inspectorCollapsed="homeInspectorCollapsed"
           v-model:search="homeProjectSearch"
           v-model:sort="homeProjectSort"
           v-model:status="homeProjectStatus"

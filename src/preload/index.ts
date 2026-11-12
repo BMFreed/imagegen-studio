@@ -737,6 +737,9 @@ function isProjectSummary(value: unknown): value is ProjectSummary {
     (value.previewStatus === null ||
       ['empty', 'rendered', 'unavailable'].includes(String(value.previewStatus))) &&
     (value.thumbnailUrl === null || isProjectThumbnailUrl(value.thumbnailUrl)) &&
+    (value.previewUrl === undefined ||
+      value.previewUrl === null ||
+      isProjectMergedPreviewUrl(value.previewUrl)) &&
     (value.bbox === null || isProjectDimensions(value.bbox)) &&
     ['invalid', 'none', 'recoverable', 'stale', 'unavailable'].includes(
       String(value.recoveryStatus),
@@ -793,6 +796,29 @@ function isProjectThumbnailUrl(value: unknown): value is string {
       url.protocol === 'igs-preview:' &&
       url.hostname === 'thumbnail' &&
       /^\/project-v1-[a-f0-9]{64}\/[a-f0-9]{64}\/[a-f0-9]{64}\.webp$/.test(url.pathname) &&
+      url.username === '' &&
+      url.password === '' &&
+      url.port === '' &&
+      url.hash === '' &&
+      url.search === ''
+    )
+  } catch {
+    return false
+  }
+}
+
+function isProjectMergedPreviewUrl(value: unknown): value is string {
+  if (typeof value !== 'string' || !value.startsWith('igs-preview://merged/')) {
+    return false
+  }
+  try {
+    const url = new URL(value)
+    return (
+      url.protocol === 'igs-preview:' &&
+      url.hostname === 'merged' &&
+      /^\/project-v1-[a-f0-9]{64}\/[a-f0-9]{64}\/[a-f0-9]{64}\/[a-f0-9]{64}\.png$/.test(
+        url.pathname,
+      ) &&
       url.username === '' &&
       url.password === '' &&
       url.port === '' &&

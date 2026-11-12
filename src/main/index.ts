@@ -202,7 +202,9 @@ import {
 } from './projects/project-mask-resource.js'
 import { withProjectPathLock } from './projects/project-path-lock.js'
 import {
+  parseProjectMergedPreviewImageUrl,
   parseProjectThumbnailImageUrl,
+  readProjectMergedPreview,
   readProjectThumbnail,
 } from './projects/project-preview-resource.js'
 import { ProjectRegionalGenerationCoordinator } from './projects/project-regional-generation-coordinator.js'
@@ -558,6 +560,10 @@ if (!gotInstanceLock) {
       protocol.handle('igs-preview', async (request) => {
         if (request.method !== 'GET') {
           return new Response('Method not allowed.', { status: 405 })
+        }
+        const merged = parseProjectMergedPreviewImageUrl(request.url)
+        if (merged) {
+          return await readProjectMergedPreview(merged, projectRepository)
         }
         const resource = parseProjectThumbnailImageUrl(request.url)
         if (!resource) {

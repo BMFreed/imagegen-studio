@@ -459,3 +459,36 @@ test('Locate Folder preload sends only workspace identity and validates boolean 
     assert.equal((await f.api.projects.locateWorkspace(id)).ok, false)
   }
 })
+
+test('Home preload admits only opaque versioned merged preview URLs and preserves older summaries', async () => {
+  const f = await fixture()
+  const project = {
+    bbox: null,
+    health: 'ready',
+    id: `project-v1-${'a'.repeat(64)}`,
+    previewStatus: 'empty',
+    recoveryStatus: 'none',
+    thumbnailUrl: null,
+    title: 'Saved preview',
+    workspaceId: 'uncategorized',
+  }
+  const url = `igs-preview://merged/${project.id}/${'b'.repeat(64)}/${'c'.repeat(64)}/${'d'.repeat(64)}.png`
+  for (const previewUrl of [undefined, null, url]) {
+    f.state.value = [{ ...project, previewUrl }]
+    assert.equal((await f.api.projects.list()).ok, true)
+  }
+  for (const previewUrl of [
+    '/local/project.igs',
+    url.replace('igs-preview:', 'file:'),
+    url.replace('//merged/', '//thumbnail/'),
+    url.replace('.png', '.webp'),
+    `${url}?path=elsewhere`,
+    `${url}#old`,
+    url.replace('//merged/', '//user@merged/'),
+    url.replace('//merged/', '//merged:443/'),
+    true,
+  ]) {
+    f.state.value = [{ ...project, previewUrl }]
+    assert.equal((await f.api.projects.list()).ok, false)
+  }
+})

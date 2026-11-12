@@ -37,6 +37,7 @@ import {
 import { computed, ref, watch } from 'vue'
 
 import IconButton from '../../../docs/prototype-app/src/components/IconButton.vue'
+import HomeProjectInspector from './HomeProjectInspector.vue'
 
 const props = defineProps<{
   busy: boolean
@@ -57,6 +58,7 @@ const workspaceId = defineModel<string | null>('workspaceId', { required: true }
 const search = defineModel<string>('search', { required: true })
 const sort = defineModel<HomeProjectSort>('sort', { required: true })
 const status = defineModel<HomeProjectStatus>('status', { required: true })
+const inspectorCollapsed = defineModel<boolean>('inspectorCollapsed', { required: true })
 
 const emit = defineEmits<{
   addWorkspace: []
@@ -280,6 +282,66 @@ const visibleProjects = computed(() =>
     workspaces: props.workspaces,
   }),
 )
+const selectedProjectId = ref<string | null>(null)
+const selectedProject = computed(() =>
+  visibleProjects.value.find(({ id }) => id === selectedProjectId.value),
+)
+const inspectorWorkspace = computed(() =>
+  props.workspaces.find(({ id }) => id === selectedProject.value?.workspaceId),
+)
+watch(
+  () => [props.trashView, workspaceId.value] as const,
+  () => {
+    selectedProjectId.value = null
+  },
+)
+watch(visibleProjects, (projects) => {
+  if (!projects.some(({ id }) => id === selectedProjectId.value)) {
+    selectedProjectId.value = null
+  }
+})
+function selectBrowse(kind: 'projects' | 'trash') {
+  selectedProjectId.value = null
+  if (kind === 'projects') {
+    emit('browseProjects')
+  } else {
+    emit('browseTrash')
+  }
+}
+function selectWorkspace(id: string) {
+  selectedProjectId.value = null
+  workspaceId.value = id
+}
+function isProjectControl(event: MouseEvent): boolean {
+  return event.target instanceof Element && Boolean(event.target.closest('[data-project-control]'))
+}
+function selectProject(event: MouseEvent, project: ProjectSummary) {
+  if (!props.busy && !isProjectControl(event)) {
+    selectedProjectId.value = project.id
+  }
+}
+function canOpenProject(project: ProjectSummary): boolean {
+  return (
+    !props.busy &&
+    !props.trashView &&
+    !project.pendingMove &&
+    !project.pendingRename &&
+    project.health === 'ready' &&
+    props.workspaces.some(
+      (workspace) => workspace.id === project.workspaceId && workspace.availability === 'available',
+    )
+  )
+}
+function requestOpen(project: ProjectSummary) {
+  if (canOpenProject(project)) {
+    emit('openProject', project.id)
+  }
+}
+function doubleClickProject(event: MouseEvent, project: ProjectSummary) {
+  if (!isProjectControl(event)) {
+    requestOpen(project)
+  }
+}
 
 function previewLabel(project: ProjectSummary): string | null {
   if (project.pendingMove || project.pendingRename || project.health !== 'ready') {
@@ -344,7 +406,11 @@ function recoveryLabel(project: ProjectSummary): string | null {
 </script>
 
 <template>
-  <section aria-label="Home" class="home-view">
+  <section
+    aria-label="Home"
+    class="home-view"
+    :class="{ 'home-view--inspector-collapsed': inspectorCollapsed }"
+  >
     <aside aria-label="Workspace navigation" class="workspace-sidebar">
       <h2>Workspace</h2>
       <NButton
@@ -371,7 +437,7 @@ function recoveryLabel(project: ProjectSummary): string | null {
         class="sidebar-action workspace-select"
         :disabled="busy"
         :secondary="!trashView && workspaceId === null"
-        @click="$emit('browseProjects')"
+        @click="selectBrowse('projects')"
       >
         <template v-slot:icon><NIcon :component="AllIcon" /></template>
         Projects
@@ -382,7 +448,7 @@ function recoveryLabel(project: ProjectSummary): string | null {
         class="sidebar-action workspace-select"
         :disabled="busy"
         :secondary="trashView"
-        @click="$emit('browseTrash')"
+        @click="selectBrowse('trash')"
       >
         <template v-slot:icon><NIcon :component="TrashIcon" /></template>
         <span>Trash</span>
@@ -407,7 +473,7 @@ function recoveryLabel(project: ProjectSummary): string | null {
             :disabled="busy"
             :secondary="!trashView && workspaceId === workspace.id"
             :title="workspace.directoryPath"
-            @click="workspaceId = workspace.id"
+            @click="selectWorkspace(workspace.id)"
           >
             <template v-slot:icon>
               <NIcon v-if="workspace.availability !== 'available'" :component="AlertIcon" />
@@ -571,95 +637,108 @@ function recoveryLabel(project: ProjectSummary): string | null {
             v-for="project of visibleProjects"
             :key="trashSummary(project)?.trashId ?? project.id"
             class="project-row"
+            :class="{ 'project-row--selected': selectedProjectId === project.id }"
             :data-project-id="project.id"
+            :data-selected="selectedProjectId === project.id"
             :data-trash-id="trashSummary(project)?.trashId"
             role="listitem"
+            @click="selectProject($event, project)"
+            @dblclick="doubleClickProject($event, project)"
           >
-            <div aria-hidden="true" class="project-thumbnail">
-              <img
-                v-if="showThumbnail(project)"
-                alt=""
-                decoding="async"
-                loading="lazy"
-                :src="project.thumbnailUrl ?? undefined"
-                @error="markThumbnailFailed(project.thumbnailUrl)"
-              />
-              <NIcon v-else :component="FolderIcon" />
-            </div>
-            <div class="project-details">
-              <div class="project-name-line">
-                <strong :title="project.title">{{ project.title }}</strong>
-                <NTag v-if="trashView" key="trash" size="small" type="warning">
-                  {{
-                    trashSummary(project)?.deletionStatus === 'deleting'
-                      ? 'Deletion pending'
-                      : 'In Trash'
-                  }}
-                </NTag>
-                <NTag v-if="healthLabel(project)" key="health" size="small" type="warning">
-                  {{ healthLabel(project) }}
-                </NTag>
-                <NTag
+            <NButton
+              :aria-label="`Select ${project.title}`"
+              :aria-pressed="selectedProjectId === project.id"
+              class="row-select"
+              :disabled="busy"
+              text
+              @keydown.enter.prevent.stop="requestOpen(project)"
+            >
+              <div aria-hidden="true" class="project-thumbnail">
+                <img
+                  v-if="showThumbnail(project)"
+                  alt=""
+                  decoding="async"
+                  loading="lazy"
+                  :src="project.thumbnailUrl ?? undefined"
+                  @error="markThumbnailFailed(project.thumbnailUrl)"
+                />
+                <NIcon v-else :component="FolderIcon" />
+              </div>
+              <div class="project-details">
+                <div class="project-name-line">
+                  <strong :title="project.title">{{ project.title }}</strong>
+                  <NTag v-if="trashView" key="trash" size="small" type="warning">
+                    {{
+                      trashSummary(project)?.deletionStatus === 'deleting'
+                        ? 'Deletion pending'
+                        : 'In Trash'
+                    }}
+                  </NTag>
+                  <NTag v-if="healthLabel(project)" key="health" size="small" type="warning">
+                    {{ healthLabel(project) }}
+                  </NTag>
+                  <NTag
+                    v-if="
+                      !trashView &&
+                      !project.pendingMove &&
+                      !project.pendingRename &&
+                      recoveryLabel(project)
+                    "
+                    key="recovery"
+                    size="small"
+                    type="warning"
+                  >
+                    {{ recoveryLabel(project) }}
+                  </NTag>
+                </div>
+                <div class="project-meta">
+                  <span
+                    class="project-workspace"
+                    :title="
+                      trashSummary(project)?.originalWorkspaceDirectoryPath ??
+                      projectWorkspaceName(project)
+                    "
+                  >
+                    {{ projectWorkspaceName(project) }}
+                  </span>
+                  <span
+                    v-if="trashView"
+                    class="project-file-name"
+                    :title="trashSummary(project)?.fileName"
+                  >
+                    {{ trashSummary(project)?.fileName }}
+                  </span>
+                  <span v-if="project.bbox">
+                    {{ project.bbox.width }} × {{ project.bbox.height }}
+                  </span>
+                  <span v-if="previewLabel(project)">{{ previewLabel(project) }}</span>
+                </div>
+                <span
+                  v-if="trashView && trashSummary(project)?.deletionError"
+                  class="project-diagnostic"
+                >
+                  {{ trashSummary(project)?.deletionError }}
+                </span>
+                <span v-if="!trashView && project.pendingMove" class="project-diagnostic">
+                  {{ project.pendingMove.message }}
+                </span>
+                <span v-if="!trashView && project.pendingRename" class="project-diagnostic">
+                  {{ project.pendingRename.message }}
+                </span>
+                <span
                   v-if="
                     !trashView &&
                     !project.pendingMove &&
                     !project.pendingRename &&
-                    recoveryLabel(project)
+                    project.recoveryReason
                   "
-                  key="recovery"
-                  size="small"
-                  type="warning"
+                  class="project-diagnostic"
                 >
-                  {{ recoveryLabel(project) }}
-                </NTag>
+                  {{ project.recoveryReason }}
+                </span>
               </div>
-              <div class="project-meta">
-                <span
-                  class="project-workspace"
-                  :title="
-                    trashSummary(project)?.originalWorkspaceDirectoryPath ??
-                    projectWorkspaceName(project)
-                  "
-                >
-                  {{ projectWorkspaceName(project) }}
-                </span>
-                <span
-                  v-if="trashView"
-                  class="project-file-name"
-                  :title="trashSummary(project)?.fileName"
-                >
-                  {{ trashSummary(project)?.fileName }}
-                </span>
-                <span v-if="project.bbox">
-                  {{ project.bbox.width }} × {{ project.bbox.height }}
-                </span>
-                <span v-if="previewLabel(project)">{{ previewLabel(project) }}</span>
-              </div>
-              <span
-                v-if="trashView && trashSummary(project)?.deletionError"
-                class="project-diagnostic"
-              >
-                {{ trashSummary(project)?.deletionError }}
-              </span>
-              <span v-if="!trashView && project.pendingMove" class="project-diagnostic">
-                {{ project.pendingMove.message }}
-              </span>
-              <span v-if="!trashView && project.pendingRename" class="project-diagnostic">
-                {{ project.pendingRename.message }}
-              </span>
-              <span
-                v-if="
-                  !trashView &&
-                  !project.pendingMove &&
-                  !project.pendingRename &&
-                  project.recoveryReason
-                "
-                class="project-diagnostic"
-              >
-                {{ project.recoveryReason }}
-              </span>
-            </div>
-            <div class="project-actions">
+            </NButton>
+            <div class="project-actions" data-project-control>
               <template v-if="trashSummary(project)">
                 <NButton
                   :aria-label="`Restore ${project.title}`"
@@ -699,14 +778,10 @@ function recoveryLabel(project: ProjectSummary): string | null {
                 key="n-button-2"
                 :aria-label="`Open ${project.title}`"
                 class="open-project"
-                :disabled="
-                  busy ||
-                  Boolean(project.pendingMove || project.pendingRename) ||
-                  project.health !== 'ready'
-                "
+                :disabled="!canOpenProject(project)"
                 :loading="pendingAction?.kind === 'open' && pendingAction.projectId === project.id"
                 size="small"
-                @click="$emit('openProject', project.id)"
+                @click="requestOpen(project)"
               >
                 Open
               </NButton>
@@ -756,16 +831,44 @@ function recoveryLabel(project: ProjectSummary): string | null {
         </div>
       </div>
     </div>
+    <HomeProjectInspector
+      v-model:collapsed="inspectorCollapsed"
+      :busy
+      :canManageMissing="selectedProject ? canManageMissingProject(selectedProject) : false"
+      :canRebuild="selectedProject ? canRebuildPreview(selectedProject) : false"
+      :healthLabel="selectedProject ? healthLabel(selectedProject) : null"
+      :isOpen="Boolean(selectedProject && openProjectIds?.includes(selectedProject.id))"
+      :pendingAction
+      :project="selectedProject"
+      :recoveryLabel="selectedProject ? recoveryLabel(selectedProject) : null"
+      :trashProject="selectedProject ? trashSummary(selectedProject) : null"
+      :workspace="inspectorWorkspace"
+      :workspaceName="selectedProject ? projectWorkspaceName(selectedProject) : ''"
+      @deleteProject="$emit('deleteProject', $event)"
+      @locateProject="$emit('locateProject', $event)"
+      @locateWorkspace="$emit('locateWorkspace', $event)"
+      @moveProject="$emit('moveProject', $event)"
+      @openProject="$emit('openProject', $event)"
+      @rebuildPreview="$emit('rebuildPreview', $event)"
+      @removeMissingProject="$emit('removeMissingProject', $event)"
+      @renameProject="$emit('renameProject', $event)"
+      @restoreProject="$emit('restoreProject', $event)"
+      @revealProject="$emit('revealProject', $event)"
+    />
   </section>
 </template>
 
 <style scoped>
 .home-view {
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-columns: 248px minmax(0, 1fr) clamp(280px, 28vw, 400px);
   flex: 1 1 auto;
   min-height: 0;
   background: var(--app-surface);
+}
+
+.home-view--inspector-collapsed {
+  grid-template-columns: 248px minmax(0, 1fr) 44px;
 }
 
 .workspace-sidebar {
@@ -894,6 +997,7 @@ function recoveryLabel(project: ProjectSummary): string | null {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  container-type: inline-size;
 }
 
 .browser-heading {
@@ -984,7 +1088,7 @@ function recoveryLabel(project: ProjectSummary): string | null {
 
 .project-row {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 14px;
   min-width: 0;
@@ -993,6 +1097,27 @@ function recoveryLabel(project: ProjectSummary): string | null {
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius);
   background: var(--app-elevated);
+}
+
+.project-row--selected {
+  border-color: var(--workspace-green);
+}
+
+.row-select {
+  min-width: 0;
+  height: auto;
+  padding: 0;
+  white-space: normal;
+}
+
+.row-select :deep(.n-button__content) {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-width: 0;
+  text-align: start;
 }
 
 .project-thumbnail {
@@ -1065,7 +1190,11 @@ function recoveryLabel(project: ProjectSummary): string | null {
 
 @media (max-width: 1100px) {
   .home-view {
-    grid-template-columns: 210px minmax(0, 1fr);
+    grid-template-columns: 210px minmax(0, 1fr) clamp(280px, 28vw, 400px);
+  }
+
+  .home-view--inspector-collapsed {
+    grid-template-columns: 210px minmax(0, 1fr) 44px;
   }
 
   .project-actions {
@@ -1076,6 +1205,26 @@ function recoveryLabel(project: ProjectSummary): string | null {
 
   .browser-toolbar {
     grid-template-columns: minmax(140px, 1fr) 120px 160px auto;
+  }
+}
+
+@container (max-width: 720px) {
+  .browser-toolbar {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  }
+
+  .toolbar-field--search {
+    grid-column: 1 / -1;
+  }
+
+  .project-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .project-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    max-width: none;
   }
 }
 

@@ -2,6 +2,14 @@
 
 ## Production checkpoint
 
+[Selected Project Inspector](../engineering/phase-4-home-inspector-research.md) connects single-click/
+keyboard list selection to the saved merged preview, independent of Open. Zoom/
+pan/fit/reset use actual image dimensions; collapse survives Home remount for the
+App session. Source-version capabilities refuse stale saved pixels even when a
+thumbnail is unchanged. Only available summary metadata is shown; saved preview
+is distinct from an open Project's unsaved composition. Grid, panel resize, richer
+metadata and complete current/new-tab gestures remain separate consumers.
+
 [Locate Folder](../engineering/phase-4-home-workspace-locate-research.md)
 reconnects a missing non-default workspace to the exact cached saved-Project set.
 One transaction preserves its workspace ID/name/color and all Project keys while

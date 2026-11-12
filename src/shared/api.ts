@@ -329,6 +329,8 @@ export interface ProjectSummary {
   pendingMove?: { message: string; workspaceId: string }
   pendingRename?: { message: string; name: string }
   previewStatus: 'empty' | 'rendered' | 'unavailable' | null
+  /** Saved merged PNG capability, bound to the indexed package version; older producers omit it. */
+  previewUrl?: string | null
   recoveryReason?: string
   recoveryStatus: 'invalid' | 'none' | 'recoverable' | 'stale' | 'unavailable'
   thumbnailUrl: string | null
