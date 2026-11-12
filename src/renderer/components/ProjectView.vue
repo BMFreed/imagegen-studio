@@ -29,6 +29,7 @@ import { progressForJob } from '../../shared/projects/generation-progress.js'
 import {
   compareRasterGenerationSettings,
   compareSmartResultGenerationSettings,
+  type GenerationComparisonResourceAction,
 } from '../../shared/projects/generation-settings-comparison.js'
 import {
   ILLUSTRIOUS_SCHEDULER_PAIRS,
@@ -136,6 +137,7 @@ import DynamicPromptPreview from './DynamicPromptPreview.vue'
 import {
   captureGenerationComparisonSource,
   type GenerationComparisonData,
+  type GenerationComparisonModelsRequest,
   GenerationComparisonReader,
   generationComparisonSourceCurrent,
 } from './generation-comparison-source.js'
@@ -270,6 +272,7 @@ const emit = defineEmits<{
   choosePreset: [id: string]
   clearExportFeedback: []
   clearHistory: []
+  comparisonModelsSuspended: [token: symbol]
   deleteRegionalGuidance: [tabId: string, owner: ProjectRegionalGuidanceOwner]
   discardRegionalPrompts: [tabId: string]
   discardSmartPatch: [scope: { documentId: string; layerId: string }]
@@ -286,6 +289,7 @@ const emit = defineEmits<{
   importImage: []
   importRegionalReferenceImage: [tabId: string, owner: ProjectRegionalGuidanceOwner]
   inspectPatch: [request: SmartPatchFreshnessRequest | null]
+  manageComparisonModels: [request: GenerationComparisonModelsRequest]
   manageModels: [focus: ModelManagerFocus | null]
   managePresets: []
   moveLayer: [layerId: string, targetIndex: number]
@@ -1843,6 +1847,23 @@ watch(patchVariantsLayer, (layer) => {
   }
 })
 const comparisonLayerId = ref<string | null>(null)
+const comparisonModelsRequest = shallowRef<GenerationComparisonModelsRequest | null>(null)
+const comparisonShowSame = ref(false)
+const comparisonRestore = ref<{ actionKey: string; scrollTop: number } | null>(null)
+// Row popovers own presentation only during a Models visit. Their outside/leave
+// callbacks must not turn that temporary hide into a logical Compare close.
+const comparisonPopoverLayerId = computed({
+  get: () => (comparisonModelsRequest.value ? null : comparisonLayerId.value),
+  set: (layerId: string | null) => {
+    if (!comparisonModelsRequest.value) {
+      comparisonLayerId.value = layerId
+    }
+  },
+})
+watch(comparisonLayerId, () => {
+  comparisonShowSame.value = false
+  comparisonRestore.value = null
+})
 const comparisonData = shallowRef<GenerationComparisonData | null>(null)
 const comparisonLoading = ref(false)
 const comparisonError = ref<string | null>(null)
@@ -1875,6 +1896,79 @@ const comparisonSections = computed(() => {
 })
 let comparisonContextEpoch = 0
 let comparisonDisposed = false
+const comparisonCanManageModels = computed(() =>
+  Boolean(
+    comparisonSource.value &&
+    comparisonData.value &&
+    !comparisonModelsRequest.value &&
+    !comparisonLoading.value &&
+    !props.busy &&
+    !props.reloadRequired &&
+    !props.draftPending &&
+    !props.historyDraftPending,
+  ),
+)
+function requestComparisonModels(input: GenerationComparisonResourceAction, scrollTop: number) {
+  const source = comparisonSource.value
+  if (!source || !comparisonCanManageModels.value) {
+    return
+  }
+  const action = comparisonSections.value
+    .flatMap((section) => section.rows.flatMap((row) => row.resourceActions ?? []))
+    .find((candidate) => candidate.actionKey === input.actionKey)
+  if (!action) {
+    return
+  }
+  const captured = JSON.parse(JSON.stringify(source)) as typeof source
+  const epoch = comparisonContextEpoch
+  const selection = selectedLayerId.value
+  const token = Symbol('comparison-models')
+  const isCurrent = () =>
+    !comparisonDisposed &&
+    comparisonModelsRequest.value?.token === token &&
+    comparisonContextEpoch === epoch &&
+    comparisonLayerId.value === captured.request.owner.layerId &&
+    selectedLayerId.value === selection &&
+    !props.busy &&
+    !props.reloadRequired &&
+    !props.draftPending &&
+    !props.historyDraftPending &&
+    generationComparisonSourceCurrent(captured, props.tab)
+  const cancel = () => {
+    if (comparisonModelsRequest.value?.token === token) {
+      comparisonModelsRequest.value = null
+      comparisonLayerId.value = null
+    }
+  }
+  const request: GenerationComparisonModelsRequest = {
+    cancel,
+    focus: {
+      ...modelManagerFocusFor(action.resource.kind, action.resource),
+      comparisonSide: action.side,
+      expectedResource: JSON.parse(JSON.stringify(action.resource)) as typeof action.resource,
+      origin: 'comparison',
+    },
+    isCurrent,
+    resume: () => {
+      if (isCurrent()) {
+        comparisonModelsRequest.value = null
+      } else {
+        cancel()
+      }
+    },
+    source: captured,
+    token,
+  }
+  comparisonRestore.value = { actionKey: action.actionKey, scrollTop }
+  comparisonModelsRequest.value = request
+  emit('manageComparisonModels', request)
+}
+function comparisonPopoverHidden(layerId: string) {
+  const request = comparisonModelsRequest.value
+  if (request?.source.request.owner.layerId === layerId && request.isCurrent()) {
+    emit('comparisonModelsSuspended', request.token)
+  }
+}
 const comparisonReader = new GenerationComparisonReader({
   onState: (data, error, loading) => {
     comparisonData.value = data
@@ -1918,6 +2012,10 @@ watch(
   ],
   (values, previous) => {
     comparisonContextEpoch += 1
+    if (comparisonModelsRequest.value) {
+      // Every context transition invalidates a visit, even an edit/Undo ABA.
+      comparisonModelsRequest.value.cancel()
+    }
     if (
       comparisonLayerId.value &&
       (props.reloadRequired ||
@@ -1939,6 +2037,7 @@ watch(
 onBeforeUnmount(() => {
   comparisonDisposed = true
   comparisonContextEpoch += 1
+  comparisonModelsRequest.value?.cancel()
   comparisonReader.dispose()
 })
 function closeComparison() {
@@ -3631,7 +3730,7 @@ function applyFitBbox() {
           <ProjectLayerStack
             v-show="!patchVariantsOpen"
             ref="layersPanel"
-            v-model:comparisonLayerId="comparisonLayerId"
+            v-model:comparisonLayerId="comparisonPopoverLayerId"
             v-model:selectedLayerId="selectedLayerId"
             :currentCanvasDraft="projectGenerationDraft"
             :disabled="busy || reloadRequired"
@@ -3651,6 +3750,7 @@ function applyFitBbox() {
             @addPatch="emit('addPatch')"
             @addRegionalGuidance="emit('addRegionalGuidance', tab.id)"
             @browseVariants="openPatchVariants"
+            @comparisonHidden="comparisonPopoverHidden"
             @deleteRegionalGuidance="emit('deleteRegionalGuidance', tab.id, $event)"
             @duplicateRegionalGuidance="emit('duplicateRegionalGuidance', tab.id, $event)"
             @importImage="emit('importImage')"
@@ -3708,11 +3808,15 @@ function applyFitBbox() {
             <template v-slot:comparison="{ layer }">
               <GenerationSettingsComparison
                 :key="`${tab.id}:${tab.documentId}:${layer.id}`"
+                v-model:showSame="comparisonShowSame"
+                :canManageModels="comparisonCanManageModels"
                 :error="comparisonError"
                 :layerName="comparisonSource?.layerName ?? layer.name"
                 :loading="comparisonLoading"
+                :restore="comparisonRestore"
                 :sections="comparisonSections"
                 @close="closeComparison"
+                @manageModels="requestComparisonModels"
               />
             </template>
             <template v-slot:header-actions>

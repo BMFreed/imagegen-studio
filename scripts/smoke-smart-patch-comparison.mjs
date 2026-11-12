@@ -234,7 +234,7 @@ const adapter = {
     }),
   setting: (key) => dialog().locator(`[data-setting="${key}"]`),
   scroll: () => dialog().locator('.comparison-scroll'),
-  values: (key) => adapter.setting(key).locator('.comparison-values > p'),
+  values: (key) => adapter.setting(key).locator('.comparison-values > div > p'),
   browse: (source) =>
     projectView().getByRole('button', {
       name: `Browse variants for ${source.owner.name}`,
@@ -2287,10 +2287,10 @@ async function startPublicationProbe(oldSource) {
       probe.capture = (reason, records = []) => {
         const rows = [...surface.querySelectorAll('[data-setting]')]
         const promptBefore =
-          surface.querySelector('[data-setting="prompt.text"] .comparison-values > p')
+          surface.querySelector('[data-setting="prompt.text"] .comparison-values > div > p')
             ?.textContent ?? null
         const negativeBefore =
-          surface.querySelector('[data-setting="negativePrompt.text"] .comparison-values > p')
+          surface.querySelector('[data-setting="negativePrompt.text"] .comparison-values > div > p')
             ?.textContent ?? null
         const settingsMutation = records.some(
           (record) =>

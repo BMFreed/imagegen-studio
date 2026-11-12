@@ -9,9 +9,10 @@ export interface ModelManagerResourceFocus {
 
 /** Browsing intent only. Project selectors still own actual resource selection. */
 export interface ModelManagerFocus {
+  comparisonSide?: 'current' | 'generated'
   /** Preset diagnostics retain the expected exact file, rather than just nominal local IDs. */
   expectedResource?: NonNullable<ProjectTab['generationDraft']['model']>
-  origin?: 'new-project' | 'preset-manager' | 'preset'
+  origin?: 'comparison' | 'new-project' | 'preset-manager' | 'preset'
   resource: ModelManagerResourceFocus | null
   resourceType: ModelResourceType
 }

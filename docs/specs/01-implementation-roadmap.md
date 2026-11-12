@@ -1,6 +1,15 @@
 # Implementation Roadmap
 
-## Current New Project Models checkpoint
+## Current accepted Compare Models checkpoint
+
+[Compare resource handoff](../engineering/phase-4-comparison-models-research.md)
+connects typed exact resources from each comparison side to Models and returns
+only to the same current accepted owner. Raster, active Smart and converted Smart
+reuse their existing readers. Toggle/scroll/focus survive the visit; provenance,
+current draft, history and Save remain untouched. No Apply/Recall is added and
+finite qualification does not promote joint MVP readiness.
+
+## Previous New Project Models checkpoint
 
 [New Project resource handoff](../engineering/phase-4-new-project-models-research.md)
 connects used temporary preset references to the same exact Models manager. The
@@ -383,8 +392,8 @@ Anima Smart enabled-LoRA refusal описывает исторический che
    production checkpoints выше. Не повторять их как отсутствующие consumers;
    совместная compatibility/capacity и итоговая Home/MVP acceptance остаются отдельными.
 4. **Model Manager:** hard Remove Local Resource с running/pending/reference/
-   shared-file guards; missing accepted-result resources → Models.
-   Global Models menu, active Preset Manager и New Project exact-resource return
+   shared-file guards. Missing accepted-result resources → Models из Compare,
+   global Models menu, active Preset Manager и New Project exact-resource return
    имеют finite checkpoints выше. Project checkpoint/LoRA/VAE/embedding navigation,
    Project Apply diagnostic return и installed artwork уже подключены; не
    ставить их повторно в TODO. Deleted-preset read-only browse не добавлен этим срезом.

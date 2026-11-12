@@ -33,6 +33,21 @@ focus fallback — Project name, иначе точная diagnostic action. Miss
 не становятся Create admission gate. Граница:
 [New Project Models checkpoint](./phase-4-new-project-models-research.md).
 
+Accepted Compare сохраняет logical owner в ProjectView и скрывает popover через
+отдельный presentation ID. Существующий row controller имеет optional
+`popoverAfterLeave`; typed Naive 2.44.1 `internalOnAfterLeave` передаёт фактическое
+окончание скрытия через `comparisonHidden(layerId)` в ProjectView. Public
+NPopover completion prop в этой версии отсутствует; ordinary dismissal/animation
+не меняются. ShowSame использует `defineModel`, scroll/action key сохраняются в
+ProjectView для remount. Renderer-only Symbol/current/resume/cancel request
+расширяет существующий App handoff и никогда не идёт в IPC/provenance.
+`GenerationSettingsComparison` принимает production capability `canManageModels`;
+прототип без consumer не показывает неработающие действия. Structured
+`resourceActions` принадлежат существующему shared comparison projection, а
+Models использует тот же exported exact resolver. Side labels, known/unknown
+availability, enabled-only LoRA policy и source/context guards описаны в
+[Compare Models checkpoint](./phase-4-comparison-models-research.md).
+
 Production Preset Manager принимает detached `PresetCreateIntent` от текущего
 Project, выбранного Smart Patch draft или принятого результата. Общий session/editor владеет transient
 draft, Cancel/guards/Create/retry; source mapper владеет содержимым копии.

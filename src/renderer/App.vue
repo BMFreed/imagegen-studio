@@ -75,6 +75,7 @@ import {
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, toRaw, watch } from 'vue'
 
 import type { CandidateExportFeedback } from './components/candidate-export-feedback.js'
+import type { GenerationComparisonModelsRequest } from './components/generation-comparison-source.js'
 import type {
   GenerationResultFocusRequest,
   QueueResultOpenReference,
@@ -299,6 +300,7 @@ const presetModelHandoff = ref<
       phase: 'models' | 'refreshing' | 'suspending'
     } & (
       | { application: NonNullable<typeof presetApplication.value>; origin: 'apply' }
+      | { comparison: GenerationComparisonModelsRequest; origin: 'comparison' }
       | { managerEpoch: number; origin: 'manager' }
       | { newProjectEpoch: number; origin: 'new-project' }
     ))
@@ -621,7 +623,11 @@ function hasGenerationCloseImpact(impact: ProjectCloseImpact | null): boolean {
 }
 
 function openModelManager(focus: ModelManagerFocus | null = null, fromPresetHandoff = false) {
-  if (presetModelHandoff.value?.origin === 'new-project' && !fromPresetHandoff) {
+  if (
+    (presetModelHandoff.value?.origin === 'new-project' ||
+      presetModelHandoff.value?.origin === 'comparison') &&
+    !fromPresetHandoff
+  ) {
     return
   }
   if (presetModelHandoff.value && !fromPresetHandoff) {
@@ -691,6 +697,9 @@ function presetApplyClosed() {
   projectView.value?.focusPresetApply()
 }
 function currentPresetModelHandoff(request: NonNullable<typeof presetModelHandoff.value>) {
+  if (request.origin === 'comparison') {
+    return !modelManagerOpen.value && currentComparisonModelsOwner(request.comparison)
+  }
   if (request.origin === 'new-project') {
     return (
       presetModelHandoff.value === request &&
@@ -783,6 +792,9 @@ function openSuspendedPresetModels() {
       presetApplyOpen.value = false
     }
     presetModelHandoff.value = null
+    if (request.origin === 'comparison') {
+      request.comparison.cancel()
+    }
     return
   }
   request.phase = 'models'
@@ -818,6 +830,16 @@ function resumePresetAfterModels() {
   ) {
     return
   }
+  if (request.origin === 'comparison') {
+    const current = currentPresetModelHandoff(request)
+    presetModelHandoff.value = null
+    if (current) {
+      request.comparison.resume()
+    } else {
+      request.comparison.cancel()
+    }
+    return
+  }
   if (!currentPresetModelHandoff(request)) {
     if (request.origin === 'apply') {
       presetApplyOpen.value = false
@@ -832,6 +854,60 @@ function presetModelsDismissed() {
     resumePresetAfterModels()
   }
 }
+
+function currentComparisonModelsOwner(request: GenerationComparisonModelsRequest) {
+  return (
+    !rendererDisposed &&
+    activeTab.value?.id === request.source.tabId &&
+    activeTab.value.documentId === request.source.request.documentId &&
+    activeTab.value.documentRevision === request.source.request.documentRevision &&
+    !pendingProjectAction.value &&
+    !windowClosePending.value &&
+    !reloadRequiredIds.value.has(request.source.tabId) &&
+    !projectHasPendingDraft(request.source.tabId) &&
+    request.isCurrent()
+  )
+}
+function openComparisonResourceModels(request: GenerationComparisonModelsRequest) {
+  if (
+    presetModelHandoff.value ||
+    modelManagerOpen.value ||
+    !currentComparisonModelsOwner(request)
+  ) {
+    request.cancel()
+    return
+  }
+  presetModelHandoff.value = {
+    catalogSettled: false,
+    comparison: request,
+    focus: JSON.parse(JSON.stringify(request.focus)) as ModelManagerFocus,
+    managerHidden: false,
+    origin: 'comparison',
+    phase: 'suspending',
+  }
+}
+function openSuspendedComparisonModels(token: symbol) {
+  const request = presetModelHandoff.value
+  if (request?.origin === 'comparison' && request.comparison.token === token) {
+    openSuspendedPresetModels()
+  }
+}
+watch(
+  () => {
+    const request = presetModelHandoff.value
+    return request?.origin === 'comparison'
+      ? currentComparisonModelsOwner(request.comparison)
+      : true
+  },
+  (current) => {
+    const request = presetModelHandoff.value
+    if (!current && request?.origin === 'comparison') {
+      presetModelHandoff.value = null
+      request.comparison.cancel()
+    }
+  },
+  { flush: 'sync' },
+)
 
 function openPresetManager() {
   ++presetCreateEpoch
@@ -5298,6 +5374,7 @@ function onAppKeydown(event: KeyboardEvent) {
   if (
     !tab ||
     tab.relocationPending ||
+    presetModelHandoff.value?.origin === 'comparison' ||
     modelManagerOpen.value ||
     presetManagerOpen.value ||
     presetApplyOpen.value ||
@@ -5490,7 +5567,12 @@ onBeforeUnmount(() => {
 
 <template>
   <NConfigProvider :theme="darkTheme" :themeOverrides="imageGenNaiveTheme">
-    <div class="app-shell" :inert="presetModelHandoff?.origin === 'new-project'">
+    <div
+      class="app-shell"
+      :inert="
+        presetModelHandoff?.origin === 'new-project' || presetModelHandoff?.origin === 'comparison'
+      "
+    >
       <AppChrome
         :canRedo="
           Boolean(activeTab?.canRedo) &&
@@ -5722,6 +5804,7 @@ onBeforeUnmount(() => {
           @choosePreset="chooseProjectPreset(activeTab.id, $event)"
           @clearExportFeedback="clearExportFeedback(activeTab.id)"
           @clearHistory="runProjectHistoryAction(activeTab.id, 'clear-history')"
+          @comparisonModelsSuspended="openSuspendedComparisonModels"
           @deleteRegionalGuidance="deleteRegionalGuidance"
           @discardRegionalPrompts="discardRegionalPrompts"
           @discardSmartPatch="discardSmartPatchResults(activeTab.id, $event)"
@@ -5734,6 +5817,7 @@ onBeforeUnmount(() => {
           @importImage="importActiveRasterImage"
           @importRegionalReferenceImage="importRegionalReferenceImage"
           @inspectPatch="patchFreshnessReader.change($event)"
+          @manageComparisonModels="openComparisonResourceModels"
           @manageModels="openModelManager($event)"
           @managePresets="openPresetManager"
           @moveLayer="moveActiveRasterLayer"

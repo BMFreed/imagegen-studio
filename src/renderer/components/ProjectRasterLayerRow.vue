@@ -28,6 +28,7 @@ const comparisonOpen = computed({
 })
 
 const emit = defineEmits<{
+  comparisonHidden: [layerId: string]
   move: [layerId: string, targetIndex: number]
   saveResultPreset: [layerId: string]
   select: [layerId: string]
@@ -81,6 +82,7 @@ const menu = computed<ProjectEntityRowAction[]>(() => [
 
 provideProjectEntityRow({
   menu,
+  popoverAfterLeave: () => emit('comparisonHidden', props.layer.id),
   popoverOpen: comparisonOpen,
   select: () => emit('select', props.layer.id),
   state: computed(() => ({

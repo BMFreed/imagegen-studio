@@ -1,6 +1,15 @@
 # Engineering Workflow
 
-## Current New Project Models checkpoint
+## Current accepted Compare Models checkpoint
+
+[Compare resource handoff](./phase-4-comparison-models-research.md) projects exact
+Generated-with/Current-Canvas references into the same Models manager. Existing
+comparison read authority and provenance remain unchanged; the popover retains
+its logical owner, toggle/scroll and guarded return while Models owns focus.
+Rows keep their original availability policies, including enabled-only LoRAs and
+Anima companion exclusions. Finite evidence is separate from MVP readiness.
+
+## Previous New Project Models checkpoint
 
 [New Project resource handoff](./phase-4-new-project-models-research.md) connects
 used temporary preset references to the same exact Models manager. The retained

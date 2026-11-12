@@ -51,6 +51,7 @@ const emit = defineEmits<{
   addPatch: []
   addRegionalGuidance: []
   browseVariants: [layerId: string]
+  comparisonHidden: [layerId: string]
   deleteRegionalGuidance: [owner: ProjectRegionalGuidanceOwner]
   duplicateRegionalGuidance: [owner: ProjectRegionalGuidanceOwner]
   importImage: []
@@ -599,6 +600,7 @@ makeDroppable(
         :patchFreshnessLabel="patchFreshnessLabels?.[layer.id]"
         :selected="selectedLayerId === layer.id"
         @browseVariants="emit('browseVariants', $event)"
+        @comparisonHidden="emit('comparisonHidden', $event)"
         @move="(layerId, targetIndex) => emit('move', layerId, targetIndex)"
         @saveResultPreset="emit('saveResultPreset', $event)"
         @saveSmartResultPreset="emit('saveSmartResultPreset', $event)"

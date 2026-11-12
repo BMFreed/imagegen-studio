@@ -19,6 +19,7 @@ export interface ProjectEntityRowAction {
 /** The shared row owns presentation; the entity adapter supplies its state and command. */
 export interface ProjectEntityRowController {
   menu: Readonly<Ref<ProjectEntityRowAction[]>>
+  popoverAfterLeave?: () => void
   popoverOpen?: Ref<boolean>
   select: () => void
   state: Readonly<Ref<ProjectEntityRowState>>

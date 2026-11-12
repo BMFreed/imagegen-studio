@@ -39,8 +39,8 @@ default selection. Production Project now selects an installed checkpoint and
 exact version from that catalog and preserves the chosen reference in `.igs`.
 Later checkpoints connect worker loading, Project LoRA/VAE/embedding controls and
 Project Apply/active Preset Manager resource navigation. New Project's temporary
-preset consumer is described below; accepted-result resource navigation and safe
-hard removal remain separate work.
+preset and accepted Compare consumers are described below; safe hard removal
+remains separate work.
 
 Useful InvokeAI areas:
 
@@ -162,7 +162,21 @@ Models receives complete expected identity and labels the origin as New Project;
 it does not select Default or create/save anything. Return waits for dismissal and
 the current catalog read, with exact action focus or Project name fallback after
 repair. Background actions stay inert throughout the visit and return interval.
-Accepted-result missing-resource navigation remains a separate consumer.
+
+[Accepted Compare handoff](../engineering/phase-4-comparison-models-research.md)
+offers exact actions for each diagnosed resource on Generated with and Current
+Canvas independently. It reads only validated portable comparison data and the
+current Project draft. Missing/unknown bindings retain full expected local IDs,
+kind, SHA, provider identity and family; Models uses the existing comparison
+resolver, labels the side and never substitutes Default or rewrites provenance.
+One action per distinct exact resource/side/row covers model, enabled LoRAs,
+external VAE and both prompt embedding sidecars. Embedded/legacy-unrecorded and
+Anima companion byte/hash fields do not manufacture external library references.
+The same current Raster/active Smart/converted Smart owner may resume after modal
+dismissal and current catalog settlement, with toggle/scroll/action focus restored
+or Close fallback after repair. Stale source/selection/revision/active-member or
+pending-draft changes cancel return. Replacement stays in Project controls;
+Compare remains read only and has no Apply/Recall/Restore.
 
 Opening Model Manager should not close the current `Project` tab, should not affect project undo/redo and should not mutate active generation settings unless the user explicitly chooses a model/resource from a Generate selector.
 

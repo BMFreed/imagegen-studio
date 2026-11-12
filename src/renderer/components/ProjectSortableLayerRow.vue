@@ -22,6 +22,7 @@ const props = defineProps<{
 const comparisonLayerId = defineModel<string | null>('comparisonLayerId', { required: true })
 const emit = defineEmits<{
   browseVariants: [layerId: string]
+  comparisonHidden: [layerId: string]
   move: [layerId: string, targetIndex: number]
   saveResultPreset: [layerId: string]
   saveSmartResultPreset: [owner: ProjectAcceptedResultTarget]
@@ -61,6 +62,7 @@ const placementClass = computed(() => ({
       :layerCount="layers.length"
       :selected
       @browseVariants="emit('browseVariants', $event)"
+      @comparisonHidden="emit('comparisonHidden', $event)"
       @move="(layerId, targetIndex) => emit('move', layerId, targetIndex)"
       @saveSmartResultPreset="emit('saveSmartResultPreset', $event)"
       @select="emit('select', $event)"
@@ -80,6 +82,7 @@ const placementClass = computed(() => ({
       :layer
       :layerCount="layers.length"
       :selected
+      @comparisonHidden="emit('comparisonHidden', $event)"
       @move="(layerId, targetIndex) => emit('move', layerId, targetIndex)"
       @saveResultPreset="emit('saveResultPreset', $event)"
       @select="emit('select', $event)"

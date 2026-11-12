@@ -152,8 +152,10 @@ function selectFromSurface(event: MouseEvent) {
           </NButton>
         </NDropdown>
       </span>
+      <!-- Naive 2.44.1 types this leave hook; NPopover has no public after-leave event. -->
       <NPopover
         ref="popover"
+        :internalOnAfterLeave="row.popoverAfterLeave"
         placement="left"
         :show="row.popoverOpen?.value ?? false"
         :showArrow="false"

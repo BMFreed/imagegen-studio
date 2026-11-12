@@ -11,6 +11,10 @@ import type {
   ModelVersionView,
   SetCheckpointNoiseProfileChange,
 } from '../../shared/api.js'
+import {
+  exactBoundComparisonVersion,
+  generationComparisonSideLabel,
+} from '../../shared/projects/generation-settings-comparison.js'
 
 import {
   Download as DownloadIcon,
@@ -56,18 +60,27 @@ const props = defineProps<{ focus: ModelManagerFocus | null }>()
 const focusedResource = computed(() => props.focus?.resource ?? null)
 const focusedFromPresetManager = computed(() => props.focus?.origin === 'preset-manager')
 const focusedFromNewProject = computed(() => props.focus?.origin === 'new-project')
+const focusedFromComparison = computed(() => props.focus?.origin === 'comparison')
+const comparisonSideLabel = computed(() =>
+  generationComparisonSideLabel(props.focus?.comparisonSide ?? 'generated'),
+)
 const focusedFromPreset = computed(
   () =>
     props.focus?.origin === 'preset' ||
     focusedFromPresetManager.value ||
     focusedFromNewProject.value,
 )
+const focusedFromExactReference = computed(
+  () => focusedFromPreset.value || focusedFromComparison.value,
+)
 const unchangedPresetSelection = computed(() =>
-  focusedFromNewProject.value
-    ? 'The New Project settings are unchanged.'
-    : focusedFromPresetManager.value
-      ? 'The Preset draft is unchanged.'
-      : 'The Apply selection is unchanged.',
+  focusedFromComparison.value
+    ? 'The saved result and Current Canvas are unchanged.'
+    : focusedFromNewProject.value
+      ? 'The New Project settings are unchanged.'
+      : focusedFromPresetManager.value
+        ? 'The Preset draft is unchanged.'
+        : 'The Apply selection is unchanged.',
 )
 const focusedPresetContext = computed(() =>
   focusedFromNewProject.value
@@ -83,21 +96,23 @@ const focusedPresetEditor = computed(() =>
       ? 'Preset Manager'
       : 'Apply',
 )
-const focusedPresetReady = computed(
+const focusedExactReady = computed(
   () =>
     props.focus?.expectedResource !== undefined &&
     !loading.value &&
     !error.value &&
-    savedModelAvailability(props.focus.expectedResource, catalog.value) === 'ready',
+    (focusedFromComparison.value
+      ? exactBoundComparisonVersion(props.focus.expectedResource, catalog.value) !== null
+      : savedModelAvailability(props.focus.expectedResource, catalog.value) === 'ready'),
 )
-const focusedPresetUnavailable = computed(
+const focusedExactUnavailable = computed(
   () =>
-    focusedFromPreset.value &&
+    focusedFromExactReference.value &&
     props.focus?.expectedResource !== undefined &&
     selectedId.value === focusedResource.value?.resourceId &&
     !loading.value &&
     !error.value &&
-    !focusedPresetReady.value,
+    !focusedExactReady.value,
 )
 const readGuard = new ModelManagerReadGuard(() => show.value)
 // Naive's active color is available through its theme API, not an app-shell token.
@@ -443,7 +458,7 @@ const detailVersion = computed(() => {
     return null
   }
   if (focusedResource.value?.resourceId === resource.id) {
-    if (focusedFromPreset.value && !focusedPresetReady.value) {
+    if (focusedFromExactReference.value && !focusedExactReady.value) {
       return null
     }
     return (
@@ -1103,27 +1118,60 @@ onBeforeUnmount(() => {
         </NAlert>
       </div>
       <div
-        v-if="focusedModelMissing || focusedVersionMissing || focusedPresetUnavailable"
+        v-if="focusedModelMissing || focusedVersionMissing || focusedExactUnavailable"
         class="manager-feedback"
       >
         <NAlert
           v-if="focusedModelMissing"
           key="focused-model-missing"
-          :title="focusedFromPreset ? 'Preset model unavailable' : 'Project model unavailable'"
+          :title="
+            focusedFromComparison
+              ? 'Compare model unavailable'
+              : focusedFromPreset
+                ? 'Preset model unavailable'
+                : 'Project model unavailable'
+          "
           type="warning"
         >
           {{ focusedResource?.resourceName }} is not in this model library.
-          {{ focusedFromPreset ? unchangedPresetSelection : 'The Project selection is unchanged.' }}
+          <template v-if="focusedFromComparison">Referenced by {{ comparisonSideLabel }}.</template>
+          {{
+            focusedFromExactReference
+              ? unchangedPresetSelection
+              : 'The Project selection is unchanged.'
+          }}
         </NAlert>
         <NAlert
           v-else-if="focusedVersionMissing"
           key="focused-version-missing"
-          :title="focusedFromPreset ? 'Preset version unavailable' : 'Project version unavailable'"
+          :title="
+            focusedFromComparison
+              ? 'Compare version unavailable'
+              : focusedFromPreset
+                ? 'Preset version unavailable'
+                : 'Project version unavailable'
+          "
           type="warning"
         >
           {{ focusedResource?.versionName }} is not installed for
           {{ focusedResource?.resourceName }}.
-          {{ focusedFromPreset ? unchangedPresetSelection : 'The Project selection is unchanged.' }}
+          <template v-if="focusedFromComparison">Referenced by {{ comparisonSideLabel }}.</template>
+          {{
+            focusedFromExactReference
+              ? unchangedPresetSelection
+              : 'The Project selection is unchanged.'
+          }}
+        </NAlert>
+        <NAlert
+          v-else-if="focusedFromComparison"
+          key="comparison-resource-unavailable"
+          title="Compare resource unavailable"
+          type="warning"
+        >
+          The exact file referenced by {{ comparisonSideLabel }} is unavailable or does not match
+          this library version. The saved result and Current Canvas are unchanged. Repair the exact
+          resource in Models. Resource selection remains with Project settings; the saved result is
+          read only.
         </NAlert>
         <NAlert v-else key="n-alert-5" title="Preset resource unavailable" type="warning">
           The exact file referenced by {{ focusedPresetContext }}
@@ -1422,7 +1470,7 @@ onBeforeUnmount(() => {
                             'version-row--project':
                               focusedResource?.resourceId === selectedResource.id &&
                               focusedResource.versionId === version.id &&
-                              (!focusedFromPreset || focusedPresetReady),
+                              (!focusedFromExactReference || focusedExactReady),
                           }"
                         >
                           <div class="version-main">
@@ -1439,20 +1487,22 @@ onBeforeUnmount(() => {
                               v-if="
                                 focusedResource?.resourceId === selectedResource.id &&
                                 focusedResource.versionId === version.id &&
-                                (!focusedFromPreset || focusedPresetReady)
+                                (!focusedFromExactReference || focusedExactReady)
                               "
                               key="selected-in-project"
                               size="small"
                               type="info"
                             >
                               {{
-                                focusedFromNewProject
-                                  ? 'Used by New Project'
-                                  : focusedFromPresetManager
-                                    ? 'Referenced by Preset draft'
-                                    : focusedFromPreset
-                                      ? 'Selected for Apply'
-                                      : 'Selected in Project'
+                                focusedFromComparison
+                                  ? `Referenced by ${comparisonSideLabel}`
+                                  : focusedFromNewProject
+                                    ? 'Used by New Project'
+                                    : focusedFromPresetManager
+                                      ? 'Referenced by Preset draft'
+                                      : focusedFromPreset
+                                        ? 'Selected for Apply'
+                                        : 'Selected in Project'
                               }}
                             </NTag>
                             <NTag

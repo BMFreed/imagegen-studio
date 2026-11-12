@@ -15,11 +15,22 @@ import {
   type SmartResultComparisonRequest,
 } from '../../shared/projects/smart-result-comparison.js'
 
+import type { ModelManagerFocus } from './model-manager-focus.js'
+
 export interface GenerationComparisonSource {
   kind: 'raster' | 'smart-patch'
   layerName: string
   request: SmartResultComparisonRequest
   tabId: string
+}
+/** Transient renderer ownership only; never sent over IPC or retained in provenance. */
+export interface GenerationComparisonModelsRequest {
+  cancel: () => void
+  focus: ModelManagerFocus
+  isCurrent: () => boolean
+  resume: () => void
+  source: GenerationComparisonSource
+  token: symbol
 }
 export type GenerationComparisonData =
   | { data: RasterGenerationData; kind: 'raster' }

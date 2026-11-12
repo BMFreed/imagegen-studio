@@ -54,11 +54,21 @@ const RasterGenerationDataSchema = v.pipe(
 export type GenerationSettingsComparisonStatus =
   'Added' | 'Changed' | 'Missing resource' | 'Removed' | 'Same' | 'Unavailable'
 
+export type GenerationComparisonResourceSide = 'current' | 'generated'
+
+export interface GenerationComparisonResourceAction {
+  actionKey: string
+  availability: 'Missing resource' | 'Unavailable'
+  resource: Resource
+  side: GenerationComparisonResourceSide
+}
+
 export interface GenerationSettingsComparisonRow {
   after: string
   before: string
   key: string
   label: string
+  resourceActions?: GenerationComparisonResourceAction[]
   status: GenerationSettingsComparisonStatus
 }
 
@@ -118,6 +128,31 @@ export function compareSmartResultGenerationSettings(
     return []
   }
   return compareGenerationSettings(data.generationConfiguration, data, current)
+}
+
+/** A portable match elsewhere in the catalog is not an already-linked resource. */
+export function exactBoundComparisonVersion(
+  resource: Resource,
+  catalog: ModelCatalogItem[],
+): ModelVersionView | null {
+  const model = catalog.find(
+    (item) => item.id === resource.localModelId && item.resourceType === resource.kind,
+  )
+  const version = model?.versions.find((item) => item.id === resource.localVersionId)
+  return model &&
+    version &&
+    model.modelId === resource.civitaiModelId &&
+    version.civitaiVersionId === resource.civitaiVersionId &&
+    version.civitaiFileId === resource.civitaiFileId &&
+    version.sha256 === resource.fileSha256 &&
+    version.baseModelFamily === resource.baseModelFamily &&
+    version.fileStatus === 'ready'
+    ? version
+    : null
+}
+
+export function generationComparisonSideLabel(side: GenerationComparisonResourceSide) {
+  return side === 'generated' ? 'Generated with' : 'Current Canvas'
 }
 
 function compareGenerationSettings(
@@ -185,7 +220,7 @@ function compareIllustriousGenerationSettings(
         )
   const currentModelVersion =
     draft.model && current.modelCatalog && !current.modelCatalogError
-      ? exactBoundVersion(draft.model, current.modelCatalog)
+      ? exactBoundComparisonVersion(draft.model, current.modelCatalog)
       : null
   const currentPrediction = !draft.model
     ? null
@@ -244,6 +279,13 @@ function compareIllustriousGenerationSettings(
           describeResource(baseline.model),
           resourceAfter(describeResource(draft.model), modelAvailability, current),
           modelAvailability,
+          comparisonResourceActions(
+            'model.resource',
+            [baseline.model],
+            draft.model ? [draft.model] : [],
+            modelAvailability,
+            current,
+          ),
         ),
         row(
           'model.predictionType',
@@ -268,6 +310,13 @@ function compareIllustriousGenerationSettings(
           recordedLoras === undefined ? UNRECORDED : describeLoraStack(recordedLoras),
           resourceAfter(describeLoraStack(draft.loras), loraAvailability, current),
           loraAvailability,
+          comparisonResourceActions(
+            'loras.stack',
+            recordedLoras?.filter((entry) => entry.enabled).map((entry) => entry.resource) ?? [],
+            draft.loras.filter((entry) => entry.enabled).map((entry) => entry.resource),
+            loraAvailability,
+            current,
+          ),
         ),
       ],
     },
@@ -458,6 +507,13 @@ function compareIllustriousGenerationSettings(
             current,
           ),
           vaeAvailability,
+          comparisonResourceActions(
+            'vae.resource',
+            recordedVae ? [recordedVae] : [],
+            currentVae ? [currentVae] : [],
+            vaeAvailability,
+            current,
+          ),
         ),
       ],
     },
@@ -509,12 +565,12 @@ function compareAnimaGenerationSettings(
   const nativeCurrent = draft.model?.baseModelFamily === 'anima'
   const currentVersion =
     draft.model && current.modelCatalog && !current.modelCatalogError
-      ? exactBoundVersion(draft.model, current.modelCatalog)
+      ? exactBoundComparisonVersion(draft.model, current.modelCatalog)
       : null
   const currentBundle = nativeCurrent ? boundAnimaBundle(currentVersion) : null
   const recordedVersion =
     current.modelCatalog && !current.modelCatalogError
-      ? exactBoundVersion(baseline.model, current.modelCatalog)
+      ? exactBoundComparisonVersion(baseline.model, current.modelCatalog)
       : null
   const recordedBundle = boundAnimaBundle(recordedVersion)
   const modelAvailability = resourceAvailability(
@@ -615,6 +671,13 @@ function compareAnimaGenerationSettings(
           describeResource(baseline.model),
           resourceAfter(describeResource(draft.model), modelAvailability, current),
           modelAvailability,
+          comparisonResourceActions(
+            'model.resource',
+            [baseline.model],
+            draft.model ? [draft.model] : [],
+            modelAvailability,
+            current,
+          ),
         ),
         row(
           'anima.architecture',
@@ -646,6 +709,13 @@ function compareAnimaGenerationSettings(
           describeLoraStack(baseline.loras),
           resourceAfter(describeLoraStack(draft.loras), loraAvailability, current),
           loraAvailability,
+          comparisonResourceActions(
+            'loras.stack',
+            baseline.loras.filter((entry) => entry.enabled).map((entry) => entry.resource),
+            draft.loras.filter((entry) => entry.enabled).map((entry) => entry.resource),
+            loraAvailability,
+            current,
+          ),
         ),
       ],
     },
@@ -915,27 +985,6 @@ function describeLoraStack(stack: readonly Lora[]): string {
     : 'None'
 }
 
-/** A portable match elsewhere in the catalog is not an already-linked resource. */
-function exactBoundVersion(
-  resource: Resource,
-  catalog: ModelCatalogItem[],
-): ModelVersionView | null {
-  const model = catalog.find(
-    (item) => item.id === resource.localModelId && item.resourceType === resource.kind,
-  )
-  const version = model?.versions.find((item) => item.id === resource.localVersionId)
-  return model &&
-    version &&
-    model.modelId === resource.civitaiModelId &&
-    version.civitaiVersionId === resource.civitaiVersionId &&
-    version.civitaiFileId === resource.civitaiFileId &&
-    version.sha256 === resource.fileSha256 &&
-    version.baseModelFamily === resource.baseModelFamily &&
-    version.fileStatus === 'ready'
-    ? version
-    : null
-}
-
 function resourceAvailability(
   resources: readonly Resource[],
   current: GenerationSettingsComparisonCurrent,
@@ -946,7 +995,7 @@ function resourceAvailability(
   if (current.modelCatalog === null || current.modelCatalogError !== null) {
     return 'Unavailable'
   }
-  return resources.some((resource) => !exactBoundVersion(resource, current.modelCatalog!))
+  return resources.some((resource) => !exactBoundComparisonVersion(resource, current.modelCatalog!))
     ? 'Missing resource'
     : null
 }
@@ -976,6 +1025,50 @@ function resourceAfter(
       : value
 }
 
+/** Browse only the exact references behind this row's existing availability diagnostic. */
+function comparisonResourceActions(
+  key: string,
+  generated: readonly Resource[],
+  authored: readonly Resource[],
+  availability: Availability,
+  current: GenerationSettingsComparisonCurrent,
+): GenerationComparisonResourceAction[] | undefined {
+  if (availability === null) {
+    return undefined
+  }
+  const seen = new Set<string>()
+  const sides: [GenerationComparisonResourceSide, readonly Resource[]][] = [
+    ['generated', generated],
+    ['current', authored],
+  ]
+  return sides.flatMap(([side, resources]) =>
+    resources.flatMap((resource) => {
+      if (resourceAvailability([resource], current) !== availability) {
+        return []
+      }
+      const actionKey = JSON.stringify([
+        key,
+        side,
+        resource.localModelId,
+        resource.localVersionId,
+        portableIdentity(resource),
+      ])
+      if (seen.has(actionKey)) {
+        return []
+      }
+      seen.add(actionKey)
+      return [
+        {
+          actionKey,
+          availability,
+          resource: JSON.parse(JSON.stringify(resource)) as Resource,
+          side,
+        },
+      ]
+    }),
+  )
+}
+
 function row(
   key: string,
   label: string,
@@ -984,12 +1077,14 @@ function row(
   before: string,
   after: string,
   availability: Availability = null,
+  resourceActions?: GenerationComparisonResourceAction[],
 ): GenerationSettingsComparisonRow {
   return {
     after,
     before,
     key,
     label,
+    ...(resourceActions ? { resourceActions } : {}),
     status:
       availability ??
       (beforeValue === undefined || afterValue === undefined
@@ -1056,6 +1151,13 @@ function promptSection(
         describeEmbeddings(baseline),
         resourceAfter(describeEmbeddings(authored), availability, current),
         availability,
+        comparisonResourceActions(
+          `${key}.embeddings`,
+          baseline.embeddingRefs.map((ref) => ref.resource),
+          authored.embeddingRefs.map((ref) => ref.resource),
+          availability,
+          current,
+        ),
       ),
     ],
   }

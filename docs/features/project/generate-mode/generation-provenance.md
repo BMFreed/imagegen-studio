@@ -214,6 +214,20 @@ to the current Canvas recompute the derived diff without modifying the provenanc
 baseline. Missing resources and fields unavailable in legacy provenance must be
 reported explicitly rather than treated as equal.
 
+Diagnosed resource rows expose `Open in Models` independently under Generated
+with and Current Canvas. Targets carry complete copied resource identity from
+their side, never parsed labels or an inferred library Default. Unknown catalog
+availability can browse known refs without claiming confirmed absence. Existing
+enabled-only LoRA availability and legacy/Embedded/Anima companion exclusions
+remain unchanged. This is navigation only: it does not select a resource or
+modify provenance/current settings. The existing Models manager may repair an
+exact resource; choosing another resource remains a separate Project action.
+The logical comparison and its unchanged-toggle/scroll are retained through the
+visit. Return waits for modal dismissal and current catalog settlement, and only
+for the same current source/selection/revision/active member and pending-work
+context. A stale owner is never reopened. Evidence and limits:
+[accepted Compare Models checkpoint](../../../engineering/phase-4-comparison-models-research.md).
+
 An imported or manually created Raster Layer without provenance keeps the
 context-menu item visible but disabled with `No generation data`. A Smart Patch
 Layer without an active accepted variant uses the same state. `Create Preset from

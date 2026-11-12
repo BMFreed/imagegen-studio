@@ -1,22 +1,53 @@
 <script setup lang="ts">
-import type { GenerationSettingsComparisonSection } from '../../shared/projects/generation-settings-comparison.js'
+import {
+  type GenerationComparisonResourceAction,
+  generationComparisonSideLabel,
+  type GenerationSettingsComparisonSection,
+} from '../../shared/projects/generation-settings-comparison.js'
 
 import { X } from '@vicons/tabler'
 import { NAlert, NButton, NCheckbox, NIcon, NSpin } from 'naive-ui'
 import { computed, nextTick, onMounted, ref } from 'vue'
 
 const props = defineProps<{
+  canManageModels?: boolean
   error: string | null
   layerName: string
   loading: boolean
+  restore?: { actionKey: string; scrollTop: number } | null
   sections: GenerationSettingsComparisonSection[]
 }>()
-const emit = defineEmits<{ close: [] }>()
-const showSame = ref(false)
+const emit = defineEmits<{
+  close: []
+  manageModels: [action: GenerationComparisonResourceAction, scrollTop: number]
+}>()
+const showSame = defineModel<boolean>('showSame', { default: false })
 const closeButton = ref<InstanceType<typeof NButton> | null>(null)
+const root = ref<HTMLElement | null>(null)
+const scroll = ref<HTMLElement | null>(null)
 onMounted(() => {
-  void nextTick(() => closeButton.value?.$el.focus({ preventScroll: true }))
+  void nextTick(() => {
+    const restore = props.restore
+    if (restore && scroll.value) {
+      scroll.value.scrollTop = restore.scrollTop
+    }
+    const action = restore
+      ? Array.from(
+          root.value?.querySelectorAll<HTMLButtonElement>('[data-comparison-model-action]') ?? [],
+        ).find(
+          (button) =>
+            button.dataset['comparisonModelAction'] === restore.actionKey && !button.disabled,
+        )
+      : null
+    const target = action ?? closeButton.value?.$el
+    target?.focus({ preventScroll: true })
+  })
 })
+function requestModels(action: GenerationComparisonResourceAction) {
+  if (props.canManageModels) {
+    emit('manageModels', action, scroll.value?.scrollTop ?? 0)
+  }
+}
 const rows = computed(() => props.sections.flatMap((section) => section.rows))
 const sameCount = computed(() => rows.value.filter((row) => row.status === 'Same').length)
 const visibleSections = computed(() =>
@@ -31,6 +62,7 @@ const visibleSections = computed(() =>
 
 <template>
   <section
+    ref="root"
     aria-label="Compare generation settings"
     class="comparison-panel"
     role="dialog"
@@ -65,7 +97,7 @@ const visibleSections = computed(() =>
         <strong>Generated with</strong>
         <strong>Current Canvas</strong>
       </div>
-      <div :aria-busy="loading" class="comparison-scroll">
+      <div ref="scroll" :aria-busy="loading" class="comparison-scroll">
         <section
           v-for="section of visibleSections"
           :key="section.key"
@@ -85,8 +117,30 @@ const visibleSections = computed(() =>
               <span>{{ row.status }}</span>
             </header>
             <div class="comparison-values">
-              <p>{{ row.before }}</p>
-              <p>{{ row.after }}</p>
+              <div v-for="side of ['generated', 'current'] as const" :key="side">
+                <p>{{ side === 'generated' ? row.before : row.after }}</p>
+                <template v-if="canManageModels">
+                  <div
+                    v-for="action of row.resourceActions?.filter((item) => item.side === side) ??
+                    []"
+                    :key="action.actionKey"
+                    class="comparison-resource-action"
+                  >
+                    <span :title="action.resource.displayName">
+                      {{ action.resource.displayName }}
+                    </span>
+                    <NButton
+                      :aria-label="`Open ${generationComparisonSideLabel(side)} ${action.resource.displayName} in Models`"
+                      :data-comparison-model-action="action.actionKey"
+                      size="tiny"
+                      text
+                      @click="requestModels(action)"
+                    >
+                      Open in Models
+                    </NButton>
+                  </div>
+                </template>
+              </div>
             </div>
           </article>
         </section>
@@ -190,6 +244,29 @@ const visibleSections = computed(() =>
   margin: 5px 0 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.comparison-values > div {
+  min-width: 0;
+}
+
+.comparison-resource-action {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.comparison-resource-action > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-meta);
+}
+
+.comparison-resource-action > .n-button {
+  flex-shrink: 0;
 }
 
 .comparison-same-toggle {
