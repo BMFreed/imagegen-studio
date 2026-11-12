@@ -1,6 +1,14 @@
 # Implementation Roadmap
 
-## Current Home Inspector checkpoint
+## Current Home grid/list and resize checkpoint
+
+[Home view modes and bounded panels](../engineering/phase-4-home-grid-research.md) connect real Project cards/rows
+to the same selection, preview and guarded actions. NSplit sidebar/Inspector resize,
+collapse and App-session preferences preserve document/recovery ownership. Richer
+metadata, complete opening gestures, cross-launch preferences and full Home/MVP
+acceptance remain separate; public promise statuses are unchanged.
+
+## Previous Home Inspector checkpoint
 
 [Selected Project Inspector](../engineering/phase-4-home-inspector-research.md) connects list selection
 to the real saved merged PNG through existing guarded media authority. Source-version

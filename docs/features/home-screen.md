@@ -2,6 +2,14 @@
 
 ## Production checkpoint
 
+[Home grid/list and resize](../engineering/phase-4-home-grid-research.md) adds the approved Grid
+and List controls to the real catalog. Both views retain the same selected Project
+and saved preview; bounded sidebar/Inspector dividers redistribute space without
+opening or saving. View, preferred widths and collapse survive Home remount within
+the App session. Reset filters keeps view/sort; scope changes clear selection.
+Cross-launch preferences, richer metadata and complete opening gestures remain
+separate acceptance work.
+
 [Selected Project Inspector](../engineering/phase-4-home-inspector-research.md) connects single-click/
 keyboard list selection to the saved merged preview, independent of Open. Zoom/
 pan/fit/reset use actual image dimensions; collapse survives Home remount for the

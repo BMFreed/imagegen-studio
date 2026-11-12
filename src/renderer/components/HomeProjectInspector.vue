@@ -255,6 +255,8 @@ function timestamp(value: string | null | undefined) {
 
 <style scoped>
 .home-inspector {
+  height: 100%;
+  box-sizing: border-box;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;

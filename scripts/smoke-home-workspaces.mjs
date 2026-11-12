@@ -191,6 +191,8 @@ async function launch(label) {
   window.on('pageerror', (error) => report.pageErrors.push(error.message))
   await expect(window.getByRole('tab', { name: 'Home', exact: true })).toBeVisible()
   await expect.poll(async () => (await api('listWorkspaces')).length).toBeGreaterThan(0)
+  // These lifecycle scenarios exercise the compact list's direct actions, not the view default.
+  await window.getByRole('button', { name: 'List view', exact: true }).click()
   database = openAppDatabase(appData, path.resolve('src/main/db/migrations'))
 }
 async function close(label) {

@@ -328,6 +328,9 @@ const homeProjectSearch = ref('')
 const homeProjectSort = ref<HomeProjectSort>('lastOpened')
 const homeProjectStatus = ref<HomeProjectStatus>('all')
 const homeInspectorCollapsed = ref(false)
+const homeViewMode = ref<'grid' | 'list'>('grid')
+const homeSidebarPaneSize = ref(0.18)
+const homeBrowserPaneSize = ref(0.67)
 const trashProjects = ref<ProjectTrashSummary[]>([])
 const trashLoading = ref(false)
 const trashError = ref<string | null>(null)
@@ -5329,10 +5332,13 @@ onBeforeUnmount(() => {
         </NAlert>
         <HomeView
           v-if="activeDocument === 'home' && homeOpen"
+          v-model:browserPaneSize="homeBrowserPaneSize"
           v-model:inspectorCollapsed="homeInspectorCollapsed"
           v-model:search="homeProjectSearch"
+          v-model:sidebarPaneSize="homeSidebarPaneSize"
           v-model:sort="homeProjectSort"
           v-model:status="homeProjectStatus"
+          v-model:viewMode="homeViewMode"
           v-model:workspaceId="browseWorkspaceId"
           :busy="pendingProjectAction !== null || windowClosePending"
           :error="homeError"
