@@ -15,6 +15,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   acceptedResults: []
   home: []
+  models: []
   presets: []
   queue: []
   redo: []
@@ -54,6 +55,13 @@ function selectEditAction(key: number | string) {
       <NButton aria-label="Edit menu" class="chrome-menu" :disabled="!projectActive" text>
         Edit
       </NButton>
+    </NDropdown>
+    <NDropdown
+      :options="[{ key: 'models', label: 'Manage Models' }]"
+      trigger="click"
+      @select="$emit('models')"
+    >
+      <NButton aria-label="Models menu" class="chrome-menu" text>Models</NButton>
     </NDropdown>
     <NButton
       aria-label="Open saved generations"

@@ -291,13 +291,19 @@ const smartPresetReader = new SmartPatchPresetApplicationReader({
       }),
     ),
 })
-const presetModelHandoff = ref<{
-  application: NonNullable<typeof presetApplication.value>
-  catalogSettled: boolean
-  focus: ModelManagerFocus
-  managerHidden: boolean
-  phase: 'models' | 'refreshing' | 'suspending'
-} | null>(null)
+const presetModelHandoff = ref<
+  | ({
+      catalogSettled: boolean
+      focus: ModelManagerFocus
+      managerHidden: boolean
+      phase: 'models' | 'refreshing' | 'suspending'
+    } & (
+      | { application: NonNullable<typeof presetApplication.value>; origin: 'apply' }
+      | { managerEpoch: number; origin: 'manager' }
+    ))
+  | null
+>(null)
+let presetManagerModelsEpoch = 0
 const presetApplyTab = computed(() => {
   const application = presetApplication.value
   return application
@@ -603,7 +609,9 @@ function hasGenerationCloseImpact(impact: ProjectCloseImpact | null): boolean {
 
 function openModelManager(focus: ModelManagerFocus | null = null, fromPresetHandoff = false) {
   if (presetModelHandoff.value && !fromPresetHandoff) {
-    presetApplyOpen.value = false
+    if (presetModelHandoff.value.origin === 'apply') {
+      presetApplyOpen.value = false
+    }
     presetModelHandoff.value = null
   }
   modelManagerFocus.value = focus
@@ -667,6 +675,17 @@ function presetApplyClosed() {
   projectView.value?.focusPresetApply()
 }
 function currentPresetModelHandoff(request: NonNullable<typeof presetModelHandoff.value>) {
+  if (request.origin === 'manager') {
+    return (
+      presetModelHandoff.value === request &&
+      presetManagerOpen.value &&
+      request.managerEpoch === presetManagerModelsEpoch &&
+      !modelManagerOpen.value &&
+      !rendererDisposed &&
+      !pendingProjectAction.value &&
+      !windowClosePending.value
+    )
+  }
   return (
     presetModelHandoff.value === request &&
     presetApplication.value === request.application &&
@@ -703,6 +722,27 @@ function openPresetResourceModels(focus: ModelManagerFocus) {
     catalogSettled: false,
     focus: JSON.parse(JSON.stringify(focus)) as ModelManagerFocus,
     managerHidden: false,
+    origin: 'apply',
+    phase: 'suspending',
+  }
+}
+function openManagerResourceModels(focus: ModelManagerFocus) {
+  if (
+    !presetManagerOpen.value ||
+    presetModelHandoff.value ||
+    modelManagerOpen.value ||
+    pendingProjectAction.value ||
+    windowClosePending.value ||
+    rendererDisposed
+  ) {
+    return
+  }
+  presetModelHandoff.value = {
+    catalogSettled: false,
+    focus: JSON.parse(JSON.stringify(focus)) as ModelManagerFocus,
+    managerEpoch: presetManagerModelsEpoch,
+    managerHidden: false,
+    origin: 'manager',
     phase: 'suspending',
   }
 }
@@ -712,7 +752,9 @@ function openSuspendedPresetModels() {
     return
   }
   if (!currentPresetModelHandoff(request)) {
-    presetApplyOpen.value = false
+    if (request.origin === 'apply') {
+      presetApplyOpen.value = false
+    }
     presetModelHandoff.value = null
     return
   }
@@ -730,7 +772,9 @@ function resumePresetAfterModels() {
     return
   }
   if (!currentPresetModelHandoff(request)) {
-    presetApplyOpen.value = false
+    if (request.origin === 'apply') {
+      presetApplyOpen.value = false
+    }
   }
   presetModelHandoff.value = null
 }
@@ -1270,6 +1314,17 @@ watch(presetManagerOpen, (open) => {
   }
 })
 watch(
+  presetManagerOpen,
+  (open) => {
+    ++presetManagerModelsEpoch
+    if (!open && presetModelHandoff.value?.origin === 'manager') {
+      presetModelHandoff.value = null
+      modelManagerOpen.value = false
+    }
+  },
+  { flush: 'sync' },
+)
+watch(
   [
     () => activeTab.value?.id,
     () => activeTab.value?.documentId,
@@ -1280,7 +1335,9 @@ watch(
     ++presetOpeningEpoch
     if (!presetApplyBusy.value) {
       presetApplyOpen.value = false
-      presetModelHandoff.value = null
+      if (presetModelHandoff.value?.origin === 'apply') {
+        presetModelHandoff.value = null
+      }
     }
     if (activeTab.value) {
       void refreshPresetCatalog()
@@ -1357,6 +1414,11 @@ async function refreshModelCatalog() {
     if (request === modelCatalogRequest) {
       modelCatalogLoading.value = false
       variantDiagnosticsEpoch.value += 1
+      const handoff = presetModelHandoff.value
+      if (handoff?.phase === 'refreshing' && !modelManagerOpen.value) {
+        handoff.catalogSettled = true
+        resumePresetAfterModels()
+      }
     }
   }
 }
@@ -1901,19 +1963,13 @@ function clearResultFocus(tabId: string, revision: number) {
   }
 }
 
-watch(modelManagerOpen, async (open, previous) => {
+watch(modelManagerOpen, (open, previous) => {
   if (previous && !open) {
     const request = presetModelHandoff.value
     if (request?.phase === 'models') {
       request.phase = 'refreshing'
-      await refreshModelCatalog()
-      if (presetModelHandoff.value === request) {
-        request.catalogSettled = true
-        resumePresetAfterModels()
-      }
-    } else {
-      void refreshModelCatalog()
     }
+    void refreshModelCatalog()
   }
 })
 
@@ -2008,7 +2064,9 @@ watch(
     const application = presetApplication.value
     const owner =
       pendingSmartPresetOwner ??
-      (presetApplyOpen.value || presetApplyBusy.value || presetModelHandoff.value
+      (presetApplyOpen.value ||
+      presetApplyBusy.value ||
+      presetModelHandoff.value?.origin === 'apply'
         ? application?.smartPatch?.owner
         : null)
     if (!owner || smartPresetOwnerCurrent(owner, presetApplyBusy.value)) {
@@ -2020,7 +2078,9 @@ watch(
     presetApplyReturnFocus = null
     if (application?.smartPatch) {
       presetApplyOpen.value = false
-      presetModelHandoff.value = null
+      if (presetModelHandoff.value?.origin === 'apply') {
+        presetModelHandoff.value = null
+      }
     }
   },
   { flush: 'sync' },
@@ -2032,7 +2092,9 @@ watch(
       smartPresetReader.invalidate()
       ++presetOpeningEpoch
       pendingSmartPresetOwner = null
-      presetModelHandoff.value = null
+      if (presetModelHandoff.value?.origin === 'apply') {
+        presetModelHandoff.value = null
+      }
     }
   },
   { flush: 'sync' },
@@ -5394,6 +5456,7 @@ onBeforeUnmount(() => {
         :projectActive="Boolean(activeTab)"
         @acceptedResults="openSavedAcceptedResults"
         @home="openHome"
+        @models="openModelManager()"
         @presets="openPresetManager"
         @queue="openGenerationQueue"
         @redo="runActiveProjectHistoryAction('redo')"
@@ -5676,7 +5739,10 @@ onBeforeUnmount(() => {
         :catalogReady="modelCatalogLoaded && !modelCatalogLoading && modelCatalogError === null"
         :createIntent="presetManagerCreateIntent"
         :initialPresetId="presetManagerInitialId"
+        :suspended="presetModelHandoff?.origin === 'manager'"
         @afterLeave="presetManagerAfterLeave"
+        @manageModels="openManagerResourceModels"
+        @suspended="openSuspendedPresetModels"
       />
       <ApplyPresetModal
         v-if="presetApplication && presetApplyTab && presetApplyCurrent"
@@ -5689,7 +5755,7 @@ onBeforeUnmount(() => {
         :excludeSize="Boolean(presetApplication.smartPatch)"
         :projectName="presetApplyTab.title"
         :source="presetApplication.source"
-        :suspended="presetModelHandoff !== null"
+        :suspended="presetModelHandoff?.origin === 'apply'"
         :targetLabel="
           presetApplication.smartPatch
             ? `Smart Patch: ${presetApplication.smartPatch.owner.layerName}`

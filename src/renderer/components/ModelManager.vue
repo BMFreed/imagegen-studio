@@ -44,6 +44,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import type { ModelManagerFocus } from './model-manager-focus.js'
 
+import { AppLayer } from '../../../docs/prototype-app/src/theme/app-layers.js'
 import CheckpointNoiseProfileControls from './CheckpointNoiseProfileControls.vue'
 import { mergeModelManagerJobSnapshot } from './model-manager-job-snapshot.js'
 import { ModelManagerReadGuard } from './model-manager-read-guard.js'
@@ -53,7 +54,15 @@ const show = defineModel<boolean>('show', { required: true })
 const emit = defineEmits<{ afterClose: [] }>()
 const props = defineProps<{ focus: ModelManagerFocus | null }>()
 const focusedResource = computed(() => props.focus?.resource ?? null)
-const focusedFromPreset = computed(() => props.focus?.origin === 'preset')
+const focusedFromPresetManager = computed(() => props.focus?.origin === 'preset-manager')
+const focusedFromPreset = computed(
+  () => props.focus?.origin === 'preset' || focusedFromPresetManager.value,
+)
+const unchangedPresetSelection = computed(() =>
+  focusedFromPresetManager.value
+    ? 'The Preset draft is unchanged.'
+    : 'The Apply selection is unchanged.',
+)
 const focusedPresetReady = computed(
   () =>
     props.focus?.expectedResource !== undefined &&
@@ -965,6 +974,7 @@ onBeforeUnmount(() => {
     :closeOnEsc="!importOpen"
     :maskClosable="false"
     transform-origin="center"
+    :zIndex="AppLayer.appOverlay"
     @afterLeave="emit('afterClose')"
   >
     <div
@@ -1083,11 +1093,7 @@ onBeforeUnmount(() => {
           type="warning"
         >
           {{ focusedResource?.resourceName }} is not in this model library.
-          {{
-            focusedFromPreset
-              ? 'The Apply selection is unchanged.'
-              : 'The Project selection is unchanged.'
-          }}
+          {{ focusedFromPreset ? unchangedPresetSelection : 'The Project selection is unchanged.' }}
         </NAlert>
         <NAlert
           v-else-if="focusedVersionMissing"
@@ -1097,16 +1103,13 @@ onBeforeUnmount(() => {
         >
           {{ focusedResource?.versionName }} is not installed for
           {{ focusedResource?.resourceName }}.
-          {{
-            focusedFromPreset
-              ? 'The Apply selection is unchanged.'
-              : 'The Project selection is unchanged.'
-          }}
+          {{ focusedFromPreset ? unchangedPresetSelection : 'The Project selection is unchanged.' }}
         </NAlert>
         <NAlert v-else key="n-alert-5" title="Preset resource unavailable" type="warning">
-          The exact file referenced by Apply is unavailable or does not match this library version.
-          The Apply selection is unchanged. Repair the exact resource or explicitly replace it in
-          Apply.
+          The exact file referenced by {{ focusedFromPresetManager ? 'the Preset draft' : 'Apply' }}
+          is unavailable or does not match this library version.
+          {{ unchangedPresetSelection }} Repair the exact resource or explicitly replace it in
+          {{ focusedFromPresetManager ? 'Preset Manager' : 'Apply' }}.
         </NAlert>
       </div>
 
@@ -1422,7 +1425,13 @@ onBeforeUnmount(() => {
                               size="small"
                               type="info"
                             >
-                              {{ focusedFromPreset ? 'Selected for Apply' : 'Selected in Project' }}
+                              {{
+                                focusedFromPresetManager
+                                  ? 'Referenced by Preset draft'
+                                  : focusedFromPreset
+                                    ? 'Selected for Apply'
+                                    : 'Selected in Project'
+                              }}
                             </NTag>
                             <NTag
                               v-if="selectedResource.defaultVersionId === version.id"
@@ -1564,7 +1573,8 @@ onBeforeUnmount(() => {
     </div>
   </NModal>
 
-  <NModal v-model:show="importOpen" :maskClosable="false">
+  <!-- Keep the nested import above its manager, below the owning dirty-close dialog. -->
+  <NModal v-model:show="importOpen" :maskClosable="false" :zIndex="AppLayer.appOverlay + 1">
     <NCard
       aria-labelledby="model-import-title"
       aria-modal="true"

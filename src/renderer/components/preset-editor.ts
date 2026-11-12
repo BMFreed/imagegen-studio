@@ -1,4 +1,5 @@
 import type { ModelCatalogItem, ModelVersionView } from '../../shared/api.js'
+import type { PresetApplicationDiagnostic } from '../../shared/presets/preset-application.js'
 import type {
   PresetDefinition,
   PresetPayload,
@@ -52,6 +53,12 @@ export const sectionLabels: Record<PresetSectionKey, string> = {
   vaePrecision: 'VAE Precision',
 }
 
+/** Availability diagnostics never change a copied identity or substitute a catalog default. */
+export interface PresetResourceReferenceEntry {
+  resource: NonNullable<PresetApplicationDiagnostic['resource']>
+  section: PresetSectionKey
+}
+
 export function emptyPresetDefinition(): EditablePresetDefinition {
   return {
     description: '',
@@ -100,30 +107,57 @@ export function presetNumericInputValid(
   )
 }
 
-/** Availability diagnostics never change a copied identity or substitute a catalog default. */
-export function presetNeedsAttention(
+/** Enumerate authored references without parsing unrelated unfinished editor fields. */
+export function presetResourceReferences(
+  definition: Pick<EditablePresetDefinition, 'payload'>,
+): PresetResourceReferenceEntry[] {
+  const payload = definition.payload
+  const entries: PresetResourceReferenceEntry[] = []
+  if (payload.model) {
+    entries.push({ resource: payload.model, section: 'model' })
+  }
+  if (payload.vae) {
+    entries.push({ resource: payload.vae, section: 'vae' })
+  }
+  entries.push(
+    ...(payload.loras ?? []).map(({ resource }) => ({ resource, section: 'loras' as const })),
+    ...(payload.prompt?.embeddingRefs ?? []).map(({ resource }) => ({
+      resource,
+      section: 'prompt' as const,
+    })),
+    ...(payload.negativePrompt?.embeddingRefs ?? []).map(({ resource }) => ({
+      resource,
+      section: 'negativePrompt' as const,
+    })),
+  )
+  return entries.filter(({ resource }) => resource !== null && resource !== undefined)
+}
+
+/** The existing authoring warning policy, retaining the exact affected references. */
+export function presetUnavailableResources(
   definition: Pick<EditablePresetDefinition, 'payload'>,
   catalog: ModelCatalogItem[],
   catalogReady: boolean,
-): boolean {
+): PresetResourceReferenceEntry[] {
   if (!catalogReady) {
-    return false
+    return []
   }
   const payload = definition.payload
-  const resources = [
-    payload.model,
-    payload.vae,
-    ...(payload.loras ?? []).map((lora) => lora.resource),
-    ...(payload.prompt?.embeddingRefs ?? []).map((reference) => reference.resource),
-    ...(payload.negativePrompt?.embeddingRefs ?? []).map((reference) => reference.resource),
-  ].filter((resource) => resource !== null && resource !== undefined)
-  return resources.some(
-    (resource) =>
+  return presetResourceReferences(definition).filter(
+    ({ resource }) =>
       savedModelAvailability(resource, catalog) !== 'ready' ||
       (payload.model?.baseModelFamily != null &&
         resource.kind !== 'checkpoint' &&
         resource.baseModelFamily !== payload.model.baseModelFamily),
   )
+}
+
+export function presetNeedsAttention(
+  definition: Pick<EditablePresetDefinition, 'payload'>,
+  catalog: ModelCatalogItem[],
+  catalogReady: boolean,
+): boolean {
+  return presetUnavailableResources(definition, catalog, catalogReady).length > 0
 }
 
 export function presetResourceReference<K extends 'checkpoint' | 'lora' | 'vae'>(

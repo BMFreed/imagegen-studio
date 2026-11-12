@@ -1,4 +1,5 @@
 import type { ModelCatalogItem } from '../../shared/api.js'
+import type { PresetApplicationDiagnostic } from '../../shared/presets/preset-application.js'
 import type { PresetRecord } from '../../shared/presets/preset-schema.js'
 
 import assert from 'node:assert/strict'
@@ -6,12 +7,15 @@ import { test } from 'node:test'
 import { reactive } from 'vue'
 
 import {
+  type EditablePresetDefinition,
   emptyPresetDefinition,
   includePresetSection,
   presetDefinitionFromRecord,
   presetNeedsAttention,
   presetNumericInputValid,
   presetResourceReference,
+  presetResourceReferences,
+  presetUnavailableResources,
   validatePresetDefinition,
 } from './preset-editor.js'
 
@@ -289,4 +293,244 @@ test('missing LoRAs, VAE and prompt sidecars are diagnosed even without a model 
     false,
     'embedded is explicit and does not require a catalog file',
   )
+})
+
+type AuthoringResource = NonNullable<PresetApplicationDiagnostic['resource']>
+
+function authoringResource<K extends AuthoringResource['kind']>(kind: K, suffix = '') {
+  return {
+    baseModelFamily: 'illustrious' as const,
+    civitaiFileId: 300,
+    civitaiModelId: 100,
+    civitaiVersionId: 200,
+    displayName: `Saved ${kind}${suffix}`,
+    fileSha256: 'a'.repeat(64),
+    kind,
+    localModelId: `${kind}${suffix}`,
+    localVersionId: `exact${suffix}`,
+    predictionType: kind === 'checkpoint' ? ('v_prediction' as const) : null,
+    versionName: 'Exact version',
+  }
+}
+
+function authoringCatalog(ref: AuthoringResource): ModelCatalogItem {
+  const item = catalogFixture()[0]!
+  Object.assign(item, {
+    id: ref.localModelId,
+    modelId: ref.civitaiModelId,
+    resourceType: ref.kind,
+  })
+  Object.assign(item.versions[0]!, {
+    baseModelFamily: ref.baseModelFamily,
+    civitaiFileId: ref.civitaiFileId,
+    civitaiVersionId: ref.civitaiVersionId,
+    id: ref.localVersionId,
+    predictionType: ref.predictionType,
+    sha256: ref.fileSha256,
+  })
+  return item
+}
+
+test('authoring references retain every included resource location, disabled signed LoRAs and repeated sidecars', () => {
+  const model = authoringResource('checkpoint')
+  const vae = authoringResource('vae')
+  const disabledLora = authoringResource('lora', '-disabled')
+  const enabledLora = authoringResource('lora', '-enabled')
+  const embedding = authoringResource('embedding')
+  const draft = emptyPresetDefinition()
+  draft.payload = {
+    loras: [
+      { enabled: false, resource: disabledLora, weight: -0.75 },
+      { enabled: true, resource: enabledLora, weight: 0 },
+    ],
+    model,
+    negativePrompt: { embeddingRefs: [{ resource: embedding, token: '<negative>' }], text: '' },
+    prompt: {
+      embeddingRefs: [
+        { resource: embedding, token: '<first>' },
+        { resource: embedding, token: '<second>' },
+      ],
+      text: '',
+    },
+    vae,
+  }
+  const before = JSON.stringify(draft)
+  assert.deepEqual(presetResourceReferences(draft), [
+    { resource: model, section: 'model' },
+    { resource: vae, section: 'vae' },
+    { resource: disabledLora, section: 'loras' },
+    { resource: enabledLora, section: 'loras' },
+    { resource: embedding, section: 'prompt' },
+    { resource: embedding, section: 'prompt' },
+    { resource: embedding, section: 'negativePrompt' },
+  ])
+  assert.equal(JSON.stringify(draft), before)
+  assert.deepEqual(
+    presetResourceReferences({
+      payload: { loras: [], model: null, prompt: { embeddingRefs: [], text: '' }, vae: null },
+    }),
+    [],
+    'unfinished model, Embedded VAE and empty stacks do not invent references',
+  )
+})
+
+test('authoring unavailable references distinguish an unknown catalog from a loaded empty catalog', () => {
+  const model = authoringResource('checkpoint')
+  const draft = { payload: { model } }
+  const before = JSON.stringify(draft)
+  assert.deepEqual(presetUnavailableResources(draft, [], false), [])
+  assert.equal(presetNeedsAttention(draft, [], false), false)
+  assert.deepEqual(presetUnavailableResources(draft, [], true), [
+    { resource: model, section: 'model' },
+  ])
+  assert.equal(presetNeedsAttention(draft, [], true), true)
+  assert.deepEqual(presetUnavailableResources(draft, [authoringCatalog(model)], true), [])
+  assert.equal(presetNeedsAttention(draft, [authoringCatalog(model)], true), false)
+  assert.equal(JSON.stringify(draft), before)
+})
+
+test('authoring attention requires exact local, provider, SHA and family identity with a ready file', () => {
+  const model = authoringResource('checkpoint')
+  const draft = { payload: { model } }
+  const cases: { change: (item: ModelCatalogItem) => void; label: string }[] = [
+    {
+      change: (item) => {
+        item.id = 'same-file-other-model'
+      },
+      label: 'local model id',
+    },
+    {
+      change: (item) => {
+        item.resourceType = 'lora'
+      },
+      label: 'resource kind',
+    },
+    {
+      change: (item) => {
+        item.modelId = 101
+      },
+      label: 'provider model id',
+    },
+    {
+      change: (item) => {
+        item.versions[0]!.id = 'same-file-other-version'
+      },
+      label: 'local version id',
+    },
+    {
+      change: (item) => {
+        item.versions[0]!.civitaiVersionId = 201
+      },
+      label: 'provider version id',
+    },
+    {
+      change: (item) => {
+        item.versions[0]!.civitaiFileId = 301
+      },
+      label: 'provider file id',
+    },
+    {
+      change: (item) => {
+        item.versions[0]!.sha256 = 'c'.repeat(64)
+      },
+      label: 'SHA',
+    },
+    {
+      change: (item) => {
+        item.versions[0]!.baseModelFamily = 'anima'
+      },
+      label: 'family',
+    },
+    {
+      change: (item) => {
+        item.versions[0]!.fileStatus = 'missing'
+      },
+      label: 'missing file',
+    },
+    {
+      change: (item) => {
+        item.versions[0]!.fileStatus = 'corrupt'
+      },
+      label: 'corrupt file',
+    },
+    {
+      change: (item) => {
+        item.versions.shift()
+      },
+      label: 'ready default only',
+    },
+  ]
+  for (const { change, label } of cases) {
+    const item = authoringCatalog(model)
+    change(item)
+    const before = JSON.stringify({ draft, item })
+    assert.deepEqual(
+      presetUnavailableResources(draft, [item], true),
+      [{ resource: model, section: 'model' }],
+      label,
+    )
+    assert.equal(presetNeedsAttention(draft, [item], true), true, label)
+    assert.equal(JSON.stringify({ draft, item }), before, label)
+  }
+  const renamed = authoringCatalog(model)
+  renamed.name = 'Different display name'
+  renamed.versions[0]!.name = 'Different display version'
+  renamed.defaultVersionId = 'newer'
+  assert.deepEqual(presetUnavailableResources(draft, [renamed], true), [])
+  assert.equal(presetNeedsAttention(draft, [renamed], true), false)
+})
+
+test('authoring family attention covers all dependent references while an absent model supplies no family gate', () => {
+  const model = {
+    ...authoringResource('checkpoint'),
+    baseModelFamily: 'anima' as const,
+    predictionType: null,
+  }
+  const lora = authoringResource('lora')
+  const vae = authoringResource('vae')
+  const embedding = authoringResource('embedding')
+  const draft = {
+    payload: {
+      loras: [{ enabled: false, resource: lora, weight: -0.5 }],
+      model,
+      negativePrompt: { embeddingRefs: [{ resource: embedding, token: '<negative>' }], text: '' },
+      prompt: { embeddingRefs: [{ resource: embedding, token: '<positive>' }], text: '' },
+      vae,
+    },
+  }
+  const catalog = [model, lora, vae, embedding].map(authoringCatalog)
+  assert.deepEqual(
+    presetUnavailableResources(draft, catalog, true).map(({ section }) => section),
+    ['vae', 'loras', 'prompt', 'negativePrompt'],
+  )
+  assert.equal(presetNeedsAttention(draft, catalog, true), true)
+  const withoutModel = { payload: { ...draft.payload, model: undefined } }
+  assert.deepEqual(presetUnavailableResources(withoutModel, catalog, true), [])
+  assert.equal(presetNeedsAttention(withoutModel, catalog, true), false)
+  const unknown = { ...authoringResource('checkpoint'), baseModelFamily: null }
+  assert.deepEqual(
+    presetUnavailableResources({ payload: { model: unknown } }, [authoringCatalog(unknown)], true),
+    [{ resource: unknown, section: 'model' }],
+    'a ready file with unknown family retains the existing attention result',
+  )
+})
+
+test('resource projection stays available in unfinished Vue drafts without turning authoring attention into Apply admission', () => {
+  const source = recordFixture()
+  const draft: EditablePresetDefinition = reactive(presetDefinitionFromRecord(source))
+  draft.name = ''
+  draft.workflow = null
+  draft.payload.guidance = { cfgScale: null, steps: null }
+  draft.payload.size = { height: 1024, width: null }
+  draft.payload.seed = { policy: 'fixed', value: null }
+  const before = JSON.stringify({ draft, source })
+  assert.equal(validatePresetDefinition(draft), null)
+  assert.equal(presetUnavailableResources(draft, [], true).length, 1)
+  assert.equal(presetNeedsAttention(draft, [], true), true)
+  const item = catalogFixture()[0]!
+  item.versions[0]!.dependencyIssues = ['missing companion']
+  item.versions[0]!.predictionType = 'epsilon'
+  assert.deepEqual(presetUnavailableResources(draft, [item], true), [])
+  assert.equal(presetNeedsAttention(draft, [item], true), false)
+  assert.equal(JSON.stringify({ draft, source }), before)
 })

@@ -36,6 +36,7 @@ import {
 } from 'naive-ui'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
+import type { ModelManagerFocus } from './model-manager-focus.js'
 import type { PresetCreateIntent } from './preset-create-intent.js'
 
 import IconButton from '../../../docs/prototype-app/src/components/IconButton.vue'
@@ -47,6 +48,7 @@ import {
   workflowLabels,
 } from './preset-editor.js'
 import { PresetManagerSession, type PresetManagerState } from './preset-manager-session.js'
+import { presetManagerModelRows } from './preset-model-handoff.js'
 import PresetPayloadEditor from './PresetPayloadEditor.vue'
 
 const props = defineProps<{
@@ -54,9 +56,17 @@ const props = defineProps<{
   catalogReady: boolean
   createIntent?: PresetCreateIntent | null
   initialPresetId?: string | null
+  suspended: boolean
 }>()
 const show = defineModel<boolean>('show', { required: true })
-const emit = defineEmits<{ afterLeave: [] }>()
+const emit = defineEmits<{
+  afterLeave: []
+  manageModels: [focus: ModelManagerFocus]
+  suspended: []
+}>()
+const modalRoot = ref<HTMLDivElement | null>(null)
+let handoffTrigger: HTMLElement | null = null
+let handoffActionKey: string | null = null
 let closingWindow: {
   reject: (error: Error) => void
   resolve: () => void
@@ -215,6 +225,11 @@ const needsAttention = computed(
     state.value.draft !== null &&
     presetNeedsAttention(state.value.draft, props.catalog, props.catalogReady),
 )
+const modelRows = computed(() =>
+  state.value.draft
+    ? presetManagerModelRows(state.value.draft, props.catalog, props.catalogReady)
+    : [],
+)
 const createSource = computed(() => (state.value.creating ? state.value.createIntent : null))
 const sourceTitle = computed(() =>
   createSource.value?.kind === 'smart-patch-draft'
@@ -307,7 +322,13 @@ async function confirmDelete() {
   }
 }
 function onKeydown(event: KeyboardEvent) {
-  if (!show.value || event.isComposing || event.altKey || (!event.ctrlKey && !event.metaKey)) {
+  if (
+    !show.value ||
+    props.suspended ||
+    event.isComposing ||
+    event.altKey ||
+    (!event.ctrlKey && !event.metaKey)
+  ) {
     return
   }
   const key = event.key.toLowerCase()
@@ -333,9 +354,61 @@ async function saveByShortcut() {
     focused.blur()
   }
   await nextTick()
-  if (show.value && valid.value && !state.value.busy && !deleteConfirmation.value) {
+  if (
+    show.value &&
+    !props.suspended &&
+    valid.value &&
+    !state.value.busy &&
+    !state.value.pending &&
+    !deleteConfirmation.value
+  ) {
     await session.save()
   }
+}
+function requestModels(focus: ModelManagerFocus, actionKey: string, event: MouseEvent) {
+  if (
+    !show.value ||
+    props.suspended ||
+    state.value.busy ||
+    state.value.pending ||
+    deleteConfirmation.value
+  ) {
+    return
+  }
+  handoffTrigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
+  handoffActionKey = actionKey
+  emit('manageModels', focus)
+}
+function afterLeave() {
+  if (show.value && props.suspended) {
+    emit('suspended')
+  } else if (!show.value) {
+    emit('afterLeave')
+  }
+}
+function afterEnter() {
+  if (!handoffActionKey || !show.value || props.suspended) {
+    return
+  }
+  const restored = Array.from(
+    modalRoot.value?.querySelectorAll<HTMLButtonElement>('[data-preset-manager-model-action]') ??
+      [],
+  ).find(
+    (button) => button.dataset.presetManagerModelAction === handoffActionKey && !button.disabled,
+  )
+  const target =
+    handoffTrigger?.isConnected &&
+    modalRoot.value?.contains(handoffTrigger) &&
+    !handoffTrigger.hasAttribute('disabled') &&
+    handoffTrigger.dataset.presetManagerModelAction === handoffActionKey
+      ? handoffTrigger
+      : (restored ??
+        modalRoot.value?.querySelector<HTMLButtonElement>(
+          'button[aria-label="Close Preset Manager"]',
+        ))
+  handoffTrigger = null
+  handoffActionKey = null
+  target?.focus({ preventScroll: true })
 }
 function prepareWindowClose(setDecisionPending: (pending: boolean) => void): Promise<void> {
   if (!show.value) {
@@ -353,6 +426,8 @@ defineExpose({ prepareWindowClose })
 watch(
   show,
   (open) => {
+    handoffTrigger = null
+    handoffActionKey = null
     deleteConfirmation.value = false
     if (open) {
       resetFilters()
@@ -387,14 +462,17 @@ onBeforeUnmount(() => {
 
 <template>
   <NModal
-    :closeOnEsc="!state.pending && !deleteConfirmation && !state.busy"
+    :closeOnEsc="!suspended && !state.pending && !deleteConfirmation && !state.busy"
+    displayDirective="show"
     :maskClosable="false"
-    :show
+    :show="show && !suspended"
     :zIndex="AppLayer.appOverlay"
-    @afterLeave="emit('afterLeave')"
+    @afterEnter="afterEnter"
+    @afterLeave="afterLeave"
     @update:show="!$event && session.requestClose()"
   >
     <div
+      ref="modalRoot"
       aria-label="Preset Manager"
       aria-modal="true"
       class="manager-shell"
@@ -701,12 +779,45 @@ onBeforeUnmount(() => {
                           </NFormItem>
                         </NForm>
                       </NCard>
-                      <NAlert v-if="!catalogReady" key="n-alert-1" type="warning">
-                        Resource catalog is unavailable. Saved references remain unchanged.
-                      </NAlert>
-                      <NAlert v-else-if="needsAttention" key="n-alert-2" type="warning">
-                        Unavailable or incompatible resources remain saved. Replace or remove them
-                        explicitly before applying this preset.
+                      <NAlert
+                        v-if="!catalogReady || needsAttention"
+                        key="n-alert-2"
+                        aria-label="Preset resource diagnostics"
+                        type="warning"
+                      >
+                        <span v-if="!catalogReady">
+                          Resource catalog is unavailable. Saved references remain unchanged.
+                        </span>
+                        <span v-else>
+                          Unavailable or incompatible resources remain saved. Replace or remove them
+                          explicitly before applying this preset.
+                        </span>
+                        <div
+                          v-for="{ actionKey, focus, section } of modelRows"
+                          :key="actionKey"
+                          class="preset-resource-row"
+                        >
+                          <span>
+                            {{ sectionLabels[section] }}: {{ focus.resource?.resourceName }} ·
+                            {{ focus.resource?.versionName }}
+                          </span>
+                          <NButton
+                            :aria-label="`Open ${focus.resource?.resourceName} in Models`"
+                            class="preset-resource-action"
+                            :data-preset-manager-model-action="actionKey"
+                            :disabled="
+                              state.busy ||
+                              suspended ||
+                              Boolean(state.pending) ||
+                              deleteConfirmation
+                            "
+                            size="small"
+                            text
+                            @click="requestModels(focus, actionKey, $event)"
+                          >
+                            Open in Models
+                          </NButton>
+                        </div>
                       </NAlert>
                       <PresetPayloadEditor
                         :key="state.editorRevision"
@@ -906,6 +1017,23 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.preset-resource-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.preset-resource-row > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.preset-resource-action {
+  flex-shrink: 0;
+}
+
 .manager-shell {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);

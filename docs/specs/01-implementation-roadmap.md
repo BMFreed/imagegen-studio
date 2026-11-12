@@ -1,6 +1,15 @@
 # Implementation Roadmap
 
-## Current Home maintenance checkpoint
+## Current Preset Manager Models checkpoint
+
+[Exact-resource Models handoff](../engineering/phase-4-preset-manager-models-research.md) connects the global Models menu
+and active Preset Manager drafts to the canonical manager. Logical editor/session
+state is retained while the modal is suspended; exact refs, raw inputs and explicit
+Save remain with their owners. Return waits for Models dismissal and the current
+catalog read. Project Apply retains its separate guards and wording. Finite evidence
+and limits are recorded in the note; public readiness remains unchanged.
+
+## Previous Home maintenance checkpoint
 
 [Workspace shortcuts and model notice](../engineering/phase-4-home-maintenance-research.md) connect concrete-workspace header
 Settings, sidebar Rescan and confirmed Remove to existing owners. Home reads the
@@ -365,10 +374,11 @@ Anima Smart enabled-LoRA refusal описывает исторический che
    production checkpoints выше. Не повторять их как отсутствующие consumers;
    совместная compatibility/capacity и итоговая Home/MVP acceptance остаются отдельными.
 4. **Model Manager:** hard Remove Local Resource с running/pending/reference/
-   shared-file guards; оставшиеся контексты, включая Project menu и missing
-   accepted-result resources, Preset Manager/New Project. Project checkpoint/
-   LoRA/VAE/embedding navigation, Project Apply diagnostic return и installed
-   artwork уже подключены; не ставить их повторно в TODO.
+   shared-file guards; missing accepted-result resources и New Project handoff.
+   Global Models menu и active Preset Manager exact-resource return имеют новый
+   finite checkpoint выше. Project checkpoint/LoRA/VAE/embedding navigation,
+   Project Apply diagnostic return и installed artwork уже подключены; не
+   ставить их повторно в TODO. Deleted-preset read-only browse не добавлен этим срезом.
 5. **Image export:** `Export As` по visible-content bounds с active Smart
    variants и отдельный `Export Generation BBox`, sRGB, empty refusal и
    неизменность Project/`.igs`. Экспорт отдельного candidate этот consumer

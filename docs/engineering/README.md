@@ -1,6 +1,15 @@
 # Engineering Workflow
 
-## Current Home maintenance checkpoint
+## Current Preset Manager Models checkpoint
+
+[Exact-resource Models handoff](./phase-4-preset-manager-models-research.md) connects the global Models menu
+and active Preset Manager drafts to the canonical manager. Logical editor/session
+state is retained while the modal is suspended; exact refs, raw inputs and explicit
+Save remain with their owners. Return waits for Models dismissal and the current
+catalog read. Project Apply retains its separate guards and wording. Finite evidence
+and limits are recorded in the note; public readiness remains unchanged.
+
+## Previous Home maintenance checkpoint
 
 [Workspace shortcuts and model notice](./phase-4-home-maintenance-research.md) connect concrete-workspace header
 Settings, sidebar Rescan and confirmed Remove to existing owners. Home reads the

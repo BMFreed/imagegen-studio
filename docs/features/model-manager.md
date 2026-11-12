@@ -136,12 +136,22 @@ Model Manager is an app-level overlay, not a `Project` tab.
 Required entry points:
 
 - `Manage Models` in the Home sidebar Tools area: opens Model Manager over the mounted Home surface.
-- `Project` top menu/context menu: opens Model Manager.
+- Global `Models → Manage Models` in the app chrome: opens the canonical Model Manager from Home, Project or no-document state, following the approved Vue prototype.
 - Generate `Model` selector: `Manage Models` opens Model Manager focused on checkpoints.
 - Generate `LoRAs` section: `Manage LoRAs` opens the LoRA category; each selected row has an `Open <name> in Models` action focused on its exact version.
 - Generate `VAE` control: `Open in Models` opens the VAE category, focused on the exact external version when present; Embedded still opens VAE browsing. Anima keeps its pinned VAE.
 - An embedding token or unified prompt autocomplete action can open Model Manager focused on embeddings.
 - Missing resource warning from a preset/accepted result: opens Model Manager filtered to the missing resource identity where possible.
+
+[Preset Manager handoff](../engineering/phase-4-preset-manager-models-research.md)
+uses the current editable create/edit draft's exact references, including positive
+and negative embedding sidecars. It retains unsaved metadata, Included sections,
+raw invalid fields, filters and editor DOM while Models owns focus. Missing or
+incompatible refs remain saveable. Model Manager labels this origin as a Preset
+draft; it does not select Default or replace a reference. A fresh current catalog
+read and modal dismissal precede return; unresolved diagnostics regain their action
+focus, resolved ones fall back to Close Preset Manager. New Project and
+accepted-result missing-resource navigation remain separate consumers.
 
 Opening Model Manager should not close the current `Project` tab, should not affect project undo/redo and should not mutate active generation settings unless the user explicitly chooses a model/resource from a Generate selector.
 

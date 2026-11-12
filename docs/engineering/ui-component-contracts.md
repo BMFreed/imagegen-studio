@@ -11,6 +11,18 @@ Default не выбирается автоматически. Stable action key 
 границы: `preset-model-handoff.ts`,
 [handoff checkpoint](./phase-3-preset-model-handoff-research.md).
 
+Preset Manager использует тот же App handoff с отдельным tagged owner и
+presentation epoch. Logical `show` и session/editor key сохраняются при `suspended`;
+полный close всё ещё dispose/dirty-guard owner. Capture/deferred Ctrl+S подавляются
+при suspension. `presetManagerModelRows` использует прежний authoring availability
+predicate, не canonical parse всего незавершённого draft. Typed focus имеет
+`origin: 'preset-manager'`; exact action key и fallback Close восстанавливают focus.
+Catalog settlement приходит только из current-request finalizer; obsolete read
+не освобождает handoff. Model Manager использует app-overlay layer, его nested
+import — app-overlay + 1, а родительский Preset dirty-close guard — dialog layer.
+Порядок не зависит от auto-z-index Naive или порядка повторных teleport. Executable evidence:
+[Manager Models checkpoint](./phase-4-preset-manager-models-research.md).
+
 Production Preset Manager принимает detached `PresetCreateIntent` от текущего
 Project, выбранного Smart Patch draft или принятого результата. Общий session/editor владеет transient
 draft, Cancel/guards/Create/retry; source mapper владеет содержимым копии.

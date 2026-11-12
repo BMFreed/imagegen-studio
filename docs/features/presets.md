@@ -588,6 +588,17 @@ Behavior:
   replacement remains an explicit action in Apply. Prototype buttons and other
   production contexts retain their separate integration scope.
 
+[Production Preset Manager](../engineering/phase-4-preset-manager-models-research.md)
+now offers exact `Open in Models` actions for references in its active edited draft,
+including disabled LoRAs and both embedding sidecars. Unrelated unfinished name,
+workflow or raw numeric input does not erase these actions. Unknown catalog state
+is displayed separately and can still browse known refs. The same session/editor
+stays mounted through the staged Models visit; dirty state, values, source intent,
+filters and layout remain. Models input does not trigger hidden preset Save.
+Repair only removes a diagnostic when the exact reference becomes available;
+replacement and Save remain explicit. Deleted read-only presets and New Project
+handoff are outside this finite consumer.
+
 Presets should store enough copied display metadata to remain understandable after a resource is removed.
 
 ## Vue Prototype Coverage
