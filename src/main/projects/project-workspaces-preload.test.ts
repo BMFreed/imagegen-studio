@@ -131,6 +131,47 @@ test('project list requires workspace ownership and import forwards explicit des
   ])
 })
 
+test('Home list transports exact filename metadata and retains a legacy neighbor without inventing its filename', async () => {
+  const f = await fixture()
+  const legacy = {
+    bbox: null,
+    health: 'ready',
+    id: `project-v1-${'a'.repeat(64)}`,
+    previewStatus: 'empty',
+    recoveryStatus: 'none',
+    thumbnailUrl: null,
+    title: 'Shared display title',
+    workspaceId: 'uncategorized',
+  }
+  for (const fileName of ['Эскиз Frame.igs', 'эскиз frame.IGS', String.raw`Папка\Кадр.igs`]) {
+    f.state.value = [legacy, { ...legacy, fileName, id: `project-v1-${'b'.repeat(64)}` }]
+    const reply = await f.api.projects.list()
+    assert.equal(reply.ok, true)
+    if (reply.ok) {
+      assert.equal(reply.value.length, 2)
+      assert.equal(Object.hasOwn(reply.value[0], 'fileName'), false)
+      assert.equal(reply.value[0].title, legacy.title)
+      assert.equal(reply.value[0].id, legacy.id)
+      assert.equal(reply.value[1].fileName, fileName)
+      assert.equal(reply.value[1].title, legacy.title)
+      assert.equal(reply.value[1].id, `project-v1-${'b'.repeat(64)}`)
+    }
+    assert.deepEqual(f.calls.at(-1), { args: [], channel: ipcChannels.projects.list })
+  }
+  for (const fileName of [null, 3, true, [], { name: 'package.igs' }]) {
+    f.state.value = [legacy, { ...legacy, fileName, id: `project-v1-${'b'.repeat(64)}` }]
+    const reply = await f.api.projects.list()
+    assert.equal(reply.ok, false)
+    assert.deepEqual(f.calls.at(-1), { args: [], channel: ipcChannels.projects.list })
+  }
+  f.state.value = [legacy]
+  const restored = await f.api.projects.list()
+  assert.equal(restored.ok, true)
+  if (restored.ok) {
+    assert.equal(Object.hasOwn(restored.value[0], 'fileName'), false)
+  }
+})
+
 test('workspace management preload forwards explicit identity/confirmation and validates saved metadata', async () => {
   const f = await fixture()
   const value = workspace()
@@ -174,11 +215,29 @@ test('Trash preload keeps the lifecycle owner and actual filename and validates 
   if (list.ok) {
     assert.equal(list.value[0].fileName, 'project-actual-uuid.igs')
   }
+  for (const fileName of ['Эскиз Frame.IGS', String.raw`Папка\Кадр.igs`]) {
+    f.state.value = [{ ...item, fileName }]
+    const reply = await f.api.projects.listTrash()
+    assert.equal(reply.ok, true)
+    if (reply.ok) {
+      assert.equal(reply.value[0].fileName, fileName)
+      assert.equal(reply.value[0].title, item.title)
+      assert.equal(reply.value[0].id, id)
+      assert.equal(reply.value[0].trashId, trashId)
+    }
+    assert.deepEqual(f.calls.at(-1), { args: [], channel: ipcChannels.projects.listTrash })
+  }
   for (const patch of [
     { trashId: '../file' },
     { deletionStatus: 'unknown' },
     { trashedAt: 'invalid' },
     { deletionError: 3 },
+    { fileName: undefined },
+    { fileName: null },
+    { fileName: 3 },
+    { fileName: true },
+    { fileName: [] },
+    { fileName: { name: item.fileName } },
   ]) {
     f.state.value = [{ ...item, ...patch }]
     assert.equal((await f.api.projects.listTrash()).ok, false)

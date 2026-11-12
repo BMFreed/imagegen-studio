@@ -321,6 +321,8 @@ export interface PresetApi {
 
 export interface ProjectSummary {
   bbox: Pick<IgsRectV1, 'height' | 'width'> | null
+  /** Main-owned filename at the indexed/source location; older producers may omit it. */
+  fileName?: string
   health: 'corrupt' | 'missing' | 'ready' | 'unsupported_schema'
   id: string
   /** Last verified/cached Home metadata; omitted only by older message producers. */

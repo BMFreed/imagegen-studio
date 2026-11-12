@@ -1,12 +1,21 @@
 # Engineering Workflow
 
-## Current Home selection checkpoint
+## Current Home filename checkpoint
+
+[Actual filename metadata](./phase-4-home-filenames-research.md) extends the existing Main summary
+projection to normal and pending Projects. List and Inspector show the real
+canonical/source basename, independently of display title; legacy producers remain
+compatible. Pending Move/Rename keeps its source filename until finalization.
+Focused Main/preload and built-app checks are recorded in the note; full Home/MVP
+acceptance and public readiness remain separate.
+
+## Previous Home selection checkpoint
 
 [Selected Project continuity](./phase-4-home-selection-research.md) preserves the selected visible Project
 through Home remount within the App session. Scope/filter invalidation and immediate
 remount validation prevent hidden-ID resurrection. Preview camera and cross-launch
-settings are separate; richer filename metadata and full Home/MVP acceptance stay
-open. Public promise statuses are unchanged.
+settings are separate; filename metadata has the later checkpoint above, and
+full Home/MVP acceptance stays open. Public promise statuses are unchanged.
 
 ## Previous Home Create/Import checkpoint
 

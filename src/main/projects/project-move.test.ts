@@ -236,6 +236,8 @@ test('pending Move remains visible after dialog close, blocks both unregisters a
     assert.equal((await f.service.moveProject(record.localProjectKey, target.id)).kind, 'pending')
     const [pending] = await f.service.list(f.workspace.id)
     assert.equal(pending.id, record.localProjectKey)
+    assert.equal(pending.fileName, path.basename(record.canonicalPath))
+    assert.equal(pending.title, record.displayName)
     assert.equal(pending.pendingMove?.workspaceId, target.id)
     assert.equal(
       (await f.service.listWorkspaces()).find((v) => v.id === f.workspace.id)?.projectCount,
@@ -260,7 +262,9 @@ test('pending Move remains visible after dialog close, blocks both unregisters a
       bytes,
     )
     assert.deepEqual(await f.service.list(f.workspace.id), [])
-    assert.equal((await f.service.list(target.id))[0].id, record.localProjectKey)
+    const [moved] = await f.service.list(target.id)
+    assert.equal(moved.id, record.localProjectKey)
+    assert.equal(moved.fileName, path.basename(record.canonicalPath))
   })
 })
 
@@ -506,6 +510,8 @@ test('pending Rename remains source-scoped and resumes only the original name af
     )
     const [summary] = await f.service.list(f.workspace.id)
     assert.equal(summary.id, record.localProjectKey)
+    assert.equal(summary.fileName, path.basename(record.canonicalPath))
+    assert.equal(summary.title, record.displayName)
     assert.equal(summary.pendingRename?.name, 'Pending Rename')
     assert.equal(summary.pendingMove, undefined)
     await assert.rejects(f.service.open(record.localProjectKey), { code: 'PROJECT_NOT_READY' })
@@ -523,8 +529,8 @@ test('pending Rename remains source-scoped and resumes only the original name af
     })
     const recovered = f.makeService()
     assert.deepEqual(
-      (await recovered.list(f.workspace.id)).map((v) => [v.id, v.title]),
-      [[record.localProjectKey, 'Pending Rename']],
+      (await recovered.list(f.workspace.id)).map((v) => [v.id, v.title, v.fileName]),
+      [[record.localProjectKey, 'Pending Rename', 'Pending Rename.igs']],
     )
     assert.deepEqual(await f.repository.relocations.list(), [])
     assert.equal((await recovered.open(record.localProjectKey)).kind, 'opened')
@@ -644,6 +650,7 @@ for (const seam of ['afterMetadataRename', 'beforeFinalize'] as const) {
       await f.service.setPrimaryBbox(tab.id, { height: 64, width: 64, x: 8, y: 0 })
       await f.service.save(tab.id)
       const owner = f.service.getOpenDocumentForAcceptance(tab.id)!
+      const source = (await f.repository.getProject(tab.id))!
       Object.defineProperty(f.repository, 'relocations', {
         configurable: true,
         value: new ProjectRelocationStore(f.database.db, {
@@ -653,6 +660,15 @@ for (const seam of ['afterMetadataRename', 'beforeFinalize'] as const) {
         }),
       })
       assert.equal((await f.service.renameProject(tab.id, 'Held Name')).kind, 'pending')
+      const journal = await f.repository.relocations.list()
+      const pendingBytes = await readFile(path.join(f.directory, 'Held Name.igs'))
+      const [pending] = await f.service.list(f.workspace.id)
+      assert.equal(pending.id, tab.id)
+      assert.equal(pending.fileName, path.basename(source.canonicalPath))
+      assert.equal(pending.title, source.displayName)
+      assert.equal(pending.pendingRename?.name, 'Held Name')
+      assert.deepEqual(await f.repository.relocations.list(), journal)
+      assert.ok((await readFile(path.join(f.directory, 'Held Name.igs'))).equals(pendingBytes))
       assert.equal(f.service.getOpenTabs()[0].relocationPending, true)
       assert.equal(f.service.getOpenDocumentId(tab.id), null)
       await assert.rejects(f.service.save(tab.id), { code: 'PROJECT_NOT_READY' })
@@ -665,6 +681,11 @@ for (const seam of ['afterMetadataRename', 'beforeFinalize'] as const) {
         value: new ProjectRelocationStore(f.database.db),
       })
       assert.deepEqual(await f.service.renameProject(tab.id, 'Held Name'), { kind: 'renamed' })
+      const [renamed] = await f.service.list(f.workspace.id)
+      assert.equal(renamed.id, tab.id)
+      assert.equal(renamed.fileName, 'Held Name.igs')
+      assert.equal(renamed.title, 'Held Name')
+      assert.ok((await readFile(path.join(f.directory, 'Held Name.igs'))).equals(pendingBytes))
       assert.equal(f.service.getOpenDocumentForAcceptance(tab.id), owner)
       assert.equal((await f.service.undo(tab.id)).primaryBbox.x, 0)
       assert.equal(f.service.getOpenTabs()[0].title, 'Held Name')
@@ -715,8 +736,12 @@ test('Home browse timestamps project active, pending and Trash metadata without 
     const stamp = await lstat(record.canonicalPath, { bigint: true })
     const modifiedAt = new Date(Number(stamp.mtimeNs / 1_000_000n)).toISOString()
     const expected = { lastOpenedAt: opened.lastOpenedAt, modifiedAt }
+    const packageBytes = await readFile(record.canonicalPath)
+    const fileName = path.basename(record.canonicalPath)
     const [active] = await f.service.list(f.workspace.id)
+    assert.equal(active.fileName, fileName)
     assert.deepEqual({ lastOpenedAt: active.lastOpenedAt, modifiedAt: active.modifiedAt }, expected)
+    assert.ok((await readFile(record.canonicalPath)).equals(packageBytes))
     const target = await destination(f)
     Object.defineProperty(f.repository, 'relocations', {
       configurable: true,
@@ -732,6 +757,7 @@ test('Home browse timestamps project active, pending and Trash metadata without 
       .selectAll()
       .executeTakeFirstOrThrow()
     const [pending] = await f.service.list(f.workspace.id)
+    assert.equal(pending.fileName, fileName)
     assert.deepEqual(
       { lastOpenedAt: pending.lastOpenedAt, modifiedAt: pending.modifiedAt },
       expected,
@@ -740,6 +766,8 @@ test('Home browse timestamps project active, pending and Trash metadata without 
       await f.database.db.selectFrom('project_relocation').selectAll().executeTakeFirstOrThrow(),
       before,
     )
+    const movedPath = path.join(target.directoryPath, fileName)
+    assert.ok((await readFile(movedPath)).equals(packageBytes))
     Object.defineProperty(f.repository, 'relocations', {
       configurable: true,
       value: new ProjectRelocationStore(f.database.db),
@@ -751,7 +779,9 @@ test('Home browse timestamps project active, pending and Trash metadata without 
       .selectAll()
       .executeTakeFirstOrThrow()
     const [trash] = await f.service.listTrash()
+    assert.equal(trash.fileName, fileName)
     assert.deepEqual({ lastOpenedAt: trash.lastOpenedAt, modifiedAt: trash.modifiedAt }, expected)
+    assert.ok((await readFile(movedPath)).equals(packageBytes))
     assert.deepEqual(
       await f.database.db
         .selectFrom('project_file_lifecycle')

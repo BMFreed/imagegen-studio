@@ -84,7 +84,9 @@ function timestamp(value: string | null | undefined) {
       <template v-else>
         <header class="inspector-header">
           <h2 :title="project.title">{{ project.title }}</h2>
-          <span :title="workspaceName">{{ workspaceName }}</span>
+          <span :title="`${workspaceName} / ${project.fileName ?? 'Filename unavailable'}`">
+            {{ workspaceName }} / {{ project.fileName ?? 'Filename unavailable' }}
+          </span>
         </header>
 
         <div class="condition-row">

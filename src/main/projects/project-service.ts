@@ -2279,6 +2279,7 @@ export class ProjectService {
           move.project.bboxWidth && move.project.bboxHeight
             ? { height: move.project.bboxHeight, width: move.project.bboxWidth }
             : null,
+        fileName: path.basename(move.sourcePath),
         health: 'ready',
         id: move.localProjectKey,
         lastOpenedAt: canonicalHomeTimestamp(move.project.lastOpenedAt),
@@ -5298,6 +5299,7 @@ export class ProjectService {
         record.bboxWidth !== null && record.bboxHeight !== null
           ? { height: record.bboxHeight, width: record.bboxWidth }
           : null,
+      fileName: path.basename(record.canonicalPath),
       health: record.fileHealth,
       id: record.localProjectKey,
       lastOpenedAt: canonicalHomeTimestamp(record.lastOpenedAt),

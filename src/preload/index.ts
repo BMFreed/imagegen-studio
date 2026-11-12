@@ -730,6 +730,7 @@ function isProjectSummary(value: unknown): value is ProjectSummary {
         typeof value.pendingMove.message === 'string')) &&
     (value.lastOpenedAt === undefined || isHomeProjectTimestamp(value.lastOpenedAt)) &&
     (value.modifiedAt === undefined || isHomeProjectTimestamp(value.modifiedAt)) &&
+    (value.fileName === undefined || typeof value.fileName === 'string') &&
     isProjectId(value.id) &&
     isProjectWorkspaceId(value.workspaceId) &&
     typeof value.title === 'string' &&

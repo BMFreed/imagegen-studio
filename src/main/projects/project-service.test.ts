@@ -14,6 +14,7 @@ import {
 } from '../../shared/projects/project-generation-target-state.js'
 import {
   createEmptyProjectDocumentV1,
+  IGS_MIMETYPE,
   IGS_SAFETY_CEILINGS,
 } from '../../shared/projects/project-schema.js'
 
@@ -35,6 +36,7 @@ import {
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import * as yazl from 'yazl'
 
 import { acceptedHistoryLayerAvailable } from '../../renderer/components/accepted-history-navigation.js'
 import { ProjectDraftSync } from '../../renderer/components/project-draft-sync.js'
@@ -1657,6 +1659,151 @@ async function withService(
     await rm(dataRoot, { force: true, recursive: true })
   }
 }
+
+test('Home filename comes from each real package location and cached browsing preserves title, identity and bytes', async () => {
+  let saveReads = 0
+  await withService(
+    async ({ dataRoot, repository, service }) => {
+      const directory = path.join(dataRoot, 'filename-workspace')
+      await mkdir(directory)
+      const workspace = await service.addWorkspace(
+        { color: 'blue', displayName: 'Filename workspace' },
+        directory,
+      )
+      const fileNames = ['Эскиз Frame.igs', 'эскиз frame.IGS', String.raw`Папка\Кадр.igs`]
+      const packages = new Map<string, Buffer>()
+      for (const fileName of fileNames) {
+        const filePath = path.join(directory, fileName)
+        await ProjectSession.create(filePath, 'Shared display title', {
+          placeholdersDir,
+          scratchDir: path.join(dataRoot, 'scratch'),
+        })
+        packages.set(fileName, await readFile(filePath))
+      }
+      const indexed = await repository.scanWorkspace(workspace.id)
+      assert.equal(indexed.length, fileNames.length)
+      assert.equal(new Set(indexed.map((record) => record.localProjectKey)).size, fileNames.length)
+      const originalRecords = await repository.listProjects(workspace.id)
+      for (let browse = 0; browse < 2; browse += 1) {
+        const summaries = await service.list(workspace.id)
+        assert.equal(summaries.length, fileNames.length)
+        for (const record of originalRecords) {
+          const summary = summaries.find((item) => item.id === record.localProjectKey)!
+          assert.equal(summary.fileName, path.basename(record.canonicalPath))
+          assert.equal(summary.title, 'Shared display title')
+          assert.equal(summary.workspaceId, workspace.id)
+          assert.equal(summary.health, 'ready')
+          assert.equal(summary.recoveryStatus, 'none')
+        }
+        assert.deepEqual(await repository.listProjects(workspace.id), originalRecords)
+      }
+      assert.deepEqual(
+        (await service.list(workspace.id)).map((summary) => summary.fileName).sort(),
+        [...fileNames].sort(),
+      )
+      assert.deepEqual(service.getOpenTabs(), [])
+
+      const retainedDirectory = `${directory}.retained`
+      await rename(directory, retainedDirectory)
+      try {
+        const cached = await service.list(workspace.id)
+        assert.equal(cached.length, fileNames.length)
+        for (const record of originalRecords) {
+          const summary = cached.find((item) => item.id === record.localProjectKey)!
+          assert.equal(summary.fileName, path.basename(record.canonicalPath))
+          assert.equal(summary.title, 'Shared display title')
+          assert.equal(summary.health, 'ready')
+          assert.equal(summary.recoveryStatus, 'unavailable')
+          assert.equal(summary.thumbnailUrl, null)
+        }
+        assert.deepEqual(await repository.listProjects(workspace.id), originalRecords)
+        for (const [fileName, bytes] of packages) {
+          assert.ok(
+            (await readFile(path.join(retainedDirectory, fileName))).equals(bytes),
+            `Home browsing must preserve package bytes for ${fileName}`,
+          )
+        }
+      } finally {
+        await rename(retainedDirectory, directory)
+      }
+      assert.equal(saveReads, 0, 'Home filename projection must not invoke Save metadata reads')
+    },
+    {},
+    async () => {
+      saveReads += 1
+      return null
+    },
+  )
+})
+
+test('Home filename survives actual missing, corrupt and unsupported package diagnoses without rewriting packages', async () => {
+  await withService(async ({ dataRoot, repository, service }) => {
+    const directory = path.join(dataRoot, 'filename-health-workspace')
+    await mkdir(directory)
+    const workspace = await service.addWorkspace(
+      { color: 'green', displayName: 'Filename health workspace' },
+      directory,
+    )
+    const cases = [
+      { fileName: 'Absent.Real.IGS', health: 'missing' },
+      { fileName: 'Broken.Real.igs', health: 'corrupt' },
+      { fileName: 'Future.Real.igs', health: 'unsupported_schema' },
+    ] as const
+    for (const item of cases) {
+      await ProjectSession.create(path.join(directory, item.fileName), 'Saved display title', {
+        placeholdersDir,
+        scratchDir: path.join(dataRoot, 'scratch'),
+      })
+    }
+    const initial = await service.list(workspace.id)
+    const originalRecords = await repository.listProjects(workspace.id)
+    assert.equal(initial.length, cases.length)
+    const futurePath = path.join(directory, 'Future.Real.igs')
+    const future = await readIgsPackage(futurePath)
+    const zip = new yazl.ZipFile()
+    zip.addBuffer(Buffer.from(IGS_MIMETYPE), 'mimetype', { compress: false })
+    zip.addBuffer(
+      Buffer.from(JSON.stringify({ ...future.manifest, schemaVersion: 2 })),
+      'manifest.json',
+    )
+    for (const member of future.manifest.members) {
+      zip.addBuffer(await future.readMember(member.path), member.path)
+    }
+    zip.end()
+    const chunks: Buffer[] = []
+    for await (const chunk of zip.outputStream) {
+      chunks.push(Buffer.from(chunk))
+    }
+    const futureBytes = Buffer.concat(chunks)
+    await writeFile(futurePath, futureBytes)
+    await assert.rejects(readIgsPackage(futurePath), { code: 'UNSUPPORTED_SCHEMA' })
+    const corruptBytes = Buffer.from('Controlled corrupt package')
+    await writeFile(path.join(directory, 'Broken.Real.igs'), corruptBytes)
+    await rm(path.join(directory, 'Absent.Real.IGS'))
+
+    for (let browse = 0; browse < 2; browse += 1) {
+      const summaries = await service.list(workspace.id)
+      assert.equal(summaries.length, cases.length)
+      for (const item of cases) {
+        const record = originalRecords.find(
+          (candidate) => candidate.canonicalPath === path.join(directory, item.fileName),
+        )!
+        const summary = summaries.find((candidate) => candidate.id === record.localProjectKey)!
+        assert.equal(summary.fileName, item.fileName)
+        assert.equal(summary.title, 'Saved display title')
+        assert.equal(summary.health, item.health)
+        const indexed = (await repository.getProject(record.localProjectKey))!
+        assert.equal(indexed.canonicalPath, record.canonicalPath)
+        assert.equal(indexed.documentId, record.documentId)
+        assert.equal(indexed.documentRevision, record.documentRevision)
+      }
+      assert.ok((await readFile(futurePath)).equals(futureBytes))
+      assert.ok((await readFile(path.join(directory, 'Broken.Real.igs'))).equals(corruptBytes))
+      await assert.rejects(readFile(path.join(directory, 'Absent.Real.IGS')), { code: 'ENOENT' })
+      assert.deepEqual(service.getOpenTabs(), [])
+    }
+  })
+})
 
 test('clean-open Move keeps the tab owner and both history directions, then Save writes only the destination', async () => {
   let saveReads = 0

@@ -2,6 +2,15 @@
 
 ## Production checkpoint
 
+[Actual filename metadata](../engineering/phase-4-home-filenames-research.md)
+connects the Main-owned canonical basename to compact List rows and the Inspector's
+`workspace / filename` header. Same-title Projects remain distinguishable; pending
+Move/Rename retains its source filename until journal finalization. Cached
+unhealthy/unavailable records keep their indexed filename. Legacy replies may omit
+this additive field and display `Filename unavailable`; the renderer never derives
+a filename from the title. Existing Trash filename behavior and ID-based actions
+remain. This is a finite metadata consumer, not full Home acceptance.
+
 [Selected Project continuity](../engineering/phase-4-home-selection-research.md)
 retains the selected visible row and Inspector owner through Project navigation
 and Home Close/reopen in the same App session. Scope changes and disappearing or
@@ -327,6 +336,7 @@ Project card/list item should show:
 - thumbnail from `.igs` `preview/thumbnail.webp` or derived cache;
 - project display name;
 - workspace name on cross-workspace grid cards; compact list rows always include workspace and filename for orientation;
+  filename means the actual Main-owned indexed/source basename, independent of the display name;
 - last opened / modified time;
 - applicable independent conditions such as `Open`;
 - a subtle `Recovery available` marker only when a validated recovery candidate exists;

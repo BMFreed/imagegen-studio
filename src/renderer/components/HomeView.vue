@@ -1007,11 +1007,11 @@ function recoveryLabel(project: ProjectSummary): string | null {
                               {{ projectWorkspaceName(project) }}
                             </span>
                             <span
-                              v-if="trashView"
+                              v-if="trashView || viewMode === 'list'"
                               class="project-file-name"
-                              :title="trashSummary(project)?.fileName"
+                              :title="project.fileName ?? 'Filename unavailable'"
                             >
-                              {{ trashSummary(project)?.fileName }}
+                              {{ project.fileName ?? 'Filename unavailable' }}
                             </span>
                             <span v-if="project.bbox">
                               {{ project.bbox.width }} × {{ project.bbox.height }}
