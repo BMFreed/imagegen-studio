@@ -136,7 +136,7 @@ const emit = defineEmits<{
   manageModels: []
   managePresets: []
   moveProject: [project: ProjectSummary]
-  openProject: [projectId: string]
+  openProject: [projectId: string, target?: 'current' | 'new']
   rebuildPreview: [projectId: string]
   refresh: []
   removeMissingProject: [project: ProjectSummary]
@@ -199,6 +199,13 @@ function canManageMissingProject(project: ProjectSummary) {
   )
 }
 function requestProjectAction(key: number | string, project: ProjectSummary) {
+  if (props.busy) {
+    return
+  }
+  if (key === 'open' || key === 'open-new') {
+    requestOpen(project, key === 'open-new' ? 'new' : 'current')
+    return
+  }
   if (project.pendingMove) {
     if (key === 'move') {
       emit('moveProject', project)
@@ -226,6 +233,45 @@ function requestProjectAction(key: number | string, project: ProjectSummary) {
   } else if (key === 'remove-missing' && canManageMissingProject(project)) {
     emit('removeMissingProject', project)
   }
+}
+function projectActionOptions(project: ProjectSummary) {
+  const openOptions = [
+    { disabled: !canOpenProject(project), key: 'open', label: 'Open' },
+    { disabled: !canOpenProject(project), key: 'open-new', label: 'Open in New Tab' },
+  ]
+  const focusOptions = props.openProjectIds?.includes(project.id) ? openOptions : []
+  if (project.pendingMove) {
+    return [...focusOptions, { key: 'move', label: 'Retry Move' }]
+  }
+  if (project.pendingRename) {
+    return [...focusOptions, { key: 'rename', label: 'Retry Rename' }]
+  }
+  return [
+    ...openOptions,
+    { disabled: !canRequestRename(project), key: 'rename', label: 'Rename' },
+    { disabled: project.health !== 'ready', key: 'move', label: 'Move to Workspace' },
+    { key: 'reveal', label: 'Show in Folder' },
+    { key: 'trash', label: 'Move to Trash' },
+    ...(viewMode.value === 'grid' && canRebuildPreview(project)
+      ? [{ key: 'rebuild', label: 'Rebuild Preview' }]
+      : []),
+    ...(canManageMissingProject(project)
+      ? [
+          { key: 'locate', label: 'Locate Project' },
+          { key: 'remove-missing', label: 'Remove from Home' },
+        ]
+      : []),
+  ]
+}
+function trashActionOptions(project: ProjectSummary) {
+  return [
+    {
+      disabled: trashSummary(project)?.deletionStatus === 'deleting',
+      key: 'restore',
+      label: 'Restore Project',
+    },
+    { key: 'delete', label: 'Delete Permanently' },
+  ]
 }
 function requestWorkspaceAction(key: number | string, workspaceId: string) {
   switch (key) {
@@ -349,6 +395,19 @@ const visibleProjects = computed(() =>
   }),
 )
 const selectedProjectId = ref<string | null>(null)
+const contextProjectId = ref<string | null>(null)
+const contextMenuX = ref(0)
+const contextMenuY = ref(0)
+const contextProject = computed(() =>
+  visibleProjects.value.find(({ id }) => id === contextProjectId.value),
+)
+const contextOptions = computed(() =>
+  contextProject.value
+    ? props.trashView
+      ? trashActionOptions(contextProject.value)
+      : projectActionOptions(contextProject.value)
+    : [],
+)
 const selectedProject = computed(() =>
   visibleProjects.value.find(({ id }) => id === selectedProjectId.value),
 )
@@ -359,14 +418,20 @@ watch(
   () => [props.trashView, workspaceId.value] as const,
   () => {
     selectedProjectId.value = null
+    closeContextMenu()
   },
 )
 watch(visibleProjects, (projects) => {
   if (!projects.some(({ id }) => id === selectedProjectId.value)) {
     selectedProjectId.value = null
   }
+  if (!projects.some(({ id }) => id === contextProjectId.value)) {
+    closeContextMenu()
+  }
 })
+watch(() => [props.busy, viewMode.value], closeContextMenu)
 function selectBrowse(kind: 'projects' | 'trash') {
+  closeContextMenu()
   selectedProjectId.value = null
   if (kind === 'projects') {
     emit('browseProjects')
@@ -375,6 +440,7 @@ function selectBrowse(kind: 'projects' | 'trash') {
   }
 }
 function selectWorkspace(id: string) {
+  closeContextMenu()
   selectedProjectId.value = null
   workspaceId.value = id
 }
@@ -382,30 +448,88 @@ function isProjectControl(event: MouseEvent): boolean {
   return event.target instanceof Element && Boolean(event.target.closest('[data-project-control]'))
 }
 function selectProject(event: MouseEvent, project: ProjectSummary) {
-  if (!props.busy && !isProjectControl(event)) {
-    selectedProjectId.value = project.id
+  if (props.busy || isProjectControl(event) || event.button !== 0) {
+    return
   }
+  closeContextMenu()
+  if (!props.trashView && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault()
+    requestOpen(project, 'new')
+    return
+  }
+  selectedProjectId.value = project.id
 }
 function canOpenProject(project: ProjectSummary): boolean {
   return (
     !props.busy &&
     !props.trashView &&
-    !project.pendingMove &&
-    !project.pendingRename &&
-    project.health === 'ready' &&
-    props.workspaces.some(
-      (workspace) => workspace.id === project.workspaceId && workspace.availability === 'available',
-    )
+    (props.openProjectIds?.includes(project.id) ||
+      (!project.pendingMove &&
+        !project.pendingRename &&
+        project.health === 'ready' &&
+        props.workspaces.some(
+          (workspace) =>
+            workspace.id === project.workspaceId && workspace.availability === 'available',
+        )))
   )
 }
-function requestOpen(project: ProjectSummary) {
+function requestOpen(project: ProjectSummary, target: 'current' | 'new' = 'current') {
+  closeContextMenu()
   if (canOpenProject(project)) {
-    emit('openProject', project.id)
+    emit('openProject', project.id, target)
   }
 }
 function doubleClickProject(event: MouseEvent, project: ProjectSummary) {
-  if (!isProjectControl(event)) {
-    requestOpen(project)
+  if (!isProjectControl(event) && event.button === 0 && !event.ctrlKey && !event.metaKey) {
+    requestOpen(project, 'current')
+  }
+}
+function auxiliaryClickProject(event: MouseEvent, project: ProjectSummary) {
+  if (event.button === 1 && !isProjectControl(event)) {
+    event.preventDefault()
+    requestOpen(project, 'new')
+  }
+}
+function closeContextMenu() {
+  contextProjectId.value = null
+}
+function closeContextMenuOutside(event: MouseEvent) {
+  // Naive's outside-click also receives the mouseup of a row's right-click.
+  // That gesture already opened/repositioned this menu during contextmenu.
+  if (
+    event.button === 2 &&
+    !isProjectControl(event) &&
+    event.target instanceof Element &&
+    event.target.closest<HTMLElement>('[data-project-id]')?.dataset.projectId ===
+      contextProjectId.value
+  ) {
+    return
+  }
+  closeContextMenu()
+}
+function openContextMenu(event: MouseEvent, project: ProjectSummary) {
+  if (isProjectControl(event)) {
+    return
+  }
+  event.preventDefault()
+  if (props.busy) {
+    return
+  }
+  selectedProjectId.value = project.id
+  contextMenuX.value = event.clientX
+  contextMenuY.value = event.clientY
+  contextProjectId.value = project.id
+}
+function requestContextAction(key: number | string) {
+  const project = contextProject.value
+  closeContextMenu()
+  if (!project || props.busy) {
+    return
+  }
+  if (props.trashView) {
+    requestTrashAction(key, project)
+  } else {
+    requestProjectAction(key, project)
   }
 }
 
@@ -449,6 +573,9 @@ function browseTimeTitle(project: ProjectSummary): string {
   return `${sort.value === 'modified' ? 'Modified' : 'Last opened'}: ${value ? new Date(value).toLocaleString() : 'Not recorded'}`
 }
 function requestTrashAction(key: number | string, project: ProjectSummary) {
+  if (props.busy) {
+    return
+  }
   if (key === 'restore') {
     requestRestore(project)
   } else if (key === 'delete') {
@@ -814,7 +941,9 @@ function recoveryLabel(project: ProjectSummary): string | null {
                       :data-selected="selectedProjectId === project.id"
                       :data-trash-id="trashSummary(project)?.trashId"
                       role="listitem"
+                      @auxclick="auxiliaryClickProject($event, project)"
                       @click="selectProject($event, project)"
+                      @contextmenu="openContextMenu($event, project)"
                       @dblclick="doubleClickProject($event, project)"
                     >
                       <NButton
@@ -940,14 +1069,7 @@ function recoveryLabel(project: ProjectSummary): string | null {
                         <NDropdown
                           v-if="trashView && viewMode === 'grid'"
                           :disabled="busy"
-                          :options="[
-                            {
-                              key: 'restore',
-                              label: 'Restore Project',
-                              disabled: trashSummary(project)?.deletionStatus === 'deleting',
-                            },
-                            { key: 'delete', label: 'Delete Permanently' },
-                          ]"
+                          :options="trashActionOptions(project)"
                           trigger="click"
                           @select="requestTrashAction($event, project)"
                         >
@@ -993,35 +1115,7 @@ function recoveryLabel(project: ProjectSummary): string | null {
                           v-if="!trashView"
                           key="n-dropdown-2"
                           :disabled="busy"
-                          :options="
-                            project.pendingMove
-                              ? [{ key: 'move', label: 'Retry Move' }]
-                              : project.pendingRename
-                                ? [{ key: 'rename', label: 'Retry Rename' }]
-                                : [
-                                    {
-                                      key: 'rename',
-                                      label: 'Rename',
-                                      disabled: !canRequestRename(project),
-                                    },
-                                    {
-                                      key: 'move',
-                                      label: 'Move to Workspace',
-                                      disabled: project.health !== 'ready',
-                                    },
-                                    { key: 'reveal', label: 'Show in Folder' },
-                                    { key: 'trash', label: 'Move to Trash' },
-                                    ...(viewMode === 'grid' && canRebuildPreview(project)
-                                      ? [{ key: 'rebuild', label: 'Rebuild Preview' }]
-                                      : []),
-                                    ...(canManageMissingProject(project)
-                                      ? [
-                                          { key: 'locate', label: 'Locate Project' },
-                                          { key: 'remove-missing', label: 'Remove from Home' },
-                                        ]
-                                      : []),
-                                  ]
-                          "
+                          :options="projectActionOptions(project)"
                           trigger="click"
                           @select="requestProjectAction($event, project)"
                         >
@@ -1060,7 +1154,7 @@ function recoveryLabel(project: ProjectSummary): string | null {
                 @locateProject="$emit('locateProject', $event)"
                 @locateWorkspace="$emit('locateWorkspace', $event)"
                 @moveProject="$emit('moveProject', $event)"
-                @openProject="$emit('openProject', $event)"
+                @openProject="(projectId, target) => $emit('openProject', projectId, target)"
                 @rebuildPreview="$emit('rebuildPreview', $event)"
                 @removeMissingProject="$emit('removeMissingProject', $event)"
                 @renameProject="$emit('renameProject', $event)"
@@ -1072,6 +1166,16 @@ function recoveryLabel(project: ProjectSummary): string | null {
         </div>
       </template>
     </NSplit>
+    <NDropdown
+      :options="contextOptions"
+      :show="Boolean(contextProject) && !busy"
+      trigger="manual"
+      :x="contextMenuX"
+      :y="contextMenuY"
+      @clickoutside="closeContextMenuOutside"
+      @select="requestContextAction"
+      @update:show="(show) => !show && closeContextMenu()"
+    />
   </section>
 </template>
 

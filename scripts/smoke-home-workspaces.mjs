@@ -233,6 +233,9 @@ async function closeProject(title) {
   await expect(window.getByRole('tab', { name: title, exact: true })).toHaveCount(0)
 }
 async function showHome() {
+  if (await window.getByRole('tab', { name: 'Home', exact: true }).count() === 0) {
+    await window.getByRole('button', { name: 'Open Home', exact: true }).click()
+  }
   await window.getByRole('tab', { name: 'Home', exact: true }).click()
 }
 async function screenshot(name, width, height, homeSurface = true) {

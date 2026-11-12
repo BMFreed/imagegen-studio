@@ -29,7 +29,7 @@ defineEmits<{
   locateProject: [project: ProjectSummary]
   locateWorkspace: [workspaceId: string]
   moveProject: [project: ProjectSummary]
-  openProject: [projectId: string]
+  openProject: [projectId: string, target?: 'current' | 'new']
   rebuildPreview: [projectId: string]
   removeMissingProject: [project: ProjectSummary]
   renameProject: [project: ProjectSummary]
@@ -42,9 +42,10 @@ const canOpen = computed(
   () =>
     !props.busy &&
     !props.trashProject &&
-    !pending.value &&
-    props.project?.health === 'ready' &&
-    props.workspace?.availability === 'available',
+    (props.isOpen ||
+      (!pending.value &&
+        props.project?.health === 'ready' &&
+        props.workspace?.availability === 'available')),
 )
 const canMove = computed(() => !props.busy && !pending.value && props.project?.health === 'ready')
 const previewSource = computed(() =>
@@ -239,9 +240,16 @@ function timestamp(value: string | null | undefined) {
             :disabled="!canOpen"
             :loading="pendingAction?.kind === 'open' && pendingAction.projectId === project.id"
             type="primary"
-            @click="$emit('openProject', project.id)"
+            @click="$emit('openProject', project.id, 'current')"
           >
             {{ isOpen ? 'Switch to Project' : 'Open Project' }}
+          </NButton>
+          <NButton
+            class="inspector-open-new"
+            :disabled="!canOpen"
+            @click="$emit('openProject', project.id, 'new')"
+          >
+            Open in New Tab
           </NButton>
           <NButton :disabled="!canMove" @click="$emit('moveProject', project)">Move</NButton>
           <NButton :disabled="busy || pending" @click="$emit('revealProject', project.id)">
@@ -376,7 +384,8 @@ function timestamp(value: string | null | undefined) {
   gap: 8px;
 }
 
-.inspector-open {
+.inspector-open,
+.inspector-open-new {
   grid-column: 1 / -1;
 }
 </style>

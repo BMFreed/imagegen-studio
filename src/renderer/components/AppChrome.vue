@@ -40,7 +40,9 @@ function selectEditAction(key: number | string) {
     <NButton aria-label="Open Home" class="brand-button" text @click="$emit('home')">
       <img alt="ImageGen Studio" class="brand-logo" :src="logoUrl" />
     </NButton>
-    <span class="chrome-context">{{ homeOpen ? 'Projects' : 'No document' }}</span>
+    <span v-if="homeOpen || !projectActive" class="chrome-context">
+      {{ homeOpen ? 'Projects' : 'No document' }}
+    </span>
     <NDropdown
       :options="[{ key: 'presets', label: 'Presets' }]"
       trigger="click"

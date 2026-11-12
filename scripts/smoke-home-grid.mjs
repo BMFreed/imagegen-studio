@@ -606,7 +606,7 @@ try {
   await inspectorTo(330)
   const sessionSizes = await dimensions()
   await select(rendered)
-  await inspector().getByRole('button', { name: 'Open Project', exact: true }).click()
+  await inspector().getByRole('button', { name: 'Open in New Tab', exact: true }).click()
   await expect(window.getByRole('tab', { name: rendered.title, exact: true })).toHaveAttribute('aria-selected', 'true')
   await window.getByRole('tab', { name: 'Home', exact: true }).click()
   await expect(viewButton('list')).toHaveAttribute('aria-pressed', 'true')

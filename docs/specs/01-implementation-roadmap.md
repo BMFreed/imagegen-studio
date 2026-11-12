@@ -1,11 +1,20 @@
 # Implementation Roadmap
 
-## Current Home grid/list and resize checkpoint
+## Current Home opening checkpoint
+
+[Home opening gestures and targets](../engineering/phase-4-home-opening-research.md) connect current/new-tab
+presentation to the existing Main Open and explicit recovery flow. Already-open
+Projects focus their unique tab; captured targets survive recovery, and stale
+Open results preserve newer Home/focus. Main snapshots retain Renderer tab order.
+Import/New Project target parity, richer metadata, cross-launch preferences and
+full Home/MVP acceptance remain separate; public promise statuses are unchanged.
+
+## Previous Home grid/list and resize checkpoint
 
 [Home view modes and bounded panels](../engineering/phase-4-home-grid-research.md) connect real Project cards/rows
 to the same selection, preview and guarded actions. NSplit sidebar/Inspector resize,
 collapse and App-session preferences preserve document/recovery ownership. Richer
-metadata, complete opening gestures, cross-launch preferences and full Home/MVP
+metadata, broader navigation, cross-launch preferences and full Home/MVP
 acceptance remain separate; public promise statuses are unchanged.
 
 ## Previous Home Inspector checkpoint

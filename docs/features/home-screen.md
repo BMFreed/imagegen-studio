@@ -2,12 +2,21 @@
 
 ## Production checkpoint
 
+[Home opening](../engineering/phase-4-home-opening-research.md) connects Grid/List
+double click, Enter and Open to current replacement after success. Ctrl/Cmd/middle
+click and Open in New Tab retain Home and insert beside it; already-open Projects
+only focus their existing tab. Explicit recovery retains the selected target;
+Cancel/failure leaves Home, and stale results preserve newer navigation. Closed
+unavailable/Trash guards remain; an already-open unavailable Project can be focused
+without another Main Open. Main snapshots preserve presentation order. This is
+the Home browser consumer; Import/New Project target parity remains separate.
+
 [Home grid/list and resize](../engineering/phase-4-home-grid-research.md) adds the approved Grid
 and List controls to the real catalog. Both views retain the same selected Project
 and saved preview; bounded sidebar/Inspector dividers redistribute space without
 opening or saving. View, preferred widths and collapse survive Home remount within
 the App session. Reset filters keeps view/sort; scope changes clear selection.
-Cross-launch preferences, richer metadata and complete opening gestures remain
+Cross-launch preferences, richer metadata and broader navigation remain
 separate acceptance work.
 
 [Selected Project Inspector](../engineering/phase-4-home-inspector-research.md) connects single-click/
@@ -15,8 +24,9 @@ keyboard list selection to the saved merged preview, independent of Open. Zoom/
 pan/fit/reset use actual image dimensions; collapse survives Home remount for the
 App session. Source-version capabilities refuse stale saved pixels even when a
 thumbnail is unchanged. Only available summary metadata is shown; saved preview
-is distinct from an open Project's unsaved composition. Grid, panel resize, richer
-metadata and complete current/new-tab gestures remain separate consumers.
+is distinct from an open Project's unsaved composition. Grid, panel resize and
+current/new-tab gestures have later finite checkpoints above; richer metadata
+remains separate.
 
 [Locate Folder](../engineering/phase-4-home-workspace-locate-research.md)
 reconnects a missing non-default workspace to the exact cached saved-Project set.

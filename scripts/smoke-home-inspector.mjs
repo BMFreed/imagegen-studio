@@ -449,7 +449,7 @@ try {
   await screenshot('refreshed-version-wide', 1440, 900)
   check('An external package replacement with the same thumbnail and document revision invalidates the old full-preview capability before and after Refresh; the new source returns exact replacement pixels', { originalPreviewUrl: renderedSummary.previewUrl, currentPreviewUrl: current.previewUrl, retainedRendered, beforeSha256: digest(retainedRendered), currentSha256: digest(files[rendered.id]), replacementResource, staleBeforeRefresh: staleBeforeRefresh.status, staleAfterRefresh: staleAfterRefresh.status })
 
-  await inspector().getByRole('button', { name: 'Open Project', exact: true }).click()
+  await inspector().getByRole('button', { name: 'Open in New Tab', exact: true }).click()
   await expect(window.getByRole('tab', { name: rendered.title, exact: true })).toHaveAttribute('aria-selected', 'true')
   const opened = await api('open', rendered.id)
   assert.equal(opened.kind, 'opened')

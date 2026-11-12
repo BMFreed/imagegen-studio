@@ -149,6 +149,11 @@ import WorkspaceSettingsModal from './components/WorkspaceSettingsModal.vue'
 import { imageGenNaiveTheme } from './theme/naive-theme.js'
 
 type RecoveryDecision = Extract<ProjectOpenResult, { kind: 'recovery-required' }>
+type HomeOpenIntent = {
+  epoch: number
+  projectId: string
+  target: 'current' | 'new'
+}
 type ImportTransfer = Extract<ProjectImportSelection, { kind: 'transfer-required' }>
 type CandidateSelection = { candidateIds: string[]; focusedCandidateId: string | null }
 type PendingAcceptance = {
@@ -436,6 +441,8 @@ const acceptanceActionLabel = computed(() => {
 const acceptanceCommitting = ref(false)
 const acceptanceNotice = ref<{ message: string; type: 'error' | 'warning' } | null>(null)
 const recoveryDecision = ref<RecoveryDecision | null>(null)
+const homeRecoveryIntent = ref<HomeOpenIntent | null>(null)
+let homePresentationEpoch = 0
 const recoveryError = ref<string | null>(null)
 const closingTabId = ref<string | null>(null)
 const closeImpact = ref<ProjectCloseImpact | null>(null)
@@ -3322,9 +3329,16 @@ function removeTab(tabId: string) {
 }
 
 function reconcileProjectTabs(nextTabs: ProjectTab[]) {
-  const openIds = new Set(nextTabs.map((tab) => tab.id))
+  const nextTabsById = new Map(nextTabs.map((tab) => [tab.id, tab]))
+  const openIds = new Set(nextTabsById.keys())
+  // Main owns tab lifetimes and snapshots; Renderer owns their presentation order.
+  const orderedTabs: ProjectTab[] = []
   for (const tab of projectTabs.value) {
-    const next = nextTabs.find((candidate) => candidate.id === tab.id)
+    const next = nextTabsById.get(tab.id)
+    if (next) {
+      orderedTabs.push(next)
+      nextTabsById.delete(tab.id)
+    }
     if (!next || next.documentId !== tab.documentId) {
       if (queueResultNavigator.getPendingProjectOpen()?.projectKey === tab.id) {
         queueResultNavigator.cancelProjectOpen()
@@ -3342,13 +3356,14 @@ function reconcileProjectTabs(nextTabs: ProjectTab[]) {
   for (const tab of nextTabs) {
     regionalPromptSync.observe(tab)
   }
-  projectTabs.value = nextTabs
+  orderedTabs.push(...nextTabsById.values())
+  projectTabs.value = orderedTabs
   if (
     activeDocument.value !== null &&
     activeDocument.value !== 'home' &&
     !openIds.has(activeDocument.value)
   ) {
-    activeDocument.value = homeOpen.value ? 'home' : (nextTabs.at(-1)?.id ?? null)
+    activeDocument.value = homeOpen.value ? 'home' : (orderedTabs.at(-1)?.id ?? null)
   }
   if (closingTabId.value && !openIds.has(closingTabId.value)) {
     closingTabId.value = null
@@ -3387,11 +3402,15 @@ function reconcileProjectTabs(nextTabs: ProjectTab[]) {
 }
 
 function openHome() {
+  if (!homeOpen.value) {
+    homePresentationEpoch += 1
+  }
   homeOpen.value = true
   void activateDocument('home')
 }
 
 function closeHome() {
+  homePresentationEpoch += 1
   cancelAcceptedHistoryNavigation()
   homeOpen.value = false
   if (activeDocument.value === 'home') {
@@ -4173,10 +4192,53 @@ async function createProject(input: ProjectCreateInput) {
   }
 }
 
+function homeOpenIntentCurrent(intent: HomeOpenIntent): boolean {
+  return (
+    !rendererDisposed &&
+    !windowClosePending.value &&
+    homeOpen.value &&
+    activeDocument.value === 'home' &&
+    intent.epoch === homePresentationEpoch
+  )
+}
+
+function focusHomeOpenedTab(tab: ProjectTab, intent: HomeOpenIntent) {
+  if (!homeOpenIntentCurrent(intent)) {
+    if (!rendererDisposed && !windowClosePending.value) {
+      replaceTab(tab)
+    }
+    return
+  }
+  focusTab(tab)
+  const index = projectTabs.value.findIndex(({ id }) => id === tab.id)
+  if (index > 0) {
+    projectTabs.value.splice(index, 1)
+    projectTabs.value.unshift(tab)
+  }
+  if (intent.target === 'current') {
+    closeHome()
+  }
+}
+
+async function openHomeProject(projectId: string, target: 'current' | 'new' = 'current') {
+  if (
+    pendingProjectAction.value ||
+    recoveryDecision.value ||
+    windowClosePending.value ||
+    !homeOpen.value ||
+    activeDocument.value !== 'home'
+  ) {
+    return
+  }
+  const intent: HomeOpenIntent = { epoch: homePresentationEpoch, projectId, target }
+  await openProject(projectId, false, () => homeOpenIntentCurrent(intent), intent)
+}
+
 async function openProject(
   projectId: string,
   preserveResultOpen = false,
   isCurrent?: () => boolean,
+  homeIntent?: HomeOpenIntent,
 ) {
   if (!preserveResultOpen) {
     cancelAcceptedHistoryNavigation()
@@ -4185,6 +4247,7 @@ async function openProject(
   if (pendingProjectAction.value !== null) {
     return
   }
+  homeRecoveryIntent.value = null
   homeError.value = null
   const existing = projectTabs.value.find((tab) => tab.id === projectId)
   if (existing) {
@@ -4204,9 +4267,14 @@ async function openProject(
     }
     if (result.kind === 'recovery-required') {
       recoveryDecision.value = result
+      homeRecoveryIntent.value = homeIntent ?? null
       recoveryError.value = null
     } else {
-      focusTab(result.tab, preserveResultOpen)
+      if (homeIntent) {
+        focusHomeOpenedTab(result.tab, homeIntent)
+      } else {
+        focusTab(result.tab, preserveResultOpen)
+      }
       if (result.tab.storageWarning) {
         globalNotice.value = result.tab.storageWarning
       }
@@ -4301,6 +4369,7 @@ async function selectImport() {
         }
       } else {
         recoveryDecision.value = selection.result
+        homeRecoveryIntent.value = null
         recoveryError.value = null
       }
       await refreshProjects()
@@ -4362,6 +4431,7 @@ async function finishImport() {
       focusTab(finished.result.tab)
     } else {
       recoveryDecision.value = finished.result
+      homeRecoveryIntent.value = null
       recoveryError.value = null
     }
     await refreshProjects()
@@ -4381,6 +4451,7 @@ function cancelRecovery() {
   queueResultNavigator.cancelProjectOpen()
   cancelAcceptedHistoryNavigation()
   recoveryDecision.value = null
+  homeRecoveryIntent.value = null
   recoveryError.value = null
 }
 
@@ -4392,6 +4463,10 @@ async function resolveRecovery(decision: 'discard' | 'recover') {
   if (decision === 'recover' && pendingRecovery.recoveryStatus !== 'recoverable') {
     return
   }
+  const homeIntent =
+    homeRecoveryIntent.value?.projectId === pendingRecovery.projectId
+      ? homeRecoveryIntent.value
+      : null
   if (decision === 'discard') {
     cancelAcceptedHistoryNavigation()
     // This explicit recovery decision discards temporary results as well as the document shadow.
@@ -4404,11 +4479,16 @@ async function resolveRecovery(decision: 'discard' | 'recover') {
       projectApi().resolveRecovery(pendingRecovery.projectId, decision),
     )
     recoveryDecision.value = null
-    focusTab(
-      tab,
-      queueResultNavigator.getPendingProjectOpen()?.projectKey === pendingRecovery.projectId ||
-        pendingAcceptedHistory?.reference.projectKey === pendingRecovery.projectId,
-    )
+    homeRecoveryIntent.value = null
+    if (homeIntent) {
+      focusHomeOpenedTab(tab, homeIntent)
+    } else {
+      focusTab(
+        tab,
+        queueResultNavigator.getPendingProjectOpen()?.projectKey === pendingRecovery.projectId ||
+          pendingAcceptedHistory?.reference.projectKey === pendingRecovery.projectId,
+      )
+    }
     if (tab.storageWarning) {
       globalNotice.value = tab.storageWarning
     }
@@ -5364,7 +5444,7 @@ onBeforeUnmount(() => {
           @manageModels="openModelManager()"
           @managePresets="openPresetManager"
           @moveProject="beginMoveProject"
-          @openProject="openProject"
+          @openProject="openHomeProject"
           @rebuildPreview="rebuildProjectPreview"
           @refresh="refreshProjects"
           @removeMissingProject="beginRemoveMissingProject"
