@@ -153,6 +153,40 @@ test('shows a portal tooltip on hover and focus, including when disabled', async
   await expect(tooltip).toBeVisible()
 })
 
+test('a focused tooltip lets the user click the neighboring action underneath it', async ({
+  page,
+}) => {
+  await mountIconButton(page)
+  const trigger = page
+    .getByTestId('icon-button-demo')
+    .getByRole('button', { name: 'Inspect layer' })
+  await trigger.focus()
+  const tooltip = page.getByText('Inspect the current layer', { exact: true })
+  await expect(tooltip).toBeVisible()
+  const box = await tooltip.boundingBox()
+  if (!box) {
+    throw new Error('Visible tooltip bounds are unavailable')
+  }
+  await page.evaluate(
+    ({ x, y }) => {
+      const neighbor = document.createElement('button')
+      neighbor.textContent = 'Neighbor action'
+      neighbor.style.cssText = `position:fixed;left:${x}px;top:${y}px;width:32px;height:24px;z-index:1001`
+      neighbor.addEventListener('click', () => {
+        neighbor.dataset['clicked'] = 'true'
+      })
+      document.body.append(neighbor)
+    },
+    { x: box.x + box.width / 2 - 16, y: box.y + box.height / 2 - 12 },
+  )
+  await expect(trigger).toBeFocused()
+  const neighbor = page.getByRole('button', { exact: true, name: 'Neighbor action' })
+  await neighbor.click({ timeout: 2000 })
+  await expect(neighbor).toHaveAttribute('data-clicked', 'true')
+  await expect(neighbor).toBeFocused()
+  await expect(tooltip).toBeHidden()
+})
+
 test('forwards one action and exposes pressed, loading, disabled and badge states', async ({
   page,
 }) => {

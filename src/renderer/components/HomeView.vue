@@ -46,7 +46,9 @@ import HomeProjectInspector from './HomeProjectInspector.vue'
 const props = defineProps<{
   busy: boolean
   error: string | null
+  hasGenerationModel: boolean | null
   loading: boolean
+  modelCatalogError: string | null
   openProjectIds?: string[]
   pendingAction: { kind: 'open' | 'rebuild'; projectId: string } | null
   projects: ProjectSummary[]
@@ -141,6 +143,7 @@ const emit = defineEmits<{
   rebuildPreview: [projectId: string]
   refresh: []
   removeMissingProject: [project: ProjectSummary]
+  removeWorkspace: [workspaceId: string]
   renameProject: [project: ProjectSummary]
   restoreProject: [project: ProjectTrashSummary]
   revealProject: [projectId: string]
@@ -275,11 +278,29 @@ function trashActionOptions(project: ProjectSummary) {
   ]
 }
 function requestWorkspaceAction(key: number | string, workspaceId: string) {
+  const workspace = props.workspaces.find(({ id }) => id === workspaceId)
+  if (props.busy || !workspace) {
+    return
+  }
   switch (key) {
     case 'locate': {
-      const workspace = props.workspaces.find(({ id }) => id === workspaceId)
-      if (!props.busy && workspace && canLocateWorkspace(workspace)) {
+      if (canLocateWorkspace(workspace)) {
         emit('locateWorkspace', workspace.id)
+      }
+
+      break
+    }
+    case 'remove': {
+      if (!workspace.isDefault) {
+        emit('removeWorkspace', workspace.id)
+      }
+
+      break
+    }
+    case 'rescan': {
+      if (!props.loading && !props.workspacesLoading && !props.trashLoading) {
+        // The existing refresh lists/scans every registered workspace without changing browse scope.
+        emit('refresh')
       }
 
       break
@@ -742,6 +763,12 @@ function recoveryLabel(project: ProjectSummary): string | null {
                 :options="[
                   { key: 'settings', label: 'Workspace Settings' },
                   { key: 'reveal', label: 'Show in Folder' },
+                  {
+                    disabled: loading || workspacesLoading || trashLoading,
+                    key: 'rescan',
+                    label: 'Rescan',
+                  },
+                  ...(!workspace.isDefault ? [{ key: 'remove', label: 'Remove Workspace' }] : []),
                   ...(canLocateWorkspace(workspace)
                     ? [{ key: 'locate', label: 'Locate Folder' }]
                     : []),
@@ -802,17 +829,52 @@ function recoveryLabel(project: ProjectSummary): string | null {
                     </h1>
                     <span class="project-count">{{ visibleProjects.length }}</span>
                   </div>
-                  <IconButton
-                    :icon="RefreshIcon"
-                    label="Refresh projects"
-                    :loading="loading || workspacesLoading || trashLoading"
-                    @click="$emit('refresh')"
-                  />
+                  <div class="heading-actions">
+                    <IconButton
+                      :disabled="busy"
+                      :icon="RefreshIcon"
+                      label="Refresh projects"
+                      :loading="loading || workspacesLoading || trashLoading"
+                      @click="$emit('refresh')"
+                    />
+                    <IconButton
+                      v-if="!trashView && selectedWorkspace"
+                      :disabled="busy"
+                      :icon="DotsIcon"
+                      label="Workspace options"
+                      @click="requestWorkspaceAction('settings', selectedWorkspace.id)"
+                    />
+                  </div>
                 </header>
 
                 <div class="browser-content">
                   <NAlert
+                    v-if="hasGenerationModel === false"
+                    key="n-alert-1"
+                    class="browser-error"
+                    type="warning"
+                  >
+                    <strong>No generation model installed.</strong>
+                    You can still create, open, and organize projects.
+                    <NButton size="tiny" text type="primary" @click="$emit('manageModels')">
+                      Manage Models
+                    </NButton>
+                  </NAlert>
+                  <NAlert
+                    v-else-if="modelCatalogError"
+                    key="n-alert-2"
+                    class="browser-error"
+                    title="Model catalog unavailable"
+                    type="warning"
+                  >
+                    Refresh Home or open Manage Models to check installed models.
+                    <NButton size="tiny" text type="primary" @click="$emit('manageModels')">
+                      Manage Models
+                    </NButton>
+                  </NAlert>
+                  <NAlert
                     v-if="error"
+                    key="n-alert-3"
                     class="browser-error"
                     title="Project action failed"
                     type="error"
@@ -1358,6 +1420,13 @@ function recoveryLabel(project: ProjectSummary): string | null {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.heading-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
 }
 
 .project-count,

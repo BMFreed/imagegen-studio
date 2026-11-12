@@ -106,6 +106,7 @@ import NewProjectModal from './components/NewProjectModal.vue'
 import PresetManager from './components/PresetManager.vue'
 import { draftOwnerKey, ProjectDraftSync } from './components/project-draft-sync.js'
 import { resolveSelectedProjectEntity } from './components/project-layer-context.js'
+import { checkpointCatalog, selectableVersion } from './components/project-model-picker.js'
 import { createProjectPresetIntent } from './components/project-preset-draft.js'
 import {
   defaultProjectWorkspaceId,
@@ -362,6 +363,13 @@ const modelCatalog = ref<ModelCatalogItem[]>([])
 const modelCatalogError = ref<string | null>(null)
 const modelCatalogLoaded = ref(false)
 const modelCatalogLoading = ref(false)
+const homeHasGenerationModel = computed(() =>
+  !modelCatalogLoaded.value || modelCatalogLoading.value || modelCatalogError.value
+    ? null
+    : checkpointCatalog(modelCatalog.value).some((resource) =>
+        resource.versions.some(selectableVersion),
+      ),
+)
 const generationDraftOverlays = ref<Record<string, ProjectTab['generationDraft']>>({})
 const regionalPromptOverlays = ref<Record<string, Record<string, IgsRegionalGuidanceV1>>>({})
 const regionalPromptErrors = ref<Record<string, string | null>>({})
@@ -1361,6 +1369,12 @@ watch([() => activeTab.value?.id, () => activeTab.value?.documentId], ([tabId]) 
   }
 })
 
+watch(activeDocument, (documentId) => {
+  if (documentId === 'home') {
+    void refreshModelCatalog()
+  }
+})
+
 async function readGenerationResults(tabId: string): Promise<ProjectGenerationResultsSnapshot> {
   const documentId = projectTabs.value.find((tab) => tab.id === tabId)?.documentId
   const request = (generationResultsRequests.get(tabId) ?? 0) + 1
@@ -1888,7 +1902,7 @@ function clearResultFocus(tabId: string, revision: number) {
 }
 
 watch(modelManagerOpen, async (open, previous) => {
-  if (previous && !open && activeTab.value) {
+  if (previous && !open) {
     const request = presetModelHandoff.value
     if (request?.phase === 'models') {
       request.phase = 'refreshing'
@@ -3533,6 +3547,11 @@ async function refreshProjects() {
   }
 }
 
+function refreshHome() {
+  void refreshModelCatalog()
+  return refreshProjects()
+}
+
 async function refreshTrash() {
   const request = ++trashRequest
   trashLoading.value = true
@@ -4112,15 +4131,17 @@ async function saveWorkspaceSettings(input: ProjectWorkspaceAddInput) {
 
 function requestWorkspaceRemoval() {
   const workspace = settingsWorkspace.value
-  if (
-    !showWorkspaceSettings.value ||
-    !workspace ||
-    workspace.isDefault ||
-    pendingProjectAction.value ||
-    windowClosePending.value
-  ) {
+  if (showWorkspaceSettings.value && workspace) {
+    beginWorkspaceRemoval(workspace.id)
+  }
+}
+
+function beginWorkspaceRemoval(workspaceId: string) {
+  const workspace = workspaces.value.find(({ id }) => id === workspaceId)
+  if (!workspace || workspace.isDefault || pendingProjectAction.value || windowClosePending.value) {
     return
   }
+  queueResultNavigator.cancelProjectOpen()
   removingWorkspace.value = { ...workspace }
   removeWorkspaceError.value = null
   showWorkspaceSettings.value = false
@@ -5231,7 +5252,7 @@ onMounted(() => {
   }
   try {
     unsubscribeModelInstall = globalThis.window.api?.models.onInstallChanged((job) => {
-      if (job.status === 'completed' && activeTab.value) {
+      if (job.status === 'completed') {
         void refreshModelCatalog()
       }
     })
@@ -5320,7 +5341,7 @@ onMounted(() => {
   }
   globalThis.window.addEventListener('keydown', onAppKeydown)
   void runRuntimeAction('check')
-  void refreshProjects()
+  void refreshHome()
 })
 
 onBeforeUnmount(() => {
@@ -5471,7 +5492,9 @@ onBeforeUnmount(() => {
           v-model:workspaceId="browseWorkspaceId"
           :busy="pendingProjectAction !== null || windowClosePending"
           :error="homeError"
+          :hasGenerationModel="homeHasGenerationModel"
           :loading="projectsLoading"
+          :modelCatalogError
           :openProjectIds="projectTabs.map(({ id }) => id)"
           :pendingAction="pendingHomeAction"
           :projects
@@ -5495,8 +5518,9 @@ onBeforeUnmount(() => {
           @moveProject="beginMoveProject"
           @openProject="openHomeProject"
           @rebuildPreview="rebuildProjectPreview"
-          @refresh="refreshProjects"
+          @refresh="refreshHome"
           @removeMissingProject="beginRemoveMissingProject"
+          @removeWorkspace="beginWorkspaceRemoval"
           @renameProject="beginRenameProject"
           @restoreProject="restoreTrashedProject"
           @revealProject="revealProject"

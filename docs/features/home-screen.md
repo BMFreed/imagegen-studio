@@ -2,6 +2,16 @@
 
 ## Production checkpoint
 
+[Workspace actions and model notice](../engineering/phase-4-home-maintenance-research.md)
+connect selected-workspace header options to Settings and sidebar Rescan/Remove to
+existing refresh/explicit confirmation. Default cannot be removed. Rescan preserves
+browse scope and selection; successful unregister retains its existing switch to
+Uncategorized and keeps files. Home's missing-model notice uses the shared catalog:
+loading/error is unknown, auxiliary-only is insufficient, and one ready supported
+checkpoint hides the notice without selecting it or promising inference readiness.
+Startup, return to Home, Refresh, Models close and completed install refresh it.
+Catalog errors offer Models/refresh rather than reporting an empty library.
+
 [Actual filename metadata](../engineering/phase-4-home-filenames-research.md)
 connects the Main-owned canonical basename to compact List rows and the Inspector's
 `workspace / filename` header. Same-title Projects remain distinguishable; pending
@@ -677,6 +687,7 @@ Model Manager:
 - `Manage Models` opens Model Manager.
 - If no model is installed, Home shows `No generation model installed. You can still create, open, and organize projects.` with a `Manage Models` action.
 - Home must not duplicate Model Manager's resource list.
+- The notice is based on a successfully read catalog and ready supported checkpoint versions; loading/error is not an empty library. Catalog refresh never selects a resource or blocks Project organization.
 
 Queue / Downloads:
 

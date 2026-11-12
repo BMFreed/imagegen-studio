@@ -1,6 +1,15 @@
 # Implementation Roadmap
 
-## Current Home filename checkpoint
+## Current Home maintenance checkpoint
+
+[Workspace shortcuts and model notice](../engineering/phase-4-home-maintenance-research.md) connect concrete-workspace header
+Settings, sidebar Rescan and confirmed Remove to existing owners. Home reads the
+same authoritative model catalog on startup/return/Refresh/Models close/install
+completion; unknown/error is distinct from a settled catalog without a ready
+supported checkpoint. No automatic selection or new lifecycle/scanner is added.
+Finite execution and retention evidence are separate from joint Home/MVP acceptance.
+
+## Previous Home filename checkpoint
 
 [Actual filename metadata](../engineering/phase-4-home-filenames-research.md) extends the existing Main summary
 projection to normal and pending Projects. List and Inspector show the real
@@ -335,23 +344,26 @@ Anima Smart enabled-LoRA refusal описывает исторический che
 
 Оставшиеся обязательные границы:
 
-1. **Regional Guidance consumers:** Illustrious regional reference-image inference
-   и оставшиеся обещанные совместимые Smart Regional combinations. `smart-patch-regional-guidance.ts` пока
-   допускает original Anima и finite Illustrious EPS/V; `regional-invoke-generation.ts` отклоняет
-   reference images. Authoring/storage references уже существуют и не заменяют
-   inference. Smart Regional batch/dynamic prompts/resources/sampling нужно
-   сверить конечной матрицей с контрактом: текущий отказ сам по себе не делает
-   любую комбинацию новой обязательной функцией. Anima references и generic
-   ControlNet/IP-Adapter остаются вне MVP. Private и public/installed evidence
-   различаются; текущие public EPS/V checkpoints не квалифицируют все controls.
+1. **Regional Guidance:** Illustrious Current Canvas reference-image EPS
+   TXT/IMG/OUT уже подключены с finite public/installed evidence в
+   [reference image checkpoint](../engineering/phase-4-regional-reference-image-research.md).
+   Это реальный inference consumer, повторять authoring/storage или старый общий
+   отказ не нужно. Остальные обещанные совместимые combinations сверяются с
+   [конечной contract matrix](../engineering/phase-4-regional-reference-image-research.md#finite-remaining-regional-scope):
+   текущий отказ сам по себе не делает каждое Regional×Smart×resource×method×batch
+   сочетание новой обязательной функцией. Anima references и generic
+   ControlNet/IP-Adapter остаются вне MVP; private/public/installed evidence,
+   визуальная полезность и capacity различаются.
 2. **Визуальная полезность и capacity:** фиксированные контроли, реальная
    совместимость и визуальная приёмка с выбранным официальным Illustrious XL
    v0.1. Pixel inequality, точный Retry и source audit не закрывают этот gate;
    defaults не меняются ради отдельного примера.
-3. **Home/workspaces и Project Trash:** реальные workspace операции,
-   rename/move/reveal/locate Project, sort/Status/grid-list/Inspector и
-   move/restore/permanent delete с файлами/SQLite/restart. Нынешние Home
-   search/create/import/open/refresh/rebuild и default workspace — foundation.
+3. **Home/workspaces и Project Trash:** catalog/destinations, Settings/unregister,
+   rename/move/reveal/locate, missing-entry removal, search/sort/Status/Grid/List,
+   Inspector, opening/Create/Import targets, session selection, real filenames,
+   Trash lifecycle и последние workspace shortcuts/model notice уже имеют finite
+   production checkpoints выше. Не повторять их как отсутствующие consumers;
+   совместная compatibility/capacity и итоговая Home/MVP acceptance остаются отдельными.
 4. **Model Manager:** hard Remove Local Resource с running/pending/reference/
    shared-file guards; оставшиеся контексты, включая Project menu и missing
    accepted-result resources, Preset Manager/New Project. Project checkpoint/

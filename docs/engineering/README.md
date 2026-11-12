@@ -1,6 +1,15 @@
 # Engineering Workflow
 
-## Current Home filename checkpoint
+## Current Home maintenance checkpoint
+
+[Workspace shortcuts and model notice](./phase-4-home-maintenance-research.md) connect concrete-workspace header
+Settings, sidebar Rescan and confirmed Remove to existing owners. Home reads the
+same authoritative model catalog on startup/return/Refresh/Models close/install
+completion; unknown/error is distinct from a settled catalog without a ready
+supported checkpoint. No automatic selection or new lifecycle/scanner is added.
+Finite execution and retention evidence are separate from joint Home/MVP acceptance.
+
+## Previous Home filename checkpoint
 
 [Actual filename metadata](./phase-4-home-filenames-research.md) extends the existing Main summary
 projection to normal and pending Projects. List and Inspector show the real

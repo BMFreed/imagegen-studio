@@ -81,7 +81,14 @@ function onClick() {
 </script>
 
 <template>
-  <NTooltip placement="bottom" :show="tooltipVisible" :showArrow="false" to="body" trigger="manual">
+  <NTooltip
+    placement="bottom"
+    :show="tooltipVisible"
+    :showArrow="false"
+    :style="{ pointerEvents: 'none' }"
+    to="body"
+    trigger="manual"
+  >
     <template v-slot:trigger>
       <span
         :aria-disabled="disabled || undefined"
