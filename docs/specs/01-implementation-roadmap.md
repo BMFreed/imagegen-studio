@@ -1,6 +1,14 @@
 # Implementation Roadmap
 
-## Current runtime host preflight checkpoint
+## Current runtime wheelhouse plan checkpoint
+
+[Locked wheelhouse plan](../engineering/phase-4-runtime-wheelhouse-plan-research.md)
+adds the build-time lock-closure/target-wheel selection consumer and real worker
+wheel validation. Its exact requirements remain a plan, not a signed complete
+release or downloaded-wheel metadata proof. Full artifact verification, the
+explicit dependency-exclusion check, signing/delivery and public setup follow.
+
+## Previous runtime host preflight checkpoint
 
 [Host preflight](../engineering/phase-4-runtime-host-preflight-research.md)
 connects the default Main install consumer to signed OS/arch/glibc/driver/SM

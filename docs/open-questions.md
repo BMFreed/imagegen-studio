@@ -1,6 +1,17 @@
 # Open Questions
 
-## Current runtime host preflight boundary
+## Current runtime wheelhouse plan boundary
+
+[Wheelhouse selection](./engineering/phase-4-runtime-wheelhouse-plan-research.md)
+adapts Invoke lock closure to an explicit Linux/x64/Python/glibc target, excludes
+dev groups and replaces the editable root with a verified built worker wheel.
+Selected artifacts still need their own bytes/metadata and offline qualification.
+The existing plain dependency check refuses Compel's deliberately excluded
+Notebook dependency; retaining Invoke's exclusion requires an explicit checker
+adaptation before full installation. Publisher trust, delivery/full preview and
+public setup remain open.
+
+## Previous runtime host preflight boundary
 
 [Strict host preflight](./engineering/phase-4-runtime-host-preflight-research.md)
 replaces the missing default host collaborator with manifest-based checks before

@@ -276,6 +276,17 @@ operating system × architecture × device/runtime profile
 
 Второй вариант не выполняет dependency resolution на машине пользователя. Он устанавливает уже выбранные CI wheels строго из release manifest/lock.
 
+[Build-time wheelhouse plan](../engineering/phase-4-runtime-wheelhouse-plan-research.md)
+adapts Invoke's complete lock-closure traversal to base plus `inference`, explicit
+Linux/x64 CPython3.12.13 and target glibc. Development groups are excluded; the
+editable root is replaced by a verified built worker wheel. The producer emits
+exact artifact identities and requirements for the existing runtime contracts.
+It does not download or qualify the full wheelhouse, sign a release or select a
+supported ABI/driver matrix. The plan binds the explicit Invoke-derived Notebook
+exclusion. The current plain `uv pip check` refuses that missing dependency;
+dependency-policy adaptation and selected-wheel metadata verification remain
+required before this plan can qualify an installed inference release.
+
 Production installation должна:
 
 - предпочитать wheels и не собирать `sdist` на машине пользователя;

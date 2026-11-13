@@ -48,6 +48,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.basedpyright]
 typeCheckingMode = "strict"
+extraPaths = ["../scripts"]
 include = ["src", "tests"]
 exclude = ["src/imagegen_worker/vendor/er_sde_scheduler.py"]
 reportMissingTypeStubs = false

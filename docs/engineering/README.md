@@ -1,6 +1,15 @@
 # Engineering Workflow
 
-## Current runtime host preflight checkpoint
+## Current runtime wheelhouse plan checkpoint
+
+[Invoke-derived wheelhouse plan](./phase-4-runtime-wheelhouse-plan-research.md)
+selects the full locked Linux/x64 CPython runtime closure with explicit target
+glibc and a verified built worker wheel. Exact hashes, sizes and offline
+requirements bridge the lock to existing release-wheel contracts. A plan does
+not prove downloaded wheel metadata or installation; the explicit Notebook
+exclusion/dependency-check mismatch remains a separate recorded gate.
+
+## Previous runtime host preflight checkpoint
 
 [Manifest host preflight](./phase-4-runtime-host-preflight-research.md) supplies
 the default Main check before auxiliary work or slot assembly. It checks actual
