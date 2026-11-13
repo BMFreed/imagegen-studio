@@ -1,6 +1,16 @@
 # Open Questions
 
-## Current Project image export boundary
+## Current internal runtime installation boundary
+
+[Offline runtime backend](./engineering/phase-4-runtime-offline-install-research.md)
+implements signed-payload trust, exact fresh-slot assembly, qualification,
+activation and rollback/recovery behind an internal Main provider. Public setup
+still needs trusted complete release inputs, qualified host inspection, full
+engine preview/download delivery and installed Linux/NVIDIA acceptance. No
+signing-key publication, GPU compatibility, distributable/update or MVP readiness
+is inferred from the CPU-only fixture.
+
+## Previous Project image export boundary
 
 [Project image export](./engineering/phase-4-project-image-export-research.md) connects full-resolution content and exact primary-bbox PNG export through existing owners. Explicit image ceilings and create-only destinations remain; custom rectangles, overwrite and arbitrary maximum-capacity qualification are not claimed. The development CPU adapter is separate from installed release-worker delivery. Runtime Install/Repair, distributable/update delivery and final compatibility/MVP acceptance remain open.
 

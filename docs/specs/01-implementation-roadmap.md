@@ -1,6 +1,16 @@
 # Implementation Roadmap
 
-## Current Project image export checkpoint
+## Current internal runtime installation checkpoint
+
+[Signed offline runtime backend](../engineering/phase-4-runtime-offline-install-research.md)
+connects internal Main review, exact assembly and both qualification phases to
+atomic activation and durable rollback/recovery. It preserves old slots and
+refuses incomplete CPU-only inference. The next release consumer still needs
+complete trusted artifacts/keyring, qualified host checks, aggregate engine
+preview/download and public setup wiring before Linux/NVIDIA install/upgrade
+acceptance. Distributable, Electron updates and final MVP gates remain open.
+
+## Previous Project image export checkpoint
 
 [Project image export](../engineering/phase-4-project-image-export-research.md) connects actual File actions to full-resolution content/primary-bbox sRGB PNG through shared CPU/frozen-asset/create-only owners. Active Smart variants participate; source bytes, Project history/provenance and `.igs` are unchanged. Snapshot/epoch/path drift, Cancel, empty and over-budget inputs have explicit outcomes. Finite qualification is separate from release CPU-worker delivery and maximum capacity.
 

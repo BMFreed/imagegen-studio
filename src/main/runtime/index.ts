@@ -1,6 +1,7 @@
 import type { ApiResult, RuntimeStatus } from '../../shared/api.js'
 import { isQualifiedInferenceWorkerReady } from '../../shared/projects/inference-worker-capabilities.js'
 
+import { randomUUID } from 'node:crypto'
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import * as fs from 'node:fs/promises'
@@ -10,10 +11,27 @@ import type { GenerationWorkerLocation } from '../projects/generation-worker-cli
 import type { InferenceWorkerReady } from '../projects/illustrious-txt2img-job.js'
 import type { SmartPatchExecutionPreparationWorker } from '../projects/project-smart-patch-execution.js'
 import type { SmartPatchOutputWorker } from '../projects/smart-patch-generation-processor.js'
-import type { ProjectWorkerLocation } from '../projects/worker-client.js'
+import type { ProjectWorkerLocation, ProjectWorkerOptions } from '../projects/worker-client.js'
 
 import { GenerationWorkerClient } from '../projects/generation-worker-client.js'
 import { ProjectWorkerClient, ProjectWorkerError } from '../projects/worker-client.js'
+import {
+  assembleOfflineRuntime,
+  type PreparedOfflineRuntime,
+  retryUnconfirmedOfflineRuntimeCommandExits,
+} from './offline-runtime-assembly.js'
+import {
+  RUNTIME_INSTALLATION_CLAIM,
+  RUNTIME_INSTALLATION_JOURNAL,
+  RUNTIME_INSTALLATION_RECOVERY_CLAIM,
+  RuntimeInstallationController,
+  RuntimeInstallationError,
+} from './runtime-installation.js'
+import {
+  type RuntimeReleaseSelection,
+  type VerifiedRuntimeRelease,
+  verifyRuntimeRelease,
+} from './runtime-release.js'
 
 const POINTER_SCHEMA_VERSION = 1
 const MAX_POINTER_BYTES = 16 * 1024
@@ -107,16 +125,56 @@ interface PreparationLease {
 type StartQualificationClient = (
   location: GenerationWorkerLocation,
   environment: NodeJS.ProcessEnv,
+  options?: { signal?: AbortSignal },
 ) => Promise<QualificationClient>
 
+// The existing inference transport owns a bounded startup and physical close. Cancellation waits
+// for that startup to settle; it must not invent an unsupported AbortSignal option or race exit.
 const startQualificationClient: StartQualificationClient = async (location, environment) =>
   await GenerationWorkerClient.start(location, { environment })
+
+export interface RuntimeInstallationReview {
+  mode: 'install' | 'repair'
+  releaseId: string
+  requiredFreeBytes: number
+  scope: 'python-runtime-slot'
+  token: string
+  verifiedPayloadBytes: number
+}
+
+/** Internal Main collaborators; no renderer paths/keys or public artifact trust is accepted. */
+export interface RuntimeInstallationBackend {
+  /** Process/transport seams used only by bounded integration checks. */
+  assemble?: typeof assembleOfflineRuntime
+  /** Verify the separately owned installed shared infill; this must not initiate downloads. */
+  ensureAuxiliaryReady: () => Promise<void>
+  /**
+   * Qualified host/driver/ABI inspection supplied by the release integration, never an advisory GPU
+   * guess.
+   */
+  ensureHostCompatible: (host: VerifiedRuntimeRelease['manifest']['host']) => Promise<void>
+  loadRelease: () => Promise<RuntimeReleaseSelection | null>
+  startProjectClient?: (
+    location: ProjectWorkerLocation,
+    options?: ProjectWorkerOptions,
+  ) => Promise<Pick<ProjectWorkerClient, 'close' | 'ready' | 'selfTest'>>
+}
 
 export class RuntimeManager {
   private cachedQualification: CachedQualification | null = null
   private generationLease: GenerationLease | null = null
-  private generationWorkPrevented = false
+  private generationShutdownRequested = false
   private readonly host: RuntimeHost
+  private installationAbort: AbortController | null = null
+  private installationActive = false
+  private installationOperation: Promise<ApiResult<RuntimeStatus>> | null = null
+  private installationRecovery: Promise<boolean> | null = null
+
+  private installationReview: {
+    pointerSha256: string | null
+    release: VerifiedRuntimeRelease
+    review: RuntimeInstallationReview
+  } | null = null
   private lastQualifiedReady: {
     expiresAt: number
     key: string
@@ -130,18 +188,49 @@ export class RuntimeManager {
   private readonly startClient: StartQualificationClient
   private statusRevision = 0
   private unconfirmedClient: QualificationClient | null = null
+  private get generationWorkPrevented(): boolean {
+    return this.generationShutdownRequested || this.installationActive
+  }
 
   constructor(
     roots: RuntimeRoots,
     host: RuntimeHost = { arch: process.arch, platform: process.platform },
     startClient: StartQualificationClient = startQualificationClient,
+    private readonly installationBackend?: RuntimeInstallationBackend,
   ) {
     this.roots = roots
     this.host = host
     this.startClient = startClient
   }
 
+  async cancelInstallation(): Promise<void> {
+    this.installationAbort?.abort()
+    await this.installationOperation
+  }
+
   async getStatus(): Promise<ApiResult<RuntimeStatus>> {
+    if (this.generationShutdownRequested) {
+      return this.shuttingDownStatus()
+    }
+    if (this.installationActive && !this.generationShutdownRequested) {
+      const status: RuntimeStatus = {
+        detail: 'Preparing the verified image runtime. Existing runtime files are preserved.',
+        kind: 'checking',
+        profile: 'linux-nvidia',
+      }
+      this.publishStatus(status)
+      return { ok: true, value: status }
+    }
+    if (!(await this.ensureInstallationRecovered())) {
+      const status: RuntimeStatus = {
+        detail:
+          'An interrupted runtime installation requires recovery before image work can start.',
+        kind: 'needs-repair',
+        profile: this.host.platform === 'linux' && this.host.arch === 'x64' ? 'linux-nvidia' : null,
+      }
+      this.publishStatus(status)
+      return { ok: true, value: status }
+    }
     const observedRevision = this.statusRevision
     if (this.generationWorkPrevented) {
       return this.shuttingDownStatus()
@@ -291,15 +380,8 @@ export class RuntimeManager {
     return { ok: true, value: status }
   }
 
-  async install(): Promise<ApiResult<RuntimeStatus>> {
-    return {
-      error: {
-        code: 'RUNTIME_INSTALL_UNAVAILABLE',
-        message:
-          'Runtime installation will be available after the verified installer is implemented.',
-      },
-      ok: false,
-    }
+  async install(reviewToken?: string): Promise<ApiResult<RuntimeStatus>> {
+    return await this.installReviewedRuntime('install', reviewToken)
   }
 
   onStatusChanged(listener: (status: RuntimeStatus) => void): () => void {
@@ -309,13 +391,82 @@ export class RuntimeManager {
 
   /** Permanently stop new status qualifications and generation leases before app shutdown awaits. */
   preventNewGenerationWork(): void {
-    this.generationWorkPrevented = true
+    this.generationShutdownRequested = true
+    this.installationAbort?.abort()
     this.cachedQualification = null
     this.preparationLease?.controller.abort()
   }
 
+  /**
+   * Internal review before any slot or process is created; future public setup must show a complete
+   * engine preview.
+   */
+  async previewInstallation(
+    mode: 'install' | 'repair',
+  ): Promise<ApiResult<RuntimeInstallationReview>> {
+    if (!this.installationBackend) {
+      return this.installationUnavailable()
+    }
+    if (mode !== 'install' && mode !== 'repair') {
+      return this.installationFailure(
+        'RUNTIME_INVALID_REVIEW',
+        'Choose a supported runtime operation.',
+      )
+    }
+    if (this.generationShutdownRequested || this.installationActive) {
+      return this.installationFailure(
+        'RUNTIME_INSTALL_BUSY',
+        'The image runtime is busy or shutting down.',
+      )
+    }
+    if (this.host.platform !== 'linux' || this.host.arch !== 'x64') {
+      return this.installationFailure(
+        'RUNTIME_UNSUPPORTED',
+        'This release requires Linux x64 with NVIDIA.',
+      )
+    }
+    try {
+      if (!(await this.ensureInstallationRecovered())) {
+        return this.installationFailure(
+          'RUNTIME_INSTALL_RECOVERY_REQUIRED',
+          'Recover the interrupted runtime installation before reviewing setup.',
+        )
+      }
+      const selection = await this.installationBackend.loadRelease()
+      if (!selection) {
+        return this.installationUnavailable()
+      }
+      const release = await verifyRuntimeRelease(selection)
+      const pointerSha256 = await new RuntimeInstallationController(this.roots).readPointerSha256()
+      if (this.generationShutdownRequested || this.installationActive) {
+        return this.installationFailure(
+          'RUNTIME_INSTALL_BUSY',
+          'The image runtime changed while reviewing setup.',
+        )
+      }
+      const review: RuntimeInstallationReview = {
+        mode,
+        releaseId: release.manifest.releaseId,
+        requiredFreeBytes: release.manifest.requiredFreeBytes,
+        scope: 'python-runtime-slot',
+        token: randomUUID(),
+        verifiedPayloadBytes: release.manifest.files.reduce(
+          (sum, file) => sum + (file.kind === 'file' ? file.sizeBytes : 0),
+          0,
+        ),
+      }
+      this.installationReview = { pointerSha256, release, review: structuredClone(review) }
+      return { ok: true, value: review }
+    } catch (error) {
+      return this.installationError(error)
+    }
+  }
+
   /** Read advisory capabilities without starting a CUDA child or borrowing its transport. */
   async readQualifiedInferenceReady(): Promise<InferenceWorkerReady | null> {
+    if (!(await this.ensureInstallationRecovered())) {
+      return null
+    }
     if (
       this.generationWorkPrevented ||
       this.host.platform !== 'linux' ||
@@ -371,14 +522,8 @@ export class RuntimeManager {
     }
   }
 
-  async repair(): Promise<ApiResult<RuntimeStatus>> {
-    return {
-      error: {
-        code: 'RUNTIME_INSTALL_UNAVAILABLE',
-        message: 'Runtime repair will be available after the verified installer is implemented.',
-      },
-      ok: false,
-    }
+  async repair(reviewToken?: string): Promise<ApiResult<RuntimeStatus>> {
+    return await this.installReviewedRuntime('repair', reviewToken)
   }
 
   /**
@@ -388,11 +533,17 @@ export class RuntimeManager {
   async resolveInstalledProjectWorker(
     scratchBasePath: string,
   ): Promise<InstalledProjectWorker | null> {
+    if (!(await this.ensureInstallationRecovered())) {
+      return null
+    }
     if (!this.projectWorkerResolutionAllowed()) {
       return null
     }
     try {
       const pointer = await readPointer(this.roots)
+      if (pointer.kind === 'valid' && (await this.hasIncompleteRuntime(pointer.value.runtimeId))) {
+        return null
+      }
       if (
         pointer.kind !== 'valid' ||
         !this.projectWorkerResolutionAllowed(pointer.value.runtimeId)
@@ -459,6 +610,9 @@ export class RuntimeManager {
   async resolveQualifiedGenerationWorker(
     scratchBasePath: string,
   ): Promise<QualifiedGenerationWorker | null> {
+    if (!(await this.ensureInstallationRecovered())) {
+      return null
+    }
     if (
       this.generationWorkPrevented ||
       this.host.platform !== 'linux' ||
@@ -507,6 +661,15 @@ export class RuntimeManager {
 
   /** Confirm exit of a failed generation, qualification or startup child without starting another. */
   async retryUnconfirmedGenerationExit(): Promise<boolean> {
+    if (this.installationOperation) {
+      if (!this.generationShutdownRequested) {
+        return false
+      }
+      await this.installationOperation
+    }
+    if (!(await retryUnconfirmedOfflineRuntimeCommandExits())) {
+      return false
+    }
     const preparation = this.preparationLease
     if (preparation) {
       if (!this.generationWorkPrevented && preparation.phase !== 'unconfirmed-exit') {
@@ -594,6 +757,9 @@ export class RuntimeManager {
     scratchBasePath: string,
     use: (ready: InferenceWorkerReady) => Promise<T>,
   ): Promise<T | null> {
+    if (!(await this.ensureInstallationRecovered())) {
+      return null
+    }
     if (
       this.generationWorkPrevented ||
       this.host.platform !== 'linux' ||
@@ -635,6 +801,9 @@ export class RuntimeManager {
     scratchBasePath: string,
     use: (preparation: GenerationPreparation) => Promise<T>,
   ): Promise<T | null> {
+    if (!(await this.ensureInstallationRecovered())) {
+      return null
+    }
     if (
       this.generationWorkPrevented ||
       this.host.platform !== 'linux' ||
@@ -747,6 +916,9 @@ export class RuntimeManager {
     scratchBasePath: string,
     use: (worker: GenerationWorkerClient, runtime: QualifiedGenerationWorker) => Promise<T>,
   ): Promise<T | null> {
+    if (!(await this.ensureInstallationRecovered())) {
+      return null
+    }
     if (
       this.generationWorkPrevented ||
       this.host.platform !== 'linux' ||
@@ -863,6 +1035,9 @@ export class RuntimeManager {
     scratchBasePath: string,
     use: (preparation: SmartPatchGenerationPreparation) => Promise<T>,
   ): Promise<T | null> {
+    if (!(await this.ensureInstallationRecovered())) {
+      return null
+    }
     return await this.withGenerationAdmission(scratchBasePath, async (ready) => {
       const generation = this.generationLease
       if (
@@ -963,6 +1138,55 @@ export class RuntimeManager {
     }
   }
 
+  private async ensureInstallationRecovered(): Promise<boolean> {
+    if (this.host.platform !== 'linux' || this.host.arch !== 'x64') {
+      return true
+    }
+    if (this.generationShutdownRequested) {
+      return false
+    }
+    if (this.installationActive) {
+      return false
+    }
+    if (this.installationRecovery) {
+      return await this.installationRecovery
+    }
+    const recovery = (async () => {
+      let exists = false
+      for (const name of [
+        RUNTIME_INSTALLATION_JOURNAL,
+        RUNTIME_INSTALLATION_CLAIM,
+        RUNTIME_INSTALLATION_RECOVERY_CLAIM,
+      ]) {
+        try {
+          await fs.lstat(path.join(this.roots.runtimeDir, name))
+          exists = true
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+            return false
+          }
+        }
+      }
+      if (!exists) {
+        return true
+      }
+      try {
+        await new RuntimeInstallationController(this.roots).recover()
+        return true
+      } catch {
+        return false
+      }
+    })()
+    this.installationRecovery = recovery
+    try {
+      return await recovery
+    } finally {
+      if (this.installationRecovery === recovery) {
+        this.installationRecovery = null
+      }
+    }
+  }
+
   private failCheckingStatus(): void {
     if (!this.generationWorkPrevented && this.previousStatus?.kind === 'checking') {
       this.publishStatus({
@@ -973,10 +1197,143 @@ export class RuntimeManager {
     }
   }
 
+  private async hasIncompleteRuntime(runtimeId: string): Promise<boolean> {
+    for (const root of [this.roots.environmentsDir, this.roots.pythonDir]) {
+      try {
+        await fs.lstat(path.join(root, runtimeId, '.igs-runtime-incomplete.json'))
+        return true
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          return true
+        }
+      }
+    }
+    return false
+  }
+
   private hasUnconfirmedGenerationExit(): boolean {
     return (
       this.generationLease?.phase === 'unconfirmed-exit' || ProjectWorkerClient.hasUnconfirmedExit()
     )
+  }
+
+  private installationError<T>(error: unknown): ApiResult<T> {
+    return this.installationFailure(
+      error instanceof Error && 'code' in error && typeof error.code === 'string'
+        ? error.code
+        : 'RUNTIME_INSTALL_FAILED',
+      error instanceof Error
+        ? error.message
+        : 'Runtime setup did not complete. The previous runtime files were preserved.',
+    )
+  }
+
+  private installationFailure<T>(code: string, message: string): ApiResult<T> {
+    return { error: { code, message }, ok: false }
+  }
+
+  private installationUnavailable<T>(): ApiResult<T> {
+    return this.installationFailure(
+      'RUNTIME_INSTALL_UNAVAILABLE',
+      'Verified release artifacts and a complete setup preview are not available in this build.',
+    )
+  }
+
+  private async installReviewedRuntime(
+    mode: 'install' | 'repair',
+    token?: string,
+  ): Promise<ApiResult<RuntimeStatus>> {
+    if (!this.installationBackend) {
+      return this.installationUnavailable()
+    }
+    const captured = this.installationReview
+    if (!captured || captured.review.token !== token || captured.review.mode !== mode) {
+      return this.installationFailure(
+        'RUNTIME_INVALID_REVIEW',
+        'Review runtime setup again before continuing.',
+      )
+    }
+    this.installationReview = null
+    if (
+      this.generationShutdownRequested ||
+      this.installationActive ||
+      this.generationLease ||
+      this.preparationLease ||
+      this.unconfirmedClient ||
+      GenerationWorkerClient.hasUnconfirmedStartExit() ||
+      ProjectWorkerClient.hasUnconfirmedExit()
+    ) {
+      return this.installationFailure(
+        'RUNTIME_INSTALL_BUSY',
+        'Finish current image work before runtime setup.',
+      )
+    }
+    this.installationActive = true
+    this.cachedQualification = null
+    this.lastQualifiedReady = null
+    const controller = new AbortController()
+    this.installationAbort = controller
+    const operation = this.withGpuSlot(async (): Promise<ApiResult<RuntimeStatus>> => {
+      try {
+        if (
+          this.generationShutdownRequested ||
+          this.generationLease ||
+          this.preparationLease ||
+          this.unconfirmedClient
+        ) {
+          return this.installationFailure(
+            'RUNTIME_INSTALL_BUSY',
+            'The image runtime is busy or shutting down.',
+          )
+        }
+        await captured.release.verifyCompletePayloadSnapshot()
+        await this.installationBackend!.ensureHostCompatible(captured.release.manifest.host)
+        await this.installationBackend!.ensureAuxiliaryReady()
+        if (controller.signal.aborted) {
+          return this.installationFailure('RUNTIME_INSTALL_CANCELED', 'Runtime setup was canceled.')
+        }
+        const runtimeId = `release-${randomUUID()}`
+        const result = await new RuntimeInstallationController(this.roots).install({
+          expectedPointerSha256: captured.pointerSha256,
+          mode,
+          prepare: () =>
+            (this.installationBackend!.assemble ?? assembleOfflineRuntime)({
+              release: captured.release,
+              roots: this.roots,
+              runtimeId,
+              signal: controller.signal,
+            }),
+          qualify: async (prepared) =>
+            this.qualifyInstallation(prepared, captured.release, controller.signal),
+          signal: controller.signal,
+        })
+        return {
+          ok: true,
+          value: {
+            detail: 'The verified image runtime is ready.',
+            kind: 'ready',
+            profile: 'linux-nvidia',
+            runtimeId: result.runtimeId,
+          },
+        }
+      } catch (error) {
+        return this.installationError(error)
+      }
+    })
+    this.installationOperation = operation
+    try {
+      const result = await operation
+      if (result.ok) {
+        this.publishStatus(result.value)
+      }
+      return result
+    } finally {
+      this.installationOperation = null
+      this.installationAbort = null
+      this.installationActive = false
+      this.cachedQualification = null
+      this.lastQualifiedReady = null
+    }
   }
 
   private leaseIsAdvisoryReady(
@@ -1013,6 +1370,9 @@ export class RuntimeManager {
     try {
       const environmentRoot = path.join(this.roots.environmentsDir, pointer.runtimeId)
       const configDir = path.join(environmentRoot, 'resources', 'sdxl-config')
+      if (await this.hasIncompleteRuntime(pointer.runtimeId)) {
+        return null
+      }
       const [scratch, config, cache, executable] = await Promise.all([
         fs.realpath(scratchBasePath),
         fs.realpath(configDir),
@@ -1140,6 +1500,82 @@ export class RuntimeManager {
         : null
     }
     return succeeded
+  }
+
+  private async qualifyInstallation(
+    prepared: PreparedOfflineRuntime,
+    release: VerifiedRuntimeRelease,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const location = {
+      pythonExecutable: prepared.pythonExecutable,
+      runtimeRoot: this.roots.runtimeDir,
+      stagingBasePath: this.roots.downloadsDir,
+    }
+    const cpu = await (this.installationBackend?.startProjectClient ?? ProjectWorkerClient.start)(
+      location,
+      { environment: { ...prepared.environment, CUDA_VISIBLE_DEVICES: '' }, signal },
+    )
+    try {
+      if (
+        cpu.ready.workerVersion !== release.manifest.worker.cpuVersion ||
+        cpu.ready.runtimeProfile !== 'derivatives-only' ||
+        ![
+          'image-derivatives',
+          'import-normalization',
+          'self-test',
+          'preview-composition',
+          'target-composition',
+          'export-composition',
+        ].every((capability) => cpu.ready.capabilities.includes(capability))
+      ) {
+        throw new Error('The release CPU worker did not pass its exact capability check.')
+      }
+      await cpu.selfTest()
+    } finally {
+      await cpu.close()
+    }
+    if (signal.aborted) {
+      throw new RuntimeInstallationError(
+        'RUNTIME_INSTALL_CANCELED',
+        'Runtime setup was canceled before inference self-test.',
+      )
+    }
+    const inference = await this.startClient(
+      {
+        pythonExecutable: prepared.pythonExecutable,
+        runtimeRoot: this.roots.runtimeDir,
+        scratchBasePath: this.roots.downloadsDir,
+      },
+      prepared.environment,
+      { signal },
+    )
+    try {
+      if (
+        !isQualifiedInferenceWorkerReady(inference.ready) ||
+        inference.ready.workerVersion !== release.manifest.worker.inferenceVersion
+      ) {
+        throw new Error('The Linux/NVIDIA release worker did not pass its exact self-test.')
+      }
+    } finally {
+      try {
+        await inference.close()
+      } catch {
+        this.unconfirmedClient = inference
+        throw new RuntimeInstallationError(
+          'RUNTIME_INSTALL_RECOVERY_REQUIRED',
+          'The release inference worker has not confirmed exit.',
+          true,
+          false,
+        )
+      }
+    }
+    if (signal.aborted) {
+      throw new RuntimeInstallationError(
+        'RUNTIME_INSTALL_CANCELED',
+        'Runtime setup was canceled during self-test.',
+      )
+    }
   }
 
   private async qualifyLive(prepared: PreparedQualification): Promise<boolean> {

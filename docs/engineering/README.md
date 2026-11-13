@@ -1,6 +1,15 @@
 # Engineering Workflow
 
-## Current Project image export checkpoint
+## Current internal runtime installation checkpoint
+
+[Verified offline runtime backend](./phase-4-runtime-offline-install-research.md)
+connects trusted signed payload review to exact local assembly, worker self-tests,
+atomic activation and rollback/recovery in new slots. The default public setup
+remains unavailable until complete release artifacts, host qualification and full
+engine preview/download delivery exist. CPU-only qualification deliberately
+refuses inference; it cannot promote Linux/NVIDIA release readiness.
+
+## Previous Project image export checkpoint
 
 [Project image export](./phase-4-project-image-export-research.md) connects File → Export As and Export Generation BBox to the existing frozen raster/CPU and create-only publication owners. PNG is full-resolution sRGB RGBA; active visible Smart variants contribute at frozen world geometry. The primary bbox is independent of selected Smart settings. Cancel, stale snapshots and existing destinations refuse without implicit Save or provenance edits. Finite execution evidence and release/installed-worker limits are recorded in the note.
 

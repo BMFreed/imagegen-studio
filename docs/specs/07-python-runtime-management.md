@@ -149,8 +149,15 @@ environment. Main владеет загрузкой, cache, проверкой �
 disk-space peak: publisher copy, unpack scratch и old slots учитываются будущим
 установщиком отдельно. Installed size остаётся unknown при неизвестном footprint.
 
-Конкретный trusted release manifest, runtime installer, aggregate preview IPC/UI
-и подключение к Set up/Install/Repair остаются задачами runtime packaging.
+[Internal offline installation](../engineering/phase-4-runtime-offline-install-research.md)
+добавляет Main-owned signed inventory, exact offline assembly в новых final slots,
+две qualification-фазы, atomic pointer и rollback/recovery. Вход — уже полученный
+payload от доверенного Main backend; host и auxiliary readiness обязательны.
+Локальный review имеет scope `python-runtime-slot` и не заменяет полный engine
+preview. Public Set up/Install/Repair остаётся недоступным без shipped release
+selection/keyring, полного wheelhouse, qualified host inspection, download и
+aggregate preview IPC/UI. Успешная CPU fixture с последующим отказом inference
+не квалифицирует Linux/NVIDIA release.
 Текущий development runtime не получает LaMa автоматически от этого checkpoint;
 worker не скачивает недостающие веса.
 
