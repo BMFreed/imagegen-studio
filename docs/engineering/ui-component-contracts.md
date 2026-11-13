@@ -1,5 +1,13 @@
 # Общие UI-компоненты
 
+Production Models removal uses the existing Naive nested confirmation surface:
+captured whole resource, counts, an always-present reference warning, separate
+acknowledgement, Cancel and explicit destructive action. Import and removal
+review/confirmation cannot open concurrently, including a delayed Main reply.
+Busy removal cannot dismiss its Models owner. Success or partial failure invalidates
+the authoritative catalog. [Current finite scope and evidence](./phase-4-model-removal-research.md)
+require idle queue/install owners and preserve incoming copied references.
+
 `ApplyPresetModal` сохраняет logical `show` при `suspended`: Naive
 `displayDirective="show"` удерживает mounted редактор и его raw values, а
 отдельное presentation `show` освобождает focus trap. Событие `suspended`

@@ -560,6 +560,7 @@ let unsubscribeStatus: (() => void) | undefined
 let unsubscribeProjectTabs: (() => void) | undefined
 let unsubscribeBeforeWindowClose: (() => void) | undefined
 let unsubscribeModelInstall: (() => void) | undefined
+let unsubscribeModelCatalog: (() => void) | undefined
 const generationProgress = ref<GenerationProgressSnapshot>({ current: null, revision: 0 })
 let unsubscribeProgress: (() => void) | undefined
 let unsubscribeGeneration: (() => void) | undefined
@@ -5447,6 +5448,9 @@ onMounted(() => {
         void refreshModelCatalog()
       }
     })
+    unsubscribeModelCatalog = globalThis.window.api?.models.onCatalogChanged(() => {
+      void refreshModelCatalog()
+    })
   } catch (cause) {
     modelCatalogError.value = errorMessage(cause)
   }
@@ -5556,6 +5560,7 @@ onBeforeUnmount(() => {
     stopExportFeedbackTimer(tabId)
   }
   unsubscribeModelInstall?.()
+  unsubscribeModelCatalog?.()
   unsubscribeStatus?.()
   unsubscribeProjectTabs?.()
   unsubscribeBeforeWindowClose?.()

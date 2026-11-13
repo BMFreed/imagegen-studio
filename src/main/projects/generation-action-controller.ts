@@ -762,6 +762,36 @@ export class ProjectGenerationActionController {
     }
   }
 
+  /** Global resource maintenance shares Generate/Retry/Smart admission, without a Project key. */
+  async withResourceMaintenance<T>(work: () => Promise<T>): Promise<T> {
+    this.assertAdmissionOpen()
+    if (this.admission) {
+      throw new ProjectGenerationActionError(
+        'GENERATION_BUSY',
+        'Finish the current generation preparation or resource operation before removing a local resource.',
+      )
+    }
+    // Defer work until the admission is installed, including synchronous/re-entrant callbacks.
+    // The caller also holds the queue's idle maintenance serializer for already-entered claims.
+    const operation = Promise.resolve().then(work)
+    this.admission = operation
+    this.admittingTabId = null
+    this.error = null
+    this.emitChanged()
+    try {
+      return await operation
+    } catch (error) {
+      this.rememberError(error)
+      throw error
+    } finally {
+      if (this.admission === operation) {
+        this.admission = null
+      }
+      this.startDrain()
+      this.emitChanged()
+    }
+  }
+
   private assertAdmissionOpen(): void {
     this.assertOpen()
     if (this.blocked) {

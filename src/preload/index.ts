@@ -31,6 +31,7 @@ import type {
   RuntimeStatus,
   StudioApi,
 } from '../shared/api.js'
+import { isModelRemovalId, isModelRemovalReview } from '../shared/model-removal.js'
 import { isPresetRecord } from '../shared/presets/preset-schema.js'
 import {
   isSmartPatchPresetApplicationReviewForRequest,
@@ -1118,6 +1119,11 @@ const api: StudioApi = {
           value.totalBytes >= 0,
       ),
     getTokenStatus: () => invokeModel(ipcChannels.models.getTokenStatus, [], isTokenStatus),
+    onCatalogChanged(listener) {
+      const handler = () => listener()
+      ipcRenderer.on(ipcChannels.models.catalogChanged, handler)
+      return () => ipcRenderer.removeListener(ipcChannels.models.catalogChanged, handler)
+    },
     onInstallChanged(listener) {
       const handler = (_event: Electron.IpcRendererEvent, job: unknown): void => {
         if (isModelInstallJob(job)) {
@@ -1131,7 +1137,26 @@ const api: StudioApi = {
     openSourceLink: (url) => invokeModel(ipcChannels.models.openSourceLink, [url], isVoid),
     previewImport: (url) =>
       invokeModel(ipcChannels.models.previewImport, [url], isModelImportPreview),
+    removeLocalResource: (token) =>
+      isModelRemovalId(token)
+        ? invokeModel(ipcChannels.models.removeLocalResource, [token], isVoid)
+        : Promise.resolve({
+            error: { code: 'MODEL_INVALID_ID', message: 'Invalid removal review.' },
+            ok: false,
+          }),
     removeToken: () => invokeModel(ipcChannels.models.removeToken, [], isTokenStatus),
+    reviewRemoval: (resourceId) =>
+      isModelRemovalId(resourceId)
+        ? invokeModel(
+            ipcChannels.models.reviewRemoval,
+            [resourceId],
+            (value): value is import('../shared/model-removal.js').ModelRemovalReview =>
+              isModelRemovalReview(value) && value.resourceId === resourceId,
+          )
+        : Promise.resolve({
+            error: { code: 'MODEL_INVALID_ID', message: 'Invalid resource ID.' },
+            ok: false,
+          }),
     saveToken: (token) => invokeModel(ipcChannels.models.saveToken, [token], isTokenStatus),
     setDefaultVersion: (resourceId, versionId) =>
       invokeModel(ipcChannels.models.setDefaultVersion, [resourceId, versionId], isVoid),

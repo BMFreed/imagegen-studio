@@ -1,6 +1,16 @@
 # Implementation Roadmap
 
-## Current accepted Compare Models checkpoint
+## Current idle hard Remove checkpoint
+
+[Idle hard Remove](../engineering/phase-4-model-removal-research.md) has a real
+confirmed Models → Main → filesystem/registry consumer and exact new verified
+reinstall identity. The finite implementation requires an idle generation queue
+and installer, preserves shared paths/companions and leaves references untouched.
+Resource-specific running/pending inspection and explicit affected-pending
+cancellation remain required for the complete Remove contract. No public-status
+promotion or release readiness follows.
+
+## Previous accepted Compare Models checkpoint
 
 [Compare resource handoff](../engineering/phase-4-comparison-models-research.md)
 connects typed exact resources from each comparison side to Models and returns
@@ -391,8 +401,11 @@ Anima Smart enabled-LoRA refusal описывает исторический che
    Trash lifecycle и последние workspace shortcuts/model notice уже имеют finite
    production checkpoints выше. Не повторять их как отсутствующие consumers;
    совместная compatibility/capacity и итоговая Home/MVP acceptance остаются отдельными.
-4. **Model Manager:** hard Remove Local Resource с running/pending/reference/
-   shared-file guards. Missing accepted-result resources → Models из Compare,
+4. **Model Manager:** idle hard Remove имеет finite checkpoint выше; остаются
+   resource-specific running/pending guards и подтверждённая отмена только
+   затронутых pending jobs. Generic reference warning/shared-file и companion
+   preservation уже входят в idle consumer; полная совместная приёмка отдельна.
+   Missing accepted-result resources → Models из Compare,
    global Models menu, active Preset Manager и New Project exact-resource return
    имеют finite checkpoints выше. Project checkpoint/LoRA/VAE/embedding navigation,
    Project Apply diagnostic return и installed artwork уже подключены; не

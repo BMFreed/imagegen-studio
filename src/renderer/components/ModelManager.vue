@@ -11,6 +11,7 @@ import type {
   ModelVersionView,
   SetCheckpointNoiseProfileChange,
 } from '../../shared/api.js'
+import type { ModelRemovalReview } from '../../shared/model-removal.js'
 import {
   exactBoundComparisonVersion,
   generationComparisonSideLabel,
@@ -170,7 +171,17 @@ const navigationPaneSize = ref<number | string>('220px')
 const resourcePaneSize = ref<number | string>('calc(100% - 400px)')
 const loading = ref(false)
 const busy = ref<
-  'cancel' | 'default' | 'install' | 'noise' | 'prediction' | 'preview' | 'token' | 'updates' | null
+  | 'cancel'
+  | 'default'
+  | 'install'
+  | 'noise'
+  | 'prediction'
+  | 'preview'
+  | 'remove-review'
+  | 'remove'
+  | 'token'
+  | 'updates'
+  | null
 >(null)
 const error = ref<string | null>(null)
 const notice = ref<string | null>(null)
@@ -186,6 +197,77 @@ const acceptedAnimaLicense = ref(false)
 const updates = ref<Record<string, { id: number; name: string }[]>>({})
 const checkedUpdates = ref<Set<string>>(new Set())
 let unsubscribeInstall: (() => void) | undefined
+let unsubscribeCatalog: (() => void) | undefined
+const removalReview = ref<ModelRemovalReview | null>(null)
+const removalAcknowledged = ref(false)
+const removalError = ref<string | null>(null)
+
+async function reviewRemoval() {
+  const resource = selectedResource.value
+  if (!resource || busy.value || importOpen.value || removalReview.value) {
+    return
+  }
+  busy.value = 'remove-review'
+  const current = readGuard.begin('removal')
+  try {
+    const result = await requireApi().reviewRemoval(resource.id)
+    if (!current()) {
+      return
+    }
+    if (!result.ok) {
+      throw new Error(result.error.message)
+    }
+    removalAcknowledged.value = false
+    removalError.value = null
+    removalReview.value = result.value
+  } catch (cause) {
+    if (current()) {
+      error.value = failureMessage(cause)
+    }
+  } finally {
+    if (current()) {
+      busy.value = null
+    }
+  }
+}
+
+async function removeReviewedResource() {
+  const review = removalReview.value
+  if (!review || !removalAcknowledged.value || busy.value) {
+    return
+  }
+  busy.value = 'remove'
+  removalError.value = null
+  const current = readGuard.begin('removal')
+  try {
+    const result = await requireApi().removeLocalResource(review.token)
+    if (!current()) {
+      return
+    }
+    if (!result.ok) {
+      throw new Error(result.error.message)
+    }
+    removalReview.value = null
+    selectedId.value = null
+    notice.value = 'Local resource removed permanently. Referenced settings are unchanged.'
+    await Promise.all([loadCatalog(), loadStorageSummary()])
+  } catch (cause) {
+    if (current()) {
+      removalError.value = failureMessage(cause)
+      removalAcknowledged.value = false
+      // Tokens are one attempt. Re-review includes any partial filesystem change.
+      const next = await requireApi().reviewRemoval(review.resourceId)
+      if (current() && next.ok) {
+        removalReview.value = next.value
+      }
+      await Promise.all([loadCatalog(), loadStorageSummary()])
+    }
+  } finally {
+    if (current()) {
+      busy.value = null
+    }
+  }
+}
 let pendingJobsRead: {
   isCurrent: () => boolean
   observed: Map<string, ModelInstallJobView>
@@ -672,6 +754,9 @@ async function removeToken() {
 }
 
 function openImport(url = '') {
+  if (busy.value || removalReview.value) {
+    return
+  }
   urlInput.value = url
   preview.value = null
   selectedFileId.value = null
@@ -956,6 +1041,8 @@ watch(show, (visible) => {
     })
   } else {
     loading.value = false
+    busy.value = null
+    removalReview.value = null
     importOpen.value = false
     tokenPopoverOpen.value = false
     tokenInput.value = ''
@@ -988,6 +1075,10 @@ onMounted(() => {
         void loadStorageSummary()
       }
     })
+    unsubscribeCatalog = requireApi().onCatalogChanged(() => {
+      void loadCatalog()
+      void loadStorageSummary()
+    })
   } catch (cause) {
     error.value = failureMessage(cause)
   }
@@ -999,6 +1090,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   readGuard.dispose()
   unsubscribeInstall?.()
+  unsubscribeCatalog?.()
   tokenInput.value = ''
 })
 </script>
@@ -1006,7 +1098,7 @@ onBeforeUnmount(() => {
 <template>
   <NModal
     v-model:show="show"
-    :closeOnEsc="!importOpen"
+    :closeOnEsc="!importOpen && !removalReview && !busy"
     :maskClosable="false"
     transform-origin="center"
     :zIndex="AppLayer.appOverlay"
@@ -1086,13 +1178,14 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </NPopover>
-          <NButton type="primary" @click="openImport()">
+          <NButton :disabled="Boolean(busy || removalReview)" type="primary" @click="openImport()">
             <template v-slot:icon><NIcon :component="PlusIcon" /></template>
             Add from CivitAI URL
           </NButton>
           <NButton
             aria-label="Close Model Manager"
             circle
+            :disabled="Boolean(busy || removalReview)"
             quaternary
             title="Close Model Manager"
             @click="show = false"
@@ -1630,6 +1723,14 @@ onBeforeUnmount(() => {
                       <template v-slot:icon><NIcon :component="ExternalLinkIcon" /></template>
                       Open CivitAI source
                     </NButton>
+                    <NButton
+                      :disabled="Boolean(busy)"
+                      secondary
+                      type="error"
+                      @click="reviewRemoval"
+                    >
+                      Remove Local Resource
+                    </NButton>
                   </div>
                   <NEmpty
                     v-else
@@ -1643,6 +1744,63 @@ onBeforeUnmount(() => {
         </template>
       </NSplit>
     </div>
+  </NModal>
+
+  <NModal
+    :closeOnEsc="!busy"
+    :maskClosable="false"
+    :show="Boolean(removalReview)"
+    :zIndex="AppLayer.appOverlay + 1"
+    @update:show="!busy && !$event && (removalReview = null)"
+  >
+    <NCard
+      aria-label="Remove Local Resource"
+      aria-modal="true"
+      class="import-dialog"
+      contentScrollable
+      role="dialog"
+      size="small"
+      title="Remove Local Resource"
+    >
+      <template v-if="removalReview">
+        <p>
+          Remove all {{ removalReview.versionCount }} versions of
+          {{ removalReview.name }} permanently?
+        </p>
+        <p>
+          {{ removalReview.fileCount - removalReview.sharedFileCount }} unshared managed files will
+          be deleted. {{ removalReview.sharedFileCount }} shared files and Anima companions remain
+          with their other owners.
+        </p>
+        <NAlert type="warning">
+          Projects, Presets and saved results that reference this resource will show
+          missing-resource diagnostics. Their settings and images are unchanged. References in
+          offline or unregistered Projects cannot be counted. There is no Trash or Restore; using
+          this resource again requires a new verified installation.
+        </NAlert>
+        <p>
+          Removal currently requires an idle generation queue and no model installations. Close
+          Models to finish or cancel pending jobs in Queue, then review again.
+        </p>
+        <NCheckbox v-model:checked="removalAcknowledged">
+          I understand that referenced settings will become unavailable
+        </NCheckbox>
+        <NAlert v-if="removalError" class="removal-error" type="error">{{ removalError }}</NAlert>
+      </template>
+      <template v-slot:footer>
+        <div class="removal-actions">
+          <NButton :disabled="Boolean(busy)" @click="removalReview = null">Cancel</NButton>
+          <NButton
+            :disabled="!removalAcknowledged || Boolean(busy)"
+            :loading="busy === 'remove'"
+            type="error"
+            @click="removeReviewedResource"
+          >
+            Remove permanently
+          </NButton>
+        </div>
+      </template>
+    </NCard>
   </NModal>
 
   <!-- Keep the nested import above its manager, below the owning dirty-close dialog. -->
@@ -1945,6 +2103,14 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.removal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.removal-error {
+  margin-top: 12px;
+}
 .manager-shell {
   display: flex;
   flex-direction: column;

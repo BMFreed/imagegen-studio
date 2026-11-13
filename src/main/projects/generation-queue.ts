@@ -3175,6 +3175,29 @@ export class GenerationQueueRepository {
     return await this.retryTerminalInternal(id, expectedStatusSequence, preflight)
   }
 
+  /**
+   * Resource removal initially requires a globally idle queue, including private operations. Keep
+   * the existing serializer through the mutation so an already admitted claim or enqueue cannot
+   * cross its idle check. The callback must not re-enter serialized queue methods.
+   */
+  async withIdleResourceMaintenance<T>(work: () => Promise<T>): Promise<T> {
+    return await this.serialize(async () => {
+      this.assertReadyForDispatch()
+      const unfinished = await this.db
+        .selectFrom('generation_queue_item')
+        .select('id')
+        .where('status', 'in', ['pending', 'running'])
+        .executeTakeFirst()
+      if (unfinished) {
+        throw new GenerationQueueError(
+          'QUEUE_STATUS_CONFLICT',
+          'Finish or cancel all pending and running generation jobs before removing a local resource.',
+        )
+      }
+      return await work()
+    })
+  }
+
   private async claimNextRegional(
     operation: 'illustrious-regional' | 'invoke',
   ): Promise<VerifiedQueuedOperationalRegionalInput | null> {

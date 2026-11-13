@@ -57,10 +57,12 @@ export class ModelInstallCoordinator {
   private readonly lastProgressAt = new Map<string, number>()
   private readonly listeners = new Set<(job: ModelInstallJobView) => void>()
   private readonly modelRoot: string
+  private preparingInstalls = 0
   private readonly progressWrites = new Map<string, Promise<void>>()
   private readonly queued: QueuedInstall[] = []
   private running = false
   private readonly stagingRoot: string
+  private storageMutation = false
 
   constructor(
     private readonly repository: ModelRepository,
@@ -119,125 +121,40 @@ export class ModelInstallCoordinator {
     fileId: number,
     acceptedAnimaLicense: boolean,
   ): Promise<ModelInstallJobView> {
-    if (!Number.isSafeInteger(fileId) || fileId <= 0) {
-      throw new ModelServiceError('MODEL_INVALID_FILE', 'Select a valid model file.')
-    }
-    const { preview } = this.modelService.getPreviewSession(previewId)
-    const file = preview.files.find((choice) => choice.fileId === fileId)
-    if (!file) {
-      throw new ModelServiceError('MODEL_INVALID_FILE', 'The selected file is not in the preview.')
-    }
-    const needsAnimaCompanions =
-      preview.resourceType === 'checkpoint' && preview.baseModelFamily === 'anima'
-    const isPinnedBase = needsAnimaCompanions && isPinnedAnimaBaseCheckpoint(file.sha256)
-    const token = await this.modelService.requireToken()
-    await this.modelService.civitai.validateToken(token)
-    const duplicate = await this.repository.findExactFileDuplicate({
-      civitai: { fileId, modelId: preview.modelId, versionId: preview.versionId },
-    })
-    const installed = await this.repository.listInstalled()
-    const exactVersion = installed
-      .flatMap((resource) => resource.versions)
-      .find((version) => version.id === duplicate?.versionId)
-    if (duplicate && !exactVersion) {
-      throw new ModelServiceError('MODEL_INSTALL_FAILED', 'The installed version is unavailable.')
-    }
-    if (file.sha256 && exactVersion && file.sha256 !== exactVersion.file.sha256) {
+    if (this.storageMutation) {
       throw new ModelServiceError(
-        'MODEL_SOURCE_CHANGED',
-        'CivitAI changed the hash for this file. Verify its source before repairing.',
+        'MODEL_STORAGE_BUSY',
+        'Resource removal is in progress. Try again after it finishes.',
       )
     }
-    const reusablePrimary = await this.modelService.findVerifiedFileByHash(
-      file.sha256 ?? exactVersion?.file.sha256 ?? '',
-    )
-    const primarySizeBytes = requireKnownDownloadSize(
-      isPinnedBase
-        ? ANIMA_BASE_1_0_CHECKPOINT.sizeBytes
-        : (exactVersion?.file.sizeBytes ?? reusablePrimary?.sizeBytes ?? file.sizeEstimateBytes),
-      needsAnimaCompanions,
-    )
-    if (needsAnimaCompanions && !acceptedAnimaLicense) {
-      throw new ModelServiceError(
-        'ANIMA_LICENSE_NOT_ACKNOWLEDGED',
-        'Acknowledge the CircleStone terms for the required Anima components before installing.',
-      )
+    this.preparingInstalls += 1
+    try {
+      return await this.startInstallPrepared(previewId, fileId, acceptedAnimaLicense)
+    } finally {
+      this.preparingInstalls -= 1
     }
-    if (exactVersion && (await this.isVersionVerified(exactVersion, preview.resourceType))) {
-      throw new ModelServiceError(
-        'MODEL_ALREADY_INSTALLED',
-        'This exact model file is already installed.',
-      )
-    }
-    const inProgress = (await this.repository.listInstallJobs()).some(
-      (job) =>
-        ['downloading', 'verifying', 'waiting'].includes(job.status) &&
-        job.civitaiModelId === preview.modelId &&
-        job.civitaiVersionId === preview.versionId &&
-        job.civitaiFileId === fileId,
-    )
-    if (inProgress) {
-      throw new ModelServiceError(
-        'MODEL_INSTALL_IN_PROGRESS',
-        'This file is already in the install queue.',
-      )
-    }
+  }
 
-    const companions = needsAnimaCompanions ? [ANIMA_QWEN3_0_6B_ENCODER, ANIMA_QWEN_IMAGE_VAE] : []
-    const jobId = await this.repository.createInstallJob({
-      artifacts: [
-        {
-          expectedSha256: file.sha256,
-          expectedSizeBytes: isPinnedBase ? ANIMA_BASE_1_0_CHECKPOINT.sizeBytes : null,
-          role: 'primary',
-          source: { fileId, kind: 'civitai_file' },
-        },
-        ...companions.map((artifact) => ({
-          expectedSha256: artifact.sha256,
-          expectedSizeBytes: artifact.sizeBytes,
-          role: companionRole(artifact),
-          source: {
-            key: companionSourceKey(artifact),
-            kind: 'supported_dependency' as const,
-          },
-        })),
-      ],
-      baseModelFamily: preview.baseModelFamily,
-      civitaiFileId: fileId,
-      civitaiModelId: preview.modelId,
-      civitaiVersionId: preview.versionId,
-      displayName: preview.modelName,
-      resourceType: preview.resourceType,
-      versionName: preview.versionName,
-    })
-    const totalBytes = needsAnimaCompanions
-      ? (reusablePrimary ? 0 : primarySizeBytes) +
-        (
-          await Promise.all(
-            companions.map(async (item) =>
-              (await this.findReadyCompanion(companionRole(item), item.sha256))
-                ? 0
-                : item.sizeBytes,
-            ),
-          )
-        ).reduce((sum, size) => sum + size, 0)
-      : null
-    await this.repository.updateInstallJob(jobId, { status: 'waiting', totalBytes })
-    const controller = new AbortController()
-    this.controllers.set(jobId, controller)
-    this.queued.push({
-      acceptedAnimaLicense,
-      controller,
-      file,
-      jobId,
-      preview,
-      previewId,
-      repairVersionId: exactVersion?.id ?? null,
-      token,
-    })
-    await this.emitJob(jobId)
-    void this.pump()
-    return this.requireJob(jobId)
+  /** Invoke exclusive claim adapted to the single existing content-addressed installer. */
+  async withIdleStorageMutation<T>(work: () => Promise<T>): Promise<T> {
+    if (
+      this.storageMutation ||
+      this.preparingInstalls ||
+      this.running ||
+      this.controllers.size ||
+      this.queued.length
+    ) {
+      throw new ModelServiceError(
+        'MODEL_STORAGE_BUSY',
+        'Finish or cancel model installations before removing a resource.',
+      )
+    }
+    this.storageMutation = true
+    try {
+      return await work()
+    } finally {
+      this.storageMutation = false
+    }
   }
 
   private async downloadArtifact(
@@ -847,6 +764,132 @@ export class ModelInstallCoordinator {
         }
       }
     }
+  }
+
+  private async startInstallPrepared(
+    previewId: string,
+    fileId: number,
+    acceptedAnimaLicense: boolean,
+  ): Promise<ModelInstallJobView> {
+    if (!Number.isSafeInteger(fileId) || fileId <= 0) {
+      throw new ModelServiceError('MODEL_INVALID_FILE', 'Select a valid model file.')
+    }
+    const { preview } = this.modelService.getPreviewSession(previewId)
+    const file = preview.files.find((choice) => choice.fileId === fileId)
+    if (!file) {
+      throw new ModelServiceError('MODEL_INVALID_FILE', 'The selected file is not in the preview.')
+    }
+    const needsAnimaCompanions =
+      preview.resourceType === 'checkpoint' && preview.baseModelFamily === 'anima'
+    const isPinnedBase = needsAnimaCompanions && isPinnedAnimaBaseCheckpoint(file.sha256)
+    const token = await this.modelService.requireToken()
+    await this.modelService.civitai.validateToken(token)
+    const duplicate = await this.repository.findExactFileDuplicate({
+      civitai: { fileId, modelId: preview.modelId, versionId: preview.versionId },
+    })
+    const installed = await this.repository.listInstalled()
+    const exactVersion = installed
+      .flatMap((resource) => resource.versions)
+      .find((version) => version.id === duplicate?.versionId)
+    if (duplicate && !exactVersion) {
+      throw new ModelServiceError('MODEL_INSTALL_FAILED', 'The installed version is unavailable.')
+    }
+    if (file.sha256 && exactVersion && file.sha256 !== exactVersion.file.sha256) {
+      throw new ModelServiceError(
+        'MODEL_SOURCE_CHANGED',
+        'CivitAI changed the hash for this file. Verify its source before repairing.',
+      )
+    }
+    const reusablePrimary = await this.modelService.findVerifiedFileByHash(
+      file.sha256 ?? exactVersion?.file.sha256 ?? '',
+    )
+    const primarySizeBytes = requireKnownDownloadSize(
+      isPinnedBase
+        ? ANIMA_BASE_1_0_CHECKPOINT.sizeBytes
+        : (exactVersion?.file.sizeBytes ?? reusablePrimary?.sizeBytes ?? file.sizeEstimateBytes),
+      needsAnimaCompanions,
+    )
+    if (needsAnimaCompanions && !acceptedAnimaLicense) {
+      throw new ModelServiceError(
+        'ANIMA_LICENSE_NOT_ACKNOWLEDGED',
+        'Acknowledge the CircleStone terms for the required Anima components before installing.',
+      )
+    }
+    if (exactVersion && (await this.isVersionVerified(exactVersion, preview.resourceType))) {
+      throw new ModelServiceError(
+        'MODEL_ALREADY_INSTALLED',
+        'This exact model file is already installed.',
+      )
+    }
+    const inProgress = (await this.repository.listInstallJobs()).some(
+      (job) =>
+        ['downloading', 'verifying', 'waiting'].includes(job.status) &&
+        job.civitaiModelId === preview.modelId &&
+        job.civitaiVersionId === preview.versionId &&
+        job.civitaiFileId === fileId,
+    )
+    if (inProgress) {
+      throw new ModelServiceError(
+        'MODEL_INSTALL_IN_PROGRESS',
+        'This file is already in the install queue.',
+      )
+    }
+
+    const companions = needsAnimaCompanions ? [ANIMA_QWEN3_0_6B_ENCODER, ANIMA_QWEN_IMAGE_VAE] : []
+    const jobId = await this.repository.createInstallJob({
+      artifacts: [
+        {
+          expectedSha256: file.sha256,
+          expectedSizeBytes: isPinnedBase ? ANIMA_BASE_1_0_CHECKPOINT.sizeBytes : null,
+          role: 'primary',
+          source: { fileId, kind: 'civitai_file' },
+        },
+        ...companions.map((artifact) => ({
+          expectedSha256: artifact.sha256,
+          expectedSizeBytes: artifact.sizeBytes,
+          role: companionRole(artifact),
+          source: {
+            key: companionSourceKey(artifact),
+            kind: 'supported_dependency' as const,
+          },
+        })),
+      ],
+      baseModelFamily: preview.baseModelFamily,
+      civitaiFileId: fileId,
+      civitaiModelId: preview.modelId,
+      civitaiVersionId: preview.versionId,
+      displayName: preview.modelName,
+      resourceType: preview.resourceType,
+      versionName: preview.versionName,
+    })
+    const totalBytes = needsAnimaCompanions
+      ? (reusablePrimary ? 0 : primarySizeBytes) +
+        (
+          await Promise.all(
+            companions.map(async (item) =>
+              (await this.findReadyCompanion(companionRole(item), item.sha256))
+                ? 0
+                : item.sizeBytes,
+            ),
+          )
+        ).reduce((sum, size) => sum + size, 0)
+      : null
+    await this.repository.updateInstallJob(jobId, { status: 'waiting', totalBytes })
+    const controller = new AbortController()
+    this.controllers.set(jobId, controller)
+    this.queued.push({
+      acceptedAnimaLicense,
+      controller,
+      file,
+      jobId,
+      preview,
+      previewId,
+      repairVersionId: exactVersion?.id ?? null,
+      token,
+    })
+    await this.emitJob(jobId)
+    void this.pump()
+    return this.requireJob(jobId)
   }
 
   private async updateJob(

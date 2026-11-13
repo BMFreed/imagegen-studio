@@ -6,6 +6,7 @@ import type { Kysely, Transaction } from 'kysely'
 import { randomUUID } from 'node:crypto'
 import { lstatSync } from 'node:fs'
 import path from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 
 import type { DB } from '../db/database.types.js'
 
@@ -280,17 +281,6 @@ const artifactTransitions: Record<
   waiting: ['downloading', 'ready', 'failed', 'canceled'],
 }
 
-function sourceKey(source: ModelSource): string {
-  if (source.kind === 'civitai') {
-    assertPositiveId(source.modelId, 'CivitAI model ID')
-    return `civitai:model:${source.modelId}`
-  }
-  if (!source.key.trim()) {
-    throw new Error('Supported dependency source key is required')
-  }
-  return `supported:${source.key}`
-}
-
 export class ModelRepository {
   constructor(private readonly db: Kysely<DB>) {}
 
@@ -495,101 +485,7 @@ export class ModelRepository {
   }
 
   async listInstalled(): Promise<InstalledModel[]> {
-    const rows = await this.db
-      .selectFrom('model_resource as resource')
-      .innerJoin('model_resource_version as version', 'version.model_resource_id', 'resource.id')
-      .innerJoin('local_model_file as file', 'file.resource_version_id', 'version.id')
-      .select([
-        'resource.id as resourceId',
-        'resource.source_kind as sourceKind',
-        'resource.source_key as sourceKey',
-        'resource.civitai_model_id as civitaiModelId',
-        'resource.type as resourceType',
-        'resource.display_name as displayName',
-        'resource.creator as creator',
-        'resource.description as description',
-        'resource.preview_url as previewUrl',
-        'resource.source_metadata_json as resourceMetadata',
-        'resource.source_checked_at as sourceCheckedAt',
-        'resource.default_version_id as defaultVersionId',
-        'version.id as versionId',
-        'version.version_name as versionName',
-        'version.civitai_model_version_id as civitaiVersionId',
-        'version.civitai_file_id as civitaiFileId',
-        'version.created_at as versionCreatedAt',
-        'version.source_revision as sourceRevision',
-        'version.base_model_family as family',
-        'version.format as format',
-        'version.prediction_type as predictionType',
-        'version.expected_sha256 as expectedSha256',
-        'version.source_metadata_json as versionMetadata',
-        'file.id as fileId',
-        'file.managed_path as managedPath',
-        'file.original_filename as originalFilename',
-        'file.size_bytes as sizeBytes',
-        'file.sha256 as sha256',
-        'file.status as fileStatus',
-        'file.verified_at as verifiedAt',
-      ])
-      .orderBy('resource.display_name')
-      .orderBy('version.created_at')
-      .execute()
-    const dependencies = await this.db.selectFrom('model_version_dependency').selectAll().execute()
-    const dependencyMap = new Map<string, Partial<Record<AnimaDependencyRole, string>>>()
-    for (const dependency of dependencies) {
-      const roles = dependencyMap.get(dependency.checkpoint_version_id) ?? {}
-      roles[dependency.role as AnimaDependencyRole] = dependency.component_version_id
-      dependencyMap.set(dependency.checkpoint_version_id, roles)
-    }
-
-    const resources = new Map<string, InstalledModel>()
-    for (const row of rows) {
-      let resource = resources.get(row.resourceId)
-      if (!resource) {
-        const source: ModelSource =
-          row.sourceKind === 'civitai'
-            ? { kind: 'civitai', modelId: row.civitaiModelId! }
-            : { key: row.sourceKey.slice('supported:'.length), kind: 'supported_dependency' }
-        resource = {
-          creator: row.creator,
-          defaultVersionId: row.defaultVersionId,
-          description: row.description,
-          displayName: row.displayName,
-          id: row.resourceId,
-          previewUrl: row.previewUrl,
-          source,
-          sourceCheckedAt: row.sourceCheckedAt,
-          sourceMetadata: fromJson(row.resourceMetadata),
-          type: row.resourceType as ModelResourceType,
-          versions: [],
-        }
-        resources.set(row.resourceId, resource)
-      }
-      resource.versions.push({
-        baseModelFamily: row.family as BaseModelFamily | null,
-        civitaiFileId: row.civitaiFileId,
-        civitaiVersionId: row.civitaiVersionId,
-        createdAt: row.versionCreatedAt,
-        dependencyVersionIds: dependencyMap.get(row.versionId) ?? {},
-        expectedSha256: row.expectedSha256,
-        file: {
-          id: row.fileId,
-          managedPath: row.managedPath,
-          originalFilename: row.originalFilename,
-          sha256: row.sha256,
-          sizeBytes: row.sizeBytes,
-          status: row.fileStatus as ModelFileStatus,
-          verifiedAt: row.verifiedAt,
-        },
-        format: row.format,
-        id: row.versionId,
-        name: row.versionName,
-        predictionType: row.predictionType as ModelPredictionType | null,
-        sourceMetadata: fromJson(row.versionMetadata),
-        sourceRevision: row.sourceRevision,
-      })
-    }
-    return [...resources.values()]
+    return listInstalledModels(this.db)
   }
 
   async listInstallJobs(): Promise<StoredModelInstallJob[]> {
@@ -750,6 +646,92 @@ export class ModelRepository {
           .execute()
       }
       return { ...primary, dependencyVersionIds }
+    })
+  }
+
+  /**
+   * The service owns the exclusive resource/install and idle generation claims. Adapt Invoke's
+   * managed-file unlink before hard registry deletion. Filesystem failure rolls back the rows; a
+   * failure after unlink leaves a missing file and an unchanged registration for explicit retry,
+   * never a fabricated rollback.
+   */
+  async removeLocalResource(
+    resourceId: string,
+    expected: InstalledModel,
+    unlinkFiles: (files: InstalledModelFile[]) => Promise<void>,
+  ): Promise<void> {
+    await this.db.transaction().execute(async (trx) => {
+      const current = (await listInstalledModels(trx)).find(
+        (resource) => resource.id === resourceId,
+      )
+      const snapshot = (resource: InstalledModel) => ({
+        ...resource,
+        versions: [...resource.versions].sort((a, b) => a.id.localeCompare(b.id)),
+      })
+      if (
+        !current ||
+        expected.id !== resourceId ||
+        !isDeepStrictEqual(snapshot(current), snapshot(expected))
+      ) {
+        throw new Error('The local resource changed. Review removal again.')
+      }
+      const versions = await trx
+        .selectFrom('model_resource_version')
+        .select('id')
+        .where('model_resource_id', '=', resourceId)
+        .execute()
+      if (versions.length !== current.versions.length) {
+        throw new Error('The local resource has incomplete file records. Removal is unavailable.')
+      }
+      const versionIds = versions.map((version) => version.id)
+      const incoming = await trx
+        .selectFrom('model_version_dependency')
+        .select('checkpoint_version_id')
+        .where('component_version_id', 'in', versionIds)
+        .where('checkpoint_version_id', 'not in', versionIds)
+        .executeTakeFirst()
+      if (incoming) {
+        throw new Error('Another installed Anima checkpoint requires this resource.')
+      }
+      const otherOwners = await trx
+        .selectFrom('local_model_file as file')
+        .innerJoin('model_resource_version as version', 'version.id', 'file.resource_version_id')
+        .select('file.managed_path')
+        .where('version.model_resource_id', '!=', resourceId)
+        .execute()
+      const sharedPaths = new Set(otherOwners.map((file) => path.resolve(file.managed_path)))
+      const files = new Map<string, InstalledModelFile>()
+      for (const version of current.versions) {
+        // Taking the SQLite write lock before unlink prevents another catalog
+        // publication from adopting a path between the ownership read and delete.
+        const identity = {
+          base_model_family: version.baseModelFamily,
+          civitai_file_id: version.civitaiFileId,
+          civitai_model_id: current.source.kind === 'civitai' ? current.source.modelId : null,
+          civitai_model_version_id: version.civitaiVersionId,
+          resource_id: current.id,
+          sha256: version.file.sha256,
+          size_bytes: version.file.sizeBytes,
+          source_key: sourceKey(current.source),
+          source_kind: current.source.kind,
+          source_revision: version.sourceRevision,
+          type: current.type,
+          version_id: version.id,
+        }
+        await trx
+          .insertInto('model_reference_identity')
+          .values(identity)
+          .onConflict((conflict) => conflict.column('version_id').doUpdateSet(identity))
+          .execute()
+        const filePath = path.resolve(version.file.managedPath)
+        if (!sharedPaths.has(filePath)) {
+          files.set(filePath, { ...version.file })
+        }
+      }
+      await unlinkFiles([...files.values()])
+      // The outgoing dependency links cascade; independently installed component
+      // resources and shared paths deliberately have no garbage-collection step.
+      await trx.deleteFrom('model_resource').where('id', '=', resourceId).execute()
     })
   }
 
@@ -1168,6 +1150,115 @@ export class ModelRepository {
   }
 }
 
+function sourceKey(source: ModelSource): string {
+  if (source.kind === 'civitai') {
+    assertPositiveId(source.modelId, 'CivitAI model ID')
+    return `civitai:model:${source.modelId}`
+  }
+  if (!source.key.trim()) {
+    throw new Error('Supported dependency source key is required')
+  }
+  return `supported:${source.key}`
+}
+
+async function listInstalledModels(executor: DbExecutor): Promise<InstalledModel[]> {
+  const rows = await executor
+    .selectFrom('model_resource as resource')
+    .innerJoin('model_resource_version as version', 'version.model_resource_id', 'resource.id')
+    .innerJoin('local_model_file as file', 'file.resource_version_id', 'version.id')
+    .select([
+      'resource.id as resourceId',
+      'resource.source_kind as sourceKind',
+      'resource.source_key as sourceKey',
+      'resource.civitai_model_id as civitaiModelId',
+      'resource.type as resourceType',
+      'resource.display_name as displayName',
+      'resource.creator as creator',
+      'resource.description as description',
+      'resource.preview_url as previewUrl',
+      'resource.source_metadata_json as resourceMetadata',
+      'resource.source_checked_at as sourceCheckedAt',
+      'resource.default_version_id as defaultVersionId',
+      'version.id as versionId',
+      'version.version_name as versionName',
+      'version.civitai_model_version_id as civitaiVersionId',
+      'version.civitai_file_id as civitaiFileId',
+      'version.created_at as versionCreatedAt',
+      'version.source_revision as sourceRevision',
+      'version.base_model_family as family',
+      'version.format as format',
+      'version.prediction_type as predictionType',
+      'version.expected_sha256 as expectedSha256',
+      'version.source_metadata_json as versionMetadata',
+      'file.id as fileId',
+      'file.managed_path as managedPath',
+      'file.original_filename as originalFilename',
+      'file.size_bytes as sizeBytes',
+      'file.sha256 as sha256',
+      'file.status as fileStatus',
+      'file.verified_at as verifiedAt',
+    ])
+    .orderBy('resource.display_name')
+    .orderBy('version.created_at')
+    .execute()
+  const dependencies = await executor.selectFrom('model_version_dependency').selectAll().execute()
+  const dependencyMap = new Map<string, Partial<Record<AnimaDependencyRole, string>>>()
+  for (const dependency of dependencies) {
+    const roles = dependencyMap.get(dependency.checkpoint_version_id) ?? {}
+    roles[dependency.role as AnimaDependencyRole] = dependency.component_version_id
+    dependencyMap.set(dependency.checkpoint_version_id, roles)
+  }
+
+  const resources = new Map<string, InstalledModel>()
+  for (const row of rows) {
+    let resource = resources.get(row.resourceId)
+    if (!resource) {
+      const source: ModelSource =
+        row.sourceKind === 'civitai'
+          ? { kind: 'civitai', modelId: row.civitaiModelId! }
+          : { key: row.sourceKey.slice('supported:'.length), kind: 'supported_dependency' }
+      resource = {
+        creator: row.creator,
+        defaultVersionId: row.defaultVersionId,
+        description: row.description,
+        displayName: row.displayName,
+        id: row.resourceId,
+        previewUrl: row.previewUrl,
+        source,
+        sourceCheckedAt: row.sourceCheckedAt,
+        sourceMetadata: fromJson(row.resourceMetadata),
+        type: row.resourceType as ModelResourceType,
+        versions: [],
+      }
+      resources.set(row.resourceId, resource)
+    }
+    resource.versions.push({
+      baseModelFamily: row.family as BaseModelFamily | null,
+      civitaiFileId: row.civitaiFileId,
+      civitaiVersionId: row.civitaiVersionId,
+      createdAt: row.versionCreatedAt,
+      dependencyVersionIds: dependencyMap.get(row.versionId) ?? {},
+      expectedSha256: row.expectedSha256,
+      file: {
+        id: row.fileId,
+        managedPath: row.managedPath,
+        originalFilename: row.originalFilename,
+        sha256: row.sha256,
+        sizeBytes: row.sizeBytes,
+        status: row.fileStatus as ModelFileStatus,
+        verifiedAt: row.verifiedAt,
+      },
+      format: row.format,
+      id: row.versionId,
+      name: row.versionName,
+      predictionType: row.predictionType as ModelPredictionType | null,
+      sourceMetadata: fromJson(row.versionMetadata),
+      sourceRevision: row.sourceRevision,
+    })
+  }
+  return [...resources.values()]
+}
+
 function assertNonNegativeBytes(value: number, label: string): void {
   if (!Number.isSafeInteger(value) || value < 0) {
     throw new Error(`${label} must be a non-negative integer`)
@@ -1321,6 +1412,7 @@ async function publishArtifact(
     .selectAll()
     .where('source_key', '=', key)
     .executeTakeFirst()
+  const retainedIdentity = await reusableReferenceIdentity(executor, artifact, existingResource?.id)
   let resourceId = existingResource?.id
   const civitaiModelId =
     artifact.resource.source.kind === 'civitai' ? artifact.resource.source.modelId : null
@@ -1347,7 +1439,7 @@ async function publishArtifact(
       .where('id', '=', existingResource.id)
       .execute()
   } else {
-    resourceId = randomUUID()
+    resourceId = retainedIdentity?.resource_id ?? randomUUID()
     await executor
       .insertInto('model_resource')
       .values({
@@ -1374,7 +1466,7 @@ async function publishArtifact(
   }
 
   const source = artifact.version.source
-  const versionId = randomUUID()
+  const versionId = retainedIdentity?.version_id ?? randomUUID()
   const fileId = randomUUID()
   await executor
     .insertInto('model_resource_version')
@@ -1422,6 +1514,66 @@ async function publishArtifact(
   }
 
   return { fileId, resourceId, versionId }
+}
+
+/** Reclaim only one exact, unoccupied binding; current installed IDs stay authoritative. */
+async function reusableReferenceIdentity(
+  executor: Transaction<DB>,
+  artifact: VerifiedModelArtifact,
+  existingResourceId: string | undefined,
+): Promise<DB['model_reference_identity'] | null> {
+  const source = artifact.version.source
+  let query = executor
+    .selectFrom('model_reference_identity')
+    .selectAll()
+    .where('source_kind', '=', artifact.resource.source.kind)
+    .where('source_key', '=', sourceKey(artifact.resource.source))
+    .where('type', '=', artifact.resource.type)
+    .where('sha256', '=', normalizeSha256(artifact.file.sha256, 'Verified file hash'))
+    .where('size_bytes', '=', artifact.file.sizeBytes)
+  query =
+    artifact.version.baseModelFamily === null
+      ? query.where('base_model_family', 'is', null)
+      : query.where('base_model_family', '=', artifact.version.baseModelFamily)
+  if (source.kind === 'civitai' && artifact.resource.source.kind === 'civitai') {
+    query = query
+      .where('civitai_model_id', '=', artifact.resource.source.modelId)
+      .where('civitai_model_version_id', '=', source.versionId)
+      .where('civitai_file_id', '=', source.fileId)
+      .where('source_revision', 'is', null)
+  } else if (
+    source.kind === 'supported_dependency' &&
+    artifact.resource.source.kind === 'supported_dependency'
+  ) {
+    query = query
+      .where('civitai_model_id', 'is', null)
+      .where('civitai_model_version_id', 'is', null)
+      .where('civitai_file_id', 'is', null)
+      .where('source_revision', '=', source.revision)
+  } else {
+    return null
+  }
+  const candidates = await query.execute()
+  if (candidates.length !== 1) {
+    return null
+  }
+  const candidate = candidates[0]
+  if (existingResourceId && candidate.resource_id !== existingResourceId) {
+    return null
+  }
+  const occupiedVersion = await executor
+    .selectFrom('model_resource_version')
+    .select('id')
+    .where('id', '=', candidate.version_id)
+    .executeTakeFirst()
+  const occupiedResource = existingResourceId
+    ? null
+    : await executor
+        .selectFrom('model_resource')
+        .select('id')
+        .where('id', '=', candidate.resource_id)
+        .executeTakeFirst()
+  return occupiedVersion || occupiedResource ? null : candidate
 }
 
 async function assertSharedManagedPathCompatible(

@@ -1,6 +1,15 @@
 # Engineering Workflow
 
-## Current accepted Compare Models checkpoint
+## Current idle hard Remove checkpoint
+
+[Idle hard Remove](./phase-4-model-removal-research.md) connects the real Models
+confirmation to guarded managed-file and registry removal. Existing admission,
+queue and installer owners require global idle; shared paths/Anima companions,
+copied references and exact verified reinstall identity are protected. There is
+no Trash/Restore or implicit job cancellation. Resource-specific running/pending
+inspection and confirmed affected-pending cancellation remain separate MVP work.
+
+## Previous accepted Compare Models checkpoint
 
 [Compare resource handoff](./phase-4-comparison-models-research.md) projects exact
 Generated-with/Current-Canvas references into the same Models manager. Existing

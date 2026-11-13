@@ -28,6 +28,7 @@ import type {
   RuntimeStatus,
   SetCheckpointNoiseProfileChange,
 } from '../shared/api.js'
+import { isModelRemovalId } from '../shared/model-removal.js'
 import { parsePresetApplication } from '../shared/presets/preset-application.js'
 import {
   parseSmartPatchPresetApplicationRequest,
@@ -127,6 +128,7 @@ import { CivitaiTokenStore, CivitaiTokenStoreError } from './models/civitai-toke
 import { ModelDownloader, ModelDownloadError } from './models/model-downloader.js'
 import { ModelInstallCoordinator } from './models/model-install-coordinator.js'
 import { ModelPreviewCache } from './models/model-preview-cache.js'
+import { ModelRemovalService } from './models/model-removal-service.js'
 import { ModelRepository } from './models/model-repository.js'
 import { ModelService, ModelServiceError } from './models/model-service.js'
 import { registerPresetIpc } from './presets/preset-ipc.js'
@@ -615,6 +617,10 @@ if (!gotInstanceLock) {
         modelService,
         new ModelDownloader(),
         paths.dataRoot,
+      )
+      const modelRemoval = new ModelRemovalService(
+        modelRepository,
+        path.join(paths.dataRoot, 'models'),
       )
       let modelStorageAvailable = true
       try {
@@ -2911,6 +2917,51 @@ if (!gotInstanceLock) {
         modelService.saveToken(token as string),
       )
       registerModelHandler(ipcChannels.models.removeToken, noArgs, () => modelService.removeToken())
+      registerModelHandler(
+        ipcChannels.models.reviewRemoval,
+        (args) => args.length === 1 && isModelRemovalId(args[0]),
+        (resourceId) => modelRemoval.reviewRemoval(resourceId as string),
+        true,
+      )
+      registerModelHandler(
+        ipcChannels.models.removeLocalResource,
+        (args) => args.length === 1 && isModelRemovalId(args[0]),
+        async (token) => {
+          if (!generationActions || !recoveredGeneration) {
+            throw new ModelServiceError(
+              'MODEL_REMOVAL_BUSY',
+              'Generation storage must recover before resource removal is available.',
+            )
+          }
+          try {
+            await generationActions.withResourceMaintenance(() =>
+              recoveredGeneration.queue.withIdleResourceMaintenance(() =>
+                installCoordinator.withIdleStorageMutation(() =>
+                  modelRemoval.removeLocalResource(token as string),
+                ),
+              ),
+            )
+          } catch (error) {
+            if (
+              error instanceof GenerationQueueError ||
+              error instanceof ProjectGenerationActionError
+            ) {
+              throw new ModelServiceError(
+                'MODEL_REMOVAL_BUSY',
+                'Finish running work and close Models to cancel pending jobs in Queue before retrying removal. No jobs were canceled.',
+              )
+            }
+            throw error
+          } finally {
+            // A partial OS failure can make files missing while SQLite rolls back.
+            // Publish a genuine catalog invalidation, not a synthetic install job.
+            if (!window.isDestroyed()) {
+              window.webContents.send(ipcChannels.models.catalogChanged)
+            }
+          }
+        },
+        true,
+      )
       registerModelHandler(ipcChannels.models.previewImport, oneString, (url) =>
         modelService.previewImport(url as string),
       )

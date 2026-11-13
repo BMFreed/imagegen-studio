@@ -747,6 +747,25 @@ Checking or installing an update cannot rewrite the third identity.
 
 Removing a model removes the local reusable resource, but does not rewrite history.
 
+The [first production consumer](../engineering/phase-4-model-removal-research.md)
+removes all versions of a captured resource through Main after a separate warning
+and acknowledgement. It currently requires a recovered globally idle generation
+queue and no preparing/active model installation. Any pending/running work is an
+explicit refusal; no jobs are canceled by Remove. Resource-specific use inspection
+and confirmed cancellation of only affected pending jobs remain required to
+complete the rules below. The prototype Remove button remains a mock gap.
+
+Only exact unshared managed files are unlinked; other resources' shared paths and
+Anima companions remain. The full installed registry record is deleted. Minimal
+UUID/source/kind/family/hash/size metadata survives solely as a missing-reference
+identity, with no path, weight, default, deleted state or Restore capability. Only
+a fresh verified installation of the same complete tuple may reclaim its local
+UUIDs; a different live source binding is not replaced. Project/Preset/provenance
+bytes are unchanged. Offline/unregistered reference counts are not knowable, so
+the missing-reference warning is always shown. A partial OS/registry failure may
+leave files absent and original rows intact; refresh, review and retry or perform
+a new verified installation. SQLite rollback cannot restore already unlinked bytes.
+
 This is a hard removal, with no Model Manager Trash, restore window or
 soft-deleted model record. Minimal copied identity/display metadata can remain
 solely to explain missing references in Projects, Presets and provenance; it is

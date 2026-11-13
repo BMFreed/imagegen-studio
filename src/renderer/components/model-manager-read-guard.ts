@@ -1,4 +1,11 @@
-export const MODEL_MANAGER_READ_KINDS = ['catalog', 'jobs', 'refresh', 'storage', 'token'] as const
+export const MODEL_MANAGER_READ_KINDS = [
+  'catalog',
+  'jobs',
+  'refresh',
+  'removal',
+  'storage',
+  'token',
+] as const
 export type ModelManagerRead = (typeof MODEL_MANAGER_READ_KINDS)[number]
 
 /** Presentation reads only; invalidation never cancels an installation or another Main command. */

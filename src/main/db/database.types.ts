@@ -162,6 +162,21 @@ export interface ModelResourceVersion {
   version_name: string
 }
 
+export interface ModelReferenceIdentity {
+  base_model_family: string | null
+  civitai_file_id: number | null
+  civitai_model_id: number | null
+  civitai_model_version_id: number | null
+  resource_id: string
+  sha256: string
+  size_bytes: number
+  source_key: string
+  source_kind: string
+  source_revision: string | null
+  type: string
+  version_id: string
+}
+
 export interface ModelVersionDependency {
   checkpoint_version_id: string
   component_version_id: string
@@ -302,6 +317,7 @@ export interface DB {
   local_model_file: LocalModelFile
   model_install_artifact: ModelInstallArtifact
   model_install_job: ModelInstallJob
+  model_reference_identity: ModelReferenceIdentity
   model_resource: ModelResource
   model_resource_version: ModelResourceVersion
   model_version_dependency: ModelVersionDependency

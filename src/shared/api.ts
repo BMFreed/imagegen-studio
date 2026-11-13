@@ -1,3 +1,4 @@
+import type { ModelRemovalReview } from './model-removal.js'
 import type { PresetApplicationRequest } from './presets/preset-application.js'
 import type { PresetDefinition, PresetRecord } from './presets/preset-schema.js'
 import type {
@@ -138,6 +139,7 @@ export type {
 export const ipcChannels = {
   models: {
     cancelInstall: 'models:cancel-install',
+    catalogChanged: 'models:catalog-changed',
     checkUpdates: 'models:check-updates',
     getCatalog: 'models:get-catalog',
     getInstallJobs: 'models:get-install-jobs',
@@ -147,7 +149,9 @@ export const ipcChannels = {
     openModelFolder: 'models:open-model-folder',
     openSourceLink: 'models:open-source-link',
     previewImport: 'models:preview-import',
+    removeLocalResource: 'models:remove-local-resource',
     removeToken: 'models:remove-token',
+    reviewRemoval: 'models:review-removal',
     saveToken: 'models:save-token',
     setDefaultVersion: 'models:set-default-version',
     setNoiseProfile: 'models:set-noise-profile',
@@ -979,11 +983,14 @@ export interface ModelApi {
   getInstallJobs: () => Promise<ApiResult<ModelInstallJobView[]>>
   getStorageSummary: () => Promise<ApiResult<{ totalBytes: number }>>
   getTokenStatus: () => Promise<ApiResult<CivitaiTokenStatus>>
+  onCatalogChanged: (listener: () => void) => () => void
   onInstallChanged: (listener: (job: ModelInstallJobView) => void) => () => void
   openModelFolder: () => Promise<ApiResult<void>>
   openSourceLink: (url: string) => Promise<ApiResult<void>>
   previewImport: (url: string) => Promise<ApiResult<ModelImportPreview>>
+  removeLocalResource: (token: string) => Promise<ApiResult<void>>
   removeToken: () => Promise<ApiResult<CivitaiTokenStatus>>
+  reviewRemoval: (resourceId: string) => Promise<ApiResult<ModelRemovalReview>>
   saveToken: (token: string) => Promise<ApiResult<CivitaiTokenStatus>>
   setDefaultVersion: (resourceId: string, versionId: string) => Promise<ApiResult<void>>
   setNoiseProfile: (

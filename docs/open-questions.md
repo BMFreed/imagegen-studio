@@ -1,5 +1,13 @@
 # Open Questions
 
+## Current idle resource removal boundary
+
+[Idle hard Remove](./engineering/phase-4-model-removal-research.md) now has a
+confirmed production consumer. It requires globally idle generation/install
+owners; resource-specific usage and confirmed affected-pending-only cancellation
+remain open. Minimal noninstalled identity permits exact fresh verified reinstall;
+no Trash, Restore, copied-reference rewrite or public-status promotion is added.
+
 ## Current ordinary encoding finding
 
 [Original Invoke CLIP operators](./engineering/phase-4-ordinary-invoke-conditioning-research.md)
