@@ -1,12 +1,17 @@
 # Open Questions
 
-## Current idle resource removal boundary
+## Current resource-specific removal boundary
 
-[Idle hard Remove](./engineering/phase-4-model-removal-research.md) now has a
-confirmed production consumer. It requires globally idle generation/install
-owners; resource-specific usage and confirmed affected-pending-only cancellation
-remain open. Minimal noninstalled identity permits exact fresh verified reinstall;
-no Trash, Restore, copied-reference rewrite or public-status promotion is added.
+[Resource-specific hard Remove](./engineering/phase-4-model-removal-usage-research.md)
+connects strict frozen-use inspection and explicit affected-pending cancellation
+to the existing managed-file/registry consumer. Affected running work blocks;
+unrelated pending/running work remains untouched. Main rechecks the exact reviewed
+pending set before its transactional cancellation; changed affected pending state
+requires fresh consent. Generation preparation and model installation still exclude
+removal; a later filesystem/registry failure leaves approved cancellations
+committed. Minimal noninstalled identity still permits exact fresh verified
+reinstall. No Trash, Restore, copied-reference rewrite or public-status promotion
+is added. Finite qualification does not close joint resource/MVP acceptance.
 
 ## Current ordinary encoding finding
 

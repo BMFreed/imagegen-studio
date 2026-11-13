@@ -747,13 +747,23 @@ Checking or installing an update cannot rewrite the third identity.
 
 Removing a model removes the local reusable resource, but does not rewrite history.
 
-The [first production consumer](../engineering/phase-4-model-removal-research.md)
-removes all versions of a captured resource through Main after a separate warning
-and acknowledgement. It currently requires a recovered globally idle generation
-queue and no preparing/active model installation. Any pending/running work is an
-explicit refusal; no jobs are canceled by Remove. Resource-specific use inspection
-and confirmed cancellation of only affected pending jobs remain required to
-complete the rules below. The prototype Remove button remains a mock gap.
+The [resource-specific production consumer](../engineering/phase-4-model-removal-usage-research.md)
+extends the [initial idle path](../engineering/phase-4-model-removal-research.md).
+Main reviews all versions of the captured resource and returns affected pending/
+running counts from strict frozen queue inputs, including owned regional sidecars.
+Unknown or corrupt unfinished inputs block removal rather than count as unused.
+Affected running work blocks removal; unrelated pending/running work remains
+untouched. Existing generation admission, recovered queue and idle installer
+guards still apply. The prototype Remove button remains a mock gap.
+
+Removal always requires the missing-reference acknowledgement. If affected
+pending jobs exist, a separate explicit acknowledgement authorizes cancellation
+of exactly the reviewed jobs. Main rechecks the resource, actual unlink footprint
+and pending IDs/sequences/payloads before one pending-only cancellation transaction;
+changed affected pending state requires a new review. Cancellation commits before
+managed-file and registry removal. No running job is canceled by Remove, and no frozen input is
+deleted by cancellation. Finite qualification and its limits are recorded in the
+checkpoint note; this is not full resource/MVP acceptance.
 
 Only exact unshared managed files are unlinked; other resources' shared paths and
 Anima companions remain. The full installed registry record is deleted. Minimal
@@ -764,7 +774,9 @@ UUIDs; a different live source binding is not replaced. Project/Preset/provenanc
 bytes are unchanged. Offline/unregistered reference counts are not knowable, so
 the missing-reference warning is always shown. A partial OS/registry failure may
 leave files absent and original rows intact; refresh, review and retry or perform
-a new verified installation. SQLite rollback cannot restore already unlinked bytes.
+a new verified installation. Already approved pending cancellations remain committed
+after such a failure and are not revived by retry; a fresh review is required.
+SQLite rollback cannot restore already unlinked bytes.
 
 This is a hard removal, with no Model Manager Trash, restore window or
 soft-deleted model record. Minimal copied identity/display metadata can remain

@@ -621,6 +621,7 @@ if (!gotInstanceLock) {
       const modelRemoval = new ModelRemovalService(
         modelRepository,
         path.join(paths.dataRoot, 'models'),
+        () => ownedGenerationContext.requireRecoveredServices().queue,
       )
       let modelStorageAvailable = true
       try {
@@ -2925,8 +2926,10 @@ if (!gotInstanceLock) {
       )
       registerModelHandler(
         ipcChannels.models.removeLocalResource,
-        (args) => args.length === 1 && isModelRemovalId(args[0]),
-        async (token) => {
+        (args) =>
+          (args.length === 1 || (args.length === 2 && typeof args[1] === 'boolean')) &&
+          isModelRemovalId(args[0]),
+        async (token, cancelPending = false) => {
           if (!generationActions || !recoveredGeneration) {
             throw new ModelServiceError(
               'MODEL_REMOVAL_BUSY',
@@ -2935,10 +2938,8 @@ if (!gotInstanceLock) {
           }
           try {
             await generationActions.withResourceMaintenance(() =>
-              recoveredGeneration.queue.withIdleResourceMaintenance(() =>
-                installCoordinator.withIdleStorageMutation(() =>
-                  modelRemoval.removeLocalResource(token as string),
-                ),
+              installCoordinator.withIdleStorageMutation(() =>
+                modelRemoval.removeLocalResource(token as string, cancelPending as boolean),
               ),
             )
           } catch (error) {
@@ -2948,7 +2949,7 @@ if (!gotInstanceLock) {
             ) {
               throw new ModelServiceError(
                 'MODEL_REMOVAL_BUSY',
-                'Finish running work and close Models to cancel pending jobs in Queue before retrying removal. No jobs were canceled.',
+                'Finish the current generation preparation or resource operation, then review removal again. No jobs were canceled.',
               )
             }
             throw error

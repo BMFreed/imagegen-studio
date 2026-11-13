@@ -988,7 +988,7 @@ export interface ModelApi {
   openModelFolder: () => Promise<ApiResult<void>>
   openSourceLink: (url: string) => Promise<ApiResult<void>>
   previewImport: (url: string) => Promise<ApiResult<ModelImportPreview>>
-  removeLocalResource: (token: string) => Promise<ApiResult<void>>
+  removeLocalResource: (token: string, cancelPending?: boolean) => Promise<ApiResult<void>>
   removeToken: () => Promise<ApiResult<CivitaiTokenStatus>>
   reviewRemoval: (resourceId: string) => Promise<ApiResult<ModelRemovalReview>>
   saveToken: (token: string) => Promise<ApiResult<CivitaiTokenStatus>>

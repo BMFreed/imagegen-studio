@@ -1,13 +1,18 @@
 # Engineering Workflow
 
-## Current idle hard Remove checkpoint
+## Current resource-specific hard Remove checkpoint
 
-[Idle hard Remove](./phase-4-model-removal-research.md) connects the real Models
-confirmation to guarded managed-file and registry removal. Existing admission,
-queue and installer owners require global idle; shared paths/Anima companions,
-copied references and exact verified reinstall identity are protected. There is
-no Trash/Restore or implicit job cancellation. Resource-specific running/pending
-inspection and confirmed affected-pending cancellation remain separate MVP work.
+[Resource-specific hard Remove](./phase-4-model-removal-usage-research.md) extends
+[the idle consumer](./phase-4-model-removal-research.md) through the existing
+admission, queue and installer owners. Strict frozen inputs determine affected
+pending/running counts. Affected running work blocks removal; pending work needs
+separate explicit consent to cancel exactly the reviewed set before unlink.
+Unrelated jobs remain untouched; changed affected pending state requires a fresh
+review. Generation preparation and model installation still exclude removal. If
+later filesystem/registry work fails, approved cancellations remain committed; review
+again. Shared paths/Anima companions, copied references and exact verified
+reinstall identity stay protected. No Trash/Restore or public-status promotion is
+added; finite evidence and limits are recorded in the checkpoint note.
 
 ## Previous accepted Compare Models checkpoint
 

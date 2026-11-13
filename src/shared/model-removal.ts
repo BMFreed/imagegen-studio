@@ -2,7 +2,9 @@
 export interface ModelRemovalReview {
   fileCount: number
   name: string
+  pendingJobs: number
   resourceId: string
+  runningJobs: number
   sharedFileCount: number
   token: string
   versionCount: number
@@ -19,13 +21,17 @@ export function isModelRemovalReview(value: unknown): value is ModelRemovalRevie
   const review = value as Record<string, unknown>
   return (
     Object.keys(review).sort().join(',') ===
-      'fileCount,name,resourceId,sharedFileCount,token,versionCount' &&
+      'fileCount,name,pendingJobs,resourceId,runningJobs,sharedFileCount,token,versionCount' &&
     isModelRemovalId(review['resourceId']) &&
     isModelRemovalId(review['token']) &&
     typeof review['name'] === 'string' &&
     review['name'].length > 0 &&
     Number.isSafeInteger(review['versionCount']) &&
     (review['versionCount'] as number) > 0 &&
+    Number.isSafeInteger(review['pendingJobs']) &&
+    (review['pendingJobs'] as number) >= 0 &&
+    Number.isSafeInteger(review['runningJobs']) &&
+    (review['runningJobs'] as number) >= 0 &&
     Number.isSafeInteger(review['fileCount']) &&
     (review['fileCount'] as number) >= 0 &&
     Number.isSafeInteger(review['sharedFileCount']) &&

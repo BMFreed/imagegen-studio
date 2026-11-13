@@ -135,6 +135,12 @@ export interface InstalledModel {
   versions: InstalledModelVersion[]
 }
 
+/** Detached registry metadata and the exact unshared file footprint, never a deletion lease. */
+export interface ModelResourceRemovalInspection {
+  files: InstalledModelFile[]
+  model: InstalledModel
+}
+
 export interface ExactFileLookup {
   civitai?: { fileId: number; modelId: number; versionId: number }
   sha256?: string
@@ -484,6 +490,14 @@ export class ModelRepository {
     return (row?.prediction_type as ModelPredictionType | undefined) ?? null
   }
 
+  /** Read-only preflight. Execution repeats these same guards inside its transaction. */
+  async inspectLocalResourceRemoval(
+    resourceId: string,
+    expected?: InstalledModel,
+  ): Promise<ModelResourceRemovalInspection> {
+    return inspectModelResourceRemoval(this.db, resourceId, expected)
+  }
+
   async listInstalled(): Promise<InstalledModel[]> {
     return listInstalledModels(this.db)
   }
@@ -661,46 +675,12 @@ export class ModelRepository {
     unlinkFiles: (files: InstalledModelFile[]) => Promise<void>,
   ): Promise<void> {
     await this.db.transaction().execute(async (trx) => {
-      const current = (await listInstalledModels(trx)).find(
-        (resource) => resource.id === resourceId,
-      )
-      const snapshot = (resource: InstalledModel) => ({
-        ...resource,
-        versions: [...resource.versions].sort((a, b) => a.id.localeCompare(b.id)),
-      })
-      if (
-        !current ||
-        expected.id !== resourceId ||
-        !isDeepStrictEqual(snapshot(current), snapshot(expected))
-      ) {
+      // Only read-only inspection permits an omitted snapshot. Keep execution's
+      // existing mandatory snapshot guard for runtime callers as well as TS.
+      if (!expected) {
         throw new Error('The local resource changed. Review removal again.')
       }
-      const versions = await trx
-        .selectFrom('model_resource_version')
-        .select('id')
-        .where('model_resource_id', '=', resourceId)
-        .execute()
-      if (versions.length !== current.versions.length) {
-        throw new Error('The local resource has incomplete file records. Removal is unavailable.')
-      }
-      const versionIds = versions.map((version) => version.id)
-      const incoming = await trx
-        .selectFrom('model_version_dependency')
-        .select('checkpoint_version_id')
-        .where('component_version_id', 'in', versionIds)
-        .where('checkpoint_version_id', 'not in', versionIds)
-        .executeTakeFirst()
-      if (incoming) {
-        throw new Error('Another installed Anima checkpoint requires this resource.')
-      }
-      const otherOwners = await trx
-        .selectFrom('local_model_file as file')
-        .innerJoin('model_resource_version as version', 'version.id', 'file.resource_version_id')
-        .select('file.managed_path')
-        .where('version.model_resource_id', '!=', resourceId)
-        .execute()
-      const sharedPaths = new Set(otherOwners.map((file) => path.resolve(file.managed_path)))
-      const files = new Map<string, InstalledModelFile>()
+      const { files, model: current } = await inspectModelResourceRemoval(trx, resourceId, expected)
       for (const version of current.versions) {
         // Taking the SQLite write lock before unlink prevents another catalog
         // publication from adopting a path between the ownership read and delete.
@@ -723,12 +703,8 @@ export class ModelRepository {
           .values(identity)
           .onConflict((conflict) => conflict.column('version_id').doUpdateSet(identity))
           .execute()
-        const filePath = path.resolve(version.file.managedPath)
-        if (!sharedPaths.has(filePath)) {
-          files.set(filePath, { ...version.file })
-        }
       }
-      await unlinkFiles([...files.values()])
+      await unlinkFiles(files)
       // The outgoing dependency links cascade; independently installed component
       // resources and shared paths deliberately have no garbage-collection step.
       await trx.deleteFrom('model_resource').where('id', '=', resourceId).execute()
@@ -1257,6 +1233,60 @@ async function listInstalledModels(executor: DbExecutor): Promise<InstalledModel
     })
   }
   return [...resources.values()]
+}
+
+async function inspectModelResourceRemoval(
+  executor: DbExecutor,
+  resourceId: string,
+  expected?: InstalledModel,
+): Promise<ModelResourceRemovalInspection> {
+  const current = (await listInstalledModels(executor)).find(
+    (resource) => resource.id === resourceId,
+  )
+  const snapshot = (resource: InstalledModel) => ({
+    ...resource,
+    versions: [...resource.versions].sort((a, b) => a.id.localeCompare(b.id)),
+  })
+  if (
+    !current ||
+    (expected !== undefined &&
+      (expected.id !== resourceId || !isDeepStrictEqual(snapshot(current), snapshot(expected))))
+  ) {
+    throw new Error('The local resource changed. Review removal again.')
+  }
+  const versions = await executor
+    .selectFrom('model_resource_version')
+    .select('id')
+    .where('model_resource_id', '=', resourceId)
+    .execute()
+  if (versions.length !== current.versions.length) {
+    throw new Error('The local resource has incomplete file records. Removal is unavailable.')
+  }
+  const versionIds = versions.map((version) => version.id)
+  const incoming = await executor
+    .selectFrom('model_version_dependency')
+    .select('checkpoint_version_id')
+    .where('component_version_id', 'in', versionIds)
+    .where('checkpoint_version_id', 'not in', versionIds)
+    .executeTakeFirst()
+  if (incoming) {
+    throw new Error('Another installed Anima checkpoint requires this resource.')
+  }
+  const otherOwners = await executor
+    .selectFrom('local_model_file as file')
+    .innerJoin('model_resource_version as version', 'version.id', 'file.resource_version_id')
+    .select('file.managed_path')
+    .where('version.model_resource_id', '!=', resourceId)
+    .execute()
+  const sharedPaths = new Set(otherOwners.map((file) => path.resolve(file.managed_path)))
+  const files = new Map<string, InstalledModelFile>()
+  for (const version of current.versions) {
+    const filePath = path.resolve(version.file.managedPath)
+    if (!sharedPaths.has(filePath)) {
+      files.set(filePath, { ...version.file })
+    }
+  }
+  return structuredClone({ files: [...files.values()], model: current })
 }
 
 function assertNonNegativeBytes(value: number, label: string): void {

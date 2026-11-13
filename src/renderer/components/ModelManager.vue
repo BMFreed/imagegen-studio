@@ -200,6 +200,7 @@ let unsubscribeInstall: (() => void) | undefined
 let unsubscribeCatalog: (() => void) | undefined
 const removalReview = ref<ModelRemovalReview | null>(null)
 const removalAcknowledged = ref(false)
+const pendingCancellationAcknowledged = ref(false)
 const removalError = ref<string | null>(null)
 
 async function reviewRemoval() {
@@ -218,6 +219,7 @@ async function reviewRemoval() {
       throw new Error(result.error.message)
     }
     removalAcknowledged.value = false
+    pendingCancellationAcknowledged.value = false
     removalError.value = null
     removalReview.value = result.value
   } catch (cause) {
@@ -233,14 +235,23 @@ async function reviewRemoval() {
 
 async function removeReviewedResource() {
   const review = removalReview.value
-  if (!review || !removalAcknowledged.value || busy.value) {
+  if (
+    !review ||
+    !removalAcknowledged.value ||
+    busy.value ||
+    review.runningJobs > 0 ||
+    (review.pendingJobs > 0 && !pendingCancellationAcknowledged.value)
+  ) {
     return
   }
   busy.value = 'remove'
   removalError.value = null
   const current = readGuard.begin('removal')
   try {
-    const result = await requireApi().removeLocalResource(review.token)
+    const result = await requireApi().removeLocalResource(
+      review.token,
+      pendingCancellationAcknowledged.value,
+    )
     if (!current()) {
       return
     }
@@ -255,6 +266,7 @@ async function removeReviewedResource() {
     if (current()) {
       removalError.value = failureMessage(cause)
       removalAcknowledged.value = false
+      pendingCancellationAcknowledged.value = false
       // Tokens are one attempt. Re-review includes any partial filesystem change.
       const next = await requireApi().reviewRemoval(review.resourceId)
       if (current() && next.ok) {
@@ -1778,20 +1790,44 @@ onBeforeUnmount(() => {
           offline or unregistered Projects cannot be counted. There is no Trash or Restore; using
           this resource again requires a new verified installation.
         </NAlert>
-        <p>
-          Removal currently requires an idle generation queue and no model installations. Close
-          Models to finish or cancel pending jobs in Queue, then review again.
+        <NAlert v-if="removalReview.runningJobs" type="error">
+          {{ removalReview.runningJobs }} running jobs use this resource. Removal is blocked. Let
+          them finish, then close this dialog and review again. Remove never stops running work.
+        </NAlert>
+        <p v-else>No running jobs use this resource. Unrelated queue work is preserved.</p>
+        <NCheckbox
+          v-if="removalReview.pendingJobs"
+          v-model:checked="pendingCancellationAcknowledged"
+          :disabled="Boolean(removalReview.runningJobs)"
+        >
+          Cancel these {{ removalReview.pendingJobs }} affected pending jobs before removing the
+          resource
+        </NCheckbox>
+        <p v-if="removalReview.pendingJobs">
+          Only the reviewed pending jobs will be canceled. Their frozen inputs remain available for
+          Retry. If removal later fails, confirmed cancellations are kept; they are not undone
+          automatically. A changed affected set requires a new review.
         </p>
+        <p>Model installations must finish or be canceled before removal.</p>
         <NCheckbox v-model:checked="removalAcknowledged">
           I understand that referenced settings will become unavailable
         </NCheckbox>
-        <NAlert v-if="removalError" class="removal-error" type="error">{{ removalError }}</NAlert>
+        <NAlert v-if="removalError" key="n-alert-2" class="removal-error" type="error">
+          {{ removalError }}
+        </NAlert>
       </template>
       <template v-slot:footer>
         <div class="removal-actions">
           <NButton :disabled="Boolean(busy)" @click="removalReview = null">Cancel</NButton>
           <NButton
-            :disabled="!removalAcknowledged || Boolean(busy)"
+            :disabled="
+              !removalAcknowledged ||
+              Boolean(
+                busy ||
+                removalReview?.runningJobs ||
+                (removalReview?.pendingJobs && !pendingCancellationAcknowledged),
+              )
+            "
             :loading="busy === 'remove'"
             type="error"
             @click="removeReviewedResource"

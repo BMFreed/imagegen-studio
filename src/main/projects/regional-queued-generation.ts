@@ -31,6 +31,7 @@ import type {
   FrozenQueuedIllustriousTxt2ImgV1,
 } from './generation-queue.js'
 import type { AnimaOutpaintRequestV1 } from './outpaint-worker-request.js'
+import type { QueuedResourceUse } from './queue-resource-usage.js'
 import type {
   RegionalGenerationRequestV1,
   RegionalOutpaintInfill,
@@ -506,61 +507,91 @@ export async function loadRegionalQueuedInput(
     )
   }
 
-  const capturedPayload = parseRegionalPayload(
-    JSON.stringify(payload),
-    payload.kind !== 'illustrious-regional',
+  return await loadIllustriousRegionalQueuedInput(
+    root,
+    payload,
+    request as RegionalGenerationRequestV1,
+    true,
   )
-  const capturedRequest = structuredClone(request) as RegionalGenerationRequestV1
-  const files = await loadRegionalQueuedFiles(root, capturedPayload)
-  const metadata = parseMetadata(files['regional.json'])
-  const hydrated = hydrate(metadata, files)
-  let captured: RegionalWorkerInput
-  try {
-    captured = captureRegionalWorkerInput({
-      ...hydrated,
-      request: capturedRequest,
-    })
-  } catch {
-    throw invalid('The frozen regional recipe/request association is invalid.')
-  }
-  assertPublicRegionalGlobalEmbeddingsAgree(captured, capturedPayload.context)
-  if (captured.references) {
-    await verifyRegionalReferenceWorkerResources(captured.references)
-  }
-  const { output: _output, target, ...fullJob } = captured.request.job
-  let job = fullJob
-  if (captured.request.type === 'generate-illustrious-outpaint') {
-    if (
-      capturedPayload.kind !== 'illustrious-regional-outpaint' ||
-      !isDeepStrictEqual(captured.request.job.conditioning, capturedPayload.context.conditioning) ||
-      !isDeepStrictEqual(captured.request.job.infillResource, capturedPayload.outpaintInfill)
-    ) {
-      throw invalid('The frozen regional outpaint resources differ.')
-    }
-    const {
-      conditioning: _conditioning,
-      infillResource: _infill,
-      output: _output,
-      target: _target,
-      ...numeric
-    } = captured.request.job
-    job = numeric
-  }
-  const { path: _targetPath, ...targetDescriptor } = target
+}
+
+/**
+ * Removal inspection reuses the exact owned sidecar loader and recipe/command agreement. Only
+ * model-weight readiness checks are omitted: those belong to dispatch and must not turn a metadata
+ * inspection into a large ML file hash.
+ */
+export async function loadRegionalQueuedResourceUses(
+  root: string,
+  payload: FrozenQueuedRegionalOperationalV1,
+): Promise<QueuedResourceUse[]> {
+  const captured = parseFrozenQueuedRegionalOperationalV1(JSON.stringify(payload))
+  const target = { ...captured.workerJob.target, path: path.join(root, 'target.png') }
+  const output = { pngPath: path.join(root, 'result.png'), stagingRoot: root }
   if (
-    !isDeepStrictEqual({ ...job, target: targetDescriptor }, capturedPayload.workerJob) ||
-    captured.compositionProfile !==
-      (capturedPayload.kind !== 'illustrious-regional'
-        ? capturedPayload.compositionProfile
-        : undefined) ||
-    captured.initializationProfile !== capturedPayload.initializationProfile ||
-    captured.references?.profile !== capturedPayload.referenceProfile ||
-    captured.recipe.documentId !== capturedPayload.context.documentId ||
-    captured.recipe.documentRevision !== capturedPayload.context.documentRevision
+    captured.kind === 'anima-regional-txt2img' ||
+    captured.kind === 'anima-regional-img2img' ||
+    captured.kind === 'anima-regional-outpaint'
   ) {
-    throw invalid('The regional request differs from its frozen queue job.')
+    const request = {
+      job: {
+        ...structuredClone(captured.workerJob),
+        ...(captured.kind === 'anima-regional-outpaint'
+          ? { conditioning: captured.context.conditioning, infillResource: captured.outpaintInfill }
+          : {}),
+        output,
+        target,
+      },
+      protocolVersion: '1',
+      requestId: captured.originRequestId,
+      type:
+        captured.kind === 'anima-regional-outpaint'
+          ? 'generate-anima-outpaint'
+          : captured.kind === 'anima-regional-img2img'
+            ? 'generate-anima-img2img'
+            : 'generate-anima-txt2img',
+    } as AnimaOutpaintRequestV1 | AnimaWorkerRequest
+    await loadAnimaRegionalQueuedInput(root, captured, request)
+    return captured.kind === 'anima-regional-outpaint'
+      ? [{ managedPath: captured.outpaintInfill.path, sha256: captured.outpaintInfill.sha256 }]
+      : []
   }
-  return captured
+  const request = {
+    job: {
+      ...structuredClone(captured.workerJob),
+      ...(captured.kind === 'illustrious-regional-outpaint'
+        ? { conditioning: captured.context.conditioning, infillResource: captured.outpaintInfill }
+        : {}),
+      output,
+      target,
+    },
+    protocolVersion: '1',
+    requestId: captured.originRequestId,
+    type:
+      captured.kind === 'illustrious-regional-outpaint'
+        ? 'generate-illustrious-outpaint'
+        : captured.kind === 'illustrious-regional-img2img'
+          ? 'generate-illustrious-img2img'
+          : 'generate-illustrious-txt2img',
+  } as RegionalGenerationRequestV1
+  const input = await loadIllustriousRegionalQueuedInput(root, captured, request, false)
+  const uses: QueuedResourceUse[] = [
+    input.recipe.globalEmbeddings,
+    ...input.recipe.regions.map((region) => region.embeddings),
+  ]
+    .flatMap((pair) => [...(pair?.positive ?? []), ...(pair?.negative ?? [])])
+    .map((entry) => ({
+      localModelId: entry.reference.localModelId,
+      localVersionId: entry.reference.localVersionId,
+      managedPath: entry.managedPath,
+      sha256: entry.reference.fileSha256,
+    }))
+  for (const resource of Object.values(input.references?.resources ?? {})) {
+    uses.push({ managedPath: resource.path, sha256: resource.sha256 })
+  }
+  if (captured.kind === 'illustrious-regional-outpaint') {
+    uses.push({ managedPath: captured.outpaintInfill.path, sha256: captured.outpaintInfill.sha256 })
+  }
+  return uses
 }
 
 /** Exact fixed-role loading shared by both family recipes; no alternate filesystem owner. */
@@ -641,6 +672,69 @@ export function assertRegionalJsonTree(value: unknown, seen = new Set<object>(),
     assertRegionalJsonTree(child, seen, depth + 1)
   }
   seen.delete(value)
+}
+
+async function loadIllustriousRegionalQueuedInput(
+  root: string,
+  payload: FrozenQueuedIllustriousRegionalOperationalV1,
+  request: RegionalGenerationRequestV1,
+  verifyReferenceWeights: boolean,
+): Promise<RegionalWorkerInput> {
+  const capturedPayload = parseRegionalPayload(
+    JSON.stringify(payload),
+    payload.kind !== 'illustrious-regional',
+  )
+  const capturedRequest = structuredClone(request)
+  const files = await loadRegionalQueuedFiles(root, capturedPayload)
+  const metadata = parseMetadata(files['regional.json'])
+  const hydrated = hydrate(metadata, files)
+  let captured: RegionalWorkerInput
+  try {
+    captured = captureRegionalWorkerInput({
+      ...hydrated,
+      request: capturedRequest,
+    })
+  } catch {
+    throw invalid('The frozen regional recipe/request association is invalid.')
+  }
+  assertPublicRegionalGlobalEmbeddingsAgree(captured, capturedPayload.context)
+  if (verifyReferenceWeights && captured.references) {
+    await verifyRegionalReferenceWorkerResources(captured.references)
+  }
+  const { output: _output, target, ...fullJob } = captured.request.job
+  let job = fullJob
+  if (captured.request.type === 'generate-illustrious-outpaint') {
+    if (
+      capturedPayload.kind !== 'illustrious-regional-outpaint' ||
+      !isDeepStrictEqual(captured.request.job.conditioning, capturedPayload.context.conditioning) ||
+      !isDeepStrictEqual(captured.request.job.infillResource, capturedPayload.outpaintInfill)
+    ) {
+      throw invalid('The frozen regional outpaint resources differ.')
+    }
+    const {
+      conditioning: _conditioning,
+      infillResource: _infill,
+      output: _output,
+      target: _target,
+      ...numeric
+    } = captured.request.job
+    job = numeric
+  }
+  const { path: _targetPath, ...targetDescriptor } = target
+  if (
+    !isDeepStrictEqual({ ...job, target: targetDescriptor }, capturedPayload.workerJob) ||
+    captured.compositionProfile !==
+      (capturedPayload.kind !== 'illustrious-regional'
+        ? capturedPayload.compositionProfile
+        : undefined) ||
+    captured.initializationProfile !== capturedPayload.initializationProfile ||
+    captured.references?.profile !== capturedPayload.referenceProfile ||
+    captured.recipe.documentId !== capturedPayload.context.documentId ||
+    captured.recipe.documentRevision !== capturedPayload.context.documentRevision
+  ) {
+    throw invalid('The regional request differs from its frozen queue job.')
+  }
+  return captured
 }
 
 function readKind(json: string): unknown {

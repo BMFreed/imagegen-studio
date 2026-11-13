@@ -21,7 +21,7 @@ import {
   RecordedGenerationLoraStackSchema,
 } from '../../shared/projects/project-schema.js'
 
-import type { Kysely, Selectable } from 'kysely'
+import type { Kysely, Selectable, Transaction } from 'kysely'
 
 import { sql } from 'kysely'
 import { createHash, randomUUID } from 'node:crypto'
@@ -132,9 +132,15 @@ import {
 } from './project-smart-patch-execution.js'
 import { SmartPatchInputBundleRepository } from './project-smart-patch-input-bundle.js'
 import {
+  type QueuedResourceRemovalTarget,
+  type QueuedResourceUse,
+  queuePayloadResourceUses,
+} from './queue-resource-usage.js'
+import {
   captureRegionalQueuedMaterial,
   loadRegionalQueuedFiles,
   loadRegionalQueuedInput,
+  loadRegionalQueuedResourceUses,
   parseAcceptedGenerationBaseV1,
   parseFrozenQueuedRegionalInvokeV1,
   parseFrozenQueuedRegionalOperationalV1,
@@ -462,6 +468,18 @@ export interface QueuedGenerationItem {
   stagingSessionId: string
   status: 'canceled' | 'completed' | 'failed' | 'pending' | 'running'
   statusSequence: number
+}
+
+/** Main-only consent witnesses: queue identity/revision and the exact frozen metadata. */
+export interface QueueResourcePendingWitness {
+  id: string
+  payloadSha256: string
+  statusSequence: number
+}
+
+export interface QueueResourceUsage {
+  pending: QueueResourcePendingWitness[]
+  running: QueueResourcePendingWitness[]
 }
 
 /** Main-only witnesses from the already verified Smart Patch staging candidate set. */
@@ -2182,6 +2200,15 @@ export class GenerationQueueRepository {
     })
   }
 
+  /** Advisory review; execution re-reads the same authoritative frozen rows under serialization. */
+  async inspectResourceUsage(target: QueuedResourceRemovalTarget): Promise<QueueResourceUsage> {
+    const captured = captureResourceRemovalTarget(target)
+    return await this.serialize(async () => {
+      this.assertReadyForDispatch()
+      return (await this.readResourceUsage(captured, this.db)).usage
+    })
+  }
+
   /** App-wide history metadata. Neither target pixels nor checkpoint files are read. */
   async listManagerPage(cursor?: GenerationQueueCursor | null): Promise<GenerationQueuePage> {
     if (cursor !== undefined && cursor !== null && !isGenerationQueueCursor(cursor)) {
@@ -3198,6 +3225,70 @@ export class GenerationQueueRepository {
     })
   }
 
+  /**
+   * Invoke pending-only transactional cancellation adapted to a captured exact-resource scope.
+   * Existing serializer holds claim/admission through filesystem work. The caller owns the shared
+   * action admission and installer claim; work must not re-enter serialized queue methods.
+   * Cancellations commit before work, so a later unlink failure does not revive approved jobs.
+   */
+  async withResourceRemoval<T>(
+    target: QueuedResourceRemovalTarget,
+    reviewedPending: readonly QueueResourcePendingWitness[],
+    cancelPending: boolean,
+    work: () => Promise<T>,
+  ): Promise<T> {
+    const captured = captureResourceRemovalTarget(target)
+    const reviewed = captureResourcePendingWitnesses(reviewedPending)
+    if (typeof cancelPending !== 'boolean') {
+      throw resourceRemovalInputInvalid()
+    }
+    return await this.serialize(async () => {
+      this.assertReadyForDispatch()
+      await this.db.transaction().execute(async (transaction) => {
+        const { rows, usage } = await this.readResourceUsage(captured, transaction)
+        if (
+          usage.running.length > 0 ||
+          !isDeepStrictEqual(usage.pending, reviewed) ||
+          (usage.pending.length > 0 && !cancelPending)
+        ) {
+          throw statusConflict()
+        }
+        const now = new Date().toISOString()
+        for (const witness of usage.pending) {
+          const row = rows.get(witness.id)
+          if (!row || row.status !== 'pending' || row.error_code !== null) {
+            throw statusConflict()
+          }
+          const canceled = await transaction
+            .updateTable('generation_queue_item')
+            .set({
+              error_code: 'USER_CANCELED',
+              error_message: 'The job was canceled.',
+              finished_at: now,
+              status: 'canceled',
+              status_sequence: sql<number>`status_sequence + 1`,
+              updated_at: now,
+            })
+            .where('id', '=', row.id)
+            .where('status', '=', 'pending')
+            .where('status_sequence', '=', witness.statusSequence)
+            .where('frozen_payload_json', '=', row.frozen_payload_json)
+            .where('operation', '=', row.operation)
+            .where('local_project_key', '=', row.local_project_key)
+            .where('document_id', '=', row.document_id)
+            .where('document_revision', '=', row.document_revision)
+            .where('error_code', 'is', null)
+            .returning('id')
+            .executeTakeFirst()
+          if (!canceled) {
+            throw statusConflict()
+          }
+        }
+      })
+      return await work()
+    })
+  }
+
   private async claimNextRegional(
     operation: 'illustrious-regional' | 'invoke',
   ): Promise<VerifiedQueuedOperationalRegionalInput | null> {
@@ -3890,6 +3981,79 @@ export class GenerationQueueRepository {
     )
   }
 
+  private async readResourceUsage(
+    target: QueuedResourceRemovalTarget,
+    executor: Kysely<DB> | Transaction<DB>,
+  ): Promise<{
+    rows: Map<string, Selectable<GenerationQueueItem>>
+    usage: QueueResourceUsage
+  }> {
+    const unfinished = await executor
+      .selectFrom('generation_queue_item')
+      .selectAll()
+      .where('status', 'in', ['pending', 'running'])
+      .orderBy('id', 'asc')
+      .execute()
+    const rows = new Map<string, Selectable<GenerationQueueItem>>()
+    const usage: QueueResourceUsage = { pending: [], running: [] }
+    for (const row of unfinished) {
+      const item = toItem(row)
+      validateQueueId(row.id)
+      validateQueueId(row.batch_id)
+      validateQueueId(row.staging_session_id)
+      if (
+        (item.status !== 'pending' && item.status !== 'running') ||
+        !path.isAbsolute(row.canonical_project_path) ||
+        path.resolve(row.canonical_project_path) !== row.canonical_project_path ||
+        localProjectRecoveryKey(row.canonical_project_path) !== row.local_project_key ||
+        !UUID_PATTERN.test(row.document_id) ||
+        !UUID_PATTERN.test(row.document_revision) ||
+        (item.status === 'pending' && row.error_code !== null)
+      ) {
+        throw resourceRemovalInputInvalid()
+      }
+      let uses: QueuedResourceUse[]
+      try {
+        if (isSmartPatchQueueOperation(row.operation)) {
+          uses = queuePayloadResourceUses(parseSmartPatchQueueRow(row))
+        } else {
+          const payload = isRegionalQueueOperation(row.operation)
+            ? parseFrozenQueuedRegionalOperationalV1(row.frozen_payload_json)
+            : parsePayload(row.frozen_payload_json)
+          if (
+            payload.kind !== row.operation ||
+            payload.context.documentId !== row.document_id ||
+            payload.context.documentRevision !== row.document_revision
+          ) {
+            throw resourceRemovalInputInvalid()
+          }
+          const regionalUses = isRegionalQueueOperation(row.operation)
+            ? await loadRegionalQueuedResourceUses(
+                path.join(this.root, row.id),
+                payload as FrozenQueuedRegionalOperationalV1,
+              )
+            : undefined
+          uses = queuePayloadResourceUses(payload, regionalUses)
+        }
+      } catch {
+        // Unknown/unreadable active work can never establish that a resource is unused.
+        throw resourceRemovalInputInvalid()
+      }
+      if (uses.map((use) => resourceRemovalUseMatches(use, target)).some(Boolean)) {
+        const witness = {
+          id: item.id,
+          payloadSha256: sha256(Buffer.from(row.frozen_payload_json, 'utf8')),
+          statusSequence: item.statusSequence,
+        }
+        usage[item.status].push(witness)
+        rows.set(item.id, row)
+      }
+    }
+    usage.pending.sort((left, right) => left.id.localeCompare(right.id))
+    usage.running.sort((left, right) => left.id.localeCompare(right.id))
+    return { rows, usage }
+  }
+
   /** Failure to parse even one possible reference is not proof that a bundle is unowned. */
   private async referencedSmartPatchBundles(): Promise<Set<string>> {
     const rows = await this.db
@@ -4575,6 +4739,87 @@ function captureSmartPatchMaterial(input: SmartPatchInputMaterial): SmartPatchIn
     files[name] = Buffer.from(bytes)
   }
   return { files, manifest: structuredClone(input.manifest) }
+}
+
+function resourceRemovalInputInvalid(): GenerationQueueError {
+  return new GenerationQueueError(
+    'QUEUE_INPUT_INVALID',
+    'Resource usage could not be verified from the frozen generation queue. No jobs were canceled.',
+  )
+}
+
+function captureResourceRemovalTarget(
+  target: QueuedResourceRemovalTarget,
+): QueuedResourceRemovalTarget {
+  if (
+    !target ||
+    typeof target.resourceId !== 'string' ||
+    !UUID_PATTERN.test(target.resourceId) ||
+    !Array.isArray(target.versionIds) ||
+    target.versionIds.length === 0 ||
+    target.versionIds.some((id) => typeof id !== 'string' || !UUID_PATTERN.test(id)) ||
+    new Set(target.versionIds).size !== target.versionIds.length ||
+    !Array.isArray(target.unsharedPaths) ||
+    target.unsharedPaths.some(
+      (file) =>
+        typeof file !== 'string' ||
+        file.includes('\0') ||
+        !path.isAbsolute(file) ||
+        path.resolve(file) !== file,
+    ) ||
+    new Set(target.unsharedPaths).size !== target.unsharedPaths.length
+  ) {
+    throw resourceRemovalInputInvalid()
+  }
+  return {
+    resourceId: target.resourceId,
+    unsharedPaths: [...target.unsharedPaths].sort(),
+    versionIds: [...target.versionIds].sort(),
+  }
+}
+
+function captureResourcePendingWitnesses(
+  witnesses: readonly QueueResourcePendingWitness[],
+): QueueResourcePendingWitness[] {
+  if (!Array.isArray(witnesses)) {
+    throw resourceRemovalInputInvalid()
+  }
+  const captured = witnesses.map((witness) => {
+    if (
+      !witness ||
+      typeof witness.id !== 'string' ||
+      !UUID_PATTERN.test(witness.id) ||
+      typeof witness.payloadSha256 !== 'string' ||
+      !SHA256_PATTERN.test(witness.payloadSha256) ||
+      !Number.isSafeInteger(witness.statusSequence) ||
+      witness.statusSequence < 0 ||
+      witness.statusSequence >= Number.MAX_SAFE_INTEGER
+    ) {
+      throw resourceRemovalInputInvalid()
+    }
+    return {
+      id: witness.id,
+      payloadSha256: witness.payloadSha256,
+      statusSequence: witness.statusSequence,
+    }
+  })
+  if (new Set(captured.map((witness) => witness.id)).size !== captured.length) {
+    throw resourceRemovalInputInvalid()
+  }
+  return captured.sort((left, right) => left.id.localeCompare(right.id))
+}
+
+function resourceRemovalUseMatches(
+  use: QueuedResourceUse,
+  target: QueuedResourceRemovalTarget,
+): boolean {
+  const modelMatches = use.localModelId === target.resourceId
+  const versionMatches =
+    use.localVersionId !== undefined && target.versionIds.includes(use.localVersionId)
+  if ((modelMatches && !versionMatches) || (versionMatches && !modelMatches)) {
+    throw resourceRemovalInputInvalid()
+  }
+  return modelMatches || versionMatches || target.unsharedPaths.includes(use.managedPath)
 }
 
 function parseSmartPatchQueueRow(row: Selectable<GenerationQueueItem>): FrozenQueuedSmartPatchV1 {

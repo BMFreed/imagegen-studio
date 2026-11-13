@@ -5,8 +5,11 @@ import { randomUUID } from 'node:crypto'
 import { closeSync, fsyncSync, lstatSync, openSync, unlinkSync } from 'node:fs'
 import path from 'node:path'
 
+import type { GenerationQueueRepository, QueueResourceUsage } from '../projects/generation-queue.js'
+import type { QueuedResourceRemovalTarget } from '../projects/queue-resource-usage.js'
 import type { InstalledModel, InstalledModelFile, ModelRepository } from './model-repository.js'
 
+import { GenerationQueueError } from '../projects/generation-queue.js'
 import { ModelServiceError } from './model-service.js'
 
 /**
@@ -15,14 +18,23 @@ import { ModelServiceError } from './model-service.js'
  * delete, Trash, retained weight or independent queue.
  */
 export class ModelRemovalService {
-  private captured: { model: InstalledModel; token: string } | null = null
+  private captured: {
+    model: InstalledModel
+    target: QueuedResourceRemovalTarget
+    token: string
+    usage: QueueResourceUsage
+  } | null = null
 
   constructor(
     private readonly repository: ModelRepository,
     private readonly modelRoot: string,
+    private readonly getQueue: () => Pick<
+      GenerationQueueRepository,
+      'inspectResourceUsage' | 'withResourceRemoval'
+    >,
   ) {}
 
-  async removeLocalResource(token: string): Promise<void> {
+  async removeLocalResource(token: string, cancelPending = false): Promise<void> {
     const captured = this.captured
     if (!isModelRemovalId(token) || !captured || captured.token !== token) {
       throw new ModelServiceError(
@@ -32,49 +44,82 @@ export class ModelRemovalService {
     }
     // A failed attempt requires a fresh review, including partial filesystem failure.
     this.captured = null
+    let cancellationsCommitted = false
     try {
-      await this.repository.removeLocalResource(
+      const inspection = await this.repository.inspectLocalResourceRemoval(
         captured.model.id,
         captured.model,
-        async (files) => {
-          // Check the complete footprint before the first unlink. A later OS failure
-          // can still leave a partial removal; registry rollback preserves exact retry.
-          for (const file of files) {
-            this.checkPath(file)
-          }
-          for (const file of files) {
-            this.checkPath(file)
-            try {
-              unlinkSync(file.managedPath)
-            } catch (error) {
-              if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-                throw error
+      )
+      const target = this.removalTarget(inspection.model, inspection.files)
+      if (JSON.stringify(target) !== JSON.stringify(captured.target)) {
+        throw new ModelServiceError(
+          'MODEL_REMOVAL_STALE',
+          'The resource file ownership changed. Review removal again.',
+        )
+      }
+      for (const version of inspection.model.versions) {
+        this.checkPath(version.file)
+      }
+      await this.getQueue().withResourceRemoval(
+        target,
+        captured.usage.pending,
+        cancelPending,
+        async () => {
+          // This callback is entered only after the pending-only transaction commits.
+          cancellationsCommitted = cancelPending && captured.usage.pending.length > 0
+          await this.repository.removeLocalResource(
+            captured.model.id,
+            captured.model,
+            async (files) => {
+              // Check the complete footprint before the first unlink. A later OS failure
+              // can still leave a partial removal; registry rollback preserves exact retry.
+              for (const file of files) {
+                this.checkPath(file)
               }
-            }
-            let descriptor: number
-            try {
-              descriptor = openSync(path.dirname(file.managedPath), 'r')
-            } catch (error) {
-              if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-                continue
+              for (const file of files) {
+                this.checkPath(file)
+                try {
+                  unlinkSync(file.managedPath)
+                } catch (error) {
+                  if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+                    throw error
+                  }
+                }
+                let descriptor: number
+                try {
+                  descriptor = openSync(path.dirname(file.managedPath), 'r')
+                } catch (error) {
+                  if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+                    continue
+                  }
+                  throw error
+                }
+                try {
+                  fsyncSync(descriptor)
+                } finally {
+                  closeSync(descriptor)
+                }
               }
-              throw error
-            }
-            try {
-              fsyncSync(descriptor)
-            } finally {
-              closeSync(descriptor)
-            }
-          }
+            },
+          )
         },
       )
     } catch (error) {
       if (error instanceof ModelServiceError) {
+        if (cancellationsCommitted) {
+          throw new ModelServiceError(
+            error.code,
+            `${captured.usage.pending.length} reviewed pending jobs were canceled. ${error.message}`,
+          )
+        }
         throw error
+      }
+      if (error instanceof GenerationQueueError) {
+        throw new ModelServiceError('MODEL_REMOVAL_USAGE_CHANGED', error.message)
       }
       throw new ModelServiceError(
         'MODEL_REMOVAL_FAILED',
-        'Removal did not complete. Some files may already be absent. Refresh Models, review the resource and retry; Project and Preset settings were not changed.',
+        `${cancellationsCommitted ? `${captured.usage.pending.length} reviewed pending jobs were canceled. ` : ''}Removal did not complete. Some files may already be absent. Refresh Models, review the resource and retry; Project and Preset settings were not changed.`,
       )
     }
   }
@@ -84,26 +129,33 @@ export class ModelRemovalService {
       throw new ModelServiceError('MODEL_INVALID_ID', 'Invalid resource ID.')
     }
     const all = await this.repository.listInstalled()
-    const model = all.find((item) => item.id === resourceId)
-    if (!model) {
+    if (!all.some((model) => model.id === resourceId)) {
       throw new ModelServiceError('MODEL_NOT_FOUND', 'This resource is no longer installed.')
     }
+    const { files, model } = await this.repository.inspectLocalResourceRemoval(resourceId)
     const paths = new Set(model.versions.map((item) => item.file.managedPath))
-    const otherPaths = new Set(
-      all
-        .filter((item) => item.id !== resourceId)
-        .flatMap((item) => item.versions.map((version) => version.file.managedPath)),
-    )
     for (const version of model.versions) {
       this.checkPath(version.file)
     }
+    const target = this.removalTarget(model, files)
+    let usage: QueueResourceUsage
+    try {
+      usage = await this.getQueue().inspectResourceUsage(target)
+    } catch {
+      throw new ModelServiceError(
+        'MODEL_REMOVAL_USAGE_UNAVAILABLE',
+        'Resource use could not be verified. Check the generation queue before removing this resource.',
+      )
+    }
     const token = randomUUID()
-    this.captured = { model: structuredClone(model), token }
+    this.captured = { model: structuredClone(model), target, token, usage: structuredClone(usage) }
     return {
       fileCount: paths.size,
       name: model.displayName,
+      pendingJobs: usage.pending.length,
       resourceId,
-      sharedFileCount: [...paths].filter((item) => otherPaths.has(item)).length,
+      runningJobs: usage.running.length,
+      sharedFileCount: paths.size - files.length,
       token,
       versionCount: model.versions.length,
     }
@@ -154,6 +206,17 @@ export class ModelRemovalService {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
         throw error
       }
+    }
+  }
+
+  private removalTarget(
+    model: InstalledModel,
+    files: InstalledModelFile[],
+  ): QueuedResourceRemovalTarget {
+    return {
+      resourceId: model.id,
+      unsharedPaths: files.map((file) => path.resolve(file.managedPath)).sort(),
+      versionIds: model.versions.map((version) => version.id).sort(),
     }
   }
 }

@@ -19,6 +19,7 @@ import path from 'node:path'
 import { test } from 'node:test'
 
 import { openAppDatabase } from '../db/database.js'
+import { GenerationQueueRepository } from '../projects/generation-queue.js'
 import { ModelRemovalService } from './model-removal-service.js'
 import { ModelRepository, type VerifiedModelArtifact } from './model-repository.js'
 
@@ -69,7 +70,9 @@ async function withService(
   const root = mkdtempSync(path.join(os.tmpdir(), 'igs-removal-service-'))
   const app = openAppDatabase(root, migrations)
   const repository = new ModelRepository(app.db)
-  const service = new ModelRemovalService(repository, path.join(root, 'models'))
+  const queue = new GenerationQueueRepository(app.db, root)
+  await queue.recoverAfterRestart()
+  const service = new ModelRemovalService(repository, path.join(root, 'models'), () => queue)
   try {
     await run({ app, repository, root, service })
   } finally {
@@ -91,7 +94,9 @@ test('actual service removal unlinks every captured managed version and leaves n
       {
         fileCount: 2,
         name: first.resource.displayName,
+        pendingJobs: 0,
         resourceId: installed.resourceId,
+        runningJobs: 0,
         sharedFileCount: 0,
         token: 'opaque',
         versionCount: 2,

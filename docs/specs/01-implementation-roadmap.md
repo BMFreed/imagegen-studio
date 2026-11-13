@@ -1,14 +1,16 @@
 # Implementation Roadmap
 
-## Current idle hard Remove checkpoint
+## Current resource-specific hard Remove checkpoint
 
-[Idle hard Remove](../engineering/phase-4-model-removal-research.md) has a real
-confirmed Models → Main → filesystem/registry consumer and exact new verified
-reinstall identity. The finite implementation requires an idle generation queue
-and installer, preserves shared paths/companions and leaves references untouched.
-Resource-specific running/pending inspection and explicit affected-pending
-cancellation remain required for the complete Remove contract. No public-status
-promotion or release readiness follows.
+[Resource-specific hard Remove](../engineering/phase-4-model-removal-usage-research.md)
+extends [the idle consumer](../engineering/phase-4-model-removal-research.md) with
+strict frozen-use inspection, affected running refusal and separately confirmed
+cancellation of exactly the reviewed pending set. Changed affected pending state
+requires a fresh review; unrelated jobs remain untouched. Existing generation
+admission and idle installer guards protect the operation. Approved cancellations
+survive a later filesystem/registry failure. Shared paths/companions, copied references and exact
+new verified reinstall identity remain protected. Finite qualification does not
+establish joint resource acceptance, public readiness or release readiness.
 
 ## Previous accepted Compare Models checkpoint
 
@@ -401,10 +403,11 @@ Anima Smart enabled-LoRA refusal описывает исторический che
    Trash lifecycle и последние workspace shortcuts/model notice уже имеют finite
    production checkpoints выше. Не повторять их как отсутствующие consumers;
    совместная compatibility/capacity и итоговая Home/MVP acceptance остаются отдельными.
-4. **Model Manager:** idle hard Remove имеет finite checkpoint выше; остаются
-   resource-specific running/pending guards и подтверждённая отмена только
-   затронутых pending jobs. Generic reference warning/shared-file и companion
-   preservation уже входят в idle consumer; полная совместная приёмка отдельна.
+4. **Model Manager:** resource-specific hard Remove, running-use guard и
+   подтверждённая отмена точного reviewed pending set подключены в checkpoint
+   выше. Generic reference warning, shared-file/companion preservation и exact
+   fresh reinstall identity сохранены; полная совместная приёмка ресурсов и MVP
+   остаётся отдельной.
    Missing accepted-result resources → Models из Compare,
    global Models menu, active Preset Manager и New Project exact-resource return
    имеют finite checkpoints выше. Project checkpoint/LoRA/VAE/embedding navigation,

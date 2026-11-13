@@ -1137,9 +1137,9 @@ const api: StudioApi = {
     openSourceLink: (url) => invokeModel(ipcChannels.models.openSourceLink, [url], isVoid),
     previewImport: (url) =>
       invokeModel(ipcChannels.models.previewImport, [url], isModelImportPreview),
-    removeLocalResource: (token) =>
-      isModelRemovalId(token)
-        ? invokeModel(ipcChannels.models.removeLocalResource, [token], isVoid)
+    removeLocalResource: (token, cancelPending = false) =>
+      isModelRemovalId(token) && typeof cancelPending === 'boolean'
+        ? invokeModel(ipcChannels.models.removeLocalResource, [token, cancelPending], isVoid)
         : Promise.resolve({
             error: { code: 'MODEL_INVALID_ID', message: 'Invalid removal review.' },
             ok: false,
