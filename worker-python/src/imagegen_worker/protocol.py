@@ -19,11 +19,13 @@ from imagegen_worker.compositor import (
     MAX_TARGET_PIXELS,
     MAX_TARGET_SIDE,
     MAX_WORLD_COORDINATE,
+    ComposeExportRequest,
     ComposePreviewRequest,
     ComposeTargetRequest,
     LayerTransform,
     PreviewLayer,
     PreviewRect,
+    compose_export,
     compose_preview,
     compose_target,
 )
@@ -110,6 +112,12 @@ class ResourcePreviewCommand:
 class ComposePreviewCommand:
     request_id: str
     preview: ComposePreviewRequest
+
+
+@dataclass(frozen=True)
+class ComposeExportCommand:
+    request_id: str
+    export: ComposeExportRequest
 
 
 @dataclass(frozen=True)
@@ -336,6 +344,7 @@ def ready_message() -> dict[str, object]:
             "import-normalization",
             "import-thumbnail",
             "preview-composition",
+            "export-composition",
             "resource-preview",
             "self-test",
             "target-composition",
@@ -1122,6 +1131,7 @@ def parse_request(
     | ImportThumbnailCommand
     | ResourcePreviewCommand
     | ComposePreviewCommand
+    | ComposeExportCommand
     | ComposeTargetCommand
     | PrepareSmartPatchCommand
     | FadeSmartPatchCommand
@@ -1284,6 +1294,31 @@ def parse_request(
                     output_fields["thumbnailWebpPath"], "Thumbnail output path"
                 ),
                 thumbnail_max_side=_positive_integer(fields["thumbnailMaxSide"], "Thumbnail side"),
+            ),
+        )
+    if fields.get("type") == "compose-export":
+        _object(
+            fields,
+            "Export request",
+            {"type", "requestId", "protocolVersion", "layers", "output"},
+            optional_keys={"bbox"},
+        )
+        raw_layers = fields["layers"]
+        if not isinstance(raw_layers, list):
+            raise DerivativeError("INVALID_REQUEST", "Export layers must be a bounded array.")
+        layers = cast(list[object], raw_layers)
+        if len(layers) > MAX_LAYERS:
+            raise DerivativeError("INVALID_REQUEST", "Export layers must be a bounded array.")
+        output_fields = _object(
+            fields["output"], "Export output", {"stagingRoot", "compositePngPath"}
+        )
+        return ComposeExportCommand(
+            request_id=request_id,
+            export=ComposeExportRequest(
+                layers=tuple(_preview_layer(layer) for layer in layers),
+                bbox=_target_bbox(fields["bbox"]) if "bbox" in fields else None,
+                staging_root=_path(output_fields["stagingRoot"], "Staging root"),
+                composite_png_path=_path(output_fields["compositePngPath"], "Export PNG output"),
             ),
         )
     if fields.get("type") == "compose-target":
@@ -1710,6 +1745,14 @@ def process_request(value: object) -> dict[str, object]:
                 "protocolVersion": PROTOCOL_VERSION,
                 "requestId": command.request_id,
                 **resource_result,
+            }
+        if isinstance(command, ComposeExportCommand):
+            export_result = compose_export(command.export)
+            return {
+                "type": "export-done",
+                "protocolVersion": PROTOCOL_VERSION,
+                "requestId": command.request_id,
+                **export_result,
             }
         if isinstance(command, ComposeTargetCommand):
             result = compose_target(command.target)

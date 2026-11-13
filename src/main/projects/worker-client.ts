@@ -126,6 +126,24 @@ export interface ComposePreviewInput {
   thumbnailWebpPath: string
 }
 
+/** Exact 1:1 sRGB export; absent bbox selects actual visible-content bounds. */
+export interface ComposeExportInput {
+  bbox?: IgsPreviewRectV1
+  compositePngPath: string
+  layers: ComposePreviewInput['layers']
+  stagingRoot: string
+}
+
+export type ComposeExportPayload = {
+  bbox?: IgsPreviewRectV1
+  layers: ComposePreviewInput['layers']
+  output: { compositePngPath: string; stagingRoot: string }
+}
+
+export type ComposeExportResult =
+  | { composite: null; rect: null; status: 'empty' }
+  | { composite: VerifiedWorkerImage; rect: IgsPreviewRectV1; status: 'rendered' }
+
 /** One exact, finite crop of the frozen Project stack for a future generation job. */
 export interface ComposeTargetInput {
   bbox: IgsPreviewRectV1
@@ -358,6 +376,7 @@ type PendingRequest = {
   timer: ReturnType<typeof setTimeout>
   type:
     | 'derivative-done'
+    | 'export-done'
     | 'import-done'
     | 'import-thumbnail-done'
     | 'preview-done'
@@ -595,6 +614,20 @@ export class ProjectWorkerClient {
       throw error
     })
     await this.closePromise
+  }
+
+  async composeExport(input: ComposeExportInput): Promise<ComposeExportResult> {
+    return this.exclusive(async () => {
+      if (!this.ready.capabilities.includes('export-composition')) {
+        throw new ProjectWorkerError(
+          'WORKER_VERSION_MISMATCH',
+          'The image worker cannot export Project images. Repair its CPU runtime.',
+        )
+      }
+      return composeExportWithTransport(input, this.stagingBasePath, (payload) =>
+        this.request('compose-export', 'export-done', payload),
+      )
+    })
   }
 
   async composePreview(input: ComposePreviewInput): Promise<ComposePreviewResult> {
@@ -1164,6 +1197,7 @@ export class ProjectWorkerClient {
 
   private request(
     type:
+      | 'compose-export'
       | 'compose-preview'
       | 'compose-smart-patch-output'
       | 'compose-target'
@@ -1227,6 +1261,78 @@ export class ProjectWorkerClient {
     clearTimeout(timeout)
     return this.exitObserved
   }
+}
+
+/** Invoke snapshot/finite-region export adapted to the shared verified CPU transport. */
+export async function composeExportWithTransport(
+  input: ComposeExportInput,
+  stagingBasePath: string,
+  request: (payload: ComposeExportPayload) => Promise<Record<string, unknown>>,
+): Promise<ComposeExportResult> {
+  const layers = snapshotCompositionLayers(input.layers)
+  const bbox = input.bbox === undefined ? undefined : { ...input.bbox }
+  if (bbox !== undefined) {
+    validateExportGeometry(bbox, false)
+  }
+  const { paths, stagingRoot } = await validateOutputPathsWithinBase(
+    stagingBasePath,
+    input.stagingRoot,
+    [[input.compositePngPath, '.png']],
+  )
+  for (const layer of layers) {
+    await validateInputPath(layer.path, layer.sha256, paths)
+    await verifyCompositionInput(layer)
+  }
+  const stagedBefore = new Set(await readdir(stagingRoot))
+  const response = await request({
+    ...(bbox === undefined ? {} : { bbox }),
+    layers,
+    output: { compositePngPath: paths[0], stagingRoot },
+  })
+  const keys = ['type', 'protocolVersion', 'requestId', 'status', 'rect', 'composite']
+  if (Object.keys(response).some((key) => !keys.includes(key))) {
+    throw new ProjectWorkerError('PROTOCOL_ERROR', 'The export response has unsupported fields.')
+  }
+  if (response.status === 'empty') {
+    if (
+      response.rect !== null ||
+      response.composite !== null ||
+      (await pathExists(paths[0])) ||
+      (await readdir(stagingRoot)).some((entry) => !stagedBefore.has(entry))
+    ) {
+      throw new ProjectWorkerError('OUTPUT_MISMATCH', 'An empty export has unexpected output.')
+    }
+    return { composite: null, rect: null, status: 'empty' }
+  }
+  if (response.status !== 'rendered') {
+    throw new ProjectWorkerError('PROTOCOL_ERROR', 'The export status is invalid.')
+  }
+  const rawRect = object(response.rect, 'Export rect')
+  if (Object.keys(rawRect).sort().join(',') !== 'height,width,x,y') {
+    throw new ProjectWorkerError('OUTPUT_MISMATCH', 'The export rect has unsupported fields.')
+  }
+  let rect: IgsPreviewRectV1
+  if (bbox === undefined) {
+    rect = validatePreviewRect(rawRect, layers)
+  } else {
+    validateTargetRect(rawRect, bbox)
+    rect = bbox
+  }
+  validateExportGeometry(rect, true)
+  const composite = await verifyImageOutput(
+    paths[0],
+    response.composite,
+    MAX_MERGED_BYTES,
+    'png',
+    true,
+  )
+  if (composite.width !== rect.width || composite.height !== rect.height) {
+    throw new ProjectWorkerError(
+      'OUTPUT_MISMATCH',
+      'Export pixels must match the exact export rect without rescaling.',
+    )
+  }
+  return { composite, rect, status: 'rendered' }
 }
 
 /** Reuses target verification with a transport owned and serialized by the caller. */
@@ -1824,6 +1930,37 @@ export async function readSmartPatchModelSourceOutput(
   return readSmartPatchPreparationOutput(expectedPath, artifact, 'model-source')
 }
 
+/** Existing portable image limits; target composition retains its separate generation limits. */
+function validateExportGeometry(rect: IgsPreviewRectV1, workerOutput: boolean): void {
+  const ceiling = workerOutput
+    ? IGS_SAFETY_CEILINGS.previewCoordinateMagnitude
+    : IGS_SAFETY_CEILINGS.coordinateMagnitude
+  if (
+    !Number.isSafeInteger(rect.x) ||
+    !Number.isSafeInteger(rect.y) ||
+    Math.abs(rect.x) > ceiling ||
+    Math.abs(rect.y) > ceiling ||
+    !Number.isSafeInteger(rect.width) ||
+    !Number.isSafeInteger(rect.height) ||
+    rect.width < 1 ||
+    rect.height < 1 ||
+    rect.x + rect.width > IGS_SAFETY_CEILINGS.previewCoordinateMagnitude ||
+    rect.y + rect.height > IGS_SAFETY_CEILINGS.previewCoordinateMagnitude
+  ) {
+    throw new ProjectWorkerError(
+      workerOutput ? 'OUTPUT_MISMATCH' : 'INVALID_REQUEST',
+      'Export bounds are invalid.',
+    )
+  }
+  if (
+    rect.width > MAX_IMAGE_SIDE ||
+    rect.height > MAX_IMAGE_SIDE ||
+    rect.width * rect.height > MAX_COMPOSITION_SOURCE_PIXELS
+  ) {
+    throw new ProjectWorkerError('IMAGE_TOO_LARGE', 'Export bounds exceed the image pixel limit.')
+  }
+}
+
 function assertSmartPatchModelSourceRgb(
   bytes: Buffer,
   dimensions: { height: number; width: number },
@@ -2325,6 +2462,7 @@ async function verifyImageOutput(
   rawMetadata: unknown,
   maxBytes: number,
   format: 'png' | 'webp',
+  requireRgba = false,
 ): Promise<VerifiedWorkerImage> {
   const metadata = object(rawMetadata, 'Worker image metadata')
   if (
@@ -2344,6 +2482,15 @@ async function verifyImageOutput(
     throw new ProjectWorkerError('OUTPUT_MISMATCH', 'The worker image metadata is invalid.')
   }
   const actual = await inspectVerifiedFile(filePath, maxBytes, async (file, byteSize) => {
+    if (requireRgba) {
+      const header = await readAt(file, 24, 5)
+      if (format !== 'png' || header[0] !== 8 || header[1] !== 6 || header[4] !== 0) {
+        throw new ProjectWorkerError(
+          'OUTPUT_MISMATCH',
+          'Export must be a canonical 8-bit RGBA PNG.',
+        )
+      }
+    }
     if (format === 'png') {
       await validateSrgbPngStream(
         file.createReadStream({ autoClose: false, start: 0 }),

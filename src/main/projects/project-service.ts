@@ -67,6 +67,10 @@ import {
   isGenerationTargetKey,
   type ProjectGenerationTargetState,
 } from '../../shared/projects/project-generation-target-state.js'
+import type {
+  ProjectImageExportRegion,
+  ProjectImageExportResult,
+} from '../../shared/projects/project-image-export.js'
 import { resolveProjectMaskSettings } from '../../shared/projects/project-mask-settings.js'
 import type { ProjectMaskBitmap } from '../../shared/projects/project-mask.js'
 import { ProjectMaskError } from '../../shared/projects/project-mask.js'
@@ -144,6 +148,7 @@ import path from 'node:path'
 import type { PreparedAnimaGenerationBatch } from './anima-generation-batch.js'
 import type { AnimaGenerationModelResolver } from './anima-generation-preparation.js'
 import type { GenerationModelResolver } from './illustrious-generation-loras.js'
+import type { CandidateImageDestinationSelection } from './project-candidate-image-export.js'
 import type { buildFrozenGenerationTarget } from './project-generation-target.js'
 import type { ProjectIndexRepository } from './project-index.js'
 import type { ProjectShadowStore } from './project-shadow.js'
@@ -205,6 +210,7 @@ import {
   ProjectIdentityError,
   rawPathDerivedProjectRecoveryKey,
 } from './project-identity.js'
+import { exportProjectImage, ProjectImageExportError } from './project-image-export.js'
 import {
   ProjectIndexError,
   type ProjectIndexRecord,
@@ -1329,6 +1335,44 @@ export class ProjectService {
       { expectedDocumentEpoch: epoch, expectedDocumentRevision: document.documentRevision },
     )
     return this.toTab(tabId, coordinator)
+  }
+
+  /** Read-only content/bbox export: the selected Smart Patch never substitutes its bbox. */
+  async exportImage(
+    tabId: string,
+    region: ProjectImageExportRegion,
+    worker: Pick<ProjectWorkerClient, 'composeExport'>,
+    chooseDestination: (defaultFileName: string) => Promise<CandidateImageDestinationSelection>,
+  ): Promise<ProjectImageExportResult> {
+    const coordinator = this.requireTab(tabId)
+    const document = coordinator.document
+    const documentEpoch = coordinator.documentEpoch
+    const filePath = coordinator.filePath
+    const assertCurrent = () => {
+      if (
+        this.openTabs.get(tabId) !== coordinator ||
+        coordinator.relocationPending ||
+        coordinator.filePath !== filePath ||
+        coordinator.document.documentId !== document.documentId ||
+        coordinator.document.documentRevision !== document.documentRevision ||
+        coordinator.documentEpoch !== documentEpoch
+      ) {
+        throw new ProjectImageExportError(
+          'PROJECT_IMAGE_EXPORT_CHANGED',
+          'The Project changed while exporting. Review the image and export again.',
+        )
+      }
+    }
+    return await exportProjectImage({
+      assertCurrent,
+      chooseDestination,
+      document,
+      packagePath: filePath,
+      pendingSource: (asset) => coordinator.getCurrentAssetSource(asset),
+      region,
+      scratchBasePath: this.options.roots.scratchDir,
+      worker,
+    })
   }
 
   /** Publish a validated copy before considering removal of the external source. */

@@ -46,6 +46,7 @@ import {
   hashGenerationTargetSignature,
   type ProjectGenerationTargetState,
 } from '../shared/projects/project-generation-target-state.js'
+import type { ProjectImageExportRegion } from '../shared/projects/project-image-export.js'
 import { validateProjectRenameName } from '../shared/projects/project-rename.js'
 import type { IgsRectV1, IgsRegionalGuidanceV1 } from '../shared/projects/project-schema.js'
 import type { ProjectTrashSummary } from '../shared/projects/project-trash.js'
@@ -200,6 +201,7 @@ type PendingProjectAction =
         | 'close'
         | 'discard'
         | 'export-candidate'
+        | 'export-image'
         | 'generate'
         | 'history'
         | 'import-image'
@@ -414,6 +416,7 @@ const saveNotices = ref<Record<string, string | null>>({})
 const reloadRequiredIds = ref<Set<string>>(new Set())
 const globalNotice = ref<string | null>(null)
 const pendingProjectAction = ref<PendingProjectAction | null>(null)
+const imageExportNotice = ref<{ message: string; tabId: string } | null>(null)
 const pendingAcceptance = ref<PendingAcceptance | null>(null)
 const pendingGeneration = ref<PendingGeneration | null>(null)
 const generationCommitting = ref(false)
@@ -4783,6 +4786,36 @@ function clearExportFeedback(tabId: string) {
   exportFeedbackByTab.value = { ...exportFeedbackByTab.value, [tabId]: null }
 }
 
+async function exportProjectImage(region: ProjectImageExportRegion) {
+  const tab = activeTab.value
+  if (
+    !tab ||
+    tab.relocationPending ||
+    pendingProjectAction.value ||
+    windowClosePending.value ||
+    reloadRequiredIds.value.has(tab.id)
+  ) {
+    return
+  }
+  pendingProjectAction.value = { kind: 'export-image', tabId: tab.id }
+  imageExportNotice.value = null
+  setTabError(tab.id, null)
+  try {
+    await flushProjectDraft(tab.id)
+    const result = await apiValue(() => projectApi().exportImage(tab.id, region))
+    if (result.kind === 'exported') {
+      imageExportNotice.value = {
+        message: `Exported ${result.fileName} (${result.rect.width} × ${result.rect.height}).`,
+        tabId: tab.id,
+      }
+    }
+  } catch (cause) {
+    setTabError(tab.id, errorMessage(cause))
+  } finally {
+    pendingProjectAction.value = null
+  }
+}
+
 async function saveCandidateImage(tabId: string, candidateId: string) {
   if (pendingProjectAction.value !== null || windowClosePending.value) {
     return
@@ -5579,6 +5612,13 @@ onBeforeUnmount(() => {
       "
     >
       <AppChrome
+        :canExportImage="
+          Boolean(activeTab) &&
+          !activeTab?.relocationPending &&
+          pendingProjectAction === null &&
+          !windowClosePending &&
+          !reloadRequiredIds.has(activeTab?.id ?? '')
+        "
         :canRedo="
           Boolean(activeTab?.canRedo) &&
           pendingProjectAction === null &&
@@ -5594,6 +5634,7 @@ onBeforeUnmount(() => {
         :homeOpen
         :projectActive="Boolean(activeTab)"
         @acceptedResults="openSavedAcceptedResults"
+        @exportImage="exportProjectImage"
         @home="openHome"
         @models="openModelManager()"
         @presets="openPresetManager"
@@ -5730,137 +5771,147 @@ onBeforeUnmount(() => {
           @trashProject="beginTrashProject"
           @workspaceSettings="beginWorkspaceSettings"
         />
-        <ProjectView
-          v-else-if="activeTab"
-          :key="activeTab.id"
-          ref="projectView"
-          v-model:imagesPerClick="activeImagesPerClick"
-          v-model:selectedLayerId="activeSelectedLayerId"
-          :acceptedHistoryFocus="
-            acceptedHistoryFocus?.projectKey === activeTab.id ? acceptedHistoryFocus : null
-          "
-          :busy="
-            pendingProjectAction !== null ||
-            windowClosePending ||
-            Boolean(activeTab.relocationPending)
-          "
-          :draftPending="Boolean(generationDraftOverlays[activeDraftOwnerKey])"
-          :error="
-            activeTab.relocationPending
-              ? 'This Project has a pending file operation. Finish it from Home to continue editing. You can also close this tab.'
-              : (tabErrors[activeTab.id] ?? null)
-          "
-          :exportFeedback="exportFeedbackByTab[activeTab.id] ?? null"
-          :generationCanceling="generationCanceling[activeTab.id] ?? false"
-          :generationDraft="activeGenerationDraft ?? activeTab.generationDraft"
-          :generationError="generationStateErrors[activeTab.id] ?? null"
-          :generationNotice="generationNotices[activeTab.id] ?? null"
-          :generationProgress
-          :generationResultFocus="generationResultFocusByTab[activeTab.id] ?? null"
-          :generationResults="generationResultsByTab[activeTab.id] ?? null"
-          :generationResultsError="generationResultsErrors[activeTab.id] ?? null"
-          :generationResultsLoading="generationResultsLoading[activeTab.id] ?? false"
-          :generationState="generationStatesByTab[activeTab.id] ?? null"
-          :generationStateLoading="generationStateLoading[activeTab.id] ?? false"
-          :generationSubmitting="
-            pendingProjectAction?.kind === 'generate' &&
-            pendingProjectAction.tabId === activeTab.id &&
-            generationCommitting
-          "
-          :historyDraftPending="projectHasPendingDraft(activeTab.id)"
-          :maskDraftPending="projectHasPendingDraft(activeTab.id)"
-          :modelCatalog
-          :modelCatalogError
-          :modelCatalogLoaded
-          :modelCatalogLoading
-          :patchFreshness
-          :pending="activeTabPending"
-          :presets="presetCatalog"
-          :presetsError="presetCatalogError"
-          :presetsLoading="presetCatalogLoading"
-          :projectGenerationDraft="
-            generationDraftOverlays[activeTab.id] ?? activeTab.generationDraft
-          "
-          :promptHistoryEpoch="promptHistoryEpochs[activeTab.id] ?? 0"
-          :regionalPromptError="regionalPromptErrors[activeTab.id] ?? null"
-          :regionalPromptInputBlocked="generationDraftPending(activeTab.id)"
-          :regionalPromptOverlays="regionalPromptOverlays[activeTab.id]"
-          :regionalPromptPending="Boolean(regionalPromptOverlays[activeTab.id])"
-          :reloadRequired="reloadRequiredIds.has(activeTab.id)"
-          :runtimeUnavailableReason
-          :saveNotice="saveNotices[activeTab.id] ?? null"
-          :smartPatchResults="smartPatchResultsByTab[activeTab.id] ?? null"
-          :smartPatchResultsError="smartPatchResultsErrors[activeTab.id] ?? null"
-          :smartPatchResultsLoading="smartPatchResultsLoading[activeTab.id] ?? false"
-          :tab="activeTab"
-          :variantDiagnosticsEpoch
-          :variantDiagnosticsPending
-          @acceptCandidates="acceptGenerationCandidates(activeTab.id, $event)"
-          @acceptSmartPatch="acceptSmartPatchResults(activeTab.id, $event)"
-          @acceptSmartPatchRaster="acceptSmartPatchResults(activeTab.id, $event, 'accept-raster')"
-          @acceptedHistoryFocusHandled="
-            acceptedHistoryFocus?.requestId === $event && (acceptedHistoryFocus = null)
-          "
-          @addLora="addGenerationLora(activeTab.id, $event)"
-          @addPatch="addSmartPatchLayer(activeTab.id)"
-          @addRegionalGuidance="addRegionalGuidance"
-          @applyBbox="applyBbox(activeTab.id, $event)"
-          @cancelGeneration="cancelCurrentGeneration(activeTab.id)"
-          @choosePreset="chooseProjectPreset(activeTab.id, $event)"
-          @clearExportFeedback="clearExportFeedback(activeTab.id)"
-          @clearHistory="runProjectHistoryAction(activeTab.id, 'clear-history')"
-          @comparisonModelsSuspended="openSuspendedComparisonModels"
-          @deleteRegionalGuidance="deleteRegionalGuidance"
-          @discardRegionalPrompts="discardRegionalPrompts"
-          @discardSmartPatch="discardSmartPatchResults(activeTab.id, $event)"
-          @duplicateRegionalGuidance="duplicateRegionalGuidance"
-          @editMask="editActiveSmartPatchMask"
-          @editRegionalMask="editRegionalGuidanceMask"
-          @exportSmartPatch="exportSmartPatchCandidate(activeTab.id, $event)"
-          @focusAcceptedResult="focusProjectAcceptedResult"
-          @generate="generateProject(activeTab.id, $event)"
-          @importImage="importActiveRasterImage"
-          @importRegionalReferenceImage="importRegionalReferenceImage"
-          @inspectPatch="patchFreshnessReader.change($event)"
-          @manageComparisonModels="openComparisonResourceModels"
-          @manageModels="openModelManager($event)"
-          @managePresets="openPresetManager"
-          @moveLayer="moveActiveRasterLayer"
-          @redo="runProjectHistoryAction(activeTab.id, 'redo')"
-          @refreshGenerationResults="refreshGenerationResults(activeTab.id)"
-          @refreshGenerationState="refreshGenerationState(activeTab.id)"
-          @refreshModels="refreshModelCatalog"
-          @refreshPresets="refreshPresetCatalog"
-          @refreshSmartPatch="refreshSmartPatchResults(activeTab.id)"
-          @relinkEmbedding="relinkGenerationEmbedding(activeTab.id, $event)"
-          @relinkLora="relinkGenerationLora(activeTab.id, $event)"
-          @relinkModel="relinkGenerationModel(activeTab.id)"
-          @relinkVae="relinkGenerationVae(activeTab.id)"
-          @removeLora="removeGenerationLora(activeTab.id, $event)"
-          @resultFocusHandled="clearResultFocus(activeTab.id, $event)"
-          @retryRegionalPrompts="retryRegionalPrompts"
-          @save="saveProject(activeTab.id)"
-          @saveCandidateImage="saveCandidateImage(activeTab.id, $event)"
-          @savePreset="saveCurrentAsPreset(activeTab.id, $event)"
-          @saveResultPreset="saveResultAsPreset(activeTab.id, $event)"
-          @saveSmartResultPreset="
-            (owner, origin, presentation) =>
-              activeTab && saveSmartResultAsPreset(activeTab.id, owner, origin, presentation)
-          "
-          @sealPromptHistory="sealPromptHistory(activeTab.id, $event)"
-          @sealRegionalGuidancePromptHistory="sealRegionalGuidancePromptHistory"
-          @selectModel="setGenerationModel(activeTab.id, $event)"
-          @selectVae="setGenerationVae(activeTab.id, $event)"
-          @undo="runProjectHistoryAction(activeTab.id, 'undo')"
-          @updateDraft="updateActiveGenerationDraft"
-          @updateLayer="updateActiveRasterLayer"
-          @updatePatch="updateActiveSmartPatchLayer"
-          @updatePatchVariant="updateActiveSmartPatchVariant"
-          @updateRegionalGuidance="updateRegionalGuidance"
-          @updateRegionalGuidancePrompt="updateRegionalGuidancePrompt"
-          @updateRegionalReferenceImage="updateRegionalReferenceImage"
-          @validateDraft="setDraftValidity"
-        />
+        <div v-else-if="activeTab" class="project-document">
+          <NAlert
+            v-if="imageExportNotice?.tabId === activeTab.id"
+            closable
+            type="success"
+            @close="imageExportNotice = null"
+          >
+            {{ imageExportNotice.message }}
+          </NAlert>
+          <ProjectView
+            :key="activeTab.id"
+            ref="projectView"
+            v-model:imagesPerClick="activeImagesPerClick"
+            v-model:selectedLayerId="activeSelectedLayerId"
+            :acceptedHistoryFocus="
+              acceptedHistoryFocus?.projectKey === activeTab.id ? acceptedHistoryFocus : null
+            "
+            :busy="
+              pendingProjectAction !== null ||
+              windowClosePending ||
+              Boolean(activeTab.relocationPending)
+            "
+            class="project-export-view"
+            :draftPending="Boolean(generationDraftOverlays[activeDraftOwnerKey])"
+            :error="
+              activeTab.relocationPending
+                ? 'This Project has a pending file operation. Finish it from Home to continue editing. You can also close this tab.'
+                : (tabErrors[activeTab.id] ?? null)
+            "
+            :exportFeedback="exportFeedbackByTab[activeTab.id] ?? null"
+            :generationCanceling="generationCanceling[activeTab.id] ?? false"
+            :generationDraft="activeGenerationDraft ?? activeTab.generationDraft"
+            :generationError="generationStateErrors[activeTab.id] ?? null"
+            :generationNotice="generationNotices[activeTab.id] ?? null"
+            :generationProgress
+            :generationResultFocus="generationResultFocusByTab[activeTab.id] ?? null"
+            :generationResults="generationResultsByTab[activeTab.id] ?? null"
+            :generationResultsError="generationResultsErrors[activeTab.id] ?? null"
+            :generationResultsLoading="generationResultsLoading[activeTab.id] ?? false"
+            :generationState="generationStatesByTab[activeTab.id] ?? null"
+            :generationStateLoading="generationStateLoading[activeTab.id] ?? false"
+            :generationSubmitting="
+              pendingProjectAction?.kind === 'generate' &&
+              pendingProjectAction.tabId === activeTab.id &&
+              generationCommitting
+            "
+            :historyDraftPending="projectHasPendingDraft(activeTab.id)"
+            :maskDraftPending="projectHasPendingDraft(activeTab.id)"
+            :modelCatalog
+            :modelCatalogError
+            :modelCatalogLoaded
+            :modelCatalogLoading
+            :patchFreshness
+            :pending="activeTabPending"
+            :presets="presetCatalog"
+            :presetsError="presetCatalogError"
+            :presetsLoading="presetCatalogLoading"
+            :projectGenerationDraft="
+              generationDraftOverlays[activeTab.id] ?? activeTab.generationDraft
+            "
+            :promptHistoryEpoch="promptHistoryEpochs[activeTab.id] ?? 0"
+            :regionalPromptError="regionalPromptErrors[activeTab.id] ?? null"
+            :regionalPromptInputBlocked="generationDraftPending(activeTab.id)"
+            :regionalPromptOverlays="regionalPromptOverlays[activeTab.id]"
+            :regionalPromptPending="Boolean(regionalPromptOverlays[activeTab.id])"
+            :reloadRequired="reloadRequiredIds.has(activeTab.id)"
+            :runtimeUnavailableReason
+            :saveNotice="saveNotices[activeTab.id] ?? null"
+            :smartPatchResults="smartPatchResultsByTab[activeTab.id] ?? null"
+            :smartPatchResultsError="smartPatchResultsErrors[activeTab.id] ?? null"
+            :smartPatchResultsLoading="smartPatchResultsLoading[activeTab.id] ?? false"
+            :tab="activeTab"
+            :variantDiagnosticsEpoch
+            :variantDiagnosticsPending
+            @acceptCandidates="acceptGenerationCandidates(activeTab.id, $event)"
+            @acceptSmartPatch="acceptSmartPatchResults(activeTab.id, $event)"
+            @acceptSmartPatchRaster="acceptSmartPatchResults(activeTab.id, $event, 'accept-raster')"
+            @acceptedHistoryFocusHandled="
+              acceptedHistoryFocus?.requestId === $event && (acceptedHistoryFocus = null)
+            "
+            @addLora="addGenerationLora(activeTab.id, $event)"
+            @addPatch="addSmartPatchLayer(activeTab.id)"
+            @addRegionalGuidance="addRegionalGuidance"
+            @applyBbox="applyBbox(activeTab.id, $event)"
+            @cancelGeneration="cancelCurrentGeneration(activeTab.id)"
+            @choosePreset="chooseProjectPreset(activeTab.id, $event)"
+            @clearExportFeedback="clearExportFeedback(activeTab.id)"
+            @clearHistory="runProjectHistoryAction(activeTab.id, 'clear-history')"
+            @comparisonModelsSuspended="openSuspendedComparisonModels"
+            @deleteRegionalGuidance="deleteRegionalGuidance"
+            @discardRegionalPrompts="discardRegionalPrompts"
+            @discardSmartPatch="discardSmartPatchResults(activeTab.id, $event)"
+            @duplicateRegionalGuidance="duplicateRegionalGuidance"
+            @editMask="editActiveSmartPatchMask"
+            @editRegionalMask="editRegionalGuidanceMask"
+            @exportSmartPatch="exportSmartPatchCandidate(activeTab.id, $event)"
+            @focusAcceptedResult="focusProjectAcceptedResult"
+            @generate="generateProject(activeTab.id, $event)"
+            @importImage="importActiveRasterImage"
+            @importRegionalReferenceImage="importRegionalReferenceImage"
+            @inspectPatch="patchFreshnessReader.change($event)"
+            @manageComparisonModels="openComparisonResourceModels"
+            @manageModels="openModelManager($event)"
+            @managePresets="openPresetManager"
+            @moveLayer="moveActiveRasterLayer"
+            @redo="runProjectHistoryAction(activeTab.id, 'redo')"
+            @refreshGenerationResults="refreshGenerationResults(activeTab.id)"
+            @refreshGenerationState="refreshGenerationState(activeTab.id)"
+            @refreshModels="refreshModelCatalog"
+            @refreshPresets="refreshPresetCatalog"
+            @refreshSmartPatch="refreshSmartPatchResults(activeTab.id)"
+            @relinkEmbedding="relinkGenerationEmbedding(activeTab.id, $event)"
+            @relinkLora="relinkGenerationLora(activeTab.id, $event)"
+            @relinkModel="relinkGenerationModel(activeTab.id)"
+            @relinkVae="relinkGenerationVae(activeTab.id)"
+            @removeLora="removeGenerationLora(activeTab.id, $event)"
+            @resultFocusHandled="clearResultFocus(activeTab.id, $event)"
+            @retryRegionalPrompts="retryRegionalPrompts"
+            @save="saveProject(activeTab.id)"
+            @saveCandidateImage="saveCandidateImage(activeTab.id, $event)"
+            @savePreset="saveCurrentAsPreset(activeTab.id, $event)"
+            @saveResultPreset="saveResultAsPreset(activeTab.id, $event)"
+            @saveSmartResultPreset="
+              (owner, origin, presentation) =>
+                activeTab && saveSmartResultAsPreset(activeTab.id, owner, origin, presentation)
+            "
+            @sealPromptHistory="sealPromptHistory(activeTab.id, $event)"
+            @sealRegionalGuidancePromptHistory="sealRegionalGuidancePromptHistory"
+            @selectModel="setGenerationModel(activeTab.id, $event)"
+            @selectVae="setGenerationVae(activeTab.id, $event)"
+            @undo="runProjectHistoryAction(activeTab.id, 'undo')"
+            @updateDraft="updateActiveGenerationDraft"
+            @updateLayer="updateActiveRasterLayer"
+            @updatePatch="updateActiveSmartPatchLayer"
+            @updatePatchVariant="updateActiveSmartPatchVariant"
+            @updateRegionalGuidance="updateRegionalGuidance"
+            @updateRegionalGuidancePrompt="updateRegionalGuidancePrompt"
+            @updateRegionalReferenceImage="updateRegionalReferenceImage"
+            @validateDraft="setDraftValidity"
+          />
+        </div>
         <NEmpty v-else class="empty-document" description="No document open">
           <template v-slot:extra>
             <NButton type="primary" @click="openHome">Open Home</NButton>
@@ -6506,6 +6557,20 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.project-document {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.project-export-view {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+
 .app-shell {
   display: grid;
   grid-template-rows: var(--app-chrome-height) var(--app-tabs-height) minmax(0, 1fr);

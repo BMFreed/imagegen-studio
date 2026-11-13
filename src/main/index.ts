@@ -57,6 +57,10 @@ import {
   isProjectGenerateOptions,
 } from '../shared/projects/project-generation-actions.js'
 import { isGenerationTargetKey } from '../shared/projects/project-generation-target-state.js'
+import {
+  isProjectImageExportRegion,
+  type ProjectImageExportRegion,
+} from '../shared/projects/project-image-export.js'
 import { ProjectMaskError } from '../shared/projects/project-mask.js'
 import { validateProjectRenameName } from '../shared/projects/project-rename.js'
 import { IGS_SAFETY_CEILINGS, IgsSchemaError } from '../shared/projects/project-schema.js'
@@ -191,6 +195,7 @@ import {
 import { ProjectGenerationStagingLifecycle } from './projects/project-generation-staging-lifecycle.js'
 import { releaseCanceledWindowCloseFences } from './projects/project-generation-window-close.js'
 import { ProjectIdentityError } from './projects/project-identity.js'
+import { ProjectImageExportError } from './projects/project-image-export.js'
 import { ProjectIndexError, ProjectIndexRepository } from './projects/project-index.js'
 import {
   parseProjectLayerImageUrl,
@@ -1519,6 +1524,7 @@ if (!gotInstanceLock) {
               error instanceof ProjectServiceError ||
               error instanceof ProjectMaskError ||
               error instanceof ProjectCandidateImageExportError ||
+              error instanceof ProjectImageExportError ||
               error instanceof ProjectGenerationCloseError ||
               error instanceof ProjectGenerationRecoveryError ||
               error instanceof ProjectGenerationAcceptanceError ||
@@ -2776,6 +2782,33 @@ if (!gotInstanceLock) {
             throw new ProjectServiceError(
               'PROJECT_WORKER_UNAVAILABLE',
               'The image worker is unavailable. The Project was not changed.',
+            )
+          }
+          return result
+        },
+      )
+      registerProjectHandler(
+        ipcChannels.projects.exportImage,
+        (args) => args.length === 2 && isProjectId(args[0]) && isProjectImageExportRegion(args[1]),
+        async (tabId, region) => {
+          const result = await targetInspectionOwner.useWorker((worker) =>
+            projectService.exportImage(
+              tabId as string,
+              region as ProjectImageExportRegion,
+              worker,
+              (defaultFileName) =>
+                dialog.showSaveDialog(window, {
+                  buttonLabel: 'Export PNG',
+                  defaultPath: defaultFileName,
+                  filters: [{ extensions: ['png'], name: 'PNG image' }],
+                  title: region === 'canvas' ? 'Export As' : 'Export Generation BBox',
+                }),
+            ),
+          )
+          if (!result) {
+            throw new ProjectServiceError(
+              'PROJECT_WORKER_UNAVAILABLE',
+              'Set up the image runtime before exporting an image. The Project was not changed.',
             )
           }
           return result

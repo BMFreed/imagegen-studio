@@ -1,5 +1,9 @@
 # Open Questions
 
+## Current Project image export boundary
+
+[Project image export](./engineering/phase-4-project-image-export-research.md) connects full-resolution content and exact primary-bbox PNG export through existing owners. Explicit image ceilings and create-only destinations remain; custom rectangles, overwrite and arbitrary maximum-capacity qualification are not claimed. The development CPU adapter is separate from installed release-worker delivery. Runtime Install/Repair, distributable/update delivery and final compatibility/MVP acceptance remain open.
+
 ## Current resource-specific removal boundary
 
 [Resource-specific hard Remove](./engineering/phase-4-model-removal-usage-research.md)

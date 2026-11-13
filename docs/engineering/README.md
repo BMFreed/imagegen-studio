@@ -1,6 +1,10 @@
 # Engineering Workflow
 
-## Current resource-specific hard Remove checkpoint
+## Current Project image export checkpoint
+
+[Project image export](./phase-4-project-image-export-research.md) connects File → Export As and Export Generation BBox to the existing frozen raster/CPU and create-only publication owners. PNG is full-resolution sRGB RGBA; active visible Smart variants contribute at frozen world geometry. The primary bbox is independent of selected Smart settings. Cancel, stale snapshots and existing destinations refuse without implicit Save or provenance edits. Finite execution evidence and release/installed-worker limits are recorded in the note.
+
+## Previous resource-specific hard Remove checkpoint
 
 [Resource-specific hard Remove](./phase-4-model-removal-usage-research.md) extends
 [the idle consumer](./phase-4-model-removal-research.md) through the existing

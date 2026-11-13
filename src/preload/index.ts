@@ -60,6 +60,10 @@ import {
   isProjectGenerationTargetState,
   type ProjectGenerationTargetState,
 } from '../shared/projects/project-generation-target-state.js'
+import {
+  isProjectImageExportRegion,
+  isProjectImageExportResult,
+} from '../shared/projects/project-image-export.js'
 import { validateProjectRenameName } from '../shared/projects/project-rename.js'
 import {
   IGS_SAFETY_CEILINGS,
@@ -1338,6 +1342,20 @@ const api: StudioApi = {
         [tabId, layerId, request],
         isProjectTab,
       ),
+    exportImage: (tabId, region) =>
+      isProjectImageExportRegion(region)
+        ? invokeProject(
+            ipcChannels.projects.exportImage,
+            [tabId, region],
+            isProjectImageExportResult,
+          )
+        : Promise.resolve({
+            error: {
+              code: 'PROJECT_INVALID_INPUT',
+              message: 'Choose a supported image export region.',
+            },
+            ok: false,
+          }),
     finishImport: (importId, choice, workspaceId) =>
       invokeProject(
         ipcChannels.projects.finishImport,

@@ -6,6 +6,7 @@ import { computed } from 'vue'
 import logoUrl from '../../../docs/assets/brand/imagegen-studio-logo-horizontal-no-bg.svg'
 
 const props = defineProps<{
+  canExportImage: boolean
   canRedo: boolean
   canUndo: boolean
   homeOpen: boolean
@@ -14,6 +15,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   acceptedResults: []
+  exportImage: [region: 'bbox' | 'canvas']
   home: []
   models: []
   presets: []
@@ -21,6 +23,17 @@ const emit = defineEmits<{
   redo: []
   undo: []
 }>()
+
+const fileOptions = computed(() => [
+  { disabled: !props.canExportImage, key: 'canvas', label: 'Export As…' },
+  { disabled: !props.canExportImage, key: 'bbox', label: 'Export Generation BBox…' },
+])
+
+function selectFileAction(key: number | string) {
+  if (props.canExportImage && (key === 'canvas' || key === 'bbox')) {
+    emit('exportImage', key)
+  }
+}
 
 const editOptions = computed(() => [
   { disabled: !props.canUndo, key: 'undo', label: 'Undo · Ctrl+Z' },
@@ -44,6 +57,9 @@ function selectEditAction(key: number | string) {
     <span v-if="homeOpen || !projectActive" class="chrome-context">
       {{ homeOpen ? 'Projects' : 'No document' }}
     </span>
+    <NDropdown :options="fileOptions" trigger="click" @select="selectFileAction">
+      <NButton aria-label="File menu" class="chrome-menu" text>File</NButton>
+    </NDropdown>
     <NDropdown
       :options="[{ key: 'presets', label: 'Presets' }]"
       trigger="click"

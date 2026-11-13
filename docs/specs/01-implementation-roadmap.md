@@ -1,6 +1,10 @@
 # Implementation Roadmap
 
-## Current resource-specific hard Remove checkpoint
+## Current Project image export checkpoint
+
+[Project image export](../engineering/phase-4-project-image-export-research.md) connects actual File actions to full-resolution content/primary-bbox sRGB PNG through shared CPU/frozen-asset/create-only owners. Active Smart variants participate; source bytes, Project history/provenance and `.igs` are unchanged. Snapshot/epoch/path drift, Cancel, empty and over-budget inputs have explicit outcomes. Finite qualification is separate from release CPU-worker delivery and maximum capacity.
+
+## Previous resource-specific hard Remove checkpoint
 
 [Resource-specific hard Remove](../engineering/phase-4-model-removal-usage-research.md)
 extends [the idle consumer](../engineering/phase-4-model-removal-research.md) with
@@ -413,10 +417,11 @@ Anima Smart enabled-LoRA refusal описывает исторический che
    имеют finite checkpoints выше. Project checkpoint/LoRA/VAE/embedding navigation,
    Project Apply diagnostic return и installed artwork уже подключены; не
    ставить их повторно в TODO. Deleted-preset read-only browse не добавлен этим срезом.
-5. **Image export:** `Export As` по visible-content bounds с active Smart
-   variants и отдельный `Export Generation BBox`, sRGB, empty refusal и
-   неизменность Project/`.igs`. Экспорт отдельного candidate этот consumer
-   не заменяет; custom rectangle остаётся вне MVP.
+5. **Image export:** full-resolution `Export As` по actual visible-content bounds
+   с active Smart variants и отдельный primary `Export Generation BBox` подключены
+   в checkpoint выше. sRGB, empty/stale/Cancel/create-only и неизменность Project
+   проверяются отдельно от candidate export. Custom rectangle/overwrite и
+   произвольная максимальная capacity не заявлены; release worker остаётся открытым.
 6. **Release delivery:** Runtime Install/Repair остаются
    `RUNTIME_INSTALL_UNAVAILABLE`; нужны trusted artifacts, staged install/
    self-test/activation/rollback. Затем проверяемый Linux/NVIDIA distributable,

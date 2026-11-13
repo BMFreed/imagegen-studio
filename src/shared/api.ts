@@ -29,6 +29,10 @@ import type {
   ProjectGenerationActionState,
 } from './projects/project-generation-actions.js'
 import type { ProjectGenerationTargetState } from './projects/project-generation-target-state.js'
+import type {
+  ProjectImageExportRegion,
+  ProjectImageExportResult,
+} from './projects/project-image-export.js'
 import type { ProjectMaskSettings } from './projects/project-mask-settings.js'
 import type { ProjectMaskEdit } from './projects/project-mask.js'
 import type {
@@ -191,6 +195,7 @@ export const ipcChannels = {
     duplicateRegionalGuidance: 'projects:duplicate-regional-guidance',
     editRegionalGuidanceMask: 'projects:edit-regional-guidance-mask',
     editSmartPatchMask: 'projects:edit-smart-patch-mask',
+    exportImage: 'projects:export-image',
     finishImport: 'projects:finish-import',
     generate: 'projects:generate',
     generateSmartPatch: 'projects:generate-smart-patch',
@@ -655,6 +660,10 @@ export interface ProjectApi {
     layerId: string,
     request: ProjectSmartPatchMaskEditRequest,
   ) => Promise<ApiResult<ProjectTab>>
+  exportImage: (
+    tabId: string,
+    region: ProjectImageExportRegion,
+  ) => Promise<ApiResult<ProjectImageExportResult>>
   finishImport: (
     importId: string,
     choice: 'copy' | 'move',

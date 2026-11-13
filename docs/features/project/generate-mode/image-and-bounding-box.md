@@ -72,6 +72,26 @@ an ICC profile to sRGB and retains the original ICC as layer metadata in
 
 An explicit destructive trim/crop of Raster Layer pixel data, if added, is a separate operation from moving a generation bbox or exporting a finite region.
 
+## Production image export checkpoint
+
+[Project image export](../../../engineering/phase-4-project-image-export-research.md)
+connects the production File menu to full-resolution canonical sRGB RGBA PNG.
+`Export As…` uses actual visible-content alpha bounds from existing CPU composition,
+including only active visible Smart world contributions; `Export Generation BBox…`
+uses the current primary bbox even when a Smart Patch is selected. Empty visible
+content refuses. A bbox outside otherwise visible content can export transparency.
+
+Both actions use the existing Project CPU worker independently of CUDA readiness;
+missing runtime or a legacy worker lacking `export-composition` refuses explicitly.
+The export image ceiling is16384side/64M pixels, distinct from unchanged generation
+limits. Over-budget exports refuse without downsampling; these are safety ceilings,
+not qualified maximum capacity. A changed owner/revision/epoch/path refuses even
+if Undo restored a portable revision. Cancel leaves no destination. Export is
+create-only: an existing or racing destination stays unchanged; choose another
+PNG filename. Export never Saves `.igs`, crops layers, accepts results, or rewrites
+history/provenance/source assets. Custom rectangles and overwrite are outside this
+finite consumer. Prototype mock actions are not production export evidence.
+
 ## Vue Prototype Gap
 
 The current Project prototype still renders a finite `Project Canvas W × H` frame. Its `Size` card and `Crop / Resize Project Canvas` tool mutate or depict that finite frame, and its normal jobs target those bounds. This is **outdated prototype behavior**, not evidence that the infinite-canvas contract is implemented. The deterministic Smart Patch fit-to-mask command does not close this gap. Production work must replace the finite frame semantics, add movable/resizable primary bbox interactions, and place staged/accepted results by frozen bbox coordinates.
