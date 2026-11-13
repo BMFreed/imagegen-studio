@@ -42,6 +42,8 @@ export interface OfflineRuntimeCommand {
   cwd: string
   environment: NodeJS.ProcessEnv
   executable: string
+  /** Main-created log identity; re-opened descriptors must match before any child can write. */
+  logIdentity?: Readonly<{ dev: string; ino: string }>
   logPath: string
   signal?: AbortSignal
 }
@@ -398,6 +400,7 @@ type ReleaseFile = Extract<RuntimeReleaseManifest['files'][number], { kind: 'fil
 export async function runOfflineRuntimeCommand(
   command: OfflineRuntimeCommand,
 ): Promise<OfflineRuntimeCommandResult> {
+  const logIdentity = command.logIdentity ? { ...command.logIdentity } : undefined
   if (!path.isAbsolute(command.executable) || !path.isAbsolute(command.cwd)) {
     storageInvalid()
   }
@@ -416,6 +419,21 @@ export async function runOfflineRuntimeCommand(
   if (!info.isFile() || info.size > MAX_COMMAND_LOG_BYTES) {
     await descriptor.close()
     storageInvalid()
+  }
+  if (logIdentity) {
+    try {
+      const pinned = await descriptor.stat({ bigint: true })
+      if (
+        pinned.dev.toString() !== logIdentity.dev ||
+        pinned.ino.toString() !== logIdentity.ino ||
+        pinned.nlink !== 1n
+      ) {
+        storageInvalid()
+      }
+    } catch (error) {
+      await descriptor.close()
+      throw error
+    }
   }
   let child: ChildProcess
   try {

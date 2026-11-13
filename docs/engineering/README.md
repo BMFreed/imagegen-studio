@@ -1,6 +1,15 @@
 # Engineering Workflow
 
-## Current internal runtime installation checkpoint
+## Current runtime host preflight checkpoint
+
+[Manifest host preflight](./phase-4-runtime-host-preflight-research.md) supplies
+the default Main check before auxiliary work or slot assembly. It checks actual
+Linux/x64/glibc and all reported NVIDIA driver/SM identities against the signed
+requirements, using the existing command exit owner. Metadata success does not
+replace installed CUDA self-tests or qualify a release support matrix. Public
+setup remains unavailable pending complete trusted release delivery.
+
+## Previous internal runtime installation checkpoint
 
 [Verified offline runtime backend](./phase-4-runtime-offline-install-research.md)
 connects trusted signed payload review to exact local assembly, worker self-tests,

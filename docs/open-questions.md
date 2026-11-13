@@ -1,6 +1,15 @@
 # Open Questions
 
-## Current internal runtime installation boundary
+## Current runtime host preflight boundary
+
+[Strict host preflight](./engineering/phase-4-runtime-host-preflight-research.md)
+replaces the missing default host collaborator with manifest-based checks before
+assembly. Its all-device metadata check and confirmed probe exit do not choose
+release hardware floors or establish Torch/CUDA/ABI acceptance. Complete trusted
+artifacts, publisher keyring, full engine preview/download and public setup
+remain open.
+
+## Previous internal runtime installation boundary
 
 [Offline runtime backend](./engineering/phase-4-runtime-offline-install-research.md)
 implements signed-payload trust, exact fresh-slot assembly, qualification,

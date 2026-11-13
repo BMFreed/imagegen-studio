@@ -363,6 +363,18 @@ Python environment packages: main process показывает полный ра
 
 ## Repair semantics
 
+[Manifest host preflight](../engineering/phase-4-runtime-host-preflight-research.md)
+is the default internal Main prerequisite for Install/Repair before auxiliary
+work and new slot creation. It checks Linux/x64, runtime glibc and every reported
+NVIDIA device against the signed driver minimum and exact SM allowlist. Until
+device identity is explicitly bound to the worker, an unsupported reported GPU
+refuses this conservative path. No CPU fallback or device picker is added.
+Cancellation waits for the existing owned-command executor to confirm exit;
+unknown exit blocks new image work and successful shutdown confirmation.
+This metadata preflight neither chooses qualified release floors nor replaces
+the installed CUDA self-tests. Public setup remains unavailable without the
+complete trusted release/preview/download integration.
+
 `Repair Runtime` означает rebuild/replace, а не изменение активного environment:
 
 1. повторно проверить или загрузить exact artifacts;

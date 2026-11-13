@@ -17,9 +17,11 @@ import { GenerationWorkerClient } from '../projects/generation-worker-client.js'
 import { ProjectWorkerClient, ProjectWorkerError } from '../projects/worker-client.js'
 import {
   assembleOfflineRuntime,
+  hasUnconfirmedOfflineRuntimeCommands,
   type PreparedOfflineRuntime,
   retryUnconfirmedOfflineRuntimeCommandExits,
 } from './offline-runtime-assembly.js'
+import { preflightRuntimeHost } from './runtime-host-preflight.js'
 import {
   RUNTIME_INSTALLATION_CLAIM,
   RUNTIME_INSTALLATION_JOURNAL,
@@ -149,10 +151,13 @@ export interface RuntimeInstallationBackend {
   /** Verify the separately owned installed shared infill; this must not initiate downloads. */
   ensureAuxiliaryReady: () => Promise<void>
   /**
-   * Qualified host/driver/ABI inspection supplied by the release integration, never an advisory GPU
-   * guess.
+   * Controlled integration override. By default Main performs strict manifest host preflight;
+   * successful metadata inspection never replaces the installed CUDA worker self-test.
    */
-  ensureHostCompatible: (host: VerifiedRuntimeRelease['manifest']['host']) => Promise<void>
+  ensureHostCompatible?: (
+    host: VerifiedRuntimeRelease['manifest']['host'],
+    signal: AbortSignal,
+  ) => Promise<void>
   loadRelease: () => Promise<RuntimeReleaseSelection | null>
   startProjectClient?: (
     location: ProjectWorkerLocation,
@@ -189,7 +194,11 @@ export class RuntimeManager {
   private statusRevision = 0
   private unconfirmedClient: QualificationClient | null = null
   private get generationWorkPrevented(): boolean {
-    return this.generationShutdownRequested || this.installationActive
+    return (
+      this.generationShutdownRequested ||
+      this.installationActive ||
+      hasUnconfirmedOfflineRuntimeCommands()
+    )
   }
 
   constructor(
@@ -211,6 +220,15 @@ export class RuntimeManager {
   async getStatus(): Promise<ApiResult<RuntimeStatus>> {
     if (this.generationShutdownRequested) {
       return this.shuttingDownStatus()
+    }
+    if (hasUnconfirmedOfflineRuntimeCommands()) {
+      const status: RuntimeStatus = {
+        detail: 'A runtime setup command has not confirmed exit; image work is blocked.',
+        kind: 'needs-repair',
+        profile: this.host.platform === 'linux' && this.host.arch === 'x64' ? 'linux-nvidia' : null,
+      }
+      this.publishStatus(status)
+      return { ok: true, value: status }
     }
     if (this.installationActive && !this.generationShutdownRequested) {
       const status: RuntimeStatus = {
@@ -413,7 +431,7 @@ export class RuntimeManager {
         'Choose a supported runtime operation.',
       )
     }
-    if (this.generationShutdownRequested || this.installationActive) {
+    if (this.generationWorkPrevented) {
       return this.installationFailure(
         'RUNTIME_INSTALL_BUSY',
         'The image runtime is busy or shutting down.',
@@ -1260,6 +1278,7 @@ export class RuntimeManager {
       this.generationLease ||
       this.preparationLease ||
       this.unconfirmedClient ||
+      hasUnconfirmedOfflineRuntimeCommands() ||
       GenerationWorkerClient.hasUnconfirmedStartExit() ||
       ProjectWorkerClient.hasUnconfirmedExit()
     ) {
@@ -1287,7 +1306,18 @@ export class RuntimeManager {
           )
         }
         await captured.release.verifyCompletePayloadSnapshot()
-        await this.installationBackend!.ensureHostCompatible(captured.release.manifest.host)
+        await (this.installationBackend!.ensureHostCompatible
+          ? this.installationBackend!.ensureHostCompatible(
+              captured.release.manifest.host,
+              controller.signal,
+            )
+          : preflightRuntimeHost(captured.release.manifest.host, {
+              logDirectory: this.roots.workerLogsDir,
+              signal: controller.signal,
+            }))
+        if (controller.signal.aborted) {
+          return this.installationFailure('RUNTIME_INSTALL_CANCELED', 'Runtime setup was canceled.')
+        }
         await this.installationBackend!.ensureAuxiliaryReady()
         if (controller.signal.aborted) {
           return this.installationFailure('RUNTIME_INSTALL_CANCELED', 'Runtime setup was canceled.')

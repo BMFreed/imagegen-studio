@@ -1,6 +1,14 @@
 # Implementation Roadmap
 
-## Current internal runtime installation checkpoint
+## Current runtime host preflight checkpoint
+
+[Host preflight](../engineering/phase-4-runtime-host-preflight-research.md)
+connects the default Main install consumer to signed OS/arch/glibc/driver/SM
+requirements before assembly. Actual metadata checks and refusal remain distinct
+from full installed CUDA/release qualification. Complete trusted artifact
+production, download/full preview and public setup wiring remain next.
+
+## Previous internal runtime installation checkpoint
 
 [Signed offline runtime backend](../engineering/phase-4-runtime-offline-install-research.md)
 connects internal Main review, exact assembly and both qualification phases to

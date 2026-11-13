@@ -316,6 +316,21 @@ async function fixture() {
     install,
     manager,
     manifest,
+    resign: () => {
+      const payload = canonicalRuntimeReleaseJson(manifest)
+      Reflect.set(
+        selection,
+        'envelope',
+        Buffer.from(
+          JSON.stringify({
+            keyId: 'integration-only',
+            payload: payload.toString('base64'),
+            schemaVersion: 1,
+            signature: sign(null, payload, keys.privateKey).toString('base64'),
+          }),
+        ),
+      )
+    },
     roots,
     scratch,
     selection,
@@ -438,6 +453,76 @@ test('unsupported host and absent release never materialize a slot', fullPayload
     assert.deepEqual(f.events, [])
   })
 })
+
+test(
+  'default Main host preflight refuses an incompatible signed glibc floor before auxiliary or assembly',
+  fullPayload,
+  async () => {
+    await withFixture(async (f) => {
+      delete f.backend.ensureHostCompatible
+      Reflect.set(f.manifest.host, 'glibcMinimum', '999.0')
+      f.resign()
+      failure(await f.install(), 'RUNTIME_HOST_GLIBC_UNSUPPORTED')
+      assert.deepEqual(f.events, [])
+      assert.deepEqual(await fs.readdir(f.roots.environmentsDir), [])
+      assert.deepEqual(await fs.readdir(f.roots.pythonDir), [])
+      await absent(f.roots.pointerFile)
+      await absent(path.join(f.roots.runtimeDir, RUNTIME_INSTALLATION_JOURNAL))
+    })
+  },
+)
+
+test(
+  'actual Main host preflight reaches controlled assembly without starting Python or inference',
+  { skip: !configFixture || process.env.IGS_RUNTIME_HOST_ACTUAL !== '1' },
+  async () => {
+    await withFixture(async (f) => {
+      delete f.backend.ensureHostCompatible
+      f.backend.assemble = async () => {
+        f.events.push('controlled-assembly-after-real-host')
+        throw new Error('Controlled assembly refusal after actual host preflight')
+      }
+      failure(await f.install(), 'RUNTIME_INSTALL_FAILED')
+      assert.deepEqual(f.events, ['auxiliary', 'controlled-assembly-after-real-host'])
+      const logs = await fs.readdir(f.roots.workerLogsDir)
+      assert.equal(logs.length, 1)
+      assert.match(
+        await fs.readFile(path.join(f.roots.workerLogsDir, logs[0]), 'utf8'),
+        /\d+\.\d+,\s*\d+\.\d+/,
+      )
+      assert.deepEqual(await fs.readdir(f.roots.environmentsDir), [])
+      await absent(f.roots.pointerFile)
+    })
+  },
+)
+
+test(
+  'host inspection receives installation abort and cancellation cannot continue into auxiliary or assembly',
+  fullPayload,
+  async () => {
+    await withFixture(async (f) => {
+      const entered = deferred()
+      let received: AbortSignal | undefined
+      f.backend.ensureHostCompatible = async (_requirements, signal) => {
+        received = signal
+        entered.resolve()
+        await new Promise<void>((resolve) =>
+          signal.addEventListener('abort', () => resolve(), { once: true }),
+        )
+      }
+      const operation = f.install()
+      await entered.promise
+      const cancel = f.manager.cancelInstallation()
+      await cancel
+      failure(await operation, 'RUNTIME_INSTALL_CANCELED')
+      assert.equal(received?.aborted, true)
+      assert.deepEqual(f.events, [])
+      assert.deepEqual(await fs.readdir(f.roots.environmentsDir), [])
+      await absent(f.roots.pointerFile)
+      await absent(path.join(f.roots.runtimeDir, RUNTIME_INSTALLATION_JOURNAL))
+    })
+  },
+)
 
 test(
   'payload drift after preview revokes setup before host and assembly',
