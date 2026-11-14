@@ -62,7 +62,10 @@ export interface VerifiedRuntimeTransport {
 export class RuntimeTransportError extends Error {
   constructor(
     readonly code:
-      'RUNTIME_TRANSPORT_CHANGED' | 'RUNTIME_TRANSPORT_INVALID' | 'RUNTIME_TRANSPORT_STORAGE',
+      | 'RUNTIME_TRANSPORT_CANCELED'
+      | 'RUNTIME_TRANSPORT_CHANGED'
+      | 'RUNTIME_TRANSPORT_INVALID'
+      | 'RUNTIME_TRANSPORT_STORAGE',
     message: string,
   ) {
     super(message)
@@ -74,9 +77,11 @@ export class RuntimeTransportError extends Error {
 export async function verifyRuntimeTransport(input: {
   readonly appVersion: string
   readonly directory: string
+  readonly signal?: AbortSignal
   readonly trustedKeys: Readonly<Record<string, string>>
 }): Promise<VerifiedRuntimeTransport> {
-  const { appVersion, directory } = input
+  const { appVersion, directory, signal } = input
+  transportNotCanceled(signal)
   const trustedKeys = Object.freeze({ ...input.trustedKeys })
   const inspect = async () => {
     const root = await canonicalDirectory(directory)
@@ -84,12 +89,17 @@ export async function verifyRuntimeTransport(input: {
       (await fs.readdir(directory)).sort().join('\0') === [ARCHIVE, INNER, OUTER].sort().join('\0'),
       'Transport must contain exactly the completed archive and two envelopes.',
     )
-    const outer = await inspectFile(path.join(directory, OUTER), MAX_ENVELOPE_BYTES, true)
+    const outer = await inspectFile(path.join(directory, OUTER), MAX_ENVELOPE_BYTES, true, signal)
     const raw = verifyCanonicalRuntimeEnvelope(outer.bytes!, trustedKeys)
-    const inner = await inspectFile(path.join(directory, INNER), MAX_ENVELOPE_BYTES, true)
+    const inner = await inspectFile(path.join(directory, INNER), MAX_ENVELOPE_BYTES, true, signal)
     const runtime = verifyRuntimeReleaseManifest(inner.bytes!, trustedKeys, appVersion)
     const manifest = validateDescriptor(raw, runtime, inner.bytes!)
-    const archive = await inspectFile(path.join(directory, ARCHIVE), MAX_ARCHIVE_BYTES)
+    const archive = await inspectFile(
+      path.join(directory, ARCHIVE),
+      MAX_ARCHIVE_BYTES,
+      false,
+      signal,
+    )
     unchanged(
       archive.sha256 === manifest.artifact.sha256 &&
         archive.sizeBytes === manifest.artifact.sizeBytes,
@@ -117,7 +127,10 @@ export async function verifyRuntimeTransport(input: {
     verifyCompleteTransportSnapshot: async () => {
       try {
         unchanged((await inspect()).snapshot === initial.snapshot)
-      } catch {
+      } catch (error) {
+        if (error instanceof RuntimeTransportError && error.code === 'RUNTIME_TRANSPORT_CANCELED') {
+          throw error
+        }
         throw new RuntimeTransportError(
           'RUNTIME_TRANSPORT_CHANGED',
           'Runtime transport snapshot changed.',
@@ -174,57 +187,8 @@ export async function produceRuntimeTransport(input: {
     'Publisher signing key does not match the external trusted keyring.',
   )
   const verified = await verifyRuntimeRelease(release)
-  storage(
-    path.isAbsolute(outputDirectory) &&
-      path.resolve(outputDirectory) === outputDirectory &&
-      outputDirectory !== verified.directory &&
-      !outputDirectory.startsWith(verified.directory + path.sep),
-    'Output must be a new canonical directory outside the input payload.',
-  )
-  const parent = path.dirname(outputDirectory)
-  const parentInfo = await canonicalDirectory(parent)
-  const parentHandle = await fs.open(parent, DIRECTORY_FLAGS)
-  let output: fs.FileHandle | undefined
-  try {
-    unchanged(identity(await parentHandle.stat({ bigint: true })) === identity(parentInfo))
-    const ownedPath = path.join(`/proc/self/fd/${parentHandle.fd}`, path.basename(outputDirectory))
-    try {
-      await fs.mkdir(ownedPath, { mode: 0o700 })
-    } catch {
-      throw new RuntimeTransportError(
-        'RUNTIME_TRANSPORT_STORAGE',
-        'Transport output must be a new directory.',
-      )
-    }
-    output = await fs.open(ownedPath, DIRECTORY_FLAGS)
-    const owned = await output.stat({ bigint: true })
-    const anchor = `/proc/self/fd/${output.fd}`
-    storage((await fs.readdir(anchor)).length === 0, 'The new transport directory was replaced.')
-    const sameOutput = async () => {
-      const visible = await canonicalDirectory(outputDirectory)
-      const held = await output!.stat({ bigint: true })
-      const visibleParent = await fs.lstat(parent, { bigint: true })
-      unchanged(
-        visible.dev === owned.dev &&
-          visible.ino === owned.ino &&
-          held.dev === owned.dev &&
-          held.ino === owned.ino &&
-          visibleParent.dev === parentInfo.dev &&
-          visibleParent.ino === parentInfo.ino &&
-          (await fs.realpath(parent)) === parent,
-      )
-    }
-    const write = async (name: string, bytes: Buffer) => {
-      await sameOutput()
-      const file = await fs.open(path.join(anchor, name), 'wx', 0o600)
-      try {
-        await file.writeFile(bytes)
-        await file.sync()
-      } finally {
-        await file.close()
-      }
-    }
-    await write(MARKER, Buffer.from('Runtime transport production is incomplete.\n'))
+  return await withRuntimeTransportOutput(outputDirectory, verified.directory, async (owned) => {
+    const { anchor, sameOutput, write } = owned
     const temporary = '.runtime-payload.zip.tmp'
     const file = await fs.open(path.join(anchor, temporary), 'wx', 0o600)
     try {
@@ -271,25 +235,113 @@ export async function produceRuntimeTransport(input: {
     await sameOutput()
     await fs.link(path.join(anchor, temporary), path.join(anchor, ARCHIVE))
     await fs.unlink(path.join(anchor, temporary))
-    await output.sync()
+    await owned.sync()
     await verified.verifyCompletePayloadSnapshot()
     await sameOutput()
-    await fs.unlink(path.join(anchor, MARKER))
-    await output.sync()
-    await parentHandle.sync()
+    await owned.complete()
     return await verifyRuntimeTransport({
       appVersion: release.appVersion,
       directory: outputDirectory,
       trustedKeys: release.trustedKeys,
     })
-  } catch (error) {
-    // Retain the exact new output/marker for inspection; never recursively clean a substituted path.
-    throw error
+  })
+}
+
+/** Existing producer's create-only, fd-anchored output owner, shared with extraction. */
+export async function withRuntimeTransportOutput<T>(
+  outputDirectory: string,
+  excludedDirectory: string,
+  operation: (owned: {
+    anchor: string
+    complete: () => Promise<void>
+    sameOutput: () => Promise<void>
+    sync: () => Promise<void>
+    write: (name: string, bytes: Buffer) => Promise<void>
+  }) => Promise<T>,
+): Promise<T> {
+  storage(
+    path.isAbsolute(outputDirectory) &&
+      path.resolve(outputDirectory) === outputDirectory &&
+      outputDirectory !== excludedDirectory &&
+      !outputDirectory.startsWith(excludedDirectory + path.sep),
+    'Output must be a new canonical directory outside the input payload.',
+  )
+  const parent = path.dirname(outputDirectory)
+  const parentInfo = await canonicalDirectory(parent)
+  const parentHandle = await fs.open(parent, DIRECTORY_FLAGS)
+  let output: fs.FileHandle | undefined
+  try {
+    unchanged(identity(await parentHandle.stat({ bigint: true })) === identity(parentInfo))
+    const ownedPath = path.join(`/proc/self/fd/${parentHandle.fd}`, path.basename(outputDirectory))
+    try {
+      await fs.mkdir(ownedPath, { mode: 0o700 })
+    } catch {
+      throw new RuntimeTransportError(
+        'RUNTIME_TRANSPORT_STORAGE',
+        'Transport output must be a new directory.',
+      )
+    }
+    output = await fs.open(ownedPath, DIRECTORY_FLAGS)
+    const owned = await output.stat({ bigint: true })
+    const anchor = `/proc/self/fd/${output.fd}`
+    storage((await fs.readdir(anchor)).length === 0, 'The new transport directory was replaced.')
+    const sameOutput = async () => {
+      const visible = await canonicalDirectory(outputDirectory)
+      const held = await output!.stat({ bigint: true })
+      const visibleParent = await fs.lstat(parent, { bigint: true })
+      unchanged(
+        visible.dev === owned.dev &&
+          visible.ino === owned.ino &&
+          held.dev === owned.dev &&
+          held.ino === owned.ino &&
+          visibleParent.dev === parentInfo.dev &&
+          visibleParent.ino === parentInfo.ino &&
+          (await fs.realpath(parent)) === parent,
+      )
+    }
+    const write = async (name: string, bytes: Buffer) => {
+      await sameOutput()
+      const file = await fs.open(path.join(anchor, name), 'wx', 0o600)
+      try {
+        await file.writeFile(bytes)
+        await file.sync()
+      } finally {
+        await file.close()
+      }
+    }
+    await write(MARKER, Buffer.from('Runtime transport operation is incomplete.\n'))
+    await output.sync()
+    await parentHandle.sync()
+    return await operation({
+      anchor,
+      complete: async () => {
+        await sameOutput()
+        await fs.unlink(path.join(anchor, MARKER))
+        await output!.sync()
+        await parentHandle.sync()
+      },
+      sameOutput,
+      sync: async () => {
+        await sameOutput()
+        await output!.sync()
+      },
+      write,
+    })
   } finally {
     await output?.close()
     await parentHandle.close()
   }
 }
+
+export function transportNotCanceled(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new RuntimeTransportError(
+      'RUNTIME_TRANSPORT_CANCELED',
+      'Runtime extraction was canceled.',
+    )
+  }
+}
+
 function need(condition: unknown, message: string): asserts condition {
   if (!condition) {
     throw new RuntimeTransportError('RUNTIME_TRANSPORT_INVALID', message)
@@ -336,7 +388,8 @@ async function canonicalDirectory(directory: string) {
 }
 
 /** Bounded/stable ordinary-file stream. Hash/copy never buffers a wheel or archive. */
-async function inspectFile(filename: string, maximum: number, bytes = false) {
+async function inspectFile(filename: string, maximum: number, bytes = false, signal?: AbortSignal) {
+  transportNotCanceled(signal)
   const before = await fs.lstat(filename, { bigint: true })
   storage(
     before.isFile() && !before.isSymbolicLink() && before.size <= BigInt(maximum),
@@ -350,6 +403,7 @@ async function inspectFile(filename: string, maximum: number, bytes = false) {
     const chunk = Buffer.allocUnsafe(1024 * 1024)
     let size = 0
     for (;;) {
+      transportNotCanceled(signal)
       const { bytesRead } = await handle.read(chunk, 0, chunk.length, null)
       if (!bytesRead) {
         break

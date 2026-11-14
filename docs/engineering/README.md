@@ -1,6 +1,16 @@
 # Engineering Workflow
 
-## Current signed runtime transport checkpoint
+## Current verified runtime extraction checkpoint
+
+[Bounded runtime extraction](./phase-4-runtime-release-extraction-research.md)
+connects signed transport bytes to the existing exact expanded-release verifier.
+ZIP preflight enforces the signed inventory before output; files stream through
+size/hash/CRC checks and Python links are created last. Shared create-only fd
+ownership preserves foreign paths and incomplete state. Actual 67-wheel unpack
+and finite cancellation/substitution tests are separate from download, assembly,
+activation, LaMa, public Setup and shipping-key readiness.
+
+## Previous signed runtime transport checkpoint
 
 [Runtime transport producer](./phase-4-runtime-release-transport-research.md)
 creates a real ZIP and detached signed descriptor from the existing verified

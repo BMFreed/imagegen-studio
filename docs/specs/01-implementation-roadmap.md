@@ -1,6 +1,17 @@
 # Implementation Roadmap
 
-## Current signed runtime transport checkpoint
+## Current runtime extraction boundary
+
+[Verified extraction](../engineering/phase-4-runtime-release-extraction-research.md)
+now bridges the authenticated ZIP to the unchanged expanded runtime verifier.
+Only exact signed files/links are written into a new incomplete container;
+foreign paths remain protected and cancellation is explicit. The real unpack
+is not Python-slot assembly or activation. Remaining delivery consumers are
+trusted download/cache admission, reviewed LaMa composition, aggregate engine
+preview/IPC/UI and shipping trust, followed by release compatibility acceptance.
+Public promise statuses remain unchanged.
+
+## Previous signed runtime transport checkpoint
 
 [Runtime transport producer](../engineering/phase-4-runtime-release-transport-research.md)
 connects an existing verified expanded release to an actual ZIP and detached

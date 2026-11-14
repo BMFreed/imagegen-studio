@@ -1,6 +1,17 @@
 # Open Questions
 
-## Current runtime transport boundary
+## Current runtime extraction boundary
+
+[Verified extraction](./engineering/phase-4-runtime-release-extraction-research.md)
+now bridges the authenticated ZIP to the unchanged expanded runtime verifier.
+Only exact signed files/links are written into a new incomplete container;
+foreign paths remain protected and cancellation is explicit. The real unpack
+is not Python-slot assembly or activation. Remaining delivery consumers are
+trusted download/cache admission, reviewed LaMa composition, aggregate engine
+preview/IPC/UI and shipping trust, followed by release compatibility acceptance.
+Public promise statuses remain unchanged.
+
+## Previous runtime transport boundary
 
 [Signed transport production](./engineering/phase-4-runtime-release-transport-research.md)
 now supplies actual ZIP bytes and a detached signature binding them to the exact

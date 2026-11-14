@@ -261,6 +261,17 @@ evidence report. Каждый прогон требует нового canonical
 
 ## Release artifacts
 
+[Verified local extraction](../engineering/phase-4-runtime-release-extraction-research.md)
+authenticates both transport envelopes/archive bytes, preflights exact ZIP
+membership, sizes, expansion and modes, then creates only signed regular files
+and finally exact relative Python links in an owned new container. Marker and
+inner sidecar stay outside `payload/`. All writes use held no-follow parent
+fds; the existing `verifyRuntimeRelease` and source/payload snapshot fences run
+before durable completion. Cancellation retains incomplete output and never
+activates it. This local consumer returns the existing release selection, without
+executing Python, downloading or replacing the existing offline assembler.
+Shipping keys, download/cache, LaMa and complete public Setup remain separate.
+
 [Signed transport producer](../engineering/phase-4-runtime-release-transport-research.md)
 packages the existing exact expanded inventory as `runtime-payload.zip`. A detached
 canonical descriptor, signed by an explicitly provided externally trusted
