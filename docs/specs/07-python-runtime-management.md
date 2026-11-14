@@ -298,6 +298,19 @@ sign a complete release, supply the other runtime artifacts or establish the
 native compatibility matrix. Actual execution evidence remains explicit in the
 linked research note.
 
+[Full offline qualification](../engineering/phase-4-runtime-offline-full-research.md)
+adds the explicit harness profile `--profile full-inference` with its bound
+`--wheelhouse-report`. It exercises the complete selected Python wheel set
+through existing Main preview/install/host/assembly/pre-post worker consumers,
+then checks reopened-manager state and a small installed CUDA operation probe.
+Root's r2 report confirms this finite 67-package installation and native route;
+the default two-wheel CPU/refusal profile also passes unchanged. The full fixture
+uses an ephemeral signing key and an explicit auxiliary no-op: the review scope
+is `python-runtime-slot`, with LaMa, shipping publisher trust, total engine
+preview/download and public Setup still separate. The successful native report
+does not replace final validation, physical-exit/retention/cleanup receipts or
+the release compatibility and readiness gates.
+
 [Signed dependency policy](../engineering/phase-4-runtime-dependency-policy-research.md)
 allows only the fixed optional `dependencyPolicy: "invoke-inference-v1"` in a
 signed release manifest. It checks installed Core Metadata with root

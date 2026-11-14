@@ -1,6 +1,16 @@
 # Engineering Workflow
 
-## Current runtime wheelhouse verification checkpoint
+## Current full offline runtime qualification checkpoint
+
+[Full offline Python runtime](./phase-4-runtime-offline-full-research.md)
+uses the verified wheelhouse and production Main installation owners. Root's
+actual r2 passes the complete 67-package Python-slot installation, default host
+admission, pre/post activation workers and a tiny installed CUDA operation.
+The default CPU refusal route also passes. These finite installed/native results
+do not qualify LaMa, publisher delivery, public Setup or a full release; final
+validation/retention/delivery receipts remain explicit in the note.
+
+## Previous runtime wheelhouse verification checkpoint
 
 [Locked wheel bytes and metadata](./phase-4-runtime-wheelhouse-verification-research.md)
 connects the producer's optional local-wheelhouse consumer to exact file hashes,

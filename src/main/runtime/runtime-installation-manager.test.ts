@@ -291,6 +291,10 @@ async function fixture() {
       const number = ++gpuNumber
       events.push(`gpu-start-${number}`)
       assert.equal(location.runtimeRoot, roots.runtimeDir)
+      // Install/Repair must use the same private root as status and operational inference.
+      // The download cache is intentionally not an inference scratch directory.
+      assert.equal(location.scratchBasePath, scratch)
+      assert.equal((await fs.stat(location.scratchBasePath)).mode & 0o777, 0o700)
       assert.equal(environment.HF_HUB_OFFLINE, '1')
       assert.equal(options?.signal?.aborted ?? false, false)
       return {

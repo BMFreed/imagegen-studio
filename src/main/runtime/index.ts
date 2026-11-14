@@ -1575,7 +1575,8 @@ export class RuntimeManager {
       {
         pythonExecutable: prepared.pythonExecutable,
         runtimeRoot: this.roots.runtimeDir,
-        scratchBasePath: this.roots.downloadsDir,
+        // ensureAppPaths owns this private root; status and operational inference use it too.
+        scratchBasePath: path.join(this.roots.appDataDir, 'scratch'),
       },
       prepared.environment,
       { signal },

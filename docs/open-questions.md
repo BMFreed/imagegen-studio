@@ -1,14 +1,25 @@
 # Open Questions
 
-## Current runtime wheelhouse verification boundary
+## Current full offline runtime qualification boundary
+
+[Full offline qualification](./engineering/phase-4-runtime-offline-full-research.md)
+has Root-reported r2 success through the existing installer: complete 67-package
+Python slot, actual host preflight, pre/post worker qualification and tiny CUDA
+operation. The retained r1 scratch-path counterexample remains separate. Its
+ephemeral trust root and explicit auxiliary no-op preserve a Python-slot scope;
+full engine/LaMa delivery, publisher trust, supported hardware, public Setup,
+clean upgrade/rollback and release acceptance remain separate. Final validation
+and retained-byte evidence are recorded independently from this native outcome.
+
+## Previous runtime wheelhouse verification boundary
 
 [Selected wheel verification](./engineering/phase-4-runtime-wheelhouse-verification-research.md)
 adds a local byte/ZIP/METADATA consumer tied to the current plan and the fixed
 dependency policy. Execution must establish the actual selected-wheel result;
-source authoring alone does not close that gate. Even a verified wheelhouse
-still needs complete offline assembly, installed/native compatibility, the
-other runtime artifacts, publisher trust, engine preview/download and public
-setup. One retained SHARED wheelhouse serves the next concrete assembly step.
+source authoring alone does not close that gate. The later full offline profile
+supplies the installation qualification route; its finite outcome is separate
+from the other runtime artifacts, publisher trust, engine preview/download and
+public setup. The retained SHARED wheelhouse remains an explicit dependency.
 
 ## Previous runtime dependency policy boundary
 

@@ -1,14 +1,25 @@
 # Implementation Roadmap
 
-## Current runtime wheelhouse verification checkpoint
+## Current full offline runtime qualification checkpoint
+
+[Full offline qualification](../engineering/phase-4-runtime-offline-full-research.md)
+records Root's actual r2 success using the complete selected-wheel profile,
+default host preflight and production installer/worker consumers. Installed
+package/worker identity, pre/post activation, reopened-manager/refusal controls
+and a tiny native CUDA operation passed; the unchanged default CPU route still
+refuses inference. Full engine delivery/LaMa, publisher trust, clean release
+compatibility and public Setup remain following gates. Final validation and
+retention/delivery evidence remain separate completion records.
+
+## Previous runtime wheelhouse verification checkpoint
 
 [Wheelhouse bytes and metadata](../engineering/phase-4-runtime-wheelhouse-verification-research.md)
 adds the producer consumer for exact selected artifacts and real dependency
 metadata, with a separate plan-bound report. The original plan stays a plan;
 successful wheel verification is still not installed release qualification.
-Actual execution/review results must be recorded in the note. Full offline ML
-assembly, complete artifact delivery/signing, installed compatibility and public
-setup remain following gates.
+Actual execution/review results are recorded in the note. The later full offline
+profile supplies the installed/native qualification route; complete artifact
+delivery/signing, release compatibility and public setup remain separate gates.
 
 ## Previous runtime dependency policy checkpoint
 
