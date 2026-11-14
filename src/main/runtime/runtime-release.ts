@@ -190,27 +190,19 @@ export function runtimeReleaseRequirements(
     .join('')
 }
 
-/**
- * Fresh Invoke4875/launcher c267 checksum-before-use and complete staging ownership adaptation.
- * Signed canonical envelope/inventory are Studio's disclosed release contract, absent upstream. No
- * artifact is opened, executed or extracted before externally trusted Ed25519 verification.
- */
-export async function verifyRuntimeRelease(
-  selection: RuntimeReleaseSelection,
-): Promise<VerifiedRuntimeRelease> {
-  if (typeof selection !== 'object' || selection === null) {
-    invalid('A trusted Main runtime release selection is required.')
-  }
-  const directory = selection.directory
-  const appVersion = selection.appVersion
+/** Shared bounded Ed25519/canonical-envelope gate; no payload files are opened. */
+export function verifyCanonicalRuntimeEnvelope(
+  envelopeBytes: Buffer,
+  trustedKeys: Readonly<Record<string, string>>,
+): unknown {
   if (
-    !Buffer.isBuffer(selection.envelope) ||
-    selection.envelope.length < 1 ||
-    selection.envelope.length > MAX_MANIFEST_BYTES
+    !Buffer.isBuffer(envelopeBytes) ||
+    envelopeBytes.length < 1 ||
+    envelopeBytes.length > MAX_MANIFEST_BYTES
   ) {
     invalid('The runtime release envelope exceeds its byte limit.')
   }
-  const envelope = Buffer.from(selection.envelope)
+  const envelope = Buffer.from(envelopeBytes)
   let raw: unknown
   try {
     raw = JSON.parse(envelope.toString('utf8'))
@@ -232,10 +224,10 @@ export async function verifyRuntimeRelease(
     invalid('The runtime release signature or payload size is invalid.')
   }
   const keyId = sealed['keyId']
-  if (!selection.trustedKeys || !Object.hasOwn(selection.trustedKeys, keyId)) {
+  if (!trustedKeys || !Object.hasOwn(trustedKeys, keyId)) {
     trust('The runtime release signing key is not trusted.')
   }
-  const publicPem = selection.trustedKeys[keyId]
+  const publicPem = trustedKeys[keyId]
   if (typeof publicPem !== 'string' || publicPem.length > 16 * 1024) {
     trust('The trusted runtime key is invalid.')
   }
@@ -259,7 +251,36 @@ export async function verifyRuntimeRelease(
   if (!payload.equals(canonicalRuntimeReleaseJson(parsed))) {
     invalid('The signed runtime payload is not canonical JSON.')
   }
-  const manifest = validateManifest(parsed, appVersion)
+  return parsed
+}
+
+/** Inner release schema remains owned here, including transport-only callers before unpack. */
+export function verifyRuntimeReleaseManifest(
+  envelope: Buffer,
+  trustedKeys: Readonly<Record<string, string>>,
+  appVersion: string,
+): RuntimeReleaseManifest {
+  return validateManifest(verifyCanonicalRuntimeEnvelope(envelope, trustedKeys), appVersion)
+}
+
+/**
+ * Fresh Invoke4875/launcher c267 checksum-before-use and complete staging ownership adaptation.
+ * Signed canonical envelope/inventory are Studio's disclosed release contract, absent upstream. No
+ * artifact is opened, executed or extracted before externally trusted Ed25519 verification.
+ */
+export async function verifyRuntimeRelease(
+  selection: RuntimeReleaseSelection,
+): Promise<VerifiedRuntimeRelease> {
+  if (typeof selection !== 'object' || selection === null) {
+    invalid('A trusted Main runtime release selection is required.')
+  }
+  const directory = selection.directory
+  const appVersion = selection.appVersion
+  const manifest = verifyRuntimeReleaseManifest(
+    selection.envelope,
+    selection.trustedKeys,
+    appVersion,
+  )
   if (
     typeof directory !== 'string' ||
     !path.isAbsolute(directory) ||

@@ -193,10 +193,12 @@ uv run pytest
 
 ### Текущая реализация и developer qualification
 
-`RuntimeManager.install()` и `repair()` пока возвращают
-`RUNTIME_INSTALL_UNAVAILABLE`; изложенный ниже staged release lifecycle остаётся
-контрактом реализации. Проверка существующего app-owned pointer и запуск
-установленного worker уже доступны, но не заменяют verified installer.
+Public Main пока не передаёт release provider и review token, поэтому его
+`RuntimeManager.install()` / `repair()` возвращают `RUNTIME_INSTALL_UNAVAILABLE`.
+Внутренний verified offline backend и полный Python-slot qualification уже
+реализованы и имеют отдельные checkpoints ниже. Публичный Setup дополнительно
+требует trusted transport/download/extraction, полного engine review и LaMa;
+проверка существующего app-owned pointer сама по себе это не заменяет.
 
 - `pnpm run app:qualify:provision` — явная подготовка нового изолированного
   app-data root: копирование managed CPython 3.12.13, online `uv sync --locked`
@@ -258,6 +260,19 @@ evidence report. Каждый прогон требует нового canonical
 [installed runtime qualification research](../engineering/phase-2c-installed-runtime-qualification-research.md).
 
 ## Release artifacts
+
+[Signed transport producer](../engineering/phase-4-runtime-release-transport-research.md)
+packages the existing exact expanded inventory as `runtime-payload.zip`. A detached
+canonical descriptor, signed by an explicitly provided externally trusted
+Ed25519 identity, binds the exact ZIP size/hash and unchanged inner envelope and
+manifest hashes. The archive contains neither its own descriptor nor signature;
+Python symlinks and executable bits are explicit. Signature/envelope validation
+is shared with the existing release owner; inner schema and offline assembly are
+unchanged. This supplies actual transfer bytes, not installed footprint or total
+engine disk peak. The retained complete artifact uses a qualification-only key.
+Bounded extraction/download, shipping key delivery, LaMa composition and public
+Setup remain separate required consumers; no client accepts arbitrary keys or
+URLs from renderer input.
 
 Клиент не должен разрешать произвольные версии зависимостей из публичных package indexes.
 

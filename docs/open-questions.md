@@ -1,6 +1,18 @@
 # Open Questions
 
-## Current full offline runtime qualification boundary
+## Current runtime transport boundary
+
+[Signed transport production](./engineering/phase-4-runtime-release-transport-research.md)
+now supplies actual ZIP bytes and a detached signature binding them to the exact
+unchanged inner runtime envelope. This closes the producer/transport identity
+boundary without pretending expanded file totals are download volume. The next
+consumer must verify transport trust before bounded safe extraction, then reuse
+the existing inner verifier and offline assembler. Download admission, LaMa
+composition, aggregate engine review/IPC/UI, shipping publisher trust and release
+acceptance remain open. The retained key is qualification-only; promise statuses
+remain unchanged.
+
+## Previous full offline runtime qualification boundary
 
 [Full offline qualification](./engineering/phase-4-runtime-offline-full-research.md)
 has Root-reported r2 success through the existing installer: complete 67-package

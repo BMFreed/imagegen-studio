@@ -1,6 +1,16 @@
 # Implementation Roadmap
 
-## Current full offline runtime qualification checkpoint
+## Current signed runtime transport checkpoint
+
+[Runtime transport producer](../engineering/phase-4-runtime-release-transport-research.md)
+connects an existing verified expanded release to an actual ZIP and detached
+signed transport identity. Source/trust/refusal tests and the complete 67-wheel
+CLI artifact are separate evidence; no installer is duplicated. Next: bounded
+verified extraction/download, reviewed LaMa composition and real aggregate engine
+preview, then public Setup and release install/upgrade/rollback acceptance.
+A successful producer and qualification-only key do not enable public Setup.
+
+## Previous full offline runtime qualification checkpoint
 
 [Full offline qualification](../engineering/phase-4-runtime-offline-full-research.md)
 records Root's actual r2 success using the complete selected-wheel profile,

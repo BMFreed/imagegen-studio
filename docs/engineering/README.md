@@ -1,6 +1,17 @@
 # Engineering Workflow
 
-## Current full offline runtime qualification checkpoint
+## Current signed runtime transport checkpoint
+
+[Runtime transport producer](./phase-4-runtime-release-transport-research.md)
+creates a real ZIP and detached signed descriptor from the existing verified
+expanded release. The final CLI produced the complete 67-wheel transport;
+canonical payloads, exact ZIP/inner hashes, permissions and Python links have
+separate unit and actual artifact evidence. Explicit external signing identity
+is mandatory; the retained artifact's key is qualification-only. Bounded
+extraction/download, LaMa composition, total engine review and public Setup are
+following gates, with no readiness promotion.
+
+## Previous full offline runtime qualification checkpoint
 
 [Full offline Python runtime](./phase-4-runtime-offline-full-research.md)
 uses the verified wheelhouse and production Main installation owners. Root's
