@@ -19,6 +19,8 @@ import {
 
 const MAX_REDIRECTS = 5
 const MAX_DOWNLOAD_BYTES = 32 * 1024 * 1024 * 1024
+const MAX_RUNTIME_DOWNLOAD_BYTES = 65 * 1024 ** 3
+const MAX_RUNTIME_REDIRECT_ORIGINS = 32
 const DEFAULT_HEADER_TIMEOUT_MS = 20_000
 const DEFAULT_IDLE_TIMEOUT_MS = 60_000
 const DEFAULT_TOTAL_TIMEOUT_MS = 24 * 60 * 60 * 1000
@@ -81,6 +83,17 @@ export interface VerifiedStagedModelFile {
   readonly stagingPath: string
 }
 
+/** Trusted Main supplies this identity after authenticating the signed runtime metadata. */
+export interface RuntimeArtifactDownloadInput {
+  readonly expectedBytes: number
+  readonly expectedSha256: string
+  readonly onProgress?: ModelDownloadInput['onProgress']
+  readonly redirectOrigins: readonly string[]
+  readonly signal?: AbortSignal
+  readonly stagingDirectory: string
+  readonly url: string
+}
+
 export type AddressResolver = (hostname: string) => Promise<readonly string[]>
 
 export interface ModelDownloaderOptions {
@@ -92,6 +105,19 @@ export interface ModelDownloaderOptions {
   readonly transport?: typeof fetch
 }
 
+interface AdmittedDownload {
+  readonly allowTextResponse: boolean
+  readonly assertRedirect: (url: URL) => void
+  readonly expectedBytes: number | null
+  readonly expectedHash: string | null
+  readonly initialUrl: URL
+  readonly maximumBytes: number
+  readonly onProgress?: ModelDownloadInput['onProgress']
+  readonly requestHeaders: (url: URL) => HeadersInit
+  readonly signal?: AbortSignal
+  readonly stagingDirectory: string
+}
+
 export class ModelDownloadError extends Error {
   constructor(
     readonly code: string,
@@ -100,6 +126,14 @@ export class ModelDownloadError extends Error {
     super(message)
     this.name = 'ModelDownloadError'
   }
+}
+
+function requestHeaders(input: ModelDownloadInput, url: URL): HeadersInit {
+  const headers: Record<string, string> = { Accept: 'application/octet-stream' }
+  if (input.source === 'civitai' && url.origin === 'https://civitai.com') {
+    headers.Authorization = `Bearer ${input.bearerToken}`
+  }
+  return headers
 }
 
 /**
@@ -122,9 +156,101 @@ export class ModelDownloader {
   }
 
   async download(input: ModelDownloadInput): Promise<VerifiedStagedModelFile> {
+    input = Object.freeze({ ...input })
     const initialUrl = validateInitialUrl(input)
     const expectedHash = validateExpectedHash(input.expectedSha256)
     const expectedBytes = validateExpectedBytes(input.expectedBytes)
+    return await this.downloadAdmitted({
+      allowTextResponse:
+        input.source === 'invoke-regional-reference' &&
+        input.url === REGIONAL_REFERENCE_VISION_CONFIG_ARTIFACT.url,
+      assertRedirect: (nextUrl) => {
+        if (input.source === 'invoke-lama' && !LAMA_REDIRECT_HOSTS.has(nextUrl.hostname)) {
+          throw new ModelDownloadError(
+            'DOWNLOAD_UNSAFE_DESTINATION',
+            'The auxiliary resource redirect is unsupported.',
+          )
+        }
+      },
+      expectedBytes,
+      expectedHash,
+      initialUrl,
+      maximumBytes: MAX_DOWNLOAD_BYTES,
+      onProgress: input.onProgress,
+      requestHeaders: (url) => requestHeaders(input, url),
+      signal: input.signal,
+      stagingDirectory: input.stagingDirectory,
+    })
+  }
+
+  /**
+   * Invoke4875 download_default.py:_do_download/_reject_unsafe_redirect and model-install callers
+   * supply streaming, progress, partial/cancel ownership and per-hop validation. Reuse the existing
+   * Studio loop with its exact SHA/HTTPS guards; runtime admission adds no queue, resume or retry.
+   */
+  async downloadRuntimeArtifact(
+    input: RuntimeArtifactDownloadInput,
+  ): Promise<VerifiedStagedModelFile> {
+    if (!input || typeof input !== 'object' || 'bearerToken' in input) {
+      throw new ModelDownloadError(
+        'DOWNLOAD_INVALID_SOURCE',
+        'Runtime artifacts cannot use authorization tokens.',
+      )
+    }
+    const captured = Object.freeze({ ...input })
+    const source = validateRuntimeArtifactSource(captured)
+    const expectedHash = validateExpectedHash(captured.expectedSha256)
+    const expectedBytes = validateExpectedBytes(captured.expectedBytes, MAX_RUNTIME_DOWNLOAD_BYTES)
+    if (expectedHash === null || expectedBytes === null) {
+      throw new ModelDownloadError(
+        'DOWNLOAD_INVALID_EXPECTATION',
+        'A runtime artifact requires an exact size and SHA-256.',
+      )
+    }
+    return await this.downloadAdmitted({
+      allowTextResponse: false,
+      assertRedirect: (nextUrl) => {
+        if (!source.redirectOrigins.includes(nextUrl.origin)) {
+          throw new ModelDownloadError(
+            'DOWNLOAD_UNSAFE_DESTINATION',
+            'The runtime artifact redirect is unsupported.',
+          )
+        }
+      },
+      expectedBytes,
+      expectedHash,
+      initialUrl: new URL(source.url),
+      maximumBytes: MAX_RUNTIME_DOWNLOAD_BYTES,
+      onProgress: captured.onProgress,
+      requestHeaders: () => ({ Accept: 'application/octet-stream' }),
+      signal: captured.signal,
+      stagingDirectory: captured.stagingDirectory,
+    })
+  }
+
+  private async assertPublicDestination(url: URL, signal: AbortSignal): Promise<string> {
+    assertSafeDownloadHostname(url)
+    const hostname = url.hostname.replaceAll(/^\[|\]$/g, '')
+    let addresses: readonly string[]
+    try {
+      addresses = await raceAbort(this.resolveAddresses(hostname), signal)
+    } catch {
+      throw new ModelDownloadError(
+        'DOWNLOAD_NETWORK_ERROR',
+        'The download destination is unavailable.',
+      )
+    }
+    if (addresses.length === 0 || addresses.some((address) => !isPublicAddress(address))) {
+      throw new ModelDownloadError(
+        'DOWNLOAD_UNSAFE_DESTINATION',
+        'The download destination is unsafe.',
+      )
+    }
+    return addresses[0]
+  }
+
+  private async downloadAdmitted(input: AdmittedDownload): Promise<VerifiedStagedModelFile> {
+    const { expectedBytes, expectedHash, initialUrl } = input
     if (input.signal?.aborted) {
       throw new ModelDownloadError('DOWNLOAD_CANCELED', 'The download was canceled.')
     }
@@ -178,7 +304,7 @@ export class ModelDownloader {
         try {
           const requestOptions: RequestInit = {
             credentials: 'omit',
-            headers: requestHeaders(input, currentUrl),
+            headers: input.requestHeaders(currentUrl),
             redirect: 'manual',
             signal: controller.signal,
           }
@@ -209,12 +335,7 @@ export class ModelDownloader {
           )
         }
         const nextUrl = parseSafeUrl(location, currentUrl)
-        if (input.source === 'invoke-lama' && !LAMA_REDIRECT_HOSTS.has(nextUrl.hostname)) {
-          throw new ModelDownloadError(
-            'DOWNLOAD_UNSAFE_DESTINATION',
-            'The auxiliary resource redirect is unsupported.',
-          )
-        }
+        input.assertRedirect(nextUrl)
         await response.body?.cancel().catch(() => undefined)
         currentUrl = nextUrl
       }
@@ -237,9 +358,7 @@ export class ModelDownloader {
       }
       const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
       const isExactVisionConfig =
-        input.source === 'invoke-regional-reference' &&
-        input.url === REGIONAL_REFERENCE_VISION_CONFIG_ARTIFACT.url &&
-        /^(?:application\/json|text\/plain)(?:;|$)/.test(contentType)
+        input.allowTextResponse && /^(?:application\/json|text\/plain)(?:;|$)/.test(contentType)
       if (
         /^(text\/|application\/(?:json|xml|xhtml\+xml))/.test(contentType) &&
         !isExactVisionConfig
@@ -250,7 +369,7 @@ export class ModelDownloader {
         )
       }
       const contentLength = parseContentLength(response.headers.get('content-length'))
-      if (contentLength !== null && contentLength > MAX_DOWNLOAD_BYTES) {
+      if (contentLength !== null && contentLength > input.maximumBytes) {
         throw new ModelDownloadError(
           'DOWNLOAD_TOO_LARGE',
           'The model file exceeds the download limit.',
@@ -263,7 +382,7 @@ export class ModelDownloader {
         )
       }
 
-      const maxBytes = expectedBytes ?? MAX_DOWNLOAD_BYTES
+      const maxBytes = expectedBytes ?? input.maximumBytes
       const totalBytes = expectedBytes ?? contentLength
       const hash = createHash('sha256')
       let downloadedBytes = 0
@@ -364,37 +483,56 @@ export class ModelDownloader {
       controller.abort()
     }
   }
+}
 
-  private async assertPublicDestination(url: URL, signal: AbortSignal): Promise<string> {
-    const hostname = url.hostname.replaceAll(/^\[|\]$/g, '')
-    if (
-      hostname.endsWith('.') ||
-      !hostname.includes('.') ||
-      /(?:^|\.)(?:localhost|local|internal|lan)$/.test(hostname) ||
-      isIP(hostname) !== 0
-    ) {
-      throw new ModelDownloadError(
-        'DOWNLOAD_UNSAFE_DESTINATION',
-        'The download destination is unsafe.',
-      )
-    }
-    let addresses: readonly string[]
-    try {
-      addresses = await raceAbort(this.resolveAddresses(hostname), signal)
-    } catch {
-      throw new ModelDownloadError(
-        'DOWNLOAD_NETWORK_ERROR',
-        'The download destination is unavailable.',
-      )
-    }
-    if (addresses.length === 0 || addresses.some((address) => !isPublicAddress(address))) {
-      throw new ModelDownloadError(
-        'DOWNLOAD_UNSAFE_DESTINATION',
-        'The download destination is unsafe.',
-      )
-    }
-    return addresses[0]
+/** Pure admission shared with the Main cache owner before it creates private output. */
+export function validateRuntimeArtifactSource(input: {
+  readonly redirectOrigins: readonly string[]
+  readonly url: string
+}): Readonly<{ redirectOrigins: readonly string[]; url: string }> {
+  if (
+    !input ||
+    typeof input.url !== 'string' ||
+    !Array.isArray(input.redirectOrigins) ||
+    input.redirectOrigins.length > MAX_RUNTIME_REDIRECT_ORIGINS
+  ) {
+    throw new ModelDownloadError(
+      'DOWNLOAD_INVALID_SOURCE',
+      'The runtime artifact source is invalid.',
+    )
   }
+  const url = parseSafeUrl(input.url)
+  assertSafeDownloadHostname(url)
+  if (url.hash) {
+    throw new ModelDownloadError(
+      'DOWNLOAD_INVALID_SOURCE',
+      'The runtime artifact source is invalid.',
+    )
+  }
+  const origins = Array.from(input.redirectOrigins, (value: unknown) => {
+    if (typeof value !== 'string') {
+      throw new ModelDownloadError(
+        'DOWNLOAD_INVALID_SOURCE',
+        'The runtime redirect policy is invalid.',
+      )
+    }
+    const origin = parseSafeUrl(value)
+    assertSafeDownloadHostname(origin)
+    if (origin.pathname !== '/' || origin.search || origin.hash) {
+      throw new ModelDownloadError(
+        'DOWNLOAD_INVALID_SOURCE',
+        'Runtime redirects require HTTPS origins.',
+      )
+    }
+    return origin.origin
+  })
+  if (new Set(origins).size !== origins.length) {
+    throw new ModelDownloadError(
+      'DOWNLOAD_INVALID_SOURCE',
+      'The runtime redirect policy is duplicated.',
+    )
+  }
+  return Object.freeze({ redirectOrigins: Object.freeze(origins), url: url.toString() })
 }
 
 /** Uses the checked IP for the socket while TLS SNI and certificate checks still use the hostname. */
@@ -474,12 +612,19 @@ async function resolvePublicAddresses(hostname: string): Promise<readonly string
   return addresses.map((item) => item.address)
 }
 
-function requestHeaders(input: ModelDownloadInput, url: URL): HeadersInit {
-  const headers: Record<string, string> = { Accept: 'application/octet-stream' }
-  if (input.source === 'civitai' && url.origin === 'https://civitai.com') {
-    headers.Authorization = `Bearer ${input.bearerToken}`
+function assertSafeDownloadHostname(url: URL): void {
+  const hostname = url.hostname.replaceAll(/^\[|\]$/g, '')
+  if (
+    hostname.endsWith('.') ||
+    !hostname.includes('.') ||
+    /(?:^|\.)(?:localhost|local|internal|lan)$/.test(hostname) ||
+    isIP(hostname) !== 0
+  ) {
+    throw new ModelDownloadError(
+      'DOWNLOAD_UNSAFE_DESTINATION',
+      'The download destination is unsafe.',
+    )
   }
-  return headers
 }
 
 function validateInitialUrl(input: ModelDownloadInput): URL {
@@ -571,11 +716,14 @@ function validateExpectedHash(input: string | null | undefined): string | null {
   return input.toLowerCase()
 }
 
-function validateExpectedBytes(input: number | null | undefined): number | null {
+function validateExpectedBytes(
+  input: number | null | undefined,
+  maximum = MAX_DOWNLOAD_BYTES,
+): number | null {
   if (input == null) {
     return null
   }
-  if (!Number.isSafeInteger(input) || input < 1 || input > MAX_DOWNLOAD_BYTES) {
+  if (!Number.isSafeInteger(input) || input < 1 || input > maximum) {
     throw new ModelDownloadError(
       'DOWNLOAD_INVALID_EXPECTATION',
       'The expected file size is invalid.',

@@ -1,6 +1,17 @@
 # Engineering Workflow
 
-## Current verified runtime extraction checkpoint
+## Current trusted runtime cache checkpoint
+
+[Trusted transport cache](./phase-5-runtime-transport-cache-research.md) joins explicit Main-selected signed
+envelopes and archive source to the existing DNS-pinned downloader. Both
+signatures/bindings precede DNS and writes; complete entries are rehashed and
+bound to the selected envelopes on reuse. One explicit attempt, cancellation
+and incomplete-entry refusal are finite consumers, not catalog discovery or
+partial recovery. Shipping key/metadata distribution, release endpoints, reviewed
+LaMa composition, complete engine preview/Install/Repair and release acceptance
+remain open. Public promise statuses stay unchanged.
+
+## Previous verified runtime extraction checkpoint
 
 [Bounded runtime extraction](./phase-4-runtime-release-extraction-research.md)
 connects signed transport bytes to the existing exact expanded-release verifier.

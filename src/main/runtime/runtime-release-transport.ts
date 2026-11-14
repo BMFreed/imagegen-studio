@@ -56,6 +56,7 @@ export interface VerifiedRuntimeTransport {
   readonly directory: string
   readonly manifest: RuntimeTransportManifest
   readonly runtimeManifest: RuntimeReleaseManifest
+  readonly transportEnvelopeSha256: string
   verifyCompleteTransportSnapshot: () => Promise<void>
 }
 
@@ -71,6 +72,26 @@ export class RuntimeTransportError extends Error {
     super(message)
     this.name = 'RuntimeTransportError'
   }
+}
+
+/** Pure admission shared by local verification and Main's explicitly selected remote source. */
+export function verifyRuntimeTransportMetadata(input: {
+  readonly appVersion: string
+  readonly runtimeEnvelope: Buffer
+  readonly transportEnvelope: Buffer
+  readonly trustedKeys: Readonly<Record<string, string>>
+}): Pick<VerifiedRuntimeTransport, 'manifest' | 'runtimeManifest' | 'transportEnvelopeSha256'> {
+  const raw = verifyCanonicalRuntimeEnvelope(input.transportEnvelope, input.trustedKeys)
+  const runtimeManifest = verifyRuntimeReleaseManifest(
+    input.runtimeEnvelope,
+    input.trustedKeys,
+    input.appVersion,
+  )
+  return Object.freeze({
+    manifest: validateDescriptor(raw, runtimeManifest, input.runtimeEnvelope),
+    runtimeManifest,
+    transportEnvelopeSha256: digest(input.transportEnvelope),
+  })
 }
 
 /** Verifies transport trust/bytes, never extracts ZIP members or advertises installed readiness. */
@@ -90,10 +111,14 @@ export async function verifyRuntimeTransport(input: {
       'Transport must contain exactly the completed archive and two envelopes.',
     )
     const outer = await inspectFile(path.join(directory, OUTER), MAX_ENVELOPE_BYTES, true, signal)
-    const raw = verifyCanonicalRuntimeEnvelope(outer.bytes!, trustedKeys)
     const inner = await inspectFile(path.join(directory, INNER), MAX_ENVELOPE_BYTES, true, signal)
-    const runtime = verifyRuntimeReleaseManifest(inner.bytes!, trustedKeys, appVersion)
-    const manifest = validateDescriptor(raw, runtime, inner.bytes!)
+    const metadata = verifyRuntimeTransportMetadata({
+      appVersion,
+      runtimeEnvelope: inner.bytes!,
+      transportEnvelope: outer.bytes!,
+      trustedKeys,
+    })
+    const { manifest, runtimeManifest: runtime } = metadata
     const archive = await inspectFile(
       path.join(directory, ARCHIVE),
       MAX_ARCHIVE_BYTES,
@@ -117,6 +142,7 @@ export async function verifyRuntimeTransport(input: {
         archive.identity,
         archive.sha256,
       ].join('\0'),
+      transportEnvelopeSha256: metadata.transportEnvelopeSha256,
     }
   }
   const initial = await inspect()
@@ -124,6 +150,7 @@ export async function verifyRuntimeTransport(input: {
     directory,
     manifest: initial.manifest,
     runtimeManifest: initial.runtime,
+    transportEnvelopeSha256: initial.transportEnvelopeSha256,
     verifyCompleteTransportSnapshot: async () => {
       try {
         unchanged((await inspect()).snapshot === initial.snapshot)
@@ -250,7 +277,7 @@ export async function produceRuntimeTransport(input: {
 /** Existing producer's create-only, fd-anchored output owner, shared with extraction. */
 export async function withRuntimeTransportOutput<T>(
   outputDirectory: string,
-  excludedDirectory: string,
+  excludedDirectory: string | null,
   operation: (owned: {
     anchor: string
     complete: () => Promise<void>
@@ -262,8 +289,9 @@ export async function withRuntimeTransportOutput<T>(
   storage(
     path.isAbsolute(outputDirectory) &&
       path.resolve(outputDirectory) === outputDirectory &&
-      outputDirectory !== excludedDirectory &&
-      !outputDirectory.startsWith(excludedDirectory + path.sep),
+      (excludedDirectory === null ||
+        (outputDirectory !== excludedDirectory &&
+          !outputDirectory.startsWith(excludedDirectory + path.sep))),
     'Output must be a new canonical directory outside the input payload.',
   )
   const parent = path.dirname(outputDirectory)

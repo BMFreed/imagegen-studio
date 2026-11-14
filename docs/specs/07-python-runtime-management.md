@@ -261,6 +261,21 @@ evidence report. Каждый прогон требует нового canonical
 
 ## Release artifacts
 
+[Trusted transport cache](../engineering/phase-5-runtime-transport-cache-research.md)
+accepts two bounded envelopes, an external trusted keyring/app version and an
+explicit Main-owned archive URL/redirect-origin policy. A pure gate shared with
+the existing transport verifier authenticates both signatures and bindings before
+DNS or writes. The same downloader streams exact signed size/SHA; model sources
+retain 32 GiB while the separate runtime admission retains the transport's 65 GiB
+ceiling. Completed exact-entry containers hold only `transport/`, whose three
+files are freshly verified against the selected envelopes before reuse.
+Concurrent callers serialize/recheck; a canceled waiter returns without letting
+later callers overtake the active writer. Incomplete/corrupt entries refuse and
+are preserved, without implicit deletion, overwrite, partial resume or automatic
+retry. A new explicit attempt needs a new Main-owned entry path. This finite
+consumer does not select shipping URLs/keys, download metadata, manage a catalog
+or perform extraction/installation/activation; public Setup remains unavailable.
+
 [Verified local extraction](../engineering/phase-4-runtime-release-extraction-research.md)
 authenticates both transport envelopes/archive bytes, preflights exact ZIP
 membership, sizes, expansion and modes, then creates only signed regular files

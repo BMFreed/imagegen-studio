@@ -22,6 +22,8 @@ import {
   ModelDownloadError,
   type ModelDownloadInput,
   requestPinnedHttps,
+  type RuntimeArtifactDownloadInput,
+  validateRuntimeArtifactSource,
 } from './model-downloader.js'
 
 const FILE_URL = 'https://civitai.com/api/download/models/7?fileId=701'
@@ -1089,6 +1091,402 @@ test('a file beyond the unknown-size safety cap is refused before staging', asyn
         url: FILE_URL,
       }),
       'DOWNLOAD_TOO_LARGE',
+    )
+    assert.deepEqual(await readdir(stagingDirectory), [])
+  })
+})
+
+const RUNTIME_URL = 'https://runtime.example.com/releases/runtime-payload.zip'
+const RUNTIME_CDN = 'https://cdn.example.com'
+
+function runtimeDownload(stagingDirectory: string): RuntimeArtifactDownloadInput {
+  return {
+    expectedBytes: 3,
+    expectedSha256: sha256('abc'),
+    redirectOrigins: [],
+    stagingDirectory,
+    url: RUNTIME_URL,
+  }
+}
+
+test('runtime source admission returns a detached normalized policy without inventing origins', () => {
+  const origins = ['https://CDN.EXAMPLE.com/']
+  const source = validateRuntimeArtifactSource({ redirectOrigins: origins, url: RUNTIME_URL })
+  origins[0] = 'https://different.example.com'
+  assert.deepEqual(source, { redirectOrigins: [RUNTIME_CDN], url: RUNTIME_URL })
+  assert.ok(Object.isFrozen(source) && Object.isFrozen(source.redirectOrigins))
+  assert.deepEqual(
+    validateRuntimeArtifactSource({ redirectOrigins: [], url: RUNTIME_URL }).redirectOrigins,
+    [],
+  )
+})
+
+test('runtime exact identity and URL policy refuse before storage, DNS or transport', async (t) => {
+  const changes: [string, (input: RuntimeArtifactDownloadInput) => void, string][] = [
+    [
+      'missing SHA',
+      (v) => Reflect.deleteProperty(v, 'expectedSha256'),
+      'DOWNLOAD_INVALID_EXPECTATION',
+    ],
+    [
+      'missing size',
+      (v) => Reflect.deleteProperty(v, 'expectedBytes'),
+      'DOWNLOAD_INVALID_EXPECTATION',
+    ],
+    [
+      'invalid SHA',
+      (v) => Reflect.set(v, 'expectedSha256', 'not-a-digest'),
+      'DOWNLOAD_INVALID_EXPECTATION',
+    ],
+    ['zero size', (v) => Reflect.set(v, 'expectedBytes', 0), 'DOWNLOAD_INVALID_EXPECTATION'],
+    [
+      'fractional size',
+      (v) => Reflect.set(v, 'expectedBytes', 1.5),
+      'DOWNLOAD_INVALID_EXPECTATION',
+    ],
+    [
+      'oversized runtime',
+      (v) => Reflect.set(v, 'expectedBytes', 65 * 1024 ** 3 + 1),
+      'DOWNLOAD_INVALID_EXPECTATION',
+    ],
+    [
+      'Bearer token',
+      (v) => Reflect.set(v, 'bearerToken', 'secret-token'),
+      'DOWNLOAD_INVALID_SOURCE',
+    ],
+    [
+      'HTTP',
+      (v) => Reflect.set(v, 'url', 'http://runtime.example.com/file'),
+      'DOWNLOAD_INVALID_URL',
+    ],
+    [
+      'credentials',
+      (v) => Reflect.set(v, 'url', 'https://secret-token@runtime.example.com/file'),
+      'DOWNLOAD_INVALID_URL',
+    ],
+    [
+      'port',
+      (v) => Reflect.set(v, 'url', 'https://runtime.example.com:8443/file'),
+      'DOWNLOAD_INVALID_URL',
+    ],
+    ['fragment', (v) => Reflect.set(v, 'url', `${RUNTIME_URL}#other`), 'DOWNLOAD_INVALID_SOURCE'],
+    [
+      'IP literal',
+      (v) => Reflect.set(v, 'url', 'https://127.0.0.1/file'),
+      'DOWNLOAD_UNSAFE_DESTINATION',
+    ],
+    [
+      'local name',
+      (v) => Reflect.set(v, 'url', 'https://host.local/file'),
+      'DOWNLOAD_UNSAFE_DESTINATION',
+    ],
+    [
+      'missing origins',
+      (v) => Reflect.deleteProperty(v, 'redirectOrigins'),
+      'DOWNLOAD_INVALID_SOURCE',
+    ],
+    [
+      'sparse origins',
+      (v) => {
+        const origins: string[] = []
+        origins.length = 1
+        Reflect.set(v, 'redirectOrigins', origins)
+      },
+      'DOWNLOAD_INVALID_SOURCE',
+    ],
+    [
+      'non-origin path',
+      (v) => Reflect.set(v, 'redirectOrigins', [`${RUNTIME_CDN}/path`]),
+      'DOWNLOAD_INVALID_SOURCE',
+    ],
+    [
+      'origin query',
+      (v) => Reflect.set(v, 'redirectOrigins', [`${RUNTIME_CDN}?key=secret-token`]),
+      'DOWNLOAD_INVALID_SOURCE',
+    ],
+    [
+      'origin HTTP',
+      (v) => Reflect.set(v, 'redirectOrigins', ['http://cdn.example.com']),
+      'DOWNLOAD_INVALID_URL',
+    ],
+    [
+      'duplicate normalized origins',
+      (v) => Reflect.set(v, 'redirectOrigins', [RUNTIME_CDN, `${RUNTIME_CDN}/`]),
+      'DOWNLOAD_INVALID_SOURCE',
+    ],
+    [
+      'origin budget',
+      (v) =>
+        Reflect.set(
+          v,
+          'redirectOrigins',
+          Array.from({ length: 33 }, (_, i) => `https://cdn-${i}.example.com`),
+        ),
+      'DOWNLOAD_INVALID_SOURCE',
+    ],
+  ]
+  for (const [name, change, code] of changes) {
+    await t.test(name, async () =>
+      withStaging(async (parent) => {
+        let calls = 0
+        const downloader = new ModelDownloader({
+          resolveAddresses: async () => {
+            calls++
+            return ['1.1.1.1']
+          },
+          transport: async () => {
+            calls++
+            return fileResponse('abc')
+          },
+        })
+        const input = runtimeDownload(join(parent, 'must-not-be-created'))
+        change(input)
+        await expectDownloadError(downloader.downloadRuntimeArtifact(input), code)
+        assert.equal(calls, 0)
+        assert.deepEqual(await readdir(parent), [])
+      }),
+    )
+  }
+})
+
+test('runtime archive follows only explicit HTTPS origins and never sends Authorization', async () => {
+  await withStaging(async (stagingDirectory) => {
+    const requests: { auth: string | null; url: string }[] = []
+    const progress: number[] = []
+    const downloaded = await new ModelDownloader({
+      resolveAddresses: PUBLIC_ADDRESSES,
+      transport: async (url, options) => {
+        requests.push({
+          auth: new Headers(options?.headers).get('Authorization'),
+          url: String(url),
+        })
+        return requests.length === 1
+          ? new Response(null, {
+              headers: { location: `${RUNTIME_CDN}/artifact?sig=signed-query` },
+              status: 302,
+            })
+          : fileResponse('abc')
+      },
+    }).downloadRuntimeArtifact({
+      ...runtimeDownload(stagingDirectory),
+      onProgress: (p) => progress.push(p.downloadedBytes),
+      redirectOrigins: [RUNTIME_CDN],
+    })
+    assert.deepEqual(requests, [
+      { auth: null, url: RUNTIME_URL },
+      { auth: null, url: `${RUNTIME_CDN}/artifact?sig=signed-query` },
+    ])
+    assert.equal(await readFile(downloaded.stagingPath, 'utf8'), 'abc')
+    assert.equal(downloaded.sha256, sha256('abc'))
+    assert.equal(downloaded.sizeBytes, 3)
+    assert.deepEqual(progress, [3])
+    assert.equal((await stat(downloaded.stagingPath)).mode & 0o777, 0o600)
+  })
+})
+
+test('runtime identity, redirect policy, callbacks and destination are captured before asynchronous DNS', async () => {
+  await withStaging(async (stagingDirectory) => {
+    let enterDns!: () => void
+    let releaseDns!: () => void
+    const entered = new Promise<void>((resolve) => {
+      enterDns = resolve
+    })
+    const released = new Promise<void>((resolve) => {
+      releaseDns = resolve
+    })
+    const requests: string[] = []
+    const progress: number[] = []
+    const origins = [RUNTIME_CDN]
+    const input: RuntimeArtifactDownloadInput = {
+      ...runtimeDownload(stagingDirectory),
+      onProgress: (p) => progress.push(p.downloadedBytes),
+      redirectOrigins: origins,
+    }
+    const pending = new ModelDownloader({
+      resolveAddresses: async () => {
+        enterDns()
+        await released
+        return ['1.1.1.1']
+      },
+      transport: async (url) => {
+        requests.push(String(url))
+        return requests.length === 1
+          ? new Response(null, { headers: { location: `${RUNTIME_CDN}/artifact` }, status: 302 })
+          : fileResponse('abc')
+      },
+    }).downloadRuntimeArtifact(input)
+    try {
+      await entered
+      origins[0] = 'https://different.example.com'
+      Reflect.set(input, 'url', 'https://different.example.com/other')
+      Reflect.set(input, 'expectedBytes', 99)
+      Reflect.set(input, 'expectedSha256', '0'.repeat(64))
+      Reflect.set(input, 'stagingDirectory', join(stagingDirectory, 'wrong-destination'))
+      Reflect.set(input, 'onProgress', () => {
+        throw new Error('Changed callback must not run')
+      })
+    } finally {
+      releaseDns()
+    }
+    const downloaded = await pending
+    assert.deepEqual(requests, [RUNTIME_URL, `${RUNTIME_CDN}/artifact`])
+    assert.equal(await readFile(downloaded.stagingPath, 'utf8'), 'abc')
+    assert.deepEqual(progress, [3])
+    assert.deepEqual(await readdir(stagingDirectory), [
+      downloaded.stagingPath.slice(stagingDirectory.length + 1),
+    ])
+  })
+})
+
+test('runtime redirect origin and DNS guards refuse before a second HTTP request', async (t) => {
+  for (const kind of ['unlisted', 'HTTP', 'credentials', 'private DNS'] as const) {
+    await t.test(kind, async () =>
+      withStaging(async (stagingDirectory) => {
+        let requests = 0
+        const downloader = new ModelDownloader({
+          resolveAddresses: async (host) =>
+            host === 'cdn.example.com' && kind === 'private DNS'
+              ? ['1.1.1.1', '127.0.0.1']
+              : ['1.1.1.1'],
+          transport: async () => {
+            requests++
+            return new Response(null, {
+              headers: {
+                location:
+                  kind === 'HTTP'
+                    ? 'http://cdn.example.com/file'
+                    : kind === 'credentials'
+                      ? 'https://secret-token@cdn.example.com/file'
+                      : `${RUNTIME_CDN}/artifact`,
+              },
+              status: 302,
+            })
+          },
+        })
+        await expectDownloadError(
+          downloader.downloadRuntimeArtifact({
+            ...runtimeDownload(stagingDirectory),
+            redirectOrigins: kind === 'unlisted' ? [] : [RUNTIME_CDN],
+          }),
+          kind === 'HTTP' || kind === 'credentials'
+            ? 'DOWNLOAD_INVALID_URL'
+            : 'DOWNLOAD_UNSAFE_DESTINATION',
+        )
+        assert.equal(requests, 1)
+        assert.deepEqual(await readdir(stagingDirectory), [])
+      }),
+    )
+  }
+})
+
+test('runtime admits its65GiB engineering bound while retaining model32GiB and full-body verification', async () => {
+  await withStaging(async (stagingDirectory) => {
+    let requests = 0
+    let advertisedBytes = 32 * 1024 ** 3 + 1
+    const downloader = new ModelDownloader({
+      resolveAddresses: PUBLIC_ADDRESSES,
+      transport: async () => {
+        requests++
+        return fileResponse('abc', advertisedBytes)
+      },
+    })
+    await expectDownloadError(
+      downloader.download({
+        bearerToken: 'secret-token',
+        expectedBytes: advertisedBytes,
+        source: 'civitai',
+        stagingDirectory,
+        url: FILE_URL,
+      }),
+      'DOWNLOAD_INVALID_EXPECTATION',
+    )
+    assert.equal(requests, 0)
+    for (const size of [32 * 1024 ** 3 + 1, 65 * 1024 ** 3]) {
+      advertisedBytes = size
+      await expectDownloadError(
+        downloader.downloadRuntimeArtifact({
+          ...runtimeDownload(stagingDirectory),
+          expectedBytes: size,
+        }),
+        'DOWNLOAD_SIZE_MISMATCH',
+      )
+    }
+    assert.equal(requests, 2)
+    assert.deepEqual(await readdir(stagingDirectory), [])
+  })
+})
+
+test('runtime body errors use the shared hash, exact-size, encoding and MIME checks and clean partials', async (t) => {
+  const cases: [string, () => Response, Partial<RuntimeArtifactDownloadInput>, string][] = [
+    [
+      'hash',
+      () => fileResponse('abc'),
+      { expectedSha256: '0'.repeat(64) },
+      'DOWNLOAD_HASH_MISMATCH',
+    ],
+    ['header-size', () => fileResponse('abc'), { expectedBytes: 4 }, 'DOWNLOAD_SIZE_MISMATCH'],
+    ['truncated', () => fileResponse('ab', 3), {}, 'DOWNLOAD_SIZE_MISMATCH'],
+    [
+      'overrun',
+      () => new Response('abcd', { headers: { 'content-type': 'application/octet-stream' } }),
+      {},
+      'DOWNLOAD_TOO_LARGE',
+    ],
+    [
+      'encoded',
+      () => new Response('abc', { headers: { 'content-encoding': 'gzip' } }),
+      {},
+      'DOWNLOAD_INVALID_RESPONSE',
+    ],
+    [
+      'JSON',
+      () => new Response('abc', { headers: { 'content-type': 'application/json' } }),
+      {},
+      'DOWNLOAD_INVALID_RESPONSE',
+    ],
+  ]
+  for (const [name, response, override, code] of cases) {
+    await t.test(name, async () =>
+      withStaging(async (stagingDirectory) => {
+        await expectDownloadError(
+          new ModelDownloader({
+            resolveAddresses: PUBLIC_ADDRESSES,
+            transport: async () => response(),
+          }).downloadRuntimeArtifact({ ...runtimeDownload(stagingDirectory), ...override }),
+          code,
+        )
+        assert.deepEqual(await readdir(stagingDirectory), [])
+      }),
+    )
+  }
+})
+
+test('runtime cancellation after written progress closes and removes its private partial file', async () => {
+  await withStaging(async (stagingDirectory) => {
+    const controller = new AbortController()
+    const downloader = new ModelDownloader({
+      resolveAddresses: PUBLIC_ADDRESSES,
+      transport: async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(stream) {
+              stream.enqueue(new TextEncoder().encode('abc'))
+              stream.enqueue(new TextEncoder().encode('def'))
+              stream.close()
+            },
+          }),
+          { headers: { 'content-type': 'application/octet-stream' } },
+        ),
+    })
+    await expectDownloadError(
+      downloader.downloadRuntimeArtifact({
+        ...runtimeDownload(stagingDirectory),
+        expectedBytes: 6,
+        expectedSha256: sha256('abcdef'),
+        onProgress: () => controller.abort(),
+        signal: controller.signal,
+      }),
+      'DOWNLOAD_CANCELED',
     )
     assert.deepEqual(await readdir(stagingDirectory), [])
   })
