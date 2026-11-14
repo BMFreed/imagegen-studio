@@ -1,14 +1,25 @@
 # Open Questions
 
-## Current runtime dependency policy boundary
+## Current runtime wheelhouse verification boundary
+
+[Selected wheel verification](./engineering/phase-4-runtime-wheelhouse-verification-research.md)
+adds a local byte/ZIP/METADATA consumer tied to the current plan and the fixed
+dependency policy. Execution must establish the actual selected-wheel result;
+source authoring alone does not close that gate. Even a verified wheelhouse
+still needs complete offline assembly, installed/native compatibility, the
+other runtime artifacts, publisher trust, engine preview/download and public
+setup. One retained SHARED wheelhouse serves the next concrete assembly step.
+
+## Previous runtime dependency policy boundary
 
 [Signed installed dependency policy](./engineering/phase-4-runtime-dependency-policy-research.md)
 adds the fixed Invoke-derived Notebook exclusion to an explicit Main consumer,
 with all other active metadata requirements checked. Absent policy retains the
 strict base CPU path. The new signed field is additive for this reader; older
-exact-key readers reject it. Complete selected wheel bytes/metadata, full
-offline inference assembly, release compatibility, publisher trust, full engine
-preview/download and public setup remain open.
+exact-key readers reject it. Selected wheel bytes/metadata now have a separate
+producer verification consumer; full offline inference assembly, release
+compatibility, publisher trust, full engine preview/download and public setup
+remain open.
 
 ## Previous runtime wheelhouse plan boundary
 

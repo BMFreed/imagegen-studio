@@ -1,7 +1,14 @@
 """Build-time Invoke-derived lock -> wheel selection, not a client installer.
 
 Run with the locked worker development environment. This command never downloads,
-installs, signs or imports inference packages. Its output is deliberately a plan.
+installs, signs or imports inference packages. It publishes the plan and, when an
+existing local wheelhouse is explicitly supplied, a separate byte/METADATA receipt.
+
+Source check: InvokeAI 4875d96531ca6712b288f6e660fcbb34143408c1,
+model_hash.py / ModelOnDisk.hash, check_platform_locks.py / uv-lock-checks.yml,
+and install_staging_ledger.py publication / ModelInstallService callers. The
+optional receipt extends this owner's existing create-only publication; byte and
+dependency semantics remain in the shared verifier rather than another checker.
 """
 
 from __future__ import annotations
@@ -25,6 +32,7 @@ from runtime_worker_wheel import inspect_worker_wheel  # noqa: E402
 
 REPOSITORY = Path(__file__).resolve().parent.parent
 MAX_INPUT_BYTES = 8 * 1024 * 1024
+MAX_VERIFICATION_BYTES = 2 * 1024 * 1024
 DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 
 
@@ -60,6 +68,7 @@ def publish_plan(
     destination: Path,
     plan: dict[str, Any],
     *,
+    verification: dict[str, object] | None = None,
     before_open_output: Callable[[], None] | None = None,
 ) -> None:
     """New output directory only; fd-anchored files retain an incomplete marker on failure.
@@ -118,6 +127,11 @@ def publish_plan(
         if not isinstance(requirements, str):
             raise ValueError("The plan did not supply exact offline requirements.")
         write("requirements.txt", requirements.encode())
+        if verification is not None:
+            receipt = (json.dumps(verification, sort_keys=True, indent=2) + "\n").encode()
+            if len(receipt) > MAX_VERIFICATION_BYTES:
+                raise ValueError("The wheelhouse verification receipt exceeds its bound.")
+            write("wheelhouse-verification.json", receipt)
         same_output()
         os.fsync(output)
         os.unlink(".incomplete", dir_fd=output)
@@ -136,6 +150,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--project", type=Path, default=REPOSITORY / "worker-python/pyproject.toml")
     parser.add_argument("--worker-wheel", type=Path, required=True)
     parser.add_argument(
+        "--wheelhouse", type=Path, help="Verify this complete existing local wheel directory"
+    )
+    parser.add_argument(
         "--glibc", required=True, help="Explicit target floor; not the current host libc"
     )
     parser.add_argument("--output-dir", type=Path, required=True, help="Must not already exist")
@@ -153,12 +170,27 @@ def main(argv: list[str] | None = None) -> int:
         worker_before = worker_path.lstat()
         worker = inspect_worker_wheel(worker_path, project, target_tags(args.glibc))
         plan = plan_wheelhouse(lock, project, glibc=args.glibc, worker_wheel=worker)
-        if stable_input(lock_path) != lock or stable_input(project_path) != project:
-            raise ValueError("Lock/project changed during selection.")
-        if file_identity(worker_path.lstat()) != file_identity(worker_before):
-            raise ValueError("Built worker wheel changed during selection.")
+
+        def unchanged_inputs() -> None:
+            if stable_input(lock_path) != lock or stable_input(project_path) != project:
+                raise ValueError("Lock/project changed during selection or verification.")
+            if file_identity(worker_path.lstat()) != file_identity(worker_before):
+                raise ValueError("Built worker wheel changed during selection or verification.")
+
+        unchanged_inputs()
         plan["tooling"] = {"packaging": tooling[0]}
-        publish_plan(args.output_dir.absolute(), plan)
+        verification: dict[str, object] | None = None
+        if args.wheelhouse is not None:
+            # The separate verifier reuses the Invoke-derived metadata checker;
+            # it inspects local archives without importing their package payloads.
+            from runtime_wheelhouse_verify import verify_wheelhouse
+
+            verification = verify_wheelhouse(plan, args.wheelhouse.absolute())
+            verification["planSha256"] = hashlib.sha256(
+                (json.dumps(plan, sort_keys=True, indent=2) + "\n").encode()
+            ).hexdigest()
+            unchanged_inputs()
+        publish_plan(args.output_dir.absolute(), plan, verification=verification)
         summary = {
             "scope": plan["scope"],
             "outputDirectory": str(args.output_dir.absolute()),
@@ -167,6 +199,9 @@ def main(argv: list[str] | None = None) -> int:
             "lockSha256": hashlib.sha256(lock).hexdigest(),
             "installQualified": False,
         }
+        if verification is not None:
+            summary["artifactBytesVerified"] = True
+            summary["dependencyEvidence"] = "wheel-metadata"
         print(json.dumps(summary, sort_keys=True))
         return 0
     except (ValueError, OSError, KeyError, TypeError) as error:

@@ -286,6 +286,18 @@ supported ABI/driver matrix. The plan binds the explicit Invoke-derived Notebook
 exclusion and names its signed dependency policy. Selected-wheel metadata
 verification and full installed qualification remain required.
 
+[Wheelhouse verification](../engineering/phase-4-runtime-wheelhouse-verification-research.md)
+adds optional producer input `--wheelhouse` for the exact local selected wheel
+files. It checks locked hashes/sizes, ZIP contents, filename/version/tags and
+actual Core Metadata dependencies through the existing fixed policy. Its
+separate `wheelhouse-verification.json` is bound to the newly generated plan's
+SHA-256; the original plan flags stay unchanged. A successful verification
+report records `artifactBytesVerified: true`, `dependencyEvidence: "wheel-metadata"`
+and `installQualified: false`. This gate does not install or execute the wheels,
+sign a complete release, supply the other runtime artifacts or establish the
+native compatibility matrix. Actual execution evidence remains explicit in the
+linked research note.
+
 [Signed dependency policy](../engineering/phase-4-runtime-dependency-policy-research.md)
 allows only the fixed optional `dependencyPolicy: "invoke-inference-v1"` in a
 signed release manifest. It checks installed Core Metadata with root

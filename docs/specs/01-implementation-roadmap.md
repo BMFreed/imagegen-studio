@@ -1,14 +1,25 @@
 # Implementation Roadmap
 
-## Current runtime dependency policy checkpoint
+## Current runtime wheelhouse verification checkpoint
+
+[Wheelhouse bytes and metadata](../engineering/phase-4-runtime-wheelhouse-verification-research.md)
+adds the producer consumer for exact selected artifacts and real dependency
+metadata, with a separate plan-bound report. The original plan stays a plan;
+successful wheel verification is still not installed release qualification.
+Actual execution/review results must be recorded in the note. Full offline ML
+assembly, complete artifact delivery/signing, installed compatibility and public
+setup remain following gates.
+
+## Previous runtime dependency policy checkpoint
 
 [Installed dependency policy](../engineering/phase-4-runtime-dependency-policy-research.md)
 connects an explicit signed policy to the existing assembler after exact
 distribution/worker verification. It retains Invoke's Notebook exclusion and
 checks other active metadata requirements; absent policy preserves strict uv
 checks. Actual results are recorded separately from source authoring. Selected
-artifact bytes/metadata, full offline ML assembly, signing/delivery, public setup
-and the final compatibility matrix remain required.
+artifact bytes/metadata are handled by the later wheelhouse verification
+consumer; full offline ML assembly, signing/delivery, public setup and the final
+compatibility matrix remain required.
 
 ## Previous runtime wheelhouse plan checkpoint
 

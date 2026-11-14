@@ -1,13 +1,23 @@
 # Engineering Workflow
 
-## Current runtime dependency policy checkpoint
+## Current runtime wheelhouse verification checkpoint
+
+[Locked wheel bytes and metadata](./phase-4-runtime-wheelhouse-verification-research.md)
+connects the producer's optional local-wheelhouse consumer to exact file hashes,
+ZIP/metadata validation and the existing dependency policy. A separate report
+binds verified artifacts to the freshly generated plan; installed qualification
+remains false. Actual execution evidence belongs to the research note, not this
+authoring checkpoint. Full offline ML assembly and public setup remain separate.
+
+## Previous runtime dependency policy checkpoint
 
 [Signed dependency policy](./phase-4-runtime-dependency-policy-research.md)
 adapts Invoke's Notebook exclusion and extra-aware traversal to installed
 metadata. A signed opt-in policy runs only after exact package membership and
 worker payload verification; absent policy preserves strict uv checks.
-Full wheelhouse artifacts, offline ML installation and public setup remain
-separate gates. Actual execution/review results belong to the research note.
+The later wheelhouse verifier checks selected artifact bytes/metadata separately
+from this installed-check consumer. Offline ML installation and public setup
+remain separate gates. Actual execution/review results belong to the research note.
 
 ## Previous runtime wheelhouse plan checkpoint
 
