@@ -563,6 +563,7 @@ def plan_wheelhouse(
             "lockSha256": hashlib.sha256(lock_bytes).hexdigest(),
             "pyprojectSha256": hashlib.sha256(project_bytes).hexdigest(),
             "excludedDependencies": excluded,
+            "dependencyPolicy": "invoke-inference-v1",
             "rootExtras": ["inference"],
             "wheels": wheels,
             "requirements": "".join(

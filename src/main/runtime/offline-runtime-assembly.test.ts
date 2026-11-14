@@ -161,6 +161,7 @@ async function workerWheel(): Promise<Buffer> {
 async function withAssembly(
   use: (fixture: {
     commands: OfflineRuntimeCommand[]
+    dependencyReport: Record<string, unknown>
     environmentRoot: string
     inspection: Record<string, unknown>
     manifest: RuntimeReleaseManifest
@@ -171,6 +172,7 @@ async function withAssembly(
     runner: (command: OfflineRuntimeCommand) => Promise<OfflineRuntimeCommandResult>
     source: string
   }) => Promise<void>,
+  dependencyPolicy?: 'invoke-inference-v1',
 ): Promise<void> {
   assert.ok(configuration, 'Provide the exact read-only 17-file config fixture')
   const root = await mkdtemp(path.join(os.tmpdir(), 'igs-offline-assembly-'))
@@ -211,6 +213,7 @@ async function withAssembly(
     let manifest: RuntimeReleaseManifest = {
       appVersion: '1.0.0',
       configPath: 'config',
+      ...(dependencyPolicy ? { dependencyPolicy } : {}),
       files: [],
       host: {
         arch: 'x64',
@@ -301,6 +304,18 @@ async function withAssembly(
       workerRoot: path.join(site, 'imagegen_worker'),
     }
     const commands: OfflineRuntimeCommand[] = []
+    const dependencyReport: Record<string, unknown> = {
+      checkedRequirements: 0,
+      excludedDependencies: ['notebook'],
+      exemptedRequirements: [],
+      packageCount: manifest.wheels.length,
+      policy: 'invoke-inference-v1',
+      pythonVersion: '3.12.13',
+      root: 'imagegen-worker',
+      rootExtras: ['inference'],
+      schemaVersion: 1,
+      status: 'ok',
+    }
     const runner = async (command: OfflineRuntimeCommand): Promise<OfflineRuntimeCommandResult> => {
       commands.push(structuredClone({ ...command, signal: undefined }))
       let stdout = ''
@@ -317,6 +332,8 @@ async function withAssembly(
         await writeFile(path.join(site, 'imagegen_worker/__init__.py'), workerBytes)
       } else if (command.args.some((value) => value.includes('importlib.metadata'))) {
         stdout = JSON.stringify(inspection)
+      } else if (command.args.includes('imagegen_worker.runtime_dependencies')) {
+        stdout = JSON.stringify(dependencyReport)
       } else if (command.executable.endsWith('python3.12')) {
         stdout = JSON.stringify({
           basePrefix: pythonRoot,
@@ -328,6 +345,7 @@ async function withAssembly(
     }
     await use({
       commands,
+      dependencyReport,
       environmentRoot,
       inspection,
       manifest,
@@ -374,6 +392,10 @@ test(
       assert.deepEqual(await readFile(f.roots.pointerFile), previous)
       await f.release.verifyCompletePayloadSnapshot()
       assert.ok(existsSync(path.join(f.environmentRoot, 'runtime-installation.json')))
+      const provenance = JSON.parse(
+        await readFile(path.join(f.environmentRoot, 'runtime-installation.json'), 'utf8'),
+      ) as Record<string, unknown>
+      assert.equal(Object.hasOwn(provenance, 'dependencyCheck'), false)
     })
   },
 )
@@ -430,6 +452,224 @@ test(
         }
       }
     })
+  },
+)
+
+test(
+  'signed inference policy checks the byte-verified installed worker and retains its exact receipt',
+  actualConfig,
+  async () => {
+    await withAssembly(async (f) => {
+      const previous = Buffer.from('{"previous":"known-good"}\n')
+      await writeFile(f.roots.pointerFile, previous)
+      f.dependencyReport.checkedRequirements = 1
+      f.dependencyReport.exemptedRequirements = [
+        { dependency: 'notebook', distribution: 'imagegen-worker', requirement: 'notebook>=6.5.7' },
+      ]
+      await assembleOfflineRuntime({
+        commandRunner: f.runner,
+        release: f.release,
+        roots: f.roots,
+        runtimeId: 'runtime-a',
+      })
+      assert.equal(f.commands.length, 6)
+      assert.equal(
+        f.commands.some((command) => command.args.includes('check')),
+        false,
+      )
+      const checker = f.commands.at(-1)!
+      assert.equal(checker.executable, path.join(f.environmentRoot, 'bin/python'))
+      assert.deepEqual(checker.args, ['-I', '-B', '-m', 'imagegen_worker.runtime_dependencies'])
+      assert.equal(checker.environment.CUDA_VISIBLE_DEVICES, '')
+      assert.ok(f.commands.at(-2)!.args.some((value) => value.includes('importlib.metadata')))
+      const receipt = JSON.parse(
+        await readFile(path.join(f.environmentRoot, 'runtime-installation.json'), 'utf8'),
+      ) as Record<string, unknown>
+      assert.deepEqual(receipt.dependencyCheck, f.dependencyReport)
+      assert.deepEqual(await readFile(f.roots.pointerFile), previous)
+      assert.ok(existsSync(path.join(f.environmentRoot, OFFLINE_RUNTIME_INCOMPLETE_MARKER)))
+      await f.release.verifyCompletePayloadSnapshot()
+    }, 'invoke-inference-v1')
+  },
+)
+
+test(
+  'installed membership and worker bytes refuse before executing the signed-policy module',
+  actualConfig,
+  async (t) => {
+    for (const kind of ['membership', 'worker bytes'] as const) {
+      await t.test(kind, async () =>
+        withAssembly(async (f) => {
+          if (kind === 'membership') {
+            f.inspection.packages = []
+          } else {
+            f.inspection.workerFiles = {}
+          }
+          await assert.rejects(
+            assembleOfflineRuntime({
+              commandRunner: f.runner,
+              release: f.release,
+              roots: f.roots,
+              runtimeId: 'runtime-a',
+            }),
+            failure('RUNTIME_ASSEMBLY_PACKAGE_MISMATCH'),
+          )
+          assert.equal(
+            f.commands.some((command) =>
+              command.args.includes('imagegen_worker.runtime_dependencies'),
+            ),
+            false,
+          )
+          assert.equal(existsSync(path.join(f.environmentRoot, 'runtime-installation.json')), false)
+        }, 'invoke-inference-v1'),
+      )
+    }
+  },
+)
+
+test(
+  'malformed or broadened dependency-policy receipts never produce installation provenance',
+  actualConfig,
+  async (t) => {
+    const row = {
+      dependency: 'notebook',
+      distribution: 'imagegen-worker',
+      requirement: 'notebook>=6.5.7',
+    }
+    const mutations: [string, (report: Record<string, unknown>) => void][] = [
+      ['unknown field', (r) => Reflect.set(r, 'ignored', true)],
+      ['missing field', (r) => Reflect.deleteProperty(r, 'checkedRequirements')],
+      ['wrong schema', (r) => Reflect.set(r, 'schemaVersion', 2)],
+      ['wrong policy', (r) => Reflect.set(r, 'policy', 'ignore-all')],
+      ['wrong root', (r) => Reflect.set(r, 'root', 'other')],
+      ['broadened extras', (r) => Reflect.set(r, 'rootExtras', ['inference', 'dev'])],
+      ['broadened exclusion', (r) => Reflect.set(r, 'excludedDependencies', ['notebook', 'torch'])],
+      ['wrong package count', (r) => Reflect.set(r, 'packageCount', 0)],
+      ['wrong Python', (r) => Reflect.set(r, 'pythonVersion', '3.12.14')],
+      ['failed verdict', (r) => Reflect.set(r, 'status', 'error')],
+      ['negative edge count', (r) => Reflect.set(r, 'checkedRequirements', -1)],
+      ['fractional edge count', (r) => Reflect.set(r, 'checkedRequirements', 0.5)],
+      ['oversized edge count', (r) => Reflect.set(r, 'checkedRequirements', 100_001)],
+      ['non-array exemptions', (r) => Reflect.set(r, 'exemptedRequirements', {})],
+      [
+        'too many exemptions',
+        (r) => {
+          r.checkedRequirements = 1001
+          r.exemptedRequirements = Array.from({ length: 1001 }, (_, index) => ({
+            ...row,
+            requirement: `notebook>=${index}`,
+          }))
+        },
+      ],
+      ['more exemptions than checks', (r) => Reflect.set(r, 'exemptedRequirements', [row])],
+      ['non-object exemption', (r) => Reflect.set(r, 'exemptedRequirements', [null])],
+      [
+        'unknown exemption field',
+        (r) => Reflect.set(r, 'exemptedRequirements', [{ ...row, ignored: true }]),
+      ],
+      [
+        'different exemption target',
+        (r) => Reflect.set(r, 'exemptedRequirements', [{ ...row, dependency: 'torch' }]),
+      ],
+      [
+        'uninstalled exemption source',
+        (r) => Reflect.set(r, 'exemptedRequirements', [{ ...row, distribution: 'other' }]),
+      ],
+      [
+        'empty requirement',
+        (r) => Reflect.set(r, 'exemptedRequirements', [{ ...row, requirement: '' }]),
+      ],
+      [
+        'non-string requirement',
+        (r) => Reflect.set(r, 'exemptedRequirements', [{ ...row, requirement: 1 }]),
+      ],
+      [
+        'oversized requirement',
+        (r) => Reflect.set(r, 'exemptedRequirements', [{ ...row, requirement: 'x'.repeat(4097) }]),
+      ],
+      ['duplicate exemption', (r) => Reflect.set(r, 'exemptedRequirements', [row, row])],
+    ]
+    for (const [name, mutate] of mutations) {
+      await t.test(name, async () =>
+        withAssembly(async (f) => {
+          // Except for the explicit cardinality control, exercise row validation itself.
+          f.dependencyReport.checkedRequirements = name === 'more exemptions than checks' ? 0 : 2
+          mutate(f.dependencyReport)
+          const previous = Buffer.from('{"previous":"known-good"}\n')
+          await writeFile(f.roots.pointerFile, previous)
+          await assert.rejects(
+            assembleOfflineRuntime({
+              commandRunner: f.runner,
+              release: f.release,
+              roots: f.roots,
+              runtimeId: 'runtime-a',
+            }),
+            failure('RUNTIME_ASSEMBLY_PACKAGE_MISMATCH'),
+          )
+          assert.ok(
+            f.commands.some((command) =>
+              command.args.includes('imagegen_worker.runtime_dependencies'),
+            ),
+          )
+          assert.equal(existsSync(path.join(f.environmentRoot, 'runtime-installation.json')), false)
+          assert.ok(existsSync(path.join(f.environmentRoot, OFFLINE_RUNTIME_INCOMPLETE_MARKER)))
+          assert.ok(existsSync(path.join(f.pythonRoot, OFFLINE_RUNTIME_INCOMPLETE_MARKER)))
+          assert.deepEqual(await readFile(f.roots.pointerFile), previous)
+        }, 'invoke-inference-v1'),
+      )
+    }
+  },
+)
+
+test(
+  'dependency-policy command failure, malformed JSON, cancel and unconfirmed exit preserve incomplete slots',
+  actualConfig,
+  async (t) => {
+    const cases = [
+      ['command failure', 'RUNTIME_ASSEMBLY_COMMAND_FAILED'],
+      ['malformed JSON', 'RUNTIME_ASSEMBLY_PACKAGE_MISMATCH'],
+      ['cancel', 'RUNTIME_ASSEMBLY_CANCELED'],
+      ['unconfirmed exit', 'RUNTIME_ASSEMBLY_EXIT_UNCONFIRMED'],
+    ] as const
+    for (const [kind, code] of cases) {
+      await t.test(kind, async () =>
+        withAssembly(async (f) => {
+          const controller = new AbortController()
+          const previous = Buffer.from('{"previous":"known-good"}\n')
+          await writeFile(f.roots.pointerFile, previous)
+          await assert.rejects(
+            assembleOfflineRuntime({
+              commandRunner: async (command) => {
+                const result = await f.runner(command)
+                if (!command.args.includes('imagegen_worker.runtime_dependencies')) {
+                  return result
+                }
+                if (kind === 'command failure') {
+                  return { ...result, code: 2 }
+                }
+                if (kind === 'malformed JSON') {
+                  return { ...result, stdout: '{' }
+                }
+                if (kind === 'unconfirmed exit') {
+                  return { ...result, exitConfirmed: false }
+                }
+                controller.abort()
+                return result
+              },
+              release: f.release,
+              roots: f.roots,
+              runtimeId: 'runtime-a',
+              signal: controller.signal,
+            }),
+            failure(code),
+          )
+          assert.equal(existsSync(path.join(f.environmentRoot, 'runtime-installation.json')), false)
+          assert.ok(existsSync(path.join(f.environmentRoot, OFFLINE_RUNTIME_INCOMPLETE_MARKER)))
+          assert.ok(existsSync(path.join(f.pythonRoot, OFFLINE_RUNTIME_INCOMPLETE_MARKER)))
+          assert.deepEqual(await readFile(f.roots.pointerFile), previous)
+        }, 'invoke-inference-v1'),
+      )
+    }
   },
 )
 

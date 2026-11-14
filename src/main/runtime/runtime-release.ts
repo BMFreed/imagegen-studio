@@ -62,6 +62,8 @@ export interface RuntimeReleaseWheel {
 export interface RuntimeReleaseManifest {
   readonly appVersion: string
   readonly configPath: 'config'
+  /** Signed opt-in; an absent policy retains the strict uv check used by earlier releases. */
+  readonly dependencyPolicy?: 'invoke-inference-v1'
   readonly files: readonly (RuntimeReleaseFile | RuntimeReleaseSymlink)[]
   readonly host: Readonly<{
     arch: 'x64'
@@ -305,7 +307,14 @@ function validateManifest(value: unknown, appVersion: string): RuntimeReleaseMan
     'wheels',
     'files',
     'requiredFreeBytes',
+    ...(Object.hasOwn(manifest, 'dependencyPolicy') ? ['dependencyPolicy'] : []),
   ])
+  if (
+    Object.hasOwn(manifest, 'dependencyPolicy') &&
+    manifest['dependencyPolicy'] !== 'invoke-inference-v1'
+  ) {
+    invalid('The signed runtime dependency policy is unsupported.')
+  }
   if (
     manifest['schemaVersion'] !== 1 ||
     manifest['profile'] !== 'linux-nvidia' ||

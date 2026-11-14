@@ -1,12 +1,23 @@
 # Implementation Roadmap
 
-## Current runtime wheelhouse plan checkpoint
+## Current runtime dependency policy checkpoint
+
+[Installed dependency policy](../engineering/phase-4-runtime-dependency-policy-research.md)
+connects an explicit signed policy to the existing assembler after exact
+distribution/worker verification. It retains Invoke's Notebook exclusion and
+checks other active metadata requirements; absent policy preserves strict uv
+checks. Actual results are recorded separately from source authoring. Selected
+artifact bytes/metadata, full offline ML assembly, signing/delivery, public setup
+and the final compatibility matrix remain required.
+
+## Previous runtime wheelhouse plan checkpoint
 
 [Locked wheelhouse plan](../engineering/phase-4-runtime-wheelhouse-plan-research.md)
 adds the build-time lock-closure/target-wheel selection consumer and real worker
 wheel validation. Its exact requirements remain a plan, not a signed complete
-release or downloaded-wheel metadata proof. Full artifact verification, the
-explicit dependency-exclusion check, signing/delivery and public setup follow.
+release or downloaded-wheel metadata proof. The later explicit dependency
+policy supplies the exclusion-aware consumer. Full artifact verification,
+signing/delivery and public setup follow.
 
 ## Previous runtime host preflight checkpoint
 

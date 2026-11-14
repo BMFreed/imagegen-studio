@@ -1,13 +1,22 @@
 # Engineering Workflow
 
-## Current runtime wheelhouse plan checkpoint
+## Current runtime dependency policy checkpoint
+
+[Signed dependency policy](./phase-4-runtime-dependency-policy-research.md)
+adapts Invoke's Notebook exclusion and extra-aware traversal to installed
+metadata. A signed opt-in policy runs only after exact package membership and
+worker payload verification; absent policy preserves strict uv checks.
+Full wheelhouse artifacts, offline ML installation and public setup remain
+separate gates. Actual execution/review results belong to the research note.
+
+## Previous runtime wheelhouse plan checkpoint
 
 [Invoke-derived wheelhouse plan](./phase-4-runtime-wheelhouse-plan-research.md)
 selects the full locked Linux/x64 CPython runtime closure with explicit target
 glibc and a verified built worker wheel. Exact hashes, sizes and offline
 requirements bridge the lock to existing release-wheel contracts. A plan does
-not prove downloaded wheel metadata or installation; the explicit Notebook
-exclusion/dependency-check mismatch remains a separate recorded gate.
+not prove downloaded wheel metadata or installation. The later signed
+dependency-policy consumer addresses the explicit Notebook check mismatch.
 
 ## Previous runtime host preflight checkpoint
 

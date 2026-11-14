@@ -225,6 +225,13 @@ test('application, worker, Python, exact config and wheel membership fail closed
   const changes: [string, (manifest: RuntimeReleaseManifest) => void][] = [
     ['app mismatch', (m) => Reflect.set(m, 'appVersion', '2.0.0')],
     ['unknown metadata', (m) => Reflect.set(m, 'downloadUrl', 'https://example.invalid')],
+    ['unknown dependency policy', (m) => Reflect.set(m, 'dependencyPolicy', 'ignore-all')],
+    ['null dependency policy', (m) => Reflect.set(m, 'dependencyPolicy', null)],
+    [
+      'object dependency policy',
+      (m) => Reflect.set(m, 'dependencyPolicy', { exclude: ['notebook'] }),
+    ],
+    ['false dependency policy', (m) => Reflect.set(m, 'dependencyPolicy', false)],
     ['Python patch mismatch', (m) => Reflect.set(m.python, 'version', '3.12.14')],
     ['old inference', (m) => Reflect.set(m.worker, 'inferenceVersion', '0.12.0')],
     ['wrong CPU', (m) => Reflect.set(m.worker, 'cpuVersion', '0.14.0')],
@@ -352,6 +359,12 @@ test('requirements are exact deterministic wheel hashes without URL/index/editab
   )
 })
 
+test('an explicitly undefined dependency policy cannot be serialized as an absent signed field', () => {
+  const manifest = manifestFixture()
+  Reflect.set(manifest, 'dependencyPolicy', undefined)
+  assert.throws(() => canonicalRuntimeReleaseJson(manifest), invalid)
+})
+
 async function withPayload(
   use: (fixture: {
     directory: string
@@ -455,6 +468,34 @@ test(
           ...f.selection,
           envelope: Buffer.from(JSON.stringify(envelope)),
         }),
+        untrusted,
+      )
+    })
+  },
+)
+
+test(
+  'the finite dependency policy is verified as part of the signed canonical manifest',
+  actualConfig,
+  async () => {
+    await withPayload(async (f) => {
+      const manifest: RuntimeReleaseManifest = {
+        ...f.manifest,
+        dependencyPolicy: 'invoke-inference-v1',
+      }
+      const release = await verifyRuntimeRelease({
+        ...f.selection,
+        envelope: envelope(manifest, f.keys),
+      })
+      assert.equal(release.manifest.dependencyPolicy, 'invoke-inference-v1')
+      assert.notDeepEqual(
+        canonicalRuntimeReleaseJson(release.manifest),
+        canonicalRuntimeReleaseJson(f.manifest),
+      )
+      const sealed = JSON.parse(f.selection.envelope.toString('utf8')) as Record<string, unknown>
+      sealed.payload = canonicalRuntimeReleaseJson(manifest).toString('base64')
+      await assert.rejects(
+        verifyRuntimeRelease({ ...f.selection, envelope: Buffer.from(JSON.stringify(sealed)) }),
         untrusted,
       )
     })

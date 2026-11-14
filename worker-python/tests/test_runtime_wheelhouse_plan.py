@@ -178,6 +178,7 @@ def test_base_and_inference_are_selected_without_dev_or_implicit_installation() 
     assert names(result) == {"core", "imagegen-worker", "model"}
     assert result["rootExtras"] == ["inference"]
     assert result["excludedDependencies"] == ["notebook"]
+    assert result["dependencyPolicy"] == "invoke-inference-v1"
     assert result["totalWheelBytes"] == 500
     assert result["externalWheelBytes"] == 400
     assert result["artifactBytesVerified"] is False

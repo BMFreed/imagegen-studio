@@ -1,15 +1,24 @@
 # Open Questions
 
-## Current runtime wheelhouse plan boundary
+## Current runtime dependency policy boundary
+
+[Signed installed dependency policy](./engineering/phase-4-runtime-dependency-policy-research.md)
+adds the fixed Invoke-derived Notebook exclusion to an explicit Main consumer,
+with all other active metadata requirements checked. Absent policy retains the
+strict base CPU path. The new signed field is additive for this reader; older
+exact-key readers reject it. Complete selected wheel bytes/metadata, full
+offline inference assembly, release compatibility, publisher trust, full engine
+preview/download and public setup remain open.
+
+## Previous runtime wheelhouse plan boundary
 
 [Wheelhouse selection](./engineering/phase-4-runtime-wheelhouse-plan-research.md)
 adapts Invoke lock closure to an explicit Linux/x64/Python/glibc target, excludes
 dev groups and replaces the editable root with a verified built worker wheel.
 Selected artifacts still need their own bytes/metadata and offline qualification.
-The existing plain dependency check refuses Compel's deliberately excluded
-Notebook dependency; retaining Invoke's exclusion requires an explicit checker
-adaptation before full installation. Publisher trust, delivery/full preview and
-public setup remain open.
+The old plain dependency check refused Compel's deliberately excluded Notebook;
+the later explicit signed policy supplies that installed-check consumer.
+Publisher trust, delivery/full preview and public setup remain open.
 
 ## Previous runtime host preflight boundary
 

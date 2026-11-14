@@ -283,9 +283,21 @@ editable root is replaced by a verified built worker wheel. The producer emits
 exact artifact identities and requirements for the existing runtime contracts.
 It does not download or qualify the full wheelhouse, sign a release or select a
 supported ABI/driver matrix. The plan binds the explicit Invoke-derived Notebook
-exclusion. The current plain `uv pip check` refuses that missing dependency;
-dependency-policy adaptation and selected-wheel metadata verification remain
-required before this plan can qualify an installed inference release.
+exclusion and names its signed dependency policy. Selected-wheel metadata
+verification and full installed qualification remain required.
+
+[Signed dependency policy](../engineering/phase-4-runtime-dependency-policy-research.md)
+allows only the fixed optional `dependencyPolicy: "invoke-inference-v1"` in a
+signed release manifest. It checks installed Core Metadata with root
+`imagegen-worker[inference]`, explicit global Notebook exclusion and normal
+requirements/markers/version/Python/extras checks. The installed checker runs
+after exact distribution membership and worker payload byte verification;
+Main validates its bounded receipt before retaining installation provenance.
+Other dependency failures refuse and retain the incomplete slot. Absent policy
+preserves ordinary strict `uv pip check` and the existing base CPU path.
+This additive schema1 field is understood by the new reader; an older exact-key
+reader rejects manifests containing it. It does not establish the final
+release/protocol compatibility matrix, complete wheelhouse or public Setup.
 
 Production installation должна:
 

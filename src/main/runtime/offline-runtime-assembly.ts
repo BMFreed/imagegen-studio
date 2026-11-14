@@ -5,7 +5,10 @@
  * scope exit. InvokeAI 4875d96531ca6712b288f6e660fcbb34143408c1:
  * invokeai/app/services/model_install/install_staging_ledger.py and caller model_install_default.py
  * supply durable markers/ownership semantics. This owner never activates a pointer, repairs an
- * existing slot or collects files.
+ * existing slot or collects files. Dependency policy source: InvokeAI same revision, pyproject.toml
+ * global Notebook exclusion, scripts/check_platform_locks.py walk_closure and
+ * .github/workflows/uv-lock-checks.yml caller. The installed-METADATA checker is a disclosed Studio
+ * adaptation, not an upstream pip checker.
  */
 import { type ChildProcess, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -299,7 +302,9 @@ export async function assembleOfflineRuntime(input: {
       pythonExecutable,
       requirementsPath,
     ])
-    await execute(uv, ['--no-config', '--offline', 'pip', 'check', '--python', pythonExecutable])
+    if (!release.manifest.dependencyPolicy) {
+      await execute(uv, ['--no-config', '--offline', 'pip', 'check', '--python', pythonExecutable])
+    }
     await input.onStage?.('verifying')
     const inspection = parseObject(
       await execute(pythonExecutable, ['-I', '-B', '-c', INSTALLED_INSPECTION]),
@@ -317,6 +322,21 @@ export async function assembleOfflineRuntime(input: {
     if (typeof workerRoot !== 'string' || !isWithin(environmentRoot, workerRoot)) {
       payloadChanged()
     }
+    // Execute this worker-owned checker only after membership and its complete wheel bytes match.
+    // The signed opt-in is finite: there are no caller-controlled exclusions or requested extras.
+    const dependencyCheck = release.manifest.dependencyPolicy
+      ? verifyDependencyCheck(
+          parseObject(
+            await execute(pythonExecutable, [
+              '-I',
+              '-B',
+              '-m',
+              'imagegen_worker.runtime_dependencies',
+            ]),
+          ),
+          release.manifest,
+        )
+      : undefined
     // Recheck source and copied immutable inputs; executable commands cannot broaden the release.
     await release.verifyCompletePayloadSnapshot()
     await verifyCopiedFiles(release.manifest, copied, pythonRoot)
@@ -331,7 +351,7 @@ export async function assembleOfflineRuntime(input: {
     )
     try {
       await provenance.writeFile(
-        `${JSON.stringify({ manifestSha256, packages: inspection.packages, releaseId: release.manifest.releaseId, runtimeId, schemaVersion: 1, workerFiles: expectedWorker })}\n`,
+        `${JSON.stringify({ ...(dependencyCheck ? { dependencyCheck } : {}), manifestSha256, packages: inspection.packages, releaseId: release.manifest.releaseId, runtimeId, schemaVersion: 1, workerFiles: expectedWorker })}\n`,
       )
       await provenance.sync()
     } finally {
@@ -872,6 +892,83 @@ function verifyPythonFields(
 
 function normalizedDistribution(name: string): string {
   return name.toLowerCase().replaceAll(/[-_.]+/g, '-')
+}
+
+/** Validate the receipt shape; the signed byte-verified Python checker owns PEP508 semantics. */
+function verifyDependencyCheck(
+  value: Record<string, unknown>,
+  manifest: RuntimeReleaseManifest,
+): Record<string, unknown> {
+  const refuse: () => never = () => {
+    throw new OfflineRuntimeAssemblyError(
+      'RUNTIME_ASSEMBLY_PACKAGE_MISMATCH',
+      'The installed dependency policy check could not be verified.',
+    )
+  }
+  const keys = [
+    'schemaVersion',
+    'policy',
+    'root',
+    'rootExtras',
+    'excludedDependencies',
+    'packageCount',
+    'checkedRequirements',
+    'exemptedRequirements',
+    'pythonVersion',
+    'status',
+  ]
+  if (
+    Object.keys(value).sort().join(',') !== keys.sort().join(',') ||
+    value.schemaVersion !== 1 ||
+    value.policy !== manifest.dependencyPolicy ||
+    value.policy !== 'invoke-inference-v1' ||
+    value.root !== 'imagegen-worker' ||
+    !Array.isArray(value.rootExtras) ||
+    value.rootExtras.length !== 1 ||
+    value.rootExtras[0] !== 'inference' ||
+    !Array.isArray(value.excludedDependencies) ||
+    value.excludedDependencies.length !== 1 ||
+    value.excludedDependencies[0] !== 'notebook' ||
+    value.packageCount !== manifest.wheels.length ||
+    typeof value.checkedRequirements !== 'number' ||
+    !Number.isSafeInteger(value.checkedRequirements) ||
+    value.checkedRequirements < 0 ||
+    value.checkedRequirements > 100_000 ||
+    !Array.isArray(value.exemptedRequirements) ||
+    value.exemptedRequirements.length > value.checkedRequirements ||
+    value.exemptedRequirements.length > 1000 ||
+    value.pythonVersion !== manifest.python.version ||
+    value.status !== 'ok'
+  ) {
+    refuse()
+  }
+  const packages = new Set(
+    manifest.wheels.map((wheel) => normalizedDistribution(wheel.distribution)),
+  )
+  const seen = new Set<string>()
+  for (const raw of value.exemptedRequirements) {
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+      refuse()
+    }
+    const entry = raw as Record<string, unknown>
+    if (
+      Object.keys(entry).sort().join(',') !== 'dependency,distribution,requirement' ||
+      entry.dependency !== 'notebook' ||
+      typeof entry.distribution !== 'string' ||
+      !packages.has(entry.distribution) ||
+      typeof entry.requirement !== 'string' ||
+      entry.requirement.length < 1 ||
+      entry.requirement.length > 4096
+    ) {
+      refuse()
+    }
+    const identity = JSON.stringify([entry.distribution, entry.requirement])
+    if (seen.has(identity)) {
+      refuse()
+    }
+    seen.add(identity)
+  }
+  return value
 }
 
 function sameWorkerFiles(
