@@ -236,6 +236,14 @@ uv run pytest
 
 ### Текущая реализация и developer qualification
 
+[Standalone Linux app package](../engineering/phase-5-linux-app-package-research.md)
+qualifies the Electron app payload locally: actual fused AppImage, native SQLite,
+30 bundled migrations and built static consumers, real Project create/reopen and
+normal physical close. It ships no Python environment or model weights and does
+not replace the existing runtime artifact/installer owners. Runtime publisher
+remains unconfigured. Extract-and-run on this host does not qualify shipping
+trust, clean-machine install/upgrade, app updates or final MVP acceptance.
+
 [Setup progress and Cancel](../engineering/phase-5-runtime-setup-progress-research.md)
 connects actual stage/constituent-byte callbacks to transient Main snapshots and
 strict getter/event/cancel IPC. The consumed review token identifies the current

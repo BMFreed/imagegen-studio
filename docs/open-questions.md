@@ -1,6 +1,17 @@
 # Open Questions
 
-## Current runtime setup progress and Cancel
+## Current standalone Linux app package
+
+[Linux app package](./engineering/phase-5-linux-app-package-research.md) adapts Invoke launcher's electron-builder/AppImage
+mechanism to the existing built Main, preload, renderer, native SQLite and static
+resources. Local fused AppImage runs outside checkout with isolated app data;
+real Create/normal close/restart/reopen preserves its own Project bytes. This is
+extract-and-run on the current host, with shipping trust, clean-machine install,
+update/interruption recovery and full MVP acceptance still open. Runtime publisher
+is independently unconfigured; default Setup remains unavailable. Promise
+statuses are unchanged.
+
+## Previous runtime setup progress and Cancel
 
 [Setup progress/Cancel](./engineering/phase-5-runtime-setup-progress-research.md) exposes current stage and constituent bytes from
 the existing installation owners. Targeted Cancel waits for settled work and

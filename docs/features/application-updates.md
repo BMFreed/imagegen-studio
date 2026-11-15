@@ -55,6 +55,13 @@ Project Save с placeholder preview остаётся доступен. SQLite mi
 
 ## Scope and dependencies
 
+[Local AppImage packaging](../engineering/phase-5-linux-app-package-research.md)
+now supplies a versioned standalone app consumer and current-host extract-and-run
+qualification. The manual check/download/install updater is still absent. This
+checkpoint does not prove signed delivery, FUSE/clean-machine install, binary
+replacement or interrupted-update recovery; those remain dependencies of the
+acceptance below. Runtime publisher metadata is a separate lifecycle.
+
 Обязательный scope первого релиза. Зависимости: Electron main/preload API,
 single-instance shell, Project close/recovery и Queue Manager. Python worker
 для проверки или установки Electron package не нужен. Linux package/update
