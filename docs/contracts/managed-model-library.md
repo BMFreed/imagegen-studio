@@ -240,6 +240,14 @@ Local file import и folder scan могут появиться как отдел
   объяснением, без install job, download и публикации; известные точные размеры
   pinned Anima и установленного файла для repair/reuse сохраняют эти flows;
 - install job имеет наблюдаемые progress, status, cancel/retry и error;
+- закрытие приложения предупреждает об active/preparing model installations и
+  resource removal до подтверждения. Cancel оставляет работу активной; подтверждённое
+  закрытие прекращает приём новой работы, отменяет незавершённые cancellable jobs и
+  ждёт downloader/progress cleanup и durable terminal rows до закрытия SQLite.
+  Начатая публикация и ранее принятая storage mutation завершаются своим владельцем;
+  неподтверждённая terminalization оставляет storage открытым для повторного close.
+  [Текущий finite consumer](../engineering/phase-5-model-install-shutdown-research.md)
+  не добавляет pause/resume или app-binary installer;
 - модель регистрируется только после проверки файла;
 - exact duplicate не скачивается повторно без явного действия;
 - несколько версий одной модели могут существовать одновременно;

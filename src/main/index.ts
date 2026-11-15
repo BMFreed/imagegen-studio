@@ -402,7 +402,7 @@ if (!gotInstanceLock) {
       console.error('Application shutdown failed', error)
       dialog.showErrorBox(
         'Application close failed',
-        'The application could not confirm worker exit or close its data storage.',
+        'The application could not finish resource work, confirm worker exit or close its data storage.',
       )
     })
   })
@@ -1049,6 +1049,7 @@ if (!gotInstanceLock) {
               },
             }
           : null,
+        modelInstalls: installCoordinator,
         pendingJobs: recoveredGeneration?.queue ?? null,
         runtimeExit: generationRuntime,
         shutdownImageReads: () => targetInspectionOwner.shutdown(),
@@ -1275,6 +1276,13 @@ if (!gotInstanceLock) {
               impacts.some((impact) => impact.generationStorageUnavailable)
             const hasGenerationImpact =
               unfinishedJobCount + completedCandidateCount > 0 || generationStorageUnavailable
+            // This snapshot only describes work. Cancel must not stop installer
+            // admission or downloads; the irreversible drain starts after consent.
+            const modelImpact = installCoordinator.getCloseImpact()
+            const hasModelInstallImpact =
+              modelImpact.activeJobCount > 0 || modelImpact.preparingInstallCount > 0
+            const hasModelResourceImpact =
+              hasModelInstallImpact || modelImpact.storageMutationActive
             const detail = [
               dirtyCount > 0
                 ? `${dirtyCount} Project${dirtyCount === 1 ? ' has' : 's have'} unsaved changes.`
@@ -1287,6 +1295,12 @@ if (!gotInstanceLock) {
                 : null,
               generationStorageUnavailable
                 ? 'Generation recovery storage cannot be inspected. Temporary results will remain on this computer for a later recovery attempt.'
+                : null,
+              hasModelInstallImpact
+                ? 'Model installations are active or preparing. Unfinished downloads will be canceled; publication already in progress will finish before closing.'
+                : null,
+              modelImpact.storageMutationActive
+                ? 'Resource removal is in progress and will finish before closing.'
                 : null,
             ]
               .filter(Boolean)
@@ -1301,14 +1315,19 @@ if (!gotInstanceLock) {
                     message: 'Close ImageGen Studio?',
                     type: 'question',
                   })
-                : hasGenerationImpact
+                : hasGenerationImpact || hasModelResourceImpact
                   ? dialog.showMessageBoxSync(window, {
                       buttons: [
                         generationStorageUnavailable
                           ? 'Close and Keep Recovery'
                           : completedCandidateCount > 0
                             ? 'Discard Results and Close'
-                            : 'Cancel Jobs and Close',
+                            : unfinishedJobCount > 0
+                              ? 'Cancel Jobs and Close'
+                              : modelImpact.activeJobCount > modelImpact.committingJobCount ||
+                                  modelImpact.preparingInstallCount > 0
+                                ? 'Cancel Downloads and Close'
+                                : 'Finish Resource Work and Close',
                         'Cancel',
                       ],
                       cancelId: 1,
@@ -1453,6 +1472,17 @@ if (!gotInstanceLock) {
           message: 'The model service could not complete the action.',
         }
       }
+      const modelMutationChannels = new Set<string>([
+        ipcChannels.models.cancelInstall,
+        ipcChannels.models.checkUpdates,
+        ipcChannels.models.removeLocalResource,
+        ipcChannels.models.removeToken,
+        ipcChannels.models.saveToken,
+        ipcChannels.models.setDefaultVersion,
+        ipcChannels.models.setNoiseProfile,
+        ipcChannels.models.setPredictionType,
+        ipcChannels.models.startInstall,
+      ])
       function registerModelHandler<T>(
         channel: string,
         validate: (args: unknown[]) => boolean,
@@ -1463,6 +1493,15 @@ if (!gotInstanceLock) {
           if (event.sender !== window.webContents || !validate(args)) {
             return {
               error: { code: 'IPC_INVALID_CALLER', message: 'The model request was rejected.' },
+              ok: false,
+            }
+          }
+          if (resolvingClose && modelMutationChannels.has(channel)) {
+            return {
+              error: {
+                code: 'MODEL_APP_CLOSING',
+                message: 'The application is closing. Try again if closing is canceled.',
+              },
               ok: false,
             }
           }

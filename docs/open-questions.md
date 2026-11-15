@@ -1,6 +1,16 @@
 # Open Questions
 
-## Current explicit application update Download
+## Current model installation drain on app close
+
+[Model installer shutdown](./engineering/phase-5-model-install-shutdown-research.md) adapts Invoke stop/join to the existing
+coordinator and app close barrier. Main describes active resource work before
+confirmation; Cancel leaves it running. Confirmed close fences admission and
+awaits preparation, downloader/progress cleanup, durable queued cancellation and
+already-started publication/storage work before SQLite closes. This is a concrete
+Install Update prerequisite; publisher trust, compatibility, full install preview
+and recoverable AppImage replacement remain open. Promise statuses unchanged.
+
+## Previous explicit application update Download
 
 [Explicit app Download](./engineering/phase-5-application-update-download-research.md) connects the existing native downloader to a
 version-bound user action, progress and final SHA-512/size checks of new and reused

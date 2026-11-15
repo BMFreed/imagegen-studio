@@ -1,5 +1,12 @@
 # Model Manager
 
+[App-close installation drain](../engineering/phase-5-model-install-shutdown-research.md)
+warns about resource work before confirmation and joins accepted installer/storage
+work before SQLite closes. Cancel leaves downloads running; a confirmed close
+cancels unfinished jobs and waits for already committing publication. Closing only
+Model Manager continues to leave its app-session downloads running. App-binary
+installation and release acceptance remain separate; promise statuses unchanged.
+
 Feature contract for [PP-004](../product-promises.md#pp-004-управляемая-библиотека-моделей-вместо-ручной-работы-с-файлами).
 [Managed Model Library supporting contract](../contracts/managed-model-library.md)
 defines the normative resource/version invariants, source metadata boundaries

@@ -366,3 +366,146 @@ test('unconfirmed runtime status child blocks close even without a generation co
     assert.equal(databaseCloses, 1)
   })
 })
+
+test('confirmed close fences installer immediately and keeps real SQLite until installer cleanup settles', async () => {
+  await withDatabase(async ({ close, query }) => {
+    const entered = deferred()
+    const release = deferred()
+    let installerCalls = 0
+    let databaseClosed = false
+    let generationFinished = false
+    const shutdown = new GenerationAppShutdown({
+      closeDatabase: async () => {
+        await close()
+        databaseClosed = true
+      },
+      context: { shutdown: () => undefined },
+      coordinator: {
+        shutdown: async () => {
+          generationFinished = true
+        },
+      },
+      modelInstalls: {
+        shutdown: async () => {
+          installerCalls++
+          entered.resolve()
+          await release.promise
+          await query()
+        },
+      },
+      pendingJobs: null,
+    })
+    const first = shutdown.finalize()
+    const duplicate = shutdown.finalize()
+    assert.equal(installerCalls, 1, 'Installer admission is fenced before returning from finalize.')
+    assert.strictEqual(first, duplicate)
+    try {
+      await entered.promise
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      assert.equal(generationFinished, true)
+      assert.equal(databaseClosed, false)
+      await query()
+    } finally {
+      release.resolve()
+    }
+    await first
+    assert.equal(databaseClosed, true)
+    await assert.rejects(query)
+  })
+})
+
+test('generation failure still awaits the installer, and installer failure keeps SQLite open for retry', async () => {
+  await withDatabase(async ({ close, query }) => {
+    const release = deferred()
+    let stops = 0
+    let generationStops = 0
+    let settled = false
+    let closes = 0
+    const shutdown = new GenerationAppShutdown({
+      closeDatabase: async () => {
+        closes++
+        await close()
+      },
+      context: { shutdown: () => undefined },
+      coordinator: {
+        shutdown: async () => {
+          generationStops++
+          if (generationStops === 1) {
+            throw new Error('Worker exit failed')
+          }
+        },
+      },
+      modelInstalls: {
+        shutdown: async () => {
+          stops++
+          if (stops === 1) {
+            await release.promise
+            throw new Error('Installer row commit failed')
+          }
+          await query()
+        },
+      },
+      pendingJobs: null,
+    })
+    const first = shutdown.finalize()
+    void first.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      },
+    )
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      assert.equal(settled, false, 'A failed worker must not abandon an active installer drain.')
+      await query()
+    } finally {
+      release.resolve()
+    }
+    await assert.rejects(first, /Worker exit failed/)
+    assert.equal(closes, 0)
+    await query()
+    await shutdown.finalize()
+    assert.equal(stops, 2)
+    assert.equal(closes, 1)
+  })
+})
+
+test('a synchronous installer failure still joins worker exit and never closes SQLite', async () => {
+  await withDatabase(async ({ close, query }) => {
+    const release = deferred()
+    let workerEntered = false
+    let closes = 0
+    const shutdown = new GenerationAppShutdown({
+      closeDatabase: async () => {
+        closes++
+        await close()
+      },
+      context: { shutdown: () => undefined },
+      coordinator: {
+        shutdown: async () => {
+          workerEntered = true
+          await release.promise
+          await query()
+        },
+      },
+      modelInstalls: {
+        shutdown: () => {
+          throw new Error('Installer drain unavailable')
+        },
+      },
+      pendingJobs: null,
+    })
+    const first = shutdown.finalize()
+    try {
+      assert.equal(workerEntered, true)
+      await query()
+    } finally {
+      release.resolve()
+    }
+    await assert.rejects(first, /Installer drain unavailable/)
+    assert.equal(closes, 0)
+    await query()
+  })
+})

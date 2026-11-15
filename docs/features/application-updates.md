@@ -55,6 +55,13 @@ Project Save с placeholder preview остаётся доступен. SQLite mi
 
 ## Scope and dependencies
 
+[Model installer drain](../engineering/phase-5-model-install-shutdown-research.md)
+now joins active model preparation/download/publication/storage work in the existing
+app-close barrier before SQLite disposal. Main warns before confirmation, and
+Cancel leaves that work running. This prerequisite does not supply Install Update,
+signed app-release trust, compatibility, the full recovered-job install preview or
+recoverable AppImage replacement.
+
 [Local AppImage packaging](../engineering/phase-5-linux-app-package-research.md)
 now supplies a versioned standalone app consumer and current-host extract-and-run
 qualification. [Manual Check](../engineering/phase-5-application-update-check-research.md) now

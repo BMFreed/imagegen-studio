@@ -11,10 +11,16 @@ export interface GenerationRuntimeExit {
   retryUnconfirmedGenerationExit: () => Promise<boolean>
 }
 
+/** Invoke model manager stop joins installer/download owners before shared database disposal. */
+export interface ModelInstallationShutdown {
+  shutdown: () => Promise<void>
+}
+
 export interface GenerationAppShutdownDependencies {
   closeDatabase: () => Promise<void>
   context: Pick<GenerationAppContext, 'shutdown'>
   coordinator: Pick<GenerationDispatchCoordinator, 'shutdown'> | null
+  modelInstalls?: ModelInstallationShutdown | null
   pendingJobs: PendingGenerationShutdown | null
   runtimeExit?: GenerationRuntimeExit | null
   shutdownImageReads?: () => Promise<void>
@@ -30,9 +36,9 @@ export class GenerationAppShutdownError extends Error {
 }
 
 /**
- * App-lifetime close barrier. A failed worker exit or queue cancellation keeps SQLite open and
- * permits a later close attempt. Call prepareWindowClose only after the user's Save/Discard choice;
- * finalize after Project tabs have closed, before allowing Electron to quit.
+ * App-lifetime close barrier. Failed worker exit, queue cancellation or resource drain keeps SQLite
+ * open and permits a later close attempt. Call prepareWindowClose only after the user's
+ * Save/Discard choice; finalize after Project tabs have closed, before allowing Electron to quit.
  */
 export class GenerationAppShutdown {
   private contextClosed = false
@@ -85,10 +91,7 @@ export class GenerationAppShutdown {
     this.finalized = true
   }
 
-  private async prepareOne(): Promise<void> {
-    // This runs synchronously when prepareWindowClose creates the promise. No status probe or
-    // generation lease can be admitted while the remaining shutdown steps await I/O.
-    this.dependencies.runtimeExit?.preventNewGenerationWork()
+  private async prepareGeneration(): Promise<void> {
     if (this.dependencies.shutdownImageReads) {
       await this.dependencies.shutdownImageReads()
     }
@@ -99,6 +102,26 @@ export class GenerationAppShutdown {
       !(await this.dependencies.runtimeExit.retryUnconfirmedGenerationExit())
     ) {
       throw new GenerationAppShutdownError()
+    }
+  }
+
+  private async prepareOne(): Promise<void> {
+    // This runs synchronously when prepareWindowClose creates the promise. No status probe or
+    // generation lease can be admitted while the remaining shutdown steps await I/O.
+    this.dependencies.runtimeExit?.preventNewGenerationWork()
+    let modelShutdown: Promise<void>
+    try {
+      // Closing admission must happen synchronously, before either owner awaits
+      // I/O. Both settlements are awaited even if the other owner fails.
+      modelShutdown = this.dependencies.modelInstalls?.shutdown() ?? Promise.resolve()
+    } catch (error) {
+      modelShutdown = Promise.reject(error)
+    }
+    const outcomes = await Promise.allSettled([this.prepareGeneration(), modelShutdown])
+    for (const outcome of outcomes) {
+      if (outcome.status === 'rejected') {
+        throw outcome.reason
+      }
     }
     this.prepared = true
   }
