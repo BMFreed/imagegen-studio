@@ -6,6 +6,10 @@
  */
 import type { ApiError, ApiResult, RuntimeStatus } from '../../shared/api.js'
 import { ipcChannels } from '../../shared/api.js'
+import {
+  isRuntimeSetupProgressSnapshot,
+  type RuntimeSetupProgressSnapshot,
+} from '../../shared/runtime-setup-progress.js'
 import type { RuntimeSetupMode, RuntimeSetupReview } from '../../shared/runtime-setup.js'
 import {
   isRuntimeSetupMode,
@@ -32,7 +36,8 @@ type Registrar = {
   ) => void
   removeHandler?: (channel: string) => void
 }
-type Service = Pick<RuntimeManager, 'getStatus' | 'install' | 'previewInstallation' | 'repair'>
+type Service = Partial<Pick<RuntimeManager, 'cancelInstallation' | 'getInstallationProgress'>> &
+  Pick<RuntimeManager, 'getStatus' | 'install' | 'previewInstallation' | 'repair'>
 
 const failure = <T>(code: string, message: string): ApiResult<T> => ({
   error: { code, message },
@@ -83,6 +88,43 @@ export function registerRuntimeSetupIpc(
   register(ipcChannels.runtime.getStatus, async (_event, args) =>
     args.length === 0 ? await service.getStatus() : rejected(),
   )
+  const progress = (): ApiResult<RuntimeSetupProgressSnapshot> => {
+    if (!service.getInstallationProgress) {
+      return unavailable()
+    }
+    const snapshot = service.getInstallationProgress()
+    return isRuntimeSetupProgressSnapshot(snapshot)
+      ? { ok: true, value: structuredClone(snapshot) }
+      : failure('RUNTIME_INSTALL_FAILED', 'The application could not read setup progress.')
+  }
+  register(ipcChannels.runtime.getInstallationProgress, async (_event, args) =>
+    args.length === 0 ? progress() : rejected(),
+  )
+  register(ipcChannels.runtime.cancelInstallation, async (event, args) => {
+    if (args.length !== 1 || !isRuntimeSetupToken(args[0])) {
+      return rejected()
+    }
+    if (!service.cancelInstallation || !service.getInstallationProgress) {
+      return unavailable()
+    }
+    const observedEpoch = epoch
+    try {
+      // Main rechecks the target immediately before abort. This is not review dismissal.
+      await service.cancelInstallation(args[0])
+      if (disposed || observedEpoch !== epoch || event.senderFrame !== caller.mainFrame) {
+        return rejected()
+      }
+      return progress()
+    } catch (error) {
+      return publicSetupFailure({
+        code:
+          error instanceof Error && 'code' in error && typeof error.code === 'string'
+            ? error.code
+            : 'RUNTIME_INSTALL_FAILED',
+        message: '',
+      })
+    }
+  })
   register(ipcChannels.runtime.previewInstallation, async (event, args) => {
     if (args.length !== 1 || !isRuntimeSetupMode(args[0])) {
       return rejected()
@@ -173,6 +215,7 @@ function publicSetupFailure<T>(error: ApiError): ApiResult<T> {
     RUNTIME_INSTALL_RECOVERY_REQUIRED: 'Recover interrupted runtime setup before continuing.',
     RUNTIME_INSTALL_UNAVAILABLE:
       'Verified release artifacts and a complete setup preview are not available in this build.',
+    RUNTIME_INVALID_OPERATION: 'This setup operation is no longer running.',
     RUNTIME_INVALID_REVIEW: 'Review runtime setup again before continuing.',
     RUNTIME_TRANSPORT_CHANGED: 'The verified setup sources changed; review setup again.',
     RUNTIME_UNSUPPORTED: 'This release requires Linux x64 with NVIDIA.',

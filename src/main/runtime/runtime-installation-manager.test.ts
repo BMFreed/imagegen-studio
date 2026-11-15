@@ -30,6 +30,7 @@ import type {
 } from './runtime-release.js'
 
 import { ModelDownloadError } from '../models/model-downloader.js'
+import { GenerationWorkerClient } from '../projects/generation-worker-client.js'
 import { createRuntimeRoots, RuntimeManager } from './index.js'
 import {
   AuxiliaryInstallationError,
@@ -40,8 +41,15 @@ import {
   verifyInferenceAuxiliaryFile,
 } from './inference-auxiliary-resources.js'
 import { LAMA_OUTPAINT_ARTIFACT } from './lama-manifest.js'
-import { OFFLINE_RUNTIME_INCOMPLETE_MARKER } from './offline-runtime-assembly.js'
-import { RUNTIME_INSTALLATION_CLAIM, RUNTIME_INSTALLATION_JOURNAL } from './runtime-installation.js'
+import {
+  OFFLINE_RUNTIME_INCOMPLETE_MARKER,
+  OfflineRuntimeAssemblyError,
+} from './offline-runtime-assembly.js'
+import {
+  RUNTIME_INSTALLATION_CLAIM,
+  RUNTIME_INSTALLATION_JOURNAL,
+  RuntimeInstallationError,
+} from './runtime-installation.js'
 import { produceRuntimeTransport } from './runtime-release-transport.js'
 import {
   canonicalRuntimeReleaseJson,
@@ -397,7 +405,10 @@ async function engineFixture(f: Fixture) {
   })
   const controls: {
     installed: boolean
-    installHook?: (options: { signal?: AbortSignal }) => Promise<void>
+    installHook?: (options: {
+      onProgress?: (progress: { downloadedBytes: number; totalBytes: number | null }) => void
+      signal?: AbortSignal
+    }) => Promise<void>
     rejectInstall?: string
     transformPreview?: (preview: AuxiliaryInstallationPreview) => AuxiliaryInstallationPreview
   } = { installed: false }
@@ -405,7 +416,10 @@ async function engineFixture(f: Fixture) {
   const auxiliaryInstaller = {
     install: async (
       planId: string,
-      options: { signal?: AbortSignal } = {},
+      options: {
+        onProgress?: (progress: { downloadedBytes: number; totalBytes: number | null }) => void
+        signal?: AbortSignal
+      } = {},
     ): Promise<AuxiliaryInstallationResult> => {
       f.events.push('aux-install')
       const reviewed = plans.get(planId)
@@ -2168,6 +2182,611 @@ test(
       await absent(metadata.selection.cacheDirectory)
       await absent(f.roots.pointerFile)
       assert.deepEqual(await fs.readdir(f.roots.environmentsDir), [])
+    })
+  },
+)
+
+type SetupProgressSnapshot = ReturnType<RuntimeManager['getInstallationProgress']>
+type SetupProgressOperation = NonNullable<SetupProgressSnapshot['operation']>
+
+function progressOperation(f: Fixture): SetupProgressOperation {
+  const operation = f.manager.getInstallationProgress().operation
+  assert.ok(operation, 'The accepted operation must have a current progress identity.')
+  return operation
+}
+
+/**
+ * Invoke4875 download_default.py:783–856 separates live bytes from settled cancellation;
+ * model_install_default.py:1267,2630–2690 keeps install completion independent of download 100%.
+ * These current Main/controller tests use controlled transport/assembly/worker ports and real
+ * signed cache, extraction, installation journal and pointer; they are not native ML
+ * qualification.
+ */
+test(
+  'installation progress is read-only before consent and follows real owners without observer authority',
+  fullPayload,
+  async () => {
+    await withFixture(async (f) => {
+      const metadata = await metadataEngineFixture(f)
+      const initial = f.manager.getInstallationProgress()
+      assert.equal(initial.operation, null)
+      const review = value(await f.manager.previewInstallation('install'))
+      assert.deepEqual(f.manager.getInstallationProgress(), initial)
+      assert.equal(metadata.downloads.length, 0)
+      const seen: SetupProgressSnapshot[] = []
+      const unsubscribe = f.manager.onInstallationProgressChanged((snapshot) =>
+        seen.push(structuredClone(snapshot)),
+      )
+      const unsubscribeBroken = f.manager.onInstallationProgressChanged(() => {
+        throw new Error('Controlled observer failure must not own installation.')
+      })
+      const assemble = f.backend.assemble!
+      f.backend.assemble = async (request) => {
+        await request.onStage?.('copying')
+        await request.onStage?.('assembling')
+        await request.onStage?.('verifying')
+        return await assemble(request)
+      }
+      metadata.engineControls.installHook = async (options) => {
+        options.onProgress?.({
+          downloadedBytes: LAMA_OUTPAINT_ARTIFACT.sizeBytes,
+          totalBytes: LAMA_OUTPAINT_ARTIFACT.sizeBytes,
+        })
+      }
+      try {
+        value(await f.manager.install(review.token))
+        const terminal = progressOperation(f)
+        assert.equal(terminal.operationId, review.token)
+        assert.equal(terminal.mode, 'install')
+        assert.equal(terminal.state, 'succeeded')
+        assert.equal(terminal.bytesDownloaded, null)
+        assert.equal(terminal.bytesTotal, null)
+        assert.ok(seen.length > 1)
+        assert.ok(
+          seen.every(
+            (snapshot, index) => index === 0 || snapshot.revision > seen[index - 1].revision,
+          ),
+        )
+        assert.ok(
+          seen.every(
+            (snapshot) =>
+              snapshot.operation === null || snapshot.operation.operationId === review.token,
+          ),
+        )
+        const stages = new Set(seen.map((snapshot) => snapshot.operation?.stage))
+        for (const stage of [
+          'preparing',
+          'preparing-runtime',
+          'downloading-runtime',
+          'extracting-runtime',
+          'installing-outpaint',
+          'copying-runtime',
+          'assembling-runtime',
+          'verifying-runtime',
+          'checking-runtime',
+          'checking-activation',
+          'finalizing',
+        ] as const) {
+          assert.ok(stages.has(stage), `Actual owner stage was not published: ${stage}`)
+        }
+        const fullDownload = seen.find(
+          (snapshot) =>
+            snapshot.operation?.stage === 'downloading-runtime' &&
+            snapshot.operation.bytesDownloaded === metadata.transport.manifest.artifact.sizeBytes,
+        )
+        assert.equal(
+          fullDownload?.operation?.state,
+          'running',
+          '100% file bytes must not complete installation.',
+        )
+        const clone = f.manager.getInstallationProgress()
+        Reflect.set(clone, 'revision', -1)
+        if (clone.operation) {
+          Reflect.set(clone.operation, 'state', 'failed')
+        }
+        assert.equal(progressOperation(f).state, 'succeeded')
+        assert.ok(f.manager.getInstallationProgress().revision >= 0)
+        assert.ok((await fs.readFile(f.roots.pointerFile)).length > 0)
+      } finally {
+        unsubscribeBroken()
+        unsubscribe()
+      }
+    })
+  },
+)
+
+test(
+  'public installation Cancel waits for acquisition settlement after 100% bytes and then publishes canceled',
+  fullPayload,
+  async () => {
+    await withFixture(async (f) => {
+      const metadata = await metadataEngineFixture(f)
+      const entered = deferred()
+      const closed = deferred()
+      metadata.controls.downloadHook = async (request) => {
+        request.onProgress?.({
+          downloadedBytes: request.expectedBytes,
+          totalBytes: request.expectedBytes,
+        })
+        entered.resolve()
+        await closed.promise
+      }
+      const ipc = metadataSetupRegistrar(f)
+      try {
+        const review = await ipc.preview('install')
+        const operation = ipc.call(ipcChannels.runtime.install, review.token)
+        await entered.promise
+        const running = value(
+          await ipc.call<SetupProgressSnapshot>(ipcChannels.runtime.getInstallationProgress),
+        )
+        assert.equal(running.operation?.operationId, review.token)
+        assert.equal(running.operation?.state, 'running')
+        assert.equal(running.operation?.stage, 'downloading-runtime')
+        assert.equal(
+          running.operation?.bytesDownloaded,
+          metadata.transport.manifest.artifact.sizeBytes,
+        )
+        let settled = false
+        const cancellation = ipc
+          .call<SetupProgressSnapshot>(ipcChannels.runtime.cancelInstallation, review.token)
+          .then((result) => {
+            settled = true
+            return result
+          })
+        try {
+          await Promise.resolve()
+          assert.equal(settled, false)
+          assert.equal(progressOperation(f).state, 'cancelling')
+          await absent(f.roots.pointerFile)
+          assert.equal(metadata.preparedDirectories.length, 0)
+        } finally {
+          closed.resolve()
+        }
+        const canceled = value(await cancellation)
+        failure(await operation, 'RUNTIME_INSTALL_CANCELED')
+        assert.equal(canceled.operation?.operationId, review.token)
+        assert.equal(canceled.operation?.state, 'canceled')
+        assert.equal(canceled.operation?.bytesDownloaded, null)
+        assert.equal(canceled.operation?.bytesTotal, null)
+        await absent(f.roots.pointerFile)
+      } finally {
+        closed.resolve()
+        ipc.dispose()
+      }
+    })
+  },
+)
+
+test(
+  'old installation IDs and late progress cannot abort or overwrite the next accepted operation',
+  fullPayload,
+  async () => {
+    await withFixture(async (f) => {
+      const metadata = await metadataEngineFixture(f)
+      const callbacks: { staleProgress?: RuntimeArtifactDownloadInput['onProgress'] } = {}
+      metadata.controls.downloadHook = async (request) => {
+        callbacks.staleProgress = request.onProgress
+      }
+      const first = value(await f.manager.previewInstallation('install'))
+      value(await f.manager.install(first.token))
+      assert.ok(callbacks.staleProgress)
+      const pointer = await fs.readFile(f.roots.pointerFile)
+      const entered = deferred()
+      const closed = deferred()
+      let signal: AbortSignal | undefined
+      f.backend.ensureHostCompatible = async (_host, currentSignal) => {
+        signal = currentSignal
+        entered.resolve()
+        await closed.promise
+      }
+      const second = value(await f.manager.previewInstallation('repair'))
+      const operation = f.manager.repair(second.token)
+      await entered.promise
+      try {
+        assert.notEqual(first.token, second.token)
+        const before = f.manager.getInstallationProgress()
+        callbacks.staleProgress({
+          downloadedBytes: 0,
+          totalBytes: metadata.transport.manifest.artifact.sizeBytes,
+        })
+        assert.deepEqual(f.manager.getInstallationProgress(), before)
+        await assert.rejects(
+          f.manager.cancelInstallation(first.token),
+          (error: unknown) =>
+            error instanceof RuntimeInstallationError && error.code === 'RUNTIME_INVALID_OPERATION',
+        )
+        assert.equal(signal?.aborted, false)
+        assert.equal(progressOperation(f).operationId, second.token)
+        const cancel = f.manager.cancelInstallation(second.token)
+        assert.equal(signal?.aborted, true)
+        closed.resolve()
+        await cancel
+        failure(await operation, 'RUNTIME_INSTALL_CANCELED')
+        const terminal = f.manager.getInstallationProgress()
+        callbacks.staleProgress({
+          downloadedBytes: metadata.transport.manifest.artifact.sizeBytes,
+          totalBytes: metadata.transport.manifest.artifact.sizeBytes,
+        })
+        assert.deepEqual(f.manager.getInstallationProgress(), terminal)
+        assert.equal(terminal.operation?.operationId, second.token)
+        assert.equal(terminal.operation?.state, 'canceled')
+        assert.equal((await fs.readFile(f.roots.pointerFile)).equals(pointer), true)
+      } finally {
+        closed.resolve()
+      }
+    })
+  },
+)
+
+test(
+  'installation progress ignores invalid transfer telemetry without changing actual acquisition',
+  fullPayload,
+  async () => {
+    await withFixture(async (f) => {
+      const metadata = await metadataEngineFixture(f)
+      metadata.controls.downloadHook = async (request) => {
+        const before = f.manager.getInstallationProgress()
+        request.onProgress?.({ downloadedBytes: -1, totalBytes: request.expectedBytes })
+        request.onProgress?.({ downloadedBytes: Number.NaN, totalBytes: request.expectedBytes })
+        request.onProgress?.({
+          downloadedBytes: request.expectedBytes + 1,
+          totalBytes: request.expectedBytes,
+        })
+        request.onProgress?.({ downloadedBytes: 1, totalBytes: request.expectedBytes + 1 })
+        assert.deepEqual(f.manager.getInstallationProgress(), before)
+      }
+      value(await f.install())
+      assert.equal(progressOperation(f).state, 'succeeded')
+      assert.equal(metadata.downloads.length, 1)
+    })
+  },
+)
+
+test(
+  'postactivation Cancel remains cancelling until qualification closes and real controller rollback finishes',
+  fullPayload,
+  async () => {
+    await withFixture(async (f) => {
+      await metadataEngineFixture(f)
+      const entered = deferred()
+      const closed = deferred()
+      f.controls.gpuClose = async (number) => {
+        if (number === 2) {
+          entered.resolve()
+          await closed.promise
+        }
+      }
+      const review = value(await f.manager.previewInstallation('install'))
+      const operation = f.manager.install(review.token)
+      await entered.promise
+      const pointer = await fs.readFile(f.roots.pointerFile)
+      assert.equal(progressOperation(f).stage, 'checking-activation')
+      const cancellation = f.manager.cancelInstallation(review.token)
+      try {
+        await Promise.resolve()
+        assert.equal(progressOperation(f).state, 'cancelling')
+        assert.equal((await fs.readFile(f.roots.pointerFile)).equals(pointer), true)
+        assert.equal(f.events.includes('gpu-closed-2'), false)
+      } finally {
+        closed.resolve()
+      }
+      await cancellation
+      failure(await operation, 'RUNTIME_INSTALL_CANCELED')
+      assert.equal(progressOperation(f).state, 'canceled')
+      await absent(f.roots.pointerFile)
+      assert.equal(
+        JSON.parse(
+          await fs.readFile(path.join(f.roots.runtimeDir, RUNTIME_INSTALLATION_JOURNAL), 'utf8'),
+        ).phase,
+        'rolled-back',
+      )
+    })
+  },
+)
+
+test(
+  'Cancel cannot hide recovery-required or unconfirmed worker exit behind a canceled terminal state',
+  fullPayload,
+  async () => {
+    await withFixture(async (f) => {
+      await metadataEngineFixture(f)
+      const entered = deferred()
+      const closed = deferred()
+      let exitConfirmed = false
+      f.controls.gpuClose = async () => {
+        if (!exitConfirmed) {
+          entered.resolve()
+          await closed.promise
+          throw new Error('Controlled physical exit remains unconfirmed after abort.')
+        }
+      }
+      const review = value(await f.manager.previewInstallation('install'))
+      const operation = f.manager.install(review.token)
+      await entered.promise
+      const cancellation = f.manager.cancelInstallation(review.token)
+      try {
+        await Promise.resolve()
+        assert.equal(progressOperation(f).state, 'cancelling')
+      } finally {
+        closed.resolve()
+      }
+      try {
+        await cancellation
+        failure(await operation, 'RUNTIME_INSTALL_RECOVERY_REQUIRED')
+        assert.equal(progressOperation(f).state, 'recovery-required')
+        assert.equal(
+          JSON.parse(
+            await fs.readFile(path.join(f.roots.runtimeDir, RUNTIME_INSTALLATION_JOURNAL), 'utf8'),
+          ).phase,
+          'recovery-required',
+        )
+        assert.ok(await fs.lstat(path.join(f.roots.runtimeDir, RUNTIME_INSTALLATION_CLAIM)))
+      } finally {
+        exitConfirmed = true
+        f.manager.preventNewGenerationWork()
+        assert.equal(await f.manager.retryUnconfirmedGenerationExit(), true)
+      }
+    })
+  },
+)
+
+test(
+  'late Cancel after controller commit loses to actual success and cannot rewrite its terminal result',
+  fullPayload,
+  async () => {
+    await withFixture(async (f) => {
+      await metadataEngineFixture(f)
+      let lateCancel: Promise<void> | undefined
+      let finalizing = false
+      const unsubscribe = f.manager.onInstallationProgressChanged((snapshot) => {
+        if (
+          snapshot.operation?.stage === 'finalizing' &&
+          snapshot.operation.state === 'running' &&
+          !finalizing
+        ) {
+          finalizing = true
+          lateCancel = f.manager.cancelInstallation(snapshot.operation.operationId)
+        }
+      })
+      try {
+        const review = value(await f.manager.previewInstallation('install'))
+        value(await f.manager.install(review.token))
+        await lateCancel
+        assert.equal(finalizing, true)
+        assert.equal(progressOperation(f).state, 'succeeded')
+        assert.equal(
+          JSON.parse(
+            await fs.readFile(path.join(f.roots.runtimeDir, RUNTIME_INSTALLATION_JOURNAL), 'utf8'),
+          ).phase,
+          'complete',
+        )
+        assert.ok((await fs.readFile(f.roots.pointerFile)).length > 0)
+        await assert.rejects(
+          f.manager.cancelInstallation(review.token),
+          (error: unknown) =>
+            error instanceof RuntimeInstallationError && error.code === 'RUNTIME_INVALID_OPERATION',
+        )
+        assert.equal(progressOperation(f).state, 'succeeded')
+      } finally {
+        unsubscribe()
+      }
+    })
+  },
+)
+
+test(
+  'targeted installation Cancel awaits the real protocol child owner and records physical exit before terminal canceled',
+  fullPayload,
+  async (t) => {
+    await withFixture(async (f) => {
+      await metadataEngineFixture(f)
+      const pidFile = path.join(f.work, 'owned-install-qualification.pid')
+      const entered = deferred()
+      const released = deferred()
+      const assemble = f.backend.assemble!
+      f.backend.assemble = async (request) => {
+        const prepared = await assemble(request)
+        const executable = await fs.realpath(prepared.pythonExecutable)
+        const source = await fs.readFile(executable, 'utf8')
+        const newline = source.indexOf('\n')
+        assert.ok(newline > 0 && source.startsWith('#!'))
+        const instrumented = `${source.slice(
+          0,
+          newline + 1,
+        )}require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));\n${source.slice(
+          newline + 1,
+        )}`
+        await fs.writeFile(executable, instrumented, { mode: 0o700 })
+        return prepared
+      }
+      let actual: GenerationWorkerClient | undefined
+      const other = new RuntimeManager(
+        f.roots,
+        { arch: 'x64', platform: 'linux' },
+        async (location, environment) => {
+          actual = await GenerationWorkerClient.start(location, { environment })
+          const captured = actual
+          return {
+            close: async () => {
+              entered.resolve()
+              await released.promise
+              await captured.close()
+            },
+            ready: captured.ready,
+          }
+        },
+        f.backend,
+      )
+      const physical: { pid: number | null; terminalExit: boolean[] } = {
+        pid: null,
+        terminalExit: [],
+      }
+      const unsubscribe = other.onInstallationProgressChanged((snapshot) => {
+        if (snapshot.operation?.state === 'canceled' && physical.pid !== null) {
+          let exited = false
+          try {
+            process.kill(physical.pid, 0)
+          } catch (error) {
+            exited = error instanceof Error && 'code' in error && error.code === 'ESRCH'
+          }
+          physical.terminalExit.push(exited)
+        }
+      })
+      try {
+        const review = value(await other.previewInstallation('install'))
+        const operation = other.install(review.token)
+        await Promise.race([
+          entered.promise,
+          operation.then((result) =>
+            assert.fail(`Protocol fixture ended before its close fence: ${JSON.stringify(result)}`),
+          ),
+        ])
+        const pid = Number(await fs.readFile(pidFile, 'utf8'))
+        assert.ok(Number.isSafeInteger(pid) && pid > 1)
+        physical.pid = pid
+        process.kill(pid, 0)
+        let settled = false
+        const cancellation = other.cancelInstallation(review.token).then(() => {
+          settled = true
+        })
+        try {
+          await Promise.resolve()
+          assert.equal(settled, false)
+          assert.equal(other.getInstallationProgress().operation?.state, 'cancelling')
+          process.kill(pid, 0)
+          await absent(f.roots.pointerFile)
+        } finally {
+          released.resolve()
+        }
+        await cancellation
+        failure(await operation, 'RUNTIME_INSTALL_CANCELED')
+        assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' })
+        assert.equal(physical.terminalExit.length, 1)
+        assert.equal(
+          physical.terminalExit[0],
+          true,
+          'The terminal event must follow physical child exit.',
+        )
+        assert.equal(other.getInstallationProgress().operation?.state, 'canceled')
+        await absent(f.roots.pointerFile)
+        t.diagnostic(
+          JSON.stringify({
+            aliveAtCloseFence: true,
+            fixture:
+              'Real bounded GenerationWorkerClient owner over Node protocol program; CPU/assembly ports controlled; no Python or native ML qualification.',
+            physicallyExitedBeforeTerminal: true,
+            pid,
+          }),
+        )
+      } finally {
+        unsubscribe()
+        released.resolve()
+        other.preventNewGenerationWork()
+        await other.cancelInstallation()
+        await actual?.close()
+        assert.equal(await other.retryUnconfirmedGenerationExit(), true)
+      }
+    })
+  },
+)
+
+test(
+  'Cancel preserves recovery-required when rollback encounters a competing pointer after activation',
+  fullPayload,
+  async () => {
+    await withFixture(async (f) => {
+      await metadataEngineFixture(f)
+      const entered = deferred()
+      const closed = deferred()
+      f.controls.gpuClose = async (number) => {
+        if (number === 2) {
+          entered.resolve()
+          await closed.promise
+        }
+      }
+      const review = value(await f.manager.previewInstallation('install'))
+      const operation = f.manager.install(review.token)
+      await entered.promise
+      const candidate = await fs.readFile(f.roots.pointerFile)
+      const competing = Buffer.from(
+        'Controlled concurrent pointer bytes; rollback must preserve another owner.',
+      )
+      const cancellation = f.manager.cancelInstallation(review.token)
+      try {
+        await Promise.resolve()
+        assert.equal(progressOperation(f).state, 'cancelling')
+        assert.equal((await fs.readFile(f.roots.pointerFile)).equals(candidate), true)
+        await fs.writeFile(f.roots.pointerFile, competing)
+      } finally {
+        closed.resolve()
+      }
+      await cancellation
+      failure(await operation, 'RUNTIME_INSTALL_RECOVERY_REQUIRED')
+      assert.equal(progressOperation(f).state, 'recovery-required')
+      assert.equal((await fs.readFile(f.roots.pointerFile)).equals(competing), true)
+      assert.equal(
+        JSON.parse(
+          await fs.readFile(path.join(f.roots.runtimeDir, RUNTIME_INSTALLATION_JOURNAL), 'utf8'),
+        ).phase,
+        'recovery-required',
+      )
+      assert.ok(await fs.lstat(path.join(f.roots.runtimeDir, RUNTIME_INSTALLATION_CLAIM)))
+    })
+  },
+)
+
+test(
+  'local cached-engine assembly cancellation publishes canceled after confirmed assembly settlement',
+  fullPayload,
+  async () => {
+    await withFixture(async (f) => {
+      await engineFixture(f)
+      const entered = deferred()
+      const released = deferred()
+      let assemblySignal: AbortSignal | undefined
+      let assemblySettled = false
+      f.backend.assemble = async (request) => {
+        assemblySignal = request.signal
+        entered.resolve()
+        await released.promise
+        assemblySettled = true
+        throw new OfflineRuntimeAssemblyError(
+          'RUNTIME_ASSEMBLY_CANCELED',
+          'Controlled local assembly confirmed exit after cancellation.',
+          [],
+          true,
+        )
+      }
+      const review = value(await f.manager.previewInstallation('install'))
+      const operation = f.manager.install(review.token)
+      await entered.promise
+      let cancelSettled = false
+      const cancellation = f.manager.cancelInstallation(review.token).then(() => {
+        cancelSettled = true
+      })
+      try {
+        await Promise.resolve()
+        assert.equal(assemblySignal?.aborted, true)
+        assert.equal(assemblySettled, false)
+        assert.equal(cancelSettled, false)
+        assert.equal(progressOperation(f).state, 'cancelling')
+        await absent(f.roots.pointerFile)
+      } finally {
+        released.resolve()
+      }
+      await cancellation
+      failure(await operation, 'RUNTIME_INSTALL_CANCELED')
+      assert.equal(assemblySettled, true)
+      assert.equal(progressOperation(f).state, 'canceled')
+      assert.equal(progressOperation(f).bytesDownloaded, null)
+      assert.equal(progressOperation(f).bytesTotal, null)
+      await absent(f.roots.pointerFile)
+      assert.equal(
+        JSON.parse(
+          await fs.readFile(path.join(f.roots.runtimeDir, RUNTIME_INSTALLATION_JOURNAL), 'utf8'),
+        ).phase,
+        'failed',
+      )
     })
   },
 )

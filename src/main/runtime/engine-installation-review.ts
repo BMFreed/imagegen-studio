@@ -5,6 +5,7 @@
  */
 import { createHash } from 'node:crypto'
 
+import type { ModelDownloadInput } from '../models/model-downloader.js'
 import type { AuxiliaryArtifactInstaller } from './inference-auxiliary-installer.js'
 import type { RuntimeReleaseSelection } from './runtime-release.js'
 
@@ -75,11 +76,14 @@ export async function reviewEngineInstallation(
       : [],
   })
   return Object.freeze({
-    installAuxiliary: async (signal: AbortSignal) => {
+    installAuxiliary: async (
+      signal: AbortSignal,
+      onProgress?: ModelDownloadInput['onProgress'],
+    ) => {
       canceled(signal)
       await transport.verifyCompleteTransportSnapshot()
       canceled(signal)
-      await auxiliary.installAuxiliary(signal)
+      await auxiliary.installAuxiliary(signal, onProgress)
     },
     plan,
   })
@@ -106,9 +110,12 @@ export async function reviewEngineAuxiliary(
   )
   const planId = auxiliary.planId
   return Object.freeze({
-    installAuxiliary: async (signal: AbortSignal) => {
+    installAuxiliary: async (
+      signal: AbortSignal,
+      onProgress?: ModelDownloadInput['onProgress'],
+    ) => {
       canceled(signal)
-      const result = await install(planId, { signal })
+      const result = await install(planId, { onProgress, signal })
       valid(
         result.role === LAMA_OUTPAINT_ARTIFACT.role &&
           result.sha256 === LAMA_OUTPAINT_ARTIFACT.sha256 &&

@@ -8,7 +8,7 @@
 import { createHash } from 'node:crypto'
 import path from 'node:path'
 
-import type { ModelDownloader } from '../models/model-downloader.js'
+import type { ModelDownloader, ModelDownloadInput } from '../models/model-downloader.js'
 import type { AuxiliaryArtifactInstaller } from './inference-auxiliary-installer.js'
 
 import { validateRuntimeArtifactSource } from '../models/model-downloader.js'
@@ -53,6 +53,11 @@ export interface EngineMetadataInstallationBackend {
   readonly loadMetadata: () => Promise<EngineMetadataReleaseSelection | null>
 }
 
+export interface EngineRuntimePreparationProgress {
+  onProgress?: ModelDownloadInput['onProgress']
+  onStage?: (stage: 'extracting-runtime' | 'preparing-runtime') => void
+}
+
 export interface CapturedMetadataEngineInstallation {
   readonly manifest: RuntimeReleaseManifest
   readonly plan: CapturedEngineInstallation['plan']
@@ -60,6 +65,7 @@ export interface CapturedMetadataEngineInstallation {
   readonly prepareRelease: (
     signal: AbortSignal,
     outputDirectory: string,
+    progress?: EngineRuntimePreparationProgress,
   ) => Promise<{ engine: CapturedEngineInstallation; release: VerifiedRuntimeRelease }>
 }
 
@@ -138,8 +144,13 @@ export async function reviewEngineMetadataInstallation(
   return Object.freeze({
     manifest: metadata.runtimeManifest,
     plan,
-    prepareRelease: async (signal: AbortSignal, outputDirectory: string) => {
+    prepareRelease: async (
+      signal: AbortSignal,
+      outputDirectory: string,
+      progress?: EngineRuntimePreparationProgress,
+    ) => {
       transportNotCanceled(signal)
+      progress?.onStage?.('preparing-runtime')
       if (cached) {
         await cached.verifyCompleteTransportSnapshot()
       }
@@ -147,10 +158,12 @@ export async function reviewEngineMetadataInstallation(
       const transport = await cacheRuntimeTransport({
         ...selection,
         downloader,
+        onProgress: progress?.onProgress,
         requireCached: cached !== null,
         signal,
       })
       await transport.verifyCompleteTransportSnapshot()
+      progress?.onStage?.('extracting-runtime')
       const releaseSelection = await extractRuntimeTransport({
         appVersion: selection.appVersion,
         outputDirectory,
@@ -173,11 +186,14 @@ export async function reviewEngineMetadataInstallation(
       const release = await verifyRuntimeRelease(releaseSelection)
       transportNotCanceled(signal)
       const engine: CapturedEngineInstallation = Object.freeze({
-        installAuxiliary: async (auxiliarySignal: AbortSignal) => {
+        installAuxiliary: async (
+          auxiliarySignal: AbortSignal,
+          onProgress?: ModelDownloadInput['onProgress'],
+        ) => {
           transportNotCanceled(auxiliarySignal)
           await transport.verifyCompleteTransportSnapshot()
           transportNotCanceled(auxiliarySignal)
-          await auxiliary.installAuxiliary(auxiliarySignal)
+          await auxiliary.installAuxiliary(auxiliarySignal, onProgress)
         },
         plan,
       })

@@ -88,6 +88,7 @@ const sourcePaths = [
   'src/main/runtime/lama-manifest.ts',
   'src/shared/api.ts',
   'src/shared/runtime-setup.ts',
+  'src/shared/runtime-setup-progress.ts',
   'src/preload/index.ts',
   'dist/preload/preload.cjs',
   ...(await filesBelow('dist/renderer')),
@@ -135,14 +136,25 @@ await build({
         await app.whenReady();
         const state = {
           controls: { available:true, holdPreview:false, holdOperation:false, infillReused:false,
-            longRelease:false, metadataReview:false, runtimeCached:true,
+            longRelease:false, metadataReview:false, runtimeCached:true, lateCancelSuccess:false,
             statusKind:'not-installed', outpaintInfill:'ready' },
           previews:[], attempts:[], mutations:[], requests:[], discards:0,
-          navigationInvalidations:0, disposed:false, pendingPreview:false, pendingOperation:false
+          navigationInvalidations:0, disposed:false, pendingPreview:false, pendingOperation:false,
+          progress:{revision:0,operation:null}, progressRecords:[], cancelRequests:[]
         };
         let captured=null;
         let previewResolve=null;
         let operationResolve=null;
+        let operationSettlement=null;
+        let settleOperation=null;
+        let cancellationRequested=false;
+        const progressListeners=new Set();
+        const publishProgress=operation=>{
+          state.progress={revision:state.progress.revision+1,operation:structuredClone(operation)};
+          state.progressRecords.push(structuredClone(state.progress));
+          for(const listener of progressListeners) {try{listener(structuredClone(state.progress));}catch{}}
+        };
+
         const currentStatus=()=>({kind:state.controls.statusKind,profile:'linux-nvidia',
           detail:'Controlled Main service; no installed runtime qualification.',
           ...(state.controls.statusKind==='ready'
@@ -152,18 +164,46 @@ await build({
         const execute=async(mode,token)=>{
           state.attempts.push({mode,token});
           if(!captured || captured.mode!==mode || captured.token!==token) return invalid();
-          captured=null;
-          if(state.controls.holdOperation) {
-            state.pendingOperation=true;
-            await new Promise(resolve=>operationResolve=resolve);
+          captured=null;cancellationRequested=false;
+          state.pendingOperation=true;
+          operationSettlement=new Promise(resolve=>settleOperation=resolve);
+          const initial={operationId:token,mode,stage:'preparing',state:'running',bytesDownloaded:null,bytesTotal:null};
+          publishProgress(initial);
+          try {
+            if(state.controls.holdOperation) {
+              publishProgress({...initial,stage:state.controls.lateCancelSuccess?'finalizing':'downloading-runtime',
+                bytesDownloaded:state.controls.lateCancelSuccess?null:500000,
+                bytesTotal:state.controls.lateCancelSuccess?null:1000000});
+              await new Promise(resolve=>operationResolve=resolve);
+            }
             state.pendingOperation=false;
+            if(cancellationRequested && !state.controls.lateCancelSuccess) {
+              publishProgress({...initial,stage:'finalizing',state:'canceled'});
+              return {ok:false,error:{code:'RUNTIME_INSTALL_CANCELED',message:'Controlled setup canceled after settlement.'}};
+            }
+            state.mutations.push({mode,token});
+            state.controls.statusKind='ready';state.controls.outpaintInfill='ready';
+            publishProgress({...initial,stage:'finalizing',state:'succeeded'});
+            return ready();
+          } finally {
+            state.pendingOperation=false;
+            const resolve=settleOperation;settleOperation=null;resolve?.();
           }
-          state.mutations.push({mode,token});
-          state.controls.statusKind='ready';state.controls.outpaintInfill='ready';
-          return ready();
         };
         const service={
           getStatus:async()=>ready(),
+          getInstallationProgress:()=>structuredClone(state.progress),
+          onInstallationProgressChanged:listener=>{progressListeners.add(listener);return()=>progressListeners.delete(listener);},
+          cancelInstallation:async operationId=>{
+            const progress=state.progress.operation;
+            if(!state.pendingOperation || !progress || progress.operationId!==operationId ||
+               !['running','cancelling'].includes(progress.state)) {
+              throw Object.assign(new Error('Controlled setup is no longer running.'),{code:'RUNTIME_INVALID_OPERATION'});
+            }
+            state.cancelRequests.push(operationId);cancellationRequested=true;
+            if(progress.state==='running')publishProgress({...progress,state:'cancelling'});
+            await operationSettlement;
+          },
           install:async token=>execute('install',token),
           repair:async token=>execute('repair',token),
           previewInstallation:async mode=>{
@@ -205,6 +245,9 @@ await build({
           return handler(event,...args);
         }),removeHandler:channel=>ipcMain.removeHandler(channel)};
         const owner=registerRuntimeSetupIpc(registrar,caller,service);
+        const unsubscribeProgress=service.onInstallationProgressChanged(snapshot=>{
+          if(!caller.isDestroyed())caller.send(ipcChannels.runtime.installationProgress,snapshot);
+        });
         const empty=()=>({ok:true,value:[]});
         const homeChannels=[ipcChannels.models.getCatalog,ipcChannels.projects.list,
           ipcChannels.projects.listTrash,ipcChannels.projects.listWorkspaces,ipcChannels.presets.list];
@@ -219,7 +262,7 @@ await build({
         caller.on('did-start-navigation',invalidateOnNavigation);
         caller.on('render-process-gone',owner.invalidateReview);
         window.on('closed',()=>{
-          owner.dispose();state.disposed=true;
+          unsubscribeProgress();owner.dispose();state.disposed=true;
           caller.removeListener('did-start-navigation',invalidateOnNavigation);
           caller.removeListener('render-process-gone',owner.invalidateReview);
           for(const channel of [...homeChannels,ipcChannels.projects.getGenerationProgress]) ipcMain.removeHandler(channel);
@@ -496,16 +539,16 @@ try {
     button.click()
   })
   await expect.poll(async () => (await snapshot()).pendingOperation).toBe(true)
-  await expect(installDialog.getByRole('status')).toContainText('Installing…')
-  await expect(installDialog.getByRole('button', { name: /^(loading )?Install$/ })).toBeDisabled()
-  await expect(installDialog.getByRole('button', { exact: true, name: 'Cancel' })).toBeDisabled()
+  await expect(installDialog.getByRole('status')).toContainText('Downloading image engine')
+  await expect(installDialog.getByRole('button', { name: /^(loading )?Install$/ })).toHaveCount(0)
+  await expect(installDialog.getByRole('button', { exact: true, name: 'Cancel' })).toBeEnabled()
   await page.keyboard.press('Escape')
   await expect(installDialog).toBeVisible()
   await assertCounts(1, 0)
   assert.deepEqual((await snapshot()).attempts[0], install)
   await capture('install-pending-1280x800.png')
   records.push({
-    name: 'two synchronous DOM confirmation events reach Install once; pending Cancel and Escape remain disabled',
+    name: 'two synchronous DOM confirmation events reach Install once; live bytes and targeted Cancel are available while Escape cannot dismiss',
   })
   await application.evaluate(() => globalThis.setupUiProbe.resolveOperation())
   await expect(installDialog).not.toBeVisible()
@@ -566,6 +609,75 @@ try {
     name: 'rejected stale review requires a fresh visible preview and another explicit confirmation',
   })
 
+  await publishStatus({
+    statusKind: 'needs-repair',
+    metadataReview: true,
+    runtimeCached: false,
+    holdOperation: true,
+    lateCancelSuccess: false,
+  })
+  await expect(repairButton).toBeEnabled()
+  await repairButton.click()
+  await waitReview(repairDialog)
+  const cancelReview = await lastReview()
+  await repairDialog.getByRole('button', { exact: true, name: 'Repair' }).click()
+  await expect(repairDialog.getByRole('status')).toContainText('Downloading image engine')
+  await expect(repairDialog).toContainText('488.3 KiB of 976.6 KiB')
+  await repairDialog.getByRole('button', { exact: true, name: 'Cancel' }).click()
+  await expect(repairDialog.getByRole('status')).toContainText('Cancelling…')
+  await expect(
+    repairDialog.getByRole('button', { exact: true, name: 'Cancelling…' }),
+  ).toBeDisabled()
+  await expect.poll(async () => (await snapshot()).cancelRequests.length).toBe(1)
+  await assertCounts(4, 3)
+  const staleCancel = await invoke('cancelInstallation', install.token)
+  assert.equal(staleCancel.ok, false)
+  assert.equal(staleCancel.error.code, 'RUNTIME_INVALID_OPERATION')
+  assert.deepEqual((await snapshot()).cancelRequests, [cancelReview.token])
+  records.push({
+    name: 'targeted operation Cancel requests settlement; stale operation ID cannot abort the current operation',
+  })
+  await capture('cancel-pending-1280x800.png')
+  await page.reload({ waitUntil: 'load' })
+  await expect(repairDialog).toBeVisible()
+  await expect(repairDialog.getByRole('status')).toContainText('Cancelling…')
+  await expect(
+    repairDialog.getByRole('button', { exact: true, name: 'Cancelling…' }),
+  ).toBeDisabled()
+  await assertCounts(4, 3)
+  records.push({
+    name: 'actual document reload rehydrates active cancelling operation from the public snapshot',
+  })
+  await application.evaluate(() => globalThis.setupUiProbe.resolveOperation())
+  await expect(repairDialog).not.toBeVisible()
+  await expect(page.getByText('Runtime setup was canceled.', { exact: true })).toBeVisible()
+  await expect(repairButton).toBeEnabled()
+  await assertCounts(4, 3)
+  assert.equal((await snapshot()).progress.operation.state, 'canceled')
+  records.push({
+    name: 'canceled terminal appears only after controlled acquisition settles and no mutation is published',
+  })
+
+  await controls({ holdOperation: true, lateCancelSuccess: true })
+  await repairButton.click()
+  await waitReview(repairDialog)
+  const lateReview = await lastReview()
+  await repairDialog.getByRole('button', { exact: true, name: 'Repair' }).click()
+  await expect(repairDialog.getByRole('status')).toContainText('Finishing setup')
+  await repairDialog.getByRole('button', { exact: true, name: 'Cancel' }).click()
+  await expect(repairDialog.getByRole('status')).toContainText('Cancelling…')
+  await expect.poll(async () => (await snapshot()).cancelRequests.length).toBe(2)
+  await assertCounts(5, 3)
+  await application.evaluate(() => globalThis.setupUiProbe.resolveOperation())
+  await expect(repairDialog).not.toBeVisible()
+  await expect(notice).not.toBeVisible()
+  await assertCounts(5, 4)
+  assert.equal((await snapshot()).progress.operation.operationId, lateReview.token)
+  assert.equal((await snapshot()).progress.operation.state, 'succeeded')
+  records.push({
+    name: 'controlled finalization success wins a late Cancel request and remains succeeded',
+  })
+
   await publishStatus({ available: false, statusKind: 'ready', outpaintInfill: 'needs-repair' })
   await expect(repairButton).toBeEnabled()
   await repairButton.click()
@@ -577,7 +689,7 @@ try {
     notice.getByRole('heading', { exact: true, name: 'Outpainting needs repair' }),
   ).toBeVisible()
   await expect(repairButton).toBeEnabled()
-  await assertCounts(3)
+  await assertCounts(5, 4)
   await capture('unavailable-partial-repair-1280x800.png')
   records.push({
     name: 'controlled missing-provider review refusal remains visible beside partial outpaint readiness; no operation',
@@ -587,9 +699,12 @@ try {
   const finalState = await snapshot()
   assert.deepEqual(
     finalState.attempts.map(({ mode }) => mode),
-    ['install', 'repair', 'repair'],
+    ['install', 'repair', 'repair', 'repair', 'repair'],
   )
-  assert.deepEqual(finalState.mutations, finalState.attempts)
+  assert.deepEqual(
+    finalState.mutations,
+    finalState.attempts.filter((_, index) => index !== 3),
+  )
   assert.equal(finalState.pendingPreview, false)
   assert.equal(finalState.pendingOperation, false)
   const sourceAfter = await freezeSources()
@@ -611,7 +726,9 @@ try {
         'invokeai/frontend/webv2/src/features/models/ui/add-models/AddModelsView.tsx:226,249',
         'invokeai/frontend/webv2/src/features/models/ui/launchpad/ModelsNotice.tsx:374',
         'invokeai/app/api/routers/model_manager.py:946,1006',
-        'invokeai/app/services/model_install/model_install_default.py:1123,1138',
+        'invokeai/app/services/model_install/model_install_default.py:1123,1138,1267,2630',
+        'invokeai/app/services/download/download_default.py:598,783,822',
+        'invokeai/frontend/webv2/src/features/models/ui/install-queue/useInstallJobActions.ts:81',
       ],
     },
     sourceBefore,
@@ -620,6 +737,9 @@ try {
     screenshots,
     authorizedCoreAttempts: finalState.attempts,
     controlledMutations: finalState.mutations,
+    cancelRequests: finalState.cancelRequests,
+    finalProgress: finalState.progress,
+    progressEventCount: finalState.progressRecords.length,
     nativeReloadRevocation: { before: navigationBefore, after: navigationAfter },
     unavailableProviderControl:
       'Controlled service refusal; not default production Main or shipping provider qualification.',

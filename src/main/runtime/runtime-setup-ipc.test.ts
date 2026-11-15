@@ -1,4 +1,5 @@
 import { type ApiResult, ipcChannels, type RuntimeStatus } from '../../shared/api.js'
+import type { RuntimeSetupProgressSnapshot } from '../../shared/runtime-setup-progress.js'
 import type { RuntimeSetupMode, RuntimeSetupReview } from '../../shared/runtime-setup.js'
 
 /** Protocol/capability tests with explicit controlled manager ports; no installer/native claim. */
@@ -18,7 +19,13 @@ type Request = Parameters<Handler>[0]
 type Service = Parameters<typeof registerRuntimeSetupIpc>[2]
 type Channel = keyof Pick<
   typeof ipcChannels.runtime,
-  'discardInstallationReview' | 'getStatus' | 'install' | 'previewInstallation' | 'repair'
+  | 'cancelInstallation'
+  | 'discardInstallationReview'
+  | 'getInstallationProgress'
+  | 'getStatus'
+  | 'install'
+  | 'previewInstallation'
+  | 'repair'
 >
 
 const firstToken = '11111111-1111-4111-8111-111111111111'
@@ -644,4 +651,219 @@ test('one accepted public token cannot reach the mutating core port a second tim
   const replay = await f.invoke('install', [review.token])
   assert.equal(f.calls.filter((call) => call.action === 'install').length, 1)
   failure(replay, 'RUNTIME_INVALID_REVIEW')
+})
+
+const progressSnapshot = (): RuntimeSetupProgressSnapshot => ({
+  operation: {
+    bytesDownloaded: 16,
+    bytesTotal: 100,
+    mode: 'install',
+    operationId: firstToken,
+    stage: 'downloading-runtime',
+    state: 'running',
+  },
+  revision: 1,
+})
+
+function progressFixture() {
+  const state = { aborts: 0, cancelCalls: [] as string[], reads: 0, snapshot: progressSnapshot() }
+  const controls: {
+    cancel?: (id: string) => Promise<void>
+    progress?: unknown
+    read?: () => RuntimeSetupProgressSnapshot
+  } = {}
+  const service: Service = {
+    cancelInstallation: async (operationId) => {
+      state.cancelCalls.push(operationId ?? '')
+      const current = state.snapshot.operation
+      if (
+        !operationId ||
+        !current ||
+        operationId !== current.operationId ||
+        !['cancelling', 'running'].includes(current.state)
+      ) {
+        throw Object.assign(new Error('Private obsolete operation /private/runtime.'), {
+          code: 'RUNTIME_INVALID_OPERATION',
+        })
+      }
+      state.aborts++
+      if (controls.cancel) {
+        await controls.cancel(operationId)
+      }
+    },
+    getInstallationProgress: () => {
+      state.reads++
+      return controls.read
+        ? controls.read()
+        : controls.progress !== undefined
+          ? (controls.progress as RuntimeSetupProgressSnapshot)
+          : state.snapshot
+    },
+    getStatus: async () => success(ready),
+    install: async () => success(ready),
+    previewInstallation: async (mode) => success(engineReview(mode)),
+    repair: async () => success(ready),
+  }
+  return { ...fixture(service), progressControls: controls, state }
+}
+
+test('public setup progress getter projects exact cloned telemetry without install or abort authority', async () => {
+  const f = progressFixture()
+  const result = value(await f.invoke('getInstallationProgress')) as RuntimeSetupProgressSnapshot
+  assert.deepEqual(result, progressSnapshot())
+  result.operation!.state = 'failed'
+  assert.equal(f.state.snapshot.operation!.state, 'running')
+  assert.equal(f.state.reads, 1)
+  assert.equal(f.state.aborts, 0)
+  assert.deepEqual(f.state.cancelCalls, [])
+  assert.deepEqual(f.calls, [])
+  failure(await f.invoke('getInstallationProgress', [firstToken]), 'IPC_INVALID_CALLER')
+  assert.equal(f.state.reads, 1)
+})
+
+test('progress getters and operation cancellation retain the trusted current main-frame guard', async () => {
+  const f = progressFixture()
+  for (const channel of ['getInstallationProgress', 'cancelInstallation'] as const) {
+    const args = channel === 'cancelInstallation' ? [firstToken] : []
+    for (const request of [
+      { sender: {}, senderFrame: f.caller.mainFrame },
+      { sender: f.caller, senderFrame: {} },
+    ]) {
+      failure(await f.invoke(channel, args, request), 'IPC_INVALID_CALLER')
+    }
+  }
+  assert.equal(f.state.reads, 0)
+  assert.equal(f.state.aborts, 0)
+  assert.deepEqual(f.state.cancelCalls, [])
+  const oldFrame = f.caller.mainFrame
+  f.caller.mainFrame = {}
+  failure(
+    await f.invoke('cancelInstallation', [firstToken], { sender: f.caller, senderFrame: oldFrame }),
+    'IPC_INVALID_CALLER',
+  )
+  assert.deepEqual(value(await f.invoke('getInstallationProgress')), progressSnapshot())
+  f.lifetime.dispose()
+  assert.equal(f.handlers.size, 0)
+})
+
+test('public Cancel delegates only a shaped exact operation ID and preserves current-operation refusal', async () => {
+  const f = progressFixture()
+  for (const args of [[], ['bad'], [null], [firstToken, secondToken]]) {
+    failure(await f.invoke('cancelInstallation', args), 'IPC_INVALID_CALLER')
+  }
+  assert.deepEqual(f.state.cancelCalls, [])
+  const staleResult = await f.invoke('cancelInstallation', [secondToken])
+  failure(staleResult, 'RUNTIME_INVALID_OPERATION')
+  assert.equal(JSON.stringify(staleResult).includes('/private/'), false)
+  assert.equal(f.state.aborts, 0)
+  assert.deepEqual(f.state.cancelCalls, [secondToken])
+  value(await f.invoke('cancelInstallation', [firstToken]))
+  assert.equal(f.state.aborts, 1)
+})
+
+test('Cancel waits for owned settlement and reports the actual canceled or success-winning terminal snapshot', async () => {
+  for (const terminal of ['canceled', 'succeeded'] as const) {
+    const f = progressFixture()
+    const entered = deferred<void>()
+    const settlement = deferred<void>()
+    f.progressControls.cancel = async () => {
+      f.state.snapshot = {
+        ...f.state.snapshot,
+        operation: { ...f.state.snapshot.operation!, state: 'cancelling' },
+        revision: 2,
+      }
+      entered.resolve()
+      await settlement.promise
+      f.state.snapshot = {
+        operation: {
+          ...f.state.snapshot.operation!,
+          bytesDownloaded: null,
+          bytesTotal: null,
+          stage: 'finalizing',
+          state: terminal,
+        },
+        revision: 3,
+      }
+    }
+    let returned = false
+    const request = f.invoke('cancelInstallation', [firstToken]).then((result) => {
+      returned = true
+      return result
+    })
+    await entered.promise
+    const waiting = value(await f.invoke('getInstallationProgress')) as RuntimeSetupProgressSnapshot
+    assert.equal(waiting.operation!.state, 'cancelling')
+    assert.equal(returned, false)
+    settlement.resolve()
+    const settled = value(await request) as RuntimeSetupProgressSnapshot
+    assert.equal(settled.operation!.state, terminal)
+    assert.equal(settled.operation!.bytesDownloaded, null)
+    assert.equal(f.state.aborts, 1)
+  }
+})
+
+test('document replacement revokes an old Cancel reply without silently cancelling the accepted operation', async () => {
+  const f = progressFixture()
+  const entered = deferred<void>()
+  const settlement = deferred<void>()
+  f.progressControls.cancel = async () => {
+    entered.resolve()
+    await settlement.promise
+  }
+  const response = f.invoke('cancelInstallation', [firstToken])
+  await entered.promise
+  assert.equal(f.state.aborts, 1)
+  f.lifetime.invalidateReview()
+  assert.deepEqual(value(await f.invoke('getInstallationProgress')), progressSnapshot())
+  assert.equal(f.state.aborts, 1, 'Reading after reload must not add an implicit cancellation.')
+  settlement.resolve()
+  failure(await response, 'IPC_INVALID_CALLER')
+  assert.equal(f.state.aborts, 1)
+})
+
+test('public progress refuses malformed/private snapshots and Cancel normalizes native diagnostics', async () => {
+  const f = progressFixture()
+  for (const malformed of [
+    { ...progressSnapshot(), nativePath: '/private/runtime' },
+    { ...progressSnapshot(), operation: { ...progressSnapshot().operation!, error: 'private' } },
+    { ...progressSnapshot(), revision: -1 },
+    {
+      ...progressSnapshot(),
+      operation: { ...progressSnapshot().operation!, bytesDownloaded: 101 },
+    },
+  ]) {
+    f.progressControls.progress = malformed
+    const result = await f.invoke('getInstallationProgress')
+    failure(result, 'RUNTIME_INSTALL_FAILED')
+    assert.equal(JSON.stringify(result).includes('/private/'), false)
+  }
+  delete f.progressControls.progress
+  f.progressControls.read = () => {
+    throw new Error('Native /private/runtime/keyring')
+  }
+  const readFailure = await f.invoke('getInstallationProgress')
+  failure(readFailure, 'RUNTIME_INTERNAL_ERROR')
+  assert.equal(JSON.stringify(readFailure).includes('/private/'), false)
+  delete f.progressControls.read
+  for (const code of ['RUNTIME_INSTALL_RECOVERY_REQUIRED', 'UNKNOWN_NATIVE_CODE']) {
+    f.progressControls.cancel = async () => {
+      throw Object.assign(new Error('Native /private/runtime/keyring'), { code })
+    }
+    const result = await f.invoke('cancelInstallation', [firstToken])
+    failure(result, code === 'RUNTIME_INSTALL_RECOVERY_REQUIRED' ? code : 'RUNTIME_INSTALL_FAILED')
+    assert.equal(JSON.stringify(result).includes('/private/'), false)
+  }
+})
+
+test('legacy controlled services without progress ports refuse new operations without changing old review behavior', async () => {
+  const f = fixture()
+  failure(await f.invoke('getInstallationProgress'), 'RUNTIME_INSTALL_UNAVAILABLE')
+  failure(await f.invoke('cancelInstallation', [firstToken]), 'RUNTIME_INSTALL_UNAVAILABLE')
+  assert.deepEqual(f.calls, [])
+  value(await f.invoke('previewInstallation', ['install']))
+  value(await f.invoke('install', [firstToken]))
+  assert.deepEqual(
+    f.calls.map(({ action }) => action),
+    ['preview', 'install'],
+  )
 })

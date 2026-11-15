@@ -1,18 +1,22 @@
 <script setup lang="ts">
+import type { RuntimeSetupProgress } from '../../shared/runtime-setup-progress.js'
 import type { RuntimeSetupMode, RuntimeSetupReview } from '../../shared/runtime-setup.js'
 
-import { NButton, NCard, NModal, NSpin } from 'naive-ui'
+import { NAlert, NButton, NCard, NModal, NProgress, NSpin } from 'naive-ui'
 import { computed } from 'vue'
 
 import { AppLayer } from '../../../docs/prototype-app/src/theme/app-layers.js'
 
 const props = defineProps<{
+  cancelPending: boolean
+  error: string | null
   mode: RuntimeSetupMode
+  progress: RuntimeSetupProgress | null
   review: RuntimeSetupReview | null
   submitting: boolean
 }>()
 const show = defineModel<boolean>('show', { required: true })
-const emit = defineEmits<{ confirm: []; dismiss: [] }>()
+const emit = defineEmits<{ cancelOperation: []; confirm: []; dismiss: [] }>()
 
 const title = computed(() =>
   props.mode === 'install' ? 'Set up image generation' : 'Repair image generation',
@@ -21,6 +25,63 @@ const action = computed(() => (props.mode === 'install' ? 'Install' : 'Repair'))
 const canConfirm = computed(
   () => props.review !== null && props.review.mode === props.mode && !props.submitting,
 )
+
+const cancelling = computed(() => props.cancelPending || props.progress?.state === 'cancelling')
+const canCancelOperation = computed(
+  () => props.submitting && props.progress?.state === 'running' && !cancelling.value,
+)
+const stageLabel = computed(() => {
+  if (cancelling.value) {
+    return 'Cancelling…'
+  }
+  switch (props.progress?.state) {
+    case 'canceled': {
+      return 'Setup canceled'
+    }
+    case 'failed': {
+      return 'Setup failed'
+    }
+    case 'recovery-required': {
+      return 'Setup needs recovery'
+    }
+    case 'succeeded': {
+      return 'Setup completed'
+    }
+  }
+  const labels = {
+    'assembling-runtime': 'Installing engine dependencies',
+    'checking-activation': 'Checking activated engine',
+    'checking-runtime': 'Checking image engine',
+    'copying-runtime': 'Copying engine files',
+    'downloading-runtime': 'Downloading image engine',
+    'extracting-runtime': 'Unpacking image engine',
+    finalizing: 'Finishing setup',
+    'installing-outpaint': 'Preparing outpainting resource',
+    preparing: 'Preparing setup',
+    'preparing-runtime': 'Preparing runtime files',
+    'verifying-runtime': 'Verifying engine files',
+  } as const
+  return props.progress
+    ? labels[props.progress.stage]
+    : props.mode === 'install'
+      ? 'Installing…'
+      : 'Repairing…'
+})
+const transferPercent = computed(() => {
+  const progress = props.progress
+  return progress?.bytesDownloaded !== null &&
+    progress?.bytesDownloaded !== undefined &&
+    progress.bytesTotal !== null &&
+    progress.bytesTotal > 0
+    ? (progress.bytesDownloaded / progress.bytesTotal) * 100
+    : null
+})
+
+function cancel() {
+  if (canCancelOperation.value) {
+    emit('cancelOperation')
+  }
+}
 
 function close() {
   if (!props.submitting) {
@@ -63,11 +124,11 @@ function formatBytes(bytes: number | null): string {
       size="small"
       :title
     >
-      <div v-if="!review" aria-live="polite" class="setup-pending" role="status">
+      <div v-if="!review && !submitting" aria-live="polite" class="setup-pending" role="status">
         <NSpin size="small" />
         <span>Preparing installation review…</span>
       </div>
-      <template v-else>
+      <template v-else-if="review">
         <p class="setup-intro">
           Review the image engine and its shared outpainting resource before continuing.
         </p>
@@ -103,13 +164,52 @@ function formatBytes(bytes: number | null): string {
           The full installation may need more space than the runtime minimum.
         </p>
       </template>
-      <p v-if="submitting" aria-live="polite" class="setup-progress" role="status">
-        {{ mode === 'install' ? 'Installing…' : 'Repairing…' }}
-      </p>
+      <div v-if="submitting" class="setup-progress">
+        <div aria-live="polite" class="setup-pending" role="status">
+          <NSpin
+            v-if="!progress || progress.state === 'running' || progress.state === 'cancelling'"
+            size="small"
+          />
+          <span>{{ stageLabel }}</span>
+        </div>
+        <template v-if="transferPercent !== null && progress">
+          <p class="setup-transfer">
+            {{ formatBytes(progress.bytesDownloaded) }} of {{ formatBytes(progress.bytesTotal) }}
+          </p>
+          <NProgress
+            aria-label="Current download progress"
+            :percentage="transferPercent"
+            :showIndicator="false"
+            type="line"
+          />
+        </template>
+      </div>
+      <NAlert
+        v-if="error"
+        class="setup-error"
+        title="Cancellation could not be completed"
+        type="error"
+      >
+        {{ error }}
+      </NAlert>
       <template v-slot:footer>
         <div class="modal-actions">
-          <NButton :disabled="submitting" @click="close">Cancel</NButton>
-          <NButton :disabled="!canConfirm" :loading="submitting" type="primary" @click="confirm">
+          <NButton
+            v-if="submitting"
+            key="n-button-1"
+            :disabled="!canCancelOperation"
+            @click="cancel"
+          >
+            {{ cancelling ? 'Cancelling…' : 'Cancel' }}
+          </NButton>
+          <NButton v-else key="n-button-2" @click="close">Cancel</NButton>
+          <NButton
+            v-if="!submitting"
+            key="n-button-3"
+            :disabled="!canConfirm"
+            type="primary"
+            @click="confirm"
+          >
             {{ action }}
           </NButton>
         </div>
@@ -164,6 +264,16 @@ function formatBytes(bytes: number | null): string {
 
 .setup-progress {
   margin: 16px 0 0;
+}
+
+.setup-transfer {
+  margin: 12px 0 8px;
+  color: var(--app-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.setup-error {
+  margin-top: 16px;
 }
 
 .modal-actions {

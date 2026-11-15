@@ -1,4 +1,8 @@
 import type { ApiResult, RuntimeStatus } from '../../../src/shared/api.js'
+import type {
+  RuntimeSetupProgress,
+  RuntimeSetupProgressSnapshot,
+} from '../../../src/shared/runtime-setup-progress.js'
 import type { RuntimeSetupMode, RuntimeSetupReview } from '../../../src/shared/runtime-setup.js'
 
 import { expect, type Locator, type Page, test } from '@playwright/test'
@@ -6,31 +10,49 @@ import path from 'node:path'
 
 type PreviewBehavior = 'hold' | 'ready' | 'unavailable' | 'wrong-mode'
 type OperationBehavior = 'hold' | 'ready' | 'stale'
+type CancelOutcome = 'canceled' | 'recovery-required' | 'succeeded'
 
 interface SetupOptions {
+  cancelOutcome?: CancelOutcome
+  cancelReplyHeld?: boolean
   discardHeld?: boolean
   operation?: OperationBehavior
+  operationReplyHeld?: boolean
   outpaintReused?: boolean
   preview?: PreviewBehavior
+  progressGetterHeld?: boolean
   releaseId?: string
+  resumed?: RuntimeSetupProgress
   runtimeCached?: boolean
   status?: 'needs-repair' | 'not-installed'
 }
 
 interface SetupSnapshot {
+  cancels: string[]
   discards: number
   operations: { mode: RuntimeSetupMode; token: string | null }[]
   previews: { mode: RuntimeSetupMode; token: string }[]
+  progress: RuntimeSetupProgressSnapshot
   returnedPreviews: number
 }
 
 interface SetupFixture extends SetupSnapshot {
+  cancelOutcome: CancelOutcome
+  cancelReject: boolean
+  cancelReplyHeld: boolean
   discardHeld: boolean
+  emitSnapshot: (snapshot: RuntimeSetupProgressSnapshot) => void
   operation: OperationBehavior
+  operationReplyHeld: boolean
   preview: PreviewBehavior
+  publish: (operation: RuntimeSetupProgress | null, revision?: number) => void
+  releaseCancelReply: () => void
   releaseDiscard: () => void
   releaseOperation: () => void
+  releaseOperationReply: () => void
   releasePreview: () => void
+  releaseProgressGetter: () => void
+  remount: () => void
   unmount: () => void
 }
 
@@ -59,7 +81,9 @@ async function mountSetupApp(page: Page, options: SetupOptions = {}) {
           }
         : mutation === 'dismissal-wait'
           ? { after: 'void previewSettled', before: 'await previewSettled' }
-          : null
+          : mutation === 'progress-revision'
+            ? { after: 'false', before: 'snapshot.revision <= runtimeSetupProgressRevision' }
+            : null
     if (!replacement) {
       throw new Error(`Unknown Setup UI mutation: ${mutation}`)
     }
@@ -89,26 +113,88 @@ async function mountSetupApp(page: Page, options: SetupOptions = {}) {
       const host = document.createElement('div')
       host.id = 'app'
       document.body.replaceChildren(host)
-      const application = createApp(App)
+      let application = createApp(App)
       const pendingPreviews: (() => void)[] = []
       const pendingDiscards: (() => void)[] = []
       const pendingOperations: (() => void)[] = []
+      const pendingProgressGetters: (() => void)[] = []
+      const pendingCancelReplies: (() => void)[] = []
+      const pendingOperationReplies: (() => void)[] = []
+      const pendingCancels: ((snapshot: RuntimeSetupProgressSnapshot) => void)[] = []
+      const progressListeners = new Set<(snapshot: RuntimeSetupProgressSnapshot) => void>()
+      let cancelRequested = false
       let status: RuntimeStatus = {
         detail: 'Controlled renderer API port; no native runtime qualification.',
         kind: initial.status ?? 'not-installed',
         profile: 'linux-nvidia',
         runtimeId: 'renderer-api-fixture',
       }
+      const publish = (
+        operation: RuntimeSetupProgress | null,
+        revision = state.progress.revision + 1,
+      ) => {
+        state.progress = { operation, revision }
+        for (const listener of progressListeners) {
+          listener(structuredClone(state.progress))
+        }
+      }
+      const settleProgress = (outcome: CancelOutcome) => {
+        const operation = state.progress.operation
+        if (operation) {
+          if (outcome === 'succeeded') {
+            status = { ...status, kind: 'ready' }
+          } else if (outcome === 'recovery-required') {
+            status = { ...status, kind: 'needs-repair' }
+          }
+          publish({
+            ...operation,
+            bytesDownloaded: null,
+            bytesTotal: null,
+            stage: 'finalizing',
+            state: outcome,
+          })
+        }
+        for (const resolve of pendingCancels.splice(0)) {
+          resolve(structuredClone(state.progress))
+        }
+      }
       const state: SetupFixture = {
+        cancelOutcome: initial.cancelOutcome ?? 'canceled',
+        cancelReject: false,
+        cancelReplyHeld: initial.cancelReplyHeld ?? false,
+        cancels: [],
         discardHeld: initial.discardHeld ?? false,
         discards: 0,
+        emitSnapshot: (snapshot) => {
+          for (const listener of progressListeners) {
+            listener(structuredClone(snapshot))
+          }
+        },
         operation: initial.operation ?? 'ready',
+        operationReplyHeld: initial.operationReplyHeld ?? false,
         operations: [],
         preview: initial.preview ?? 'ready',
         previews: [],
+        progress: { operation: initial.resumed ?? null, revision: initial.resumed ? 1 : 0 },
+        publish,
+        releaseCancelReply: () => pendingCancelReplies.shift()?.(),
         releaseDiscard: () => pendingDiscards.shift()?.(),
-        releaseOperation: () => pendingOperations.shift()?.(),
+        releaseOperation: () => {
+          const resolve = pendingOperations.shift()
+          if (resolve) {
+            resolve()
+          } else {
+            settleProgress(cancelRequested ? state.cancelOutcome : 'succeeded')
+          }
+        },
+        releaseOperationReply: () => pendingOperationReplies.shift()?.(),
         releasePreview: () => pendingPreviews.shift()?.(),
+        releaseProgressGetter: () => pendingProgressGetters.shift()?.(),
+        remount: () => {
+          application.unmount()
+          application = createApp(App)
+          application.mount(host)
+        },
         returnedPreviews: 0,
         unmount: () => application.unmount(),
       }
@@ -119,6 +205,18 @@ async function mountSetupApp(page: Page, options: SetupOptions = {}) {
       ): Promise<ApiResult<RuntimeStatus>> => {
         state.operations.push({ mode, token: token ?? null })
         const behavior = state.operation
+        cancelRequested = false
+        const operationId = token ?? '00000000-0000-4000-8000-000000000000'
+        if (behavior !== 'stale') {
+          publish({
+            bytesDownloaded: null,
+            bytesTotal: null,
+            mode,
+            operationId,
+            stage: 'preparing',
+            state: 'running',
+          })
+        }
         if (behavior === 'hold') {
           await new Promise<void>((resolve) => pendingOperations.push(resolve))
         }
@@ -127,6 +225,26 @@ async function mountSetupApp(page: Page, options: SetupOptions = {}) {
             error: {
               code: 'RUNTIME_INVALID_REVIEW',
               message: 'Review runtime setup again before continuing.',
+            },
+            ok: false,
+          }
+        }
+        const outcome = cancelRequested ? state.cancelOutcome : 'succeeded'
+        settleProgress(outcome)
+        if (state.operationReplyHeld) {
+          await new Promise<void>((resolve) => pendingOperationReplies.push(resolve))
+        }
+        if (outcome === 'canceled' || outcome === 'recovery-required') {
+          return {
+            error: {
+              code:
+                outcome === 'canceled'
+                  ? 'RUNTIME_INSTALL_CANCELED'
+                  : 'RUNTIME_INSTALL_RECOVERY_REQUIRED',
+              message:
+                outcome === 'canceled'
+                  ? 'Runtime setup was canceled.'
+                  : 'Runtime setup needs recovery. Controlled exit could not be confirmed.',
             },
             ok: false,
           }
@@ -155,6 +273,43 @@ async function mountSetupApp(page: Page, options: SetupOptions = {}) {
           onTabsChanged: unsubscribe,
         },
         runtime: {
+          cancelInstallation: async (
+            operationId: string,
+          ): Promise<ApiResult<RuntimeSetupProgressSnapshot>> => {
+            state.cancels.push(operationId)
+            if (state.cancelReject) {
+              return {
+                error: {
+                  code: 'RUNTIME_INSTALL_FAILED',
+                  message: 'Controlled cancellation request failure.',
+                },
+                ok: false,
+              }
+            }
+            const operation = state.progress.operation
+            if (
+              !operation ||
+              operation.operationId !== operationId ||
+              !['cancelling', 'running'].includes(operation.state)
+            ) {
+              return {
+                error: {
+                  code: 'RUNTIME_INVALID_OPERATION',
+                  message: 'This setup operation is no longer running.',
+                },
+                ok: false,
+              }
+            }
+            cancelRequested = true
+            publish({ ...operation, state: 'cancelling' })
+            const settled = await new Promise<RuntimeSetupProgressSnapshot>((resolve) =>
+              pendingCancels.push(resolve),
+            )
+            if (state.cancelReplyHeld) {
+              await new Promise<void>((resolve) => pendingCancelReplies.push(resolve))
+            }
+            return { ok: true, value: settled }
+          },
           discardInstallationReview: async (): Promise<ApiResult<null>> => {
             state.discards++
             if (state.discardHeld) {
@@ -162,8 +317,21 @@ async function mountSetupApp(page: Page, options: SetupOptions = {}) {
             }
             return { ok: true, value: null }
           },
+          getInstallationProgress: async (): Promise<ApiResult<RuntimeSetupProgressSnapshot>> => {
+            const captured = structuredClone(state.progress)
+            if (initial.progressGetterHeld) {
+              await new Promise<void>((resolve) => pendingProgressGetters.push(resolve))
+            }
+            return { ok: true, value: captured }
+          },
           getStatus: async (): Promise<ApiResult<RuntimeStatus>> => ({ ok: true, value: status }),
           install: async (token?: string) => await operate('install', token),
+          onInstallationProgressChanged: (
+            listener: (snapshot: RuntimeSetupProgressSnapshot) => void,
+          ) => {
+            progressListeners.add(listener)
+            return () => progressListeners.delete(listener)
+          },
           onStatusChanged: unsubscribe,
           previewInstallation: async (
             mode: RuntimeSetupMode,
@@ -215,9 +383,11 @@ async function mountSetupApp(page: Page, options: SetupOptions = {}) {
     },
     { initial: options, root: sourceRoot },
   )
-  await expect(
-    notice(page).getByRole('button', { exact: true, name: setupAction(options) }),
-  ).toBeEnabled()
+  await (options.resumed
+    ? expect(dialog(page, options.resumed.mode)).toBeVisible()
+    : expect(
+        notice(page).getByRole('button', { exact: true, name: setupAction(options) }),
+      ).toBeEnabled())
 }
 
 const notice = (page: Page) => page.getByRole('region', { name: 'Image generation status' })
@@ -231,15 +401,21 @@ const setupAction = (options: SetupOptions) =>
 
 async function snapshot(page: Page): Promise<SetupSnapshot> {
   return await page.evaluate(() => {
-    const { discards, operations, previews, returnedPreviews } = (globalThis as SetupGlobal)
-      .runtimeSetupFixture
-    return { discards, operations, previews, returnedPreviews }
+    const { cancels, discards, operations, previews, progress, returnedPreviews } = (
+      globalThis as SetupGlobal
+    ).runtimeSetupFixture
+    return { cancels, discards, operations, previews, progress, returnedPreviews }
   })
 }
 
 async function patchFixture(
   page: Page,
-  patch: Partial<Pick<SetupFixture, 'discardHeld' | 'operation' | 'preview'>>,
+  patch: Partial<
+    Pick<
+      SetupFixture,
+      'cancelOutcome' | 'cancelReject' | 'cancelReplyHeld' | 'discardHeld' | 'operation' | 'preview'
+    >
+  >,
 ) {
   await page.evaluate((next) => {
     Object.assign((globalThis as SetupGlobal).runtimeSetupFixture, next)
@@ -300,9 +476,9 @@ test('production Setup reviews complete bytes and unknown peak, then submits its
   await expect.poll(() => review.evaluate((el) => getComputedStyle(el).transform)).toBe('none')
   await page.screenshot({ path: testInfo.outputPath('setup-review.png') })
   await review.getByRole('button', { exact: true, name: 'Install' }).click()
-  await expect(review.getByRole('status')).toHaveText('Installing…')
-  await expect(review.getByRole('button', { name: /^(loading )?Install$/ })).toBeDisabled()
-  await expect(review.getByRole('button', { exact: true, name: 'Cancel' })).toBeDisabled()
+  await expect(review.getByRole('status')).toHaveText('Preparing setup')
+  await expect(review.getByRole('button', { name: /^(loading )?Install$/ })).toHaveCount(0)
+  await expect(review.getByRole('button', { exact: true, name: 'Cancel' })).toBeEnabled()
   await page.keyboard.press('Escape')
   await expect(review).toBeVisible()
   expect((await snapshot(page)).operations).toEqual([
@@ -522,3 +698,203 @@ for (const viewport of [
     expect((await snapshot(page)).operations).toEqual([])
   })
 }
+
+async function publishSetupProgress(
+  page: Page,
+  change: Partial<RuntimeSetupProgress>,
+  revision?: number,
+) {
+  await page.evaluate(
+    ({ patch, version }) => {
+      const fixture = (globalThis as SetupGlobal).runtimeSetupFixture
+      const current = fixture.progress.operation
+      if (!current) {
+        throw new Error('No controlled setup operation is active.')
+      }
+      fixture.publish({ ...current, ...patch }, version)
+    },
+    { patch: change, version: revision },
+  )
+}
+
+test('download bytes and Cancel stay attached to the accepted operation until cancellation settles', async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ height: 620, width: 900 })
+  await mountSetupApp(page, { operation: 'hold', runtimeCached: false })
+  await notice(page).getByRole('button', { exact: true, name: 'Set up' }).click()
+  const review = dialog(page)
+  await review.getByRole('button', { exact: true, name: 'Install' }).click()
+  const token = (await snapshot(page)).operations[0]!.token
+  await publishSetupProgress(page, {
+    bytesDownloaded: 1024 ** 2,
+    bytesTotal: 2 * 1024 ** 2,
+    stage: 'downloading-runtime',
+  })
+  await expect(review.getByRole('status')).toHaveText('Downloading image engine')
+  await expect(review.getByText('1.0 MiB of 2.0 MiB', { exact: true })).toBeVisible()
+  await expect(review.getByRole('button', { exact: true, name: 'Cancel' })).toBeEnabled()
+  await expect.poll(() => review.evaluate((el) => getComputedStyle(el).transform)).toBe('none')
+  await page.screenshot({ path: testInfo.outputPath('setup-download-900x620.png') })
+  await publishSetupProgress(page, { bytesDownloaded: 2 * 1024 ** 2 })
+  await expect(review.getByText('2.0 MiB of 2.0 MiB', { exact: true })).toBeVisible()
+  await expect(review.getByText('Setup completed', { exact: true })).toHaveCount(0)
+  await review.getByRole('button', { exact: true, name: 'Cancel' }).evaluate((button) => {
+    ;(button as HTMLButtonElement).click()
+    ;(button as HTMLButtonElement).click()
+  })
+  await expect(review.getByRole('status')).toHaveText('Cancelling…')
+  await expect(review.getByRole('button', { exact: true, name: 'Cancelling…' })).toBeDisabled()
+  await page.keyboard.press('Escape')
+  await expect(review).toBeVisible()
+  expect((await snapshot(page)).cancels).toEqual([token])
+  await page.screenshot({ path: testInfo.outputPath('setup-cancelling-900x620.png') })
+  await release(page, 'operation')
+  await expect(review).toHaveCount(0)
+  await expect(page.getByText('Runtime setup was canceled.', { exact: true })).toBeVisible()
+  expect((await snapshot(page)).operations).toHaveLength(1)
+})
+
+test('stale getter, old terminal and old invoke reply cannot replace a newer setup operation', async ({
+  page,
+}) => {
+  await mountSetupApp(page, {
+    operation: 'hold',
+    operationReplyHeld: true,
+    progressGetterHeld: true,
+  })
+  await notice(page).getByRole('button', { exact: true, name: 'Set up' }).click()
+  await dialog(page).getByRole('button', { exact: true, name: 'Install' }).click()
+  const early = (await snapshot(page)).progress
+  await publishSetupProgress(page, {
+    bytesDownloaded: 50,
+    bytesTotal: 100,
+    stage: 'downloading-runtime',
+  })
+  await page.evaluate(() => (globalThis as SetupGlobal).runtimeSetupFixture.releaseProgressGetter())
+  await page.evaluate(
+    (snapshot) => (globalThis as SetupGlobal).runtimeSetupFixture.emitSnapshot(snapshot),
+    early,
+  )
+  await expect(dialog(page).getByRole('status')).toHaveText('Downloading image engine')
+  const old = (await snapshot(page)).progress.operation!
+  await release(page, 'operation')
+  await expect.poll(async () => (await snapshot(page)).progress.operation?.state).toBe('succeeded')
+  const nextId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+  await publishSetupProgress(page, {
+    bytesDownloaded: null,
+    bytesTotal: null,
+    mode: 'repair',
+    operationId: nextId,
+    stage: 'checking-runtime',
+    state: 'running',
+  })
+  await expect(dialog(page, 'repair').getByRole('status')).toHaveText('Checking image engine')
+  await page.evaluate(
+    (operation) =>
+      (globalThis as SetupGlobal).runtimeSetupFixture.publish({
+        ...operation,
+        bytesDownloaded: null,
+        bytesTotal: null,
+        stage: 'finalizing',
+        state: 'failed',
+      }),
+    old,
+  )
+  await page.evaluate(() => (globalThis as SetupGlobal).runtimeSetupFixture.releaseOperationReply())
+  await expect(dialog(page, 'repair').getByRole('status')).toHaveText('Checking image engine')
+  await expect(
+    dialog(page, 'repair').getByRole('button', { exact: true, name: 'Cancel' }),
+  ).toBeEnabled()
+  await publishSetupProgress(page, {
+    bytesDownloaded: null,
+    bytesTotal: null,
+    mode: 'repair',
+    operationId: nextId,
+    stage: 'finalizing',
+    state: 'canceled',
+  })
+  await expect(dialog(page, 'repair')).toHaveCount(0)
+  await expect(page.getByText('Runtime setup was canceled.', { exact: true })).toBeVisible()
+})
+
+test('remount restores accepted setup and cancellation from the current snapshot without a review', async ({
+  page,
+}) => {
+  await mountSetupApp(page, { operation: 'hold' })
+  await notice(page).getByRole('button', { exact: true, name: 'Set up' }).click()
+  await dialog(page).getByRole('button', { exact: true, name: 'Install' }).click()
+  await publishSetupProgress(page, {
+    bytesDownloaded: null,
+    bytesTotal: null,
+    stage: 'extracting-runtime',
+  })
+  await page.evaluate(() => (globalThis as SetupGlobal).runtimeSetupFixture.remount())
+  await expect(dialog(page).getByRole('status')).toHaveText('Unpacking image engine')
+  await expect(
+    dialog(page).getByText('Preparing installation review…', { exact: true }),
+  ).toHaveCount(0)
+  await expect(dialog(page).locator('dt')).toHaveCount(0)
+  await dialog(page).getByRole('button', { exact: true, name: 'Cancel' }).click()
+  await expect(dialog(page).getByRole('status')).toHaveText('Cancelling…')
+  await page.evaluate(() => (globalThis as SetupGlobal).runtimeSetupFixture.remount())
+  await expect(dialog(page).getByRole('status')).toHaveText('Cancelling…')
+  await expect(
+    dialog(page).getByRole('button', { exact: true, name: 'Cancelling…' }),
+  ).toBeDisabled()
+  await release(page, 'operation')
+  await expect(dialog(page)).toHaveCount(0)
+  await expect(page.getByText('Runtime setup was canceled.', { exact: true })).toBeVisible()
+  expect((await snapshot(page)).cancels).toHaveLength(1)
+  expect((await snapshot(page)).operations).toHaveLength(1)
+})
+
+test('a late Cancel request cannot turn a successful setup into canceled', async ({ page }) => {
+  await mountSetupApp(page, { cancelOutcome: 'succeeded', operation: 'hold' })
+  await notice(page).getByRole('button', { exact: true, name: 'Set up' }).click()
+  await dialog(page).getByRole('button', { exact: true, name: 'Install' }).click()
+  await dialog(page).getByRole('button', { exact: true, name: 'Cancel' }).click()
+  await expect(dialog(page).getByRole('status')).toHaveText('Cancelling…')
+  await release(page, 'operation')
+  await expect(dialog(page)).toHaveCount(0)
+  await expect(notice(page)).toHaveCount(0)
+  await expect(page.getByText('Runtime setup was canceled.', { exact: true })).toHaveCount(0)
+  expect((await snapshot(page)).progress.operation?.state).toBe('succeeded')
+})
+
+test('recovery failure after Cancel remains a recovery diagnostic rather than ordinary cancellation', async ({
+  page,
+}) => {
+  await mountSetupApp(page, { cancelOutcome: 'recovery-required', operation: 'hold' })
+  await notice(page).getByRole('button', { exact: true, name: 'Set up' }).click()
+  await dialog(page).getByRole('button', { exact: true, name: 'Install' }).click()
+  await dialog(page).getByRole('button', { exact: true, name: 'Cancel' }).click()
+  await release(page, 'operation')
+  await expect(dialog(page)).toHaveCount(0)
+  await expect(notice(page).getByRole('alert')).toContainText('Runtime setup needs recovery.')
+  await expect(page.getByText('Runtime setup was canceled.', { exact: true })).toHaveCount(0)
+  await notice(page).getByRole('button', { exact: true, name: 'Check again' }).click()
+  await expect(
+    notice(page).getByRole('heading', { exact: true, name: 'Image generation needs repair' }),
+  ).toBeVisible()
+})
+
+test('failed cancellation stays visible in the operation dialog and can be retried explicitly', async ({
+  page,
+}) => {
+  await mountSetupApp(page, { operation: 'hold' })
+  await notice(page).getByRole('button', { exact: true, name: 'Set up' }).click()
+  await dialog(page).getByRole('button', { exact: true, name: 'Install' }).click()
+  await patchFixture(page, { cancelReject: true })
+  await dialog(page).getByRole('button', { exact: true, name: 'Cancel' }).click()
+  await expect(dialog(page).getByRole('alert')).toContainText(
+    'Controlled cancellation request failure.',
+  )
+  await expect(dialog(page).getByRole('button', { exact: true, name: 'Cancel' })).toBeEnabled()
+  await patchFixture(page, { cancelReject: false })
+  await dialog(page).getByRole('button', { exact: true, name: 'Cancel' }).click()
+  await expect(dialog(page).getByRole('alert')).toHaveCount(0)
+  await release(page, 'operation')
+  await expect(dialog(page)).toHaveCount(0)
+  expect((await snapshot(page)).cancels).toHaveLength(2)
+})

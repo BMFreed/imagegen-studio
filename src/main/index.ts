@@ -314,7 +314,14 @@ const gotInstanceLock = app.requestSingleInstanceLock()
 
 function unavailableRuntimeService(): Pick<
   RuntimeManager,
-  'getStatus' | 'install' | 'onStatusChanged' | 'previewInstallation' | 'repair'
+  | 'cancelInstallation'
+  | 'getInstallationProgress'
+  | 'getStatus'
+  | 'install'
+  | 'onInstallationProgressChanged'
+  | 'onStatusChanged'
+  | 'previewInstallation'
+  | 'repair'
 > {
   const status: RuntimeStatus = {
     detail: 'The application runtime storage cannot be accessed.',
@@ -329,8 +336,15 @@ function unavailableRuntimeService(): Pick<
     ok: false,
   })
   return {
+    cancelInstallation: async () => {
+      throw Object.assign(new Error('Runtime repair is unavailable in this application version.'), {
+        code: 'RUNTIME_INSTALL_UNAVAILABLE',
+      })
+    },
+    getInstallationProgress: () => ({ operation: null, revision: 0 }),
     getStatus: async () => ({ ok: true, value: status }),
     install: installationUnavailable,
+    onInstallationProgressChanged: () => () => undefined,
     onStatusChanged: () => () => undefined,
     previewInstallation: installationUnavailable,
     repair: installationUnavailable,
@@ -639,7 +653,14 @@ if (!gotInstanceLock) {
       }
       let runtimeManager: Pick<
         RuntimeManager,
-        'getStatus' | 'install' | 'onStatusChanged' | 'previewInstallation' | 'repair'
+        | 'cancelInstallation'
+        | 'getInstallationProgress'
+        | 'getStatus'
+        | 'install'
+        | 'onInstallationProgressChanged'
+        | 'onStatusChanged'
+        | 'previewInstallation'
+        | 'repair'
       >
       let generationRuntime: RuntimeManager | null = null
       try {
@@ -1372,6 +1393,14 @@ if (!gotInstanceLock) {
         }
       })
       window.on('closed', unsubscribeRuntime)
+      const unsubscribeRuntimeProgress = runtimeManager.onInstallationProgressChanged(
+        (snapshot) => {
+          if (!window.isDestroyed()) {
+            runtimeCaller.send(ipcChannels.runtime.installationProgress, snapshot)
+          }
+        },
+      )
+      window.on('closed', unsubscribeRuntimeProgress)
 
       const modelError = (error: unknown): { code: string; message: string } => {
         if (

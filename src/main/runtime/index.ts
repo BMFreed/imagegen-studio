@@ -1,5 +1,11 @@
 import type { ApiResult, RuntimeStatus } from '../../shared/api.js'
 import { isQualifiedInferenceWorkerReady } from '../../shared/projects/inference-worker-capabilities.js'
+import type {
+  RuntimeSetupProgress,
+  RuntimeSetupProgressSnapshot,
+  RuntimeSetupProgressStage,
+  RuntimeSetupProgressState,
+} from '../../shared/runtime-setup-progress.js'
 
 import { randomUUID } from 'node:crypto'
 import { createHash } from 'node:crypto'
@@ -200,6 +206,10 @@ export class RuntimeManager {
   private installationAbort: AbortController | null = null
   private installationActive = false
   private installationOperation: Promise<ApiResult<RuntimeStatus>> | null = null
+  private installationProgress: RuntimeSetupProgressSnapshot = { operation: null, revision: 0 }
+  private readonly installationProgressListeners = new Set<
+    (snapshot: RuntimeSetupProgressSnapshot) => void
+  >()
   private installationRecovery: Promise<boolean> | null = null
 
   private installationReview:
@@ -245,9 +255,29 @@ export class RuntimeManager {
     this.startClient = startClient
   }
 
-  async cancelInstallation(): Promise<void> {
+  async cancelInstallation(operationId?: string): Promise<void> {
+    const operation = this.installationOperation
+    const progress = this.installationProgress.operation
+    if (
+      operationId !== undefined &&
+      (!operation ||
+        progress?.operationId !== operationId ||
+        (progress.state !== 'running' && progress.state !== 'cancelling'))
+    ) {
+      throw new RuntimeInstallationError(
+        'RUNTIME_INVALID_OPERATION',
+        'This setup operation is no longer running.',
+      )
+    }
+    if (operation && progress && progress.state === 'running') {
+      this.publishInstallationProgress({ ...progress, state: 'cancelling' })
+    }
     this.installationAbort?.abort()
-    await this.installationOperation
+    await operation
+  }
+
+  getInstallationProgress(): RuntimeSetupProgressSnapshot {
+    return structuredClone(this.installationProgress)
   }
 
   async getStatus(): Promise<ApiResult<RuntimeStatus>> {
@@ -474,6 +504,13 @@ export class RuntimeManager {
 
   async install(reviewToken?: string): Promise<ApiResult<RuntimeStatus>> {
     return await this.installReviewedRuntime('install', reviewToken)
+  }
+
+  onInstallationProgressChanged(
+    listener: (snapshot: RuntimeSetupProgressSnapshot) => void,
+  ): () => void {
+    this.installationProgressListeners.add(listener)
+    return () => this.installationProgressListeners.delete(listener)
   }
 
   onStatusChanged(listener: (status: RuntimeStatus) => void): () => void {
@@ -1336,6 +1373,19 @@ export class RuntimeManager {
     }
   }
 
+  private finishInstallationProgress(operationId: string, state: RuntimeSetupProgressState): void {
+    const current = this.installationProgress.operation
+    if (current?.operationId === operationId) {
+      this.publishInstallationProgress({
+        ...current,
+        bytesDownloaded: null,
+        bytesTotal: null,
+        stage: 'finalizing',
+        state,
+      })
+    }
+  }
+
   private async hasIncompleteRuntime(runtimeId: string): Promise<boolean> {
     for (const root of [this.roots.environmentsDir, this.roots.pythonDir]) {
       try {
@@ -1413,7 +1463,9 @@ export class RuntimeManager {
     this.lastQualifiedReady = null
     const controller = new AbortController()
     this.installationAbort = controller
+    const operationId = captured.review.token
     const operation = this.withGpuSlot(async (): Promise<ApiResult<RuntimeStatus>> => {
+      let telemetryOwner: object | null = null
       try {
         if (
           this.generationShutdownRequested ||
@@ -1455,16 +1507,82 @@ export class RuntimeManager {
           // Refuse before obtaining bytes from the reviewed source, not only before activation.
           await checkPointer()
         }
-        const { engine, release } = captured.metadata
-          ? await captured.metadata.prepareRelease(
+        let release: VerifiedRuntimeRelease
+        let engine: CapturedEngineInstallation | undefined
+        if (captured.metadata) {
+          const scope = {}
+          telemetryOwner = scope
+          let runtimeTransferOpen = true
+          const total = captured.metadata.plan.artifacts.find(
+            (artifact) => artifact.kind === 'runtime',
+          )!.sizeBytes
+          try {
+            const prepared = await captured.metadata.prepareRelease(
               controller.signal,
               path.join(this.roots.downloadsDir, `engine-${captured.review.token}`),
+              {
+                onProgress: (progress) => {
+                  if (
+                    telemetryOwner === scope &&
+                    runtimeTransferOpen &&
+                    progress &&
+                    (progress.totalBytes === null || progress.totalBytes === total)
+                  ) {
+                    this.recordInstallationTransfer(
+                      operationId,
+                      'downloading-runtime',
+                      progress.downloadedBytes,
+                      total,
+                    )
+                  }
+                },
+                onStage: (stage) => {
+                  if (telemetryOwner === scope) {
+                    if (stage === 'extracting-runtime') {
+                      runtimeTransferOpen = false
+                    }
+                    this.recordInstallationStage(operationId, stage)
+                  }
+                },
+              },
             )
-          : { engine: captured.engine, release: captured.release }
+            release = prepared.release
+            engine = prepared.engine
+          } finally {
+            telemetryOwner = null
+          }
+        } else {
+          release = captured.release
+          engine = captured.engine
+        }
         if (engine) {
           await checkPointer()
-          await engine.installAuxiliary(controller.signal)
+          this.recordInstallationStage(operationId, 'installing-outpaint')
+          const scope = {}
+          telemetryOwner = scope
+          const total = engine.plan.artifacts.find(
+            (artifact) => artifact.kind === 'outpaint-infill',
+          )!.sizeBytes
+          try {
+            await engine.installAuxiliary(controller.signal, (progress) => {
+              if (
+                telemetryOwner === scope &&
+                progress &&
+                (progress.totalBytes === null || progress.totalBytes === total)
+              ) {
+                this.recordInstallationTransfer(
+                  operationId,
+                  'installing-outpaint',
+                  progress.downloadedBytes,
+                  total,
+                )
+              }
+            })
+          } finally {
+            telemetryOwner = null
+          }
         }
+        this.recordInstallationStage(operationId, 'verifying-runtime')
         await this.installationBackend!.ensureAuxiliaryReady()
         if (controller.signal.aborted) {
           return this.installationFailure('RUNTIME_INSTALL_CANCELED', 'Runtime setup was canceled.')
@@ -1473,14 +1591,38 @@ export class RuntimeManager {
         const result = await new RuntimeInstallationController(this.roots).install({
           expectedPointerSha256: captured.pointerSha256,
           mode,
-          prepare: () =>
-            (this.installationBackend!.assemble ?? assembleOfflineRuntime)({
-              release,
-              roots: this.roots,
-              runtimeId,
-              signal: controller.signal,
-            }),
-          qualify: async (prepared) => {
+          prepare: async () => {
+            this.recordInstallationStage(operationId, 'copying-runtime')
+            const scope = {}
+            telemetryOwner = scope
+            try {
+              return await (this.installationBackend!.assemble ?? assembleOfflineRuntime)({
+                onStage: (stage) => {
+                  if (telemetryOwner === scope) {
+                    this.recordInstallationStage(
+                      operationId,
+                      stage === 'copying'
+                        ? 'copying-runtime'
+                        : stage === 'assembling'
+                          ? 'assembling-runtime'
+                          : 'verifying-runtime',
+                    )
+                  }
+                },
+                release,
+                roots: this.roots,
+                runtimeId,
+                signal: controller.signal,
+              })
+            } finally {
+              telemetryOwner = null
+            }
+          },
+          qualify: async (prepared, phase) => {
+            this.recordInstallationStage(
+              operationId,
+              phase === 'before-activation' ? 'checking-runtime' : 'checking-activation',
+            )
             await this.qualifyInstallation(prepared, release, controller.signal)
             if (engine) {
               await this.installationBackend!.ensureAuxiliaryReady()
@@ -1488,6 +1630,7 @@ export class RuntimeManager {
           },
           signal: controller.signal,
         })
+        this.recordInstallationStage(operationId, 'finalizing')
         return {
           ok: true,
           value: {
@@ -1498,26 +1641,58 @@ export class RuntimeManager {
           },
         }
       } catch (error) {
-        if (captured.metadata && controller.signal.aborted) {
+        if (
+          captured.metadata &&
+          controller.signal.aborted &&
+          !(
+            error instanceof RuntimeInstallationError &&
+            (error.code === 'RUNTIME_INSTALL_RECOVERY_REQUIRED' ||
+              error.recoveryRequired ||
+              !error.exitConfirmed)
+          )
+        ) {
           return this.installationFailure('RUNTIME_INSTALL_CANCELED', 'Runtime setup was canceled.')
         }
         return this.installationError(error)
       }
     })
-    this.installationOperation = operation
-    try {
-      const result = await operation
-      if (result.ok) {
-        this.publishStatus(result.value)
-      }
-      return result
-    } finally {
-      this.installationOperation = null
-      this.installationAbort = null
-      this.installationActive = false
-      this.cachedQualification = null
-      this.lastQualifiedReady = null
-    }
+    let settledResult: ApiResult<RuntimeStatus> | undefined
+    const settledOperation = operation
+      .then((result) => {
+        settledResult = result
+        if (result.ok) {
+          this.publishStatus(result.value)
+        }
+        return result
+      })
+      .finally(() => {
+        this.installationOperation = null
+        this.installationAbort = null
+        this.installationActive = false
+        this.cachedQualification = null
+        this.lastQualifiedReady = null
+        this.finishInstallationProgress(
+          operationId,
+          settledResult?.ok
+            ? 'succeeded'
+            : settledResult?.error.code === 'RUNTIME_INSTALL_RECOVERY_REQUIRED'
+              ? 'recovery-required'
+              : settledResult?.error.code === 'RUNTIME_INSTALL_CANCELED'
+                ? 'canceled'
+                : 'failed',
+        )
+      })
+    // Store the fully settled promise before notifying synchronous consumers, including Cancel.
+    this.installationOperation = settledOperation
+    this.publishInstallationProgress({
+      bytesDownloaded: null,
+      bytesTotal: null,
+      mode,
+      operationId,
+      stage: 'preparing',
+      state: 'running',
+    })
+    return await settledOperation
   }
 
   private leaseIsAdvisoryReady(
@@ -1626,6 +1801,23 @@ export class RuntimeManager {
       }
     }
     return true
+  }
+
+  private publishInstallationProgress(operation: RuntimeSetupProgress): void {
+    if (JSON.stringify(this.installationProgress.operation) === JSON.stringify(operation)) {
+      return
+    }
+    this.installationProgress = {
+      operation: structuredClone(operation),
+      revision: this.installationProgress.revision + 1,
+    }
+    for (const listener of this.installationProgressListeners) {
+      try {
+        listener(this.getInstallationProgress())
+      } catch {
+        // Observers cannot change installation, cancellation or another listener's snapshot.
+      }
+    }
   }
 
   private publishStatus(status: RuntimeStatus): void {
@@ -1843,6 +2035,55 @@ export class RuntimeManager {
     } catch {
       return false
     }
+  }
+
+  private recordInstallationStage(operationId: string, stage: RuntimeSetupProgressStage): void {
+    const current = this.installationProgress.operation
+    if (
+      current?.operationId !== operationId ||
+      current.state !== 'running' ||
+      this.installationAbort?.signal.aborted
+    ) {
+      return
+    }
+    this.publishInstallationProgress({ ...current, bytesDownloaded: null, bytesTotal: null, stage })
+  }
+
+  private recordInstallationTransfer(
+    operationId: string,
+    stage: 'downloading-runtime' | 'installing-outpaint',
+    downloaded: number,
+    total: number,
+  ): void {
+    const current = this.installationProgress.operation
+    if (
+      current?.operationId !== operationId ||
+      current.state !== 'running' ||
+      this.installationAbort?.signal.aborted ||
+      !Number.isSafeInteger(downloaded) ||
+      !Number.isSafeInteger(total) ||
+      total <= 0 ||
+      downloaded < 0 ||
+      downloaded > total
+    ) {
+      return
+    }
+    if (current.stage === stage && current.bytesDownloaded !== null) {
+      if (
+        current.bytesTotal !== total ||
+        downloaded <= current.bytesDownloaded ||
+        (downloaded < total && downloaded - current.bytesDownloaded < total / 100)
+      ) {
+        return
+      }
+    }
+    // Invoke's download owner reports each 1% byte change, plus the final transfer byte count.
+    this.publishInstallationProgress({
+      ...current,
+      bytesDownloaded: downloaded,
+      bytesTotal: total,
+      stage,
+    })
   }
 
   private async refreshCheckingStatus(): Promise<void> {

@@ -57,6 +57,10 @@ import {
   type ProjectWorkspaceAddInput,
   type ProjectWorkspaceSummary,
 } from '../shared/projects/project-workspaces.js'
+import type {
+  RuntimeSetupProgress,
+  RuntimeSetupProgressSnapshot,
+} from '../shared/runtime-setup-progress.js'
 import type { RuntimeSetupMode, RuntimeSetupReview } from '../shared/runtime-setup.js'
 import { WINDOW_CLOSE_CANCELED_MESSAGE } from '../shared/window-close.js'
 
@@ -566,6 +570,14 @@ const runtimeSetupOpen = ref(false)
 const runtimeSetupMode = ref<RuntimeSetupMode>('install')
 const runtimeSetupReview = shallowRef<RuntimeSetupReview | null>(null)
 const runtimeSetupSubmitting = ref(false)
+const runtimeSetupProgress = shallowRef<RuntimeSetupProgress | null>(null)
+const runtimeSetupCancelPending = ref(false)
+const runtimeSetupOperationError = ref<string | null>(null)
+let runtimeSetupOperationId: string | null = null
+let runtimeSetupResponsePendingFor: string | null = null
+let runtimeSetupFinishedOperationId: string | null = null
+let runtimeSetupProgressRevision = -1
+let unsubscribeSetupProgress: (() => void) | undefined
 let runtimeSetupEpoch = 0
 let runtimeSetupPreviewSettled: Promise<void> | null = null
 const windowClosePending = ref(false)
@@ -5426,6 +5438,167 @@ async function dismissRuntimeSetup() {
   }
 }
 
+function runtimeSetupActive(operation: RuntimeSetupProgress): boolean {
+  return operation.state === 'running' || operation.state === 'cancelling'
+}
+
+function clearRuntimeSetupControl(operationId: string) {
+  if (runtimeSetupOperationId !== operationId) {
+    return
+  }
+  runtimeSetupFinishedOperationId = operationId
+  runtimeSetupOperationId = null
+  runtimeSetupResponsePendingFor = null
+  runtimeSetupProgress.value = null
+  runtimeSetupCancelPending.value = false
+  runtimeSetupOperationError.value = null
+  runtimeSetupReview.value = null
+  runtimeSetupOpen.value = false
+  runtimeSetupSubmitting.value = false
+  runtimePending.value = null
+  variantDiagnosticsEpoch.value += 1
+}
+
+async function finishObservedRuntimeSetup(operation: RuntimeSetupProgress) {
+  const operationId = operation.operationId
+  if (runtimeSetupOperationId !== operationId || runtimeSetupResponsePendingFor === operationId) {
+    return
+  }
+  clearRuntimeSetupControl(operationId)
+  const epoch = ++runtimeSetupEpoch
+  runtimePending.value = 'check'
+  if (operation.state === 'recovery-required') {
+    runtimeError.value = 'Runtime setup needs recovery. Check runtime status before trying again.'
+  } else if (operation.state === 'failed') {
+    runtimeError.value =
+      'Image setup could not be completed. Check runtime status before trying again.'
+  }
+  try {
+    const runtimeApi = globalThis.window.api?.runtime
+    if (!runtimeApi) {
+      throw new Error('The desktop application connection is unavailable.')
+    }
+    const result = await runtimeApi.getStatus()
+    if (rendererDisposed || epoch !== runtimeSetupEpoch || runtimeSetupOperationId !== null) {
+      return
+    }
+    applyRuntimeResult(result)
+    switch (operation.state) {
+      case 'canceled': {
+        globalNotice.value = 'Runtime setup was canceled.'
+
+        break
+      }
+      case 'failed': {
+        runtimeError.value =
+          'Image setup could not be completed. Check runtime status before trying again.'
+
+        break
+      }
+      case 'recovery-required': {
+        runtimeError.value =
+          'Runtime setup needs recovery. Check runtime status before trying again.'
+
+        break
+      }
+      // No default
+    }
+  } catch (cause) {
+    if (!rendererDisposed && epoch === runtimeSetupEpoch) {
+      runtimeError.value = errorMessage(cause)
+    }
+  } finally {
+    if (!rendererDisposed && epoch === runtimeSetupEpoch && runtimeSetupOperationId === null) {
+      runtimePending.value = null
+    }
+  }
+}
+
+function updateRuntimeSetupProgress(snapshot: RuntimeSetupProgressSnapshot) {
+  if (rendererDisposed || snapshot.revision <= runtimeSetupProgressRevision) {
+    return
+  }
+  runtimeSetupProgressRevision = snapshot.revision
+  const operation = snapshot.operation
+  if (!operation || operation.operationId === runtimeSetupFinishedOperationId) {
+    return
+  }
+  if (runtimeSetupActive(operation)) {
+    if (runtimeSetupOperationId !== operation.operationId) {
+      // A trusted current snapshot can restore accepted work after reload. An older invoke's
+      // reply/finalizer must not close this new operation's dialog.
+      ++runtimeSetupEpoch
+      runtimeSetupFinishedOperationId = runtimeSetupOperationId
+      runtimeSetupOperationId = operation.operationId
+      runtimeSetupResponsePendingFor = null
+      runtimeSetupReview.value = null
+      runtimeSetupCancelPending.value = false
+      runtimeSetupOperationError.value = null
+    }
+    runtimeSetupMode.value = operation.mode
+    runtimeSetupProgress.value = operation
+    runtimeSetupSubmitting.value = true
+    runtimeSetupOpen.value = true
+    runtimePending.value = operation.mode
+  } else if (runtimeSetupOperationId === operation.operationId) {
+    runtimeSetupProgress.value = operation
+    void finishObservedRuntimeSetup(operation)
+  }
+}
+
+async function cancelRuntimeSetupOperation() {
+  const operation = runtimeSetupProgress.value
+  const operationId = runtimeSetupOperationId
+  if (
+    !runtimeSetupSubmitting.value ||
+    runtimeSetupCancelPending.value ||
+    !operation ||
+    !operationId ||
+    operation.operationId !== operationId ||
+    operation.state !== 'running'
+  ) {
+    return
+  }
+  const epoch = runtimeSetupEpoch
+  runtimeSetupCancelPending.value = true
+  runtimeSetupOperationError.value = null
+  try {
+    const runtimeApi = globalThis.window.api?.runtime
+    if (!runtimeApi?.cancelInstallation) {
+      throw new Error('Runtime cancellation is unavailable in this build.')
+    }
+    const result = await runtimeApi.cancelInstallation(operationId)
+    if (
+      rendererDisposed ||
+      epoch !== runtimeSetupEpoch ||
+      runtimeSetupOperationId !== operationId
+    ) {
+      return
+    }
+    if (result.ok) {
+      updateRuntimeSetupProgress(result.value)
+    } else {
+      runtimeSetupOperationError.value = result.error.message
+    }
+  } catch (cause) {
+    if (
+      !rendererDisposed &&
+      epoch === runtimeSetupEpoch &&
+      runtimeSetupOperationId === operationId
+    ) {
+      runtimeSetupOperationError.value = errorMessage(cause)
+    }
+  } finally {
+    if (
+      !rendererDisposed &&
+      epoch === runtimeSetupEpoch &&
+      runtimeSetupOperationId === operationId
+    ) {
+      runtimeSetupCancelPending.value = false
+    }
+  }
+}
+
 async function confirmRuntimeSetup() {
   const review = runtimeSetupReview.value
   if (
@@ -5439,6 +5612,11 @@ async function confirmRuntimeSetup() {
   }
   // Capture consent once, before yielding. Main remains the authority for token/currentness.
   runtimeSetupSubmitting.value = true
+  runtimeSetupOperationId = review.token
+  runtimeSetupResponsePendingFor = review.token
+  runtimeSetupProgress.value = null
+  runtimeSetupCancelPending.value = false
+  runtimeSetupOperationError.value = null
   const epoch = runtimeSetupEpoch
   try {
     const runtimeApi = globalThis.window.api?.runtime
@@ -5446,11 +5624,26 @@ async function confirmRuntimeSetup() {
       throw new Error('The desktop application connection is unavailable.')
     }
     const result = await runtimeApi[review.mode](review.token)
-    if (rendererDisposed || epoch !== runtimeSetupEpoch) {
+    if (
+      rendererDisposed ||
+      epoch !== runtimeSetupEpoch ||
+      runtimeSetupOperationId !== review.token
+    ) {
       return
     }
     if (result.ok) {
       applyRuntimeResult(result)
+    } else if (result.error.code === 'RUNTIME_INSTALL_CANCELED') {
+      const statusResult = await runtimeApi.getStatus()
+      if (
+        rendererDisposed ||
+        epoch !== runtimeSetupEpoch ||
+        runtimeSetupOperationId !== review.token
+      ) {
+        return
+      }
+      applyRuntimeResult(statusResult)
+      globalNotice.value = 'Runtime setup was canceled.'
     } else {
       applyRuntimeSetupFailure(review.mode, result)
     }
@@ -5459,12 +5652,12 @@ async function confirmRuntimeSetup() {
       runtimeError.value = errorMessage(cause)
     }
   } finally {
-    if (!rendererDisposed && epoch === runtimeSetupEpoch) {
-      runtimeSetupReview.value = null
-      runtimeSetupOpen.value = false
-      runtimeSetupSubmitting.value = false
-      runtimePending.value = null
-      variantDiagnosticsEpoch.value += 1
+    if (
+      !rendererDisposed &&
+      epoch === runtimeSetupEpoch &&
+      runtimeSetupOperationId === review.token
+    ) {
+      clearRuntimeSetupControl(review.token)
     }
   }
 }
@@ -5635,6 +5828,33 @@ onMounted(() => {
     modelCatalogError.value = errorMessage(cause)
   }
   try {
+    const runtimeApi = globalThis.window.api?.runtime
+    // Older explicit prototype API fixtures may not implement setup observation. The shipped
+    // preload supplies both methods; observation never starts or cancels an operation.
+    unsubscribeSetupProgress = runtimeApi?.onInstallationProgressChanged?.(
+      updateRuntimeSetupProgress,
+    )
+    if (runtimeApi?.getInstallationProgress) {
+      const observedRevision = runtimeSetupProgressRevision
+      void runtimeApi
+        .getInstallationProgress()
+        .then((result) => {
+          if (result.ok) {
+            updateRuntimeSetupProgress(result.value)
+          } else if (!rendererDisposed && runtimeSetupProgressRevision === observedRevision) {
+            globalNotice.value = result.error.message
+          }
+        })
+        .catch((cause) => {
+          if (!rendererDisposed && runtimeSetupProgressRevision === observedRevision) {
+            globalNotice.value = errorMessage(cause)
+          }
+        })
+    }
+  } catch (cause) {
+    globalNotice.value = errorMessage(cause)
+  }
+  try {
     unsubscribeStatus = globalThis.window.api?.runtime.onStatusChanged((nextStatus) => {
       status.value = nextStatus
       variantDiagnosticsEpoch.value += 1
@@ -5747,6 +5967,7 @@ onBeforeUnmount(() => {
   unsubscribeModelInstall?.()
   unsubscribeModelCatalog?.()
   unsubscribeStatus?.()
+  unsubscribeSetupProgress?.()
   unsubscribeProjectTabs?.()
   unsubscribeBeforeWindowClose?.()
   unsubscribeGeneration?.()
@@ -5858,9 +6079,13 @@ onBeforeUnmount(() => {
       <main class="app-stage">
         <RuntimeSetupModal
           v-model:show="runtimeSetupOpen"
+          :cancelPending="runtimeSetupCancelPending"
+          :error="runtimeSetupOperationError"
           :mode="runtimeSetupMode"
+          :progress="runtimeSetupProgress"
           :review="runtimeSetupReview"
           :submitting="runtimeSetupSubmitting"
+          @cancelOperation="cancelRuntimeSetupOperation"
           @confirm="confirmRuntimeSetup"
           @dismiss="dismissRuntimeSetup"
         />

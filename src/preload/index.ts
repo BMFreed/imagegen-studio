@@ -99,6 +99,10 @@ import {
   type SmartResultPresetRequest,
 } from '../shared/projects/smart-result-preset.js'
 import {
+  isRuntimeSetupProgressSnapshot,
+  type RuntimeSetupProgressSnapshot,
+} from '../shared/runtime-setup-progress.js'
+import {
   isRuntimeSetupReview,
   type RuntimeSetupMode,
   type RuntimeSetupReview,
@@ -196,6 +200,40 @@ async function invokeRuntimeReview(mode: RuntimeSetupMode): Promise<ApiResult<Ru
       error: {
         code: 'IPC_INVALID_RESPONSE',
         message: 'The application returned an invalid engine review.',
+      },
+      ok: false,
+    }
+  } catch {
+    return {
+      error: {
+        code: 'IPC_UNAVAILABLE',
+        message: 'The application could not reach the runtime service.',
+      },
+      ok: false,
+    }
+  }
+}
+
+async function invokeRuntimeProgress(
+  channel:
+    | typeof ipcChannels.runtime.cancelInstallation
+    | typeof ipcChannels.runtime.getInstallationProgress,
+  args: readonly unknown[] = [],
+): Promise<ApiResult<RuntimeSetupProgressSnapshot>> {
+  try {
+    const result: unknown = await ipcRenderer.invoke(channel, ...args)
+    if (isRecord(result)) {
+      if (result.ok === true && isRuntimeSetupProgressSnapshot(result.value)) {
+        return { ok: true, value: result.value }
+      }
+      if (result.ok === false && isApiError(result.error)) {
+        return { error: result.error, ok: false }
+      }
+    }
+    return {
+      error: {
+        code: 'IPC_INVALID_RESPONSE',
+        message: 'The application returned invalid setup progress.',
       },
       ok: false,
     }
@@ -1842,10 +1880,23 @@ const api: StudioApi = {
       ),
   },
   runtime: {
+    cancelInstallation: (operationId) =>
+      invokeRuntimeProgress(ipcChannels.runtime.cancelInstallation, [operationId]),
     discardInstallationReview: discardRuntimeReview,
+    getInstallationProgress: () =>
+      invokeRuntimeProgress(ipcChannels.runtime.getInstallationProgress),
     getStatus: () => invokeRuntime(ipcChannels.runtime.getStatus),
     install: (reviewToken) =>
       invokeRuntime(ipcChannels.runtime.install, reviewToken === undefined ? [] : [reviewToken]),
+    onInstallationProgressChanged(listener) {
+      const handler = (_event: Electron.IpcRendererEvent, snapshot: unknown): void => {
+        if (isRuntimeSetupProgressSnapshot(snapshot)) {
+          listener(snapshot)
+        }
+      }
+      ipcRenderer.on(ipcChannels.runtime.installationProgress, handler)
+      return () => ipcRenderer.removeListener(ipcChannels.runtime.installationProgress, handler)
+    },
     onStatusChanged(listener) {
       const handler = (_event: Electron.IpcRendererEvent, status: unknown): void => {
         if (isRuntimeStatus(status)) {

@@ -236,6 +236,19 @@ uv run pytest
 
 ### Текущая реализация и developer qualification
 
+[Setup progress and Cancel](../engineering/phase-5-runtime-setup-progress-research.md)
+connects actual stage/constituent-byte callbacks to transient Main snapshots and
+strict getter/event/cancel IPC. The consumed review token identifies the current
+operation; Main checks the target before abort. Cancelling remains pending until
+existing work physically settles and operation fences clear. Final actual success
+can win a late Cancel; unknown exit or failed rollback remains recovery-required.
+Confirmed local assembly cancellation retains its cancellation code after the
+controller's recovery gates. No aggregate percentage/readiness is inferred from
+transfer bytes. Reload reads/restores active work; stale document/revision/id
+responses cannot replace a newer operation. Main restart uses existing durable
+journal/status recovery, not transient progress. Publisher/discovery, distribution,
+upgrade/update and final visual/MVP acceptance remain separate.
+
 [Metadata-first consumer](../engineering/phase-5-runtime-metadata-provider-research.md)
 adds an optional Main backend over already obtained authenticated metadata and
 separately trusted keys/source policy. Preview verifies metadata, inspects exact

@@ -1,6 +1,17 @@
 # Implementation Roadmap
 
-## Current metadata-first engine review
+## Current runtime setup progress and Cancel
+
+[Setup progress/Cancel](../engineering/phase-5-runtime-setup-progress-research.md) exposes current stage and constituent bytes from
+the existing installation owners. Targeted Cancel waits for settled work and
+fence cleanup; actual success or recovery wins over the request. Snapshot
+revision/identity guards restore accepted work after renderer reload without
+reusing review authority. Unknown exit and failed rollback retain recovery.
+No overall percentage or new installer is introduced. Shipping publisher remains
+unconfigured; default Setup stays unavailable and final release/MVP acceptance remains open.
+Promise statuses are unchanged.
+
+## Previous metadata-first engine review
 
 [Metadata-first review](../engineering/phase-5-runtime-metadata-provider-research.md) authenticates explicitly supplied signed metadata,
 reviews full engine bytes and defers acquisition until existing token consent.

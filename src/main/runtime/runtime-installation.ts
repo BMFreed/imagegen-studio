@@ -11,7 +11,10 @@ import path from 'node:path'
 import type { RuntimeRoots } from './index.js'
 import type { PreparedOfflineRuntime } from './offline-runtime-assembly.js'
 
-import { OFFLINE_RUNTIME_INCOMPLETE_MARKER } from './offline-runtime-assembly.js'
+import {
+  OFFLINE_RUNTIME_INCOMPLETE_MARKER,
+  OfflineRuntimeAssemblyError,
+} from './offline-runtime-assembly.js'
 
 export const RUNTIME_INSTALLATION_JOURNAL = 'runtime-installation.json'
 export const RUNTIME_INSTALLATION_CLAIM = '.igs-runtime-install.claim.json'
@@ -100,7 +103,8 @@ export class RuntimeInstallationError extends Error {
       | 'RUNTIME_INSTALL_POINTER_CHANGED'
       | 'RUNTIME_INSTALL_PREPARATION_INVALID'
       | 'RUNTIME_INSTALL_RECOVERY_REQUIRED'
-      | 'RUNTIME_INSTALL_STORAGE_INVALID',
+      | 'RUNTIME_INSTALL_STORAGE_INVALID'
+      | 'RUNTIME_INVALID_OPERATION',
     message: string,
     readonly recoveryRequired = false,
     readonly exitConfirmed = true,
@@ -236,6 +240,16 @@ export class RuntimeInstallationController {
         }
         if (error instanceof RuntimeInstallationError) {
           throw error
+        }
+        if (
+          error instanceof OfflineRuntimeAssemblyError &&
+          error.code === 'RUNTIME_ASSEMBLY_CANCELED'
+        ) {
+          // Unknown exit and rollback failures have already retained recovery above.
+          throw new RuntimeInstallationError(
+            'RUNTIME_INSTALL_CANCELED',
+            'Runtime installation was canceled. Previous runtime files were not changed.',
+          )
         }
         throw new RuntimeInstallationError(
           'RUNTIME_INSTALL_FAILED',

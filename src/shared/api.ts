@@ -79,6 +79,7 @@ import type {
   SmartResultPresetData,
   SmartResultPresetRequest,
 } from './projects/smart-result-preset.js'
+import type { RuntimeSetupProgressSnapshot } from './runtime-setup-progress.js'
 import type { RuntimeSetupMode, RuntimeSetupReview } from './runtime-setup.js'
 
 import { isAnimaSamplingMethod } from './projects/anima-sampling-method.js'
@@ -270,9 +271,12 @@ export const ipcChannels = {
     windowCloseReleased: 'projects:window-close-released',
   },
   runtime: {
+    cancelInstallation: 'runtime:cancel-installation',
     discardInstallationReview: 'runtime:discard-installation-review',
+    getInstallationProgress: 'runtime:get-installation-progress',
     getStatus: 'runtime:get-status',
     install: 'runtime:install',
+    installationProgress: 'runtime:installation-progress',
     previewInstallation: 'runtime:preview-installation',
     repair: 'runtime:repair',
     statusChanged: 'runtime:status-changed',
@@ -1025,9 +1029,14 @@ export interface ModelApi {
 }
 
 export interface RuntimeApi {
+  cancelInstallation: (operationId: string) => Promise<ApiResult<RuntimeSetupProgressSnapshot>>
   discardInstallationReview: () => Promise<ApiResult<null>>
+  getInstallationProgress: () => Promise<ApiResult<RuntimeSetupProgressSnapshot>>
   getStatus: () => Promise<ApiResult<RuntimeStatus>>
   install: (reviewToken?: string) => Promise<ApiResult<RuntimeStatus>>
+  onInstallationProgressChanged: (
+    listener: (snapshot: RuntimeSetupProgressSnapshot) => void,
+  ) => () => void
   onStatusChanged: (listener: (status: RuntimeStatus) => void) => () => void
   previewInstallation: (mode: RuntimeSetupMode) => Promise<ApiResult<RuntimeSetupReview>>
   repair: (reviewToken?: string) => Promise<ApiResult<RuntimeStatus>>
