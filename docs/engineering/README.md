@@ -1,6 +1,18 @@
 # Engineering Workflow
 
-## Current native engine qualification
+## Current reopened outpaint resource health
+
+[Outpaint health](./phase-5-runtime-outpaint-health-research.md) checks the existing exact LaMa resolver on public
+runtime status reads, independently of cached GPU readiness. Typed preload and
+the existing notice expose a separate outpaint warning; ordinary generation and
+CPU tools retain their readiness. Explicit unavailable Repair errors remain
+visible without becoming connection failures. No status read installs resources.
+Shipping provider/keyring/endpoints, full Setup preview/token/progress/cancel,
+distribution/update and final visual/MVP acceptance remain open. This is advisory
+LaMa visibility, not complete engine health or public Install readiness; promise
+statuses are unchanged.
+
+## Previous native engine qualification
 
 [Native engine qualification](./phase-5-native-engine-qualification-research.md) adopts the exact retained signed
 transport and runs the existing engine review, real offline 67-package assembly,

@@ -122,6 +122,9 @@ function isRuntimeStatus(value: unknown): value is RuntimeStatus {
     runtimeKinds.has(value.kind as RuntimeStatus['kind']) &&
     (value.profile === 'linux-nvidia' || value.profile === null) &&
     typeof value.detail === 'string' &&
+    (value.outpaintInfill === undefined ||
+      value.outpaintInfill === 'ready' ||
+      value.outpaintInfill === 'needs-repair') &&
     (value.runtimeId === undefined || typeof value.runtimeId === 'string')
   )
 }

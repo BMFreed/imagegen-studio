@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { ChildProcess } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -20,6 +21,7 @@ import { GenerationQueueRepository } from '../projects/generation-queue.js'
 import { GenerationStagingRepository } from '../projects/generation-staging.js'
 
 import { createRuntimeRoots, RuntimeManager } from './index.ts'
+import { verifyInferenceAuxiliaryFile } from './inference-auxiliary-resources.ts'
 
 const temporaryDirectories = []
 
@@ -2646,6 +2648,273 @@ test('a delayed status query cannot hide invalid metadata behind a newer ready p
     release.resolve()
     await delayed
     manager.prepareQualification = prepare
+    unsubscribe()
+  }
+})
+
+test('outpaint health rechecks actual local bytes despite cached GPU readiness and on manager reopen', async () => {
+  // Boundary: real RuntimeManager/status/cache, descriptor verifier and filesystem, plus an
+  // installed Node JSONL peer. The small resource and resolver identity are synthetic seams;
+  // this is not pinned LaMa installation, trained inference or native CUDA qualification.
+  const { roots } = await fixture()
+  await installFakeInferenceRuntime(roots)
+  const bytes = Buffer.from('synthetic status resource, not trained LaMa')
+  const managedPath = path.join(roots.appDataDir, 'synthetic-status-resource.pt')
+  const identity = {
+    byteSize: bytes.length,
+    managedPath,
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+  }
+  let verifications = 0
+  const resolver = {
+    resolveVerifiedOutpaintInfill: async () => {
+      verifications++
+      await verifyInferenceAuxiliaryFile(identity)
+      return { ...identity, role: 'outpaint-infill' }
+    },
+  }
+  const manager = new RuntimeManager(
+    roots,
+    { platform: 'linux', arch: 'x64' },
+    undefined,
+    undefined,
+    resolver,
+  )
+  const changes = []
+  const unsubscribe = manager.onStatusChanged((status) => changes.push(status))
+  const expectHealth = async (expected) => {
+    const result = await manager.getStatus()
+    assert.equal(result.ok, true)
+    assert.equal(result.value.kind, 'ready')
+    assert.equal(result.value.outpaintInfill, expected)
+    assert.ok(await manager.readQualifiedInferenceReady())
+    assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 1)
+    assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 1)
+  }
+  try {
+    await expectHealth('needs-repair')
+    await fs.writeFile(managedPath, bytes)
+    await expectHealth('ready')
+    await fs.writeFile(managedPath, Buffer.alloc(bytes.length, 73))
+    await expectHealth('needs-repair')
+    const other = path.join(roots.appDataDir, 'synthetic-neighbor.pt')
+    await fs.writeFile(other, bytes)
+    await fs.unlink(managedPath)
+    await fs.symlink(other, managedPath)
+    await expectHealth('needs-repair')
+    assert.deepEqual(await fs.readFile(other), bytes)
+    await fs.unlink(managedPath)
+    await fs.writeFile(managedPath, bytes)
+    await expectHealth('ready')
+    assert.equal(verifications, 5, 'Every status read must perform a new resource verification.')
+    assert.deepEqual(
+      changes.map((status) => [status.kind, status.outpaintInfill]),
+      [['ready', 'ready'], ['ready', 'needs-repair'], ['ready', 'ready']],
+      'Resource-only changes must reach the existing status event without false runtime repair.',
+    )
+    const reopened = new RuntimeManager(
+      roots,
+      { platform: 'linux', arch: 'x64' },
+      undefined,
+      undefined,
+      resolver,
+    )
+    const status = await reopened.getStatus()
+    assert.equal(status.ok, true)
+    assert.equal(status.value.kind, 'ready')
+    assert.equal(status.value.outpaintInfill, 'ready')
+    assert.equal(verifications, 6)
+    assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+    assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 2)
+  } finally {
+    unsubscribe()
+  }
+})
+
+test('outpaint health omission preserves legacy slot status and avoids absent or unsupported runtime probes', async () => {
+  const { roots, manager: legacy } = await fixture()
+  let verifications = 0
+  const resolver = {
+    resolveVerifiedOutpaintInfill: async () => {
+      verifications++
+      throw new Error('Controlled resource verification failure; never download.')
+    },
+  }
+  const manager = new RuntimeManager(
+    roots,
+    { platform: 'linux', arch: 'x64' },
+    undefined,
+    undefined,
+    resolver,
+  )
+  const missing = await manager.getStatus()
+  assert.equal(missing.value.kind, 'not-installed')
+  assert.equal(Object.hasOwn(missing.value, 'outpaintInfill'), false)
+  const unsupported = new RuntimeManager(
+    roots,
+    { platform: 'darwin', arch: 'arm64' },
+    undefined,
+    undefined,
+    resolver,
+  )
+  const refused = await unsupported.getStatus()
+  assert.equal(refused.value.kind, 'unsupported')
+  assert.equal(Object.hasOwn(refused.value, 'outpaintInfill'), false)
+  await fs.writeFile(roots.pointerFile, '{}')
+  const invalid = await manager.getStatus()
+  assert.equal(invalid.value.kind, 'needs-repair')
+  assert.equal(Object.hasOwn(invalid.value, 'outpaintInfill'), false)
+  assert.equal(verifications, 0)
+  const installed = await installFakeInferenceRuntime(roots)
+  const oldProfile = await legacy.getStatus()
+  assert.equal(oldProfile.value.kind, 'ready')
+  assert.equal(Object.hasOwn(oldProfile.value, 'outpaintInfill'), false)
+  await fs.writeFile(path.join(installed.environment, 'mode'), 'no-ready')
+  const failed = await manager.getStatus()
+  assert.equal(failed.value.kind, 'needs-repair')
+  assert.equal(Object.hasOwn(failed.value, 'outpaintInfill'), false)
+  assert.equal(verifications, 1)
+})
+
+test('failed outpaint health preserves ordinary inference admission and actual CPU preparation', async () => {
+  const { roots } = await fixture()
+  await installFakeInferenceRuntime(roots)
+  await installCpuTarget(roots)
+  const scratch = path.join(roots.appDataDir, 'scratch')
+  let verifications = 0
+  const manager = new RuntimeManager(
+    roots,
+    { platform: 'linux', arch: 'x64' },
+    undefined,
+    undefined,
+    {
+      resolveVerifiedOutpaintInfill: async () => {
+        verifications++
+        throw new Error('Controlled missing shared outpaint helper.')
+      },
+    },
+  )
+  assert.ok(await manager.resolveInstalledProjectWorker(scratch))
+  assert.equal(verifications, 0, 'CPU resolution must not acquire an outpaint dependency.')
+  const result = await manager.withGenerationWorker(scratch, async (worker) => {
+    assert.ok(worker.ready.capabilities.includes('illustrious-txt2img'))
+    assert.equal(
+      await manager.withGenerationAdmission(scratch, async (ready) => ready.runtimeProfile),
+      'linux-nvidia',
+    )
+    const status = await manager.getStatus()
+    assert.equal(status.value.kind, 'ready')
+    assert.equal(status.value.outpaintInfill, 'needs-repair')
+    assert.ok(await manager.readQualifiedInferenceReady())
+    assert.ok(await manager.resolveInstalledProjectWorker(scratch))
+    const prepared = await manager.withGenerationPreparation(scratch, async (input) =>
+      composeCpuTarget(input.targetWorker, scratch),
+    )
+    return prepared.mode
+  })
+  assert.equal(result, 'txt2img')
+  assert.equal(verifications, 1)
+  assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
+  assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 2)
+  assert.equal((await lines(path.join(roots.runtimeDir, 'cpu-launches'))).length, 1)
+  assert.equal((await lines(path.join(roots.runtimeDir, 'cpu-exits'))).length, 1)
+})
+
+test('shutdown during deferred outpaint health cannot publish ready or spawn a worker', { timeout: 5000 }, async () => {
+  const { roots } = await fixture()
+  await installFakeInferenceRuntime(roots)
+  const entered = deferred()
+  const release = deferred()
+  let verifications = 0
+  const manager = new RuntimeManager(
+    roots,
+    { platform: 'linux', arch: 'x64' },
+    undefined,
+    undefined,
+    {
+      resolveVerifiedOutpaintInfill: async () => {
+        verifications++
+        entered.resolve()
+        await release.promise
+        return {
+          byteSize: 1,
+          managedPath: path.join(roots.appDataDir, 'controlled-resource.pt'),
+          role: 'outpaint-infill',
+          sha256: '0'.repeat(64),
+        }
+      },
+    },
+  )
+  const delayed = manager.getStatus()
+  try {
+    await entered.promise
+    manager.preventNewGenerationWork()
+    release.resolve()
+    const result = await delayed
+    assert.equal(result.ok, false)
+    assert.equal(result.error.code, 'RUNTIME_SHUTTING_DOWN')
+    assert.equal(verifications, 1)
+    assert.deepEqual(await lines(path.join(roots.runtimeDir, 'launches')), [])
+    assert.equal(await manager.resolveInstalledProjectWorker(path.join(roots.appDataDir, 'scratch')), null)
+    const neighbor = new RuntimeManager(roots, { platform: 'linux', arch: 'x64' })
+    assert.equal((await neighbor.getStatus()).value.kind, 'ready')
+    assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 1)
+    assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 1)
+  } finally {
+    release.resolve()
+    await delayed
+  }
+})
+
+test('pointer replacement during deferred outpaint health never lends readiness to the old slot', { timeout: 5000 }, async () => {
+  const { roots } = await fixture()
+  const oldId = 'outpaint-health-original'
+  const newId = 'outpaint-health-replacement'
+  await installFakeInferenceRuntime(roots, oldId)
+  const entered = deferred()
+  const release = deferred()
+  let verifications = 0
+  const manager = new RuntimeManager(
+    roots,
+    { platform: 'linux', arch: 'x64' },
+    undefined,
+    undefined,
+    {
+      resolveVerifiedOutpaintInfill: async () => {
+        if (++verifications === 1) {
+          entered.resolve()
+          await release.promise
+        }
+        return {
+          byteSize: 1,
+          managedPath: path.join(roots.appDataDir, 'controlled-resource.pt'),
+          role: 'outpaint-infill',
+          sha256: '0'.repeat(64),
+        }
+      },
+    },
+  )
+  const statuses = []
+  const unsubscribe = manager.onStatusChanged((status) => statuses.push(status))
+  const delayed = manager.getStatus()
+  try {
+    await entered.promise
+    await installFakeInferenceRuntime(roots, newId)
+    release.resolve()
+    const first = await delayed
+    assert.equal(first.ok, true)
+    assert.equal(first.value.kind === 'ready' && first.value.runtimeId === oldId, false)
+    const healthy = await manager.getStatus()
+    assert.equal(healthy.value.kind, 'ready')
+    assert.equal(healthy.value.runtimeId, newId)
+    assert.equal(healthy.value.outpaintInfill, 'ready')
+    assert.ok(verifications >= 2, 'The replacement pointer requires a fresh status read.')
+    assert.equal(statuses.some((status) => status.kind === 'ready' && status.runtimeId === oldId), false)
+    assert.deepEqual(await lines(path.join(roots.runtimeDir, 'launches')), [newId])
+    assert.deepEqual(await lines(path.join(roots.runtimeDir, 'exits')), [newId])
+  } finally {
+    release.resolve()
+    await delayed
     unsubscribe()
   }
 })

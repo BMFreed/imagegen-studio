@@ -165,6 +165,20 @@ transaction deleting valid shared weights on later runtime failure. Public
 provider/preview IPC/UI and reopened aggregate auxiliary health remain future
 consumers; default Setup stays unavailable.
 
+[Reopened outpaint resource health](../engineering/phase-5-runtime-outpaint-health-research.md)
+adds optional advisory `RuntimeStatus.outpaintInfill: ready | needs-repair` beside
+Python/GPU `kind: ready`. Omission means uninspected, not healthy. Public Main
+supplies the existing recovered verification-only LaMa resolver; every status
+read rechecks actual canonical/pinned bytes independently of the GPU cache.
+Failure changes only the outpaint projection. Existing ordinary inference,
+metadata admission, CPU derivatives and per-operation outpaint authority remain
+unchanged. Preload validates the enum on getters/events. The existing notice
+supports explicit Check again and distinguishes a refused partial-resource
+Repair action from a connection/status error; the latter still blocks generation.
+No new install/download path or public release trust is supplied, and default
+Install/Repair remains unavailable. This does not establish complete engine or
+regional-reference resource health.
+
 [Native engine qualification](../engineering/phase-5-native-engine-qualification-research.md)
 adds the explicit `full-engine` qualifier profile. It accepts original signed
 transport, external public keyring/app version, bound wheelhouse proof and exact

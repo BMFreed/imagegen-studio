@@ -279,6 +279,8 @@ export const ipcChannels = {
 export interface RuntimeStatus {
   detail: string
   kind: 'checking' | 'needs-repair' | 'not-installed' | 'ready' | 'unsupported'
+  /** Advisory shared-resource health; omission means this service did not inspect LaMa. */
+  outpaintInfill?: 'needs-repair' | 'ready'
   profile: 'linux-nvidia' | null
   runtimeId?: string
 }

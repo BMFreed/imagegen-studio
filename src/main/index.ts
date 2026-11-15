@@ -642,7 +642,12 @@ if (!gotInstanceLock) {
       let generationRuntime: RuntimeManager | null = null
       try {
         const runtimeRoots = await createRuntimeRoots(paths.dataRoot)
-        generationRuntime = new RuntimeManager(runtimeRoots)
+        generationRuntime = new RuntimeManager(runtimeRoots, undefined, undefined, undefined, {
+          resolveVerifiedOutpaintInfill: async () =>
+            await ownedGenerationContext
+              .requireRecoveredServices()
+              .infillResolver.resolveVerifiedOutpaintInfill(),
+        })
         runtimeManager = generationRuntime
       } catch (error) {
         console.error('Runtime storage is unavailable', error)

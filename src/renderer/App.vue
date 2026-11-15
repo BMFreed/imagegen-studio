@@ -557,6 +557,7 @@ const importWorkspaceProblem = computed(() =>
 
 const status = ref<RuntimeStatus | null>(null)
 const runtimeError = ref<string | null>(null)
+const runtimeActionError = ref<string | null>(null)
 const runtimePending = ref<'check' | 'install' | 'repair' | null>(null)
 const windowClosePending = ref(false)
 let unsubscribeStatus: (() => void) | undefined
@@ -1496,7 +1497,10 @@ const activeTabPending = computed<
   return action.kind
 })
 const showRuntimeNotice = computed(
-  () => status.value?.kind !== 'ready' || runtimeError.value !== null,
+  () =>
+    status.value?.kind !== 'ready' ||
+    status.value.outpaintInfill === 'needs-repair' ||
+    runtimeError.value !== null,
 )
 
 function errorMessage(cause: unknown): string {
@@ -5378,7 +5382,14 @@ async function runRuntimeAction(action: 'check' | 'install' | 'repair') {
     return
   }
   runtimePending.value = action
-  runtimeError.value = null
+  if (
+    action !== 'repair' ||
+    status.value?.kind !== 'ready' ||
+    status.value.outpaintInfill !== 'needs-repair'
+  ) {
+    runtimeError.value = null
+  }
+  runtimeActionError.value = null
   try {
     const runtimeApi = globalThis.window.api?.runtime
     if (!runtimeApi) {
@@ -5386,7 +5397,19 @@ async function runRuntimeAction(action: 'check' | 'install' | 'repair') {
       return
     }
     const result = await runtimeApi[action === 'check' ? 'getStatus' : action]()
-    applyRuntimeResult(result)
+    if (
+      action === 'repair' &&
+      status.value?.kind === 'ready' &&
+      status.value.outpaintInfill === 'needs-repair' &&
+      !result.ok &&
+      result.error.code === 'RUNTIME_INSTALL_UNAVAILABLE'
+    ) {
+      // This build refused before any setup operation. Keep ordinary generation usable while
+      // presenting the partial-resource action error; connection/status failures still block it.
+      runtimeActionError.value = result.error.message
+    } else {
+      applyRuntimeResult(result)
+    }
   } catch (cause) {
     runtimeError.value = errorMessage(cause)
   } finally {
@@ -5493,6 +5516,7 @@ onMounted(() => {
       variantDiagnosticsEpoch.value += 1
       if (nextStatus.kind === 'ready') {
         runtimeError.value = null
+        runtimeActionError.value = null
       }
       for (const tab of projectTabs.value) {
         void refreshGenerationState(tab.id)
@@ -5706,9 +5730,9 @@ onBeforeUnmount(() => {
       <main class="app-stage">
         <RuntimeNotice
           v-if="showRuntimeNotice"
-          :error="runtimeError"
+          :error="runtimeError ?? runtimeActionError"
           :pending="runtimePending"
-          :status
+          :status="status?.kind === 'ready' && runtimeError ? null : status"
           @check="runRuntimeAction('check')"
           @install="runRuntimeAction('install')"
           @repair="runRuntimeAction('repair')"

@@ -60,8 +60,10 @@ async function mountRuntimeNotice(page: Page) {
           {
             default: () =>
               h('main', { 'data-testid': 'runtime-notice-fixture' }, [
-                // Match App.vue's notice lifetime: ready clears it unless an action error remains.
-                state.status?.kind !== 'ready' || state.error !== null
+                // Match App.vue: ready hides the notice unless outpainting or an action needs attention.
+                state.status?.kind !== 'ready' ||
+                state.status.outpaintInfill === 'needs-repair' ||
+                state.error !== null
                   ? h(RuntimeNotice, {
                       error: state.error,
                       onCheck: () => state.checks++,
@@ -194,3 +196,128 @@ test('an unavailable status keeps Check again distinct from setup and repair', a
     await page.evaluate(() => (globalThis as RuntimeNoticeGlobal).runtimeNoticeFixture.checks),
   ).toBe(1)
 })
+
+const outpaintRepairStatus = (): RuntimeStatus => ({
+  ...runtimeStatus('ready'),
+  detail: 'The shared outpainting resource is unavailable or changed.',
+  outpaintInfill: 'needs-repair',
+})
+
+test('ready generation with unavailable outpainting shows a local repair notice and both actions', async ({
+  page,
+}, testInfo) => {
+  await mountRuntimeNotice(page)
+  await updateRuntimeNotice(page, { status: outpaintRepairStatus() })
+  const notice = page.getByRole('region', { name: 'Image generation status' })
+  await expect(notice.getByRole('heading', { name: 'Outpainting needs repair' })).toBeVisible()
+  await expect(
+    notice.getByText(
+      'The outpainting resource is unavailable. Other image generation and project tools remain available.',
+    ),
+  ).toBeVisible()
+  await expect(
+    notice.getByText('The image engine cannot start. Repair it to resume generation.'),
+  ).toHaveCount(0)
+  await expect(notice.locator('.n-spin')).toHaveCount(0)
+  await expect(notice.getByRole('button', { name: 'Set up' })).toHaveCount(0)
+  const repair = notice.getByRole('button', { exact: true, name: 'Repair' })
+  const check = notice.getByRole('button', { exact: true, name: 'Check again' })
+  await expect(repair).toBeEnabled()
+  await expect(check).toBeEnabled()
+  await notice.getByText('Details', { exact: true }).click()
+  await expect(
+    notice.getByText('The shared outpainting resource is unavailable or changed.'),
+  ).toBeVisible()
+  await page.screenshot({
+    fullPage: true,
+    path: testInfo.outputPath('outpainting-needs-repair.png'),
+  })
+  await repair.click()
+  expect(
+    await page.evaluate(() => (globalThis as RuntimeNoticeGlobal).runtimeNoticeFixture.repairs),
+  ).toBe(1)
+  expect(
+    await page.evaluate(() => (globalThis as RuntimeNoticeGlobal).runtimeNoticeFixture.installs),
+  ).toBe(0)
+})
+
+test('partial outpainting health respects pending actions and keeps explicit repair failure recoverable', async ({
+  page,
+}, testInfo) => {
+  await mountRuntimeNotice(page)
+  await updateRuntimeNotice(page, { status: outpaintRepairStatus() })
+  const notice = page.getByRole('region', { name: 'Image generation status' })
+  const repair = notice.getByRole('button', { name: /^(loading )?Repair$/ })
+  const check = notice.getByRole('button', { exact: true, name: 'Check again' })
+  for (const pending of ['check', 'install', 'repair'] as const) {
+    await updateRuntimeNotice(page, { pending })
+    await expect(repair).toBeDisabled()
+    await expect(check).toBeDisabled()
+    await expect(notice.getByRole('heading', { name: 'Outpainting needs repair' })).toBeVisible()
+    if (pending === 'repair') {
+      await expect(repair).toHaveClass(/n-button--loading/)
+    }
+  }
+  await updateRuntimeNotice(page, {
+    error:
+      'Verified release artifacts and a complete setup preview are not available in this build.',
+    pending: null,
+  })
+  await expect(repair).toBeEnabled()
+  await expect(check).toBeEnabled()
+  await expect(notice.getByRole('alert')).toContainText('Action could not be completed')
+  await expect(notice.getByRole('alert')).toContainText('Verified release artifacts')
+  await expect(notice.getByRole('heading', { name: 'Outpainting needs repair' })).toBeVisible()
+  await page.screenshot({
+    fullPage: true,
+    path: testInfo.outputPath('outpainting-repair-unavailable.png'),
+  })
+  expect(
+    await page.evaluate(() => (globalThis as RuntimeNoticeGlobal).runtimeNoticeFixture.repairs),
+  ).toBe(0)
+})
+
+test('Check again forwards one refresh and restored outpainting clears the notice', async ({
+  page,
+}) => {
+  await mountRuntimeNotice(page)
+  await updateRuntimeNotice(page, { status: outpaintRepairStatus() })
+  const notice = page.getByRole('region', { name: 'Image generation status' })
+  await notice.getByRole('button', { exact: true, name: 'Check again' }).click()
+  expect(
+    await page.evaluate(() => (globalThis as RuntimeNoticeGlobal).runtimeNoticeFixture.checks),
+  ).toBe(1)
+  await updateRuntimeNotice(page, { pending: 'check' })
+  await expect(notice.getByRole('button', { exact: true, name: 'Check again' })).toBeDisabled()
+  await updateRuntimeNotice(page, {
+    pending: null,
+    status: { ...runtimeStatus('ready'), outpaintInfill: 'ready' },
+  })
+  await expect(notice).toHaveCount(0)
+  await expect(
+    page.getByText('Project editing stays available while the image engine starts.'),
+  ).toBeVisible()
+  expect(
+    await page.evaluate(() => (globalThis as RuntimeNoticeGlobal).runtimeNoticeFixture.repairs),
+  ).toBe(0)
+})
+
+for (const outpaintInfill of [undefined, 'ready'] as const) {
+  test(`ready generation with ${outpaintInfill ?? 'absent'} outpainting health retains the hidden notice`, async ({
+    page,
+  }) => {
+    await mountRuntimeNotice(page)
+    await updateRuntimeNotice(page, {
+      status: { ...runtimeStatus('ready'), ...(outpaintInfill ? { outpaintInfill } : {}) },
+    })
+    await expect(page.getByRole('region', { name: 'Image generation status' })).toHaveCount(0)
+    await updateRuntimeNotice(page, {
+      error: 'The status request could not be completed.',
+    })
+    const notice = page.getByRole('region', { name: 'Image generation status' })
+    await expect(notice).toBeVisible()
+    await expect(notice.getByRole('heading', { name: 'Outpainting needs repair' })).toHaveCount(0)
+    await expect(notice.getByRole('button', { name: 'Repair' })).toHaveCount(0)
+    await expect(notice.getByRole('button', { exact: true, name: 'Check again' })).toBeEnabled()
+  })
+}

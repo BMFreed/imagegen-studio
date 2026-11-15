@@ -16,7 +16,14 @@ const emit = defineEmits<{
   repair: []
 }>()
 
+const outpaintNeedsRepair = computed(
+  () => props.status?.kind === 'ready' && props.status.outpaintInfill === 'needs-repair',
+)
+
 const heading = computed(() => {
+  if (outpaintNeedsRepair.value) {
+    return 'Outpainting needs repair'
+  }
   switch (props.status?.kind) {
     case 'checking': {
       return 'Starting image generation'
@@ -37,6 +44,9 @@ const heading = computed(() => {
 })
 
 const description = computed(() => {
+  if (outpaintNeedsRepair.value) {
+    return 'The outpainting resource is unavailable. Other image generation and project tools remain available.'
+  }
   switch (props.status?.kind) {
     case 'checking': {
       return 'The image engine is starting. Queued work will continue when it is ready.'
@@ -90,7 +100,7 @@ const description = computed(() => {
         Set up
       </NButton>
       <NButton
-        v-else-if="status?.kind === 'needs-repair'"
+        v-else-if="status?.kind === 'needs-repair' || outpaintNeedsRepair"
         key="n-button-2"
         :disabled="pending !== null"
         :loading="pending === 'repair'"
@@ -99,7 +109,12 @@ const description = computed(() => {
       >
         Repair
       </NButton>
-      <NButton v-if="error" key="n-button-3" :disabled="pending !== null" @click="emit('check')">
+      <NButton
+        v-if="error || outpaintNeedsRepair"
+        key="n-button-3"
+        :disabled="pending !== null"
+        @click="emit('check')"
+      >
         Check again
       </NButton>
     </div>

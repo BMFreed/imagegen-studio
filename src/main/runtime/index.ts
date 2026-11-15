@@ -13,6 +13,7 @@ import type { SmartPatchExecutionPreparationWorker } from '../projects/project-s
 import type { SmartPatchOutputWorker } from '../projects/smart-patch-generation-processor.js'
 import type { ProjectWorkerLocation, ProjectWorkerOptions } from '../projects/worker-client.js'
 import type { EngineInstallPlan } from './engine-install-plan.js'
+import type { OutpaintInfillResolver } from './inference-auxiliary-resources.js'
 
 import { GenerationWorkerClient } from '../projects/generation-worker-client.js'
 import { ProjectWorkerClient, ProjectWorkerError } from '../projects/worker-client.js'
@@ -225,6 +226,8 @@ export class RuntimeManager {
     host: RuntimeHost = { arch: process.arch, platform: process.platform },
     startClient: StartQualificationClient = startQualificationClient,
     private readonly installationBackend?: RuntimeInstallationBackend,
+    /** Verification-only advisory read. Failure affects outpaint, never ordinary admission. */
+    private readonly outpaintInfillResolver?: OutpaintInfillResolver,
   ) {
     this.roots = roots
     this.host = host
@@ -325,6 +328,46 @@ export class RuntimeManager {
           profile: 'linux-nvidia',
         }
       } else {
+        // The GPU self-test cache says nothing about separately owned shared resource bytes.
+        // Reuse the exact verification-only owner on every read; never invoke its installer.
+        let outpaintInfill: RuntimeStatus['outpaintInfill']
+        if (this.outpaintInfillResolver) {
+          try {
+            await this.outpaintInfillResolver.resolveVerifiedOutpaintInfill()
+            outpaintInfill = 'ready'
+          } catch {
+            outpaintInfill = 'needs-repair'
+          }
+          if (this.generationWorkPrevented) {
+            return this.shuttingDownStatus()
+          }
+          // Verification awaited local I/O. Do not qualify/cache a pointer replaced meanwhile.
+          let current: PointerRead
+          try {
+            current = await readPointer(this.roots)
+          } catch {
+            if (this.generationWorkPrevented) {
+              return this.shuttingDownStatus()
+            }
+            return {
+              error: {
+                code: 'RUNTIME_STATUS_UNAVAILABLE',
+                message: 'Cannot inspect the application runtime.',
+              },
+              ok: false,
+            }
+          }
+          if (this.generationWorkPrevented) {
+            return this.shuttingDownStatus()
+          }
+          if (
+            current.kind !== 'valid' ||
+            current.value.runtimeId !== pointer.value.runtimeId ||
+            current.value.pythonExecutable !== pointer.value.pythonExecutable
+          ) {
+            return await this.getStatus()
+          }
+        }
         const prepared = await this.prepareQualification(
           pointer.value,
           path.join(this.roots.appDataDir, 'scratch'),
@@ -376,6 +419,7 @@ export class RuntimeManager {
                 ? 'The Linux/NVIDIA image runtime is in use; a separate status probe is deferred.'
                 : 'The Linux/NVIDIA image runtime is ready.',
               kind: 'ready',
+              ...(outpaintInfill ? { outpaintInfill } : {}),
               profile: 'linux-nvidia',
               runtimeId: pointer.value.runtimeId,
             }
