@@ -52,6 +52,7 @@ function snapshot(status: ApplicationUpdateSnapshot['status']): ApplicationUpdat
     releaseNotes: null,
     status,
     totalBytes: null,
+    verification: null,
   }
 }
 
@@ -63,6 +64,7 @@ function available(
     ...snapshot('available'),
     availableVersion: version,
     releaseNotes: notes,
+    verification: 'metadata-only',
   }
 }
 
@@ -121,6 +123,7 @@ async function mountUpdatesApp(page: Page, options: UpdatesOptions = {}) {
         releaseNotes: null,
         status: 'idle',
         totalBytes: null,
+        verification: null,
       }
       const pendingChecks = new Map<number, () => void>()
       const pendingDownloads = new Map<number, () => void>()
@@ -211,7 +214,7 @@ async function mountUpdatesApp(page: Page, options: UpdatesOptions = {}) {
                 check: async (): Promise<ApiResult<ApplicationUpdateSnapshot>> => {
                   const id = ++state.checkCalls
                   const plan: CheckPlan = initial.checks?.[id - 1] ?? {
-                    snapshot: { ...initialStatus, status: 'up-to-date' },
+                    snapshot: { ...initialStatus, status: 'up-to-date', verification: null },
                   }
                   if (plan.hold) {
                     await new Promise<void>((resolve) => pendingChecks.set(id, resolve))
@@ -593,6 +596,8 @@ test('Download is explicit, captures the displayed version and shows polled tran
   await expect(dialog(page)).toContainText(
     'Publisher authenticity and installation have not been verified.',
   )
+  await expect(dialog(page)).not.toContainText('Publisher signature verified.')
+  await expect(dialog(page)).not.toContainText('Compatibility declaration accepted.')
   await expect(dialog(page)).toContainText('Installation is not available in this build.')
   await expect(dialog(page).getByRole('button', { name: /install|cancel/i })).toHaveCount(0)
   await expect(
@@ -746,4 +751,89 @@ test('successful download clears a transient progress read error', async ({ page
   await expect(dialog(page)).toContainText('Download completed')
   await expect(dialog(page)).not.toContainText(publicFailure)
   expect(await calls(page)).toMatchObject({ checkCalls: 1, downloadVersions: ['0.2.0'] })
+})
+
+for (const status of ['available', 'downloaded'] as const) {
+  test(`signed ${status} distinguishes the accepted declaration from engine readiness`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ height: 620, width: 900 })
+    const signed: ApplicationUpdateSnapshot = {
+      ...(status === 'available'
+        ? available('0.2.0', 'Signed notes remain plain text.\n'.repeat(400))
+        : downloadStatus('downloaded', 4096, 4096)),
+      verification: 'signed-release',
+    }
+    await mountUpdatesApp(
+      page,
+      status === 'available' ? { checks: [{ snapshot: signed }] } : { status: signed },
+    )
+    await openUpdates(page)
+    await expect(dialog(page)).toContainText('Publisher signature verified.')
+    await expect(dialog(page)).toContainText(
+      'Compatibility declaration accepted. The image engine will be checked after restart.',
+    )
+    await expect(dialog(page)).toContainText('Installation is not available in this build.')
+    await expect(dialog(page)).not.toContainText(
+      'Publisher authenticity and installation have not been verified.',
+    )
+    await expect(dialog(page)).not.toContainText('ready to install')
+    await expect(dialog(page).getByRole('button', { name: /install|restart/i })).toHaveCount(0)
+    if (status === 'downloaded') {
+      await expect(dialog(page)).toContainText(
+        'The saved file matches the update metadata checksum.',
+      )
+      await expect(dialog(page)).toContainText('Installation has not been verified.')
+      await expect(
+        dialog(page).getByRole('button', { exact: true, name: 'Download again' }),
+      ).toBeEnabled()
+    } else {
+      await expect(
+        dialog(page).getByRole('button', { exact: true, name: 'Download' }),
+      ).toBeEnabled()
+    }
+    expect(await calls(page)).toMatchObject({
+      checkCalls: status === 'available' ? 1 : 0,
+      downloadVersions: [],
+      mutationCalls: [],
+      statusCalls: 1,
+    })
+    await assertModalFits(page)
+    await page.screenshot({ path: testInfo.outputPath(`updates-signed-${status}-900x620.png`) })
+  })
+}
+
+test('invalid or missing verification cannot be a signed public snapshot and a refused check stays visible', async ({
+  page,
+}) => {
+  const original = available('0.2.0')
+  const missing: Partial<ApplicationUpdateSnapshot> = { ...original }
+  delete missing.verification
+  expect(isApplicationUpdateSnapshot(missing)).toBe(false)
+  expect(isApplicationUpdateSnapshot({ ...original, verification: 'trusted' })).toBe(false)
+  // This renderer fixture replaces preload/Main. It checks the shared DTO guard
+  // directly, then presents a controlled public refusal; it does not qualify the
+  // actual preload's rejection of malformed native responses.
+  await mountUpdatesApp(page, {
+    checks: [
+      { kind: 'public-error' },
+      { snapshot: { ...original, verification: 'signed-release' } },
+    ],
+  })
+  await openUpdates(page)
+  await expect(dialog(page)).toContainText(publicFailure)
+  await expect(dialog(page)).not.toContainText('Publisher signature verified.')
+  await expect(dialog(page).getByRole('button', { exact: true, name: 'Download' })).toHaveCount(0)
+  expect(await calls(page)).toMatchObject({
+    checkCalls: 1,
+    downloadVersions: [],
+    mutationCalls: [],
+  })
+  await dialog(page).getByRole('button', { exact: true, name: 'Check again' }).click()
+  await expect(dialog(page)).toContainText('Publisher signature verified.')
+  expect(await calls(page)).toMatchObject({
+    checkCalls: 2,
+    downloadVersions: [],
+    mutationCalls: [],
+  })
 })

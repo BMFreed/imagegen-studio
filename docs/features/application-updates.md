@@ -53,14 +53,49 @@ Project Save с placeholder preview остаётся доступен. SQLite mi
 открытие прежних `.igs` проверяются на копии пользовательского состояния до
 релиза; неуспешная миграция не должна превращаться в silent data loss.
 
+### Signed release declaration boundary
+
+Main проверяет отдельный app-release envelope существующим canonical Ed25519
+verifier. Он связывает выбранные native provider version, AppImage basename,
+size/SHA512 и digest исходных release notes с подписанной declaration для
+`studio.imagegen.desktop`, Linux/x64/AppImage. Project schema и CPU/inference
+protocol declarations должны совпадать с текущими owners; каждый применённый
+SQLite migration name/hash должен присутствовать в signed inventory. Это
+проверка declaration и membership, а не исполнение будущих SQL migrations,
+проверка внутренней версии binary или готовности установленного image engine.
+После restart обычные handshake/setup/repair owners остаются обязательны.
+
+Bundled `resources/app-update-trust.json` содержит только versioned app ID и
+public Ed25519 keyId/PEM map. Он отделён от native `app-update.yml` feed config и
+runtime publisher. При отсутствующем keyring настроенный legacy consumer
+сохраняет `metadata-only`; некорректный существующий keyring не допускает fallback.
+С keyring unsigned/mismatched release отказывается до native Download authority.
+Неподписанные native policy `stagingPercentage`, `minimumSystemVersion`, `packages`
+и выбранный `blockMapSize` не входят в конечный signed profile и отклоняются до
+native availability evaluation. Это не объявляет доверенным весь feed или URL.
+
+Public `signed-release` означает принятую signature, descriptor/notes binding и
+compatibility declaration. На available/downloaded UI явно говорит, что image
+engine будет проверен после restart; Install остаётся unavailable. Private
+artifact capability повторно проверяет текущую selection и реальные cache bytes
+и не передаёт пути/ключи/manifest в renderer. Будущий installer обязан отдельно
+использовать эту revalidation boundary перед своим действием. Приватная capability
+сама по себе не разрешает замену приложения, restart или закрытие Project.
+
+Offline publisher CLI `scripts/sign-application-release.mjs` требует manifest,
+raw notes JSON, реальный artifact, явные private Ed25519 key/keyId и новый output.
+Он вычисляет artifact basename/size/SHA512 и notes digest, проверяет app domain
+перед create-only output и не проверяет executable format, internal binary
+version, исполнение migrations или installed-runtime readiness. Реальный клиент
+сверяет свой installed context независимо от publisher declaration.
+
 ## Scope and dependencies
 
 [Model installer drain](../engineering/phase-5-model-install-shutdown-research.md)
 now joins active model preparation/download/publication/storage work in the existing
 app-close barrier before SQLite disposal. Main warns before confirmation, and
 Cancel leaves that work running. This prerequisite does not supply Install Update,
-signed app-release trust, compatibility, the full recovered-job install preview or
-recoverable AppImage replacement.
+the full recovered-job install preview or recoverable AppImage replacement.
 
 [Local AppImage packaging](../engineering/phase-5-linux-app-package-research.md)
 now supplies a versioned standalone app consumer and current-host extract-and-run
@@ -73,11 +108,16 @@ Download failure permits explicit retry. Closing the dialog leaves accepted work
 running; reopen reads its Main state. No Cancel is exposed until native socket/file
 drain is qualified. Check and status reads never initiate a download. Installation
 remains absent; automatic download/install-on-quit are explicitly disabled. The
-default build is unavailable until its own publisher configuration is supplied. This
-checkpoint verifies integrity relative to metadata, not publisher authenticity.
-It does not prove signed delivery, FUSE/clean-machine install, binary
-replacement or interrupted-update recovery; those remain dependencies of the
-acceptance below. Runtime publisher metadata is a separate lifecycle.
+default build is unavailable until its own publisher configuration is supplied.
+The earlier Download checkpoint verifies integrity relative to metadata.
+[Signed release trust](../engineering/phase-5-application-release-trust-research.md)
+adds the declaration/keyring and private artifact consumer described above; Root
+confirms 190 targeted and 323 browser PASS, typecheck/build and partitioned full
+lint PASS. Four actual fused-package flows give eight normal physical exits and
+original GREEN / signature-bypass RED / original GREEN. No shipping publisher is configured. FUSE/clean-machine install,
+binary replacement, interrupted-update recovery and actual upgrade compatibility
+remain dependencies of the acceptance below. Runtime publisher metadata is a
+separate lifecycle.
 
 Обязательный scope первого релиза. Зависимости: Electron main/preload API,
 single-instance shell, Project close/recovery и Queue Manager. Python worker
@@ -100,6 +140,10 @@ channel, формат доверенного manifest и способ восст
   установленную версию, Project или runtime.
 - Загрузка и установка начинаются только после отдельного действия; пакет
   проверяется до handoff installer'у.
+- Signed authority требует trust, exact app/target/descriptor/notes binding и
+  текущие schema/protocol/migration declarations. `signed-release` не означает
+  installed engine readiness; отсутствующий shipping publisher не подменяется
+  тестовым feed или автоматически созданным ключом.
 - Dirty Project, active jobs и unaccepted staging не исчезают без обычного
   close/cancel confirmation. `Установить позже` до close sequence ничего не
   меняет; последующая отмена останавливает restart, не откатывая ранее

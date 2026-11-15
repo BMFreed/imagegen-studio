@@ -63,7 +63,11 @@ import {
 } from '../shared/projects/project-image-export.js'
 import { ProjectMaskError } from '../shared/projects/project-mask.js'
 import { validateProjectRenameName } from '../shared/projects/project-rename.js'
-import { IGS_SAFETY_CEILINGS, IgsSchemaError } from '../shared/projects/project-schema.js'
+import {
+  IGS_SAFETY_CEILINGS,
+  IGS_SCHEMA_VERSION,
+  IgsSchemaError,
+} from '../shared/projects/project-schema.js'
 import type { IgsRectV1 } from '../shared/projects/project-schema.js'
 import {
   isProjectWorkspaceAddInput,
@@ -125,13 +129,14 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import { ensureAppPaths, resolveAppPaths } from './app-paths.js'
+import { loadApplicationReleaseTrust } from './application-updates/application-release.js'
 import { registerApplicationUpdateIpc } from './application-updates/application-update-ipc.js'
 import { ApplicationUpdateService } from './application-updates/application-update-service.js'
 import {
   createElectronUpdateChecker,
   VerifiedAppImageUpdater,
 } from './application-updates/electron-update-checker.js'
-import { openAppDatabase } from './db/database.js'
+import { openAppDatabase, readAppliedSqlMigrations } from './db/database.js'
 import { ANIMA_SOURCE_LICENSE } from './models/anima-manifest.js'
 import { CivitaiClient, CivitaiClientError, parseCivitaiModelUrl } from './models/civitai-client.js'
 import { CivitaiTokenStore, CivitaiTokenStoreError } from './models/civitai-token-store.js'
@@ -167,6 +172,7 @@ import { GenerationProcessorError } from './projects/generation-processor.js'
 import { GenerationProgressSource } from './projects/generation-progress-source.js'
 import { GenerationQueueError } from './projects/generation-queue.js'
 import { GenerationStagingError } from './projects/generation-staging.js'
+import { INFERENCE_WORKER_PROTOCOL_VERSION } from './projects/generation-worker-client.js'
 import { IgsPackageError } from './projects/igs-package.js'
 import { IllustriousJobError } from './projects/illustrious-txt2img-job.js'
 import { ProjectAutosaveError } from './projects/project-autosave.js'
@@ -263,7 +269,11 @@ import {
 } from './projects/smart-patch-acceptance-journal.js'
 import { SmartPatchProcessorError } from './projects/smart-patch-generation-processor.js'
 import { SmartPatchGenerationStagingError } from './projects/smart-patch-generation-staging.js'
-import { ProjectWorkerClient, ProjectWorkerError } from './projects/worker-client.js'
+import {
+  CPU_WORKER_PROTOCOL_VERSION,
+  ProjectWorkerClient,
+  ProjectWorkerError,
+} from './projects/worker-client.js'
 import { createRuntimeRoots, RuntimeManager } from './runtime/index.js'
 import { registerRuntimeSetupIpc } from './runtime/runtime-setup-ipc.js'
 
@@ -1399,7 +1409,17 @@ if (!gotInstanceLock) {
           process.platform === 'linux' &&
           Boolean(process.env['APPIMAGE']) &&
           existsSync(path.join(process.resourcesPath, 'app-update.yml')),
-        () => createElectronUpdateChecker(new VerifiedAppImageUpdater()),
+        async () => {
+          const trust = await loadApplicationReleaseTrust(process.resourcesPath, {
+            cpuWorkerProtocolVersion: CPU_WORKER_PROTOCOL_VERSION,
+            databaseMigrations: await readAppliedSqlMigrations(database),
+            inferenceWorkerProtocolVersion: INFERENCE_WORKER_PROTOCOL_VERSION,
+            projectSchemaVersion: IGS_SCHEMA_VERSION,
+          })
+          return createElectronUpdateChecker(
+            new VerifiedAppImageUpdater(undefined, undefined, trust),
+          )
+        },
       )
       const applicationUpdates = registerApplicationUpdateIpc(
         ipcMain,

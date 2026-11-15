@@ -1,6 +1,20 @@
 # Implementation Roadmap
 
-## Current model installation drain on app close
+## Current signed application release declarations
+
+[Application release trust](../engineering/phase-5-application-release-trust-research.md)
+now supplies the finite signed app-descriptor/notes and compatibility-declaration
+consumer plus an offline producer. Main checks current applied migration name/hash
+membership and actual schema/protocol constants; this does not execute migrations
+or prove installed engine readiness. A bundled public keyring is separate from
+feed configuration; missing trust keeps metadata-only authority and invalid
+existing trust refuses. Root confirms 190 targeted and 323 browser PASS, typecheck/build and
+partitioned full lint PASS. Actual fused packages give eight normal physical exits
+and original GREEN / signature-bypass RED / original GREEN. Real shipping publisher,
+Install preview/replacement/recovery and final release/MVP acceptance remain open.
+Promise statuses unchanged.
+
+## Previous model installation drain on app close
 
 [Model installer shutdown](../engineering/phase-5-model-install-shutdown-research.md) adapts Invoke stop/join to the existing
 coordinator and app close barrier. Main describes active resource work before
@@ -3445,11 +3459,13 @@ UI всех этих действий проверен в поддерживае
 
 **Зависимости:** функциональные фазы 0–4 и доказанный packaging artifact.
 Release qualification начинается раньше, но итоговый gate закрывается здесь.
-Перед реализацией app updater довести до исполнимого уровня
-[user-flow/acceptance contract](../features/application-updates.md): ручную
-проверку версии, offline/error, отложенную установку при dirty `.igs` и
-активных jobs/staging, restart и interrupted update. Проверка при старте не
-выполняется; Linux package/update mechanism должен доказать recovery path.
+Ручной Check, explicit Download и конечный signed declaration consumer уже имеют
+отдельные checkpoints; их не нужно создавать заново. Следующие app-update gates
+по [user-flow/acceptance contract](../features/application-updates.md): полный
+Install preview, отложенная установка при dirty `.igs` и активных jobs/staging,
+restart и interrupted-update recovery. Принятая signed compatibility declaration
+не закрывает фактические migration/protocol/engine checks после upgrade.
+Проверка при старте не выполняется; shipping publisher остаётся не настроен.
 
 - Собрать подписанный/проверяемый дистрибутив и runtime artifacts для
   Linux/NVIDIA; проверить чистую установку и установку runtime из интерфейса

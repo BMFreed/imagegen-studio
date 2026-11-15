@@ -47,8 +47,10 @@ const supplied = process.env.IMAGEGEN_LINUX_PACKAGE_ARTIFACTS
 const suppliedPackage = process.env.IMAGEGEN_LINUX_PACKAGE_APPIMAGE
 const updateCheckMode = process.env.IMAGEGEN_LINUX_PACKAGE_UPDATE_CHECK
 assert.ok(
-  updateCheckMode === undefined || updateCheckMode === 'unavailable' || updateCheckMode === 'feed' || updateCheckMode === 'download',
+  updateCheckMode === undefined || updateCheckMode === 'unavailable' || updateCheckMode === 'feed' || updateCheckMode === 'download' || updateCheckMode === 'signed',
 )
+const updateReleaseFixturesPath = process.env.IMAGEGEN_LINUX_PACKAGE_UPDATE_RELEASE_FIXTURES
+assert.ok(updateCheckMode === 'signed' || updateReleaseFixturesPath === undefined)
 const updateFeedPortText = process.env.IMAGEGEN_LINUX_PACKAGE_UPDATE_FEED_PORT
 assert.ok(updateFeedPortText === undefined || /^\d+$/.test(updateFeedPortText))
 const updateFeedPort = updateFeedPortText === undefined ? 0 : Number(updateFeedPortText)
@@ -57,6 +59,9 @@ const canonicalAbsolute = (value) =>
   typeof value === 'string' && path.isAbsolute(value) && path.resolve(value) === value
 assert.ok(canonicalAbsolute(supplied), 'Supply a canonical IMAGEGEN_LINUX_PACKAGE_ARTIFACTS.')
 assert.ok(canonicalAbsolute(suppliedPackage), 'Supply a canonical IMAGEGEN_LINUX_PACKAGE_APPIMAGE.')
+if (updateCheckMode === 'signed') {
+  assert.ok(canonicalAbsolute(updateReleaseFixturesPath), 'Supply canonical IMAGEGEN_LINUX_PACKAGE_UPDATE_RELEASE_FIXTURES for signed admission.')
+}
 const root = supplied
 const appImage = suppliedPackage
 const relative = path.relative(artifactRoot, root)
@@ -412,6 +417,7 @@ try {
       port: updateFeedPort,
       root,
       currentVersion: '0.1.0-dev.1',
+      releaseFixturesPath: updateReleaseFixturesPath,
     })
   }
   const first = await launch('first')
@@ -521,6 +527,8 @@ try {
   const sourceAfter = await Promise.all(sourcePaths.map(identity))
   assert.deepEqual(sourceAfter, sourceBefore)
   if (applicationUpdateSmoke) {
+    assert.equal(lifetimes.length, 2)
+    assert.ok(lifetimes.every((state) => state.normalPhysicalExit && !state.forcedCleanup))
     await applicationUpdateSmoke.stop()
     applicationUpdateResult = applicationUpdateSmoke.finalize()
   }

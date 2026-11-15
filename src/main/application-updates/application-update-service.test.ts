@@ -8,6 +8,8 @@ import type { AppUpdater } from 'electron-updater'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
+import type { VerifiedApplicationArtifact } from './electron-update-checker.js'
+
 import {
   type ApplicationUpdateCheckResult,
   ApplicationUpdateService,
@@ -18,6 +20,125 @@ const current = '0.1.0-dev.1'
 const available = (releaseNotes?: ApplicationUpdateCheckResult['updateInfo']['releaseNotes']) => ({
   isUpdateAvailable: true,
   updateInfo: { releaseNotes, version: '0.1.0' },
+})
+
+/** Native verifier is a controlled service port here; native crypto/filesystem have their own tests. */
+function artifact(
+  verifyCompleteSnapshot: () => Promise<void> = async () => {},
+): VerifiedApplicationArtifact {
+  return {
+    manifest: {
+      appId: 'studio.imagegen.desktop',
+      artifact: {
+        filename: 'release.AppImage',
+        sha512: Buffer.alloc(64).toString('base64'),
+        sizeBytes: 19,
+      },
+      compatibility: {
+        cpuWorkerProtocolVersion: '1',
+        databaseMigrations: [],
+        inferenceWorkerProtocolVersion: '1',
+        projectSchemaVersion: 1,
+        runtimeValidation: 'after-restart',
+      },
+      releaseId: 'service-port',
+      releaseNotesSha256: '0'.repeat(64),
+      schemaVersion: 1,
+      scope: 'application-release',
+      target: { arch: 'x64', format: 'AppImage', os: 'linux' },
+      version: '0.1.0',
+    },
+    path: '/private/owned-cache/release.AppImage',
+    verifyCompleteSnapshot,
+  }
+}
+
+test('signed native metadata and private artifact project no paths or install capability', async () => {
+  let verifications = 0
+  const receipt = artifact(async () => {
+    verifications++
+  })
+  const service = new ApplicationUpdateService(current, true, () => ({
+    checkForUpdates: async () => ({ ...available('Signed notes'), verification: 'signed-release' }),
+    downloadUpdate: async () => ({ sizeBytes: 19, verifiedArtifact: receipt }),
+  }))
+  await assert.rejects(service.prepareVerifiedArtifact('0.1.0'))
+  assert.equal((await service.check()).verification, 'signed-release')
+  const snapshot = await service.download('0.1.0')
+  assert.equal(snapshot.status, 'downloaded')
+  assert.equal(isApplicationUpdateSnapshot(snapshot), true)
+  assert.equal(JSON.stringify(snapshot).includes('private'), false)
+  assert.equal(Object.hasOwn(snapshot, 'verifiedArtifact'), false)
+  assert.equal(await service.prepareVerifiedArtifact('0.1.0'), receipt)
+  assert.ok(verifications >= 2)
+})
+
+test('metadata-only download cannot acquire private installer handoff even if a native port offers one', async () => {
+  const service = new ApplicationUpdateService(current, true, () => ({
+    checkForUpdates: async () => available(),
+    downloadUpdate: async () => ({ sizeBytes: 19, verifiedArtifact: artifact() }),
+  }))
+  await service.check()
+  assert.equal((await service.download('0.1.0')).verification, 'metadata-only')
+  await assert.rejects(service.prepareVerifiedArtifact('0.1.0'))
+})
+
+test('signed download refuses a missing private artifact instead of trusting downloaded bytes alone', async () => {
+  const service = new ApplicationUpdateService(current, true, () => ({
+    checkForUpdates: async () => ({ ...available(), verification: 'signed-release' }),
+    downloadUpdate: async () => ({ sizeBytes: 19 }),
+  }))
+  await service.check()
+  assert.equal((await service.download('0.1.0')).status, 'download-error')
+  await assert.rejects(service.prepareVerifiedArtifact('0.1.0'))
+})
+
+test('new check retires an in-flight private handoff without overwriting its newer public result', async () => {
+  const entered = deferred<void>()
+  const release = deferred<void>()
+  let calls = 0
+  let checks = 0
+  const receipt = artifact(async () => {
+    if (++calls === 2) {
+      entered.resolve()
+      await release.promise
+    }
+  })
+  const service = new ApplicationUpdateService(current, true, () => ({
+    checkForUpdates: async () =>
+      ++checks === 1
+        ? { ...available(), verification: 'signed-release' }
+        : { isUpdateAvailable: false, updateInfo: { version: current } },
+    downloadUpdate: async () => ({ sizeBytes: 19, verifiedArtifact: receipt }),
+  }))
+  await service.check()
+  await service.download('0.1.0')
+  const handoff = service.prepareVerifiedArtifact('0.1.0')
+  await entered.promise
+  await service.check()
+  release.resolve()
+  await assert.rejects(handoff)
+  assert.equal(service.getStatus().status, 'up-to-date')
+  assert.equal(service.getStatus().verification, null)
+})
+
+test('failed private revalidation retires the artifact and requires explicit Download again', async () => {
+  let invalid = false
+  const receipt = artifact(async () => {
+    if (invalid) {
+      throw new Error('/private/cache changed')
+    }
+  })
+  const service = new ApplicationUpdateService(current, true, () => ({
+    checkForUpdates: async () => ({ ...available(), verification: 'signed-release' }),
+    downloadUpdate: async () => ({ sizeBytes: 19, verifiedArtifact: receipt }),
+  }))
+  await service.check()
+  await service.download('0.1.0')
+  invalid = true
+  await assert.rejects(service.prepareVerifiedArtifact('0.1.0'), /downloaded and verified again/)
+  assert.equal(service.getStatus().status, 'download-error')
+  assert.equal(JSON.stringify(service.getStatus()).includes('private'), false)
 })
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -120,6 +241,7 @@ test('native no-update result stays up-to-date without exposing irrelevant remot
     releaseNotes: null,
     status: 'up-to-date',
     totalBytes: null,
+    verification: null,
   })
 })
 
@@ -220,6 +342,7 @@ test('download needs the exact version from an explicit successful check, never 
     releaseNotes: 'Selected notes',
     status: 'downloaded',
     totalBytes: 19,
+    verification: 'metadata-only',
   })
   assert.equal(isApplicationUpdateSnapshot(result), true)
   assert.equal(downloads, 1)

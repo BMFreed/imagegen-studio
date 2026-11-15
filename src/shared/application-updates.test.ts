@@ -18,12 +18,14 @@ const snapshot = (): ApplicationUpdateSnapshot => ({
   releaseNotes: null,
   status: 'idle',
   totalBytes: null,
+  verification: null,
 })
 const available = (): ApplicationUpdateSnapshot => ({
   ...snapshot(),
   availableVersion: '0.1.0',
   releaseNotes: 'Release notes are plain text.',
   status: 'available',
+  verification: 'metadata-only',
 })
 
 test('application update snapshots cover the exact explicit check/download state domain', () => {
@@ -230,4 +232,25 @@ test('the exact public snapshot rejects missing/private fields without executing
     assert.equal(isApplicationUpdateSnapshot(value), false)
   }
   assert.equal(reads, 0)
+})
+
+test('verification describes signed metadata without exposing installer authority', () => {
+  for (const verification of ['metadata-only', 'signed-release'] as const) {
+    assert.equal(isApplicationUpdateSnapshot({ ...available(), verification }), true)
+  }
+  for (const verification of [null, true, 'ready-to-install', 'trusted-runtime', '/private/key']) {
+    assert.equal(isApplicationUpdateSnapshot({ ...available(), verification }), false)
+  }
+  assert.equal(
+    isApplicationUpdateSnapshot({ ...snapshot(), verification: 'signed-release' }),
+    false,
+  )
+  assert.equal(
+    isApplicationUpdateSnapshot({ ...available(), verifiedArtifact: { path: '/private/cache' } }),
+    false,
+  )
+  assert.equal(isApplicationUpdateSnapshot({ ...available(), manifest: {} }), false)
+  const missing: Partial<ApplicationUpdateSnapshot> = available()
+  delete missing.verification
+  assert.equal(isApplicationUpdateSnapshot(missing), false)
 })

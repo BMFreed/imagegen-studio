@@ -114,6 +114,7 @@ import {
 } from './worker-client.js'
 
 const PROTOCOL_VERSION = '1'
+export { PROTOCOL_VERSION as INFERENCE_WORKER_PROTOCOL_VERSION }
 const RUNTIME_PROFILE = 'linux-nvidia'
 const MAX_PROTOCOL_LINE_BYTES = 64 * 1024
 const SHUTDOWN_WAIT_MS = 2000

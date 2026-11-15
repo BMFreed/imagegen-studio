@@ -24,6 +24,7 @@ import { decodeDerivedProjectMaskPng, readProjectMaskSource } from './project-ma
 import { classifyTargetPngAlpha, decodeTargetPngAlpha } from './target-png-mode.js'
 
 const PROTOCOL_VERSION = '1'
+export { PROTOCOL_VERSION as CPU_WORKER_PROTOCOL_VERSION }
 const WORKER_VERSION = '0.1.0'
 const RUNTIME_PROFILE = 'derivatives-only'
 const REQUIRED_CAPABILITIES = ['image-derivatives', 'import-normalization', 'self-test'] as const

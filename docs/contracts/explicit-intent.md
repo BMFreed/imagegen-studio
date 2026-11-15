@@ -111,6 +111,16 @@ flows и не скрывает последствия выбранной ком�
 
 ## Evidence и текущие границы
 
+[Application release trust](../engineering/phase-5-application-release-trust-research.md)
+сохраняет разные намерения Check, Download и будущий Install. Принятие подписи и
+compatibility declaration не запускает установку/restart, не закрывает Project
+и не объявляет image engine готовым. Main-private artifact revalidation не
+становится renderer install token. Missing publisher остаётся unavailable;
+metadata-only и signed-release не смешиваются в UI. Root подтверждает 190 targeted
+и 323 browser PASS, typecheck/build и partitioned full lint PASS. Actual AppImage:
+восемь normal physical exits, original GREEN / signature-bypass RED / original GREEN. Shipping delivery, Install/recovery и публичный статус PP-002 не
+считаются закрытыми этим срезом.
+
 [Home tests](../prototype-app/tests/home.spec.ts) и
 [Preset tests](../prototype-app/tests/preset-manager.spec.ts) содержат раздельные
 search/create/apply сценарии. [Model Manager](../features/model-manager.md#vue-prototype-coverage)

@@ -1,6 +1,20 @@
 # Engineering Workflow
 
-## Current model installation drain on app close
+## Current signed application release declarations
+
+[Application release trust](./phase-5-application-release-trust-research.md) adapts
+the existing canonical Ed25519 envelope to the native provider/descriptor and
+raw notes, exact Project/worker declarations and current applied migration
+name/hash membership. A separate bundled public keyring enables signed checks;
+absence retains metadata-only authority and invalid existing trust refuses.
+Signed status is not installed engine readiness or installer authority. The offline
+producer recomputes artifact/notes identity; unsigned native policy fields outside
+the finite profile refuse. Root confirms 190 targeted and 323 browser PASS, typecheck/build and
+partitioned full lint PASS. Actual fused packages give eight normal physical exits
+and original GREEN / signature-bypass RED / original GREEN. Shipping publisher remains
+unconfigured; Install/replacement/recovery and full MVP remain open. Statuses unchanged.
+
+## Previous model installation drain on app close
 
 [Model installer shutdown](./phase-5-model-install-shutdown-research.md) adapts Invoke stop/join to the existing
 coordinator and app close barrier. Main describes active resource work before

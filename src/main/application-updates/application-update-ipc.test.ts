@@ -21,6 +21,7 @@ const snapshot = (
   releaseNotes: status === 'available' ? 'Changes' : null,
   status,
   totalBytes: null,
+  verification: status === 'available' ? 'metadata-only' : null,
 })
 
 function value(result: ApiResult<unknown>): ApplicationUpdateSnapshot {

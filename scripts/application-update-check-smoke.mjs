@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import { lstat, open, readFile, readdir, realpath } from 'node:fs/promises'
 import http from 'node:http'
+import os from 'node:os'
 import path from 'node:path'
 
 import { expect } from '@playwright/test'
@@ -24,6 +25,56 @@ const artifactName = 'app-update-check-not-installable.AppImage'
 // compatibility, publisher authenticity and installation are separate gates.
 const artifactBytes = Buffer.alloc(2 * 1024 * 1024, 'qualification-only-not-an-executable\n')
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex')
+const signedFaults = [
+  'bad-signature',
+  'wrong-descriptor',
+  'migration-changed',
+  'protocol-changed',
+  'notes-changed',
+  'unsigned-policy',
+]
+
+async function readReleaseFixtures(filename) {
+  const artifactRoot = path.join(os.homedir(), '.codex/artifacts/imagegen-studio')
+  assert.ok(typeof filename === 'string' && path.isAbsolute(filename) && path.resolve(filename) === filename)
+  const relative = path.relative(artifactRoot, filename)
+  assert.ok(relative && !relative.startsWith('..') && !path.isAbsolute(relative))
+  assert.equal(await realpath(artifactRoot), artifactRoot)
+  assert.equal(await realpath(path.dirname(filename)), path.dirname(filename))
+  assert.equal(await realpath(filename), filename)
+  const handle = await open(filename, constants.O_RDONLY | constants.O_NOFOLLOW)
+  try {
+    const identity = (info) => [info.dev, info.ino, info.mode, info.nlink, info.size, info.mtimeNs, info.ctimeNs].map(String)
+    const before = await handle.stat({ bigint: true })
+    assert.ok(before.isFile() && before.size > 0n && before.size <= 8n * 1024n ** 2n)
+    assert.deepEqual(identity(await lstat(filename, { bigint: true })), identity(before))
+    const bytes = Buffer.alloc(Number(before.size) + 1)
+    let offset = 0
+    while (offset < bytes.length) {
+      const result = await handle.read(bytes, offset, bytes.length - offset, offset)
+      if (result.bytesRead === 0) break
+      offset += result.bytesRead
+    }
+    assert.equal(offset, Number(before.size), 'Release fixtures must remain bounded and unchanged while read.')
+    assert.deepEqual(identity(await handle.stat({ bigint: true })), identity(before))
+    assert.deepEqual(identity(await lstat(filename, { bigint: true })), identity(before))
+    assert.equal(await realpath(filename), filename)
+    const content = bytes.subarray(0, offset)
+    const parsed = JSON.parse(content.toString('utf8'))
+    assert.ok(parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+    assert.deepEqual(Object.keys(parsed).sort(), ['current', 'available', ...signedFaults].sort())
+    const envelopes = Object.fromEntries(Object.entries(parsed).map(([name, envelope]) => {
+      assert.ok(envelope && typeof envelope === 'object' && !Array.isArray(envelope))
+      return [name, JSON.stringify(envelope)]
+    }))
+    return {
+      envelopes: Object.freeze(envelopes),
+      evidence: { path: filename, sizeBytes: content.length, sha256: sha(content) },
+    }
+  } finally {
+    await handle.close()
+  }
+}
 
 function deferred() {
   let resolve
@@ -33,7 +84,7 @@ function deferred() {
   return { promise, resolve }
 }
 
-function assertSnapshot(snapshot, status, currentVersion) {
+function assertSnapshot(snapshot, status, currentVersion, signed = false) {
   assert.deepEqual(Object.keys(snapshot).sort(), [
     'availableVersion',
     'currentVersion',
@@ -42,6 +93,7 @@ function assertSnapshot(snapshot, status, currentVersion) {
     'releaseNotes',
     'status',
     'totalBytes',
+    'verification',
   ])
   assert.equal(snapshot.currentVersion, currentVersion)
   assert.equal(snapshot.status, status)
@@ -49,9 +101,11 @@ function assertSnapshot(snapshot, status, currentVersion) {
   if (['available', 'downloading', 'downloaded', 'download-error'].includes(status)) {
     assert.equal(snapshot.availableVersion, availableVersion)
     assert.equal(snapshot.releaseNotes, releaseNotes)
+    assert.equal(snapshot.verification, signed ? 'signed-release' : 'metadata-only')
   } else {
     assert.equal(snapshot.availableVersion, null)
     assert.equal(snapshot.releaseNotes, null)
+    assert.equal(snapshot.verification, null)
   }
   if (status === 'downloaded') {
     assert.equal(snapshot.downloadedBytes, artifactBytes.length)
@@ -118,12 +172,15 @@ async function resizeRendererViewport(page, width, height) {
   return async () => { await page.setViewportSize(previous) }
 }
 
-export async function createApplicationUpdateCheckSmoke({ mode, port = 0, root, currentVersion }) {
-  assert.ok(mode === 'feed' || mode === 'unavailable' || mode === 'download')
+export async function createApplicationUpdateCheckSmoke({ mode, port = 0, root, currentVersion, releaseFixturesPath }) {
+  assert.ok(mode === 'feed' || mode === 'unavailable' || mode === 'download' || mode === 'signed')
   assert.ok(Number.isSafeInteger(port) && port >= 0 && port <= 65535)
   assert.equal(currentVersion, '0.1.0-dev.1')
+  assert.ok(mode === 'signed' || releaseFixturesPath === undefined)
+  const releaseFixtures = mode === 'signed' ? await readReleaseFixtures(releaseFixturesPath) : null
   const requests = []
   const checks = []
+  const violations = []
   const viewportEvidence = { kind: 'packaged renderer CSS viewport emulation', width: 900, height: 620, nativeWindowResizeQualified: false }
   const active = new Set()
   let feedMode = 'current'
@@ -137,6 +194,7 @@ export async function createApplicationUpdateCheckSmoke({ mode, port = 0, root, 
   let afterChecksMetadataCount = null
   let projectBefore = null
   let projectAfter = null
+  let releaseFixturesAfter = null
 
   function metadata() {
     const version = feedMode === 'current' ? currentVersion : availableVersion
@@ -146,7 +204,9 @@ export async function createApplicationUpdateCheckSmoke({ mode, port = 0, root, 
       `  - url: ${artifactName}`,
       `    sha512: ${createHash('sha512').update(artifactBytes).digest('base64')}`,
       `    size: ${artifactBytes.length}`,
-      `releaseNotes: ${JSON.stringify(releaseNotes)}`,
+      `releaseNotes: ${JSON.stringify(feedMode === 'notes-changed' ? `${releaseNotes}\nUnsigned notes mutation.` : releaseNotes)}`,
+      ...(releaseFixtures ? [`imagegenStudioRelease: ${JSON.stringify(releaseFixtures.envelopes[feedMode])}`] : []),
+      ...(feedMode === 'unsigned-policy' ? ['stagingPercentage: 100'] : []),
       'releaseDate: "2026-11-15T00:00:00.000Z"',
       '',
     ].join('\n')
@@ -281,7 +341,7 @@ export async function createApplicationUpdateCheckSmoke({ mode, port = 0, root, 
         return snapshot.status
       })
       .toBe(status)
-    assertSnapshot(snapshot, status, currentVersion)
+    assertSnapshot(snapshot, status, currentVersion, mode === 'signed')
     return snapshot
   }
 
@@ -294,13 +354,13 @@ export async function createApplicationUpdateCheckSmoke({ mode, port = 0, root, 
     // Retain the observed terminal state before checking it. A removed verifier
     // must fail on its actual false success, not on waiting for an error forever.
     record(name, state, { ...extra, metadataRequests: metadataCount(), artifactRequests: artifactCount() })
-    assertSnapshot(state, expected, currentVersion)
+    assertSnapshot(state, expected, currentVersion, mode === 'signed')
     return state
   }
 
   async function assertStartup(page) {
     const snapshot = await readStatus(page)
-    assertSnapshot(snapshot, mode === 'unavailable' ? 'unavailable' : 'idle', currentVersion)
+    assertSnapshot(snapshot, mode === 'unavailable' ? 'unavailable' : 'idle', currentVersion, mode === 'signed')
     assert.equal(
       requests.length,
       0,
@@ -371,9 +431,52 @@ export async function createApplicationUpdateCheckSmoke({ mode, port = 0, root, 
     assert.equal(artifactCount(), 0, 'Checking available metadata must not download the artifact.')
     const wrong = await page.evaluate(() => globalThis.api.applicationUpdates.download('9.9.9'))
     assert.equal(wrong.ok, true, JSON.stringify(wrong))
-    assertSnapshot(wrong.value, 'available', currentVersion)
+    assertSnapshot(wrong.value, 'available', currentVersion, mode === 'signed')
     assert.equal(artifactCount(), 0)
     record('Available check and stale-version Download preserve explicit transfer intent', state)
+
+    if (mode === 'signed') {
+      for (const fault of signedFaults) {
+        feedMode = fault
+        const beforeMetadata = metadataCount()
+        const beforeArtifacts = artifactCount()
+        await dialog.getByRole('button', { name: 'Check again', exact: true }).click()
+        await expect.poll(metadataCount).toBe(beforeMetadata + 1)
+        let observed
+        await expect.poll(async () => {
+          observed = await readStatus(page)
+          return observed.status
+        }).toMatch(/^(error|available|up-to-date)$/)
+        record(`Observed signed metadata admission for ${fault}`, observed, {
+          expectedStatus: 'error',
+          metadataRequests: metadataCount(),
+          artifactRequests: artifactCount(),
+          falseAcceptance: observed.status !== 'error',
+        })
+        // Retain a false acceptance and continue through two normal lifetimes.
+        // Never invoke Download for rejected or falsely accepted fault metadata.
+        if (observed.status !== 'error') {
+          violations.push({ fault, expectedStatus: 'error', observedStatus: observed.status })
+        } else {
+          assertSnapshot(observed, 'error', currentVersion, true)
+          await expect(dialog).toContainText('Could not check for updates. Check your connection and try again.')
+          const refused = await page.evaluate((version) => globalThis.api.applicationUpdates.download(version), availableVersion)
+          assert.equal(refused.ok, true)
+          assertSnapshot(refused.value, 'error', currentVersion, true)
+        }
+        assert.equal(metadataCount(), beforeMetadata + 1)
+        assert.equal(artifactCount(), beforeArtifacts, 'Signed metadata admission must precede every artifact request.')
+      }
+      feedMode = 'available'
+      await dialog.getByRole('button', { name: 'Check again', exact: true }).click()
+      state = await terminal(page, 'available')
+      assert.equal(metadataCount(), 9)
+      assert.equal(artifactCount(), 0)
+      await expect(dialog).toContainText('Publisher signature verified.')
+      await expect(dialog).toContainText('Compatibility declaration accepted. The image engine will be checked after restart.')
+      record('Explicit healthy signed metadata check restores the selected release after admission faults', state)
+    }
+    const beforeTransferMetadata = metadataCount()
 
     artifactMode = 'corrupt'
     await dialog.getByRole('button', { name: 'Download', exact: true }).click()
@@ -389,7 +492,7 @@ export async function createApplicationUpdateCheckSmoke({ mode, port = 0, root, 
     await expect.poll(() => heldArtifact !== null).toBe(true)
     await expect.poll(async () => (await readStatus(page)).downloadedBytes).toBeGreaterThan(0)
     state = await readStatus(page)
-    assertSnapshot(state, 'downloading', currentVersion)
+    assertSnapshot(state, 'downloading', currentVersion, mode === 'signed')
     assert.ok(state.downloadedBytes < state.totalBytes)
     await expect(dialog).toContainText('Downloading and verifying…')
     await expect(dialog.getByRole('button', { name: 'Check again', exact: true })).toBeDisabled()
@@ -403,12 +506,12 @@ export async function createApplicationUpdateCheckSmoke({ mode, port = 0, root, 
     })
     const whileDownloading = await page.evaluate(() => globalThis.api.applicationUpdates.check())
     assert.equal(whileDownloading.ok, true, JSON.stringify(whileDownloading))
-    assertSnapshot(whileDownloading.value, 'downloading', currentVersion)
-    assert.equal(metadataCount(), 2, 'Check while downloading must not replace selected native metadata.')
+    assertSnapshot(whileDownloading.value, 'downloading', currentVersion, mode === 'signed')
+    assert.equal(metadataCount(), beforeTransferMetadata, 'Check while downloading must not replace selected native metadata.')
     await closeDialog(dialog)
     dialog = await openDialog(page)
     await expect(dialog).toContainText('Downloading and verifying…')
-    assert.equal(metadataCount(), 2)
+    assert.equal(metadataCount(), beforeTransferMetadata)
     assert.equal(artifactCount(), heldRequestCount, 'Duplicate Download must share the accepted transfer.')
     const restore = await resizeRendererViewport(page, 900, 620)
     try {
@@ -417,7 +520,7 @@ export async function createApplicationUpdateCheckSmoke({ mode, port = 0, root, 
     } finally {
       await restore()
     }
-    record('Real native byte progress survives dismissal/reopen and duplicate Download/check calls', state)
+    record('Real native byte progress survives dismissal/reopen and duplicate Download/check calls', state, { beforeTransferMetadata })
     artifactMode = 'healthy'
     releaseHeld()
     state = await settledDownload(page, 'downloaded', 'Observed held native transfer completion')
@@ -427,7 +530,7 @@ export async function createApplicationUpdateCheckSmoke({ mode, port = 0, root, 
     })
     for (const result of duplicates) {
       assert.equal(result.ok, true, JSON.stringify(result))
-      assertSnapshot(result.value, 'downloaded', currentVersion)
+      assertSnapshot(result.value, 'downloaded', currentVersion, mode === 'signed')
     }
     await expect(dialog).toContainText('Download completed')
     await expect(dialog).toContainText('Installation is not available in this build.')
@@ -473,7 +576,7 @@ export async function createApplicationUpdateCheckSmoke({ mode, port = 0, root, 
         snapshot,
       )
       await closeDialog(dialog)
-    } else if (mode === 'download') {
+    } else if (mode === 'download' || mode === 'signed') {
       await runDownloads(page, dialog)
     } else {
       let snapshot = await terminal(page, 'up-to-date')
@@ -594,7 +697,7 @@ export async function createApplicationUpdateCheckSmoke({ mode, port = 0, root, 
 
   async function assertRestart(page) {
     const snapshot = await readStatus(page)
-    assertSnapshot(snapshot, mode === 'unavailable' ? 'unavailable' : 'idle', currentVersion)
+    assertSnapshot(snapshot, mode === 'unavailable' ? 'unavailable' : 'idle', currentVersion, mode === 'signed')
     assert.equal(
       metadataCount(),
       afterChecksMetadataCount,
@@ -602,7 +705,7 @@ export async function createApplicationUpdateCheckSmoke({ mode, port = 0, root, 
     )
     record('New actual app lifetime resets transient status without a network check', snapshot)
     assert.equal(artifactCount(), afterChecksArtifactCount, 'Ordinary close/restart must not download or install cached bytes.')
-    if (mode === 'download') {
+    if (mode === 'download' || mode === 'signed') {
       const dialog = await openDialog(page)
       await terminal(page, 'available')
       assert.equal(metadataCount(), afterChecksMetadataCount + 1)
@@ -626,19 +729,24 @@ export async function createApplicationUpdateCheckSmoke({ mode, port = 0, root, 
       controlledTransportFault:
         'This fixture destroys its own HTTP socket; host-wide offline is not qualified.',
       metadataRequests: metadataCount(),
-      explicitCheckSequences: mode === 'feed' ? 9 : mode === 'download' ? 3 : 2,
+      explicitCheckSequences: mode === 'signed' ? 10 : mode === 'feed' ? 9 : mode === 'download' ? 3 : 2,
       artifactRequests: requests.filter((entry) => entry.kind === 'artifact').length,
       otherRequests: requests.filter((entry) => entry.kind === 'other').length,
       activeResponses: active.size,
       serverClosed,
       requests: structuredClone(requests),
       checks: structuredClone(checks),
+      violations: structuredClone(violations),
       projectBefore,
       projectAfter,
       cacheRestoration,
+      releaseFixturesBefore: releaseFixtures?.evidence ?? null,
+      releaseFixturesAfter,
       artifactFixture: { sizeBytes: artifactBytes.length, sha256: sha(artifactBytes), installable: false },
       scope:
-        mode === 'download'
+        mode === 'signed'
+          ? 'Real packaged Main/preload/UI and native signed release admission, exact compatibility checks, download progress and saved-cache integrity on controlled non-installable bytes. Fixture signing identity is qualification-only. No installer, shipping publisher or binary compatibility qualification.'
+          : mode === 'download'
           ? 'Real packaged Main/preload/UI/native download, progress and saved-cache integrity on controlled non-installable bytes. No Main mocks, installer, publisher authenticity or binary compatibility qualification.'
           : 'Real packaged Main/preload/UI and electron-updater metadata requests to a controlled local feed. No Main service mocks, automatic downloads, installer, shipping trust or binary-update qualification.',
     }
@@ -658,6 +766,10 @@ export async function createApplicationUpdateCheckSmoke({ mode, port = 0, root, 
       })
     }
     await stopPromise
+    if (releaseFixtures && releaseFixturesAfter === null) {
+      releaseFixturesAfter = (await readReleaseFixtures(releaseFixturesPath)).evidence
+      assert.deepEqual(releaseFixturesAfter, releaseFixtures.evidence, 'Signed fixture source bytes must remain unchanged.')
+    }
   }
   function finalize() {
     assert.equal(
@@ -668,11 +780,17 @@ export async function createApplicationUpdateCheckSmoke({ mode, port = 0, root, 
     assert.equal(active.size, 0)
     assert.equal(metadataCount(), afterChecksMetadataCount)
     assert.equal(artifactCount(), afterChecksArtifactCount)
-    if (mode !== 'download') {
+    if (mode !== 'download' && mode !== 'signed') {
       assert.equal(artifactCount(), 0, 'Manual application update checks must never request an update artifact.')
     } else {
       assert.ok(cacheRestoration)
       assert.equal(checks.some((entry) => entry.name.includes('cached-byte mutation')), true)
+    }
+    if (mode === 'signed') {
+      assert.equal(metadataCount(), 10)
+      assert.equal(artifactCount(), 3)
+      assert.deepEqual(releaseFixturesAfter, releaseFixtures.evidence)
+      assert.deepEqual(violations, [], 'Signed release admission falsely accepted controlled metadata faults.')
     }
     assert.equal(requests.filter((entry) => entry.kind === 'other').length, 0)
     assert.equal(

@@ -28,6 +28,7 @@ export interface ApplicationUpdateSnapshot {
   releaseNotes: string | null
   status: ApplicationUpdateStatus
   totalBytes: number | null
+  verification: 'metadata-only' | 'signed-release' | null
 }
 
 const STATUS_VALUES: ReadonlySet<string> = new Set(APPLICATION_UPDATE_STATUSES)
@@ -39,6 +40,7 @@ const FIELDS = [
   'releaseNotes',
   'status',
   'totalBytes',
+  'verification',
 ] as const
 const numeric = String.raw`(?:0|[1-9]\d*)`
 const prerelease = String.raw`(?:0|[1-9]\d*|\d*[a-z-][\da-z-]*)`
@@ -101,10 +103,14 @@ export function isApplicationUpdateSnapshot(value: unknown): value is Applicatio
     }
     if (!['available', 'download-error', 'downloaded', 'downloading'].includes(status)) {
       return (
+        snapshot['verification'] === null &&
         snapshot['availableVersion'] === null &&
         snapshot['releaseNotes'] === null &&
         snapshot['notesTruncated'] === false
       )
+    }
+    if (!['metadata-only', 'signed-release'].includes(snapshot['verification'] as string)) {
+      return false
     }
     if (
       !isApplicationUpdateVersion(snapshot['availableVersion']) ||

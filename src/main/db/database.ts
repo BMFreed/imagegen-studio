@@ -1,7 +1,7 @@
 import type { Stats } from 'node:fs'
 
 import Database from 'better-sqlite3'
-import { Kysely, SqliteDialect } from 'kysely'
+import { Kysely, sql, SqliteDialect } from 'kysely'
 import { createHash } from 'node:crypto'
 import {
   closeSync,
@@ -25,6 +25,19 @@ export interface AppDatabase {
   close: () => Promise<void>
   db: Kysely<DB>
   filePath: string
+}
+
+/** Same applied name/hash inventory used by migration admission, on the existing connection. */
+export async function readAppliedSqlMigrations(
+  database: Pick<AppDatabase, 'db'>,
+): Promise<readonly Readonly<{ name: string; sha256: string }>[]> {
+  const result = await sql<{
+    name: string
+    sha256: string
+  }>`SELECT name, sha256 FROM schema_migrations ORDER BY name`.execute(database.db)
+  return Object.freeze(
+    result.rows.map((row) => Object.freeze({ name: row.name, sha256: row.sha256 })),
+  )
 }
 
 export function openAppDatabase(dataRoot: string, migrationsDir: string): AppDatabase {

@@ -12,19 +12,22 @@ import {
   isApplicationUpdateVersion,
 } from '../../shared/application-updates.js'
 
+import type { VerifiedApplicationArtifact } from './electron-update-checker.js'
+
 export interface ApplicationUpdateCheckResult {
   isUpdateAvailable: boolean
   updateInfo: {
     releaseNotes?: string | { note: string | null; version: string }[] | null
     version: string
   }
+  verification?: 'metadata-only' | 'signed-release'
 }
 
 export interface ApplicationUpdateChecker {
   checkForUpdates: () => Promise<ApplicationUpdateCheckResult | null>
   downloadUpdate?: (
     onProgress: (progress: { downloadedBytes: number; totalBytes: number }) => void,
-  ) => Promise<{ sizeBytes: number }>
+  ) => Promise<{ sizeBytes: number; verifiedArtifact?: VerifiedApplicationArtifact }>
 }
 
 export class ApplicationUpdateService {
@@ -36,11 +39,13 @@ export class ApplicationUpdateService {
     version: string
   } | null = null
   private snapshot: ApplicationUpdateSnapshot
+  private verifiedArtifact: VerifiedApplicationArtifact | null = null
 
   constructor(
     private readonly currentVersion: string,
     private readonly configured: boolean,
-    private readonly createChecker: () => ApplicationUpdateChecker,
+    private readonly createChecker: () =>
+      ApplicationUpdateChecker | Promise<ApplicationUpdateChecker>,
   ) {
     if (!isApplicationUpdateVersion(currentVersion)) {
       throw new Error('Invalid application version.')
@@ -59,11 +64,12 @@ export class ApplicationUpdateService {
       return structuredClone(await this.pendingCheck)
     }
     this.snapshot = this.empty('checking')
+    this.verifiedArtifact = null
     // Store the complete projection promise before a synchronous factory/check
     // failure can settle. Native AppUpdater retains its own check coalescing.
     const operation = Promise.resolve()
       .then(async () => {
-        this.checker ??= this.createChecker()
+        this.checker ??= await this.createChecker()
         const result = await this.checker.checkForUpdates()
         if (
           !result ||
@@ -83,6 +89,7 @@ export class ApplicationUpdateService {
           ...notes,
           status: 'available',
           totalBytes: null,
+          verification: result.verification ?? 'metadata-only',
         }
         if (!isApplicationUpdateSnapshot(snapshot)) {
           throw new Error('Invalid application update projection.')
@@ -119,6 +126,7 @@ export class ApplicationUpdateService {
     }
 
     const selected = this.getStatus()
+    this.verifiedArtifact = null
     const epoch = {}
     this.snapshot = {
       ...selected,
@@ -155,6 +163,18 @@ export class ApplicationUpdateService {
         if (!result || !Number.isSafeInteger(result.sizeBytes) || result.sizeBytes <= 0) {
           throw new Error('Invalid application download result.')
         }
+        if (selected.verification === 'signed-release') {
+          const artifact = result.verifiedArtifact
+          if (
+            !artifact ||
+            artifact.manifest.version !== selected.availableVersion ||
+            artifact.manifest.artifact.sizeBytes !== result.sizeBytes
+          ) {
+            throw new Error('The application release artifact is not verified.')
+          }
+          await artifact.verifyCompleteSnapshot()
+          this.verifiedArtifact = artifact
+        }
         return {
           ...selected,
           downloadedBytes: result.sizeBytes,
@@ -183,6 +203,41 @@ export class ApplicationUpdateService {
     return structuredClone(this.snapshot)
   }
 
+  /** Main-private gate; public downloaded snapshots never grant installer authority. */
+  async prepareVerifiedArtifact(expectedVersion: string): Promise<VerifiedApplicationArtifact> {
+    const artifact = this.verifiedArtifact
+    const current = () =>
+      artifact !== null &&
+      artifact === this.verifiedArtifact &&
+      !this.pendingCheck &&
+      !this.pendingDownload &&
+      this.snapshot.status === 'downloaded' &&
+      this.snapshot.verification === 'signed-release' &&
+      this.snapshot.availableVersion === expectedVersion &&
+      artifact.manifest.version === expectedVersion
+    if (!current() || !artifact) {
+      throw new Error('Download and verify the application release again before installation.')
+    }
+    try {
+      await artifact.verifyCompleteSnapshot()
+      if (!current()) {
+        throw new Error('The application release selection changed.')
+      }
+      return artifact
+    } catch {
+      if (this.verifiedArtifact === artifact) {
+        this.verifiedArtifact = null
+        this.snapshot = {
+          ...this.snapshot,
+          downloadedBytes: null,
+          status: 'download-error',
+          totalBytes: null,
+        }
+      }
+      throw new Error('The application release must be downloaded and verified again.')
+    }
+  }
+
   private empty(status: ApplicationUpdateSnapshot['status']): ApplicationUpdateSnapshot {
     return {
       availableVersion: null,
@@ -192,6 +247,7 @@ export class ApplicationUpdateService {
       releaseNotes: null,
       status,
       totalBytes: null,
+      verification: null,
     }
   }
 }

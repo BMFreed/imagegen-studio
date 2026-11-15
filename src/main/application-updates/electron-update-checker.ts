@@ -4,6 +4,7 @@
  * returned files because its same-process cache bypasses hashing.
  */
 import type { AppUpdater } from 'electron-updater'
+import type { UpdateInfoAndProvider } from 'electron-updater/out/AppUpdater.js'
 import type { DownloadedUpdateHelper } from 'electron-updater/out/DownloadedUpdateHelper.js'
 
 import electronUpdater from 'electron-updater'
@@ -15,37 +16,185 @@ import path from 'node:path'
 
 import type { ApplicationUpdateChecker } from './application-update-service.js'
 
+import { type ApplicationReleaseTrust, verifyApplicationRelease } from './application-release.js'
+
 type Progress = { downloadedBytes: number; totalBytes: number }
 const fileFlags = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
 const identity = (s: BigIntStats) => [s.dev, s.ino, s.mode, s.size, s.mtimeNs, s.ctimeNs].join(':')
+const maxEnvelopeBytes = 1024 * 1024
+/** Main-private capability. Never serialize this file/closure into the renderer snapshot. */
+export interface VerifiedApplicationArtifact {
+  readonly manifest: Manifest
+  readonly path: string
+  verifyCompleteSnapshot: () => Promise<void>
+}
+type Manifest = ReturnType<typeof verifyApplicationRelease>
+type FileSnapshot = Readonly<{ file: string; root: string }>
+type Descriptor = Readonly<{
+  filename: string
+  href: string
+  sha512: string
+  sizeBytes: number
+  version: string
+}>
+
+type SignedSelection = Readonly<{
+  descriptor: Descriptor
+  envelope: string
+  manifest: Manifest
+  source: UpdateInfoAndProvider
+}>
+
+type VerifiedDownload = {
+  sizeBytes: number
+  verifiedArtifact?: VerifiedApplicationArtifact
+}
 
 /** Native transfer is unchanged. No download completion grants installer authority. */
 export class VerifiedAppImageUpdater extends electronUpdater.AppImageUpdater {
-  async downloadVerified(onProgress: (progress: Progress) => void): Promise<{ sizeBytes: number }> {
+  private artifactEpoch = {}
+  private authenticatedCheck = false
+  private checkOperation: ReturnType<AppUpdater['checkForUpdates']> | null = null
+  private downloadOperation: Promise<VerifiedDownload> | null = null
+  private readonly releaseTrust: ApplicationReleaseTrust | null
+  private signedSelection: SignedSelection | null = null
+
+  constructor(
+    options?: ConstructorParameters<typeof electronUpdater.AppImageUpdater>[0],
+    app?: ConstructorParameters<typeof electronUpdater.AppImageUpdater>[1],
+    trust: ApplicationReleaseTrust | null = null,
+  ) {
+    super(options, app)
+    this.releaseTrust =
+      trust === null
+        ? null
+        : Object.freeze({
+            compatibility: Object.freeze({
+              ...trust.compatibility,
+              databaseMigrations: Object.freeze(
+                trust.compatibility.databaseMigrations.map((entry) => Object.freeze({ ...entry })),
+              ),
+            }),
+            trustedKeys: Object.freeze({ ...trust.trustedKeys }),
+          })
+  }
+
+  override checkForUpdates(): ReturnType<AppUpdater['checkForUpdates']> {
+    if (this.checkOperation) {
+      return this.checkOperation
+    }
+    this.artifactEpoch = {}
+    this.authenticatedCheck = false
+    this.signedSelection = null
+    const operation = Promise.resolve()
+      .then(() => super.checkForUpdates())
+      .then((result) => {
+        if (!result?.isUpdateAvailable) {
+          this.signedSelection = null
+        }
+        return result
+      })
+      .catch((error: unknown) => {
+        this.authenticatedCheck = false
+        this.signedSelection = null
+        throw error
+      })
+      .finally(() => {
+        this.checkOperation = null
+      })
+    this.checkOperation = operation
+    return operation
+  }
+
+  downloadVerified(onProgress: (progress: Progress) => void): Promise<VerifiedDownload> {
+    if (this.downloadOperation) {
+      return this.downloadOperation
+    }
+    this.artifactEpoch = {}
+    const epoch = this.artifactEpoch
+    const operation = Promise.resolve()
+      .then(() => this.downloadVerifiedOne(onProgress, epoch))
+      .finally(() => {
+        this.downloadOperation = null
+      })
+    this.downloadOperation = operation
+    return operation
+  }
+
+  getVerification(): 'metadata-only' | 'signed-release' {
+    return this.authenticatedCheck ? 'signed-release' : 'metadata-only'
+  }
+
+  /** Authenticate the actual provider result before native availability/staging evaluation. */
+  protected override async getUpdateInfoAndProvider(): Promise<UpdateInfoAndProvider> {
+    const source = await super.getUpdateInfoAndProvider()
+    this.signedSelection = this.releaseTrust ? this.authenticateSelection(source) : null
+    this.authenticatedCheck = this.releaseTrust !== null
+    return source
+  }
+
+  private assertCurrentSelection(signed: SignedSelection): void {
+    need(
+      this.signedSelection === signed && this.updateInfoAndProvider === signed.source,
+      'Application release selection was retired.',
+    )
+    const current = this.authenticateSelection(signed.source)
+    need(
+      current.envelope === signed.envelope &&
+        Object.keys(signed.descriptor).every(
+          (key) =>
+            current.descriptor[key as keyof Descriptor] ===
+            signed.descriptor[key as keyof Descriptor],
+        ),
+      'Application release selection changed.',
+    )
+  }
+
+  private authenticateSelection(source: UpdateInfoAndProvider): SignedSelection {
+    need(this.releaseTrust, 'Application release trust is unavailable.')
+    const info = source.info as unknown as Record<string, unknown>
+    // These native selection policies are not part of the finite signed contract.
+    need(
+      !['stagingPercentage', 'minimumSystemVersion', 'packages'].some((key) =>
+        Object.hasOwn(info, key),
+      ),
+      'Unsupported signed application release policy.',
+    )
+    const envelope = info['imagegenStudioRelease']
+    need(
+      typeof envelope === 'string' &&
+        Buffer.byteLength(envelope, 'utf8') > 0 &&
+        Buffer.byteLength(envelope, 'utf8') <= maxEnvelopeBytes,
+      'A signed application release is required.',
+    )
+    const descriptor = selectDescriptor(source, true)
+    const manifest = verifyApplicationRelease(
+      Buffer.from(envelope, 'utf8'),
+      this.releaseTrust,
+      {
+        filename: descriptor.filename,
+        sha512: descriptor.sha512,
+        sizeBytes: descriptor.sizeBytes,
+        version: descriptor.version,
+      },
+      source.info.releaseNotes,
+    )
+    return Object.freeze({ descriptor, envelope, manifest, source })
+  }
+
+  private async downloadVerifiedOne(
+    onProgress: (progress: Progress) => void,
+    epoch: object,
+  ): Promise<VerifiedDownload> {
     const source = this.updateInfoAndProvider
     need(source, 'No current application update is available.')
-    const files = source.provider.resolveFiles(source.info)
-    const selected = findFile(files, 'AppImage', ['rpm', 'deb', 'pacman'])
-    const candidates = files.filter((file) => file.url.pathname.endsWith('.AppImage'))
-    need(
-      selected && candidates.length === 1 && candidates[0] === selected,
-      'A single AppImage descriptor is required.',
-    )
-    const name = path.basename(decodeURIComponent(selected.url.pathname))
-    const sha512 = selected.info.sha512
-    const sizeBytes = selected.info.size
-    need(
-      name.endsWith('.AppImage') &&
-        !name.includes('\\') &&
-        !name.includes('\0') &&
-        typeof sha512 === 'string' &&
-        Buffer.from(sha512, 'base64').length === 64 &&
-        Buffer.from(sha512, 'base64').toString('base64') === sha512 &&
-        typeof sizeBytes === 'number' &&
-        Number.isSafeInteger(sizeBytes) &&
-        sizeBytes > 0,
-      'Invalid AppImage integrity descriptor.',
-    )
+    const selected = selectDescriptor(source)
+    const { filename: name, sha512, sizeBytes } = selected
+    const signed = this.signedSelection
+    if (this.releaseTrust) {
+      need(signed, 'A signed application release check is required.')
+      this.assertCurrentSelection(signed)
+    }
     // Capture values, rather than retaining mutable provider metadata across transfer.
     const expected = Object.freeze({ name, sha512, sizeBytes })
     // Native cache validation can clear pending before returning a file. Admit
@@ -63,8 +212,31 @@ export class VerifiedAppImageUpdater extends electronUpdater.AppImageUpdater {
         need(returned.length === 1, 'Unexpected application download result.')
         const filename = path.join(pending, expected.name)
         need(returned[0] === filename, 'Unexpected application download path.')
-        await verifyDownloadedFile(filename, pending, expected)
-        return { sizeBytes: expected.sizeBytes }
+        const snapshot = await verifyDownloadedFile(filename, pending, expected)
+        need(this.artifactEpoch === epoch, 'Application download was retired.')
+        if (!signed) {
+          return { sizeBytes: expected.sizeBytes }
+        }
+        this.assertCurrentSelection(signed)
+        const artifact: VerifiedApplicationArtifact = Object.freeze({
+          manifest: signed.manifest,
+          path: filename,
+          verifyCompleteSnapshot: async () => {
+            try {
+              need(this.artifactEpoch === epoch, 'Application artifact was retired.')
+              this.assertCurrentSelection(signed)
+              await verifyDownloadedFile(filename, pending, expected, snapshot)
+              need(this.artifactEpoch === epoch, 'Application artifact was retired.')
+              this.assertCurrentSelection(signed)
+            } catch (error) {
+              if (this.artifactEpoch === epoch) {
+                this.artifactEpoch = {}
+              }
+              throw error
+            }
+          },
+        })
+        return { sizeBytes: expected.sizeBytes, verifiedArtifact: artifact }
       } catch (error) {
         // Reuse native pending-cache invalidation so a later explicit retry can
         // download fresh bytes after the same-process cache returned corruption.
@@ -111,7 +283,18 @@ export function createElectronUpdateChecker(updater: AppUpdater): ApplicationUpd
   // that rejection visibly; EventEmitter must not turn it into process death.
   updater.on('error', () => {})
   return {
-    checkForUpdates: () => updater.checkForUpdates(),
+    checkForUpdates: async () => {
+      const result = await updater.checkForUpdates()
+      return result === null
+        ? null
+        : {
+            ...result,
+            verification:
+              updater instanceof VerifiedAppImageUpdater
+                ? updater.getVerification()
+                : 'metadata-only',
+          }
+    },
     downloadUpdate: async (onProgress: (progress: Progress) => void) => {
       need(updater instanceof VerifiedAppImageUpdater, 'Application download is unavailable.')
       return updater.downloadVerified(onProgress)
@@ -124,12 +307,17 @@ async function verifyDownloadedFile(
   filename: string,
   directory: string,
   expected: { sha512: string; sizeBytes: number },
-): Promise<void> {
+  original?: FileSnapshot,
+): Promise<FileSnapshot> {
   const root = await canonicalDirectory(directory)
   const before = await fs.lstat(filename, { bigint: true })
   need(
     before.isFile() && !before.isSymbolicLink() && before.size === BigInt(expected.sizeBytes),
     'Application download has an invalid type or size.',
+  )
+  need(
+    !original || (identity(before) === original.file && identity(root) === original.root),
+    'Application download snapshot changed.',
   )
   const handle = await fs.open(filename, fileFlags)
   try {
@@ -154,9 +342,48 @@ async function verifyDownloadedFile(
         identity(await canonicalDirectory(directory)) === identity(root),
       'Application download integrity verification failed.',
     )
+    return Object.freeze({ file: identity(before), root: identity(root) })
   } finally {
     await handle.close()
   }
+}
+
+function selectDescriptor(source: UpdateInfoAndProvider, signedPolicy = false): Descriptor {
+  const files = source.provider.resolveFiles(source.info)
+  const selected = findFile(files, 'AppImage', ['rpm', 'deb', 'pacman'])
+  const candidates = files.filter((file) => file.url.pathname.endsWith('.AppImage'))
+  need(
+    selected && candidates.length === 1 && candidates[0] === selected,
+    'A single AppImage descriptor is required.',
+  )
+  // This auxiliary range/buffer input is not signed by the finite release profile.
+  // Keep legacy native differential behavior and its disable flag unchanged.
+  need(
+    !signedPolicy || !Object.hasOwn(selected.info, 'blockMapSize'),
+    'Unsupported signed application release policy.',
+  )
+  const filename = path.basename(decodeURIComponent(selected.url.pathname))
+  const sha512 = selected.info.sha512
+  const sizeBytes = selected.info.size
+  need(
+    filename.endsWith('.AppImage') &&
+      !filename.includes('\\') &&
+      !filename.includes('\0') &&
+      typeof sha512 === 'string' &&
+      Buffer.from(sha512, 'base64').length === 64 &&
+      Buffer.from(sha512, 'base64').toString('base64') === sha512 &&
+      typeof sizeBytes === 'number' &&
+      Number.isSafeInteger(sizeBytes) &&
+      sizeBytes > 0,
+    'Invalid AppImage integrity descriptor.',
+  )
+  return Object.freeze({
+    filename,
+    href: selected.url.href,
+    sha512,
+    sizeBytes,
+    version: source.info.version,
+  })
 }
 
 async function canonicalDirectory(directory: string): Promise<BigIntStats> {

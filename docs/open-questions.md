@@ -1,6 +1,20 @@
 # Open Questions
 
-## Current model installation drain on app close
+## Current signed application release declarations
+
+[Application release trust](./engineering/phase-5-application-release-trust-research.md)
+now supplies the finite signed app-descriptor/notes and compatibility-declaration
+consumer plus an offline producer. Main checks current applied migration name/hash
+membership and actual schema/protocol constants; this does not execute migrations
+or prove installed engine readiness. A bundled public keyring is separate from
+feed configuration; missing trust keeps metadata-only authority and invalid
+existing trust refuses. Root confirms 190 targeted and 323 browser PASS, typecheck/build and
+partitioned full lint PASS. Actual fused packages give eight normal physical exits
+and original GREEN / signature-bypass RED / original GREEN. Real shipping publisher,
+Install preview/replacement/recovery and final release/MVP acceptance remain open.
+Promise statuses unchanged.
+
+## Previous model installation drain on app close
 
 [Model installer shutdown](./engineering/phase-5-model-install-shutdown-research.md) adapts Invoke stop/join to the existing
 coordinator and app close barrier. Main describes active resource work before
@@ -376,9 +390,11 @@ regional integrations, перечисленные в roadmap; их не нужн
 - По результатам Linux/NVIDIA packaging и inference tests установить минимальные
   driver/CUDA/VRAM требования; это release qualification, не выбор другого
   inference backend.
-- До релизной фазы выбрать проверяемый Linux app package/update channel:
-  trusted manifest, версия/совместимость, integrity/signature verification,
-  handoff системному installer/updater и поведение при interrupted update.
+- Завершить проверяемую Linux app delivery после локального AppImage и
+  [signed release consumer](./engineering/phase-5-application-release-trust-research.md):
+  shipping publisher/key distribution, installer handoff и interrupted-update
+  recovery. Подписанная compatibility declaration ещё не доказывает запуск
+  нового binary, SQL migration, worker handshake или installed engine readiness.
   Продуктовое решение о встроенной проверке и установке уже принято; это
   инженерный контракт доставки, отдельный от Python runtime update. User flow
   описан в [Application Updates](./features/application-updates.md).

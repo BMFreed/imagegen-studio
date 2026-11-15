@@ -142,8 +142,13 @@ function close() {
           title="Download completed"
           type="success"
         >
-          The saved file matches the update metadata checksum. Publisher authenticity and
-          installation have not been verified.
+          The saved file matches the update metadata checksum.
+          <template v-if="snapshot.verification === 'signed-release'">
+            Installation has not been verified.
+          </template>
+          <template v-else>
+            Publisher authenticity and installation have not been verified.
+          </template>
         </NAlert>
         <NAlert
           v-else-if="snapshot.status === 'download-error'"
@@ -156,6 +161,17 @@ function close() {
         <NAlert v-else key="n-alert-6" title="Update available" type="info">
           A new version is available.
         </NAlert>
+        <template
+          v-if="
+            snapshot.verification === 'signed-release' &&
+            (snapshot.status === 'available' || snapshot.status === 'downloaded')
+          "
+        >
+          <p class="updates-detail">Publisher signature verified.</p>
+          <p class="updates-detail">
+            Compatibility declaration accepted. The image engine will be checked after restart.
+          </p>
+        </template>
         <section v-if="snapshot.releaseNotes !== null" class="updates-notes-section">
           <h3>Release notes</h3>
           <div aria-label="Release notes" class="updates-notes" role="region" tabindex="0">
