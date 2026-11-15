@@ -165,6 +165,19 @@ transaction deleting valid shared weights on later runtime failure. Public
 provider/preview IPC/UI and reopened aggregate auxiliary health remain future
 consumers; default Setup stays unavailable.
 
+[Native engine qualification](../engineering/phase-5-native-engine-qualification-research.md)
+adds the explicit `full-engine` qualifier profile. It accepts original signed
+transport, external public keyring/app version, bound wheelhouse proof and exact
+local LaMa source, adopts the existing extractor's selection without re-signing,
+and uses the production assembler/workers/engine controller. Actual Install,
+new-slot Repair and post-activation refusal/rollback are exercised on one host;
+LaMa has an installed CUDA 64² execution check through its existing worker owner.
+The auxiliary network is a controlled local copy port, not a public delivery
+qualification. The original manager startup failure remains generic; a separate
+same-slot CUDA-hidden diagnostic supplies code 78 and the concrete unavailable
+reason. This does not qualify public Setup, shipping trust, upgrade/distributable
+compatibility, reopened aggregate health or checkpoint image/visual acceptance.
+
 [Internal offline installation](../engineering/phase-4-runtime-offline-install-research.md)
 добавляет Main-owned signed inventory, exact offline assembly в новых final slots,
 две qualification-фазы, atomic pointer и rollback/recovery. Вход — уже полученный

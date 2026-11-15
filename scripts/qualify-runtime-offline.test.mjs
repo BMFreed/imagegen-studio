@@ -9,6 +9,7 @@ import { test } from 'node:test'
 import {
   argumentsFrom,
   stableFile,
+  validateEngineRelease,
   validateFullWheelhouseProof,
 } from './qualify-runtime-offline.mjs'
 
@@ -25,6 +26,176 @@ const baseArguments = [
   '--report-file',
   '/fixture/report.json',
 ]
+
+const engineArguments = [
+  '--profile',
+  'full-engine',
+  '--transport-dir',
+  '/fixture/transport',
+  '--trusted-keys',
+  '/fixture/public-keys.json',
+  '--app-version',
+  'qualification-0.1.0',
+  '--lama-source',
+  '/fixture/big-lama.pt',
+  '--wheelhouse-report',
+  '/fixture/proof/wheelhouse-verification.json',
+  '--report-file',
+  '/fixture/run.json',
+]
+
+test('full-engine takes the original signed transport inputs without legacy source-copy inputs', () => {
+  const args = argumentsFrom(engineArguments)
+  assert.equal(args.profile, 'full-engine')
+  assert.equal(args['app-version'], 'qualification-0.1.0')
+  assert.equal(args['transport-dir'], '/fixture/transport')
+  for (const key of ['python-root', 'uv', 'wheels', 'config']) {
+    assert.equal(Object.hasOwn(args, key), false)
+    assert.throws(() => argumentsFrom([...engineArguments, '--' + key, '/unreviewed']))
+  }
+  for (const key of [
+    'transport-dir',
+    'trusted-keys',
+    'app-version',
+    'lama-source',
+    'wheelhouse-report',
+    'report-file',
+  ]) {
+    const copy = [...engineArguments]
+    copy.splice(copy.indexOf('--' + key), 2)
+    assert.throws(() => argumentsFrom(copy), key)
+    assert.throws(() => argumentsFrom([...engineArguments, '--' + key, '/duplicate']), key)
+  }
+})
+
+test('full-engine refuses malformed version/path inputs and cannot silently fall back to a legacy profile', () => {
+  for (const [key, value] of [
+    ['app-version', '../unsigned'],
+    ['app-version', 'a'.repeat(129)],
+    ['app-version', 'version with spaces'],
+    ['transport-dir', 'relative'],
+    ['trusted-keys', '/fixture/../public-keys.json'],
+    ['lama-source', 'https://example.invalid/model'],
+  ]) {
+    const args = [...engineArguments]
+    args[args.indexOf('--' + key) + 1] = value
+    assert.throws(() => argumentsFrom(args))
+  }
+  const noProfile = engineArguments.slice(2)
+  assert.throws(() => argumentsFrom(noProfile))
+  assert.throws(() => argumentsFrom([...baseArguments, '--transport-dir', '/fixture/transport']))
+})
+
+function engineFixture() {
+  const { plan } = fixture()
+  plan.lockSha256 = 'c'.repeat(64)
+  const manifest = {
+    schemaVersion: 1,
+    profile: 'linux-nvidia',
+    dependencyPolicy: 'invoke-inference-v1',
+    lockSha256: plan.lockSha256,
+    worker: {
+      distribution: 'imagegen-worker',
+      distributionVersion: '0.1.0',
+      cpuVersion: '0.1.0',
+      inferenceVersion: '0.14.0',
+      protocolVersion: '1',
+    },
+    python: { version: '3.12.13', executable: 'python/bin/python3.12' },
+    host: { os: 'linux', arch: 'x64', glibcMinimum: '2.28' },
+    configPath: 'config',
+    requirementsPath: 'requirements.txt',
+    wheels: plan.wheels.map(({ distribution, version, path, sha256, sizeBytes }) => ({
+      distribution,
+      version,
+      path,
+      sha256,
+      sizeBytes,
+    })),
+  }
+  return { manifest, plan }
+}
+
+test('adopted engine release must match the exact locked proof, without modifying either input', () => {
+  const { manifest, plan } = engineFixture()
+  const before = structuredClone({ manifest, plan })
+  assert.equal(validateEngineRelease(manifest, plan), true)
+  assert.deepEqual({ manifest, plan }, before)
+  manifest.wheels.reverse()
+  assert.equal(validateEngineRelease(manifest, plan), true)
+})
+
+test('a signed engine selection cannot borrow missing, changed or duplicated wheel identities', async (t) => {
+  for (const kind of [
+    'missing',
+    'extra',
+    'duplicate',
+    'path',
+    'version',
+    'distribution',
+    'sha256',
+    'sizeBytes',
+    'extra-field',
+  ]) {
+    await t.test(kind, () => {
+      const { manifest, plan } = engineFixture()
+      if (kind === 'missing') manifest.wheels.pop()
+      else if (kind === 'extra') manifest.wheels.push({ ...manifest.wheels[0] })
+      else if (kind === 'duplicate') manifest.wheels[1] = { ...manifest.wheels[0] }
+      else if (kind === 'extra-field') manifest.wheels[0].url = 'https://untrusted.invalid/'
+      else manifest.wheels[0][kind] = kind === 'sizeBytes' ? 11 : 'wrong'
+      assert.throws(() => validateEngineRelease(manifest, plan))
+    })
+  }
+})
+
+test('engine selection retains dependency policy, host, worker and source layout pins', async (t) => {
+  const changes = [
+    (m) => {
+      m.lockSha256 = 'd'.repeat(64)
+    },
+    (m) => {
+      delete m.dependencyPolicy
+    },
+    (m) => {
+      m.worker.inferenceVersion = '0.15.0'
+    },
+    (m) => {
+      m.worker.protocolVersion = '2'
+    },
+    (m) => {
+      m.worker.cpuVersion = '0.2.0'
+    },
+    (m) => {
+      m.python.version = '3.13.0'
+    },
+    (m) => {
+      m.python.executable = 'system/python'
+    },
+    (m) => {
+      m.host.glibcMinimum = '2.40'
+    },
+    (m) => {
+      m.host.arch = 'arm64'
+    },
+    (m) => {
+      m.configPath = 'alternate-config'
+    },
+    (m) => {
+      m.requirementsPath = 'unlocked.txt'
+    },
+    (m) => {
+      m.profile = 'cpu'
+    },
+  ]
+  for (const [index, change] of changes.entries()) {
+    await t.test(String(index), () => {
+      const { manifest, plan } = engineFixture()
+      change(manifest)
+      assert.throws(() => validateEngineRelease(manifest, plan))
+    })
+  }
+})
 
 function fixture() {
   const wheels = Array.from({ length: 67 }, (_, index) => {

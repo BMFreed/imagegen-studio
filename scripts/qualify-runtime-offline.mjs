@@ -1,8 +1,9 @@
 /**
  * Real offline assembly through the existing release/installer/worker owners. Default: two-wheel
  * CPU qualification and mandatory inference refusal, <=4 GiB. --profile full-inference: verified
- * 67-wheel input, native qualification and activation, <=8 GiB. Both require zero swap/600 s
- * external bounds. No downloads, model weights or payload cleanup.
+ * 67-wheel input, native qualification and activation, <=8 GiB. --profile full-engine adopts an
+ * existing signed transport and pinned local LaMa, then exercises native Install/Repair/rollback.
+ * All require zero swap/600 s external bounds. No public downloads or payload cleanup.
  */
 import assert from 'node:assert/strict'
 import { createHash, generateKeyPairSync, randomUUID, sign } from 'node:crypto'
@@ -17,6 +18,11 @@ import { ensureAppPaths } from '../src/main/app-paths.ts'
 import { GenerationWorkerClient } from '../src/main/projects/generation-worker-client.ts'
 import { ProjectWorkerClient } from '../src/main/projects/worker-client.ts'
 import { createRuntimeRoots, RuntimeManager } from '../src/main/runtime/index.ts'
+import { createLamaAuxiliaryInstaller } from '../src/main/runtime/inference-auxiliary-installer.ts'
+import { InferenceAuxiliaryResources } from '../src/main/runtime/inference-auxiliary-resources.ts'
+import { LAMA_OUTPAINT_ARTIFACT } from '../src/main/runtime/lama-manifest.ts'
+import { extractRuntimeTransport } from '../src/main/runtime/runtime-release-extraction.ts'
+import { verifyRuntimeTransport } from '../src/main/runtime/runtime-release-transport.ts'
 import {
   assembleOfflineRuntime,
   hasUnconfirmedOfflineRuntimeCommands,
@@ -42,6 +48,18 @@ const normalizedDistribution = (name) => name.toLowerCase().replace(/[-_.]+/g, '
 const identity = (stat) =>
   [stat.dev, stat.ino, stat.mode, stat.size, stat.mtimeNs, stat.ctimeNs].join(':')
 const within = (root, candidate) => candidate.startsWith(`${root}${path.sep}`)
+const engineOwnerPaths = [
+  'src/main/runtime/engine-install-plan.ts',
+  'src/main/runtime/engine-installation-review.ts',
+  'src/main/runtime/runtime-release-transport.ts',
+  'src/main/runtime/runtime-release-extraction.ts',
+  'src/main/runtime/runtime-transport-cache.ts',
+  'src/main/runtime/inference-auxiliary-installer.ts',
+  'src/main/runtime/inference-auxiliary-resources.ts',
+  'src/main/runtime/lama-manifest.ts',
+  'src/main/models/model-downloader.ts',
+  'src/shared/projects/alpha-outpaint.ts',
+]
 const report = {
   schemaVersion: 1,
   startedAt: new Date().toISOString(),
@@ -76,30 +94,108 @@ let deadlineExceeded = false
 const liveCpuClients = new Set()
 const liveInferenceClients = new Set()
 let fullInference = false
+let fullEngine = false
+let engineTransport
+let engineTrustedKeys
+let engineResources
+let failEngineAfterActivation = false
 
 export function argumentsFrom(argv) {
-  const required = ['python-root', 'uv', 'config', 'wheels', 'report-file']
-  const allowed = new Set([...required, 'profile', 'wheelhouse-report'])
+  const legacy = ['python-root', 'uv', 'config', 'wheels', 'report-file']
+  const engine = [
+    'transport-dir',
+    'trusted-keys',
+    'app-version',
+    'lama-source',
+    'wheelhouse-report',
+    'report-file',
+  ]
+  const allowed = new Set([...legacy, ...engine, 'profile'])
   const values = {}
   for (let index = 0; index < argv.length; index += 2) {
     const key = argv[index]?.replace(/^--/, '')
     assert.ok(argv[index]?.startsWith('--') && allowed.has(key), 'Unknown CLI argument')
     assert.ok(argv[index + 1] && !Object.hasOwn(values, key), `Missing/duplicate --${key}`)
     if (key === 'profile') {
-      assert.equal(argv[index + 1], 'full-inference', 'Unsupported qualification profile')
+      assert.ok(
+        ['full-inference', 'full-engine'].includes(argv[index + 1]),
+        'Unsupported qualification profile',
+      )
+    } else if (key === 'app-version') {
+      assert.match(argv[index + 1], /^[A-Z0-9][\w.+!-]{0,127}$/i, 'Invalid app version')
+      assert.ok(!/[\r\n]/.test(argv[index + 1]), 'Invalid app version')
     } else {
       assert.ok(path.isAbsolute(argv[index + 1]), `--${key} must be absolute`)
       assert.equal(path.normalize(argv[index + 1]), argv[index + 1], `Noncanonical --${key}`)
     }
     values[key] = argv[index + 1]
   }
+  const engineProfile = values.profile === 'full-engine'
+  const required = engineProfile ? engine : legacy
+  const profileAllowed = new Set([
+    ...required,
+    'profile',
+    ...(engineProfile ? [] : ['wheelhouse-report']),
+  ])
+  for (const key of Object.keys(values))
+    assert.ok(profileAllowed.has(key), `Input unsupported by selected profile: --${key}`)
   for (const key of required) assert.ok(Object.hasOwn(values, key), `Required --${key}`)
   assert.equal(
     Object.hasOwn(values, 'wheelhouse-report'),
-    values.profile === 'full-inference',
-    'A wheelhouse report is required only for full-inference',
+    values.profile === 'full-inference' || engineProfile,
+    'A wheelhouse report is required only for full profiles',
   )
   return values
+}
+
+/** Signed source adoption is exact; an existing valid release cannot borrow another wheel plan. */
+export function validateEngineRelease(manifest, plan) {
+  assert.equal(manifest.schemaVersion, 1)
+  assert.equal(manifest.profile, 'linux-nvidia')
+  assert.equal(manifest.dependencyPolicy, 'invoke-inference-v1')
+  assert.equal(manifest.lockSha256, plan.lockSha256)
+  assert.match(manifest.lockSha256, /^[a-f0-9]{64}$/)
+  assert.deepEqual(manifest.worker, {
+    distribution: 'imagegen-worker',
+    distributionVersion: '0.1.0',
+    cpuVersion: '0.1.0',
+    inferenceVersion: '0.14.0',
+    protocolVersion: '1',
+  })
+  assert.equal(manifest.python.version, '3.12.13')
+  assert.equal(manifest.python.executable, 'python/bin/python3.12')
+  assert.equal(manifest.configPath, 'config')
+  assert.equal(manifest.requirementsPath, 'requirements.txt')
+  assert.equal(manifest.host.os, plan.target.os)
+  assert.equal(manifest.host.arch, plan.target.arch)
+  assert.equal(manifest.host.glibcMinimum, plan.target.glibcMinimum)
+  assert.ok(Array.isArray(manifest.wheels) && manifest.wheels.length === 67)
+  const rows = (wheels) =>
+    wheels
+      .map((entry) => ({
+        distribution: entry.distribution,
+        version: entry.version,
+        path: entry.path,
+        sha256: entry.sha256,
+        sizeBytes: entry.sizeBytes,
+      }))
+      .sort((a, b) => a.path.localeCompare(b.path))
+  for (const entry of manifest.wheels)
+    assert.deepEqual(Object.keys(entry).sort(), [
+      'distribution',
+      'path',
+      'sha256',
+      'sizeBytes',
+      'version',
+    ])
+  assert.deepEqual(
+    rows(manifest.wheels),
+    rows(plan.wheels),
+    'Signed wheel set differs from bound proof',
+  )
+  assert.equal(new Set(manifest.wheels.map((entry) => entry.distribution)).size, 67)
+  assert.equal(new Set(manifest.wheels.map((entry) => entry.path)).size, 67)
+  return true
 }
 
 /** Local artifact proof is not a publisher signature or installed-runtime qualification. */
@@ -535,6 +631,7 @@ async function freezeOwners() {
     'src/main/projects/generation-worker-client.ts',
     'src/main/projects/inference-worker-ownership.ts',
     'src/shared/projects/inference-worker-capabilities.ts',
+    ...(fullEngine ? engineOwnerPaths : []),
   ]
   const python = await inventory(path.join(repository, 'worker-python/src/imagegen_worker'))
   const files = []
@@ -543,6 +640,50 @@ async function freezeOwners() {
     files.push({ path: name, sha256: sha256(entry.bytes), identity: entry.identity })
   }
   return { head: await repositoryHead(repository), files, python }
+}
+
+async function engineInputs(args) {
+  await canonicalDirectory(args['transport-dir'])
+  assert.equal(await fs.realpath(args['trusted-keys']), args['trusted-keys'])
+  assert.equal(await fs.realpath(args['lama-source']), args['lama-source'])
+  const keys = await stableBytes(args['trusted-keys'], 128 * 1024)
+  const trustedKeys = JSON.parse(keys.bytes.toString('utf8'))
+  assert.ok(trustedKeys && typeof trustedKeys === 'object' && !Array.isArray(trustedKeys))
+  if (engineTransport) await engineTransport.verifyCompleteTransportSnapshot()
+  else {
+    engineTrustedKeys = Object.freeze({ ...trustedKeys })
+    engineTransport = await verifyRuntimeTransport({
+      appVersion: args['app-version'],
+      directory: args['transport-dir'],
+      trustedKeys: engineTrustedKeys,
+    })
+  }
+  const inner = await stableBytes(
+    path.join(args['transport-dir'], 'runtime-release.json'),
+    1024 ** 2,
+  )
+  const outer = await stableBytes(
+    path.join(args['transport-dir'], 'runtime-transport.json'),
+    1024 ** 2,
+  )
+  const archive = await fs.lstat(path.join(args['transport-dir'], 'runtime-payload.zip'), {
+    bigint: true,
+  })
+  const lama = await stableFile(args['lama-source'])
+  assert.equal(lama.sha256, LAMA_OUTPAINT_ARTIFACT.sha256)
+  assert.equal(lama.sizeBytes, LAMA_OUTPAINT_ARTIFACT.sizeBytes)
+  return {
+    keys: { path: args['trusted-keys'], identity: keys.identity, sha256: sha256(keys.bytes) },
+    transport: {
+      directory: args['transport-dir'],
+      manifest: engineTransport.manifest,
+      archiveIdentity: identity(archive),
+      inner: { identity: inner.identity, sha256: sha256(inner.bytes) },
+      outer: { identity: outer.identity, sha256: sha256(outer.bytes) },
+    },
+    lama: { path: args['lama-source'], ...lama },
+    wheelhouseProof: (await fullWheelhouseProof(args)).files,
+  }
 }
 
 async function cgroupProof(pid) {
@@ -928,10 +1069,252 @@ async function fullInstalledChecks({ roots, backend, startInference, review, whe
   }
 }
 
+async function fullEngineInstalledChecks({ roots }) {
+  await check('installed-pinned-lama-native-cuda-infill-smoke', async () => {
+    const resource = await engineResources.resolveVerifiedOutpaintInfill()
+    assert.equal(report.auxiliary.copies.length, 1)
+    const output = path.join(payloadRoot, 'installed-lama-smoke.png')
+    await absent(output)
+    const logPath = path.join(roots.workerLogsDir, 'installed-lama-smoke.log')
+    await fs.writeFile(logPath, '', { flag: 'wx', mode: 0o600 })
+    const source = [
+      'import hashlib,json,sys,torch',
+      'from pathlib import Path',
+      'from PIL import Image',
+      'from imagegen_worker.derivatives import SRGB_ICC_PROFILE',
+      'from imagegen_worker.lama_infill import load_local_lama',
+      'torch.cuda.set_per_process_memory_fraction(0.75)',
+      "source=Image.new('RGBA',(64,64),(12,34,56,0))",
+      "source.paste(Image.new('RGBA',(32,32),(180,90,40,255)),(16,16))",
+      "source.info['icc_profile']=SRGB_ICC_PROFILE",
+      'original=source.tobytes()',
+      `model=load_local_lama(Path(sys.argv[1]),expected_sha256='${LAMA_OUTPAINT_ARTIFACT.sha256}',expected_byte_size=${LAMA_OUTPAINT_ARTIFACT.sizeBytes},device='cuda')`,
+      'result=model.infill_processing_source(source)',
+      'torch.cuda.synchronize()',
+      "assert result.mode=='RGB' and result.size==(64,64)",
+      "assert result.info.get('icc_profile')==SRGB_ICC_PROFILE",
+      "assert source.mode=='RGBA' and source.size==(64,64) and source.tobytes()==original and source.info.get('icc_profile')==SRGB_ICC_PROFILE",
+      "with open(sys.argv[2],'xb') as output: result.save(output,format='PNG',icc_profile=SRGB_ICC_PROFILE)",
+      "print(json.dumps({'device':'cuda','allocatorFraction':0.75,'size':list(result.size),'mode':result.mode,'sourceUnchanged':True,'srgb':True,'pngSha256':hashlib.sha256(Path(sys.argv[2]).read_bytes()).hexdigest(),'scope':'installed LaMa TorchScript compute only; no diffusion or visual acceptance'}))",
+    ].join('\n')
+    const result = await commandObserver({
+      executable: prepared.pythonExecutable,
+      cwd: roots.runtimeDir,
+      environment: prepared.environment,
+      logPath,
+      args: ['-I', '-B', '-c', source, resource.managedPath, output],
+    })
+    assert.equal(result.code, 0)
+    const facts = JSON.parse(result.stdout)
+    const png = await stableBytes(output, 1024 ** 2)
+    assert.equal(facts.pngSha256, sha256(png.bytes))
+    assert.deepEqual(facts.size, [64, 64])
+    assert.equal(facts.mode, 'RGB')
+    assert.equal(facts.sourceUnchanged, true)
+    assert.equal(facts.srgb, true)
+    await backendAuxiliaryVerified()
+    report.nativeLamaSmoke = {
+      facts,
+      output,
+      sha256: sha256(png.bytes),
+      sizeBytes: png.bytes.length,
+      exitConfirmed: result.exitConfirmed,
+    }
+    return report.nativeLamaSmoke
+  })
+  await check('native-engine-repair-builds-new-slot-and-reuses-exact-lama', async () => {
+    const previous = (await stableBytes(roots.pointerFile)).bytes
+    const old = JSON.parse(previous.toString('utf8'))
+    const review = value(await manager.previewInstallation('repair'))
+    assert.equal(review.scope, 'engine')
+    assert.equal(review.requiredFreeBytes, null)
+    assert.equal(review.plan.totals.downloadBytes, 0)
+    assert.equal(review.plan.totals.additionalInstalledBytes, null)
+    assert.equal(review.plan.artifacts.find((entry) => entry.kind === 'runtime').reused, false)
+    assert.equal(review.plan.artifacts.find((entry) => entry.kind === 'runtime').sourceCached, true)
+    assert.equal(
+      review.plan.artifacts.find((entry) => entry.kind === 'outpaint-infill').reused,
+      true,
+    )
+    const cpuBefore = report.cpuClients.length
+    const gpuBefore = report.inferenceStarts.length
+    const result = value(await manager.repair(review.token))
+    assert.equal(result.kind, 'ready')
+    assert.notEqual(result.runtimeId, old.runtimeId)
+    assert.equal(result.runtimeId, prepared.runtimeId)
+    assert.equal(report.cpuClients.length, cpuBefore + 2)
+    assert.equal(report.inferenceStarts.length, gpuBefore + 2)
+    assert.ok(
+      report.cpuClients
+        .slice(cpuBefore)
+        .every((entry) => entry.selfTest && entry.exitConfirmed && !entry.forcedTermination),
+    )
+    assert.ok(
+      report.inferenceStarts
+        .slice(gpuBefore)
+        .every((entry) => entry.ready && entry.exitConfirmed && !entry.forcedTermination),
+    )
+    const pointerBytes = (await stableBytes(roots.pointerFile)).bytes
+    const pointer = JSON.parse(pointerBytes.toString('utf8'))
+    assert.equal(pointer.runtimeId, result.runtimeId)
+    assert.equal((await manager.repair(review.token)).error.code, 'RUNTIME_INVALID_REVIEW')
+    assert.deepEqual((await stableBytes(roots.pointerFile)).bytes, pointerBytes)
+    const provenance = await stableBytes(
+      path.join(prepared.environmentRoot, 'runtime-installation.json'),
+    )
+    const record = JSON.parse(provenance.bytes.toString('utf8'))
+    assert.equal(record.releaseId, report.signedRelease.manifest.releaseId)
+    assert.equal(record.manifestSha256, report.signedRelease.manifestSha256)
+    assert.equal(record.dependencyCheck.packageCount, 67)
+    const packageIdentities = (packages) =>
+      packages.map((entry) => [normalizedDistribution(entry.name), entry.version]).sort()
+    assert.deepEqual(
+      packageIdentities(record.packages),
+      packageIdentities(report.installedInspection.packages),
+    )
+    assert.ok(
+      record.packages.every(
+        (entry) =>
+          within(prepared.environmentRoot, entry.root) && !entry.direct?.dir_info?.editable,
+      ),
+    )
+    assert.deepEqual(record.workerFiles, report.installedInspection.workerFiles)
+    assert.equal(report.auxiliary.copies.length, 1)
+    await backendAuxiliaryVerified()
+    report.repairInstallationProvenance = {
+      path: path.join(prepared.environmentRoot, 'runtime-installation.json'),
+      sha256: sha256(provenance.bytes),
+      value: record,
+    }
+    report.repairResult = {
+      result,
+      previousPointer: old,
+      pointer,
+      provenanceSha256: sha256(provenance.bytes),
+      preAndPostCpuClients: 2,
+      preAndPostInferenceClients: 2,
+      lamaCopies: 1,
+    }
+    return report.repairResult
+  })
+  const success = prepared
+  await check(
+    'native-postactivation-cuda-refusal-rolls-back-repair-and-preserves-lama',
+    async () => {
+      const previous = (await stableBytes(roots.pointerFile)).bytes
+      const review = value(await manager.previewInstallation('repair'))
+      assert.equal(review.scope, 'engine')
+      assert.equal(review.plan.totals.downloadBytes, 0)
+      const cpuBefore = report.cpuClients.length
+      const gpuBefore = report.inferenceStarts.length
+      let result
+      try {
+        failEngineAfterActivation = true
+        result = await manager.repair(review.token)
+        assert.equal(result.ok, false)
+        assert.equal(result.error.code, 'RUNTIME_INSTALL_FAILED')
+        report.failedRepairPrepared = prepared
+        assert.notEqual(prepared.runtimeId, success.runtimeId)
+      } finally {
+        failEngineAfterActivation = false
+        prepared = success
+        report.assembled = success
+      }
+      assert.equal(report.cpuClients.length, cpuBefore + 2)
+      assert.equal(report.inferenceStarts.length, gpuBefore + 2)
+      assert.ok(
+        report.cpuClients
+          .slice(cpuBefore)
+          .every((entry) => entry.exitConfirmed && !entry.forcedTermination),
+      )
+      const [pre, post] = report.inferenceStarts.slice(gpuBefore)
+      assert.ok(pre.ready && pre.exitConfirmed && !pre.forcedTermination)
+      assert.equal(post.controlledFault, 'CUDA hidden after candidate pointer activation only')
+      assert.equal(post.error.code, 'WORKER_EXITED')
+      assert.equal(post.exitFenceClear, true)
+      // The production client deliberately exposes a generic failed-start error. Observe the
+      // exact CUDA-unavailable reason separately with the same failed slot/environment, rather
+      // than presenting import failure, crash or OOM as the intended refusal.
+      const diagnosticLog = path.join(roots.workerLogsDir, 'failed-repair-cuda-diagnostic.log')
+      await fs.writeFile(diagnosticLog, '', { flag: 'wx', mode: 0o600 })
+      const diagnostic = await commandObserver({
+        executable: report.failedRepairPrepared.pythonExecutable,
+        cwd: roots.runtimeDir,
+        environment: { ...report.failedRepairPrepared.environment, CUDA_VISIBLE_DEVICES: '' },
+        logPath: diagnosticLog,
+        args: ['-I', '-B', '-m', 'imagegen_worker.inference_main'],
+      })
+      assert.equal(diagnostic.code, 78)
+      assert.match(diagnostic.stderr, /Inference startup failed: A CUDA GPU is unavailable\./)
+      assert.equal(diagnostic.stdout, '')
+      assert.deepEqual((await stableBytes(roots.pointerFile)).bytes, previous)
+      const journal = JSON.parse(
+        (
+          await stableBytes(path.join(roots.runtimeDir, RUNTIME_INSTALLATION_JOURNAL))
+        ).bytes.toString('utf8'),
+      )
+      assert.equal(journal.phase, 'rolled-back')
+      assert.equal(journal.prepared.runtimeId, report.failedRepairPrepared.runtimeId)
+      await absent(path.join(roots.runtimeDir, RUNTIME_INSTALLATION_CLAIM))
+      await absent(path.join(roots.runtimeDir, RUNTIME_INSTALLATION_RECOVERY_CLAIM))
+      assert.equal(GenerationWorkerClient.hasUnconfirmedStartExit(), false)
+      assert.equal(ProjectWorkerClient.hasUnconfirmedExit(), false)
+      assert.equal(report.auxiliary.copies.length, 1)
+      await backendAuxiliaryVerified()
+      const beforeStatus = report.inferenceStarts.length
+      const status = value(await manager.getStatus())
+      assert.equal(status.kind, 'ready')
+      assert.equal(status.runtimeId, success.runtimeId)
+      assert.equal(report.inferenceStarts.length, beforeStatus + 1)
+      assert.deepEqual((await stableBytes(roots.pointerFile)).bytes, previous)
+      assert.equal((await manager.repair(review.token)).error.code, 'RUNTIME_INVALID_REVIEW')
+      const slots = report.assembledSlots.map((entry) => entry.runtimeId).sort()
+      assert.equal(slots.length, 3)
+      assert.deepEqual((await fs.readdir(roots.pythonDir)).sort(), slots)
+      assert.deepEqual((await fs.readdir(roots.environmentsDir)).sort(), slots)
+      report.failedRepairResult = {
+        result,
+        status,
+        pointerSha256: sha256(previous),
+        journal,
+        originalActiveRuntimeId: success.runtimeId,
+        lamaCopies: 1,
+        exactPointerRollback: true,
+        cudaUnavailableDiagnostic: {
+          code: diagnostic.code,
+          stderrSha256: sha256(Buffer.from(diagnostic.stderr)),
+          exitConfirmed: diagnostic.exitConfirmed,
+          scope:
+            'Separate same-slot hidden-CUDA diagnostic; not stderr of the original manager start.',
+        },
+      }
+      return report.failedRepairResult
+    },
+  )
+  report.fullProfileQualified = {
+    ...report.fullProfileQualified,
+    scope: 'engine',
+    runtimeId: success.runtimeId,
+    auxiliaryQualified: true,
+    nativeLamaComputeQualified: true,
+    successfulRepairQualified: true,
+    postActivationRollbackQualified: true,
+    controlledAuxiliaryTransport: 'explicit pinned local copy port; not public HTTP',
+  }
+}
+
+async function backendAuxiliaryVerified() {
+  const resource = await engineResources.resolveVerifiedOutpaintInfill()
+  assert.equal(resource.sha256, LAMA_OUTPAINT_ARTIFACT.sha256)
+  assert.equal(resource.byteSize, LAMA_OUTPAINT_ARTIFACT.sizeBytes)
+  return resource
+}
+
 async function main(argv) {
   const args = argumentsFrom(argv)
   inputArguments = args
-  fullInference = args.profile === 'full-inference'
+  fullEngine = args.profile === 'full-engine'
+  fullInference = args.profile === 'full-inference' || fullEngine
   if (fullInference) {
     report.qualification = 'actual-full-offline-python-slot-install-native-qualification'
     report.controlledPorts.host =
@@ -944,6 +1327,20 @@ async function main(argv) {
       'The owned slot is left at its final path for the Root retention/audit owner; this harness never deletes it.',
     ]
   }
+  if (fullEngine) {
+    report.qualification = 'actual-signed-full-engine-install-repair-native-qualification'
+    report.controlledPorts.auxiliary =
+      'Production pinned installer/resolver; controlled stable-file copy transport from an explicit hash-verified local LaMa source. No public HTTP qualification.'
+    report.controlledPorts.releaseTrust =
+      'Explicit external public qualification keyring and unchanged retained signed transport; no new key, release ID or signature.'
+    report.negativeScope = [
+      'Host-scoped signed local engine installation/repair; no shipped key distribution, public release endpoint, public Setup or support matrix.',
+      'Real native worker startup and tiny CUDA/LaMa smoke only; no diffusion models, image-generation or visual acceptance.',
+      'The last Repair injects CUDA-hidden startup only after candidate activation; native readiness is never fabricated.',
+      'Only the explicit original LaMa file and signed transport/proof are read; existing runtime/model/project state remains unchanged.',
+      'All new sources/slots and exact mutation controls are retained for Root audit and cleanup; this harness never deletes them.',
+    ]
+  }
   assert.equal(process.platform, 'linux')
   assert.equal(process.arch, 'x64')
   await canonicalDirectory(artifactRoot)
@@ -954,10 +1351,13 @@ async function main(argv) {
   )
   await absent(args['report-file'])
   reportFile = args['report-file']
-  for (const key of ['python-root', 'config', 'wheels']) await canonicalDirectory(args[key])
-  assert.equal(await fs.realpath(args.uv), args.uv, 'uv must be a canonical ordinary executable')
-  const uvInput = await stableBytes(args.uv)
-  assert.ok(uvInput.executable)
+  let uvInput
+  if (!fullEngine) {
+    for (const key of ['python-root', 'config', 'wheels']) await canonicalDirectory(args[key])
+    assert.equal(await fs.realpath(args.uv), args.uv, 'uv must be a canonical ordinary executable')
+    uvInput = await stableBytes(args.uv)
+    assert.ok(uvInput.executable)
+  }
   const wheelhouseProof = fullInference ? await fullWheelhouseProof(args) : null
   if (wheelhouseProof) report.wheelhouseProof = wheelhouseProof
   report.processBoundary = await cgroupProof(process.pid)
@@ -982,6 +1382,13 @@ async function main(argv) {
       'invokeai/app/util/startup_utils.py',
       'invokeai/app/run_app.py',
       'tests/family_e2e/test_gpu_memory.py',
+      ...(fullEngine
+        ? [
+            'invokeai/backend/image_util/infill_methods/lama.py',
+            'invokeai/app/invocations/infill.py',
+            'invokeai/app/services/shared/invocation_context.py',
+          ]
+        : []),
     ],
     launcherPaths: ['download_uv.ts', 'src/main/install-manager.ts', 'src/main/index.ts'],
     adaptation:
@@ -998,7 +1405,8 @@ async function main(argv) {
   }
   payloadRoot = await fs.mkdtemp(path.join(payloads, 'native-runtime-offline-'))
   report.payloadRoot = payloadRoot
-  const releaseDirectory = await mkdirNew(path.join(payloadRoot, 'signed-payload'))
+  let releaseDirectory
+  if (!fullEngine) releaseDirectory = await mkdirNew(path.join(payloadRoot, 'signed-payload'))
   const roots = await createRuntimeRoots(path.join(payloadRoot, 'app'))
   ensureAppPaths({
     dataRoot: roots.appDataDir,
@@ -1028,206 +1436,259 @@ async function main(argv) {
   deadlineTimer.unref()
 
   let selection
-  await check('actual-source-copy-and-real-wheel-metadata', async () => {
-    const python = await inventory(args['python-root'], true)
-    const config = await inventory(args.config)
-    const wheels = await inventory(args.wheels)
-    assert.equal(
-      wheels.entries.length,
-      fullInference ? 67 : 2,
-      'Only the exact supplied wheel set is allowed',
-    )
-    assert.deepEqual(
-      config.entries.map((entry) => entry.path).sort(),
-      Object.keys(PINNED_RUNTIME_CONFIG_FILES).sort(),
-    )
-    for (const entry of config.entries)
-      assert.equal(entry.sha256, PINNED_RUNTIME_CONFIG_FILES[entry.path])
-    inputsFreeze = {
-      python,
-      config,
-      wheels,
-      uv: { identity: uvInput.identity, sha256: sha256(uvInput.bytes) },
-      ...(wheelhouseProof ? { wheelhouseProof: wheelhouseProof.files } : {}),
-    }
-    report.inputsBefore = inputsFreeze
-    const files = await copyInventory(
-      args['python-root'],
-      path.join(releaseDirectory, 'python'),
-      python,
-      'python',
-    )
-    files.push(
-      ...(await copyInventory(
-        args.config,
-        path.join(releaseDirectory, 'config'),
-        config,
-        'config',
-      )),
-    )
-    files.push(
-      await copyFile(args.uv, path.join(releaseDirectory, 'uv/uv'), 'uv/uv', {
-        identity: uvInput.identity,
-        sha256: sha256(uvInput.bytes),
-      }),
-    )
-    const descriptors = []
-    for (const wheel of wheels.entries) {
-      assert.ok(wheel.kind === 'file' && wheel.path.endsWith('.whl') && !wheel.path.includes('/'))
-      const planned = wheelhouseProof?.plan.wheels.find((entry) => entry.filename === wheel.path)
-      if (fullInference) {
-        assert.ok(planned, 'An input wheel is absent from the bound proof')
-        assert.equal(wheel.sha256, planned.sha256)
-        assert.equal(wheel.sizeBytes, planned.sizeBytes)
-      }
-      const metadata =
-        !fullInference || planned.distribution === 'imagegen-worker'
-          ? await wheelMetadata(path.join(args.wheels, wheel.path))
-          : {
-              distribution: planned.distribution,
-              version: planned.version,
-              metadataSha256: wheelhouseProof.verification.wheels.find(
-                (entry) => entry.filename === wheel.path,
-              ).metadataSha256,
-              basis:
-                'Actual prior byte/METADATA proof, exact plan binding and fresh streamed input hash; no new resolver.',
-            }
-      if (fullInference) {
-        assert.equal(metadata.distribution, planned.distribution)
-        assert.equal(metadata.version, planned.version)
-      } else {
-        assert.ok(
-          (metadata.distribution === 'imagegen-worker' && metadata.version === '0.1.0') ||
-            (metadata.distribution === 'pillow' && metadata.version === '12.2.0'),
+  if (fullEngine) {
+    await check(
+      'adopt-exact-signed-transport-and-native-wheelhouse-without-resigning',
+      async () => {
+        inputsFreeze = await engineInputs(args)
+        report.inputsBefore = inputsFreeze
+        selection = await extractRuntimeTransport({
+          appVersion: args['app-version'],
+          transportDirectory: args['transport-dir'],
+          trustedKeys: engineTrustedKeys,
+          outputDirectory: path.join(payloadRoot, 'extracted-transport'),
+        })
+        releaseDirectory = selection.directory
+        const release = await verifyRuntimeRelease(selection)
+        validateEngineRelease(release.manifest, wheelhouseProof.plan)
+        const worker = release.manifest.wheels.find(
+          (entry) => entry.distribution === 'imagegen-worker',
         )
-      }
-      if (metadata.distribution === 'imagegen-worker') {
+        const metadata = await wheelMetadata(path.join(releaseDirectory, worker.path))
         const expected = Object.fromEntries(
           sourceFreeze.python.entries.map((entry) => {
-            assert.equal(entry.kind, 'file', 'Worker source must contain ordinary files only')
+            assert.equal(entry.kind, 'file')
             return [entry.path, { bytes: entry.sizeBytes, sha256: entry.sha256 }]
           }),
         )
         assert.deepEqual(
           metadata.workerFiles,
           expected,
-          'Built worker wheel differs from current Python source',
+          'Adopted worker wheel differs from current source',
         )
-      }
-      const descriptor = await copyFile(
-        path.join(args.wheels, wheel.path),
-        path.join(releaseDirectory, 'wheels', wheel.path),
-        `wheels/${wheel.path}`,
-        wheel,
-      )
-      files.push(descriptor)
-      descriptors.push({
-        path: descriptor.path,
-        distribution: metadata.distribution,
-        version: metadata.version,
-        sha256: descriptor.sha256,
-        sizeBytes: descriptor.sizeBytes,
-      })
-      report.wheelMetadata ??= []
-      report.wheelMetadata.push({ path: descriptor.path, ...metadata })
-    }
-    assert.deepEqual(
-      descriptors.map((wheel) => wheel.distribution).sort(),
-      fullInference
-        ? wheelhouseProof.plan.wheels.map((wheel) => wheel.distribution).sort()
-        : ['imagegen-worker', 'pillow'],
+        report.wheelMetadata = [{ path: worker.path, ...metadata }]
+        report.signedRelease = {
+          manifest: release.manifest,
+          manifestSha256: sha256(canonicalRuntimeReleaseJson(release.manifest)),
+          envelopeSha256: sha256(selection.envelope),
+          trustedKeys: engineTrustedKeys,
+          keyScope: 'Explicit retained qualification keys; no private key read or new signature',
+          hostMetadataQualified: false,
+        }
+        await release.verifyCompletePayloadSnapshot()
+        return {
+          adoptedExactInnerEnvelope: true,
+          releaseId: release.manifest.releaseId,
+          wheelCount: release.manifest.wheels.length,
+          workerFiles: Object.keys(metadata.workerFiles).length,
+          newReleaseSigning: false,
+          transport: engineTransport.manifest,
+        }
+      },
     )
-    const manifest = {
-      schemaVersion: 1,
-      appVersion: 'qualification-0.1.0',
-      releaseId: `${fullInference ? 'full-native' : 'cpu-refusal'}-${randomUUID()}`,
-      ...(fullInference ? { dependencyPolicy: 'invoke-inference-v1' } : {}),
-      profile: 'linux-nvidia',
-      configPath: 'config',
-      requirementsPath: 'requirements.txt',
-      python: {
-        version: '3.12.13',
-        buildId: 'cpython-3.12.13-local-readonly-qualification',
-        executable: 'python/bin/python3.12',
-      },
-      uv: { version: '0.11.11', executable: 'uv/uv' },
-      worker: {
-        distribution: 'imagegen-worker',
-        distributionVersion: '0.1.0',
-        cpuVersion: '0.1.0',
-        inferenceVersion: '0.14.0',
-        protocolVersion: '1',
-      },
-      host: {
-        os: 'linux',
-        arch: 'x64',
-        glibcMinimum: '2.28',
-        cudaVersion: '12.6',
-        minimumNvidiaDriver: '560.0',
-        gpuArchitectures: ['sm_89'],
-      },
-      lockSha256: sha256((await stableBytes(path.join(repository, 'worker-python/uv.lock'))).bytes),
-      requiredFreeBytes: (fullInference ? 20 : 1) * 1024 ** 3,
-      wheels: descriptors,
-      files,
-    }
-    const requirements = Buffer.from(runtimeReleaseRequirements(manifest))
-    await fs.writeFile(path.join(releaseDirectory, 'requirements.txt'), requirements, {
-      flag: 'wx',
-      mode: 0o600,
+  } else
+    await check('actual-source-copy-and-real-wheel-metadata', async () => {
+      const python = await inventory(args['python-root'], true)
+      const config = await inventory(args.config)
+      const wheels = await inventory(args.wheels)
+      assert.equal(
+        wheels.entries.length,
+        fullInference ? 67 : 2,
+        'Only the exact supplied wheel set is allowed',
+      )
+      assert.deepEqual(
+        config.entries.map((entry) => entry.path).sort(),
+        Object.keys(PINNED_RUNTIME_CONFIG_FILES).sort(),
+      )
+      for (const entry of config.entries)
+        assert.equal(entry.sha256, PINNED_RUNTIME_CONFIG_FILES[entry.path])
+      inputsFreeze = {
+        python,
+        config,
+        wheels,
+        uv: { identity: uvInput.identity, sha256: sha256(uvInput.bytes) },
+        ...(wheelhouseProof ? { wheelhouseProof: wheelhouseProof.files } : {}),
+      }
+      report.inputsBefore = inputsFreeze
+      const files = await copyInventory(
+        args['python-root'],
+        path.join(releaseDirectory, 'python'),
+        python,
+        'python',
+      )
+      files.push(
+        ...(await copyInventory(
+          args.config,
+          path.join(releaseDirectory, 'config'),
+          config,
+          'config',
+        )),
+      )
+      files.push(
+        await copyFile(args.uv, path.join(releaseDirectory, 'uv/uv'), 'uv/uv', {
+          identity: uvInput.identity,
+          sha256: sha256(uvInput.bytes),
+        }),
+      )
+      const descriptors = []
+      for (const wheel of wheels.entries) {
+        assert.ok(wheel.kind === 'file' && wheel.path.endsWith('.whl') && !wheel.path.includes('/'))
+        const planned = wheelhouseProof?.plan.wheels.find((entry) => entry.filename === wheel.path)
+        if (fullInference) {
+          assert.ok(planned, 'An input wheel is absent from the bound proof')
+          assert.equal(wheel.sha256, planned.sha256)
+          assert.equal(wheel.sizeBytes, planned.sizeBytes)
+        }
+        const metadata =
+          !fullInference || planned.distribution === 'imagegen-worker'
+            ? await wheelMetadata(path.join(args.wheels, wheel.path))
+            : {
+                distribution: planned.distribution,
+                version: planned.version,
+                metadataSha256: wheelhouseProof.verification.wheels.find(
+                  (entry) => entry.filename === wheel.path,
+                ).metadataSha256,
+                basis:
+                  'Actual prior byte/METADATA proof, exact plan binding and fresh streamed input hash; no new resolver.',
+              }
+        if (fullInference) {
+          assert.equal(metadata.distribution, planned.distribution)
+          assert.equal(metadata.version, planned.version)
+        } else {
+          assert.ok(
+            (metadata.distribution === 'imagegen-worker' && metadata.version === '0.1.0') ||
+              (metadata.distribution === 'pillow' && metadata.version === '12.2.0'),
+          )
+        }
+        if (metadata.distribution === 'imagegen-worker') {
+          const expected = Object.fromEntries(
+            sourceFreeze.python.entries.map((entry) => {
+              assert.equal(entry.kind, 'file', 'Worker source must contain ordinary files only')
+              return [entry.path, { bytes: entry.sizeBytes, sha256: entry.sha256 }]
+            }),
+          )
+          assert.deepEqual(
+            metadata.workerFiles,
+            expected,
+            'Built worker wheel differs from current Python source',
+          )
+        }
+        const descriptor = await copyFile(
+          path.join(args.wheels, wheel.path),
+          path.join(releaseDirectory, 'wheels', wheel.path),
+          `wheels/${wheel.path}`,
+          wheel,
+        )
+        files.push(descriptor)
+        descriptors.push({
+          path: descriptor.path,
+          distribution: metadata.distribution,
+          version: metadata.version,
+          sha256: descriptor.sha256,
+          sizeBytes: descriptor.sizeBytes,
+        })
+        report.wheelMetadata ??= []
+        report.wheelMetadata.push({ path: descriptor.path, ...metadata })
+      }
+      assert.deepEqual(
+        descriptors.map((wheel) => wheel.distribution).sort(),
+        fullInference
+          ? wheelhouseProof.plan.wheels.map((wheel) => wheel.distribution).sort()
+          : ['imagegen-worker', 'pillow'],
+      )
+      const manifest = {
+        schemaVersion: 1,
+        appVersion: 'qualification-0.1.0',
+        releaseId: `${fullInference ? 'full-native' : 'cpu-refusal'}-${randomUUID()}`,
+        ...(fullInference ? { dependencyPolicy: 'invoke-inference-v1' } : {}),
+        profile: 'linux-nvidia',
+        configPath: 'config',
+        requirementsPath: 'requirements.txt',
+        python: {
+          version: '3.12.13',
+          buildId: 'cpython-3.12.13-local-readonly-qualification',
+          executable: 'python/bin/python3.12',
+        },
+        uv: { version: '0.11.11', executable: 'uv/uv' },
+        worker: {
+          distribution: 'imagegen-worker',
+          distributionVersion: '0.1.0',
+          cpuVersion: '0.1.0',
+          inferenceVersion: '0.14.0',
+          protocolVersion: '1',
+        },
+        host: {
+          os: 'linux',
+          arch: 'x64',
+          glibcMinimum: '2.28',
+          cudaVersion: '12.6',
+          minimumNvidiaDriver: '560.0',
+          gpuArchitectures: ['sm_89'],
+        },
+        lockSha256: sha256(
+          (await stableBytes(path.join(repository, 'worker-python/uv.lock'))).bytes,
+        ),
+        requiredFreeBytes: (fullInference ? 20 : 1) * 1024 ** 3,
+        wheels: descriptors,
+        files,
+      }
+      const requirements = Buffer.from(runtimeReleaseRequirements(manifest))
+      await fs.writeFile(path.join(releaseDirectory, 'requirements.txt'), requirements, {
+        flag: 'wx',
+        mode: 0o600,
+      })
+      files.push({
+        path: 'requirements.txt',
+        kind: 'file',
+        executable: false,
+        sha256: sha256(requirements),
+        sizeBytes: requirements.length,
+      })
+      files.sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0))
+      const keys = generateKeyPairSync('ed25519')
+      const payload = canonicalRuntimeReleaseJson(manifest)
+      const publicKey = keys.publicKey.export({ type: 'spki', format: 'pem' }).toString()
+      const keyId = fullInference ? 'ephemeral-full-inference' : 'ephemeral-cpu-refusal'
+      const envelope = canonicalRuntimeReleaseJson({
+        schemaVersion: 1,
+        keyId,
+        payload: payload.toString('base64'),
+        signature: sign(null, payload, keys.privateKey).toString('base64'),
+      })
+      // The private key never leaves this local scope and is never serialized.
+      await fs.writeFile(path.join(payloadRoot, 'qualification-public-key.pem'), publicKey, {
+        flag: 'wx',
+        mode: 0o600,
+      })
+      await fs.writeFile(path.join(payloadRoot, 'qualification-envelope.json'), envelope, {
+        flag: 'wx',
+        mode: 0o600,
+      })
+      selection = {
+        appVersion: manifest.appVersion,
+        directory: releaseDirectory,
+        envelope,
+        trustedKeys: { [keyId]: publicKey },
+      }
+      report.signedRelease = {
+        manifest,
+        manifestSha256: sha256(payload),
+        envelopeSha256: sha256(envelope),
+        publicKey,
+        keyScope: 'This run only; private key not retained',
+        hostMetadataQualified: false,
+      }
+      const verified = await verifyRuntimeRelease(selection)
+      await verified.verifyCompletePayloadSnapshot()
+      return {
+        files: files.length,
+        bytes: files
+          .filter((entry) => entry.kind === 'file')
+          .reduce((sum, entry) => sum + entry.sizeBytes, 0),
+        configPins: config.entries.length,
+        realWheels: descriptors,
+      }
     })
-    files.push({
-      path: 'requirements.txt',
-      kind: 'file',
-      executable: false,
-      sha256: sha256(requirements),
-      sizeBytes: requirements.length,
-    })
-    files.sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0))
-    const keys = generateKeyPairSync('ed25519')
-    const payload = canonicalRuntimeReleaseJson(manifest)
-    const publicKey = keys.publicKey.export({ type: 'spki', format: 'pem' }).toString()
-    const keyId = fullInference ? 'ephemeral-full-inference' : 'ephemeral-cpu-refusal'
-    const envelope = canonicalRuntimeReleaseJson({
-      schemaVersion: 1,
-      keyId,
-      payload: payload.toString('base64'),
-      signature: sign(null, payload, keys.privateKey).toString('base64'),
-    })
-    // The private key never leaves this local scope and is never serialized.
-    await fs.writeFile(path.join(payloadRoot, 'qualification-public-key.pem'), publicKey, {
-      flag: 'wx',
-      mode: 0o600,
-    })
-    await fs.writeFile(path.join(payloadRoot, 'qualification-envelope.json'), envelope, {
-      flag: 'wx',
-      mode: 0o600,
-    })
-    selection = {
-      appVersion: manifest.appVersion,
-      directory: releaseDirectory,
-      envelope,
-      trustedKeys: { [keyId]: publicKey },
-    }
-    report.signedRelease = {
-      manifest,
-      manifestSha256: sha256(payload),
-      envelopeSha256: sha256(envelope),
-      publicKey,
-      keyScope: 'This run only; private key not retained',
-      hostMetadataQualified: false,
-    }
-    const verified = await verifyRuntimeRelease(selection)
-    await verified.verifyCompletePayloadSnapshot()
-    return {
-      files: files.length,
-      bytes: files
-        .filter((entry) => entry.kind === 'file')
-        .reduce((sum, entry) => sum + entry.sizeBytes, 0),
-      configPins: config.entries.length,
-      realWheels: descriptors,
-    }
-  })
 
   let currentSelection = selection
   const backend = {
@@ -1243,6 +1704,10 @@ async function main(argv) {
     assemble: async (input) => {
       prepared = await assembleOfflineRuntime({ ...input, commandRunner: commandObserver })
       report.assembled = prepared
+      if (fullEngine) {
+        report.assembledSlots ??= []
+        report.assembledSlots.push(prepared)
+      }
       return prepared
     },
     startProjectClient: async (location, options) => {
@@ -1285,11 +1750,59 @@ async function main(argv) {
     },
   }
   if (fullInference) delete backend.ensureHostCompatible
+  if (fullEngine) {
+    const resourcesDirectory = await mkdirNew(path.join(roots.appDataDir, 'inference-resources'))
+    engineResources = new InferenceAuxiliaryResources(resourcesDirectory)
+    report.auxiliary = {
+      source: args['lama-source'],
+      resourcesDirectory,
+      copies: [],
+      verifications: [],
+      scope: 'actual pinned resource publication/reuse; controlled local copy transport only',
+    }
+    backend.engine = {
+      transportDirectory: args['transport-dir'],
+      auxiliaryInstaller: createLamaAuxiliaryInstaller(resourcesDirectory, {
+        download: async (input) => {
+          assert.equal(input.source, 'invoke-lama')
+          assert.equal(input.url, LAMA_OUTPAINT_ARTIFACT.url)
+          assert.equal(input.expectedBytes, LAMA_OUTPAINT_ARTIFACT.sizeBytes)
+          assert.equal(input.expectedSha256, LAMA_OUTPAINT_ARTIFACT.sha256)
+          assert.equal(input.bearerToken, undefined)
+          if (input.signal?.aborted) throw new Error('LaMa copy canceled before acquisition')
+          const stagingPath = path.join(input.stagingDirectory, `${randomUUID()}.part`)
+          const copied = await stableFile(args['lama-source'], stagingPath, inputsFreeze.lama)
+          report.auxiliary.copies.push({
+            sha256: copied.sha256,
+            sizeBytes: copied.sizeBytes,
+            stagingPath,
+          })
+          input.onProgress?.({ downloadedBytes: copied.sizeBytes, totalBytes: copied.sizeBytes })
+          return { sha256: copied.sha256, sizeBytes: copied.sizeBytes, stagingPath }
+        },
+      }),
+    }
+    backend.ensureAuxiliaryReady = async () => {
+      const resource = await engineResources.resolveVerifiedOutpaintInfill()
+      report.auxiliary.verifications.push({ ...resource, at: new Date().toISOString() })
+    }
+  }
   const startInference = async (location, environment) => {
     const receipt = { location, startedAt: new Date().toISOString(), environment }
     report.inferenceStarts.push(receipt)
     try {
-      const client = await GenerationWorkerClient.start(location, { environment })
+      let actualEnvironment = environment
+      if (fullEngine && failEngineAfterActivation) {
+        const pointer = JSON.parse((await stableBytes(roots.pointerFile)).bytes.toString('utf8'))
+        if (pointer.runtimeId === prepared.runtimeId) {
+          actualEnvironment = { ...environment, CUDA_VISIBLE_DEVICES: '' }
+          receipt.controlledFault = 'CUDA hidden after candidate pointer activation only'
+          receipt.actualEnvironment = actualEnvironment
+        }
+      }
+      const client = await GenerationWorkerClient.start(location, {
+        environment: actualEnvironment,
+      })
       if (fullInference) {
         liveInferenceClients.add(client)
         const processProof = await cgroupProof(client.child.pid)
@@ -1399,15 +1912,27 @@ async function main(argv) {
   let review
   await check('real-signed-preview-creates-no-runtime-slot-or-process', async () => {
     review = value(await manager.previewInstallation('install'))
-    assert.equal(review.scope, 'python-runtime-slot')
+    assert.equal(review.scope, fullEngine ? 'engine' : 'python-runtime-slot')
     assert.equal(review.mode, 'install')
     assert.equal(report.commands.length, 0)
     assert.deepEqual(await fs.readdir(roots.environmentsDir), [])
     assert.deepEqual(await fs.readdir(roots.pythonDir), [])
+    if (fullEngine) {
+      assert.equal(review.requiredFreeBytes, null)
+      assert.equal(review.runtimeRequiredFreeBytes, report.signedRelease.manifest.requiredFreeBytes)
+      assert.equal(review.plan.totals.downloadBytes, LAMA_OUTPAINT_ARTIFACT.sizeBytes)
+      assert.equal(review.plan.totals.additionalInstalledBytes, null)
+      const runtime = review.plan.artifacts.find((entry) => entry.kind === 'runtime')
+      assert.equal(runtime.sourceCached, true)
+      assert.equal(runtime.reused, false)
+      assert.equal(report.auxiliary.copies.length, 0)
+      assert.deepEqual(await fs.readdir(report.auxiliary.resourcesDirectory), [])
+    }
     return review
   })
   if (fullInference) {
     await fullInstalledChecks({ args, roots, backend, startInference, review, wheelhouseProof })
+    if (fullEngine) await fullEngineInstalledChecks({ roots, backend, startInference })
   } else {
     await check('actual-offline-assembly-cpu-self-test-and-inference-refusal', async () => {
       const result = await manager.install(review.token)
@@ -1539,14 +2064,18 @@ async function main(argv) {
   await check('owned-sentinels-source-payload-and-physical-exit-restoration', async () => {
     for (const sentinel of sentinels)
       assert.deepEqual(await fs.readFile(sentinel.filename), sentinel.bytes)
-    const after = {
-      python: await inventory(args['python-root'], true),
-      config: await inventory(args.config),
-      wheels: await inventory(args.wheels),
-      uv: await stableBytes(args.uv),
+    let after
+    if (fullEngine) after = await engineInputs(args)
+    else {
+      after = {
+        python: await inventory(args['python-root'], true),
+        config: await inventory(args.config),
+        wheels: await inventory(args.wheels),
+        uv: await stableBytes(args.uv),
+      }
+      after.uv = { identity: after.uv.identity, sha256: sha256(after.uv.bytes) }
+      if (fullInference) after.wheelhouseProof = (await fullWheelhouseProof(args)).files
     }
-    after.uv = { identity: after.uv.identity, sha256: sha256(after.uv.bytes) }
-    if (fullInference) after.wheelhouseProof = (await fullWheelhouseProof(args)).files
     assert.deepEqual(after, inputsFreeze, 'Read-only input bytes or metadata changed')
     assert.deepEqual(
       await freezeOwners(),
@@ -1649,14 +2178,19 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     }
     if (inputsFreeze && inputArguments) {
       try {
-        const uv = await stableBytes(inputArguments.uv)
-        const after = {
-          python: await inventory(inputArguments['python-root'], true),
-          config: await inventory(inputArguments.config),
-          wheels: await inventory(inputArguments.wheels),
-          uv: { identity: uv.identity, sha256: sha256(uv.bytes) },
+        let after
+        if (fullEngine) after = await engineInputs(inputArguments)
+        else {
+          const uv = await stableBytes(inputArguments.uv)
+          after = {
+            python: await inventory(inputArguments['python-root'], true),
+            config: await inventory(inputArguments.config),
+            wheels: await inventory(inputArguments.wheels),
+            uv: { identity: uv.identity, sha256: sha256(uv.bytes) },
+          }
+          if (fullInference)
+            after.wheelhouseProof = (await fullWheelhouseProof(inputArguments)).files
         }
-        if (fullInference) after.wheelhouseProof = (await fullWheelhouseProof(inputArguments)).files
         assert.deepEqual(after, inputsFreeze)
         report.readOnlyInputsUnchanged = true
       } catch (error) {

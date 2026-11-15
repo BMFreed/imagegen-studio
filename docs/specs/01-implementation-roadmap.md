@@ -1,6 +1,17 @@
 # Implementation Roadmap
 
-## Current reviewed runtime and LaMa composition
+## Current native engine qualification
+
+[Native engine qualification](../engineering/phase-5-native-engine-qualification-research.md) adopts the exact retained signed
+transport and runs the existing engine review, real offline 67-package assembly,
+pre/post CPU/GPU workers and pinned LaMa publication. A fresh-slot Repair and
+post-activation CUDA-hidden failure exercise real pointer rollback; the installed
+LaMa owner performs a 64² CUDA infill smoke. These are finite host results with
+a controlled local auxiliary copy port. Shipping trust/endpoints, public Setup
+provider/IPC/UI, reopened aggregate auxiliary health, distribution/upgrade and
+visual/MVP acceptance remain open. Promise statuses are unchanged.
+
+## Previous reviewed runtime and LaMa composition
 
 [Engine/LaMa composition](../engineering/phase-5-engine-lama-composition-research.md) connects the existing internal
 RuntimeManager review/token/installation path to the signed local transport and
