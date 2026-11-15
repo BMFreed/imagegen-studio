@@ -1,6 +1,17 @@
 # Open Questions
 
-## Current engine setup confirmation UI
+## Current metadata-first engine review
+
+[Metadata-first review](./engineering/phase-5-runtime-metadata-provider-research.md) authenticates explicitly supplied signed metadata,
+reviews full engine bytes and defers acquisition until existing token consent.
+Host/pointer guards precede download; verified-cache loss cannot increase the
+reviewed transfer. Existing cache, extractor, LaMa and installer owners remain
+in charge. DTO/UI distinguish uncached metadata from cached source. No publisher
+exists yet (user confirmed); default shipping Setup remains unavailable. Metadata
+discovery/publisher provisioning, operation progress/cancel and release acceptance
+remain open. Promise statuses are unchanged.
+
+## Previous engine setup confirmation UI
 
 [Setup confirmation](./engineering/phase-5-runtime-setup-ui-research.md) connects the existing App actions to engine review,
 explicit token confirmation and dismissal. Cached source, new runtime, reused

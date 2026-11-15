@@ -48,6 +48,34 @@ test('public setup review preserves unknown aggregate sizes and known nonnegativ
   assert.equal(isRuntimeSetupReview(Object.assign(Object.create(null), review())), true)
 })
 
+test('authenticated metadata reviews describe uncached transfer or freshly verified cached source without changing the public shape', () => {
+  for (const runtimeSourceCached of [false, true]) {
+    const metadataReview: RuntimeSetupReview = {
+      ...review(),
+      downloadBytes: runtimeSourceCached ? 205_669_692 : 2 * 1024 ** 3 + 205_669_692,
+      runtimeSourceCached,
+      source: 'verified-metadata',
+    }
+    assert.equal(isRuntimeSetupReview(metadataReview), true)
+    assert.equal(metadataReview.installedBytes, null)
+    assert.equal(metadataReview.requiredFreeBytes, null)
+    assert.deepEqual(Object.keys(metadataReview).sort(), Object.keys(review()).sort())
+    assert.equal(isRuntimeSetupReview({ ...metadataReview, trustedKeys: {} }), false)
+    assert.equal(
+      isRuntimeSetupReview({ ...metadataReview, sourceUrl: 'https://publisher.test/runtime.zip' }),
+      false,
+    )
+  }
+  assert.equal(
+    isRuntimeSetupReview({
+      ...review(),
+      runtimeSourceCached: false,
+      source: 'verified-local-cache',
+    }),
+    false,
+  )
+})
+
 test('setup mode and opaque token shape admit only the domain inputs and never establish authority', () => {
   for (const mode of ['install', 'repair']) {
     assert.equal(isRuntimeSetupMode(mode), true)
@@ -106,12 +134,22 @@ test('missing fields and private Main capabilities cannot cross the exact public
   assert.equal(isRuntimeSetupReview({ ...valid, scope: 'auxiliary-weights' }), false)
 })
 
-test('source, cached-source and installed-reuse flags are literal and cannot imply another workflow', () => {
+test('source provenance, cached-source and installed-reuse flags cannot imply another workflow', () => {
   for (const invalid of ['download-url', 'installed-runtime', '', null, undefined, true, {}]) {
     assert.equal(isRuntimeSetupReview({ ...review(), source: invalid }), false)
   }
   for (const invalid of [false, 'true', 1, null, undefined, {}, []]) {
     assert.equal(isRuntimeSetupReview({ ...review(), runtimeSourceCached: invalid }), false)
+  }
+  for (const invalid of ['true', 1, null, undefined, {}, []]) {
+    assert.equal(
+      isRuntimeSetupReview({
+        ...review(),
+        runtimeSourceCached: invalid,
+        source: 'verified-metadata',
+      }),
+      false,
+    )
   }
   for (const invalid of ['true', 'false', 0, 1, null, undefined, {}, []]) {
     assert.equal(isRuntimeSetupReview({ ...review(), outpaintInfillReused: invalid }), false)

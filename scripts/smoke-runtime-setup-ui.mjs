@@ -135,7 +135,8 @@ await build({
         await app.whenReady();
         const state = {
           controls: { available:true, holdPreview:false, holdOperation:false, infillReused:false,
-            longRelease:false, statusKind:'not-installed', outpaintInfill:'ready' },
+            longRelease:false, metadataReview:false, runtimeCached:true,
+            statusKind:'not-installed', outpaintInfill:'ready' },
           previews:[], attempts:[], mutations:[], requests:[], discards:0,
           navigationInvalidations:0, disposed:false, pendingPreview:false, pendingOperation:false
         };
@@ -173,11 +174,13 @@ await build({
             captured=review;
             const common={mode,token,releaseId:state.controls.longRelease
               ? 'controlled-release+'.repeat(6)+'local' : 'controlled-release+local',
-              verifiedPayloadBytes:987654};
+              verifiedPayloadBytes:987654,
+              ...(state.controls.metadataReview ? {source:'verified-metadata'} : {})};
             const plan=createEngineInstallPlan({runtimeArtifacts:[{id:'python-runtime-transport',
               filename:'runtime-payload.zip',sha256:'a'.repeat(64),sizeBytes:1000000,installedSizeBytes:null}],
-              verifiedCachedRuntimeArtifacts:[{id:'python-runtime-transport',filename:'runtime-payload.zip',
-              sha256:'a'.repeat(64),sizeBytes:1000000}],
+              verifiedCachedRuntimeArtifacts:state.controls.runtimeCached
+                ? [{id:'python-runtime-transport',filename:'runtime-payload.zip',
+                    sha256:'a'.repeat(64),sizeBytes:1000000}] : [],
               verifiedInstalledArtifacts:state.controls.infillReused ? [{id:ENGINE_OUTPAINT_INFILL_ARTIFACT_ID,
                 filename:LAMA_OUTPAINT_ARTIFACT.filename,sha256:LAMA_OUTPAINT_ARTIFACT.sha256,
                 sizeBytes:LAMA_OUTPAINT_ARTIFACT.sizeBytes,kind:'outpaint-infill'}] : []});
@@ -353,6 +356,35 @@ try {
   records.push({
     name: 'built production App starts through real preload with controlled empty Home ports',
   })
+
+  await controls({ metadataReview: true, runtimeCached: false })
+  await setupButton.click()
+  await waitReview(installDialog)
+  await expect(installDialog).toContainText(
+    'The runtime download is included in this review. Installation creates a new runtime.',
+  )
+  await expect(installDialog).not.toContainText('The runtime download is already cached.')
+  const metadataSource = await lastReview()
+  const publicMetadata = await invoke('previewInstallation', 'install')
+  assert.equal(publicMetadata.ok, true)
+  assert.equal(publicMetadata.value.source, 'verified-metadata')
+  assert.equal(publicMetadata.value.runtimeSourceCached, false)
+  // The separate protocol probe superseded the visible review; neither can mutate without consent.
+  await refusedToken(
+    'uncached metadata review does not authorize the superseded token',
+    metadataSource,
+    0,
+  )
+  await capture('metadata-uncached-review-1280x800.png')
+  await assertCounts(0)
+  await installDialog.getByRole('button', { exact: true, name: 'Cancel' }).click()
+  await expect(setupButton).toBeEnabled()
+  await refusedToken('metadata Cancel revokes the current public review', publicMetadata.value, 0)
+  records.push({
+    name: 'uncached metadata projection reaches built review before any controlled operation',
+    fullDownloadBytes: publicMetadata.value.downloadBytes,
+  })
+  await controls({ metadataReview: false, runtimeCached: true })
 
   await setupButton.click()
   await waitReview(installDialog)

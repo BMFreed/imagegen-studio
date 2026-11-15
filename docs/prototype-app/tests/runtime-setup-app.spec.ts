@@ -13,6 +13,7 @@ interface SetupOptions {
   outpaintReused?: boolean
   preview?: PreviewBehavior
   releaseId?: string
+  runtimeCached?: boolean
   status?: 'needs-repair' | 'not-installed'
 }
 
@@ -190,7 +191,7 @@ async function mountSetupApp(page: Page, options: SetupOptions = {}) {
               ok: true,
               value: {
                 additionalInstalledBytes: null,
-                downloadBytes: 0,
+                downloadBytes: initial.runtimeCached === false ? 2 * 1024 ** 3 : 0,
                 installedBytes: null,
                 mode:
                   behavior === 'wrong-mode' ? (mode === 'install' ? 'repair' : 'install') : mode,
@@ -198,9 +199,10 @@ async function mountSetupApp(page: Page, options: SetupOptions = {}) {
                 releaseId: initial.releaseId ?? 'renderer-review+cached',
                 requiredFreeBytes: null,
                 runtimeRequiredFreeBytes: 21_474_836_480,
-                runtimeSourceCached: true,
+                runtimeSourceCached: initial.runtimeCached !== false,
                 scope: 'engine',
-                source: 'verified-local-cache',
+                source:
+                  initial.runtimeCached === false ? 'verified-metadata' : 'verified-local-cache',
                 token,
               },
             }
@@ -329,6 +331,38 @@ test('production Repair confirms the repair mode and shows verified outpaint reu
   await review.getByRole('button', { exact: true, name: 'Repair' }).click()
   await expect(review).toHaveCount(0)
   expect((await snapshot(page)).operations).toEqual([{ mode: 'repair', token }])
+})
+
+test('production metadata review shows the full uncached download before explicit confirmation', async ({
+  page,
+}, testInfo) => {
+  const pageErrors: string[] = []
+  page.on('pageerror', (error) => pageErrors.push(error.message))
+  await mountSetupApp(page, { runtimeCached: false })
+  await notice(page).getByRole('button', { exact: true, name: 'Set up' }).click()
+  const review = dialog(page)
+  await expect(review).toBeVisible()
+  await expect(valueFor(review, 'Total download')).toHaveText('2.0 GiB')
+  await expect(valueFor(review, 'Installed size')).toHaveText('Unknown')
+  await expect(valueFor(review, 'Additional installed size')).toHaveText('Unknown')
+  await expect(valueFor(review, 'Runtime minimum free space')).toHaveText('20.0 GiB')
+  await expect(valueFor(review, 'Peak free space required')).toHaveText('Unknown')
+  await expect(review).toContainText(
+    'The runtime download is included in this review. Installation creates a new runtime.',
+  )
+  await expect(review).not.toContainText('The runtime download is already cached.')
+  const before = await snapshot(page)
+  expect(before.operations).toEqual([])
+  expect(before.previews.map(({ mode }) => mode)).toEqual(['install'])
+  await expect(review).not.toContainText(before.previews[0]!.token)
+  await expect.poll(() => review.evaluate((el) => getComputedStyle(el).transform)).toBe('none')
+  await page.screenshot({ path: testInfo.outputPath('metadata-uncached-review.png') })
+  await review.getByRole('button', { exact: true, name: 'Install' }).click()
+  await expect(review).toHaveCount(0)
+  expect((await snapshot(page)).operations).toEqual([
+    { mode: 'install', token: before.previews[0]!.token },
+  ])
+  expect(pageErrors).toEqual([])
 })
 
 test('Cancel and Escape revoke loaded consent without installation, and reopening obtains a new token', async ({

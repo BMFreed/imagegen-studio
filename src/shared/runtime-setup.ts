@@ -1,8 +1,9 @@
 /**
  * Invoke4875 useInstallActions.ts (AddModelsView/ModelsNotice callers) scopes explicit install
  * intent to its current owner; model_manager.py:946 starts heuristic_import immediately. Invoke has
- * no signed aggregate review token. This path-free Studio DTO adapts the existing Main
- * review/capture boundary; it is neither a release provider nor installation authorization.
+ * no signed aggregate review token. Its download_default.py241 prepares parts before submission;
+ * this path-free DTO also projects Studio's authenticated metadata review before archive download.
+ * It is neither a release provider nor installation authorization.
  */
 export type RuntimeSetupMode = 'install' | 'repair'
 
@@ -17,9 +18,9 @@ export interface RuntimeSetupReview {
   requiredFreeBytes: null
   runtimeRequiredFreeBytes: number
   /** Cached source does not mean the new runtime slot is installed or reusable. */
-  runtimeSourceCached: true
+  runtimeSourceCached: boolean
   scope: 'engine'
-  source: 'verified-local-cache'
+  source: 'verified-local-cache' | 'verified-metadata'
   token: string
 }
 
@@ -83,7 +84,7 @@ export function isRuntimeSetupReview(value: unknown): value is RuntimeSetupRevie
     const additionalInstalledBytes = review['additionalInstalledBytes']
     if (
       review['scope'] !== 'engine' ||
-      review['source'] !== 'verified-local-cache' ||
+      (review['source'] !== 'verified-local-cache' && review['source'] !== 'verified-metadata') ||
       !isRuntimeSetupMode(review['mode']) ||
       !isRuntimeSetupToken(review['token']) ||
       !safeReleaseId(review['releaseId']) ||
@@ -92,7 +93,8 @@ export function isRuntimeSetupReview(value: unknown): value is RuntimeSetupRevie
       (additionalInstalledBytes !== null && !nonnegativeSafeInteger(additionalInstalledBytes)) ||
       review['requiredFreeBytes'] !== null ||
       !positiveSafeInteger(review['runtimeRequiredFreeBytes']) ||
-      review['runtimeSourceCached'] !== true ||
+      typeof review['runtimeSourceCached'] !== 'boolean' ||
+      (review['source'] === 'verified-local-cache' && review['runtimeSourceCached'] !== true) ||
       typeof review['outpaintInfillReused'] !== 'boolean'
     ) {
       return false

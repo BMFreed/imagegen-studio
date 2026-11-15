@@ -32,12 +32,34 @@ export interface RuntimeTransportCacheInput {
   /** Internal qualification seam. Production uses the existing DNS-pinned HTTPS owner. */
   readonly downloader?: Pick<ModelDownloader, 'downloadRuntimeArtifact'>
   readonly onProgress?: (progress: { downloadedBytes: number; totalBytes: number | null }) => void
+  /** Reviewed cached source must not silently become a newly authorized download. */
+  readonly requireCached?: boolean
   readonly runtimeEnvelope: Buffer
   readonly signal?: AbortSignal
   /** Explicit trusted Main selection; URLs are not authenticated by the signed envelopes. */
   readonly source: Readonly<{ redirectOrigins: readonly string[]; url: string }>
   readonly transportEnvelope: Buffer
   readonly trustedKeys: Readonly<Record<string, string>>
+}
+
+export type RuntimeTransportCacheInspectionInput = Pick<
+  RuntimeTransportCacheInput,
+  | 'appVersion'
+  | 'cacheDirectory'
+  | 'runtimeEnvelope'
+  | 'signal'
+  | 'source'
+  | 'transportEnvelope'
+  | 'trustedKeys'
+>
+
+type PreparedCacheInput = ReturnType<typeof prepareCacheInput>
+
+/** Read-only exact-entry inspection. Only an absent entry returns null; invalid entries refuse. */
+export async function inspectRuntimeTransportCache(
+  input: RuntimeTransportCacheInspectionInput,
+): Promise<VerifiedRuntimeTransport | null> {
+  return await inspectSelectedCache(prepareCacheInput(input))
 }
 
 /**
@@ -47,33 +69,12 @@ export interface RuntimeTransportCacheInput {
 export async function cacheRuntimeTransport(
   input: RuntimeTransportCacheInput,
 ): Promise<VerifiedRuntimeTransport> {
-  const { appVersion, cacheDirectory, onProgress, signal } = input
-  storage(
-    typeof cacheDirectory === 'string' &&
-      path.isAbsolute(cacheDirectory) &&
-      path.resolve(cacheDirectory) === cacheDirectory,
-    'A canonical absolute cache entry is required.',
-  )
-  storage(
-    Buffer.isBuffer(input.runtimeEnvelope) &&
-      input.runtimeEnvelope.length <= 1024 ** 2 &&
-      Buffer.isBuffer(input.transportEnvelope) &&
-      input.transportEnvelope.length <= 1024 ** 2,
-    'Runtime envelopes must be bounded buffers.',
-  )
-  const runtimeEnvelope = Buffer.from(input.runtimeEnvelope)
-  const transportEnvelope = Buffer.from(input.transportEnvelope)
-  const trustedKeys = Object.freeze({ ...input.trustedKeys })
-  // Complete trust/source admission is synchronous and precedes both storage and DNS.
-  const metadata = verifyRuntimeTransportMetadata({
-    appVersion,
-    runtimeEnvelope,
-    transportEnvelope,
-    trustedKeys,
-  })
-  const source = validateRuntimeArtifactSource(input.source)
-  transportNotCanceled(signal)
-  const downloader = input.downloader ?? new ModelDownloader()
+  const prepared = prepareCacheInput(input)
+  const { cacheDirectory, metadata, runtimeEnvelope, signal, source, transportEnvelope } = prepared
+  const { onProgress } = input
+  const selectedDownloader = input.downloader
+  const requireCached = input.requireCached === undefined ? false : input.requireCached
+  storage(typeof requireCached === 'boolean', 'The cache requirement is invalid.')
 
   // Invoke's per-source lock becomes a per-entry promise chain. Waiters recheck real bytes.
   const previous = pending.get(cacheDirectory) ?? Promise.resolve()
@@ -93,42 +94,17 @@ export async function cacheRuntimeTransport(
     await waitForTurn(previous, signal)
     entered = true
     transportNotCanceled(signal)
-    const verifySelected = async () => {
-      const result = await verifyRuntimeTransport({
-        appVersion,
-        directory: path.join(cacheDirectory, 'transport'),
-        signal,
-        trustedKeys,
-      })
-      storage(
-        result.transportEnvelopeSha256 === metadata.transportEnvelopeSha256 &&
-          result.manifest.runtimeEnvelopeSha256 === metadata.manifest.runtimeEnvelopeSha256,
-        'Cached transport differs from the selected signed envelopes.',
-      )
-      return result
+    const cached = await inspectSelectedCache(prepared)
+    if (cached) {
+      return cached
     }
-    const before = await fs.lstat(cacheDirectory, { bigint: true }).catch((error: unknown) => {
-      if (isMissing(error)) {
-        return null
-      }
-      throw error
-    })
-    if (before) {
-      storage(
-        before.isDirectory() &&
-          !before.isSymbolicLink() &&
-          (await fs.realpath(cacheDirectory)) === cacheDirectory &&
-          (await fs.readdir(cacheDirectory)).join('\0') === 'transport',
-        'Cache entry is incomplete or is not an owned complete container.',
+    if (requireCached) {
+      throw new RuntimeTransportError(
+        'RUNTIME_TRANSPORT_CHANGED',
+        'The reviewed cached runtime is no longer available; review setup again.',
       )
-      const result = await verifySelected()
-      storage(
-        identity(await fs.lstat(cacheDirectory, { bigint: true })) === identity(before) &&
-          (await fs.realpath(cacheDirectory)) === cacheDirectory,
-        'Cache entry changed during verification.',
-      )
-      return result
     }
+    const downloader = selectedDownloader ?? new ModelDownloader()
 
     return await withRuntimeTransportOutput(cacheDirectory, null, async (owned) => {
       await fs.mkdir(path.join(owned.anchor, 'transport'), { mode: 0o700 })
@@ -203,7 +179,7 @@ export async function cacheRuntimeTransport(
         await child.sync()
         await sameChild()
         // Do not trust the downloader's receipt. Existing verifier rehashes actual archive bytes.
-        const verified = await verifySelected()
+        const verified = await verifySelectedTransport(prepared)
         await sameChild()
         transportNotCanceled(signal)
         storage(
@@ -224,6 +200,94 @@ export async function cacheRuntimeTransport(
       void previous.then(done)
     }
   }
+}
+
+/** Complete trust/source admission is synchronous and precedes both storage and DNS. */
+function prepareCacheInput(input: RuntimeTransportCacheInspectionInput) {
+  const { appVersion, cacheDirectory, signal } = input
+  storage(
+    typeof cacheDirectory === 'string' &&
+      path.isAbsolute(cacheDirectory) &&
+      path.resolve(cacheDirectory) === cacheDirectory,
+    'A canonical absolute cache entry is required.',
+  )
+  storage(
+    Buffer.isBuffer(input.runtimeEnvelope) &&
+      input.runtimeEnvelope.length <= 1024 ** 2 &&
+      Buffer.isBuffer(input.transportEnvelope) &&
+      input.transportEnvelope.length <= 1024 ** 2,
+    'Runtime envelopes must be bounded buffers.',
+  )
+  const runtimeEnvelope = Buffer.from(input.runtimeEnvelope)
+  const transportEnvelope = Buffer.from(input.transportEnvelope)
+  const trustedKeys = Object.freeze({ ...input.trustedKeys })
+  const metadata = verifyRuntimeTransportMetadata({
+    appVersion,
+    runtimeEnvelope,
+    transportEnvelope,
+    trustedKeys,
+  })
+  const source = validateRuntimeArtifactSource(input.source)
+  transportNotCanceled(signal)
+  return Object.freeze({
+    appVersion,
+    cacheDirectory,
+    metadata,
+    runtimeEnvelope,
+    signal,
+    source,
+    transportEnvelope,
+    trustedKeys,
+  })
+}
+
+async function verifySelectedTransport(
+  input: PreparedCacheInput,
+): Promise<VerifiedRuntimeTransport> {
+  const result = await verifyRuntimeTransport({
+    appVersion: input.appVersion,
+    directory: path.join(input.cacheDirectory, 'transport'),
+    signal: input.signal,
+    trustedKeys: input.trustedKeys,
+  })
+  storage(
+    result.transportEnvelopeSha256 === input.metadata.transportEnvelopeSha256 &&
+      result.manifest.runtimeEnvelopeSha256 === input.metadata.manifest.runtimeEnvelopeSha256,
+    'Cached transport differs from the selected signed envelopes.',
+  )
+  return result
+}
+
+async function inspectSelectedCache(
+  input: PreparedCacheInput,
+): Promise<VerifiedRuntimeTransport | null> {
+  transportNotCanceled(input.signal)
+  const { cacheDirectory } = input
+  const before = await fs.lstat(cacheDirectory, { bigint: true }).catch((error: unknown) => {
+    if (isMissing(error)) {
+      return null
+    }
+    throw error
+  })
+  if (!before) {
+    transportNotCanceled(input.signal)
+    return null
+  }
+  storage(
+    before.isDirectory() &&
+      !before.isSymbolicLink() &&
+      (await fs.realpath(cacheDirectory)) === cacheDirectory &&
+      (await fs.readdir(cacheDirectory)).join('\0') === 'transport',
+    'Cache entry is incomplete or is not an owned complete container.',
+  )
+  const result = await verifySelectedTransport(input)
+  storage(
+    identity(await fs.lstat(cacheDirectory, { bigint: true })) === identity(before) &&
+      (await fs.realpath(cacheDirectory)) === cacheDirectory,
+    'Cache entry changed during verification.',
+  )
+  transportNotCanceled(input.signal)
+  return result
 }
 
 async function waitForTurn(previous: Promise<void>, signal?: AbortSignal): Promise<void> {

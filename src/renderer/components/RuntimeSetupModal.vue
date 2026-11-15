@@ -86,7 +86,11 @@ function formatBytes(bytes: number | null): string {
           <dd>Unknown</dd>
         </dl>
         <p class="setup-detail">
-          The runtime download is already cached. Installation still creates a new runtime.
+          {{
+            review.runtimeSourceCached
+              ? 'The runtime download is already cached. Installation still creates a new runtime.'
+              : 'The runtime download is included in this review. Installation creates a new runtime.'
+          }}
         </p>
         <p class="setup-detail">
           {{

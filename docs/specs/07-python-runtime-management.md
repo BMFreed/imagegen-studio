@@ -236,6 +236,20 @@ uv run pytest
 
 ### Текущая реализация и developer qualification
 
+[Metadata-first consumer](../engineering/phase-5-runtime-metadata-provider-research.md)
+adds an optional Main backend over already obtained authenticated metadata and
+separately trusted keys/source policy. Preview verifies metadata, inspects exact
+existing cache/LaMa and reviews full bytes without acquiring/extracting runtime.
+Existing mode/token consent and host/pointer guards precede deferred cache,
+extraction and unchanged installation/rollback. Cached-source loss cannot turn
+a reviewed zero transfer into a new download. Public projection keeps twelve
+fields and distinguishes metadata provenance and actual verified cache.
+A failed incomplete cache needs an explicitly selected fresh owned attempt; no
+implicit deletion, partial resume or fallback is introduced. User confirmed that
+shipping metadata/artifact URLs and trusted publisher identity do not exist yet.
+Default Main remains unavailable; publisher provisioning/discovery, operation
+progress/cancel and release acceptance remain separate.
+
 [Setup confirmation consumer](../engineering/phase-5-runtime-setup-ui-research.md)
 connects Set up/Repair in the production App to the existing engine review. The
 Vue/Naive dialog shows download/installed/additional bytes, cached source and
@@ -245,8 +259,8 @@ unmount dismisses unconsumed review; pending preview/dismissal is serialized and
 late replies cannot reopen it. Accepted operations show pending text and cannot
 be dismissed as if that cancelled installation. Failure requires fresh review.
 The unavailable partial-outpaint Repair remains separate from connection errors.
-This does not supply a shipping provider, metadata-first pre-download offer,
-public operation progress/cancel or release readiness.
+Metadata-first review is recorded above. This UI checkpoint itself supplies no
+shipping provider, public operation progress/cancel or release readiness.
 
 [Public setup review/token IPC](../engineering/phase-5-runtime-setup-ipc-research.md)
 adds engine-only `previewInstallation(mode)`, explicit review dismissal and

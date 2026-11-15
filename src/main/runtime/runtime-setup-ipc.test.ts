@@ -55,6 +55,7 @@ function engineReview(
   mode: RuntimeSetupMode = 'install',
   token = firstToken,
   reused = false,
+  cached = true,
 ): Extract<RuntimeInstallationReview, { scope: 'engine' }> {
   const runtime = {
     filename: 'runtime-payload.zip',
@@ -67,14 +68,16 @@ function engineReview(
     mode,
     plan: createEngineInstallPlan({
       runtimeArtifacts: [runtime],
-      verifiedCachedRuntimeArtifacts: [
-        {
-          filename: runtime.filename,
-          id: runtime.id,
-          sha256: runtime.sha256,
-          sizeBytes: runtime.sizeBytes,
-        },
-      ],
+      verifiedCachedRuntimeArtifacts: cached
+        ? [
+            {
+              filename: runtime.filename,
+              id: runtime.id,
+              sha256: runtime.sha256,
+              sizeBytes: runtime.sizeBytes,
+            },
+          ]
+        : [],
       verifiedInstalledArtifacts: reused
         ? [
             {
@@ -178,6 +181,62 @@ test('public engine review projects existing byte plan and exact core token with
     assert.deepEqual(value(await f.invoke('repair', [firstToken])), ready)
     assert.deepEqual(f.calls.at(-1), { action: 'repair', input: firstToken })
   }
+})
+
+test('metadata engine review projects exact uncached or cached download totals and requires explicit token submission', async () => {
+  for (const cached of [false, true]) {
+    for (const reused of [false, true]) {
+      const f = fixture()
+      f.controls.preview = async (mode) => {
+        const review = engineReview(mode, firstToken, reused, cached)
+        review.source = 'verified-metadata'
+        Object.assign(review, { sourceUrl: 'https://publisher.test/runtime.zip', trustedKeys: {} })
+        return success(review)
+      }
+      const review = value(await f.invoke('previewInstallation', ['install'])) as RuntimeSetupReview
+      assert.equal(review.source, 'verified-metadata')
+      assert.equal(review.runtimeSourceCached, cached)
+      assert.equal(
+        review.downloadBytes,
+        (cached ? 0 : 1024) + (reused ? 0 : LAMA_OUTPAINT_ARTIFACT.sizeBytes),
+      )
+      assert.equal(review.outpaintInfillReused, reused)
+      assert.equal(review.installedBytes, null)
+      assert.equal(review.requiredFreeBytes, null)
+      assert.equal(review.runtimeRequiredFreeBytes, 20 * 1024 ** 3)
+      assert.equal(Object.keys(review).length, 12)
+      assert.equal(Object.hasOwn(review, 'sourceUrl'), false)
+      assert.equal(Object.hasOwn(review, 'trustedKeys'), false)
+      assert.deepEqual(f.calls, [{ action: 'preview', input: 'install' }])
+      value(await f.invoke('install', [firstToken]))
+      assert.deepEqual(f.calls.at(-1), { action: 'install', input: firstToken })
+      failure(await f.invoke('install', [firstToken]), 'RUNTIME_INVALID_REVIEW')
+    }
+  }
+})
+
+test('uncached legacy reviews and unsupported source provenance never issue installation authority', async () => {
+  for (const source of [undefined, 'verified-local-cache', 'download-url']) {
+    const f = fixture()
+    f.controls.preview = async () => {
+      const review = engineReview('install', firstToken, false, false)
+      if (source !== undefined) {
+        Object.assign(review, { source })
+      }
+      return success(review)
+    }
+    failure(
+      await f.invoke('previewInstallation', ['install']),
+      'RUNTIME_INSTALL_PREPARATION_INVALID',
+    )
+    failure(await f.invoke('install', [firstToken]), 'RUNTIME_INVALID_REVIEW')
+    assert.deepEqual(f.calls, [{ action: 'preview', input: 'install' }])
+  }
+  const f = fixture()
+  f.controls.preview = async () =>
+    success(Object.assign(engineReview(), { source: 'download-url' }))
+  failure(await f.invoke('previewInstallation', ['install']), 'RUNTIME_INSTALL_PREPARATION_INVALID')
+  failure(await f.invoke('install', [firstToken]), 'RUNTIME_INVALID_REVIEW')
 })
 
 test('trusted main frame and exact arguments protect an issued review from foreign requests', async () => {

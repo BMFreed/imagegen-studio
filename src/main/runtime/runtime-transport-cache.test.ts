@@ -46,6 +46,7 @@ import {
 } from './runtime-release.js'
 import {
   cacheRuntimeTransport,
+  inspectRuntimeTransportCache,
   type RuntimeTransportCacheInput,
 } from './runtime-transport-cache.js'
 
@@ -330,6 +331,80 @@ test('pure selected metadata authenticates the same signed artifact without file
   assert.deepEqual(verified.runtimeManifest, f.runtime)
   assert.equal(verified.transportEnvelopeSha256, digest(f.transportEnvelope))
 })
+
+test('read-only cache inspection returns null for absence and preserves a verified complete entry', async () => {
+  await withWork(async (work) => {
+    const f = signedFixture()
+    const fake = downloading(f)
+    const cache = path.join(work, 'entry')
+    const beforeMissing = await tree(work)
+    assert.equal(await inspectRuntimeTransportCache(input(f, cache, fake.downloader)), null)
+    assert.equal(fake.calls.length, 0)
+    assert.deepEqual(await tree(work), beforeMissing)
+    await absent(cache)
+
+    await cacheRuntimeTransport(input(f, cache, fake.downloader))
+    const beforeComplete = await tree(cache)
+    const inspected = await inspectRuntimeTransportCache(input(f, cache, fake.downloader))
+    assert.ok(inspected)
+    assert.equal(inspected.directory, path.join(cache, 'transport'))
+    assert.deepEqual(inspected.manifest, f.transport)
+    await inspected.verifyCompleteTransportSnapshot()
+    assert.equal(fake.calls.length, 1)
+    assert.deepEqual(await tree(cache), beforeComplete)
+    await assertNoOwnedDescriptors(work)
+  })
+})
+
+test('a required cached source refuses an absent entry before download or output creation', async () => {
+  await withWork(async (work) => {
+    const f = signedFixture()
+    const fake = downloading(f)
+    const cache = path.join(work, 'entry')
+    const before = await tree(work)
+    await assert.rejects(
+      cacheRuntimeTransport({ ...input(f, cache, fake.downloader), requireCached: true }),
+      code('RUNTIME_TRANSPORT_CHANGED'),
+    )
+    assert.equal(fake.calls.length, 0)
+    assert.deepEqual(await tree(work), before)
+    await absent(cache)
+
+    // The neighboring explicit transfer path still works, then satisfies the cached requirement.
+    await cacheRuntimeTransport({ ...input(f, cache, fake.downloader), requireCached: false })
+    assert.equal(fake.calls.length, 1)
+    const beforeReuse = await tree(cache)
+    await cacheRuntimeTransport({ ...input(f, cache, fake.downloader), requireCached: true })
+    assert.equal(fake.calls.length, 1)
+    assert.deepEqual(await tree(cache), beforeReuse)
+    await assertNoOwnedDescriptors(work)
+  })
+})
+
+for (const broken of ['incomplete', 'corrupt'] as const) {
+  test(`read-only inspection refuses ${broken} entries without rewriting them or downloading`, async () => {
+    await withWork(async (work) => {
+      const f = signedFixture()
+      const fake = downloading(f)
+      const cache = path.join(work, 'entry')
+      if (broken === 'incomplete') {
+        await mkdir(cache)
+        await writeFile(path.join(cache, 'foreign.txt'), 'Preserve this exact incomplete entry.')
+      } else {
+        const prepared = await cacheRuntimeTransport(input(f, cache, fake.downloader))
+        await writeFile(
+          path.join(prepared.directory, 'runtime-payload.zip'),
+          'Corrupt source bytes',
+        )
+      }
+      const before = await tree(cache)
+      await assert.rejects(inspectRuntimeTransportCache(input(f, cache, fake.downloader)), refused)
+      assert.equal(fake.calls.length, broken === 'corrupt' ? 1 : 0)
+      assert.deepEqual(await tree(cache), before)
+      await assertNoOwnedDescriptors(work)
+    })
+  })
+}
 
 test('a cold cache publishes actual authenticated bytes and a fresh hit performs no download', async () => {
   await withWork(async (work) => {

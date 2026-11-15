@@ -23,6 +23,11 @@ import {
   reviewEngineInstallation,
 } from './engine-installation-review.js'
 import {
+  type CapturedMetadataEngineInstallation,
+  type EngineMetadataInstallationBackend,
+  reviewEngineMetadataInstallation,
+} from './engine-metadata-installation.js'
+import {
   assembleOfflineRuntime,
   hasUnconfirmedOfflineRuntimeCommands,
   type PreparedOfflineRuntime,
@@ -150,6 +155,7 @@ export type RuntimeInstallationReview = RuntimeInstallationReviewBase &
         requiredFreeBytes: null
         runtimeRequiredFreeBytes: number
         scope: 'engine'
+        source?: 'verified-metadata'
       }
     | { requiredFreeBytes: number; scope: 'python-runtime-slot' }
   )
@@ -170,7 +176,9 @@ export interface RuntimeInstallationBackend {
     host: VerifiedRuntimeRelease['manifest']['host'],
     signal: AbortSignal,
   ) => Promise<void>
-  loadRelease: () => Promise<RuntimeReleaseSelection | null>
+  loadRelease?: () => Promise<RuntimeReleaseSelection | null>
+  /** Authenticated metadata first; payload acquisition is deferred until token confirmation. */
+  metadata?: EngineMetadataInstallationBackend
   startProjectClient?: (
     location: ProjectWorkerLocation,
     options?: ProjectWorkerOptions,
@@ -194,12 +202,15 @@ export class RuntimeManager {
   private installationOperation: Promise<ApiResult<RuntimeStatus>> | null = null
   private installationRecovery: Promise<boolean> | null = null
 
-  private installationReview: {
-    engine?: CapturedEngineInstallation
-    pointerSha256: string | null
-    release: VerifiedRuntimeRelease
-    review: RuntimeInstallationReview
-  } | null = null
+  private installationReview:
+    | ({
+        pointerSha256: string | null
+        review: RuntimeInstallationReview
+      } & (
+        | { engine?: CapturedEngineInstallation; metadata?: never; release: VerifiedRuntimeRelease }
+        | { engine?: never; metadata: CapturedMetadataEngineInstallation; release?: never }
+      ))
+    | null = null
   private lastQualifiedReady: {
     expiresAt: number
     key: string
@@ -494,6 +505,7 @@ export class RuntimeManager {
         'Choose a supported runtime operation.',
       )
     }
+    this.installationReview = null
     if (this.generationWorkPrevented) {
       return this.installationFailure(
         'RUNTIME_INSTALL_BUSY',
@@ -516,20 +528,43 @@ export class RuntimeManager {
       const engineBackend = this.installationBackend.engine
         ? Object.freeze({ ...this.installationBackend.engine })
         : undefined
-      const supplied = await this.installationBackend.loadRelease()
-      if (!supplied) {
-        return this.installationUnavailable()
-      }
-      const selection = Object.freeze({
-        ...supplied,
-        envelope: Buffer.from(supplied.envelope),
-        trustedKeys: Object.freeze({ ...supplied.trustedKeys }),
-      })
-      const release = await verifyRuntimeRelease(selection)
-      const pointerSha256 = await new RuntimeInstallationController(this.roots).readPointerSha256()
-      const engine = engineBackend
-        ? await reviewEngineInstallation(selection, engineBackend)
+      const metadataBackend = this.installationBackend.metadata
+        ? Object.freeze({ ...this.installationBackend.metadata })
         : undefined
+      let release: VerifiedRuntimeRelease | undefined
+      let engine: CapturedEngineInstallation | undefined
+      let metadata: CapturedMetadataEngineInstallation | undefined
+      let pointerSha256: string | null
+      if (metadataBackend) {
+        if (engineBackend || this.installationBackend.loadRelease) {
+          throw new RuntimeInstallationError(
+            'RUNTIME_INSTALL_PREPARATION_INVALID',
+            'Choose one trusted runtime release provider.',
+          )
+        }
+        const supplied = await metadataBackend.loadMetadata()
+        if (!supplied) {
+          return this.installationUnavailable()
+        }
+        pointerSha256 = await new RuntimeInstallationController(this.roots).readPointerSha256()
+        metadata = await reviewEngineMetadataInstallation(supplied, metadataBackend)
+      } else {
+        const supplied = await this.installationBackend.loadRelease?.()
+        if (!supplied) {
+          return this.installationUnavailable()
+        }
+        const selection = Object.freeze({
+          ...supplied,
+          envelope: Buffer.from(supplied.envelope),
+          trustedKeys: Object.freeze({ ...supplied.trustedKeys }),
+        })
+        release = await verifyRuntimeRelease(selection)
+        pointerSha256 = await new RuntimeInstallationController(this.roots).readPointerSha256()
+        engine = engineBackend
+          ? await reviewEngineInstallation(selection, engineBackend)
+          : undefined
+      }
+      const manifest = metadata ? metadata.manifest : release!.manifest
       if (this.generationShutdownRequested || this.installationActive) {
         return this.installationFailure(
           'RUNTIME_INSTALL_BUSY',
@@ -538,25 +573,28 @@ export class RuntimeManager {
       }
       const review: RuntimeInstallationReview = {
         mode,
-        releaseId: release.manifest.releaseId,
-        ...(engine
+        releaseId: manifest.releaseId,
+        ...(metadata || engine
           ? {
-              plan: engine.plan,
+              plan: (metadata ?? engine!).plan,
               requiredFreeBytes: null,
-              runtimeRequiredFreeBytes: release.manifest.requiredFreeBytes,
+              runtimeRequiredFreeBytes: manifest.requiredFreeBytes,
               scope: 'engine' as const,
+              ...(metadata ? { source: 'verified-metadata' as const } : {}),
             }
           : {
-              requiredFreeBytes: release.manifest.requiredFreeBytes,
+              requiredFreeBytes: manifest.requiredFreeBytes,
               scope: 'python-runtime-slot' as const,
             }),
         token: randomUUID(),
-        verifiedPayloadBytes: release.manifest.files.reduce(
+        verifiedPayloadBytes: manifest.files.reduce(
           (sum, file) => sum + (file.kind === 'file' ? file.sizeBytes : 0),
           0,
         ),
       }
-      this.installationReview = { engine, pointerSha256, release, review: structuredClone(review) }
+      this.installationReview = metadata
+        ? { metadata, pointerSha256, review: structuredClone(review) }
+        : { engine, pointerSha256, release: release!, review: structuredClone(review) }
       return { ok: true, value: review }
     } catch (error) {
       return this.installationError(error)
@@ -1388,20 +1426,20 @@ export class RuntimeManager {
             'The image runtime is busy or shutting down.',
           )
         }
-        await captured.release.verifyCompletePayloadSnapshot()
+        const manifest = captured.metadata ? captured.metadata.manifest : captured.release.manifest
+        if (!captured.metadata) {
+          await captured.release.verifyCompletePayloadSnapshot()
+        }
         await (this.installationBackend!.ensureHostCompatible
-          ? this.installationBackend!.ensureHostCompatible(
-              captured.release.manifest.host,
-              controller.signal,
-            )
-          : preflightRuntimeHost(captured.release.manifest.host, {
+          ? this.installationBackend!.ensureHostCompatible(manifest.host, controller.signal)
+          : preflightRuntimeHost(manifest.host, {
               logDirectory: this.roots.workerLogsDir,
               signal: controller.signal,
             }))
         if (controller.signal.aborted) {
           return this.installationFailure('RUNTIME_INSTALL_CANCELED', 'Runtime setup was canceled.')
         }
-        if (captured.engine) {
+        const checkPointer = async () => {
           // Refuse a stale review before spending bytes on shared auxiliary preparation.
           const currentPointer = await new RuntimeInstallationController(
             this.roots,
@@ -1412,7 +1450,20 @@ export class RuntimeManager {
               'The active runtime changed; review engine setup again.',
             )
           }
-          await captured.engine.installAuxiliary(controller.signal)
+        }
+        if (captured.metadata) {
+          // Refuse before obtaining bytes from the reviewed source, not only before activation.
+          await checkPointer()
+        }
+        const { engine, release } = captured.metadata
+          ? await captured.metadata.prepareRelease(
+              controller.signal,
+              path.join(this.roots.downloadsDir, `engine-${captured.review.token}`),
+            )
+          : { engine: captured.engine, release: captured.release }
+        if (engine) {
+          await checkPointer()
+          await engine.installAuxiliary(controller.signal)
         }
         await this.installationBackend!.ensureAuxiliaryReady()
         if (controller.signal.aborted) {
@@ -1424,14 +1475,14 @@ export class RuntimeManager {
           mode,
           prepare: () =>
             (this.installationBackend!.assemble ?? assembleOfflineRuntime)({
-              release: captured.release,
+              release,
               roots: this.roots,
               runtimeId,
               signal: controller.signal,
             }),
           qualify: async (prepared) => {
-            await this.qualifyInstallation(prepared, captured.release, controller.signal)
-            if (captured.engine) {
+            await this.qualifyInstallation(prepared, release, controller.signal)
+            if (engine) {
               await this.installationBackend!.ensureAuxiliaryReady()
             }
           },
@@ -1447,6 +1498,9 @@ export class RuntimeManager {
           },
         }
       } catch (error) {
+        if (captured.metadata && controller.signal.aborted) {
+          return this.installationFailure('RUNTIME_INSTALL_CANCELED', 'Runtime setup was canceled.')
+        }
         return this.installationError(error)
       }
     })

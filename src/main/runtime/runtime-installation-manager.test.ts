@@ -10,9 +10,14 @@ import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 
-import type { ModelDownloadInput } from '../models/model-downloader.js'
+import type {
+  ModelDownloadInput,
+  RuntimeArtifactDownloadInput,
+  VerifiedStagedModelFile,
+} from '../models/model-downloader.js'
 import type { InferenceWorkerReady } from '../projects/illustrious-txt2img-job.js'
 import type { WorkerReady, WorkerSelfTestResult } from '../projects/worker-client.js'
+import type { EngineMetadataInstallationBackend } from './engine-metadata-installation.js'
 import type { RuntimeInstallationBackend } from './index.js'
 import type {
   AuxiliaryInstallationPreview,
@@ -24,6 +29,7 @@ import type {
   RuntimeReleaseSelection,
 } from './runtime-release.js'
 
+import { ModelDownloadError } from '../models/model-downloader.js'
 import { createRuntimeRoots, RuntimeManager } from './index.js'
 import {
   AuxiliaryInstallationError,
@@ -43,6 +49,7 @@ import {
   runtimeReleaseRequirements,
 } from './runtime-release.js'
 import { registerRuntimeSetupIpc } from './runtime-setup-ipc.js'
+import { cacheRuntimeTransport } from './runtime-transport-cache.js'
 
 /**
  * Main integration: real signed inventory, private roots, install journal and atomic pointer.
@@ -1705,6 +1712,462 @@ test(
       } finally {
         registration.dispose()
       }
+    })
+  },
+)
+
+type MetadataSetupHandler = Parameters<Parameters<typeof registerRuntimeSetupIpc>[0]['handle']>[1]
+
+/**
+ * Invoke4875 download_default.py:241 prepares parts before submit_multifile_download:281;
+ * model_install_default.py:1606 pins metadata before obtaining bytes. Callers reread: infill.py:134
+ * -> invocation_context.py:800 -> download_and_cache_model:1549. This fixture exercises the real
+ * signed transport/cache/extractor/Main controller with controlled archive acquisition, auxiliary
+ * resource, assembly and worker ports; it does not qualify public DNS, shipping trust, package
+ * assembly or native inference.
+ */
+async function metadataEngineFixture(f: Fixture) {
+  const engine = await engineFixture(f)
+  const selection = {
+    appVersion: f.selection.appVersion,
+    cacheDirectory: path.join(f.work, 'metadata-cache'),
+    runtimeEnvelope: Buffer.from(f.selection.envelope),
+    source: {
+      redirectOrigins: ['https://cdn.example.org'],
+      url: 'https://example.org/reviewed-runtime.zip',
+    },
+    transportEnvelope: await fs.readFile(
+      path.join(engine.transportDirectory, 'runtime-transport.json'),
+    ),
+    trustedKeys: { ...f.selection.trustedKeys },
+  }
+  const controls: {
+    corruptArchive?: boolean
+    downloadHook?: (request: RuntimeArtifactDownloadInput) => Promise<void>
+    loads: number
+  } = { loads: 0 }
+  const downloads: RuntimeArtifactDownloadInput[] = []
+  const preparedDirectories: string[] = []
+  const downloader = {
+    downloadRuntimeArtifact: async (
+      request: RuntimeArtifactDownloadInput,
+    ): Promise<VerifiedStagedModelFile> => {
+      downloads.push(request)
+      f.events.push('runtime-download')
+      await controls.downloadHook?.(request)
+      if (request.signal?.aborted) {
+        throw new ModelDownloadError(
+          'DOWNLOAD_CANCELED',
+          'Controlled acquisition settled after cancellation.',
+        )
+      }
+      const bytes = await fs.readFile(path.join(engine.transportDirectory, 'runtime-payload.zip'))
+      if (controls.corruptArchive) {
+        bytes[0] ^= 1
+      }
+      const stagingPath = path.join(request.stagingDirectory, `${randomUUID()}.part`)
+      await fs.writeFile(stagingPath, bytes, { flag: 'wx', mode: 0o600 })
+      request.onProgress?.({ downloadedBytes: bytes.length, totalBytes: request.expectedBytes })
+      return { sha256: digest(bytes), sizeBytes: bytes.length, stagingPath }
+    },
+  }
+  const backend: EngineMetadataInstallationBackend = {
+    auxiliaryInstaller: engine.auxiliaryInstaller,
+    downloader,
+    loadMetadata: async () => {
+      controls.loads++
+      return selection
+    },
+  }
+  f.backend.engine = undefined
+  f.backend.loadRelease = undefined
+  f.backend.metadata = backend
+  const assemble = f.backend.assemble
+  assert.ok(assemble)
+  f.backend.assemble = async (request) => {
+    assert.notEqual(
+      request.release.directory,
+      f.directory,
+      'Assembly must receive the actual extracted selection.',
+    )
+    await request.release.verifyCompletePayloadSnapshot()
+    preparedDirectories.push(request.release.directory)
+    return await assemble(request)
+  }
+  return {
+    ...engine,
+    controls,
+    downloads,
+    engineControls: engine.controls,
+    preparedDirectories,
+    primeCache: async () => await cacheRuntimeTransport({ ...selection, downloader }),
+    selection,
+  }
+}
+function metadataSetupRegistrar(f: Fixture) {
+  const handlers = new Map<string, MetadataSetupHandler>()
+  const caller = { mainFrame: {} }
+  const registration = registerRuntimeSetupIpc(
+    {
+      handle: (channel, handler) => handlers.set(channel, handler),
+      removeHandler: (channel) => {
+        handlers.delete(channel)
+      },
+    },
+    caller,
+    f.manager,
+  )
+  async function call<T = unknown>(channel: string, ...args: unknown[]): Promise<ApiResult<T>> {
+    return (await handlers.get(channel)!(
+      { sender: caller, senderFrame: caller.mainFrame },
+      ...args,
+    )) as ApiResult<T>
+  }
+  return {
+    call,
+    dispose: registration.dispose,
+    invalidateReview: registration.invalidateReview,
+    preview: async (mode: 'install' | 'repair') =>
+      value(await call<RuntimeSetupReview>(ipcChannels.runtime.previewInstallation, mode)),
+  }
+}
+
+test(
+  'metadata-first public engine review defers real cache and extraction until exact token confirmation',
+  fullPayload,
+  async () => {
+    await withFixture(async (f) => {
+      const metadata = await metadataEngineFixture(f)
+      const ipc = metadataSetupRegistrar(f)
+      try {
+        const review = await ipc.preview('install')
+        assert.equal(review.source, 'verified-metadata')
+        assert.equal(review.runtimeSourceCached, false)
+        assert.equal(
+          review.downloadBytes,
+          metadata.transport.manifest.artifact.sizeBytes + LAMA_OUTPAINT_ARTIFACT.sizeBytes,
+        )
+        assert.equal(review.requiredFreeBytes, null)
+        assert.equal(review.runtimeRequiredFreeBytes, f.manifest.requiredFreeBytes)
+        assert.equal(review.installedBytes, null)
+        assert.equal(review.additionalInstalledBytes, null)
+        assert.equal(metadata.controls.loads, 1)
+        assert.equal(metadata.downloads.length, 0)
+        assert.equal(metadata.preparedDirectories.length, 0)
+        assert.deepEqual(f.events, ['aux-preview'])
+        await absent(metadata.selection.cacheDirectory)
+        await absent(path.join(f.roots.downloadsDir, `engine-${review.token}`))
+        await absent(f.roots.pointerFile)
+        assert.deepEqual(await fs.readdir(f.roots.environmentsDir), [])
+        const installed = value(
+          await ipc.call<import('../../shared/api.js').RuntimeStatus>(
+            ipcChannels.runtime.install,
+            review.token,
+          ),
+        )
+        assert.equal(installed.kind, 'ready')
+        assert.equal(metadata.controls.loads, 1, 'Confirmation must not reload latest metadata.')
+        assert.equal(metadata.downloads.length, 1)
+        assert.equal(
+          metadata.downloads[0].expectedSha256,
+          metadata.transport.manifest.artifact.sha256,
+        )
+        assert.equal(
+          metadata.downloads[0].expectedBytes,
+          metadata.transport.manifest.artifact.sizeBytes,
+        )
+        assert.ok(f.events.indexOf('host') < f.events.indexOf('runtime-download'))
+        assert.equal(metadata.preparedDirectories.length, 1)
+        assert.ok(
+          metadata.preparedDirectories[0].startsWith(
+            path.join(f.roots.downloadsDir, `engine-${review.token}`) + path.sep,
+          ),
+        )
+        const pointer = await fs.readFile(f.roots.pointerFile)
+        failure(await ipc.call(ipcChannels.runtime.install, review.token), 'RUNTIME_INVALID_REVIEW')
+        const repair = await ipc.preview('repair')
+        assert.equal(repair.source, 'verified-metadata')
+        assert.equal(repair.runtimeSourceCached, true)
+        assert.equal(repair.outpaintInfillReused, true)
+        assert.equal(repair.downloadBytes, 0)
+        value(await ipc.call(ipcChannels.runtime.repair, repair.token))
+        assert.equal(
+          metadata.downloads.length,
+          1,
+          'Repair must reuse the freshly verified complete source cache.',
+        )
+        assert.equal(metadata.preparedDirectories.length, 2)
+        assert.notEqual(metadata.preparedDirectories[1], metadata.preparedDirectories[0])
+        assert.equal((await fs.readFile(f.roots.pointerFile)).equals(pointer), false)
+        assert.equal(f.events.filter((event) => event === 'assemble').length, 2)
+      } finally {
+        ipc.dispose()
+      }
+    })
+  },
+)
+
+test(
+  'metadata-first public dismissal, document invalidation and superseding preview refuse acquisition',
+  fullPayload,
+  async () => {
+    await withFixture(async (f) => {
+      const metadata = await metadataEngineFixture(f)
+      const ipc = metadataSetupRegistrar(f)
+      try {
+        const dismissed = await ipc.preview('install')
+        value(await ipc.call(ipcChannels.runtime.discardInstallationReview))
+        failure(
+          await ipc.call(ipcChannels.runtime.install, dismissed.token),
+          'RUNTIME_INVALID_REVIEW',
+        )
+        const navigated = await ipc.preview('install')
+        ipc.invalidateReview()
+        failure(
+          await ipc.call(ipcChannels.runtime.install, navigated.token),
+          'RUNTIME_INVALID_REVIEW',
+        )
+        const superseded = await ipc.preview('install')
+        const current = await ipc.preview('install')
+        failure(
+          await ipc.call(ipcChannels.runtime.install, superseded.token),
+          'RUNTIME_INVALID_REVIEW',
+        )
+        assert.equal(metadata.downloads.length, 0)
+        assert.equal(metadata.preparedDirectories.length, 0)
+        assert.equal(f.events.includes('assemble'), false)
+        await absent(metadata.selection.cacheDirectory)
+        await absent(f.roots.pointerFile)
+        value(await ipc.call(ipcChannels.runtime.install, current.token))
+        assert.equal(metadata.downloads.length, 1)
+        assert.equal(metadata.preparedDirectories.length, 1)
+      } finally {
+        ipc.dispose()
+      }
+    })
+  },
+)
+
+test(
+  'metadata-first capture keeps signed A, source policy and keyring after mutable provider inputs change',
+  fullPayload,
+  async () => {
+    await withFixture(async (f) => {
+      const metadata = await metadataEngineFixture(f)
+      const selectedCache = metadata.selection.cacheDirectory
+      const source = structuredClone(metadata.selection.source)
+      const review = value(await f.manager.previewInstallation('install'))
+      metadata.selection.runtimeEnvelope.fill(0)
+      metadata.selection.transportEnvelope.fill(0)
+      metadata.selection.source.url = 'https://other.example.org/changed.zip'
+      metadata.selection.source.redirectOrigins.splice(0)
+      metadata.selection.cacheDirectory = path.join(f.work, 'different-cache')
+      metadata.selection.appVersion = '99.0.0'
+      Reflect.deleteProperty(metadata.selection.trustedKeys, 'integration-only')
+      value(await f.manager.install(review.token))
+      assert.equal(metadata.controls.loads, 1)
+      assert.equal(metadata.downloads.length, 1)
+      assert.equal(metadata.downloads[0].url, source.url)
+      assert.deepEqual(metadata.downloads[0].redirectOrigins, source.redirectOrigins)
+      assert.equal(
+        metadata.downloads[0].expectedSha256,
+        metadata.transport.manifest.artifact.sha256,
+      )
+      assert.equal(
+        (await fs.stat(path.join(selectedCache, 'transport', 'runtime-payload.zip'))).isFile(),
+        true,
+      )
+      await absent(metadata.selection.cacheDirectory)
+      const journal = JSON.parse(
+        await fs.readFile(path.join(f.roots.runtimeDir, RUNTIME_INSTALLATION_JOURNAL), 'utf8'),
+      )
+      assert.equal(journal.prepared.releaseId, f.manifest.releaseId)
+      assert.equal(journal.prepared.manifestSha256, digest(canonicalRuntimeReleaseJson(f.manifest)))
+    })
+  },
+)
+
+test(
+  'metadata-first host and reviewed pointer refusal precede runtime acquisition',
+  fullPayload,
+  async (t) => {
+    for (const refusal of ['host', 'pointer'] as const) {
+      await t.test(refusal, async () => {
+        await withFixture(async (f) => {
+          const metadata = await metadataEngineFixture(f)
+          const review = value(await f.manager.previewInstallation('install'))
+          let changedPointer: Buffer | undefined
+          if (refusal === 'host') {
+            f.controls.host = async () => {
+              throw new Error('Controlled incompatible host.')
+            }
+          } else {
+            changedPointer = Buffer.from(
+              'Owned competing pointer bytes; never qualified as a runtime.',
+            )
+            await fs.writeFile(f.roots.pointerFile, changedPointer, { flag: 'wx', mode: 0o600 })
+          }
+          const result = await f.manager.install(review.token)
+          failure(
+            result,
+            refusal === 'pointer' ? 'RUNTIME_INSTALL_POINTER_CHANGED' : 'RUNTIME_INSTALL_FAILED',
+          )
+          assert.equal(metadata.downloads.length, 0)
+          assert.equal(metadata.preparedDirectories.length, 0)
+          assert.equal(f.events.includes('aux-install'), false)
+          assert.equal(f.events.includes('assemble'), false)
+          await absent(metadata.selection.cacheDirectory)
+          assert.deepEqual(await fs.readdir(f.roots.environmentsDir), [])
+          if (changedPointer) {
+            assert.equal((await fs.readFile(f.roots.pointerFile)).equals(changedPointer), true)
+          } else {
+            await absent(f.roots.pointerFile)
+          }
+          failure(await f.manager.install(review.token), 'RUNTIME_INVALID_REVIEW')
+        })
+      })
+    }
+  },
+)
+
+test(
+  'metadata-first cached review cannot spend an unreviewed transfer after source cache loss or corruption',
+  fullPayload,
+  async (t) => {
+    for (const drift of ['missing', 'corrupt'] as const) {
+      await t.test(drift, async () => {
+        await withFixture(async (f) => {
+          const metadata = await metadataEngineFixture(f)
+          metadata.engineControls.installed = true
+          await metadata.primeCache()
+          const transfers = metadata.downloads.length
+          const review = value(await f.manager.previewInstallation('install'))
+          assert.equal(review.scope, 'engine')
+          if (review.scope !== 'engine') {
+            throw new Error('Expected complete engine review.')
+          }
+          const runtime = review.plan.artifacts.find((artifact) => artifact.kind === 'runtime')
+          assert.equal(runtime?.sourceCached, true)
+          assert.equal(review.plan.totals.downloadBytes, 0)
+          if (drift === 'missing') {
+            await fs.rm(metadata.selection.cacheDirectory, { recursive: true })
+          } else {
+            const archive = path.join(
+              metadata.selection.cacheDirectory,
+              'transport',
+              'runtime-payload.zip',
+            )
+            const bytes = await fs.readFile(archive)
+            bytes[0] ^= 1
+            await fs.writeFile(archive, bytes)
+          }
+          assert.equal((await f.manager.install(review.token)).ok, false)
+          assert.equal(
+            metadata.downloads.length,
+            transfers,
+            'Lost verified cache must require a fresh byte review, never hidden download.',
+          )
+          assert.equal(metadata.preparedDirectories.length, 0)
+          assert.equal(f.events.includes('aux-install'), false)
+          assert.equal(f.events.includes('assemble'), false)
+          assert.deepEqual(await fs.readdir(f.roots.environmentsDir), [])
+          await absent(f.roots.pointerFile)
+          failure(await f.manager.install(review.token), 'RUNTIME_INVALID_REVIEW')
+        })
+      })
+    }
+  },
+)
+
+test(
+  'metadata-first cancellation settles acquisition before returning and never activates a slot',
+  fullPayload,
+  async () => {
+    await withFixture(async (f) => {
+      const metadata = await metadataEngineFixture(f)
+      const entered = deferred()
+      let signal: AbortSignal | undefined
+      let settled = false
+      metadata.controls.downloadHook = async (request) => {
+        signal = request.signal
+        assert.ok(signal)
+        entered.resolve()
+        await new Promise<void>((resolve) =>
+          signal!.addEventListener('abort', () => resolve(), { once: true }),
+        )
+        settled = true
+      }
+      const review = value(await f.manager.previewInstallation('install'))
+      const operation = f.manager.install(review.token)
+      await entered.promise
+      await f.manager.cancelInstallation()
+      assert.equal((await operation).ok, false)
+      assert.equal(signal?.aborted, true)
+      assert.equal(settled, true)
+      assert.equal(metadata.downloads.length, 1)
+      assert.equal(metadata.preparedDirectories.length, 0)
+      assert.equal(f.events.includes('aux-install'), false)
+      assert.equal(f.events.includes('assemble'), false)
+      assert.deepEqual(await fs.readdir(f.roots.environmentsDir), [])
+      await absent(f.roots.pointerFile)
+      failure(await f.manager.install(review.token), 'RUNTIME_INVALID_REVIEW')
+    })
+  },
+)
+
+test(
+  'metadata-first failed acquisition preserves no activation and requires a new explicit review',
+  fullPayload,
+  async (t) => {
+    for (const refusal of ['network', 'archive-hash'] as const) {
+      await t.test(refusal, async () => {
+        await withFixture(async (f) => {
+          const metadata = await metadataEngineFixture(f)
+          if (refusal === 'network') {
+            metadata.controls.downloadHook = async () => {
+              throw new ModelDownloadError('DOWNLOAD_NETWORK_ERROR', 'Controlled network refusal.')
+            }
+          } else {
+            metadata.controls.corruptArchive = true
+          }
+          const review = value(await f.manager.previewInstallation('install'))
+          assert.equal((await f.manager.install(review.token)).ok, false)
+          assert.equal(metadata.downloads.length, 1)
+          assert.equal(metadata.preparedDirectories.length, 0)
+          assert.equal(f.events.includes('assemble'), false)
+          assert.equal(f.events.includes('aux-install'), false)
+          await absent(f.roots.pointerFile)
+          failure(await f.manager.install(review.token), 'RUNTIME_INVALID_REVIEW')
+          // A new explicit Main selection may choose fresh owned staging. It is not an automatic
+          // fallback: the failed owner remains intact until the fixture's normal final cleanup.
+          metadata.selection.cacheDirectory = path.join(f.work, 'explicit-new-cache')
+          metadata.controls.downloadHook = undefined
+          metadata.controls.corruptArchive = false
+          const fresh = value(await f.manager.previewInstallation('install'))
+          assert.notEqual(fresh.token, review.token)
+          assert.equal(metadata.downloads.length, 1)
+          value(await f.manager.install(fresh.token))
+          assert.equal(metadata.downloads.length, 2)
+          assert.equal(metadata.preparedDirectories.length, 1)
+        })
+      })
+    }
+  },
+)
+
+test(
+  'metadata-first untrusted envelopes fail before auxiliary preview or acquisition',
+  fullPayload,
+  async () => {
+    await withFixture(async (f) => {
+      const metadata = await metadataEngineFixture(f)
+      Reflect.deleteProperty(metadata.selection.trustedKeys, 'integration-only')
+      assert.equal((await f.manager.previewInstallation('install')).ok, false)
+      assert.equal(metadata.downloads.length, 0)
+      assert.deepEqual(f.events, [])
+      await absent(metadata.selection.cacheDirectory)
+      await absent(f.roots.pointerFile)
+      assert.deepEqual(await fs.readdir(f.roots.environmentsDir), [])
     })
   },
 )

@@ -30,7 +30,10 @@ export async function reviewEngineInstallation(
   backend: EngineInstallationBackend,
 ) {
   const { auxiliaryInstaller, transportDirectory } = backend
-  const install = auxiliaryInstaller.install.bind(auxiliaryInstaller)
+  const capturedAuxiliary = {
+    install: auxiliaryInstaller.install.bind(auxiliaryInstaller),
+    preview: auxiliaryInstaller.preview.bind(auxiliaryInstaller),
+  }
   const transport = await verifyRuntimeTransport({
     appVersion: selection.appVersion,
     directory: transportDirectory,
@@ -41,21 +44,7 @@ export async function reviewEngineInstallation(
       createHash('sha256').update(selection.envelope).digest('hex'),
     'The cached transport does not belong to the reviewed expanded runtime.',
   )
-  const auxiliary = await auxiliaryInstaller.preview()
-  valid(
-    auxiliary.scope === 'auxiliary-weights' &&
-      auxiliary.artifact.filename === LAMA_OUTPAINT_ARTIFACT.filename &&
-      auxiliary.artifact.role === LAMA_OUTPAINT_ARTIFACT.role &&
-      auxiliary.artifact.sha256 === LAMA_OUTPAINT_ARTIFACT.sha256 &&
-      auxiliary.artifact.sizeBytes === LAMA_OUTPAINT_ARTIFACT.sizeBytes &&
-      typeof auxiliary.installed === 'boolean' &&
-      auxiliary.requiredDownloadBytes ===
-        (auxiliary.installed ? 0 : LAMA_OUTPAINT_ARTIFACT.sizeBytes) &&
-      typeof auxiliary.planId === 'string' &&
-      auxiliary.planId.length > 0,
-    'The engine auxiliary preview must describe the exact pinned LaMa resource.',
-  )
-  const planId = auxiliary.planId
+  const auxiliary = await reviewEngineAuxiliary(capturedAuxiliary)
   const runtime = {
     filename: transport.manifest.artifact.filename,
     id: 'python-runtime-transport',
@@ -76,11 +65,11 @@ export async function reviewEngineInstallation(
     verifiedInstalledArtifacts: auxiliary.installed
       ? [
           {
-            filename: auxiliary.artifact.filename,
+            filename: LAMA_OUTPAINT_ARTIFACT.filename,
             id: ENGINE_OUTPAINT_INFILL_ARTIFACT_ID,
             kind: 'outpaint-infill',
-            sha256: auxiliary.artifact.sha256,
-            sizeBytes: auxiliary.artifact.sizeBytes,
+            sha256: LAMA_OUTPAINT_ARTIFACT.sha256,
+            sizeBytes: LAMA_OUTPAINT_ARTIFACT.sizeBytes,
           },
         ]
       : [],
@@ -89,6 +78,35 @@ export async function reviewEngineInstallation(
     installAuxiliary: async (signal: AbortSignal) => {
       canceled(signal)
       await transport.verifyCompleteTransportSnapshot()
+      canceled(signal)
+      await auxiliary.installAuxiliary(signal)
+    },
+    plan,
+  })
+}
+
+/** One exact LaMa review shared by local and metadata-first engine composition. */
+export async function reviewEngineAuxiliary(
+  installer: Pick<AuxiliaryArtifactInstaller, 'install' | 'preview'>,
+) {
+  const install = installer.install.bind(installer)
+  const auxiliary = await installer.preview()
+  valid(
+    auxiliary.scope === 'auxiliary-weights' &&
+      auxiliary.artifact.filename === LAMA_OUTPAINT_ARTIFACT.filename &&
+      auxiliary.artifact.role === LAMA_OUTPAINT_ARTIFACT.role &&
+      auxiliary.artifact.sha256 === LAMA_OUTPAINT_ARTIFACT.sha256 &&
+      auxiliary.artifact.sizeBytes === LAMA_OUTPAINT_ARTIFACT.sizeBytes &&
+      typeof auxiliary.installed === 'boolean' &&
+      auxiliary.requiredDownloadBytes ===
+        (auxiliary.installed ? 0 : LAMA_OUTPAINT_ARTIFACT.sizeBytes) &&
+      typeof auxiliary.planId === 'string' &&
+      auxiliary.planId.length > 0,
+    'The engine auxiliary preview must describe the exact pinned LaMa resource.',
+  )
+  const planId = auxiliary.planId
+  return Object.freeze({
+    installAuxiliary: async (signal: AbortSignal) => {
       canceled(signal)
       const result = await install(planId, { signal })
       valid(
@@ -99,7 +117,7 @@ export async function reviewEngineInstallation(
       )
       canceled(signal)
     },
-    plan,
+    installed: auxiliary.installed,
   })
 }
 

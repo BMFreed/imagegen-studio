@@ -203,7 +203,8 @@ function projectEngineReview(
     if (
       !runtime ||
       runtime.id !== 'python-runtime-transport' ||
-      !runtime.sourceCached ||
+      typeof runtime.sourceCached !== 'boolean' ||
+      (!runtime.sourceCached && review.source !== 'verified-metadata') ||
       runtime.reused ||
       !infill ||
       infill.id !== ENGINE_OUTPAINT_INFILL_ARTIFACT_ID ||
@@ -225,14 +226,16 @@ function projectEngineReview(
           sizeBytes: runtime.sizeBytes,
         },
       ],
-      verifiedCachedRuntimeArtifacts: [
-        {
-          filename: runtime.filename,
-          id: runtime.id,
-          sha256: runtime.sha256,
-          sizeBytes: runtime.sizeBytes,
-        },
-      ],
+      verifiedCachedRuntimeArtifacts: runtime.sourceCached
+        ? [
+            {
+              filename: runtime.filename,
+              id: runtime.id,
+              sha256: runtime.sha256,
+              sizeBytes: runtime.sizeBytes,
+            },
+          ]
+        : [],
       verifiedInstalledArtifacts: infill.reused
         ? [
             {
@@ -257,9 +260,9 @@ function projectEngineReview(
       releaseId: review.releaseId,
       requiredFreeBytes: null,
       runtimeRequiredFreeBytes: review.runtimeRequiredFreeBytes,
-      runtimeSourceCached: true,
+      runtimeSourceCached: runtime.sourceCached,
       scope: 'engine',
-      source: 'verified-local-cache',
+      source: review.source ?? 'verified-local-cache',
       token: review.token,
     }
     return isRuntimeSetupReview(projected) ? projected : null
