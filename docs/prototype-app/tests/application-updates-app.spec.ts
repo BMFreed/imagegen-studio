@@ -13,19 +13,26 @@ interface CheckPlan {
 
 interface UpdatesOptions {
   checks?: CheckPlan[]
+  downloads?: CheckPlan[]
   omitDomain?: boolean
   status?: ApplicationUpdateSnapshot
   statusFailure?: 'public-error' | 'throw'
+  statusFailures?: number[]
   statusHeld?: boolean
+  statusHolds?: number[]
 }
 
 interface UpdatesFixture {
   checkCalls: number
+  downloadVersions: string[]
   mutationCalls: string[]
   releaseCheck: (id: number) => void
-  releaseStatus: () => void
+  releaseDownload: (id: number) => void
+  releaseStatus: (id?: number) => void
   returnedChecks: number
+  returnedDownloads: number
   returnedStatuses: number
+  setStatus: (snapshot: ApplicationUpdateSnapshot) => void
   statusCalls: number
 }
 
@@ -40,9 +47,11 @@ function snapshot(status: ApplicationUpdateSnapshot['status']): ApplicationUpdat
   return {
     availableVersion: null,
     currentVersion,
+    downloadedBytes: null,
     notesTruncated: false,
     releaseNotes: null,
     status,
+    totalBytes: null,
   }
 }
 
@@ -57,10 +66,18 @@ function available(
   }
 }
 
+function downloadStatus(
+  status: 'download-error' | 'downloaded' | 'downloading',
+  downloadedBytes: number | null = null,
+  totalBytes: number | null = null,
+): ApplicationUpdateSnapshot {
+  return { ...available('0.2.0'), downloadedBytes, status, totalBytes }
+}
+
 /**
  * Actual production App/chrome/modal with explicit API ports replacing preload/Main. These cases
  * qualify manual renderer intent, literal presentation and late-reply isolation, never network,
- * update trust, download, installation, persistence, restart or native package behavior.
+ * update trust, actual transfer, installation, persistence, restart or native package behavior.
  */
 async function mountUpdatesApp(page: Page, options: UpdatesOptions = {}) {
   if (process.env['IGS_APPLICATION_UPDATE_MUTATION'] === 'stale-ui') {
@@ -75,7 +92,7 @@ async function mountUpdatesApp(page: Page, options: UpdatesOptions = {}) {
   if (options.status) {
     expect(isApplicationUpdateSnapshot(options.status)).toBe(true)
   }
-  for (const plan of options.checks ?? []) {
+  for (const plan of [...(options.checks ?? []), ...(options.downloads ?? [])]) {
     if (plan.snapshot) {
       expect(isApplicationUpdateSnapshot(plan.snapshot)).toBe(true)
     }
@@ -99,14 +116,19 @@ async function mountUpdatesApp(page: Page, options: UpdatesOptions = {}) {
       const initialStatus: ApplicationUpdateSnapshot = initial.status ?? {
         availableVersion: null,
         currentVersion: '0.1.0-dev.1',
+        downloadedBytes: null,
         notesTruncated: false,
         releaseNotes: null,
         status: 'idle',
+        totalBytes: null,
       }
       const pendingChecks = new Map<number, () => void>()
-      let pendingStatus: (() => void) | null = null
+      const pendingDownloads = new Map<number, () => void>()
+      const pendingStatuses = new Map<number, () => void>()
+      let currentStatus = structuredClone(initialStatus)
       const state: UpdatesFixture = {
         checkCalls: 0,
+        downloadVersions: [],
         mutationCalls: [],
         releaseCheck: (id) => {
           const resolve = pendingChecks.get(id)
@@ -116,15 +138,28 @@ async function mountUpdatesApp(page: Page, options: UpdatesOptions = {}) {
           pendingChecks.delete(id)
           resolve()
         },
-        releaseStatus: () => {
-          if (!pendingStatus) {
+        releaseDownload: (id) => {
+          const resolve = pendingDownloads.get(id)
+          if (!resolve) {
+            throw new Error(`No controlled pending download ${id}.`)
+          }
+          pendingDownloads.delete(id)
+          resolve()
+        },
+        releaseStatus: (id = 1) => {
+          const resolve = pendingStatuses.get(id)
+          if (!resolve) {
             throw new Error('No controlled pending status read.')
           }
-          pendingStatus()
-          pendingStatus = null
+          pendingStatuses.delete(id)
+          resolve()
         },
         returnedChecks: 0,
+        returnedDownloads: 0,
         returnedStatuses: 0,
+        setStatus: (snapshot) => {
+          currentStatus = structuredClone(snapshot)
+        },
         statusCalls: 0,
       }
       const publicError = (): ApiResult<ApplicationUpdateSnapshot> => ({
@@ -185,24 +220,61 @@ async function mountUpdatesApp(page: Page, options: UpdatesOptions = {}) {
                   if (plan.kind === 'throw') {
                     throw new Error('Unexpected native failure at /private/fixture/update-source.')
                   }
+                  if (plan.snapshot) {
+                    currentStatus = structuredClone(plan.snapshot)
+                  }
                   return plan.kind === 'public-error'
                     ? publicError()
                     : { ok: true, value: structuredClone(plan.snapshot ?? initialStatus) }
                 },
-                download: async () => state.mutationCalls.push('app-download'),
+                download: async (
+                  version: string,
+                ): Promise<ApiResult<ApplicationUpdateSnapshot>> => {
+                  state.downloadVersions.push(version)
+                  state.mutationCalls.push('app-download')
+                  const id = state.downloadVersions.length
+                  const plan: CheckPlan = initial.downloads?.[id - 1] ?? {
+                    snapshot: {
+                      ...currentStatus,
+                      downloadedBytes: 4096,
+                      status: 'downloaded',
+                      totalBytes: 4096,
+                    },
+                  }
+                  currentStatus = {
+                    ...currentStatus,
+                    downloadedBytes: null,
+                    status: 'downloading',
+                    totalBytes: null,
+                  }
+                  if (plan.hold) {
+                    await new Promise<void>((resolve) => pendingDownloads.set(id, resolve))
+                  }
+                  state.returnedDownloads++
+                  if (plan.kind === 'throw') {
+                    throw new Error('Unexpected download failure at /private/fixture/update-cache.')
+                  }
+                  if (plan.snapshot) {
+                    currentStatus = structuredClone(plan.snapshot)
+                  }
+                  return plan.kind === 'public-error'
+                    ? publicError()
+                    : { ok: true, value: structuredClone(plan.snapshot ?? currentStatus) }
+                },
                 getStatus: async (): Promise<ApiResult<ApplicationUpdateSnapshot>> => {
                   const id = ++state.statusCalls
-                  const captured = structuredClone(initialStatus)
-                  if (initial.statusHeld && id === 1) {
+                  const captured = structuredClone(currentStatus)
+                  if ((initial.statusHeld && id === 1) || initial.statusHolds?.includes(id)) {
                     await new Promise<void>((resolve) => {
-                      pendingStatus = resolve
+                      pendingStatuses.set(id, resolve)
                     })
                   }
                   state.returnedStatuses++
                   if (id === 1 && initial.statusFailure === 'throw') {
                     throw new Error('Unexpected native failure at /private/fixture/update-source.')
                   }
-                  return id === 1 && initial.statusFailure === 'public-error'
+                  return (id === 1 && initial.statusFailure === 'public-error') ||
+                    initial.statusFailures?.includes(id)
                     ? publicError()
                     : { ok: true, value: captured }
                 },
@@ -230,10 +302,24 @@ async function openUpdates(page: Page) {
 
 async function calls(page: Page) {
   return await page.evaluate(() => {
-    const { checkCalls, mutationCalls, returnedChecks, returnedStatuses, statusCalls } = (
-      globalThis as UpdatesGlobal
-    ).applicationUpdatesFixture
-    return { checkCalls, mutationCalls, returnedChecks, returnedStatuses, statusCalls }
+    const {
+      checkCalls,
+      downloadVersions,
+      mutationCalls,
+      returnedChecks,
+      returnedDownloads,
+      returnedStatuses,
+      statusCalls,
+    } = (globalThis as UpdatesGlobal).applicationUpdatesFixture
+    return {
+      checkCalls,
+      downloadVersions,
+      mutationCalls,
+      returnedChecks,
+      returnedDownloads,
+      returnedStatuses,
+      statusCalls,
+    }
   })
 }
 
@@ -287,10 +373,9 @@ for (const viewport of [
     await expect(releaseNotes).toHaveText(notes)
     await expect(releaseNotes.locator('a, h1, script, img')).toHaveCount(0)
     await expect(dialog(page)).toContainText('Release notes were shortened for display.')
-    await expect(dialog(page)).toContainText(
-      'Download and installation are not available in this build.',
-    )
-    await expect(dialog(page).getByRole('button', { name: /download|install/i })).toHaveCount(0)
+    await expect(dialog(page)).toContainText('Installation is not available in this build.')
+    await expect(dialog(page).getByRole('button', { exact: true, name: 'Download' })).toBeEnabled()
+    await expect(dialog(page).getByRole('button', { name: /install/i })).toHaveCount(0)
     expect(await calls(page)).toMatchObject({ checkCalls: 1, mutationCalls: [], statusCalls: 1 })
     await assertModalFits(page)
     await page.screenshot({
@@ -467,4 +552,198 @@ test('old status getter cannot start another check after Close and reopen', asyn
   await expect.poll(async () => (await calls(page)).returnedStatuses).toBe(2)
   await expect(dialog(page).getByText('0.3.0', { exact: true })).toBeVisible()
   expect(await calls(page)).toMatchObject({ checkCalls: 1, mutationCalls: [], statusCalls: 2 })
+})
+
+test('Download is explicit, captures the displayed version and shows polled transfer progress', async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ height: 620, width: 900 })
+  await mountUpdatesApp(page, {
+    checks: [{ snapshot: available('0.2.0') }],
+    downloads: [{ hold: true, snapshot: downloadStatus('downloaded', 4096, 4096) }],
+  })
+  expect(await calls(page)).toMatchObject({ checkCalls: 0, downloadVersions: [], statusCalls: 0 })
+  await openUpdates(page)
+  expect(await calls(page)).toMatchObject({ checkCalls: 1, downloadVersions: [] })
+  await dialog(page).getByRole('button', { exact: true, name: 'Download' }).click()
+  await expect(dialog(page).getByRole('status')).toContainText('Downloading and verifying…')
+  await expect(dialog(page)).toContainText('Closing this dialog leaves the download running.')
+  await expect(dialog(page).getByRole('button', { exact: true, name: 'Close' })).toBeEnabled()
+  await expect(
+    dialog(page).getByRole('button', { exact: true, name: 'Check again' }),
+  ).toBeDisabled()
+  await page.evaluate(
+    (progress) => (globalThis as UpdatesGlobal).applicationUpdatesFixture.setStatus(progress),
+    downloadStatus('downloading', 1024, 4096),
+  )
+  await expect(dialog(page).getByRole('status')).toContainText('1.0 KiB of 4.0 KiB')
+  await expect(dialog(page).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '25')
+  expect(await calls(page)).toMatchObject({
+    checkCalls: 1,
+    downloadVersions: ['0.2.0'],
+    mutationCalls: ['app-download'],
+  })
+  await assertModalFits(page)
+  await page.screenshot({ path: testInfo.outputPath('updates-download-900x620.png') })
+  await page.evaluate(() =>
+    (globalThis as UpdatesGlobal).applicationUpdatesFixture.releaseDownload(1),
+  )
+  await expect(dialog(page)).toContainText('Download completed')
+  await expect(dialog(page)).toContainText('The saved file matches the update metadata checksum.')
+  await expect(dialog(page)).toContainText(
+    'Publisher authenticity and installation have not been verified.',
+  )
+  await expect(dialog(page)).toContainText('Installation is not available in this build.')
+  await expect(dialog(page).getByRole('button', { name: /install|cancel/i })).toHaveCount(0)
+  await expect(
+    dialog(page).getByRole('button', { exact: true, name: 'Download again' }),
+  ).toBeEnabled()
+  await page.screenshot({ path: testInfo.outputPath('updates-downloaded-900x620.png') })
+})
+
+test('download failure remains retryable with the same displayed version and no new check', async ({
+  page,
+}) => {
+  await mountUpdatesApp(page, {
+    checks: [{ snapshot: available('0.2.0') }],
+    downloads: [
+      { snapshot: downloadStatus('download-error') },
+      { snapshot: downloadStatus('downloaded', 4096, 4096) },
+    ],
+  })
+  await openUpdates(page)
+  await dialog(page).getByRole('button', { exact: true, name: 'Download' }).click()
+  await expect(dialog(page)).toContainText('Could not download or verify the update.')
+  await expect(dialog(page).getByText('0.2.0', { exact: true })).toBeVisible()
+  await dialog(page).getByRole('button', { exact: true, name: 'Retry download' }).click()
+  await expect(dialog(page)).toContainText('Download completed')
+  expect(await calls(page)).toMatchObject({
+    checkCalls: 1,
+    downloadVersions: ['0.2.0', '0.2.0'],
+    mutationCalls: ['app-download', 'app-download'],
+  })
+})
+
+test('Close and reopen recovers a running download through read-only status without another check', async ({
+  page,
+}) => {
+  await mountUpdatesApp(page, {
+    checks: [{ snapshot: available('0.2.0') }],
+    downloads: [{ hold: true, snapshot: downloadStatus('downloaded', 4096, 4096) }],
+  })
+  await openUpdates(page)
+  await dialog(page).getByRole('button', { exact: true, name: 'Download' }).click()
+  await expect.poll(async () => (await calls(page)).downloadVersions.length).toBe(1)
+  await dialog(page).getByRole('button', { exact: true, name: 'Close' }).click()
+  await page.evaluate(
+    (progress) => (globalThis as UpdatesGlobal).applicationUpdatesFixture.setStatus(progress),
+    downloadStatus('downloading', 2048, 4096),
+  )
+  await openUpdates(page)
+  await expect(dialog(page).getByRole('status')).toContainText('2.0 KiB of 4.0 KiB')
+  expect(await calls(page)).toMatchObject({ checkCalls: 1, downloadVersions: ['0.2.0'] })
+  await page.evaluate(() =>
+    (globalThis as UpdatesGlobal).applicationUpdatesFixture.releaseDownload(1),
+  )
+  await expect(dialog(page)).toContainText('Download completed')
+  expect(await calls(page)).toMatchObject({
+    checkCalls: 1,
+    downloadVersions: ['0.2.0'],
+    mutationCalls: ['app-download'],
+  })
+})
+
+for (const status of ['downloaded', 'download-error'] as const) {
+  test(`reopening ${status} status does not check or download until an explicit action`, async ({
+    page,
+  }) => {
+    await mountUpdatesApp(page, {
+      checks: [{ snapshot: available('0.3.0') }],
+      status: downloadStatus(
+        status,
+        status === 'downloaded' ? 4096 : null,
+        status === 'downloaded' ? 4096 : null,
+      ),
+    })
+    await openUpdates(page)
+    await expect(dialog(page)).toContainText(
+      status === 'downloaded' ? 'Download completed' : 'Download failed',
+    )
+    expect(await calls(page)).toMatchObject({ checkCalls: 0, downloadVersions: [], statusCalls: 1 })
+    await dialog(page).getByRole('button', { exact: true, name: 'Check again' }).click()
+    await expect(dialog(page).getByText('0.3.0', { exact: true })).toBeVisible()
+    expect(await calls(page)).toMatchObject({ checkCalls: 1, downloadVersions: [] })
+  })
+}
+
+test('a held progress read cannot resurrect downloading after its terminal result', async ({
+  page,
+}) => {
+  await mountUpdatesApp(page, {
+    checks: [{ snapshot: available('0.2.0') }],
+    downloads: [{ hold: true, snapshot: downloadStatus('downloaded', 4096, 4096) }],
+    statusHolds: [2],
+  })
+  await openUpdates(page)
+  await dialog(page).getByRole('button', { exact: true, name: 'Download' }).click()
+  await expect.poll(async () => (await calls(page)).statusCalls).toBe(2)
+  await page.evaluate(() =>
+    (globalThis as UpdatesGlobal).applicationUpdatesFixture.releaseDownload(1),
+  )
+  await expect(dialog(page)).toContainText('Download completed')
+  await page.evaluate(() =>
+    (globalThis as UpdatesGlobal).applicationUpdatesFixture.releaseStatus(2),
+  )
+  await expect.poll(async () => (await calls(page)).returnedStatuses).toBe(2)
+  await expect(dialog(page)).toContainText('Download completed')
+  await expect(dialog(page).getByRole('status')).toHaveCount(0)
+  await expect(
+    dialog(page).getByRole('button', { exact: true, name: 'Download again' }),
+  ).toBeEnabled()
+})
+
+test('old download reply cannot replace a newer selected version after dismissal', async ({
+  page,
+}) => {
+  await mountUpdatesApp(page, {
+    checks: [{ snapshot: available('0.2.0') }, { snapshot: available('0.3.0') }],
+    downloads: [{ hold: true, snapshot: downloadStatus('downloaded', 4096, 4096) }],
+  })
+  await openUpdates(page)
+  await dialog(page).getByRole('button', { exact: true, name: 'Download' }).click()
+  await expect.poll(async () => (await calls(page)).downloadVersions.length).toBe(1)
+  await dialog(page).getByRole('button', { exact: true, name: 'Close' }).click()
+  // Controlled API replies model a completed Main operation whose old IPC response is held.
+  await page.evaluate(
+    (value) => (globalThis as UpdatesGlobal).applicationUpdatesFixture.setStatus(value),
+    snapshot('idle'),
+  )
+  await openUpdates(page)
+  await expect(dialog(page).getByText('0.3.0', { exact: true })).toBeVisible()
+  await page.evaluate(() =>
+    (globalThis as UpdatesGlobal).applicationUpdatesFixture.releaseDownload(1),
+  )
+  await expect.poll(async () => (await calls(page)).returnedDownloads).toBe(1)
+  await expect(dialog(page).getByText('0.3.0', { exact: true })).toBeVisible()
+  await expect(dialog(page)).not.toContainText('Download completed')
+  await expect(dialog(page).getByRole('button', { exact: true, name: 'Download' })).toBeEnabled()
+  expect(await calls(page)).toMatchObject({ checkCalls: 2, downloadVersions: ['0.2.0'] })
+})
+
+test('successful download clears a transient progress read error', async ({ page }) => {
+  await mountUpdatesApp(page, {
+    checks: [{ snapshot: available('0.2.0') }],
+    downloads: [{ hold: true, snapshot: downloadStatus('downloaded', 4096, 4096) }],
+    statusFailures: [2],
+  })
+  await openUpdates(page)
+  await dialog(page).getByRole('button', { exact: true, name: 'Download' }).click()
+  await expect(dialog(page)).toContainText(publicFailure)
+  await page.evaluate(() =>
+    (globalThis as UpdatesGlobal).applicationUpdatesFixture.releaseDownload(1),
+  )
+  await expect.poll(async () => (await calls(page)).returnedDownloads).toBe(1)
+  await expect(dialog(page)).toContainText('Download completed')
+  await expect(dialog(page)).not.toContainText(publicFailure)
+  expect(await calls(page)).toMatchObject({ checkCalls: 1, downloadVersions: ['0.2.0'] })
 })

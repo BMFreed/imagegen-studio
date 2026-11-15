@@ -47,7 +47,7 @@ const supplied = process.env.IMAGEGEN_LINUX_PACKAGE_ARTIFACTS
 const suppliedPackage = process.env.IMAGEGEN_LINUX_PACKAGE_APPIMAGE
 const updateCheckMode = process.env.IMAGEGEN_LINUX_PACKAGE_UPDATE_CHECK
 assert.ok(
-  updateCheckMode === undefined || updateCheckMode === 'unavailable' || updateCheckMode === 'feed',
+  updateCheckMode === undefined || updateCheckMode === 'unavailable' || updateCheckMode === 'feed' || updateCheckMode === 'download',
 )
 const updateFeedPortText = process.env.IMAGEGEN_LINUX_PACKAGE_UPDATE_FEED_PORT
 assert.ok(updateFeedPortText === undefined || /^\d+$/.test(updateFeedPortText))

@@ -146,6 +146,7 @@ export type {
 export const ipcChannels = {
   applicationUpdates: {
     check: 'application-updates:check',
+    download: 'application-updates:download',
     getStatus: 'application-updates:get-status',
   },
   models: {
@@ -1049,6 +1050,7 @@ export interface RuntimeApi {
 
 export interface ApplicationUpdatesApi {
   check: () => Promise<ApiResult<ApplicationUpdateSnapshot>>
+  download: (availableVersion: string) => Promise<ApiResult<ApplicationUpdateSnapshot>>
   getStatus: () => Promise<ApiResult<ApplicationUpdateSnapshot>>
 }
 

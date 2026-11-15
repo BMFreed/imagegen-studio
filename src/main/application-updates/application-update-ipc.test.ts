@@ -16,9 +16,11 @@ const snapshot = (
 ): ApplicationUpdateSnapshot => ({
   availableVersion: status === 'available' ? '0.1.0' : null,
   currentVersion: '0.1.0-dev.1',
+  downloadedBytes: null,
   notesTruncated: false,
   releaseNotes: status === 'available' ? 'Changes' : null,
   status,
+  totalBytes: null,
 })
 
 function value(result: ApiResult<unknown>): ApplicationUpdateSnapshot {
@@ -47,9 +49,15 @@ function fixture() {
   const handlers = new Map<string, Handler>()
   const controls = {
     check: async (): Promise<ApplicationUpdateSnapshot> => snapshot('up-to-date'),
+    download: async (_version: string): Promise<ApplicationUpdateSnapshot> => ({
+      ...snapshot('available'),
+      downloadedBytes: 128,
+      status: 'downloaded',
+      totalBytes: 128,
+    }),
     getStatus: (): ApplicationUpdateSnapshot => snapshot(),
   }
-  const calls = { check: 0, getStatus: 0 }
+  const calls = { check: 0, download: 0, getStatus: 0 }
   const lifetime = registerApplicationUpdateIpc(
     {
       handle: (channel, handler) => {
@@ -65,6 +73,10 @@ function fixture() {
       check: async () => {
         calls.check++
         return await controls.check()
+      },
+      download: async (version) => {
+        calls.download++
+        return await controls.download(version)
       },
       getStatus: () => {
         calls.getStatus++
@@ -88,9 +100,10 @@ test('read-only update getter copies the current service result and never invoke
   assert.deepEqual(result, original)
   result.releaseNotes = 'Renderer-local change'
   assert.equal(original.releaseNotes, 'Changes')
-  assert.deepEqual(f.calls, { check: 0, getStatus: 1 })
+  assert.deepEqual(f.calls, { check: 0, download: 0, getStatus: 1 })
   assert.deepEqual([...f.handlers.keys()].sort(), [
     'application-updates:check',
+    'application-updates:download',
     'application-updates:get-status',
   ])
 })
@@ -105,7 +118,7 @@ test('only the explicit zero-argument check invokes the service and exposes its 
   assert.deepEqual(returned, original)
   returned.availableVersion = '2.0.0'
   assert.equal(original.availableVersion, '0.1.0')
-  assert.deepEqual(f.calls, { check: 2, getStatus: 0 })
+  assert.deepEqual(f.calls, { check: 2, download: 0, getStatus: 0 })
 })
 
 test('foreign sender/subframe, stale frame and arbitrary feed/key arguments cannot reach either service port', async () => {
@@ -130,7 +143,7 @@ test('foreign sender/subframe, stale frame and arbitrary feed/key arguments cann
       failure(await f.invoke(channel, args), 'IPC_INVALID_CALLER')
     }
   }
-  assert.deepEqual(f.calls, { check: 0, getStatus: 0 })
+  assert.deepEqual(f.calls, { check: 0, download: 0, getStatus: 0 })
 })
 
 test('document invalidation refuses an old pending result while the new document reads actual completed state', async () => {
@@ -148,7 +161,7 @@ test('document invalidation refuses an old pending result while the new document
   completed.resolve(snapshot('available'))
   failure(await old, 'IPC_INVALID_CALLER')
   assert.equal(value(await f.invoke('getStatus')).status, 'available')
-  assert.deepEqual(f.calls, { check: 1, getStatus: 1 })
+  assert.deepEqual(f.calls, { check: 1, download: 0, getStatus: 1 })
 })
 
 test('current frame is rechecked after pending success and after a pending native error', async () => {
@@ -195,7 +208,7 @@ test('dispose removes both handlers and rejects retained/pending callbacks witho
     await handler({ sender: f.caller, senderFrame: f.caller.mainFrame }),
     'IPC_INVALID_CALLER',
   )
-  assert.deepEqual(f.calls, { check: 1, getStatus: 0 })
+  assert.deepEqual(f.calls, { check: 1, download: 0, getStatus: 0 })
 })
 
 test('native errors and invalid service snapshots cannot leak provider paths or capabilities', async () => {
@@ -221,4 +234,66 @@ test('native errors and invalid service snapshots cannot leak provider paths or 
       message: 'The application returned an invalid update status.',
     })
   }
+})
+
+test('only a displayed version reaches explicit Download and stale document completion stays retired', async () => {
+  const f = fixture()
+  for (const args of [
+    [],
+    [undefined],
+    ['https://private.example/app.AppImage'],
+    ['0.1.0', 'extra'],
+    [{ version: '0.1.0' }],
+  ]) {
+    failure(await f.invoke('download', args), 'IPC_INVALID_CALLER')
+  }
+  for (const request of [
+    { sender: {}, senderFrame: f.caller.mainFrame },
+    { sender: f.caller, senderFrame: {} },
+  ]) {
+    failure(await f.invoke('download', ['0.1.0'], request), 'IPC_INVALID_CALLER')
+  }
+  assert.equal(f.calls.download, 0)
+  const entered = deferred<void>()
+  const completed = deferred<ApplicationUpdateSnapshot>()
+  f.controls.download = async (version) => {
+    assert.equal(version, '0.1.0')
+    entered.resolve()
+    return await completed.promise
+  }
+  const pending = f.invoke('download', ['0.1.0'])
+  await entered.promise
+  f.lifetime.invalidateDocument()
+  const downloaded: ApplicationUpdateSnapshot = {
+    ...snapshot('available'),
+    downloadedBytes: 128,
+    status: 'downloaded',
+    totalBytes: 128,
+  }
+  completed.resolve(downloaded)
+  failure(await pending, 'IPC_INVALID_CALLER')
+  f.controls.getStatus = () => downloaded
+  assert.equal(value(await f.invoke('getStatus')).status, 'downloaded')
+  assert.equal(f.calls.download, 1)
+  assert.equal(f.calls.check, 0)
+})
+
+test('download errors are fixed public diagnostics and native file paths never escape', async () => {
+  const f = fixture()
+  f.controls.download = async () => {
+    throw new Error('/private/cache/pending/app.AppImage')
+  }
+  assert.deepEqual(
+    failure(await f.invoke('download', ['0.1.0']), 'APPLICATION_UPDATE_DOWNLOAD_FAILED'),
+    {
+      code: 'APPLICATION_UPDATE_DOWNLOAD_FAILED',
+      message: 'The application could not download the update. Try again.',
+    },
+  )
+  f.controls.download = async () =>
+    ({
+      ...snapshot('available'),
+      path: '/private/cache/pending/app.AppImage',
+    }) as ApplicationUpdateSnapshot
+  failure(await f.invoke('download', ['0.1.0']), 'IPC_INVALID_RESPONSE')
 })

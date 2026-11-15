@@ -570,9 +570,12 @@ const runtimeActionError = ref<string | null>(null)
 const runtimePending = ref<'check' | 'install' | 'repair' | null>(null)
 const applicationUpdatesOpen = ref(false)
 const applicationUpdatesPending = ref(false)
+const applicationUpdatesDownloadPending = ref(false)
 const applicationUpdatesSnapshot = shallowRef<ApplicationUpdateSnapshot | null>(null)
 const applicationUpdatesError = ref<string | null>(null)
 let applicationUpdatesEpoch = 0
+let applicationUpdatesPollEpoch = 0
+let applicationUpdatesPollTimer: ReturnType<typeof setTimeout> | null = null
 const runtimeSetupOpen = ref(false)
 const runtimeSetupMode = ref<RuntimeSetupMode>('install')
 const runtimeSetupReview = shallowRef<RuntimeSetupReview | null>(null)
@@ -5409,21 +5412,74 @@ function currentApplicationUpdatesRequest(epoch: number): boolean {
   return !rendererDisposed && applicationUpdatesOpen.value && epoch === applicationUpdatesEpoch
 }
 
+function stopApplicationUpdatesPolling() {
+  ++applicationUpdatesPollEpoch
+  if (applicationUpdatesPollTimer !== null) {
+    clearTimeout(applicationUpdatesPollTimer)
+    applicationUpdatesPollTimer = null
+  }
+}
+
+function pollApplicationUpdates(epoch: number) {
+  stopApplicationUpdatesPolling()
+  if (
+    !currentApplicationUpdatesRequest(epoch) ||
+    applicationUpdatesSnapshot.value?.status !== 'downloading'
+  ) {
+    return
+  }
+  const pollEpoch = applicationUpdatesPollEpoch
+  // This is a UI refresh interval, not a transport retry or a download deadline.
+  applicationUpdatesPollTimer = setTimeout(() => {
+    applicationUpdatesPollTimer = null
+    void (async () => {
+      const current = () =>
+        currentApplicationUpdatesRequest(epoch) && pollEpoch === applicationUpdatesPollEpoch
+      try {
+        const updates = globalThis.window.api?.applicationUpdates
+        if (!updates?.getStatus) {
+          throw new Error('Application update status is unavailable.')
+        }
+        const result = await updates.getStatus()
+        if (!current()) {
+          return
+        }
+        if (!result.ok) {
+          applicationUpdatesError.value = result.error.message
+          return
+        }
+        applicationUpdatesError.value = null
+        applicationUpdatesSnapshot.value = result.value
+        pollApplicationUpdates(epoch)
+      } catch {
+        if (current()) {
+          applicationUpdatesError.value =
+            'Could not read download progress. Close and reopen this dialog to try again.'
+        }
+      }
+    })()
+  }, 1000)
+}
+
 function dismissApplicationUpdates() {
   ++applicationUpdatesEpoch
+  stopApplicationUpdatesPolling()
   applicationUpdatesOpen.value = false
   applicationUpdatesPending.value = false
+  applicationUpdatesDownloadPending.value = false
 }
 
 async function checkApplicationUpdates(readCurrentVersion = false) {
   if (
     !applicationUpdatesOpen.value ||
     applicationUpdatesPending.value ||
+    applicationUpdatesSnapshot.value?.status === 'downloading' ||
     windowClosePending.value
   ) {
     return
   }
   const epoch = ++applicationUpdatesEpoch
+  stopApplicationUpdatesPolling()
   applicationUpdatesPending.value = true
   applicationUpdatesError.value = null
   try {
@@ -5442,6 +5498,10 @@ async function checkApplicationUpdates(readCurrentVersion = false) {
         return
       }
       applicationUpdatesSnapshot.value = statusResult.value
+      if (['download-error', 'downloaded', 'downloading'].includes(statusResult.value.status)) {
+        pollApplicationUpdates(epoch)
+        return
+      }
     }
     const result = await updates.check()
     if (!currentApplicationUpdatesRequest(epoch)) {
@@ -5449,6 +5509,7 @@ async function checkApplicationUpdates(readCurrentVersion = false) {
     }
     if (result.ok) {
       applicationUpdatesSnapshot.value = result.value
+      pollApplicationUpdates(epoch)
     } else {
       applicationUpdatesError.value = result.error.message
     }
@@ -5460,6 +5521,64 @@ async function checkApplicationUpdates(readCurrentVersion = false) {
   } finally {
     if (currentApplicationUpdatesRequest(epoch)) {
       applicationUpdatesPending.value = false
+    }
+  }
+}
+
+async function downloadApplicationUpdate(availableVersion: string) {
+  const previous = applicationUpdatesSnapshot.value
+  if (
+    !applicationUpdatesOpen.value ||
+    applicationUpdatesPending.value ||
+    windowClosePending.value ||
+    !previous ||
+    previous.availableVersion !== availableVersion ||
+    !['available', 'download-error', 'downloaded'].includes(previous.status)
+  ) {
+    return
+  }
+  const epoch = ++applicationUpdatesEpoch
+  stopApplicationUpdatesPolling()
+  applicationUpdatesPending.value = true
+  applicationUpdatesDownloadPending.value = true
+  applicationUpdatesError.value = null
+  applicationUpdatesSnapshot.value = {
+    ...previous,
+    downloadedBytes: null,
+    status: 'downloading',
+    totalBytes: null,
+  }
+  try {
+    const updates = globalThis.window.api?.applicationUpdates
+    if (!updates?.download) {
+      throw new Error('Application update download is unavailable.')
+    }
+    const operation = updates.download(availableVersion)
+    pollApplicationUpdates(epoch)
+    const result = await operation
+    if (!currentApplicationUpdatesRequest(epoch)) {
+      return
+    }
+    stopApplicationUpdatesPolling()
+    if (result.ok) {
+      applicationUpdatesError.value = null
+      applicationUpdatesSnapshot.value = result.value
+    } else {
+      applicationUpdatesError.value = result.error.message
+      applicationUpdatesSnapshot.value = previous
+    }
+  } catch {
+    if (currentApplicationUpdatesRequest(epoch)) {
+      stopApplicationUpdatesPolling()
+      applicationUpdatesSnapshot.value = previous
+      applicationUpdatesError.value =
+        'The application could not download the update. Please try again.'
+    }
+  } finally {
+    if (currentApplicationUpdatesRequest(epoch)) {
+      applicationUpdatesPending.value = false
+      applicationUpdatesDownloadPending.value = false
+      pollApplicationUpdates(epoch)
     }
   }
 }
@@ -6020,6 +6139,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   ++applicationUpdatesEpoch
+  stopApplicationUpdatesPolling()
   if (runtimeSetupOpen.value && !runtimeSetupSubmitting.value) {
     void dismissRuntimeSetup()
   }
@@ -6159,11 +6279,13 @@ onBeforeUnmount(() => {
       <main class="app-stage">
         <ApplicationUpdatesModal
           v-model:show="applicationUpdatesOpen"
+          :downloading="applicationUpdatesDownloadPending"
           :error="applicationUpdatesError"
           :pending="applicationUpdatesPending"
           :snapshot="applicationUpdatesSnapshot"
           @check="checkApplicationUpdates()"
           @dismiss="dismissApplicationUpdates"
+          @download="downloadApplicationUpdate"
         />
         <RuntimeSetupModal
           v-model:show="runtimeSetupOpen"

@@ -1,6 +1,16 @@
 # Implementation Roadmap
 
-## Current manual application update check
+## Current explicit application update Download
+
+[Explicit app Download](../engineering/phase-5-application-update-download-research.md) connects the existing native downloader to a
+version-bound user action, progress and final SHA-512/size checks of new and reused
+cache files. Closing the dialog leaves accepted work running; reopening reads Main
+state. There is no Cancel or installer authority. Metadata checksum is separate
+from publisher authenticity. Default publisher remains unconfigured/unavailable;
+shipping trust, compatibility, safe Install/replacement/recovery and full MVP remain
+open. Promise statuses unchanged.
+
+## Previous manual application update check
 
 [Manual app check](../engineering/phase-5-application-update-check-research.md) adapts Invoke's exact electron-updater6.6.2 to
 Help, trusted current-frame IPC and bounded version/plain-text notes. Startup and

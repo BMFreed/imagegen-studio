@@ -116,18 +116,19 @@ import { contextBridge, ipcRenderer } from 'electron'
 
 const applicationUpdateErrors: Readonly<Record<string, string>> = {
   APPLICATION_UPDATE_CHECK_FAILED: 'The application could not check for updates. Try again.',
+  APPLICATION_UPDATE_DOWNLOAD_FAILED: 'The application could not download the update. Try again.',
   IPC_INVALID_CALLER: 'Application update request was rejected.',
   IPC_INVALID_RESPONSE: 'The application returned an invalid update status.',
   IPC_UNAVAILABLE: 'The application could not reach the update service.',
 }
 
-/** Check-only IPC: fixed public errors and the shared DTO, never native provider details. */
+/** Explicit update IPC: fixed public errors and shared DTO, never native provider details. */
 async function invokeApplicationUpdate(
-  channel:
-    typeof ipcChannels.applicationUpdates.check | typeof ipcChannels.applicationUpdates.getStatus,
+  channel: (typeof ipcChannels.applicationUpdates)[keyof typeof ipcChannels.applicationUpdates],
+  args: unknown[] = [],
 ): Promise<ApiResult<ApplicationUpdateSnapshot>> {
   try {
-    const result: unknown = await ipcRenderer.invoke(channel)
+    const result: unknown = await ipcRenderer.invoke(channel, ...args)
     if (isRecord(result)) {
       if (result.ok === true && isApplicationUpdateSnapshot(result.value)) {
         return { ok: true, value: result.value }
@@ -1250,6 +1251,8 @@ function regionalPromptReplyMatches(
 const api: StudioApi = {
   applicationUpdates: {
     check: () => invokeApplicationUpdate(ipcChannels.applicationUpdates.check),
+    download: (availableVersion) =>
+      invokeApplicationUpdate(ipcChannels.applicationUpdates.download, [availableVersion]),
     getStatus: () => invokeApplicationUpdate(ipcChannels.applicationUpdates.getStatus),
   },
   models: {

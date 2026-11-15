@@ -1,13 +1,14 @@
 /**
  * Invoke launcher c267bdb439519216b277a7a8c6ad408b9d79efce updater.ts7/16 and
- * main-process-manager.ts167 own the upstream check/caller. Studio adapts only explicit checks
+ * main-process-manager.ts167 own the upstream check/download caller. Studio adapts explicit actions
  * through its existing runtime-setup-ipc current-frame/document guard pattern. This protocol
- * accepts no feed, download or install capability.
+ * accepts only the displayed version for Download, never feed/path or install capability.
  */
 import { type ApiResult, ipcChannels } from '../../shared/api.js'
 import {
   type ApplicationUpdateSnapshot,
   isApplicationUpdateSnapshot,
+  isApplicationUpdateVersion,
 } from '../../shared/application-updates.js'
 
 type Caller = { mainFrame: unknown }
@@ -21,6 +22,7 @@ type Registrar = {
 }
 type Service = {
   check: () => Promise<ApplicationUpdateSnapshot>
+  download: (availableVersion: string) => Promise<ApplicationUpdateSnapshot>
   getStatus: () => ApplicationUpdateSnapshot
 }
 
@@ -40,7 +42,11 @@ export function registerApplicationUpdateIpc(
 ): { dispose: () => void; invalidateDocument: () => void } {
   let disposed = false
   let epoch = {}
-  const channels = [ipcChannels.applicationUpdates.getStatus, ipcChannels.applicationUpdates.check]
+  const channels = [
+    ipcChannels.applicationUpdates.getStatus,
+    ipcChannels.applicationUpdates.check,
+    ipcChannels.applicationUpdates.download,
+  ]
   const invalidateDocument = () => {
     epoch = {}
   }
@@ -48,7 +54,9 @@ export function registerApplicationUpdateIpc(
     registrar.handle(channel, async (event, ...args) => {
       if (
         disposed ||
-        args.length !== 0 ||
+        (channel === ipcChannels.applicationUpdates.download
+          ? args.length !== 1 || !isApplicationUpdateVersion(args[0])
+          : args.length !== 0) ||
         event.sender !== caller ||
         event.senderFrame !== caller.mainFrame
       ) {
@@ -62,9 +70,11 @@ export function registerApplicationUpdateIpc(
         event.senderFrame === caller.mainFrame
       try {
         const snapshot =
-          channel === ipcChannels.applicationUpdates.check
-            ? await service.check()
-            : service.getStatus()
+          channel === ipcChannels.applicationUpdates.download
+            ? await service.download(args[0] as string)
+            : channel === ipcChannels.applicationUpdates.check
+              ? await service.check()
+              : service.getStatus()
         if (!current()) {
           return rejected()
         }
@@ -76,8 +86,12 @@ export function registerApplicationUpdateIpc(
           return rejected()
         }
         return failure(
-          'APPLICATION_UPDATE_CHECK_FAILED',
-          'The application could not check for updates. Try again.',
+          channel === ipcChannels.applicationUpdates.download
+            ? 'APPLICATION_UPDATE_DOWNLOAD_FAILED'
+            : 'APPLICATION_UPDATE_CHECK_FAILED',
+          channel === ipcChannels.applicationUpdates.download
+            ? 'The application could not download the update. Try again.'
+            : 'The application could not check for updates. Try again.',
         )
       }
     })

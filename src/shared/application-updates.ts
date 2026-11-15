@@ -1,7 +1,7 @@
 /**
  * Invoke launcher c267bdb439519216b277a7a8c6ad408b9d79efce, updater.ts7/16 and
- * main-process-manager.ts167: adapt its check result to a bounded Studio DTO. This projection
- * exposes no feed, downloaded file, installer or restart authority.
+ * main-process-manager.ts167: adapt explicit check/download to a bounded Studio DTO. This
+ * projection exposes no feed, downloaded file, installer or restart authority.
  */
 export const APPLICATION_UPDATE_STATUSES = [
   'idle',
@@ -9,6 +9,9 @@ export const APPLICATION_UPDATE_STATUSES = [
   'unavailable',
   'up-to-date',
   'available',
+  'downloading',
+  'downloaded',
+  'download-error',
   'error',
 ] as const
 
@@ -20,18 +23,22 @@ export type ApplicationUpdateStatus = (typeof APPLICATION_UPDATE_STATUSES)[numbe
 export interface ApplicationUpdateSnapshot {
   availableVersion: string | null
   currentVersion: string
+  downloadedBytes: number | null
   notesTruncated: boolean
   releaseNotes: string | null
   status: ApplicationUpdateStatus
+  totalBytes: number | null
 }
 
 const STATUS_VALUES: ReadonlySet<string> = new Set(APPLICATION_UPDATE_STATUSES)
 const FIELDS = [
   'availableVersion',
   'currentVersion',
+  'downloadedBytes',
   'notesTruncated',
   'releaseNotes',
   'status',
+  'totalBytes',
 ] as const
 const numeric = String.raw`(?:0|[1-9]\d*)`
 const prerelease = String.raw`(?:0|[1-9]\d*|\d*[a-z-][\da-z-]*)`
@@ -62,7 +69,37 @@ export function isApplicationUpdateSnapshot(value: unknown): value is Applicatio
     ) {
       return false
     }
-    if (snapshot['status'] !== 'available') {
+    const status = snapshot['status']
+    const downloaded = snapshot['downloadedBytes']
+    const total = snapshot['totalBytes']
+    if (status === 'downloading') {
+      if (
+        !(downloaded === null && total === null) &&
+        !(
+          typeof downloaded === 'number' &&
+          Number.isSafeInteger(downloaded) &&
+          downloaded >= 0 &&
+          typeof total === 'number' &&
+          Number.isSafeInteger(total) &&
+          total > 0 &&
+          downloaded <= total
+        )
+      ) {
+        return false
+      }
+    } else if (status === 'downloaded') {
+      if (
+        typeof total !== 'number' ||
+        !Number.isSafeInteger(total) ||
+        total <= 0 ||
+        downloaded !== total
+      ) {
+        return false
+      }
+    } else if (downloaded !== null || total !== null) {
+      return false
+    }
+    if (!['available', 'download-error', 'downloaded', 'downloading'].includes(status)) {
       return (
         snapshot['availableVersion'] === null &&
         snapshot['releaseNotes'] === null &&

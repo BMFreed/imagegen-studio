@@ -13,9 +13,11 @@ import {
 const snapshot = (): ApplicationUpdateSnapshot => ({
   availableVersion: null,
   currentVersion: '0.1.0-dev.1',
+  downloadedBytes: null,
   notesTruncated: false,
   releaseNotes: null,
   status: 'idle',
+  totalBytes: null,
 })
 const available = (): ApplicationUpdateSnapshot => ({
   ...snapshot(),
@@ -24,14 +26,21 @@ const available = (): ApplicationUpdateSnapshot => ({
   status: 'available',
 })
 
-test('application update snapshots cover the exact check-only state domain', () => {
+test('application update snapshots cover the exact explicit check/download state domain', () => {
   for (const status of APPLICATION_UPDATE_STATUSES) {
-    const value = status === 'available' ? available() : { ...snapshot(), status }
+    const carriesVersion = ['available', 'download-error', 'downloaded', 'downloading'].includes(
+      status,
+    )
+    const value = carriesVersion ? { ...available(), status } : { ...snapshot(), status }
+    if (status === 'downloaded') {
+      value.downloadedBytes = 128
+      value.totalBytes = 128
+    }
     assert.equal(isApplicationUpdateSnapshot(value), true, status)
   }
   assert.equal(isApplicationUpdateSnapshot(Object.freeze(snapshot())), true)
   assert.equal(isApplicationUpdateSnapshot(Object.assign(Object.create(null), snapshot())), true)
-  for (const status of ['downloaded', 'installed', 'installing', 'canceled', 'ready', '']) {
+  for (const status of ['installed', 'installing', 'canceled', 'ready', '']) {
     assert.equal(isApplicationUpdateSnapshot({ ...snapshot(), status }), false)
   }
 })
@@ -53,7 +62,9 @@ test('only an available update can carry a distinct version and bounded plain-te
     }),
     true,
   )
-  for (const status of APPLICATION_UPDATE_STATUSES.filter((value) => value !== 'available')) {
+  for (const status of APPLICATION_UPDATE_STATUSES.filter(
+    (value) => !['available', 'download-error', 'downloaded', 'downloading'].includes(value),
+  )) {
     for (const patch of [
       { availableVersion: '1.0.0' },
       { notesTruncated: true },
@@ -110,6 +121,57 @@ test('public versions are bounded strict SemVer labels instead of paths or provi
     assert.equal(isApplicationUpdateSnapshot({ ...snapshot(), currentVersion: value }), false)
     assert.equal(isApplicationUpdateSnapshot({ ...available(), availableVersion: value }), false)
   }
+})
+
+test('download progress cannot imply completion or carry unbounded/native data', () => {
+  const downloading = { ...available(), status: 'downloading' }
+  assert.equal(isApplicationUpdateSnapshot(downloading), true)
+  assert.equal(
+    isApplicationUpdateSnapshot({ ...downloading, downloadedBytes: 0, totalBytes: 1 }),
+    true,
+  )
+  assert.equal(
+    isApplicationUpdateSnapshot({ ...downloading, downloadedBytes: 1, totalBytes: 1 }),
+    true,
+  )
+  for (const patch of [
+    { downloadedBytes: -1, totalBytes: 1 },
+    { downloadedBytes: 2, totalBytes: 1 },
+    { downloadedBytes: 0, totalBytes: 0 },
+    { downloadedBytes: null, totalBytes: 1 },
+    { downloadedBytes: 1, totalBytes: null },
+    { downloadedBytes: 0.5, totalBytes: 1 },
+    { downloadedBytes: 0, totalBytes: Number.POSITIVE_INFINITY },
+    { downloadedBytes: 0, totalBytes: Number.MAX_SAFE_INTEGER + 1 },
+    { downloadedBytes: '1', totalBytes: 1 },
+  ]) {
+    assert.equal(isApplicationUpdateSnapshot({ ...downloading, ...patch }), false)
+  }
+  for (const status of ['available', 'download-error', 'idle', 'error', 'checking']) {
+    assert.equal(
+      isApplicationUpdateSnapshot({ ...available(), downloadedBytes: 1, status, totalBytes: 1 }),
+      false,
+    )
+  }
+  assert.equal(isApplicationUpdateSnapshot({ ...available(), status: 'downloaded' }), false)
+  assert.equal(
+    isApplicationUpdateSnapshot({
+      ...available(),
+      downloadedBytes: 2,
+      status: 'downloaded',
+      totalBytes: 3,
+    }),
+    false,
+  )
+  assert.equal(
+    isApplicationUpdateSnapshot({
+      ...available(),
+      downloadedBytes: 3,
+      status: 'downloaded',
+      totalBytes: 3,
+    }),
+    true,
+  )
 })
 
 test('the exact public snapshot rejects missing/private fields without executing accessors', () => {

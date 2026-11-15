@@ -1,8 +1,9 @@
 /**
  * Invoke launcher c267bdb4 updater.ts7/16 -> main-process-manager.ts167; electron-updater6.6.2
- * AppUpdater.checkForUpdates owns provider/semver/coalescing. Adapt only its result to Studio's
- * current-frame public snapshot. No download, resource/Project mutation or close/installer
- * authority belongs to this owner.
+ * AppUpdater.checkForUpdates/downloadUpdate own provider/semver/transfer/cache. The native adapter
+ * verifies returned cache bytes; this owner binds an explicit Download to the latest available
+ * check. Native AppUpdater retains old metadata after no-update/errors, so that internal state
+ * alone must never authorize a download. No close/installer authority escapes.
  */
 import {
   APPLICATION_UPDATE_NOTES_MAX_LENGTH,
@@ -21,11 +22,19 @@ export interface ApplicationUpdateCheckResult {
 
 export interface ApplicationUpdateChecker {
   checkForUpdates: () => Promise<ApplicationUpdateCheckResult | null>
+  downloadUpdate?: (
+    onProgress: (progress: { downloadedBytes: number; totalBytes: number }) => void,
+  ) => Promise<{ sizeBytes: number }>
 }
 
 export class ApplicationUpdateService {
   private checker: ApplicationUpdateChecker | null = null
-  private pending: Promise<ApplicationUpdateSnapshot> | null = null
+  private pendingCheck: Promise<ApplicationUpdateSnapshot> | null = null
+  private pendingDownload: {
+    epoch: object
+    promise: Promise<ApplicationUpdateSnapshot>
+    version: string
+  } | null = null
   private snapshot: ApplicationUpdateSnapshot
 
   constructor(
@@ -43,8 +52,11 @@ export class ApplicationUpdateService {
     if (!this.configured) {
       return this.getStatus()
     }
-    if (this.pending) {
-      return structuredClone(await this.pending)
+    if (this.pendingDownload) {
+      return this.getStatus()
+    }
+    if (this.pendingCheck) {
+      return structuredClone(await this.pendingCheck)
     }
     this.snapshot = this.empty('checking')
     // Store the complete projection promise before a synchronous factory/check
@@ -67,8 +79,10 @@ export class ApplicationUpdateService {
         const snapshot: ApplicationUpdateSnapshot = {
           availableVersion: result.updateInfo.version,
           currentVersion: this.currentVersion,
+          downloadedBytes: null,
           ...notes,
           status: 'available',
+          totalBytes: null,
         }
         if (!isApplicationUpdateSnapshot(snapshot)) {
           throw new Error('Invalid application update projection.')
@@ -81,9 +95,87 @@ export class ApplicationUpdateService {
         return this.getStatus()
       })
       .finally(() => {
-        this.pending = null
+        this.pendingCheck = null
       })
-    this.pending = operation
+    this.pendingCheck = operation
+    return structuredClone(await operation)
+  }
+
+  async download(expectedVersion: string): Promise<ApplicationUpdateSnapshot> {
+    if (!this.configured || this.pendingCheck) {
+      return this.getStatus()
+    }
+    if (this.pendingDownload) {
+      return expectedVersion === this.pendingDownload.version
+        ? structuredClone(await this.pendingDownload.promise)
+        : this.getStatus()
+    }
+    if (
+      !isApplicationUpdateVersion(expectedVersion) ||
+      expectedVersion !== this.snapshot.availableVersion ||
+      !['available', 'download-error', 'downloaded'].includes(this.snapshot.status)
+    ) {
+      return this.getStatus()
+    }
+
+    const selected = this.getStatus()
+    const epoch = {}
+    this.snapshot = {
+      ...selected,
+      downloadedBytes: null,
+      status: 'downloading',
+      totalBytes: null,
+    }
+    // Store the complete operation before entering even a synchronous native
+    // failure. Status reads and repeated checks never initiate transfer.
+    const operation = Promise.resolve()
+      .then(async (): Promise<ApplicationUpdateSnapshot> => {
+        if (!this.checker?.downloadUpdate) {
+          throw new Error('Application download is unavailable.')
+        }
+        const result = await this.checker.downloadUpdate((progress) => {
+          if (
+            this.pendingDownload?.epoch !== epoch ||
+            this.snapshot.status !== 'downloading' ||
+            !progress ||
+            !Number.isSafeInteger(progress.downloadedBytes) ||
+            !Number.isSafeInteger(progress.totalBytes) ||
+            progress.totalBytes <= 0 ||
+            progress.downloadedBytes < 0 ||
+            progress.downloadedBytes > progress.totalBytes
+          ) {
+            return
+          }
+          this.snapshot = {
+            ...this.snapshot,
+            downloadedBytes: progress.downloadedBytes,
+            totalBytes: progress.totalBytes,
+          }
+        })
+        if (!result || !Number.isSafeInteger(result.sizeBytes) || result.sizeBytes <= 0) {
+          throw new Error('Invalid application download result.')
+        }
+        return {
+          ...selected,
+          downloadedBytes: result.sizeBytes,
+          status: 'downloaded',
+          totalBytes: result.sizeBytes,
+        }
+      })
+      .catch((): ApplicationUpdateSnapshot => ({
+        ...selected,
+        downloadedBytes: null,
+        status: 'download-error',
+        totalBytes: null,
+      }))
+      .then((snapshot) => {
+        this.snapshot = snapshot
+        return this.getStatus()
+      })
+      .finally(() => {
+        this.pendingDownload = null
+      })
+    this.pendingDownload = { epoch, promise: operation, version: expectedVersion }
     return structuredClone(await operation)
   }
 
@@ -95,9 +187,11 @@ export class ApplicationUpdateService {
     return {
       availableVersion: null,
       currentVersion: this.currentVersion,
+      downloadedBytes: null,
       notesTruncated: false,
       releaseNotes: null,
       status,
+      totalBytes: null,
     }
   }
 }

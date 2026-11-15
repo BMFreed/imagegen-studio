@@ -59,10 +59,16 @@ Project Save с placeholder preview остаётся доступен. SQLite mi
 now supplies a versioned standalone app consumer and current-host extract-and-run
 qualification. [Manual Check](../engineering/phase-5-application-update-check-research.md) now
 uses the real Invoke/electron-updater metadata consumer through Help/Main/preload,
-with explicit outcomes and no startup network check. Download and installation
-remain absent; automatic download/install-on-quit are explicitly disabled. The
+with explicit outcomes and no startup network check. [Explicit Download](../engineering/phase-5-application-update-download-research.md)
+now uses that native downloader through an exact-version action, real progress
+and final saved-file SHA-512/size verification, including reused cache bytes.
+Download failure permits explicit retry. Closing the dialog leaves accepted work
+running; reopen reads its Main state. No Cancel is exposed until native socket/file
+drain is qualified. Check and status reads never initiate a download. Installation
+remains absent; automatic download/install-on-quit are explicitly disabled. The
 default build is unavailable until its own publisher configuration is supplied. This
-checkpoint does not prove signed delivery, FUSE/clean-machine install, binary
+checkpoint verifies integrity relative to metadata, not publisher authenticity.
+It does not prove signed delivery, FUSE/clean-machine install, binary
 replacement or interrupted-update recovery; those remain dependencies of the
 acceptance below. Runtime publisher metadata is a separate lifecycle.
 
