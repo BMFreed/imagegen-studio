@@ -79,6 +79,7 @@ import type {
   SmartResultPresetData,
   SmartResultPresetRequest,
 } from './projects/smart-result-preset.js'
+import type { RuntimeSetupMode, RuntimeSetupReview } from './runtime-setup.js'
 
 import { isAnimaSamplingMethod } from './projects/anima-sampling-method.js'
 import { isGenerationDynamicPromptSettings } from './projects/generation-dynamic-settings.js'
@@ -269,8 +270,10 @@ export const ipcChannels = {
     windowCloseReleased: 'projects:window-close-released',
   },
   runtime: {
+    discardInstallationReview: 'runtime:discard-installation-review',
     getStatus: 'runtime:get-status',
     install: 'runtime:install',
+    previewInstallation: 'runtime:preview-installation',
     repair: 'runtime:repair',
     statusChanged: 'runtime:status-changed',
   },
@@ -1022,10 +1025,12 @@ export interface ModelApi {
 }
 
 export interface RuntimeApi {
+  discardInstallationReview: () => Promise<ApiResult<null>>
   getStatus: () => Promise<ApiResult<RuntimeStatus>>
-  install: () => Promise<ApiResult<RuntimeStatus>>
+  install: (reviewToken?: string) => Promise<ApiResult<RuntimeStatus>>
   onStatusChanged: (listener: (status: RuntimeStatus) => void) => () => void
-  repair: () => Promise<ApiResult<RuntimeStatus>>
+  previewInstallation: (mode: RuntimeSetupMode) => Promise<ApiResult<RuntimeSetupReview>>
+  repair: (reviewToken?: string) => Promise<ApiResult<RuntimeStatus>>
 }
 
 export interface StudioApi {

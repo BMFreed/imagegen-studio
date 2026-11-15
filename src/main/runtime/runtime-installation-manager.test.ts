@@ -1,4 +1,6 @@
 import type { ApiResult } from '../../shared/api.js'
+import { ipcChannels } from '../../shared/api.js'
+import type { RuntimeSetupReview } from '../../shared/runtime-setup.js'
 
 import assert from 'node:assert/strict'
 import { createHash, generateKeyPairSync, randomUUID, sign } from 'node:crypto'
@@ -40,6 +42,7 @@ import {
   PINNED_RUNTIME_CONFIG_FILES,
   runtimeReleaseRequirements,
 } from './runtime-release.js'
+import { registerRuntimeSetupIpc } from './runtime-setup-ipc.js'
 
 /**
  * Main integration: real signed inventory, private roots, install journal and atomic pointer.
@@ -1547,6 +1550,161 @@ test(
       }
       value(await f.install('repair'))
       assert.equal((await fs.readdir(f.roots.environmentsDir)).length, 2)
+    })
+  },
+)
+
+test(
+  'public engine IPC uses the existing real review/controller, preserves byte meanings and consumes exact intent',
+  fullPayload,
+  async () => {
+    await withFixture(async (f) => {
+      const handlers = new Map<
+        string,
+        (
+          event: { sender: unknown; senderFrame: unknown },
+          ...args: unknown[]
+        ) => Promise<ApiResult<unknown>>
+      >()
+      const caller = { mainFrame: {} }
+      const registration = registerRuntimeSetupIpc(
+        {
+          handle: (channel, handler) => {
+            handlers.set(channel, handler)
+          },
+          removeHandler: (channel) => {
+            handlers.delete(channel)
+          },
+        },
+        caller,
+        f.manager,
+      )
+      const call = (channel: string, ...args: unknown[]) =>
+        handlers.get(channel)!({ sender: caller, senderFrame: caller.mainFrame }, ...args)
+      const review = async (mode: 'install' | 'repair') =>
+        value(
+          (await call(
+            ipcChannels.runtime.previewInstallation,
+            mode,
+          )) as ApiResult<RuntimeSetupReview>,
+        )
+      try {
+        const slot = await call(ipcChannels.runtime.previewInstallation, 'install')
+        assert.equal(
+          slot.ok,
+          false,
+          'A signed Python-only slot cannot authorize the public engine API.',
+        )
+        await absent(f.roots.pointerFile)
+        const engine = await engineFixture(f)
+        const first = await review('install')
+        assert.equal(first.scope, 'engine')
+        assert.equal(first.source, 'verified-local-cache')
+        assert.equal(first.runtimeSourceCached, true)
+        assert.equal(first.outpaintInfillReused, false)
+        assert.equal(first.downloadBytes, LAMA_OUTPAINT_ARTIFACT.sizeBytes)
+        assert.equal(first.requiredFreeBytes, null)
+        assert.equal(first.runtimeRequiredFreeBytes, f.manifest.requiredFreeBytes)
+        assert.equal(first.installedBytes, null)
+        assert.equal(first.additionalInstalledBytes, null)
+        const exposed = JSON.stringify(first)
+        for (const forbidden of [
+          f.work,
+          'trustedKeys',
+          'planId',
+          'verifiedPayloadBytes',
+          'pythonExecutable',
+          'sha256',
+        ]) {
+          assert.equal(
+            exposed.includes(forbidden),
+            false,
+            'Only the public path-free byte review may cross IPC.',
+          )
+        }
+        assert.equal(f.events.includes('aux-install'), false)
+        assert.equal(f.events.includes('assemble'), false)
+        assert.equal((await call(ipcChannels.runtime.repair, first.token)).ok, false)
+        const installed = value(
+          (await call(ipcChannels.runtime.install, first.token)) as ApiResult<
+            import('../../shared/api.js').RuntimeStatus
+          >,
+        )
+        assert.equal(installed.kind, 'ready')
+        assert.equal(engine.controls.installed, true)
+        assert.equal((await call(ipcChannels.runtime.install, first.token)).ok, false)
+        const original = await fs.readFile(f.roots.pointerFile)
+        const discarded = await review('repair')
+        assert.equal(discarded.downloadBytes, 0)
+        assert.equal(discarded.outpaintInfillReused, true)
+        value(await call(ipcChannels.runtime.discardInstallationReview))
+        assert.equal((await call(ipcChannels.runtime.repair, discarded.token)).ok, false)
+        const navigated = await review('repair')
+        registration.invalidateReview()
+        assert.equal((await call(ipcChannels.runtime.repair, navigated.token)).ok, false)
+        const failedPreview = await review('repair')
+        const load = f.backend.loadRelease
+        f.backend.loadRelease = async () => null
+        assert.equal((await call(ipcChannels.runtime.previewInstallation, 'repair')).ok, false)
+        assert.equal((await call(ipcChannels.runtime.repair, failedPreview.token)).ok, false)
+        assert.equal((await fs.readFile(f.roots.pointerFile)).equals(original), true)
+        f.backend.loadRelease = load
+        const final = await review('repair')
+        value(await call(ipcChannels.runtime.repair, final.token))
+        assert.equal((await fs.readFile(f.roots.pointerFile)).equals(original), false)
+        assert.equal(f.events.filter((event) => event === 'assemble').length, 2)
+        assert.equal(f.events.filter((event) => event === 'aux-install').length, 2)
+        assert.equal(
+          (await call(ipcChannels.runtime.repair)).ok,
+          false,
+          'Legacy zero-arg actions never mutate even when configured.',
+        )
+        assert.equal(f.events.filter((event) => event === 'assemble').length, 2)
+      } finally {
+        registration.dispose()
+      }
+    })
+  },
+)
+
+test(
+  'public engine preview normalizes actual missing-transport diagnostics without exposing local paths',
+  fullPayload,
+  async () => {
+    await withFixture(async (f) => {
+      const engine = await engineFixture(f)
+      await fs.rm(engine.transportDirectory, { recursive: true })
+      const handlers = new Map<
+        string,
+        (
+          event: { sender: unknown; senderFrame: unknown },
+          ...args: unknown[]
+        ) => Promise<ApiResult<unknown>>
+      >()
+      const caller = { mainFrame: {} }
+      const registration = registerRuntimeSetupIpc(
+        {
+          handle: (channel, handler) => {
+            handlers.set(channel, handler)
+          },
+        },
+        caller,
+        f.manager,
+      )
+      try {
+        const result = await handlers.get(ipcChannels.runtime.previewInstallation)!(
+          { sender: caller, senderFrame: caller.mainFrame },
+          'install',
+        )
+        assert.equal(result.ok, false)
+        assert.equal(JSON.stringify(result).includes(f.work), false)
+        assert.equal(JSON.stringify(result).includes('ENOENT'), false)
+        assert.equal(f.events.includes('assemble'), false)
+        assert.equal(f.events.includes('aux-install'), false)
+        await absent(f.roots.pointerFile)
+      } finally {
+        registration.dispose()
+      }
     })
   },
 )

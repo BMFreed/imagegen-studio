@@ -259,6 +259,7 @@ import { SmartPatchProcessorError } from './projects/smart-patch-generation-proc
 import { SmartPatchGenerationStagingError } from './projects/smart-patch-generation-staging.js'
 import { ProjectWorkerClient, ProjectWorkerError } from './projects/worker-client.js'
 import { createRuntimeRoots, RuntimeManager } from './runtime/index.js'
+import { registerRuntimeSetupIpc } from './runtime/runtime-setup-ipc.js'
 
 const moduleDir = __dirname
 const paths = resolveAppPaths()
@@ -313,14 +314,14 @@ const gotInstanceLock = app.requestSingleInstanceLock()
 
 function unavailableRuntimeService(): Pick<
   RuntimeManager,
-  'getStatus' | 'install' | 'onStatusChanged' | 'repair'
+  'getStatus' | 'install' | 'onStatusChanged' | 'previewInstallation' | 'repair'
 > {
   const status: RuntimeStatus = {
     detail: 'The application runtime storage cannot be accessed.',
     kind: 'needs-repair',
     profile: 'linux-nvidia',
   }
-  const installationUnavailable = async (): Promise<ApiResult<RuntimeStatus>> => ({
+  const installationUnavailable = async <T>(): Promise<ApiResult<T>> => ({
     error: {
       code: 'RUNTIME_INSTALL_UNAVAILABLE',
       message: 'Runtime repair is unavailable in this application version.',
@@ -331,6 +332,7 @@ function unavailableRuntimeService(): Pick<
     getStatus: async () => ({ ok: true, value: status }),
     install: installationUnavailable,
     onStatusChanged: () => () => undefined,
+    previewInstallation: installationUnavailable,
     repair: installationUnavailable,
   }
 }
@@ -637,7 +639,7 @@ if (!gotInstanceLock) {
       }
       let runtimeManager: Pick<
         RuntimeManager,
-        'getStatus' | 'install' | 'onStatusChanged' | 'repair'
+        'getStatus' | 'install' | 'onStatusChanged' | 'previewInstallation' | 'repair'
       >
       let generationRuntime: RuntimeManager | null = null
       try {
@@ -1344,33 +1346,26 @@ if (!gotInstanceLock) {
         })()
       })
 
-      const invalidCaller = (): ApiResult<RuntimeStatus> => ({
-        error: { code: 'IPC_INVALID_CALLER', message: 'Runtime request was rejected.' },
-        ok: false,
-      })
-      function registerRuntimeHandler(
-        channel: string,
-        handler: () => Promise<ApiResult<RuntimeStatus>>,
-      ): void {
-        ipcMain.handle(channel, async (event, ...args: unknown[]) => {
-          if (event.sender !== window.webContents || args.length !== 0) {
-            return invalidCaller()
-          }
-          try {
-            return await handler()
-          } catch (error) {
-            console.error(`Runtime operation failed: ${channel}`, error)
-            return {
-              error: { code: 'RUNTIME_INTERNAL_ERROR', message: 'Runtime service failed.' },
-              ok: false,
-            } satisfies ApiResult<RuntimeStatus>
-          }
-        })
+      const runtimeCaller = window.webContents
+      const runtimeSetup = registerRuntimeSetupIpc(ipcMain, runtimeCaller, runtimeManager)
+      // A review authorizes only this live renderer document, not its reload or replacement.
+      const invalidateRuntimeReviewOnNavigation = (
+        _event: Electron.Event,
+        _url: string,
+        _isInPlace: boolean,
+        isMainFrame: boolean,
+      ) => {
+        if (isMainFrame) {
+          runtimeSetup.invalidateReview()
+        }
       }
-
-      registerRuntimeHandler(ipcChannels.runtime.getStatus, () => runtimeManager.getStatus())
-      registerRuntimeHandler(ipcChannels.runtime.install, () => runtimeManager.install())
-      registerRuntimeHandler(ipcChannels.runtime.repair, () => runtimeManager.repair())
+      window.webContents.on('did-start-navigation', invalidateRuntimeReviewOnNavigation)
+      window.webContents.on('render-process-gone', runtimeSetup.invalidateReview)
+      window.on('closed', () => {
+        runtimeSetup.dispose()
+        runtimeCaller.removeListener('did-start-navigation', invalidateRuntimeReviewOnNavigation)
+        runtimeCaller.removeListener('render-process-gone', runtimeSetup.invalidateReview)
+      })
       const unsubscribeRuntime = runtimeManager.onStatusChanged((status) => {
         if (!window.isDestroyed()) {
           window.webContents.send(ipcChannels.runtime.statusChanged, status)

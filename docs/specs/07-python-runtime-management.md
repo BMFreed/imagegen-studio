@@ -236,8 +236,27 @@ uv run pytest
 
 ### Текущая реализация и developer qualification
 
-Public Main пока не передаёт release provider и review token, поэтому его
-`RuntimeManager.install()` / `repair()` возвращают `RUNTIME_INSTALL_UNAVAILABLE`.
+[Public setup review/token IPC](../engineering/phase-5-runtime-setup-ipc-research.md)
+adds engine-only `previewInstallation(mode)`, explicit review dismissal and
+optional token arguments to install/repair. Only the current trusted main frame
+may use them. New/failed preview, dismissal, main-frame navigation, renderer loss
+and closure revoke public intent; matching token is consumed before delegation.
+The internal RuntimeManager capture/controller remains installation authority.
+Native diagnostic paths are normalized to fixed public errors. Legacy zero-arg
+actions always refuse unavailable without mutating the core, preserving current
+partial-outpaint Repair behavior.
+
+The flat DTO describes already verified **local cached source**, not a network
+pre-download offer. It omits paths, keys, auxiliary IDs and expanded payload byte
+counts; unknown total peak remains null, separately from the signed runtime
+floor. Current App has no confirmation consumer for positive reviews yet. No
+shipping provider/keyring/endpoints are supplied; nothing downloads implicitly
+through this checkpoint. Metadata-first provider, confirmation/progress/cancel
+and distributable/update acceptance remain separate.
+
+Public Main пока не передаёт shipping release provider. Его legacy zero-arg
+Install/Repair и preview без provider возвращают `RUNTIME_INSTALL_UNAVAILABLE`;
+новый публичный token path использует существующий internal capture/controller.
 Внутренний verified offline backend и полный Python-slot qualification уже
 реализованы и имеют отдельные checkpoints ниже. Публичный Setup дополнительно
 требует trusted transport/download/extraction, полного engine review и LaMa;

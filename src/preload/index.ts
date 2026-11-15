@@ -98,6 +98,11 @@ import {
   type SmartResultPresetData,
   type SmartResultPresetRequest,
 } from '../shared/projects/smart-result-preset.js'
+import {
+  isRuntimeSetupReview,
+  type RuntimeSetupMode,
+  type RuntimeSetupReview,
+} from '../shared/runtime-setup.js'
 
 import { contextBridge, ipcRenderer } from 'electron'
 
@@ -151,9 +156,10 @@ async function invokeRuntime(
     | typeof ipcChannels.runtime.getStatus
     | typeof ipcChannels.runtime.install
     | typeof ipcChannels.runtime.repair,
+  args: readonly unknown[] = [],
 ): Promise<ApiResult<RuntimeStatus>> {
   try {
-    const result: unknown = await ipcRenderer.invoke(channel)
+    const result: unknown = await ipcRenderer.invoke(channel, ...args)
     if (isRuntimeResult(result)) {
       return result
     }
@@ -161,6 +167,64 @@ async function invokeRuntime(
       error: {
         code: 'IPC_INVALID_RESPONSE',
         message: 'The application returned an invalid runtime status.',
+      },
+      ok: false,
+    }
+  } catch {
+    return {
+      error: {
+        code: 'IPC_UNAVAILABLE',
+        message: 'The application could not reach the runtime service.',
+      },
+      ok: false,
+    }
+  }
+}
+
+async function invokeRuntimeReview(mode: RuntimeSetupMode): Promise<ApiResult<RuntimeSetupReview>> {
+  try {
+    const result: unknown = await ipcRenderer.invoke(ipcChannels.runtime.previewInstallation, mode)
+    if (isRecord(result)) {
+      if (result.ok === false && isApiError(result.error)) {
+        return { error: result.error, ok: false }
+      }
+      if (result.ok === true && isRuntimeSetupReview(result.value) && result.value.mode === mode) {
+        return { ok: true, value: result.value }
+      }
+    }
+    return {
+      error: {
+        code: 'IPC_INVALID_RESPONSE',
+        message: 'The application returned an invalid engine review.',
+      },
+      ok: false,
+    }
+  } catch {
+    return {
+      error: {
+        code: 'IPC_UNAVAILABLE',
+        message: 'The application could not reach the runtime service.',
+      },
+      ok: false,
+    }
+  }
+}
+
+async function discardRuntimeReview(): Promise<ApiResult<null>> {
+  try {
+    const result: unknown = await ipcRenderer.invoke(ipcChannels.runtime.discardInstallationReview)
+    if (isRecord(result)) {
+      if (result.ok === true && result.value === null) {
+        return { ok: true, value: null }
+      }
+      if (result.ok === false && isApiError(result.error)) {
+        return { error: result.error, ok: false }
+      }
+    }
+    return {
+      error: {
+        code: 'IPC_INVALID_RESPONSE',
+        message: 'The application returned an invalid review dismissal.',
       },
       ok: false,
     }
@@ -1778,8 +1842,10 @@ const api: StudioApi = {
       ),
   },
   runtime: {
+    discardInstallationReview: discardRuntimeReview,
     getStatus: () => invokeRuntime(ipcChannels.runtime.getStatus),
-    install: () => invokeRuntime(ipcChannels.runtime.install),
+    install: (reviewToken) =>
+      invokeRuntime(ipcChannels.runtime.install, reviewToken === undefined ? [] : [reviewToken]),
     onStatusChanged(listener) {
       const handler = (_event: Electron.IpcRendererEvent, status: unknown): void => {
         if (isRuntimeStatus(status)) {
@@ -1789,7 +1855,9 @@ const api: StudioApi = {
       ipcRenderer.on(ipcChannels.runtime.statusChanged, handler)
       return () => ipcRenderer.removeListener(ipcChannels.runtime.statusChanged, handler)
     },
-    repair: () => invokeRuntime(ipcChannels.runtime.repair),
+    previewInstallation: invokeRuntimeReview,
+    repair: (reviewToken) =>
+      invokeRuntime(ipcChannels.runtime.repair, reviewToken === undefined ? [] : [reviewToken]),
   },
 }
 

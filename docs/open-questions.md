@@ -1,6 +1,17 @@
 # Open Questions
 
-## Current reopened outpaint resource health
+## Current public engine review/token IPC
+
+[Reviewed setup IPC](./engineering/phase-5-runtime-setup-ipc-research.md) exposes an engine-only flat preview and routes its
+existing one-use token through trusted-window/main-frame/document guards to the
+existing RuntimeManager. Cached source, installed reuse and unknown peak remain
+separate. Dismissal/reload revoke unconsumed review; legacy zero-arg actions stay
+unavailable. Fixed public errors keep native paths private. Default Main still
+has no shipping provider. This is verified-local-source protocol wiring, not
+metadata-first download, confirmation UI/progress/cancel or release readiness.
+Promise statuses remain unchanged.
+
+## Previous reopened outpaint resource health
 
 [Outpaint health](./engineering/phase-5-runtime-outpaint-health-research.md) checks the existing exact LaMa resolver on public
 runtime status reads, independently of cached GPU readiness. Typed preload and
