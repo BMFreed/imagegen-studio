@@ -12,9 +12,15 @@ import type { InferenceWorkerReady } from '../projects/illustrious-txt2img-job.j
 import type { SmartPatchExecutionPreparationWorker } from '../projects/project-smart-patch-execution.js'
 import type { SmartPatchOutputWorker } from '../projects/smart-patch-generation-processor.js'
 import type { ProjectWorkerLocation, ProjectWorkerOptions } from '../projects/worker-client.js'
+import type { EngineInstallPlan } from './engine-install-plan.js'
 
 import { GenerationWorkerClient } from '../projects/generation-worker-client.js'
 import { ProjectWorkerClient, ProjectWorkerError } from '../projects/worker-client.js'
+import {
+  type CapturedEngineInstallation,
+  type EngineInstallationBackend,
+  reviewEngineInstallation,
+} from './engine-installation-review.js'
 import {
   assembleOfflineRuntime,
   hasUnconfirmedOfflineRuntimeCommands,
@@ -135,19 +141,24 @@ type StartQualificationClient = (
 const startQualificationClient: StartQualificationClient = async (location, environment) =>
   await GenerationWorkerClient.start(location, { environment })
 
-export interface RuntimeInstallationReview {
-  mode: 'install' | 'repair'
-  releaseId: string
-  requiredFreeBytes: number
-  scope: 'python-runtime-slot'
-  token: string
-  verifiedPayloadBytes: number
-}
+export type RuntimeInstallationReview = RuntimeInstallationReviewBase &
+  (
+    | {
+        plan: EngineInstallPlan
+        /** Aggregate peak is unknown; download/staging bytes cannot substitute for it. */
+        requiredFreeBytes: null
+        runtimeRequiredFreeBytes: number
+        scope: 'engine'
+      }
+    | { requiredFreeBytes: number; scope: 'python-runtime-slot' }
+  )
 
 /** Internal Main collaborators; no renderer paths/keys or public artifact trust is accepted. */
 export interface RuntimeInstallationBackend {
   /** Process/transport seams used only by bounded integration checks. */
   assemble?: typeof assembleOfflineRuntime
+  /** Opt-in internal aggregate review over already obtained exact local runtime sources. */
+  engine?: EngineInstallationBackend
   /** Verify the separately owned installed shared infill; this must not initiate downloads. */
   ensureAuxiliaryReady: () => Promise<void>
   /**
@@ -165,6 +176,13 @@ export interface RuntimeInstallationBackend {
   ) => Promise<Pick<ProjectWorkerClient, 'close' | 'ready' | 'selfTest'>>
 }
 
+interface RuntimeInstallationReviewBase {
+  mode: 'install' | 'repair'
+  releaseId: string
+  token: string
+  verifiedPayloadBytes: number
+}
+
 export class RuntimeManager {
   private cachedQualification: CachedQualification | null = null
   private generationLease: GenerationLease | null = null
@@ -176,6 +194,7 @@ export class RuntimeManager {
   private installationRecovery: Promise<boolean> | null = null
 
   private installationReview: {
+    engine?: CapturedEngineInstallation
     pointerSha256: string | null
     release: VerifiedRuntimeRelease
     review: RuntimeInstallationReview
@@ -416,8 +435,8 @@ export class RuntimeManager {
   }
 
   /**
-   * Internal review before any slot or process is created; future public setup must show a complete
-   * engine preview.
+   * Internal review before any slot or process is created. The optional engine backend includes
+   * pinned LaMa; public provider/IPC/UI and release acceptance remain separate gates.
    */
   async previewInstallation(
     mode: 'install' | 'repair',
@@ -450,12 +469,23 @@ export class RuntimeManager {
           'Recover the interrupted runtime installation before reviewing setup.',
         )
       }
-      const selection = await this.installationBackend.loadRelease()
-      if (!selection) {
+      const engineBackend = this.installationBackend.engine
+        ? Object.freeze({ ...this.installationBackend.engine })
+        : undefined
+      const supplied = await this.installationBackend.loadRelease()
+      if (!supplied) {
         return this.installationUnavailable()
       }
+      const selection = Object.freeze({
+        ...supplied,
+        envelope: Buffer.from(supplied.envelope),
+        trustedKeys: Object.freeze({ ...supplied.trustedKeys }),
+      })
       const release = await verifyRuntimeRelease(selection)
       const pointerSha256 = await new RuntimeInstallationController(this.roots).readPointerSha256()
+      const engine = engineBackend
+        ? await reviewEngineInstallation(selection, engineBackend)
+        : undefined
       if (this.generationShutdownRequested || this.installationActive) {
         return this.installationFailure(
           'RUNTIME_INSTALL_BUSY',
@@ -465,15 +495,24 @@ export class RuntimeManager {
       const review: RuntimeInstallationReview = {
         mode,
         releaseId: release.manifest.releaseId,
-        requiredFreeBytes: release.manifest.requiredFreeBytes,
-        scope: 'python-runtime-slot',
+        ...(engine
+          ? {
+              plan: engine.plan,
+              requiredFreeBytes: null,
+              runtimeRequiredFreeBytes: release.manifest.requiredFreeBytes,
+              scope: 'engine' as const,
+            }
+          : {
+              requiredFreeBytes: release.manifest.requiredFreeBytes,
+              scope: 'python-runtime-slot' as const,
+            }),
         token: randomUUID(),
         verifiedPayloadBytes: release.manifest.files.reduce(
           (sum, file) => sum + (file.kind === 'file' ? file.sizeBytes : 0),
           0,
         ),
       }
-      this.installationReview = { pointerSha256, release, review: structuredClone(review) }
+      this.installationReview = { engine, pointerSha256, release, review: structuredClone(review) }
       return { ok: true, value: review }
     } catch (error) {
       return this.installationError(error)
@@ -1318,6 +1357,19 @@ export class RuntimeManager {
         if (controller.signal.aborted) {
           return this.installationFailure('RUNTIME_INSTALL_CANCELED', 'Runtime setup was canceled.')
         }
+        if (captured.engine) {
+          // Refuse a stale review before spending bytes on shared auxiliary preparation.
+          const currentPointer = await new RuntimeInstallationController(
+            this.roots,
+          ).readPointerSha256()
+          if (currentPointer !== captured.pointerSha256) {
+            throw new RuntimeInstallationError(
+              'RUNTIME_INSTALL_POINTER_CHANGED',
+              'The active runtime changed; review engine setup again.',
+            )
+          }
+          await captured.engine.installAuxiliary(controller.signal)
+        }
         await this.installationBackend!.ensureAuxiliaryReady()
         if (controller.signal.aborted) {
           return this.installationFailure('RUNTIME_INSTALL_CANCELED', 'Runtime setup was canceled.')
@@ -1333,8 +1385,12 @@ export class RuntimeManager {
               runtimeId,
               signal: controller.signal,
             }),
-          qualify: async (prepared) =>
-            this.qualifyInstallation(prepared, captured.release, controller.signal),
+          qualify: async (prepared) => {
+            await this.qualifyInstallation(prepared, captured.release, controller.signal)
+            if (captured.engine) {
+              await this.installationBackend!.ensureAuxiliaryReady()
+            }
+          },
           signal: controller.signal,
         })
         return {

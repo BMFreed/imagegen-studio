@@ -1,6 +1,18 @@
 # Open Questions
 
-## Current trusted runtime cache boundary
+## Current reviewed runtime and LaMa composition
+
+[Engine/LaMa composition](./engineering/phase-5-engine-lama-composition-research.md) connects the existing internal
+RuntimeManager review/token/installation path to the signed local transport and
+pinned auxiliary installer. Cached source bytes save transfer without implying
+an installed slot; aggregate disk peak remains unknown. Explicit Install/Repair
+prepares LaMa after host/pointer guards and verifies it around runtime
+qualification. A later runtime failure may retain valid shared LaMa while the
+existing pointer rollback preserves the old slot. Public shipping selection,
+preview IPC/UI, reopened aggregate auxiliary health and full native engine
+acceptance remain separate. Promise statuses are unchanged.
+
+## Previous trusted runtime cache boundary
 
 [Trusted transport cache](./engineering/phase-5-runtime-transport-cache-research.md) joins explicit Main-selected signed
 envelopes and archive source to the existing DNS-pinned downloader. Both

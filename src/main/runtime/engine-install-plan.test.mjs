@@ -24,6 +24,12 @@ const exactVerified = (artifact) => ({
   sha256: artifact.sha256,
   sizeBytes: artifact.sizeBytes,
 })
+const exactCached = (artifact) => ({
+  filename: artifact.filename,
+  id: artifact.id,
+  sha256: artifact.sha256,
+  sizeBytes: artifact.sizeBytes,
+})
 const refuse = (input) =>
   assert.throws(
     () => createEngineInstallPlan(input),
@@ -57,6 +63,7 @@ test('the actual full engine byte plan always appends one exact LaMa artifact an
     reused: false,
     sha256: LAMA_OUTPAINT_ARTIFACT.sha256,
     sizeBytes: LAMA_OUTPAINT_ARTIFACT.sizeBytes,
+    sourceCached: false,
   })
   assert.deepEqual(plan.totals, {
     additionalInstalledBytes: 210 + LAMA_OUTPAINT_ARTIFACT.sizeBytes,
@@ -115,6 +122,7 @@ test('runtime identities, exact sizes and disk footprints reject malformed or re
     { path: '/tmp/runtime' },
     { url: 'https://example.test/runtime' },
     { reused: true },
+    { sourceCached: true },
   ]) {
     refuse({ runtimeArtifacts: [runtimeArtifact(extra)] })
   }
@@ -202,6 +210,142 @@ test('changed size, digest, type or names cannot bypass a download through insta
   for (const verifiedInstalledArtifacts of [null, true, {}, Array(1)]) {
     refuse({ runtimeArtifacts, verifiedInstalledArtifacts })
   }
+})
+
+test('a verified runtime source cache saves download bytes while preserving new slot footprint accounting', () => {
+  const runtimeArtifacts = [runtimeArtifact()]
+  const uncached = createEngineInstallPlan({ runtimeArtifacts })
+  const verifiedCachedRuntimeArtifacts = [exactCached(runtimeArtifacts[0])]
+  const cached = createEngineInstallPlan({ runtimeArtifacts, verifiedCachedRuntimeArtifacts })
+  assert.deepEqual(
+    createEngineInstallPlan({ runtimeArtifacts, verifiedCachedRuntimeArtifacts: [] }),
+    uncached,
+  )
+  assert.deepEqual(cached.artifacts[0], {
+    ...uncached.artifacts[0],
+    sourceCached: true,
+  })
+  assert.equal(cached.artifacts[0].reused, false)
+  assert.equal(cached.artifacts[1].sourceCached, false)
+  assert.equal(cached.artifacts[1].reused, false)
+  assert.deepEqual(cached.totals, {
+    additionalInstalledBytes: uncached.totals.additionalInstalledBytes,
+    downloadBytes: LAMA_OUTPAINT_ARTIFACT.sizeBytes,
+    installedBytes: uncached.totals.installedBytes,
+    stagingBytes: LAMA_OUTPAINT_ARTIFACT.sizeBytes,
+  })
+  verifiedCachedRuntimeArtifacts[0].sha256 = '4'.repeat(64)
+  verifiedCachedRuntimeArtifacts.length = 0
+  assert.equal(cached.artifacts[0].sourceCached, true)
+  assert.equal(cached.artifacts[0].sha256, '1'.repeat(64))
+  assert.throws(() => {
+    cached.artifacts[0].sourceCached = false
+  }, TypeError)
+})
+
+test('cached sources preserve unknown installed sizes and combine with installed LaMa without another download', () => {
+  const runtimeArtifacts = [runtimeArtifact({ installedSizeBytes: null })]
+  const uncached = createEngineInstallPlan({ runtimeArtifacts })
+  const verifiedCachedRuntimeArtifacts = [exactCached(runtimeArtifacts[0])]
+  const cached = createEngineInstallPlan({ runtimeArtifacts, verifiedCachedRuntimeArtifacts })
+  assert.equal(cached.totals.downloadBytes, LAMA_OUTPAINT_ARTIFACT.sizeBytes)
+  assert.equal(cached.totals.installedBytes, null)
+  assert.equal(cached.totals.additionalInstalledBytes, null)
+  assert.deepEqual(cached.unknownInstalledSizeArtifactIds, ['python-runtime'])
+
+  const cachedWithLaMa = createEngineInstallPlan({
+    runtimeArtifacts,
+    verifiedCachedRuntimeArtifacts,
+    verifiedInstalledArtifacts: [exactVerified(uncached.artifacts[1])],
+  })
+  assert.deepEqual(cachedWithLaMa.totals, {
+    additionalInstalledBytes: null,
+    downloadBytes: 0,
+    installedBytes: null,
+    stagingBytes: 0,
+  })
+  assert.equal(cachedWithLaMa.artifacts[0].reused, false)
+  assert.equal(cachedWithLaMa.artifacts[0].sourceCached, true)
+  assert.equal(cachedWithLaMa.artifacts[1].reused, true)
+  assert.equal(cachedWithLaMa.artifacts[1].sourceCached, false)
+})
+
+test('source cache and installed proofs keep their independent flags when both match a runtime artifact', () => {
+  const runtimeArtifacts = [runtimeArtifact()]
+  const original = createEngineInstallPlan({ runtimeArtifacts })
+  const plan = createEngineInstallPlan({
+    runtimeArtifacts,
+    verifiedCachedRuntimeArtifacts: [exactCached(runtimeArtifacts[0])],
+    verifiedInstalledArtifacts: original.artifacts.map(exactVerified),
+  })
+  assert.equal(plan.artifacts[0].sourceCached, true)
+  assert.equal(plan.artifacts[0].reused, true)
+  assert.equal(plan.artifacts[1].sourceCached, false)
+  assert.equal(plan.artifacts[1].reused, true)
+  assert.deepEqual(plan.totals, {
+    additionalInstalledBytes: 0,
+    downloadBytes: 0,
+    installedBytes: 150 + LAMA_OUTPAINT_ARTIFACT.sizeBytes,
+    stagingBytes: 0,
+  })
+})
+
+test('a cache proof matches only its exact runtime artifact and never the shared LaMa', () => {
+  const runtimeArtifacts = [
+    runtimeArtifact(),
+    runtimeArtifact({
+      filename: 'worker.whl',
+      id: 'worker-wheel',
+      installedSizeBytes: 70,
+      sha256: '2'.repeat(64),
+      sizeBytes: 40,
+    }),
+  ]
+  const original = createEngineInstallPlan({ runtimeArtifacts })
+  const cached = createEngineInstallPlan({
+    runtimeArtifacts,
+    verifiedCachedRuntimeArtifacts: [exactCached(runtimeArtifacts[0])],
+  })
+  assert.equal(cached.totals.downloadBytes, 40 + LAMA_OUTPAINT_ARTIFACT.sizeBytes)
+  assert.equal(cached.totals.additionalInstalledBytes, 220 + LAMA_OUTPAINT_ARTIFACT.sizeBytes)
+  assert.equal(cached.artifacts[1].sourceCached, false)
+  refuse({
+    runtimeArtifacts,
+    verifiedCachedRuntimeArtifacts: [exactCached(original.artifacts[2])],
+  })
+})
+
+test('cached source proofs reject missing, changed, duplicate, unknown, extra and sparse claims', () => {
+  const runtimeArtifacts = [runtimeArtifact()]
+  const verified = exactCached(runtimeArtifacts[0])
+  for (const field of ['filename', 'id', 'sha256', 'sizeBytes']) {
+    const missing = { ...verified }
+    delete missing[field]
+    refuse({ runtimeArtifacts, verifiedCachedRuntimeArtifacts: [missing] })
+  }
+  for (const change of [
+    { id: 'unplanned' },
+    { filename: 'different.tar.zst' },
+    { sha256: '3'.repeat(64) },
+    { sha256: 'F'.repeat(64) },
+    { sizeBytes: verified.sizeBytes + 1 },
+    { sizeBytes: 0 },
+    { kind: 'runtime' },
+    { installedSizeBytes: 150 },
+    { sourceCached: true },
+    { reused: true },
+    { path: '/tmp/claimed-cache' },
+    { url: 'https://unplanned.test/runtime.zip' },
+  ]) {
+    refuse({ runtimeArtifacts, verifiedCachedRuntimeArtifacts: [{ ...verified, ...change }] })
+  }
+  refuse({ runtimeArtifacts, verifiedCachedRuntimeArtifacts: [verified, verified] })
+  for (const verifiedCachedRuntimeArtifacts of [null, false, {}, Array(1), [verified, ,]]) {
+    refuse({ runtimeArtifacts, verifiedCachedRuntimeArtifacts })
+  }
+  const inherited = Array(1)
+  Object.setPrototypeOf(inherited, { 0: verified })
+  refuse({ runtimeArtifacts, verifiedCachedRuntimeArtifacts: inherited })
 })
 
 test('unknown installed footprints remain explicitly unknown without hiding exact download totals', () => {

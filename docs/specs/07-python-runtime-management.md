@@ -149,6 +149,22 @@ environment. Main владеет загрузкой, cache, проверкой �
 disk-space peak: publisher copy, unpack scratch и old slots учитываются будущим
 установщиком отдельно. Installed size остаётся unknown при неизвестном footprint.
 
+[Reviewed engine composition](../engineering/phase-5-engine-lama-composition-research.md)
+adds an opt-in internal `engine` backend over already obtained exact expanded
+runtime and signed cached transport. Main authenticates their exact envelope
+binding and the pinned LaMa preview before issuing its one-use review token.
+The existing planner distinguishes `sourceCached` from installed `reused`: a
+cached archive does not remove the new slot's unknown installed footprint. The
+engine review returns `requiredFreeBytes: null` for the unknown aggregate peak
+and names the signed slot floor separately as `runtimeRequiredFreeBytes`.
+Explicit Install/Repair performs host and early pointer checks before consuming
+the auxiliary plan, then verifies LaMa and uses the unchanged new-slot
+qualification/activation/rollback controller. LaMa is verified again after each
+qualification phase. This is composition of separate owners, not an atomic
+transaction deleting valid shared weights on later runtime failure. Public
+provider/preview IPC/UI and reopened aggregate auxiliary health remain future
+consumers; default Setup stays unavailable.
+
 [Internal offline installation](../engineering/phase-4-runtime-offline-install-research.md)
 добавляет Main-owned signed inventory, exact offline assembly в новых final slots,
 две qualification-фазы, atomic pointer и rollback/recovery. Вход — уже полученный

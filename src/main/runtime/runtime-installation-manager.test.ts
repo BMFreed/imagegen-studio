@@ -1,15 +1,21 @@
 import type { ApiResult } from '../../shared/api.js'
 
 import assert from 'node:assert/strict'
-import { createHash, generateKeyPairSync, sign } from 'node:crypto'
+import { createHash, generateKeyPairSync, randomUUID, sign } from 'node:crypto'
+import { constants } from 'node:fs'
 import * as fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 
+import type { ModelDownloadInput } from '../models/model-downloader.js'
 import type { InferenceWorkerReady } from '../projects/illustrious-txt2img-job.js'
 import type { WorkerReady, WorkerSelfTestResult } from '../projects/worker-client.js'
 import type { RuntimeInstallationBackend } from './index.js'
+import type {
+  AuxiliaryInstallationPreview,
+  AuxiliaryInstallationResult,
+} from './inference-auxiliary-installer.js'
 import type {
   RuntimeReleaseFile,
   RuntimeReleaseManifest,
@@ -17,8 +23,18 @@ import type {
 } from './runtime-release.js'
 
 import { createRuntimeRoots, RuntimeManager } from './index.js'
+import {
+  AuxiliaryInstallationError,
+  createLamaAuxiliaryInstaller,
+} from './inference-auxiliary-installer.js'
+import {
+  InferenceAuxiliaryResources,
+  verifyInferenceAuxiliaryFile,
+} from './inference-auxiliary-resources.js'
+import { LAMA_OUTPAINT_ARTIFACT } from './lama-manifest.js'
 import { OFFLINE_RUNTIME_INCOMPLETE_MARKER } from './offline-runtime-assembly.js'
 import { RUNTIME_INSTALLATION_CLAIM, RUNTIME_INSTALLATION_JOURNAL } from './runtime-installation.js'
+import { produceRuntimeTransport } from './runtime-release-transport.js'
 import {
   canonicalRuntimeReleaseJson,
   PINNED_RUNTIME_CONFIG_FILES,
@@ -34,6 +50,7 @@ import {
  */
 const configFixture = process.env.IGS_RUNTIME_RELEASE_CONFIG_FIXTURE
 const fullPayload = { skip: !configFixture }
+const lamaFixture = process.env.IGS_ENGINE_LAMA_FIXTURE
 const digest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex')
 const cpuReady: WorkerReady = {
   capabilities: [
@@ -105,9 +122,16 @@ async function absent(file: string): Promise<void> {
 function descriptor(name: string, bytes: Buffer, executable = false): RuntimeReleaseFile {
   return { executable, kind: 'file', path: name, sha256: digest(bytes), sizeBytes: bytes.length }
 }
-async function fixture() {
+async function fixture(workDirectory?: string) {
   assert.ok(configFixture, 'The full Main integration requires the exact pinned17 config snapshot.')
-  const work = await fs.mkdtemp(path.join(os.tmpdir(), 'igs-runtime-manager-install-'))
+  const work =
+    workDirectory ?? (await fs.mkdtemp(path.join(os.tmpdir(), 'igs-runtime-manager-install-')))
+  if (workDirectory) {
+    assert.equal(path.resolve(workDirectory), workDirectory)
+    assert.equal(await fs.realpath(path.dirname(workDirectory)), path.dirname(workDirectory))
+    await fs.mkdir(workDirectory, { mode: 0o700 })
+    assert.equal(await fs.realpath(workDirectory), workDirectory)
+  }
   const roots = await createRuntimeRoots(path.join(work, 'app'))
   const scratch = path.join(roots.appDataDir, 'scratch')
   await fs.mkdir(scratch, { mode: 0o700 })
@@ -318,6 +342,7 @@ async function fixture() {
     directory,
     events,
     install,
+    keys,
     manager,
     manifest,
     resign: () => {
@@ -350,6 +375,513 @@ async function withFixture(use: (f: Fixture) => Promise<void>) {
     await fs.rm(f.work, { force: true, recursive: true })
   }
 }
+
+/** Controlled auxiliary port only. Native bytes are exercised by the separate opt-in case. */
+async function engineFixture(f: Fixture) {
+  const transportDirectory = path.join(f.work, 'transport')
+  const transport = await produceRuntimeTransport({
+    outputDirectory: transportDirectory,
+    publisherKeyId: 'integration-only',
+    publisherPrivateKey: f.keys.privateKey,
+    release: f.selection,
+  })
+  const controls: {
+    installed: boolean
+    installHook?: (options: { signal?: AbortSignal }) => Promise<void>
+    rejectInstall?: string
+    transformPreview?: (preview: AuxiliaryInstallationPreview) => AuxiliaryInstallationPreview
+  } = { installed: false }
+  const plans = new Map<string, { installed: boolean }>()
+  const auxiliaryInstaller = {
+    install: async (
+      planId: string,
+      options: { signal?: AbortSignal } = {},
+    ): Promise<AuxiliaryInstallationResult> => {
+      f.events.push('aux-install')
+      const reviewed = plans.get(planId)
+      plans.delete(planId)
+      if (!reviewed || controls.rejectInstall) {
+        throw new AuxiliaryInstallationError(
+          controls.rejectInstall ?? 'AUXILIARY_INVALID_PLAN',
+          'Controlled expired auxiliary plan',
+        )
+      }
+      await controls.installHook?.(options)
+      if (options.signal?.aborted) {
+        throw new AuxiliaryInstallationError(
+          'AUXILIARY_INSTALL_CANCELED',
+          'Controlled auxiliary request closed after cancellation',
+        )
+      }
+      if (reviewed.installed && !controls.installed) {
+        throw new AuxiliaryInstallationError(
+          'AUXILIARY_PLAN_CHANGED',
+          'The reviewed installed resource changed',
+        )
+      }
+      const reused = controls.installed
+      controls.installed = true
+      f.events.push('aux-installed')
+      return {
+        byteSize: LAMA_OUTPAINT_ARTIFACT.sizeBytes,
+        managedPath: path.join(f.work, LAMA_OUTPAINT_ARTIFACT.filename),
+        reused,
+        role: LAMA_OUTPAINT_ARTIFACT.role,
+        sha256: LAMA_OUTPAINT_ARTIFACT.sha256,
+      }
+    },
+    preview: async (): Promise<AuxiliaryInstallationPreview> => {
+      f.events.push('aux-preview')
+      const planId = randomUUID()
+      plans.set(planId, { installed: controls.installed })
+      const preview: AuxiliaryInstallationPreview = {
+        artifact: {
+          filename: LAMA_OUTPAINT_ARTIFACT.filename,
+          role: LAMA_OUTPAINT_ARTIFACT.role,
+          sha256: LAMA_OUTPAINT_ARTIFACT.sha256,
+          sizeBytes: LAMA_OUTPAINT_ARTIFACT.sizeBytes,
+        },
+        expiresAt: Date.now() + 600_000,
+        installed: controls.installed,
+        planId,
+        requiredDownloadBytes: controls.installed ? 0 : LAMA_OUTPAINT_ARTIFACT.sizeBytes,
+        scope: 'auxiliary-weights',
+      }
+      return controls.transformPreview?.(preview) ?? preview
+    },
+  }
+  f.backend.engine = { auxiliaryInstaller, transportDirectory }
+  f.controls.auxiliary = async () => {
+    assert.equal(
+      controls.installed,
+      true,
+      'Verification never installs an absent auxiliary resource',
+    )
+  }
+  return { auxiliaryInstaller, controls, transport, transportDirectory }
+}
+
+test(
+  'engine review binds the verified cached runtime and pinned LaMa without installing or inventing a disk peak',
+  fullPayload,
+  async () => {
+    await withFixture(async (f) => {
+      const engine = await engineFixture(f)
+      const review = value(await f.manager.previewInstallation('install'))
+      assert.ok(review.scope === 'engine')
+      assert.equal(review.requiredFreeBytes, null)
+      assert.equal(review.runtimeRequiredFreeBytes, f.manifest.requiredFreeBytes)
+      assert.equal(review.plan.totals.downloadBytes, LAMA_OUTPAINT_ARTIFACT.sizeBytes)
+      assert.equal(review.plan.totals.installedBytes, null)
+      assert.equal(review.plan.totals.additionalInstalledBytes, null)
+      const runtime = review.plan.artifacts.find((artifact) => artifact.kind === 'runtime')
+      assert.ok(runtime)
+      assert.equal(runtime.filename, engine.transport.manifest.artifact.filename)
+      assert.equal(runtime.sha256, engine.transport.manifest.artifact.sha256)
+      assert.equal(runtime.sizeBytes, engine.transport.manifest.artifact.sizeBytes)
+      assert.equal(runtime.sourceCached, true)
+      assert.equal(runtime.reused, false)
+      assert.deepEqual(review.plan.unknownInstalledSizeArtifactIds, [runtime.id])
+      assert.deepEqual(f.events, ['aux-preview'])
+      await absent(f.roots.pointerFile)
+      assert.deepEqual(await fs.readdir(f.roots.environmentsDir), [])
+      assert.equal('planId' in review, false)
+      assert.equal('transportDirectory' in review, false)
+      assert.equal('trustedKeys' in review, false)
+    })
+  },
+)
+
+test(
+  'explicit engine install prepares LaMa after host admission and re-verifies it around both qualification phases',
+  fullPayload,
+  async () => {
+    await withFixture(async (f) => {
+      const engine = await engineFixture(f)
+      const review = value(await f.manager.previewInstallation('install'))
+      const result = value(await f.manager.install(review.token))
+      assert.equal(result.kind, 'ready')
+      assert.equal(engine.controls.installed, true)
+      assert.ok(f.events.indexOf('host') < f.events.indexOf('aux-install'))
+      assert.ok(f.events.indexOf('aux-installed') < f.events.indexOf('assemble'))
+      assert.equal(f.events.filter((event) => event === 'auxiliary').length, 3)
+      assert.ok(f.events.lastIndexOf('auxiliary') > f.events.indexOf('gpu-closed-2'))
+      failure(await f.manager.install(review.token), 'RUNTIME_INVALID_REVIEW')
+      assert.equal(f.events.filter((event) => event === 'aux-install').length, 1)
+      const previous = await fs.readFile(f.roots.pointerFile)
+      const repair = value(await f.manager.previewInstallation('repair'))
+      assert.ok(repair.scope === 'engine')
+      assert.equal(repair.plan.totals.downloadBytes, 0)
+      assert.equal(repair.plan.totals.additionalInstalledBytes, null)
+      assert.equal(
+        repair.plan.artifacts.find((artifact) => artifact.kind === 'outpaint-infill')?.reused,
+        true,
+      )
+      failure(await f.manager.install(repair.token), 'RUNTIME_INVALID_REVIEW')
+      value(await f.manager.repair(repair.token))
+      assert.notDeepEqual(await fs.readFile(f.roots.pointerFile), previous)
+      assert.equal(f.events.filter((event) => event === 'aux-install').length, 2)
+      assert.equal(f.events.filter((event) => event === 'auxiliary').length, 6)
+    })
+  },
+)
+
+test(
+  'engine review rejects a nonpinned auxiliary preview before install, assembly or workers',
+  fullPayload,
+  async (t) => {
+    for (const kind of ['filename', 'role', 'sha256', 'sizeBytes', 'scope', 'download'] as const) {
+      await t.test(kind, async () => {
+        await withFixture(async (f) => {
+          const engine = await engineFixture(f)
+          engine.controls.transformPreview = (preview) => {
+            const changed = structuredClone(preview)
+            if (kind === 'scope') {
+              Reflect.set(changed, 'scope', 'complete-engine')
+            } else if (kind === 'download') {
+              Reflect.set(changed, 'requiredDownloadBytes', 1)
+            } else {
+              Reflect.set(changed.artifact, kind, kind === 'sizeBytes' ? 1 : 'wrong')
+            }
+            return changed
+          }
+          failure(
+            await f.manager.previewInstallation('install'),
+            'RUNTIME_INSTALL_PREPARATION_INVALID',
+          )
+          assert.deepEqual(f.events, ['aux-preview'])
+          await absent(f.roots.pointerFile)
+          assert.deepEqual(await fs.readdir(f.roots.environmentsDir), [])
+        })
+      })
+    }
+  },
+)
+
+test(
+  'a signed transport for different envelope bytes cannot be attached to the reviewed expanded runtime',
+  fullPayload,
+  async () => {
+    await withFixture(async (f) => {
+      await engineFixture(f)
+      // Same valid signed canonical payload, differently encoded outer envelope bytes.
+      const changed = Buffer.from(
+        JSON.stringify(JSON.parse(f.selection.envelope.toString()), null, 2),
+      )
+      assert.notDeepEqual(changed, f.selection.envelope)
+      f.backend.loadRelease = async () => ({ ...f.selection, envelope: changed })
+      failure(await f.manager.previewInstallation('install'), 'RUNTIME_INSTALL_PREPARATION_INVALID')
+      assert.deepEqual(f.events, [])
+      await absent(f.roots.pointerFile)
+    })
+  },
+)
+
+test(
+  'cached transport drift after engine review refuses before spending auxiliary bytes and exact restoration permits a fresh review',
+  fullPayload,
+  async () => {
+    await withFixture(async (f) => {
+      const engine = await engineFixture(f)
+      const review = value(await f.manager.previewInstallation('install'))
+      const archive = path.join(engine.transportDirectory, 'runtime-payload.zip')
+      const original = await fs.readFile(archive)
+      const changed = Buffer.from(original)
+      changed[0] ^= 1
+      await fs.writeFile(archive, changed)
+      failure(await f.manager.install(review.token), 'RUNTIME_TRANSPORT_CHANGED')
+      assert.equal(f.events.includes('aux-install'), false)
+      assert.equal(f.events.includes('assemble'), false)
+      await absent(f.roots.pointerFile)
+      await fs.writeFile(archive, original)
+      value(await f.install())
+      assert.equal(engine.controls.installed, true)
+    })
+  },
+)
+
+test(
+  'a superseded runtime pointer revokes engine review before auxiliary preparation',
+  fullPayload,
+  async () => {
+    await withFixture(async (f) => {
+      value(await f.install())
+      const engine = await engineFixture(f)
+      engine.controls.installed = true
+      const review = value(await f.manager.previewInstallation('repair'))
+      const other = new RuntimeManager(
+        f.roots,
+        { arch: 'x64', platform: 'linux' },
+        async () => ({ close: async () => {}, ready: gpuReady }),
+        f.backend,
+      )
+      value(await other.install(value(await other.previewInstallation('install')).token))
+      const replaced = await fs.readFile(f.roots.pointerFile)
+      const auxiliaryCalls = f.events.filter((event) => event === 'aux-install').length
+      const assemblies = f.events.filter((event) => event === 'assemble').length
+      failure(await f.manager.repair(review.token), 'RUNTIME_INSTALL_POINTER_CHANGED')
+      assert.equal(f.events.filter((event) => event === 'aux-install').length, auxiliaryCalls)
+      assert.equal(f.events.filter((event) => event === 'assemble').length, assemblies)
+      assert.deepEqual(await fs.readFile(f.roots.pointerFile), replaced)
+    })
+  },
+)
+
+test(
+  'expired or changed reviewed auxiliary state refuses before runtime assembly and cannot silently add a download',
+  fullPayload,
+  async (t) => {
+    for (const kind of ['expired', 'changed'] as const) {
+      await t.test(kind, async () => {
+        await withFixture(async (f) => {
+          const engine = await engineFixture(f)
+          engine.controls.installed = kind === 'changed'
+          const review = value(await f.manager.previewInstallation('install'))
+          if (kind === 'expired') {
+            engine.controls.rejectInstall = 'AUXILIARY_INVALID_PLAN'
+          } else {
+            engine.controls.installed = false
+          }
+          failure(
+            await f.manager.install(review.token),
+            kind === 'expired' ? 'AUXILIARY_INVALID_PLAN' : 'AUXILIARY_PLAN_CHANGED',
+          )
+          assert.equal(f.events.filter((event) => event === 'aux-install').length, 1)
+          assert.equal(f.events.includes('assemble'), false)
+          await absent(f.roots.pointerFile)
+          assert.deepEqual(await fs.readdir(f.roots.environmentsDir), [])
+        })
+      })
+    }
+  },
+)
+
+test(
+  'engine cancellation awaits the owned auxiliary request close and cannot advance to assembly',
+  fullPayload,
+  async () => {
+    await withFixture(async (f) => {
+      const engine = await engineFixture(f)
+      const entered = deferred()
+      const closed = deferred()
+      let signal: AbortSignal | undefined
+      engine.controls.installHook = async (options) => {
+        signal = options.signal
+        entered.resolve()
+        await closed.promise
+        f.events.push('aux-closed')
+      }
+      const operation = f.install()
+      await Promise.race([
+        entered.promise,
+        operation.then((result) =>
+          assert.fail(`Engine install ended before auxiliary admission: ${JSON.stringify(result)}`),
+        ),
+      ])
+      let settled = false
+      const cancellation = f.manager.cancelInstallation().then(() => {
+        settled = true
+      })
+      try {
+        await Promise.resolve()
+        assert.equal(signal?.aborted, true)
+        assert.equal(settled, false)
+        assert.equal(f.events.includes('assemble'), false)
+        await absent(f.roots.pointerFile)
+      } finally {
+        closed.resolve()
+      }
+      await cancellation
+      const result = await operation
+      assert.equal(result.ok, false)
+      assert.equal(f.events.includes('aux-closed'), true)
+      assert.equal(f.events.includes('aux-installed'), false)
+      assert.equal(f.events.includes('assemble'), false)
+      await absent(f.roots.pointerFile)
+    })
+  },
+)
+
+test(
+  'failed postactivation engine qualification retains verified auxiliary state and restores the previous pointer',
+  fullPayload,
+  async () => {
+    await withFixture(async (f) => {
+      const engine = await engineFixture(f)
+      value(await f.install())
+      const previous = await fs.readFile(f.roots.pointerFile)
+      f.controls.gpuReady = (number) =>
+        number === 4 ? { ...gpuReady, workerVersion: 'unknown' } : gpuReady
+      failure(await f.install('repair'), 'RUNTIME_INSTALL_FAILED')
+      assert.equal(engine.controls.installed, true)
+      assert.deepEqual(await fs.readFile(f.roots.pointerFile), previous)
+      assert.ok(f.events.includes('gpu-closed-4'))
+      assert.equal((await fs.readdir(f.roots.environmentsDir)).length, 2)
+      assert.equal(
+        JSON.parse(
+          await fs.readFile(path.join(f.roots.runtimeDir, RUNTIME_INSTALLATION_JOURNAL), 'utf8'),
+        ).phase,
+        'rolled-back',
+      )
+    })
+  },
+)
+
+test(
+  'changed auxiliary health after either qualification phase refuses engine activation or rolls it back',
+  fullPayload,
+  async (t) => {
+    for (const phase of ['before-activation', 'after-activation'] as const) {
+      await t.test(phase, async () => {
+        await withFixture(async (f) => {
+          const engine = await engineFixture(f)
+          value(await f.install())
+          const previous = await fs.readFile(f.roots.pointerFile)
+          const failingGpu = phase === 'before-activation' ? 3 : 4
+          f.controls.gpuClose = async (number) => {
+            if (number === failingGpu) {
+              engine.controls.installed = false
+            }
+          }
+          failure(await f.install('repair'), 'RUNTIME_INSTALL_FAILED')
+          assert.deepEqual(await fs.readFile(f.roots.pointerFile), previous)
+          assert.ok(f.events.includes(`gpu-closed-${failingGpu}`))
+          const journal = JSON.parse(
+            await fs.readFile(path.join(f.roots.runtimeDir, RUNTIME_INSTALLATION_JOURNAL), 'utf8'),
+          )
+          assert.equal(journal.phase, phase === 'before-activation' ? 'failed' : 'rolled-back')
+        })
+      })
+    }
+  },
+)
+
+test(
+  'actual pinned LaMa publication, reuse and repair run through the existing engine and filesystem owners',
+  { skip: !configFixture || !lamaFixture },
+  async () => {
+    assert.ok(lamaFixture)
+    const retained = process.env.IGS_ENGINE_LAMA_EVIDENCE_DIRECTORY
+    if (retained) {
+      const allowed = path.join(
+        os.homedir(),
+        '.codex/artifacts/imagegen-studio/runs/engine-lama-composition',
+      )
+      assert.equal(path.resolve(retained), retained)
+      assert.ok(retained.startsWith(allowed + path.sep))
+      assert.equal(path.basename(path.dirname(retained)), 'payloads')
+    }
+    await verifyInferenceAuxiliaryFile({
+      byteSize: LAMA_OUTPAINT_ARTIFACT.sizeBytes,
+      managedPath: lamaFixture,
+      sha256: LAMA_OUTPAINT_ARTIFACT.sha256,
+    })
+    const f = await fixture(retained)
+    const report: Record<string, unknown> = {
+      keyScope: 'ephemeral test signing key; only public keyring serialized',
+      nativeGpuQualified: false,
+      nativePackageInstallationQualified: false,
+      outcome: 'RUNNING',
+      publicEndpointQualified: false,
+      scope:
+        'actual pinned LaMa filesystem publication with controlled runtime assembly and worker ports',
+      sha256: LAMA_OUTPAINT_ARTIFACT.sha256,
+      sizeBytes: LAMA_OUTPAINT_ARTIFACT.sizeBytes,
+      source: lamaFixture,
+      trustedKeys: f.selection.trustedKeys,
+      work: f.work,
+    }
+    let downloads = 0
+    try {
+      const engine = await engineFixture(f)
+      const resourcesDirectory = path.join(f.work, 'inference-resources')
+      await fs.mkdir(resourcesDirectory, { mode: 0o700 })
+      const installer = createLamaAuxiliaryInstaller(resourcesDirectory, {
+        download: async (request: ModelDownloadInput) => {
+          downloads++
+          assert.equal(request.source, 'invoke-lama')
+          assert.equal(request.url, LAMA_OUTPAINT_ARTIFACT.url)
+          assert.equal(request.expectedBytes, LAMA_OUTPAINT_ARTIFACT.sizeBytes)
+          assert.equal(request.expectedSha256, LAMA_OUTPAINT_ARTIFACT.sha256)
+          assert.equal(request.bearerToken, undefined)
+          const stagingPath = path.join(request.stagingDirectory, `${randomUUID()}.part`)
+          await fs.copyFile(lamaFixture, stagingPath, constants.COPYFILE_EXCL)
+          await fs.chmod(stagingPath, 0o600)
+          request.onProgress?.({
+            downloadedBytes: LAMA_OUTPAINT_ARTIFACT.sizeBytes,
+            totalBytes: LAMA_OUTPAINT_ARTIFACT.sizeBytes,
+          })
+          return {
+            sha256: LAMA_OUTPAINT_ARTIFACT.sha256,
+            sizeBytes: LAMA_OUTPAINT_ARTIFACT.sizeBytes,
+            stagingPath,
+          }
+        },
+      })
+      f.backend.engine = {
+        auxiliaryInstaller: installer,
+        transportDirectory: engine.transportDirectory,
+      }
+      const resources = new InferenceAuxiliaryResources(resourcesDirectory)
+      f.controls.auxiliary = async () => {
+        await resources.resolveVerifiedOutpaintInfill()
+      }
+      const initial = value(await f.manager.previewInstallation('install'))
+      assert.ok(initial.scope === 'engine')
+      assert.equal(initial.plan.totals.downloadBytes, LAMA_OUTPAINT_ARTIFACT.sizeBytes)
+      assert.equal(downloads, 0)
+      const installed = value(await f.manager.install(initial.token))
+      assert.equal(downloads, 1)
+      const actual = await resources.resolveVerifiedOutpaintInfill()
+      assert.notEqual(actual.managedPath, lamaFixture)
+      assert.notEqual((await fs.stat(actual.managedPath)).ino, (await fs.stat(lamaFixture)).ino)
+      const firstPointer = await fs.readFile(f.roots.pointerFile)
+      const repair = value(await f.manager.previewInstallation('repair'))
+      assert.ok(repair.scope === 'engine')
+      assert.equal(repair.plan.totals.downloadBytes, 0)
+      assert.equal(repair.plan.totals.additionalInstalledBytes, null)
+      const repaired = value(await f.manager.repair(repair.token))
+      assert.notEqual(repaired.runtimeId, installed.runtimeId)
+      assert.equal(downloads, 1)
+      const beforeFailedRepair = await fs.readFile(f.roots.pointerFile)
+      f.controls.gpuReady = (number) =>
+        number === 6 ? { ...gpuReady, workerVersion: 'unknown' } : gpuReady
+      failure(await f.install('repair'), 'RUNTIME_INSTALL_FAILED')
+      assert.equal(downloads, 1)
+      assert.deepEqual(await fs.readFile(f.roots.pointerFile), beforeFailedRepair)
+      await resources.resolveVerifiedOutpaintInfill()
+      await verifyInferenceAuxiliaryFile({
+        byteSize: LAMA_OUTPAINT_ARTIFACT.sizeBytes,
+        managedPath: lamaFixture,
+        sha256: LAMA_OUTPAINT_ARTIFACT.sha256,
+      })
+      assert.deepEqual(await fs.readdir(resourcesDirectory), [LAMA_OUTPAINT_ARTIFACT.filename])
+      report.outcome = 'PASS'
+      report.downloadCalls = downloads
+      report.publication = actual
+      report.firstPointer = JSON.parse(firstPointer.toString())
+      report.previousPointer = JSON.parse(beforeFailedRepair.toString())
+      report.currentPointer = JSON.parse((await fs.readFile(f.roots.pointerFile)).toString())
+      report.exactRollback = true
+      report.sourceStillVerified = true
+      report.events = [...f.events]
+    } catch (error) {
+      report.outcome = 'FAIL'
+      report.error = error instanceof Error ? error.message : 'Actual LaMa integration failed'
+      throw error
+    } finally {
+      await f.manager.cancelInstallation()
+      report.readersClosed = true
+      await (retained
+        ? fs.writeFile(
+            path.join(f.work, 'engine-lama-result.json'),
+            `${JSON.stringify(report, null, 2)}\n`,
+            { flag: 'wx', mode: 0o600 },
+          )
+        : fs.rm(f.work, { force: true, recursive: true }))
+    }
+  },
+)
 
 test('public default stays unavailable without a Main-owned release provider', async () => {
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'igs-runtime-no-release-'))

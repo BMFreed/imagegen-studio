@@ -24,14 +24,29 @@ export interface VerifiedInstalledEngineArtifact {
   readonly sizeBytes: number
 }
 
+/**
+ * Exact source bytes already verified in Main's runtime transport cache. This claim saves a
+ * transfer only: it neither verifies nor reuses an installed runtime slot. Invoke4875's
+ * model_install_default.py:download_and_cache_model and invocation_context.py callers separate
+ * cached source acquisition from loading; actual cache verification belongs to Studio's owner.
+ */
+export interface VerifiedCachedRuntimeArtifact {
+  readonly filename: string
+  readonly id: string
+  readonly sha256: string
+  readonly sizeBytes: number
+}
+
 export interface EngineInstallPlanInput {
   readonly runtimeArtifacts: readonly EngineRuntimeArtifact[]
+  readonly verifiedCachedRuntimeArtifacts?: readonly VerifiedCachedRuntimeArtifact[]
   readonly verifiedInstalledArtifacts?: readonly VerifiedInstalledEngineArtifact[]
 }
 
 export interface EngineInstallArtifact extends EngineRuntimeArtifact {
   readonly kind: 'outpaint-infill' | 'runtime'
   readonly reused: boolean
+  readonly sourceCached: boolean
 }
 
 /** Path-free metadata suitable for a public installation preview after Main builds the plan. */
@@ -43,7 +58,7 @@ export interface EngineInstallPlan {
      * Previously verified artifacts occupy disk already and do not contribute to this number.
      */
     additionalInstalledBytes: number | null
-    /** Non-reused source artifacts only; no network/compression overhead is guessed. */
+    /** Neither installed nor verified-cached source artifacts; no transfer overhead is guessed. */
     downloadBytes: number
     /** Complete final engine + shared LaMa footprint; null if any footprint is unknown. */
     installedBytes: number | null
@@ -68,15 +83,20 @@ export class EngineInstallPlanError extends Error {
 }
 
 /**
- * Build a full-artifact byte plan for a future engine installer. Main must provide the complete
- * runtime manifest: this helper rejects an empty list but cannot prove an unknown release's
- * completeness. LaMa alone is deliberately not accepted as a complete engine. No filesystem, URL,
- * release trust key, installer behavior or runtime-readiness claim is produced here.
+ * Build the artifact byte plan for Main's reviewed engine installation. Main must provide the
+ * complete runtime manifest: this helper rejects an empty list but cannot prove an unknown
+ * release's completeness. LaMa alone is deliberately not accepted as a complete engine. No
+ * filesystem, URL, release trust key, installer behavior or runtime-readiness claim is produced
+ * here.
  */
 export function createEngineInstallPlan(input: EngineInstallPlanInput): EngineInstallPlan {
   if (
     !isRecord(input) ||
-    !hasExactKeys(input, ['runtimeArtifacts'], ['verifiedInstalledArtifacts']) ||
+    !hasExactKeys(
+      input,
+      ['runtimeArtifacts'],
+      ['verifiedCachedRuntimeArtifacts', 'verifiedInstalledArtifacts'],
+    ) ||
     !Array.isArray(input.runtimeArtifacts) ||
     input.runtimeArtifacts.length === 0
   ) {
@@ -102,6 +122,7 @@ export function createEngineInstallPlan(input: EngineInstallPlanInput): EngineIn
       reused: false,
       sha256: artifact.sha256,
       sizeBytes: artifact.sizeBytes,
+      sourceCached: false,
     })
   }
   artifacts.push({
@@ -112,6 +133,7 @@ export function createEngineInstallPlan(input: EngineInstallPlanInput): EngineIn
     reused: false,
     sha256: LAMA_OUTPAINT_ARTIFACT.sha256,
     sizeBytes: LAMA_OUTPAINT_ARTIFACT.sizeBytes,
+    sourceCached: false,
   })
 
   const byId = new Map<string, EngineInstallArtifact>()
@@ -153,7 +175,44 @@ export function createEngineInstallPlan(input: EngineInstallPlanInput): EngineIn
         refuse('An installed artifact verification does not uniquely match the trusted plan.')
       }
       seen.add(verified.id)
-      artifacts[artifacts.indexOf(planned)] = { ...planned, reused: true }
+      const updated = { ...planned, reused: true }
+      artifacts[artifacts.indexOf(planned)] = updated
+      byId.set(planned.id, updated)
+    }
+  }
+
+  if (input.verifiedCachedRuntimeArtifacts !== undefined) {
+    if (!Array.isArray(input.verifiedCachedRuntimeArtifacts)) {
+      refuse(
+        'Verified cached runtime sources must be a finite list of exact Main-owned identities.',
+      )
+    }
+    const seen = new Set<string>()
+    for (let index = 0; index < input.verifiedCachedRuntimeArtifacts.length; index++) {
+      const verified: unknown = input.verifiedCachedRuntimeArtifacts[index]
+      if (
+        !Object.hasOwn(input.verifiedCachedRuntimeArtifacts, index) ||
+        !isRecord(verified) ||
+        !hasExactKeys(verified, ['filename', 'id', 'sha256', 'sizeBytes']) ||
+        !validIdentity(verified)
+      ) {
+        refuse('A cached runtime source verification is not a strict exact identity.')
+      }
+      const planned = byId.get(verified.id)
+      if (
+        seen.has(verified.id) ||
+        !planned ||
+        planned.kind !== 'runtime' ||
+        planned.filename !== verified.filename ||
+        planned.sha256 !== verified.sha256 ||
+        planned.sizeBytes !== verified.sizeBytes
+      ) {
+        refuse('A cached source verification does not uniquely match a trusted runtime artifact.')
+      }
+      seen.add(verified.id)
+      const updated = { ...planned, sourceCached: true }
+      artifacts[artifacts.indexOf(planned)] = updated
+      byId.set(planned.id, updated)
     }
   }
 
@@ -163,7 +222,7 @@ export function createEngineInstallPlan(input: EngineInstallPlanInput): EngineIn
   let additionalInstalledSizeUnknown = false
   const unknownInstalledSizeArtifactIds: string[] = []
   for (const artifact of artifacts) {
-    if (!artifact.reused) {
+    if (!artifact.reused && !artifact.sourceCached) {
       downloadBytes = checkedAdd(downloadBytes, artifact.sizeBytes)
     }
     if (artifact.installedSizeBytes === null) {
