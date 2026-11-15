@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type {
+  ApiError,
   ApiResult,
   ModelCatalogItem,
   ProjectApi,
@@ -56,6 +57,7 @@ import {
   type ProjectWorkspaceAddInput,
   type ProjectWorkspaceSummary,
 } from '../shared/projects/project-workspaces.js'
+import type { RuntimeSetupMode, RuntimeSetupReview } from '../shared/runtime-setup.js'
 import { WINDOW_CLOSE_CANCELED_MESSAGE } from '../shared/window-close.js'
 
 import { Home as HomeIcon, X as XIcon } from '@vicons/tabler'
@@ -124,6 +126,7 @@ import {
   createSmartResultPresetIntent,
 } from './components/result-preset-draft.js'
 import RuntimeNotice from './components/RuntimeNotice.vue'
+import RuntimeSetupModal from './components/RuntimeSetupModal.vue'
 import {
   SmartPatchFreshnessReader,
   type SmartPatchFreshnessState,
@@ -559,6 +562,12 @@ const status = ref<RuntimeStatus | null>(null)
 const runtimeError = ref<string | null>(null)
 const runtimeActionError = ref<string | null>(null)
 const runtimePending = ref<'check' | 'install' | 'repair' | null>(null)
+const runtimeSetupOpen = ref(false)
+const runtimeSetupMode = ref<RuntimeSetupMode>('install')
+const runtimeSetupReview = shallowRef<RuntimeSetupReview | null>(null)
+const runtimeSetupSubmitting = ref(false)
+let runtimeSetupEpoch = 0
+let runtimeSetupPreviewSettled: Promise<void> | null = null
 const windowClosePending = ref(false)
 let unsubscribeStatus: (() => void) | undefined
 let unsubscribeProjectTabs: (() => void) | undefined
@@ -5377,6 +5386,89 @@ function applyRuntimeResult(result: ApiResult<RuntimeStatus>) {
   }
 }
 
+function applyRuntimeSetupFailure(action: RuntimeSetupMode, result: { error: ApiError }) {
+  if (
+    action === 'repair' &&
+    status.value?.kind === 'ready' &&
+    status.value.outpaintInfill === 'needs-repair' &&
+    result.error.code === 'RUNTIME_INSTALL_UNAVAILABLE'
+  ) {
+    // A refused setup does not change ordinary readiness; connection/status errors still block it.
+    runtimeActionError.value = result.error.message
+  } else {
+    runtimeError.value = result.error.message
+  }
+}
+
+async function dismissRuntimeSetup() {
+  if (runtimeSetupSubmitting.value) {
+    return
+  }
+  const epoch = ++runtimeSetupEpoch
+  runtimeSetupOpen.value = false
+  runtimeSetupReview.value = null
+  const previewSettled = runtimeSetupPreviewSettled
+  try {
+    const result = await globalThis.window.api?.runtime.discardInstallationReview()
+    if (!rendererDisposed && epoch === runtimeSetupEpoch && result && !result.ok) {
+      runtimeError.value = result.error.message
+    }
+  } catch (cause) {
+    if (!rendererDisposed && epoch === runtimeSetupEpoch) {
+      runtimeError.value = errorMessage(cause)
+    }
+  } finally {
+    // Do not let a late dismissal revoke a newly opened review, or overlap the old preview.
+    await previewSettled
+    if (!rendererDisposed && epoch === runtimeSetupEpoch) {
+      runtimePending.value = null
+    }
+  }
+}
+
+async function confirmRuntimeSetup() {
+  const review = runtimeSetupReview.value
+  if (
+    !runtimeSetupOpen.value ||
+    runtimeSetupSubmitting.value ||
+    !review ||
+    review.mode !== runtimeSetupMode.value ||
+    runtimePending.value !== review.mode
+  ) {
+    return
+  }
+  // Capture consent once, before yielding. Main remains the authority for token/currentness.
+  runtimeSetupSubmitting.value = true
+  const epoch = runtimeSetupEpoch
+  try {
+    const runtimeApi = globalThis.window.api?.runtime
+    if (!runtimeApi) {
+      throw new Error('The desktop application connection is unavailable.')
+    }
+    const result = await runtimeApi[review.mode](review.token)
+    if (rendererDisposed || epoch !== runtimeSetupEpoch) {
+      return
+    }
+    if (result.ok) {
+      applyRuntimeResult(result)
+    } else {
+      applyRuntimeSetupFailure(review.mode, result)
+    }
+  } catch (cause) {
+    if (!rendererDisposed && epoch === runtimeSetupEpoch) {
+      runtimeError.value = errorMessage(cause)
+    }
+  } finally {
+    if (!rendererDisposed && epoch === runtimeSetupEpoch) {
+      runtimeSetupReview.value = null
+      runtimeSetupOpen.value = false
+      runtimeSetupSubmitting.value = false
+      runtimePending.value = null
+      variantDiagnosticsEpoch.value += 1
+    }
+  }
+}
+
 async function runRuntimeAction(action: 'check' | 'install' | 'repair') {
   if (runtimePending.value !== null) {
     return
@@ -5390,31 +5482,62 @@ async function runRuntimeAction(action: 'check' | 'install' | 'repair') {
     runtimeError.value = null
   }
   runtimeActionError.value = null
+  const epoch = ++runtimeSetupEpoch
   try {
     const runtimeApi = globalThis.window.api?.runtime
     if (!runtimeApi) {
       runtimeError.value = 'The desktop application connection is unavailable.'
       return
     }
-    const result = await runtimeApi[action === 'check' ? 'getStatus' : action]()
-    if (
-      action === 'repair' &&
-      status.value?.kind === 'ready' &&
-      status.value.outpaintInfill === 'needs-repair' &&
-      !result.ok &&
-      result.error.code === 'RUNTIME_INSTALL_UNAVAILABLE'
-    ) {
-      // This build refused before any setup operation. Keep ordinary generation usable while
-      // presenting the partial-resource action error; connection/status failures still block it.
-      runtimeActionError.value = result.error.message
+    if (action === 'check') {
+      const result = await runtimeApi.getStatus()
+      if (!rendererDisposed && epoch === runtimeSetupEpoch) {
+        applyRuntimeResult(result)
+      }
     } else {
-      applyRuntimeResult(result)
+      runtimeSetupMode.value = action
+      runtimeSetupReview.value = null
+      runtimeSetupOpen.value = true
+      const preview = runtimeApi.previewInstallation(action)
+      const settled = preview.then(
+        () => undefined,
+        () => undefined,
+      )
+      runtimeSetupPreviewSettled = settled
+      try {
+        const result = await preview
+        if (rendererDisposed || epoch !== runtimeSetupEpoch) {
+          return
+        }
+        if (!result.ok) {
+          runtimeSetupOpen.value = false
+          applyRuntimeSetupFailure(action, result)
+        } else if (result.value.mode !== action) {
+          await dismissRuntimeSetup()
+          if (!rendererDisposed) {
+            runtimeError.value = 'Review image generation setup again before continuing.'
+          }
+        } else {
+          runtimeSetupReview.value = result.value
+        }
+      } finally {
+        if (runtimeSetupPreviewSettled === settled) {
+          runtimeSetupPreviewSettled = null
+        }
+      }
     }
   } catch (cause) {
-    runtimeError.value = errorMessage(cause)
+    if (!rendererDisposed && epoch === runtimeSetupEpoch) {
+      runtimeSetupOpen.value = false
+      runtimeError.value = errorMessage(cause)
+    }
   } finally {
-    runtimePending.value = null
-    variantDiagnosticsEpoch.value += 1
+    if (!rendererDisposed && epoch === runtimeSetupEpoch) {
+      if (!runtimeSetupOpen.value) {
+        runtimePending.value = null
+      }
+      variantDiagnosticsEpoch.value += 1
+    }
   }
 }
 
@@ -5435,6 +5558,7 @@ function onAppKeydown(event: KeyboardEvent) {
     modelManagerOpen.value ||
     presetManagerOpen.value ||
     presetApplyOpen.value ||
+    runtimeSetupOpen.value ||
     showNewProject.value ||
     showAddWorkspace.value ||
     showProjectTrashAction.value ||
@@ -5597,6 +5721,10 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  if (runtimeSetupOpen.value && !runtimeSetupSubmitting.value) {
+    void dismissRuntimeSetup()
+  }
+  ++runtimeSetupEpoch
   ++presetCreateEpoch
   currentSmartPresetReturnFocus = null
   ++presetCatalogEpoch
@@ -5728,6 +5856,14 @@ onBeforeUnmount(() => {
       </nav>
 
       <main class="app-stage">
+        <RuntimeSetupModal
+          v-model:show="runtimeSetupOpen"
+          :mode="runtimeSetupMode"
+          :review="runtimeSetupReview"
+          :submitting="runtimeSetupSubmitting"
+          @confirm="confirmRuntimeSetup"
+          @dismiss="dismissRuntimeSetup"
+        />
         <RuntimeNotice
           v-if="showRuntimeNotice"
           :error="runtimeError ?? runtimeActionError"

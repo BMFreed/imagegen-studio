@@ -20,6 +20,7 @@ interface RuntimeAppHealthFixture {
   read: () => AvailabilitySnapshot
   repairCode: string
   repairDirect: () => Promise<void>
+  repairPreviews: number
   repairs: number
 }
 
@@ -90,6 +91,7 @@ async function mountRuntimeApp(page: Page) {
       },
       repairCode: 'RUNTIME_INSTALL_UNAVAILABLE',
       repairDirect: async () => await application._instance.setupState.runRuntimeAction('repair'),
+      repairPreviews: 0,
       repairs: 0,
     }
     const unsubscribe = () => () => undefined
@@ -113,6 +115,7 @@ async function mountRuntimeApp(page: Page) {
         onTabsChanged: unsubscribe,
       },
       runtime: {
+        discardInstallationReview: async () => ({ ok: true, value: null }),
         getStatus: async (): Promise<ApiResult<RuntimeStatus>> => {
           state.checks++
           if (state.mode === 'transport-error') {
@@ -146,6 +149,19 @@ async function mountRuntimeApp(page: Page) {
           }
         },
         onStatusChanged: unsubscribe,
+        previewInstallation: async () => {
+          state.repairPreviews++
+          return {
+            error: {
+              code: state.repairCode,
+              message:
+                state.repairCode === 'RUNTIME_INSTALL_UNAVAILABLE'
+                  ? 'Verified release artifacts and a complete setup preview are not available in this build.'
+                  : 'Controlled different runtime repair failure.',
+            },
+            ok: false,
+          }
+        },
         repair: async (): Promise<ApiResult<RuntimeStatus>> => {
           state.repairs++
           return {
@@ -221,9 +237,14 @@ test('production App keeps unavailable partial Repair separate from blocking sta
     await page.screenshot({ path: testInfo.outputPath('app-outpaint-repair-unavailable.png') })
     expect(
       await page.evaluate(
-        () => (globalThis as RuntimeAppHealthGlobal).runtimeAppHealthFixture.repairs,
+        () => (globalThis as RuntimeAppHealthGlobal).runtimeAppHealthFixture.repairPreviews,
       ),
     ).toBe(1)
+    expect(
+      await page.evaluate(
+        () => (globalThis as RuntimeAppHealthGlobal).runtimeAppHealthFixture.repairs,
+      ),
+    ).toBe(0)
   })
 
   await test.step('a failed status read blocks despite the previous ready slot', async () => {

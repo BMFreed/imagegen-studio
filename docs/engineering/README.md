@@ -1,6 +1,16 @@
 # Engineering Workflow
 
-## Current public engine review/token IPC
+## Current engine setup confirmation UI
+
+[Setup confirmation](./phase-5-runtime-setup-ui-research.md) connects the existing App actions to engine review,
+explicit token confirmation and dismissal. Cached source, new runtime, reused
+outpainting resource and unknown disk peak remain distinct. Pending/late replies
+are scoped to the current dialog; dismissal never claims operation cancellation.
+Default shipping Setup remains unavailable. Metadata-first provider/trust/
+endpoints, operation progress/cancel and release/visual acceptance remain open.
+Promise statuses are unchanged.
+
+## Previous public engine review/token IPC
 
 [Reviewed setup IPC](./phase-5-runtime-setup-ipc-research.md) exposes an engine-only flat preview and routes its
 existing one-use token through trusted-window/main-frame/document guards to the

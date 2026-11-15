@@ -236,6 +236,18 @@ uv run pytest
 
 ### Текущая реализация и developer qualification
 
+[Setup confirmation consumer](../engineering/phase-5-runtime-setup-ui-research.md)
+connects Set up/Repair in the production App to the existing engine review. The
+Vue/Naive dialog shows download/installed/additional bytes, cached source and
+outpaint reuse, with the signed runtime floor separate from unknown aggregate
+peak. Only explicit confirmation sends its current mode/token. Cancel/Escape or
+unmount dismisses unconsumed review; pending preview/dismissal is serialized and
+late replies cannot reopen it. Accepted operations show pending text and cannot
+be dismissed as if that cancelled installation. Failure requires fresh review.
+The unavailable partial-outpaint Repair remains separate from connection errors.
+This does not supply a shipping provider, metadata-first pre-download offer,
+public operation progress/cancel or release readiness.
+
 [Public setup review/token IPC](../engineering/phase-5-runtime-setup-ipc-research.md)
 adds engine-only `previewInstallation(mode)`, explicit review dismissal and
 optional token arguments to install/repair. Only the current trusted main frame
@@ -249,10 +261,10 @@ partial-outpaint Repair behavior.
 The flat DTO describes already verified **local cached source**, not a network
 pre-download offer. It omits paths, keys, auxiliary IDs and expanded payload byte
 counts; unknown total peak remains null, separately from the signed runtime
-floor. Current App has no confirmation consumer for positive reviews yet. No
-shipping provider/keyring/endpoints are supplied; nothing downloads implicitly
-through this checkpoint. Metadata-first provider, confirmation/progress/cancel
-and distributable/update acceptance remain separate.
+floor. The App confirmation consumer is recorded above. No shipping provider/
+keyring/endpoints are supplied; nothing downloads implicitly through this
+checkpoint. Metadata-first provider, operation progress/cancel and distributable/
+update acceptance remain separate.
 
 Public Main пока не передаёт shipping release provider. Его legacy zero-arg
 Install/Repair и preview без provider возвращают `RUNTIME_INSTALL_UNAVAILABLE`;
