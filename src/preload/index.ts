@@ -31,6 +31,10 @@ import type {
   RuntimeStatus,
   StudioApi,
 } from '../shared/api.js'
+import {
+  type ApplicationUpdateSnapshot,
+  isApplicationUpdateSnapshot,
+} from '../shared/application-updates.js'
 import { isModelRemovalId, isModelRemovalReview } from '../shared/model-removal.js'
 import { isPresetRecord } from '../shared/presets/preset-schema.js'
 import {
@@ -109,6 +113,51 @@ import {
 } from '../shared/runtime-setup.js'
 
 import { contextBridge, ipcRenderer } from 'electron'
+
+const applicationUpdateErrors: Readonly<Record<string, string>> = {
+  APPLICATION_UPDATE_CHECK_FAILED: 'The application could not check for updates. Try again.',
+  IPC_INVALID_CALLER: 'Application update request was rejected.',
+  IPC_INVALID_RESPONSE: 'The application returned an invalid update status.',
+  IPC_UNAVAILABLE: 'The application could not reach the update service.',
+}
+
+/** Check-only IPC: fixed public errors and the shared DTO, never native provider details. */
+async function invokeApplicationUpdate(
+  channel:
+    typeof ipcChannels.applicationUpdates.check | typeof ipcChannels.applicationUpdates.getStatus,
+): Promise<ApiResult<ApplicationUpdateSnapshot>> {
+  try {
+    const result: unknown = await ipcRenderer.invoke(channel)
+    if (isRecord(result)) {
+      if (result.ok === true && isApplicationUpdateSnapshot(result.value)) {
+        return { ok: true, value: result.value }
+      }
+      if (result.ok === false && isApiError(result.error)) {
+        const message = Object.hasOwn(applicationUpdateErrors, result.error.code)
+          ? applicationUpdateErrors[result.error.code]
+          : undefined
+        if (message) {
+          return { error: { code: result.error.code, message }, ok: false }
+        }
+      }
+    }
+    return {
+      error: {
+        code: 'IPC_INVALID_RESPONSE',
+        message: applicationUpdateErrors['IPC_INVALID_RESPONSE'],
+      },
+      ok: false,
+    }
+  } catch {
+    return {
+      error: {
+        code: 'IPC_UNAVAILABLE',
+        message: applicationUpdateErrors['IPC_UNAVAILABLE'],
+      },
+      ok: false,
+    }
+  }
+}
 
 const runtimeKinds = new Set<RuntimeStatus['kind']>([
   'checking',
@@ -1199,6 +1248,10 @@ function regionalPromptReplyMatches(
 }
 
 const api: StudioApi = {
+  applicationUpdates: {
+    check: () => invokeApplicationUpdate(ipcChannels.applicationUpdates.check),
+    getStatus: () => invokeApplicationUpdate(ipcChannels.applicationUpdates.getStatus),
+  },
   models: {
     cancelInstall: (jobId) =>
       invokeModel(ipcChannels.models.cancelInstall, [jobId], isModelInstallJob),

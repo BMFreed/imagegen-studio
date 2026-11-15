@@ -57,7 +57,11 @@ Project Save с placeholder preview остаётся доступен. SQLite mi
 
 [Local AppImage packaging](../engineering/phase-5-linux-app-package-research.md)
 now supplies a versioned standalone app consumer and current-host extract-and-run
-qualification. The manual check/download/install updater is still absent. This
+qualification. [Manual Check](../engineering/phase-5-application-update-check-research.md) now
+uses the real Invoke/electron-updater metadata consumer through Help/Main/preload,
+with explicit outcomes and no startup network check. Download and installation
+remain absent; automatic download/install-on-quit are explicitly disabled. The
+default build is unavailable until its own publisher configuration is supplied. This
 checkpoint does not prove signed delivery, FUSE/clean-machine install, binary
 replacement or interrupted-update recovery; those remain dependencies of the
 acceptance below. Runtime publisher metadata is a separate lifecycle.

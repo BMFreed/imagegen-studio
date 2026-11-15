@@ -12,7 +12,7 @@ await Promise.all([
     format: 'cjs',
     target: 'node24',
     outfile: path.join(outDir, 'main/main.cjs'),
-    external: ['electron', 'better-sqlite3'],
+    external: ['electron', 'better-sqlite3', 'electron-updater'],
     sourcemap: true,
   }),
   build({

@@ -118,13 +118,17 @@ import {
   safeStorage,
   shell,
 } from 'electron'
+import electronUpdater from 'electron-updater'
 import { randomUUID } from 'node:crypto'
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { mkdir, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import { ensureAppPaths, resolveAppPaths } from './app-paths.js'
+import { registerApplicationUpdateIpc } from './application-updates/application-update-ipc.js'
+import { ApplicationUpdateService } from './application-updates/application-update-service.js'
+import { createElectronUpdateChecker } from './application-updates/electron-update-checker.js'
 import { openAppDatabase } from './db/database.js'
 import { ANIMA_SOURCE_LICENSE } from './models/anima-manifest.js'
 import { CivitaiClient, CivitaiClientError, parseCivitaiModelUrl } from './models/civitai-client.js'
@@ -1368,6 +1372,36 @@ if (!gotInstanceLock) {
       })
 
       const runtimeCaller = window.webContents
+      const applicationUpdateService = new ApplicationUpdateService(
+        app.getVersion(),
+        app.isPackaged &&
+          process.platform === 'linux' &&
+          Boolean(process.env['APPIMAGE']) &&
+          existsSync(path.join(process.resourcesPath, 'app-update.yml')),
+        () => createElectronUpdateChecker(electronUpdater.autoUpdater),
+      )
+      const applicationUpdates = registerApplicationUpdateIpc(
+        ipcMain,
+        runtimeCaller,
+        applicationUpdateService,
+      )
+      const invalidateApplicationUpdateDocument = (
+        _event: Electron.Event,
+        _url: string,
+        _isInPlace: boolean,
+        isMainFrame: boolean,
+      ) => {
+        if (isMainFrame) {
+          applicationUpdates.invalidateDocument()
+        }
+      }
+      runtimeCaller.on('did-start-navigation', invalidateApplicationUpdateDocument)
+      runtimeCaller.on('render-process-gone', applicationUpdates.invalidateDocument)
+      window.on('closed', () => {
+        applicationUpdates.dispose()
+        runtimeCaller.removeListener('did-start-navigation', invalidateApplicationUpdateDocument)
+        runtimeCaller.removeListener('render-process-gone', applicationUpdates.invalidateDocument)
+      })
       const runtimeSetup = registerRuntimeSetupIpc(ipcMain, runtimeCaller, runtimeManager)
       // A review authorizes only this live renderer document, not its reload or replacement.
       const invalidateRuntimeReviewOnNavigation = (

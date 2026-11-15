@@ -1,3 +1,4 @@
+import type { ApplicationUpdateSnapshot } from './application-updates.js'
 import type { ModelRemovalReview } from './model-removal.js'
 import type { PresetApplicationRequest } from './presets/preset-application.js'
 import type { PresetDefinition, PresetRecord } from './presets/preset-schema.js'
@@ -143,6 +144,10 @@ export type {
 
 /** Renderer contract. System APIs remain in Electron main. */
 export const ipcChannels = {
+  applicationUpdates: {
+    check: 'application-updates:check',
+    getStatus: 'application-updates:get-status',
+  },
   models: {
     cancelInstall: 'models:cancel-install',
     catalogChanged: 'models:catalog-changed',
@@ -1042,7 +1047,13 @@ export interface RuntimeApi {
   repair: (reviewToken?: string) => Promise<ApiResult<RuntimeStatus>>
 }
 
+export interface ApplicationUpdatesApi {
+  check: () => Promise<ApiResult<ApplicationUpdateSnapshot>>
+  getStatus: () => Promise<ApiResult<ApplicationUpdateSnapshot>>
+}
+
 export interface StudioApi {
+  applicationUpdates: ApplicationUpdatesApi
   models: ModelApi
   presets: PresetApi
   projects: ProjectApi

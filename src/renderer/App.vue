@@ -33,6 +33,7 @@ import type {
   ProjectTab,
   RuntimeStatus,
 } from '../shared/api.js'
+import type { ApplicationUpdateSnapshot } from '../shared/application-updates.js'
 import type { PresetApplicationRequest } from '../shared/presets/preset-application.js'
 import type { PresetRecord } from '../shared/presets/preset-schema.js'
 import type {
@@ -100,6 +101,7 @@ import {
 import AcceptedResultsBrowser from './components/AcceptedResultsBrowser.vue'
 import AddWorkspaceModal from './components/AddWorkspaceModal.vue'
 import AppChrome from './components/AppChrome.vue'
+import ApplicationUpdatesModal from './components/ApplicationUpdatesModal.vue'
 import ApplyPresetModal from './components/ApplyPresetModal.vue'
 import {
   GenerationQueueResultNavigator,
@@ -566,6 +568,11 @@ const status = ref<RuntimeStatus | null>(null)
 const runtimeError = ref<string | null>(null)
 const runtimeActionError = ref<string | null>(null)
 const runtimePending = ref<'check' | 'install' | 'repair' | null>(null)
+const applicationUpdatesOpen = ref(false)
+const applicationUpdatesPending = ref(false)
+const applicationUpdatesSnapshot = shallowRef<ApplicationUpdateSnapshot | null>(null)
+const applicationUpdatesError = ref<string | null>(null)
+let applicationUpdatesEpoch = 0
 const runtimeSetupOpen = ref(false)
 const runtimeSetupMode = ref<RuntimeSetupMode>('install')
 const runtimeSetupReview = shallowRef<RuntimeSetupReview | null>(null)
@@ -5398,6 +5405,75 @@ function applyRuntimeResult(result: ApiResult<RuntimeStatus>) {
   }
 }
 
+function currentApplicationUpdatesRequest(epoch: number): boolean {
+  return !rendererDisposed && applicationUpdatesOpen.value && epoch === applicationUpdatesEpoch
+}
+
+function dismissApplicationUpdates() {
+  ++applicationUpdatesEpoch
+  applicationUpdatesOpen.value = false
+  applicationUpdatesPending.value = false
+}
+
+async function checkApplicationUpdates(readCurrentVersion = false) {
+  if (
+    !applicationUpdatesOpen.value ||
+    applicationUpdatesPending.value ||
+    windowClosePending.value
+  ) {
+    return
+  }
+  const epoch = ++applicationUpdatesEpoch
+  applicationUpdatesPending.value = true
+  applicationUpdatesError.value = null
+  try {
+    const updates = globalThis.window.api?.applicationUpdates
+    if (!updates?.getStatus || !updates?.check) {
+      applicationUpdatesSnapshot.value = null
+      return
+    }
+    if (readCurrentVersion) {
+      const statusResult = await updates.getStatus()
+      if (!currentApplicationUpdatesRequest(epoch)) {
+        return
+      }
+      if (!statusResult.ok) {
+        applicationUpdatesError.value = statusResult.error.message
+        return
+      }
+      applicationUpdatesSnapshot.value = statusResult.value
+    }
+    const result = await updates.check()
+    if (!currentApplicationUpdatesRequest(epoch)) {
+      return
+    }
+    if (result.ok) {
+      applicationUpdatesSnapshot.value = result.value
+    } else {
+      applicationUpdatesError.value = result.error.message
+    }
+  } catch {
+    if (currentApplicationUpdatesRequest(epoch)) {
+      applicationUpdatesError.value =
+        'The application could not check for updates. Please try again.'
+    }
+  } finally {
+    if (currentApplicationUpdatesRequest(epoch)) {
+      applicationUpdatesPending.value = false
+    }
+  }
+}
+
+function openApplicationUpdates() {
+  if (rendererDisposed || windowClosePending.value || applicationUpdatesOpen.value) {
+    return
+  }
+  applicationUpdatesOpen.value = true
+  applicationUpdatesSnapshot.value = null
+  applicationUpdatesError.value = null
+  void checkApplicationUpdates(true)
+}
+
 function applyRuntimeSetupFailure(action: RuntimeSetupMode, result: { error: ApiError }) {
   if (
     action === 'repair' &&
@@ -5751,6 +5827,7 @@ function onAppKeydown(event: KeyboardEvent) {
     modelManagerOpen.value ||
     presetManagerOpen.value ||
     presetApplyOpen.value ||
+    applicationUpdatesOpen.value ||
     runtimeSetupOpen.value ||
     showNewProject.value ||
     showAddWorkspace.value ||
@@ -5884,6 +5961,7 @@ onMounted(() => {
     unsubscribeBeforeWindowClose = globalThis.window.api?.projects.onBeforeWindowClose(
       async (setDecisionPending) => {
         windowClosePending.value = true
+        dismissApplicationUpdates()
         if (
           pendingSmartReview.value &&
           !generationCommitting.value &&
@@ -5941,6 +6019,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  ++applicationUpdatesEpoch
   if (runtimeSetupOpen.value && !runtimeSetupSubmitting.value) {
     void dismissRuntimeSetup()
   }
@@ -6007,6 +6086,7 @@ onBeforeUnmount(() => {
         :homeOpen
         :projectActive="Boolean(activeTab)"
         @acceptedResults="openSavedAcceptedResults"
+        @applicationUpdates="openApplicationUpdates"
         @exportImage="exportProjectImage"
         @home="openHome"
         @models="openModelManager()"
@@ -6077,6 +6157,14 @@ onBeforeUnmount(() => {
       </nav>
 
       <main class="app-stage">
+        <ApplicationUpdatesModal
+          v-model:show="applicationUpdatesOpen"
+          :error="applicationUpdatesError"
+          :pending="applicationUpdatesPending"
+          :snapshot="applicationUpdatesSnapshot"
+          @check="checkApplicationUpdates()"
+          @dismiss="dismissApplicationUpdates"
+        />
         <RuntimeSetupModal
           v-model:show="runtimeSetupOpen"
           :cancelPending="runtimeSetupCancelPending"

@@ -1,6 +1,16 @@
 # Implementation Roadmap
 
-## Current standalone Linux app package
+## Current manual application update check
+
+[Manual app check](../engineering/phase-5-application-update-check-research.md) adapts Invoke's exact electron-updater6.6.2 to
+Help, trusted current-frame IPC and bounded version/plain-text notes. Startup and
+getters do not check; automatic download/install-on-quit are disabled. Default
+publisher remains unconfigured with explicit unavailable. Actual metadata checks
+use a controlled bundled feed, separately from shipping trust. Download/Install
+Update, final-byte/compatibility and Linux replacement/recovery remain open;
+upstream unlink-before-move cannot close those gates. Promise statuses unchanged.
+
+## Previous standalone Linux app package
 
 [Linux app package](../engineering/phase-5-linux-app-package-research.md) adapts Invoke launcher's electron-builder/AppImage
 mechanism to the existing built Main, preload, renderer, native SQLite and static

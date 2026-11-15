@@ -10,7 +10,16 @@ import assert from 'node:assert/strict'
 import { execFile, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { copyFile, lstat, mkdir, readFile, readdir, realpath, unlink, writeFile } from 'node:fs/promises'
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  unlink,
+  writeFile,
+} from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -36,6 +45,14 @@ const artifactRoot = path.join(os.homedir(), '.codex/artifacts/imagegen-studio')
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const supplied = process.env.IMAGEGEN_LINUX_PACKAGE_ARTIFACTS
 const suppliedPackage = process.env.IMAGEGEN_LINUX_PACKAGE_APPIMAGE
+const updateCheckMode = process.env.IMAGEGEN_LINUX_PACKAGE_UPDATE_CHECK
+assert.ok(
+  updateCheckMode === undefined || updateCheckMode === 'unavailable' || updateCheckMode === 'feed',
+)
+const updateFeedPortText = process.env.IMAGEGEN_LINUX_PACKAGE_UPDATE_FEED_PORT
+assert.ok(updateFeedPortText === undefined || /^\d+$/.test(updateFeedPortText))
+const updateFeedPort = updateFeedPortText === undefined ? 0 : Number(updateFeedPortText)
+assert.ok(Number.isSafeInteger(updateFeedPort) && updateFeedPort >= 0 && updateFeedPort <= 65535)
 const canonicalAbsolute = (value) =>
   typeof value === 'string' && path.isAbsolute(value) && path.resolve(value) === value
 assert.ok(canonicalAbsolute(supplied), 'Supply a canonical IMAGEGEN_LINUX_PACKAGE_ARTIFACTS.')
@@ -115,6 +132,7 @@ const sourcePaths = [
   fileURLToPath(import.meta.url),
   path.join(repo, 'scripts/qualification-resource-limits.mjs'),
 ]
+if (updateCheckMode) sourcePaths.push(path.join(repo, 'scripts/application-update-check-smoke.mjs'))
 const sourceBefore = await Promise.all(sourcePaths.map(identity))
 const packageBefore = await identity(appImage)
 const projectTitle = 'Package qualification'
@@ -123,6 +141,8 @@ const lifetimes = []
 let projectId
 let firstTab
 let failed
+let applicationUpdateSmoke
+let applicationUpdateResult
 
 async function writeJson(name, value) {
   await writeFile(path.join(root, name), `${JSON.stringify(value, null, 2)}\n`)
@@ -384,7 +404,18 @@ async function retainOwnStore(name) {
 }
 
 try {
+  if (updateCheckMode) {
+    const { createApplicationUpdateCheckSmoke } =
+      await import('./application-update-check-smoke.mjs')
+    applicationUpdateSmoke = await createApplicationUpdateCheckSmoke({
+      mode: updateCheckMode,
+      port: updateFeedPort,
+      root,
+      currentVersion: '0.1.0-dev.1',
+    })
+  }
   const first = await launch('first')
+  await applicationUpdateSmoke?.assertStartup(first.page)
   const initial = await readPorts(first)
   assert.deepEqual(initial.projects.value, [])
   await checkUnavailable(first)
@@ -442,10 +473,12 @@ try {
     tab: firstTab,
     summary,
   })
+  await applicationUpdateSmoke?.run(first.page)
   await closeNormally(first)
   const saved = await retainOwnStore('after-first-close')
 
   const second = await launch('restarted')
+  await applicationUpdateSmoke?.assertRestart(second.page)
   const reopenedPorts = await readPorts(second)
   assert.equal(reopenedPorts.projects.value.length, 1)
   assert.equal(reopenedPorts.projects.value[0].id, projectId)
@@ -487,6 +520,10 @@ try {
   assert.deepEqual(await identity(appImage), packageBefore)
   const sourceAfter = await Promise.all(sourcePaths.map(identity))
   assert.deepEqual(sourceAfter, sourceBefore)
+  if (applicationUpdateSmoke) {
+    await applicationUpdateSmoke.stop()
+    applicationUpdateResult = applicationUpdateSmoke.finalize()
+  }
   await writeJson('report.json', {
     schemaVersion: 1,
     outcome: 'PASS',
@@ -501,6 +538,7 @@ try {
     appData,
     temporaryRoot: environment.TMPDIR ?? null,
     records,
+    ...(applicationUpdateSmoke ? { applicationUpdateCheck: applicationUpdateResult } : {}),
     stores: { saved, restarted },
     lifetimes: lifetimes.map(
       ({
@@ -529,8 +567,12 @@ try {
     records,
     projectId,
     packageBefore,
+    ...(applicationUpdateSmoke
+      ? { applicationUpdateCheck: applicationUpdateSmoke.snapshot() }
+      : {}),
   })
 } finally {
+  applicationUpdateSmoke?.releaseHeld()
   for (const state of lifetimes) {
     if (!state.normalPhysicalExit) {
       try {
@@ -585,6 +627,14 @@ try {
       checks: state.checks,
       scopeExit: state.scopeExit,
     })
+  }
+  if (applicationUpdateSmoke) {
+    try {
+      await applicationUpdateSmoke.stop()
+    } catch (error) {
+      failed ??= error
+    }
+    await writeJson('application-update-check.json', applicationUpdateSmoke.snapshot())
   }
 }
 if (failed) throw failed

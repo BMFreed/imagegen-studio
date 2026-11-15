@@ -15,6 +15,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   acceptedResults: []
+  applicationUpdates: []
   exportImage: [region: 'bbox' | 'canvas']
   home: []
   models: []
@@ -78,6 +79,13 @@ function selectEditAction(key: number | string) {
       @select="$emit('models')"
     >
       <NButton aria-label="Models menu" class="chrome-menu" text>Models</NButton>
+    </NDropdown>
+    <NDropdown
+      :options="[{ key: 'application-updates', label: 'Check for Updates…' }]"
+      trigger="click"
+      @select="$emit('applicationUpdates')"
+    >
+      <NButton aria-label="Help menu" class="chrome-menu" text>Help</NButton>
     </NDropdown>
     <NButton
       aria-label="Open saved generations"

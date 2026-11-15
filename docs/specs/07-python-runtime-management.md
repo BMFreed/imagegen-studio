@@ -236,6 +236,12 @@ uv run pytest
 
 ### Текущая реализация и developer qualification
 
+[Manual application Check](../engineering/phase-5-application-update-check-research.md)
+is a separate Electron metadata lifecycle. It does not install/update Python,
+models or the application binary; no app-update request occurs on boot or status
+reads. No shipping feed is configured. Runtime publisher/compatibility and app
+binary download/install/recovery remain separate open gates.
+
 [Standalone Linux app package](../engineering/phase-5-linux-app-package-research.md)
 qualifies the Electron app payload locally: actual fused AppImage, native SQLite,
 30 bundled migrations and built static consumers, real Project create/reopen and
