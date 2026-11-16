@@ -15,6 +15,7 @@ import {
   isApplicationUpdateVersion,
 } from '../../shared/application-updates.js'
 
+import { ApplicationUpdateAdmissionError } from './application-update-admission.js'
 import {
   ApplicationUpdateCurrentSourceError,
   ApplicationUpdateRecoveryRequiredError,
@@ -53,6 +54,17 @@ const currentSourceUnavailable = () =>
     'APPLICATION_UPDATE_CURRENT_SOURCE_UNAVAILABLE',
     'The application changed or could not be checked. Restart ImageGen Studio before installing an update. Your Projects remain open.',
   )
+
+const admissionUnavailable = (error: ApplicationUpdateAdmissionError) =>
+  error.code === 'APPLICATION_UPDATE_BUSY'
+    ? failure(
+        'APPLICATION_UPDATE_BUSY',
+        'Another application update is in progress. Try again after it finishes. Your Projects remain open.',
+      )
+    : failure(
+        'APPLICATION_UPDATE_ADMISSION_UNAVAILABLE',
+        'Application update installation could not be reserved. Your Projects remain open.',
+      )
 
 /** Getter is read-only. The service owns deduplication, metadata and every actual network check. */
 export function registerApplicationUpdateIpc(
@@ -125,14 +137,16 @@ export function registerApplicationUpdateIpc(
           if (!current()) {
             return rejected()
           }
-          return error instanceof ApplicationUpdateRecoveryRequiredError
-            ? recoveryRequired()
-            : error instanceof ApplicationUpdateCurrentSourceError
-              ? currentSourceUnavailable()
-              : failure(
-                  'APPLICATION_UPDATE_INSTALL_FAILED',
-                  'The application could not start installation. Review the update and try again.',
-                )
+          return error instanceof ApplicationUpdateAdmissionError
+            ? admissionUnavailable(error)
+            : error instanceof ApplicationUpdateRecoveryRequiredError
+              ? recoveryRequired()
+              : error instanceof ApplicationUpdateCurrentSourceError
+                ? currentSourceUnavailable()
+                : failure(
+                    'APPLICATION_UPDATE_INSTALL_FAILED',
+                    'The application could not start installation. Review the update and try again.',
+                  )
         } finally {
           installationPending = false
         }

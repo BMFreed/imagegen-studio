@@ -130,6 +130,11 @@ import { pathToFileURL } from 'node:url'
 
 import { ensureAppPaths, resolveAppPaths } from './app-paths.js'
 import { loadApplicationReleaseTrust } from './application-updates/application-release.js'
+import {
+  acquireApplicationUpdateAdmission,
+  type ApplicationUpdateAdmission,
+  ApplicationUpdateAdmissionError,
+} from './application-updates/application-update-admission.js'
 import { collectApplicationUpdateInstallPreview } from './application-updates/application-update-install-preview.js'
 import { registerApplicationUpdateIpc } from './application-updates/application-update-ipc.js'
 import { ApplicationUpdateService } from './application-updates/application-update-service.js'
@@ -287,6 +292,11 @@ import { createRuntimeRoots, RuntimeManager } from './runtime/index.js'
 import { registerRuntimeSetupIpc } from './runtime/runtime-setup-ipc.js'
 
 const moduleDir = __dirname
+// Invoke4875 stable creation/_claim_scan_lock callers serialize participating writers. The
+// admission owner adapts their flock lifetime; it is not a global running-application lease.
+// Electron44.4.5 lib/browser/init.ts emits process 'exit' from app 'quit' before physical exit.
+// A sealed reservation therefore has no JS event disposer: keep it until kernel teardown.
+let sealedApplicationUpdateAdmission: ApplicationUpdateAdmission | null = null
 const applicationUpdateAppImage =
   process.platform === 'linux' ? (process.env['APPIMAGE'] ?? null) : null
 const applicationUpdateSourceCapture = (() => {
@@ -1196,11 +1206,27 @@ if (!gotInstanceLock) {
       let appDataSealed = false
       let windowCloseEpoch = 0
       let applicationInstallationRequestPending = false
+      let activeApplicationUpdateAdmission: ApplicationUpdateAdmission | null = null
       let pendingApplicationInstallation: {
+        admission: ApplicationUpdateAdmission
         artifact: VerifiedApplicationArtifact
         isCurrent: () => boolean
         version: string
       } | null = null
+      const assertApplicationUpdateAdmission = (
+        admission: ApplicationUpdateAdmission | null,
+      ): void => {
+        if (!admission || admission.currentAppImage !== applicationUpdateAppImage) {
+          throw new ApplicationUpdateAdmissionError('UNAVAILABLE')
+        }
+        const result: unknown = admission.assertHeld()
+        if (result !== undefined) {
+          if (result instanceof Promise) {
+            void result.catch(() => undefined)
+          }
+          throw new ApplicationUpdateAdmissionError('UNAVAILABLE')
+        }
+      }
       let rendererCloseHandlerReady = false
       const onCloseEditorReady = (event: Electron.IpcMainEvent, ...args: unknown[]): void => {
         if (
@@ -1337,6 +1363,7 @@ if (!gotInstanceLock) {
         // before any draft/Save/close await; this intent belongs only to this close attempt.
         const applicationInstallation = pendingApplicationInstallation
         pendingApplicationInstallation = null
+        activeApplicationUpdateAdmission = applicationInstallation?.admission ?? null
         void (async () => {
           const fencedTabs: string[] = []
           let closeCommitted = false
@@ -1456,12 +1483,23 @@ if (!gotInstanceLock) {
                 'The update review changed before closing. Review installation again.',
               )
             }
+            if (applicationInstallation) {
+              assertApplicationUpdateAdmission(applicationInstallation.admission)
+            }
             // Keep every tab attached until all requested Saves have committed. If a later Save
             // fails, the window and all tabs remain usable; their snapshots are resynchronized.
             if (choice === 0) {
               for (const tab of projectService.getOpenTabs()) {
                 if (tab.dirty) {
-                  await projectGenerationGate.run(tab.id, () => saveProjectWithPreview(tab.id))
+                  await projectGenerationGate.run(tab.id, () => {
+                    if (applicationInstallation) {
+                      if (!applicationInstallation.isCurrent()) {
+                        throw new Error('Review installation again before closing the application.')
+                      }
+                      assertApplicationUpdateAdmission(applicationInstallation.admission)
+                    }
+                    return saveProjectWithPreview(tab.id)
+                  })
                 }
               }
             }
@@ -1470,11 +1508,20 @@ if (!gotInstanceLock) {
                 'The update review changed before closing. Review installation again.',
               )
             }
+            if (applicationInstallation) {
+              assertApplicationUpdateAdmission(applicationInstallation.admission)
+            }
             closeCommitted = true
             // A canceled dialog has not stopped generation. Once the user confirms closing,
             // hold this visible window until worker exit and pending-job cancellation are durable.
             await appShutdown.prepareWindowClose()
             for (const tab of projectService.getOpenTabs()) {
+              if (applicationInstallation) {
+                if (!applicationInstallation.isCurrent()) {
+                  throw new Error('Review installation again before closing the application.')
+                }
+                assertApplicationUpdateAdmission(applicationInstallation.admission)
+              }
               await projectGenerationClose.close(tab.id, {
                 confirmCloseImpact: hasGenerationImpact,
                 discardDocument: tab.dirty && choice === 1,
@@ -1482,6 +1529,19 @@ if (!gotInstanceLock) {
             }
             // Finalization may dispose SQLite and then reject. From its first instruction there
             // is no safe editor-release path, even when successful disposal is not confirmed.
+            if (applicationInstallation) {
+              if (!applicationInstallation.isCurrent()) {
+                throw new Error('Review installation again before closing the application.')
+              }
+              assertApplicationUpdateAdmission(applicationInstallation.admission)
+              if (
+                sealedApplicationUpdateAdmission &&
+                sealedApplicationUpdateAdmission !== applicationInstallation.admission
+              ) {
+                throw new ApplicationUpdateAdmissionError('UNAVAILABLE')
+              }
+              sealedApplicationUpdateAdmission = applicationInstallation.admission
+            }
             appDataSealed = true
             await appShutdown.finalize()
             dataFinalized = true
@@ -1510,10 +1570,20 @@ if (!gotInstanceLock) {
             if (!appDataSealed && !(error instanceof WindowCloseCanceledError)) {
               dialog.showErrorBox(
                 'Project close failed',
-                error instanceof Error ? error.message : 'The Project could not be closed.',
+                closeCommitted && error instanceof ApplicationUpdateAdmissionError
+                  ? 'Application update ownership could not be confirmed. Installation has not started. Keep update files for recovery.'
+                  : error instanceof Error
+                    ? error.message
+                    : 'The Project could not be closed.',
               )
             }
           } finally {
+            if (applicationInstallation && !appDataSealed) {
+              applicationInstallation.admission.release()
+              if (activeApplicationUpdateAdmission === applicationInstallation.admission) {
+                activeApplicationUpdateAdmission = null
+              }
+            }
             if (!closeCommitted && !appDataSealed) {
               releaseCanceledWindowCloseFences(
                 fencedTabs,
@@ -1564,6 +1634,10 @@ if (!gotInstanceLock) {
           appShutdown.assertFinalized()
           if (projectService.getOpenTabs().length !== 0) {
             throw new Error('Close all Projects before activating an application update.')
+          }
+          assertApplicationUpdateAdmission(activeApplicationUpdateAdmission)
+          if (sealedApplicationUpdateAdmission !== activeApplicationUpdateAdmission) {
+            throw new ApplicationUpdateAdmissionError('UNAVAILABLE')
           }
         },
         async () => {
@@ -1621,6 +1695,7 @@ if (!gotInstanceLock) {
           }
           applicationInstallationRequestPending = true
           const observedCloseEpoch = windowCloseEpoch
+          let admission: ApplicationUpdateAdmission | null = null
           try {
             // Read-only preflight: unsupported/stale/missing artifacts cannot close Projects or
             // create stage. Keep exact capability identity through the later finalized handoff.
@@ -1634,8 +1709,28 @@ if (!gotInstanceLock) {
             ) {
               throw new Error('Review installation again before closing the application.')
             }
+            if (!applicationUpdateAppImage) {
+              throw new ApplicationUpdateAdmissionError('UNAVAILABLE')
+            }
+            admission = acquireApplicationUpdateAdmission(applicationUpdateAppImage)
+            assertApplicationUpdateAdmission(admission)
+            // A peer can leave a retained stage during the first preflight. Revalidate the same
+            // artifact under the reservation, before any Project close is requested.
+            if ((await applicationUpdateService.prepareInstallation(version)) !== artifact) {
+              throw new Error('Review installation again before closing the application.')
+            }
+            if (
+              !isCurrent() ||
+              resolvingClose ||
+              appDataSealed ||
+              window.isDestroyed() ||
+              observedCloseEpoch !== windowCloseEpoch
+            ) {
+              throw new Error('Review installation again before closing the application.')
+            }
             applicationUpdateService.assertCurrentSourceSnapshot()
-            const intent = { artifact, isCurrent, version }
+            assertApplicationUpdateAdmission(admission)
+            const intent = { admission, artifact, isCurrent, version }
             pendingApplicationInstallation = intent
             try {
               // No await between the final document/close guard, intent and native close event.
@@ -1653,6 +1748,11 @@ if (!gotInstanceLock) {
             return { availableVersion: version, status: 'close-requested' }
           } finally {
             applicationInstallationRequestPending = false
+            // The native close handler consumes ownership synchronously, before its first await.
+            // A canceled/failed pre-seal close releases there; sealed attempts remain held above.
+            if (admission && activeApplicationUpdateAdmission !== admission) {
+              admission.release()
+            }
           }
         },
       )

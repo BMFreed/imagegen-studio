@@ -455,3 +455,35 @@ Both results preserve all recovery files and the existing retained-stage veto.
 Neither authenticates earlier loaded V8 memory, unpacked libraries, all runtime
 files, healthy startup, global process ownership or retirement. These remain
 acceptance dependencies; public promise statuses are unchanged.
+
+
+### Admission before explicit installation closes Projects
+
+[Cross-dataRoot admission](../engineering/phase-5-application-update-admission-research.md)
+adds a nonblocking OS gate for participating Install writers sharing a canonical
+AppImage. After existing read-only preflight, explicit Install acquires a stable
+sibling `.lock` descriptor before publishing its normal close intent. A competitor
+refuses before Save/close and preserves Projects and the downloaded candidate.
+Review, Check, Download, status and ordinary startup do not acquire it.
+
+Cancel, failed Save or stale preseal intent closes only its owned descriptors.
+The zero-byte user-owned0600 lock file remains on the same inode forever; its
+presence alone is neither a live lock nor retained recovery/auto-install intent.
+No candidate or backup is created before finalized close. Main checks admission
+at close and through its existing finalized-close/stage/activation/relaunch guard.
+
+Once sealed, the descriptor stays held until physical process teardown. Electron
+synthesizes process `exit` from app `quit`, so neither that event, window close nor
+handshake releases sealed admission. There is no arbitrary-FD transfer to B.
+Existing retained-stage veto is preserved there.
+
+The adapter uses fixed `/usr/bin/flock` in descriptor-only mode, without a shell,
+background helper or ML runtime dependency. Missing/unsafe tool or unsupported
+filesystem locking refuses Install with Projects open. Busy is shown as:
+`Another application update is in progress. Try again after it finishes. Your Projects remain open.`
+Other admission failures are normalized to:
+`Application update installation could not be reserved. Your Projects remain open.`
+
+This is updater-writer serialization, not global exclusivity of all executing
+runtimes. Legacy/unleased processes, startup health and recovery/retirement remain
+separate acceptance boundaries. No persisted schema or public status is promoted.

@@ -118,6 +118,10 @@ import {
 import { contextBridge, ipcRenderer } from 'electron'
 
 const applicationUpdateErrors: Readonly<Record<string, string>> = {
+  APPLICATION_UPDATE_ADMISSION_UNAVAILABLE:
+    'Application update installation could not be reserved. Your Projects remain open.',
+  APPLICATION_UPDATE_BUSY:
+    'Another application update is in progress. Try again after it finishes. Your Projects remain open.',
   APPLICATION_UPDATE_CHECK_FAILED: 'The application could not check for updates. Try again.',
   APPLICATION_UPDATE_CURRENT_SOURCE_UNAVAILABLE:
     'The application changed or could not be checked. Restart ImageGen Studio before installing an update. Your Projects remain open.',

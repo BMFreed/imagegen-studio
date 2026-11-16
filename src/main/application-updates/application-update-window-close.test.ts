@@ -7,7 +7,8 @@ import {
 /**
  * Runs the actual Main close/callback/IPC-registration source with controlled window, Project and
  * update-service ports plus the real app shutdown barrier and catalog lock. No Electron, filesystem
- * transaction, signature, application startup or Project persistence is qualified.
+ * transaction, kernel admission lock, signature, application startup or Project persistence is
+ * qualified. The controlled admission port observes actual Main ownership transfer/release only.
  */
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
@@ -21,7 +22,11 @@ import ts from 'typescript'
 
 import { GenerationAppShutdown } from '../projects/generation-app-shutdown.js'
 import { withProjectPathLock } from '../projects/project-path-lock.js'
-import { ApplicationUpdateCurrentSourceError } from './application-update-service.js'
+import { ApplicationUpdateAdmissionError } from './application-update-admission.js'
+import {
+  ApplicationUpdateCurrentSourceError,
+  ApplicationUpdateRecoveryRequiredError,
+} from './application-update-service.js'
 
 const mainSource = readFileSync(path.resolve(import.meta.dirname, '../index.ts'), 'utf8')
 const startMarker =
@@ -54,11 +59,12 @@ function declaration(name: string): string {
 }
 
 const consumer = ts.transpileModule(
-  `${mainSource.slice(regionStart, regionEnd)}\n${declaration(
+  `${declaration('sealedApplicationUpdateAdmission')}\n${mainSource.slice(regionStart, regionEnd)}\n${declaration(
     'workspaceCatalogChannels',
   )}\n${declaration('registerProjectHandler')}
 globalThis.closeState = () => ({ resolvingClose, appDataSealed, closingAfterResolution, windowCloseEpoch, exitReady });
 globalThis.registerControlledProject = registerProjectHandler;
+globalThis.sealedAdmission = () => sealedApplicationUpdateAdmission;
 `,
   { compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022 } },
 ).outputText
@@ -66,8 +72,13 @@ globalThis.registerControlledProject = registerProjectHandler;
 type Tab = { dirty: boolean; id: string; title: string }
 
 type Options = {
+  admissionFailure?: 'BUSY' | 'UNAVAILABLE'
+  admissionPath?: string
+  asyncAdmissionAssertion?: boolean
+  changedCandidateOnRevalidation?: boolean
   choice?: number
   dirty?: boolean
+  failAdmissionSnapshot?: boolean
   failFinalize?: boolean
   failInstall?: boolean
   failPreflight?: boolean
@@ -75,7 +86,11 @@ type Options = {
   failSourceSnapshot?: boolean
   flushError?: string | null
   installHeld?: Promise<void>
+  invalidateAdmissionOnProjectClose?: boolean
+  invalidateAdmissionOnSave?: boolean
   preflightHeld?: Promise<void>
+  retainedStageOnAdmission?: boolean
+  saveHeld?: Promise<void>
 }
 type CloseState = {
   appDataSealed: boolean
@@ -110,6 +125,9 @@ function fixture(options: Options = {}) {
   let reviewCalls = 0
   let closeCalls = 0
   let sourceChecks = 0
+  let admissionAttempts = 0
+  let retainedStagePresent = false
+  const admissions: { assertions: number; held: boolean; releases: number }[] = []
   let serviceFacade!: {
     check: () => Promise<unknown>
     download: (version: string) => Promise<unknown>
@@ -227,13 +245,18 @@ function fixture(options: Options = {}) {
     async prepareInstallation(version: string) {
       prepareCalls++
       assert.equal(version, '0.2.0')
+      if (retainedStagePresent) {
+        throw new ApplicationUpdateRecoveryRequiredError()
+      }
       if (options.preflightHeld) {
         await options.preflightHeld
       }
       if (options.failPreflight) {
         throw new Error('controlled unavailable preflight')
       }
-      return artifact
+      return options.changedCandidateOnRevalidation && prepareCalls > 1
+        ? Object.freeze({ identity: 'different-controlled-artifact' })
+        : artifact
     }
     reviewInstallation() {
       reviewCalls++
@@ -250,6 +273,38 @@ function fixture(options: Options = {}) {
   }
   const context = {
     acceptanceRecovery: { hasPendingHandoff: () => false },
+    acquireApplicationUpdateAdmission: (currentAppImage: string) => {
+      admissionAttempts++
+      assert.equal(currentAppImage, '/controlled/Current.AppImage')
+      if (options.admissionFailure) {
+        throw new ApplicationUpdateAdmissionError(options.admissionFailure)
+      }
+      const state = { assertions: 0, held: true, releases: 0 }
+      admissions.push(state)
+      if (options.retainedStageOnAdmission) {
+        retainedStagePresent = true
+      }
+      events.push('admission-acquired')
+      return Object.freeze({
+        assertHeld: () => {
+          state.assertions++
+          if (!state.held || options.failAdmissionSnapshot) {
+            throw new ApplicationUpdateAdmissionError('UNAVAILABLE')
+          }
+          if (options.asyncAdmissionAssertion) {
+            return Promise.resolve()
+          }
+        },
+        currentAppImage: options.admissionPath ?? currentAppImage,
+        release: () => {
+          if (state.held) {
+            state.held = false
+            state.releases++
+            events.push('admission-released')
+          }
+        },
+      })
+    },
     app: {
       getVersion: () => '0.1.0',
       isPackaged: true,
@@ -257,6 +312,7 @@ function fixture(options: Options = {}) {
         events.push('app-quit')
       },
     },
+    ApplicationUpdateAdmissionError,
     applicationUpdateAppImage: '/controlled/Current.AppImage',
     applicationUpdateCurrentSource: null,
     ApplicationUpdateService: ControlledUpdateService,
@@ -285,12 +341,12 @@ function fixture(options: Options = {}) {
     ipcMain,
     path,
     paths: { dataRoot: `/controlled-main-close/${randomUUID()}` },
-    process: {
+    process: Object.assign(new EventEmitter(), {
       env: { APPIMAGE: '/controlled/Current.AppImage' },
       platform: 'linux',
       resourcesPath: '/controlled/resources',
       versions: { electron: '44.4.5' },
-    },
+    }),
     projectGenerationClose: {
       close: async (tabId: string) => {
         tabs.splice(
@@ -298,6 +354,9 @@ function fixture(options: Options = {}) {
           1,
         )
         events.push('project-closed')
+        if (options.invalidateAdmissionOnProjectClose) {
+          options.failAdmissionSnapshot = true
+        }
       },
       getCloseImpact: async () => ({
         completedCandidateCount: 0,
@@ -338,12 +397,20 @@ function fixture(options: Options = {}) {
       events.push('fences-released')
     },
     saveProjectWithPreview: async (tabId: string) => {
+      if (options.saveHeld) {
+        events.push('save-awaiting')
+        await options.saveHeld
+      }
       if (options.failSave) {
         throw new Error('controlled Save failure')
       }
       tabs.find((tab) => tab.id === tabId)!.dirty = false
       events.push('project-saved')
+      if (options.invalidateAdmissionOnSave) {
+        options.failAdmissionSnapshot = true
+      }
     },
+    sealedAdmission: undefined as unknown as () => unknown,
     setTimeout,
     window,
     WINDOW_CLOSE_CANCELED_MESSAGE,
@@ -362,6 +429,7 @@ function fixture(options: Options = {}) {
     }
   }
   return {
+    admissions,
     artifact,
     context,
     errors,
@@ -373,6 +441,7 @@ function fixture(options: Options = {}) {
     options,
     request: (isCurrent = () => true) => requestInstallation('0.2.0', isCurrent),
     stats: () => ({
+      admissionAttempts,
       checkCalls,
       closeCalls,
       databaseClosed,
@@ -425,6 +494,18 @@ test('actual Main keeps sealed close blocked until exact-artifact handoff settle
     0,
   )
   assert.equal(f.context.closeState().exitReady, true)
+  assert.equal(f.admissions.length, 1)
+  assert.equal(f.admissions[0].held, true)
+  assert.equal(f.admissions[0].releases, 0)
+  assert.ok(f.context.sealedAdmission())
+  f.context.process.emit('exit', 0)
+  f.context.app.quit()
+  assert.equal(
+    f.admissions[0].held,
+    true,
+    'Synthetic Electron quit/exit cannot release a sealed reservation.',
+  )
+  assert.equal(f.admissions[0].releases, 0)
 })
 
 test('actual Main checks current sources after final document guards and refuses before native close', async () => {
@@ -436,7 +517,7 @@ test('actual Main checks current sources after final document guards and refuses
     }),
     ApplicationUpdateCurrentSourceError,
   )
-  assert.equal(f.stats().prepareCalls, 1)
+  assert.equal(f.stats().prepareCalls, 2)
   assert.equal(f.stats().sourceChecks, 1)
   assert.equal(f.stats().closeCalls, 0)
   assert.equal(f.stats().installCalls, 0)
@@ -444,12 +525,155 @@ test('actual Main checks current sources after final document guards and refuses
   assert.equal(f.tabs.length, 1)
   assert.equal(f.tabs[0].dirty, true)
   assert.equal(f.messages.length, 0)
+  assert.equal(f.admissions.length, 1)
+  assert.equal(f.admissions[0].held, false)
+  assert.equal(f.admissions[0].releases, 1)
   f.options.failSourceSnapshot = false
   f.options.choice = 2
   await f.request()
   await f.until(() => !f.context.closeState().resolvingClose)
   assert.equal(f.stats().sourceChecks, 2, 'A fresh request still uses the Main guard.')
   assert.equal(f.stats().installCalls, 0)
+})
+
+for (const reason of ['BUSY', 'UNAVAILABLE'] as const) {
+  test(`actual Main admission ${reason} refuses before native close and preserves the prepared candidate`, async () => {
+    const f = fixture({ admissionFailure: reason, dirty: true })
+    const candidate = f.artifact
+    await assert.rejects(
+      f.request(),
+      (error: unknown) =>
+        error instanceof ApplicationUpdateAdmissionError && error.reason === reason,
+    )
+    assert.equal(f.stats().prepareCalls, 1)
+    assert.equal(f.stats().admissionAttempts, 1)
+    assert.equal(f.stats().closeCalls, 0)
+    assert.equal(f.stats().installCalls, 0)
+    assert.equal(f.stats().databaseClosed, false)
+    assert.equal(f.stats().sourceChecks, 0)
+    assert.equal(f.artifact, candidate)
+    assert.equal(f.tabs.length, 1)
+    assert.equal(f.tabs[0].dirty, true)
+    assert.deepEqual(f.messages, [])
+    f.options.admissionFailure = undefined
+    f.options.choice = 2
+    await f.request()
+    await f.until(() => !f.context.closeState().resolvingClose)
+    assert.equal(f.stats().admissionAttempts, 2)
+    assert.equal(f.admissions.length, 1)
+    assert.equal(f.admissions[0].releases, 1)
+  })
+}
+
+for (const fault of ['wrong-target', 'async-assert'] as const) {
+  test(`actual Main ${fault} admission cannot reach normal close`, async () => {
+    const f = fixture({
+      admissionPath: fault === 'wrong-target' ? '/controlled/Other.AppImage' : undefined,
+      asyncAdmissionAssertion: fault === 'async-assert',
+      dirty: true,
+    })
+    await assert.rejects(f.request(), ApplicationUpdateAdmissionError)
+    assert.equal(f.stats().prepareCalls, 1)
+    assert.equal(f.stats().sourceChecks, 0)
+    assert.equal(f.stats().closeCalls, 0)
+    assert.equal(f.stats().databaseClosed, false)
+    assert.equal(f.admissions[0].held, false)
+    assert.equal(f.admissions[0].releases, 1)
+  })
+}
+
+for (const fault of ['retained-stage', 'different-candidate'] as const) {
+  test(`reservation revalidation catches ${fault} appearing after the first preflight`, async () => {
+    const f = fixture({
+      changedCandidateOnRevalidation: fault === 'different-candidate',
+      dirty: true,
+      retainedStageOnAdmission: fault === 'retained-stage',
+    })
+    await assert.rejects(
+      f.request(),
+      fault === 'retained-stage'
+        ? ApplicationUpdateRecoveryRequiredError
+        : /^(?:Error: )?Review installation again before closing the application\.$/,
+    )
+    assert.equal(f.stats().prepareCalls, 2)
+    assert.equal(f.stats().admissionAttempts, 1)
+    assert.equal(f.stats().sourceChecks, 0)
+    assert.equal(f.stats().closeCalls, 0)
+    assert.equal(f.stats().installCalls, 0)
+    assert.equal(f.stats().databaseClosed, false)
+    assert.equal(f.tabs.length, 1)
+    assert.equal(f.tabs[0].dirty, true)
+    assert.equal(f.admissions[0].held, false)
+    assert.equal(f.admissions[0].releases, 1)
+    assert.deepEqual(f.messages, [])
+  })
+}
+
+test('document invalidation during awaited Save releases the reservation before destructive Project close', async () => {
+  const held = deferred()
+  const f = fixture({ dirty: true, saveHeld: held.promise })
+  let current = true
+  await f.request(() => current)
+  await f.until(() => f.events.includes('save-awaiting'))
+  assert.equal(f.admissions[0].held, true)
+  current = false
+  held.resolve()
+  await f.until(() => !f.context.closeState().resolvingClose)
+  assert.equal(f.context.closeState().appDataSealed, false)
+  assert.equal(f.stats().databaseClosed, false)
+  assert.equal(f.stats().installCalls, 0)
+  assert.equal(f.tabs.length, 1)
+  assert.equal(f.tabs[0].dirty, false, 'The completed explicit Save is preserved.')
+  assert.equal(f.events.includes('project-closed'), false)
+  assert.equal(f.admissions[0].held, false)
+  assert.equal(f.admissions[0].releases, 1)
+})
+
+test('admission lost during Save releases before Project close and never arms a later ordinary close', async () => {
+  const f = fixture({ dirty: true, invalidateAdmissionOnSave: true })
+  await f.request()
+  await f.until(() => !f.context.closeState().resolvingClose)
+  assert.equal(f.stats().databaseClosed, false)
+  assert.equal(f.stats().installCalls, 0)
+  assert.equal(f.tabs.length, 1)
+  assert.equal(f.tabs[0].dirty, false)
+  assert.equal(f.admissions[0].held, false)
+  assert.equal(f.admissions[0].releases, 1)
+  f.window.close()
+  await f.until(() => f.stats().destroyed)
+  assert.equal(f.stats().installCalls, 0)
+  assert.equal(f.stats().admissionAttempts, 1)
+})
+
+test('post-Project-close admission loss stays unsealed, releases and uses a neutral diagnostic', async () => {
+  const f = fixture({ dirty: true, invalidateAdmissionOnProjectClose: true })
+  await f.request()
+  await f.until(() => !f.context.closeState().resolvingClose)
+  assert.equal(f.events.includes('project-closed'), true)
+  assert.equal(f.tabs.length, 0, 'Confirmed Project Close is not rolled back.')
+  assert.equal(f.context.closeState().appDataSealed, false)
+  assert.equal(f.stats().databaseClosed, false)
+  assert.equal(f.stats().installCalls, 0)
+  assert.equal(f.admissions[0].held, false)
+  assert.equal(f.admissions[0].releases, 1)
+  assert.equal(f.errors.length, 1)
+  assert.equal(f.errors[0].message.includes('Projects remain open'), false)
+  assert.equal(
+    f.errors[0].message,
+    'Application update ownership could not be confirmed. Installation has not started. Keep update files for recovery.',
+  )
+})
+
+test('ordinary Check Download Review and Close never acquire an update admission', async () => {
+  const f = fixture()
+  await f.facade().check()
+  await f.facade().download('0.2.0')
+  await f.facade().reviewInstallation('0.2.0')
+  f.window.close()
+  await f.until(() => f.stats().destroyed)
+  assert.equal(f.stats().admissionAttempts, 0)
+  assert.equal(f.stats().installCalls, 0)
+  assert.equal(f.context.sealedAdmission(), null)
 })
 
 for (const lane of ['native-cancel', 'renderer-cancel', 'save-error'] as const) {
@@ -465,12 +689,17 @@ for (const lane of ['native-cancel', 'renderer-cancel', 'save-error'] as const) 
     assert.equal(f.stats().databaseClosed, false)
     assert.equal(f.stats().installCalls, 0)
     assert.equal(f.tabs.length, 1)
+    assert.equal(f.admissions.length, 1)
+    assert.equal(f.admissions[0].held, false)
+    assert.equal(f.admissions[0].releases, 1)
+    assert.equal(f.context.sealedAdmission(), null)
     f.options.choice = 1
     f.options.failSave = false
     f.options.flushError = null
     f.window.close()
     await f.until(() => f.stats().destroyed)
     assert.equal(f.stats().installCalls, 0)
+    assert.equal(f.stats().admissionAttempts, 1, 'A later ordinary Close inherits no reservation.')
   })
 }
 
@@ -486,6 +715,18 @@ for (const lane of ['finalize-error', 'install-error'] as const) {
     assert.equal(f.context.closeState().resolvingClose, true)
     assert.equal(f.context.closeState().exitReady, true)
     assert.equal(f.stats().installCalls, lane === 'install-error' ? 1 : 0)
+    assert.equal(f.admissions.length, 1)
+    assert.equal(f.admissions[0].held, true)
+    assert.equal(f.admissions[0].releases, 0)
+    assert.ok(f.context.sealedAdmission())
+    f.context.process.emit('exit', 0)
+    f.context.app.quit()
+    assert.equal(
+      f.admissions[0].held,
+      true,
+      'Even sealed failure retains the controlled lease through synthetic exit.',
+    )
+    assert.equal(f.admissions[0].releases, 0)
     assert.equal(f.errors.length, 1)
     assert.equal(
       f.errors[0].title,
@@ -509,6 +750,7 @@ test('actual Main refuses unavailable and stale preflight before requesting clos
   const unavailable = fixture({ failPreflight: true })
   await assert.rejects(unavailable.request())
   assert.equal(unavailable.stats().closeCalls, 0)
+  assert.equal(unavailable.stats().admissionAttempts, 0)
   const held = deferred()
   const stale = fixture({ preflightHeld: held.promise })
   let current = true
@@ -518,6 +760,8 @@ test('actual Main refuses unavailable and stale preflight before requesting clos
   await assert.rejects(pending)
   assert.equal(stale.stats().closeCalls, 0)
   assert.equal(stale.stats().databaseClosed, false)
+  assert.equal(stale.admissions.length, 0)
+  assert.equal(stale.stats().admissionAttempts, 0)
 })
 
 test('an intervening canceled ordinary Close invalidates Install preflight and duplicates refuse', async () => {
@@ -530,6 +774,7 @@ test('an intervening canceled ordinary Close invalidates Install preflight and d
   held.resolve()
   await assert.rejects(pending)
   assert.equal(f.stats().prepareCalls, 1)
+  assert.equal(f.stats().admissionAttempts, 0)
   assert.equal(f.stats().closeCalls, 1)
   assert.equal(f.stats().installCalls, 0)
 })

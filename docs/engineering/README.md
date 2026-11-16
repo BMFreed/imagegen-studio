@@ -1,6 +1,23 @@
 # Engineering Workflow
 
-## Current signed application runtime declaration
+## Current cross-dataRoot update admission
+
+[Update admission](./phase-5-application-update-admission-research.md) serializes explicit Install operations for the
+same canonical AppImage before ordinary Project close. It adapts Invoke's stable
+OS-lock file through inherited-FD system flock. Cancel releases owned descriptors;
+sealed attempts retain the gate until physical process death, including after
+Electron's synthetic exit event. Check/Download/Review/startup never acquire this
+admission.
+
+This protects participating updater writers. Legacy/unleased runtime ownership,
+health, recovery adoption/retirement and shipping remain open. Root615PASS/one
+platformSKIP, full typing/build/scoped lint and actual kernel semantic mutation
+pass. Accepted packaged R2 covers Busy/Cancel/Save→A/B with2normal app exits and
+6normal helpers; initial oracle failures are retained separately. Complete5,088-entry
+retention/audit records are linked in research; all eight promise statuses stay unchanged.
+
+
+## Previous signed application runtime declaration
 
 [Signed publisher declaration](./phase-5-application-runtime-declaration-research.md) adds strict release schema2 with
 fixed ASAR/executable fingerprints. Existing schema1 remains target-only. The

@@ -9,6 +9,7 @@ import type {
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import { ApplicationUpdateAdmissionError } from './application-update-admission.js'
 import { registerApplicationUpdateIpc } from './application-update-ipc.js'
 import {
   ApplicationUpdateCurrentSourceError,
@@ -725,4 +726,39 @@ test('Install response exposes only the requested close acknowledgement, never s
     failure(await f.invoke('install', ['0.1.0']), 'IPC_INVALID_RESPONSE')
   }
   assert.equal(f.installationVersions.length, 4)
+})
+
+for (const reason of ['BUSY', 'UNAVAILABLE'] as const) {
+  test(`Install normalizes typed admission ${reason} without exposing native diagnostics or retry authority`, async () => {
+    const f = fixture()
+    await f.invoke('reviewInstallation', ['0.1.0'])
+    const error = new ApplicationUpdateAdmissionError(reason)
+    error.message = '/private/lock/path?token=secret'
+    f.controls.install = async () => {
+      throw error
+    }
+    const code =
+      reason === 'BUSY' ? 'APPLICATION_UPDATE_BUSY' : 'APPLICATION_UPDATE_ADMISSION_UNAVAILABLE'
+    assert.deepEqual(failure(await f.invoke('install', ['0.1.0']), code), {
+      code,
+      message:
+        reason === 'BUSY'
+          ? 'Another application update is in progress. Try again after it finishes. Your Projects remain open.'
+          : 'Application update installation could not be reserved. Your Projects remain open.',
+    })
+    failure(await f.invoke('install', ['0.1.0']), 'APPLICATION_UPDATE_INSTALL_FAILED')
+    assert.equal(f.installationVersions.length, 1)
+    f.controls.install = async () => ({ availableVersion: '0.1.0', status: 'close-requested' })
+    await f.invoke('reviewInstallation', ['0.1.0'])
+    assert.equal((await f.invoke('install', ['0.1.0'])).ok, true)
+  })
+}
+
+test('a plain native admission code cannot impersonate the typed Install refusal', async () => {
+  const f = fixture()
+  await f.invoke('reviewInstallation', ['0.1.0'])
+  f.controls.install = async () => {
+    throw Object.assign(new Error('/private/native'), { code: 'APPLICATION_UPDATE_BUSY' })
+  }
+  failure(await f.invoke('install', ['0.1.0']), 'APPLICATION_UPDATE_INSTALL_FAILED')
 })
