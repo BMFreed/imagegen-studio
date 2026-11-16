@@ -133,6 +133,7 @@ import { loadApplicationReleaseTrust } from './application-updates/application-r
 import { collectApplicationUpdateInstallPreview } from './application-updates/application-update-install-preview.js'
 import { registerApplicationUpdateIpc } from './application-updates/application-update-ipc.js'
 import { ApplicationUpdateService } from './application-updates/application-update-service.js'
+import { createElectronApplicationRelauncher } from './application-updates/electron-application-relaunch.js'
 import {
   createElectronUpdateChecker,
   VerifiedAppImageUpdater,
@@ -1444,6 +1445,7 @@ if (!gotInstanceLock) {
           }
           return impact
         },
+        createElectronApplicationRelauncher(app, process.versions.electron),
       )
       const applicationUpdates = registerApplicationUpdateIpc(
         ipcMain,

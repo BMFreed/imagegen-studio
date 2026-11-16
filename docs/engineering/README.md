@@ -1,6 +1,21 @@
 # Engineering Workflow
 
-## Current application update installation preview
+## Current private application update relaunch handoff
+
+[Exit-synchronized relaunch](./phase-5-application-update-relaunch-research.md)
+connects the existing activated owner to the pinned Electron44.4.5 built-in
+relauncher. Private installAfterClose requires the finalized captured Main close
+assertion before staging; no public Install/IPC or new close state machine is added.
+Durable relaunching intent and final synchronous identity guards precede the
+callback; only literaltrue acknowledges helper setup. Any attempted nontrue/throw
+is terminal uncertain, with no automatic retry/rollback. Final checks:322PASS,
+one platform SKIP; typing/build/scoped lint and semantic GREEN/RED/GREEN PASS.
+Real fixture A on FUSE → B extract-and-run passes with two normal lifetimes and
+automatic cleanup. This does not qualify Studio migrations or public Install.
+Next consumer: existing Project close consent → sealed Install close/handoff;
+startup/recovery and shipping acceptance remain gates. All promise statuses stay unchanged.
+
+## Previous application update installation preview
 
 [Installation preview](./phase-5-application-update-install-preview-research.md)
 connects the existing Updates dialog to signed downloaded release inspection and

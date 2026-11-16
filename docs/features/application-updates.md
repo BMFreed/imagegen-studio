@@ -148,6 +148,38 @@ capability в failed. Этот контракт не добавляет restart 
 helper/relaunch, автоматическое восстановление после crash или проверку FUSE.
 Публичный Install и release acceptance остаются открыты; shipping publisher не настроен.
 
+### Private exit-synchronized handoff
+
+[Private relaunch](../engineering/phase-5-application-update-relaunch-research.md)
+продолжает тот же activated owner: durable `relaunching` intent → full owned
+snapshot → final synchronous guards → pinned Electron44.4.5 built-in relauncher.
+Native bool проверяется как unknown: только literaltrue подтверждает handshake,
+а не запуск приложения. False/throw/Promise после попытки означает uncertain;
+backup сохраняется, автоматических retry/rollback/quit нет. Старые capabilities
+больше не дают действий. Post-activation handoff не зависит от native cache.
+
+Main-private `installAfterClose(version)` до создания stage требует captured
+synchronous finalized/no-Project assertion и поддерживаемый scheduler, затем
+использует прежние stage/backup/activation owners. Adapter передаёт только exact
+current AppImage path и fixed `--appimage-extract-and-run`, без нового subprocess helper или inherited CLI.
+Это штатный type2 runtime path для restart под NoNewPrivs; прямой повторный FUSE
+mount не считается поддержанным relaunch.
+Другие Electron versions не получают scheduler; Check/Download остаются прежними.
+
+Это не новый public Install/IPC или close flow: user consent/Save/Discard/Cancel
+при будущем Install должны проходить существующий обычный close handler. После
+finalize нельзя возвращать disposed SQLite/UI в режим редактирования; failure
+должен удерживать sealed normal-exit path. Helper handshake, native test fixture,
+shipping binary, migration/runtime acceptance и crash recovery — разные границы.
+Public Install/relaunch и авторизация recovery из journal не добавлены этим этапом.
+
+Настоящий минимальный packaged fixture прошёл A0.1.0/FUSE → B0.2.0/extract-and-run:
+два normal app/process exit0, тот же lock/profile/SQLite sentinel, точные signed B
+и backup A, удаление FUSE mount и extracted AppDir. Это выполненный native путь
+private service, но не Studio Project close/migration или shipping acceptance.
+Финальные focused checks:322PASS/один platform SKIP; typing/build/scoped lint и
+изолированный semantic GREEN/RED/GREEN прошли. Подробные evidence/limits — в research.
+
 ### Installation impact preview
 
 [Installation preview](../engineering/phase-5-application-update-install-preview-research.md)

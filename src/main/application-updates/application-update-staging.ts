@@ -12,7 +12,10 @@
  * Header classification does not qualify ELF loading, the filesystem, internal app version,
  * migrations or execution. Private filesystem activation follows the existing runtime journal
  * phases after caller-confirmed resource close; it does not prove physical Main exit, application
- * restart or execution. No public Install, helper or crash-recovery/adoption consumer exists here.
+ * restart or execution. The disclosed Electron44.4.5 adapter supplies the native relaunch call;
+ * this owner records its intent and guards the exact activated snapshot immediately before it. A
+ * successful handshake is not execution/startup acknowledgement. No public Install or
+ * crash-recovery/adoption consumer exists here, and no independent helper is introduced.
  */
 import { createHash, randomUUID } from 'node:crypto'
 import {
@@ -67,6 +70,7 @@ export interface BackedUpApplicationUpdate {
 export interface ActivatedApplicationUpdate {
   readonly backupPath: string
   readonly currentAppImage: string
+  handoffRelaunch: (schedule: (currentAppImage: string) => unknown) => Promise<void>
   readonly manifest: ApplicationReleaseManifest
   rollback: () => Promise<RolledBackApplicationUpdate>
   readonly stagingDirectory: string
@@ -88,6 +92,7 @@ type Phase =
   | 'backing-up'
   | 'failed'
   | 'prepared'
+  | 'relaunching'
   | 'rolled-back'
   | 'rolling-back'
 type PhaseSnapshot = Readonly<{
@@ -155,6 +160,20 @@ export class AppUpdateTransitionError extends Error {
             : 'Application update preparation failed before publication. Preserve all staging files for explicit recovery.',
     )
     this.name = 'AppUpdateTransitionError'
+  }
+}
+
+/** Neither outcome says the previous application was restored or a new application started. */
+export class AppUpdateRelaunchError extends Error {
+  readonly code = 'APPLICATION_UPDATE_RELAUNCH_FAILED'
+
+  constructor(readonly outcome: 'not-attempted' | 'uncertain') {
+    super(
+      outcome === 'uncertain'
+        ? 'Application relaunch handoff is uncertain. Preserve all update files and do not retry automatically.'
+        : 'Application relaunch was not attempted. Preserve the update and backup for explicit recovery.',
+    )
+    this.name = 'AppUpdateRelaunchError'
   }
 }
 
@@ -329,14 +348,21 @@ export async function stageVerifiedApplicationArtifact(input: {
 
     // All capabilities belong to this one owner. An old capability refuses before entering a
     // verification catch, so consuming it cannot poison a legitimate in-progress transition.
-    function exclusive<T>(kind: string, expected: Phase, use: () => Promise<T>): Promise<T> {
+    function exclusive<T>(
+      kind: string,
+      expected: Phase,
+      use: () => Promise<T>,
+      refuse?: (code: 'BUSY' | 'INVALID_PHASE') => Error,
+    ): Promise<T> {
       if (pending) {
         return pendingKind === kind
           ? (pending as Promise<T>)
-          : Promise.reject(new AppUpdateTransitionError('BUSY', 'unchanged'))
+          : Promise.reject(refuse?.('BUSY') ?? new AppUpdateTransitionError('BUSY', 'unchanged'))
       }
       if (phase !== expected) {
-        return Promise.reject(new AppUpdateTransitionError('INVALID_PHASE', 'unchanged'))
+        return Promise.reject(
+          refuse?.('INVALID_PHASE') ?? new AppUpdateTransitionError('INVALID_PHASE', 'unchanged'),
+        )
       }
       const operation = Promise.resolve().then(use)
       pending = operation
@@ -674,6 +700,7 @@ export async function stageVerifiedApplicationArtifact(input: {
           return Object.freeze({
             backupPath,
             currentAppImage,
+            handoffRelaunch,
             manifest,
             rollback,
             stagingDirectory,
@@ -687,6 +714,44 @@ export async function stageVerifiedApplicationArtifact(input: {
           )
         }
       })
+    }
+
+    function handoffRelaunch(schedule: (currentAppImage: string) => unknown): Promise<void> {
+      return exclusive(
+        'relaunch',
+        'activated',
+        async () => {
+          let attempted = false
+          try {
+            need(typeof schedule === 'function', 'INVALID')
+            await verifySnapshot(snapshot, false)
+            // Consume every activated capability before replacing its journal. Even a successful
+            // native handshake leaves only durable intent: it is not application-start proof.
+            phase = 'relaunching'
+            await withDirectories(async (directories) => {
+              snapshot = await writePhase(directories, { ...snapshot, phase: 'relaunching' })
+            })
+            await verifySnapshot(snapshot, false)
+            // No await between these fresh synchronous guards and the native call. The helper
+            // might already exist after a false return or throw, so attempts are never retried or
+            // rolled back automatically. The caller owns normal close after this boundary.
+            finalGuards(snapshot, () => {
+              attempted = true
+              const result = schedule(currentAppImage)
+              if (result !== true) {
+                if (result instanceof Promise) {
+                  void result.catch(() => undefined)
+                }
+                throw new AppUpdateRelaunchError('uncertain')
+              }
+            })
+          } catch {
+            await failOwned()
+            throw new AppUpdateRelaunchError(attempted ? 'uncertain' : 'not-attempted')
+          }
+        },
+        () => new AppUpdateRelaunchError('not-attempted'),
+      )
     }
 
     function rollback(): Promise<RolledBackApplicationUpdate> {

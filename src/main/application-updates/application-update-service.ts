@@ -3,7 +3,7 @@
  * AppUpdater.checkForUpdates/downloadUpdate own provider/semver/transfer/cache. The native adapter
  * verifies returned cache bytes; this owner binds an explicit Download to the latest available
  * check. Native AppUpdater retains old metadata after no-update/errors, so that internal state
- * alone must never authorize a download. No close/installer authority escapes.
+ * alone must never authorize a download. No public close/installer authority escapes.
  */
 import {
   APPLICATION_UPDATE_NOTES_MAX_LENGTH,
@@ -66,6 +66,8 @@ export class ApplicationUpdateService {
     private readonly assertApplicationClosed: (() => void) | null = null,
     private readonly readInstallImpact:
       (() => Promise<Omit<ApplicationUpdateInstallPreview, 'availableVersion'>>) | null = null,
+    private readonly scheduleApplicationRelaunch:
+      ((currentAppImage: string) => unknown) | null = null,
   ) {
     if (!isApplicationUpdateVersion(currentVersion)) {
       throw new Error('Invalid application version.')
@@ -223,6 +225,21 @@ export class ApplicationUpdateService {
     return structuredClone(this.snapshot)
   }
 
+  /** Main-private consumer after irreversible close; caller must seal the normal exit path. */
+  async installAfterClose(expectedVersion: string): Promise<void> {
+    if (!this.assertApplicationClosed || !this.scheduleApplicationRelaunch) {
+      throw new Error('Application update restart is unavailable.')
+    }
+    this.assertClosedForInstallation()
+    const staged = await this.stageForInstallation(expectedVersion)
+    const backed = await staged.prepareBackup()
+    const active = await backed.activate()
+    await active.handoffRelaunch((currentAppImage) => {
+      this.assertClosedForInstallation()
+      return this.scheduleApplicationRelaunch!(currentAppImage)
+    })
+  }
+
   /** Main-private gate; public downloaded snapshots never grant installer authority. */
   async prepareVerifiedArtifact(expectedVersion: string): Promise<VerifiedApplicationArtifact> {
     const artifact = this.verifiedArtifact
@@ -320,7 +337,7 @@ export class ApplicationUpdateService {
             // Rollback after publication belongs to the returned filesystem capability.
             return await backup.activate(() => {
               assertSelection()
-              this.assertApplicationClosed!()
+              this.assertClosedForInstallation()
             })
           },
           verifyCompleteSnapshot: async () => {
@@ -338,6 +355,19 @@ export class ApplicationUpdateService {
     })
     await plan.verifyCompleteSnapshot()
     return plan
+  }
+
+  private assertClosedForInstallation(): void {
+    if (!this.assertApplicationClosed) {
+      throw new Error('The application close barrier is unavailable.')
+    }
+    const result: unknown = this.assertApplicationClosed()
+    if (result !== undefined) {
+      if (result instanceof Promise) {
+        void result.catch(() => undefined)
+      }
+      throw new Error('The application close assertion must be synchronous.')
+    }
   }
 
   private empty(status: ApplicationUpdateSnapshot['status']): ApplicationUpdateSnapshot {

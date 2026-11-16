@@ -3,6 +3,7 @@ import type { ApplicationUpdateInstallPreview } from '../../shared/application-u
 import { DownloadedUpdateHelper } from 'electron-updater/out/DownloadedUpdateHelper.js'
 import assert from 'node:assert/strict'
 import { createHash, generateKeyPairSync, sign } from 'node:crypto'
+import { lstatSync, readFileSync } from 'node:fs'
 import * as fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -24,8 +25,9 @@ function image(fill: number): Buffer {
 }
 
 /**
- * Only native metadata HTTP and transfer are controlled. Parser/cache/signature/service/FS are
- * real.
+ * Native metadata HTTP and transfer are controlled. Parser/cache/signature/service/FS are real;
+ * optional Main close/impact and relaunch callbacks remain controlled where each case supplies
+ * them.
  */
 async function fixture(
   t: { after: (cleanup: () => Promise<void>) => void },
@@ -34,6 +36,7 @@ async function fixture(
   assertApplicationClosed: (() => void) | null = null,
   readInstallImpact:
     (() => Promise<Omit<ApplicationUpdateInstallPreview, 'availableVersion'>>) | null = null,
+  scheduleApplicationRelaunch: ((currentAppImage: string) => unknown) | null = null,
 ) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'igs-staging-consumer-'))
   t.after(() => fs.rm(root, { force: true, recursive: true }))
@@ -136,6 +139,7 @@ async function fixture(
     target ? currentAppImage : null,
     assertApplicationClosed,
     readInstallImpact,
+    scheduleApplicationRelaunch,
   )
   return { body, currentAppImage, parent, root, service, updater }
 }
@@ -414,4 +418,139 @@ test('changed native cache bytes refuse impact review before the collector runs'
   assert.equal(impactCalls, 0)
   assert.deepEqual(await identity(f.currentAppImage), original)
   assert.deepEqual(await fs.readdir(f.parent), ['Current.AppImage'])
+})
+
+/**
+ * Actual native provider/parser/signature/cache/service/transaction; metadata HTTP, transfer,
+ * finalized-close assertion and helper scheduling are controlled ports. Nothing is executed or
+ * quit. A true scheduler result proves only the observed private handoff, not native app startup.
+ */
+test('private install after close joins the signed native cache to backup activation and one exact-path handoff', async (t) => {
+  let closeChecks = 0
+  const scheduled: string[] = []
+  const f = await fixture(
+    t,
+    true,
+    true,
+    () => {
+      closeChecks++
+    },
+    null,
+    (target) => {
+      scheduled.push(target)
+      assert.equal(target, f.currentAppImage)
+      assert.equal(lstatSync(target).mode & 0o7777, 0o755)
+      assert.ok(readFileSync(target).equals(f.body))
+      return true
+    },
+  )
+  await f.service.check()
+  await f.service.download('0.2.0')
+  const artifact = await f.service.prepareVerifiedArtifact('0.2.0')
+  const cached = await identity(artifact.path)
+  const old = await fs.readFile(f.currentAppImage)
+  const publicBefore = f.service.getStatus()
+  await f.service.installAfterClose('0.2.0')
+  assert.deepEqual(scheduled, [f.currentAppImage])
+  assert.ok(closeChecks >= 2)
+  assert.ok((await fs.readFile(f.currentAppImage)).equals(f.body))
+  assert.deepEqual(await identity(artifact.path), cached)
+  assert.deepEqual(f.service.getStatus(), publicBefore)
+  const siblings = (await fs.readdir(f.parent)).filter((name) => name !== 'Current.AppImage')
+  assert.equal(siblings.length, 1)
+  const stage = path.join(f.parent, siblings[0])
+  assert.ok((await fs.readFile(path.join(stage, 'previous.AppImage'))).equals(old))
+  assert.equal((await fs.stat(path.join(stage, 'previous.AppImage'))).mode & 0o7777, 0o600)
+  const journal = JSON.parse(await fs.readFile(path.join(stage, 'journal.json'), 'utf8')) as {
+    state: string
+  }
+  assert.equal(journal.state, 'relaunching')
+  await assert.rejects(fs.access(path.join(stage, 'failed.json')), { code: 'ENOENT' })
+  await assert.rejects(f.service.installAfterClose('0.2.0'))
+  assert.deepEqual(scheduled, [f.currentAppImage])
+})
+
+for (const lane of [
+  'missing-close',
+  'rejected-close',
+  'async-close',
+  'missing-scheduler',
+  'metadata-only',
+  'wrong-version',
+  'not-downloaded',
+  'missing-current-path',
+] as const) {
+  test(`${lane} refuses private install after close before staging or helper scheduling`, async (t) => {
+    const scheduled: string[] = []
+    const close =
+      lane === 'missing-close'
+        ? null
+        : lane === 'rejected-close'
+          ? () => {
+              throw new Error('Controlled Main close barrier is not complete.')
+            }
+          : lane === 'async-close'
+            ? () => Promise.resolve()
+            : () => undefined
+    const f = await fixture(
+      t,
+      lane !== 'metadata-only',
+      lane !== 'missing-current-path',
+      close,
+      null,
+      lane === 'missing-scheduler'
+        ? null
+        : (target) => {
+            scheduled.push(target)
+            return true
+          },
+    )
+    await f.service.check()
+    if (lane !== 'not-downloaded') {
+      await f.service.download('0.2.0')
+    }
+    const before = await identity(f.currentAppImage)
+    await assert.rejects(f.service.installAfterClose(lane === 'wrong-version' ? '0.3.0' : '0.2.0'))
+    assert.deepEqual(await identity(f.currentAppImage), before)
+    assert.deepEqual(await fs.readdir(f.parent), ['Current.AppImage'])
+    assert.deepEqual(scheduled, [])
+  })
+}
+
+test('a false helper result leaves the actual installed bytes and backup for explicit recovery, without retrying', async (t) => {
+  let scheduled = 0
+  const f = await fixture(
+    t,
+    true,
+    true,
+    () => undefined,
+    null,
+    () => {
+      scheduled++
+      return false
+    },
+  )
+  await f.service.check()
+  await f.service.download('0.2.0')
+  const artifact = await f.service.prepareVerifiedArtifact('0.2.0')
+  const cached = await identity(artifact.path)
+  const old = await fs.readFile(f.currentAppImage)
+  await assert.rejects(f.service.installAfterClose('0.2.0'), (error: unknown) => {
+    assert.equal((error as { outcome?: string }).outcome, 'uncertain')
+    return true
+  })
+  assert.equal(scheduled, 1)
+  assert.ok((await fs.readFile(f.currentAppImage)).equals(f.body))
+  assert.deepEqual(await identity(artifact.path), cached)
+  const siblings = (await fs.readdir(f.parent)).filter((name) => name !== 'Current.AppImage')
+  assert.equal(siblings.length, 1)
+  const stage = path.join(f.parent, siblings[0])
+  assert.ok((await fs.readFile(path.join(stage, 'previous.AppImage'))).equals(old))
+  assert.equal(
+    (JSON.parse(await fs.readFile(path.join(stage, 'journal.json'), 'utf8')) as { state: string })
+      .state,
+    'relaunching',
+  )
+  await assert.rejects(f.service.installAfterClose('0.2.0'))
+  assert.equal(scheduled, 1)
 })
