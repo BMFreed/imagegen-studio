@@ -36,6 +36,7 @@ import {
   type ApplicationUpdateInstallPreview,
   isApplicationUpdateInstallationRequest,
   isApplicationUpdateInstallPreview,
+  isApplicationUpdateRecoverySnapshot,
   isApplicationUpdateSnapshot,
 } from '../shared/application-updates.js'
 import { isModelRemovalId, isModelRemovalReview } from '../shared/model-removal.js'
@@ -132,6 +133,8 @@ const applicationUpdateErrors: Readonly<Record<string, string>> = {
     'The application could not review installation impact. Try again.',
   APPLICATION_UPDATE_RECOVERY_REQUIRED:
     'Application update recovery is required before installation. Your Projects remain open.',
+  APPLICATION_UPDATE_RECOVERY_STATUS_FAILED:
+    'The application could not read update recovery information. Reopen this dialog to try again.',
   IPC_INVALID_CALLER: 'Application update request was rejected.',
   IPC_INVALID_RESPONSE: 'The application returned an invalid update status.',
   IPC_UNAVAILABLE: 'The application could not reach the update service.',
@@ -1277,6 +1280,12 @@ const api: StudioApi = {
         ipcChannels.applicationUpdates.download,
         [availableVersion],
         isApplicationUpdateSnapshot,
+      ),
+    getRecoveryStatus: () =>
+      invokeApplicationUpdate(
+        ipcChannels.applicationUpdates.getRecoveryStatus,
+        [],
+        isApplicationUpdateRecoverySnapshot,
       ),
     getStatus: () =>
       invokeApplicationUpdate(

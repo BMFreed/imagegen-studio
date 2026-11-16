@@ -1,6 +1,7 @@
 import type {
   ApplicationUpdateInstallationRequest,
   ApplicationUpdateInstallPreview,
+  ApplicationUpdateRecoverySnapshot,
   ApplicationUpdateSnapshot,
 } from './application-updates.js'
 import type { ModelRemovalReview } from './model-removal.js'
@@ -151,6 +152,7 @@ export const ipcChannels = {
   applicationUpdates: {
     check: 'application-updates:check',
     download: 'application-updates:download',
+    getRecoveryStatus: 'application-updates:get-recovery-status',
     getStatus: 'application-updates:get-status',
     install: 'application-updates:install',
     reviewInstallation: 'application-updates:review-installation',
@@ -1057,6 +1059,7 @@ export interface RuntimeApi {
 export interface ApplicationUpdatesApi {
   check: () => Promise<ApiResult<ApplicationUpdateSnapshot>>
   download: (availableVersion: string) => Promise<ApiResult<ApplicationUpdateSnapshot>>
+  getRecoveryStatus: () => Promise<ApiResult<ApplicationUpdateRecoverySnapshot>>
   getStatus: () => Promise<ApiResult<ApplicationUpdateSnapshot>>
   install: (availableVersion: string) => Promise<ApiResult<ApplicationUpdateInstallationRequest>>
   reviewInstallation: (

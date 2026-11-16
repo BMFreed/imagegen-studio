@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type {
   ApplicationUpdateInstallPreview,
+  ApplicationUpdateRecoverySnapshot,
   ApplicationUpdateSnapshot,
 } from '../../shared/application-updates.js'
 
@@ -18,6 +19,9 @@ const props = defineProps<{
   pending: boolean
   previewError: string | null
   previewPending: boolean
+  recovery: ApplicationUpdateRecoverySnapshot | null
+  recoveryError: string | null
+  recoveryPending: boolean
   snapshot: ApplicationUpdateSnapshot | null
 }>()
 const show = defineModel<boolean>('show', { required: true })
@@ -30,15 +34,24 @@ const emit = defineEmits<{
 }>()
 
 const activeDownload = computed(() => props.downloading || props.snapshot?.status === 'downloading')
+const recoveryAllowsInstallation = computed(
+  () =>
+    !props.recoveryPending &&
+    props.recoveryError === null &&
+    props.recovery !== null &&
+    props.recovery.status !== 'required',
+)
 const previewView = computed(
   () =>
-    props.previewPending ||
-    props.previewError !== null ||
-    props.installError !== null ||
-    props.installPreview !== null,
+    recoveryAllowsInstallation.value &&
+    (props.previewPending ||
+      props.previewError !== null ||
+      props.installError !== null ||
+      props.installPreview !== null),
 )
 const installationEligible = computed(
   () =>
+    recoveryAllowsInstallation.value &&
     props.installPreview?.installationAvailable === true &&
     props.snapshot?.status === 'downloaded' &&
     props.snapshot.verification === 'signed-release' &&
@@ -54,6 +67,7 @@ const canInstall = computed(
 )
 const canReview = computed(
   () =>
+    recoveryAllowsInstallation.value &&
     !props.pending &&
     !activeDownload.value &&
     !props.previewPending &&
@@ -150,6 +164,52 @@ function close() {
           <dd>{{ snapshot.availableVersion }}</dd>
         </template>
       </dl>
+      <section
+        v-if="recovery?.status === 'required'"
+        aria-label="Application update recovery at startup"
+        class="updates-recovery"
+      >
+        <NAlert title="Application update recovery required" type="warning">
+          <p class="updates-result">At app startup</p>
+          <p class="updates-recovery-detail">
+            Installation is blocked while update recovery is required. Keep any update and backup
+            files. You can continue working with Projects.
+          </p>
+          <p class="updates-recovery-detail">
+            Application file:
+            {{
+              recovery.target === 'verified'
+                ? 'publisher signature verified.'
+                : 'could not be verified.'
+            }}
+          </p>
+          <p class="updates-recovery-detail">
+            Runtime files:
+            {{
+              recovery.runtime === 'verified-publisher-declaration'
+                ? 'match the signed publisher declaration.'
+                : 'could not be verified.'
+            }}
+          </p>
+          <p class="updates-recovery-detail">
+            These checks do not establish image-engine readiness.
+          </p>
+        </NAlert>
+      </section>
+      <p v-else-if="recoveryPending" class="updates-detail updates-recovery" role="status">
+        Reading application update recovery status…
+      </p>
+      <NAlert
+        v-else-if="recoveryError"
+        class="updates-recovery"
+        title="Application update recovery status unavailable"
+        type="warning"
+      >
+        {{ recoveryError }}
+      </NAlert>
+      <p v-else-if="recovery?.status === 'not-checked'" class="updates-detail updates-recovery">
+        Application update recovery was not checked at app startup.
+      </p>
       <section v-if="previewView" aria-label="Installation preview" class="updates-preview">
         <h3>Installation preview</h3>
         <p v-if="installationEligible" class="updates-detail">
@@ -160,7 +220,12 @@ function close() {
         <p v-else-if="!previewPending && !installError && !previewError" class="updates-detail">
           Installation is not available in this build.
         </p>
-        <NAlert v-if="installError" title="Installation could not start" type="error">
+        <NAlert
+          v-if="installError"
+          key="n-alert-2"
+          title="Installation could not start"
+          type="error"
+        >
           {{ installError }}
         </NAlert>
         <div v-if="installPending" aria-live="polite" class="updates-pending" role="status">
@@ -318,10 +383,13 @@ function close() {
           </p>
         </section>
         <p v-if="snapshot.verification === 'signed-release'" class="updates-detail">
-          <template v-if="snapshot.status === 'downloaded'">
+          <template v-if="snapshot.status === 'downloaded' && recoveryAllowsInstallation">
             Review installation availability and what must close before restarting.
           </template>
-          <template v-else>Download and verify the update before reviewing installation.</template>
+          <template v-else-if="snapshot.status !== 'downloaded' && recoveryAllowsInstallation">
+            Download and verify the update before reviewing installation.
+          </template>
+          <template v-else>Installation review is unavailable.</template>
         </p>
         <p v-else class="updates-detail">Installation is not available in this build.</p>
       </template>
@@ -393,6 +461,14 @@ function close() {
 
 .updates-intro {
   margin: 0 0 16px;
+}
+
+.updates-recovery {
+  margin: 0 0 16px;
+}
+
+.updates-recovery-detail {
+  margin: 12px 0 0;
 }
 
 .updates-versions {

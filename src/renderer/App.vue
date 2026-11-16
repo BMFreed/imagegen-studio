@@ -35,8 +35,10 @@ import type {
 } from '../shared/api.js'
 import type {
   ApplicationUpdateInstallPreview,
+  ApplicationUpdateRecoverySnapshot,
   ApplicationUpdateSnapshot,
 } from '../shared/application-updates.js'
+import { isApplicationUpdateRecoverySnapshot } from '../shared/application-updates.js'
 import type { PresetApplicationRequest } from '../shared/presets/preset-application.js'
 import type { PresetRecord } from '../shared/presets/preset-schema.js'
 import type {
@@ -576,6 +578,16 @@ const applicationUpdatesPending = ref(false)
 const applicationUpdatesDownloadPending = ref(false)
 const applicationUpdatesSnapshot = shallowRef<ApplicationUpdateSnapshot | null>(null)
 const applicationUpdatesError = ref<string | null>(null)
+const applicationUpdatesRecovery = shallowRef<ApplicationUpdateRecoverySnapshot | null>(null)
+const applicationUpdatesRecoveryPending = ref(false)
+const applicationUpdatesRecoveryError = ref<string | null>(null)
+const applicationUpdateRecoveryAllowsInstallation = computed(
+  () =>
+    !applicationUpdatesRecoveryPending.value &&
+    applicationUpdatesRecoveryError.value === null &&
+    applicationUpdatesRecovery.value !== null &&
+    applicationUpdatesRecovery.value.status !== 'required',
+)
 const applicationUpdateInstallPreview = shallowRef<ApplicationUpdateInstallPreview | null>(null)
 const applicationUpdatePreviewPending = ref(false)
 const applicationUpdatePreviewError = ref<string | null>(null)
@@ -583,6 +595,7 @@ const applicationUpdateInstallError = ref<string | null>(null)
 const applicationUpdateInstallPending = ref(false)
 let applicationUpdateInstallRequest = 0
 let applicationUpdatesEpoch = 0
+let applicationUpdatesRecoveryEpoch = 0
 let applicationUpdatesPollEpoch = 0
 let applicationUpdatesPollTimer: ReturnType<typeof setTimeout> | null = null
 const runtimeSetupOpen = ref(false)
@@ -5421,6 +5434,40 @@ function currentApplicationUpdatesRequest(epoch: number): boolean {
   return !rendererDisposed && applicationUpdatesOpen.value && epoch === applicationUpdatesEpoch
 }
 
+async function readApplicationUpdateRecovery() {
+  const epoch = ++applicationUpdatesRecoveryEpoch
+  const current = () =>
+    !rendererDisposed && applicationUpdatesOpen.value && epoch === applicationUpdatesRecoveryEpoch
+  applicationUpdatesRecovery.value = null
+  applicationUpdatesRecoveryPending.value = true
+  applicationUpdatesRecoveryError.value = null
+  try {
+    const updates = globalThis.window.api?.applicationUpdates
+    if (!updates?.getRecoveryStatus) {
+      throw new Error('Application update recovery status is unavailable.')
+    }
+    // This is the immutable Main startup observation, read once per dialog opening. Update
+    // checks/downloads and their progress polling do not refresh or reinterpret this snapshot.
+    const result = await updates.getRecoveryStatus()
+    if (!current()) {
+      return
+    }
+    if (!result.ok || !isApplicationUpdateRecoverySnapshot(result.value)) {
+      throw new Error('Invalid application update recovery status.')
+    }
+    applicationUpdatesRecovery.value = structuredClone(result.value)
+  } catch {
+    if (current()) {
+      applicationUpdatesRecoveryError.value =
+        'Application update recovery status could not be read. Close and reopen this dialog to try again.'
+    }
+  } finally {
+    if (current()) {
+      applicationUpdatesRecoveryPending.value = false
+    }
+  }
+}
+
 function stopApplicationUpdatesPolling() {
   ++applicationUpdatesPollEpoch
   if (applicationUpdatesPollTimer !== null) {
@@ -5480,6 +5527,7 @@ function clearApplicationUpdatePreview() {
 async function reviewApplicationUpdateInstallation(availableVersion: string) {
   if (
     !applicationUpdatesOpen.value ||
+    !applicationUpdateRecoveryAllowsInstallation.value ||
     applicationUpdatesPending.value ||
     applicationUpdatePreviewPending.value ||
     applicationUpdateInstallPending.value ||
@@ -5531,6 +5579,7 @@ function dismissApplicationUpdates(force = false) {
   ++applicationUpdateInstallRequest
   applicationUpdateInstallPending.value = false
   ++applicationUpdatesEpoch
+  ++applicationUpdatesRecoveryEpoch
   stopApplicationUpdatesPolling()
   applicationUpdatesOpen.value = false
   applicationUpdatesPending.value = false
@@ -5542,6 +5591,7 @@ async function installApplicationUpdate(availableVersion: string) {
   if (
     rendererDisposed ||
     !applicationUpdatesOpen.value ||
+    !applicationUpdateRecoveryAllowsInstallation.value ||
     applicationUpdatesPending.value ||
     applicationUpdatePreviewPending.value ||
     applicationUpdateInstallPending.value ||
@@ -5725,6 +5775,7 @@ function openApplicationUpdates() {
   clearApplicationUpdatePreview()
   applicationUpdatesSnapshot.value = null
   applicationUpdatesError.value = null
+  void readApplicationUpdateRecovery()
   void checkApplicationUpdates(true)
 }
 
@@ -6274,6 +6325,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   ++applicationUpdatesEpoch
+  ++applicationUpdatesRecoveryEpoch
   stopApplicationUpdatesPolling()
   if (runtimeSetupOpen.value && !runtimeSetupSubmitting.value) {
     void dismissRuntimeSetup()
@@ -6422,6 +6474,9 @@ onBeforeUnmount(() => {
           :pending="applicationUpdatesPending"
           :previewError="applicationUpdatePreviewError"
           :previewPending="applicationUpdatePreviewPending"
+          :recovery="applicationUpdatesRecovery"
+          :recoveryError="applicationUpdatesRecoveryError"
+          :recoveryPending="applicationUpdatesRecoveryPending"
           :snapshot="applicationUpdatesSnapshot"
           @check="checkApplicationUpdates()"
           @dismiss="dismissApplicationUpdates"

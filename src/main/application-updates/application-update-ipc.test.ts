@@ -1,13 +1,16 @@
-import { type ApiResult, ipcChannels } from '../../shared/api.js'
+import { type ApiResult, ipcChannels, type StudioApi } from '../../shared/api.js'
 import type {
   ApplicationUpdateInstallationRequest,
   ApplicationUpdateInstallPreview,
+  ApplicationUpdateRecoverySnapshot,
   ApplicationUpdateSnapshot,
 } from '../../shared/application-updates.js'
 
 /** Controlled check service ports; no installer, Electron network or shipping qualification. */
+import { build } from 'esbuild'
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { createContext, runInContext } from 'node:vm'
 
 import { ApplicationUpdateAdmissionError } from './application-update-admission.js'
 import { registerApplicationUpdateIpc } from './application-update-ipc.js'
@@ -19,6 +22,19 @@ import {
 type Handler = Parameters<Parameters<typeof registerApplicationUpdateIpc>[0]['handle']>[1]
 type Request = Parameters<Handler>[0]
 type Channel = keyof typeof ipcChannels.applicationUpdates
+
+const recoverySnapshots: ApplicationUpdateRecoverySnapshot[] = [
+  { status: 'not-checked' },
+  { status: 'clear' },
+  { runtime: 'unverified', status: 'required', target: 'unverified' },
+  { runtime: 'unverified', status: 'required', target: 'verified' },
+  { runtime: 'verified-publisher-declaration', status: 'required', target: 'verified' },
+]
+const recoveryStatusError = {
+  code: 'APPLICATION_UPDATE_RECOVERY_STATUS_FAILED',
+  message:
+    'The application could not read update recovery information. Reopen this dialog to try again.',
+}
 
 const snapshot = (
   status: ApplicationUpdateSnapshot['status'] = 'idle',
@@ -78,6 +94,10 @@ function fixture(withInstallation = true) {
       status: 'downloaded',
       totalBytes: 128,
     }),
+    getRecoveryStatus: ():
+      ApplicationUpdateRecoverySnapshot | Promise<ApplicationUpdateRecoverySnapshot> => ({
+      status: 'not-checked',
+    }),
     getStatus: (): ApplicationUpdateSnapshot => snapshot(),
     install: async (
       availableVersion: string,
@@ -90,6 +110,7 @@ function fixture(withInstallation = true) {
       preview(version),
   }
   const calls = { check: 0, download: 0, getStatus: 0 }
+  const recoveryCalls = { count: 0 }
   const previewVersions: string[] = []
   const installationVersions: string[] = []
   const lifetime = registerApplicationUpdateIpc(
@@ -111,6 +132,10 @@ function fixture(withInstallation = true) {
       download: async (version) => {
         calls.download++
         return await controls.download(version)
+      },
+      getRecoveryStatus: () => {
+        recoveryCalls.count++
+        return controls.getRecoveryStatus()
       },
       getStatus: () => {
         calls.getStatus++
@@ -142,6 +167,7 @@ function fixture(withInstallation = true) {
     invoke,
     lifetime,
     previewVersions,
+    recoveryCalls,
   }
 }
 
@@ -157,10 +183,181 @@ test('read-only update getter copies the current service result and never invoke
   assert.deepEqual([...f.handlers.keys()].sort(), [
     'application-updates:check',
     'application-updates:download',
+    'application-updates:get-recovery-status',
     'application-updates:get-status',
     'application-updates:install',
     'application-updates:review-installation',
   ])
+})
+
+test('recovery getter returns only detached startup enum data without checking or granting installation', async () => {
+  const f = fixture()
+  for (const original of recoverySnapshots) {
+    f.controls.getRecoveryStatus = () => original
+    const reply = await f.invoke('getRecoveryStatus')
+    assert.ok(reply.ok)
+    assert.deepEqual(reply.value, original)
+    assert.notEqual(reply.value, original)
+  }
+  const original: ApplicationUpdateRecoverySnapshot = {
+    runtime: 'unverified',
+    status: 'required',
+    target: 'verified',
+  }
+  f.controls.getRecoveryStatus = () => original
+  const detached = await f.invoke('getRecoveryStatus')
+  assert.ok(detached.ok)
+  const detachedValue = detached.value as { target: string }
+  detachedValue.target = 'unverified'
+  assert.equal(original.target, 'verified')
+  failure(await f.invoke('install', ['0.1.0']), 'APPLICATION_UPDATE_INSTALL_FAILED')
+  assert.equal(f.recoveryCalls.count, recoverySnapshots.length + 1)
+  assert.deepEqual(f.calls, { check: 0, download: 0, getStatus: 0 })
+  assert.deepEqual(f.previewVersions, [])
+  assert.deepEqual(f.installationVersions, [])
+})
+
+test('recovery getter accepts no arguments and requires the current trusted top-level frame', async () => {
+  const f = fixture()
+  const oldFrame = f.caller.mainFrame
+  f.caller.mainFrame = {}
+  for (const request of [
+    { sender: {}, senderFrame: f.caller.mainFrame },
+    { sender: f.caller, senderFrame: {} },
+    { sender: f.caller, senderFrame: oldFrame },
+    { sender: f.caller, senderFrame: null },
+  ]) {
+    failure(await f.invoke('getRecoveryStatus', [], request), 'IPC_INVALID_CALLER')
+  }
+  for (const args of [
+    [undefined],
+    [null],
+    ['0.1.0'],
+    ['/private/update-stage'],
+    [{ refresh: true }],
+    [1, 2],
+  ]) {
+    failure(await f.invoke('getRecoveryStatus', args), 'IPC_INVALID_CALLER')
+  }
+  assert.equal(f.recoveryCalls.count, 0)
+  assert.deepEqual(f.calls, { check: 0, download: 0, getStatus: 0 })
+})
+
+test('recovery getter rechecks document, frame and disposal after pending success or failure', async () => {
+  for (const invalidation of ['document', 'frame', 'dispose'] as const) {
+    for (const reject of [false, true]) {
+      const f = fixture()
+      const entered = deferred<void>()
+      const completed = deferred<ApplicationUpdateRecoverySnapshot>()
+      f.controls.getRecoveryStatus = async () => {
+        entered.resolve()
+        return await completed.promise
+      }
+      const pending = f.invoke('getRecoveryStatus')
+      await entered.promise
+      if (invalidation === 'document') {
+        f.lifetime.invalidateDocument()
+      } else if (invalidation === 'frame') {
+        f.caller.mainFrame = {}
+      } else {
+        f.lifetime.dispose()
+        assert.equal(f.handlers.size, 0)
+      }
+      if (reject) {
+        completed.reject(new Error('/private/retained/journal'))
+      } else {
+        completed.resolve({ status: 'clear' })
+      }
+      failure(await pending, 'IPC_INVALID_CALLER')
+      assert.equal(f.recoveryCalls.count, 1)
+    }
+  }
+})
+
+test('recovery getter refuses extra fields, forged authentication, accessors and native status values', async () => {
+  const f = fixture()
+  let accessorReads = 0
+  const accessor = Object.defineProperty({}, 'status', {
+    enumerable: true,
+    get: () => {
+      accessorReads++
+      return 'clear'
+    },
+  })
+  for (const invalid of [
+    null,
+    [],
+    { status: 'none' },
+    { status: 'retained', targetAuthentication: 'verified' },
+    { path: '/private/stage', status: 'clear' },
+    { status: 'not-checked', target: 'unverified' },
+    { runtime: 'unverified', status: 'required' },
+    { runtime: 'verified-publisher-declaration', status: 'required', target: 'unverified' },
+    { runtime: 'healthy', status: 'required', target: 'verified' },
+    { runtime: 'unverified', status: 'required', target: 'unknown' },
+    { runtime: 'unverified', status: 'required', target: 'verified', version: '0.1.0' },
+    accessor,
+  ]) {
+    f.controls.getRecoveryStatus = () => invalid as ApplicationUpdateRecoverySnapshot
+    failure(await f.invoke('getRecoveryStatus'), 'IPC_INVALID_RESPONSE')
+  }
+  assert.equal(accessorReads, 0)
+})
+
+test('recovery getter sanitizes every exception without accepting action-error code impersonation', async () => {
+  const f = fixture()
+  for (const error of [
+    new Error('/private/native/source'),
+    new ApplicationUpdateRecoveryRequiredError(),
+    new ApplicationUpdateCurrentSourceError(),
+    new ApplicationUpdateAdmissionError('BUSY'),
+    Object.assign(new Error('/private/code?key=secret'), {
+      code: 'APPLICATION_UPDATE_RECOVERY_STATUS_FAILED',
+    }),
+  ]) {
+    f.controls.getRecoveryStatus = () => {
+      throw error
+    }
+    assert.deepEqual(
+      failure(await f.invoke('getRecoveryStatus'), 'APPLICATION_UPDATE_RECOVERY_STATUS_FAILED'),
+      recoveryStatusError,
+    )
+  }
+  f.controls.reviewInstallation = async () => {
+    throw Object.assign(new Error('/private/action'), {
+      code: 'APPLICATION_UPDATE_RECOVERY_STATUS_FAILED',
+    })
+  }
+  failure(await f.invoke('reviewInstallation', ['0.1.0']), 'APPLICATION_UPDATE_PREVIEW_FAILED')
+})
+
+test('recovery getter success, invalid payload and failure never revoke an existing Review', async () => {
+  for (const outcome of ['success', 'invalid', 'throw'] as const) {
+    const f = fixture()
+    await f.invoke('reviewInstallation', ['0.1.0'])
+    f.controls.getRecoveryStatus = () => {
+      if (outcome === 'throw') {
+        throw new Error('/private/observer')
+      }
+      return outcome === 'success'
+        ? { status: 'not-checked' }
+        : ({ status: 'invalid' } as unknown as ApplicationUpdateRecoverySnapshot)
+    }
+    const reply = await f.invoke('getRecoveryStatus')
+    if (outcome === 'success') {
+      assert.ok(reply.ok)
+    } else {
+      failure(
+        reply,
+        outcome === 'invalid'
+          ? 'IPC_INVALID_RESPONSE'
+          : 'APPLICATION_UPDATE_RECOVERY_STATUS_FAILED',
+      )
+    }
+    assert.equal((await f.invoke('install', ['0.1.0'])).ok, true)
+    assert.deepEqual(f.previewVersions, ['0.1.0'])
+    assert.deepEqual(f.installationVersions, ['0.1.0'])
+  }
 })
 
 test('only the explicit zero-argument check invokes the service and exposes its bounded snapshot', async () => {
@@ -636,7 +833,7 @@ for (const invalidation of ['none', 'document', 'frame', 'dispose'] as const) {
   })
 }
 
-test('pending Install refuses duplicate and competing actions while allowing read-only status', async () => {
+test('pending Install refuses duplicate and competing actions while allowing both read-only getters', async () => {
   const f = fixture()
   const entered = deferred<void>()
   const completed = deferred<void>()
@@ -659,6 +856,11 @@ test('pending Install refuses duplicate and competing actions while allowing rea
       failure(await f.invoke(channel, [...args]), 'APPLICATION_UPDATE_INSTALL_FAILED')
     }
     assert.equal(value(await f.invoke('getStatus')).status, 'idle')
+    assert.deepEqual(await f.invoke('getRecoveryStatus'), {
+      ok: true,
+      value: { status: 'not-checked' },
+    })
+    assert.equal(f.recoveryCalls.count, 1)
     assert.deepEqual(f.calls, { check: 0, download: 0, getStatus: 1 })
     assert.deepEqual(f.previewVersions, ['0.1.0'])
     assert.deepEqual(f.installationVersions, ['0.1.0'])
@@ -761,4 +963,119 @@ test('a plain native admission code cannot impersonate the typed Install refusal
     throw Object.assign(new Error('/private/native'), { code: 'APPLICATION_UPDATE_BUSY' })
   }
   failure(await f.invoke('install', ['0.1.0']), 'APPLICATION_UPDATE_INSTALL_FAILED')
+})
+
+const preloadBundle = build({
+  bundle: true,
+  entryPoints: ['src/preload/index.ts'],
+  external: ['electron'],
+  format: 'cjs',
+  platform: 'node',
+  write: false,
+})
+
+/** Actual preload methods with a controlled Electron transport; no native process or recovery IO. */
+async function preloadFixture() {
+  let api: StudioApi | undefined
+  const calls: { args: unknown[]; channel: string }[] = []
+  const state = {
+    reply: async (): Promise<unknown> => ({ ok: true, value: { status: 'not-checked' } }),
+  }
+  const context = createContext({
+    Buffer,
+    clearTimeout,
+    console,
+    exports: {},
+    module: { exports: {} },
+    require: (name: string) => {
+      assert.equal(name, 'electron')
+      return {
+        contextBridge: {
+          exposeInMainWorld: (name: string, exposed: StudioApi) => {
+            assert.equal(name, 'api')
+            api = exposed
+          },
+        },
+        ipcRenderer: {
+          invoke: async (channel: string, ...args: unknown[]) => {
+            calls.push({ args: structuredClone(args), channel })
+            const reply = JSON.stringify(await state.reply())
+            if (reply === undefined) {
+              return undefined
+            }
+            // Electron deserializes plain IPC data in the receiving realm. Reconstruct that
+            // property here so exact plain-record validators also run in their actual realm.
+            context['__updateReplyJson'] = reply
+            try {
+              return runInContext('JSON.parse(__updateReplyJson)', context)
+            } finally {
+              delete context['__updateReplyJson']
+            }
+          },
+        },
+      }
+    },
+    setTimeout,
+    structuredClone,
+    TextEncoder,
+    URL,
+  })
+  runInContext((await preloadBundle).outputFiles[0].text, context)
+  assert.ok(api)
+  return { api, calls, state }
+}
+
+test('actual preload recovery getter uses the exact zero-argument API channel and validates every public state', async () => {
+  const f = await preloadFixture()
+  for (const original of recoverySnapshots) {
+    f.state.reply = async () => ({ ok: true, value: original })
+    assert.deepEqual(structuredClone(await f.api.applicationUpdates.getRecoveryStatus()), {
+      ok: true,
+      value: original,
+    })
+  }
+  assert.deepEqual(
+    f.calls,
+    recoverySnapshots.map(() => ({
+      args: [],
+      channel: 'application-updates:get-recovery-status',
+    })),
+  )
+  for (const value of [
+    { status: 'retained' },
+    { path: '/private/update', status: 'clear' },
+    { runtime: 'verified-publisher-declaration', status: 'required', target: 'unverified' },
+    { healthy: true, runtime: 'unverified', status: 'required', target: 'verified' },
+    { status: 'required', target: 'verified' },
+  ]) {
+    f.state.reply = async () => ({ ok: true, value })
+    failure(await f.api.applicationUpdates.getRecoveryStatus(), 'IPC_INVALID_RESPONSE')
+  }
+})
+
+test('actual preload recovery getter fixes known error copy and refuses unknown codes or transport failures', async () => {
+  const f = await preloadFixture()
+  f.state.reply = async () => ({
+    error: { code: 'APPLICATION_UPDATE_RECOVERY_STATUS_FAILED', message: '/private/key=secret' },
+    ok: false,
+  })
+  assert.deepEqual(
+    structuredClone(
+      failure(
+        await f.api.applicationUpdates.getRecoveryStatus(),
+        'APPLICATION_UPDATE_RECOVERY_STATUS_FAILED',
+      ),
+    ),
+    recoveryStatusError,
+  )
+  f.state.reply = async () => ({
+    error: { code: 'NATIVE_PATH_FAILED', message: '/private/stage' },
+    ok: false,
+  })
+  failure(await f.api.applicationUpdates.getRecoveryStatus(), 'IPC_INVALID_RESPONSE')
+  f.state.reply = async () => {
+    throw new Error('/private/native/transport')
+  }
+  const unavailable = failure(await f.api.applicationUpdates.getRecoveryStatus(), 'IPC_UNAVAILABLE')
+  assert.equal(unavailable.message, 'The application could not reach the update service.')
 })

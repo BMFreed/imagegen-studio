@@ -1,6 +1,23 @@
 # Engineering Workflow
 
-## Current cross-dataRoot update admission
+## Current public startup update recovery information
+
+[Startup recovery information](./phase-5-application-update-recovery-status-research.md) exposes the already captured Main
+inspection in the existing Updates dialog, independently of publisher config.
+An exact enum-only getter separates not-checked, clear and required states; no
+filesystem/hash/network/lock work is performed by reading it. Required suppresses
+Review/Install offers while preserving Check/Download and Projects. UI explicitly
+labels the observation At app startup; it cannot clear Main's retained veto.
+
+No refresh/repair/retirement action or new authority is added. Recovery/reinstall,
+global ownership and shipping remain open. This checkpoint has 636 Main PASS/one
+platform SKIP, 358 browser PASS before the local contrast fix plus 5 final focused
+PASS, semantic mutation/restoration and one actual A→B with two normal exits.
+B has no publisher config; repeated recovery reads preserve stage/Project bytes.
+The full-browser wrapper exit receipt is unavailable; complete test JSON/footer
+and resource journal are retained. All eight promise statuses remain unchanged.
+
+## Previous cross-dataRoot update admission
 
 [Update admission](./phase-5-application-update-admission-research.md) serializes explicit Install operations for the
 same canonical AppImage before ordinary Project close. It adapts Invoke's stable

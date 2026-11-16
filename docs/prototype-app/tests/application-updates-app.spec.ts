@@ -1,5 +1,8 @@
 import type { ApiResult } from '../../../src/shared/api.js'
-import type { ApplicationUpdateSnapshot } from '../../../src/shared/application-updates.js'
+import type {
+  ApplicationUpdateRecoverySnapshot,
+  ApplicationUpdateSnapshot,
+} from '../../../src/shared/application-updates.js'
 import { isApplicationUpdateSnapshot } from '../../../src/shared/application-updates.js'
 
 import { expect, type Page, test } from '@playwright/test'
@@ -15,6 +18,7 @@ interface UpdatesOptions {
   checks?: CheckPlan[]
   downloads?: CheckPlan[]
   omitDomain?: boolean
+  recoveries?: RecoveryPlan[]
   status?: ApplicationUpdateSnapshot
   statusFailure?: 'public-error' | 'throw'
   statusFailures?: number[]
@@ -22,15 +26,24 @@ interface UpdatesOptions {
   statusHolds?: number[]
 }
 
+interface RecoveryPlan {
+  hold?: boolean
+  kind?: 'malformed' | 'public-error' | 'throw'
+  snapshot?: ApplicationUpdateRecoverySnapshot
+}
+
 interface UpdatesFixture {
   checkCalls: number
   downloadVersions: string[]
   mutationCalls: string[]
+  recoveryCalls: number
   releaseCheck: (id: number) => void
   releaseDownload: (id: number) => void
+  releaseRecovery: (id: number) => void
   releaseStatus: (id?: number) => void
   returnedChecks: number
   returnedDownloads: number
+  returnedRecoveries: number
   returnedStatuses: number
   setStatus: (snapshot: ApplicationUpdateSnapshot) => void
   statusCalls: number
@@ -127,12 +140,14 @@ async function mountUpdatesApp(page: Page, options: UpdatesOptions = {}) {
       }
       const pendingChecks = new Map<number, () => void>()
       const pendingDownloads = new Map<number, () => void>()
+      const pendingRecoveries = new Map<number, () => void>()
       const pendingStatuses = new Map<number, () => void>()
       let currentStatus = structuredClone(initialStatus)
       const state: UpdatesFixture = {
         checkCalls: 0,
         downloadVersions: [],
         mutationCalls: [],
+        recoveryCalls: 0,
         releaseCheck: (id) => {
           const resolve = pendingChecks.get(id)
           if (!resolve) {
@@ -149,6 +164,14 @@ async function mountUpdatesApp(page: Page, options: UpdatesOptions = {}) {
           pendingDownloads.delete(id)
           resolve()
         },
+        releaseRecovery: (id) => {
+          const resolve = pendingRecoveries.get(id)
+          if (!resolve) {
+            throw new Error(`No controlled pending recovery status ${id}.`)
+          }
+          pendingRecoveries.delete(id)
+          resolve()
+        },
         releaseStatus: (id = 1) => {
           const resolve = pendingStatuses.get(id)
           if (!resolve) {
@@ -159,6 +182,7 @@ async function mountUpdatesApp(page: Page, options: UpdatesOptions = {}) {
         },
         returnedChecks: 0,
         returnedDownloads: 0,
+        returnedRecoveries: 0,
         returnedStatuses: 0,
         setStatus: (snapshot) => {
           currentStatus = structuredClone(snapshot)
@@ -264,6 +288,37 @@ async function mountUpdatesApp(page: Page, options: UpdatesOptions = {}) {
                     ? publicError()
                     : { ok: true, value: structuredClone(plan.snapshot ?? currentStatus) }
                 },
+                getRecoveryStatus: async (): Promise<
+                  ApiResult<ApplicationUpdateRecoverySnapshot>
+                > => {
+                  const id = ++state.recoveryCalls
+                  const plan = initial.recoveries?.[id - 1] ?? {
+                    snapshot: { status: 'not-checked' as const },
+                  }
+                  if (plan.hold) {
+                    await new Promise<void>((resolve) => pendingRecoveries.set(id, resolve))
+                  }
+                  state.returnedRecoveries++
+                  if (plan.kind === 'throw') {
+                    throw new Error('Unexpected recovery detail at /private/fixture/recovery.')
+                  }
+                  if (plan.kind === 'public-error') {
+                    return {
+                      error: { code: 'IPC_INVALID_RESPONSE', message: 'Recovery unavailable.' },
+                      ok: false,
+                    }
+                  }
+                  return {
+                    ok: true,
+                    value:
+                      plan.kind === 'malformed'
+                        ? ({
+                            privatePath: '/private/fixture/recovery',
+                            status: 'clear',
+                          } as unknown as ApplicationUpdateRecoverySnapshot)
+                        : structuredClone(plan.snapshot ?? { status: 'not-checked' }),
+                  }
+                },
                 getStatus: async (): Promise<ApiResult<ApplicationUpdateSnapshot>> => {
                   const id = ++state.statusCalls
                   const captured = structuredClone(currentStatus)
@@ -282,6 +337,24 @@ async function mountUpdatesApp(page: Page, options: UpdatesOptions = {}) {
                     : { ok: true, value: captured }
                 },
                 install: async () => state.mutationCalls.push('app-install'),
+                reviewInstallation: async (availableVersion: string) => {
+                  state.mutationCalls.push('app-review')
+                  return {
+                    ok: true,
+                    value: {
+                      activeModelInstallCount: 0,
+                      availableVersion,
+                      generationStorageUnavailable: false,
+                      installationAvailable: true,
+                      openProjectCount: 0,
+                      preparingModelInstallCount: 0,
+                      resourceRemovalActive: false,
+                      unacceptedResultCount: 0,
+                      unfinishedJobCount: 0,
+                      unsavedProjectCount: 0,
+                    },
+                  }
+                },
               },
             }),
       }
@@ -309,8 +382,10 @@ async function calls(page: Page) {
       checkCalls,
       downloadVersions,
       mutationCalls,
+      recoveryCalls,
       returnedChecks,
       returnedDownloads,
+      returnedRecoveries,
       returnedStatuses,
       statusCalls,
     } = (globalThis as UpdatesGlobal).applicationUpdatesFixture
@@ -318,8 +393,10 @@ async function calls(page: Page) {
       checkCalls,
       downloadVersions,
       mutationCalls,
+      recoveryCalls,
       returnedChecks,
       returnedDownloads,
+      returnedRecoveries,
       returnedStatuses,
       statusCalls,
     }
@@ -850,4 +927,258 @@ test('invalid or missing verification cannot be a signed public snapshot and a r
     downloadVersions: [],
     mutationCalls: [],
   })
+})
+
+const recoveryStates: { name: string; value: ApplicationUpdateRecoverySnapshot }[] = [
+  { name: 'not checked', value: { status: 'not-checked' } },
+  { name: 'clear', value: { status: 'clear' } },
+  {
+    name: 'unverified target',
+    value: { runtime: 'unverified', status: 'required', target: 'unverified' },
+  },
+  {
+    name: 'verified target',
+    value: { runtime: 'unverified', status: 'required', target: 'verified' },
+  },
+  {
+    name: 'matching publisher runtime',
+    value: { runtime: 'verified-publisher-declaration', status: 'required', target: 'verified' },
+  },
+]
+
+for (const recovery of recoveryStates) {
+  test(`startup recovery ${recovery.name} is independent of an unavailable publisher`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ height: 620, width: 900 })
+    await mountUpdatesApp(page, {
+      checks: [{ snapshot: snapshot('unavailable') }],
+      recoveries: [{ snapshot: recovery.value }],
+    })
+    expect(await calls(page)).toMatchObject({ checkCalls: 0, mutationCalls: [], recoveryCalls: 0 })
+    await openUpdates(page)
+    await expect(dialog(page)).toContainText('Updates unavailable')
+    const card = dialog(page).getByRole('region', {
+      exact: true,
+      name: 'Application update recovery at startup',
+    })
+    if (recovery.value.status === 'required') {
+      await expect(card).toBeVisible()
+      await expect(card).toContainText('At app startup')
+      await expect(card).toContainText('Installation is blocked while update recovery is required.')
+      await expect(card).toContainText(
+        recovery.value.target === 'verified'
+          ? 'Application file: publisher signature verified.'
+          : 'Application file: could not be verified.',
+      )
+      await expect(card).toContainText(
+        recovery.value.runtime === 'verified-publisher-declaration'
+          ? 'Runtime files: match the signed publisher declaration.'
+          : 'Runtime files: could not be verified.',
+      )
+      await expect(card).toContainText('These checks do not establish image-engine readiness.')
+      await expect(card.getByRole('button')).toHaveCount(0)
+    } else {
+      await expect(card).toHaveCount(0)
+      if (recovery.value.status === 'not-checked') {
+        await expect(dialog(page)).toContainText(
+          'Application update recovery was not checked at app startup.',
+        )
+      } else {
+        await expect(dialog(page)).not.toContainText('Application update recovery was not checked')
+        await expect(dialog(page)).not.toContainText('safe to install')
+      }
+    }
+    await expect(
+      dialog(page).getByRole('button', {
+        name: /^(?:Review installation|Install and restart|Refresh preview)$/,
+      }),
+    ).toHaveCount(0)
+    await expect(
+      dialog(page).getByRole('button', { exact: true, name: 'Check again' }),
+    ).toBeEnabled()
+    expect(await calls(page)).toMatchObject({
+      checkCalls: 1,
+      mutationCalls: [],
+      recoveryCalls: 1,
+      returnedRecoveries: 1,
+      statusCalls: 1,
+    })
+    await assertModalFits(page)
+    await page.screenshot({ path: testInfo.outputPath('startup-recovery-900x620.png') })
+  })
+}
+
+async function emitInstallationIntents(page: Page) {
+  // Controlled Vue intent port: exercise App's guards even when the modal hides its buttons.
+  await dialog(page).evaluate((element) => {
+    type Instance = {
+      emit: (name: string, value: string) => void
+      parent: Instance | null
+      type: { __name?: string }
+    }
+    let instance = (element as HTMLElement & { __vueParentComponent?: Instance })
+      .__vueParentComponent
+    while (instance && instance.type.__name !== 'ApplicationUpdatesModal') {
+      instance = instance.parent ?? undefined
+    }
+    if (!instance) {
+      throw new Error('The actual application Updates modal owner was not found.')
+    }
+    instance.emit('reviewInstallation', '0.2.0')
+    instance.emit('install', '0.2.0')
+  })
+}
+
+test('required startup recovery blocks installation intents while explicit Check and Download remain available', async ({
+  page,
+}) => {
+  const signed = { ...available('0.2.0'), verification: 'signed-release' as const }
+  await mountUpdatesApp(page, {
+    checks: [{ snapshot: signed }, { snapshot: signed }],
+    recoveries: [
+      {
+        snapshot: {
+          runtime: 'verified-publisher-declaration',
+          status: 'required',
+          target: 'verified',
+        },
+      },
+    ],
+  })
+  await openUpdates(page)
+  await expect(dialog(page).getByRole('button', { exact: true, name: 'Download' })).toBeEnabled()
+  await dialog(page).getByRole('button', { exact: true, name: 'Download' }).click()
+  await expect(dialog(page)).toContainText('Download completed')
+  await expect(
+    dialog(page).getByRole('button', { exact: true, name: 'Download again' }),
+  ).toBeEnabled()
+  await expect(
+    dialog(page).getByRole('button', {
+      name: /^(?:Review installation|Install and restart|Refresh preview)$/,
+    }),
+  ).toHaveCount(0)
+  await expect(dialog(page)).not.toContainText(
+    'Review installation availability and what must close',
+  )
+  await emitInstallationIntents(page)
+  expect(await calls(page)).toMatchObject({ mutationCalls: ['app-download'], recoveryCalls: 1 })
+  await dialog(page).getByRole('button', { exact: true, name: 'Check again' }).click()
+  await expect.poll(async () => (await calls(page)).returnedChecks).toBe(2)
+  await expect(
+    dialog(page).getByRole('region', {
+      exact: true,
+      name: 'Application update recovery at startup',
+    }),
+  ).toBeVisible()
+  expect(await calls(page)).toMatchObject({
+    checkCalls: 2,
+    downloadVersions: ['0.2.0'],
+    mutationCalls: ['app-download'],
+    recoveryCalls: 1,
+  })
+})
+
+for (const kind of ['public-error', 'malformed', 'throw'] as const) {
+  test(`startup recovery getter ${kind} blocks installation without hiding explicit downloads`, async ({
+    page,
+  }) => {
+    await mountUpdatesApp(page, {
+      recoveries: [{ kind }],
+      status: { ...downloadStatus('downloaded', 4096, 4096), verification: 'signed-release' },
+    })
+    await openUpdates(page)
+    await expect(dialog(page)).toContainText('Application update recovery status unavailable')
+    await expect(dialog(page)).toContainText(
+      'Application update recovery status could not be read. Close and reopen this dialog to try again.',
+    )
+    await expect(dialog(page)).not.toContainText('/private/fixture')
+    await expect(dialog(page)).not.toContainText(
+      'Application update recovery was not checked at app startup.',
+    )
+    await expect(
+      dialog(page).getByRole('button', { exact: true, name: 'Download again' }),
+    ).toBeEnabled()
+    await expect(
+      dialog(page).getByRole('button', {
+        name: /^(?:Review installation|Install and restart|Refresh preview)$/,
+      }),
+    ).toHaveCount(0)
+    await emitInstallationIntents(page)
+    expect(await calls(page)).toMatchObject({ checkCalls: 0, mutationCalls: [], recoveryCalls: 1 })
+  })
+}
+
+for (const first of ['required', 'throw'] as const) {
+  test(`late startup recovery ${first} cannot replace the reopened dialog snapshot`, async ({
+    page,
+  }) => {
+    await mountUpdatesApp(page, {
+      recoveries: [
+        first === 'throw'
+          ? { hold: true, kind: 'throw' }
+          : {
+              hold: true,
+              snapshot: { runtime: 'unverified', status: 'required', target: 'unverified' },
+            },
+        { snapshot: { status: 'clear' } },
+      ],
+      status: { ...downloadStatus('downloaded', 4096, 4096), verification: 'signed-release' },
+    })
+    await openUpdates(page)
+    await expect(dialog(page)).toContainText('Reading application update recovery status…')
+    await expect(
+      dialog(page).getByRole('button', { exact: true, name: 'Review installation' }),
+    ).toHaveCount(0)
+    await emitInstallationIntents(page)
+    expect(await calls(page)).toMatchObject({ mutationCalls: [], recoveryCalls: 1 })
+    await dialog(page).getByRole('button', { exact: true, name: 'Close' }).click()
+    await expect(dialog(page)).not.toBeVisible()
+    await openUpdates(page)
+    await expect(
+      dialog(page).getByRole('button', { exact: true, name: 'Review installation' }),
+    ).toBeEnabled()
+    await page.evaluate(() =>
+      (globalThis as UpdatesGlobal).applicationUpdatesFixture.releaseRecovery(1),
+    )
+    await expect.poll(async () => (await calls(page)).returnedRecoveries).toBe(2)
+    await expect(
+      dialog(page).getByRole('button', { exact: true, name: 'Review installation' }),
+    ).toBeEnabled()
+    await expect(dialog(page)).not.toContainText('Application update recovery required')
+    await expect(dialog(page)).not.toContainText('Application update recovery status unavailable')
+    expect(await calls(page)).toMatchObject({ mutationCalls: [], recoveryCalls: 2 })
+  })
+}
+
+test('download progress polling never repeats the immutable startup recovery getter', async ({
+  page,
+}) => {
+  await mountUpdatesApp(page, {
+    recoveries: [{ snapshot: { runtime: 'unverified', status: 'required', target: 'verified' } }],
+    status: { ...downloadStatus('downloading', 1024, 4096), verification: 'signed-release' },
+  })
+  await openUpdates(page)
+  await expect.poll(async () => (await calls(page)).statusCalls).toBeGreaterThanOrEqual(2)
+  expect(await calls(page)).toMatchObject({ checkCalls: 0, mutationCalls: [], recoveryCalls: 1 })
+  await page.evaluate(() =>
+    (globalThis as UpdatesGlobal).applicationUpdatesFixture.setStatus({
+      availableVersion: '0.2.0',
+      currentVersion: '0.1.0-dev.1',
+      downloadedBytes: 4096,
+      notesTruncated: false,
+      releaseNotes: 'Controlled download.',
+      status: 'downloaded',
+      totalBytes: 4096,
+      verification: 'signed-release',
+    }),
+  )
+  await expect(dialog(page)).toContainText('Download completed')
+  await expect(
+    dialog(page).getByRole('region', {
+      exact: true,
+      name: 'Application update recovery at startup',
+    }),
+  ).toBeVisible()
+  expect(await calls(page)).toMatchObject({ checkCalls: 0, mutationCalls: [], recoveryCalls: 1 })
 })

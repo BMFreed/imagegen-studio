@@ -487,7 +487,7 @@ if (!gotInstanceLock) {
       }
       closeDatabase = closeStorage
       let applicationUpdateStartupInspection: ApplicationUpdateStartupInspection = {
-        status: 'none',
+        status: 'not-checked',
       }
       if (app.isPackaged && process.platform === 'linux' && applicationUpdateAppImage) {
         try {
@@ -1678,6 +1678,7 @@ if (!gotInstanceLock) {
           },
           // Reopening/polling may still read state, but cannot revoke the accepted artifact by
           // starting Check/Download/Review while this normal close attempt awaits user input.
+          getRecoveryStatus: () => applicationUpdateService.getRecoveryStatus(),
           getStatus: () => applicationUpdateService.getStatus(),
           reviewInstallation: async (version) => {
             assertApplicationUpdateActionOpen()

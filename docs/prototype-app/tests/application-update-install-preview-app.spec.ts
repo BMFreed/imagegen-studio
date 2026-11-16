@@ -2,6 +2,7 @@ import type { ApiResult } from '../../../src/shared/api.js'
 import type {
   ApplicationUpdateInstallationRequest,
   ApplicationUpdateInstallPreview,
+  ApplicationUpdateRecoverySnapshot,
   ApplicationUpdateSnapshot,
 } from '../../../src/shared/application-updates.js'
 
@@ -154,6 +155,10 @@ async function mountPreviewApp(page: Page, options: PreviewFixtureOptions = {}) 
             return { ok: true, value: structuredClone(currentStatus) }
           },
           download: async () => mutate('app-download'),
+          getRecoveryStatus: async (): Promise<ApiResult<ApplicationUpdateRecoverySnapshot>> => ({
+            ok: true,
+            value: { status: 'not-checked' },
+          }),
           getStatus: async () => {
             state.statusCalls++
             return { ok: true, value: structuredClone(currentStatus) }

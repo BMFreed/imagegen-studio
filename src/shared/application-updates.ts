@@ -31,6 +31,16 @@ export interface ApplicationUpdateSnapshot {
   verification: 'metadata-only' | 'signed-release' | null
 }
 
+/** Startup observation only; no live filesystem, recovery or installation authority. */
+export type ApplicationUpdateRecoverySnapshot =
+  | {
+      runtime: 'unverified' | 'verified-publisher-declaration'
+      status: 'required'
+      target: 'unverified' | 'verified'
+    }
+  | { status: 'clear' }
+  | { status: 'not-checked' }
+
 /** Advisory close impact only; never an install, close or restart capability. */
 export interface ApplicationUpdateInstallPreview {
   activeModelInstallCount: number
@@ -49,6 +59,29 @@ export interface ApplicationUpdateInstallPreview {
 export interface ApplicationUpdateInstallationRequest {
   availableVersion: string
   status: 'close-requested'
+}
+
+/** Exact public enum data, without native paths or an implication of healthy startup. */
+export function isApplicationUpdateRecoverySnapshot(
+  value: unknown,
+): value is ApplicationUpdateRecoverySnapshot {
+  try {
+    const simple = dataRecord(value, ['status'])
+    if (simple) {
+      return simple['status'] === 'clear' || simple['status'] === 'not-checked'
+    }
+    const required = dataRecord(value, ['runtime', 'status', 'target'])
+    return (
+      !!required &&
+      required['status'] === 'required' &&
+      (required['target'] === 'unverified' || required['target'] === 'verified') &&
+      (required['runtime'] === 'unverified' ||
+        (required['runtime'] === 'verified-publisher-declaration' &&
+          required['target'] === 'verified'))
+    )
+  } catch {
+    return false
+  }
 }
 
 export function isApplicationUpdateInstallationRequest(

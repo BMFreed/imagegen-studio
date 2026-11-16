@@ -1,5 +1,7 @@
 import {
   APPLICATION_UPDATE_NOTES_MAX_LENGTH,
+  type ApplicationUpdateRecoverySnapshot,
+  isApplicationUpdateRecoverySnapshot,
   isApplicationUpdateSnapshot,
 } from '../../shared/application-updates.js'
 
@@ -11,7 +13,10 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 
-import type { ApplicationUpdateCurrentSource } from './application-update-staging.js'
+import type {
+  ApplicationUpdateCurrentSource,
+  ApplicationUpdateStartupInspection,
+} from './application-update-staging.js'
 import type { VerifiedApplicationArtifact } from './electron-update-checker.js'
 
 import {
@@ -114,6 +119,298 @@ const emptyImpact = () => ({
   unacceptedResultCount: 0,
   unfinishedJobCount: 0,
   unsavedProjectCount: 0,
+})
+
+const recoveryCases: {
+  expected: ApplicationUpdateRecoverySnapshot
+  inspection: ApplicationUpdateStartupInspection
+  name: string
+}[] = [
+  {
+    expected: { status: 'not-checked' },
+    inspection: { status: 'not-checked' },
+    name: 'not checked',
+  },
+  { expected: { status: 'clear' }, inspection: { status: 'none' }, name: 'clear' },
+  {
+    expected: { runtime: 'unverified', status: 'required', target: 'unverified' },
+    inspection: {
+      runtimeAuthentication: 'unverified',
+      status: 'retained',
+      targetAuthentication: 'unverified',
+    },
+    name: 'retained unverified',
+  },
+  {
+    expected: { runtime: 'unverified', status: 'required', target: 'verified' },
+    inspection: {
+      runtimeAuthentication: 'unverified',
+      status: 'retained',
+      targetAuthentication: 'verified',
+    },
+    name: 'retained verified target',
+  },
+  {
+    expected: { runtime: 'verified-publisher-declaration', status: 'required', target: 'verified' },
+    inspection: {
+      runtimeAuthentication: 'verified-publisher-declaration',
+      status: 'retained',
+      targetAuthentication: 'verified',
+    },
+    name: 'retained verified publisher tuple',
+  },
+]
+
+for (const row of recoveryCases) {
+  test(`unconfigured recovery ${row.name} is an enum-only startup snapshot without calling effectful ports`, () => {
+    const calls: string[] = []
+    const receipt = artifact(async () => {
+      calls.push('artifact')
+    })
+    const source = new Proxy(
+      {},
+      {
+        get: () => {
+          calls.push('source')
+          throw new Error('A recovery getter must not inspect current sources.')
+        },
+      },
+    ) as ApplicationUpdateCurrentSource
+    const service = new ApplicationUpdateService(
+      current,
+      false,
+      () => {
+        calls.push('checker')
+        return {
+          checkForUpdates: async () => {
+            calls.push('network')
+            return available()
+          },
+          downloadUpdate: async () => {
+            calls.push('download')
+            return { sizeBytes: 19, verifiedArtifact: receipt }
+          },
+        }
+      },
+      '/private/owned/Current.AppImage',
+      () => {
+        calls.push('close')
+      },
+      async () => {
+        calls.push('impact')
+        return emptyImpact()
+      },
+      () => {
+        calls.push('relaunch')
+        return true
+      },
+      row.inspection,
+      source,
+    )
+    const before = service.getStatus()
+    for (let index = 0; index < 3; index++) {
+      assert.deepEqual(service.getRecoveryStatus(), row.expected)
+      assert.equal(isApplicationUpdateRecoverySnapshot(service.getRecoveryStatus()), true)
+    }
+    assert.deepEqual(calls, [])
+    assert.deepEqual(service.getStatus(), before)
+    assert.equal(service.getStatus().status, 'unavailable')
+    assert.equal(isApplicationUpdateSnapshot(service.getStatus()), true)
+    assert.deepEqual(Object.keys(service.getStatus()).sort(), [
+      'availableVersion',
+      'currentVersion',
+      'downloadedBytes',
+      'notesTruncated',
+      'releaseNotes',
+      'status',
+      'totalBytes',
+      'verification',
+    ])
+  })
+}
+
+test('default recovery inspection stays not checked rather than claiming a clear filesystem', () => {
+  const service = new ApplicationUpdateService(current, false, () => {
+    throw new Error('The recovery getter must not instantiate an updater.')
+  })
+  assert.deepEqual(service.getRecoveryStatus(), { status: 'not-checked' })
+  assert.equal(service.getStatus().status, 'unavailable')
+})
+
+test('recovery startup projection copies input once and returns detached enum-only snapshots', () => {
+  const inspection: ApplicationUpdateStartupInspection = {
+    runtimeAuthentication: 'verified-publisher-declaration',
+    status: 'retained',
+    targetAuthentication: 'verified',
+  }
+  const service = new ApplicationUpdateService(
+    current,
+    false,
+    () => {
+      throw new Error('No updater is needed.')
+    },
+    null,
+    null,
+    null,
+    null,
+    inspection,
+  )
+  const expected = {
+    runtime: 'verified-publisher-declaration',
+    status: 'required',
+    target: 'verified',
+  }
+  const first = service.getRecoveryStatus()
+  Object.assign(inspection, {
+    path: '/private/retained',
+    runtimeAuthentication: 'unverified',
+    status: 'none',
+    targetAuthentication: 'unverified',
+  })
+  Object.assign(first, {
+    journal: '/private/journal',
+    runtime: 'unverified',
+    status: 'clear',
+    target: 'unverified',
+  })
+  const second = service.getRecoveryStatus()
+  assert.notEqual(first, second)
+  assert.deepEqual(second, expected)
+  assert.equal(isApplicationUpdateRecoverySnapshot(second), true)
+  assert.equal(JSON.stringify(second).includes('private'), false)
+  assert.equal(service.getStatus().status, 'unavailable')
+})
+
+test('recovery projection never verifies runtime without a verified target and normalizes unknown flags', () => {
+  for (const targetAuthentication of ['unverified', 'unknown'] as const) {
+    const inspection = {
+      runtimeAuthentication: 'verified-publisher-declaration',
+      status: 'retained',
+      targetAuthentication,
+    } as ApplicationUpdateStartupInspection
+    const service = new ApplicationUpdateService(
+      current,
+      false,
+      () => {
+        throw new Error('No updater is needed.')
+      },
+      null,
+      null,
+      null,
+      null,
+      inspection,
+    )
+    assert.deepEqual(service.getRecoveryStatus(), {
+      runtime: 'unverified',
+      status: 'required',
+      target: 'unverified',
+    })
+  }
+  const unknownRuntime = {
+    runtimeAuthentication: 'unknown',
+    status: 'retained',
+    targetAuthentication: 'verified',
+  } as unknown as ApplicationUpdateStartupInspection
+  const service = new ApplicationUpdateService(
+    current,
+    false,
+    () => {
+      throw new Error('No updater is needed.')
+    },
+    null,
+    null,
+    null,
+    null,
+    unknownRuntime,
+  )
+  assert.deepEqual(service.getRecoveryStatus(), {
+    runtime: 'unverified',
+    status: 'required',
+    target: 'verified',
+  })
+})
+
+test('recovery reads leave an in-flight explicit check and its selected release untouched', async () => {
+  const entered = deferred<void>()
+  const result = deferred<ApplicationUpdateCheckResult>()
+  let checks = 0
+  const service = new ApplicationUpdateService(current, true, () => ({
+    checkForUpdates: () => {
+      checks++
+      entered.resolve()
+      return result.promise
+    },
+  }))
+  const pending = service.check()
+  await entered.promise
+  for (let index = 0; index < 3; index++) {
+    assert.deepEqual(service.getRecoveryStatus(), { status: 'not-checked' })
+    assert.equal(service.getStatus().status, 'checking')
+  }
+  result.resolve(available('Selected release notes.'))
+  const selected = await pending
+  assert.equal(checks, 1)
+  assert.equal(selected.status, 'available')
+  assert.equal(selected.releaseNotes, 'Selected release notes.')
+  service.getRecoveryStatus()
+  assert.deepEqual(service.getStatus(), selected)
+})
+
+test('reading or mutating recovery snapshots never clears retained veto or retires downloaded candidate', async () => {
+  let artifactReads = 0
+  let impactReads = 0
+  const receipt = artifact(async () => {
+    artifactReads++
+  })
+  const inspection: ApplicationUpdateStartupInspection = {
+    runtimeAuthentication: 'verified-publisher-declaration',
+    status: 'retained',
+    targetAuthentication: 'verified',
+  }
+  const service = new ApplicationUpdateService(
+    current,
+    true,
+    () => ({
+      checkForUpdates: async () => ({ ...available(), verification: 'signed-release' }),
+      downloadUpdate: async () => ({ sizeBytes: 19, verifiedArtifact: receipt }),
+    }),
+    '/private/owned/Current.AppImage',
+    () => {
+      throw new Error('Projects must not close on recovery inspection.')
+    },
+    async () => {
+      impactReads++
+      return emptyImpact()
+    },
+    () => true,
+    inspection,
+  )
+  await service.check()
+  await service.download('0.1.0')
+  const before = service.getStatus()
+  const readsBefore = artifactReads
+  Object.assign(inspection, { status: 'none', targetAuthentication: 'unverified' })
+  for (let index = 0; index < 3; index++) {
+    const snapshot = service.getRecoveryStatus()
+    Object.assign(snapshot, { status: 'clear' })
+    await assert.rejects(
+      service.reviewInstallation('0.1.0'),
+      ApplicationUpdateRecoveryRequiredError,
+    )
+    await assert.rejects(
+      service.prepareInstallation('0.1.0'),
+      ApplicationUpdateRecoveryRequiredError,
+    )
+  }
+  assert.deepEqual(service.getStatus(), before)
+  assert.equal(service.getStatus().status, 'downloaded')
+  assert.equal(artifactReads, readsBefore)
+  assert.equal(impactReads, 0)
+  assert.deepEqual(service.getRecoveryStatus(), {
+    runtime: 'verified-publisher-declaration',
+    status: 'required',
+    target: 'verified',
+  })
 })
 
 for (const fault of ['missing', 'changed'] as const) {

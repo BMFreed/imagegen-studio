@@ -8,9 +8,11 @@ import { type ApiResult, ipcChannels } from '../../shared/api.js'
 import {
   type ApplicationUpdateInstallationRequest,
   type ApplicationUpdateInstallPreview,
+  type ApplicationUpdateRecoverySnapshot,
   type ApplicationUpdateSnapshot,
   isApplicationUpdateInstallationRequest,
   isApplicationUpdateInstallPreview,
+  isApplicationUpdateRecoverySnapshot,
   isApplicationUpdateSnapshot,
   isApplicationUpdateVersion,
 } from '../../shared/application-updates.js'
@@ -33,6 +35,8 @@ type Registrar = {
 type Service = {
   check: () => Promise<ApplicationUpdateSnapshot>
   download: (availableVersion: string) => Promise<ApplicationUpdateSnapshot>
+  getRecoveryStatus: () =>
+    ApplicationUpdateRecoverySnapshot | Promise<ApplicationUpdateRecoverySnapshot>
   getStatus: () => ApplicationUpdateSnapshot
   reviewInstallation: (availableVersion: string) => Promise<ApplicationUpdateInstallPreview>
 }
@@ -82,6 +86,7 @@ export function registerApplicationUpdateIpc(
   let reviewedVersion: string | null = null
   let installationPending = false
   const channels = [
+    ipcChannels.applicationUpdates.getRecoveryStatus,
     ipcChannels.applicationUpdates.getStatus,
     ipcChannels.applicationUpdates.install,
     ipcChannels.applicationUpdates.check,
@@ -113,6 +118,28 @@ export function registerApplicationUpdateIpc(
         observedEpoch === epoch &&
         event.sender === caller &&
         event.senderFrame === caller.mainFrame
+      if (channel === ipcChannels.applicationUpdates.getRecoveryStatus) {
+        // Read the immutable startup projection without consuming or invalidating Review/Install.
+        try {
+          const recovery = await service.getRecoveryStatus()
+          if (!current()) {
+            return rejected()
+          }
+          if (!isApplicationUpdateRecoverySnapshot(recovery)) {
+            return invalid()
+          }
+          const value = structuredClone(recovery)
+          return current() ? { ok: true, value } : rejected()
+        } catch {
+          if (!current()) {
+            return rejected()
+          }
+          return failure(
+            'APPLICATION_UPDATE_RECOVERY_STATUS_FAILED',
+            'The application could not read update recovery information. Reopen this dialog to try again.',
+          )
+        }
+      }
       if (channel === ipcChannels.applicationUpdates.install) {
         if (installationPending || !requestInstallation || reviewedVersion !== args[0]) {
           return failure(

@@ -487,3 +487,44 @@ Other admission failures are normalized to:
 This is updater-writer serialization, not global exclusivity of all executing
 runtimes. Legacy/unleased processes, startup health and recovery/retirement remain
 separate acceptance boundaries. No persisted schema or public status is promoted.
+
+### Public startup recovery information
+
+[Startup recovery status](../engineering/phase-5-application-update-recovery-status-research.md)
+is a separate enum-only observation from Main's existing startup inspector. It is
+available in Updates even when the publisher/feed is unconfigured. Unsupported or
+unattempted inspection is explicitly `not-checked`; only an actual safe no-stage
+inspection becomes `clear`. Required includes separately bounded target and
+runtime verification facts. Runtime match requires target verification.
+
+The service freezes the projection at startup and returns detached copies through
+`getRecoveryStatus`. Reading it does not scan files, hash bytes, check the network,
+acquire admission or change update selection. Existing getStatus polling remains
+unchanged. The dialog requests recovery once on each open and discards late replies
+after dismissal/reopen/unmount. There is no Refresh or recovery mutation action.
+
+A required warning is independent of unavailable/checking/downloaded feed states.
+It is labelled **At app startup**, describes preserved recovery data and available
+Projects, and suppresses Review/Install offers. Clear displays no success card;
+not-checked is neutral information. Pending/unreadable recovery information blocks
+Review/Install in this dialog without blocking Check/Download. Errors are separate
+from not-checked/clear; malformed data or missing methods cannot imply safe absence.
+
+This snapshot is not continuing filesystem/health authority. A later stage still
+fails the existing fresh preflight; external deletion never clears the sticky
+retained-at-startup veto. No paths, manifests, keys, PID or backup execution data
+are exposed. Current target/runtime matches do not establish healthy startup or
+image-engine readiness. Recovery/reinstall, global runtime ownership, stage
+finalization/retirement and shipping acceptance remain open.
+
+
+Qualification: 636 Main PASS/one existing platform SKIP, 358 full browser PASS before
+its local contrast correction plus 5 focused final PASS, exact semantic mutation
+restoration and one actual packaged A→B with two normal exits. B has trust but no
+publisher config; recovery/status reads, Check again and reopen preserve retained
+bytes and the saved Project. The getter itself does no IO; opening Updates still
+uses the existing manual Check flow, whose unconfigured B path returns unavailable
+without HTTP. Full-browser original wrapper exit/duration are unavailable; complete
+test JSON/footer and unit journal are retained. See the linked research for source
+pins, controlled native ports, full/focused visual evidence and retention receipts.
+This does not close recovery mutation or shipping acceptance.

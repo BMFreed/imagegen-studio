@@ -7,9 +7,11 @@ import {
   APPLICATION_UPDATE_VERSION_MAX_LENGTH,
   type ApplicationUpdateInstallationRequest,
   type ApplicationUpdateInstallPreview,
+  type ApplicationUpdateRecoverySnapshot,
   type ApplicationUpdateSnapshot,
   isApplicationUpdateInstallationRequest,
   isApplicationUpdateInstallPreview,
+  isApplicationUpdateRecoverySnapshot,
   isApplicationUpdateSnapshot,
   isApplicationUpdateVersion,
 } from './application-updates.js'
@@ -43,6 +45,110 @@ const installPreview = (): ApplicationUpdateInstallPreview => ({
   unacceptedResultCount: 3,
   unfinishedJobCount: 4,
   unsavedProjectCount: 1,
+})
+
+test('recovery startup snapshots admit exactly five bounded states', () => {
+  const values: ApplicationUpdateRecoverySnapshot[] = [
+    { status: 'not-checked' },
+    { status: 'clear' },
+    { runtime: 'unverified', status: 'required', target: 'unverified' },
+    { runtime: 'unverified', status: 'required', target: 'verified' },
+    { runtime: 'verified-publisher-declaration', status: 'required', target: 'verified' },
+  ]
+  for (const value of values) {
+    assert.equal(isApplicationUpdateRecoverySnapshot(value), true)
+    assert.equal(isApplicationUpdateRecoverySnapshot(Object.freeze({ ...value })), true)
+    assert.equal(
+      isApplicationUpdateRecoverySnapshot(Object.assign(Object.create(null), value)),
+      true,
+    )
+  }
+})
+
+test('recovery startup snapshots reject unknown states, private data and impossible authentication', () => {
+  const required = { runtime: 'unverified', status: 'required', target: 'verified' }
+  for (const value of [
+    null,
+    undefined,
+    true,
+    [],
+    new Date(),
+    {},
+    { status: 'none' },
+    { status: 'retained' },
+    { status: 'healthy' },
+    { status: '/private/stage' },
+    { status: 'required' },
+    { runtime: 'unverified', status: 'clear', target: 'verified' },
+    { runtime: 'unverified', status: 'not-checked', target: 'unverified' },
+    { ...required, runtime: 'verified-publisher-declaration', target: 'unverified' },
+    { ...required, target: 'signed-release' },
+    { ...required, runtime: 'verified' },
+    { ...required, targetAuthentication: 'verified' },
+    { ...required, runtimeAuthentication: 'unverified' },
+    ...['path', 'manifest', 'journal', 'releaseNotes', 'keyId', 'canRetire'].map((key) => ({
+      ...required,
+      [key]: '/private/retained-update',
+    })),
+    { ...required, [Symbol('private')]: true },
+    Object.assign(Object.create({ inherited: true }), required),
+  ]) {
+    assert.equal(isApplicationUpdateRecoverySnapshot(value), false)
+  }
+})
+
+test('recovery snapshot validation never executes accessors and refuses hostile reflection', () => {
+  const required = { runtime: 'unverified', status: 'required', target: 'verified' }
+  let reads = 0
+  for (const key of ['runtime', 'status', 'target'] as const) {
+    const accessor = Object.defineProperty({ ...required }, key, {
+      enumerable: true,
+      get: () => {
+        reads++
+        return required[key]
+      },
+    })
+    assert.equal(isApplicationUpdateRecoverySnapshot(accessor), false)
+    assert.equal(
+      isApplicationUpdateRecoverySnapshot(
+        Object.defineProperty({ ...required }, key, { enumerable: false, value: required[key] }),
+      ),
+      false,
+    )
+  }
+  for (const value of [
+    Object.defineProperty({}, 'status', {
+      enumerable: true,
+      get: () => {
+        reads++
+        return 'clear'
+      },
+    }),
+    new Proxy(
+      {},
+      {
+        getPrototypeOf: () => {
+          throw new Error('private')
+        },
+      },
+    ),
+    new Proxy(
+      {},
+      {
+        ownKeys: () => {
+          throw new Error('private')
+        },
+      },
+    ),
+    new Proxy(required, {
+      getOwnPropertyDescriptor: () => {
+        throw new Error('private')
+      },
+    }),
+  ]) {
+    assert.equal(isApplicationUpdateRecoverySnapshot(value), false)
+  }
+  assert.equal(reads, 0)
 })
 
 test('application update snapshots cover the exact explicit check/download state domain', () => {

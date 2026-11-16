@@ -102,6 +102,7 @@ export type ApplicationUpdateStartupInspection =
       targetAuthentication: 'unverified' | 'verified'
     }
   | { status: 'none' }
+  | { status: 'not-checked' }
 export type ApplicationUpdateCurrentImageSnapshot = FileSnapshot
 export type ApplicationUpdateCurrentSource = Readonly<{
   assertCurrentSnapshot: () => void

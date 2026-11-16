@@ -8,6 +8,7 @@
 import {
   APPLICATION_UPDATE_NOTES_MAX_LENGTH,
   type ApplicationUpdateInstallPreview,
+  type ApplicationUpdateRecoverySnapshot,
   type ApplicationUpdateSnapshot,
   isApplicationUpdateInstallPreview,
   isApplicationUpdateSnapshot,
@@ -79,6 +80,7 @@ export class ApplicationUpdateService {
     promise: Promise<ApplicationUpdateSnapshot>
     version: string
   } | null = null
+  private readonly recoverySnapshot: Readonly<ApplicationUpdateRecoverySnapshot>
   private readonly retainedAtStartup: boolean
   private snapshot: ApplicationUpdateSnapshot
   private verifiedArtifact: VerifiedApplicationArtifact | null = null
@@ -97,13 +99,29 @@ export class ApplicationUpdateService {
       | null = null,
     private readonly scheduleApplicationRelaunch:
       ((currentAppImage: string) => unknown) | null = null,
-    startupInspection: ApplicationUpdateStartupInspection = { status: 'none' },
+    startupInspection: ApplicationUpdateStartupInspection = { status: 'not-checked' },
     private readonly currentSource: ApplicationUpdateCurrentSource | null = null,
   ) {
     if (!isApplicationUpdateVersion(currentVersion)) {
       throw new Error('Invalid application version.')
     }
-    this.retainedAtStartup = startupInspection.status === 'retained'
+    const status = startupInspection.status
+    this.retainedAtStartup = status === 'retained'
+    // Invoke4875 InstallStagingLedger preserves protected/unknown recovery; orphaned_models
+    // find -> admin GET -> OrphanedModelsDialog.loadOrphans projects inspection separately from
+    // mutation. Reuse the existing startup inspector's result, never rerun or clear it on read.
+    if (status === 'retained') {
+      const target =
+        startupInspection.targetAuthentication === 'verified' ? 'verified' : 'unverified'
+      const runtime =
+        target === 'verified' &&
+        startupInspection.runtimeAuthentication === 'verified-publisher-declaration'
+          ? 'verified-publisher-declaration'
+          : 'unverified'
+      this.recoverySnapshot = Object.freeze({ runtime, status: 'required', target })
+    } else {
+      this.recoverySnapshot = Object.freeze({ status: status === 'none' ? 'clear' : 'not-checked' })
+    }
     this.snapshot = this.empty(configured ? 'idle' : 'unavailable')
   }
 
@@ -269,6 +287,11 @@ export class ApplicationUpdateService {
       })
     this.pendingDownload = { epoch, promise: operation, version: expectedVersion }
     return structuredClone(await operation)
+  }
+
+  /** Immutable startup observation; no I/O, updater selection or recovery eligibility changes. */
+  getRecoveryStatus(): ApplicationUpdateRecoverySnapshot {
+    return structuredClone(this.recoverySnapshot)
   }
 
   getStatus(): ApplicationUpdateSnapshot {
