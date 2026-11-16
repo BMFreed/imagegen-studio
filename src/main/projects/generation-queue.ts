@@ -2080,6 +2080,26 @@ export class GenerationQueueRepository {
     this.fencedProjects.add(localProjectKey)
   }
 
+  /**
+   * InvokeAI 4875d96531ca6712b288f6e660fcbb34143408c1:
+   * invokeai/app/services/shared/database/queries/session_queue.py status_counts/_status_counts ->
+   * invokeai/app/services/session_queue/session_queue_default.py get_queue_status ->
+   * invokeai/app/api/routers/session_queue.py get_queue_status. Adapt its metadata-only aggregate
+   * to app-wide close, including private operations and closed Projects. Unlike a manager page, no
+   * public-visibility filter or input hydration belongs here.
+   */
+  async getAppCloseImpact(): Promise<{ unfinishedJobCount: number }> {
+    return await this.serialize(async () => {
+      this.assertReadyForDispatch()
+      const row = await this.db
+        .selectFrom('generation_queue_item')
+        .select(({ fn }) => fn.countAll<number>().as('count'))
+        .where('status', 'in', ['pending', 'running'])
+        .executeTakeFirstOrThrow()
+      return { unfinishedJobCount: Number(row.count) }
+    })
+  }
+
   /** Read one reviewed identity without requiring valid frozen input files. */
   async getManagerEntry(id: string): Promise<GenerationQueueEntry> {
     validateQueueId(id)

@@ -1269,14 +1269,15 @@ if (!gotInstanceLock) {
               await recoveredGeneration?.orchestrator.fenceProjectGeneration(tab.id)
               fencedTabs.push(tab.id)
             }
+            // Invoke queue status counts cover the whole queue without hydrating inputs.
+            // Shutdown cancels pending rows outside open tabs too; describe them before consent.
+            // Read queue before staging so a completing job cannot disappear between the reads.
+            const queueCloseImpact = await recoveredGeneration?.queue.getAppCloseImpact()
             const impacts = await Promise.all(
               tabs.map((tab) => projectGenerationClose.getCloseImpact(tab.id)),
             )
             const dirtyCount = tabs.filter((tab) => tab.dirty).length
-            const unfinishedJobCount = impacts.reduce(
-              (sum, impact) => sum + impact.unfinishedJobCount,
-              0,
-            )
+            const unfinishedJobCount = queueCloseImpact?.unfinishedJobCount ?? 0
             const completedCandidateCount = impacts.reduce(
               (sum, impact) => sum + impact.completedCandidateCount,
               0,

@@ -1,6 +1,18 @@
 # Engineering Workflow
 
-## Current signed application release declarations
+## Current app-wide generation close impact
+
+[Generation close impact](./phase-5-generation-close-impact-research.md) connects the existing native warning to
+all pending/running queue rows, including closed Projects and private operations.
+The existing app-wide cancellation/drain remains in charge; terminal APP_RESTART
+history and closed recovery results are preserved. This is a concrete Install Update
+prerequisite; no installer or binary replacement is introduced. Root confirms97 targeted
+PASS, typecheck/build/scoped lint PASS and actual copied Main GREEN/RED/GREEN
+with six qualified normal exits. Five excluded setup attempts remain separate.
+Shipping publisher, recoverable replacement/rollback and full MVP remain open.
+Promise statuses unchanged.
+
+## Previous signed application release declarations
 
 [Application release trust](./phase-5-application-release-trust-research.md) adapts
 the existing canonical Ed25519 envelope to the native provider/descriptor and

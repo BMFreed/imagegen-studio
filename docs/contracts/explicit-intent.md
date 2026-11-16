@@ -111,6 +111,12 @@ flows и не скрывает последствия выбранной ком�
 
 ## Evidence и текущие границы
 
+[App-wide close impact](../engineering/phase-5-generation-close-impact-research.md)
+предупреждает об общей pending/running очереди, которую существующий shutdown
+собирается отменить, включая закрытые Projects и private jobs. Cancel не изменяет
+задания; terminal APP_RESTART не называется новой отменой. Это prerequisite Install,
+без нового installer или повышения публичного статуса.
+
 [Application release trust](../engineering/phase-5-application-release-trust-research.md)
 сохраняет разные намерения Check, Download и будущий Install. Принятие подписи и
 compatibility declaration не запускает установку/restart, не закрывает Project

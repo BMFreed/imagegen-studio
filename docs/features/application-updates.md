@@ -91,6 +91,15 @@ version, исполнение migrations или installed-runtime readiness. Р�
 
 ## Scope and dependencies
 
+[App-wide generation close impact](../engineering/phase-5-generation-close-impact-research.md)
+now describes every pending/running queue row before native close, including rows
+for Projects outside open tabs and private regional work. Open-tab counts are not
+added again. The same existing shutdown owner cancels those pending rows after
+confirmation; Cancel leaves them unchanged. Already canceled APP_RESTART rows are
+terminal history, while closed-Project recovery results retain their existing
+retention. This is the ordinary app-close prerequisite, not a frozen Install review
+or an enabled installer.
+
 [Model installer drain](../engineering/phase-5-model-install-shutdown-research.md)
 now joins active model preparation/download/publication/storage work in the existing
 app-close barrier before SQLite disposal. Main warns before confirmation, and
