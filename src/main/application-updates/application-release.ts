@@ -35,6 +35,12 @@ export interface ApplicationReleaseTrust {
   readonly trustedKeys: Readonly<Record<string, string>>
 }
 
+/** Persistable signed inputs only; bundled trust and unsigned selectors never travel with them. */
+export type ApplicationReleaseAuthority = {
+  readonly envelope: string
+  readonly releaseNotesJson: string
+}
+
 export interface ApplicationReleaseSelectedArtifact {
   readonly filename: string
   readonly sha512: string
@@ -62,6 +68,50 @@ export class AppReleaseError extends Error {
   constructor() {
     super('The signed application release could not be verified.')
     this.name = 'AppReleaseError'
+  }
+}
+
+/** Preserve the original envelope and the canonical, complete native notes without accessors. */
+export function copyApplicationReleaseAuthority(
+  value: unknown,
+): Readonly<ApplicationReleaseAuthority> {
+  try {
+    const raw = plain(value, ['envelope', 'releaseNotesJson'])
+    const envelope = authorityString(raw['envelope'])
+    const releaseNotesJson = authorityString(raw['releaseNotesJson'])
+    need(
+      canonicalRuntimeReleaseJson(JSON.parse(releaseNotesJson)).toString('utf8') ===
+        releaseNotesJson,
+    )
+    return Object.freeze({ envelope, releaseNotesJson })
+  } catch {
+    throw new AppReleaseError()
+  }
+}
+
+/**
+ * Reauthenticate retained inputs with this process's bundled trust, without cache or journal
+ * authority.
+ */
+export function verifyApplicationReleaseAuthority(
+  authority: unknown,
+  trust: ApplicationReleaseTrust,
+): Readonly<ApplicationReleaseManifest> {
+  try {
+    const capturedAuthority = copyApplicationReleaseAuthority(authority)
+    const capturedTrust = copyTrust(trust)
+    const envelope = Buffer.from(capturedAuthority.envelope, 'utf8')
+    const signed = plain(verifyCanonicalRuntimeEnvelope(envelope, capturedTrust.trustedKeys))
+    need(isApplicationUpdateVersion(signed['version']))
+    const selected = artifact(signed['artifact'])
+    return verifyApplicationRelease(
+      envelope,
+      capturedTrust,
+      { ...selected, version: signed['version'] },
+      JSON.parse(capturedAuthority.releaseNotesJson),
+    )
+  } catch {
+    throw new AppReleaseError()
   }
 }
 
@@ -212,6 +262,13 @@ function copyTrust(value: ApplicationReleaseTrust): ApplicationReleaseTrust {
     compatibility: readCompatibility(raw['compatibility']),
     trustedKeys: readTrustedKeys(raw['trustedKeys']),
   })
+}
+
+function authorityString(value: unknown): string {
+  need(typeof value === 'string')
+  const bytes = Buffer.from(value, 'utf8')
+  need(bytes.length > 0 && bytes.length <= MAX_BYTES && bytes.toString('utf8') === value)
+  return value
 }
 
 function readTrustedKeys(value: unknown): Readonly<Record<string, string>> {

@@ -12,8 +12,10 @@ import { test } from 'node:test'
 import { canonicalRuntimeReleaseJson } from '../runtime/runtime-release.js'
 import {
   AppReleaseError,
+  copyApplicationReleaseAuthority,
   loadApplicationReleaseTrust,
   verifyApplicationRelease,
+  verifyApplicationReleaseAuthority,
 } from './application-release.js'
 
 const body = Buffer.from('Owned signed application fixture; not executable.')
@@ -49,14 +51,14 @@ function selected() {
   }
 }
 
-function manifest() {
+function manifest(releaseNotes: unknown = notes) {
   const file = selected()
   return {
     appId: 'studio.imagegen.desktop',
     artifact: { filename: file.filename, sha512: file.sha512, sizeBytes: file.sizeBytes },
     compatibility: { ...compatibility(), runtimeValidation: 'after-restart' },
     releaseId: 'owned-release-2',
-    releaseNotesSha256: hash(canonicalRuntimeReleaseJson(notes)),
+    releaseNotesSha256: hash(canonicalRuntimeReleaseJson(releaseNotes ?? null)),
     schemaVersion: 1,
     scope: 'application-release',
     target: { arch: 'x64', format: 'AppImage', os: 'linux' },
@@ -88,6 +90,184 @@ function rejected(error: unknown) {
   assert.equal(error.message, 'The signed application release could not be verified.')
   return true
 }
+
+test('persistable authority preserves original outer bytes and complete canonical native notes', () => {
+  const keys = keyring()
+  for (const releaseNotes of [
+    notes,
+    'Complete notes. '.repeat(2000),
+    [
+      { note: 'first', version: '0.2.0' },
+      { note: null, version: '0.1.0' },
+    ],
+    null,
+  ]) {
+    const value = manifest(releaseNotes)
+    const envelope = `${JSON.stringify(JSON.parse(seal(value, keys).toString()), null, 2)}\n`
+    const input = {
+      envelope,
+      releaseNotesJson: canonicalRuntimeReleaseJson(releaseNotes).toString('utf8'),
+    }
+    const copied = copyApplicationReleaseAuthority(input)
+    assert.deepEqual(copied, input)
+    assert.notEqual(copied, input)
+    assert.equal(Object.isFrozen(copied), true)
+    assert.equal(copied.envelope, envelope, 'Outer envelope formatting is not reserialized.')
+    assert.deepEqual(verifyApplicationReleaseAuthority(copied, trust(keys)), value)
+    input.envelope = 'changed'
+    input.releaseNotesJson = 'null'
+    assert.equal(copied.envelope, envelope)
+    assert.throws(() => Object.assign(copied, { releaseNotesJson: 'null' }), TypeError)
+  }
+})
+
+test('authority copy bounds UTF-8 bytes independently and refuses lossy or noncanonical notes', async (t) => {
+  const limit = 1024 * 1024
+  assert.equal(
+    Buffer.byteLength(
+      copyApplicationReleaseAuthority({ envelope: 'é'.repeat(limit / 2), releaseNotesJson: 'null' })
+        .envelope,
+    ),
+    limit,
+  )
+  assert.equal(
+    Buffer.byteLength(
+      copyApplicationReleaseAuthority({
+        envelope: 'owned',
+        releaseNotesJson: JSON.stringify('a'.repeat(limit - 2)),
+      }).releaseNotesJson,
+    ),
+    limit,
+  )
+  const valid = { envelope: 'owned', releaseNotesJson: 'null' }
+  for (const [label, patch] of [
+    ['empty envelope', { envelope: '' }],
+    ['oversized envelope bytes', { envelope: 'é'.repeat(limit / 2 + 1) }],
+    ['lossy envelope', { envelope: '\uD800' }],
+    ['nonstring envelope', { envelope: Buffer.from('owned') }],
+    ['empty notes', { releaseNotesJson: '' }],
+    ['oversized notes bytes', { releaseNotesJson: JSON.stringify('é'.repeat(limit / 2)) }],
+    ['lossy notes', { releaseNotesJson: '"\uD800"' }],
+    ['nonstring notes', { releaseNotesJson: null }],
+    ['invalid notes JSON', { releaseNotesJson: 'undefined' }],
+    ['notes whitespace', { releaseNotesJson: 'null\n' }],
+    ['notes object key order', { releaseNotesJson: '{"b":1,"a":2}' }],
+    ['notes duplicate keys', { releaseNotesJson: '{"a":1,"a":1}' }],
+    ['notes alternate escape', { releaseNotesJson: String.raw`"\u0061"` }],
+    ['notes unsafe number', { releaseNotesJson: '9007199254740992' }],
+    ['notes noncanonical number', { releaseNotesJson: '1.0' }],
+  ] as const) {
+    await t.test(label, () =>
+      assert.throws(() => copyApplicationReleaseAuthority({ ...valid, ...patch }), rejected),
+    )
+  }
+})
+
+test('authority copy rejects hidden, extra, accessor and exotic fields without reading getters', () => {
+  const valid = { envelope: 'owned', releaseNotesJson: 'null' }
+  let reads = 0
+  const accessor = { ...valid }
+  Object.defineProperty(accessor, 'envelope', {
+    enumerable: true,
+    get: () => {
+      reads++
+      return valid.envelope
+    },
+  })
+  const hidden = { ...valid }
+  Object.defineProperty(hidden, 'releaseNotesJson', { enumerable: false, value: 'null' })
+  for (const value of [
+    null,
+    [],
+    { envelope: 'owned' },
+    { ...valid, trustedKeys: {} },
+    { ...valid, manifest: manifest() },
+    { ...valid, [Symbol('authority')]: true },
+    Object.assign(Object.create({ inherited: true }), valid),
+    accessor,
+    hidden,
+    new Proxy(valid, {
+      getPrototypeOf: () => {
+        throw new Error('private detail')
+      },
+    }),
+  ]) {
+    assert.throws(() => copyApplicationReleaseAuthority(value), rejected)
+  }
+  assert.equal(reads, 0)
+})
+
+test('retained authority derives its selector from signed payload and uses current bundled compatibility', () => {
+  const keys = keyring()
+  const value = manifest()
+  value.version = '0.3.0'
+  value.artifact.filename = 'owned-other-name.AppImage'
+  const authority = {
+    envelope: seal(value, keys).toString('utf8'),
+    releaseNotesJson: canonicalRuntimeReleaseJson(notes).toString('utf8'),
+  }
+  assert.deepEqual(verifyApplicationReleaseAuthority(authority, trust(keys)), value)
+  const changed = trust(keys)
+  changed.compatibility.databaseMigrations[0].sha256 = 'f'.repeat(64)
+  assert.throws(() => verifyApplicationReleaseAuthority(authority, changed), rejected)
+})
+
+test('retained authority rejects changed inputs, removed signers, key substitution and foreign domains', async (t) => {
+  const keys = keyring()
+  const authority = {
+    envelope: seal(manifest(), keys).toString('utf8'),
+    releaseNotesJson: canonicalRuntimeReleaseJson(notes).toString('utf8'),
+  }
+  for (const [label, input, policy] of [
+    ['changed notes', { ...authority, releaseNotesJson: '"changed"' }, trust(keys)],
+    ['invalid envelope', { ...authority, envelope: 'not an envelope' }, trust(keys)],
+    ['different bundled key', authority, trust(keyring())],
+    [
+      'removed signer',
+      authority,
+      { ...trust(keys), trustedKeys: { replacement: keyring().publicPem } },
+    ],
+    ['empty keyring', authority, { ...trust(keys), trustedKeys: {} }],
+    [
+      'unknown signer',
+      { ...authority, envelope: seal(manifest(), keys, undefined, 'unknown').toString('utf8') },
+      trust(keys),
+    ],
+    [
+      'runtime domain',
+      {
+        ...authority,
+        envelope: seal({ ...manifest(), scope: 'runtime-release' }, keys).toString('utf8'),
+      },
+      trust(keys),
+    ],
+    [
+      'foreign application',
+      {
+        ...authority,
+        envelope: seal({ ...manifest(), appId: 'foreign.app' }, keys).toString('utf8'),
+      },
+      trust(keys),
+    ],
+    [
+      'unknown schema',
+      {
+        ...authority,
+        envelope: seal({ ...manifest(), schemaVersion: 2 }, keys).toString('utf8'),
+      },
+      trust(keys),
+    ],
+    [
+      'wrong canonical notes',
+      { ...authority, releaseNotesJson: `${authority.releaseNotesJson}\n` },
+      trust(keys),
+    ],
+  ] as const) {
+    await t.test(label, () =>
+      assert.throws(() => verifyApplicationReleaseAuthority(input, policy), rejected),
+    )
+  }
+})
 
 test('signed app declaration binds actual artifact and notes while retaining runtime revalidation', () => {
   const keys = keyring()

@@ -348,3 +348,29 @@ channel, формат доверенного manifest и способ восст
   проверяет protocol handshake, корректные миграции и понятный setup/repair
   при несовместимости. Existing Project можно сохранить даже пока ML runtime
   требует восстановления.
+
+
+### Retained signed authority and offline target inspection
+
+[Offline startup authority](../engineering/phase-5-application-update-startup-authority-research.md)
+сохраняет исходный signed envelope и полные canonical raw release notes отдельными
+fsynced0600 members того же stage; schema2 journal хранит их snapshots/digests.
+Текущий bundled keyring и применённые compatibility contracts проверяются заново
+после restart, независимо от прежнего updater/cache. Missing signer, legacy/partial
+stage, неизвестные members, unsafe paths или несовпадение current target сохраняют
+recovery data без автоматических изменений. Startup не выполняет сетевой check.
+
+Main выполняет read-only inspection до запуска Project/runtime/UI. Наличие
+retained stage или невозможность безопасно доказать его отсутствие блокирует
+Review и Install preflight до artifact/impact reads и Project close; отдельная
+fresh проверка ловит stage, появившийся после startup. Публичное сообщение:
+`Application update recovery is required before installation. Your Projects remain open.`
+Check/Download/status и обычная работа с Projects остаются доступны.
+
+Authenticated означает только совпадение текущего файла на диске с независимо
+проверенным подписанным релизом и текущей app version. Это не доказательство
+loaded-body identity, healthy startup или engine handshake и не разрешение
+rollback/delete/retirement. Backup A не получает доверия из подписи target B.
+Нужные exclusive ownership, executing-body proof и recovery/finalization consumer
+остаются следующим отдельным этапом. Ни actual renderer load, ни per-dataRoot
+single-instance lock эту границу не закрывают.

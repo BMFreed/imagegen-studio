@@ -133,6 +133,10 @@ import { loadApplicationReleaseTrust } from './application-updates/application-r
 import { collectApplicationUpdateInstallPreview } from './application-updates/application-update-install-preview.js'
 import { registerApplicationUpdateIpc } from './application-updates/application-update-ipc.js'
 import { ApplicationUpdateService } from './application-updates/application-update-service.js'
+import {
+  type ApplicationUpdateStartupInspection,
+  inspectRetainedApplicationUpdate,
+} from './application-updates/application-update-staging.js'
 import { createElectronApplicationRelauncher } from './application-updates/electron-application-relaunch.js'
 import {
   createElectronUpdateChecker,
@@ -434,6 +438,39 @@ if (!gotInstanceLock) {
         await database.close()
       }
       closeDatabase = closeStorage
+      const applicationUpdateAppImage =
+        process.platform === 'linux' ? (process.env['APPIMAGE'] ?? null) : null
+      let applicationUpdateStartupInspection: ApplicationUpdateStartupInspection = {
+        status: 'none',
+      }
+      if (app.isPackaged && process.platform === 'linux' && applicationUpdateAppImage) {
+        try {
+          applicationUpdateStartupInspection = await inspectRetainedApplicationUpdate({
+            currentAppImage: applicationUpdateAppImage,
+            currentVersion: app.getVersion(),
+            readTrust: async () =>
+              await loadApplicationReleaseTrust(process.resourcesPath, {
+                cpuWorkerProtocolVersion: CPU_WORKER_PROTOCOL_VERSION,
+                databaseMigrations: await readAppliedSqlMigrations(database),
+                inferenceWorkerProtocolVersion: INFERENCE_WORKER_PROTOCOL_VERSION,
+                projectSchemaVersion: IGS_SCHEMA_VERSION,
+              }),
+          })
+        } catch {
+          // Inspection cannot prevent access to Projects or make retained recovery data disposable.
+          applicationUpdateStartupInspection = {
+            status: 'retained',
+            targetAuthentication: 'unverified',
+          }
+        }
+        if (applicationUpdateStartupInspection.status === 'retained') {
+          console.info(
+            applicationUpdateStartupInspection.targetAuthentication === 'verified'
+              ? 'Previous application update target authenticated; recovery data retained.'
+              : 'Previous application update needs recovery; data retained.',
+          )
+        }
+      }
       await presetService.start()
       const projectRepository = new ProjectIndexRepository(database.db)
       let readGenerationSeed:
@@ -1468,7 +1505,7 @@ if (!gotInstanceLock) {
         app.getVersion(),
         app.isPackaged &&
           process.platform === 'linux' &&
-          Boolean(process.env['APPIMAGE']) &&
+          Boolean(applicationUpdateAppImage) &&
           existsSync(path.join(process.resourcesPath, 'app-update.yml')),
         async () => {
           const trust = await loadApplicationReleaseTrust(process.resourcesPath, {
@@ -1481,7 +1518,7 @@ if (!gotInstanceLock) {
             new VerifiedAppImageUpdater(undefined, undefined, trust),
           )
         },
-        process.platform === 'linux' ? (process.env['APPIMAGE'] ?? null) : null,
+        applicationUpdateAppImage,
         () => {
           appShutdown.assertFinalized()
           if (projectService.getOpenTabs().length !== 0) {
@@ -1504,6 +1541,7 @@ if (!gotInstanceLock) {
           return impact
         },
         createElectronApplicationRelauncher(app, process.versions.electron),
+        applicationUpdateStartupInspection,
       )
       const assertApplicationUpdateActionOpen = () => {
         if (resolvingClose || appDataSealed || closingAfterResolution || exitReady) {

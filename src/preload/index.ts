@@ -124,6 +124,8 @@ const applicationUpdateErrors: Readonly<Record<string, string>> = {
     'The application could not start installation. Review the update and try again.',
   APPLICATION_UPDATE_PREVIEW_FAILED:
     'The application could not review installation impact. Try again.',
+  APPLICATION_UPDATE_RECOVERY_REQUIRED:
+    'Application update recovery is required before installation. Your Projects remain open.',
   IPC_INVALID_CALLER: 'Application update request was rejected.',
   IPC_INVALID_RESPONSE: 'The application returned an invalid update status.',
   IPC_UNAVAILABLE: 'The application could not reach the update service.',

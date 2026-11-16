@@ -14,8 +14,8 @@
  * phases after caller-confirmed resource close; it does not prove physical Main exit, application
  * restart or execution. The disclosed Electron44.4.5 adapter supplies the native relaunch call;
  * this owner records its intent and guards the exact activated snapshot immediately before it. A
- * successful handshake is not execution/startup acknowledgement. No public Install or
- * crash-recovery/adoption consumer exists here, and no independent helper is introduced.
+ * successful handshake is not execution/startup acknowledgement. Startup inspection only
+ * reauthenticates the fixed target on disk; no crash adoption or independent helper is introduced.
  */
 import { createHash, randomUUID } from 'node:crypto'
 import {
@@ -32,10 +32,15 @@ import {
 import * as fs from 'node:fs/promises'
 import path from 'node:path'
 
-import type { ApplicationReleaseManifest } from './application-release.js'
 import type { VerifiedApplicationArtifact } from './electron-update-checker.js'
 
 import { canonicalRuntimeReleaseJson } from '../runtime/runtime-release.js'
+import {
+  type ApplicationReleaseManifest,
+  type ApplicationReleaseTrust,
+  copyApplicationReleaseAuthority,
+  verifyApplicationReleaseAuthority,
+} from './application-release.js'
 
 const DIRECTORY_FLAGS =
   constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | constants.O_NONBLOCK
@@ -45,6 +50,8 @@ const CREATE_FLAGS =
 const CHUNK_BYTES = 1024 * 1024
 const MAX_METADATA_BYTES = 1024 * 1024
 const JOURNAL = 'journal.json'
+const ENVELOPE = 'release-envelope.json'
+const RELEASE_NOTES = 'release-notes.json'
 const FAILED = 'failed.json'
 const CANDIDATE = 'candidate.AppImage'
 const BACKUP = 'previous.AppImage'
@@ -85,6 +92,8 @@ export interface RolledBackApplicationUpdate {
   verifyCompleteSnapshot: () => Promise<void>
 }
 
+export type ApplicationUpdateStartupInspection =
+  { status: 'none' } | { status: 'retained'; targetAuthentication: 'unverified' | 'verified' }
 type Phase =
   | 'activated'
   | 'activating'
@@ -118,6 +127,7 @@ type FileIdentity = Readonly<{
   uid: string
 }>
 type FileSnapshot = Readonly<{ identity: FileIdentity; sha512: string; sizeBytes: number }>
+
 type Reader = { handle: fs.FileHandle; identity: FileIdentity; path: string; visible: string }
 
 type OwnedDirectory = {
@@ -196,6 +206,19 @@ export async function stageVerifiedApplicationArtifact(input: {
   } catch {
     throw new AppUpdateStagingError('INVALID')
   }
+  const verifyArtifact = artifact.verifyCompleteSnapshot.bind(artifact)
+  // A capability must still own its native signed selection on both sides of the primitive copy.
+  // The caller's verifier owns signature admission; this owner never accepts a new trust source.
+  let authority: ReturnType<typeof copyApplicationReleaseAuthority>
+  try {
+    await verifyArtifact()
+    authority = copyApplicationReleaseAuthority(artifact.authority)
+    await verifyArtifact()
+  } catch {
+    throw new AppUpdateStagingError('INVALID')
+  }
+  const envelopeBytes = Buffer.from(authority.envelope, 'utf8')
+  const notesBytes = Buffer.from(authority.releaseNotesJson, 'utf8')
   need(
     manifest &&
       typeof manifest === 'object' &&
@@ -217,7 +240,6 @@ export async function stageVerifiedApplicationArtifact(input: {
         manifest.artifact.sha512,
     'INVALID',
   )
-  const verifyArtifact = artifact.verifyCompleteSnapshot.bind(artifact)
   const assertArtifact = async () => {
     try {
       await verifyArtifact()
@@ -227,6 +249,12 @@ export async function stageVerifiedApplicationArtifact(input: {
     try {
       need(canonicalRuntimeReleaseJson(artifact.manifest).equals(manifestBytes), 'UNSAFE')
       need(artifact.path === sourcePath, 'UNSAFE')
+      const retained = copyApplicationReleaseAuthority(artifact.authority)
+      need(
+        retained.envelope === authority.envelope &&
+          retained.releaseNotesJson === authority.releaseNotesJson,
+        'UNSAFE',
+      )
     } catch {
       throw new AppUpdateStagingError('UNSAFE')
     }
@@ -269,11 +297,23 @@ export async function stageVerifiedApplicationArtifact(input: {
     need(staging.identity.dev === parent.identity.dev, 'UNSAFE')
     need((await fs.readdir(staging.anchor)).length === 0, 'UNSAFE')
     await parent.handle.sync()
+    const envelope = await writeJournal(staging, parent, envelopeBytes, null, ENVELOPE)
+    const releaseNotes = await writeJournal(staging, parent, notesBytes, null, RELEASE_NOTES)
+    await assertArtifact()
+    const describeAuthority = (file: FileSnapshot) => ({
+      sha512: file.sha512,
+      sizeBytes: file.sizeBytes,
+      snapshot: file.identity,
+    })
     const base = {
+      authority: {
+        envelope: describeAuthority(envelope),
+        releaseNotes: describeAuthority(releaseNotes),
+      },
       current: { path: currentAppImage, ...current },
       manifest,
       parent: { path: parentPath, ...parent.identity },
-      schemaVersion: 1,
+      schemaVersion: 2,
       scope: 'application-update-staging',
       staging: { path: stagingDirectory, ...staging.identity },
     } as const
@@ -394,6 +434,8 @@ export async function stageVerifiedApplicationArtifact(input: {
     function members(value: PhaseSnapshot): string[] {
       return [
         JOURNAL,
+        ENVELOPE,
+        RELEASE_NOTES,
         ...(value.candidate ? [CANDIDATE] : []),
         ...(value.backup ? [BACKUP] : []),
         ...(value.rollback ? [ROLLBACK] : []),
@@ -441,6 +483,16 @@ export async function stageVerifiedApplicationArtifact(input: {
           path.join(stagingDirectory, JOURNAL),
           path.join(stageAnchor, JOURNAL),
           value.journal.identity,
+        )
+        assertFileNow(
+          path.join(stagingDirectory, ENVELOPE),
+          path.join(stageAnchor, ENVELOPE),
+          envelope.identity,
+        )
+        assertFileNow(
+          path.join(stagingDirectory, RELEASE_NOTES),
+          path.join(stageAnchor, RELEASE_NOTES),
+          releaseNotes.identity,
         )
         return publish?.({ parent: parentAnchor, staging: stageAnchor })
       } finally {
@@ -496,6 +548,18 @@ export async function stageVerifiedApplicationArtifact(input: {
           path.join(directories.staging.anchor, JOURNAL),
           value.journalBytes,
           value.journal,
+        )
+        await inspectMetadata(
+          path.join(stagingDirectory, ENVELOPE),
+          path.join(directories.staging.anchor, ENVELOPE),
+          envelopeBytes,
+          envelope,
+        )
+        await inspectMetadata(
+          path.join(stagingDirectory, RELEASE_NOTES),
+          path.join(directories.staging.anchor, RELEASE_NOTES),
+          notesBytes,
+          releaseNotes,
         )
         await directories.staging.check()
         await directories.parent.check()
@@ -909,6 +973,301 @@ export async function stageVerifiedApplicationArtifact(input: {
   }
 }
 
+/**
+ * Read-only retained-stage admission, adapted from Invoke's conservative marker restoration gate.
+ * Only the fixed target's bytes can be authenticated. This is never acknowledgement of the loaded
+ * application body, startup health, a rollback capability or permission to retire retained files.
+ * In particular, the unsigned journal cannot supply trust or make its previous image executable.
+ */
+export async function inspectRetainedApplicationUpdate(input: {
+  currentAppImage: string
+  currentVersion: string
+  readTrust: () => Promise<ApplicationReleaseTrust | null>
+}): Promise<ApplicationUpdateStartupInspection> {
+  const retained = { status: 'retained', targetAuthentication: 'unverified' } as const
+  let parent: OwnedDirectory | undefined
+  let staging: OwnedDirectory | undefined
+  try {
+    const { currentAppImage, currentVersion, readTrust } = input
+    need(
+      process.platform === 'linux' &&
+        process.arch === 'x64' &&
+        canonicalPath(currentAppImage) &&
+        typeof currentVersion === 'string' &&
+        typeof readTrust === 'function',
+      'UNSAFE',
+    )
+    const parentPath = path.dirname(currentAppImage)
+    const stageName = `.igs-app-update-${createHash('sha256').update(path.basename(currentAppImage)).digest('hex').slice(0, 16)}`
+    const stagingDirectory = path.join(parentPath, stageName)
+    parent = await openDirectory(parentPath, undefined, false)
+    // Absence is established through the safe held parent; neither the current body nor trust is
+    // read for the common no-stage case. A parent replacement cannot turn uncertainty into none.
+    try {
+      await fs.lstat(path.join(parent.anchor, stageName))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error
+      }
+      await parent.check()
+      const parentIdentity = parent.identity
+      await parent.handle.close()
+      parent = undefined
+      const parentFd = openSync(parentPath, DIRECTORY_FLAGS)
+      try {
+        assertDirectoryNow(
+          { handle: { fd: parentFd }, identity: parentIdentity },
+          parentPath,
+          false,
+        )
+        try {
+          lstatSync(path.join(`/proc/self/fd/${parentFd}`, stageName))
+        } catch (finalError) {
+          if ((finalError as NodeJS.ErrnoException).code === 'ENOENT') {
+            return { status: 'none' }
+          }
+          throw finalError
+        }
+      } finally {
+        closeSync(parentFd)
+      }
+      return retained
+    }
+    staging = await openDirectory(stagingDirectory, undefined, true)
+    need(staging.identity.dev === parent.identity.dev, 'UNSAFE')
+    const expectedMembers = [BACKUP, ENVELOPE, JOURNAL, RELEASE_NOTES].sort().join('\0')
+    const checkMembers = async () => {
+      need((await fs.readdir(staging!.anchor)).sort().join('\0') === expectedMembers, 'UNSAFE')
+    }
+    await checkMembers()
+    const journal = await readMetadata(
+      path.join(stagingDirectory, JOURNAL),
+      path.join(staging.anchor, JOURNAL),
+    )
+    const record = exactRecord(JSON.parse(journal.bytes.toString('utf8')), [
+      'authority',
+      'backup',
+      'candidate',
+      'current',
+      'manifest',
+      'originalCurrent',
+      'parent',
+      'rollback',
+      'schemaVersion',
+      'scope',
+      'staging',
+      'state',
+    ])
+    need(
+      canonicalRuntimeReleaseJson(record).equals(journal.bytes) &&
+        record['schemaVersion'] === 2 &&
+        record['scope'] === 'application-update-staging' &&
+        (record['state'] === 'activated' || record['state'] === 'relaunching') &&
+        record['candidate'] === null &&
+        record['rollback'] === null,
+      'UNSAFE',
+    )
+    const checkDirectoryReference = (
+      value: unknown,
+      filename: string,
+      expected: DirectoryIdentity,
+    ) => {
+      const ref = exactRecord(value, ['path', 'dev', 'ino'])
+      need(
+        ref['path'] === filename && ref['dev'] === expected.dev && ref['ino'] === expected.ino,
+        'UNSAFE',
+      )
+    }
+    checkDirectoryReference(record['parent'], parentPath, parent.identity)
+    checkDirectoryReference(record['staging'], stagingDirectory, staging.identity)
+    const current = snapshotReference(record['current'], currentAppImage, 'identity')
+    const backupPath = path.join(stagingDirectory, BACKUP)
+    const backup = snapshotReference(record['backup'], backupPath, 'snapshot')
+    snapshotReference(record['originalCurrent'], currentAppImage, 'identity')
+    const references = exactRecord(record['authority'], ['envelope', 'releaseNotes'])
+    const envelopeRef = snapshotReference(references['envelope'], null, 'snapshot')
+    const notesRef = snapshotReference(references['releaseNotes'], null, 'snapshot')
+    const envelopePath = path.join(stagingDirectory, ENVELOPE)
+    const notesPath = path.join(stagingDirectory, RELEASE_NOTES)
+    const envelope = await readMetadata(
+      envelopePath,
+      path.join(staging.anchor, ENVELOPE),
+      envelopeRef,
+    )
+    const notes = await readMetadata(notesPath, path.join(staging.anchor, RELEASE_NOTES), notesRef)
+    const authority = copyApplicationReleaseAuthority({
+      envelope: envelope.bytes.toString('utf8'),
+      releaseNotesJson: notes.bytes.toString('utf8'),
+    })
+    need(
+      Buffer.from(authority.envelope, 'utf8').equals(envelope.bytes) &&
+        Buffer.from(authority.releaseNotesJson, 'utf8').equals(notes.bytes),
+      'UNSAFE',
+    )
+    // Merely admit the fixed backup's ordinary metadata. It gains no signed hash, execution,
+    // restoration or deletion authority, and its body is deliberately neither read nor hashed.
+    const checkBackup = async () => {
+      const reader = await openReader(backupPath, path.join(staging!.anchor, BACKUP), 0o600)
+      try {
+        need(sameIdentity(reader.identity, backup.identity), 'UNSAFE')
+      } finally {
+        await reader.handle.close()
+      }
+    }
+    await checkBackup()
+    await checkMembers()
+    await staging.check()
+    await parent.check()
+    // Used without trust by admission callers as a cheap veto. No current-body hash or network
+    // is needed to retain an existing stage, and the bundled keyring is never persisted here.
+    const trust = await readTrust()
+    if (!trust) {
+      return retained
+    }
+    const manifest = verifyApplicationReleaseAuthority(authority, trust)
+    need(
+      manifest.version === currentVersion &&
+        canonicalRuntimeReleaseJson(manifest).equals(
+          canonicalRuntimeReleaseJson(record['manifest']),
+        ) &&
+        current.sha512 === manifest.artifact.sha512 &&
+        current.sizeBytes === manifest.artifact.sizeBytes,
+      'UNSAFE',
+    )
+    await checkMembers()
+    await inspectMetadata(
+      path.join(stagingDirectory, JOURNAL),
+      path.join(staging.anchor, JOURNAL),
+      journal.bytes,
+      journal.snapshot,
+    )
+    await inspectMetadata(
+      envelopePath,
+      path.join(staging.anchor, ENVELOPE),
+      envelope.bytes,
+      envelope.snapshot,
+    )
+    await inspectMetadata(
+      notesPath,
+      path.join(staging.anchor, RELEASE_NOTES),
+      notes.bytes,
+      notes.snapshot,
+    )
+    await inspectImage(
+      currentAppImage,
+      path.join(parent.anchor, path.basename(currentAppImage)),
+      0o755,
+      current,
+    )
+    await checkBackup()
+    await staging.check()
+    await parent.check()
+    const parentIdentity = parent.identity
+    const stagingIdentity = staging.identity
+    await staging.handle.close()
+    staging = undefined
+    await parent.handle.close()
+    parent = undefined
+    // Finish through the same fresh descriptor/visible-path guards used before publication. No
+    // await follows this boundary, so same-byte replacement during trust/hash awaits is refused.
+    const parentFd = openSync(parentPath, DIRECTORY_FLAGS)
+    let stageFd: number | undefined
+    try {
+      stageFd = openSync(stagingDirectory, DIRECTORY_FLAGS)
+      const parentAnchor = `/proc/self/fd/${parentFd}`
+      const stageAnchor = `/proc/self/fd/${stageFd}`
+      assertDirectoryNow({ handle: { fd: parentFd }, identity: parentIdentity }, parentPath, false)
+      assertDirectoryNow(
+        { handle: { fd: stageFd }, identity: stagingIdentity },
+        stagingDirectory,
+        true,
+      )
+      need(readdirSync(stageAnchor).sort().join('\0') === expectedMembers, 'UNSAFE')
+      for (const [name, snapshot] of [
+        [JOURNAL, journal.snapshot],
+        [ENVELOPE, envelope.snapshot],
+        [RELEASE_NOTES, notes.snapshot],
+        [BACKUP, backup],
+      ] as const) {
+        assertFileNow(
+          path.join(stagingDirectory, name),
+          path.join(stageAnchor, name),
+          snapshot.identity,
+        )
+      }
+      assertFileNow(
+        currentAppImage,
+        path.join(parentAnchor, path.basename(currentAppImage)),
+        current.identity,
+      )
+      return { status: 'retained', targetAuthentication: 'verified' }
+    } finally {
+      if (stageFd !== undefined) {
+        closeSync(stageFd)
+      }
+      closeSync(parentFd)
+    }
+  } catch {
+    return retained
+  } finally {
+    if (staging) {
+      await closeReadHandle(staging.handle)
+    }
+    if (parent) {
+      await closeReadHandle(parent.handle)
+    }
+  }
+}
+
+function exactRecord(value: unknown, keys: string[]): Record<string, unknown> {
+  need(value !== null && typeof value === 'object' && !Array.isArray(value), 'UNSAFE')
+  need(Object.keys(value).sort().join('\0') === [...keys].sort().join('\0'), 'UNSAFE')
+  return value as Record<string, unknown>
+}
+
+function snapshotReference(
+  value: unknown,
+  filename: string | null,
+  identityKey: 'identity' | 'snapshot',
+): FileSnapshot {
+  const ref = exactRecord(value, [
+    identityKey,
+    'sha512',
+    'sizeBytes',
+    ...(filename ? ['path'] : []),
+  ])
+  need(!filename || ref['path'] === filename, 'UNSAFE')
+  const raw = exactRecord(ref[identityKey], [
+    'ctimeNs',
+    'dev',
+    'gid',
+    'ino',
+    'mode',
+    'mtimeNs',
+    'nlink',
+    'sizeBytes',
+    'uid',
+  ])
+  for (const key of ['ctimeNs', 'dev', 'gid', 'ino', 'mode', 'mtimeNs', 'nlink', 'uid']) {
+    need(typeof raw[key] === 'string' && /^(0|[1-9]\d*)$/.test(raw[key]), 'UNSAFE')
+  }
+  need(
+    Number.isSafeInteger(ref['sizeBytes']) &&
+      Number(ref['sizeBytes']) > 0 &&
+      raw['sizeBytes'] === ref['sizeBytes'] &&
+      raw['nlink'] === '1' &&
+      typeof ref['sha512'] === 'string' &&
+      Buffer.from(ref['sha512'], 'base64').length === 64 &&
+      Buffer.from(ref['sha512'], 'base64').toString('base64') === ref['sha512'],
+    'UNSAFE',
+  )
+  return Object.freeze({
+    identity: Object.freeze(raw as unknown as FileIdentity),
+    sha512: ref['sha512'],
+    sizeBytes: ref['sizeBytes'] as number,
+  })
+}
+
 function assertDirectoryNow(
   directory: { handle: { fd: number }; identity: DirectoryIdentity },
   filename: string,
@@ -1199,15 +1558,21 @@ async function inspectMetadata(
   expectedBytes: Buffer,
   expected?: FileSnapshot,
 ): Promise<FileSnapshot> {
+  const read = await readMetadata(visible, filename, expected)
+  need(read.bytes.equals(expectedBytes), 'UNSAFE')
+  return read.snapshot
+}
+
+async function readMetadata(
+  visible: string,
+  filename: string,
+  expected?: FileSnapshot,
+): Promise<{ bytes: Buffer; snapshot: FileSnapshot }> {
   const reader = await openReader(visible, filename, 0o600)
   try {
-    need(
-      reader.identity.sizeBytes <= MAX_METADATA_BYTES &&
-        reader.identity.sizeBytes === expectedBytes.length,
-      'UNSAFE',
-    )
+    need(reader.identity.sizeBytes <= MAX_METADATA_BYTES, 'UNSAFE')
     need(!expected || sameIdentity(reader.identity, expected.identity), 'UNSAFE')
-    const bytes = Buffer.alloc(expectedBytes.length + 1)
+    const bytes = Buffer.alloc(reader.identity.sizeBytes + 1)
     let count = 0
     while (count < bytes.length) {
       const { bytesRead } = await reader.handle.read(bytes, count, bytes.length - count, count)
@@ -1217,10 +1582,14 @@ async function inspectMetadata(
       count += bytesRead
     }
     await assertReader(reader)
-    need(count === expectedBytes.length && bytes.subarray(0, count).equals(expectedBytes), 'UNSAFE')
-    const sha512 = createHash('sha512').update(expectedBytes).digest('base64')
-    need(!expected || sha512 === expected.sha512, 'UNSAFE')
-    return Object.freeze({ identity: reader.identity, sha512, sizeBytes: count })
+    need(count === reader.identity.sizeBytes, 'UNSAFE')
+    const contents = bytes.subarray(0, count)
+    const sha512 = createHash('sha512').update(contents).digest('base64')
+    need(!expected || (sha512 === expected.sha512 && count === expected.sizeBytes), 'UNSAFE')
+    return {
+      bytes: contents,
+      snapshot: Object.freeze({ identity: reader.identity, sha512, sizeBytes: count }),
+    }
   } finally {
     await reader.handle.close()
   }
@@ -1231,6 +1600,7 @@ async function writeJournal(
   parent: OwnedDirectory,
   bytes: Buffer,
   previous: FileSnapshot | null,
+  member = JOURNAL,
 ): Promise<FileSnapshot> {
   await parent.check()
   await staging.check()
@@ -1244,9 +1614,9 @@ async function writeJournal(
   } finally {
     await file.close()
   }
-  const visible = path.join(await fs.realpath(staging.anchor), JOURNAL)
+  const visible = path.join(await fs.realpath(staging.anchor), member)
   if (previous) {
-    const reader = await openReader(visible, path.join(staging.anchor, JOURNAL), 0o600)
+    const reader = await openReader(visible, path.join(staging.anchor, member), 0o600)
     try {
       need(sameIdentity(reader.identity, previous.identity), 'UNSAFE')
     } finally {
@@ -1254,7 +1624,7 @@ async function writeJournal(
     }
   } else {
     try {
-      await fs.lstat(path.join(staging.anchor, JOURNAL))
+      await fs.lstat(path.join(staging.anchor, member))
       throw new AppUpdateStagingError('UNSAFE')
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
@@ -1264,10 +1634,10 @@ async function writeJournal(
   }
   await parent.check()
   await staging.check()
-  await fs.rename(temporary, path.join(staging.anchor, JOURNAL))
+  await fs.rename(temporary, path.join(staging.anchor, member))
   await staging.handle.sync()
   await parent.handle.sync()
-  return await inspectMetadata(visible, path.join(staging.anchor, JOURNAL), bytes)
+  return await inspectMetadata(visible, path.join(staging.anchor, member), bytes)
 }
 
 async function markFailed(staging?: OwnedDirectory, parent?: OwnedDirectory): Promise<void> {

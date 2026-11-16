@@ -12,6 +12,7 @@ import type { VerifiedApplicationArtifact } from './electron-update-checker.js'
 
 import {
   type ApplicationUpdateCheckResult,
+  ApplicationUpdateRecoveryRequiredError,
   ApplicationUpdateService,
 } from './application-update-service.js'
 import { createElectronUpdateChecker } from './electron-update-checker.js'
@@ -27,6 +28,7 @@ function artifact(
   verifyCompleteSnapshot: () => Promise<void> = async () => {},
 ): VerifiedApplicationArtifact {
   return {
+    authority: { envelope: 'controlled-service-envelope', releaseNotesJson: 'null' },
     manifest: {
       appId: 'studio.imagegen.desktop',
       artifact: {
@@ -51,6 +53,62 @@ function artifact(
     path: '/private/owned-cache/release.AppImage',
     verifyCompleteSnapshot,
   }
+}
+
+for (const targetAuthentication of ['verified', 'unverified'] as const) {
+  test(`retained ${targetAuthentication} startup refuses Review and preflight before artifact or impact reads`, async () => {
+    let verifications = 0
+    let impacts = 0
+    let closeChecks = 0
+    let schedules = 0
+    const receipt = artifact(async () => {
+      verifications++
+    })
+    const service = new ApplicationUpdateService(
+      current,
+      true,
+      () => ({
+        checkForUpdates: async () => ({ ...available(), verification: 'signed-release' }),
+        downloadUpdate: async () => ({ sizeBytes: 19, verifiedArtifact: receipt }),
+      }),
+      '/private/not-inspected/Current.AppImage',
+      () => {
+        closeChecks++
+      },
+      async () => {
+        impacts++
+        throw new Error('/private/impact must not be reached')
+      },
+      () => {
+        schedules++
+      },
+      { status: 'retained', targetAuthentication },
+    )
+    assert.equal(service.getStatus().status, 'idle')
+    assert.equal((await service.check()).status, 'available')
+    assert.equal((await service.download('0.1.0')).status, 'downloaded')
+    assert.equal(verifications, 1)
+    for (const action of [
+      () => service.reviewInstallation('0.1.0'),
+      () => service.prepareInstallation('0.1.0'),
+    ]) {
+      await assert.rejects(action, (error: unknown) => {
+        assert.ok(error instanceof ApplicationUpdateRecoveryRequiredError)
+        assert.equal(error.code, 'APPLICATION_UPDATE_RECOVERY_REQUIRED')
+        assert.equal(
+          error.message,
+          'Application update recovery is required before installation. Your Projects remain open.',
+        )
+        return true
+      })
+    }
+    assert.equal(verifications, 1)
+    assert.equal(impacts, 0)
+    assert.equal(closeChecks, 0)
+    assert.equal(schedules, 0)
+    assert.equal(service.getStatus().status, 'downloaded')
+    assert.equal(JSON.stringify(service.getStatus()).includes('private'), false)
+  })
 }
 
 test('signed native metadata and private artifact project no paths or install capability', async () => {

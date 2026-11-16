@@ -10,7 +10,7 @@ import path from 'node:path'
 
 interface PreviewPlan {
   hold?: boolean
-  kind?: 'error' | 'throw'
+  kind?: 'error' | 'recovery' | 'throw'
   preview?: ApplicationUpdateInstallPreview
 }
 
@@ -201,11 +201,17 @@ async function mountPreviewApp(page: Page, options: PreviewFixtureOptions = {}) 
             if (plan.kind === 'throw') {
               throw new Error('Unexpected native detail at /private/fixture/install-preview.')
             }
-            return plan.kind === 'error'
+            return plan.kind === 'error' || plan.kind === 'recovery'
               ? {
                   error: {
-                    code: 'APPLICATION_UPDATE_PREVIEW_FAILED',
-                    message: 'Preview unavailable. Try again.',
+                    code:
+                      plan.kind === 'recovery'
+                        ? 'APPLICATION_UPDATE_RECOVERY_REQUIRED'
+                        : 'APPLICATION_UPDATE_PREVIEW_FAILED',
+                    message:
+                      plan.kind === 'recovery'
+                        ? 'Application update recovery is required before installation. Your Projects remain open.'
+                        : 'Preview unavailable. Try again.',
                   },
                   ok: false,
                 }
@@ -724,3 +730,39 @@ test('a review for a different version never exposes an installation action', as
   await expect(install(page)).toHaveCount(0)
   expect(await calls(page)).toMatchObject({ installVersions: [], mutationCalls: [] })
 })
+
+for (const viewport of [
+  { height: 800, width: 1280 },
+  { height: 620, width: 900 },
+]) {
+  test(`retained update recovery refuses review without close or mutation at ${viewport.width}×${viewport.height}`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize(viewport)
+    await mountPreviewApp(page, { plans: [{ kind: 'recovery' }] })
+    await openUpdates(page)
+    await review(page).click()
+    const message =
+      'Application update recovery is required before installation. Your Projects remain open.'
+    await expect(impact(page)).toContainText(message)
+    await expect(impact(page)).not.toContainText('Installation is not available in this build.')
+    await expect(install(page)).toHaveCount(0)
+    await expect(later(page)).toBeInViewport()
+    await expect(refresh(page)).toBeEnabled()
+    await expect(refresh(page).locator('.n-base-loading')).toHaveCount(0)
+    expect(await calls(page)).toMatchObject({
+      closeCalls: 0,
+      closeReleases: 0,
+      installVersions: [],
+      mutationCalls: [],
+      previewVersions: [version],
+    })
+    await page.screenshot({
+      path: testInfo.outputPath(`installation-recovery-${viewport.width}x${viewport.height}.png`),
+    })
+    await later(page).click()
+    await expect(dialog(page)).toHaveCount(0)
+    await expect(page.getByRole('region', { exact: true, name: 'Home' })).toBeVisible()
+    expect(await calls(page)).toMatchObject({ closeCalls: 0, mutationCalls: [] })
+  })
+}

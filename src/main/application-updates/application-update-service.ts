@@ -18,7 +18,9 @@ import type { VerifiedApplicationArtifact } from './electron-update-checker.js'
 
 import {
   type ActivatedApplicationUpdate,
+  type ApplicationUpdateStartupInspection,
   type BackedUpApplicationUpdate,
+  inspectRetainedApplicationUpdate,
   type StagedApplicationUpdate,
   stageVerifiedApplicationArtifact,
 } from './application-update-staging.js'
@@ -46,6 +48,16 @@ type ServiceStagedUpdate = Omit<StagedApplicationUpdate, 'prepareBackup'> & {
   prepareBackup: () => Promise<ServiceBackedUpUpdate>
 }
 
+/** Fixed public refusal: retaining update recovery data never requires closing Projects. */
+export class ApplicationUpdateRecoveryRequiredError extends Error {
+  readonly code = 'APPLICATION_UPDATE_RECOVERY_REQUIRED'
+
+  constructor() {
+    super('Application update recovery is required before installation. Your Projects remain open.')
+    this.name = 'ApplicationUpdateRecoveryRequiredError'
+  }
+}
+
 export class ApplicationUpdateService {
   private checker: ApplicationUpdateChecker | null = null
   private pendingCheck: Promise<ApplicationUpdateSnapshot> | null = null
@@ -54,6 +66,7 @@ export class ApplicationUpdateService {
     promise: Promise<ApplicationUpdateSnapshot>
     version: string
   } | null = null
+  private readonly retainedAtStartup: boolean
   private snapshot: ApplicationUpdateSnapshot
   private verifiedArtifact: VerifiedApplicationArtifact | null = null
 
@@ -71,10 +84,12 @@ export class ApplicationUpdateService {
       | null = null,
     private readonly scheduleApplicationRelaunch:
       ((currentAppImage: string) => unknown) | null = null,
+    startupInspection: ApplicationUpdateStartupInspection = { status: 'none' },
   ) {
     if (!isApplicationUpdateVersion(currentVersion)) {
       throw new Error('Invalid application version.')
     }
+    this.retainedAtStartup = startupInspection.status === 'retained'
     this.snapshot = this.empty(configured ? 'idle' : 'unavailable')
   }
 
@@ -248,6 +263,7 @@ export class ApplicationUpdateService {
 
   /** Read-only pre-close eligibility. The exact capability must be rebound after normal close. */
   async prepareInstallation(expectedVersion: string): Promise<VerifiedApplicationArtifact> {
+    await this.assertNoRetainedInstallation()
     if (
       !this.currentAppImage ||
       !this.assertApplicationClosed ||
@@ -295,6 +311,7 @@ export class ApplicationUpdateService {
 
   /** Advisory inspection only: never prepares a binary, starts close or grants install authority. */
   async reviewInstallation(expectedVersion: string): Promise<ApplicationUpdateInstallPreview> {
+    await this.assertNoRetainedInstallation()
     if (!this.readInstallImpact) {
       throw new Error('Application update preview is unavailable.')
     }
@@ -399,6 +416,30 @@ export class ApplicationUpdateService {
         void result.catch(() => undefined)
       }
       throw new Error('The application close assertion must be synchronous.')
+    }
+  }
+
+  private async assertNoRetainedInstallation(): Promise<void> {
+    if (this.retainedAtStartup) {
+      throw new ApplicationUpdateRecoveryRequiredError()
+    }
+    if (!this.currentAppImage) {
+      return
+    }
+    // Reuse the staging owner's read-only admission check to catch claims appearing after
+    // startup. No trust is needed to preserve any retained stage; this does not hash the target.
+    let inspection: ApplicationUpdateStartupInspection
+    try {
+      inspection = await inspectRetainedApplicationUpdate({
+        currentAppImage: this.currentAppImage,
+        currentVersion: this.currentVersion,
+        readTrust: async () => null,
+      })
+    } catch {
+      throw new ApplicationUpdateRecoveryRequiredError()
+    }
+    if (inspection.status === 'retained') {
+      throw new ApplicationUpdateRecoveryRequiredError()
     }
   }
 

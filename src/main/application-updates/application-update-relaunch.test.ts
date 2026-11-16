@@ -10,7 +10,7 @@
  * separately by the production native adapter and Root's native fixture.
  */
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
+import { createHash, generateKeyPairSync, sign } from 'node:crypto'
 import { lstatSync, readFileSync } from 'node:fs'
 import * as fs from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -20,6 +20,7 @@ import { test, type TestContext } from 'node:test'
 import type { ApplicationReleaseManifest } from './application-release.js'
 import type { VerifiedApplicationArtifact } from './electron-update-checker.js'
 
+import { canonicalRuntimeReleaseJson } from '../runtime/runtime-release.js'
 import {
   AppUpdateRelaunchError,
   stageVerifiedApplicationArtifact,
@@ -66,6 +67,7 @@ async function fixture(t: Pick<TestContext, 'after'>) {
   await fs.writeFile(source, newBytes, { mode: 0o755 })
   await fs.chmod(currentAppImage, 0o755)
   await fs.chmod(source, 0o755)
+  const notesJson = canonicalRuntimeReleaseJson('Owned relaunch fixture; never executed.')
   const manifest: ApplicationReleaseManifest = {
     appId: 'studio.imagegen.desktop',
     artifact: { filename: 'next.AppImage', sha512: sha(newBytes), sizeBytes: newBytes.length },
@@ -77,14 +79,26 @@ async function fixture(t: Pick<TestContext, 'after'>) {
       runtimeValidation: 'after-restart',
     },
     releaseId: 'owned-relaunch-fixture',
-    releaseNotesSha256: 'b'.repeat(64),
+    releaseNotesSha256: createHash('sha256').update(notesJson).digest('hex'),
     schemaVersion: 1,
     scope: 'application-release',
     target: { arch: 'x64', format: 'AppImage', os: 'linux' },
     version: '0.2.0',
   }
+  const { privateKey } = generateKeyPairSync('ed25519')
+  const payload = canonicalRuntimeReleaseJson(manifest)
+  const releaseAuthority = Object.freeze({
+    envelope: canonicalRuntimeReleaseJson({
+      keyId: 'owned-relaunch-key',
+      payload: payload.toString('base64'),
+      schemaVersion: 1,
+      signature: sign(null, payload, privateKey).toString('base64'),
+    }).toString('utf8'),
+    releaseNotesJson: notesJson.toString('utf8'),
+  })
   const authority = { calls: 0, revoked: false }
   const artifact: VerifiedApplicationArtifact = {
+    authority: releaseAuthority,
     manifest,
     path: source,
     verifyCompleteSnapshot: async () => {
@@ -251,21 +265,42 @@ for (const fault of [
   'backup-same-bytes',
   'backup-bytes',
   'journal',
+  'release-envelope.json',
+  'release-notes.json',
 ] as const) {
   test(`${fault} tamper refuses before the relaunch scheduler and retains the foreign material`, async (t) => {
     const f = await fixture(t)
-    if (fault === 'journal') {
-      const journal = path.join(f.active.stagingDirectory, 'journal.json')
-      await fs.appendFile(journal, '\n')
-    } else if (fault === 'backup-bytes') {
-      const bytes = await fs.readFile(f.active.backupPath)
-      bytes[100] = (bytes[100] ?? 0) ^ 1
-      await fs.writeFile(f.active.backupPath, bytes)
-    } else {
-      const filename = fault === 'current-same-bytes' ? f.currentAppImage : f.active.backupPath
-      const bytes = await fs.readFile(filename)
-      await fs.rename(filename, path.join(f.root, 'retained-foreign-source.AppImage'))
-      await fs.writeFile(filename, bytes, { mode: fault === 'current-same-bytes' ? 0o755 : 0o600 })
+    switch (fault) {
+      case 'backup-bytes': {
+        const bytes = await fs.readFile(f.active.backupPath)
+        bytes[100] = (bytes[100] ?? 0) ^ 1
+        await fs.writeFile(f.active.backupPath, bytes)
+
+        break
+      }
+      case 'journal': {
+        const journal = path.join(f.active.stagingDirectory, 'journal.json')
+        await fs.appendFile(journal, '\n')
+
+        break
+      }
+      case 'release-envelope.json':
+      case 'release-notes.json': {
+        const filename = path.join(f.active.stagingDirectory, fault)
+        const bytes = await fs.readFile(filename)
+        await fs.rename(filename, path.join(f.root, `retained-${fault}`))
+        await fs.writeFile(filename, bytes, { mode: 0o600 })
+
+        break
+      }
+      default: {
+        const filename = fault === 'current-same-bytes' ? f.currentAppImage : f.active.backupPath
+        const bytes = await fs.readFile(filename)
+        await fs.rename(filename, path.join(f.root, 'retained-foreign-source.AppImage'))
+        await fs.writeFile(filename, bytes, {
+          mode: fault === 'current-same-bytes' ? 0o755 : 0o600,
+        })
+      }
     }
     const before = {
       backup: await witness(f.active.backupPath),

@@ -1,6 +1,27 @@
 # Open Questions
 
-## Current explicit application Install
+## Current retained application update authority
+
+[Offline retained authority](./engineering/phase-5-application-update-startup-authority-research.md)
+continues the explicit Install owner with the original signed envelope and complete
+canonical notes in the same schema2 stage. Main inspects the on-disk target offline
+before Project/runtime/UI startup. Any retained/unsafe stage refuses Review and
+preflight before artifact/impact reads or Project close, including stages appearing
+after startup. Ordinary Project access and explicit Check/Download remain available.
+
+This authenticates only current target bytes, not the executing body or healthy
+startup/engine. Backup trust, exclusive process ownership, recovery/claim
+finalization, rollback, retirement/cleanup, publisher/shipping and migration/runtime
+acceptance remain open. Root checks:437 Main PASS/one platformSKIP; full browser343PASS plus two settled
+observer cases; final typing/build/scoped lint and actual-consumer hash mutation
+GREEN/semanticRED/GREEN PASS. Packaged R2 A→B passes offline authority inspection,
+source-cache absence, public C Review refusal, unchanged stage, usable saved
+Project and two normal exits. R1 is a retained harness budget/timing failure with
+separate physical-exit proof. Explicit native timing controls and promotion
+overhead limits are recorded in research. All promise statuses stay unchanged.
+
+
+## Previous explicit application Install
 
 [Public Install](./engineering/phase-5-application-update-install-research.md) connects eligible current-document Review to the
 existing normal Project/Preset close flow and the guarded same-owner handoff.

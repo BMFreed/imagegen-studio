@@ -10,6 +10,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { registerApplicationUpdateIpc } from './application-update-ipc.js'
+import { ApplicationUpdateRecoveryRequiredError } from './application-update-service.js'
 
 type Handler = Parameters<Parameters<typeof registerApplicationUpdateIpc>[0]['handle']>[1]
 type Request = Parameters<Handler>[0]
@@ -449,6 +450,44 @@ test('impact review refuses malformed or mismatched projections and sanitizes na
     f.controls.reviewInstallation = async () => invalid
     failure(await f.invoke('reviewInstallation', ['0.1.0']), 'IPC_INVALID_RESPONSE')
   }
+})
+
+for (const action of ['reviewInstallation', 'install'] as const) {
+  test(`${action} exposes only the fixed retained-update refusal and grants no further close attempt`, async () => {
+    const f = fixture()
+    const error = new ApplicationUpdateRecoveryRequiredError()
+    error.message = '/private/retained/journal.json?key=secret'
+    if (action === 'install') {
+      await f.invoke('reviewInstallation', ['0.1.0'])
+      f.controls.install = async () => {
+        throw error
+      }
+    } else {
+      f.controls.reviewInstallation = async () => {
+        throw error
+      }
+    }
+    assert.deepEqual(
+      failure(await f.invoke(action, ['0.1.0']), 'APPLICATION_UPDATE_RECOVERY_REQUIRED'),
+      {
+        code: 'APPLICATION_UPDATE_RECOVERY_REQUIRED',
+        message:
+          'Application update recovery is required before installation. Your Projects remain open.',
+      },
+    )
+    failure(await f.invoke('install', ['0.1.0']), 'APPLICATION_UPDATE_INSTALL_FAILED')
+    assert.equal(f.installationVersions.length, action === 'install' ? 1 : 0)
+  })
+}
+
+test('an arbitrary native error with the recovery code cannot impersonate the typed refusal', async () => {
+  const f = fixture()
+  f.controls.reviewInstallation = async () => {
+    throw Object.assign(new Error('/private/unknown'), {
+      code: 'APPLICATION_UPDATE_RECOVERY_REQUIRED',
+    })
+  }
+  failure(await f.invoke('reviewInstallation', ['0.1.0']), 'APPLICATION_UPDATE_PREVIEW_FAILED')
 })
 
 /** Install remains a controlled Main callback here, not Electron close or executable acceptance. */

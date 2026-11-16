@@ -12,6 +12,10 @@ import { test } from 'node:test'
 import type { ApplicationReleaseTrust } from './application-release.js'
 
 import { canonicalRuntimeReleaseJson } from '../runtime/runtime-release.js'
+import {
+  copyApplicationReleaseAuthority,
+  verifyApplicationReleaseAuthority,
+} from './application-release.js'
 import { createElectronUpdateChecker, VerifiedAppImageUpdater } from './electron-update-checker.js'
 
 const body = Buffer.alloc(2 * 1024 * 1024 + 37, 19)
@@ -268,14 +272,18 @@ class SignedFixtureUpdater extends FixtureUpdater {
   metadata: UpdateInfoAndProvider['info'] & { imagegenStudioRelease?: string }
   metadataRequests = 0
 
-  constructor(root: string, trust = releaseTrust()) {
+  constructor(
+    root: string,
+    trust = releaseTrust(),
+    nativeNotes: UpdateInfoAndProvider['info']['releaseNotes'] = releaseNotes,
+  ) {
     super(root, trust)
     this.metadata = {
       files: [{ sha512: digest(body), size: body.length, url: 'studio-0.2.0.AppImage' }],
-      imagegenStudioRelease: signedEnvelope(releaseManifest()),
+      imagegenStudioRelease: signedEnvelope(releaseManifest('0.2.0', nativeNotes)),
       path: 'studio-0.2.0.AppImage',
       releaseDate: '2026-11-15T00:00:00Z',
-      releaseNotes,
+      releaseNotes: nativeNotes,
       sha512: digest(body),
       version: '0.2.0',
     }
@@ -310,14 +318,14 @@ function releaseTrust() {
   }
 }
 
-function releaseManifest(version = '0.2.0') {
+function releaseManifest(version = '0.2.0', nativeNotes: unknown = releaseNotes) {
   return {
     appId: 'studio.imagegen.desktop',
     artifact: { filename: 'studio-0.2.0.AppImage', sha512: digest(body), sizeBytes: body.length },
     compatibility: { ...releaseTrust().compatibility, runtimeValidation: 'after-restart' },
     releaseId: 'owned-native-release',
     releaseNotesSha256: createHash('sha256')
-      .update(canonicalRuntimeReleaseJson(releaseNotes))
+      .update(canonicalRuntimeReleaseJson(nativeNotes ?? null))
       .digest('hex'),
     schemaVersion: 1,
     scope: 'application-release',
@@ -339,10 +347,11 @@ function signedEnvelope(payload: unknown) {
 async function signedFixture(
   t: { after: (fn: () => Promise<void>) => void },
   trust = releaseTrust(),
+  nativeNotes: UpdateInfoAndProvider['info']['releaseNotes'] = releaseNotes,
 ) {
   const root = await fs.mkdtemp(path.join(tmpdir(), 'igs-app-signed-download-'))
   t.after(() => fs.rm(root, { force: true, recursive: true }))
-  return new SignedFixtureUpdater(root, trust)
+  return new SignedFixtureUpdater(root, trust, nativeNotes)
 }
 
 test('real native metadata parsing authenticates a release before advertising or downloading it', async (t) => {
@@ -363,12 +372,170 @@ test('real native metadata parsing authenticates a release before advertising or
     path.join(updater.helper.cacheDirForPendingUpdate, 'studio-0.2.0.AppImage'),
   )
   assert.equal(Object.isFrozen(artifact), true)
+  assert.equal(Object.isFrozen(artifact.authority), true)
+  assert.deepEqual(artifact.authority, {
+    envelope: updater.metadata.imagegenStudioRelease,
+    releaseNotesJson: canonicalRuntimeReleaseJson(releaseNotes).toString('utf8'),
+  })
   assert.equal(Object.isFrozen(artifact.manifest.compatibility.databaseMigrations), true)
   assert.equal(artifact.manifest.version, '0.2.0')
   await artifact.verifyCompleteSnapshot()
   assert.equal(updater.transfers, 1)
   assert.equal(updater.autoInstallOnAppQuit, false)
   assert.equal(updater.disableDifferentialDownload, false)
+})
+
+test('native artifact retains exact persistable envelope and complete raw long or structured notes', async (t) => {
+  const cases: [string, UpdateInfoAndProvider['info']['releaseNotes']][] = [
+    ['long notes', `${'Owned complete notes. '.repeat(2000)}final signed tail`],
+    [
+      'structured notes',
+      [
+        { note: 'New release literal text <script>owned</script>', version: '0.2.0' },
+        { note: 'Previous release note', version: '0.1.0' },
+      ],
+    ],
+    ['missing notes', undefined],
+  ]
+  for (const [label, nativeNotes] of cases) {
+    await t.test(label, async (sub) => {
+      const updater = await signedFixture(sub, releaseTrust(), nativeNotes)
+      if (nativeNotes === undefined) {
+        delete updater.metadata.releaseNotes
+        updater.metadata.imagegenStudioRelease = signedEnvelope(releaseManifest('0.2.0', null))
+      }
+      const envelope = `${JSON.stringify(
+        JSON.parse(updater.metadata.imagegenStudioRelease!),
+        null,
+        2,
+      )}\n`
+      updater.metadata.imagegenStudioRelease = envelope
+      await updater.checkForUpdates()
+      const artifact = (await updater.downloadVerified(() => {})).verifiedArtifact!
+      const expected = {
+        envelope,
+        releaseNotesJson: canonicalRuntimeReleaseJson(nativeNotes ?? null).toString('utf8'),
+      }
+      assert.deepEqual(artifact.authority, expected)
+      const persisted = JSON.parse(JSON.stringify(artifact.authority)) as unknown
+      assert.deepEqual(copyApplicationReleaseAuthority(persisted), expected)
+      assert.deepEqual(
+        verifyApplicationReleaseAuthority(persisted, releaseTrust()),
+        artifact.manifest,
+      )
+      assert.equal(Object.isFrozen(artifact.authority), true)
+      assert.throws(() => Object.assign(artifact.authority, { envelope: '{}' }), TypeError)
+      assert.throws(
+        () => Object.assign(artifact, { authority: { ...expected, releaseNotesJson: 'null' } }),
+        TypeError,
+      )
+      await artifact.verifyCompleteSnapshot()
+      assert.equal(
+        updater.metadataRequests,
+        1,
+        'Offline authority verification uses no feed request.',
+      )
+      assert.equal(updater.transfers, 1)
+    })
+  }
+})
+
+test('post-download raw notes or signed selection mutations retire the exposed authority capability', async (t) => {
+  for (const fault of [
+    'notes tail',
+    'structured note',
+    'envelope formatting',
+    'release',
+  ] as const) {
+    await t.test(fault, async (sub) => {
+      const nativeNotes =
+        fault === 'structured note'
+          ? [{ note: 'Owned complete array note', version: '0.2.0' }]
+          : `${'Owned notes. '.repeat(2000)}signed tail`
+      const updater = await signedFixture(sub, releaseTrust(), nativeNotes)
+      await updater.checkForUpdates()
+      const artifact = (await updater.downloadVerified(() => {})).verifiedArtifact!
+      const source = Reflect.get(updater, 'updateInfoAndProvider') as UpdateInfoAndProvider
+      const beforeNotes = source.info.releaseNotes
+      const beforeEnvelope = Reflect.get(source.info, 'imagegenStudioRelease') as string
+      switch (fault) {
+        case 'envelope formatting': {
+          Reflect.set(source.info, 'imagegenStudioRelease', `${beforeEnvelope}\n`)
+
+          break
+        }
+        case 'notes tail': {
+          source.info.releaseNotes = `${nativeNotes as string} changed beyond the display bound`
+
+          break
+        }
+        case 'structured note': {
+          source.info.releaseNotes = [{ note: 'Changed array note', version: '0.2.0' }]
+
+          break
+        }
+        default: {
+          Reflect.set(
+            source.info,
+            'imagegenStudioRelease',
+            signedEnvelope({ ...releaseManifest('0.2.0', nativeNotes), releaseId: 'replacement' }),
+          )
+        }
+      }
+      await assert.rejects(artifact.verifyCompleteSnapshot())
+      source.info.releaseNotes = beforeNotes
+      Reflect.set(source.info, 'imagegenStudioRelease', beforeEnvelope)
+      await assert.rejects(artifact.verifyCompleteSnapshot(), /retired/)
+      assert.deepEqual(artifact.authority, {
+        envelope: beforeEnvelope,
+        releaseNotesJson: canonicalRuntimeReleaseJson(nativeNotes).toString('utf8'),
+      })
+      assert.equal(updater.downloadCalls, 1)
+    })
+  }
+})
+
+test('persisted native authority cannot supply replacement trust, domain or noncanonical notes', async (t) => {
+  const updater = await signedFixture(t)
+  await updater.checkForUpdates()
+  const artifact = (await updater.downloadVerified(() => {})).verifiedArtifact!
+  const persisted = { ...artifact.authority }
+  const unrelatedKey = generateKeyPairSync('ed25519')
+    .publicKey.export({ format: 'pem', type: 'spki' })
+    .toString()
+  for (const [label, authority, policy] of [
+    [
+      'removed bundled signer',
+      persisted,
+      { ...releaseTrust(), trustedKeys: { replacement: unrelatedKey } },
+    ],
+    [
+      'substituted bundled key',
+      persisted,
+      { ...releaseTrust(), trustedKeys: { 'owned-native-key': unrelatedKey } },
+    ],
+    [
+      'signed foreign domain',
+      {
+        ...persisted,
+        envelope: signedEnvelope({ ...releaseManifest(), scope: 'runtime-transport' }),
+      },
+      releaseTrust(),
+    ],
+    [
+      'wrong canonical notes',
+      { ...persisted, releaseNotesJson: `${persisted.releaseNotesJson}\n` },
+      releaseTrust(),
+    ],
+    ['embedded trust', { ...persisted, trustedKeys: releaseTrust().trustedKeys }, releaseTrust()],
+  ] as const) {
+    await t.test(label, () =>
+      assert.throws(() => verifyApplicationReleaseAuthority(authority, policy)),
+    )
+  }
+  await artifact.verifyCompleteSnapshot()
+  assert.equal(updater.metadataRequests, 1)
+  assert.equal(updater.downloadCalls, 1)
 })
 
 test('missing, untrusted or descriptor/notes-mismatched signatures never reach native transfer', async (t) => {

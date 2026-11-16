@@ -248,7 +248,9 @@ function fixture(options: Options = {}) {
         events.push('app-quit')
       },
     },
+    applicationUpdateAppImage: '/controlled/Current.AppImage',
     ApplicationUpdateService: ControlledUpdateService,
+    applicationUpdateStartupInspection: { status: 'none' },
     appShutdown,
     clearTimeout,
     closeState: undefined as unknown as () => CloseState,

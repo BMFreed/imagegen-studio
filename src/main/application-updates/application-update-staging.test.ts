@@ -52,7 +52,7 @@ function imageBytes(marker: number, size = 1024 + 97): Buffer {
   return bytes
 }
 
-function signedManifest(
+function signedRelease(
   bytes: Buffer,
   descriptor: { filename?: string; sha512?: string; sizeBytes?: number } = {},
 ) {
@@ -93,7 +93,7 @@ function signedManifest(
     schemaVersion: 1,
     signature: sign(null, payload, privateKey).toString('base64'),
   })
-  return verifyApplicationRelease(
+  const manifest = verifyApplicationRelease(
     envelope,
     {
       compatibility,
@@ -104,6 +104,13 @@ function signedManifest(
     selected,
     notes,
   )
+  return {
+    authority: Object.freeze({
+      envelope: envelope.toString('utf8'),
+      releaseNotesJson: canonicalRuntimeReleaseJson(notes).toString('utf8'),
+    }),
+    manifest,
+  }
 }
 
 async function witness(file: string) {
@@ -158,7 +165,7 @@ async function fixture(
   await fs.chmod(source, 0o755)
   const state: { calls: number; onVerify?: (call: number) => Promise<void> } = { calls: 0 }
   const artifact: VerifiedApplicationArtifact = Object.freeze({
-    manifest: signedManifest(body, options.descriptor),
+    ...signedRelease(body, options.descriptor),
     path: source,
     verifyCompleteSnapshot: async () => {
       state.calls += 1
@@ -249,6 +256,16 @@ test('staging creates a fresh private candidate and prepared journal while prese
     'The trusted artifact must be revalidated before and after copying.',
   )
   const receipt = await journal(f.stagingDirectory, staged.candidatePath)
+  assert.equal(receipt.value['schemaVersion'], 2)
+  for (const [member, value] of [
+    ['release-envelope.json', f.artifact.authority.envelope],
+    ['release-notes.json', f.artifact.authority.releaseNotesJson],
+  ] as const) {
+    const file = path.join(staged.stagingDirectory, member)
+    assert.equal(await fs.readFile(file, 'utf8'), value)
+    assert.equal((await witness(file)).mode, 0o600)
+    assert.equal((await witness(file)).nlink, 1n)
+  }
   assert.equal(Object.values(receipt.value).includes('prepared'), true)
   await staged.verifyCompleteSnapshot()
   assert.deepEqual(await inputs(f), before)
@@ -355,7 +372,7 @@ test('hardlinked or non-executable current images and direct source/current alia
       } else {
         artifact = {
           ...f.artifact,
-          manifest: signedManifest(f.oldBytes, { filename: path.basename(f.currentAppImage) }),
+          ...signedRelease(f.oldBytes, { filename: path.basename(f.currentAppImage) }),
           path: f.currentAppImage,
         }
       }
@@ -379,6 +396,22 @@ test('revoked source authority before writing preserves both inputs', async (t) 
   )
   assert.ok(f.state.calls >= 1)
   assert.deepEqual(await inputs(f), before)
+})
+
+test('authority capture is bracketed by native revalidation and refuses changed original bytes', async (t) => {
+  const f = await fixture(t)
+  const before = await inputs(f)
+  const artifact = { ...f.artifact, authority: { ...f.artifact.authority } }
+  f.state.onVerify = async (call) => {
+    if (call === 2) {
+      artifact.authority = { ...artifact.authority, envelope: `${artifact.authority.envelope} ` }
+    }
+  }
+  await assert.rejects(
+    stageVerifiedApplicationArtifact({ artifact, currentAppImage: f.currentAppImage }),
+  )
+  assert.deepEqual(await inputs(f), before)
+  await assert.rejects(fs.lstat(f.stagingDirectory), { code: 'ENOENT' })
 })
 
 test('revocation observed after the actual copy leaves a failed claim and preserves old/cache inputs', async (t) => {
@@ -656,6 +689,23 @@ test('returned capability rejects byte, permission, inode, journal and canonical
       },
     ],
   ]
+  for (const member of ['release-envelope.json', 'release-notes.json']) {
+    for (const fault of ['bytes', 'same-byte-inode']) {
+      faults.push([
+        `${member}/${fault}`,
+        async (f, staged) => {
+          const file = path.join(staged.stagingDirectory, member)
+          const bytes = await fs.readFile(file)
+          if (fault === 'same-byte-inode') {
+            await fs.rename(file, path.join(f.root, `retained-${member}`))
+            await fs.writeFile(file, bytes, { mode: 0o600 })
+          } else {
+            await fs.appendFile(file, ' ')
+          }
+        },
+      ])
+    }
+  }
   for (const [label, mutate] of faults) {
     await t.test(label, async (subtest) => {
       const f = await fixture(subtest)
@@ -695,7 +745,14 @@ test('an unwritable current parent is refused without chmod or partial cleanup o
   await assert.rejects(fs.lstat(f.stagingDirectory), { code: 'ENOENT' })
 })
 
-for (const fault of ['current', 'candidate', 'journal', 'extra-entry'] as const) {
+for (const fault of [
+  'current',
+  'candidate',
+  'journal',
+  'release-envelope.json',
+  'release-notes.json',
+  'extra-entry',
+] as const) {
   test(`a ${fault} change during the last authority await cannot escape final plan guards`, async (t) => {
     const f = await fixture(t)
     const staged = await stageVerifiedApplicationArtifact({
@@ -715,7 +772,7 @@ for (const fault of ['current', 'candidate', 'journal', 'extra-entry'] as const)
             ? f.currentAppImage
             : fault === 'candidate'
               ? staged.candidatePath
-              : path.join(staged.stagingDirectory, 'journal.json')
+              : path.join(staged.stagingDirectory, fault === 'journal' ? 'journal.json' : fault)
         const bytes = await fs.readFile(filename)
         bytes[bytes.length - 1] ^= 1
         await fs.writeFile(filename, bytes)

@@ -157,7 +157,7 @@ function close() {
           cancel those choices before installation starts. The image engine will be checked after
           restart.
         </p>
-        <p v-else-if="!previewPending && !installError" class="updates-detail">
+        <p v-else-if="!previewPending && !installError && !previewError" class="updates-detail">
           Installation is not available in this build.
         </p>
         <NAlert v-if="installError" title="Installation could not start" type="error">

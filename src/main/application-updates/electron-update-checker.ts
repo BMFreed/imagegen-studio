@@ -16,7 +16,13 @@ import path from 'node:path'
 
 import type { ApplicationUpdateChecker } from './application-update-service.js'
 
-import { type ApplicationReleaseTrust, verifyApplicationRelease } from './application-release.js'
+import { canonicalRuntimeReleaseJson } from '../runtime/runtime-release.js'
+import {
+  type ApplicationReleaseAuthority,
+  type ApplicationReleaseTrust,
+  copyApplicationReleaseAuthority,
+  verifyApplicationRelease,
+} from './application-release.js'
 
 type Progress = { downloadedBytes: number; totalBytes: number }
 const fileFlags = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
@@ -24,6 +30,7 @@ const identity = (s: BigIntStats) => [s.dev, s.ino, s.mode, s.size, s.mtimeNs, s
 const maxEnvelopeBytes = 1024 * 1024
 /** Main-private capability. Never serialize this file/closure into the renderer snapshot. */
 export interface VerifiedApplicationArtifact {
+  readonly authority: ApplicationReleaseAuthority
   readonly manifest: Manifest
   readonly path: string
   verifyCompleteSnapshot: () => Promise<void>
@@ -39,8 +46,8 @@ type Descriptor = Readonly<{
 }>
 
 type SignedSelection = Readonly<{
+  authority: Readonly<ApplicationReleaseAuthority>
   descriptor: Descriptor
-  envelope: string
   manifest: Manifest
   source: UpdateInfoAndProvider
 }>
@@ -140,7 +147,8 @@ export class VerifiedAppImageUpdater extends electronUpdater.AppImageUpdater {
     )
     const current = this.authenticateSelection(signed.source)
     need(
-      current.envelope === signed.envelope &&
+      current.authority.envelope === signed.authority.envelope &&
+        current.authority.releaseNotesJson === signed.authority.releaseNotesJson &&
         Object.keys(signed.descriptor).every(
           (key) =>
             current.descriptor[key as keyof Descriptor] ===
@@ -168,8 +176,14 @@ export class VerifiedAppImageUpdater extends electronUpdater.AppImageUpdater {
       'A signed application release is required.',
     )
     const descriptor = selectDescriptor(source, true)
+    const authority = copyApplicationReleaseAuthority({
+      envelope,
+      releaseNotesJson: canonicalRuntimeReleaseJson(source.info.releaseNotes ?? null).toString(
+        'utf8',
+      ),
+    })
     const manifest = verifyApplicationRelease(
-      Buffer.from(envelope, 'utf8'),
+      Buffer.from(authority.envelope, 'utf8'),
       this.releaseTrust,
       {
         filename: descriptor.filename,
@@ -177,9 +191,9 @@ export class VerifiedAppImageUpdater extends electronUpdater.AppImageUpdater {
         sizeBytes: descriptor.sizeBytes,
         version: descriptor.version,
       },
-      source.info.releaseNotes,
+      JSON.parse(authority.releaseNotesJson),
     )
-    return Object.freeze({ descriptor, envelope, manifest, source })
+    return Object.freeze({ authority, descriptor, manifest, source })
   }
 
   private async downloadVerifiedOne(
@@ -219,14 +233,23 @@ export class VerifiedAppImageUpdater extends electronUpdater.AppImageUpdater {
         }
         this.assertCurrentSelection(signed)
         const artifact: VerifiedApplicationArtifact = Object.freeze({
+          authority: signed.authority,
           manifest: signed.manifest,
           path: filename,
           verifyCompleteSnapshot: async () => {
             try {
               need(this.artifactEpoch === epoch, 'Application artifact was retired.')
+              need(
+                artifact.authority === signed.authority && Object.isFrozen(artifact.authority),
+                'Application release authority changed.',
+              )
               this.assertCurrentSelection(signed)
               await verifyDownloadedFile(filename, pending, expected, snapshot)
               need(this.artifactEpoch === epoch, 'Application artifact was retired.')
+              need(
+                artifact.authority === signed.authority && Object.isFrozen(artifact.authority),
+                'Application release authority changed.',
+              )
               this.assertCurrentSelection(signed)
             } catch (error) {
               if (this.artifactEpoch === epoch) {

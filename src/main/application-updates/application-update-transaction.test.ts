@@ -10,7 +10,7 @@
  * adapted by the production owner; these tests observe that owner through its public methods.
  */
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
+import { createHash, generateKeyPairSync, sign } from 'node:crypto'
 import { lstatSync, readFileSync } from 'node:fs'
 import * as fs from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -20,6 +20,7 @@ import { test, type TestContext } from 'node:test'
 import type { ApplicationReleaseManifest } from './application-release.js'
 import type { VerifiedApplicationArtifact } from './electron-update-checker.js'
 
+import { canonicalRuntimeReleaseJson } from '../runtime/runtime-release.js'
 import { stageVerifiedApplicationArtifact } from './application-update-staging.js'
 
 const hash = (bytes: Buffer) => createHash('sha512').update(bytes).digest('base64')
@@ -67,6 +68,8 @@ async function fixture(t: Pick<TestContext, 'after'>) {
   await fs.writeFile(source, newBytes, { mode: 0o755 })
   await fs.chmod(currentAppImage, 0o755)
   await fs.chmod(source, 0o755)
+  const notes = 'Owned filesystem transaction; synthetic body is never executed.'
+  const notesJson = canonicalRuntimeReleaseJson(notes)
   const manifest: ApplicationReleaseManifest = Object.freeze({
     appId: 'studio.imagegen.desktop',
     artifact: Object.freeze({
@@ -82,17 +85,29 @@ async function fixture(t: Pick<TestContext, 'after'>) {
       runtimeValidation: 'after-restart',
     }),
     releaseId: 'owned-filesystem-transaction',
-    releaseNotesSha256: 'a'.repeat(64),
+    releaseNotesSha256: createHash('sha256').update(notesJson).digest('hex'),
     schemaVersion: 1,
     scope: 'application-release',
     target: Object.freeze({ arch: 'x64', format: 'AppImage', os: 'linux' }),
     version: '0.2.0',
+  })
+  const { privateKey } = generateKeyPairSync('ed25519')
+  const payload = canonicalRuntimeReleaseJson(manifest)
+  const releaseAuthority = Object.freeze({
+    envelope: canonicalRuntimeReleaseJson({
+      keyId: 'owned-transaction-key',
+      payload: payload.toString('base64'),
+      schemaVersion: 1,
+      signature: sign(null, payload, privateKey).toString('base64'),
+    }).toString('utf8'),
+    releaseNotesJson: notesJson.toString('utf8'),
   })
   const authority: { calls: number; onVerify?: () => Promise<void>; revoked: boolean } = {
     calls: 0,
     revoked: false,
   }
   const artifact: VerifiedApplicationArtifact = Object.freeze({
+    authority: releaseAuthority,
     manifest,
     path: source,
     verifyCompleteSnapshot: async () => {
@@ -500,6 +515,45 @@ test('modified or replaced backup refuses activation and rollback without repair
         assert.deepEqual(await witness(backed.backupPath), backup)
         assert.deepEqual(await witness(f.source), cache)
       })
+    }
+  }
+})
+
+test('persisted signed authority remains part of activation and rollback capabilities', async (t) => {
+  for (const at of ['before-activation', 'before-rollback'] as const) {
+    for (const member of ['release-envelope.json', 'release-notes.json']) {
+      for (const fault of ['bytes', 'same-byte-inode']) {
+        await t.test(`${at}/${member}/${fault}`, async (subtest) => {
+          const f = await fixture(subtest)
+          const backed = await (await prepared(f)).prepareBackup()
+          const active = at === 'before-rollback' ? await backed.activate(() => undefined) : null
+          await (active ?? backed).verifyCompleteSnapshot()
+          const filename = path.join(backed.stagingDirectory, member)
+          const bytes = await fs.readFile(filename)
+          if (fault === 'same-byte-inode') {
+            await fs.rename(filename, path.join(f.root, `retained-${member}`))
+            await fs.writeFile(filename, bytes, { mode: 0o600 })
+          } else {
+            await fs.appendFile(filename, ' ')
+          }
+          const before = {
+            authority: await witness(filename),
+            backup: await witness(backed.backupPath),
+            cache: await witness(f.source),
+            current: await witness(f.currentAppImage),
+          }
+          await assert.rejects(active ? active.rollback() : backed.activate(() => undefined))
+          assert.deepEqual(
+            {
+              authority: await witness(filename),
+              backup: await witness(backed.backupPath),
+              cache: await witness(f.source),
+              current: await witness(f.currentAppImage),
+            },
+            before,
+          )
+        })
+      }
     }
   }
 })

@@ -15,6 +15,8 @@ import {
   isApplicationUpdateVersion,
 } from '../../shared/application-updates.js'
 
+import { ApplicationUpdateRecoveryRequiredError } from './application-update-service.js'
+
 type Caller = { mainFrame: unknown }
 type Request = { sender: unknown; senderFrame: unknown }
 type Registrar = {
@@ -38,6 +40,11 @@ const failure = (code: string, message: string): ApiResult<never> => ({
 const rejected = () => failure('IPC_INVALID_CALLER', 'Application update request was rejected.')
 const invalid = () =>
   failure('IPC_INVALID_RESPONSE', 'The application returned an invalid update status.')
+const recoveryRequired = () =>
+  failure(
+    'APPLICATION_UPDATE_RECOVERY_REQUIRED',
+    'Application update recovery is required before installation. Your Projects remain open.',
+  )
 
 /** Getter is read-only. The service owns deduplication, metadata and every actual network check. */
 export function registerApplicationUpdateIpc(
@@ -106,13 +113,16 @@ export function registerApplicationUpdateIpc(
             result.availableVersion === args[0]
             ? { ok: true, value: structuredClone(result) }
             : invalid()
-        } catch {
-          return current()
-            ? failure(
+        } catch (error) {
+          if (!current()) {
+            return rejected()
+          }
+          return error instanceof ApplicationUpdateRecoveryRequiredError
+            ? recoveryRequired()
+            : failure(
                 'APPLICATION_UPDATE_INSTALL_FAILED',
                 'The application could not start installation. Review the update and try again.',
               )
-            : rejected()
         } finally {
           installationPending = false
         }
@@ -155,9 +165,12 @@ export function registerApplicationUpdateIpc(
           reviewedVersion = snapshot.availableVersion
         }
         return { ok: true, value: structuredClone(snapshot) }
-      } catch {
+      } catch (error) {
         if (!current()) {
           return rejected()
+        }
+        if (error instanceof ApplicationUpdateRecoveryRequiredError) {
+          return recoveryRequired()
         }
         return failure(
           channel === ipcChannels.applicationUpdates.reviewInstallation

@@ -10,7 +10,10 @@ import path from 'node:path'
 import { test } from 'node:test'
 
 import { canonicalRuntimeReleaseJson } from '../runtime/runtime-release.js'
-import { ApplicationUpdateService } from './application-update-service.js'
+import {
+  ApplicationUpdateRecoveryRequiredError,
+  ApplicationUpdateService,
+} from './application-update-service.js'
 import { createElectronUpdateChecker, VerifiedAppImageUpdater } from './electron-update-checker.js'
 
 const sha = (bytes: Buffer) => createHash('sha512').update(bytes).digest('base64')
@@ -603,6 +606,67 @@ test('eligible pre-close preparation returns exact signed authority without asse
       public: f.service.getStatus(),
     },
     before,
+  )
+})
+
+test('a stage retained after startup blocks another public Review and preflight before impact or close', async (t) => {
+  let impacts = 0
+  let closeChecks = 0
+  let schedules = 0
+  const f = await fixture(
+    t,
+    true,
+    true,
+    () => {
+      closeChecks++
+    },
+    async () => {
+      impacts++
+      return installImpact()
+    },
+    () => {
+      schedules++
+      return true
+    },
+  )
+  await f.service.check()
+  await f.service.download('0.2.0')
+  assert.equal((await f.service.reviewInstallation('0.2.0')).installationAvailable, true)
+  assert.equal(impacts, 1)
+  const stage = await f.service.stageForInstallation('0.2.0')
+  const retained = {
+    candidate: await identity(stage.candidatePath),
+    current: await identity(f.currentAppImage),
+    journal: await fs.readFile(path.join(stage.stagingDirectory, 'journal.json')),
+    members: await fs.readdir(stage.stagingDirectory),
+  }
+  // A new explicit download remains available; it cannot make the retained stage disposable.
+  await f.service.check()
+  assert.equal((await f.service.download('0.2.0')).status, 'downloaded')
+  const receipt = await f.service.prepareVerifiedArtifact('0.2.0')
+  await fs.writeFile(receipt.path, Buffer.alloc(f.body.length))
+  for (const action of [
+    () => f.service.reviewInstallation('0.2.0'),
+    () => f.service.prepareInstallation('0.2.0'),
+  ]) {
+    await assert.rejects(action, ApplicationUpdateRecoveryRequiredError)
+  }
+  assert.equal(
+    f.service.getStatus().status,
+    'downloaded',
+    'Retained admission precedes cache reads.',
+  )
+  assert.equal(impacts, 1)
+  assert.equal(closeChecks, 0)
+  assert.equal(schedules, 0)
+  assert.deepEqual(
+    {
+      candidate: await identity(stage.candidatePath),
+      current: await identity(f.currentAppImage),
+      journal: await fs.readFile(path.join(stage.stagingDirectory, 'journal.json')),
+      members: await fs.readdir(stage.stagingDirectory),
+    },
+    retained,
   )
 })
 
