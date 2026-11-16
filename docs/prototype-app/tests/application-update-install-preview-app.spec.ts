@@ -1,5 +1,6 @@
 import type { ApiResult } from '../../../src/shared/api.js'
 import type {
+  ApplicationUpdateInstallationRequest,
   ApplicationUpdateInstallPreview,
   ApplicationUpdateSnapshot,
 } from '../../../src/shared/application-updates.js'
@@ -14,15 +15,28 @@ interface PreviewPlan {
 }
 
 interface PreviewFixtureOptions {
+  installs?: InstallPlan[]
   plans?: PreviewPlan[]
   snapshot?: ApplicationUpdateSnapshot
 }
 
+interface InstallPlan {
+  hold?: boolean
+  kind?: 'error' | 'mismatch' | 'throw'
+}
+
 interface PreviewFixture {
   checkCalls: number
+  closeCalls: number
+  closeReleases: number
+  installVersions: string[]
   mutationCalls: string[]
+  prepareClose: () => Promise<void>
   previewVersions: string[]
+  releaseClose: () => void
+  releaseInstall: (id: number) => void
   releasePreview: (id: number) => void
+  returnedInstalls: number
   returnedPreviews: number
   statusCalls: number
 }
@@ -31,6 +45,8 @@ type PreviewGlobal = { installPreviewFixture: PreviewFixture } & typeof globalTh
 const sourceRoot = `/@fs${path.resolve(import.meta.dirname, '../../../src/renderer')}`
 const version = '0.2.0'
 const publicFailure = 'Preview unavailable. Try again.'
+const installFailure =
+  'The application could not start installation. Review the update and try again.'
 
 const downloaded: ApplicationUpdateSnapshot = {
   availableVersion: version,
@@ -47,6 +63,7 @@ const preview: ApplicationUpdateInstallPreview = {
   activeModelInstallCount: 2,
   availableVersion: version,
   generationStorageUnavailable: false,
+  installationAvailable: false,
   openProjectCount: 3,
   preparingModelInstallCount: 1,
   resourceRemovalActive: true,
@@ -57,13 +74,14 @@ const preview: ApplicationUpdateInstallPreview = {
 
 /**
  * Mounts the real production App/chrome/modal using explicit API ports. Counts and update state are
- * controlled renderer inputs; these cases do not qualify native queue/storage, signed release
- * admission, installation, Project persistence, process exit, recovery or a relaunch.
+ * controlled renderer inputs. Install cases qualify explicit renderer intent and ordinary close
+ * presentation only, never native queue/storage, signed release admission, actual installation,
+ * Project persistence, process exit, recovery or a relaunch.
  */
 async function mountPreviewApp(page: Page, options: PreviewFixtureOptions = {}) {
   await page.goto('/')
   await page.evaluate(
-    async ({ defaultPreview, defaultSnapshot, initial, root }) => {
+    async ({ defaultPreview, defaultSnapshot, initial, installationFailure, root }) => {
       const loadModule = (url: string) => import(url)
       const [{ createApp }, { default: App }] = await Promise.all([
         loadModule('/@id/vue'),
@@ -79,10 +97,39 @@ async function mountPreviewApp(page: Page, options: PreviewFixtureOptions = {}) 
       document.body.replaceChildren(host)
       const currentStatus = initial.snapshot ?? defaultSnapshot
       const pending = new Map<number, () => void>()
+      const pendingInstalls = new Map<number, () => void>()
+      let beforeClose: ((setDecisionPending: (pending: boolean) => void) => Promise<void>) | null =
+        null
+      let closeReleased: (() => void) | null = null
       const state: PreviewFixture = {
         checkCalls: 0,
+        closeCalls: 0,
+        closeReleases: 0,
+        installVersions: [],
         mutationCalls: [],
+        prepareClose: async () => {
+          if (!beforeClose) {
+            throw new Error('The real App close listener was not registered.')
+          }
+          state.closeCalls++
+          await beforeClose(() => undefined)
+        },
         previewVersions: [],
+        releaseClose: () => {
+          if (!closeReleased) {
+            throw new Error('The real App close release listener was not registered.')
+          }
+          state.closeReleases++
+          closeReleased()
+        },
+        releaseInstall: (id) => {
+          const release = pendingInstalls.get(id)
+          if (!release) {
+            throw new Error(`No controlled pending installation ${id}.`)
+          }
+          pendingInstalls.delete(id)
+          release()
+        },
         releasePreview: (id) => {
           const release = pending.get(id)
           if (!release) {
@@ -91,6 +138,7 @@ async function mountPreviewApp(page: Page, options: PreviewFixtureOptions = {}) 
           pending.delete(id)
           release()
         },
+        returnedInstalls: 0,
         returnedPreviews: 0,
         statusCalls: 0,
       }
@@ -110,7 +158,34 @@ async function mountPreviewApp(page: Page, options: PreviewFixtureOptions = {}) 
             state.statusCalls++
             return { ok: true, value: structuredClone(currentStatus) }
           },
-          install: async () => mutate('app-install'),
+          install: async (
+            availableVersion: string,
+          ): Promise<ApiResult<ApplicationUpdateInstallationRequest>> => {
+            state.installVersions.push(availableVersion)
+            state.mutationCalls.push('app-install')
+            const id = state.installVersions.length
+            const plan: InstallPlan = initial.installs?.[id - 1] ?? {}
+            if (plan.hold) {
+              await new Promise<void>((resolve) => pendingInstalls.set(id, resolve))
+            }
+            state.returnedInstalls++
+            if (plan.kind === 'throw') {
+              throw new Error('Unexpected native detail at /private/fixture/install-preflight.')
+            }
+            if (plan.kind === 'error') {
+              return {
+                error: { code: 'APPLICATION_UPDATE_INSTALL_FAILED', message: installationFailure },
+                ok: false,
+              }
+            }
+            return {
+              ok: true,
+              value: {
+                availableVersion: plan.kind === 'mismatch' ? '0.3.0' : availableVersion,
+                status: 'close-requested',
+              },
+            }
+          },
           reviewInstallation: async (
             availableVersion: string,
           ): Promise<ApiResult<ApplicationUpdateInstallPreview>> => {
@@ -154,7 +229,17 @@ async function mountPreviewApp(page: Page, options: PreviewFixtureOptions = {}) 
           list: async () => ({ ok: true, value: [] }),
           listTrash: async () => ({ ok: true, value: [] }),
           listWorkspaces: async () => ({ ok: true, value: [] }),
-          onBeforeWindowClose: unsubscribe,
+          onBeforeWindowClose: (
+            listener: (setDecisionPending: (pending: boolean) => void) => Promise<void>,
+            onCanceled: () => void,
+          ) => {
+            beforeClose = listener
+            closeReleased = onCanceled
+            return () => {
+              beforeClose = null
+              closeReleased = null
+            }
+          },
           onGenerationChanged: unsubscribe,
           onGenerationProgress: unsubscribe,
           onTabsChanged: unsubscribe,
@@ -179,7 +264,13 @@ async function mountPreviewApp(page: Page, options: PreviewFixtureOptions = {}) 
       ;(globalThis as PreviewGlobal).installPreviewFixture = state
       createApp(App).mount(host)
     },
-    { defaultPreview: preview, defaultSnapshot: downloaded, initial: options, root: sourceRoot },
+    {
+      defaultPreview: preview,
+      defaultSnapshot: downloaded,
+      initial: options,
+      installationFailure: installFailure,
+      root: sourceRoot,
+    },
   )
   await expect(page.getByRole('region', { exact: true, name: 'Home' })).toBeVisible()
 }
@@ -194,6 +285,8 @@ const later = (page: Page) =>
   dialog(page).getByRole('button', { exact: true, name: 'Install later' })
 const impact = (page: Page) =>
   dialog(page).getByRole('region', { exact: true, name: 'Installation preview' })
+const install = (page: Page) =>
+  dialog(page).getByRole('button', { exact: true, name: 'Install and restart' })
 
 async function openUpdates(page: Page) {
   await page.getByRole('button', { exact: true, name: 'Help menu' }).click()
@@ -203,10 +296,28 @@ async function openUpdates(page: Page) {
 
 async function calls(page: Page) {
   return await page.evaluate(() => {
-    const { checkCalls, mutationCalls, previewVersions, returnedPreviews, statusCalls } = (
-      globalThis as PreviewGlobal
-    ).installPreviewFixture
-    return { checkCalls, mutationCalls, previewVersions, returnedPreviews, statusCalls }
+    const {
+      checkCalls,
+      closeCalls,
+      closeReleases,
+      installVersions,
+      mutationCalls,
+      previewVersions,
+      returnedInstalls,
+      returnedPreviews,
+      statusCalls,
+    } = (globalThis as PreviewGlobal).installPreviewFixture
+    return {
+      checkCalls,
+      closeCalls,
+      closeReleases,
+      installVersions,
+      mutationCalls,
+      previewVersions,
+      returnedInstalls,
+      returnedPreviews,
+      statusCalls,
+    }
   })
 }
 
@@ -416,9 +527,200 @@ for (const state of [
     await expect(dialog(page)).toContainText(
       state.status === 'downloading'
         ? 'Downloading and verifying…'
-        : 'Installation is not available in this build.',
+        : state.verification === 'signed-release'
+          ? 'Download and verify the update before reviewing installation.'
+          : 'Installation is not available in this build.',
     )
     await expect(review(page)).toHaveCount(0)
     expect(await calls(page)).toMatchObject({ mutationCalls: [], previewVersions: [] })
   })
 }
+
+const eligiblePreview: ApplicationUpdateInstallPreview = {
+  ...preview,
+  generationStorageUnavailable: true,
+  installationAvailable: true,
+  resourceRemovalActive: false,
+  unacceptedResultCount: null,
+  unfinishedJobCount: null,
+}
+
+for (const viewport of [
+  { height: 800, width: 1280 },
+  { height: 620, width: 900 },
+]) {
+  test(`eligible installation is explicit and yields to normal close with unknown recovery counts at ${viewport.width}×${viewport.height}`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize(viewport)
+    await mountPreviewApp(page, {
+      plans: [{ preview: eligiblePreview }, { preview: eligiblePreview }],
+    })
+    await openUpdates(page)
+    await expect(install(page)).toHaveCount(0)
+    await review(page).click()
+    await expect(install(page)).toBeEnabled()
+    await expect(impact(page)).toContainText(
+      'You can cancel those choices before installation starts.',
+    )
+    await expect(impact(page)).toContainText('The image engine will be checked after restart.')
+    await expect(impact(page)).not.toContainText('Installation is not available in this build.')
+    expect(await count(page, 'Unfinished generation jobs')).toBe('Unknown')
+    expect(await count(page, 'Unaccepted results in open Projects')).toBe('Unknown')
+    expect(await calls(page)).toMatchObject({ installVersions: [], mutationCalls: [] })
+    await expect(later(page)).toBeInViewport()
+    await expect(refresh(page)).toBeInViewport()
+    await expect(install(page)).toBeInViewport()
+    await install(page).focus()
+    await expect(install(page)).toBeFocused()
+    await page.screenshot({
+      path: testInfo.outputPath(`installation-eligible-${viewport.width}x${viewport.height}.png`),
+    })
+    await page.keyboard.press('Enter')
+    await expect.poll(async () => (await calls(page)).returnedInstalls).toBe(1)
+    expect(await calls(page)).toMatchObject({
+      installVersions: [version],
+      mutationCalls: ['app-install'],
+    })
+    // close-requested alone is not installed/startup success and does not release preflight UI.
+    await expect(install(page)).toBeDisabled()
+    await expect(impact(page)).toContainText('Checking the update before closing…')
+    await page.evaluate(() => (globalThis as PreviewGlobal).installPreviewFixture.prepareClose())
+    await expect(dialog(page)).toHaveCount(0)
+    await page.evaluate(() => (globalThis as PreviewGlobal).installPreviewFixture.releaseClose())
+    await openUpdates(page)
+    await expect(review(page)).toBeEnabled()
+    await expect(impact(page)).toHaveCount(0)
+    expect(await calls(page)).toMatchObject({
+      closeCalls: 1,
+      closeReleases: 1,
+      installVersions: [version],
+      mutationCalls: ['app-install'],
+    })
+    await review(page).click()
+    await expect(install(page)).toBeEnabled()
+    await later(page).click()
+    await expect(dialog(page)).toHaveCount(0)
+    expect(await calls(page)).toMatchObject({ installVersions: [version] })
+  })
+}
+
+test('installation preflight blocks dismissal, duplicate intent and competing preview actions until refusal', async ({
+  page,
+}) => {
+  await mountPreviewApp(page, {
+    installs: [{ hold: true, kind: 'error' }],
+    plans: [{ preview: eligiblePreview }, { preview: eligiblePreview }],
+  })
+  await openUpdates(page)
+  await review(page).click()
+  await install(page).click()
+  await expect.poll(async () => (await calls(page)).installVersions.length).toBe(1)
+  await expect(install(page)).toBeDisabled()
+  await expect(refresh(page)).toBeDisabled()
+  await expect(later(page)).toBeDisabled()
+  await expect(dialog(page).getByRole('button', { exact: true, name: 'Check again' })).toHaveCount(
+    0,
+  )
+  await expect(dialog(page).getByRole('button', { name: /^Download/ })).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  await expect(dialog(page)).toBeVisible()
+  // A queued DOM click still reaches the component's guard while the visible button is disabled.
+  await install(page).dispatchEvent('click')
+  await refresh(page).dispatchEvent('click')
+  await later(page).dispatchEvent('click')
+  expect(await calls(page)).toMatchObject({
+    checkCalls: 0,
+    installVersions: [version],
+    mutationCalls: ['app-install'],
+    previewVersions: [version],
+  })
+  await page.evaluate(() => (globalThis as PreviewGlobal).installPreviewFixture.releaseInstall(1))
+  await expect(impact(page)).toContainText(installFailure)
+  await expect(install(page)).toHaveCount(0)
+  await expect(refresh(page)).toBeEnabled()
+  await expect(later(page)).toBeEnabled()
+  await refresh(page).click()
+  await expect(install(page)).toBeEnabled()
+  await expect(impact(page)).not.toContainText(installFailure)
+  expect(await calls(page)).toMatchObject({
+    installVersions: [version],
+    previewVersions: [version, version],
+  })
+})
+
+for (const kind of ['error', 'throw', 'mismatch'] as const) {
+  test(`installation ${kind} before close requires a new review and exposes no native details`, async ({
+    page,
+  }) => {
+    await mountPreviewApp(page, {
+      installs: [{ kind }],
+      plans: [{ preview: eligiblePreview }, { preview: eligiblePreview }],
+    })
+    await openUpdates(page)
+    await review(page).click()
+    await install(page).click()
+    await expect(impact(page)).toContainText('Installation could not start')
+    await expect(impact(page)).toContainText(installFailure)
+    await expect(impact(page)).not.toContainText('/private/')
+    await expect(impact(page).locator('dl')).toHaveCount(0)
+    await expect(install(page)).toHaveCount(0)
+    expect(await calls(page)).toMatchObject({ closeCalls: 0, installVersions: [version] })
+    await refresh(page).click()
+    await expect(install(page)).toBeEnabled()
+    expect(await calls(page)).toMatchObject({
+      installVersions: [version],
+      previewVersions: [version, version],
+    })
+  })
+}
+
+test('ordinary close cancellation and a late old install refusal cannot replace the new review or pending intent', async ({
+  page,
+}) => {
+  await mountPreviewApp(page, {
+    installs: [{ hold: true, kind: 'error' }, { hold: true }],
+    plans: [{ preview: eligiblePreview }, { preview: eligiblePreview }],
+  })
+  await openUpdates(page)
+  await review(page).click()
+  await install(page).click()
+  await expect.poll(async () => (await calls(page)).installVersions.length).toBe(1)
+  await page.evaluate(() => (globalThis as PreviewGlobal).installPreviewFixture.prepareClose())
+  await expect(dialog(page)).toHaveCount(0)
+  await page.evaluate(() => (globalThis as PreviewGlobal).installPreviewFixture.releaseClose())
+  await openUpdates(page)
+  await expect(impact(page)).toHaveCount(0)
+  await review(page).click()
+  await install(page).click()
+  await expect.poll(async () => (await calls(page)).installVersions.length).toBe(2)
+  await page.evaluate(() => (globalThis as PreviewGlobal).installPreviewFixture.releaseInstall(1))
+  await expect.poll(async () => (await calls(page)).returnedInstalls).toBe(1)
+  await expect(impact(page)).not.toContainText(installFailure)
+  await expect(install(page)).toBeDisabled()
+  await expect(later(page)).toBeDisabled()
+  expect(await calls(page)).toMatchObject({
+    closeCalls: 1,
+    closeReleases: 1,
+    installVersions: [version, version],
+    previewVersions: [version, version],
+  })
+  await page.evaluate(() => (globalThis as PreviewGlobal).installPreviewFixture.releaseInstall(2))
+  await expect.poll(async () => (await calls(page)).returnedInstalls).toBe(2)
+  await page.evaluate(() => (globalThis as PreviewGlobal).installPreviewFixture.prepareClose())
+  await expect(dialog(page)).toHaveCount(0)
+  await page.evaluate(() => (globalThis as PreviewGlobal).installPreviewFixture.releaseClose())
+})
+
+test('a review for a different version never exposes an installation action', async ({ page }) => {
+  await mountPreviewApp(page, {
+    plans: [{ preview: { ...eligiblePreview, availableVersion: '0.3.0' } }],
+  })
+  await openUpdates(page)
+  await review(page).click()
+  await expect(impact(page)).toContainText(
+    'Could not review installation impact. Please try again.',
+  )
+  await expect(install(page)).toHaveCount(0)
+  expect(await calls(page)).toMatchObject({ installVersions: [], mutationCalls: [] })
+})

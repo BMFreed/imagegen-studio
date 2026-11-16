@@ -32,7 +32,9 @@ import type {
   StudioApi,
 } from '../shared/api.js'
 import {
+  type ApplicationUpdateInstallationRequest,
   type ApplicationUpdateInstallPreview,
+  isApplicationUpdateInstallationRequest,
   isApplicationUpdateInstallPreview,
   isApplicationUpdateSnapshot,
 } from '../shared/application-updates.js'
@@ -118,6 +120,8 @@ import { contextBridge, ipcRenderer } from 'electron'
 const applicationUpdateErrors: Readonly<Record<string, string>> = {
   APPLICATION_UPDATE_CHECK_FAILED: 'The application could not check for updates. Try again.',
   APPLICATION_UPDATE_DOWNLOAD_FAILED: 'The application could not download the update. Try again.',
+  APPLICATION_UPDATE_INSTALL_FAILED:
+    'The application could not start installation. Review the update and try again.',
   APPLICATION_UPDATE_PREVIEW_FAILED:
     'The application could not review installation impact. Try again.',
   IPC_INVALID_CALLER: 'Application update request was rejected.',
@@ -1271,6 +1275,14 @@ const api: StudioApi = {
         ipcChannels.applicationUpdates.getStatus,
         [],
         isApplicationUpdateSnapshot,
+      ),
+    install: (availableVersion) =>
+      invokeApplicationUpdate(
+        ipcChannels.applicationUpdates.install,
+        [availableVersion],
+        (value): value is ApplicationUpdateInstallationRequest =>
+          isApplicationUpdateInstallationRequest(value) &&
+          value.availableVersion === availableVersion,
       ),
     reviewInstallation: (availableVersion) =>
       invokeApplicationUpdate(

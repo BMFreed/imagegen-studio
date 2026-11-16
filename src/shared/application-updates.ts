@@ -36,6 +36,7 @@ export interface ApplicationUpdateInstallPreview {
   activeModelInstallCount: number
   availableVersion: string
   generationStorageUnavailable: boolean
+  installationAvailable: boolean
   openProjectCount: number
   preparingModelInstallCount: number
   resourceRemovalActive: boolean
@@ -44,10 +45,32 @@ export interface ApplicationUpdateInstallPreview {
   unsavedProjectCount: number
 }
 
+/** Only acknowledgement that the ordinary close flow was requested, never installation success. */
+export interface ApplicationUpdateInstallationRequest {
+  availableVersion: string
+  status: 'close-requested'
+}
+
+export function isApplicationUpdateInstallationRequest(
+  value: unknown,
+): value is ApplicationUpdateInstallationRequest {
+  try {
+    const record = dataRecord(value, ['availableVersion', 'status'])
+    return (
+      !!record &&
+      isApplicationUpdateVersion(record['availableVersion']) &&
+      record['status'] === 'close-requested'
+    )
+  } catch {
+    return false
+  }
+}
+
 const PREVIEW_FIELDS = [
   'activeModelInstallCount',
   'availableVersion',
   'generationStorageUnavailable',
+  'installationAvailable',
   'openProjectCount',
   'preparingModelInstallCount',
   'resourceRemovalActive',
@@ -73,6 +96,7 @@ export function isApplicationUpdateInstallPreview(
       count(record['preparingModelInstallCount']) &&
       typeof record['resourceRemovalActive'] === 'boolean' &&
       typeof record['generationStorageUnavailable'] === 'boolean' &&
+      typeof record['installationAvailable'] === 'boolean' &&
       (record['generationStorageUnavailable']
         ? record['unfinishedJobCount'] === null && record['unacceptedResultCount'] === null
         : count(record['unfinishedJobCount']) && count(record['unacceptedResultCount']))

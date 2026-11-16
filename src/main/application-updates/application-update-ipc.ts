@@ -6,8 +6,10 @@
  */
 import { type ApiResult, ipcChannels } from '../../shared/api.js'
 import {
+  type ApplicationUpdateInstallationRequest,
   type ApplicationUpdateInstallPreview,
   type ApplicationUpdateSnapshot,
+  isApplicationUpdateInstallationRequest,
   isApplicationUpdateInstallPreview,
   isApplicationUpdateSnapshot,
   isApplicationUpdateVersion,
@@ -42,23 +44,34 @@ export function registerApplicationUpdateIpc(
   registrar: Registrar,
   caller: Caller,
   service: Service,
+  requestInstallation?: (
+    availableVersion: string,
+    isCurrent: () => boolean,
+  ) => Promise<ApplicationUpdateInstallationRequest>,
 ): { dispose: () => void; invalidateDocument: () => void } {
   let disposed = false
   let epoch = {}
+  let selectionEpoch = {}
+  let reviewedVersion: string | null = null
+  let installationPending = false
   const channels = [
     ipcChannels.applicationUpdates.getStatus,
+    ipcChannels.applicationUpdates.install,
     ipcChannels.applicationUpdates.check,
     ipcChannels.applicationUpdates.download,
     ipcChannels.applicationUpdates.reviewInstallation,
   ]
   const invalidateDocument = () => {
     epoch = {}
+    selectionEpoch = {}
+    reviewedVersion = null
   }
   for (const channel of channels) {
     registrar.handle(channel, async (event, ...args) => {
       if (
         disposed ||
         (channel === ipcChannels.applicationUpdates.download ||
+        channel === ipcChannels.applicationUpdates.install ||
         channel === ipcChannels.applicationUpdates.reviewInstallation
           ? args.length !== 1 || !isApplicationUpdateVersion(args[0])
           : args.length !== 0) ||
@@ -73,6 +86,48 @@ export function registerApplicationUpdateIpc(
         observedEpoch === epoch &&
         event.sender === caller &&
         event.senderFrame === caller.mainFrame
+      if (channel === ipcChannels.applicationUpdates.install) {
+        if (installationPending || !requestInstallation || reviewedVersion !== args[0]) {
+          return failure(
+            'APPLICATION_UPDATE_INSTALL_FAILED',
+            'The application could not start installation. Review the update and try again.',
+          )
+        }
+        installationPending = true
+        reviewedVersion = null
+        try {
+          // Unlike status reads, an Install side effect needs this guard AFTER preflight awaits,
+          // immediately before Main requests normal close. A stale reply check cannot undo close.
+          const result = await requestInstallation(args[0] as string, current)
+          if (!current()) {
+            return rejected()
+          }
+          return isApplicationUpdateInstallationRequest(result) &&
+            result.availableVersion === args[0]
+            ? { ok: true, value: structuredClone(result) }
+            : invalid()
+        } catch {
+          return current()
+            ? failure(
+                'APPLICATION_UPDATE_INSTALL_FAILED',
+                'The application could not start installation. Review the update and try again.',
+              )
+            : rejected()
+        } finally {
+          installationPending = false
+        }
+      }
+      if (installationPending && channel !== ipcChannels.applicationUpdates.getStatus) {
+        return failure(
+          'APPLICATION_UPDATE_INSTALL_FAILED',
+          'The application could not start installation. Review the update and try again.',
+        )
+      }
+      if (channel !== ipcChannels.applicationUpdates.getStatus) {
+        selectionEpoch = {}
+        reviewedVersion = null
+      }
+      const observedSelection = selectionEpoch
       try {
         const previewRequest = channel === ipcChannels.applicationUpdates.reviewInstallation
         const snapshot = previewRequest
@@ -85,13 +140,21 @@ export function registerApplicationUpdateIpc(
         if (!current()) {
           return rejected()
         }
-        return (
-          previewRequest
-            ? isApplicationUpdateInstallPreview(snapshot) && snapshot.availableVersion === args[0]
-            : isApplicationUpdateSnapshot(snapshot)
-        )
-          ? { ok: true, value: structuredClone(snapshot) }
-          : invalid()
+        const valid = previewRequest
+          ? isApplicationUpdateInstallPreview(snapshot) && snapshot.availableVersion === args[0]
+          : isApplicationUpdateSnapshot(snapshot)
+        if (!valid) {
+          return invalid()
+        }
+        if (
+          previewRequest &&
+          observedSelection === selectionEpoch &&
+          isApplicationUpdateInstallPreview(snapshot) &&
+          snapshot.installationAvailable
+        ) {
+          reviewedVersion = snapshot.availableVersion
+        }
+        return { ok: true, value: structuredClone(snapshot) }
       } catch {
         if (!current()) {
           return rejected()

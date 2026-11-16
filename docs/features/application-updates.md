@@ -76,7 +76,8 @@ native availability evaluation. Это не объявляет доверенн�
 
 Public `signed-release` означает принятую signature, descriptor/notes binding и
 compatibility declaration. На available/downloaded UI явно говорит, что image
-engine будет проверен после restart; Install остаётся unavailable. Private
+engine будет проверен после restart. Install требует отдельного eligible Review,
+поддерживаемого captured scheduler и обычного close consent, описанных ниже. Private
 artifact capability повторно проверяет текущую selection и реальные cache bytes
 и не передаёт пути/ключи/manifest в renderer. Будущий installer обязан отдельно
 использовать эту revalidation boundary перед своим действием. Приватная capability
@@ -94,7 +95,8 @@ version, исполнение migrations или installed-runtime readiness. Р�
 [Private staging](../engineering/phase-5-application-update-staging-research.md)
 подключён только через явный Main-private `stageForInstallation(expectedVersion)`.
 Main захватывает текущий APPIMAGE target; renderer не задаёт путь назначения.
-Пока нет staging IPC/UI, нового public status или действия Install. Обычные Check,
+Сам stage не предоставляет staging IPC/UI или нового public status. Публичный
+Install ниже вызывает его только после обычного подтверждённого close. Обычные Check,
 Download и status reads не создают stage и не запускают executable.
 
 Gate требует текущий signed downloaded artifact и повторную проверку его native
@@ -146,7 +148,8 @@ activated, rolling-back и rolled-back. Операции одного owner ис
 несовместимые concurrent operations отказываются, не превращая актуальную
 capability в failed. Этот контракт не добавляет restart adoption/discard,
 helper/relaunch, автоматическое восстановление после crash или проверку FUSE.
-Публичный Install и release acceptance остаются открыты; shipping publisher не настроен.
+Этот ранний transaction checkpoint сам не квалифицирует public Install; release
+acceptance остаётся открытым, shipping publisher не настроен.
 
 ### Private exit-synchronized handoff
 
@@ -197,8 +200,56 @@ stage/backup/activation или restart. Existing staging inspection может �
 и укреплять permissions recovery directories; byte-readonly filesystem guarantee
 не добавляется. `Refresh preview` запрашивает новый снимок; `Install later`
 закрывает модалку без consent на дальнейшее действие. Late replies после dismissal,
-reopen или нового Check/Download не заменяют актуальный preview. Install/relaunch
-остаётся unavailable до отдельной квалификации; preview не повышает PP readiness.
+reopen или нового Check/Download не заменяют актуальный preview. Новый Install
+ниже имеет отдельную authority/close границу; preview не повышает PP readiness.
+
+### Explicit Install and ordinary close
+
+[Public Install](../engineering/phase-5-application-update-install-research.md)
+добавляет отдельный `Install and restart` только после current-document Review
+текущей signed downloaded версии с `installationAvailable=true`. Этот boolean
+означает наличие captured platform mechanism; permissions/space/header/identity
+проверяет существующий stage owner после consent. Ненастроенный publisher и
+unsupported scheduler сохраняют unavailable. `Install later` не начинает close.
+
+Renderer передаёт только version. Main после asynchronous native-artifact
+preflight заново проверяет renderer document/frame и отсутствие intervening close.
+Ответ `close-requested` подтверждает только начало обычного close, не успешную
+установку/новый процесс. Pending preflight блокирует повторный Install и competing
+actions; обычный close dismisses Updates modal до Project/Preset guard. Reload
+не может завершить старый preflight закрытием нового документа.
+
+Один intent принадлежит одной close attempt. Draft flush, actual impacts,
+Save/Discard/Cancel, worker/model/queue drain и Project close используют прежних
+владельцев. Cancel/failed Save не создаёт update stage и не оставляет установку
+для будущего обычного Close. Уже подтверждённые Saves/Close не откатываются.
+Catalog admission закрывается и existing dataRoot lock дренируется до snapshot;
+queued Open/Create не может добавить tab после него. Required draft/history writes
+остаются доступны до sealed phase. Точная preflight artifact identity обязательна
+после close: повторное скачивание той же версии не подменяет выбранный файл.
+
+До irreversible finalize Main seals close. После этой точки не отправляются
+tabsChanged/windowCloseReleased и не восстанавливается editing; sealed Project/
+Model IPC отказывается. Finalize error пропускает installation, сохраняет обычный
+recovery state и завершает приложение после уже подтверждённого worker/resource
+drain. При storage error успешное закрытие SQLite не заявляется; сохраняется WAL
+для штатного recovery. Успешный finalize вызывает существующий guarded activation/
+handoff. Alt+F4 не пропускает ожидающие hashes/handoff. Любой postseal отказ даёт
+fixed native diagnostic и normal exit, без automatic retry/rollback.
+
+Это production wiring для configured signed feed, а не shipping/recovery
+acceptance. Retained claim после restart ещё требует verified startup consumer;
+subsequent updates, interrupted recovery/reinstall, copied-state migrations,
+protocol/runtime validation и итоговая release matrix остаются gates. Unsigned
+journal не разрешает adoption, cleanup или rollback. PP statuses не повышены.
+
+Конечный native R4 прошёл production Main/preload/renderer, реальный Project Save,
+SQLite disposal и A/FUSE→B/extraction с reopen точного prompt и двумя normal exits.
+Это nonshipping bodies с явными CDP/dialog/timing controls и X11; engine и новые
+migrations не квалифицированы. Проверки:352PASS/один platformSKIP, typing/build/
+scoped lint и Main semantic GREEN/RED/GREEN; финальные42 затронутых browser cases
+PASS после сохранённых исходных ошибок полного341-run. Точные уровни evidence,
+три failed native attempts и retention5708 entries находятся в research.
 
 ## Scope and dependencies
 

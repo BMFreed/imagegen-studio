@@ -21,7 +21,7 @@ export interface ApplicationUpdateInstallPreviewDependencies {
   getQueueImpact: () => Promise<{ unfinishedJobCount: number }> | null
 }
 
-type Impact = Omit<ApplicationUpdateInstallPreview, 'availableVersion'>
+type Impact = Omit<ApplicationUpdateInstallPreview, 'availableVersion' | 'installationAvailable'>
 type TabSnapshot = Pick<ProjectTab, 'dirty' | 'id'>
 
 /**

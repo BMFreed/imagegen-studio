@@ -137,6 +137,7 @@ import { createElectronApplicationRelauncher } from './application-updates/elect
 import {
   createElectronUpdateChecker,
   VerifiedAppImageUpdater,
+  type VerifiedApplicationArtifact,
 } from './application-updates/electron-update-checker.js'
 import { openAppDatabase, readAppliedSqlMigrations } from './db/database.js'
 import { ANIMA_SOURCE_LICENSE } from './models/anima-manifest.js'
@@ -1110,8 +1111,18 @@ if (!gotInstanceLock) {
 
       // Closing the native window follows the same Save / Discard / Cancel contract as a tab.
       // This also covers Alt+F4 and app.quit(), which do not go through renderer controls.
+      // Fresh Invoke4875: api_app.lifespan -> ApiDependencies.shutdown -> Invoker.stop ->
+      // session_processor.stop. Keep the existing worker/resource/database barrier as the owner.
       let closingAfterResolution = false
       let resolvingClose = false
+      let appDataSealed = false
+      let windowCloseEpoch = 0
+      let applicationInstallationRequestPending = false
+      let pendingApplicationInstallation: {
+        artifact: VerifiedApplicationArtifact
+        isCurrent: () => boolean
+        version: string
+      } | null = null
       let rendererCloseHandlerReady = false
       const onCloseEditorReady = (event: Electron.IpcMainEvent, ...args: unknown[]): void => {
         if (
@@ -1243,10 +1254,19 @@ if (!gotInstanceLock) {
           return
         }
         resolvingClose = true
+        ++windowCloseEpoch
+        // The next ordinary Close must never inherit a canceled Install request. Capture once,
+        // before any draft/Save/close await; this intent belongs only to this close attempt.
+        const applicationInstallation = pendingApplicationInstallation
+        pendingApplicationInstallation = null
         void (async () => {
           const fencedTabs: string[] = []
           let closeCommitted = false
+          let dataFinalized = false
           try {
+            // Catalog actions can attach a Project after awaited filesystem work. New and queued
+            // admissions see resolvingClose; drain the existing dataRoot lock before snapshotting.
+            await withProjectPathLock(paths.dataRoot, async () => undefined)
             // The renderer can still have an unacknowledged prompt/seed edit. Flush it before
             // main decides whether anything is dirty or starts an explicit Save.
             if (projectService.getOpenTabs().length > 0 || rendererCloseHandlerReady) {
@@ -1353,6 +1373,11 @@ if (!gotInstanceLock) {
             if ((dirtyCount > 0 && choice === 2) || (dirtyCount === 0 && choice === 1)) {
               return
             }
+            if (applicationInstallation && !applicationInstallation.isCurrent()) {
+              throw new Error(
+                'The update review changed before closing. Review installation again.',
+              )
+            }
             // Keep every tab attached until all requested Saves have committed. If a later Save
             // fails, the window and all tabs remain usable; their snapshots are resynchronized.
             if (choice === 0) {
@@ -1361,6 +1386,11 @@ if (!gotInstanceLock) {
                   await projectGenerationGate.run(tab.id, () => saveProjectWithPreview(tab.id))
                 }
               }
+            }
+            if (applicationInstallation && !applicationInstallation.isCurrent()) {
+              throw new Error(
+                'The update review changed before closing. Review installation again.',
+              )
             }
             closeCommitted = true
             // A canceled dialog has not stopped generation. Once the user confirms closing,
@@ -1372,34 +1402,62 @@ if (!gotInstanceLock) {
                 discardDocument: tab.dirty && choice === 1,
               })
             }
+            // Finalization may dispose SQLite and then reject. From its first instruction there
+            // is no safe editor-release path, even when successful disposal is not confirmed.
+            appDataSealed = true
             await appShutdown.finalize()
-            exitReady = true
-            closingAfterResolution = true
-            window.close()
+            dataFinalized = true
+            if (applicationInstallation) {
+              await applicationUpdateService.installAfterClose(
+                applicationInstallation.version,
+                applicationInstallation.artifact,
+              )
+            }
           } catch (error) {
-            if (!window.isDestroyed()) {
+            if (appDataSealed) {
+              dialog.showErrorBox(
+                dataFinalized
+                  ? 'Application update could not be completed'
+                  : 'Application close failed',
+                dataFinalized
+                  ? 'Installation or restart could not be confirmed. ImageGen Studio will close. Keep any update and backup files for explicit recovery; do not retry installation automatically.'
+                  : 'Data cleanup could not be confirmed. ImageGen Studio will close after its workers and resource work have stopped. Keep its data for recovery.',
+              )
+            } else if (!window.isDestroyed()) {
               window.webContents.send(
                 ipcChannels.projects.tabsChanged,
                 projectService.getOpenTabs(),
               )
             }
-            if (!(error instanceof WindowCloseCanceledError)) {
+            if (!appDataSealed && !(error instanceof WindowCloseCanceledError)) {
               dialog.showErrorBox(
                 'Project close failed',
                 error instanceof Error ? error.message : 'The Project could not be closed.',
               )
             }
           } finally {
-            if (!closeCommitted) {
+            if (!closeCommitted && !appDataSealed) {
               releaseCanceledWindowCloseFences(
                 fencedTabs,
                 (tabId) => acceptanceRecovery?.hasPendingHandoff(tabId) ?? false,
                 (tabId) => recoveredGeneration?.orchestrator.releaseProjectGenerationFence(tabId),
               )
             }
-            resolvingClose = false
-            if (!closingAfterResolution && !window.isDestroyed()) {
-              window.webContents.send(ipcChannels.projects.windowCloseReleased)
+            if (appDataSealed) {
+              // Keep Alt+F4/app.quit prevented while hashes or the native handshake await. Only
+              // settled success/failure reaches this final ordinary exit; no rollback or retry.
+              exitReady = true
+              closingAfterResolution = true
+              if (window.isDestroyed()) {
+                app.quit()
+              } else {
+                window.close()
+              }
+            } else {
+              resolvingClose = false
+              if (!closingAfterResolution && !window.isDestroyed()) {
+                window.webContents.send(ipcChannels.projects.windowCloseReleased)
+              }
             }
           }
         })()
@@ -1447,10 +1505,75 @@ if (!gotInstanceLock) {
         },
         createElectronApplicationRelauncher(app, process.versions.electron),
       )
+      const assertApplicationUpdateActionOpen = () => {
+        if (resolvingClose || appDataSealed || closingAfterResolution || exitReady) {
+          throw new Error('Application close is already running.')
+        }
+      }
       const applicationUpdates = registerApplicationUpdateIpc(
         ipcMain,
         runtimeCaller,
-        applicationUpdateService,
+        {
+          check: async () => {
+            assertApplicationUpdateActionOpen()
+            return await applicationUpdateService.check()
+          },
+          download: async (version) => {
+            assertApplicationUpdateActionOpen()
+            return await applicationUpdateService.download(version)
+          },
+          // Reopening/polling may still read state, but cannot revoke the accepted artifact by
+          // starting Check/Download/Review while this normal close attempt awaits user input.
+          getStatus: () => applicationUpdateService.getStatus(),
+          reviewInstallation: async (version) => {
+            assertApplicationUpdateActionOpen()
+            return await applicationUpdateService.reviewInstallation(version)
+          },
+        },
+        async (version, isCurrent) => {
+          if (
+            resolvingClose ||
+            appDataSealed ||
+            applicationInstallationRequestPending ||
+            window.isDestroyed()
+          ) {
+            throw new Error('Application close is already running.')
+          }
+          applicationInstallationRequestPending = true
+          const observedCloseEpoch = windowCloseEpoch
+          try {
+            // Read-only preflight: unsupported/stale/missing artifacts cannot close Projects or
+            // create stage. Keep exact capability identity through the later finalized handoff.
+            const artifact = await applicationUpdateService.prepareInstallation(version)
+            if (
+              !isCurrent() ||
+              resolvingClose ||
+              appDataSealed ||
+              window.isDestroyed() ||
+              observedCloseEpoch !== windowCloseEpoch
+            ) {
+              throw new Error('Review installation again before closing the application.')
+            }
+            const intent = { artifact, isCurrent, version }
+            pendingApplicationInstallation = intent
+            try {
+              // No await between the final document/close guard, intent and native close event.
+              window.close()
+            } catch {
+              if (pendingApplicationInstallation === intent) {
+                pendingApplicationInstallation = null
+              }
+              throw new Error('The application could not begin its normal close sequence.')
+            }
+            if (pendingApplicationInstallation === intent) {
+              pendingApplicationInstallation = null
+              throw new Error('The application could not begin its normal close sequence.')
+            }
+            return { availableVersion: version, status: 'close-requested' }
+          } finally {
+            applicationInstallationRequestPending = false
+          }
+        },
       )
       const invalidateApplicationUpdateDocument = (
         _event: Electron.Event,
@@ -1542,7 +1665,7 @@ if (!gotInstanceLock) {
               ok: false,
             }
           }
-          if (resolvingClose && modelMutationChannels.has(channel)) {
+          if (appDataSealed || (resolvingClose && modelMutationChannels.has(channel))) {
             return {
               error: {
                 code: 'MODEL_APP_CLOSING',
@@ -1651,9 +1774,28 @@ if (!gotInstanceLock) {
               ok: false,
             }
           }
+          if (appDataSealed || (resolvingClose && workspaceCatalogChannels.has(channel))) {
+            return {
+              error: {
+                code: 'PROJECT_NOT_READY',
+                message: 'The application is closing. Try again if closing is canceled.',
+              },
+              ok: false,
+            }
+          }
           try {
             const value = workspaceCatalogChannels.has(channel)
-              ? await withProjectPathLock(paths.dataRoot, () => handler(...args))
+              ? await withProjectPathLock(paths.dataRoot, async () => {
+                  // A request may have queued before native close began. It cannot attach a new
+                  // tab after the close snapshot merely because its initial IPC guard passed.
+                  if (resolvingClose || appDataSealed) {
+                    throw new ProjectServiceError(
+                      'PROJECT_NOT_READY',
+                      'The application is closing. Try again if closing is canceled.',
+                    )
+                  }
+                  return await handler(...args)
+                })
               : await handler(...args)
             return { ok: true, value }
           } catch (error) {

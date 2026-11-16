@@ -1,5 +1,6 @@
 import { type ApiResult, ipcChannels } from '../../shared/api.js'
 import type {
+  ApplicationUpdateInstallationRequest,
   ApplicationUpdateInstallPreview,
   ApplicationUpdateSnapshot,
 } from '../../shared/application-updates.js'
@@ -31,6 +32,7 @@ const preview = (availableVersion = '0.1.0'): ApplicationUpdateInstallPreview =>
   activeModelInstallCount: 2,
   availableVersion,
   generationStorageUnavailable: false,
+  installationAvailable: true,
   openProjectCount: 3,
   preparingModelInstallCount: 1,
   resourceRemovalActive: true,
@@ -60,7 +62,7 @@ function deferred<T>() {
   })
   return { promise, reject, resolve }
 }
-function fixture() {
+function fixture(withInstallation = true) {
   const caller = { mainFrame: {} }
   const handlers = new Map<string, Handler>()
   const controls = {
@@ -72,11 +74,19 @@ function fixture() {
       totalBytes: 128,
     }),
     getStatus: (): ApplicationUpdateSnapshot => snapshot(),
+    install: async (
+      availableVersion: string,
+      isCurrent: () => boolean,
+    ): Promise<ApplicationUpdateInstallationRequest> => {
+      assert.equal(isCurrent(), true)
+      return { availableVersion, status: 'close-requested' }
+    },
     reviewInstallation: async (version: string): Promise<ApplicationUpdateInstallPreview> =>
       preview(version),
   }
   const calls = { check: 0, download: 0, getStatus: 0 }
   const previewVersions: string[] = []
+  const installationVersions: string[] = []
   const lifetime = registerApplicationUpdateIpc(
     {
       handle: (channel, handler) => {
@@ -106,13 +116,28 @@ function fixture() {
         return await controls.reviewInstallation(version)
       },
     },
+    withInstallation
+      ? async (version, isCurrent) => {
+          installationVersions.push(version)
+          return await controls.install(version, isCurrent)
+        }
+      : undefined,
   )
   const invoke = async (channel: Channel, args: unknown[] = [], request?: Request) => {
     const handler = handlers.get(ipcChannels.applicationUpdates[channel])
     assert.ok(handler)
     return await handler(request ?? { sender: caller, senderFrame: caller.mainFrame }, ...args)
   }
-  return { caller, calls, controls, handlers, invoke, lifetime, previewVersions }
+  return {
+    caller,
+    calls,
+    controls,
+    handlers,
+    installationVersions,
+    invoke,
+    lifetime,
+    previewVersions,
+  }
 }
 
 test('read-only update getter copies the current service result and never invokes check', async () => {
@@ -128,6 +153,7 @@ test('read-only update getter copies the current service result and never invoke
     'application-updates:check',
     'application-updates:download',
     'application-updates:get-status',
+    'application-updates:install',
     'application-updates:review-installation',
   ])
 })
@@ -423,4 +449,200 @@ test('impact review refuses malformed or mismatched projections and sanitizes na
     f.controls.reviewInstallation = async () => invalid
     failure(await f.invoke('reviewInstallation', ['0.1.0']), 'IPC_INVALID_RESPONSE')
   }
+})
+
+/** Install remains a controlled Main callback here, not Electron close or executable acceptance. */
+test('Install requires this document to review an eligible version before requesting normal close once', async () => {
+  const f = fixture()
+  failure(await f.invoke('install', ['0.1.0']), 'APPLICATION_UPDATE_INSTALL_FAILED')
+  await f.invoke('reviewInstallation', ['0.1.0'])
+  assert.equal(f.installationVersions.length, 0, 'Review never starts close.')
+  failure(await f.invoke('install', ['0.2.0']), 'APPLICATION_UPDATE_INSTALL_FAILED')
+  assert.equal(f.installationVersions.length, 0)
+  const result = await f.invoke('install', ['0.1.0'])
+  assert.deepEqual(result, {
+    ok: true,
+    value: { availableVersion: '0.1.0', status: 'close-requested' },
+  })
+  assert.deepEqual(f.installationVersions, ['0.1.0'])
+  failure(await f.invoke('install', ['0.1.0']), 'APPLICATION_UPDATE_INSTALL_FAILED')
+  assert.equal(
+    f.installationVersions.length,
+    1,
+    'An old review cannot restart a later ordinary close.',
+  )
+  await f.invoke('reviewInstallation', ['0.1.0'])
+  await f.invoke('install', ['0.1.0'])
+  assert.deepEqual(f.installationVersions, ['0.1.0', '0.1.0'])
+})
+
+test('missing installer or unavailable eligibility never grants close authority', async () => {
+  for (const installer of [false, true]) {
+    const f = fixture(installer)
+    f.controls.reviewInstallation = async () => ({
+      ...preview(),
+      installationAvailable: !installer,
+    })
+    assert.equal((await f.invoke('reviewInstallation', ['0.1.0'])).ok, true)
+    failure(await f.invoke('install', ['0.1.0']), 'APPLICATION_UPDATE_INSTALL_FAILED')
+    assert.equal(f.installationVersions.length, 0)
+  }
+})
+
+test('Install rejects arbitrary arguments, foreign senders and stale frames before reaching Main', async () => {
+  const f = fixture()
+  await f.invoke('reviewInstallation', ['0.1.0'])
+  for (const args of [
+    [],
+    [undefined],
+    [null],
+    [''],
+    ['/private/next.AppImage'],
+    ['0.1.0', preview()],
+    [{ version: '0.1.0' }],
+  ]) {
+    failure(await f.invoke('install', args), 'IPC_INVALID_CALLER')
+  }
+  for (const request of [
+    { sender: {}, senderFrame: f.caller.mainFrame },
+    { sender: f.caller, senderFrame: {} },
+    { sender: f.caller, senderFrame: null },
+  ]) {
+    failure(await f.invoke('install', ['0.1.0'], request), 'IPC_INVALID_CALLER')
+  }
+  assert.equal(f.installationVersions.length, 0)
+  assert.equal((await f.invoke('install', ['0.1.0'])).ok, true)
+})
+
+for (const invalidation of ['none', 'document', 'frame', 'dispose'] as const) {
+  test(`the trusted Install predicate after awaited preflight handles ${invalidation} before any close effect`, async () => {
+    const f = fixture()
+    const entered = deferred<void>()
+    const completed = deferred<void>()
+    let closeRequests = 0
+    f.controls.install = async (availableVersion, isCurrent) => {
+      entered.resolve()
+      await completed.promise
+      if (!isCurrent()) {
+        throw new Error('The requesting document changed during validation.')
+      }
+      closeRequests++
+      return { availableVersion, status: 'close-requested' }
+    }
+    await f.invoke('reviewInstallation', ['0.1.0'])
+    const pending = f.invoke('install', ['0.1.0'])
+    await entered.promise
+    if (invalidation === 'document') {
+      f.lifetime.invalidateDocument()
+    }
+    if (invalidation === 'frame') {
+      f.caller.mainFrame = {}
+    }
+    if (invalidation === 'dispose') {
+      f.lifetime.dispose()
+    }
+    completed.resolve()
+    if (invalidation === 'none') {
+      assert.deepEqual(await pending, {
+        ok: true,
+        value: { availableVersion: '0.1.0', status: 'close-requested' },
+      })
+      assert.equal(closeRequests, 1)
+    } else {
+      failure(await pending, 'IPC_INVALID_CALLER')
+      assert.equal(closeRequests, 0)
+    }
+  })
+}
+
+test('pending Install refuses duplicate and competing actions while allowing read-only status', async () => {
+  const f = fixture()
+  const entered = deferred<void>()
+  const completed = deferred<void>()
+  f.controls.install = async (availableVersion, isCurrent) => {
+    entered.resolve()
+    await completed.promise
+    assert.equal(isCurrent(), true, 'Refused competing actions must not revoke the active request.')
+    return { availableVersion, status: 'close-requested' }
+  }
+  await f.invoke('reviewInstallation', ['0.1.0'])
+  const pending = f.invoke('install', ['0.1.0'])
+  await entered.promise
+  try {
+    for (const [channel, args] of [
+      ['install', ['0.1.0']],
+      ['check', []],
+      ['download', ['0.1.0']],
+      ['reviewInstallation', ['0.1.0']],
+    ] as const) {
+      failure(await f.invoke(channel, [...args]), 'APPLICATION_UPDATE_INSTALL_FAILED')
+    }
+    assert.equal(value(await f.invoke('getStatus')).status, 'idle')
+    assert.deepEqual(f.calls, { check: 0, download: 0, getStatus: 1 })
+    assert.deepEqual(f.previewVersions, ['0.1.0'])
+    assert.deepEqual(f.installationVersions, ['0.1.0'])
+  } finally {
+    completed.resolve()
+  }
+  assert.equal((await pending).ok, true)
+})
+
+test('a new Check or Download retires review and a late old preview cannot grant installation', async () => {
+  for (const action of ['check', 'download'] as const) {
+    const f = fixture()
+    await f.invoke('reviewInstallation', ['0.1.0'])
+    await f.invoke(action, action === 'download' ? ['0.1.0'] : [])
+    failure(await f.invoke('install', ['0.1.0']), 'APPLICATION_UPDATE_INSTALL_FAILED')
+    assert.equal(f.installationVersions.length, 0)
+  }
+  const f = fixture()
+  const entered = deferred<void>()
+  const completed = deferred<ApplicationUpdateInstallPreview>()
+  f.controls.reviewInstallation = async () => {
+    entered.resolve()
+    return await completed.promise
+  }
+  const pending = f.invoke('reviewInstallation', ['0.1.0'])
+  await entered.promise
+  await f.invoke('check')
+  completed.resolve(preview())
+  assert.equal(
+    (await pending).ok,
+    true,
+    'The returned advisory DTO grants no capability by itself.',
+  )
+  failure(await f.invoke('install', ['0.1.0']), 'APPLICATION_UPDATE_INSTALL_FAILED')
+  assert.equal(f.installationVersions.length, 0)
+})
+
+test('pre-close refusal sanitizes native details and requires another explicit review', async () => {
+  const f = fixture()
+  f.controls.install = async () => {
+    throw new Error('/private/update/backup.AppImage?key=secret')
+  }
+  await f.invoke('reviewInstallation', ['0.1.0'])
+  assert.deepEqual(
+    failure(await f.invoke('install', ['0.1.0']), 'APPLICATION_UPDATE_INSTALL_FAILED'),
+    {
+      code: 'APPLICATION_UPDATE_INSTALL_FAILED',
+      message: 'The application could not start installation. Review the update and try again.',
+    },
+  )
+  failure(await f.invoke('install', ['0.1.0']), 'APPLICATION_UPDATE_INSTALL_FAILED')
+  assert.deepEqual(f.installationVersions, ['0.1.0'])
+})
+
+test('Install response exposes only the requested close acknowledgement, never startup success or native authority', async () => {
+  const f = fixture()
+  for (const invalid of [
+    { availableVersion: '0.2.0', status: 'close-requested' },
+    { availableVersion: '0.1.0', status: 'installed' },
+    { availableVersion: '0.1.0', path: '/private/next.AppImage', status: 'close-requested' },
+    null,
+  ]) {
+    f.controls.install = async () => invalid as ApplicationUpdateInstallationRequest
+    await f.invoke('reviewInstallation', ['0.1.0'])
+    failure(await f.invoke('install', ['0.1.0']), 'IPC_INVALID_RESPONSE')
+  }
+  assert.equal(f.installationVersions.length, 4)
 })

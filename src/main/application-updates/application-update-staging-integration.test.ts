@@ -35,7 +35,10 @@ async function fixture(
   target = true,
   assertApplicationClosed: (() => void) | null = null,
   readInstallImpact:
-    (() => Promise<Omit<ApplicationUpdateInstallPreview, 'availableVersion'>>) | null = null,
+    | (() => Promise<
+        Omit<ApplicationUpdateInstallPreview, 'availableVersion' | 'installationAvailable'>
+      >)
+    | null = null,
   scheduleApplicationRelaunch: ((currentAppImage: string) => unknown) | null = null,
 ) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'igs-staging-consumer-'))
@@ -247,7 +250,10 @@ test('service cannot activate without a Main close assertion even with a valid s
   assert.deepEqual(await identity(backup.candidatePath), candidate)
 })
 
-const installImpact = (): Omit<ApplicationUpdateInstallPreview, 'availableVersion'> => ({
+const installImpact = (): Omit<
+  ApplicationUpdateInstallPreview,
+  'availableVersion' | 'installationAvailable'
+> => ({
   activeModelInstallCount: 2,
   generationStorageUnavailable: false,
   openProjectCount: 3,
@@ -291,7 +297,11 @@ test('signed native downloaded artifact grants repeatable impact review without 
   }
   const first = await f.service.reviewInstallation('0.2.0')
   const second = await f.service.reviewInstallation('0.2.0')
-  assert.deepEqual(first, { ...controlledImpact, availableVersion: '0.2.0' })
+  assert.deepEqual(first, {
+    ...controlledImpact,
+    availableVersion: '0.2.0',
+    installationAvailable: false,
+  })
   assert.deepEqual(second, first)
   assert.notEqual(first, second)
   assert.deepEqual(
@@ -553,4 +563,135 @@ test('a false helper result leaves the actual installed bytes and backup for exp
   )
   await assert.rejects(f.service.installAfterClose('0.2.0'))
   assert.equal(scheduled, 1)
+})
+
+test('eligible pre-close preparation returns exact signed authority without asserting close or creating a stage', async (t) => {
+  let closeChecks = 0
+  let scheduled = 0
+  const f = await fixture(
+    t,
+    true,
+    true,
+    () => {
+      closeChecks++
+      throw new Error('The application is deliberately still open.')
+    },
+    async () => installImpact(),
+    () => {
+      scheduled++
+      return true
+    },
+  )
+  await f.service.check()
+  await f.service.download('0.2.0')
+  const authority = await f.service.prepareVerifiedArtifact('0.2.0')
+  const before = {
+    cache: await identity(authority.path),
+    current: await identity(f.currentAppImage),
+    public: f.service.getStatus(),
+  }
+  assert.equal((await f.service.reviewInstallation('0.2.0')).installationAvailable, true)
+  assert.equal(await f.service.prepareInstallation('0.2.0'), authority)
+  assert.equal(await f.service.prepareInstallation('0.2.0'), authority)
+  assert.equal(closeChecks, 0)
+  assert.equal(scheduled, 0)
+  assert.deepEqual(await fs.readdir(f.parent), ['Current.AppImage'])
+  assert.deepEqual(
+    {
+      cache: await identity(authority.path),
+      current: await identity(f.currentAppImage),
+      public: f.service.getStatus(),
+    },
+    before,
+  )
+})
+
+for (const lane of [
+  'missing-close',
+  'missing-scheduler',
+  'missing-current-path',
+  'metadata-only',
+  'wrong-version',
+  'not-downloaded',
+] as const) {
+  test(`${lane} refuses pre-close Install eligibility without consuming the normal close barrier`, async (t) => {
+    let closeChecks = 0
+    let scheduled = 0
+    const f = await fixture(
+      t,
+      lane !== 'metadata-only',
+      lane !== 'missing-current-path',
+      lane === 'missing-close'
+        ? null
+        : () => {
+            closeChecks++
+          },
+      async () => installImpact(),
+      lane === 'missing-scheduler'
+        ? null
+        : () => {
+            scheduled++
+            return true
+          },
+    )
+    await f.service.check()
+    if (lane !== 'not-downloaded') {
+      await f.service.download('0.2.0')
+    }
+    const before = await identity(f.currentAppImage)
+    await assert.rejects(
+      f.service.prepareInstallation(lane === 'wrong-version' ? '0.3.0' : '0.2.0'),
+    )
+    assert.equal(closeChecks, 0)
+    assert.equal(scheduled, 0)
+    assert.deepEqual(await identity(f.currentAppImage), before)
+    assert.deepEqual(await fs.readdir(f.parent), ['Current.AppImage'])
+    if (['missing-close', 'missing-current-path', 'missing-scheduler'].includes(lane)) {
+      assert.equal((await f.service.reviewInstallation('0.2.0')).installationAvailable, false)
+    }
+  })
+}
+
+test('a same-version replacement after preflight cannot be installed under the older exact capability', async (t) => {
+  let closed = false
+  let scheduled = 0
+  const f = await fixture(
+    t,
+    true,
+    true,
+    () => assert.equal(closed, true),
+    null,
+    () => {
+      scheduled++
+      return true
+    },
+  )
+  await f.service.check()
+  await f.service.download('0.2.0')
+  const reviewedArtifact = await f.service.prepareInstallation('0.2.0')
+  await f.service.check()
+  await f.service.download('0.2.0')
+  const replacementArtifact = await f.service.prepareInstallation('0.2.0')
+  assert.notEqual(replacementArtifact, reviewedArtifact)
+  assert.equal(replacementArtifact.manifest.version, reviewedArtifact.manifest.version)
+  assert.equal(
+    replacementArtifact.manifest.artifact.sha512,
+    reviewedArtifact.manifest.artifact.sha512,
+    'Equal version and bytes do not revive retired native authority.',
+  )
+  const before = {
+    cache: await identity(replacementArtifact.path),
+    current: await identity(f.currentAppImage),
+  }
+  closed = true
+  await assert.rejects(f.service.installAfterClose('0.2.0', reviewedArtifact), /selection changed/i)
+  assert.equal(scheduled, 0)
+  assert.deepEqual(await fs.readdir(f.parent), ['Current.AppImage'])
+  assert.deepEqual(
+    { cache: await identity(replacementArtifact.path), current: await identity(f.currentAppImage) },
+    before,
+  )
+  await f.service.installAfterClose('0.2.0', replacementArtifact)
+  assert.equal(scheduled, 1, 'Fresh explicit authority remains a neighboring valid control.')
+  assert.ok((await fs.readFile(f.currentAppImage)).equals(f.body))
 })

@@ -327,6 +327,10 @@ async function calls(page: Page) {
 }
 
 async function assertModalFits(page: Page) {
+  // Bounds during Naive's entering scale transition do not describe the settled dialog.
+  await expect
+    .poll(() => dialog(page).evaluate((element) => getComputedStyle(element).transform))
+    .toBe('none')
   const bounds = await dialog(page).evaluate((element) => {
     const rect = element.getBoundingClientRect()
     return {
@@ -777,7 +781,11 @@ for (const status of ['available', 'downloaded'] as const) {
     await expect(dialog(page)).toContainText(
       'Compatibility declaration accepted. The image engine will be checked after restart.',
     )
-    await expect(dialog(page)).toContainText('Installation is not available in this build.')
+    await expect(dialog(page)).toContainText(
+      status === 'downloaded'
+        ? 'Review installation availability and what must close before restarting.'
+        : 'Download and verify the update before reviewing installation.',
+    )
     await expect(dialog(page)).not.toContainText(
       'Publisher authenticity and installation have not been verified.',
     )
@@ -789,7 +797,7 @@ for (const status of ['available', 'downloaded'] as const) {
       await expect(dialog(page)).toContainText(
         'The saved file matches the update metadata checksum.',
       )
-      await expect(dialog(page)).toContainText('Installation has not been verified.')
+      await expect(dialog(page)).toContainText('Installation has not started.')
       await expect(
         dialog(page).getByRole('button', { exact: true, name: 'Download again' }),
       ).toBeEnabled()

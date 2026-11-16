@@ -579,6 +579,9 @@ const applicationUpdatesError = ref<string | null>(null)
 const applicationUpdateInstallPreview = shallowRef<ApplicationUpdateInstallPreview | null>(null)
 const applicationUpdatePreviewPending = ref(false)
 const applicationUpdatePreviewError = ref<string | null>(null)
+const applicationUpdateInstallError = ref<string | null>(null)
+const applicationUpdateInstallPending = ref(false)
+let applicationUpdateInstallRequest = 0
 let applicationUpdatesEpoch = 0
 let applicationUpdatesPollEpoch = 0
 let applicationUpdatesPollTimer: ReturnType<typeof setTimeout> | null = null
@@ -5471,6 +5474,7 @@ function clearApplicationUpdatePreview() {
   applicationUpdateInstallPreview.value = null
   applicationUpdatePreviewPending.value = false
   applicationUpdatePreviewError.value = null
+  applicationUpdateInstallError.value = null
 }
 
 async function reviewApplicationUpdateInstallation(availableVersion: string) {
@@ -5478,6 +5482,7 @@ async function reviewApplicationUpdateInstallation(availableVersion: string) {
     !applicationUpdatesOpen.value ||
     applicationUpdatesPending.value ||
     applicationUpdatePreviewPending.value ||
+    applicationUpdateInstallPending.value ||
     windowClosePending.value ||
     applicationUpdatesSnapshot.value?.status !== 'downloaded' ||
     applicationUpdatesSnapshot.value.verification !== 'signed-release' ||
@@ -5489,6 +5494,7 @@ async function reviewApplicationUpdateInstallation(availableVersion: string) {
   stopApplicationUpdatesPolling()
   applicationUpdateInstallPreview.value = null
   applicationUpdatePreviewError.value = null
+  applicationUpdateInstallError.value = null
   applicationUpdatePreviewPending.value = true
   try {
     const api = globalThis.window.api?.applicationUpdates
@@ -5518,7 +5524,12 @@ async function reviewApplicationUpdateInstallation(availableVersion: string) {
   }
 }
 
-function dismissApplicationUpdates() {
+function dismissApplicationUpdates(force = false) {
+  if (applicationUpdateInstallPending.value && !force) {
+    return
+  }
+  ++applicationUpdateInstallRequest
+  applicationUpdateInstallPending.value = false
   ++applicationUpdatesEpoch
   stopApplicationUpdatesPolling()
   applicationUpdatesOpen.value = false
@@ -5527,10 +5538,67 @@ function dismissApplicationUpdates() {
   clearApplicationUpdatePreview()
 }
 
+async function installApplicationUpdate(availableVersion: string) {
+  if (
+    rendererDisposed ||
+    !applicationUpdatesOpen.value ||
+    applicationUpdatesPending.value ||
+    applicationUpdatePreviewPending.value ||
+    applicationUpdateInstallPending.value ||
+    windowClosePending.value ||
+    applicationUpdatesSnapshot.value?.status !== 'downloaded' ||
+    applicationUpdatesSnapshot.value.verification !== 'signed-release' ||
+    applicationUpdatesSnapshot.value.availableVersion !== availableVersion ||
+    applicationUpdateInstallPreview.value?.availableVersion !== availableVersion ||
+    !applicationUpdateInstallPreview.value.installationAvailable
+  ) {
+    return
+  }
+  const request = ++applicationUpdateInstallRequest
+  const current = () => !rendererDisposed && request === applicationUpdateInstallRequest
+  const failed = (message: string) => {
+    clearApplicationUpdatePreview()
+    applicationUpdateInstallError.value = message
+    applicationUpdateInstallPending.value = false
+  }
+  stopApplicationUpdatesPolling()
+  applicationUpdateInstallPending.value = true
+  applicationUpdateInstallError.value = null
+  try {
+    const updates = globalThis.window.api?.applicationUpdates
+    if (!updates?.install) {
+      throw new Error('Application installation is unavailable.')
+    }
+    const result = await updates.install(availableVersion)
+    if (!current()) {
+      return
+    }
+    if (
+      !result.ok ||
+      result.value.availableVersion !== availableVersion ||
+      result.value.status !== 'close-requested'
+    ) {
+      failed(
+        result.ok
+          ? 'The application could not start installation. Review the update and try again.'
+          : result.error.message,
+      )
+    }
+    // close-requested is not an installation/startup acknowledgement. Keep preflight controls
+    // sealed until the normal before-window-close event dismisses this presentation. Its Cancel
+    // release restores ordinary editing without retaining any automatic installation intent.
+  } catch {
+    if (current()) {
+      failed('The application could not start installation. Review the update and try again.')
+    }
+  }
+}
+
 async function checkApplicationUpdates(readCurrentVersion = false) {
   if (
     !applicationUpdatesOpen.value ||
     applicationUpdatesPending.value ||
+    applicationUpdateInstallPending.value ||
     applicationUpdatesSnapshot.value?.status === 'downloading' ||
     windowClosePending.value
   ) {
@@ -5589,6 +5657,7 @@ async function downloadApplicationUpdate(availableVersion: string) {
   if (
     !applicationUpdatesOpen.value ||
     applicationUpdatesPending.value ||
+    applicationUpdateInstallPending.value ||
     windowClosePending.value ||
     !previous ||
     previous.availableVersion !== availableVersion ||
@@ -5644,7 +5713,12 @@ async function downloadApplicationUpdate(availableVersion: string) {
 }
 
 function openApplicationUpdates() {
-  if (rendererDisposed || windowClosePending.value || applicationUpdatesOpen.value) {
+  if (
+    rendererDisposed ||
+    windowClosePending.value ||
+    applicationUpdatesOpen.value ||
+    applicationUpdateInstallPending.value
+  ) {
     return
   }
   applicationUpdatesOpen.value = true
@@ -6141,7 +6215,7 @@ onMounted(() => {
     unsubscribeBeforeWindowClose = globalThis.window.api?.projects.onBeforeWindowClose(
       async (setDecisionPending) => {
         windowClosePending.value = true
-        dismissApplicationUpdates()
+        dismissApplicationUpdates(true)
         if (
           pendingSmartReview.value &&
           !generationCommitting.value &&
@@ -6342,6 +6416,8 @@ onBeforeUnmount(() => {
           v-model:show="applicationUpdatesOpen"
           :downloading="applicationUpdatesDownloadPending"
           :error="applicationUpdatesError"
+          :installError="applicationUpdateInstallError"
+          :installPending="applicationUpdateInstallPending"
           :installPreview="applicationUpdateInstallPreview"
           :pending="applicationUpdatesPending"
           :previewError="applicationUpdatePreviewError"
@@ -6350,6 +6426,7 @@ onBeforeUnmount(() => {
           @check="checkApplicationUpdates()"
           @dismiss="dismissApplicationUpdates"
           @download="downloadApplicationUpdate"
+          @install="installApplicationUpdate"
           @reviewInstallation="reviewApplicationUpdateInstallation"
         />
         <RuntimeSetupModal

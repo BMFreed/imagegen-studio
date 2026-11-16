@@ -65,7 +65,10 @@ export class ApplicationUpdateService {
     private readonly currentAppImage: string | null = null,
     private readonly assertApplicationClosed: (() => void) | null = null,
     private readonly readInstallImpact:
-      (() => Promise<Omit<ApplicationUpdateInstallPreview, 'availableVersion'>>) | null = null,
+      | (() => Promise<
+          Omit<ApplicationUpdateInstallPreview, 'availableVersion' | 'installationAvailable'>
+        >)
+      | null = null,
     private readonly scheduleApplicationRelaunch:
       ((currentAppImage: string) => unknown) | null = null,
   ) {
@@ -226,18 +229,33 @@ export class ApplicationUpdateService {
   }
 
   /** Main-private consumer after irreversible close; caller must seal the normal exit path. */
-  async installAfterClose(expectedVersion: string): Promise<void> {
+  async installAfterClose(
+    expectedVersion: string,
+    expectedArtifact?: VerifiedApplicationArtifact,
+  ): Promise<void> {
     if (!this.assertApplicationClosed || !this.scheduleApplicationRelaunch) {
       throw new Error('Application update restart is unavailable.')
     }
     this.assertClosedForInstallation()
-    const staged = await this.stageForInstallation(expectedVersion)
+    const staged = await this.stageForInstallation(expectedVersion, expectedArtifact)
     const backed = await staged.prepareBackup()
     const active = await backed.activate()
     await active.handoffRelaunch((currentAppImage) => {
       this.assertClosedForInstallation()
       return this.scheduleApplicationRelaunch!(currentAppImage)
     })
+  }
+
+  /** Read-only pre-close eligibility. The exact capability must be rebound after normal close. */
+  async prepareInstallation(expectedVersion: string): Promise<VerifiedApplicationArtifact> {
+    if (
+      !this.currentAppImage ||
+      !this.assertApplicationClosed ||
+      !this.scheduleApplicationRelaunch
+    ) {
+      throw new Error('Application update installation is unavailable.')
+    }
+    return await this.prepareVerifiedArtifact(expectedVersion)
   }
 
   /** Main-private gate; public downloaded snapshots never grant installer authority. */
@@ -285,7 +303,15 @@ export class ApplicationUpdateService {
     if ((await this.prepareVerifiedArtifact(expectedVersion)) !== artifact) {
       throw new Error('The application release selection changed.')
     }
-    const preview = { ...impact, availableVersion: expectedVersion }
+    const preview = {
+      ...impact,
+      availableVersion: expectedVersion,
+      installationAvailable: !!(
+        this.currentAppImage &&
+        this.assertApplicationClosed &&
+        this.scheduleApplicationRelaunch
+      ),
+    }
     if (!isApplicationUpdateInstallPreview(preview)) {
       throw new Error('Invalid application update preview.')
     }
@@ -293,11 +319,17 @@ export class ApplicationUpdateService {
   }
 
   /** Main-private explicit preparation; Download/status never stage or replace the app. */
-  async stageForInstallation(expectedVersion: string): Promise<ServiceStagedUpdate> {
+  async stageForInstallation(
+    expectedVersion: string,
+    expectedArtifact?: VerifiedApplicationArtifact,
+  ): Promise<ServiceStagedUpdate> {
     if (this.currentAppImage === null) {
       throw new Error('Application update staging is unavailable.')
     }
     const artifact = await this.prepareVerifiedArtifact(expectedVersion)
+    if (expectedArtifact && artifact !== expectedArtifact) {
+      throw new Error('The application release selection changed after close was requested.')
+    }
     const staged = await stageVerifiedApplicationArtifact({
       artifact,
       currentAppImage: this.currentAppImage,

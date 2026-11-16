@@ -1,4 +1,5 @@
 import type {
+  ApplicationUpdateInstallationRequest,
   ApplicationUpdateInstallPreview,
   ApplicationUpdateSnapshot,
 } from './application-updates.js'
@@ -151,6 +152,7 @@ export const ipcChannels = {
     check: 'application-updates:check',
     download: 'application-updates:download',
     getStatus: 'application-updates:get-status',
+    install: 'application-updates:install',
     reviewInstallation: 'application-updates:review-installation',
   },
   models: {
@@ -1056,6 +1058,7 @@ export interface ApplicationUpdatesApi {
   check: () => Promise<ApiResult<ApplicationUpdateSnapshot>>
   download: (availableVersion: string) => Promise<ApiResult<ApplicationUpdateSnapshot>>
   getStatus: () => Promise<ApiResult<ApplicationUpdateSnapshot>>
+  install: (availableVersion: string) => Promise<ApiResult<ApplicationUpdateInstallationRequest>>
   reviewInstallation: (
     availableVersion: string,
   ) => Promise<ApiResult<ApplicationUpdateInstallPreview>>

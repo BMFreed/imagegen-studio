@@ -5,8 +5,10 @@ import {
   APPLICATION_UPDATE_NOTES_MAX_LENGTH,
   APPLICATION_UPDATE_STATUSES,
   APPLICATION_UPDATE_VERSION_MAX_LENGTH,
+  type ApplicationUpdateInstallationRequest,
   type ApplicationUpdateInstallPreview,
   type ApplicationUpdateSnapshot,
+  isApplicationUpdateInstallationRequest,
   isApplicationUpdateInstallPreview,
   isApplicationUpdateSnapshot,
   isApplicationUpdateVersion,
@@ -34,6 +36,7 @@ const installPreview = (): ApplicationUpdateInstallPreview => ({
   activeModelInstallCount: 0,
   availableVersion: '0.2.0',
   generationStorageUnavailable: false,
+  installationAvailable: false,
   openProjectCount: 2,
   preparingModelInstallCount: 0,
   resourceRemovalActive: false,
@@ -278,6 +281,7 @@ test('install preview admits exact Main counts and marks unavailable generation 
     { ...installPreview(), openProjectCount: 2, unsavedProjectCount: 2 },
     { ...installPreview(), unacceptedResultCount: 0, unfinishedJobCount: 0 },
     { ...installPreview(), resourceRemovalActive: true },
+    { ...installPreview(), installationAvailable: true },
     {
       ...installPreview(),
       generationStorageUnavailable: true,
@@ -320,6 +324,8 @@ test('install preview admits exact Main counts and marks unavailable generation 
     { unsavedProjectCount: 3 },
     { generationStorageUnavailable: 1 },
     { resourceRemovalActive: 'yes' },
+    { installationAvailable: 'yes' },
+    { installationAvailable: undefined },
     { generationStorageUnavailable: true },
     { generationStorageUnavailable: true, unfinishedJobCount: null },
     { generationStorageUnavailable: true, unacceptedResultCount: null },
@@ -382,6 +388,89 @@ test('install preview never exposes native capabilities and refuses accessors wi
     }),
   ]) {
     assert.equal(isApplicationUpdateInstallPreview(value), false)
+  }
+  assert.equal(reads, 0)
+})
+
+test('installation request is an exact close acknowledgement rather than an installed or restarted result', () => {
+  const request: ApplicationUpdateInstallationRequest = {
+    availableVersion: '0.2.0',
+    status: 'close-requested',
+  }
+  for (const value of [
+    request,
+    Object.freeze({ ...request }),
+    Object.assign(Object.create(null), request),
+  ]) {
+    assert.equal(isApplicationUpdateInstallationRequest(value), true)
+  }
+  for (const value of [
+    null,
+    undefined,
+    false,
+    [],
+    new Date(),
+    {},
+    { availableVersion: '0.2.0' },
+    { status: 'close-requested' },
+    { ...request, availableVersion: '/private/next.AppImage' },
+    { ...request, availableVersion: '01.2.0' },
+    { ...request, availableVersion: null },
+    ...['installed', 'restarting', 'ready', 'canceled', true, null].map((status) => ({
+      ...request,
+      status,
+    })),
+    ...['path', 'manifest', 'backupPath', 'scheduler', 'engineReady'].map((key) => ({
+      ...request,
+      [key]: true,
+    })),
+    { ...request, [Symbol('private')]: true },
+    Object.assign(Object.create({ inherited: true }), request),
+  ]) {
+    assert.equal(isApplicationUpdateInstallationRequest(value), false)
+  }
+})
+
+test('installation acknowledgement refuses hidden data, accessors and hostile reflection without reading them', () => {
+  const request = { availableVersion: '0.2.0', status: 'close-requested' }
+  let reads = 0
+  const accessor = Object.defineProperty({ ...request }, 'status', {
+    enumerable: true,
+    get: () => {
+      reads++
+      return 'close-requested'
+    },
+  })
+  const hidden = Object.defineProperty({ ...request }, 'availableVersion', {
+    enumerable: false,
+    value: '0.2.0',
+  })
+  for (const value of [
+    accessor,
+    hidden,
+    new Proxy(
+      {},
+      {
+        getPrototypeOf: () => {
+          throw new Error('private')
+        },
+      },
+    ),
+    new Proxy(
+      {},
+      {
+        ownKeys: () => {
+          throw new Error('private')
+        },
+      },
+    ),
+    new Proxy(request, {
+      getOwnPropertyDescriptor: () => {
+        throw new Error('private')
+      },
+    }),
+  ]) {
+    assert.equal(isApplicationUpdateInstallationRequest(value), false)
   }
   assert.equal(reads, 0)
 })

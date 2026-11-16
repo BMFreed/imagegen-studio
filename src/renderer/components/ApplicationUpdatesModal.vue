@@ -12,6 +12,8 @@ import { AppLayer } from '../../../docs/prototype-app/src/theme/app-layers.js'
 const props = defineProps<{
   downloading: boolean
   error: string | null
+  installError: string | null
+  installPending: boolean
   installPreview: ApplicationUpdateInstallPreview | null
   pending: boolean
   previewError: string | null
@@ -23,18 +25,39 @@ const emit = defineEmits<{
   check: []
   dismiss: []
   download: [availableVersion: string]
+  install: [availableVersion: string]
   reviewInstallation: [availableVersion: string]
 }>()
 
 const activeDownload = computed(() => props.downloading || props.snapshot?.status === 'downloading')
 const previewView = computed(
-  () => props.previewPending || props.previewError !== null || props.installPreview !== null,
+  () =>
+    props.previewPending ||
+    props.previewError !== null ||
+    props.installError !== null ||
+    props.installPreview !== null,
+)
+const installationEligible = computed(
+  () =>
+    props.installPreview?.installationAvailable === true &&
+    props.snapshot?.status === 'downloaded' &&
+    props.snapshot.verification === 'signed-release' &&
+    props.snapshot.availableVersion === props.installPreview.availableVersion,
+)
+const canInstall = computed(
+  () =>
+    installationEligible.value &&
+    !props.pending &&
+    !activeDownload.value &&
+    !props.previewPending &&
+    !props.installPending,
 )
 const canReview = computed(
   () =>
     !props.pending &&
     !activeDownload.value &&
     !props.previewPending &&
+    !props.installPending &&
     props.snapshot?.status === 'downloaded' &&
     props.snapshot.verification === 'signed-release' &&
     !!props.snapshot.availableVersion,
@@ -43,6 +66,7 @@ const canDownload = computed(
   () =>
     !props.pending &&
     !activeDownload.value &&
+    !props.installPending &&
     props.snapshot?.availableVersion !== null &&
     ['available', 'download-error', 'downloaded'].includes(props.snapshot?.status ?? ''),
 )
@@ -77,6 +101,13 @@ function reviewInstallation() {
   }
 }
 
+function install() {
+  const version = props.installPreview?.availableVersion
+  if (canInstall.value && version) {
+    emit('install', version)
+  }
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) {
     return `${bytes} B`
@@ -86,13 +117,22 @@ function formatBytes(bytes: number): string {
 }
 
 function close() {
+  if (props.installPending) {
+    return
+  }
   show.value = false
   emit('dismiss')
 }
 </script>
 
 <template>
-  <NModal :maskClosable="false" :show :zIndex="AppLayer.dialog" @update:show="!$event && close()">
+  <NModal
+    :closeOnEsc="!installPending"
+    :maskClosable="false"
+    :show
+    :zIndex="AppLayer.dialog"
+    @update:show="!$event && close()"
+  >
     <NCard
       aria-label="Application Updates"
       class="application-updates-modal"
@@ -112,12 +152,31 @@ function close() {
       </dl>
       <section v-if="previewView" aria-label="Installation preview" class="updates-preview">
         <h3>Installation preview</h3>
-        <p class="updates-detail">Installation is not available in this build.</p>
+        <p v-if="installationEligible" class="updates-detail">
+          Install and restart closes ImageGen Studio using the normal Save/Close choices. You can
+          cancel those choices before installation starts. The image engine will be checked after
+          restart.
+        </p>
+        <p v-else-if="!previewPending && !installError" class="updates-detail">
+          Installation is not available in this build.
+        </p>
+        <NAlert v-if="installError" title="Installation could not start" type="error">
+          {{ installError }}
+        </NAlert>
+        <div v-if="installPending" aria-live="polite" class="updates-pending" role="status">
+          <NSpin size="small" />
+          <span>Checking the update before closing…</span>
+        </div>
         <div v-if="previewPending" aria-live="polite" class="updates-pending" role="status">
           <NSpin size="small" />
           <span>Reviewing installation impact…</span>
         </div>
-        <NAlert v-else-if="previewError" title="Installation preview unavailable" type="error">
+        <NAlert
+          v-else-if="previewError"
+          key="n-alert-2"
+          title="Installation preview unavailable"
+          type="error"
+        >
           {{ previewError }}
         </NAlert>
         <template v-else-if="installPreview">
@@ -221,7 +280,7 @@ function close() {
         >
           The saved file matches the update metadata checksum.
           <template v-if="snapshot.verification === 'signed-release'">
-            Installation has not been verified.
+            Installation has not started.
           </template>
           <template v-else>
             Publisher authenticity and installation have not been verified.
@@ -258,7 +317,13 @@ function close() {
             Release notes were shortened for display.
           </p>
         </section>
-        <p class="updates-detail">Installation is not available in this build.</p>
+        <p v-if="snapshot.verification === 'signed-release'" class="updates-detail">
+          <template v-if="snapshot.status === 'downloaded'">
+            Review installation availability and what must close before restarting.
+          </template>
+          <template v-else>Download and verify the update before reviewing installation.</template>
+        </p>
+        <p v-else class="updates-detail">Installation is not available in this build.</p>
       </template>
       <NAlert
         v-else-if="!snapshot || snapshot.status === 'unavailable'"
@@ -272,7 +337,7 @@ function close() {
       <template v-slot:footer>
         <div class="modal-actions">
           <template v-if="previewView">
-            <NButton @click="close">Install later</NButton>
+            <NButton :disabled="installPending" @click="close">Install later</NButton>
             <NButton
               aria-label="Refresh preview"
               :disabled="!canReview"
@@ -281,13 +346,28 @@ function close() {
             >
               Refresh preview
             </NButton>
+            <NButton
+              v-if="installationEligible"
+              aria-label="Install and restart"
+              :disabled="!canInstall"
+              :loading="installPending"
+              type="primary"
+              @click="install"
+            >
+              Install and restart
+            </NButton>
           </template>
           <template v-else>
             <NButton @click="close">Close</NButton>
             <NButton :disabled="pending || activeDownload" @click="$emit('check')">
               Check again
             </NButton>
-            <NButton v-if="canReview" type="primary" @click="reviewInstallation">
+            <NButton
+              v-if="canReview"
+              key="review-installation"
+              type="primary"
+              @click="reviewInstallation"
+            >
               Review installation
             </NButton>
             <NButton

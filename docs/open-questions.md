@@ -1,6 +1,26 @@
 # Open Questions
 
-## Current private application update staging
+## Current explicit application Install
+
+[Public Install](./engineering/phase-5-application-update-install-research.md) connects eligible current-document Review to the
+existing normal Project/Preset close flow and the guarded same-owner handoff.
+Cancel retires the intent before any update stage; the exact artifact is rebound
+after close. Main seals before irreversible finalize and never releases editing
+after storage disposal, even on failed cleanup/activation/handoff. Catalog
+admission uses the existing dataRoot lock; native close remains prevented while
+handoff awaits. Default publisher remains unavailable.
+
+Root checks:352PASS/one platformSKIP; final typing/build/scoped lint and actual-Main
+sealed-event semantic GREEN/RED/GREEN PASS. Full browser341 gave337PASS+4 loading-label
+failures; final affected42PASS after the label fix and settled-geometry observer fix.
+Native production-consumer R4 passes Cancel/ordinary-Cancel/Save→A/FUSE→B/extraction
+and real saved Project reopen, with two normal exits; explicit bootstrap/dialog/
+timing/X11 controls remain separate from shipping. Retention/delivery are in research.
+Startup/recovery/subsequent-update claim
+finalization, shipping and migration/protocol/runtime acceptance remain gates.
+All promise statuses stay unchanged.
+
+## Previous private application update staging
 
 [Application update staging](./engineering/phase-5-application-update-staging-research.md)
 now supplies an explicit Main-private stage gate for the captured APPIMAGE target.
