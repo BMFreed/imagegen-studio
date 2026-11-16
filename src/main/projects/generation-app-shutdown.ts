@@ -49,6 +49,13 @@ export class GenerationAppShutdown {
 
   constructor(private readonly dependencies: GenerationAppShutdownDependencies) {}
 
+  /** Read-only quiescence assertion; never starts closing or claims physical Main exit. */
+  assertFinalized(): void {
+    if (!this.finalized) {
+      throw new Error('The application close barrier has not completed.')
+    }
+  }
+
   finalize(): Promise<void> {
     if (this.finalized) {
       return Promise.resolve()

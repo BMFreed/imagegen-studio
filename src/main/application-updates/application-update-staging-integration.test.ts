@@ -29,6 +29,7 @@ async function fixture(
   t: { after: (cleanup: () => Promise<void>) => void },
   signed = true,
   target = true,
+  assertApplicationClosed: (() => void) | null = null,
 ) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'igs-staging-consumer-'))
   t.after(() => fs.rm(root, { force: true, recursive: true }))
@@ -129,6 +130,7 @@ async function fixture(
     true,
     () => createElectronUpdateChecker(updater),
     target ? currentAppImage : null,
+    assertApplicationClosed,
   )
   return { body, currentAppImage, parent, root, service, updater }
 }
@@ -188,4 +190,50 @@ test('a new Check retires a staged service capability but preserves all staged a
   await assert.rejects(plan.verifyCompleteSnapshot())
   assert.deepEqual(await identity(f.currentAppImage), old)
   assert.deepEqual(await identity(plan.candidatePath), staged)
+})
+
+test('service activation requires its captured Main close barrier and rollback survives a new Check', async (t) => {
+  let closed = false
+  const f = await fixture(t, true, true, () => {
+    assert.ok(closed, 'Main close barrier incomplete')
+  })
+  await f.service.check()
+  await f.service.download('0.2.0')
+  const artifact = await f.service.prepareVerifiedArtifact('0.2.0')
+  const original = await fs.readFile(f.currentAppImage)
+  const originalIdentity = await identity(f.currentAppImage)
+  const cached = await identity(artifact.path)
+  const staged = await f.service.stageForInstallation('0.2.0')
+  const backup = await staged.prepareBackup()
+  await assert.rejects(
+    Reflect.apply(backup.activate, backup, [() => undefined]),
+    /Close application resources/,
+  )
+  assert.deepEqual(await identity(f.currentAppImage), originalIdentity)
+  await backup.verifyCompleteSnapshot()
+  closed = true
+  const active = await backup.activate()
+  assert.ok((await fs.readFile(f.currentAppImage)).equals(f.body))
+  assert.deepEqual(await identity(artifact.path), cached)
+  await f.service.check()
+  await active.verifyCompleteSnapshot()
+  const restored = await active.rollback()
+  await restored.verifyCompleteSnapshot()
+  assert.ok((await fs.readFile(f.currentAppImage)).equals(original))
+  assert.notEqual((await identity(f.currentAppImage)).ino, originalIdentity.ino)
+  assert.deepEqual(await identity(artifact.path), cached)
+})
+
+test('service cannot activate without a Main close assertion even with a valid signed backup', async (t) => {
+  const f = await fixture(t)
+  await f.service.check()
+  await f.service.download('0.2.0')
+  const staged = await f.service.stageForInstallation('0.2.0')
+  const backup = await staged.prepareBackup()
+  const old = await identity(f.currentAppImage)
+  const candidate = await identity(backup.candidatePath)
+  await assert.rejects(backup.activate(), /unavailable/i)
+  await backup.verifyCompleteSnapshot()
+  assert.deepEqual(await identity(f.currentAppImage), old)
+  assert.deepEqual(await identity(backup.candidatePath), candidate)
 })

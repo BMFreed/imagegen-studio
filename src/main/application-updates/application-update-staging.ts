@@ -10,7 +10,9 @@
  * https://github.com/AppImage/AppImageSpec/blob/master/draft.md#type-2-image-format and
  * https://raw.githubusercontent.com/torvalds/linux/master/include/uapi/linux/elf.h plus elf-em.h.
  * Header classification does not qualify ELF loading, the filesystem, internal app version,
- * migrations or execution. This owner stages only; it never replaces or executes an application.
+ * migrations or execution. Private filesystem activation follows the existing runtime journal
+ * phases after caller-confirmed resource close; it does not prove physical Main exit, application
+ * restart or execution. No public Install, helper or crash-recovery/adoption consumer exists here.
  */
 import { createHash, randomUUID } from 'node:crypto'
 import {
@@ -22,6 +24,7 @@ import {
   openSync,
   readdirSync,
   realpathSync,
+  renameSync,
 } from 'node:fs'
 import * as fs from 'node:fs/promises'
 import path from 'node:path'
@@ -41,13 +44,61 @@ const MAX_METADATA_BYTES = 1024 * 1024
 const JOURNAL = 'journal.json'
 const FAILED = 'failed.json'
 const CANDIDATE = 'candidate.AppImage'
+const BACKUP = 'previous.AppImage'
+const ROLLBACK = 'rollback.AppImage'
 
 export interface StagedApplicationUpdate {
+  readonly candidatePath: string
+  readonly manifest: ApplicationReleaseManifest
+  prepareBackup: () => Promise<BackedUpApplicationUpdate>
+  readonly stagingDirectory: string
+  verifyCompleteSnapshot: () => Promise<void>
+}
+
+export interface BackedUpApplicationUpdate {
+  activate: (assertApplicationClosed: () => void) => Promise<ActivatedApplicationUpdate>
+  readonly backupPath: string
   readonly candidatePath: string
   readonly manifest: ApplicationReleaseManifest
   readonly stagingDirectory: string
   verifyCompleteSnapshot: () => Promise<void>
 }
+
+export interface ActivatedApplicationUpdate {
+  readonly backupPath: string
+  readonly currentAppImage: string
+  readonly manifest: ApplicationReleaseManifest
+  rollback: () => Promise<RolledBackApplicationUpdate>
+  readonly stagingDirectory: string
+  verifyCompleteSnapshot: () => Promise<void>
+}
+
+export interface RolledBackApplicationUpdate {
+  readonly backupPath: string
+  readonly currentAppImage: string
+  readonly manifest: ApplicationReleaseManifest
+  readonly stagingDirectory: string
+  verifyCompleteSnapshot: () => Promise<void>
+}
+
+type Phase =
+  | 'activated'
+  | 'activating'
+  | 'backed-up'
+  | 'backing-up'
+  | 'failed'
+  | 'prepared'
+  | 'rolled-back'
+  | 'rolling-back'
+type PhaseSnapshot = Readonly<{
+  backup: FileSnapshot | null
+  candidate: FileSnapshot | null
+  current: FileSnapshot
+  journal: FileSnapshot
+  journalBytes: Buffer
+  phase: Exclude<Phase, 'failed'>
+  rollback: FileSnapshot | null
+}>
 type FailureCode = 'BUSY' | 'FAILED' | 'INVALID' | 'RECOVERY_REQUIRED' | 'UNSAFE'
 type DirectoryIdentity = Readonly<{ dev: string; ino: string }>
 type FileIdentity = Readonly<{
@@ -85,6 +136,25 @@ export class AppUpdateStagingError extends Error {
     }
     super(messages[code])
     this.name = 'AppUpdateStagingError'
+  }
+}
+
+/** Outcome describes this operation's publication attempt, not other writers or app readiness. */
+export class AppUpdateTransitionError extends Error {
+  constructor(
+    readonly code: 'BUSY' | 'CLOSE_REQUIRED' | 'INVALID_PHASE' | 'RECOVERY_REQUIRED',
+    readonly outcome: 'uncertain' | 'unchanged',
+  ) {
+    super(
+      code === 'CLOSE_REQUIRED'
+        ? 'Close application resources before activating the verified update.'
+        : code === 'INVALID_PHASE' || code === 'BUSY'
+          ? 'This application update capability is no longer available for that operation.'
+          : outcome === 'uncertain'
+            ? 'Application update publication is uncertain. Preserve all files for explicit recovery.'
+            : 'Application update preparation failed before publication. Preserve all staging files for explicit recovery.',
+    )
+    this.name = 'AppUpdateTransitionError'
   }
 }
 
@@ -199,7 +269,11 @@ export async function stageVerifiedApplicationArtifact(input: {
       state: 'preparing',
     })
     const preparing = await writeJournal(staging, parent, preparingBytes, null)
-    await copyCandidate(source, path.join(staging.anchor, CANDIDATE), manifest)
+    const copiedCandidate = await copyImage(
+      source,
+      path.join(staging.anchor, CANDIDATE),
+      manifest.artifact,
+    )
     await assertArtifact()
     await parent.check()
     await staging.check()
@@ -209,7 +283,12 @@ export async function stageVerifiedApplicationArtifact(input: {
       0o755,
       current,
     )
-    const candidate = await inspectImage(candidatePath, path.join(staging.anchor, CANDIDATE), 0o600)
+    const candidate = await inspectImage(
+      candidatePath,
+      path.join(staging.anchor, CANDIDATE),
+      0o600,
+      copiedCandidate,
+    )
     need(
       candidate.sha512 === manifest.artifact.sha512 &&
         candidate.sizeBytes === manifest.artifact.sizeBytes,
@@ -233,116 +312,513 @@ export async function stageVerifiedApplicationArtifact(input: {
     const journal = await writeJournal(staging, parent, preparedBytes, preparing)
     const parentIdentity = parent.identity
     const stagingIdentity = staging.identity
-    let retired = false
-    const verifyCompleteSnapshot = async () => {
-      let visibleParent: OwnedDirectory | undefined
-      let visibleStage: OwnedDirectory | undefined
+    const backupPath = path.join(stagingDirectory, BACKUP)
+    const rollbackPath = path.join(stagingDirectory, ROLLBACK)
+    let phase: Phase = 'prepared'
+    let pending: Promise<unknown> | null = null
+    let pendingKind: string | null = null
+    let snapshot: PhaseSnapshot = Object.freeze({
+      backup: null,
+      candidate,
+      current,
+      journal,
+      journalBytes: preparedBytes,
+      phase: 'prepared',
+      rollback: null,
+    })
+
+    // All capabilities belong to this one owner. An old capability refuses before entering a
+    // verification catch, so consuming it cannot poison a legitimate in-progress transition.
+    function exclusive<T>(kind: string, expected: Phase, use: () => Promise<T>): Promise<T> {
+      if (pending) {
+        return pendingKind === kind
+          ? (pending as Promise<T>)
+          : Promise.reject(new AppUpdateTransitionError('BUSY', 'unchanged'))
+      }
+      if (phase !== expected) {
+        return Promise.reject(new AppUpdateTransitionError('INVALID_PHASE', 'unchanged'))
+      }
+      const operation = Promise.resolve().then(use)
+      pending = operation
+      pendingKind = kind
+      const release = () => {
+        if (pending === operation) {
+          pending = null
+          pendingKind = null
+        }
+      }
+      void operation.then(release, release)
+      return operation
+    }
+
+    async function withDirectories<T>(
+      use: (directories: { parent: OwnedDirectory; staging: OwnedDirectory }) => Promise<T>,
+    ): Promise<T> {
+      const ownedParent = await openDirectory(parentPath, parentIdentity, false)
+      let ownedStage: OwnedDirectory | undefined
       try {
-        need(!retired, 'RECOVERY_REQUIRED')
+        ownedStage = await openDirectory(stagingDirectory, stagingIdentity, true)
+        return await use({ parent: ownedParent, staging: ownedStage })
+      } finally {
+        await closeReadHandle(ownedStage?.handle)
+        await closeReadHandle(ownedParent.handle)
+      }
+    }
+
+    function members(value: PhaseSnapshot): string[] {
+      return [
+        JOURNAL,
+        ...(value.candidate ? [CANDIDATE] : []),
+        ...(value.backup ? [BACKUP] : []),
+        ...(value.rollback ? [ROLLBACK] : []),
+      ].sort()
+    }
+
+    // Fresh descriptors and no await between the final guards and the optional owned rename.
+    function finalGuards<T>(
+      value: PhaseSnapshot,
+      publish?: (anchors: { parent: string; staging: string }) => T,
+    ): T | undefined {
+      need(phase !== 'failed', 'RECOVERY_REQUIRED')
+      const parentFd = openSync(parentPath, DIRECTORY_FLAGS)
+      let stageFd: number | undefined
+      try {
+        stageFd = openSync(stagingDirectory, DIRECTORY_FLAGS)
+        const parentAnchor = `/proc/self/fd/${parentFd}`
+        const stageAnchor = `/proc/self/fd/${stageFd}`
+        assertDirectoryNow(
+          { handle: { fd: parentFd }, identity: parentIdentity },
+          parentPath,
+          false,
+        )
+        assertDirectoryNow(
+          { handle: { fd: stageFd }, identity: stagingIdentity },
+          stagingDirectory,
+          true,
+        )
+        need(readdirSync(stageAnchor).sort().join('\0') === members(value).join('\0'), 'UNSAFE')
+        assertFileNow(
+          currentAppImage,
+          path.join(parentAnchor, path.basename(currentAppImage)),
+          value.current.identity,
+        )
+        if (value.candidate) {
+          assertFileNow(candidatePath, path.join(stageAnchor, CANDIDATE), value.candidate.identity)
+        }
+        if (value.backup) {
+          assertFileNow(backupPath, path.join(stageAnchor, BACKUP), value.backup.identity)
+        }
+        if (value.rollback) {
+          assertFileNow(rollbackPath, path.join(stageAnchor, ROLLBACK), value.rollback.identity)
+        }
+        assertFileNow(
+          path.join(stagingDirectory, JOURNAL),
+          path.join(stageAnchor, JOURNAL),
+          value.journal.identity,
+        )
+        return publish?.({ parent: parentAnchor, staging: stageAnchor })
+      } finally {
+        if (stageFd !== undefined) {
+          closeSync(stageFd)
+        }
+        closeSync(parentFd)
+      }
+    }
+
+    async function verifySnapshot(value: PhaseSnapshot, sourceAuthority: boolean): Promise<void> {
+      if (sourceAuthority) {
         await assertArtifact()
-        visibleParent = await openDirectory(parentPath, parentIdentity, false)
-        visibleStage = await openDirectory(stagingDirectory, stagingIdentity, true)
+      }
+      await withDirectories(async (directories) => {
         need(
-          (await fs.readdir(visibleStage.anchor)).sort().join('\0') ===
-            [CANDIDATE, JOURNAL].sort().join('\0'),
+          (await fs.readdir(directories.staging.anchor)).sort().join('\0') ===
+            members(value).join('\0'),
           'UNSAFE',
         )
         await inspectImage(
           currentAppImage,
-          path.join(visibleParent.anchor, path.basename(currentAppImage)),
+          path.join(directories.parent.anchor, path.basename(currentAppImage)),
           0o755,
-          current,
+          value.current,
         )
-        await inspectImage(
-          candidatePath,
-          path.join(visibleStage.anchor, CANDIDATE),
-          0o600,
-          candidate,
-        )
+        if (value.candidate) {
+          await inspectImage(
+            candidatePath,
+            path.join(directories.staging.anchor, CANDIDATE),
+            imageMode(value.candidate),
+            value.candidate,
+          )
+        }
+        if (value.backup) {
+          await inspectImage(
+            backupPath,
+            path.join(directories.staging.anchor, BACKUP),
+            0o600,
+            value.backup,
+          )
+        }
+        if (value.rollback) {
+          await inspectImage(
+            rollbackPath,
+            path.join(directories.staging.anchor, ROLLBACK),
+            0o755,
+            value.rollback,
+          )
+        }
         await inspectMetadata(
           path.join(stagingDirectory, JOURNAL),
-          path.join(visibleStage.anchor, JOURNAL),
-          preparedBytes,
-          journal,
+          path.join(directories.staging.anchor, JOURNAL),
+          value.journalBytes,
+          value.journal,
         )
-        await visibleStage.check()
-        await visibleParent.check()
-        await assertArtifact()
-        await closeReadHandle(visibleStage.handle)
-        visibleStage = undefined
-        await closeReadHandle(visibleParent.handle)
-        visibleParent = undefined
-        // As in ProjectRelocation's final no-await guard, don't return a snapshot
-        // whose earlier file checks were invalidated during the last async hash.
-        need(!retired, 'RECOVERY_REQUIRED')
-        const parentFd = openSync(parentPath, DIRECTORY_FLAGS)
-        let stageFd: number | undefined
-        try {
-          stageFd = openSync(stagingDirectory, DIRECTORY_FLAGS)
-          const parentAnchor = `/proc/self/fd/${parentFd}`
-          const stageAnchor = `/proc/self/fd/${stageFd}`
-          assertDirectoryNow(
-            { handle: { fd: parentFd }, identity: parentIdentity },
-            parentPath,
-            false,
-          )
-          assertDirectoryNow(
-            { handle: { fd: stageFd }, identity: stagingIdentity },
-            stagingDirectory,
-            true,
-          )
-          need(
-            readdirSync(stageAnchor).sort().join('\0') === [CANDIDATE, JOURNAL].sort().join('\0'),
-            'UNSAFE',
-          )
-          assertFileNow(
-            currentAppImage,
-            path.join(parentAnchor, path.basename(currentAppImage)),
-            current.identity,
-          )
-          assertFileNow(candidatePath, path.join(stageAnchor, CANDIDATE), candidate.identity)
-          assertFileNow(
-            path.join(stagingDirectory, JOURNAL),
-            path.join(stageAnchor, JOURNAL),
-            journal.identity,
-          )
-        } finally {
-          if (stageFd !== undefined) {
-            closeSync(stageFd)
-          }
-          closeSync(parentFd)
+        await directories.staging.check()
+        await directories.parent.check()
+        if (sourceAuthority) {
+          await assertArtifact()
         }
-      } catch {
-        retired = true
-        if (!visibleParent) {
-          visibleParent = await openDirectory(parentPath, parentIdentity, false).catch(
-            () => undefined,
-          )
-        }
-        if (visibleParent && !visibleStage) {
-          visibleStage = await openDirectory(stagingDirectory, stagingIdentity, true).catch(
-            () => undefined,
-          )
-        }
-        await markFailed(visibleStage, visibleParent).catch(() => undefined)
-        throw new AppUpdateStagingError('RECOVERY_REQUIRED')
-      } finally {
-        if (visibleStage) {
-          await closeReadHandle(visibleStage.handle)
-        }
-        if (visibleParent) {
-          await closeReadHandle(visibleParent.handle)
-        }
-      }
+      })
+      finalGuards(value)
     }
+
+    async function failOwned(): Promise<void> {
+      phase = 'failed'
+      await withDirectories(async (directories) => {
+        await markFailed(directories.staging, directories.parent)
+      }).catch(() => undefined)
+    }
+
+    function verifyCapability(expected: Phase): Promise<void> {
+      return exclusive(`verify:${expected}`, expected, async () => {
+        try {
+          await verifySnapshot(snapshot, expected === 'prepared' || expected === 'backed-up')
+        } catch {
+          await failOwned()
+          if (expected === 'prepared') {
+            throw new AppUpdateStagingError('RECOVERY_REQUIRED')
+          }
+          throw new AppUpdateTransitionError(
+            'RECOVERY_REQUIRED',
+            expected === 'activated' || expected === 'rolled-back' ? 'uncertain' : 'unchanged',
+          )
+        }
+      })
+    }
+
+    async function writePhase(
+      directories: { parent: OwnedDirectory; staging: OwnedDirectory },
+      next: Omit<PhaseSnapshot, 'journal' | 'journalBytes'>,
+    ): Promise<PhaseSnapshot> {
+      const describe = (filename: string, file: FileSnapshot | null, pendingFile = false) =>
+        file
+          ? {
+              path: filename,
+              sha512: file.sha512,
+              sizeBytes: file.sizeBytes,
+              snapshot: file.identity,
+            }
+          : pendingFile
+            ? {
+                path: filename,
+                sha512: current.sha512,
+                sizeBytes: current.sizeBytes,
+                snapshot: null,
+              }
+            : null
+      const bytes = canonicalRuntimeReleaseJson({
+        ...base,
+        backup: describe(backupPath, next.backup, next.phase === 'backing-up'),
+        candidate: describe(candidatePath, next.candidate),
+        current: { path: currentAppImage, ...next.current },
+        originalCurrent: base.current,
+        rollback: describe(rollbackPath, next.rollback, next.phase === 'rolling-back'),
+        state: next.phase,
+      })
+      const nextJournal = await writeJournal(
+        directories.staging,
+        directories.parent,
+        bytes,
+        snapshot.journal,
+      )
+      return Object.freeze({ ...next, journal: nextJournal, journalBytes: bytes })
+    }
+
+    function prepareBackup(): Promise<BackedUpApplicationUpdate> {
+      return exclusive('backup', 'prepared', async () => {
+        try {
+          await verifySnapshot(snapshot, true)
+          // Consume the prepared capability before the first intentional journal/membership change.
+          phase = 'backing-up'
+          await withDirectories(async (directories) => {
+            await requireCopySpace(directories.parent, current.sizeBytes)
+            snapshot = await writePhase(directories, { ...snapshot, phase: 'backing-up' })
+            const original = await openReader(
+              currentAppImage,
+              path.join(directories.parent.anchor, path.basename(currentAppImage)),
+              0o755,
+            )
+            let copiedBackup: FileSnapshot
+            try {
+              need(sameIdentity(original.identity, current.identity), 'UNSAFE')
+              copiedBackup = await copyImage(
+                original,
+                path.join(directories.staging.anchor, BACKUP),
+                current,
+              )
+            } finally {
+              await original.handle.close()
+            }
+            const backup = await inspectImage(
+              backupPath,
+              path.join(directories.staging.anchor, BACKUP),
+              0o600,
+              copiedBackup,
+            )
+            need(
+              backup.sha512 === current.sha512 &&
+                backup.sizeBytes === current.sizeBytes &&
+                !sameInode(backup.identity, current.identity) &&
+                !sameInode(backup.identity, candidate.identity),
+              'UNSAFE',
+            )
+            snapshot = await writePhase(directories, { ...snapshot, backup, phase: 'backed-up' })
+          })
+          await verifySnapshot(snapshot, true)
+          phase = 'backed-up'
+          return Object.freeze({
+            activate,
+            backupPath,
+            candidatePath,
+            manifest,
+            stagingDirectory,
+            verifyCompleteSnapshot: () => verifyCapability('backed-up'),
+          })
+        } catch {
+          await failOwned()
+          throw new AppUpdateTransitionError('RECOVERY_REQUIRED', 'unchanged')
+        }
+      })
+    }
+
+    function activate(assertApplicationClosed: () => void): Promise<ActivatedApplicationUpdate> {
+      return exclusive('activate', 'backed-up', async () => {
+        // A refused first close assertion has changed neither phase nor files and remains retryable.
+        assertClosedNow(assertApplicationClosed)
+        let attempted = false
+        try {
+          await verifySnapshot(snapshot, true)
+          phase = 'activating'
+          await withDirectories(async (directories) => {
+            need(snapshot.candidate && snapshot.backup, 'UNSAFE')
+            const moving = await openReader(
+              candidatePath,
+              path.join(directories.staging.anchor, CANDIDATE),
+              0o600,
+            )
+            try {
+              need(sameIdentity(moving.identity, snapshot.candidate.identity), 'UNSAFE')
+              const executable = await makeExecutable(moving, snapshot.candidate)
+              snapshot = await writePhase(directories, {
+                ...snapshot,
+                candidate: executable,
+                phase: 'activating',
+              })
+              await verifySnapshot(snapshot, true)
+              // This is the last authority await. The second pure close assertion and fresh-FD
+              // guards precede rename in the same synchronous section; no unlink creates a gap.
+              await assertArtifact()
+              assertClosedNow(assertApplicationClosed)
+              finalGuards(snapshot, (anchors) => {
+                need(
+                  sameIdentity(
+                    fileIdentity(fstatSync(moving.handle.fd, { bigint: true })),
+                    moving.identity,
+                  ),
+                  'UNSAFE',
+                )
+                attempted = true
+                renameSync(
+                  path.join(anchors.staging, CANDIDATE),
+                  path.join(anchors.parent, path.basename(currentAppImage)),
+                )
+                adoptMovedReader(
+                  moving,
+                  currentAppImage,
+                  path.join(directories.parent.anchor, path.basename(currentAppImage)),
+                )
+                assertFileNow(
+                  currentAppImage,
+                  path.join(anchors.parent, path.basename(currentAppImage)),
+                  moving.identity,
+                )
+              })
+              await directories.staging.handle.sync()
+              await directories.parent.handle.sync()
+              const published = await inspectReaderImage(moving, {
+                ...executable,
+                identity: moving.identity,
+              })
+              snapshot = await writePhase(directories, {
+                ...snapshot,
+                candidate: null,
+                current: published,
+                phase: 'activated',
+              })
+            } finally {
+              await moving.handle.close()
+            }
+          })
+          // Publication consumes source-cache authority. Subsequent verification/rollback uses
+          // only owned published/current/backup/journal snapshots, even after Check or cache loss.
+          await verifySnapshot(snapshot, false)
+          phase = 'activated'
+          return Object.freeze({
+            backupPath,
+            currentAppImage,
+            manifest,
+            rollback,
+            stagingDirectory,
+            verifyCompleteSnapshot: () => verifyCapability('activated'),
+          })
+        } catch {
+          await failOwned()
+          throw new AppUpdateTransitionError(
+            'RECOVERY_REQUIRED',
+            attempted ? 'uncertain' : 'unchanged',
+          )
+        }
+      })
+    }
+
+    function rollback(): Promise<RolledBackApplicationUpdate> {
+      return exclusive('rollback', 'activated', async () => {
+        let attempted = false
+        try {
+          await verifySnapshot(snapshot, false)
+          phase = 'rolling-back'
+          await withDirectories(async (directories) => {
+            need(snapshot.backup, 'UNSAFE')
+            await requireCopySpace(directories.parent, snapshot.backup.sizeBytes)
+            snapshot = await writePhase(directories, { ...snapshot, phase: 'rolling-back' })
+            const saved = await openReader(
+              backupPath,
+              path.join(directories.staging.anchor, BACKUP),
+              0o600,
+            )
+            let copiedRollback: FileSnapshot
+            try {
+              need(sameIdentity(saved.identity, snapshot.backup!.identity), 'UNSAFE')
+              copiedRollback = await copyImage(
+                saved,
+                path.join(directories.staging.anchor, ROLLBACK),
+                snapshot.backup!,
+              )
+            } finally {
+              await saved.handle.close()
+            }
+            const copied = await inspectImage(
+              rollbackPath,
+              path.join(directories.staging.anchor, ROLLBACK),
+              0o600,
+              copiedRollback,
+            )
+            need(
+              copied.sha512 === current.sha512 &&
+                copied.sizeBytes === current.sizeBytes &&
+                !sameInode(copied.identity, snapshot.backup!.identity) &&
+                !sameInode(copied.identity, snapshot.current.identity),
+              'UNSAFE',
+            )
+            const moving = await openReader(
+              rollbackPath,
+              path.join(directories.staging.anchor, ROLLBACK),
+              0o600,
+            )
+            try {
+              const executable = await makeExecutable(moving, copied)
+              snapshot = await writePhase(directories, {
+                ...snapshot,
+                phase: 'rolling-back',
+                rollback: executable,
+              })
+              await verifySnapshot(snapshot, false)
+              finalGuards(snapshot, (anchors) => {
+                need(
+                  sameIdentity(
+                    fileIdentity(fstatSync(moving.handle.fd, { bigint: true })),
+                    moving.identity,
+                  ),
+                  'UNSAFE',
+                )
+                attempted = true
+                renameSync(
+                  path.join(anchors.staging, ROLLBACK),
+                  path.join(anchors.parent, path.basename(currentAppImage)),
+                )
+                adoptMovedReader(
+                  moving,
+                  currentAppImage,
+                  path.join(directories.parent.anchor, path.basename(currentAppImage)),
+                )
+                assertFileNow(
+                  currentAppImage,
+                  path.join(anchors.parent, path.basename(currentAppImage)),
+                  moving.identity,
+                )
+              })
+              await directories.staging.handle.sync()
+              await directories.parent.handle.sync()
+              const restored = await inspectReaderImage(moving, {
+                ...executable,
+                identity: moving.identity,
+              })
+              snapshot = await writePhase(directories, {
+                ...snapshot,
+                current: restored,
+                phase: 'rolled-back',
+                rollback: null,
+              })
+            } finally {
+              await moving.handle.close()
+            }
+          })
+          await verifySnapshot(snapshot, false)
+          phase = 'rolled-back'
+          return Object.freeze({
+            backupPath,
+            currentAppImage,
+            manifest,
+            stagingDirectory,
+            verifyCompleteSnapshot: () => verifyCapability('rolled-back'),
+          })
+        } catch {
+          await failOwned()
+          throw new AppUpdateTransitionError(
+            'RECOVERY_REQUIRED',
+            attempted ? 'uncertain' : 'unchanged',
+          )
+        }
+      })
+    }
+
     await closeReadHandle(source.handle)
     source = undefined
     await closeReadHandle(staging.handle)
     staging = undefined
     await closeReadHandle(parent.handle)
     parent = undefined
-    await verifyCompleteSnapshot()
-    return Object.freeze({ candidatePath, manifest, stagingDirectory, verifyCompleteSnapshot })
+    try {
+      await verifySnapshot(snapshot, true)
+    } catch (error) {
+      await failOwned()
+      throw error
+    }
+    return Object.freeze({
+      candidatePath,
+      manifest,
+      prepareBackup,
+      stagingDirectory,
+      verifyCompleteSnapshot: () => verifyCapability('prepared'),
+    })
   } catch (error) {
     if (created) {
       await markFailed(staging, parent).catch(() => undefined)
@@ -513,34 +989,38 @@ async function inspectImage(
 ): Promise<FileSnapshot> {
   const reader = await openReader(visible, filename, mode)
   try {
-    need(!expected || sameIdentity(reader.identity, expected.identity), 'UNSAFE')
-    await classifyAppImage(reader)
-    const hash = createHash('sha512')
-    const chunk = Buffer.allocUnsafe(CHUNK_BYTES)
-    let count = 0
-    for (;;) {
-      const { bytesRead } = await reader.handle.read(chunk, 0, chunk.length, count)
-      if (!bytesRead) {
-        break
-      }
-      count += bytesRead
-      need(count <= reader.identity.sizeBytes, 'UNSAFE')
-      hash.update(chunk.subarray(0, bytesRead))
-    }
-    await assertReader(reader)
-    const sha512 = hash.digest('base64')
-    need(count === reader.identity.sizeBytes && (!expected || sha512 === expected.sha512), 'UNSAFE')
-    return Object.freeze({ identity: reader.identity, sha512, sizeBytes: count })
+    return await inspectReaderImage(reader, expected)
   } finally {
     await reader.handle.close()
   }
 }
 
-async function copyCandidate(
+async function inspectReaderImage(reader: Reader, expected?: FileSnapshot): Promise<FileSnapshot> {
+  need(!expected || sameIdentity(reader.identity, expected.identity), 'UNSAFE')
+  await classifyAppImage(reader)
+  const hash = createHash('sha512')
+  const chunk = Buffer.allocUnsafe(CHUNK_BYTES)
+  let count = 0
+  for (;;) {
+    const { bytesRead } = await reader.handle.read(chunk, 0, chunk.length, count)
+    if (!bytesRead) {
+      break
+    }
+    count += bytesRead
+    need(count <= reader.identity.sizeBytes, 'UNSAFE')
+    hash.update(chunk.subarray(0, bytesRead))
+  }
+  await assertReader(reader)
+  const sha512 = hash.digest('base64')
+  need(count === reader.identity.sizeBytes && (!expected || sha512 === expected.sha512), 'UNSAFE')
+  return Object.freeze({ identity: reader.identity, sha512, sizeBytes: count })
+}
+
+async function copyImage(
   source: Reader,
   destination: string,
-  manifest: ApplicationReleaseManifest,
-): Promise<void> {
+  expected: Readonly<{ sha512: string; sizeBytes: number }>,
+): Promise<FileSnapshot> {
   await assertReader(source)
   const writer = await fs.open(destination, CREATE_FLAGS, 0o600)
   try {
@@ -554,7 +1034,7 @@ async function copyCandidate(
         break
       }
       count += bytesRead
-      need(count <= manifest.artifact.sizeBytes, 'UNSAFE')
+      need(count <= expected.sizeBytes, 'UNSAFE')
       hash.update(chunk.subarray(0, bytesRead))
       let offset = 0
       while (offset < bytesRead) {
@@ -569,13 +1049,82 @@ async function copyCandidate(
       }
     }
     await assertReader(source)
+    const sha512 = hash.digest('base64')
+    need(count === expected.sizeBytes && sha512 === expected.sha512, 'UNSAFE')
+    await writer.sync()
+    // Invoke's no-replace publisher returns the held writer's signature, not a fresh path's.
+    // Bind the later readback to that inode even if equal bytes replace its name after close.
+    const written = await writer.stat({ bigint: true })
+    const identity = fileIdentity(written)
     need(
-      count === manifest.artifact.sizeBytes && hash.digest('base64') === manifest.artifact.sha512,
+      written.isFile() &&
+        written.nlink === 1n &&
+        written.uid === BigInt(process.geteuid!()) &&
+        (written.mode & 0o7777n) === 0o600n &&
+        written.size === BigInt(expected.sizeBytes) &&
+        sameIdentity(fileIdentity(await fs.lstat(destination, { bigint: true })), identity),
       'UNSAFE',
     )
-    await writer.sync()
+    return Object.freeze({ identity, sha512, sizeBytes: count })
   } finally {
     await writer.close()
+  }
+}
+
+async function makeExecutable(reader: Reader, expected: FileSnapshot): Promise<FileSnapshot> {
+  await assertReader(reader)
+  need(sameIdentity(reader.identity, expected.identity), 'UNSAFE')
+  const before = reader.identity
+  await reader.handle.chmod(0o755)
+  await reader.handle.sync()
+  const info = await reader.handle.stat({ bigint: true })
+  const after = fileIdentity(info)
+  need(
+    info.isFile() &&
+      (info.mode & 0o7777n) === 0o755n &&
+      sameIdentity({ ...before, ctimeNs: after.ctimeNs, mode: after.mode }, after),
+    'UNSAFE',
+  )
+  reader.identity = after
+  await assertReader(reader)
+  return await inspectReaderImage(reader, { ...expected, identity: after })
+}
+
+/** Only the held inode's rename-related ctime may change; never adopt by digest/path alone. */
+function adoptMovedReader(reader: Reader, visible: string, filename: string): void {
+  const after = fileIdentity(fstatSync(reader.handle.fd, { bigint: true }))
+  need(sameIdentity({ ...reader.identity, ctimeNs: after.ctimeNs }, after), 'UNSAFE')
+  reader.identity = after
+  reader.path = filename
+  reader.visible = visible
+}
+
+function imageMode(snapshot: FileSnapshot): number {
+  return Number(BigInt(snapshot.identity.mode) & 0o7777n)
+}
+
+async function requireCopySpace(directory: OwnedDirectory, sizeBytes: number): Promise<void> {
+  await directory.check()
+  const volume = await fs.statfs(directory.anchor, { bigint: true })
+  need(volume.bavail * volume.bsize >= BigInt(sizeBytes), 'FAILED')
+}
+
+function assertClosedNow(assertion: () => void): void {
+  try {
+    if (typeof assertion !== 'function') {
+      throw new TypeError('Invalid close assertion.')
+    }
+    const result: unknown = assertion()
+    if (result !== undefined) {
+      // A rejected async callback must not become an unhandled rejection, but is never awaited or
+      // accepted as a close assertion. Thenables and every other returned value are refused.
+      if (result instanceof Promise) {
+        void result.catch(() => undefined)
+      }
+      throw new Error('The close assertion must be synchronous.')
+    }
+  } catch {
+    throw new AppUpdateTransitionError('CLOSE_REQUIRED', 'unchanged')
   }
 }
 

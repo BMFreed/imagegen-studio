@@ -1422,6 +1422,12 @@ if (!gotInstanceLock) {
           )
         },
         process.platform === 'linux' ? (process.env['APPIMAGE'] ?? null) : null,
+        () => {
+          appShutdown.assertFinalized()
+          if (projectService.getOpenTabs().length !== 0) {
+            throw new Error('Close all Projects before activating an application update.')
+          }
+        },
       )
       const applicationUpdates = registerApplicationUpdateIpc(
         ipcMain,

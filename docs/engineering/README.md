@@ -1,6 +1,19 @@
 # Engineering Workflow
 
-## Current private application update staging
+## Current private application update transaction
+
+[Application update transaction](./phase-5-application-update-transaction-research.md)
+extends the same private staging owner through backup, atomic activation and
+explicit rollback. Before activation, Main requires the finalized existing app-data
+close barrier and zero Project tabs through a synchronous assertion; this does not
+claim physical Main exit. Prepared/backed-up authority still depends on the current
+signed native artifact. Activated/rolled-back authority verifies its own target,
+backup and journal, so cache revocation cannot prevent rollback. Consumed handles
+cannot poison the current owner. No public Install, relaunch/helper, restart
+adoption, crash recovery, FUSE or shipping acceptance follows. Evidence and limits
+are recorded separately in the linked research; promise statuses stay unchanged.
+
+## Previous private application update staging
 
 [Application update staging](./phase-5-application-update-staging-research.md)
 adds an explicit Main-private service gate using Main's captured APPIMAGE target.

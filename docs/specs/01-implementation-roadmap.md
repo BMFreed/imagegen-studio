@@ -1,6 +1,18 @@
 # Implementation Roadmap
 
-## Current private application update staging
+## Current private application update transaction
+
+[Application update transaction](../engineering/phase-5-application-update-transaction-research.md)
+extends the same private staging owner through backup, atomic activation and
+explicit rollback. Main's synchronous activation assertion requires the finalized
+existing app-data close barrier and zero Project tabs; it does not claim physical
+Main exit. Prepared/backed-up authority still requires the signed native artifact;
+activated/rolled-back authority and rollback no longer depend on cache availability.
+There is no public Install or relaunch/helper, restart adoption, crash-recovery,
+FUSE or shipping acceptance. Detailed evidence/limits belong to the linked research.
+Promise statuses remain unchanged.
+
+## Previous private application update staging
 
 [Application update staging](../engineering/phase-5-application-update-staging-research.md)
 now supplies an explicit Main-private stage gate for the captured APPIMAGE target.
@@ -3485,14 +3497,16 @@ UI всех этих действий проверен в поддерживае
 
 **Зависимости:** функциональные фазы 0–4 и доказанный packaging artifact.
 Release qualification начинается раньше, но итоговый gate закрывается здесь.
-Ручной Check, explicit Download, конечный signed declaration consumer и
-[private staging](../engineering/phase-5-application-update-staging-research.md)
-уже имеют отдельные checkpoints; их не нужно создавать заново. Private staging
-не имеет IPC/UI и не активирует кандидат. Следующие app-update gates
+Ручной Check, explicit Download, конечный signed declaration consumer,
+[private staging](../engineering/phase-5-application-update-staging-research.md) и
+[same-owner transaction](../engineering/phase-5-application-update-transaction-research.md)
+уже имеют отдельные checkpoints; их не нужно создавать заново. Private transaction
+не имеет Install IPC/UI или relaunch consumer. Следующие app-update gates
 по [user-flow/acceptance contract](../features/application-updates.md): полный
 Install preview, отложенная установка при dirty `.igs` и активных jobs/staging,
-activation/restart, rollback, явные adoption/discard сохранённого stage и
-interrupted-update recovery. Принятая signed compatibility declaration
+публичный Install/relaunch flow, явные adoption/discard сохранённого stage и
+interrupted-update/crash recovery. Private same-owner rollback не закрывает эти
+release gates. Принятая signed compatibility declaration
 не закрывает фактические migration/protocol/engine checks после upgrade.
 Проверка при старте не выполняется; shipping publisher остаётся не настроен.
 

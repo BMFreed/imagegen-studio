@@ -109,16 +109,53 @@ cache не перезаписываются и не удаляются; их byt
 Durable journal описывает preparing/prepared state; отказ после получения claim
 сохраняет его данные и по возможности durable failed marker. Любой существующий
 claim отказывается без автоматического resume, cleanup или «исправления».
-Возвращаемый frozen private plan повторно проверяет старый executable, candidate,
-точные journal bytes/identities, canonical parent, текущую selection и **native
-cache source capability**. Отдельный inode кандидата не делает plan независимым
-от cache authority и не разрешает установку после её потери.
+До activation возвращаемые prepared/backed-up capabilities повторно проверяют
+старый executable, candidate, точные journal bytes/identities, canonical parent,
+текущую selection и **native cache source capability**. Отдельный inode кандидата
+не делает подготовленный plan независимым от cache authority. Сам stage не меняет
+app binary, не исполняет его и не начинает Project close sequence.
 
-Activation/replacement, restart/rollback, adoption/discard сохранённого stage и
-полный Install review остаются отдельными незавершёнными consumers. Этот owner
-не меняет app binary, не исполняет его и не начинает Project close sequence.
+### Private same-owner backup, activation and rollback
+
+[Private transaction](../engineering/phase-5-application-update-transaction-research.md)
+продолжает тот же exclusive staging owner. `prepareBackup` создаёт отдельный
+fresh0600 inode с проверенными bytes текущего executable; текущий target и native
+cache при подготовке сохраняются. Затем отдельная activation переводит проверенный
+candidate в executable0755 и атомарно заменяет target pathname. Backup остаётся
+отдельной сохранённой копией. Это Main-private filesystem capability, а не public
+Install command, IPC/UI action или relaunch flow.
+
+Перед activation service использует только assertion, переданный самим Main:
+существующий app-data close barrier должен быть полностью finalized, а список
+открытых Project tabs — пуст. Assertion синхронный, не принимает Promise и сам
+не закрывает Project, worker или SQLite. Он проверяется до mutation и повторно
+после последнего authority await перед публикацией. Finalized здесь означает
+завершение существующего barrier, включая disposal SQLite, а не physical exit
+Electron Main. Наличие backup или закрытого отдельного tab не заменяет этот guard.
+
+После успешной activation новая private capability проверяет actual target,
+backup, canonical directory и exact journal/identities самостоятельно. Revoked
+selection или удалённый native cache больше не блокируют её verification и
+same-owner rollback. Rollback создаёт fresh replacement inode из backup и атомарно
+возвращает старые bytes/mode, сохраняя backup. Подменённый чужой target нельзя
+перезаписать даже при совпадающих bytes: его identity должна оставаться принятой.
+
+Журнал последовательно различает prepared, backing-up, backed-up, activating,
+activated, rolling-back и rolled-back. Операции одного owner исключают друг друга;
+совпадающие pending operations получают один результат. Consumed capability и
+несовместимые concurrent operations отказываются, не превращая актуальную
+capability в failed. Этот контракт не добавляет restart adoption/discard,
+helper/relaunch, автоматическое восстановление после crash или проверку FUSE.
+Публичный Install и release acceptance остаются открыты; shipping publisher не настроен.
 
 ## Scope and dependencies
+
+[Private transaction](../engineering/phase-5-application-update-transaction-research.md)
+имеет отдельную границу от раннего stage checkpoint: до activation нужна native
+cache authority, после неё same-owner rollback опирается на собственный target и
+backup. Точные результаты проверок и runtime limits записываются в research;
+наличие этих owners не повышает публичные promise statuses и не доказывает
+пользовательскую установку или запуск обновлённого приложения.
 
 [Private staging](../engineering/phase-5-application-update-staging-research.md)
 имеет Root-confirmed220 focused PASS, typecheck/build/scoped lint PASS. Отдельная
@@ -192,8 +229,11 @@ channel, формат доверенного manifest и способ восст
 - Private stage сохраняет текущий executable и cache, создаёт только отдельный
   fresh inode и повторно проверяет private plan перед material action. Existing
   retained claim не удаляется и не принимается для повторного использования
-  автоматически; stage не означает
-  Install, activation или разрешение на restart.
+  автоматически; stage не означает Install, activation или разрешение на restart.
+- Private activation допускается только после finalized app-data close assertion
+  Main и повторных authority/identity checks. Последующий same-owner rollback
+  сохраняет backup и не зависит от native cache; он не перезаписывает чужой target
+  и не подменяет restart/crash-recovery acceptance.
 - Dirty Project, active jobs и unaccepted staging не исчезают без обычного
   close/cancel confirmation. `Установить позже` до close sequence ничего не
   меняет; последующая отмена останавливает restart, не откатывая ранее

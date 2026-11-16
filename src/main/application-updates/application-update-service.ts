@@ -15,6 +15,8 @@ import {
 import type { VerifiedApplicationArtifact } from './electron-update-checker.js'
 
 import {
+  type ActivatedApplicationUpdate,
+  type BackedUpApplicationUpdate,
   type StagedApplicationUpdate,
   stageVerifiedApplicationArtifact,
 } from './application-update-staging.js'
@@ -27,12 +29,19 @@ export interface ApplicationUpdateCheckResult {
   }
   verification?: 'metadata-only' | 'signed-release'
 }
-
 export interface ApplicationUpdateChecker {
   checkForUpdates: () => Promise<ApplicationUpdateCheckResult | null>
   downloadUpdate?: (
     onProgress: (progress: { downloadedBytes: number; totalBytes: number }) => void,
   ) => Promise<{ sizeBytes: number; verifiedArtifact?: VerifiedApplicationArtifact }>
+}
+
+type ServiceBackedUpUpdate = Omit<BackedUpApplicationUpdate, 'activate'> & {
+  activate: () => Promise<ActivatedApplicationUpdate>
+}
+
+type ServiceStagedUpdate = Omit<StagedApplicationUpdate, 'prepareBackup'> & {
+  prepareBackup: () => Promise<ServiceBackedUpUpdate>
 }
 
 export class ApplicationUpdateService {
@@ -52,6 +61,7 @@ export class ApplicationUpdateService {
     private readonly createChecker: () =>
       ApplicationUpdateChecker | Promise<ApplicationUpdateChecker>,
     private readonly currentAppImage: string | null = null,
+    private readonly assertApplicationClosed: (() => void) | null = null,
   ) {
     if (!isApplicationUpdateVersion(currentVersion)) {
       throw new Error('Invalid application version.')
@@ -245,7 +255,7 @@ export class ApplicationUpdateService {
   }
 
   /** Main-private explicit preparation; Download/status never stage or replace the app. */
-  async stageForInstallation(expectedVersion: string): Promise<StagedApplicationUpdate> {
+  async stageForInstallation(expectedVersion: string): Promise<ServiceStagedUpdate> {
     if (this.currentAppImage === null) {
       throw new Error('Application update staging is unavailable.')
     }
@@ -255,23 +265,54 @@ export class ApplicationUpdateService {
       currentAppImage: this.currentAppImage,
     })
     await this.prepareVerifiedArtifact(expectedVersion)
-    const plan: StagedApplicationUpdate = Object.freeze({
+    const assertSelection = () => {
+      if (
+        this.verifiedArtifact !== artifact ||
+        this.pendingCheck ||
+        this.pendingDownload ||
+        this.snapshot.status !== 'downloaded' ||
+        this.snapshot.availableVersion !== expectedVersion ||
+        this.snapshot.verification !== 'signed-release'
+      ) {
+        throw new Error('The application release selection changed.')
+      }
+    }
+    const verifyAuthority = async () => {
+      if ((await this.prepareVerifiedArtifact(expectedVersion)) !== artifact) {
+        throw new Error('The application release selection changed.')
+      }
+    }
+    const plan: ServiceStagedUpdate = Object.freeze({
       ...staged,
+      prepareBackup: async () => {
+        await verifyAuthority()
+        const backup = await staged.prepareBackup()
+        assertSelection()
+        return Object.freeze({
+          ...backup,
+          activate: async () => {
+            if (this.assertApplicationClosed === null) {
+              throw new Error('Application update activation is unavailable.')
+            }
+            await verifyAuthority()
+            // Main supplies this guard; no caller-provided assertion can bypass it.
+            // Rollback after publication belongs to the returned filesystem capability.
+            return await backup.activate(() => {
+              assertSelection()
+              this.assertApplicationClosed!()
+            })
+          },
+          verifyCompleteSnapshot: async () => {
+            await verifyAuthority()
+            await backup.verifyCompleteSnapshot()
+            assertSelection()
+          },
+        })
+      },
       verifyCompleteSnapshot: async () => {
-        if ((await this.prepareVerifiedArtifact(expectedVersion)) !== artifact) {
-          throw new Error('The application release selection changed.')
-        }
+        await verifyAuthority()
         await staged.verifyCompleteSnapshot()
-        if (
-          this.verifiedArtifact !== artifact ||
-          this.pendingCheck ||
-          this.pendingDownload ||
-          this.snapshot.status !== 'downloaded' ||
-          this.snapshot.availableVersion !== expectedVersion ||
-          this.snapshot.verification !== 'signed-release'
-        ) {
-          throw new Error('The application release selection changed.')
-        }
+        assertSelection()
       },
     })
     await plan.verifyCompleteSnapshot()

@@ -66,6 +66,36 @@ test(
   },
 )
 
+test('update activation assertion is read-only and requires completed real database disposal', async () => {
+  await withDatabase(async ({ close, query }) => {
+    const held = deferred()
+    const entered = deferred()
+    const shutdown = new GenerationAppShutdown({
+      closeDatabase: async () => {
+        entered.resolve()
+        await held.promise
+        await close()
+      },
+      context: { shutdown: () => undefined },
+      coordinator: null,
+      pendingJobs: null,
+    })
+    assert.throws(() => shutdown.assertFinalized(), /close barrier/)
+    await query()
+    const closing = shutdown.finalize()
+    try {
+      await entered.promise
+      assert.throws(() => shutdown.assertFinalized(), /close barrier/)
+      await query()
+    } finally {
+      held.resolve()
+    }
+    await closing
+    assert.doesNotThrow(() => shutdown.assertFinalized())
+    await assert.rejects(query)
+  })
+})
+
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void
   const promise = new Promise<void>((done) => {
