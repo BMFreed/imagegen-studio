@@ -39,6 +39,7 @@ import type { VerifiedApplicationArtifact } from './electron-update-checker.js'
 import { canonicalRuntimeReleaseJson } from '../runtime/runtime-release.js'
 import {
   type ApplicationReleaseManifest,
+  type ApplicationReleaseRuntimeFiles,
   type ApplicationReleaseTrust,
   copyApplicationReleaseAuthority,
   verifyApplicationReleaseAuthority,
@@ -95,13 +96,19 @@ export interface RolledBackApplicationUpdate {
 }
 
 export type ApplicationUpdateStartupInspection =
-  { status: 'none' } | { status: 'retained'; targetAuthentication: 'unverified' | 'verified' }
+  | {
+      runtimeAuthentication: 'unverified' | 'verified-publisher-declaration'
+      status: 'retained'
+      targetAuthentication: 'unverified' | 'verified'
+    }
+  | { status: 'none' }
 export type ApplicationUpdateCurrentImageSnapshot = FileSnapshot
 export type ApplicationUpdateCurrentSource = Readonly<{
   assertCurrentSnapshot: () => void
   currentAppImage: string
   currentImage: FileSnapshot
   dispose: () => void
+  runtimeFiles: Readonly<ApplicationReleaseRuntimeFiles>
   verifyCompleteSnapshot: () => Promise<void>
 }>
 export type ApplicationUpdateCurrentSourceCapture = Readonly<{
@@ -470,6 +477,16 @@ export function captureApplicationUpdateCurrentSource(input: {
             currentAppImage,
             currentImage: initial[0],
             dispose,
+            runtimeFiles: Object.freeze({
+              archive: Object.freeze({
+                sha512: initial[1].sha512,
+                sizeBytes: initial[1].sizeBytes,
+              }),
+              executable: Object.freeze({
+                sha512: initial[2].sha512,
+                sizeBytes: initial[2].sizeBytes,
+              }),
+            }),
             verifyCompleteSnapshot: async () => {
               const current = await inspect()
               try {
@@ -562,7 +579,7 @@ export async function stageVerifiedApplicationArtifact(input: {
       typeof manifest === 'object' &&
       manifest.appId === 'studio.imagegen.desktop' &&
       manifest.scope === 'application-release' &&
-      manifest.schemaVersion === 1 &&
+      (manifest.schemaVersion === 1 || manifest.schemaVersion === 2) &&
       manifest.target &&
       typeof manifest.target === 'object' &&
       manifest.artifact &&
@@ -1328,14 +1345,19 @@ export async function stageVerifiedApplicationArtifact(input: {
  */
 export async function inspectRetainedApplicationUpdate(input: {
   currentAppImage: string
+  currentSource?: ApplicationUpdateCurrentSource | null
   currentVersion: string
   readTrust: () => Promise<ApplicationReleaseTrust | null>
 }): Promise<ApplicationUpdateStartupInspection> {
-  const retained = { status: 'retained', targetAuthentication: 'unverified' } as const
+  const retained = {
+    runtimeAuthentication: 'unverified',
+    status: 'retained',
+    targetAuthentication: 'unverified',
+  } as const
   let parent: OwnedDirectory | undefined
   let staging: OwnedDirectory | undefined
   try {
-    const { currentAppImage, currentVersion, readTrust } = input
+    const { currentAppImage, currentSource = null, currentVersion, readTrust } = input
     need(
       process.platform === 'linux' &&
         process.arch === 'x64' &&
@@ -1465,6 +1487,65 @@ export async function inspectRetainedApplicationUpdate(input: {
     await checkMembers()
     await staging.check()
     await parent.check()
+    const readSourceObservation = (source: ApplicationUpdateCurrentSource) => {
+      const raw = exactRecord(source, [
+        'assertCurrentSnapshot',
+        'currentAppImage',
+        'currentImage',
+        'dispose',
+        'runtimeFiles',
+        'verifyCompleteSnapshot',
+      ])
+      need(typeof raw['currentAppImage'] === 'string', 'UNSAFE')
+      const image = exactRecord(raw['currentImage'], ['identity', 'sha512', 'sizeBytes'])
+      const identity = exactRecord(image['identity'], [
+        'ctimeNs',
+        'dev',
+        'gid',
+        'ino',
+        'mode',
+        'mtimeNs',
+        'nlink',
+        'sizeBytes',
+        'uid',
+      ])
+      const runtime = exactRecord(raw['runtimeFiles'], ['archive', 'executable'])
+      const archive = exactRecord(runtime['archive'], ['sha512', 'sizeBytes'])
+      const executable = exactRecord(runtime['executable'], ['sha512', 'sizeBytes'])
+      return {
+        bytes: canonicalRuntimeReleaseJson({
+          currentAppImage: raw['currentAppImage'],
+          currentImage: {
+            identity: { ...identity },
+            sha512: image['sha512'],
+            sizeBytes: image['sizeBytes'],
+          },
+          runtimeFiles: { archive: { ...archive }, executable: { ...executable } },
+        }),
+        raw: Object.freeze({ ...raw }),
+      }
+    }
+    let sourceObservation: ReturnType<typeof readSourceObservation> | null = null
+    let verifyRuntimeSource: (() => Promise<void>) | null = null
+    let assertRuntimeSource: (() => void) | null = null
+    // Capture a complete primitive observation before authority/trust awaits, without getters.
+    // The untrusted journal can select this read-only preparation, never grant authentication.
+    // A genuine v1 stage never consults the optional runtime capability at all.
+    if (
+      (record['manifest'] as { schemaVersion?: unknown } | null)?.schemaVersion === 2 &&
+      currentSource
+    ) {
+      try {
+        sourceObservation = readSourceObservation(currentSource)
+        const verify = sourceObservation.raw['verifyCompleteSnapshot']
+        const assert = sourceObservation.raw['assertCurrentSnapshot']
+        need(typeof verify === 'function' && typeof assert === 'function', 'UNSAFE')
+        verifyRuntimeSource = verify.bind(currentSource) as () => Promise<void>
+        assertRuntimeSource = assert.bind(currentSource) as () => void
+      } catch {
+        sourceObservation = null
+      }
+    }
     // Used without trust by admission callers as a cheap veto. No current-body hash or network
     // is needed to retain an existing stage, and the bundled keyring is never persisted here.
     const trust = await readTrust()
@@ -1481,40 +1562,111 @@ export async function inspectRetainedApplicationUpdate(input: {
         current.sizeBytes === manifest.artifact.sizeBytes,
       'UNSAFE',
     )
-    await checkMembers()
-    await inspectMetadata(
-      path.join(stagingDirectory, JOURNAL),
-      path.join(staging.anchor, JOURNAL),
-      journal.bytes,
-      journal.snapshot,
-    )
-    await inspectMetadata(
-      envelopePath,
-      path.join(staging.anchor, ENVELOPE),
-      envelope.bytes,
-      envelope.snapshot,
-    )
-    await inspectMetadata(
-      notesPath,
-      path.join(staging.anchor, RELEASE_NOTES),
-      notes.bytes,
-      notes.snapshot,
-    )
-    await inspectImage(
-      currentAppImage,
-      path.join(parent.anchor, path.basename(currentAppImage)),
-      0o755,
-      current,
-    )
-    await checkBackup()
-    await staging.check()
-    await parent.check()
+    const verifyTargetSnapshot = async () => {
+      await checkMembers()
+      await inspectMetadata(
+        path.join(stagingDirectory, JOURNAL),
+        path.join(staging!.anchor, JOURNAL),
+        journal.bytes,
+        journal.snapshot,
+      )
+      await inspectMetadata(
+        envelopePath,
+        path.join(staging!.anchor, ENVELOPE),
+        envelope.bytes,
+        envelope.snapshot,
+      )
+      await inspectMetadata(
+        notesPath,
+        path.join(staging!.anchor, RELEASE_NOTES),
+        notes.bytes,
+        notes.snapshot,
+      )
+      await inspectImage(
+        currentAppImage,
+        path.join(parent!.anchor, path.basename(currentAppImage)),
+        0o755,
+        current,
+      )
+      await checkBackup()
+      await staging!.check()
+      await parent!.check()
+    }
+    await verifyTargetSnapshot()
+    let runtimeAuthentication: 'unverified' | 'verified-publisher-declaration' = 'unverified'
+    let assertRuntimeBinding: (() => void) | null = null
+    if (
+      manifest.schemaVersion === 2 &&
+      currentSource &&
+      sourceObservation &&
+      verifyRuntimeSource &&
+      assertRuntimeSource
+    ) {
+      const sourcePort = currentSource
+      // Invoke4875 projects/invk/fonts.ts:readEmbeddedFonts checks exact declared roles and
+      // bytes before its importProject.ts -> projectFile.ts consumer. Adapt that inventory gate
+      // to the already captured physical FD hashes; the existing release verifier supplies trust.
+      // No archive/container parser, path supplied by metadata, V8 attestation or cleanup follows.
+      try {
+        const expectedRuntime = canonicalRuntimeReleaseJson(manifest.runtimeFiles)
+        const expectedCurrent = canonicalRuntimeReleaseJson(current)
+        const observed = sourceObservation
+        const currentSource = freezeJson(JSON.parse(observed.bytes.toString('utf8'))) as Pick<
+          ApplicationUpdateCurrentSource,
+          'currentAppImage' | 'currentImage' | 'runtimeFiles'
+        >
+        assertRuntimeBinding = () => {
+          const result: unknown = assertRuntimeSource()
+          if (result !== undefined) {
+            if (result instanceof Promise) {
+              void result.catch(() => undefined)
+            }
+            throw new AppUpdateCurrentSourceError()
+          }
+          const latest = readSourceObservation(sourcePort)
+          need(
+            latest.bytes.equals(observed.bytes) &&
+              latest.raw['verifyCompleteSnapshot'] === observed.raw['verifyCompleteSnapshot'] &&
+              latest.raw['assertCurrentSnapshot'] === observed.raw['assertCurrentSnapshot'] &&
+              currentSource.currentAppImage === currentAppImage &&
+              canonicalRuntimeReleaseJson(currentSource.currentImage).equals(expectedCurrent) &&
+              canonicalRuntimeReleaseJson(currentSource.runtimeFiles).equals(expectedRuntime),
+            'UNSAFE',
+          )
+        }
+        assertRuntimeBinding()
+        await verifyRuntimeSource()
+        assertRuntimeBinding()
+        runtimeAuthentication = 'verified-publisher-declaration'
+      } catch {
+        // Runtime absence/mismatch never turns an independently verified target into unverified.
+        runtimeAuthentication = 'unverified'
+      }
+      // Source callbacks can yield or fail after changing files. Recheck target/authority under
+      // their original identities even when the runtime branch refused; no journal is authority.
+      await verifyTargetSnapshot()
+      if (runtimeAuthentication === 'verified-publisher-declaration') {
+        try {
+          await verifyRuntimeSource()
+          assertRuntimeBinding!()
+        } catch {
+          runtimeAuthentication = 'unverified'
+        }
+      }
+    }
     const parentIdentity = parent.identity
     const stagingIdentity = staging.identity
     await staging.handle.close()
     staging = undefined
     await parent.handle.close()
     parent = undefined
+    if (runtimeAuthentication === 'verified-publisher-declaration') {
+      try {
+        assertRuntimeBinding!()
+      } catch {
+        runtimeAuthentication = 'unverified'
+      }
+    }
     // Finish through the same fresh descriptor/visible-path guards used before publication. No
     // await follows this boundary, so same-byte replacement during trust/hash awaits is refused.
     const parentFd = openSync(parentPath, DIRECTORY_FLAGS)
@@ -1547,7 +1699,7 @@ export async function inspectRetainedApplicationUpdate(input: {
         path.join(parentAnchor, path.basename(currentAppImage)),
         current.identity,
       )
-      return { status: 'retained', targetAuthentication: 'verified' }
+      return { runtimeAuthentication, status: 'retained', targetAuthentication: 'verified' }
     } finally {
       if (stageFd !== undefined) {
         closeSync(stageFd)
@@ -1568,8 +1720,19 @@ export async function inspectRetainedApplicationUpdate(input: {
 
 function exactRecord(value: unknown, keys: string[]): Record<string, unknown> {
   need(value !== null && typeof value === 'object' && !Array.isArray(value), 'UNSAFE')
-  need(Object.keys(value).sort().join('\0') === [...keys].sort().join('\0'), 'UNSAFE')
-  return value as Record<string, unknown>
+  const actual = Reflect.ownKeys(value)
+  need(
+    actual.every((key) => typeof key === 'string'),
+    'UNSAFE',
+  )
+  need(actual.sort().join('\0') === [...keys].sort().join('\0'), 'UNSAFE')
+  const captured: [string, unknown][] = []
+  for (const key of keys) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    need(descriptor?.enumerable && Object.hasOwn(descriptor, 'value'), 'UNSAFE')
+    captured.push([key, descriptor.value])
+  }
+  return Object.fromEntries(captured)
 }
 
 function snapshotReference(

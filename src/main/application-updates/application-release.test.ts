@@ -66,6 +66,14 @@ function manifest(releaseNotes: unknown = notes) {
   }
 }
 
+function runtimeFiles() {
+  const digest = (value: string) => ({
+    sha512: createHash('sha512').update(value).digest('base64'),
+    sizeBytes: Buffer.byteLength(value),
+  })
+  return { archive: digest('declared archive'), executable: digest('declared executable') }
+}
+
 function trust(keys: ReturnType<typeof keyring>) {
   return { compatibility: compatibility(), trustedKeys: { 'owned-key': keys.publicPem } }
 }
@@ -90,6 +98,123 @@ function rejected(error: unknown) {
   assert.equal(error.message, 'The signed application release could not be verified.')
   return true
 }
+
+test('v2 authenticates fixed runtime declarations and retained authority without container claims', () => {
+  const keys = keyring()
+  const value = { ...manifest(), runtimeFiles: runtimeFiles(), schemaVersion: 2 }
+  const envelope = seal(value, keys)
+  const verified = verifyApplicationRelease(envelope, trust(keys), selected(), notes)
+  assert.deepEqual(verified, value)
+  assert.equal(verified.schemaVersion, 2)
+  if (verified.schemaVersion !== 2) {
+    assert.fail('v2 retains its discriminated runtime declaration.')
+  }
+  assert.equal(Object.isFrozen(verified), true)
+  assert.equal(Object.isFrozen(verified.runtimeFiles), true)
+  assert.equal(Object.isFrozen(verified.runtimeFiles.archive), true)
+  assert.equal(Object.isFrozen(verified.runtimeFiles.executable), true)
+  assert.deepEqual(
+    verifyApplicationReleaseAuthority(
+      {
+        envelope: envelope.toString(),
+        releaseNotesJson: canonicalRuntimeReleaseJson(notes).toString(),
+      },
+      trust(keys),
+    ),
+    verified,
+  )
+  value.runtimeFiles.archive.sizeBytes++
+  assert.notEqual(verified.runtimeFiles.archive.sizeBytes, value.runtimeFiles.archive.sizeBytes)
+  assert.throws(() => Object.assign(verified.runtimeFiles.executable, { sizeBytes: 1 }), TypeError)
+  assert.equal(Object.hasOwn(verified, 'containerContentsVerified'), false)
+  const legacy = verifyApplicationRelease(seal(manifest(), keys), trust(keys), selected(), notes)
+  assert.equal(legacy.schemaVersion, 1)
+  assert.equal(Object.hasOwn(legacy, 'runtimeFiles'), false)
+  const changedEnvelope = JSON.parse(envelope.toString()) as Record<string, unknown>
+  changedEnvelope['payload'] = canonicalRuntimeReleaseJson({
+    ...verified,
+    runtimeFiles: { ...verified.runtimeFiles, archive: verified.runtimeFiles.executable },
+  }).toString('base64')
+  assert.throws(
+    () =>
+      verifyApplicationRelease(
+        Buffer.from(JSON.stringify(changedEnvelope)),
+        trust(keys),
+        selected(),
+        notes,
+      ),
+    rejected,
+  )
+})
+
+test('runtime declarations require exact v2 roles and refuse v1 extensions or unknown profiles', async (t) => {
+  const keys = keyring()
+  const declared = runtimeFiles()
+  for (const [label, value] of [
+    ['v1 extension', { ...manifest(), runtimeFiles: declared }],
+    ['v2 missing declaration', { ...manifest(), schemaVersion: 2 }],
+    ['unknown version', { ...manifest(), runtimeFiles: declared, schemaVersion: 3 }],
+    ...[
+      ['null', null],
+      ['array', [declared.archive, declared.executable]],
+      ['missing archive', { executable: declared.executable }],
+      ['missing executable', { archive: declared.archive }],
+      ['unknown role', { ...declared, library: declared.archive }],
+      ['role path', { ...declared, archive: { ...declared.archive, path: 'resources/app.asar' } }],
+      ['declaration profile', { ...declared, profile: 'arbitrary-files' }],
+    ].map(([label, runtimeFiles]) => [label, { ...manifest(), runtimeFiles, schemaVersion: 2 }]),
+  ] as const) {
+    await t.test(String(label), () => {
+      assert.throws(
+        () => verifyApplicationRelease(seal(value, keys), trust(keys), selected(), notes),
+        rejected,
+      )
+    })
+  }
+})
+
+test('each declared runtime digest uses canonical SHA512 and an exact positive safe integer size', async (t) => {
+  const keys = keyring()
+  for (const role of ['archive', 'executable'] as const) {
+    for (const [label, entry] of [
+      ['missing digest', { sizeBytes: 1 }],
+      ['missing size', { sha512: selected().sha512 }],
+      ['wrong digest type', { sha512: 1, sizeBytes: 1 }],
+      ['wrong digest length', { sha512: Buffer.alloc(63).toString('base64'), sizeBytes: 1 }],
+      ['noncanonical digest', { sha512: selected().sha512.replace(/=+$/, ''), sizeBytes: 1 }],
+      ['extra field', { ...runtimeFiles()[role], filename: 'input' }],
+      ...[0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, '1', null].map((sizeBytes) => [
+        `invalid size ${String(sizeBytes)}`,
+        { sha512: selected().sha512, sizeBytes },
+      ]),
+    ] as const) {
+      await t.test(`${role}: ${String(label)}`, () => {
+        const value = {
+          ...manifest(),
+          runtimeFiles: { ...runtimeFiles(), [role]: entry },
+          schemaVersion: 2,
+        }
+        // Invalid numbers must reach the consumer instead of being rejected by our seal helper.
+        const payload = Buffer.from(
+          JSON.stringify(value, (_key, node: unknown) =>
+            node && typeof node === 'object' && !Array.isArray(node)
+              ? Object.fromEntries(
+                  Object.entries(node).sort(([left], [right]) =>
+                    left < right ? -1 : left > right ? 1 : 0,
+                  ),
+                )
+              : node,
+          ),
+        )
+        assert.throws(
+          () =>
+            verifyApplicationRelease(seal(value, keys, payload), trust(keys), selected(), notes),
+          rejected,
+        )
+      })
+    }
+  }
+})
 
 test('persistable authority preserves original outer bytes and complete canonical native notes', () => {
   const keys = keyring()

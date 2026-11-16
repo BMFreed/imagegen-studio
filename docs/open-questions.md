@@ -1,6 +1,25 @@
 # Open Questions
 
-## Current captured application source consistency
+## Current signed application runtime declaration
+
+[Signed publisher declaration](./engineering/phase-5-application-runtime-declaration-research.md) adds strict release schema2 with
+fixed ASAR/executable fingerprints. Existing schema1 remains target-only. The
+offline retained inspector compares the completed native source capture with
+signed declarations and reports runtime authentication separately from target
+authentication; a missing/mismatching runtime never grants retirement authority.
+Any retained stage still refuses Review/preflight, preserving Projects/Save.
+
+This is publisher-declared correspondence, without automatic container readback,
+earlier V8-memory proof, unpacked dependency coverage, health or global ownership.
+Publisher/shipping, recovery/retirement and changed migration/runtime acceptance
+remain open. Root587 Main/publisher PASS/one platformSKIP, full typecheck/build/
+scoped lint and actual-consumer2GREEN/semanticRED/restored2GREEN pass. Two real
+packaged match/mismatch flows give four normal exits, saved Projects and offline
+startup comparison on identical B bytes. Complete5,149-entry retention and audit
+records are linked from the research; all eight promise statuses stay unchanged.
+
+
+## Previous captured application source consistency
 
 [Source consistency](./engineering/phase-5-application-update-source-consistency-research.md)
 adds one immutable early descriptor/path observation, completed under whenReady.

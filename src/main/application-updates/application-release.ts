@@ -48,14 +48,31 @@ export interface ApplicationReleaseSelectedArtifact {
   readonly version: string
 }
 
-export interface ApplicationReleaseManifest {
+export interface ApplicationReleaseRuntimeFile {
+  readonly sha512: string
+  readonly sizeBytes: number
+}
+
+/** Fixed publisher-declared roles: resources/app.asar and imagegen-studio, never supplied paths. */
+export interface ApplicationReleaseRuntimeFiles {
+  readonly archive: Readonly<ApplicationReleaseRuntimeFile>
+  readonly executable: Readonly<ApplicationReleaseRuntimeFile>
+}
+
+/** V2 authenticates a publisher declaration; it does not prove AppImage contents or loaded V8. */
+export type ApplicationReleaseManifest = ApplicationReleaseManifestBase &
+  (
+    | Readonly<{ runtimeFiles: ApplicationReleaseRuntimeFiles; schemaVersion: 2 }>
+    | Readonly<{ schemaVersion: 1 }>
+  )
+
+interface ApplicationReleaseManifestBase {
   readonly appId: 'studio.imagegen.desktop'
   readonly artifact: Readonly<{ filename: string; sha512: string; sizeBytes: number }>
   readonly compatibility: ApplicationReleaseCompatibility &
     Readonly<{ runtimeValidation: 'after-restart' }>
   readonly releaseId: string
   readonly releaseNotesSha256: string
-  readonly schemaVersion: 1
   readonly scope: 'application-release'
   readonly target: Readonly<{ arch: 'x64'; format: 'AppImage'; os: 'linux' }>
   readonly version: string
@@ -131,7 +148,10 @@ export function verifyApplicationRelease(
       sha512: descriptor['sha512'],
       sizeBytes: descriptor['sizeBytes'],
     })
-    const raw = plain(verifyCanonicalRuntimeEnvelope(envelope, captured.trustedKeys), [
+    const signed = plain(verifyCanonicalRuntimeEnvelope(envelope, captured.trustedKeys))
+    const schemaVersion = signed['schemaVersion']
+    need(schemaVersion === 1 || schemaVersion === 2)
+    const raw = plain(signed, [
       'schemaVersion',
       'scope',
       'appId',
@@ -141,12 +161,9 @@ export function verifyApplicationRelease(
       'artifact',
       'compatibility',
       'releaseNotesSha256',
+      ...(schemaVersion === 2 ? ['runtimeFiles'] : []),
     ])
-    need(
-      raw['schemaVersion'] === 1 &&
-        raw['scope'] === 'application-release' &&
-        raw['appId'] === 'studio.imagegen.desktop',
-    )
+    need(raw['scope'] === 'application-release' && raw['appId'] === 'studio.imagegen.desktop')
     need(isApplicationUpdateVersion(raw['version']) && raw['version'] === descriptor['version'])
     need(typeof raw['releaseId'] === 'string' && IDENTIFIER.test(raw['releaseId']))
     const target = plain(raw['target'], ['os', 'arch', 'format'])
@@ -179,17 +196,23 @@ export function verifyApplicationRelease(
         .update(canonicalRuntimeReleaseJson(releaseNotes ?? null))
         .digest('hex') === notesHash,
     )
-    return Object.freeze({
+    const common: ApplicationReleaseManifestBase = {
       appId: 'studio.imagegen.desktop',
       artifact: releaseArtifact,
       compatibility: Object.freeze({ ...compatibility, runtimeValidation: 'after-restart' }),
       releaseId: raw['releaseId'],
       releaseNotesSha256: notesHash,
-      schemaVersion: 1,
       scope: 'application-release',
       target: Object.freeze({ arch: 'x64', format: 'AppImage', os: 'linux' }),
       version: raw['version'],
-    })
+    }
+    return schemaVersion === 2
+      ? Object.freeze({
+          ...common,
+          runtimeFiles: runtimeFiles(raw['runtimeFiles']),
+          schemaVersion: 2,
+        })
+      : Object.freeze({ ...common, schemaVersion: 1 })
   } catch {
     throw new AppReleaseError()
   }
@@ -344,8 +367,6 @@ function protocol(value: unknown): string {
 function artifact(value: unknown): ApplicationReleaseManifest['artifact'] {
   const raw = plain(value, ['filename', 'sha512', 'sizeBytes'])
   const filename = raw['filename']
-  const sha512 = raw['sha512']
-  const sizeBytes = raw['sizeBytes']
   need(
     typeof filename === 'string' &&
       filename.endsWith('.AppImage') &&
@@ -353,13 +374,31 @@ function artifact(value: unknown): ApplicationReleaseManifest['artifact'] {
       path.basename(filename) === filename &&
       path.normalize(filename) === filename,
   )
+  return Object.freeze({
+    filename,
+    ...runtimeFile({ sha512: raw['sha512'], sizeBytes: raw['sizeBytes'] }),
+  })
+}
+
+function runtimeFiles(value: unknown): Readonly<ApplicationReleaseRuntimeFiles> {
+  const raw = plain(value, ['archive', 'executable'])
+  return Object.freeze({
+    archive: runtimeFile(raw['archive']),
+    executable: runtimeFile(raw['executable']),
+  })
+}
+
+function runtimeFile(value: unknown): Readonly<ApplicationReleaseRuntimeFile> {
+  const raw = plain(value, ['sha512', 'sizeBytes'])
+  const sha512 = raw['sha512']
+  const sizeBytes = raw['sizeBytes']
   need(
     typeof sha512 === 'string' &&
       Buffer.from(sha512, 'base64').length === 64 &&
       Buffer.from(sha512, 'base64').toString('base64') === sha512,
   )
   need(typeof sizeBytes === 'number' && Number.isSafeInteger(sizeBytes) && sizeBytes > 0)
-  return Object.freeze({ filename, sha512, sizeBytes })
+  return Object.freeze({ sha512, sizeBytes })
 }
 
 /** Read only enumerable own data; no accessors, symbol/private extras or exotic prototypes. */

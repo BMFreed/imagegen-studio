@@ -90,6 +90,11 @@ async function sourcePort(t: { after: (fn: () => Promise<void>) => void }) {
       sizeBytes: 19,
     }),
     dispose: () => {},
+    // Controlled v1 fixture; no native runtime authentication is claimed.
+    runtimeFiles: Object.freeze({
+      archive: Object.freeze({ sha512: Buffer.alloc(64).toString('base64'), sizeBytes: 1 }),
+      executable: Object.freeze({ sha512: Buffer.alloc(64).toString('base64'), sizeBytes: 1 }),
+    }),
     verifyCompleteSnapshot: async () => {
       state.verifications++
       if (state.fail) {
@@ -299,7 +304,7 @@ for (const targetAuthentication of ['verified', 'unverified'] as const) {
       () => {
         schedules++
       },
-      { status: 'retained', targetAuthentication },
+      { runtimeAuthentication: 'unverified', status: 'retained', targetAuthentication },
     )
     assert.equal(service.getStatus().status, 'idle')
     assert.equal((await service.check()).status, 'available')

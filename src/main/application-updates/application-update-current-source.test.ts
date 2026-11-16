@@ -187,6 +187,22 @@ test('capture is synchronous; complete memoizes full snapshots and never changes
   assert.equal(Object.isFrozen(cap.currentImage.identity), true)
   assert.equal(cap.currentAppImage, f.currentAppImage)
   assert.equal(cap.currentImage.sha512, sha512(f.oldBytes))
+  assert.equal(Object.isFrozen(cap.runtimeFiles), true)
+  assert.equal(Object.isFrozen(cap.runtimeFiles.archive), true)
+  assert.equal(Object.isFrozen(cap.runtimeFiles.executable), true)
+  assert.deepEqual(cap.runtimeFiles, {
+    archive: {
+      sha512: sha512(await fs.readFile(f.archivePath)),
+      sizeBytes: (await fs.stat(f.archivePath)).size,
+    },
+    executable: {
+      sha512: sha512(await fs.readFile(f.executablePath)),
+      sizeBytes: (await fs.stat(f.executablePath)).size,
+    },
+  })
+  for (const fingerprint of Object.values(cap.runtimeFiles)) {
+    assert.deepEqual(Reflect.ownKeys(fingerprint).sort(), ['sha512', 'sizeBytes'])
+  }
   await cap.verifyCompleteSnapshot()
   cap.assertCurrentSnapshot()
   await f.archive.read(archiveByte, 0, 1, null)

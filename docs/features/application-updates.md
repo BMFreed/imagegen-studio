@@ -405,3 +405,53 @@ V8 memory, связи ASAR/executable с signed outer image, всех unpacked l
 healthy startup или global ownership. Pre-capture B1/B2 mismatch, legacy/unleased
 процессы, разные dataRoots и retirement/recovery остаются открытыми. В Product,
 provenance и persisted journal новая source capability не сериализуется.
+
+
+### Signed publisher declaration of runtime files
+
+[Runtime declaration consumer](../engineering/phase-5-application-runtime-declaration-research.md)
+adds release payload schema2. Its fixed `runtimeFiles.archive` and
+`runtimeFiles.executable` each contain only canonical SHA512 and positive safe
+`sizeBytes`; they refer to `resources/app.asar` and `imagegen-studio`. The existing
+external envelope signs these descriptors together with the outer artifact and
+notes. Schema1 remains strict and target-only; its absence of runtime descriptors
+never becomes successful runtime authentication. Keyring, envelope and stage
+journal versions are unchanged.
+
+For schema2 the offline publisher CLI requires `--runtime-directory` pointing to
+the final appOutDir **after the complete AppImage build returns**. It hashes the
+two fixed files itself, overriding any template fingerprints, and rechecks held
+inputs before its create-only envelope output. For schema1 the option is refused.
+Do not use an `afterPack` executable digest: builder applies fuses afterward.
+`afterSign` is conditional and cannot serve as a general Linux completion hook.
+
+```sh
+pnpm exec tsx scripts/sign-application-release.mjs \
+  --manifest /srv/imagegen-release/manifest-v2.json \
+  --notes /srv/imagegen-release/notes.json \
+  --artifact /srv/imagegen-release/imagegen-studio.AppImage \
+  --runtime-directory /srv/imagegen-release/linux-unpacked \
+  --private-key /srv/imagegen-signing/private.pem \
+  --key-id release-publisher \
+  --output /srv/imagegen-release/new-envelope.json
+```
+
+The association of this final app directory with the artifact is the trusted
+publisher's declaration. CLI output explicitly reports
+`containerContentsVerified: false` and `packageFormatVerified: false`. It does not
+extract/execute an AppImage or prove containment; a wrong signed pairing remains
+a publisher error. No real publisher URL/key is created or configured.
+
+Main passes its ephemeral cached-ASAR/proc-executable/current-image observation to
+the retained inspector. After target verification, only an exact schema2 tuple and
+a still-valid capture can report runtime
+`verified-publisher-declaration`. Missing/unsupported capture, wrong tuple or late
+source drift retains runtime `unverified`; target verification remains a separate
+result. A final synchronous source assertion accompanies the existing final
+target/journal guards. No fingerprint/capability is exposed to the renderer or
+serialized into Project, provenance or journal.
+
+Both results preserve all recovery files and the existing retained-stage veto.
+Neither authenticates earlier loaded V8 memory, unpacked libraries, all runtime
+files, healthy startup, global process ownership or retirement. These remain
+acceptance dependencies; public promise statuses are unchanged.

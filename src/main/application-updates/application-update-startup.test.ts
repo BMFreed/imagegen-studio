@@ -14,21 +14,48 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { test, type TestContext } from 'node:test'
 
-import type { ApplicationReleaseTrust } from './application-release.js'
+import type {
+  ApplicationReleaseRuntimeFiles,
+  ApplicationReleaseTrust,
+} from './application-release.js'
 import type { VerifiedApplicationArtifact } from './electron-update-checker.js'
 
 import { canonicalRuntimeReleaseJson } from '../runtime/runtime-release.js'
 import { verifyApplicationReleaseAuthority } from './application-release.js'
 import {
   type ApplicationUpdateCurrentSource,
+  captureApplicationUpdateCurrentSource,
   inspectRetainedApplicationUpdate,
   stageVerifiedApplicationArtifact,
 } from './application-update-staging.js'
 
 const sha512 = (bytes: Buffer) => createHash('sha512').update(bytes).digest('base64')
-const unverified = { status: 'retained', targetAuthentication: 'unverified' }
-const verified = { status: 'retained', targetAuthentication: 'verified' }
+const unverified = {
+  runtimeAuthentication: 'unverified',
+  status: 'retained',
+  targetAuthentication: 'unverified',
+}
+const verified = {
+  runtimeAuthentication: 'unverified',
+  status: 'retained',
+  targetAuthentication: 'verified',
+}
+const runtimeVerified = { ...verified, runtimeAuthentication: 'verified-publisher-declaration' }
 const names = { envelope: 'release-envelope.json', releaseNotes: 'release-notes.json' } as const
+const runtimeBodies = {
+  archive: Buffer.from('Owned publisher-declared archive B; never loaded as V8.'),
+  executable: Buffer.from('Owned publisher-declared executable B; never executed.'),
+}
+const declaredRuntimeFiles: ApplicationReleaseRuntimeFiles = Object.freeze({
+  archive: Object.freeze({
+    sha512: sha512(runtimeBodies.archive),
+    sizeBytes: runtimeBodies.archive.length,
+  }),
+  executable: Object.freeze({
+    sha512: sha512(runtimeBodies.executable),
+    sizeBytes: runtimeBodies.executable.length,
+  }),
+})
 
 type Fixture = Awaited<ReturnType<typeof fixture>>
 
@@ -43,7 +70,11 @@ function image(marker: number) {
   return bytes
 }
 
-function release(body: Buffer, notes: unknown = 'Owned offline startup fixture; never executed.') {
+function release(
+  body: Buffer,
+  notes: unknown = 'Owned offline startup fixture; never executed.',
+  schemaVersion: 1 | 2 = 1,
+) {
   const keys = generateKeyPairSync('ed25519')
   const trust: ApplicationReleaseTrust = {
     compatibility: {
@@ -63,7 +94,8 @@ function release(body: Buffer, notes: unknown = 'Owned offline startup fixture; 
     compatibility: { ...trust.compatibility, runtimeValidation: 'after-restart' },
     releaseId: 'owned-startup-fixture',
     releaseNotesSha256: createHash('sha256').update(notesJson).digest('hex'),
-    schemaVersion: 1,
+    schemaVersion,
+    ...(schemaVersion === 2 ? { runtimeFiles: declaredRuntimeFiles } : {}),
     scope: 'application-release',
     target: { arch: 'x64', format: 'AppImage', os: 'linux' },
     version: '0.2.0',
@@ -121,11 +153,17 @@ async function fixtureCurrentSource(
       sizeBytes: Number(info.size),
     }),
     dispose: () => undefined,
+    runtimeFiles: declaredRuntimeFiles,
     verifyCompleteSnapshot: async () => undefined,
   })
 }
 
-async function fixture(t: Pick<TestContext, 'after'>, notes?: unknown, paddedEnvelope = false) {
+async function fixture(
+  t: Pick<TestContext, 'after'>,
+  notes?: unknown,
+  paddedEnvelope = false,
+  schemaVersion: 1 | 2 = 1,
+) {
   const root = await fs.mkdtemp(path.join(tmpdir(), 'igs-app-update-startup-'))
   const applications = path.join(root, 'applications')
   const cache = path.join(root, 'cache')
@@ -135,7 +173,7 @@ async function fixture(t: Pick<TestContext, 'after'>, notes?: unknown, paddedEnv
   const source = path.join(cache, 'next.AppImage')
   const oldBytes = image(17)
   const newBytes = image(41)
-  const releaseData = release(newBytes, notes)
+  const releaseData = release(newBytes, notes, schemaVersion)
   const signed = {
     ...releaseData,
     authority: Object.freeze({
@@ -189,6 +227,45 @@ async function fixture(t: Pick<TestContext, 'after'>, notes?: unknown, paddedEnv
     source,
     stage: staged.stagingDirectory,
   }
+}
+
+/** Tiny physical observations only: no native cache discovery or container-membership claim. */
+async function loadedRuntimeSource(
+  t: Pick<TestContext, 'after'>,
+  f: Fixture,
+  mismatch: 'archive' | 'executable' | null = null,
+) {
+  const directory = path.join(f.root, 'observed-runtime')
+  await fs.mkdir(directory, { mode: 0o775 })
+  await fs.chmod(directory, 0o775)
+  const archivePath = path.join(directory, 'app.asar')
+  const executablePath = path.join(directory, 'imagegen-studio')
+  const observedBodies = {
+    archive: Buffer.from(runtimeBodies.archive),
+    executable: Buffer.from(runtimeBodies.executable),
+  }
+  if (mismatch) {
+    observedBodies[mismatch][0] ^= 1
+  }
+  await fs.writeFile(archivePath, observedBodies.archive, { mode: 0o664 })
+  await fs.chmod(archivePath, 0o664)
+  await fs.writeFile(executablePath, observedBodies.executable, { mode: 0o775 })
+  await fs.chmod(executablePath, 0o775)
+  const archive = await fs.open(archivePath, 'r')
+  const executable = await fs.open(executablePath, 'r')
+  const capture = captureApplicationUpdateCurrentSource({
+    archiveFd: archive.fd,
+    archivePath,
+    currentAppImage: f.currentAppImage,
+    executableFd: executable.fd,
+    executablePath,
+  })
+  t.after(async () => {
+    capture.dispose()
+    await archive.close()
+    await executable.close()
+  })
+  return { archivePath, executablePath, source: await capture.complete() }
 }
 
 async function snapshot(file: string) {
@@ -604,4 +681,206 @@ test('near-limit canonical notes and padded envelope persist separately from the
   assert.equal((await fs.stat(path.join(f.stage, names.releaseNotes))).size, 1024 * 1024 - 1)
   assert.ok((await fs.stat(path.join(f.stage, 'journal.json'))).size < 16 * 1024)
   await preserves(f, verified)
+})
+
+test('v2 retained target authenticates publisher runtime tuple', async (t) => {
+  const f = await fixture(t, undefined, false, 2)
+  const loaded = await loadedRuntimeSource(t, f)
+  await fs.rm(f.cache, { recursive: true })
+  await preserves(f, runtimeVerified, { currentSource: loaded.source })
+  await loaded.source.verifyCompleteSnapshot()
+})
+
+for (const role of ['archive', 'executable'] as const) {
+  test(`v2 runtime ${role} mismatch preserves verified target`, async (t) => {
+    const f = await fixture(t, undefined, false, 2)
+    const loaded = await loadedRuntimeSource(t, f, role)
+    await loaded.source.verifyCompleteSnapshot()
+    assert.notDeepEqual(loaded.source.runtimeFiles, declaredRuntimeFiles)
+    await preserves(f, verified, { currentSource: loaded.source })
+  })
+  test(`v2 signed ${role} size mismatch preserves verified target`, async (t) => {
+    const f = await fixture(t, undefined, false, 2)
+    const loaded = await loadedRuntimeSource(t, f)
+    const payload = {
+      ...f.signed.payload,
+      runtimeFiles: {
+        ...declaredRuntimeFiles,
+        [role]: {
+          ...declaredRuntimeFiles[role],
+          sizeBytes: declaredRuntimeFiles[role].sizeBytes + 1,
+        },
+      },
+    }
+    await replaceAuthority(f, 'envelope', f.signed.envelopeFor(payload))
+    const record = await journal(f)
+    record['manifest'] = payload
+    await writeJournal(f, record)
+    await preserves(f, verified, { currentSource: loaded.source })
+  })
+}
+
+test('v2 missing runtime source preserves target authentication', async (t) => {
+  const f = await fixture(t, undefined, false, 2)
+  await preserves(f, verified)
+  await preserves(f, verified, { currentSource: null })
+})
+
+test('v1 target never consults the optional runtime capability', async (t) => {
+  const f = await fixture(t)
+  let reads = 0
+  const source = new Proxy({} as ApplicationUpdateCurrentSource, {
+    get: () => {
+      reads++
+      throw new Error('A v1 declaration has no runtime authority.')
+    },
+    ownKeys: () => {
+      reads++
+      throw new Error('A v1 declaration has no runtime inventory.')
+    },
+  })
+  await preserves(f, verified, { currentSource: source })
+  assert.equal(reads, 0)
+})
+
+for (const fault of [
+  'verify-error',
+  'wrong-current-path',
+  'wrong-current-snapshot',
+  'async-assert',
+] as const) {
+  test(`v2 runtime ${fault} cannot downgrade a verified target`, async (t) => {
+    const f = await fixture(t, undefined, false, 2)
+    const loaded = await loadedRuntimeSource(t, f)
+    const source: ApplicationUpdateCurrentSource = {
+      ...loaded.source,
+      ...(fault === 'verify-error'
+        ? {
+            verifyCompleteSnapshot: async () => {
+              throw new Error('Owned observation unavailable.')
+            },
+          }
+        : {}),
+      ...(fault === 'wrong-current-path' ? { currentAppImage: f.source } : {}),
+      ...(fault === 'wrong-current-snapshot'
+        ? {
+            currentImage: {
+              ...loaded.source.currentImage,
+              sha512: sha512(Buffer.from('Different outer observation.')),
+            },
+          }
+        : {}),
+      ...(fault === 'async-assert'
+        ? {
+            assertCurrentSnapshot: async () => {
+              throw new Error('An async assertion is never admitted.')
+            },
+          }
+        : {}),
+    }
+    await preserves(f, verified, { currentSource: source })
+  })
+}
+
+for (const getter of ['runtimeFiles', 'archive-hash', 'assertCurrentSnapshot'] as const) {
+  test(`v2 runtime ${getter} accessor refuses without reading its getter`, async (t) => {
+    const f = await fixture(t, undefined, false, 2)
+    const loaded = await loadedRuntimeSource(t, f)
+    let reads = 0
+    const source = { ...loaded.source }
+    const get = () => {
+      reads++
+      return getter === 'assertCurrentSnapshot' ? () => undefined : declaredRuntimeFiles
+    }
+    if (getter === 'archive-hash') {
+      const archive = { ...declaredRuntimeFiles.archive }
+      Object.defineProperty(archive, 'sha512', { enumerable: true, get })
+      source.runtimeFiles = { ...declaredRuntimeFiles, archive }
+    } else {
+      Object.defineProperty(source, getter, { enumerable: true, get })
+    }
+    await preserves(f, verified, { currentSource: source })
+    assert.equal(reads, 0)
+  })
+}
+
+for (const drift of ['tuple', 'method'] as const) {
+  test(`v2 source ${drift} drift during trust await cannot rebase runtime authority`, async (t) => {
+    const f = await fixture(t, undefined, false, 2)
+    const loaded = await loadedRuntimeSource(t, f)
+    const source = { ...loaded.source }
+    if (drift === 'tuple') {
+      source.runtimeFiles = {
+        ...declaredRuntimeFiles,
+        archive: {
+          ...declaredRuntimeFiles.archive,
+          sha512: sha512(Buffer.from('Earlier archive A.')),
+        },
+      }
+    }
+    await preserves(f, verified, {
+      currentSource: source,
+      readTrust: async () => {
+        if (drift === 'tuple') {
+          source.runtimeFiles = declaredRuntimeFiles
+        } else {
+          source.verifyCompleteSnapshot = async () => undefined
+        }
+        return f.signed.trust
+      },
+    })
+  })
+}
+
+test('v2 runtime source replacement after full verify preserves target and refuses runtime authentication', async (t) => {
+  const f = await fixture(t, undefined, false, 2)
+  const loaded = await loadedRuntimeSource(t, f)
+  let afterMutation: unknown[] | undefined
+  const source: ApplicationUpdateCurrentSource = {
+    ...loaded.source,
+    verifyCompleteSnapshot: async () => {
+      await loaded.source.verifyCompleteSnapshot()
+      const bytes = await fs.readFile(loaded.archivePath)
+      await fs.rename(loaded.archivePath, path.join(f.root, 'retained-observed-archive'))
+      await fs.writeFile(loaded.archivePath, bytes, { mode: 0o664 })
+      afterMutation = await inventory(f.root)
+    },
+  }
+  assert.deepEqual(await inspect(f, { currentSource: source }), verified)
+  assert.ok(afterMutation)
+  assert.deepEqual(await inventory(f.root), afterMutation)
+})
+
+test('v2 target mutation during runtime verify still refuses both authentications', async (t) => {
+  const f = await fixture(t, undefined, false, 2)
+  const loaded = await loadedRuntimeSource(t, f)
+  let afterMutation: unknown[] | undefined
+  const source: ApplicationUpdateCurrentSource = {
+    ...loaded.source,
+    verifyCompleteSnapshot: async () => {
+      await loaded.source.verifyCompleteSnapshot()
+      await fs.appendFile(path.join(f.stage, 'journal.json'), '\n')
+      afterMutation = await inventory(f.root)
+    },
+  }
+  assert.deepEqual(await inspect(f, { currentSource: source }), unverified)
+  assert.ok(afterMutation)
+  assert.deepEqual(await inventory(f.root), afterMutation)
+})
+
+test('v2 final synchronous runtime assertion rejects an async return after target awaits', async (t) => {
+  const f = await fixture(t, undefined, false, 2)
+  const loaded = await loadedRuntimeSource(t, f)
+  let calls = 0
+  const source: ApplicationUpdateCurrentSource = {
+    ...loaded.source,
+    assertCurrentSnapshot: () => {
+      if (++calls === 4) {
+        return Promise.resolve()
+      }
+      loaded.source.assertCurrentSnapshot()
+    },
+  }
+  await preserves(f, verified, { currentSource: source })
+  assert.equal(calls, 4, 'The refusal reaches the last synchronous guard after all target awaits.')
 })

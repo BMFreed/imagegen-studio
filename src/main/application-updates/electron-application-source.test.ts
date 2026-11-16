@@ -3,6 +3,7 @@
  * not qualify Electron's real native cache, loaded V8 memory, a package or startup health.
  */
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import {
   closeSync,
   constants,
@@ -121,6 +122,19 @@ test(
     const source = await first
     assert.equal(Object.isFrozen(source), true)
     assert.equal(source.currentAppImage, f.currentAppImage)
+    assert.deepEqual(source.runtimeFiles, {
+      archive: {
+        sha512: createHash('sha512').update('Controlled retained archive source.').digest('base64'),
+        sizeBytes: Buffer.byteLength('Controlled retained archive source.'),
+      },
+      executable: {
+        sha512: createHash('sha512').update(image(3)).digest('base64'),
+        sizeBytes: image(3).length,
+      },
+    })
+    assert.equal(Object.isFrozen(source.runtimeFiles), true)
+    assert.equal(Object.isFrozen(source.runtimeFiles.archive), true)
+    assert.equal(Object.isFrozen(source.runtimeFiles.executable), true)
     source.assertCurrentSnapshot()
     await source.verifyCompleteSnapshot()
     assert.equal(fstatSync(f.executableFds[0]).isFile(), true)

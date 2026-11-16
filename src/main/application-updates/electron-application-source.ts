@@ -188,6 +188,7 @@ export function captureElectronApplicationUpdateCurrentSource(
               currentAppImage: source.currentAppImage,
               currentImage: source.currentImage,
               dispose,
+              runtimeFiles: source.runtimeFiles,
               verifyCompleteSnapshot: async () => await source.verifyCompleteSnapshot(),
             })
           },

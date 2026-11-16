@@ -483,6 +483,7 @@ if (!gotInstanceLock) {
         try {
           applicationUpdateStartupInspection = await inspectRetainedApplicationUpdate({
             currentAppImage: applicationUpdateAppImage,
+            currentSource: applicationUpdateCurrentSource,
             currentVersion: app.getVersion(),
             readTrust: async () =>
               await loadApplicationReleaseTrust(process.resourcesPath, {
@@ -495,15 +496,19 @@ if (!gotInstanceLock) {
         } catch {
           // Inspection cannot prevent access to Projects or make retained recovery data disposable.
           applicationUpdateStartupInspection = {
+            runtimeAuthentication: 'unverified',
             status: 'retained',
             targetAuthentication: 'unverified',
           }
         }
         if (applicationUpdateStartupInspection.status === 'retained') {
           console.info(
-            applicationUpdateStartupInspection.targetAuthentication === 'verified'
-              ? 'Previous application update target authenticated; recovery data retained.'
-              : 'Previous application update needs recovery; data retained.',
+            applicationUpdateStartupInspection.runtimeAuthentication ===
+              'verified-publisher-declaration'
+              ? 'Previous application update runtime files match the signed publisher declaration; recovery data retained.'
+              : applicationUpdateStartupInspection.targetAuthentication === 'verified'
+                ? 'Previous application update target authenticated; recovery data retained.'
+                : 'Previous application update needs recovery; data retained.',
           )
         }
       }

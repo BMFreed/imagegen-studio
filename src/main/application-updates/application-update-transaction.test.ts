@@ -72,6 +72,11 @@ async function fixtureCurrentSource(
       sizeBytes: Number(info.size),
     }),
     dispose: () => undefined,
+    // Controlled v1 fixture; no native runtime authentication is claimed.
+    runtimeFiles: Object.freeze({
+      archive: Object.freeze({ sha512: Buffer.alloc(64).toString('base64'), sizeBytes: 1 }),
+      executable: Object.freeze({ sha512: Buffer.alloc(64).toString('base64'), sizeBytes: 1 }),
+    }),
     verifyCompleteSnapshot: async () => undefined,
   })
 }

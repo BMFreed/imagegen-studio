@@ -8,7 +8,10 @@ import { test } from 'node:test'
 import { promisify } from 'node:util'
 
 import { verifyApplicationRelease } from '../src/main/application-updates/application-release.ts'
-import { applicationReleaseArguments } from './sign-application-release.mjs'
+import {
+  applicationReleaseArguments,
+  inspectApplicationReleaseRuntimeDirectory,
+} from './sign-application-release.mjs'
 
 const args = [
   '--manifest',
@@ -37,7 +40,9 @@ async function fixture(operation) {
   try {
     const { privateKey, publicKey } = generateKeyPairSync('ed25519')
     const secret = privateKey.export({ format: 'pem', type: 'pkcs8' }).toString()
-    const artifactBytes = Buffer.from('Synthetic AppImage fixture; deliberately not an executable.\n')
+    const artifactBytes = Buffer.from(
+      'Synthetic AppImage fixture; deliberately not an executable.\n',
+    )
     const releaseNotes = 'A plain release note from the publisher.'
     const files = {
       manifest: path.join(directory, 'manifest.json'),
@@ -62,7 +67,9 @@ async function fixture(operation) {
     await fs.writeFile(files.artifact, artifactBytes, { mode: 0o644 })
     await fs.writeFile(files['private-key'], secret, { mode: 0o600 })
     const actualArgs = args.map((value) => {
-      const name = Object.keys(files).find((name) => value === `/fixture/${path.basename(files[name])}`)
+      const name = Object.keys(files).find(
+        (name) => value === `/fixture/${path.basename(files[name])}`,
+      )
       return name ? files[name] : value
     })
     await operation({
@@ -78,6 +85,39 @@ async function fixture(operation) {
   } finally {
     await fs.rm(directory, { force: true, recursive: true })
   }
+}
+
+async function runtimeFixture(operation) {
+  await fixture(async (value) => {
+    const runtimeDirectory = path.join(value.directory, 'final-app')
+    const archive = path.join(runtimeDirectory, 'resources/app.asar')
+    const executable = path.join(runtimeDirectory, 'imagegen-studio')
+    const archiveBytes = Buffer.from('Owned final archive bytes; no container inspection.')
+    const executableBytes = Buffer.from('Owned post-build executable bytes; not a running binary.')
+    await fs.mkdir(path.dirname(archive), { recursive: true })
+    await fs.writeFile(archive, archiveBytes, { mode: 0o664 })
+    await fs.writeFile(executable, executableBytes, { mode: 0o755 })
+    await fs.writeFile(
+      value.files.manifest,
+      JSON.stringify({
+        ...value.manifest,
+        schemaVersion: 2,
+        runtimeFiles: {
+          archive: { sha512: 'ignored template archive', sizeBytes: 1 },
+          executable: { sha512: 'ignored template executable', sizeBytes: 1 },
+        },
+      }),
+    )
+    await operation({
+      ...value,
+      archive,
+      archiveBytes,
+      executable,
+      executableBytes,
+      runtimeDirectory,
+      actualArgs: [...value.actualArgs, '--runtime-directory', runtimeDirectory],
+    })
+  })
 }
 
 function cli(actualArgs) {
@@ -106,6 +146,12 @@ async function refuses(actualArgs, secret) {
 
 test('application release CLI requires notes, identity and canonical explicit local paths', () => {
   assert.equal(applicationReleaseArguments(args)['key-id'], 'fixture-publisher')
+  assert.equal(
+    applicationReleaseArguments([...args, '--runtime-directory', '/fixture/final-app'])[
+      'runtime-directory'
+    ],
+    '/fixture/final-app',
+  )
   for (const invalid of [
     args.filter((value, index) => index !== 2 && index !== 3),
     args.slice(0, -2),
@@ -113,6 +159,9 @@ test('application release CLI requires notes, identity and canonical explicit lo
     [...args, '--private-key', '/second'],
     args.map((value) => (value === '/fixture/private.pem' ? 'relative/private.pem' : value)),
     args.map((value) => (value === '/fixture/notes.json' ? '/fixture/../notes.json' : value)),
+    [...args, '--runtime-directory', 'relative/app'],
+    [...args, '--runtime-directory', '/fixture/../app'],
+    [...args, '--runtime-directory', '/fixture/app', '--runtime-directory', '/fixture/app'],
   ]) {
     assert.throws(() => applicationReleaseArguments(invalid))
   }
@@ -128,6 +177,8 @@ test('real CLI signs actual artifact and notes for the public verifier without c
       assert.equal(receipt.outcome, 'PASS')
       assert.equal(receipt.installed, false)
       assert.equal(receipt.packageFormatVerified, false)
+      assert.equal(receipt.runtimeFilesDeclared, false)
+      assert.equal(receipt.containerContentsVerified, false)
       assert.equal(result.stdout.includes(secret), false)
       const envelope = await fs.readFile(files.output)
       assert.deepEqual(Object.keys(JSON.parse(envelope)).sort(), [
@@ -169,6 +220,136 @@ test('real CLI signs actual artifact and notes for the public verifier without c
   )
 })
 
+test('real v2 CLI signs actual final role files as publisher declarations, without container proof', async () => {
+  await runtimeFixture(
+    async ({
+      actualArgs,
+      files,
+      publicKey,
+      releaseNotes,
+      archiveBytes,
+      executableBytes,
+      artifactBytes,
+    }) => {
+      const result = await cli(actualArgs)
+      assert.equal(result.stderr, '')
+      const receipt = JSON.parse(result.stdout)
+      assert.equal(receipt.runtimeFilesDeclared, true)
+      assert.equal(receipt.containerContentsVerified, false)
+      assert.equal(receipt.packageFormatVerified, false)
+      assert.equal(receipt.installed, false)
+      const selected = {
+        filename: path.basename(files.artifact),
+        sha512: createHash('sha512').update(artifactBytes).digest('base64'),
+        sizeBytes: artifactBytes.length,
+        version: '0.2.0',
+      }
+      const verified = verifyApplicationRelease(
+        await fs.readFile(files.output),
+        { trustedKeys: { 'fixture-publisher': publicKey }, compatibility },
+        selected,
+        releaseNotes,
+      )
+      assert.equal(verified.schemaVersion, 2)
+      assert.deepEqual(verified.runtimeFiles, {
+        archive: {
+          sha512: createHash('sha512').update(archiveBytes).digest('base64'),
+          sizeBytes: archiveBytes.length,
+        },
+        executable: {
+          sha512: createHash('sha512').update(executableBytes).digest('base64'),
+          sizeBytes: executableBytes.length,
+        },
+      })
+      assert.deepEqual(await fs.readFile(files.artifact), artifactBytes)
+    },
+  )
+})
+
+test('real CLI requires the final runtime directory exactly for v2 and preserves v1 refusal of extensions', async (t) => {
+  await t.test('v2 without explicit directory', async () => {
+    await runtimeFixture(async ({ actualArgs, files, secret }) => {
+      await refuses(actualArgs.slice(0, -2), secret)
+      await assert.rejects(fs.lstat(files.output), { code: 'ENOENT' })
+    })
+  })
+  await t.test('v1 with directory', async () => {
+    await fixture(async ({ actualArgs, directory, files, secret }) => {
+      await refuses([...actualArgs, '--runtime-directory', directory], secret)
+      await assert.rejects(fs.lstat(files.output), { code: 'ENOENT' })
+    })
+  })
+  await t.test('v1 with unsigned runtime extension', async () => {
+    await fixture(async ({ actualArgs, files, manifest, secret }) => {
+      await fs.writeFile(files.manifest, JSON.stringify({ ...manifest, runtimeFiles: {} }))
+      await refuses(actualArgs, secret)
+      await assert.rejects(fs.lstat(files.output), { code: 'ENOENT' })
+    })
+  })
+})
+
+test('v2 publisher refuses missing, empty, nonregular or symlinked fixed runtime inputs', async (t) => {
+  for (const role of ['archive', 'executable']) {
+    for (const kind of ['missing', 'empty', 'directory', 'symlink']) {
+      await t.test(`${role}: ${kind}`, async () => {
+        await runtimeFixture(async (value) => {
+          const filename = value[role]
+          await fs.unlink(filename)
+          if (kind === 'empty') await fs.writeFile(filename, '')
+          if (kind === 'directory') await fs.mkdir(filename)
+          if (kind === 'symlink') await fs.symlink(value.files.artifact, filename)
+          await refuses(value.actualArgs, value.secret)
+          await assert.rejects(fs.lstat(value.files.output), { code: 'ENOENT' })
+        })
+      })
+    }
+  }
+  for (const member of ['runtime', 'resources']) {
+    await t.test(`${member} symlink`, async () => {
+      await runtimeFixture(async (value) => {
+        const filename =
+          member === 'runtime'
+            ? value.runtimeDirectory
+            : path.join(value.runtimeDirectory, 'resources')
+        await fs.rename(filename, filename + '-retained')
+        await fs.symlink(filename + '-retained', filename)
+        await refuses(value.actualArgs, value.secret)
+        await assert.rejects(fs.lstat(value.files.output), { code: 'ENOENT' })
+      })
+    })
+  }
+})
+
+test('held publisher runtime inputs refuse same-byte inode replacement and parent replacement', async (t) => {
+  for (const kind of ['archive', 'executable', 'resources', 'runtime']) {
+    await t.test(kind, async () => {
+      await runtimeFixture(async (value) => {
+        const captured = await inspectApplicationReleaseRuntimeDirectory(value.runtimeDirectory)
+        try {
+          await captured.unchanged()
+          const filename =
+            kind === 'runtime'
+              ? value.runtimeDirectory
+              : kind === 'resources'
+                ? path.join(value.runtimeDirectory, 'resources')
+                : value[kind]
+          const retained = filename + '-retained'
+          await fs.rename(filename, retained)
+          if (kind === 'archive' || kind === 'executable') {
+            await fs.copyFile(retained, filename)
+            assert.deepEqual(await fs.readFile(filename), await fs.readFile(retained))
+          } else {
+            await fs.cp(retained, filename, { recursive: true })
+          }
+          await assert.rejects(captured.unchanged(), /changed/)
+        } finally {
+          await captured.close()
+        }
+      })
+    })
+  }
+})
+
 test('real CLI refuses an existing output without replacing its bytes', async () => {
   await fixture(async ({ actualArgs, files, secret }) => {
     const existing = Buffer.from('Existing release must survive.\n')
@@ -194,7 +375,10 @@ test('real CLI refuses symlinked inputs and output parents without publishing', 
       await fixture(async ({ actualArgs, directory, files, secret }) => {
         const link = path.join(directory, `linked-${path.basename(files[input])}`)
         await fs.symlink(files[input], link)
-        await refuses(actualArgs.map((value) => (value === files[input] ? link : value)), secret)
+        await refuses(
+          actualArgs.map((value) => (value === files[input] ? link : value)),
+          secret,
+        )
         await assert.rejects(fs.lstat(files.output), { code: 'ENOENT' })
       })
     })
@@ -206,7 +390,10 @@ test('real CLI refuses symlinked inputs and output parents without publishing', 
       await fs.mkdir(parent)
       await fs.symlink(parent, link)
       const linkedOutput = path.join(link, 'release.json')
-      await refuses(actualArgs.map((value) => (value === files.output ? linkedOutput : value)), secret)
+      await refuses(
+        actualArgs.map((value) => (value === files.output ? linkedOutput : value)),
+        secret,
+      )
       assert.deepEqual(await fs.readdir(parent), [])
     })
   })
