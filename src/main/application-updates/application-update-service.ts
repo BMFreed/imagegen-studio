@@ -14,6 +14,11 @@ import {
 
 import type { VerifiedApplicationArtifact } from './electron-update-checker.js'
 
+import {
+  type StagedApplicationUpdate,
+  stageVerifiedApplicationArtifact,
+} from './application-update-staging.js'
+
 export interface ApplicationUpdateCheckResult {
   isUpdateAvailable: boolean
   updateInfo: {
@@ -46,6 +51,7 @@ export class ApplicationUpdateService {
     private readonly configured: boolean,
     private readonly createChecker: () =>
       ApplicationUpdateChecker | Promise<ApplicationUpdateChecker>,
+    private readonly currentAppImage: string | null = null,
   ) {
     if (!isApplicationUpdateVersion(currentVersion)) {
       throw new Error('Invalid application version.')
@@ -236,6 +242,40 @@ export class ApplicationUpdateService {
       }
       throw new Error('The application release must be downloaded and verified again.')
     }
+  }
+
+  /** Main-private explicit preparation; Download/status never stage or replace the app. */
+  async stageForInstallation(expectedVersion: string): Promise<StagedApplicationUpdate> {
+    if (this.currentAppImage === null) {
+      throw new Error('Application update staging is unavailable.')
+    }
+    const artifact = await this.prepareVerifiedArtifact(expectedVersion)
+    const staged = await stageVerifiedApplicationArtifact({
+      artifact,
+      currentAppImage: this.currentAppImage,
+    })
+    await this.prepareVerifiedArtifact(expectedVersion)
+    const plan: StagedApplicationUpdate = Object.freeze({
+      ...staged,
+      verifyCompleteSnapshot: async () => {
+        if ((await this.prepareVerifiedArtifact(expectedVersion)) !== artifact) {
+          throw new Error('The application release selection changed.')
+        }
+        await staged.verifyCompleteSnapshot()
+        if (
+          this.verifiedArtifact !== artifact ||
+          this.pendingCheck ||
+          this.pendingDownload ||
+          this.snapshot.status !== 'downloaded' ||
+          this.snapshot.availableVersion !== expectedVersion ||
+          this.snapshot.verification !== 'signed-release'
+        ) {
+          throw new Error('The application release selection changed.')
+        }
+      },
+    })
+    await plan.verifyCompleteSnapshot()
+    return plan
   }
 
   private empty(status: ApplicationUpdateSnapshot['status']): ApplicationUpdateSnapshot {

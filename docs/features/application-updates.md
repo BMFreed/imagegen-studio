@@ -89,7 +89,43 @@ raw notes JSON, реальный artifact, явные private Ed25519 key/keyId 
 version, исполнение migrations или installed-runtime readiness. Реальный клиент
 сверяет свой installed context независимо от publisher declaration.
 
+### Private staging boundary
+
+[Private staging](../engineering/phase-5-application-update-staging-research.md)
+подключён только через явный Main-private `stageForInstallation(expectedVersion)`.
+Main захватывает текущий APPIMAGE target; renderer не задаёт путь назначения.
+Пока нет staging IPC/UI, нового public status или действия Install. Обычные Check,
+Download и status reads не создают stage и не запускают executable.
+
+Gate требует текущий signed downloaded artifact и повторную проверку его native
+cache authority. В собственном canonical parent текущего AppImage он создаёт
+фиксированный exclusive sibling claim0700 и копирует candidate в новый inode0600
+с проверкой signed size/SHA512, минимального ELF64 little-endian x64/AI2 header,
+FD/path identities и fsync. Текущий regular single-link executable0755 и native
+cache не перезаписываются и не удаляются; их bytes/modes сохраняются. Это
+подготовка отдельной копии; header classification не доказывает запуск, внутреннюю
+версию app binary, SQL migrations или installed image-engine readiness.
+
+Durable journal описывает preparing/prepared state; отказ после получения claim
+сохраняет его данные и по возможности durable failed marker. Любой существующий
+claim отказывается без автоматического resume, cleanup или «исправления».
+Возвращаемый frozen private plan повторно проверяет старый executable, candidate,
+точные journal bytes/identities, canonical parent, текущую selection и **native
+cache source capability**. Отдельный inode кандидата не делает plan независимым
+от cache authority и не разрешает установку после её потери.
+
+Activation/replacement, restart/rollback, adoption/discard сохранённого stage и
+полный Install review остаются отдельными незавершёнными consumers. Этот owner
+не меняет app binary, не исполняет его и не начинает Project close sequence.
+
 ## Scope and dependencies
+
+[Private staging](../engineering/phase-5-application-update-staging-research.md)
+имеет Root-confirmed220 focused PASS, typecheck/build/scoped lint PASS. Отдельная
+filesystem/module qualification с controlled authority прошла на сохранённом старом
+AppImage147,106,530 bytes и точной late-candidate-guard GREEN/RED/GREEN.
+AppImage не запускался; это не новый shipping artifact или Install proof.
+Publisher остаётся не настроен. Публичные promise statuses этим срезом не повышаются.
 
 [App-wide generation close impact](../engineering/phase-5-generation-close-impact-research.md)
 now describes every pending/running queue row before native close, including rows
@@ -153,6 +189,11 @@ channel, формат доверенного manifest и способ восст
   текущие schema/protocol/migration declarations. `signed-release` не означает
   installed engine readiness; отсутствующий shipping publisher не подменяется
   тестовым feed или автоматически созданным ключом.
+- Private stage сохраняет текущий executable и cache, создаёт только отдельный
+  fresh inode и повторно проверяет private plan перед material action. Existing
+  retained claim не удаляется и не принимается для повторного использования
+  автоматически; stage не означает
+  Install, activation или разрешение на restart.
 - Dirty Project, active jobs и unaccepted staging не исчезают без обычного
   close/cancel confirmation. `Установить позже` до close sequence ничего не
   меняет; последующая отмена останавливает restart, не откатывая ранее

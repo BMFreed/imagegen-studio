@@ -1,6 +1,20 @@
 # Open Questions
 
-## Current app-wide generation close impact
+## Current private application update staging
+
+[Application update staging](./engineering/phase-5-application-update-staging-research.md)
+now supplies an explicit Main-private stage gate for the captured APPIMAGE target.
+A signed cache artifact is copied to a fresh0600 candidate under an exclusive
+owned0700 sibling claim with a durable journal. The plan still revalidates the
+native cache source and current selection; Download does not implicitly stage.
+Old/cache bytes and modes are preserved; existing retained claims refuse automatic
+cleanup/reuse. There is no staging IPC/UI or activation. Root confirms 220 focused
+PASS and typecheck/build/scoped lint PASS; the compiled filesystem consumer passed a 147,106,530-byte retained-AppImage data
+fixture and late-candidate-guard GREEN/RED/GREEN, without executing the AppImage. Shipping publisher,
+Install/activation/rollback, explicit adoption/discard of retained claims and final
+MVP acceptance remain open. Promise statuses unchanged.
+
+## Previous app-wide generation close impact
 
 [Generation close impact](./engineering/phase-5-generation-close-impact-research.md) connects the existing native warning to
 all pending/running queue rows, including closed Projects and private operations.

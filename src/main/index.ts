@@ -1421,6 +1421,7 @@ if (!gotInstanceLock) {
             new VerifiedAppImageUpdater(undefined, undefined, trust),
           )
         },
+        process.platform === 'linux' ? (process.env['APPIMAGE'] ?? null) : null,
       )
       const applicationUpdates = registerApplicationUpdateIpc(
         ipcMain,

@@ -1,6 +1,21 @@
 # Engineering Workflow
 
-## Current app-wide generation close impact
+## Current private application update staging
+
+[Application update staging](./phase-5-application-update-staging-research.md)
+adds an explicit Main-private service gate using Main's captured APPIMAGE target.
+It copies a verified signed cache artifact to a fresh0600 inode in an exclusive
+owned0700 sibling claim, with durable preparation metadata and current/candidate
+revalidation. The old executable and native cache remain unchanged; the returned
+plan still revalidates native cache authority. Download/status do not stage; no
+IPC, UI, activation or installer is added. Existing claims are retained and refuse
+automatic reuse/cleanup. Root confirms 220 focused PASS and typecheck/build/scoped
+lint PASS. The compiled stage owner passed a 147,106,530-byte retained-AppImage data
+fixture and exact late-candidate-guard GREEN/RED/GREEN; authority callbacks are
+controlled and no AppImage was executed. Shipping publisher, Install/activation/rollback,
+explicit retained-stage adoption/discard and full MVP remain open. Statuses unchanged.
+
+## Previous app-wide generation close impact
 
 [Generation close impact](./phase-5-generation-close-impact-research.md) connects the existing native warning to
 all pending/running queue rows, including closed Projects and private operations.

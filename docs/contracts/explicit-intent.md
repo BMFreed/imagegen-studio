@@ -111,6 +111,16 @@ flows и не скрывает последствия выбранной ком�
 
 ## Evidence и текущие границы
 
+[Private app staging](../engineering/phase-5-application-update-staging-research.md)
+является отдельным Main-private preparation gate. Check, Download и status read
+не создают stage; public IPC/UI Install ещё отсутствует. Fresh candidate copy
+сохраняет old/cache bytes и всё ещё зависит от revalidation текущей native cache
+authority. Подготовка не выполняет activation/restart/Project close; existing
+retained claim не очищается и не переиспользуется автоматически. Root подтверждает
+220 focused PASS и typecheck/build/scoped lint PASS; отдельный compiled filesystem consumer прошёл retained-AppImage data fixture
+и late-candidate-guard GREEN/RED/GREEN без запуска приложения. Shipping publisher,
+Install/rollback/adoption/discard и публичная готовность остаются открытыми.
+
 [App-wide close impact](../engineering/phase-5-generation-close-impact-research.md)
 предупреждает об общей pending/running очереди, которую существующий shutdown
 собирается отменить, включая закрытые Projects и private jobs. Cancel не изменяет
