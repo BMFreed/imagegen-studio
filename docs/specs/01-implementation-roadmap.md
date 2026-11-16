@@ -1,6 +1,27 @@
 # Implementation Roadmap
 
-## Current retained application update authority
+## Current captured application source consistency
+
+[Source consistency](../engineering/phase-5-application-update-source-consistency-research.md)
+adds one immutable early descriptor/path observation, completed under whenReady.
+Existing Review/preflight, final Main close and stage publication consume it; a
+changed source refuses before close and never invalidates a healthy downloaded B.
+Exact expected-current matching prevents stage from rebasing A after preflight.
+Own activation consumes old-target authority. Unsupported observation preserves
+ordinary Projects/Save/Check/Download; retained-stage refusal keeps precedence.
+
+Root checks:499 Main PASS/one platformSKIP, focused47 browserPASS, final typing/
+build/scoped lint and actual stage-consumer semantic GREEN/RED/GREEN. Final native
+R2 flow/outer/ASAR PASS gives four normal lifetimes, actual saved Projects and
+borrowed FD preservation after disposer. R1's real0664/0775 incompatibility was
+fixed only in runtime observation; mutable stage permissions remain strict.
+
+This is stability since capture. Signed runtime/AppImage correspondence, earlier
+V8 memory, global process ownership, recovery/retirement, publisher/shipping and
+changed migration/runtime acceptance remain open. All promise statuses stay unchanged.
+
+
+## Previous retained application update authority
 
 [Offline retained authority](../engineering/phase-5-application-update-startup-authority-research.md)
 continues the explicit Install owner with the original signed envelope and complete

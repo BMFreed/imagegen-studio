@@ -6,12 +6,17 @@ import {
 import type { AppUpdater } from 'electron-updater'
 
 import assert from 'node:assert/strict'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { test } from 'node:test'
 
+import type { ApplicationUpdateCurrentSource } from './application-update-staging.js'
 import type { VerifiedApplicationArtifact } from './electron-update-checker.js'
 
 import {
   type ApplicationUpdateCheckResult,
+  ApplicationUpdateCurrentSourceError,
   ApplicationUpdateRecoveryRequiredError,
   ApplicationUpdateService,
 } from './application-update-service.js'
@@ -54,6 +59,218 @@ function artifact(
     verifyCompleteSnapshot,
   }
 }
+
+/** Controlled consistency port; real descriptor/byte behavior is exercised by staging tests. */
+async function sourcePort(t: { after: (fn: () => Promise<void>) => void }) {
+  const directory = await mkdtemp(path.join(tmpdir(), 'igs-current-source-service-'))
+  t.after(() => rm(directory, { force: true, recursive: true }))
+  const currentAppImage = path.join(directory, 'Current.AppImage')
+  const state = { assertions: 0, fail: false, verifications: 0 }
+  const source: ApplicationUpdateCurrentSource = Object.freeze({
+    assertCurrentSnapshot: () => {
+      state.assertions++
+      if (state.fail) {
+        throw new Error('/private/current-source changed')
+      }
+    },
+    currentAppImage,
+    currentImage: Object.freeze({
+      identity: Object.freeze({
+        ctimeNs: '0',
+        dev: '1',
+        gid: '0',
+        ino: '1',
+        mode: '33261',
+        mtimeNs: '0',
+        nlink: '1',
+        sizeBytes: 19,
+        uid: '0',
+      }),
+      sha512: Buffer.alloc(64).toString('base64'),
+      sizeBytes: 19,
+    }),
+    dispose: () => {},
+    verifyCompleteSnapshot: async () => {
+      state.verifications++
+      if (state.fail) {
+        throw new Error('/private/current-source changed')
+      }
+    },
+  })
+  return { currentAppImage, source, state }
+}
+
+const emptyImpact = () => ({
+  activeModelInstallCount: 0,
+  generationStorageUnavailable: false,
+  openProjectCount: 0,
+  preparingModelInstallCount: 0,
+  resourceRemovalActive: false,
+  unacceptedResultCount: 0,
+  unfinishedJobCount: 0,
+  unsavedProjectCount: 0,
+})
+
+for (const fault of ['missing', 'changed'] as const) {
+  test(`${fault} current source refuses Review/preflight before candidate or impact reads without retiring downloaded B`, async (t) => {
+    const f = await sourcePort(t)
+    let candidateReads = 0
+    let impacts = 0
+    const receipt = artifact(async () => {
+      candidateReads++
+    })
+    const service = new ApplicationUpdateService(
+      current,
+      true,
+      () => ({
+        checkForUpdates: async () => ({ ...available(), verification: 'signed-release' }),
+        downloadUpdate: async () => ({ sizeBytes: 19, verifiedArtifact: receipt }),
+      }),
+      f.currentAppImage,
+      () => {},
+      async () => {
+        impacts++
+        return emptyImpact()
+      },
+      () => true,
+      { status: 'none' },
+      fault === 'missing' ? null : f.source,
+    )
+    await service.check()
+    assert.equal((await service.download('0.1.0')).status, 'downloaded')
+    assert.equal(candidateReads, 1)
+    f.state.fail = true
+    for (const action of [
+      () => service.reviewInstallation('0.1.0'),
+      () => service.prepareInstallation('0.1.0'),
+    ]) {
+      await assert.rejects(action, ApplicationUpdateCurrentSourceError)
+    }
+    assert.equal(candidateReads, 1)
+    assert.equal(impacts, 0)
+    assert.equal(service.getStatus().status, 'downloaded')
+    assert.equal(await service.prepareVerifiedArtifact('0.1.0'), receipt)
+    assert.equal(service.getStatus().status, 'downloaded')
+    assert.throws(() => service.assertCurrentSourceSnapshot(), ApplicationUpdateCurrentSourceError)
+  })
+}
+
+for (const boundary of ['candidate-await', 'impact-await'] as const) {
+  test(`source changes during ${boundary} refuse before close and preserve healthy candidate authority`, async (t) => {
+    const f = await sourcePort(t)
+    let candidateReads = 0
+    let impacts = 0
+    const receipt = artifact(async () => {
+      if (++candidateReads === 2 && boundary === 'candidate-await') {
+        f.state.fail = true
+      }
+    })
+    const service = new ApplicationUpdateService(
+      current,
+      true,
+      () => ({
+        checkForUpdates: async () => ({ ...available(), verification: 'signed-release' }),
+        downloadUpdate: async () => ({ sizeBytes: 19, verifiedArtifact: receipt }),
+      }),
+      f.currentAppImage,
+      () => {},
+      async () => {
+        impacts++
+        f.state.fail = true
+        return emptyImpact()
+      },
+      () => true,
+      { status: 'none' },
+      f.source,
+    )
+    await service.check()
+    await service.download('0.1.0')
+    await assert.rejects(service.reviewInstallation('0.1.0'), ApplicationUpdateCurrentSourceError)
+    assert.equal(impacts, boundary === 'candidate-await' ? 0 : 1)
+    assert.equal(service.getStatus().status, 'downloaded')
+    assert.equal(await service.prepareVerifiedArtifact('0.1.0'), receipt)
+    assert.equal(service.getStatus().status, 'downloaded')
+  })
+}
+
+test('stable current-source capability remains the same through Review and preflight', async (t) => {
+  const f = await sourcePort(t)
+  const receipt = artifact()
+  let closeChecks = 0
+  const service = new ApplicationUpdateService(
+    current,
+    true,
+    () => ({
+      checkForUpdates: async () => ({ ...available(), verification: 'signed-release' }),
+      downloadUpdate: async () => ({ sizeBytes: 19, verifiedArtifact: receipt }),
+    }),
+    f.currentAppImage,
+    () => {
+      closeChecks++
+    },
+    async () => emptyImpact(),
+    () => true,
+    { status: 'none' },
+    f.source,
+  )
+  await service.check()
+  await service.download('0.1.0')
+  assert.equal((await service.reviewInstallation('0.1.0')).installationAvailable, true)
+  assert.equal(await service.prepareInstallation('0.1.0'), receipt)
+  service.assertCurrentSourceSnapshot()
+  assert.ok(f.state.verifications >= 6)
+  assert.equal(closeChecks, 0)
+})
+
+test('preflight rechecks current sources after awaiting the healthy candidate verifier', async (t) => {
+  const f = await sourcePort(t)
+  let candidateReads = 0
+  const receipt = artifact(async () => {
+    if (++candidateReads === 2) {
+      f.state.fail = true
+    }
+  })
+  const service = new ApplicationUpdateService(
+    current,
+    true,
+    () => ({
+      checkForUpdates: async () => ({ ...available(), verification: 'signed-release' }),
+      downloadUpdate: async () => ({ sizeBytes: 19, verifiedArtifact: receipt }),
+    }),
+    f.currentAppImage,
+    () => {},
+    async () => emptyImpact(),
+    () => true,
+    { status: 'none' },
+    f.source,
+  )
+  await service.check()
+  await service.download('0.1.0')
+  await assert.rejects(service.prepareInstallation('0.1.0'), ApplicationUpdateCurrentSourceError)
+  assert.equal(service.getStatus().status, 'downloaded')
+  assert.equal(await service.prepareVerifiedArtifact('0.1.0'), receipt)
+})
+
+test('the final current-source assertion rejects an accidentally asynchronous port', async (t) => {
+  const f = await sourcePort(t)
+  const source: ApplicationUpdateCurrentSource = Object.freeze({
+    ...f.source,
+    assertCurrentSnapshot: async () => {},
+  })
+  const service = new ApplicationUpdateService(
+    current,
+    false,
+    () => ({ checkForUpdates: async () => available() }),
+    f.currentAppImage,
+    null,
+    null,
+    null,
+    { status: 'none' },
+    source,
+  )
+  assert.throws(() => service.assertCurrentSourceSnapshot(), ApplicationUpdateCurrentSourceError)
+  assert.equal(service.getStatus().status, 'unavailable')
+})
 
 for (const targetAuthentication of ['verified', 'unverified'] as const) {
   test(`retained ${targetAuthentication} startup refuses Review and preflight before artifact or impact reads`, async () => {

@@ -22,6 +22,7 @@ import type { VerifiedApplicationArtifact } from './electron-update-checker.js'
 
 import { canonicalRuntimeReleaseJson } from '../runtime/runtime-release.js'
 import {
+  type ApplicationUpdateCurrentSource,
   AppUpdateRelaunchError,
   stageVerifiedApplicationArtifact,
 } from './application-update-staging.js'
@@ -37,6 +38,39 @@ function image(marker: number) {
   bytes.writeUInt32LE(1, 20)
   bytes.writeUInt16LE(64, 52)
   return bytes
+}
+
+/**
+ * Explicit controlled source port for the legacy private transaction matrix, not a native source
+ * observation.
+ */
+async function fixtureCurrentSource(
+  currentAppImage: string,
+): Promise<ApplicationUpdateCurrentSource> {
+  const info = await fs.lstat(currentAppImage, { bigint: true })
+  return Object.freeze({
+    assertCurrentSnapshot: () => undefined,
+    currentAppImage,
+    currentImage: Object.freeze({
+      identity: Object.freeze({
+        ctimeNs: String(info.ctimeNs),
+        dev: String(info.dev),
+        gid: String(info.gid),
+        ino: String(info.ino),
+        mode: String(info.mode),
+        mtimeNs: String(info.mtimeNs),
+        nlink: String(info.nlink),
+        sizeBytes: Number(info.size),
+        uid: String(info.uid),
+      }),
+      sha512: createHash('sha512')
+        .update(await fs.readFile(currentAppImage))
+        .digest('base64'),
+      sizeBytes: Number(info.size),
+    }),
+    dispose: () => undefined,
+    verifyCompleteSnapshot: async () => undefined,
+  })
 }
 
 async function witness(filename: string) {
@@ -106,7 +140,12 @@ async function fixture(t: Pick<TestContext, 'after'>) {
       assert.equal(authority.revoked, false, 'Owned native artifact authority was revoked.')
     },
   }
-  const staged = await stageVerifiedApplicationArtifact({ artifact, currentAppImage })
+  const currentSource = await fixtureCurrentSource(currentAppImage)
+  const staged = await stageVerifiedApplicationArtifact({
+    artifact,
+    currentAppImage,
+    currentSource,
+  })
   const backup = await staged.prepareBackup()
   const active = await backup.activate(() => undefined)
   return { active, authority, backup, currentAppImage, newBytes, oldBytes, root, source, staged }

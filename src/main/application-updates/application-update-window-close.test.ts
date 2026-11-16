@@ -21,6 +21,7 @@ import ts from 'typescript'
 
 import { GenerationAppShutdown } from '../projects/generation-app-shutdown.js'
 import { withProjectPathLock } from '../projects/project-path-lock.js'
+import { ApplicationUpdateCurrentSourceError } from './application-update-service.js'
 
 const mainSource = readFileSync(path.resolve(import.meta.dirname, '../index.ts'), 'utf8')
 const startMarker =
@@ -71,6 +72,7 @@ type Options = {
   failInstall?: boolean
   failPreflight?: boolean
   failSave?: boolean
+  failSourceSnapshot?: boolean
   flushError?: string | null
   installHeld?: Promise<void>
   preflightHeld?: Promise<void>
@@ -107,6 +109,7 @@ function fixture(options: Options = {}) {
   let downloadCalls = 0
   let reviewCalls = 0
   let closeCalls = 0
+  let sourceChecks = 0
   let serviceFacade!: {
     check: () => Promise<unknown>
     download: (version: string) => Promise<unknown>
@@ -189,6 +192,12 @@ function fixture(options: Options = {}) {
     constructor(...ports: unknown[]) {
       this.assertClosed = ports[4] as () => void
     }
+    assertCurrentSourceSnapshot() {
+      sourceChecks++
+      if (options.failSourceSnapshot) {
+        throw new ApplicationUpdateCurrentSourceError()
+      }
+    }
     check() {
       checkCalls++
       return Promise.resolve({ status: 'controlled-status' })
@@ -249,6 +258,7 @@ function fixture(options: Options = {}) {
       },
     },
     applicationUpdateAppImage: '/controlled/Current.AppImage',
+    applicationUpdateCurrentSource: null,
     ApplicationUpdateService: ControlledUpdateService,
     applicationUpdateStartupInspection: { status: 'none' },
     appShutdown,
@@ -371,6 +381,7 @@ function fixture(options: Options = {}) {
       installCalls,
       prepareCalls,
       reviewCalls,
+      sourceChecks,
     }),
     tabs,
     until,
@@ -414,6 +425,31 @@ test('actual Main keeps sealed close blocked until exact-artifact handoff settle
     0,
   )
   assert.equal(f.context.closeState().exitReady, true)
+})
+
+test('actual Main checks current sources after final document guards and refuses before native close', async () => {
+  const f = fixture({ dirty: true })
+  await assert.rejects(
+    f.request(() => {
+      f.options.failSourceSnapshot = true
+      return true
+    }),
+    ApplicationUpdateCurrentSourceError,
+  )
+  assert.equal(f.stats().prepareCalls, 1)
+  assert.equal(f.stats().sourceChecks, 1)
+  assert.equal(f.stats().closeCalls, 0)
+  assert.equal(f.stats().installCalls, 0)
+  assert.equal(f.stats().databaseClosed, false)
+  assert.equal(f.tabs.length, 1)
+  assert.equal(f.tabs[0].dirty, true)
+  assert.equal(f.messages.length, 0)
+  f.options.failSourceSnapshot = false
+  f.options.choice = 2
+  await f.request()
+  await f.until(() => !f.context.closeState().resolvingClose)
+  assert.equal(f.stats().sourceChecks, 2, 'A fresh request still uses the Main guard.')
+  assert.equal(f.stats().installCalls, 0)
 })
 
 for (const lane of ['native-cancel', 'renderer-cancel', 'save-error'] as const) {

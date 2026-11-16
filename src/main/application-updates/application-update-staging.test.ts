@@ -22,7 +22,10 @@ import type { VerifiedApplicationArtifact } from './electron-update-checker.js'
 
 import { canonicalRuntimeReleaseJson } from '../runtime/runtime-release.js'
 import { verifyApplicationRelease } from './application-release.js'
-import { stageVerifiedApplicationArtifact } from './application-update-staging.js'
+import {
+  type ApplicationUpdateCurrentSource,
+  stageVerifiedApplicationArtifact,
+} from './application-update-staging.js'
 
 const sha512 = (bytes: Buffer) => createHash('sha512').update(bytes).digest('base64')
 const filename = 'owned-studio-0.2.0-x86_64.AppImage'
@@ -113,6 +116,39 @@ function signedRelease(
   }
 }
 
+/**
+ * Explicit controlled source port for the legacy private transaction matrix, not a native source
+ * observation.
+ */
+async function fixtureCurrentSource(
+  currentAppImage: string,
+): Promise<ApplicationUpdateCurrentSource> {
+  const info = await fs.lstat(currentAppImage, { bigint: true })
+  return Object.freeze({
+    assertCurrentSnapshot: () => undefined,
+    currentAppImage,
+    currentImage: Object.freeze({
+      identity: Object.freeze({
+        ctimeNs: String(info.ctimeNs),
+        dev: String(info.dev),
+        gid: String(info.gid),
+        ino: String(info.ino),
+        mode: String(info.mode),
+        mtimeNs: String(info.mtimeNs),
+        nlink: String(info.nlink),
+        sizeBytes: Number(info.size),
+        uid: String(info.uid),
+      }),
+      sha512: createHash('sha512')
+        .update(await fs.readFile(currentAppImage))
+        .digest('base64'),
+      sizeBytes: Number(info.size),
+    }),
+    dispose: () => undefined,
+    verifyCompleteSnapshot: async () => undefined,
+  })
+}
+
 async function witness(file: string) {
   const bytes = await fs.readFile(file)
   const info = await fs.lstat(file, { bigint: true })
@@ -172,10 +208,12 @@ async function fixture(
       await state.onVerify?.(state.calls)
     },
   })
+  const currentSource = await fixtureCurrentSource(currentAppImage)
   return {
     artifact,
     body,
     currentAppImage,
+    currentSource,
     oldBytes,
     parent,
     root,
@@ -234,6 +272,7 @@ test('staging creates a fresh private candidate and prepared journal while prese
   const staged = await stageVerifiedApplicationArtifact({
     artifact: f.artifact,
     currentAppImage: f.currentAppImage,
+    currentSource: f.currentSource,
   })
   assert.equal(Object.isFrozen(staged), true)
   assert.equal(Object.isFrozen(staged.manifest), true)
@@ -280,7 +319,11 @@ test('an unknown existing claim is refused without resuming, cleaning or changin
   const before = await inputs(f)
   const foreign = await witness(sentinel)
   await assert.rejects(
-    stageVerifiedApplicationArtifact({ artifact: f.artifact, currentAppImage: f.currentAppImage }),
+    stageVerifiedApplicationArtifact({
+      artifact: f.artifact,
+      currentAppImage: f.currentAppImage,
+      currentSource: f.currentSource,
+    }),
   )
   assert.deepEqual(await inputs(f), before)
   assert.deepEqual(await witness(sentinel), foreign)
@@ -292,12 +335,17 @@ test('a second staging request cannot replace even this process previous prepare
   const staged = await stageVerifiedApplicationArtifact({
     artifact: f.artifact,
     currentAppImage: f.currentAppImage,
+    currentSource: f.currentSource,
   })
   const receipt = await journal(staged.stagingDirectory, staged.candidatePath)
   const candidate = await witness(staged.candidatePath)
   const receiptWitness = await witness(receipt.file)
   await assert.rejects(
-    stageVerifiedApplicationArtifact({ artifact: f.artifact, currentAppImage: f.currentAppImage }),
+    stageVerifiedApplicationArtifact({
+      artifact: f.artifact,
+      currentAppImage: f.currentAppImage,
+      currentSource: f.currentSource,
+    }),
   )
   assert.deepEqual(await witness(staged.candidatePath), candidate)
   assert.deepEqual(await witness(receipt.file), receiptWitness)
@@ -350,6 +398,7 @@ test('symlinked parent, current image, source and existing claim refuse without 
         stageVerifiedApplicationArtifact({
           artifact: { ...f.artifact, path: source },
           currentAppImage,
+          currentSource: f.currentSource,
         }),
       )
       assert.deepEqual({ old: await witness(oldPath), source: await witness(sourcePath) }, before)
@@ -378,7 +427,11 @@ test('hardlinked or non-executable current images and direct source/current alia
       }
       const before = await inputs(f)
       await assert.rejects(
-        stageVerifiedApplicationArtifact({ artifact, currentAppImage: f.currentAppImage }),
+        stageVerifiedApplicationArtifact({
+          artifact,
+          currentAppImage: f.currentAppImage,
+          currentSource: f.currentSource,
+        }),
       )
       assert.deepEqual(await inputs(f), before)
     })
@@ -392,7 +445,11 @@ test('revoked source authority before writing preserves both inputs', async (t) 
     throw new Error('Owned capability was revoked before staging.')
   }
   await assert.rejects(
-    stageVerifiedApplicationArtifact({ artifact: f.artifact, currentAppImage: f.currentAppImage }),
+    stageVerifiedApplicationArtifact({
+      artifact: f.artifact,
+      currentAppImage: f.currentAppImage,
+      currentSource: f.currentSource,
+    }),
   )
   assert.ok(f.state.calls >= 1)
   assert.deepEqual(await inputs(f), before)
@@ -408,7 +465,11 @@ test('authority capture is bracketed by native revalidation and refuses changed 
     }
   }
   await assert.rejects(
-    stageVerifiedApplicationArtifact({ artifact, currentAppImage: f.currentAppImage }),
+    stageVerifiedApplicationArtifact({
+      artifact,
+      currentAppImage: f.currentAppImage,
+      currentSource: f.currentSource,
+    }),
   )
   assert.deepEqual(await inputs(f), before)
   await assert.rejects(fs.lstat(f.stagingDirectory), { code: 'ENOENT' })
@@ -441,7 +502,11 @@ test('revocation observed after the actual copy leaves a failed claim and preser
     }
   }
   await assert.rejects(
-    stageVerifiedApplicationArtifact({ artifact: f.artifact, currentAppImage: f.currentAppImage }),
+    stageVerifiedApplicationArtifact({
+      artifact: f.artifact,
+      currentAppImage: f.currentAppImage,
+      currentSource: f.currentSource,
+    }),
   )
   assert.equal(
     observedCopiedBytes,
@@ -466,6 +531,7 @@ test('signed source hash and exact size are enforced independently of the contro
         stageVerifiedApplicationArtifact({
           artifact: f.artifact,
           currentAppImage: f.currentAppImage,
+          currentSource: f.currentSource,
         }),
       )
       assert.deepEqual(await inputs(f), before)
@@ -563,6 +629,7 @@ test('minimal Linux x64 Type2 AppImage header admission refuses other executable
         stageVerifiedApplicationArtifact({
           artifact: f.artifact,
           currentAppImage: f.currentAppImage,
+          currentSource: f.currentSource,
         }),
       )
       assert.deepEqual(await inputs(f), before)
@@ -712,6 +779,7 @@ test('returned capability rejects byte, permission, inode, journal and canonical
       const staged = await stageVerifiedApplicationArtifact({
         artifact: f.artifact,
         currentAppImage: f.currentAppImage,
+        currentSource: f.currentSource,
       })
       await staged.verifyCompleteSnapshot()
       const observation = await mutate(f, staged)
@@ -738,7 +806,11 @@ test('an unwritable current parent is refused without chmod or partial cleanup o
   await fs.chmod(f.parent, 0o500)
   const before = await inputs(f)
   await assert.rejects(
-    stageVerifiedApplicationArtifact({ artifact: f.artifact, currentAppImage: f.currentAppImage }),
+    stageVerifiedApplicationArtifact({
+      artifact: f.artifact,
+      currentAppImage: f.currentAppImage,
+      currentSource: f.currentSource,
+    }),
   )
   assert.deepEqual(await inputs(f), before)
   assert.equal((await fs.lstat(f.parent)).mode & 0o777, 0o500)
@@ -758,6 +830,7 @@ for (const fault of [
     const staged = await stageVerifiedApplicationArtifact({
       artifact: f.artifact,
       currentAppImage: f.currentAppImage,
+      currentSource: f.currentSource,
     })
     let calls = 0
     f.state.onVerify = async () => {

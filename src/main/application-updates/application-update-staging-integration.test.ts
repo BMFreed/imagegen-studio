@@ -11,9 +11,14 @@ import { test } from 'node:test'
 
 import { canonicalRuntimeReleaseJson } from '../runtime/runtime-release.js'
 import {
+  ApplicationUpdateCurrentSourceError,
   ApplicationUpdateRecoveryRequiredError,
   ApplicationUpdateService,
 } from './application-update-service.js'
+import {
+  type ApplicationUpdateCurrentSource,
+  captureApplicationUpdateCurrentSource,
+} from './application-update-staging.js'
 import { createElectronUpdateChecker, VerifiedAppImageUpdater } from './electron-update-checker.js'
 
 const sha = (bytes: Buffer) => createHash('sha512').update(bytes).digest('base64')
@@ -43,14 +48,40 @@ async function fixture(
       >)
     | null = null,
   scheduleApplicationRelaunch: ((currentAppImage: string) => unknown) | null = null,
+  sourceAvailable = true,
 ) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'igs-staging-consumer-'))
-  t.after(() => fs.rm(root, { force: true, recursive: true }))
+  let currentSource: ApplicationUpdateCurrentSource | null = null
+  const sourceHandles: fs.FileHandle[] = []
+  t.after(async () => {
+    currentSource?.dispose()
+    for (const handle of sourceHandles) {
+      await handle.close()
+    }
+    await fs.rm(root, { force: true, recursive: true })
+  })
   const parent = path.join(root, 'Applications')
   await fs.mkdir(parent, { mode: 0o700 })
   const currentAppImage = path.join(parent, 'Current.AppImage')
   await fs.writeFile(currentAppImage, image(5), { mode: 0o755 })
   await fs.chmod(currentAppImage, 0o755)
+  const archivePath = path.join(root, 'owned-app.asar')
+  const executablePath = path.join(root, 'owned-electron')
+  await fs.writeFile(archivePath, image(11), { mode: 0o600 })
+  await fs.writeFile(executablePath, image(13), { mode: 0o755 })
+  const archive = await fs.open(archivePath, 'r')
+  sourceHandles.push(archive)
+  const executable = await fs.open(executablePath, 'r')
+  sourceHandles.push(executable)
+  const captured = captureApplicationUpdateCurrentSource({
+    archiveFd: archive.fd,
+    archivePath,
+    currentAppImage,
+    executableFd: executable.fd,
+    executablePath,
+  })
+  assert.ok(captured)
+  currentSource = await captured.complete()
   const body = image(7)
   const notes = 'Owned integration declaration.'
   const pair = generateKeyPairSync('ed25519')
@@ -146,8 +177,20 @@ async function fixture(
     assertApplicationClosed,
     readInstallImpact,
     scheduleApplicationRelaunch,
+    { status: 'none' },
+    sourceAvailable ? currentSource : null,
   )
-  return { body, currentAppImage, parent, root, service, updater }
+  return {
+    archivePath,
+    body,
+    currentAppImage,
+    currentSource,
+    executablePath,
+    parent,
+    root,
+    service,
+    updater,
+  }
 }
 
 async function identity(filename: string) {
@@ -162,6 +205,153 @@ async function identity(filename: string) {
     size: s.size,
   }
 }
+
+for (const source of ['current', 'archive', 'executable'] as const) {
+  for (const change of ['bytes', 'same-byte-inode'] as const) {
+    test(`${source}/${change} refuses public Review/preflight before native cache or impact reads`, async (t) => {
+      let impacts = 0
+      let closes = 0
+      let scheduled = 0
+      const f = await fixture(
+        t,
+        true,
+        true,
+        () => {
+          closes++
+        },
+        async () => {
+          impacts++
+          return installImpact()
+        },
+        () => {
+          scheduled++
+          return true
+        },
+      )
+      await f.service.check()
+      await f.service.download('0.2.0')
+      const receipt = await f.service.prepareVerifiedArtifact('0.2.0')
+      const filename =
+        source === 'current'
+          ? f.currentAppImage
+          : source === 'archive'
+            ? f.archivePath
+            : f.executablePath
+      const bytes = await fs.readFile(filename)
+      if (change === 'same-byte-inode') {
+        await fs.rename(filename, path.join(f.root, `retained-${source}`))
+        await fs.writeFile(filename, bytes, { mode: source === 'archive' ? 0o600 : 0o755 })
+      } else {
+        bytes[100] ^= 1
+        await fs.writeFile(filename, bytes)
+      }
+      const changed = await identity(filename)
+      // If the later native verifier were reached, this would retire B as download-error.
+      await fs.writeFile(receipt.path, Buffer.alloc(f.body.length))
+      for (const action of [
+        () => f.service.reviewInstallation('0.2.0'),
+        () => f.service.prepareInstallation('0.2.0'),
+      ]) {
+        await assert.rejects(action, ApplicationUpdateCurrentSourceError)
+      }
+      assert.equal(f.service.getStatus().status, 'downloaded')
+      assert.equal(impacts, 0)
+      assert.equal(closes, 0)
+      assert.equal(scheduled, 0)
+      assert.equal(f.updater.transfers, 1)
+      assert.deepEqual(await fs.readdir(f.parent), ['Current.AppImage'])
+      assert.deepEqual(await identity(filename), changed)
+    })
+  }
+}
+
+test('a source change during actual impact review refuses without retiring a healthy downloaded candidate', async (t) => {
+  let impacts = 0
+  const f = await fixture(
+    t,
+    true,
+    true,
+    () => {},
+    async () => {
+      impacts++
+      const bytes = await fs.readFile(f.archivePath)
+      bytes[100] ^= 1
+      await fs.writeFile(f.archivePath, bytes)
+      return installImpact()
+    },
+    () => true,
+  )
+  await f.service.check()
+  await f.service.download('0.2.0')
+  const receipt = await f.service.prepareVerifiedArtifact('0.2.0')
+  const candidate = await identity(receipt.path)
+  await assert.rejects(f.service.reviewInstallation('0.2.0'), ApplicationUpdateCurrentSourceError)
+  assert.equal(impacts, 1)
+  assert.equal(f.service.getStatus().status, 'downloaded')
+  assert.equal(await f.service.prepareVerifiedArtifact('0.2.0'), receipt)
+  assert.deepEqual(await identity(receipt.path), candidate)
+  assert.deepEqual(await fs.readdir(f.parent), ['Current.AppImage'])
+})
+
+test('postclose source refusal retains the target without claiming Projects remain open', async (t) => {
+  let scheduled = 0
+  const f = await fixture(
+    t,
+    true,
+    true,
+    () => {},
+    null,
+    () => {
+      scheduled++
+      return true
+    },
+  )
+  await f.service.check()
+  await f.service.download('0.2.0')
+  const receipt = await f.service.prepareInstallation('0.2.0')
+  const original = await fs.readFile(f.currentAppImage)
+  await fs.rename(f.currentAppImage, path.join(f.root, 'retained-current'))
+  await fs.writeFile(f.currentAppImage, original, { mode: 0o755 })
+  const replacement = await identity(f.currentAppImage)
+  await assert.rejects(f.service.installAfterClose('0.2.0', receipt), (error: unknown) => {
+    assert.ok(error instanceof Error)
+    assert.equal(error instanceof ApplicationUpdateCurrentSourceError, false)
+    assert.equal(error.message.includes('Projects remain open'), false)
+    return true
+  })
+  assert.equal(scheduled, 0)
+  assert.deepEqual(await identity(f.currentAppImage), replacement)
+  assert.deepEqual(await fs.readdir(f.parent), ['Current.AppImage'])
+  assert.equal(f.service.getStatus().status, 'downloaded')
+})
+
+test('missing current-source capability cannot bypass private staging or public eligibility', async (t) => {
+  const f = await fixture(
+    t,
+    true,
+    true,
+    () => {},
+    async () => installImpact(),
+    () => true,
+    false,
+  )
+  await f.service.check()
+  await f.service.download('0.2.0')
+  await assert.rejects(f.service.prepareInstallation('0.2.0'), ApplicationUpdateCurrentSourceError)
+  await assert.rejects(f.service.reviewInstallation('0.2.0'), ApplicationUpdateCurrentSourceError)
+  for (const action of [
+    () => f.service.stageForInstallation('0.2.0'),
+    () => f.service.installAfterClose('0.2.0'),
+  ]) {
+    await assert.rejects(action, (error: unknown) => {
+      assert.ok(error instanceof Error)
+      assert.equal(error.message.includes('Projects remain open'), false)
+      return true
+    })
+  }
+  assert.equal(f.service.getStatus().status, 'downloaded')
+  assert.deepEqual(await fs.readdir(f.parent), ['Current.AppImage'])
+})
 
 test('signed native parser/cache artifact enters explicit service staging; Download never stages implicitly', async (t) => {
   const f = await fixture(t)
@@ -710,7 +900,12 @@ for (const lane of [
     assert.equal(scheduled, 0)
     assert.deepEqual(await identity(f.currentAppImage), before)
     assert.deepEqual(await fs.readdir(f.parent), ['Current.AppImage'])
-    if (['missing-close', 'missing-current-path', 'missing-scheduler'].includes(lane)) {
+    if (lane === 'missing-current-path') {
+      await assert.rejects(
+        f.service.reviewInstallation('0.2.0'),
+        ApplicationUpdateCurrentSourceError,
+      )
+    } else if (['missing-close', 'missing-scheduler'].includes(lane)) {
       assert.equal((await f.service.reviewInstallation('0.2.0')).installationAvailable, false)
     }
   })

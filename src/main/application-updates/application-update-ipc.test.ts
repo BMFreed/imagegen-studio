@@ -10,7 +10,10 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { registerApplicationUpdateIpc } from './application-update-ipc.js'
-import { ApplicationUpdateRecoveryRequiredError } from './application-update-service.js'
+import {
+  ApplicationUpdateCurrentSourceError,
+  ApplicationUpdateRecoveryRequiredError,
+} from './application-update-service.js'
 
 type Handler = Parameters<Parameters<typeof registerApplicationUpdateIpc>[0]['handle']>[1]
 type Request = Parameters<Handler>[0]
@@ -485,6 +488,44 @@ test('an arbitrary native error with the recovery code cannot impersonate the ty
   f.controls.reviewInstallation = async () => {
     throw Object.assign(new Error('/private/unknown'), {
       code: 'APPLICATION_UPDATE_RECOVERY_REQUIRED',
+    })
+  }
+  failure(await f.invoke('reviewInstallation', ['0.1.0']), 'APPLICATION_UPDATE_PREVIEW_FAILED')
+})
+
+for (const action of ['reviewInstallation', 'install'] as const) {
+  test(`${action} normalizes source-consistency refusal without preserving private diagnostics or close authority`, async () => {
+    const f = fixture()
+    const error = new ApplicationUpdateCurrentSourceError()
+    error.message = '/private/native-archive/source?token=secret'
+    if (action === 'install') {
+      await f.invoke('reviewInstallation', ['0.1.0'])
+      f.controls.install = async () => {
+        throw error
+      }
+    } else {
+      f.controls.reviewInstallation = async () => {
+        throw error
+      }
+    }
+    assert.deepEqual(
+      failure(await f.invoke(action, ['0.1.0']), 'APPLICATION_UPDATE_CURRENT_SOURCE_UNAVAILABLE'),
+      {
+        code: 'APPLICATION_UPDATE_CURRENT_SOURCE_UNAVAILABLE',
+        message:
+          'The application changed or could not be checked. Restart ImageGen Studio before installing an update. Your Projects remain open.',
+      },
+    )
+    failure(await f.invoke('install', ['0.1.0']), 'APPLICATION_UPDATE_INSTALL_FAILED')
+    assert.equal(f.installationVersions.length, action === 'install' ? 1 : 0)
+  })
+}
+
+test('a native error cannot impersonate source-consistency refusal by its code', async () => {
+  const f = fixture()
+  f.controls.reviewInstallation = async () => {
+    throw Object.assign(new Error('/private/changed'), {
+      code: 'APPLICATION_UPDATE_CURRENT_SOURCE_UNAVAILABLE',
     })
   }
   failure(await f.invoke('reviewInstallation', ['0.1.0']), 'APPLICATION_UPDATE_PREVIEW_FAILED')

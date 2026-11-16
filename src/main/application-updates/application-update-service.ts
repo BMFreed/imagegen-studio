@@ -18,6 +18,7 @@ import type { VerifiedApplicationArtifact } from './electron-update-checker.js'
 
 import {
   type ActivatedApplicationUpdate,
+  type ApplicationUpdateCurrentSource,
   type ApplicationUpdateStartupInspection,
   type BackedUpApplicationUpdate,
   inspectRetainedApplicationUpdate,
@@ -58,6 +59,18 @@ export class ApplicationUpdateRecoveryRequiredError extends Error {
   }
 }
 
+/** Pre-close refusal only; no update failure may implicitly close an open Project. */
+export class ApplicationUpdateCurrentSourceError extends Error {
+  readonly code = 'APPLICATION_UPDATE_CURRENT_SOURCE_UNAVAILABLE'
+
+  constructor() {
+    super(
+      'The application changed or could not be checked. Restart ImageGen Studio before installing an update. Your Projects remain open.',
+    )
+    this.name = 'ApplicationUpdateCurrentSourceError'
+  }
+}
+
 export class ApplicationUpdateService {
   private checker: ApplicationUpdateChecker | null = null
   private pendingCheck: Promise<ApplicationUpdateSnapshot> | null = null
@@ -85,12 +98,31 @@ export class ApplicationUpdateService {
     private readonly scheduleApplicationRelaunch:
       ((currentAppImage: string) => unknown) | null = null,
     startupInspection: ApplicationUpdateStartupInspection = { status: 'none' },
+    private readonly currentSource: ApplicationUpdateCurrentSource | null = null,
   ) {
     if (!isApplicationUpdateVersion(currentVersion)) {
       throw new Error('Invalid application version.')
     }
     this.retainedAtStartup = startupInspection.status === 'retained'
     this.snapshot = this.empty(configured ? 'idle' : 'unavailable')
+  }
+
+  /** Main calls this after its final document/close checks, with no await before normal close. */
+  assertCurrentSourceSnapshot(): void {
+    try {
+      if (!this.currentSource || this.currentSource.currentAppImage !== this.currentAppImage) {
+        throw new Error('Current application sources are unavailable.')
+      }
+      const result: unknown = this.currentSource.assertCurrentSnapshot()
+      if (result !== undefined) {
+        if (result instanceof Promise) {
+          void result.catch(() => undefined)
+        }
+        throw new Error('The current-source assertion must be synchronous.')
+      }
+    } catch {
+      throw new ApplicationUpdateCurrentSourceError()
+    }
   }
 
   async check(): Promise<ApplicationUpdateSnapshot> {
@@ -264,6 +296,7 @@ export class ApplicationUpdateService {
   /** Read-only pre-close eligibility. The exact capability must be rebound after normal close. */
   async prepareInstallation(expectedVersion: string): Promise<VerifiedApplicationArtifact> {
     await this.assertNoRetainedInstallation()
+    await this.verifyCurrentSource()
     if (
       !this.currentAppImage ||
       !this.assertApplicationClosed ||
@@ -271,7 +304,9 @@ export class ApplicationUpdateService {
     ) {
       throw new Error('Application update installation is unavailable.')
     }
-    return await this.prepareVerifiedArtifact(expectedVersion)
+    const artifact = await this.prepareVerifiedArtifact(expectedVersion)
+    await this.verifyCurrentSource()
+    return artifact
   }
 
   /** Main-private gate; public downloaded snapshots never grant installer authority. */
@@ -312,14 +347,18 @@ export class ApplicationUpdateService {
   /** Advisory inspection only: never prepares a binary, starts close or grants install authority. */
   async reviewInstallation(expectedVersion: string): Promise<ApplicationUpdateInstallPreview> {
     await this.assertNoRetainedInstallation()
+    await this.verifyCurrentSource()
     if (!this.readInstallImpact) {
       throw new Error('Application update preview is unavailable.')
     }
     const artifact = await this.prepareVerifiedArtifact(expectedVersion)
+    await this.verifyCurrentSource()
     const impact = await this.readInstallImpact()
+    await this.verifyCurrentSource()
     if ((await this.prepareVerifiedArtifact(expectedVersion)) !== artifact) {
       throw new Error('The application release selection changed.')
     }
+    await this.verifyCurrentSource()
     const preview = {
       ...impact,
       availableVersion: expectedVersion,
@@ -343,6 +382,14 @@ export class ApplicationUpdateService {
     if (this.currentAppImage === null) {
       throw new Error('Application update staging is unavailable.')
     }
+    let currentSource: ApplicationUpdateCurrentSource
+    try {
+      currentSource = await this.verifyCurrentSource()
+    } catch {
+      // This private path is also reached after irreversible close. Its diagnostic must never
+      // claim that Projects remain open or invite a return to disposed editing state.
+      throw new Error('The current application sources are unavailable for update staging.')
+    }
     const artifact = await this.prepareVerifiedArtifact(expectedVersion)
     if (expectedArtifact && artifact !== expectedArtifact) {
       throw new Error('The application release selection changed after close was requested.')
@@ -350,6 +397,7 @@ export class ApplicationUpdateService {
     const staged = await stageVerifiedApplicationArtifact({
       artifact,
       currentAppImage: this.currentAppImage,
+      currentSource,
     })
     await this.prepareVerifiedArtifact(expectedVersion)
     const assertSelection = () => {
@@ -453,6 +501,18 @@ export class ApplicationUpdateService {
       status,
       totalBytes: null,
       verification: null,
+    }
+  }
+
+  private async verifyCurrentSource(): Promise<ApplicationUpdateCurrentSource> {
+    try {
+      this.assertCurrentSourceSnapshot()
+      const source = this.currentSource!
+      await source.verifyCompleteSnapshot()
+      this.assertCurrentSourceSnapshot()
+      return source
+    } catch {
+      throw new ApplicationUpdateCurrentSourceError()
     }
   }
 }

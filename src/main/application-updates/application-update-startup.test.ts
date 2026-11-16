@@ -20,6 +20,7 @@ import type { VerifiedApplicationArtifact } from './electron-update-checker.js'
 import { canonicalRuntimeReleaseJson } from '../runtime/runtime-release.js'
 import { verifyApplicationReleaseAuthority } from './application-release.js'
 import {
+  type ApplicationUpdateCurrentSource,
   inspectRetainedApplicationUpdate,
   stageVerifiedApplicationArtifact,
 } from './application-update-staging.js'
@@ -90,6 +91,40 @@ function release(body: Buffer, notes: unknown = 'Owned offline startup fixture; 
     trust,
   }
 }
+
+/**
+ * Explicit controlled source port for the legacy private transaction matrix, not a native source
+ * observation.
+ */
+async function fixtureCurrentSource(
+  currentAppImage: string,
+): Promise<ApplicationUpdateCurrentSource> {
+  const info = await fs.lstat(currentAppImage, { bigint: true })
+  return Object.freeze({
+    assertCurrentSnapshot: () => undefined,
+    currentAppImage,
+    currentImage: Object.freeze({
+      identity: Object.freeze({
+        ctimeNs: String(info.ctimeNs),
+        dev: String(info.dev),
+        gid: String(info.gid),
+        ino: String(info.ino),
+        mode: String(info.mode),
+        mtimeNs: String(info.mtimeNs),
+        nlink: String(info.nlink),
+        sizeBytes: Number(info.size),
+        uid: String(info.uid),
+      }),
+      sha512: createHash('sha512')
+        .update(await fs.readFile(currentAppImage))
+        .digest('base64'),
+      sizeBytes: Number(info.size),
+    }),
+    dispose: () => undefined,
+    verifyCompleteSnapshot: async () => undefined,
+  })
+}
+
 async function fixture(t: Pick<TestContext, 'after'>, notes?: unknown, paddedEnvelope = false) {
   const root = await fs.mkdtemp(path.join(tmpdir(), 'igs-app-update-startup-'))
   const applications = path.join(root, 'applications')
@@ -124,7 +159,12 @@ async function fixture(t: Pick<TestContext, 'after'>, notes?: unknown, paddedEnv
       assert.equal(sha512(await fs.readFile(source)), signed.manifest.artifact.sha512)
     },
   })
-  const staged = await stageVerifiedApplicationArtifact({ artifact, currentAppImage })
+  const currentSource = await fixtureCurrentSource(currentAppImage)
+  const staged = await stageVerifiedApplicationArtifact({
+    artifact,
+    currentAppImage,
+    currentSource,
+  })
   const backed = await staged.prepareBackup()
   const active = await backed.activate(() => undefined)
   t.after(async () => {

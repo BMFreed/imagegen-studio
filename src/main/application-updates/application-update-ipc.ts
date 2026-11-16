@@ -15,7 +15,10 @@ import {
   isApplicationUpdateVersion,
 } from '../../shared/application-updates.js'
 
-import { ApplicationUpdateRecoveryRequiredError } from './application-update-service.js'
+import {
+  ApplicationUpdateCurrentSourceError,
+  ApplicationUpdateRecoveryRequiredError,
+} from './application-update-service.js'
 
 type Caller = { mainFrame: unknown }
 type Request = { sender: unknown; senderFrame: unknown }
@@ -44,6 +47,11 @@ const recoveryRequired = () =>
   failure(
     'APPLICATION_UPDATE_RECOVERY_REQUIRED',
     'Application update recovery is required before installation. Your Projects remain open.',
+  )
+const currentSourceUnavailable = () =>
+  failure(
+    'APPLICATION_UPDATE_CURRENT_SOURCE_UNAVAILABLE',
+    'The application changed or could not be checked. Restart ImageGen Studio before installing an update. Your Projects remain open.',
   )
 
 /** Getter is read-only. The service owns deduplication, metadata and every actual network check. */
@@ -119,10 +127,12 @@ export function registerApplicationUpdateIpc(
           }
           return error instanceof ApplicationUpdateRecoveryRequiredError
             ? recoveryRequired()
-            : failure(
-                'APPLICATION_UPDATE_INSTALL_FAILED',
-                'The application could not start installation. Review the update and try again.',
-              )
+            : error instanceof ApplicationUpdateCurrentSourceError
+              ? currentSourceUnavailable()
+              : failure(
+                  'APPLICATION_UPDATE_INSTALL_FAILED',
+                  'The application could not start installation. Review the update and try again.',
+                )
         } finally {
           installationPending = false
         }
@@ -171,6 +181,9 @@ export function registerApplicationUpdateIpc(
         }
         if (error instanceof ApplicationUpdateRecoveryRequiredError) {
           return recoveryRequired()
+        }
+        if (error instanceof ApplicationUpdateCurrentSourceError) {
+          return currentSourceUnavailable()
         }
         return failure(
           channel === ipcChannels.applicationUpdates.reviewInstallation

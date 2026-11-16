@@ -374,3 +374,34 @@ rollback/delete/retirement. Backup A не получает доверия из �
 Нужные exclusive ownership, executing-body proof и recovery/finalization consumer
 остаются следующим отдельным этапом. Ни actual renderer load, ни per-dataRoot
 single-instance lock эту границу не закрывают.
+
+
+### Captured source consistency before close and publication
+
+[Source-consistency consumer](../engineering/phase-5-application-update-source-consistency-research.md)
+сохраняет одну ephemeral observation cached native ASAR descriptor, executable
+и captured APPIMAGE. Ранний capture синхронный и metadata-only; полные hashes
+завершаются под whenReady без смены baseline. Точный pinned Electron layout/key
+обязателен; unsupported binding или неясный FD не заменяется свежим ASAR open.
+Физические ASAR metadata читает original-fs. Runtime0664/0775 допустимы как
+наблюдаемые modes; их drift и world-write отказываются. Mutable stage rules
+остаются прежними. Native borrowed FD и shared offsets не закрываются/меняются.
+
+После прежнего retained-stage veto Review/preflight повторно проверяют sources
+до artifact/impact reads и после awaits; Main выполняет sync assertion перед
+window.close. Здоровый скачанный B не превращается в download-error при
+изменении current A. Существующий stage получает exact captured current-image
+FileSnapshot и не выбирает новый A после close. Последний synchronous source
+guard предшествует rename. Own activation потребляет old-target expectation;
+последующие owned target/backup/journal guards продолжают работать.
+
+Before-close typed refusal: `The application changed or could not be checked.
+Restart ImageGen Studio before installing an update. Your Projects remain open.`
+Project access/Save, explicit Check/Download/status сохраняются. Postseal failure
+сохраняет прежний sealed normal-exit путь и не обещает открытые Projects.
+
+Это стабильность наблюдаемых файлов после capture: не proof ранее загруженной
+V8 memory, связи ASAR/executable с signed outer image, всех unpacked libraries,
+healthy startup или global ownership. Pre-capture B1/B2 mismatch, legacy/unleased
+процессы, разные dataRoots и retirement/recovery остаются открытыми. В Product,
+provenance и persisted journal новая source capability не сериализуется.

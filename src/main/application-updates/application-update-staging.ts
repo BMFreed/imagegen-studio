@@ -18,6 +18,7 @@
  * reauthenticates the fixed target on disk; no crash adoption or independent helper is introduced.
  */
 import { createHash, randomUUID } from 'node:crypto'
+import * as nodeFs from 'node:fs'
 import {
   type BigIntStats,
   closeSync,
@@ -30,6 +31,7 @@ import {
   renameSync,
 } from 'node:fs'
 import * as fs from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 
 import type { VerifiedApplicationArtifact } from './electron-update-checker.js'
@@ -94,6 +96,18 @@ export interface RolledBackApplicationUpdate {
 
 export type ApplicationUpdateStartupInspection =
   { status: 'none' } | { status: 'retained'; targetAuthentication: 'unverified' | 'verified' }
+export type ApplicationUpdateCurrentImageSnapshot = FileSnapshot
+export type ApplicationUpdateCurrentSource = Readonly<{
+  assertCurrentSnapshot: () => void
+  currentAppImage: string
+  currentImage: FileSnapshot
+  dispose: () => void
+  verifyCompleteSnapshot: () => Promise<void>
+}>
+export type ApplicationUpdateCurrentSourceCapture = Readonly<{
+  complete: () => Promise<ApplicationUpdateCurrentSource>
+  dispose: () => void
+}>
 type Phase =
   | 'activated'
   | 'activating'
@@ -115,6 +129,7 @@ type PhaseSnapshot = Readonly<{
 }>
 type FailureCode = 'BUSY' | 'FAILED' | 'INVALID' | 'RECOVERY_REQUIRED' | 'UNSAFE'
 type DirectoryIdentity = Readonly<{ dev: string; ino: string }>
+
 type FileIdentity = Readonly<{
   ctimeNs: string
   dev: string
@@ -126,7 +141,28 @@ type FileIdentity = Readonly<{
   sizeBytes: number
   uid: string
 }>
+
 type FileSnapshot = Readonly<{ identity: FileIdentity; sha512: string; sizeBytes: number }>
+
+type CurrentSourceFs = Pick<
+  typeof nodeFs,
+  'closeSync' | 'fstatSync' | 'lstatSync' | 'openSync' | 'read' | 'realpathSync'
+>
+type CurrentSourceParent = Readonly<{
+  fd: number
+  gid: string
+  identity: DirectoryIdentity
+  mode: string
+  path: string
+  uid: string
+}>
+type CurrentSourceFile = Readonly<{
+  borrowedFd?: number
+  fd: number
+  identity: FileIdentity
+  parent: CurrentSourceParent
+  path: string
+}>
 
 type Reader = { handle: fs.FileHandle; identity: FileIdentity; path: string; visible: string }
 
@@ -187,16 +223,315 @@ export class AppUpdateRelaunchError extends Error {
   }
 }
 
+/** Fixed diagnostic: observation is consistency only, never executing-body authentication. */
+export class AppUpdateCurrentSourceError extends Error {
+  readonly code = 'APPLICATION_UPDATE_CURRENT_SOURCE_CHANGED'
+
+  constructor() {
+    super(
+      'The application update source could not be verified. Restart the application before installing an update.',
+    )
+    this.name = 'AppUpdateCurrentSourceError'
+  }
+}
+
+/**
+ * Invoke4875 rasterSnapshotCapture.ts captureDocumentSnapshot/captureRasterSnapshot and callers
+ * engine.ts -> generationComposite.ts -> prepareCanvasInvocation.ts -> invocationSubmit.ts: hold
+ * immutable source identity, recheck across every async read, and guard the final consumer. Backend
+ * analogy: InstallStaging.protect_source -> probe -> before_transfer/begin_transfer. Invoke has no
+ * Electron cached-ASAR/proc descriptor adapter; this disclosed Linux boundary duplicates only known
+ * borrowed descriptors. It never reopens an archive pathname or establishes loaded V8 identity,
+ * runtime/AppImage signature equivalence, global ownership or retirement.
+ */
+export function captureApplicationUpdateCurrentSource(input: {
+  archiveFd: number
+  archivePath: string
+  currentAppImage: string
+  executableFd: number
+  executablePath: string
+}): ApplicationUpdateCurrentSourceCapture {
+  let physical: CurrentSourceFs | undefined
+  const owned = new Set<number>()
+  let disposed = false
+  let failed = false
+  let active = 0
+  let completed: Promise<ApplicationUpdateCurrentSource> | null = null
+  const closeOwned = () => {
+    for (const fd of owned) {
+      owned.delete(fd)
+      try {
+        physical!.closeSync(fd)
+      } catch {
+        /* No borrowed descriptor is ever disposed. */
+      }
+    }
+  }
+  const dispose = () => {
+    disposed = true
+    if (!active) {
+      closeOwned()
+    }
+  }
+  try {
+    need(process.platform === 'linux' && process.arch === 'x64', 'UNSAFE')
+    // Electron's normal fs facade virtualizes app.asar metadata and caches realpath. Select the
+    // physical facade explicitly, without a fallback in Electron, and bind its methods once.
+    const raw: typeof nodeFs = process.versions.electron
+      ? (createRequire(process.execPath)('original-fs') as typeof nodeFs)
+      : nodeFs
+    physical = Object.freeze({
+      closeSync: raw.closeSync.bind(raw),
+      fstatSync: raw.fstatSync.bind(raw),
+      lstatSync: raw.lstatSync.bind(raw),
+      openSync: raw.openSync.bind(raw),
+      read: raw.read.bind(raw),
+      realpathSync: raw.realpathSync.bind(raw),
+    })
+    const physicalFs = physical
+    const { archiveFd, archivePath, currentAppImage, executableFd, executablePath } = input
+    for (const borrowedFd of [archiveFd, executableFd]) {
+      need(
+        Number.isSafeInteger(borrowedFd) && borrowedFd >= 0 && borrowedFd <= 0x7f_ff_ff_ff,
+        'UNSAFE',
+      )
+    }
+    const hold = (visible: string, borrowedFd?: number): CurrentSourceFile => {
+      need(canonicalPath(visible), 'UNSAFE')
+      if (borrowedFd !== undefined) {
+        need(
+          Number.isSafeInteger(borrowedFd) && borrowedFd >= 0 && borrowedFd <= 0x7f_ff_ff_ff,
+          'UNSAFE',
+        )
+      }
+      const parentPath = path.dirname(visible)
+      need(physicalFs.realpathSync(parentPath) === parentPath, 'UNSAFE')
+      const parentFd = physicalFs.openSync(parentPath, DIRECTORY_FLAGS)
+      owned.add(parentFd)
+      const directory = physicalFs.fstatSync(parentFd, { bigint: true })
+      need(directory.isDirectory(), 'UNSAFE')
+      const parent: CurrentSourceParent = Object.freeze({
+        fd: parentFd,
+        gid: String(directory.gid),
+        identity: Object.freeze({ dev: String(directory.dev), ino: String(directory.ino) }),
+        mode: String(directory.mode),
+        path: parentPath,
+        uid: String(directory.uid),
+      })
+      // Following this one known proc magic link duplicates the physical regular file. It does
+      // not use the archive pathname, and all borrowed/own/path identities are compared below.
+      const fd =
+        borrowedFd === undefined
+          ? physicalFs.openSync(
+              path.join(`/proc/self/fd/${parentFd}`, path.basename(visible)),
+              FILE_FLAGS,
+            )
+          : physicalFs.openSync(
+              `/proc/self/fd/${borrowedFd}`,
+              constants.O_RDONLY | constants.O_NONBLOCK,
+            )
+      owned.add(fd)
+      const info = physicalFs.fstatSync(fd, { bigint: true })
+      need(
+        info.isFile() &&
+          info.nlink === 1n &&
+          info.size > 0n &&
+          info.size <= BigInt(Number.MAX_SAFE_INTEGER) &&
+          (info.uid === 0n || info.uid === BigInt(process.geteuid!())) &&
+          (info.mode & (borrowedFd === undefined ? 0o22n : 0o2n)) === 0n,
+        'UNSAFE',
+      )
+      if (borrowedFd === undefined) {
+        need(info.uid === BigInt(process.geteuid!()) && (info.mode & 0o7777n) === 0o755n, 'UNSAFE')
+      }
+      return Object.freeze({ borrowedFd, fd, identity: fileIdentity(info), parent, path: visible })
+    }
+    const image = hold(currentAppImage)
+    const archive = hold(archivePath, archiveFd)
+    const executable = hold(executablePath, executableFd)
+    const files = [image, archive, executable] as const
+    const assertAll = () => {
+      try {
+        need(!disposed && !failed, 'UNSAFE')
+        for (const file of files) {
+          const { parent } = file
+          for (const info of [
+            physicalFs.fstatSync(parent.fd, { bigint: true }),
+            physicalFs.lstatSync(parent.path, { bigint: true }),
+          ]) {
+            need(
+              info.isDirectory() &&
+                !info.isSymbolicLink() &&
+                (info.uid === 0n || info.uid === BigInt(process.geteuid!())) &&
+                // Packaged runtime sources may expose 0664/0775 even on readonly SquashFS.
+                // They are frozen observations, not mutable publication roots or trust evidence.
+                // The current AppImage's own mutable parent retains the stricter admission.
+                (info.mode & (file.borrowedFd === undefined ? 0o22n : 0o2n)) === 0n &&
+                String(info.dev) === parent.identity.dev &&
+                String(info.ino) === parent.identity.ino &&
+                String(info.mode) === parent.mode &&
+                String(info.gid) === parent.gid &&
+                String(info.uid) === parent.uid,
+              'UNSAFE',
+            )
+          }
+          need(physicalFs.realpathSync(parent.path) === parent.path, 'UNSAFE')
+          const observed = [
+            physicalFs.fstatSync(file.fd, { bigint: true }),
+            physicalFs.lstatSync(file.path, { bigint: true }),
+            physicalFs.lstatSync(
+              path.join(`/proc/self/fd/${parent.fd}`, path.basename(file.path)),
+              { bigint: true },
+            ),
+          ]
+          if (file.borrowedFd !== undefined) {
+            observed.push(physicalFs.fstatSync(file.borrowedFd, { bigint: true }))
+          }
+          for (const info of observed) {
+            need(
+              info.isFile() &&
+                !info.isSymbolicLink() &&
+                sameIdentity(fileIdentity(info), file.identity),
+              'UNSAFE',
+            )
+          }
+          need(physicalFs.realpathSync(file.path) === file.path, 'UNSAFE')
+          need(physicalFs.realpathSync(`/proc/self/fd/${file.fd}`) === file.path, 'UNSAFE')
+          if (file.borrowedFd !== undefined) {
+            need(
+              physicalFs.realpathSync(`/proc/self/fd/${file.borrowedFd}`) === file.path,
+              'UNSAFE',
+            )
+          }
+        }
+      } catch {
+        failed = true
+        throw new AppUpdateCurrentSourceError()
+      }
+    }
+    assertAll()
+    const hashFile = async (file: CurrentSourceFile): Promise<FileSnapshot> => {
+      const hash = createHash('sha512')
+      const chunk = Buffer.allocUnsafe(CHUNK_BYTES)
+      let count = 0
+      for (;;) {
+        assertAll()
+        const bytesRead = await new Promise<number>((resolve, reject) => {
+          physicalFs.read(file.fd, chunk, 0, chunk.length, count, (error, length) => {
+            if (error) {
+              reject(error)
+            } else {
+              resolve(length)
+            }
+          })
+        })
+        assertAll()
+        if (!bytesRead) {
+          break
+        }
+        count += bytesRead
+        need(count <= file.identity.sizeBytes, 'UNSAFE')
+        hash.update(chunk.subarray(0, bytesRead))
+      }
+      need(count === file.identity.sizeBytes, 'UNSAFE')
+      return Object.freeze({
+        identity: file.identity,
+        sha512: hash.digest('base64'),
+        sizeBytes: count,
+      })
+    }
+    const inspect = async (): Promise<readonly [FileSnapshot, FileSnapshot, FileSnapshot]> => {
+      active++
+      try {
+        assertAll()
+        const snapshots = [
+          await hashFile(image),
+          await hashFile(archive),
+          await hashFile(executable),
+        ] as const
+        assertAll()
+        return snapshots
+      } catch {
+        failed = true
+        throw new AppUpdateCurrentSourceError()
+      } finally {
+        active--
+        if (disposed && !active) {
+          closeOwned()
+        }
+      }
+    }
+    return Object.freeze({
+      complete: () => {
+        completed ??= inspect().then((initial) => {
+          assertAll()
+          return Object.freeze({
+            assertCurrentSnapshot: assertAll,
+            currentAppImage,
+            currentImage: initial[0],
+            dispose,
+            verifyCompleteSnapshot: async () => {
+              const current = await inspect()
+              try {
+                need(
+                  current.every((value, index) => value.sha512 === initial[index].sha512),
+                  'UNSAFE',
+                )
+                assertAll()
+              } catch {
+                failed = true
+                throw new AppUpdateCurrentSourceError()
+              }
+            },
+          })
+        })
+        return completed
+      },
+      dispose,
+    })
+  } catch {
+    failed = true
+    dispose()
+    throw new AppUpdateCurrentSourceError()
+  }
+}
+
 /** Main-private stage capability. No caller-provided destination, installer or cleanup authority. */
 export async function stageVerifiedApplicationArtifact(input: {
   artifact: VerifiedApplicationArtifact
   currentAppImage: string
+  currentSource: ApplicationUpdateCurrentSource
 }): Promise<StagedApplicationUpdate> {
   need(input && typeof input === 'object', 'INVALID')
-  const { artifact, currentAppImage } = input
+  const { artifact, currentAppImage, currentSource } = input
   need(process.platform === 'linux' && process.arch === 'x64', 'INVALID')
   need(canonicalPath(currentAppImage) && artifact && canonicalPath(artifact.path), 'INVALID')
   need(typeof artifact.verifyCompleteSnapshot === 'function', 'INVALID')
+  need(currentSource && currentSource.currentAppImage === currentAppImage, 'INVALID')
+  need(
+    typeof currentSource.verifyCompleteSnapshot === 'function' &&
+      typeof currentSource.assertCurrentSnapshot === 'function',
+    'INVALID',
+  )
+  const currentSourceSnapshot = freezeJson(
+    JSON.parse(
+      canonicalRuntimeReleaseJson(currentSource.currentImage).toString('utf8'),
+    ) as FileSnapshot,
+  )
+  const verifyCurrentSource = currentSource.verifyCompleteSnapshot.bind(currentSource)
+  const assertCurrentSource = currentSource.assertCurrentSnapshot.bind(currentSource)
+  let sourceConsumed = false
+  const assertSource = async () => {
+    need(!sourceConsumed && currentSource.currentAppImage === currentAppImage, 'UNSAFE')
+    await verifyCurrentSource()
+    need(
+      canonicalRuntimeReleaseJson(currentSource.currentImage).equals(
+        canonicalRuntimeReleaseJson(currentSourceSnapshot),
+      ),
+      'UNSAFE',
+    )
+    assertCurrentSource()
+  }
   const sourcePath = artifact.path
   let manifest: ApplicationReleaseManifest
   let manifestBytes: Buffer
@@ -211,9 +546,12 @@ export async function stageVerifiedApplicationArtifact(input: {
   // The caller's verifier owns signature admission; this owner never accepts a new trust source.
   let authority: ReturnType<typeof copyApplicationReleaseAuthority>
   try {
+    await assertSource()
     await verifyArtifact()
+    await assertSource()
     authority = copyApplicationReleaseAuthority(artifact.authority)
     await verifyArtifact()
+    await assertSource()
   } catch {
     throw new AppUpdateStagingError('INVALID')
   }
@@ -242,7 +580,9 @@ export async function stageVerifiedApplicationArtifact(input: {
   )
   const assertArtifact = async () => {
     try {
+      await assertSource()
       await verifyArtifact()
+      await assertSource()
     } catch {
       throw new AppUpdateStagingError('INVALID')
     }
@@ -274,6 +614,7 @@ export async function stageVerifiedApplicationArtifact(input: {
       currentAppImage,
       path.join(parent.anchor, path.basename(currentAppImage)),
       0o755,
+      currentSourceSnapshot,
     )
     source = await openReader(sourcePath, sourcePath)
     need(source.identity.sizeBytes === manifest.artifact.sizeBytes, 'INVALID')
@@ -283,6 +624,8 @@ export async function stageVerifiedApplicationArtifact(input: {
     await assertArtifact()
     const volume = await fs.statfs(parent.anchor, { bigint: true })
     need(volume.bavail * volume.bsize >= BigInt(manifest.artifact.sizeBytes), 'FAILED')
+    await assertSource()
+    assertCurrentSource()
     try {
       await fs.mkdir(path.join(parent.anchor, stageName), { mode: 0o700 })
       created = true
@@ -448,6 +791,9 @@ export async function stageVerifiedApplicationArtifact(input: {
       publish?: (anchors: { parent: string; staging: string }) => T,
     ): T | undefined {
       need(phase !== 'failed', 'RECOVERY_REQUIRED')
+      if (!sourceConsumed) {
+        assertCurrentSource()
+      }
       const parentFd = openSync(parentPath, DIRECTORY_FLAGS)
       let stageFd: number | undefined
       try {
@@ -730,6 +1076,7 @@ export async function stageVerifiedApplicationArtifact(input: {
                   path.join(anchors.staging, CANDIDATE),
                   path.join(anchors.parent, path.basename(currentAppImage)),
                 )
+                sourceConsumed = true
                 adoptMovedReader(
                   moving,
                   currentAppImage,

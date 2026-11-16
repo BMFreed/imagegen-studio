@@ -21,7 +21,10 @@ import type { ApplicationReleaseManifest } from './application-release.js'
 import type { VerifiedApplicationArtifact } from './electron-update-checker.js'
 
 import { canonicalRuntimeReleaseJson } from '../runtime/runtime-release.js'
-import { stageVerifiedApplicationArtifact } from './application-update-staging.js'
+import {
+  type ApplicationUpdateCurrentSource,
+  stageVerifiedApplicationArtifact,
+} from './application-update-staging.js'
 
 const hash = (bytes: Buffer) => createHash('sha512').update(bytes).digest('base64')
 
@@ -38,6 +41,39 @@ function image(marker: number, length = 4096): Buffer {
   bytes.writeUInt16LE(56, 54)
   bytes.writeUInt16LE(64, 58)
   return bytes
+}
+
+/**
+ * Explicit controlled source port for the legacy private transaction matrix, not a native source
+ * observation.
+ */
+async function fixtureCurrentSource(
+  currentAppImage: string,
+): Promise<ApplicationUpdateCurrentSource> {
+  const info = await fs.lstat(currentAppImage, { bigint: true })
+  return Object.freeze({
+    assertCurrentSnapshot: () => undefined,
+    currentAppImage,
+    currentImage: Object.freeze({
+      identity: Object.freeze({
+        ctimeNs: String(info.ctimeNs),
+        dev: String(info.dev),
+        gid: String(info.gid),
+        ino: String(info.ino),
+        mode: String(info.mode),
+        mtimeNs: String(info.mtimeNs),
+        nlink: String(info.nlink),
+        sizeBytes: Number(info.size),
+        uid: String(info.uid),
+      }),
+      sha512: createHash('sha512')
+        .update(await fs.readFile(currentAppImage))
+        .digest('base64'),
+      sizeBytes: Number(info.size),
+    }),
+    dispose: () => undefined,
+    verifyCompleteSnapshot: async () => undefined,
+  })
 }
 
 async function witness(file: string) {
@@ -118,10 +154,12 @@ async function fixture(t: Pick<TestContext, 'after'>) {
       await authority.onVerify?.()
     },
   })
+  const currentSource = await fixtureCurrentSource(currentAppImage)
   return {
     artifact,
     authority,
     currentAppImage,
+    currentSource,
     manifest,
     newBytes,
     oldBytes,
@@ -135,6 +173,7 @@ async function prepared(f: Fixture) {
   return await stageVerifiedApplicationArtifact({
     artifact: f.artifact,
     currentAppImage: f.currentAppImage,
+    currentSource: f.currentSource,
   })
 }
 

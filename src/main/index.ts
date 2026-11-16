@@ -134,10 +134,12 @@ import { collectApplicationUpdateInstallPreview } from './application-updates/ap
 import { registerApplicationUpdateIpc } from './application-updates/application-update-ipc.js'
 import { ApplicationUpdateService } from './application-updates/application-update-service.js'
 import {
+  type ApplicationUpdateCurrentSource,
   type ApplicationUpdateStartupInspection,
   inspectRetainedApplicationUpdate,
 } from './application-updates/application-update-staging.js'
 import { createElectronApplicationRelauncher } from './application-updates/electron-application-relaunch.js'
+import { captureElectronApplicationUpdateCurrentSource } from './application-updates/electron-application-source.js'
 import {
   createElectronUpdateChecker,
   VerifiedAppImageUpdater,
@@ -285,6 +287,32 @@ import { createRuntimeRoots, RuntimeManager } from './runtime/index.js'
 import { registerRuntimeSetupIpc } from './runtime/runtime-setup-ipc.js'
 
 const moduleDir = __dirname
+const applicationUpdateAppImage =
+  process.platform === 'linux' ? (process.env['APPIMAGE'] ?? null) : null
+const applicationUpdateSourceCapture = (() => {
+  try {
+    return captureElectronApplicationUpdateCurrentSource({
+      appPath: app.getAppPath(),
+      arch: process.arch,
+      currentAppImage: applicationUpdateAppImage ?? '',
+      electronVersion: process.versions.electron,
+      moduleDir,
+      moduleFilename: __filename,
+      packaged: app.isPackaged,
+      platform: process.platform,
+      resourcesPath: process.resourcesPath,
+    })
+  } catch {
+    return null
+  }
+})()
+process.once('exit', () => {
+  try {
+    applicationUpdateSourceCapture?.dispose()
+  } catch {
+    // Only owned read descriptors are released; source checks cannot prevent normal exit.
+  }
+})
 const paths = resolveAppPaths()
 mkdirSync(paths.dataRoot, { recursive: true })
 app.setName('ImageGen Studio')
@@ -427,6 +455,16 @@ if (!gotInstanceLock) {
   void app
     .whenReady()
     .then(async () => {
+      let applicationUpdateCurrentSource: ApplicationUpdateCurrentSource | null = null
+      try {
+        applicationUpdateCurrentSource = (await applicationUpdateSourceCapture?.complete()) ?? null
+      } catch {
+        try {
+          applicationUpdateSourceCapture?.dispose()
+        } catch {
+          // Failed source capture disables update installation, never ordinary Project startup.
+        }
+      }
       ensureAppPaths(paths)
 
       const database = openAppDatabase(paths.dataRoot, path.join(moduleDir, 'migrations'))
@@ -438,8 +476,6 @@ if (!gotInstanceLock) {
         await database.close()
       }
       closeDatabase = closeStorage
-      const applicationUpdateAppImage =
-        process.platform === 'linux' ? (process.env['APPIMAGE'] ?? null) : null
       let applicationUpdateStartupInspection: ApplicationUpdateStartupInspection = {
         status: 'none',
       }
@@ -1542,6 +1578,7 @@ if (!gotInstanceLock) {
         },
         createElectronApplicationRelauncher(app, process.versions.electron),
         applicationUpdateStartupInspection,
+        applicationUpdateCurrentSource,
       )
       const assertApplicationUpdateActionOpen = () => {
         if (resolvingClose || appDataSealed || closingAfterResolution || exitReady) {
@@ -1592,6 +1629,7 @@ if (!gotInstanceLock) {
             ) {
               throw new Error('Review installation again before closing the application.')
             }
+            applicationUpdateService.assertCurrentSourceSnapshot()
             const intent = { artifact, isCurrent, version }
             pendingApplicationInstallation = intent
             try {

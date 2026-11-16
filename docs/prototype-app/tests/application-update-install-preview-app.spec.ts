@@ -10,7 +10,7 @@ import path from 'node:path'
 
 interface PreviewPlan {
   hold?: boolean
-  kind?: 'error' | 'recovery' | 'throw'
+  kind?: 'error' | 'recovery' | 'source' | 'throw'
   preview?: ApplicationUpdateInstallPreview
 }
 
@@ -22,7 +22,7 @@ interface PreviewFixtureOptions {
 
 interface InstallPlan {
   hold?: boolean
-  kind?: 'error' | 'mismatch' | 'throw'
+  kind?: 'error' | 'mismatch' | 'source' | 'throw'
 }
 
 interface PreviewFixture {
@@ -172,9 +172,16 @@ async function mountPreviewApp(page: Page, options: PreviewFixtureOptions = {}) 
             if (plan.kind === 'throw') {
               throw new Error('Unexpected native detail at /private/fixture/install-preflight.')
             }
-            if (plan.kind === 'error') {
+            if (plan.kind === 'error' || plan.kind === 'source') {
               return {
-                error: { code: 'APPLICATION_UPDATE_INSTALL_FAILED', message: installationFailure },
+                error:
+                  plan.kind === 'source'
+                    ? {
+                        code: 'APPLICATION_UPDATE_CURRENT_SOURCE_UNAVAILABLE',
+                        message:
+                          'The application changed or could not be checked. Restart ImageGen Studio before installing an update. Your Projects remain open.',
+                      }
+                    : { code: 'APPLICATION_UPDATE_INSTALL_FAILED', message: installationFailure },
                 ok: false,
               }
             }
@@ -201,17 +208,21 @@ async function mountPreviewApp(page: Page, options: PreviewFixtureOptions = {}) 
             if (plan.kind === 'throw') {
               throw new Error('Unexpected native detail at /private/fixture/install-preview.')
             }
-            return plan.kind === 'error' || plan.kind === 'recovery'
+            return plan.kind === 'error' || plan.kind === 'recovery' || plan.kind === 'source'
               ? {
                   error: {
                     code:
                       plan.kind === 'recovery'
                         ? 'APPLICATION_UPDATE_RECOVERY_REQUIRED'
-                        : 'APPLICATION_UPDATE_PREVIEW_FAILED',
+                        : plan.kind === 'source'
+                          ? 'APPLICATION_UPDATE_CURRENT_SOURCE_UNAVAILABLE'
+                          : 'APPLICATION_UPDATE_PREVIEW_FAILED',
                     message:
                       plan.kind === 'recovery'
                         ? 'Application update recovery is required before installation. Your Projects remain open.'
-                        : 'Preview unavailable. Try again.',
+                        : plan.kind === 'source'
+                          ? 'The application changed or could not be checked. Restart ImageGen Studio before installing an update. Your Projects remain open.'
+                          : 'Preview unavailable. Try again.',
                   },
                   ok: false,
                 }
@@ -766,3 +777,66 @@ for (const viewport of [
     expect(await calls(page)).toMatchObject({ closeCalls: 0, mutationCalls: [] })
   })
 }
+
+for (const viewport of [
+  { height: 800, width: 1280 },
+  { height: 620, width: 900 },
+]) {
+  test(`changed application refuses review and preserves downloaded candidate at ${viewport.width}×${viewport.height}`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize(viewport)
+    await mountPreviewApp(page, { plans: [{ kind: 'source' }] })
+    await openUpdates(page)
+    await review(page).click()
+    await expect(impact(page)).toContainText(
+      'The application changed or could not be checked. Restart ImageGen Studio before installing an update. Your Projects remain open.',
+    )
+    await expect(impact(page)).not.toContainText('Installation is not available in this build.')
+    await expect(install(page)).toHaveCount(0)
+    await expect(refresh(page)).toBeEnabled()
+    await expect(refresh(page).locator('.n-base-loading')).toHaveCount(0)
+    await expect(later(page)).toBeInViewport()
+    expect(await calls(page)).toMatchObject({
+      closeCalls: 0,
+      installVersions: [],
+      mutationCalls: [],
+      previewVersions: [version],
+    })
+    await page.screenshot({
+      path: testInfo.outputPath(
+        `application-source-refusal-${viewport.width}x${viewport.height}.png`,
+      ),
+    })
+    await later(page).click()
+    await expect(dialog(page)).toHaveCount(0)
+    await expect(page.getByRole('region', { exact: true, name: 'Home' })).toBeVisible()
+    expect(await calls(page)).toMatchObject({ closeCalls: 0, mutationCalls: [] })
+  })
+}
+
+test('source change during Install preflight stays before ordinary close and preserves update review', async ({
+  page,
+}) => {
+  await mountPreviewApp(page, {
+    installs: [{ kind: 'source' }],
+    plans: [{ preview: eligiblePreview }],
+  })
+  await openUpdates(page)
+  await review(page).click()
+  await expect(install(page)).toBeEnabled()
+  await install(page).click()
+  await expect(impact(page)).toContainText(
+    'The application changed or could not be checked. Restart ImageGen Studio before installing an update. Your Projects remain open.',
+  )
+  await expect(install(page)).toHaveCount(0)
+  await expect(refresh(page)).toBeEnabled()
+  expect(await calls(page)).toMatchObject({
+    closeCalls: 0,
+    closeReleases: 0,
+    installVersions: [version],
+    mutationCalls: ['app-install'],
+  })
+  await later(page).click()
+  await expect(dialog(page)).toHaveCount(0)
+})
