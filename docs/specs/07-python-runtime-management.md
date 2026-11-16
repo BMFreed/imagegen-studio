@@ -693,6 +693,17 @@ transport/metadata или второй CUDA child до физически под
 Оба инициатора close и отказные соседи проверены actual-child regressions в
 [Smart Patch installed qualification](../engineering/phase-4-smart-patch-installed-generation-research.md).
 
+## Historical app data and incompatible protocol checkpoint
+
+[Historical29→30](../engineering/phase-5-application-state-upgrade-research.md)
+qualifies the existing startup migration owner and Project Save/reopen across two
+current packaged lifetimes with a deliberately incompatible Node JSONL peer.
+Actual default runtime/client transports refuse it and settle all nine children;
+Projects remain saveable with their empty placeholder preview. This is protocol
+refusal evidence, not an installed historical CPython/worker or ML runtime test.
+The retained data-only checkpoint is not an activatable relocated runtime, and no
+Repair/Install provider or readiness status is promoted.
+
 ## Acceptance criteria
 
 - Приложение запускает worker без установленного системного Python.

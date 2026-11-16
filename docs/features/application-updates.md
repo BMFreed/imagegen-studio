@@ -528,3 +528,19 @@ without HTTP. Full-browser original wrapper exit/duration are unavailable; compl
 test JSON/footer and unit journal are retained. See the linked research for source
 pins, controlled native ports, full/focused visual evidence and retention receipts.
 This does not close recovery mutation or shipping acceptance.
+
+
+### Historical state compatibility checkpoint
+
+[Historical29→30](../engineering/phase-5-application-state-upgrade-research.md) now
+qualifies one actual changed migration through the current packaged startup owner,
+using exact historical producer source and a closed retained checkpoint at the same
+canonical fixture path. It preserves prior rows/IDs/history, adds the empty 0030
+identity table, and proves real Project prompt Save/reopen while actual transports
+reject an incompatible controlled protocol peer. Two normal native exits and nine
+settled wire children are qualified separately from old observer failures.
+
+This is a synthetic empty-layer schema1 Project and source-compatible current
+qualification dependencies. It does not establish arbitrary old-state migration,
+historical desktop/CPython/ML compatibility, automatic production backup, downgrade,
+recovery/retirement or shipping. All public promise statuses remain unchanged.

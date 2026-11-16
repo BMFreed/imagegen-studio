@@ -1,6 +1,22 @@
 # Open Questions
 
-## Current public startup update recovery information
+## Current historical state upgrade qualification
+
+[Historical29→30](./engineering/phase-5-application-state-upgrade-research.md) executes exact historical owners, then the current
+packaged Main on the same owned canonical state with a separately retained checkpoint.
+Final R4 passes two normal lifetimes, actual prompt Save/reopen and nine controlled
+incompatible-protocol child exits. All historical rows/migrations survive startup;
+only the known Project index scan timestamp changes. The new table is empty/STRICT.
+Root's 12 focused DB/worker regressions, migration semantic mutation/rollback/refusal,
+closed-reader metadata controls and final build/scoped lint support this finite gate.
+
+This is source-compatible historical fixture execution and a Node wire peer,
+without historical desktop/old Python/ML or shipping acceptance. Earlier observer
+FAILs remain separate and necessary reproduction materials are retained. Production
+pre-migration backup is still absent; recovery/reinstall/retirement, actual release
+runtime/model matrix and final MVP acceptance remain open. PP8 statuses are unchanged.
+
+## Previous public startup update recovery information
 
 [Startup recovery information](./engineering/phase-5-application-update-recovery-status-research.md) exposes the already captured Main
 inspection in the existing Updates dialog, independently of publisher config.
