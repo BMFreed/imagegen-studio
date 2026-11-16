@@ -1,6 +1,17 @@
 # Implementation Roadmap
 
-## Current private application update transaction
+## Current application update installation preview
+
+[Installation preview](../engineering/phase-5-application-update-install-preview-research.md)
+connects the existing Updates dialog to signed downloaded release inspection and
+Main close-impact getters. It reports current Project/job/result/model impact
+without entering the close flow or granting installation authority. Unknown
+generation storage stays unknown; Check/Download and document/request epochs
+retire old replies. Current Project state is checked again during ordinary close.
+No public Install/relaunch, crash recovery or shipping acceptance is implied.
+Promise statuses remain unchanged. Evidence/limits are recorded in the research.
+
+## Previous private application update transaction
 
 [Application update transaction](../engineering/phase-5-application-update-transaction-research.md)
 extends the same private staging owner through backup, atomic activation and
@@ -3502,8 +3513,7 @@ Release qualification начинается раньше, но итоговый g
 [same-owner transaction](../engineering/phase-5-application-update-transaction-research.md)
 уже имеют отдельные checkpoints; их не нужно создавать заново. Private transaction
 не имеет Install IPC/UI или relaunch consumer. Следующие app-update gates
-по [user-flow/acceptance contract](../features/application-updates.md): полный
-Install preview, отложенная установка при dirty `.igs` и активных jobs/staging,
+по [user-flow/acceptance contract](../features/application-updates.md): отложенная установка при dirty `.igs` и активных jobs/staging,
 публичный Install/relaunch flow, явные adoption/discard сохранённого stage и
 interrupted-update/crash recovery. Private same-owner rollback не закрывает эти
 release gates. Принятая signed compatibility declaration

@@ -5,7 +5,9 @@ import {
   APPLICATION_UPDATE_NOTES_MAX_LENGTH,
   APPLICATION_UPDATE_STATUSES,
   APPLICATION_UPDATE_VERSION_MAX_LENGTH,
+  type ApplicationUpdateInstallPreview,
   type ApplicationUpdateSnapshot,
+  isApplicationUpdateInstallPreview,
   isApplicationUpdateSnapshot,
   isApplicationUpdateVersion,
 } from './application-updates.js'
@@ -26,6 +28,18 @@ const available = (): ApplicationUpdateSnapshot => ({
   releaseNotes: 'Release notes are plain text.',
   status: 'available',
   verification: 'metadata-only',
+})
+
+const installPreview = (): ApplicationUpdateInstallPreview => ({
+  activeModelInstallCount: 0,
+  availableVersion: '0.2.0',
+  generationStorageUnavailable: false,
+  openProjectCount: 2,
+  preparingModelInstallCount: 0,
+  resourceRemovalActive: false,
+  unacceptedResultCount: 3,
+  unfinishedJobCount: 4,
+  unsavedProjectCount: 1,
 })
 
 test('application update snapshots cover the exact explicit check/download state domain', () => {
@@ -253,4 +267,121 @@ test('verification describes signed metadata without exposing installer authorit
   const missing: Partial<ApplicationUpdateSnapshot> = available()
   delete missing.verification
   assert.equal(isApplicationUpdateSnapshot(missing), false)
+})
+
+test('install preview admits exact Main counts and marks unavailable generation counts as unknown', () => {
+  for (const value of [
+    installPreview(),
+    Object.freeze(installPreview()),
+    Object.assign(Object.create(null), installPreview()),
+    { ...installPreview(), openProjectCount: 0, unsavedProjectCount: 0 },
+    { ...installPreview(), openProjectCount: 2, unsavedProjectCount: 2 },
+    { ...installPreview(), unacceptedResultCount: 0, unfinishedJobCount: 0 },
+    { ...installPreview(), resourceRemovalActive: true },
+    {
+      ...installPreview(),
+      generationStorageUnavailable: true,
+      unacceptedResultCount: null,
+      unfinishedJobCount: null,
+    },
+  ]) {
+    assert.equal(isApplicationUpdateInstallPreview(value), true)
+  }
+
+  for (const field of [
+    'activeModelInstallCount',
+    'openProjectCount',
+    'preparingModelInstallCount',
+    'unsavedProjectCount',
+    'unfinishedJobCount',
+    'unacceptedResultCount',
+  ] as const) {
+    for (const invalid of [
+      -1,
+      0.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.MAX_SAFE_INTEGER + 1,
+      '1',
+      false,
+      null,
+    ]) {
+      assert.equal(
+        isApplicationUpdateInstallPreview({ ...installPreview(), [field]: invalid }),
+        false,
+        `${field}: ${String(invalid)}`,
+      )
+    }
+  }
+  for (const patch of [
+    { availableVersion: '/private/update.AppImage' },
+    { availableVersion: '01.2.0' },
+    { availableVersion: null },
+    { unsavedProjectCount: 3 },
+    { generationStorageUnavailable: 1 },
+    { resourceRemovalActive: 'yes' },
+    { generationStorageUnavailable: true },
+    { generationStorageUnavailable: true, unfinishedJobCount: null },
+    { generationStorageUnavailable: true, unacceptedResultCount: null },
+    { unacceptedResultCount: null, unfinishedJobCount: null },
+  ]) {
+    assert.equal(isApplicationUpdateInstallPreview({ ...installPreview(), ...patch }), false)
+  }
+})
+
+test('install preview never exposes native capabilities and refuses accessors without executing them', () => {
+  let reads = 0
+  const accessor = installPreview()
+  Object.defineProperty(accessor, 'unfinishedJobCount', {
+    enumerable: true,
+    get: () => {
+      reads++
+      return 4
+    },
+  })
+  const hidden = installPreview()
+  Object.defineProperty(hidden, 'availableVersion', { enumerable: false, value: '0.2.0' })
+  const missing: Partial<ApplicationUpdateInstallPreview> = installPreview()
+  delete missing.resourceRemovalActive
+  for (const value of [
+    null,
+    undefined,
+    [],
+    false,
+    1,
+    '',
+    new Date(),
+    missing,
+    accessor,
+    hidden,
+    Object.assign(Object.create({ inherited: true }), installPreview()),
+    { ...installPreview(), [Symbol('private')]: true },
+    ...['path', 'feed', 'manifest', 'backupPath', 'install', 'token', 'releaseNotes'].map(
+      (key) => ({ ...installPreview(), [key]: '/private/provider' }),
+    ),
+    new Proxy(
+      {},
+      {
+        getPrototypeOf: () => {
+          throw new Error('private')
+        },
+      },
+    ),
+    new Proxy(
+      {},
+      {
+        ownKeys: () => {
+          throw new Error('private')
+        },
+      },
+    ),
+    new Proxy(installPreview(), {
+      getOwnPropertyDescriptor: () => {
+        throw new Error('private')
+      },
+    }),
+  ]) {
+    assert.equal(isApplicationUpdateInstallPreview(value), false)
+  }
+  assert.equal(reads, 0)
 })

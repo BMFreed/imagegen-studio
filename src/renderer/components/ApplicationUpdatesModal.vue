@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import type { ApplicationUpdateSnapshot } from '../../shared/application-updates.js'
+import type {
+  ApplicationUpdateInstallPreview,
+  ApplicationUpdateSnapshot,
+} from '../../shared/application-updates.js'
 
 import { NAlert, NButton, NCard, NModal, NProgress, NSpin } from 'naive-ui'
 import { computed } from 'vue'
@@ -9,13 +12,33 @@ import { AppLayer } from '../../../docs/prototype-app/src/theme/app-layers.js'
 const props = defineProps<{
   downloading: boolean
   error: string | null
+  installPreview: ApplicationUpdateInstallPreview | null
   pending: boolean
+  previewError: string | null
+  previewPending: boolean
   snapshot: ApplicationUpdateSnapshot | null
 }>()
 const show = defineModel<boolean>('show', { required: true })
-const emit = defineEmits<{ check: []; dismiss: []; download: [availableVersion: string] }>()
+const emit = defineEmits<{
+  check: []
+  dismiss: []
+  download: [availableVersion: string]
+  reviewInstallation: [availableVersion: string]
+}>()
 
 const activeDownload = computed(() => props.downloading || props.snapshot?.status === 'downloading')
+const previewView = computed(
+  () => props.previewPending || props.previewError !== null || props.installPreview !== null,
+)
+const canReview = computed(
+  () =>
+    !props.pending &&
+    !activeDownload.value &&
+    !props.previewPending &&
+    props.snapshot?.status === 'downloaded' &&
+    props.snapshot.verification === 'signed-release' &&
+    !!props.snapshot.availableVersion,
+)
 const canDownload = computed(
   () =>
     !props.pending &&
@@ -44,6 +67,13 @@ function download() {
   const version = props.snapshot?.availableVersion
   if (canDownload.value && version) {
     emit('download', version)
+  }
+}
+
+function reviewInstallation() {
+  const version = props.snapshot?.availableVersion
+  if (canReview.value && version) {
+    emit('reviewInstallation', version)
   }
 }
 
@@ -80,8 +110,55 @@ function close() {
           <dd>{{ snapshot.availableVersion }}</dd>
         </template>
       </dl>
+      <section v-if="previewView" aria-label="Installation preview" class="updates-preview">
+        <h3>Installation preview</h3>
+        <p class="updates-detail">Installation is not available in this build.</p>
+        <div v-if="previewPending" aria-live="polite" class="updates-pending" role="status">
+          <NSpin size="small" />
+          <span>Reviewing installation impact…</span>
+        </div>
+        <NAlert v-else-if="previewError" title="Installation preview unavailable" type="error">
+          {{ previewError }}
+        </NAlert>
+        <template v-else-if="installPreview">
+          <dl class="updates-versions updates-impact">
+            <dt>Open Projects</dt>
+            <dd>{{ installPreview.openProjectCount }}</dd>
+            <dt>Projects with unsaved changes</dt>
+            <dd>{{ installPreview.unsavedProjectCount }}</dd>
+            <dt>Unfinished generation jobs</dt>
+            <dd>{{ installPreview.unfinishedJobCount ?? 'Unknown' }}</dd>
+            <dt>Unaccepted results in open Projects</dt>
+            <dd>{{ installPreview.unacceptedResultCount ?? 'Unknown' }}</dd>
+            <dt>Active model installations</dt>
+            <dd>{{ installPreview.activeModelInstallCount }}</dd>
+            <dt>Preparing model installations</dt>
+            <dd>{{ installPreview.preparingModelInstallCount }}</dd>
+          </dl>
+          <NAlert
+            v-if="installPreview.generationStorageUnavailable"
+            title="Generation recovery storage unavailable"
+            type="warning"
+          >
+            Generation jobs and temporary results could not be fully inspected. Temporary results
+            remain on this computer for a later recovery attempt.
+          </NAlert>
+          <p v-if="installPreview.resourceRemovalActive" class="updates-detail">
+            Resource removal is in progress and must finish before closing.
+          </p>
+          <p class="updates-detail">
+            Before installation, Projects use their normal Save/Close choices. Closing cancels
+            unfinished generation jobs and model downloads. Unaccepted results in open Projects are
+            discarded only after confirmation.
+          </p>
+        </template>
+        <p class="updates-detail">
+          Current Project state is checked again when you close. Nothing has been saved, closed or
+          canceled.
+        </p>
+      </section>
       <div
-        v-if="activeDownload && !error"
+        v-else-if="activeDownload && !error"
         aria-live="polite"
         class="updates-download"
         role="status"
@@ -194,11 +271,34 @@ function close() {
       <p v-else class="updates-result">Check for updates when you are ready.</p>
       <template v-slot:footer>
         <div class="modal-actions">
-          <NButton @click="close">Close</NButton>
-          <NButton :disabled="pending || activeDownload" @click="$emit('check')">
-            Check again
-          </NButton>
-          <NButton v-if="canDownload" type="primary" @click="download">{{ downloadLabel }}</NButton>
+          <template v-if="previewView">
+            <NButton @click="close">Install later</NButton>
+            <NButton
+              aria-label="Refresh preview"
+              :disabled="!canReview"
+              :loading="previewPending"
+              @click="reviewInstallation"
+            >
+              Refresh preview
+            </NButton>
+          </template>
+          <template v-else>
+            <NButton @click="close">Close</NButton>
+            <NButton :disabled="pending || activeDownload" @click="$emit('check')">
+              Check again
+            </NButton>
+            <NButton v-if="canReview" type="primary" @click="reviewInstallation">
+              Review installation
+            </NButton>
+            <NButton
+              v-if="canDownload"
+              key="n-button-2"
+              :type="canReview ? 'default' : 'primary'"
+              @click="download"
+            >
+              {{ downloadLabel }}
+            </NButton>
+          </template>
         </div>
       </template>
     </NCard>
@@ -249,10 +349,15 @@ function close() {
   margin-top: 16px;
 }
 
-.updates-notes-section h3 {
+.updates-notes-section h3,
+.updates-preview h3 {
   margin: 0 0 8px;
   font-size: inherit;
   font-weight: 600;
+}
+
+.updates-impact {
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 
 .updates-notes {
@@ -273,6 +378,7 @@ function close() {
 
 .modal-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
 }

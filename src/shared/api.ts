@@ -1,4 +1,7 @@
-import type { ApplicationUpdateSnapshot } from './application-updates.js'
+import type {
+  ApplicationUpdateInstallPreview,
+  ApplicationUpdateSnapshot,
+} from './application-updates.js'
 import type { ModelRemovalReview } from './model-removal.js'
 import type { PresetApplicationRequest } from './presets/preset-application.js'
 import type { PresetDefinition, PresetRecord } from './presets/preset-schema.js'
@@ -148,6 +151,7 @@ export const ipcChannels = {
     check: 'application-updates:check',
     download: 'application-updates:download',
     getStatus: 'application-updates:get-status',
+    reviewInstallation: 'application-updates:review-installation',
   },
   models: {
     cancelInstall: 'models:cancel-install',
@@ -1052,6 +1056,9 @@ export interface ApplicationUpdatesApi {
   check: () => Promise<ApiResult<ApplicationUpdateSnapshot>>
   download: (availableVersion: string) => Promise<ApiResult<ApplicationUpdateSnapshot>>
   getStatus: () => Promise<ApiResult<ApplicationUpdateSnapshot>>
+  reviewInstallation: (
+    availableVersion: string,
+  ) => Promise<ApiResult<ApplicationUpdateInstallPreview>>
 }
 
 export interface StudioApi {

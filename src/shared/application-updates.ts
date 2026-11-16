@@ -31,6 +31,57 @@ export interface ApplicationUpdateSnapshot {
   verification: 'metadata-only' | 'signed-release' | null
 }
 
+/** Advisory close impact only; never an install, close or restart capability. */
+export interface ApplicationUpdateInstallPreview {
+  activeModelInstallCount: number
+  availableVersion: string
+  generationStorageUnavailable: boolean
+  openProjectCount: number
+  preparingModelInstallCount: number
+  resourceRemovalActive: boolean
+  unacceptedResultCount: number | null
+  unfinishedJobCount: number | null
+  unsavedProjectCount: number
+}
+
+const PREVIEW_FIELDS = [
+  'activeModelInstallCount',
+  'availableVersion',
+  'generationStorageUnavailable',
+  'openProjectCount',
+  'preparingModelInstallCount',
+  'resourceRemovalActive',
+  'unacceptedResultCount',
+  'unfinishedJobCount',
+  'unsavedProjectCount',
+] as const
+
+export function isApplicationUpdateInstallPreview(
+  value: unknown,
+): value is ApplicationUpdateInstallPreview {
+  try {
+    const record = dataRecord(value, PREVIEW_FIELDS)
+    const count = (item: unknown): item is number =>
+      typeof item === 'number' && Number.isSafeInteger(item) && item >= 0
+    return (
+      !!record &&
+      isApplicationUpdateVersion(record['availableVersion']) &&
+      count(record['openProjectCount']) &&
+      count(record['unsavedProjectCount']) &&
+      record['unsavedProjectCount'] <= record['openProjectCount'] &&
+      count(record['activeModelInstallCount']) &&
+      count(record['preparingModelInstallCount']) &&
+      typeof record['resourceRemovalActive'] === 'boolean' &&
+      typeof record['generationStorageUnavailable'] === 'boolean' &&
+      (record['generationStorageUnavailable']
+        ? record['unfinishedJobCount'] === null && record['unacceptedResultCount'] === null
+        : count(record['unfinishedJobCount']) && count(record['unacceptedResultCount']))
+    )
+  } catch {
+    return false
+  }
+}
+
 const STATUS_VALUES: ReadonlySet<string> = new Set(APPLICATION_UPDATE_STATUSES)
 const FIELDS = [
   'availableVersion',
@@ -130,7 +181,10 @@ export function isApplicationUpdateSnapshot(value: unknown): value is Applicatio
   }
 }
 
-function dataRecord(value: unknown): Record<string, unknown> | null {
+function dataRecord(
+  value: unknown,
+  fields: readonly string[] = FIELDS,
+): Record<string, unknown> | null {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     return null
   }
@@ -140,13 +194,13 @@ function dataRecord(value: unknown): Record<string, unknown> | null {
   }
   const keys = Reflect.ownKeys(value)
   if (
-    keys.length !== FIELDS.length ||
-    keys.some((key) => typeof key !== 'string' || !FIELDS.includes(key as (typeof FIELDS)[number]))
+    keys.length !== fields.length ||
+    keys.some((key) => typeof key !== 'string' || !fields.includes(key))
   ) {
     return null
   }
   const record: Record<string, unknown> = {}
-  for (const key of FIELDS) {
+  for (const key of fields) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key)
     if (!descriptor || !descriptor.enumerable || !Object.hasOwn(descriptor, 'value')) {
       return null

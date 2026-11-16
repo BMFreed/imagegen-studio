@@ -1,6 +1,17 @@
 # Engineering Workflow
 
-## Current private application update transaction
+## Current application update installation preview
+
+[Installation preview](./phase-5-application-update-install-preview-research.md)
+connects the existing Updates dialog to signed downloaded release inspection and
+Main close-impact getters. It reports current Project/job/result/model impact
+without entering the close flow or granting installation authority. Unknown
+generation storage stays unknown; Check/Download and document/request epochs
+retire old replies. Current Project state is checked again during ordinary close.
+No public Install/relaunch, crash recovery or shipping acceptance is implied.
+Promise statuses remain unchanged. Evidence/limits are recorded in the research.
+
+## Previous private application update transaction
 
 [Application update transaction](./phase-5-application-update-transaction-research.md)
 extends the same private staging owner through backup, atomic activation and

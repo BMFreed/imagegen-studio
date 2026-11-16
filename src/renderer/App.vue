@@ -33,7 +33,10 @@ import type {
   ProjectTab,
   RuntimeStatus,
 } from '../shared/api.js'
-import type { ApplicationUpdateSnapshot } from '../shared/application-updates.js'
+import type {
+  ApplicationUpdateInstallPreview,
+  ApplicationUpdateSnapshot,
+} from '../shared/application-updates.js'
 import type { PresetApplicationRequest } from '../shared/presets/preset-application.js'
 import type { PresetRecord } from '../shared/presets/preset-schema.js'
 import type {
@@ -573,6 +576,9 @@ const applicationUpdatesPending = ref(false)
 const applicationUpdatesDownloadPending = ref(false)
 const applicationUpdatesSnapshot = shallowRef<ApplicationUpdateSnapshot | null>(null)
 const applicationUpdatesError = ref<string | null>(null)
+const applicationUpdateInstallPreview = shallowRef<ApplicationUpdateInstallPreview | null>(null)
+const applicationUpdatePreviewPending = ref(false)
+const applicationUpdatePreviewError = ref<string | null>(null)
 let applicationUpdatesEpoch = 0
 let applicationUpdatesPollEpoch = 0
 let applicationUpdatesPollTimer: ReturnType<typeof setTimeout> | null = null
@@ -5461,12 +5467,64 @@ function pollApplicationUpdates(epoch: number) {
   }, 1000)
 }
 
+function clearApplicationUpdatePreview() {
+  applicationUpdateInstallPreview.value = null
+  applicationUpdatePreviewPending.value = false
+  applicationUpdatePreviewError.value = null
+}
+
+async function reviewApplicationUpdateInstallation(availableVersion: string) {
+  if (
+    !applicationUpdatesOpen.value ||
+    applicationUpdatesPending.value ||
+    applicationUpdatePreviewPending.value ||
+    windowClosePending.value ||
+    applicationUpdatesSnapshot.value?.status !== 'downloaded' ||
+    applicationUpdatesSnapshot.value.verification !== 'signed-release' ||
+    applicationUpdatesSnapshot.value.availableVersion !== availableVersion
+  ) {
+    return
+  }
+  const epoch = ++applicationUpdatesEpoch
+  stopApplicationUpdatesPolling()
+  applicationUpdateInstallPreview.value = null
+  applicationUpdatePreviewError.value = null
+  applicationUpdatePreviewPending.value = true
+  try {
+    const api = globalThis.window.api?.applicationUpdates
+    if (!api?.reviewInstallation) {
+      throw new Error('Preview unavailable')
+    }
+    const result = await api.reviewInstallation(availableVersion)
+    if (!currentApplicationUpdatesRequest(epoch)) {
+      return
+    }
+    if (result.ok && result.value.availableVersion === availableVersion) {
+      applicationUpdateInstallPreview.value = result.value
+    } else {
+      applicationUpdatePreviewError.value = result.ok
+        ? 'Could not review installation impact. Please try again.'
+        : result.error.message
+    }
+  } catch {
+    if (currentApplicationUpdatesRequest(epoch)) {
+      applicationUpdatePreviewError.value =
+        'Could not review installation impact. Please try again.'
+    }
+  } finally {
+    if (currentApplicationUpdatesRequest(epoch)) {
+      applicationUpdatePreviewPending.value = false
+    }
+  }
+}
+
 function dismissApplicationUpdates() {
   ++applicationUpdatesEpoch
   stopApplicationUpdatesPolling()
   applicationUpdatesOpen.value = false
   applicationUpdatesPending.value = false
   applicationUpdatesDownloadPending.value = false
+  clearApplicationUpdatePreview()
 }
 
 async function checkApplicationUpdates(readCurrentVersion = false) {
@@ -5481,6 +5539,7 @@ async function checkApplicationUpdates(readCurrentVersion = false) {
   const epoch = ++applicationUpdatesEpoch
   stopApplicationUpdatesPolling()
   applicationUpdatesPending.value = true
+  clearApplicationUpdatePreview()
   applicationUpdatesError.value = null
   try {
     const updates = globalThis.window.api?.applicationUpdates
@@ -5541,6 +5600,7 @@ async function downloadApplicationUpdate(availableVersion: string) {
   stopApplicationUpdatesPolling()
   applicationUpdatesPending.value = true
   applicationUpdatesDownloadPending.value = true
+  clearApplicationUpdatePreview()
   applicationUpdatesError.value = null
   applicationUpdatesSnapshot.value = {
     ...previous,
@@ -5588,6 +5648,7 @@ function openApplicationUpdates() {
     return
   }
   applicationUpdatesOpen.value = true
+  clearApplicationUpdatePreview()
   applicationUpdatesSnapshot.value = null
   applicationUpdatesError.value = null
   void checkApplicationUpdates(true)
@@ -6281,11 +6342,15 @@ onBeforeUnmount(() => {
           v-model:show="applicationUpdatesOpen"
           :downloading="applicationUpdatesDownloadPending"
           :error="applicationUpdatesError"
+          :installPreview="applicationUpdateInstallPreview"
           :pending="applicationUpdatesPending"
+          :previewError="applicationUpdatePreviewError"
+          :previewPending="applicationUpdatePreviewPending"
           :snapshot="applicationUpdatesSnapshot"
           @check="checkApplicationUpdates()"
           @dismiss="dismissApplicationUpdates"
           @download="downloadApplicationUpdate"
+          @reviewInstallation="reviewApplicationUpdateInstallation"
         />
         <RuntimeSetupModal
           v-model:show="runtimeSetupOpen"

@@ -6,7 +6,9 @@
  */
 import { type ApiResult, ipcChannels } from '../../shared/api.js'
 import {
+  type ApplicationUpdateInstallPreview,
   type ApplicationUpdateSnapshot,
+  isApplicationUpdateInstallPreview,
   isApplicationUpdateSnapshot,
   isApplicationUpdateVersion,
 } from '../../shared/application-updates.js'
@@ -24,9 +26,10 @@ type Service = {
   check: () => Promise<ApplicationUpdateSnapshot>
   download: (availableVersion: string) => Promise<ApplicationUpdateSnapshot>
   getStatus: () => ApplicationUpdateSnapshot
+  reviewInstallation: (availableVersion: string) => Promise<ApplicationUpdateInstallPreview>
 }
 
-const failure = (code: string, message: string): ApiResult<ApplicationUpdateSnapshot> => ({
+const failure = (code: string, message: string): ApiResult<never> => ({
   error: { code, message },
   ok: false,
 })
@@ -46,6 +49,7 @@ export function registerApplicationUpdateIpc(
     ipcChannels.applicationUpdates.getStatus,
     ipcChannels.applicationUpdates.check,
     ipcChannels.applicationUpdates.download,
+    ipcChannels.applicationUpdates.reviewInstallation,
   ]
   const invalidateDocument = () => {
     epoch = {}
@@ -54,7 +58,8 @@ export function registerApplicationUpdateIpc(
     registrar.handle(channel, async (event, ...args) => {
       if (
         disposed ||
-        (channel === ipcChannels.applicationUpdates.download
+        (channel === ipcChannels.applicationUpdates.download ||
+        channel === ipcChannels.applicationUpdates.reviewInstallation
           ? args.length !== 1 || !isApplicationUpdateVersion(args[0])
           : args.length !== 0) ||
         event.sender !== caller ||
@@ -69,8 +74,10 @@ export function registerApplicationUpdateIpc(
         event.sender === caller &&
         event.senderFrame === caller.mainFrame
       try {
-        const snapshot =
-          channel === ipcChannels.applicationUpdates.download
+        const previewRequest = channel === ipcChannels.applicationUpdates.reviewInstallation
+        const snapshot = previewRequest
+          ? await service.reviewInstallation(args[0] as string)
+          : channel === ipcChannels.applicationUpdates.download
             ? await service.download(args[0] as string)
             : channel === ipcChannels.applicationUpdates.check
               ? await service.check()
@@ -78,7 +85,11 @@ export function registerApplicationUpdateIpc(
         if (!current()) {
           return rejected()
         }
-        return isApplicationUpdateSnapshot(snapshot)
+        return (
+          previewRequest
+            ? isApplicationUpdateInstallPreview(snapshot) && snapshot.availableVersion === args[0]
+            : isApplicationUpdateSnapshot(snapshot)
+        )
           ? { ok: true, value: structuredClone(snapshot) }
           : invalid()
       } catch {
@@ -86,12 +97,16 @@ export function registerApplicationUpdateIpc(
           return rejected()
         }
         return failure(
-          channel === ipcChannels.applicationUpdates.download
-            ? 'APPLICATION_UPDATE_DOWNLOAD_FAILED'
-            : 'APPLICATION_UPDATE_CHECK_FAILED',
-          channel === ipcChannels.applicationUpdates.download
-            ? 'The application could not download the update. Try again.'
-            : 'The application could not check for updates. Try again.',
+          channel === ipcChannels.applicationUpdates.reviewInstallation
+            ? 'APPLICATION_UPDATE_PREVIEW_FAILED'
+            : channel === ipcChannels.applicationUpdates.download
+              ? 'APPLICATION_UPDATE_DOWNLOAD_FAILED'
+              : 'APPLICATION_UPDATE_CHECK_FAILED',
+          channel === ipcChannels.applicationUpdates.reviewInstallation
+            ? 'The application could not review installation impact. Try again.'
+            : channel === ipcChannels.applicationUpdates.download
+              ? 'The application could not download the update. Try again.'
+              : 'The application could not check for updates. Try again.',
         )
       }
     })

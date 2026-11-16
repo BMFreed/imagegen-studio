@@ -130,6 +130,7 @@ import { pathToFileURL } from 'node:url'
 
 import { ensureAppPaths, resolveAppPaths } from './app-paths.js'
 import { loadApplicationReleaseTrust } from './application-updates/application-release.js'
+import { collectApplicationUpdateInstallPreview } from './application-updates/application-update-install-preview.js'
 import { registerApplicationUpdateIpc } from './application-updates/application-update-ipc.js'
 import { ApplicationUpdateService } from './application-updates/application-update-service.js'
 import {
@@ -1427,6 +1428,21 @@ if (!gotInstanceLock) {
           if (projectService.getOpenTabs().length !== 0) {
             throw new Error('Close all Projects before activating an application update.')
           }
+        },
+        async () => {
+          if (resolvingClose) {
+            throw new Error('Application close is already running.')
+          }
+          const impact = await collectApplicationUpdateInstallPreview({
+            getModelImpact: () => installCoordinator.getCloseImpact(),
+            getOpenTabs: () => projectService.getOpenTabs(),
+            getProjectImpact: (tabId) => projectGenerationClose.getCloseImpact(tabId),
+            getQueueImpact: () => recoveredGeneration?.queue.getAppCloseImpact() ?? null,
+          })
+          if (resolvingClose) {
+            throw new Error('Application close is already running.')
+          }
+          return impact
         },
       )
       const applicationUpdates = registerApplicationUpdateIpc(

@@ -148,6 +148,26 @@ capability в failed. Этот контракт не добавляет restart 
 helper/relaunch, автоматическое восстановление после crash или проверку FUSE.
 Публичный Install и release acceptance остаются открыты; shipping publisher не настроен.
 
+### Installation impact preview
+
+[Installation preview](../engineering/phase-5-application-update-install-preview-research.md)
+доступен отдельным `Review installation` только для текущей signed downloaded
+версии. Main повторно проверяет native artifact до и после inspection; публичный
+ответ содержит только version/counts/availability, без путей, prompts или installer
+capability. Отображаются open/unsaved Projects, app-wide unfinished jobs (включая
+закрытые Projects/private operations), unaccepted results открытых Projects,
+active/preparing model installs и resource removal. При недоступном generation
+storage оба generation count неизвестны, а не равны нулю.
+
+Это снимок текущего Main state: обычный close заново применяет editor drafts и
+проверяет guards. Preview не запускает Save, flush, fence, cancel, discard, close,
+stage/backup/activation или restart. Existing staging inspection может проверять
+и укреплять permissions recovery directories; byte-readonly filesystem guarantee
+не добавляется. `Refresh preview` запрашивает новый снимок; `Install later`
+закрывает модалку без consent на дальнейшее действие. Late replies после dismissal,
+reopen или нового Check/Download не заменяют актуальный preview. Install/relaunch
+остаётся unavailable до отдельной квалификации; preview не повышает PP readiness.
+
 ## Scope and dependencies
 
 [Private transaction](../engineering/phase-5-application-update-transaction-research.md)

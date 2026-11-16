@@ -1,3 +1,5 @@
+import type { ApplicationUpdateInstallPreview } from '../../shared/application-updates.js'
+
 import { DownloadedUpdateHelper } from 'electron-updater/out/DownloadedUpdateHelper.js'
 import assert from 'node:assert/strict'
 import { createHash, generateKeyPairSync, sign } from 'node:crypto'
@@ -30,6 +32,8 @@ async function fixture(
   signed = true,
   target = true,
   assertApplicationClosed: (() => void) | null = null,
+  readInstallImpact:
+    (() => Promise<Omit<ApplicationUpdateInstallPreview, 'availableVersion'>>) | null = null,
 ) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'igs-staging-consumer-'))
   t.after(() => fs.rm(root, { force: true, recursive: true }))
@@ -131,6 +135,7 @@ async function fixture(
     () => createElectronUpdateChecker(updater),
     target ? currentAppImage : null,
     assertApplicationClosed,
+    readInstallImpact,
   )
   return { body, currentAppImage, parent, root, service, updater }
 }
@@ -236,4 +241,177 @@ test('service cannot activate without a Main close assertion even with a valid s
   await backup.verifyCompleteSnapshot()
   assert.deepEqual(await identity(f.currentAppImage), old)
   assert.deepEqual(await identity(backup.candidatePath), candidate)
+})
+
+const installImpact = (): Omit<ApplicationUpdateInstallPreview, 'availableVersion'> => ({
+  activeModelInstallCount: 2,
+  generationStorageUnavailable: false,
+  openProjectCount: 3,
+  preparingModelInstallCount: 1,
+  resourceRemovalActive: true,
+  unacceptedResultCount: 4,
+  unfinishedJobCount: 5,
+  unsavedProjectCount: 2,
+})
+
+/**
+ * Fresh Invoke4875d965: status_counts/_status_counts -> get_queue_status service/router callers.
+ * This boundary joins the real native signed artifact to a controlled Main impact collector.
+ * Collector SQLite/staging behavior is qualified separately; it is not replaced with a pretend
+ * database here. No claim of Electron renderer, network or public installation qualification.
+ */
+test('signed native downloaded artifact grants repeatable impact review without staging or close', async (t) => {
+  let impactCalls = 0
+  let closeCalls = 0
+  const controlledImpact = installImpact()
+  const f = await fixture(
+    t,
+    true,
+    true,
+    () => {
+      closeCalls++
+    },
+    async () => {
+      impactCalls++
+      return controlledImpact
+    },
+  )
+  await f.service.check()
+  await f.service.download('0.2.0')
+  const artifact = await f.service.prepareVerifiedArtifact('0.2.0')
+  const before = {
+    current: await identity(f.currentAppImage),
+    directory: await fs.readdir(f.parent),
+    public: f.service.getStatus(),
+    source: await identity(artifact.path),
+  }
+  const first = await f.service.reviewInstallation('0.2.0')
+  const second = await f.service.reviewInstallation('0.2.0')
+  assert.deepEqual(first, { ...controlledImpact, availableVersion: '0.2.0' })
+  assert.deepEqual(second, first)
+  assert.notEqual(first, second)
+  assert.deepEqual(
+    {
+      current: await identity(f.currentAppImage),
+      directory: await fs.readdir(f.parent),
+      public: f.service.getStatus(),
+      source: await identity(artifact.path),
+    },
+    before,
+  )
+  assert.equal(impactCalls, 2)
+  assert.equal(closeCalls, 0)
+  assert.equal(f.updater.metadataRequests, 1)
+  assert.equal(f.updater.transfers, 1)
+  assert.equal(JSON.stringify(first).includes(f.root), false)
+})
+
+for (const lane of [
+  'metadata-only',
+  'not-downloaded',
+  'wrong-version',
+  'missing-collector',
+] as const) {
+  test(`${lane} cannot inspect Main impact or prepare an installation`, async (t) => {
+    let impactCalls = 0
+    let closeCalls = 0
+    const f = await fixture(
+      t,
+      lane !== 'metadata-only',
+      true,
+      () => {
+        closeCalls++
+      },
+      lane === 'missing-collector'
+        ? null
+        : async () => {
+            impactCalls++
+            return installImpact()
+          },
+    )
+    await f.service.check()
+    if (lane !== 'not-downloaded') {
+      await f.service.download('0.2.0')
+    }
+    const old = await identity(f.currentAppImage)
+    await assert.rejects(f.service.reviewInstallation(lane === 'wrong-version' ? '0.3.0' : '0.2.0'))
+    assert.deepEqual(await fs.readdir(f.parent), ['Current.AppImage'])
+    assert.deepEqual(await identity(f.currentAppImage), old)
+    assert.equal(impactCalls, 0)
+    assert.equal(closeCalls, 0)
+  })
+}
+
+test('new Check during impact inspection retires its preview without close or sibling publication', async (t) => {
+  let enter!: () => void
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve
+  })
+  let release!: (value: ReturnType<typeof installImpact>) => void
+  const held = new Promise<ReturnType<typeof installImpact>>((resolve) => {
+    release = resolve
+  })
+  let closeCalls = 0
+  const f = await fixture(
+    t,
+    true,
+    true,
+    () => {
+      closeCalls++
+    },
+    async () => {
+      enter()
+      return await held
+    },
+  )
+  await f.service.check()
+  await f.service.download('0.2.0')
+  const artifact = await f.service.prepareVerifiedArtifact('0.2.0')
+  const before = {
+    current: await identity(f.currentAppImage),
+    source: await identity(artifact.path),
+  }
+  const pending = f.service.reviewInstallation('0.2.0')
+  void pending.catch(() => undefined)
+  try {
+    await Promise.race([
+      entered,
+      pending.then(() => {
+        throw new Error('Preview completed before entering its held collector')
+      }),
+    ])
+    await f.service.check()
+  } finally {
+    release(installImpact())
+  }
+  await assert.rejects(pending)
+  assert.deepEqual(
+    { current: await identity(f.currentAppImage), source: await identity(artifact.path) },
+    before,
+  )
+  assert.deepEqual(await fs.readdir(f.parent), ['Current.AppImage'])
+  assert.equal(closeCalls, 0)
+})
+
+test('changed native cache bytes refuse impact review before the collector runs', async (t) => {
+  let impactCalls = 0
+  const f = await fixture(t, true, true, null, async () => {
+    impactCalls++
+    return installImpact()
+  })
+  await f.service.check()
+  await f.service.download('0.2.0')
+  const artifact = await f.service.prepareVerifiedArtifact('0.2.0')
+  const original = await identity(f.currentAppImage)
+  const handle = await fs.open(artifact.path, 'r+')
+  try {
+    await handle.write(Buffer.from([42]), 0, 1, 100)
+    await handle.sync()
+  } finally {
+    await handle.close()
+  }
+  await assert.rejects(f.service.reviewInstallation('0.2.0'))
+  assert.equal(impactCalls, 0)
+  assert.deepEqual(await identity(f.currentAppImage), original)
+  assert.deepEqual(await fs.readdir(f.parent), ['Current.AppImage'])
 })

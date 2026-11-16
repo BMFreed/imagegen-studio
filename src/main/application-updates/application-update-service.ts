@@ -7,7 +7,9 @@
  */
 import {
   APPLICATION_UPDATE_NOTES_MAX_LENGTH,
+  type ApplicationUpdateInstallPreview,
   type ApplicationUpdateSnapshot,
+  isApplicationUpdateInstallPreview,
   isApplicationUpdateSnapshot,
   isApplicationUpdateVersion,
 } from '../../shared/application-updates.js'
@@ -62,6 +64,8 @@ export class ApplicationUpdateService {
       ApplicationUpdateChecker | Promise<ApplicationUpdateChecker>,
     private readonly currentAppImage: string | null = null,
     private readonly assertApplicationClosed: (() => void) | null = null,
+    private readonly readInstallImpact:
+      (() => Promise<Omit<ApplicationUpdateInstallPreview, 'availableVersion'>>) | null = null,
   ) {
     if (!isApplicationUpdateVersion(currentVersion)) {
       throw new Error('Invalid application version.')
@@ -252,6 +256,23 @@ export class ApplicationUpdateService {
       }
       throw new Error('The application release must be downloaded and verified again.')
     }
+  }
+
+  /** Advisory inspection only: never prepares a binary, starts close or grants install authority. */
+  async reviewInstallation(expectedVersion: string): Promise<ApplicationUpdateInstallPreview> {
+    if (!this.readInstallImpact) {
+      throw new Error('Application update preview is unavailable.')
+    }
+    const artifact = await this.prepareVerifiedArtifact(expectedVersion)
+    const impact = await this.readInstallImpact()
+    if ((await this.prepareVerifiedArtifact(expectedVersion)) !== artifact) {
+      throw new Error('The application release selection changed.')
+    }
+    const preview = { ...impact, availableVersion: expectedVersion }
+    if (!isApplicationUpdateInstallPreview(preview)) {
+      throw new Error('Invalid application update preview.')
+    }
+    return Object.freeze(preview)
   }
 
   /** Main-private explicit preparation; Download/status never stage or replace the app. */

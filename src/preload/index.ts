@@ -32,7 +32,8 @@ import type {
   StudioApi,
 } from '../shared/api.js'
 import {
-  type ApplicationUpdateSnapshot,
+  type ApplicationUpdateInstallPreview,
+  isApplicationUpdateInstallPreview,
   isApplicationUpdateSnapshot,
 } from '../shared/application-updates.js'
 import { isModelRemovalId, isModelRemovalReview } from '../shared/model-removal.js'
@@ -117,20 +118,23 @@ import { contextBridge, ipcRenderer } from 'electron'
 const applicationUpdateErrors: Readonly<Record<string, string>> = {
   APPLICATION_UPDATE_CHECK_FAILED: 'The application could not check for updates. Try again.',
   APPLICATION_UPDATE_DOWNLOAD_FAILED: 'The application could not download the update. Try again.',
+  APPLICATION_UPDATE_PREVIEW_FAILED:
+    'The application could not review installation impact. Try again.',
   IPC_INVALID_CALLER: 'Application update request was rejected.',
   IPC_INVALID_RESPONSE: 'The application returned an invalid update status.',
   IPC_UNAVAILABLE: 'The application could not reach the update service.',
 }
 
 /** Explicit update IPC: fixed public errors and shared DTO, never native provider details. */
-async function invokeApplicationUpdate(
+async function invokeApplicationUpdate<T>(
   channel: (typeof ipcChannels.applicationUpdates)[keyof typeof ipcChannels.applicationUpdates],
-  args: unknown[] = [],
-): Promise<ApiResult<ApplicationUpdateSnapshot>> {
+  args: unknown[],
+  validate: (value: unknown) => value is T,
+): Promise<ApiResult<T>> {
   try {
     const result: unknown = await ipcRenderer.invoke(channel, ...args)
     if (isRecord(result)) {
-      if (result.ok === true && isApplicationUpdateSnapshot(result.value)) {
+      if (result.ok === true && validate(result.value)) {
         return { ok: true, value: result.value }
       }
       if (result.ok === false && isApiError(result.error)) {
@@ -1250,10 +1254,31 @@ function regionalPromptReplyMatches(
 
 const api: StudioApi = {
   applicationUpdates: {
-    check: () => invokeApplicationUpdate(ipcChannels.applicationUpdates.check),
+    check: () =>
+      invokeApplicationUpdate(
+        ipcChannels.applicationUpdates.check,
+        [],
+        isApplicationUpdateSnapshot,
+      ),
     download: (availableVersion) =>
-      invokeApplicationUpdate(ipcChannels.applicationUpdates.download, [availableVersion]),
-    getStatus: () => invokeApplicationUpdate(ipcChannels.applicationUpdates.getStatus),
+      invokeApplicationUpdate(
+        ipcChannels.applicationUpdates.download,
+        [availableVersion],
+        isApplicationUpdateSnapshot,
+      ),
+    getStatus: () =>
+      invokeApplicationUpdate(
+        ipcChannels.applicationUpdates.getStatus,
+        [],
+        isApplicationUpdateSnapshot,
+      ),
+    reviewInstallation: (availableVersion) =>
+      invokeApplicationUpdate(
+        ipcChannels.applicationUpdates.reviewInstallation,
+        [availableVersion],
+        (value): value is ApplicationUpdateInstallPreview =>
+          isApplicationUpdateInstallPreview(value) && value.availableVersion === availableVersion,
+      ),
   },
   models: {
     cancelInstall: (jobId) =>

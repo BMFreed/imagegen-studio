@@ -378,7 +378,9 @@ for (const viewport of [
     await expect(dialog(page)).toContainText('Release notes were shortened for display.')
     await expect(dialog(page)).toContainText('Installation is not available in this build.')
     await expect(dialog(page).getByRole('button', { exact: true, name: 'Download' })).toBeEnabled()
-    await expect(dialog(page).getByRole('button', { name: /install/i })).toHaveCount(0)
+    await expect(
+      dialog(page).getByRole('button', { name: /^Install(?: and restart)?$/i }),
+    ).toHaveCount(0)
     expect(await calls(page)).toMatchObject({ checkCalls: 1, mutationCalls: [], statusCalls: 1 })
     await assertModalFits(page)
     await page.screenshot({
@@ -599,7 +601,9 @@ test('Download is explicit, captures the displayed version and shows polled tran
   await expect(dialog(page)).not.toContainText('Publisher signature verified.')
   await expect(dialog(page)).not.toContainText('Compatibility declaration accepted.')
   await expect(dialog(page)).toContainText('Installation is not available in this build.')
-  await expect(dialog(page).getByRole('button', { name: /install|cancel/i })).toHaveCount(0)
+  await expect(
+    dialog(page).getByRole('button', { name: /^(?:Install(?: and restart)?|Cancel)$/i }),
+  ).toHaveCount(0)
   await expect(
     dialog(page).getByRole('button', { exact: true, name: 'Download again' }),
   ).toBeEnabled()
@@ -778,7 +782,9 @@ for (const status of ['available', 'downloaded'] as const) {
       'Publisher authenticity and installation have not been verified.',
     )
     await expect(dialog(page)).not.toContainText('ready to install')
-    await expect(dialog(page).getByRole('button', { name: /install|restart/i })).toHaveCount(0)
+    await expect(
+      dialog(page).getByRole('button', { name: /^(?:Install(?: and restart)?|Restart)$/i }),
+    ).toHaveCount(0)
     if (status === 'downloaded') {
       await expect(dialog(page)).toContainText(
         'The saved file matches the update metadata checksum.',

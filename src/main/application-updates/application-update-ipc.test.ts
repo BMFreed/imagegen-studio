@@ -1,5 +1,8 @@
 import { type ApiResult, ipcChannels } from '../../shared/api.js'
-import type { ApplicationUpdateSnapshot } from '../../shared/application-updates.js'
+import type {
+  ApplicationUpdateInstallPreview,
+  ApplicationUpdateSnapshot,
+} from '../../shared/application-updates.js'
 
 /** Controlled check service ports; no installer, Electron network or shipping qualification. */
 import assert from 'node:assert/strict'
@@ -22,6 +25,18 @@ const snapshot = (
   status,
   totalBytes: null,
   verification: status === 'available' ? 'metadata-only' : null,
+})
+
+const preview = (availableVersion = '0.1.0'): ApplicationUpdateInstallPreview => ({
+  activeModelInstallCount: 2,
+  availableVersion,
+  generationStorageUnavailable: false,
+  openProjectCount: 3,
+  preparingModelInstallCount: 1,
+  resourceRemovalActive: true,
+  unacceptedResultCount: 4,
+  unfinishedJobCount: 5,
+  unsavedProjectCount: 2,
 })
 
 function value(result: ApiResult<unknown>): ApplicationUpdateSnapshot {
@@ -57,8 +72,11 @@ function fixture() {
       totalBytes: 128,
     }),
     getStatus: (): ApplicationUpdateSnapshot => snapshot(),
+    reviewInstallation: async (version: string): Promise<ApplicationUpdateInstallPreview> =>
+      preview(version),
   }
   const calls = { check: 0, download: 0, getStatus: 0 }
+  const previewVersions: string[] = []
   const lifetime = registerApplicationUpdateIpc(
     {
       handle: (channel, handler) => {
@@ -83,6 +101,10 @@ function fixture() {
         calls.getStatus++
         return controls.getStatus()
       },
+      reviewInstallation: async (version) => {
+        previewVersions.push(version)
+        return await controls.reviewInstallation(version)
+      },
     },
   )
   const invoke = async (channel: Channel, args: unknown[] = [], request?: Request) => {
@@ -90,7 +112,7 @@ function fixture() {
     assert.ok(handler)
     return await handler(request ?? { sender: caller, senderFrame: caller.mainFrame }, ...args)
   }
-  return { caller, calls, controls, handlers, invoke, lifetime }
+  return { caller, calls, controls, handlers, invoke, lifetime, previewVersions }
 }
 
 test('read-only update getter copies the current service result and never invokes check', async () => {
@@ -106,6 +128,7 @@ test('read-only update getter copies the current service result and never invoke
     'application-updates:check',
     'application-updates:download',
     'application-updates:get-status',
+    'application-updates:review-installation',
   ])
 })
 
@@ -297,4 +320,107 @@ test('download errors are fixed public diagnostics and native file paths never e
       path: '/private/cache/pending/app.AppImage',
     }) as ApplicationUpdateSnapshot
   failure(await f.invoke('download', ['0.1.0']), 'IPC_INVALID_RESPONSE')
+})
+
+test('explicit impact review accepts only one version from the current frame and returns a detached projection', async () => {
+  const f = fixture()
+  const original = preview()
+  f.controls.reviewInstallation = async () => original
+  const result = await f.invoke('reviewInstallation', ['0.1.0'])
+  assert.equal(result.ok, true)
+  if (!result.ok) {
+    throw new Error('Expected an impact preview')
+  }
+  assert.deepEqual(result.value, original)
+  assert.notEqual(result.value, original)
+  result.value.unsavedProjectCount = 0
+  assert.equal(original.unsavedProjectCount, 2)
+  assert.deepEqual(f.previewVersions, ['0.1.0'])
+  assert.deepEqual(f.calls, { check: 0, download: 0, getStatus: 0 })
+
+  const previous = f.caller.mainFrame
+  f.caller.mainFrame = {}
+  for (const args of [
+    [],
+    [undefined],
+    [null],
+    [''],
+    ['/private/update.AppImage'],
+    ['0.1.0', {}],
+    [{ version: '0.1.0' }],
+  ]) {
+    failure(await f.invoke('reviewInstallation', args), 'IPC_INVALID_CALLER')
+  }
+  for (const request of [
+    { sender: {}, senderFrame: f.caller.mainFrame },
+    { sender: f.caller, senderFrame: {} },
+    { sender: f.caller, senderFrame: previous },
+    { sender: f.caller, senderFrame: null },
+  ]) {
+    failure(await f.invoke('reviewInstallation', ['0.1.0'], request), 'IPC_INVALID_CALLER')
+  }
+  assert.deepEqual(f.previewVersions, ['0.1.0'])
+})
+
+test('review results and errors cannot cross document invalidation, frame replacement or disposal', async () => {
+  for (const invalidation of ['document', 'frame', 'dispose'] as const) {
+    for (const rejects of [false, true]) {
+      const f = fixture()
+      const entered = deferred<void>()
+      const completed = deferred<ApplicationUpdateInstallPreview>()
+      f.controls.reviewInstallation = async () => {
+        entered.resolve()
+        return await completed.promise
+      }
+      const handler = f.handlers.get(ipcChannels.applicationUpdates.reviewInstallation)!
+      const pending = f.invoke('reviewInstallation', ['0.1.0'])
+      await entered.promise
+      if (invalidation === 'document') {
+        f.lifetime.invalidateDocument()
+      } else if (invalidation === 'frame') {
+        f.caller.mainFrame = {}
+      } else {
+        f.lifetime.dispose()
+      }
+      if (rejects) {
+        completed.reject(new Error('/private/preview/secret'))
+      } else {
+        completed.resolve(preview())
+      }
+      failure(await pending, 'IPC_INVALID_CALLER')
+      if (invalidation === 'dispose') {
+        assert.equal(f.handlers.size, 0)
+        failure(
+          await handler({ sender: f.caller, senderFrame: f.caller.mainFrame }, '0.1.0'),
+          'IPC_INVALID_CALLER',
+        )
+      }
+      assert.deepEqual(f.previewVersions, ['0.1.0'])
+      assert.deepEqual(f.calls, { check: 0, download: 0, getStatus: 0 })
+    }
+  }
+})
+
+test('impact review refuses malformed or mismatched projections and sanitizes native failures', async () => {
+  const f = fixture()
+  f.controls.reviewInstallation = async () => {
+    throw new Error('/private/staging/path?key=secret')
+  }
+  assert.deepEqual(
+    failure(await f.invoke('reviewInstallation', ['0.1.0']), 'APPLICATION_UPDATE_PREVIEW_FAILED'),
+    {
+      code: 'APPLICATION_UPDATE_PREVIEW_FAILED',
+      message: 'The application could not review installation impact. Try again.',
+    },
+  )
+  for (const invalid of [
+    { ...preview(), path: '/private/cache/update.AppImage' },
+    { ...preview(), unsavedProjectCount: 4 },
+    { ...preview(), unfinishedJobCount: null },
+    { ...preview(), generationStorageUnavailable: true },
+    preview('0.2.0'),
+  ]) {
+    f.controls.reviewInstallation = async () => invalid
+    failure(await f.invoke('reviewInstallation', ['0.1.0']), 'IPC_INVALID_RESPONSE')
+  }
 })
