@@ -9,7 +9,8 @@
  * the upgrade. The checkpoint is a qualification copy, not a new product backup or recovery
  * mechanism. The wire child adapts runtime/index.test.mjs's installFakeInferenceRuntime and the
  * current CPU/inference ready validators; no Python, CUDA, model loading, inference, native
- * historical UI or dependency-era ABI claim is made.
+ * historical UI or dependency-era ABI claim is made by the default profile. The installed profile
+ * adds one historical Raster through the original import owner and a supplied normalization port.
  */
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
@@ -24,6 +25,16 @@ import { crc32, deflateSync } from 'node:zlib'
 
 const historicalRevision = '6b812f93d2715af2c4f904e70093b3f9c5b09713'
 const artifactRoot = path.join(os.homedir(), '.codex/artifacts/imagegen-studio')
+const installedRunRoot = path.join(artifactRoot, 'runs/packaged-installed-engine')
+const installedCompanions = ['inference-resources', 'runtime']
+const installedCheckpointEntries = [
+  'autosave',
+  'database',
+  'generation-inputs',
+  'generation-queued-inputs',
+  'models',
+  'workspaces',
+]
 const moduleRepo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const require = createRequire(path.join(moduleRepo, 'package.json'))
 const Database = require('better-sqlite3')
@@ -529,8 +540,63 @@ setInterval(() => {}, 1000)
   }
 }
 
+/** Bind an already leased, quarantined, canonical slot before opening any historical data. */
+async function admitInstalledState(installed, run) {
+  assert.ok(installed && typeof installed.normalizeImport === 'function')
+  const { appData, runtimeId, pythonExecutable, rasterSourcePath } = installed
+  for (const filename of [appData, pythonExecutable, rasterSourcePath]) {
+    assert.ok(path.isAbsolute(filename) && path.normalize(filename) === filename)
+  }
+  childOf(installedRunRoot, appData)
+  const [engineRun, payloads, slot, data, name, ...extra] = path
+    .relative(installedRunRoot, appData)
+    .split(path.sep)
+  assert.match(slot ?? '', /^native-runtime-offline-[\w-]+$/)
+  assert.ok(engineRun && payloads === 'payloads' && data === 'data' && name === 'imagegen-studio')
+  assert.deepEqual(extra, [])
+  childOf(path.join(installedRunRoot, engineRun), run)
+  await directory(appData)
+  assert.deepEqual((await fs.readdir(appData)).sort(), installedCompanions)
+  for (const name of installedCompanions) await directory(path.join(appData, name))
+  assert.match(runtimeId, /^release-[0-9a-f-]{36}$/)
+  const runtimeRoot = path.join(appData, 'runtime')
+  const pointerFile = path.join(runtimeRoot, 'current-runtime.json')
+  const environmentRoot = path.join(runtimeRoot, 'environments', runtimeId)
+  await directory(environmentRoot)
+  assert.equal(pythonExecutable, path.join(environmentRoot, 'bin/python'))
+  const ownedExecutable = await fs.realpath(pythonExecutable)
+  childOf(runtimeRoot, ownedExecutable)
+  const executable = await fs.lstat(ownedExecutable)
+  assert.ok(executable.isFile() && executable.uid === process.getuid() && (executable.mode & 0o111))
+  const pointer = await witness(pointerFile)
+  const pointerBytes = await fs.readFile(pointerFile)
+  assert.equal(sha256(pointerBytes), pointer.sha256)
+  assert.deepEqual(JSON.parse(pointerBytes.toString('utf8')), {
+    schemaVersion: 1,
+    runtimeId,
+    pythonExecutable,
+  })
+  childOf(run, rasterSourcePath)
+  assert.equal(await fs.realpath(rasterSourcePath), rasterSourcePath)
+  const source = await fs.lstat(rasterSourcePath)
+  assert.ok(source.isFile() && source.uid === process.getuid())
+  assert.ok(source.size > 0 && source.size <= 1024 ** 2)
+  return {
+    raster: await witness(rasterSourcePath),
+    runtime: {
+      kind: 'installed-engine',
+      runtimeRoot,
+      pointerFile,
+      environmentRoot,
+      runtimeId,
+      pythonExecutable,
+      pointer,
+    },
+  }
+}
+
 /** Fresh-only producer. Failures preserve partial owned evidence; there is no resume or cleanup. */
-export async function prepareHistoricalState({ repo, run, root }) {
+export async function prepareHistoricalState({ repo, run, root, installed }) {
   assert.equal(process.platform, 'linux')
   assert.equal(process.arch, 'x64')
   assert.equal(repo, moduleRepo)
@@ -553,13 +619,16 @@ export async function prepareHistoricalState({ repo, run, root }) {
       .trim(),
     historicalRevision,
   )
+  const installedState = installed === undefined ? null : await admitInstalledState(installed, run)
   const historicalSource = await historicalBundle(repo, run)
   const owners = require(historicalSource.bundlePath)
   await fs.mkdir(root, { mode: 0o700 })
-  await fs.mkdir(path.join(root, 'data'), { mode: 0o700 })
-  const appData = path.join(root, 'data/imagegen-studio')
-  await fs.mkdir(appData, { mode: 0o700 })
-  const runtime = await wrongProtocolRuntime(owners, appData)
+  const appData = installedState ? installed.appData : path.join(root, 'data/imagegen-studio')
+  if (!installedState) {
+    await fs.mkdir(path.join(root, 'data'), { mode: 0o700 })
+    await fs.mkdir(appData, { mode: 0o700 })
+  }
+  const runtime = installedState?.runtime ?? (await wrongProtocolRuntime(owners, appData))
   const database = owners.openAppDatabase(
     appData,
     path.join(historicalSource.root, 'src/main/db/migrations'),
@@ -591,6 +660,12 @@ export async function prepareHistoricalState({ repo, run, root }) {
       kind: 'positive-prompt',
       text: initialPrompt,
     })
+    if (installedState) {
+      tab = await service.importRasterImage(tab.id, installedState.raster.path, {
+        normalizeImport: installed.normalizeImport,
+      })
+      assert.equal(tab.layers.length, 1)
+    }
     await service.save(tab.id)
     const indexed = (await repository.listProjects()).find(
       (entry) => entry.localProjectKey === tab.id,
@@ -606,6 +681,18 @@ export async function prepareHistoricalState({ repo, run, root }) {
       initialProject: await witness(indexed.canonicalPath),
       documentId: saved.project.documentId,
       documentRevision: saved.project.documentRevision,
+    }
+    if (installedState) {
+      assert.equal(saved.project.layers.length, 1)
+      const raster = saved.project.layers[0]
+      assert.equal(raster.kind, 'raster')
+      assert.equal(saved.manifest.preview.status, 'unavailable')
+      const bytes = await saved.readMember(raster.asset.path)
+      assert.equal(bytes.length, raster.asset.bytes)
+      assert.equal(sha256(bytes), raster.asset.sha256)
+      assert.deepEqual(await witness(installedState.raster.path), installedState.raster)
+      project.raster = { ...raster, source: installedState.raster }
+      project.initialPreview = saved.manifest.preview
     }
     await service.close(tab.id)
     preset = await new owners.PresetRepository(database.db).create({
@@ -749,21 +836,51 @@ export async function prepareHistoricalState({ repo, run, root }) {
   } finally {
     await database.close()
   }
-  const baseline = snapshotDatabase(database.filePath)
+  const closed = { closed: Boolean(installedState) }
+  const baseline = snapshotDatabase(database.filePath, closed)
   assert.equal(baseline.integrityCheck, 'ok')
   assert.deepEqual(baseline.foreignKeyCheck, [])
   assert.equal(baseline.schemaMigrations.length, 29)
   assert.equal(baseline.tables.model_reference_identity, undefined)
   const checkpointRoot = path.join(run, 'payloads/checkpoint-29')
   await absent(checkpointRoot)
-  await fs.cp(root, checkpointRoot, {
+  const copy = {
     recursive: true,
     dereference: false,
     errorOnExist: true,
     force: false,
-  })
-  const checkpointFile = path.join(checkpointRoot, path.relative(root, database.filePath))
-  assert.deepEqual(snapshotDatabase(checkpointFile), baseline)
+  }
+  const dataRelative = 'data/imagegen-studio'
+  let sourceFiles
+  if (installedState) {
+    const checkpointData = path.join(checkpointRoot, dataRelative)
+    await fs.mkdir(checkpointData, { mode: 0o700, recursive: true })
+    sourceFiles = []
+    for (const name of installedCheckpointEntries) {
+      const input = path.join(appData, name)
+      const entry = await fs.lstat(input).catch((error) => {
+        if (error.code === 'ENOENT') return null
+        throw error
+      })
+      if (!entry) continue
+      await directory(input)
+      const files = await inventory(input)
+      assert.ok(files.every(({ kind }) => kind === 'file'), `${name} must contain ordinary files`)
+      await fs.cp(input, path.join(checkpointData, name), copy)
+      sourceFiles.push(
+        ...files.map((file) => ({ ...file, path: path.join(dataRelative, name, file.path) })),
+      )
+    }
+    assert.deepEqual(await witness(runtime.pointerFile), runtime.pointer)
+    const withoutIdentity = (files) =>
+      files.map(({ path, sha256, sizeBytes, kind }) => ({ path, sha256, sizeBytes, kind }))
+    assert.deepEqual(withoutIdentity(await inventory(checkpointRoot)), withoutIdentity(sourceFiles))
+  } else {
+    await fs.cp(root, checkpointRoot, copy)
+    sourceFiles = await inventory(root)
+  }
+  const checkpointFile = path.join(checkpointRoot, dataRelative, 'database/app.sqlite')
+  assert.deepEqual(snapshotDatabase(checkpointFile, closed), baseline)
   const descriptor = {
     schemaVersion: 1,
     historicalRevision,
@@ -781,13 +898,15 @@ export async function prepareHistoricalState({ repo, run, root }) {
     checkpoint29: {
       root: checkpointRoot,
       files: await inventory(checkpointRoot),
-      sourceFiles: await inventory(root),
+      sourceFiles,
     },
     limits: [
       'Historical owner execution against current pinned dependencies; no historical desktop or dependency-era ABI claim.',
       'Seeded preset/catalog/terminal queue persist through real historical owners. Queue qualification uses the existing test-only model verifier, not ML inference.',
       'Closed pre-upgrade checkpoint retained before current Main; product does not gain automatic backup/rollback from this fixture.',
-      'Wrong-protocol Node process substitutes only wire input; a ready diagnostic does not prove Python, GPU, model or engine readiness.',
+      installedState
+        ? 'Historical Raster import uses the supplied normalization port. The installed slot and outpaint weights are excluded from the mutable-state checkpoint.'
+        : 'Wrong-protocol Node process substitutes only wire input; a ready diagnostic does not prove Python, GPU, model or engine readiness.',
     ],
   }
   await writeNew(

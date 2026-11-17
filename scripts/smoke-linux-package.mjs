@@ -46,6 +46,7 @@ const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const supplied = process.env.IMAGEGEN_LINUX_PACKAGE_ARTIFACTS
 const suppliedPackage = process.env.IMAGEGEN_LINUX_PACKAGE_APPIMAGE
 const installedEngineReport = process.env.IMAGEGEN_LINUX_PACKAGE_INSTALLED_ENGINE_REPORT
+const historicalFixture = process.env.IMAGEGEN_LINUX_PACKAGE_HISTORICAL_FIXTURE
 const updateCheckMode = process.env.IMAGEGEN_LINUX_PACKAGE_UPDATE_CHECK
 assert.ok(
   updateCheckMode === undefined ||
@@ -64,6 +65,12 @@ const canonicalAbsolute = (value) =>
   typeof value === 'string' && path.isAbsolute(value) && path.resolve(value) === value
 assert.ok(canonicalAbsolute(supplied), 'Supply a canonical IMAGEGEN_LINUX_PACKAGE_ARTIFACTS.')
 assert.ok(canonicalAbsolute(suppliedPackage), 'Supply a canonical IMAGEGEN_LINUX_PACKAGE_APPIMAGE.')
+if (historicalFixture !== undefined) {
+  assert.ok(
+    canonicalAbsolute(historicalFixture) && installedEngineReport,
+    'A historical package fixture requires a canonical descriptor and an installed engine report.',
+  )
+}
 if (updateCheckMode === 'signed') {
   assert.ok(
     canonicalAbsolute(updateReleaseFixturesPath),
@@ -143,16 +150,29 @@ async function installedEngineFixture() {
       return actual
     }),
   )
-  await assert.rejects(lstat(path.join(dataRoot, 'database', 'app.sqlite')), {
-    code: 'ENOENT',
-  })
+  if (historicalFixture === undefined) {
+    await assert.rejects(lstat(path.join(dataRoot, 'database', 'app.sqlite')), { code: 'ENOENT' })
+  }
   return {
     dataRoot,
+    run,
     runtimeId,
+    pythonExecutable: report.activatedPointer.pythonExecutable,
     inputs: [reportBefore, await identity(pointer), provenanceBefore, ...workerInputs],
   }
 }
 const engine = await installedEngineFixture()
+const historical =
+  historicalFixture === undefined
+    ? null
+    : await import('./fixtures/packaged-installed-engine-upgrade.mjs')
+const history = await historical?.readHistoricalUpgrade({
+  filename: historicalFixture,
+  engine,
+  outputRoot: root,
+  appImage,
+  identity,
+})
 const relative = path.relative(artifactRoot, root)
 assert.ok(relative && !relative.startsWith('..') && !path.isAbsolute(relative))
 assert.equal(await realpath(artifactRoot), artifactRoot)
@@ -226,6 +246,19 @@ const sourcePaths = [
   fileURLToPath(import.meta.url),
   path.join(repo, 'scripts/qualification-resource-limits.mjs'),
 ]
+const migrationFile = path.join(repo, 'src/main/db/migrations/0030_model_reference_identity.sql')
+const srgbProfile = path.join(repo, 'worker-python/src/imagegen_worker/srgb.icc')
+if (history) {
+  sourcePaths.push(
+    migrationFile,
+    srgbProfile,
+    ...[
+      'application-state-upgrade-fixture.mjs',
+      'application-state-upgrade-native.mjs',
+      'packaged-installed-engine-upgrade.mjs',
+    ].map((file) => path.join(repo, 'scripts/fixtures', file)),
+  )
+}
 if (updateCheckMode) sourcePaths.push(path.join(repo, 'scripts/application-update-check-smoke.mjs'))
 const sourceBefore = await Promise.all(sourcePaths.map(identity))
 const packageBefore = await identity(appImage)
@@ -334,6 +367,12 @@ async function launch(name) {
   }
   const state = { name, checks: [], pageErrors: [], stdout: '', stderr: '', forcedCleanup: false }
   lifetimes.push(state)
+  if (history) {
+    await writeFile(path.join(root, `${name}.launch-intent.json`), JSON.stringify({ name }) + '\n', {
+      flag: 'wx',
+      mode: 0o600,
+    })
+  }
   state.child = spawn(
     appImage,
     [
@@ -393,8 +432,10 @@ async function readPorts(state) {
     workspaces: await globalThis.api.projects.listWorkspaces(),
   }))
   for (const entry of Object.values(result)) assert.equal(entry.ok, true, JSON.stringify(entry))
-  assert.deepEqual(result.catalog.value, [])
-  assert.deepEqual(result.presets.value, [])
+  if (!history) {
+    assert.deepEqual(result.catalog.value, [])
+    assert.deepEqual(result.presets.value, [])
+  }
   if (engine) {
     assert.equal(result.runtime.value.kind, 'ready', JSON.stringify(result.runtime.value))
     assert.equal(result.runtime.value.profile, 'linux-nvidia')
@@ -507,18 +548,7 @@ async function retainOwnStore(name) {
   return { project: await identity(packagePath), retainedProject: `${name}.igs`, databaseFiles }
 }
 
-try {
-  if (updateCheckMode) {
-    const { createApplicationUpdateCheckSmoke } =
-      await import('./application-update-check-smoke.mjs')
-    applicationUpdateSmoke = await createApplicationUpdateCheckSmoke({
-      mode: updateCheckMode,
-      port: updateFeedPort,
-      root,
-      currentVersion: '0.1.0-dev.1',
-      releaseFixturesPath: updateReleaseFixturesPath,
-    })
-  }
+async function runFreshProfile() {
   const first = await launch('first')
   await applicationUpdateSmoke?.assertStartup(first.page)
   const initial = await readPorts(first)
@@ -646,6 +676,35 @@ try {
     saved.project.sha256,
     'Read/reopen must preserve the Project package bytes.',
   )
+  return { saved, restarted }
+}
+
+try {
+  if (updateCheckMode) {
+    const { createApplicationUpdateCheckSmoke } =
+      await import('./application-update-check-smoke.mjs')
+    applicationUpdateSmoke = await createApplicationUpdateCheckSmoke({
+      mode: updateCheckMode,
+      port: updateFeedPort,
+      root,
+      currentVersion: '0.1.0-dev.1',
+      releaseFixturesPath: updateReleaseFixturesPath,
+    })
+  }
+  const { saved, restarted, historicalUpgrade } = history
+    ? await historical.runHistoricalUpgrade({
+        history,
+        launch,
+        readPorts,
+        closeNormally,
+        retainOwnStore,
+        root,
+        migrationHash: sourceBefore.find(({ path: file }) => file === migrationFile).sha256,
+        iccHash: sourceBefore.find(({ path: file }) => file === srgbProfile).sha256,
+        identity,
+        records,
+      })
+    : await runFreshProfile()
   assert.deepEqual(await identity(appImage), packageBefore)
   const sourceAfter = await Promise.all(sourcePaths.map(identity))
   assert.deepEqual(sourceAfter, sourceBefore)
@@ -661,9 +720,11 @@ try {
   await writeJson('report.json', {
     schemaVersion: 1,
     outcome: 'PASS',
-    scope: engine
-      ? 'Actual fused Linux AppImage with exact installed runtime, real Main status qualification and Project create/restart/persistence.'
-      : 'Actual fused Linux AppImage outside checkout, real packaged Main/preload/SQLite/migrations/own Project create/restart/persistence. No source worker or service mocks.',
+    scope: historicalUpgrade
+      ? 'Actual fused AppImage upgrades an owned historical DB, renders a nonempty Project preview with the installed CPU worker and reopens the saved Project.'
+      : engine
+        ? 'Actual fused Linux AppImage with exact installed runtime, real Main status qualification and Project create/restart/persistence.'
+        : 'Actual fused Linux AppImage outside checkout, real packaged Main/preload/SQLite/migrations/own Project create/restart/persistence. No source worker or service mocks.',
     mode: 'APPIMAGE_EXTRACT_AND_RUN=1; X11; Chromium CDP loopback. FUSE installation and Main Node inspector are not used.',
     packageBefore,
     packageAfter: await identity(appImage),
@@ -674,6 +735,7 @@ try {
     temporaryRoot: environment.TMPDIR ?? null,
     records,
     ...(applicationUpdateSmoke ? { applicationUpdateCheck: applicationUpdateResult } : {}),
+    ...(historicalUpgrade ? { historicalUpgrade } : {}),
     stores: { saved, restarted },
     lifetimes: lifetimes.map(
       ({
@@ -781,7 +843,9 @@ try {
 }
 if (failed) throw failed
 console.log(
-  engine
-    ? 'PASS installed runtime readiness, packaged Project reopen and two normal physical closes'
-    : 'PASS actual fused AppImage Home/IPC/SQLite/Project persistence, unavailable Setup and two normal physical closes',
+  history
+    ? 'PASS historical database upgrade, exact backup, installed CPU preview, and two normal physical closes'
+    : engine
+      ? 'PASS installed runtime readiness, packaged Project reopen and two normal physical closes'
+      : 'PASS actual fused AppImage Home/IPC/SQLite/Project persistence, unavailable Setup and two normal physical closes',
 )

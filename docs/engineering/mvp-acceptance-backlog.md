@@ -44,16 +44,16 @@ the state at their checkpoint.
    exact fixture opt-ins bring coverage to 8,469 PASS, one inapplicable platform
    SKIP and zero failures. [Qualification evidence](./anima-qualification-oracles-research.md),
    [test command](../../package.json).
-2. **Qualify the installed engine with historical state and real models.** The
-   local signed install, packaged runtime Ready and empty Project reopen passed
-   on the first host. Reuse that exact owned slot at its canonical path. Verify
-   model identities and extend the packaged flow to exercise CPU derivatives,
-   one bounded trained request per family, explicit Add and Save/reopen.
-   Run the upgrade lane over a pinned historical nonempty `.igs` with exact resource,
-   preset and queue/provenance records. Check the pre-migration backup, startup rows,
-   saved package and normal exits. Separate the real compatible worker lane from
-   missing/incompatible worker refusal and verify that Project Save remains usable.
+2. **Qualify trained generation from the packaged installed slot.** Local
+   signed install, packaged runtime Ready and empty Project reopen passed on
+   the first host. A separate run passed historical SQLite 29→30, exact backup,
+   real installed CPU preview on Save and nonempty Project reopen. Historical
+   model and terminal queue identities were controlled fixtures. Verify trained
+   model identities and extend the packaged flow to exercise one bounded request
+   per family, explicit Add, immutable provenance and Save/reopen. Keep the
+   compatible worker lane distinct from missing/incompatible worker refusal.
    [Packaged installed engine](./phase-5-packaged-installed-engine-research.md),
+   [historical state with installed worker](./phase-5-packaged-installed-historical-upgrade-research.md),
    [packaged upgrade harness](../../scripts/qualify-application-state-upgrade.mjs),
    [packaged smoke](../../scripts/smoke-linux-package.mjs),
    [runtime owner](../../src/main/runtime/index.ts),

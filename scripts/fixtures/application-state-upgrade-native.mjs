@@ -98,7 +98,7 @@ const canonical = (value) =>
 const rows = (value) => [...value].sort((a, b) => canonical(a).localeCompare(canonical(b)))
 
 /** Account for the ONE known Main startup scan update; preserve every other existing value. */
-function compareStartup(before, after, { first, projectId, migrationHash }) {
+export function compareStartup(before, after, { first, projectId, migrationHash }) {
   assert.equal(after.integrityCheck, 'ok')
   assert.deepEqual(after.foreignKeyCheck, [])
   const beforeNames = Object.keys(before.tables).sort(),

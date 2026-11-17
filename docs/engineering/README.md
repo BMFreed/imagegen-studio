@@ -1,5 +1,13 @@
 # Engineering Workflow
 
+## Current packaged historical upgrade with the installed worker
+
+[Packaged historical upgrade](./phase-5-packaged-installed-historical-upgrade-research.md)
+records real SQLite 29→30 startup, the exact pre-migration backup, CPU-rendered
+preview on explicit Save and nonempty Project reopen in the ordinary retained
+AppImage. The test restored the original owned slot state after normal exit.
+Trained generation and release acceptance remain open.
+
 ## Current packaged app and installed engine qualification
 
 [Packaged installed engine](./phase-5-packaged-installed-engine-research.md)

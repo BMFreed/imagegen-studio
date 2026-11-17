@@ -579,3 +579,9 @@ Recovery follows Invoke's manual restore procedure:
 Database restore does not rewind `.igs`, models, staging or other app-data files;
 newer files may be incompatible with an older app. This is a manual recovery path,
 not automatic in-place restore/downgrade, app-binary recovery or full acceptance.
+
+[Packaged historical upgrade with an installed engine](../engineering/phase-5-packaged-installed-historical-upgrade-research.md)
+exercised the actual 29→30 backup and migration on the first Linux/NVIDIA host.
+The same AppImage used the installed CPU worker to render a nonempty historical
+Project on explicit Save and reopened it after normal close. The trained-model,
+interrupted-update and shipping checks remain separate.
