@@ -1,4 +1,4 @@
-/** Compose the historical fixture and packaged smoke around one idle, already qualified slot. */
+/** Compose a historical or trained fixture with the packaged smoke in one idle installed slot. */
 import assert from 'node:assert/strict'
 import { execFile, execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -19,10 +19,19 @@ const engineRuns = path.join(
   '.codex/artifacts/imagegen-studio/runs/packaged-installed-engine',
 )
 const { values } = parseArgs({
-  options: { artifacts: { type: 'string' }, 'engine-report': { type: 'string' } },
+  options: {
+    artifacts: { type: 'string' },
+    'engine-report': { type: 'string' },
+    family: { type: 'string' },
+    'model-inputs': { type: 'string' },
+  },
 })
 const run = values.artifacts
 const engineReportPath = values['engine-report']
+const { family } = values
+const sourcesPath = values['model-inputs']
+assert.ok(family === undefined || family === 'illustrious' || family === 'anima')
+assert.equal(sourcesPath === undefined, family === undefined)
 const preserved = new Set(['inference-resources', 'runtime'])
 const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim()
 const readJson = async (file) => JSON.parse(await fs.readFile(file, 'utf8'))
@@ -126,7 +135,8 @@ assert.equal(path.basename(engineReportPath), 'installed-engine.json')
 assert.ok(
   path.isAbsolute(run ?? '') && path.normalize(run) === run && path.dirname(run) === engineRun,
 )
-assert.match(path.basename(run), /^historical-upgrade-r[1-9]\d*$/)
+const runType = family ? `trained-${family}` : 'historical-upgrade'
+assert.match(path.basename(run), new RegExp(`^${runType}-r[1-9]\\d*$`))
 await directory(engineRun)
 assert.equal(await fs.realpath(engineReportPath), engineReportPath)
 const release = await readJson(engineReportPath)
@@ -226,19 +236,25 @@ assert.ok(group && path.posix.normalize(group) === group, 'Use a bounded qualifi
 const memoryLimit = path.join('/sys/fs/cgroup', group)
 const memoryMax = (await fs.readFile(path.join(memoryLimit, 'memory.max'), 'utf8')).trim()
 const swapMax = (await fs.readFile(path.join(memoryLimit, 'memory.swap.max'), 'utf8')).trim()
-assert.ok(/^\d+$/.test(memoryMax) && Number(memoryMax) <= 4 * 1024 ** 3)
+assert.ok(/^\d+$/.test(memoryMax) && Number(memoryMax) <= (family ? 2 : 4) * 1024 ** 3)
 assert.equal(swapMax, '0')
 
 await fs.mkdir(run, { mode: 0o700 })
 const payloads = path.join(run, 'payloads')
 await fs.mkdir(payloads, { mode: 0o700 })
 await writeRecord(path.join(run, 'artifact-lifecycle.json'), {
-  owner: { repository: repo, task: 'packaged installed historical upgrade' },
+  owner: { repository: repo, task: `packaged installed ${runType}` },
   revision: git('rev-parse', 'HEAD'),
   state: 'running',
   evidence: run,
   payloads: [payloads],
-  dependsOn: [engineReportPath, priorNativeReport, appImage, appData],
+  dependsOn: [
+    engineReportPath,
+    priorNativeReport,
+    appImage,
+    appData,
+    ...(sourcesPath ? [sourcesPath] : []),
+  ],
   usedBy: [],
   pins: [],
 })
@@ -250,6 +266,8 @@ const moved = []
 let before
 let stagedOwned = false
 let fixture
+let trained
+let verifyTrainedSources
 let normalized
 let smokeExit
 const nativeRoot = path.join(run, 'native')
@@ -285,65 +303,82 @@ try {
   assert.deepEqual(await inventory(held, names), before)
   stagedOwned = true
 
-  const rasterSourcePath = path.join(run, 'historical-raster.png')
-  const profile = path.join(repo, 'worker-python/src/imagegen_worker/srgb.icc')
-  await exec(
-    pythonExecutable,
-    [
-      '-I',
-      '-B',
-      '-c',
-      `from pathlib import Path
+  if (family) {
+    const { preparePackagedTrainedModels, verifyPackagedTrainedSources } =
+      await import('./fixtures/packaged-installed-models.mjs')
+    verifyTrainedSources = verifyPackagedTrainedSources
+    trained = await preparePackagedTrainedModels({ repo, run, appData, family, sourcesPath })
+    await writeRecord(path.join(run, 'trained-fixture.json'), {
+      schemaVersion: 1,
+      family,
+      appData,
+      runtimeId,
+      ...trained,
+    })
+  } else {
+    const rasterSourcePath = path.join(run, 'historical-raster.png')
+    const profile = path.join(repo, 'worker-python/src/imagegen_worker/srgb.icc')
+    await exec(
+      pythonExecutable,
+      [
+        '-I',
+        '-B',
+        '-c',
+        `from pathlib import Path
 from PIL import Image
 import sys
 with Path(sys.argv[1]).open('xb') as out:
     Image.new('RGBA', (48, 32), (31, 101, 197, 255)).save(out, format='PNG', icc_profile=Path(sys.argv[2]).read_bytes())`,
-      rasterSourcePath,
-      profile,
-    ],
-    { timeout: 15_000 },
-  )
-  fixture = await prepareHistoricalState({
-    repo,
-    run,
-    root: path.join(payloads, 'subject'),
-    installed: {
-      appData,
-      runtimeId,
-      pythonExecutable,
-      rasterSourcePath,
-      normalizeImport: async (input) => {
-        const manager = new RuntimeManager(await createRuntimeRoots(appData))
-        const source = await manager.resolveInstalledProjectWorker(path.join(appData, 'scratch'))
-        assert.ok(source)
-        assert.equal(source.location.pythonExecutable, pythonExecutable)
-        const client = await ProjectWorkerClient.start(source.location, {
-          environment: source.environment,
-        })
-        try {
-          const result = await client.normalizeImport(input)
-          normalized = { ready: client.ready, rasterBytes: await sha256(rasterSourcePath) }
-          return result
-        } finally {
-          await client.close()
-        }
+        rasterSourcePath,
+        profile,
+      ],
+      { timeout: 15_000 },
+    )
+    fixture = await prepareHistoricalState({
+      repo,
+      run,
+      root: path.join(payloads, 'subject'),
+      installed: {
+        appData,
+        runtimeId,
+        pythonExecutable,
+        rasterSourcePath,
+        normalizeImport: async (input) => {
+          const manager = new RuntimeManager(await createRuntimeRoots(appData))
+          const source = await manager.resolveInstalledProjectWorker(path.join(appData, 'scratch'))
+          assert.ok(source)
+          assert.equal(source.location.pythonExecutable, pythonExecutable)
+          const client = await ProjectWorkerClient.start(source.location, {
+            environment: source.environment,
+          })
+          try {
+            const result = await client.normalizeImport(input)
+            normalized = { ready: client.ready, rasterBytes: await sha256(rasterSourcePath) }
+            return result
+          } finally {
+            await client.close()
+          }
+        },
       },
-    },
-  })
-  await writeRecord(path.join(run, 'historical-normalization.json'), normalized)
+    })
+    await writeRecord(path.join(run, 'historical-normalization.json'), normalized)
+  }
   const env = {
     ...process.env,
     IMAGEGEN_LINUX_PACKAGE_APPIMAGE: appImage,
     IMAGEGEN_LINUX_PACKAGE_ARTIFACTS: nativeRoot,
     IMAGEGEN_LINUX_PACKAGE_INSTALLED_ENGINE_REPORT: engineReportPath,
-    IMAGEGEN_LINUX_PACKAGE_HISTORICAL_FIXTURE: path.join(run, 'historical-fixture.json'),
   }
   for (const key of [
     'IMAGEGEN_LINUX_PACKAGE_UPDATE_CHECK',
     'IMAGEGEN_LINUX_PACKAGE_UPDATE_RELEASE_FIXTURES',
     'IMAGEGEN_LINUX_PACKAGE_UPDATE_FEED_PORT',
+    'IMAGEGEN_LINUX_PACKAGE_HISTORICAL_FIXTURE',
+    'IMAGEGEN_LINUX_PACKAGE_TRAINED_FIXTURE',
   ])
     delete env[key]
+  if (family) env.IMAGEGEN_LINUX_PACKAGE_TRAINED_FIXTURE = path.join(run, 'trained-fixture.json')
+  else env.IMAGEGEN_LINUX_PACKAGE_HISTORICAL_FIXTURE = path.join(run, 'historical-fixture.json')
   smokeExit = await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [path.join(repo, 'scripts/smoke-linux-package.mjs')], {
       cwd: repo,
@@ -397,6 +432,12 @@ with Path(sys.argv[1]).open('xb') as out:
       exactIdentityAndBytes: true,
     })
   }
+  if (trained) {
+    await verifyTrainedSources(trained.files)
+    await writeRecord(path.join(run, 'trained-sources-unchanged.json'), { files: trained.files })
+  }
   await fs.rename(claim, path.join(run, 'released-claim'))
 }
-console.log(JSON.stringify({ outcome: 'PASS', appData, run, projectId: fixture.project.projectId }))
+console.log(
+  JSON.stringify({ outcome: 'PASS', appData, run, family, projectId: fixture?.project.projectId }),
+)

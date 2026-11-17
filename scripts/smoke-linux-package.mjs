@@ -35,10 +35,13 @@ import {
 } from './qualification-resource-limits.mjs'
 
 const execute = promisify(execFile)
+const trainedFixture = process.env.IMAGEGEN_LINUX_PACKAGE_TRAINED_FIXTURE
+const nativeMemoryGiB = trainedFixture ? 12 : 4
+const nativeDeadlineSeconds = trainedFixture ? 420 : 120
 const boundedExecute = (command, args, options) =>
   execute(
     command,
-    args.map((value) => (value === 'MemoryMax=12G' ? 'MemoryMax=4G' : value)),
+    args.map((value) => (value === 'MemoryMax=12G' ? `MemoryMax=${nativeMemoryGiB}G` : value)),
     options,
   )
 const artifactRoot = path.join(os.homedir(), '.codex/artifacts/imagegen-studio')
@@ -47,6 +50,9 @@ const supplied = process.env.IMAGEGEN_LINUX_PACKAGE_ARTIFACTS
 const suppliedPackage = process.env.IMAGEGEN_LINUX_PACKAGE_APPIMAGE
 const installedEngineReport = process.env.IMAGEGEN_LINUX_PACKAGE_INSTALLED_ENGINE_REPORT
 const historicalFixture = process.env.IMAGEGEN_LINUX_PACKAGE_HISTORICAL_FIXTURE
+assert.ok(
+  trainedFixture === undefined || (installedEngineReport && historicalFixture === undefined),
+)
 const updateCheckMode = process.env.IMAGEGEN_LINUX_PACKAGE_UPDATE_CHECK
 assert.ok(
   updateCheckMode === undefined ||
@@ -150,7 +156,7 @@ async function installedEngineFixture() {
       return actual
     }),
   )
-  if (historicalFixture === undefined) {
+  if (historicalFixture === undefined && trainedFixture === undefined) {
     await assert.rejects(lstat(path.join(dataRoot, 'database', 'app.sqlite')), { code: 'ENOENT' })
   }
   return {
@@ -168,6 +174,17 @@ const historical =
     : await import('./fixtures/packaged-installed-engine-upgrade.mjs')
 const history = await historical?.readHistoricalUpgrade({
   filename: historicalFixture,
+  engine,
+  outputRoot: root,
+  appImage,
+  identity,
+})
+const trainedProfile =
+  trainedFixture === undefined
+    ? null
+    : await import('./fixtures/packaged-installed-trained-generation.mjs')
+const trained = await trainedProfile?.readTrainedGeneration({
+  filename: trainedFixture,
   engine,
   outputRoot: root,
   appImage,
@@ -259,12 +276,15 @@ if (history) {
     ].map((file) => path.join(repo, 'scripts/fixtures', file)),
   )
 }
+if (trained)
+  sourcePaths.push(path.join(repo, 'scripts/fixtures/packaged-installed-trained-generation.mjs'))
 if (updateCheckMode) sourcePaths.push(path.join(repo, 'scripts/application-update-check-smoke.mjs'))
 const sourceBefore = await Promise.all(sourcePaths.map(identity))
 const packageBefore = await identity(appImage)
 const projectTitle = 'Package qualification'
 const records = []
 const lifetimes = []
+const gpuObservers = new Map()
 let projectId
 let firstTab
 let failed
@@ -277,19 +297,76 @@ async function writeJson(name, value) {
 
 function assertAggregate(checks) {
   const groups = new Map()
+  const ownedScopes = new Set(
+    checks.flatMap(({ groups }) =>
+      groups.filter(({ ownedScope }) => ownedScope).map(({ group }) => group),
+    ),
+  )
   for (const check of checks) {
     for (const group of check.groups) {
       assert.equal(group.swapMax, '0')
-      assert.ok(/^\d+$/.test(group.memoryMax) && BigInt(group.memoryMax) <= 4n * 1024n ** 3n)
+      const limit = trained && !ownedScopes.has(group.group) ? 2 : nativeMemoryGiB
+      assert.ok(
+        /^\d+$/.test(group.memoryMax) && BigInt(group.memoryMax) <= BigInt(limit) * 1024n ** 3n,
+      )
       groups.set(group.group, BigInt(group.memoryMax))
     }
   }
   const aggregate = [...groups.values()].reduce((total, value) => total + value, 0n)
   assert.ok(
-    aggregate <= 8n * 1024n ** 3n,
-    'Observed native groups exceed the aggregate 8 GiB bound.',
+    aggregate <= BigInt(trained ? 14 : 8) * 1024n ** 3n,
+    'Observed native groups exceed the qualification aggregate bound.',
   )
   return { memoryMaxBytes: String(aggregate), groups: [...groups.keys()], zeroSwap: true }
+}
+
+function observeGpuWorker(state) {
+  const scope = state.aggregateLimits.groups.find((group) =>
+    group.endsWith(`-${state.mainPid}.scope`),
+  )
+  assert.ok(scope, 'A trained job requires its bounded native scope before Generate.')
+  state.gpuSamples = []
+  let pending
+  const sample = async () => {
+    const { stdout } = await execute(
+      '/usr/bin/nvidia-smi',
+      ['--query-compute-apps=pid,used_gpu_memory', '--format=csv,noheader,nounits'],
+      { timeout: 2000 },
+    )
+    for (const line of stdout.split('\n')) {
+      const match = /^\s*(\d+),\s*(\d+)\s*$/.exec(line)
+      if (!match) continue
+      const pid = Number(match[1])
+      try {
+        const cgroup = (await readFile(`/proc/${pid}/cgroup`, 'utf8')).trim()
+        if (cgroup !== `0::${scope}`) continue
+        const args = (await readFile(`/proc/${pid}/cmdline`, 'utf8')).split('\0')
+        if (!args.includes('imagegen_worker.owned_inference')) continue
+        const stat = await readFile(`/proc/${pid}/stat`, 'utf8')
+        state.gpuSamples.push({
+          pid,
+          startTicks: stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19],
+          group: scope,
+          gpuMiB: Number(match[2]),
+        })
+      } catch (error) {
+        if (!['ENOENT', 'ESRCH'].includes(error.code)) throw error
+      }
+    }
+  }
+  const timer = setInterval(() => {
+    pending ??= sample()
+      .catch((error) => {
+        state.gpuObserverError = error.message
+      })
+      .finally(() => {
+        pending = undefined
+      })
+  }, 1000)
+  gpuObservers.set(state, async () => {
+    clearInterval(timer)
+    await pending
+  })
 }
 
 async function discoverEndpoint(state) {
@@ -332,9 +409,21 @@ async function connect(state) {
     } finally {
       await session.detach()
     }
+    if (trained) {
+      const expectedScope = `app-imagegen\\x2dstudio-${state.mainPid}.scope`
+      await expect
+        .poll(
+          async () => {
+            const cgroup = (await readFile(`/proc/${state.mainPid}/cgroup`, 'utf8')).trim()
+            return path.posix.basename(cgroup)
+          },
+          { timeout: 30_000 },
+        )
+        .toBe(expectedScope)
+    }
     state.checks.push(
       await boundQualificationProcess(state.mainPid, {
-        deadlineSeconds: 120,
+        deadlineSeconds: nativeDeadlineSeconds,
         execute: boundedExecute,
       }),
     )
@@ -367,11 +456,15 @@ async function launch(name) {
   }
   const state = { name, checks: [], pageErrors: [], stdout: '', stderr: '', forcedCleanup: false }
   lifetimes.push(state)
-  if (history) {
-    await writeFile(path.join(root, `${name}.launch-intent.json`), JSON.stringify({ name }) + '\n', {
-      flag: 'wx',
-      mode: 0o600,
-    })
+  if (history || trained) {
+    await writeFile(
+      path.join(root, `${name}.launch-intent.json`),
+      JSON.stringify({ name }) + '\n',
+      {
+        flag: 'wx',
+        mode: 0o600,
+      },
+    )
   }
   state.child = spawn(
     appImage,
@@ -409,7 +502,7 @@ async function launch(name) {
   if (state.wrapperPid !== state.mainPid) {
     state.checks.push(
       await boundQualificationProcess(state.wrapperPid, {
-        deadlineSeconds: 120,
+        deadlineSeconds: nativeDeadlineSeconds,
         execute: boundedExecute,
       }),
     )
@@ -432,7 +525,7 @@ async function readPorts(state) {
     workspaces: await globalThis.api.projects.listWorkspaces(),
   }))
   for (const entry of Object.values(result)) assert.equal(entry.ok, true, JSON.stringify(entry))
-  if (!history) {
+  if (!history && !trained) {
     assert.deepEqual(result.catalog.value, [])
     assert.deepEqual(result.presets.value, [])
   }
@@ -497,6 +590,26 @@ async function currentTab(state) {
 }
 
 async function closeNormally(state) {
+  await gpuObservers.get(state)?.()
+  gpuObservers.delete(state)
+  if (trained && !state.closed && state.aggregateLimits) {
+    state.memoryBeforeClose = await Promise.all(
+      state.aggregateLimits.groups.map(async (group) => {
+        const directory = path.join('/sys/fs/cgroup', group)
+        const [peak, events, accounting] = await Promise.all(
+          ['memory.peak', 'memory.events', 'memory.stat'].map((name) =>
+            readFile(path.join(directory, name), 'utf8'),
+          ),
+        )
+        return {
+          group,
+          peakBytes: peak.trim(),
+          events: events.trim(),
+          accounting: accounting.split('\n').filter((line) => /^(anon|file) /.test(line)),
+        }
+      }),
+    )
+  }
   if (!state.closed) {
     const page = state.page && !state.page.isClosed() ? state.page : await connect(state)
     try {
@@ -691,7 +804,7 @@ try {
       releaseFixturesPath: updateReleaseFixturesPath,
     })
   }
-  const { saved, restarted, historicalUpgrade } = history
+  const { saved, restarted, historicalUpgrade, trainedGeneration } = history
     ? await historical.runHistoricalUpgrade({
         history,
         launch,
@@ -704,8 +817,49 @@ try {
         identity,
         records,
       })
-    : await runFreshProfile()
+    : trained
+      ? await trainedProfile.runTrainedGeneration({
+          trained,
+          launch,
+          readPorts,
+          closeNormally,
+          retainOwnStore,
+          root,
+          identity,
+          records,
+          observeGpuWorker,
+        })
+      : await runFreshProfile()
   assert.deepEqual(await identity(appImage), packageBefore)
+  if (trainedGeneration) {
+    const jobWorker = trainedGeneration.worker
+    assert.ok(
+      lifetimes[0].gpuSamples.some(
+        ({ gpuMiB, pid, startTicks, group }) =>
+          gpuMiB > 0 &&
+          pid === jobWorker.pid &&
+          startTicks === jobWorker.startTicks &&
+          group === jobWorker.group,
+      ),
+      'Observe the claimed generation worker on CUDA, with exact PID/start/cgroup.',
+    )
+    const workers = new Map(lifetimes[0].gpuSamples.map(({ pid, startTicks }) => [pid, startTicks]))
+    for (const [pid, startTicks] of workers) {
+      try {
+        const stat = await readFile(`/proc/${pid}/stat`, 'utf8')
+        assert.notEqual(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19], startTicks)
+      } catch (error) {
+        if (!['ENOENT', 'ESRCH'].includes(error.code)) throw error
+      }
+    }
+    for (const state of lifetimes) {
+      assert.ok(
+        state.memoryBeforeClose.every(
+          ({ events }) => /^oom 0$/m.test(events) && /^oom_kill 0$/m.test(events),
+        ),
+      )
+    }
+  }
   const sourceAfter = await Promise.all(sourcePaths.map(identity))
   assert.deepEqual(sourceAfter, sourceBefore)
   if (engine) {
@@ -720,11 +874,13 @@ try {
   await writeJson('report.json', {
     schemaVersion: 1,
     outcome: 'PASS',
-    scope: historicalUpgrade
-      ? 'Actual fused AppImage upgrades an owned historical DB, renders a nonempty Project preview with the installed CPU worker and reopens the saved Project.'
-      : engine
-        ? 'Actual fused Linux AppImage with exact installed runtime, real Main status qualification and Project create/restart/persistence.'
-        : 'Actual fused Linux AppImage outside checkout, real packaged Main/preload/SQLite/migrations/own Project create/restart/persistence. No source worker or service mocks.',
+    scope: trainedGeneration
+      ? 'Actual fused AppImage executes one trained installed-worker generation through public Generate, Add, Save and reopen.'
+      : historicalUpgrade
+        ? 'Actual fused AppImage upgrades an owned historical DB, renders a nonempty Project preview with the installed CPU worker and reopens the saved Project.'
+        : engine
+          ? 'Actual fused Linux AppImage with exact installed runtime, real Main status qualification and Project create/restart/persistence.'
+          : 'Actual fused Linux AppImage outside checkout, real packaged Main/preload/SQLite/migrations/own Project create/restart/persistence. No source worker or service mocks.',
     mode: 'APPIMAGE_EXTRACT_AND_RUN=1; X11; Chromium CDP loopback. FUSE installation and Main Node inspector are not used.',
     packageBefore,
     packageAfter: await identity(appImage),
@@ -736,6 +892,7 @@ try {
     records,
     ...(applicationUpdateSmoke ? { applicationUpdateCheck: applicationUpdateResult } : {}),
     ...(historicalUpgrade ? { historicalUpgrade } : {}),
+    ...(trainedGeneration ? { trainedGeneration } : {}),
     stores: { saved, restarted },
     lifetimes: lifetimes.map(
       ({
@@ -756,7 +913,7 @@ try {
           },
         }
       : { defaultProviderUnavailable: true }),
-    nativeInferenceQualified: false,
+    nativeInferenceQualified: Boolean(trainedGeneration),
     shippingTrustQualified: false,
     cleanMachineInstallQualified: false,
     applicationUpdateQualified: false,
@@ -785,7 +942,10 @@ try {
         state.closeFailure = error.message
         // A failed close never becomes PASS. Existing guards own any forced native deadline.
         // Wait for their original finite deadline, then revalidate the exact owned scope only.
-        const due = Math.max(0, ...state.checks.map((check) => Date.parse(check.at) + 120_000))
+        const due = Math.max(
+          0,
+          ...state.checks.map((check) => Date.parse(check.at) + nativeDeadlineSeconds * 1000),
+        )
         while (!state.closed && Date.now() < due) await delay(Math.min(1000, due - Date.now()))
         if (!state.closed) {
           for (const check of state.checks) {
@@ -829,6 +989,9 @@ try {
       physicalExitFailure: state.physicalExitFailure,
       deadlineCleanup: state.deadlineCleanup,
       checks: state.checks,
+      memoryBeforeClose: state.memoryBeforeClose,
+      gpuSamples: state.gpuSamples,
+      gpuObserverError: state.gpuObserverError,
       scopeExit: state.scopeExit,
     })
   }
@@ -843,9 +1006,11 @@ try {
 }
 if (failed) throw failed
 console.log(
-  history
-    ? 'PASS historical database upgrade, exact backup, installed CPU preview, and two normal physical closes'
-    : engine
-      ? 'PASS installed runtime readiness, packaged Project reopen and two normal physical closes'
-      : 'PASS actual fused AppImage Home/IPC/SQLite/Project persistence, unavailable Setup and two normal physical closes',
+  trained
+    ? 'PASS trained generation, explicit Add and Save/reopen, and two normal physical closes'
+    : history
+      ? 'PASS historical database upgrade, exact backup, installed CPU preview, and two normal physical closes'
+      : engine
+        ? 'PASS installed runtime readiness, packaged Project reopen and two normal physical closes'
+        : 'PASS actual fused AppImage Home/IPC/SQLite/Project persistence, unavailable Setup and two normal physical closes',
 )

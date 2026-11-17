@@ -1,12 +1,20 @@
 # Engineering Workflow
 
+## Current packaged trained generation
+
+[Packaged trained generation](./phase-5-packaged-trained-generation-research.md)
+records one real CUDA job each for Illustrious XL v0.1 and Cyberfalafel anima
+v1.0. Both use the existing installed engine and the ordinary AppImage flow for
+Generate, explicit Add, Save and Project reopen. The retained DB and `.igs`
+readback confirms frozen configuration, exact result bytes and original slot
+restoration. Visual utility and supported capacity remain open.
+
 ## Current packaged historical upgrade with the installed worker
 
 [Packaged historical upgrade](./phase-5-packaged-installed-historical-upgrade-research.md)
 records real SQLite 29→30 startup, the exact pre-migration backup, CPU-rendered
 preview on explicit Save and nonempty Project reopen in the ordinary retained
 AppImage. The test restored the original owned slot state after normal exit.
-Trained generation and release acceptance remain open.
 
 ## Current packaged app and installed engine qualification
 
@@ -15,7 +23,7 @@ records one signed local slot, actual CPU/CUDA/LaMa checks and two normal
 AppImage lifetimes that report Ready for the exact runtime and reopen a saved
 Project. Two no-engine lifetimes verify default unavailable Setup. This closes
 the local packaged startup and installed-worker status part of the backlog.
-Historical state with that engine, trained jobs and production trust remain open.
+Production trust remains open.
 
 ## Current Anima qualification and MVP acceptance
 

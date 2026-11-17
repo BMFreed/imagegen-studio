@@ -1,8 +1,8 @@
 # MVP acceptance backlog
 
-Reconciled against `3c1d42ec95576c74519ea7cc02683ca29b2b8d02`. All eight public
-promise statuses remain **«Пока не обещать»**. Earlier roadmap entries record
-the state at their checkpoint.
+Updated through [packaged trained generation](./phase-5-packaged-trained-generation-research.md).
+All eight public promise statuses remain **«Пока не обещать»**. Earlier roadmap
+entries record the state at their checkpoint.
 [Product scope](../specs/00-product-scope.md), [promise matrix](../product-promises.md),
 [roadmap](../specs/01-implementation-roadmap.md).
 
@@ -29,12 +29,13 @@ the state at their checkpoint.
   [native engine](./phase-5-native-engine-qualification-research.md),
   [AppImage](./phase-5-linux-app-package-research.md),
   [application updates](../features/application-updates.md).
-- Packaged migration 29→30 and Project Save/reopen used a controlled incompatible
-  protocol peer. The subsequent SQLite online backup checkpoint preserved committed
-  WAL in a real Main database initializer run. Actual current packaged Main with an
-  installed Python worker, nonempty historical Project and migration backup belongs
-  to step 2. [Historical state](./phase-5-application-state-upgrade-research.md),
-  [startup backup](./phase-5-database-migration-backup-research.md).
+- Packaged migration 29→30 and Project Save/reopen originally used a controlled
+  incompatible protocol peer. The SQLite online backup checkpoint preserved
+  committed WAL in the Main initializer. The packaged installed-worker follow-up
+  verifies the pre-migration backup and a real CPU preview on Save of a nonempty
+  historical Project. [Historical state](./phase-5-application-state-upgrade-research.md),
+  [startup backup](./phase-5-database-migration-backup-research.md),
+  [installed-worker follow-up](./phase-5-packaged-installed-historical-upgrade-research.md).
 
 ## Ordered acceptance work
 
@@ -44,17 +45,15 @@ the state at their checkpoint.
    exact fixture opt-ins bring coverage to 8,469 PASS, one inapplicable platform
    SKIP and zero failures. [Qualification evidence](./anima-qualification-oracles-research.md),
    [test command](../../package.json).
-2. **Qualify trained generation from the packaged installed slot.** Local
-   signed install, packaged runtime Ready and empty Project reopen passed on
-   the first host. A separate run passed historical SQLite 29→30, exact backup,
-   real installed CPU preview on Save and nonempty Project reopen. Historical
-   model and terminal queue identities were controlled fixtures. Verify trained
-   model identities and extend the packaged flow to exercise one bounded request
-   per family, explicit Add, immutable provenance and Save/reopen. Keep the
-   compatible worker lane distinct from missing/incompatible worker refusal.
+2. **Bounded packaged trained generation passed.** One actual 256×256 TXT job
+   for each family reaches public Generate, explicit Add, Save and reopen with
+   exact resource identities, frozen provenance and retained result bytes. The
+   compatible installed engine and original AppData are restored after both
+   runs. Missing-engine Setup has a fresh packaged control. The incompatible
+   worker refusal for the release candidate remains in step 6.
    [Packaged installed engine](./phase-5-packaged-installed-engine-research.md),
-   [historical state with installed worker](./phase-5-packaged-installed-historical-upgrade-research.md),
-   [packaged upgrade harness](../../scripts/qualify-application-state-upgrade.mjs),
+   [packaged trained jobs](./phase-5-packaged-trained-generation-research.md),
+   [packaged installed harness](../../scripts/qualify-packaged-installed-upgrade.mjs),
    [packaged smoke](../../scripts/smoke-linux-package.mjs),
    [runtime owner](../../src/main/runtime/index.ts),
    [runtime acceptance](../specs/07-python-runtime-management.md#acceptance-criteria).
