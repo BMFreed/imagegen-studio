@@ -2,8 +2,9 @@
  * Genuine private Main handoff for ROOT's original-Anima regional probes. Import runs nothing.
  * SQLite/coordinator/Save/reopen/capture/planner/coverage are real. Default authored model metadata
  * and literal masks are setup. Optional trained mode registers three exact read-only files only in
- * the fresh fixture DB and resolves the saved reference through real ModelService. No worker is
- * spawned and no public generation permission is granted. The caller owns the fresh root/cleanup.
+ * the fresh fixture DB and resolves the saved reference through real ModelService. The IMG visual
+ * probe uses the installed CPU worker for Raster import and source composition. The caller owns
+ * inference, run retention and cleanup.
  *
  * InvokeAI a61ac4fb: backend/anima/{regional_prompting,conditioning_data}.py and
  * app/invocations/anima/anima_denoise.py; the existing Studio compiler remains the sole parser.
@@ -25,11 +26,13 @@ import {
   parseProjectDocumentV1,
 } from '../../../shared/projects/project-schema.js'
 import type { GenerationPrompt } from '../../../shared/projects/prompt-embeddings.js'
+import { ANIMA_REGIONAL_NEGATIVE_PROFILE } from '../../../shared/projects/regional-invoke-generation.js'
 
 import { sql } from 'kysely'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { lstat, mkdir, readdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -40,6 +43,11 @@ import { openAppDatabase } from '../../db/database.js'
 import { ANIMA_QWEN3_0_6B_ENCODER, ANIMA_QWEN_IMAGE_VAE } from '../../models/anima-manifest.js'
 import { ModelRepository, type VerifiedModelArtifact } from '../../models/model-repository.js'
 import { ModelService, type VerifiedAnimaGenerationBundle } from '../../models/model-service.js'
+import { prepareAnimaGenerationBatch } from '../anima-generation-batch.js'
+import {
+  prepareAnimaGeneration,
+  type PreparedAnimaGeneration,
+} from '../anima-generation-preparation.js'
 import { readIgsPackage } from '../igs-package.js'
 import { ProjectAutosaveLeaseRegistry } from '../project-autosave.js'
 import {
@@ -54,6 +62,8 @@ import { ProjectIndexRepository } from '../project-index.js'
 import { encodeProjectMaskPng } from '../project-mask.js'
 import { ProjectService } from '../project-service.js'
 import { ProjectShadowStore } from '../project-shadow.js'
+import { classifyTargetPngAlpha } from '../target-png-mode.js'
+import { ProjectWorkerClient } from '../worker-client.js'
 
 const REPO = fileURLToPath(new URL('../../../../', import.meta.url))
 const VARIANTS = [
@@ -454,6 +464,315 @@ export async function produceAnimaRegionalInputFixture(
     mode: 0o600,
   })
   return result
+}
+
+const ANIMA_REGIONAL_NEGATIVE_VISUAL_CASES = [
+  { label: 'baseline', negativeSide: null },
+  { label: 'negative-left', negativeSide: 'left' },
+  { label: 'negative-right', negativeSide: 'right' },
+] as const
+
+export interface AnimaRegionalNegativeVisualUseCase {
+  case: (typeof ANIMA_REGIONAL_NEGATIVE_VISUAL_CASES)[number]
+  compiledPrompts: readonly CompiledCurrentCanvasAnimaRegionalPrompt[]
+  models: ModelService
+  prepared: PreparedAnimaGeneration
+  recipe: CurrentCanvasRegionalRecipe
+}
+
+/**
+ * InvokeAI 4875d96531ca6712b288f6e660fcbb34143408c1: addRegionalGuidance.ts sends masked negatives
+ * to the negative collector. anima_denoise.py and the Anima regional prompting and transformer
+ * patch apply independent signed masks on even blocks.
+ */
+export async function produceAnimaRegionalNegativeVisualProbe(options: {
+  pythonExecutable: string
+  run: string
+  runtimeRoot: string
+  sourceImage: AnimaRegionalTrainedFile
+  trainedBundle: AnimaRegionalTrainedBundle
+  useCase: (input: AnimaRegionalNegativeVisualUseCase) => Promise<unknown>
+}): Promise<void> {
+  const { pythonExecutable, run, runtimeRoot, useCase } = options
+  const trainedBundle = captureTrainedBundle(options.trainedBundle)
+  const sourceImage = structuredClone(options.sourceImage)
+  const runParent = path.join(
+    os.homedir(),
+    '.codex/artifacts/imagegen-studio/runs/anima-negative-visual',
+  )
+  assert.equal(path.dirname(run), runParent)
+  assert.match(path.basename(run), /^20261118-r[1-9]\d*$/)
+  assert.equal(await realpath(run), run)
+  assert.equal(sourceImage.path, path.join(run, 'cat-scarves-source.png'))
+  assert.equal(await realpath(sourceImage.path), sourceImage.path)
+  const sourceStat = await lstat(sourceImage.path)
+  assert.ok(sourceStat.isFile() && sourceStat.size > 0 && sourceStat.size <= 2 * 1024 ** 2)
+  const source = await readFile(sourceImage.path)
+  assert.equal(source.length, sourceImage.byteSize)
+  assert.equal(digest(source), sourceImage.sha256)
+  const bbox: IgsRectV1 = { height: 512, width: 512, x: 0, y: 0 }
+  assert.equal(classifyTargetPngAlpha(source, bbox.width, bbox.height), 'img2img')
+
+  const data = path.join(run, 'anima-main-payload')
+  const scratch = path.join(data, 'scratch')
+  const artifacts = path.join(run, 'anima-main-inputs')
+  for (const directory of [data, scratch, artifacts]) {
+    await mkdir(directory, { mode: 0o700 })
+  }
+  const keep = async (name: string, bytes: Buffer) => {
+    const file = path.join(artifacts, name)
+    await writeFile(file, bytes, { flag: 'wx', mode: 0o600 })
+    return { byteSize: bytes.length, path: file, sha256: digest(bytes) }
+  }
+  const database = openAppDatabase(data, path.join(REPO, 'src/main/db/migrations'))
+  const service = new ProjectService({
+    autosaveOptions: { debounceMs: 60_000, leaseRegistry: new ProjectAutosaveLeaseRegistry() },
+    dataRoot: data,
+    repository: new ProjectIndexRepository(database.db),
+    roots: {
+      placeholdersDir: path.join(REPO, 'src/main/projects/placeholders'),
+      scratchDir: scratch,
+    },
+    shadow: new ProjectShadowStore(path.join(data, 'autosave')),
+  })
+  const startCpu = () =>
+    ProjectWorkerClient.start(
+      { pythonExecutable, runtimeRoot, stagingBasePath: scratch },
+      {
+        environment: {
+          CUDA_VISIBLE_DEVICES: '',
+          LANG: 'C.UTF-8',
+          LC_ALL: 'C.UTF-8',
+          TMPDIR: scratch,
+        },
+      },
+    )
+  let worker: ProjectWorkerClient | undefined
+  let failure: unknown
+  try {
+    const { models, reference } = await registerTrainedBundle(
+      new ModelRepository(database.db),
+      trainedBundle,
+    )
+    const tab = await service.create({
+      height: 512,
+      title: 'Anima regional negative visual control',
+      width: 512,
+    })
+    const owner = () => {
+      const current = service.getOpenDocumentForAcceptance(tab.id)
+      assert.ok(current)
+      return current
+    }
+    worker = await startCpu()
+    await service.importRasterImage(tab.id, sourceImage.path, worker)
+    await worker.close()
+    worker = undefined
+    assert.equal(ProjectWorkerClient.hasUnconfirmedExit(), false)
+    const initial = structuredClone(owner().document)
+    assert.deepEqual(initial.primaryBbox, bbox)
+    assert.equal(initial.layers.length, 1)
+    const positive = 'one white cat wearing a scarf'
+    const negative = '(red scarf)1.5'
+    const maskPng = encodeProjectMaskPng(new Uint8Array(256 * 512).fill(255), 256, 512)
+    const maskHash = digest(maskPng)
+    const sources: Record<string, { bytes: Buffer }> = {}
+    const masks: IgsRegionalGuidanceV1['mask'][] = []
+    const sides = ['left', 'right'] as const
+    type RetainedFile = Awaited<ReturnType<typeof keep>>
+    const coverage: { alpha: Buffer; alphaFile: RetainedFile; maskFile: RetainedFile }[] = []
+    for (const [index, side] of sides.entries()) {
+      const id = MASK_IDS[index]
+      const member = `assets/masks/${id}/${maskHash}.png`
+      const bounds = { height: 512, width: 256, x: index * 256, y: 0 }
+      const alpha = Buffer.alloc(512 * 512)
+      for (let y = 0; y < 512; y++) {
+        const start = y * 512 + bounds.x
+        alpha.fill(255, start, start + 256)
+      }
+      sources[member] = { bytes: maskPng }
+      masks.push({
+        asset: { bytes: maskPng.length, height: 512, path: member, sha256: maskHash, width: 256 },
+        bounds,
+        id,
+        revision: 1,
+      })
+      coverage.push({
+        alpha,
+        alphaFile: await keep(`${side}.alpha8`, alpha),
+        maskFile: await keep(`mask-${side}.png`, maskPng),
+      })
+    }
+
+    let targetSha: string | undefined
+    for (const testCase of ANIMA_REGIONAL_NEGATIVE_VISUAL_CASES) {
+      const regionalGuidance = sides.map((side, index) => ({
+        enabled: true,
+        id: REGION_IDS[index],
+        locked: false,
+        mask: masks[index],
+        name: `${side} cat`,
+        overlayOpacity: 0,
+        prompts: {
+          negative: prompt(testCase.negativeSide === side ? negative : ''),
+          positive: prompt(positive),
+          useGlobalNegativePrompt: false,
+        },
+      }))
+      const document = parseProjectDocumentV1({
+        ...initial,
+        documentRevision: owner().document.documentRevision,
+        generationDraft: {
+          cfgRescale: 0,
+          loras: [],
+          model: reference,
+          negativePrompt: prompt('(blur)0.75, noise'),
+          positivePrompt: prompt(
+            'two white cats wearing scarves, illustration, plain light background',
+          ),
+          sampling: {
+            animaMethod: 'heun',
+            cfgScale: 4,
+            denoisingStrength: 0.5,
+            sampler: null,
+            scheduler: null,
+            steps: 20,
+          },
+          seed: { policy: 'fixed', value: 123 },
+          vae: null,
+          vaePrecision: 'Auto',
+        },
+        regionalGuidance,
+      })
+      await owner().applyDocument(document, sources, {
+        expectedDocumentEpoch: owner().documentEpoch,
+        expectedDocumentRevision: document.documentRevision,
+      })
+      await service.save(tab.id)
+      const packagePath = owner().filePath
+      await service.close(tab.id)
+      assert.equal((await service.open(tab.id)).kind, 'opened')
+      await service.flushAutosave(tab.id)
+      assert.equal(owner().dirty, false)
+      const authored = structuredClone(owner().document)
+      assert.deepEqual(authored.layers, initial.layers)
+      assert.deepEqual(authored.regionalGuidance, regionalGuidance)
+      const packageFile = await keep(`${testCase.label}.igs`, await readFile(packagePath))
+      assert.deepEqual((await readIgsPackage(packageFile.path)).project, authored)
+
+      await service.withCapturedCurrentCanvasRegionalGenerationInput(tab.id, async (capture) => {
+        capture.assertCurrent()
+        assert.deepEqual(capture.document, authored)
+        worker = await startCpu()
+        const target = await capture.composeTarget(worker)
+        await worker.close()
+        worker = undefined
+        assert.equal(ProjectWorkerClient.hasUnconfirmedExit(), false)
+        assert.equal(target.mode, 'img2img')
+        const prepared = await prepareAnimaGeneration({ modelService: models, target })
+        assert.equal(prepared.context.mode, 'img2img')
+        assert.deepEqual(prepared.context.bbox, bbox)
+        targetSha ??= prepared.context.target.sha256
+        assert.equal(
+          prepared.context.target.sha256,
+          targetSha,
+          'Every case must consume the same source target',
+        )
+        const targetFile = await keep(`${testCase.label}.target.png`, prepared.targetPngBytes)
+        assert.equal(targetFile.sha256, targetSha)
+        const batch = prepareAnimaGenerationBatch({ iterations: 1, prepared })
+        assert.equal(batch.truncated, false)
+        assert.equal(batch.items.length, 1)
+        const { iteration, promptPairIndex, prompts, samplingPlan, seed } = batch.items[0]
+        const recipe = await prepareCurrentCanvasRegionalRecipe({
+          capture: capture.regional,
+          job: {
+            bbox,
+            documentId: authored.documentId,
+            documentRevision: authored.documentRevision,
+            family: 'anima',
+            item: { iteration, promptPairIndex, prompts, seed },
+          },
+        })
+        const compiledPrompts = compileCurrentCanvasAnimaRegionalPrompts(recipe, {
+          negativeProfile: ANIMA_REGIONAL_NEGATIVE_PROFILE,
+        })
+        assert.equal(recipe.regions.length, 2)
+        const regions = recipe.regions.map((region, index) => {
+          const { alpha, ...descriptor } = region.coverage
+          assert.equal(region.regionId, REGION_IDS[index])
+          assert.equal(region.maskId, MASK_IDS[index])
+          assert.equal(region.positive?.text, positive)
+          assert.equal(region.negative.source, 'regional')
+          assert.equal(
+            region.negative.prompt.text,
+            testCase.negativeSide === sides[index] ? negative : '',
+          )
+          assert.equal(descriptor.kind, 'covered')
+          assert.ok(Buffer.from(alpha).equals(coverage[index].alpha))
+          return {
+            ...region,
+            coverage: { ...descriptor, alpha: coverage[index].alphaFile },
+            mask: coverage[index].maskFile,
+          }
+        })
+        await keep(
+          `${testCase.label}.json`,
+          Buffer.from(
+            `${JSON.stringify(
+              {
+                authoredDocument: authored,
+                case: testCase,
+                compiledPrompts,
+                package: packageFile,
+                prepared: prepared.context,
+                recipe: { ...recipe, regions },
+                samplingPlan,
+                schema: 'main-anima-regional-negative-visual-img-v1',
+                sourceImage,
+                target: targetFile,
+              },
+              null,
+              2,
+            )}\n`,
+          ),
+        )
+        await useCase({ case: testCase, compiledPrompts, models, prepared, recipe })
+        capture.assertCurrent()
+        assert.equal(owner().dirty, false)
+        assert.deepEqual(owner().document, authored)
+        assert.equal(digest(await readFile(packagePath)), packageFile.sha256)
+      })
+    }
+  } catch (error) {
+    failure = error
+    throw error
+  } finally {
+    const cleanupErrors: unknown[] = []
+    try {
+      await worker?.close()
+    } catch (error) {
+      cleanupErrors.push(error)
+    }
+    for (const tab of service.getOpenTabs()) {
+      try {
+        await (tab.dirty ? service.discardAndClose(tab.id) : service.close(tab.id))
+      } catch (error) {
+        cleanupErrors.push(error)
+      }
+    }
+    try {
+      await database.close()
+    } catch (error) {
+      cleanupErrors.push(error)
+    }
+    if (cleanupErrors.length) {
+      throw new AggregateError(
+        failure === undefined ? cleanupErrors : [failure, ...cleanupErrors],
+        'Anima visual fixture closure failed',
+      )
+    }
+  }
 }
 
 function captureNegativeTexts(

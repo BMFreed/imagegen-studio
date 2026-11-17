@@ -1,6 +1,6 @@
 # MVP acceptance backlog
 
-Updated through the [Illustrious IMG utility pilot](./phase-4-reference-img-utility-research.md).
+Updated through the [Anima negative placement pilot](./phase-4-anima-negative-spatial-utility-research.md).
 All eight public promise statuses remain **«Пока не обещать»**. Earlier roadmap
 entries record the state at their checkpoint.
 [Product scope](../specs/00-product-scope.md), [promise matrix](../product-promises.md),
@@ -64,15 +64,17 @@ entries record the state at their checkpoint.
    diagnosis was inconclusive, and the fixed common-runtime CLIP operators matched.
    The source-anchored IMG pilot preserved geometry in all three jobs. Both
    reference cards failed the preregistered red/blue recoloring criterion.
-   Keep that case as a diagnostic and record a new hypothesis before changing
-   an input or default. Record all images and a human acceptance verdict.
-   Check signed Anima regional text for actual spatial effect on the supported
-   installed peer. Consult model-aware
+   The signed Anima IMG pilot held the source and regional
+   positives fixed while swapping the same negative between sides. Both red
+   scarves survived all variants. Selective attenuation remains unqualified.
+   Retain both IMG pilots and record a new hypothesis before any further
+   visual run. Record all images and a human acceptance verdict. Consult model-aware
    settings and the guards before classifying additional combinations as supported.
    Measure output, host memory and VRAM on the declared profile, including a
    representative maximum admitted regional/reference case and an above-limit
    refusal preserving queue and Project state. [Visual utility](./phase-4-regional-reference-utility-research.md),
    [source-anchored IMG](./phase-4-reference-img-utility-research.md),
+   [signed Anima IMG placement](./phase-4-anima-negative-spatial-utility-research.md),
    [resolution](./phase-4-ordinary-resolution-research.md),
    [CLIP comparison](./phase-4-ordinary-invoke-conditioning-research.md),
    [regional contract](../features/project/generate-mode/regional-guidance.md#scope).

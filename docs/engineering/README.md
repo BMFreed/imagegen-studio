@@ -1,5 +1,13 @@
 # Engineering Workflow
 
+## Current Anima regional negative placement
+
+[Anima negative placement](./phase-4-anima-negative-spatial-utility-research.md)
+records one matched regional IMG control and two opposite assignments through
+the exact installed worker. All three calls preserve both coherent cats and
+their red scarves. The treated scarf cores retain their baseline red-pixel
+counts, so the preregistered spatial utility criterion fails for this input.
+
 ## Current source-anchored Illustrious reference utility
 
 [Illustrious IMG utility](./phase-4-reference-img-utility-research.md) records

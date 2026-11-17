@@ -14,6 +14,8 @@
     "vite.desktop.config.ts",
     "src/**/*.ts",
     "scripts/**/*.ts",
+    "scripts/qualify-installed-anima-negative-visual.mts",
+    "scripts/qualify-installed-reference-img-utility.mts",
     "scripts/qualify-regional-character-visual.mts"
   ]
 }

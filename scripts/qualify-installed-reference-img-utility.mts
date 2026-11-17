@@ -21,7 +21,7 @@ import { produceReferenceImgUtilityProbe } from '../src/main/projects/test-fixtu
 import { readSmartPatchModelSourceOutput } from '../src/main/projects/worker-client.js'
 import { InferenceAuxiliaryResources } from '../src/main/runtime/inference-auxiliary-resources.js'
 
-interface FilePin {
+export interface FilePin {
   byteSize: number
   path: string
   sha256: string
@@ -151,14 +151,22 @@ async function verifyFixtureFile(pin: FilePin) {
   await verify({ ...pin, sizeBytes: pin.byteSize })
 }
 
-async function writeJson(name: string, value: unknown) {
-  await writeFile(path.join(run, name), `${JSON.stringify(value, null, 2)}\n`, {
+async function writeJson(name: string, value: unknown, directory = run) {
+  await writeFile(path.join(directory, name), `${JSON.stringify(value, null, 2)}\n`, {
     flag: 'wx',
     mode: 0o600,
   })
 }
 
-async function readEngine() {
+async function readEngine(
+  requiredCapabilities: readonly string[] = [
+    'illustrious-img2img',
+    'illustrious-regional-img2img-v1',
+    'illustrious-regional-reference-img2img-v1',
+    'illustrious-regional-progress-v1',
+    'linux-owned-inference-v1',
+  ],
+) {
   const releasePath = path.join(engineRun, 'installed-engine.json')
   const priorPath = path.join(engineRun, 'native/report.json')
   const releaseBytes = await bytesAt(releasePath)
@@ -247,13 +255,7 @@ async function readEngine() {
   const active = release.inferenceStarts.filter((start) => start.ready && start.exitConfirmed)
   assert.ok(active.length > 0)
   const ready = active[0].ready!
-  for (const capability of [
-    'illustrious-img2img',
-    'illustrious-regional-img2img-v1',
-    'illustrious-regional-reference-img2img-v1',
-    'illustrious-regional-progress-v1',
-    'linux-owned-inference-v1',
-  ]) {
+  for (const capability of requiredCapabilities) {
     assert.ok(ready.capabilities.includes(capability), capability)
   }
   return {
@@ -694,4 +696,23 @@ async function main() {
   }
 }
 
-await main()
+export {
+  artifactRoot,
+  assertRuntimeIdle,
+  assertUpgradeBounds,
+  bytesAt,
+  children,
+  errorText,
+  observeGpu,
+  readEngine,
+  regular,
+  sha,
+  verify,
+  verifyFixtureFile,
+  workerExited,
+  writeJson,
+}
+
+if (import.meta.main) {
+  await main()
+}
