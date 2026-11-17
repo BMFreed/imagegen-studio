@@ -44,17 +44,17 @@ the state at their checkpoint.
    exact fixture opt-ins bring coverage to 8,469 PASS, one inapplicable platform
    SKIP and zero failures. [Qualification evidence](./anima-qualification-oracles-research.md),
    [test command](../../package.json).
-2. **Join the current packaged app and a real installed engine on one host.** Verify
-   the actual runtime, dependency, capability, model and host identities first. Reuse
-   a compatible owned slot at its canonical path if available. Otherwise assemble
-   one exact slot at its final path through the existing signed offline mechanism.
-   Extend the packaged qualification to observe real CPU derivatives and inference
-   handshakes, one bounded trained request per family, explicit Add and Save/reopen.
+2. **Qualify the installed engine with historical state and real models.** The
+   local signed install, packaged runtime Ready and empty Project reopen passed
+   on the first host. Reuse that exact owned slot at its canonical path. Verify
+   model identities and extend the packaged flow to exercise CPU derivatives,
+   one bounded trained request per family, explicit Add and Save/reopen.
    Run the upgrade lane over a pinned historical nonempty `.igs` with exact resource,
    preset and queue/provenance records. Check the pre-migration backup, startup rows,
    saved package and normal exits. Separate the real compatible worker lane from
    missing/incompatible worker refusal and verify that Project Save remains usable.
-   [Packaged upgrade harness](../../scripts/qualify-application-state-upgrade.mjs),
+   [Packaged installed engine](./phase-5-packaged-installed-engine-research.md),
+   [packaged upgrade harness](../../scripts/qualify-application-state-upgrade.mjs),
    [packaged smoke](../../scripts/smoke-linux-package.mjs),
    [runtime owner](../../src/main/runtime/index.ts),
    [runtime acceptance](../specs/07-python-runtime-management.md#acceptance-criteria).

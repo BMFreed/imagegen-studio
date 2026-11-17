@@ -3,7 +3,9 @@
  * CPU qualification and mandatory inference refusal, <=4 GiB. --profile full-inference: verified
  * 67-wheel input, native qualification and activation, <=8 GiB. --profile full-engine adopts an
  * existing signed transport and pinned local LaMa, then exercises native Install/Repair/rollback.
- * All require zero swap/600 s external bounds. No public downloads or payload cleanup.
+ * --profile full-engine-install uses the same source through one qualified final slot for a later
+ * packaged application run. All require zero swap/600 s external bounds. No public downloads or
+ * payload cleanup.
  */
 import assert from 'node:assert/strict'
 import { createHash, generateKeyPairSync, randomUUID, sign } from 'node:crypto'
@@ -14,7 +16,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as yauzl from 'yauzl'
 
-import { ensureAppPaths } from '../src/main/app-paths.ts'
+import { ensureAppPaths, resolveAppPaths } from '../src/main/app-paths.ts'
 import { GenerationWorkerClient } from '../src/main/projects/generation-worker-client.ts'
 import { ProjectWorkerClient } from '../src/main/projects/worker-client.ts'
 import { createRuntimeRoots, RuntimeManager } from '../src/main/runtime/index.ts'
@@ -48,6 +50,7 @@ const normalizedDistribution = (name) => name.toLowerCase().replace(/[-_.]+/g, '
 const identity = (stat) =>
   [stat.dev, stat.ino, stat.mode, stat.size, stat.mtimeNs, stat.ctimeNs].join(':')
 const within = (root, candidate) => candidate.startsWith(`${root}${path.sep}`)
+const engineProfiles = new Set(['full-engine', 'full-engine-install'])
 const engineOwnerPaths = [
   'src/main/runtime/engine-install-plan.ts',
   'src/main/runtime/engine-installation-review.ts',
@@ -118,7 +121,7 @@ export function argumentsFrom(argv) {
     assert.ok(argv[index + 1] && !Object.hasOwn(values, key), `Missing/duplicate --${key}`)
     if (key === 'profile') {
       assert.ok(
-        ['full-inference', 'full-engine'].includes(argv[index + 1]),
+        argv[index + 1] === 'full-inference' || engineProfiles.has(argv[index + 1]),
         'Unsupported qualification profile',
       )
     } else if (key === 'app-version') {
@@ -130,7 +133,7 @@ export function argumentsFrom(argv) {
     }
     values[key] = argv[index + 1]
   }
-  const engineProfile = values.profile === 'full-engine'
+  const engineProfile = engineProfiles.has(values.profile)
   const required = engineProfile ? engine : legacy
   const profileAllowed = new Set([
     ...required,
@@ -1069,7 +1072,7 @@ async function fullInstalledChecks({ roots, backend, startInference, review, whe
   }
 }
 
-async function fullEngineInstalledChecks({ roots }) {
+async function fullEngineInstalledChecks({ roots, installOnly }) {
   await check('installed-pinned-lama-native-cuda-infill-smoke', async () => {
     const resource = await engineResources.resolveVerifiedOutpaintInfill()
     assert.equal(report.auxiliary.copies.length, 1)
@@ -1122,6 +1125,24 @@ async function fullEngineInstalledChecks({ roots }) {
     }
     return report.nativeLamaSmoke
   })
+  if (installOnly) {
+    assert.deepEqual(
+      report.assembledSlots.map(({ runtimeId }) => runtimeId),
+      [prepared.runtimeId],
+    )
+    assert.ok(
+      report.cpuClients.every(({ ready }) => ready.capabilities.includes('export-composition')),
+      'The installed CPU worker must support packaged Project image export',
+    )
+    report.fullProfileQualified = {
+      ...report.fullProfileQualified,
+      scope: 'engine',
+      auxiliaryQualified: true,
+      nativeLamaComputeQualified: true,
+      controlledAuxiliaryTransport: 'explicit pinned local copy port; not public HTTP',
+    }
+    return
+  }
   await check('native-engine-repair-builds-new-slot-and-reuses-exact-lama', async () => {
     const previous = (await stableBytes(roots.pointerFile)).bytes
     const old = JSON.parse(previous.toString('utf8'))
@@ -1313,7 +1334,8 @@ async function backendAuxiliaryVerified() {
 async function main(argv) {
   const args = argumentsFrom(argv)
   inputArguments = args
-  fullEngine = args.profile === 'full-engine'
+  const installOnly = args.profile === 'full-engine-install'
+  fullEngine = engineProfiles.has(args.profile)
   fullInference = args.profile === 'full-inference' || fullEngine
   if (fullInference) {
     report.qualification = 'actual-full-offline-python-slot-install-native-qualification'
@@ -1328,15 +1350,21 @@ async function main(argv) {
     ]
   }
   if (fullEngine) {
-    report.qualification = 'actual-signed-full-engine-install-repair-native-qualification'
+    report.qualification = installOnly
+      ? 'actual-signed-full-engine-install-native-qualification'
+      : 'actual-signed-full-engine-install-repair-native-qualification'
     report.controlledPorts.auxiliary =
       'Production pinned installer/resolver; controlled stable-file copy transport from an explicit hash-verified local LaMa source. No public HTTP qualification.'
     report.controlledPorts.releaseTrust =
       'Explicit external public qualification keyring and unchanged retained signed transport; no new key, release ID or signature.'
     report.negativeScope = [
-      'Host-scoped signed local engine installation/repair; no shipped key distribution, public release endpoint, public Setup or support matrix.',
+      installOnly
+        ? 'Host-scoped signed local engine installation; no shipped key distribution, public release endpoint, public Setup or support matrix.'
+        : 'Host-scoped signed local engine installation/repair; no shipped key distribution, public release endpoint, public Setup or support matrix.',
       'Real native worker startup and tiny CUDA/LaMa smoke only; no diffusion models, image-generation or visual acceptance.',
-      'The last Repair injects CUDA-hidden startup only after candidate activation; native readiness is never fabricated.',
+      installOnly
+        ? 'One installed slot at its packaged app data path; Repair, rollback and the packaged application are outside this run.'
+        : 'The last Repair injects CUDA-hidden startup only after candidate activation; native readiness is never fabricated.',
       'Only the explicit original LaMa file and signed transport/proof are read; existing runtime/model/project state remains unchanged.',
       'All new sources/slots and exact mutation controls are retained for Root audit and cleanup; this harness never deletes them.',
     ]
@@ -1407,7 +1435,9 @@ async function main(argv) {
   report.payloadRoot = payloadRoot
   let releaseDirectory
   if (!fullEngine) releaseDirectory = await mkdirNew(path.join(payloadRoot, 'signed-payload'))
-  const roots = await createRuntimeRoots(path.join(payloadRoot, 'app'))
+  const xdgDataHome = path.join(payloadRoot, 'data')
+  const packagedPaths = installOnly ? resolveAppPaths({ XDG_DATA_HOME: xdgDataHome }) : null
+  const roots = await createRuntimeRoots(packagedPaths?.dataRoot ?? path.join(payloadRoot, 'app'))
   ensureAppPaths({
     dataRoot: roots.appDataDir,
     cacheRoot: roots.cacheDir,
@@ -1416,6 +1446,10 @@ async function main(argv) {
     runtimeRoot: roots.runtimeDir,
   })
   report.roots = roots
+  if (packagedPaths) {
+    assert.equal(roots.appDataDir, packagedPaths.dataRoot)
+    report.packagedAppData = { xdgDataHome, dataRoot: roots.appDataDir }
+  }
   const sentinels = []
   for (const name of ['models', 'workspaces', 'presets']) {
     const directory = await mkdirNew(path.join(roots.appDataDir, name))
@@ -1932,7 +1966,7 @@ async function main(argv) {
   })
   if (fullInference) {
     await fullInstalledChecks({ args, roots, backend, startInference, review, wheelhouseProof })
-    if (fullEngine) await fullEngineInstalledChecks({ roots, backend, startInference })
+    if (fullEngine) await fullEngineInstalledChecks({ roots, installOnly })
   } else {
     await check('actual-offline-assembly-cpu-self-test-and-inference-refusal', async () => {
       const result = await manager.install(review.token)

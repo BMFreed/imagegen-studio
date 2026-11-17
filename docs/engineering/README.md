@@ -1,5 +1,14 @@
 # Engineering Workflow
 
+## Current packaged app and installed engine qualification
+
+[Packaged installed engine](./phase-5-packaged-installed-engine-research.md)
+records one signed local slot, actual CPU/CUDA/LaMa checks and two normal
+AppImage lifetimes that report Ready for the exact runtime and reopen a saved
+Project. Two no-engine lifetimes verify default unavailable Setup. This closes
+the local packaged startup and installed-worker status part of the backlog.
+Historical state with that engine, trained jobs and production trust remain open.
+
 ## Current Anima qualification and MVP acceptance
 
 [Anima prompt qualification](./anima-qualification-oracles-research.md) checks

@@ -86,6 +86,31 @@ test('full-engine refuses malformed version/path inputs and cannot silently fall
   assert.throws(() => argumentsFrom([...baseArguments, '--transport-dir', '/fixture/transport']))
 })
 
+test('full-engine-install requires the same signed inputs as the full engine profile', () => {
+  const installArgs = [...engineArguments]
+  installArgs[1] = 'full-engine-install'
+  assert.deepEqual(argumentsFrom(installArgs), {
+    ...argumentsFrom(engineArguments),
+    profile: 'full-engine-install',
+  })
+  for (let index = 2; index < installArgs.length; index += 2) {
+    const without = [...installArgs]
+    without.splice(index, 2)
+    assert.throws(() => argumentsFrom(without), /Required/)
+    assert.throws(
+      () => argumentsFrom([...installArgs, installArgs[index], installArgs[index + 1]]),
+      /duplicate/,
+    )
+  }
+  for (const key of ['python-root', 'uv', 'wheels', 'config']) {
+    assert.throws(() => argumentsFrom([...installArgs, '--' + key, '/unreviewed']), /unsupported/)
+  }
+  assert.throws(
+    () => argumentsFrom([...baseArguments, '--profile', 'full-engine-install']),
+    /unsupported/,
+  )
+})
+
 function engineFixture() {
   const { plan } = fixture()
   plan.lockSha256 = 'c'.repeat(64)

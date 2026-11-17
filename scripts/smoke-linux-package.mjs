@@ -45,9 +45,14 @@ const artifactRoot = path.join(os.homedir(), '.codex/artifacts/imagegen-studio')
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const supplied = process.env.IMAGEGEN_LINUX_PACKAGE_ARTIFACTS
 const suppliedPackage = process.env.IMAGEGEN_LINUX_PACKAGE_APPIMAGE
+const installedEngineReport = process.env.IMAGEGEN_LINUX_PACKAGE_INSTALLED_ENGINE_REPORT
 const updateCheckMode = process.env.IMAGEGEN_LINUX_PACKAGE_UPDATE_CHECK
 assert.ok(
-  updateCheckMode === undefined || updateCheckMode === 'unavailable' || updateCheckMode === 'feed' || updateCheckMode === 'download' || updateCheckMode === 'signed',
+  updateCheckMode === undefined ||
+    updateCheckMode === 'unavailable' ||
+    updateCheckMode === 'feed' ||
+    updateCheckMode === 'download' ||
+    updateCheckMode === 'signed',
 )
 const updateReleaseFixturesPath = process.env.IMAGEGEN_LINUX_PACKAGE_UPDATE_RELEASE_FIXTURES
 assert.ok(updateCheckMode === 'signed' || updateReleaseFixturesPath === undefined)
@@ -60,10 +65,94 @@ const canonicalAbsolute = (value) =>
 assert.ok(canonicalAbsolute(supplied), 'Supply a canonical IMAGEGEN_LINUX_PACKAGE_ARTIFACTS.')
 assert.ok(canonicalAbsolute(suppliedPackage), 'Supply a canonical IMAGEGEN_LINUX_PACKAGE_APPIMAGE.')
 if (updateCheckMode === 'signed') {
-  assert.ok(canonicalAbsolute(updateReleaseFixturesPath), 'Supply canonical IMAGEGEN_LINUX_PACKAGE_UPDATE_RELEASE_FIXTURES for signed admission.')
+  assert.ok(
+    canonicalAbsolute(updateReleaseFixturesPath),
+    'Supply canonical IMAGEGEN_LINUX_PACKAGE_UPDATE_RELEASE_FIXTURES for signed admission.',
+  )
 }
 const root = supplied
 const appImage = suppliedPackage
+const ownedRunRoot = path.join(artifactRoot, 'runs')
+function strictDescendant(parent, child) {
+  return canonicalAbsolute(child) && child.startsWith(`${parent}${path.sep}`)
+}
+async function installedEngineFixture() {
+  if (!installedEngineReport) return null
+  assert.equal(updateCheckMode, undefined, 'Use a separate application update fixture.')
+  assert.ok(strictDescendant(ownedRunRoot, installedEngineReport))
+  assert.equal(await realpath(installedEngineReport), installedEngineReport)
+  const reportStat = await lstat(installedEngineReport)
+  assert.ok(reportStat.isFile() && reportStat.size <= 8 * 1024 * 1024)
+  const reportBefore = await identity(installedEngineReport)
+  const report = JSON.parse(await readFile(installedEngineReport, 'utf8'))
+  assert.deepEqual(await identity(installedEngineReport), reportBefore)
+  const run = path.dirname(installedEngineReport)
+  assert.ok(strictDescendant(ownedRunRoot, run))
+  assert.ok(strictDescendant(run, root), 'Package evidence must stay inside the engine run.')
+  assert.equal(report.outcome, 'PASS')
+  assert.equal(report.qualification, 'actual-signed-full-engine-install-native-qualification')
+  assert.equal(report.fullProfileQualified.nativeLamaComputeQualified, true)
+  assert.equal(report.assembledSlots.length, 1)
+  assert.ok(strictDescendant(path.join(run, 'payloads'), report.payloadRoot))
+  const dataRoot = path.join(report.payloadRoot, 'data', 'imagegen-studio')
+  assert.equal(report.roots.appDataDir, dataRoot)
+  assert.deepEqual(report.packagedAppData, {
+    dataRoot,
+    xdgDataHome: path.dirname(dataRoot),
+  })
+  assert.equal(await realpath(dataRoot), dataRoot)
+  const runtimeId = report.assembledSlots[0].runtimeId
+  assert.match(runtimeId, /^release-[0-9a-f-]{36}$/)
+  assert.equal(report.activatedPointer.runtimeId, runtimeId)
+  assert.equal(report.fullProfileQualified.runtimeId, runtimeId)
+  assert.equal(report.reopenedStatus.runtimeId, runtimeId)
+  const pointer = path.join(dataRoot, 'runtime', 'current-runtime.json')
+  assert.equal(pointer, report.roots.pointerFile)
+  const provenance = path.join(
+    dataRoot,
+    'runtime',
+    'environments',
+    runtimeId,
+    'runtime-installation.json',
+  )
+  assert.equal(provenance, report.installationProvenance.path)
+  for (const file of [pointer, provenance]) {
+    assert.equal(await realpath(file), file)
+    assert.ok((await lstat(file)).isFile())
+  }
+  assert.deepEqual(JSON.parse(await readFile(pointer, 'utf8')), report.activatedPointer)
+  const provenanceBefore = await identity(provenance)
+  assert.equal(provenanceBefore.sha256, report.installationProvenance.sha256)
+  const installation = JSON.parse(await readFile(provenance, 'utf8'))
+  const workerRoot = report.installedInspection.workerRoot
+  assert.ok(strictDescendant(path.dirname(provenance), workerRoot))
+  assert.equal(await realpath(workerRoot), workerRoot)
+  assert.deepEqual(installation.workerFiles, report.installedInspection.workerFiles)
+  const workerMembers = Object.entries(installation.workerFiles)
+  assert.ok(workerMembers.length > 0 && workerMembers.length <= 256)
+  const workerInputs = await Promise.all(
+    workerMembers.map(async ([name, witness]) => {
+      const file = path.join(workerRoot, name)
+      assert.ok(!path.isAbsolute(name) && path.normalize(name) === name)
+      assert.ok(strictDescendant(workerRoot, file))
+      assert.equal(await realpath(file), file)
+      assert.ok((await lstat(file)).isFile())
+      const actual = await identity(file)
+      assert.equal(actual.sizeBytes, witness.bytes)
+      assert.equal(actual.sha256, witness.sha256)
+      return actual
+    }),
+  )
+  await assert.rejects(lstat(path.join(dataRoot, 'database', 'app.sqlite')), {
+    code: 'ENOENT',
+  })
+  return {
+    dataRoot,
+    runtimeId,
+    inputs: [reportBefore, await identity(pointer), provenanceBefore, ...workerInputs],
+  }
+}
+const engine = await installedEngineFixture()
 const relative = path.relative(artifactRoot, root)
 assert.ok(relative && !relative.startsWith('..') && !path.isAbsolute(relative))
 assert.equal(await realpath(artifactRoot), artifactRoot)
@@ -80,7 +169,7 @@ assert.equal(await realpath(appImage), appImage)
 assert.ok((await lstat(appImage)).isFile() && !(await lstat(appImage)).isSymbolicLink())
 
 const cwd = path.join(root, 'empty-cwd')
-const appData = path.join(root, 'data/imagegen-studio')
+const appData = engine?.dataRoot ?? path.join(root, 'data/imagegen-studio')
 const profile = path.join(root, 'chrome-profile')
 for (const name of [
   cwd,
@@ -99,7 +188,7 @@ const environment = {
   // and install host desktop entries before Electron sees isolated XDG paths.
   APPIMAGELAUNCHER_DISABLE: '1',
   XDG_CONFIG_HOME: path.join(root, 'config'),
-  XDG_DATA_HOME: path.join(root, 'data'),
+  XDG_DATA_HOME: path.dirname(appData),
   XDG_CACHE_HOME: path.join(root, 'cache'),
 }
 for (const key of [
@@ -306,20 +395,30 @@ async function readPorts(state) {
   for (const entry of Object.values(result)) assert.equal(entry.ok, true, JSON.stringify(entry))
   assert.deepEqual(result.catalog.value, [])
   assert.deepEqual(result.presets.value, [])
-  assert.equal(result.runtime.value.kind, 'not-installed')
+  if (engine) {
+    assert.equal(result.runtime.value.kind, 'ready', JSON.stringify(result.runtime.value))
+    assert.equal(result.runtime.value.profile, 'linux-nvidia')
+    assert.equal(result.runtime.value.runtimeId, engine.runtimeId)
+    assert.equal(result.runtime.value.outpaintInfill, 'ready')
+  } else assert.equal(result.runtime.value.kind, 'not-installed')
   assert.ok(result.workspaces.value.length >= 1)
   return result
 }
 
 async function checkUnavailable(state) {
-  const notice = state.page.getByRole('region', { name: 'Image generation status' })
+  const notice = state.page.getByRole('region', {
+    name: 'Image generation status',
+  })
   await expect(notice.getByRole('button', { name: 'Set up', exact: true })).toBeEnabled()
   await notice.getByRole('button', { name: 'Set up', exact: true }).click()
   await expect(notice.getByRole('alert')).toContainText(
     'Verified release artifacts and a complete setup preview are not available in this build.',
   )
   await expect(
-    state.page.getByRole('dialog', { name: 'Set up image generation', exact: true }),
+    state.page.getByRole('dialog', {
+      name: 'Set up image generation',
+      exact: true,
+    }),
   ).toHaveCount(0)
   await expect(notice.getByRole('button', { name: 'Set up', exact: true })).toBeEnabled()
   const snapshot = await state.page.evaluate(() => globalThis.api.runtime.getInstallationProgress())
@@ -424,15 +523,28 @@ try {
   await applicationUpdateSmoke?.assertStartup(first.page)
   const initial = await readPorts(first)
   assert.deepEqual(initial.projects.value, [])
-  await checkUnavailable(first)
-  await first.page.screenshot({ path: path.join(root, 'first-home-unavailable.png') })
+  if (engine) {
+    records.push({
+      name: 'Packaged Main qualifies the exact installed native runtime',
+      status: initial.runtime.value,
+    })
+  } else await checkUnavailable(first)
+  await first.page.screenshot({
+    path: path.join(root, engine ? 'first-home-ready.png' : 'first-home-unavailable.png'),
+  })
   await first.page.getByRole('button', { name: 'New Project', exact: true }).first().click()
-  const dialog = first.page.getByRole('dialog', { name: 'New Project', exact: true })
+  const dialog = first.page.getByRole('dialog', {
+    name: 'New Project',
+    exact: true,
+  })
   await expect(dialog).toBeVisible()
   await dialog.locator('input[aria-label="Project name"]').fill(projectTitle)
   await expect(dialog.getByRole('button', { name: 'Create Project', exact: true })).toBeEnabled()
   await dialog.getByRole('button', { name: 'Create Project', exact: true }).click()
-  const createdTab = first.page.getByRole('tab', { name: projectTitle, exact: true })
+  const createdTab = first.page.getByRole('tab', {
+    name: projectTitle,
+    exact: true,
+  })
   const creationFailure = dialog.getByRole('alert', {
     name: 'Project creation failed',
     exact: true,
@@ -444,7 +556,10 @@ try {
         createOutcome = (await createdTab.isVisible())
           ? { kind: 'created' }
           : (await creationFailure.isVisible())
-            ? { kind: 'error', message: (await creationFailure.textContent())?.trim() }
+            ? {
+                kind: 'error',
+                message: (await creationFailure.textContent())?.trim(),
+              }
             : { kind: 'pending' }
         return createOutcome.kind
       },
@@ -472,9 +587,11 @@ try {
   assert.equal(summary.previewStatus, 'empty')
   assert.equal(summary.recoveryStatus, 'none')
   projectId = summary.id
-  await first.page.screenshot({ path: path.join(root, 'first-created-project.png') })
+  await first.page.screenshot({
+    path: path.join(root, 'first-created-project.png'),
+  })
   records.push({
-    name: 'Explicit UI Create persists the initial own Project with no ML runtime',
+    name: 'Explicit UI Create persists the initial own Project',
     projectId,
     tab: firstTab,
     summary,
@@ -486,6 +603,12 @@ try {
   const second = await launch('restarted')
   await applicationUpdateSmoke?.assertRestart(second.page)
   const reopenedPorts = await readPorts(second)
+  if (engine) {
+    records.push({
+      name: 'Restart qualifies the same installed native runtime',
+      status: reopenedPorts.runtime.value,
+    })
+  }
   assert.equal(reopenedPorts.projects.value.length, 1)
   assert.equal(reopenedPorts.projects.value[0].id, projectId)
   assert.equal(reopenedPorts.projects.value[0].title, projectTitle)
@@ -526,6 +649,9 @@ try {
   assert.deepEqual(await identity(appImage), packageBefore)
   const sourceAfter = await Promise.all(sourcePaths.map(identity))
   assert.deepEqual(sourceAfter, sourceBefore)
+  if (engine) {
+    for (const input of engine.inputs) assert.deepEqual(await identity(input.path), input)
+  }
   if (applicationUpdateSmoke) {
     assert.equal(lifetimes.length, 2)
     assert.ok(lifetimes.every((state) => state.normalPhysicalExit && !state.forcedCleanup))
@@ -535,8 +661,9 @@ try {
   await writeJson('report.json', {
     schemaVersion: 1,
     outcome: 'PASS',
-    scope:
-      'Actual fused Linux AppImage outside checkout, real packaged Main/preload/SQLite/migrations/own Project create/restart/persistence. No source worker or service mocks.',
+    scope: engine
+      ? 'Actual fused Linux AppImage with exact installed runtime, real Main status qualification and Project create/restart/persistence.'
+      : 'Actual fused Linux AppImage outside checkout, real packaged Main/preload/SQLite/migrations/own Project create/restart/persistence. No source worker or service mocks.',
     mode: 'APPIMAGE_EXTRACT_AND_RUN=1; X11; Chromium CDP loopback. FUSE installation and Main Node inspector are not used.',
     packageBefore,
     packageAfter: await identity(appImage),
@@ -559,7 +686,14 @@ try {
         ...state
       }) => state,
     ),
-    defaultProviderUnavailable: true,
+    ...(engine
+      ? {
+          packagedInstalledRuntime: {
+            runtimeId: engine.runtimeId,
+            unchangedInputs: engine.inputs,
+          },
+        }
+      : { defaultProviderUnavailable: true }),
     nativeInferenceQualified: false,
     shippingTrustQualified: false,
     cleanMachineInstallQualified: false,
@@ -647,5 +781,7 @@ try {
 }
 if (failed) throw failed
 console.log(
-  'PASS actual fused AppImage Home/IPC/SQLite/Project persistence, unavailable Setup and two normal physical closes',
+  engine
+    ? 'PASS installed runtime readiness, packaged Project reopen and two normal physical closes'
+    : 'PASS actual fused AppImage Home/IPC/SQLite/Project persistence, unavailable Setup and two normal physical closes',
 )
