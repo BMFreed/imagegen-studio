@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
-import { openAppDatabase } from './database.js'
+import { initializeAppDatabase, openAppDatabase } from './database.js'
 
 test('noise policy migration preserves existing prediction decisions and app metadata through upgrade and actual reopen', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'igs-noise-migration-'))
@@ -23,7 +23,7 @@ test('noise policy migration preserves existing prediction decisions and app met
     await before.db.insertInto('checkpoint_prediction_override').values(prediction).execute()
     await before.db.insertInto('app_metadata').values({ key: 'existing', value: 'kept' }).execute()
     await before.close()
-    const upgraded = openAppDatabase(root, migrations)
+    const upgraded = await initializeAppDatabase(root, migrations)
     assert.deepEqual(
       await upgraded.db.selectFrom('checkpoint_prediction_override').selectAll().execute(),
       [prediction],

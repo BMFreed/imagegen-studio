@@ -23,7 +23,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
-import { type AppDatabase, openAppDatabase } from '../db/database.js'
+import { type AppDatabase, initializeAppDatabase, openAppDatabase } from '../db/database.js'
 import { readIgsPackage, saveIgsPackage } from './igs-package.js'
 import { localProjectRecoveryKey } from './project-identity.js'
 import {
@@ -760,7 +760,7 @@ test('thumbnail migration preserves an existing v3 Home row and rescan fills der
       sqlite.close()
     }
 
-    const upgraded = openAppDatabase(directory, migrations)
+    const upgraded = await initializeAppDatabase(directory, migrations)
     try {
       const index = new ProjectIndexRepository(upgraded.db)
       const before = await index.getProject(projectId)

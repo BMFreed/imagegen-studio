@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { test } from 'node:test'
 
-import { openAppDatabase } from './database.js'
+import { initializeAppDatabase, openAppDatabase } from './database.js'
 
 const migrations = path.resolve('src/main/db/migrations')
 
@@ -92,7 +92,7 @@ test('Anima queue migration preserves both legacy operations, every status and i
     )
     await before.close()
 
-    const migrated = openAppDatabase(root, migrations)
+    const migrated = await initializeAppDatabase(root, migrations)
     try {
       assert.deepEqual(
         await migrated.db.selectFrom('generation_queue_item').selectAll().orderBy('id').execute(),

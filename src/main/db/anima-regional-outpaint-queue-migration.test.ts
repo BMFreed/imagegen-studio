@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
-import { openAppDatabase } from './database.js'
+import { initializeAppDatabase, openAppDatabase } from './database.js'
 
 const migrations = path.resolve(import.meta.dirname, 'migrations')
 const migrationName = '0026_anima_regional_outpaint_queue.sql'
@@ -172,7 +172,7 @@ test('Anima Regional SQL migration preserves fourteen existing operations in eve
     } finally {
       await legacy.close()
     }
-    const migrated = openAppDatabase(root, through26)
+    const migrated = await initializeAppDatabase(root, through26)
     try {
       assert.deepEqual(
         await migrated.db.selectFrom('generation_queue_item').selectAll().orderBy('id').execute(),

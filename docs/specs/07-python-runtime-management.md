@@ -704,6 +704,15 @@ refusal evidence, not an installed historical CPython/worker or ML runtime test.
 The retained data-only checkpoint is not an activatable relocated runtime, and no
 Repair/Install provider or readiness status is promoted.
 
+### Application database backup
+
+[Startup SQLite backup](../engineering/phase-5-database-migration-backup-research.md)
+is a separate storage boundary before services start: a pending existing DB gets
+an awaited online backup, including committed WAL, before migrations. Failure
+stops startup with manual recovery guidance. This neither backs up nor activates,
+repairs or rolls back the Python runtime. Restoring SQLite alone does not rewind
+resource/model files, Project packages or installed worker environments.
+
 ## Acceptance criteria
 
 - Приложение запускает worker без установленного системного Python.

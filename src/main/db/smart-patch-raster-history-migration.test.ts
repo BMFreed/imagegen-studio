@@ -6,7 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
-import { openAppDatabase } from './database.js'
+import { initializeAppDatabase, openAppDatabase } from './database.js'
 
 const migrations = path.resolve('src/main/db/migrations')
 const migrationName = '0019_smart_patch_raster_history_geometry.sql'
@@ -112,7 +112,7 @@ async function fixture() {
 test('history geometry migration preserves every legacy result byte and seek index across reopen, admits 1px world output and retains constraints/cascade', async () => {
   const f = await fixture()
   try {
-    const upgraded = openAppDatabase(f.root, migrations)
+    const upgraded = await initializeAppDatabase(f.root, migrations)
     try {
       assert.deepEqual(
         await upgraded.db
@@ -234,8 +234,8 @@ test('a failed history table rebuild rolls back its rows, index and installed mi
       target,
       `${await readFile(target, 'utf8')}\nSELECT * FROM deliberate_missing_history_table;\n`,
     )
-    assert.throws(
-      () => openAppDatabase(f.root, faultyMigrations),
+    await assert.rejects(
+      () => initializeAppDatabase(f.root, faultyMigrations),
       /deliberate_missing_history_table/,
     )
     const legacy = openAppDatabase(f.root, f.legacyMigrations)
@@ -270,7 +270,7 @@ test('a failed history table rebuild rolls back its rows, index and installed mi
     } finally {
       await legacy.close()
     }
-    const restored = openAppDatabase(f.root, migrations)
+    const restored = await initializeAppDatabase(f.root, migrations)
     await restored.close()
   } finally {
     await rm(f.root, { force: true, recursive: true })

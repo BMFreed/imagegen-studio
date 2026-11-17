@@ -12,7 +12,7 @@ import test from 'node:test'
 
 import type { AppDatabase } from '../db/database.js'
 
-import { openAppDatabase } from '../db/database.js'
+import { initializeAppDatabase, openAppDatabase } from '../db/database.js'
 import { PresetRepository, PresetRepositoryError } from './preset-repository.js'
 
 const migrations = path.resolve('src/main/db/migrations')
@@ -714,7 +714,7 @@ test('the preset migration upgrades the sixteen-migration database without touch
     assert.equal(before.length, 16)
     await application.close()
     application = null
-    application = openAppDatabase(root, migrations)
+    application = await initializeAppDatabase(root, migrations)
     assert.deepEqual(
       await application.db.selectFrom('checkpoint_prediction_override').selectAll().execute(),
       [policy],

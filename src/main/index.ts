@@ -150,7 +150,7 @@ import {
   VerifiedAppImageUpdater,
   type VerifiedApplicationArtifact,
 } from './application-updates/electron-update-checker.js'
-import { openAppDatabase, readAppliedSqlMigrations } from './db/database.js'
+import { initializeAppDatabase, readAppliedSqlMigrations } from './db/database.js'
 import { ANIMA_SOURCE_LICENSE } from './models/anima-manifest.js'
 import { CivitaiClient, CivitaiClientError, parseCivitaiModelUrl } from './models/civitai-client.js'
 import { CivitaiTokenStore, CivitaiTokenStoreError } from './models/civitai-token-store.js'
@@ -477,7 +477,10 @@ if (!gotInstanceLock) {
       }
       ensureAppPaths(paths)
 
-      const database = openAppDatabase(paths.dataRoot, path.join(moduleDir, 'migrations'))
+      const database = await initializeAppDatabase(
+        paths.dataRoot,
+        path.join(moduleDir, 'migrations'),
+      )
       const presetService = new PresetService(new PresetRepository(database.db), {
         onCleanupError: () => console.error('Expired preset cleanup could not be completed.'),
       })

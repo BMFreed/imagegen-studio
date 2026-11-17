@@ -1,9 +1,9 @@
 /**
  * Lower real-owner controls for the finite historical29 -> current30 qualification. Invoke4875
  * sqlite_migrator_impl.run_migrations/_run_migration and database.startup validate history and
- * transact each migration. This calls Studio's unchanged owner, never reimplements its migration
- * loop. All subjects are disposable copies of the closed historical fixture; the native subject and
- * repository sources stay intact.
+ * transact each migration. This calls Studio's actual startup owner, never reimplements its
+ * migration loop. All subjects are disposable copies of the closed historical fixture; the native
+ * subject and repository sources stay intact.
  */
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
@@ -138,7 +138,7 @@ export async function runStateUpgradeControls({ repo = repository, run }) {
   const bundle = path.join(root, 'current-database.cjs')
   await build({
     stdin: {
-      contents: `export { openAppDatabase } from ${JSON.stringify(owner)}`,
+      contents: `export { initializeAppDatabase } from ${JSON.stringify(owner)}`,
       resolveDir: repo,
       loader: 'ts',
     },
@@ -159,7 +159,7 @@ export async function runStateUpgradeControls({ repo = repository, run }) {
       },
     ],
   })
-  const { openAppDatabase } = require(bundle)
+  const { initializeAppDatabase } = require(bundle)
   const migrations = path.join(repo, 'src/main/db/migrations')
   const names = (await fs.readdir(migrations))
     .filter((name) => /^\d{4}_[a-z0-9_]+\.sql$/.test(name))
@@ -200,7 +200,7 @@ export async function runStateUpgradeControls({ repo = repository, run }) {
         ? "\nUPDATE app_metadata SET value = 'lost by controlled migration mutation' WHERE key = 'application-state-upgrade-sentinel';\n"
         : ''
     const item = await one(name, mutation)
-    const connection = openAppDatabase(item.directory, item.sqlDirectory)
+    const connection = await initializeAppDatabase(item.directory, item.sqlDirectory)
     await connection.close()
     const after = snapshotUpgradeDatabase(item.file)
     assert.equal(
@@ -254,8 +254,8 @@ export async function runStateUpgradeControls({ repo = repository, run }) {
     'transaction-failure',
     '\nSELECT * FROM qualification_nonexistent_table;\n',
   )
-  assert.throws(
-    () => openAppDatabase(failed.directory, failed.sqlDirectory),
+  await assert.rejects(
+    () => initializeAppDatabase(failed.directory, failed.sqlDirectory),
     /no such table: qualification_nonexistent_table/,
   )
   const failedAfter = snapshotUpgradeDatabase(failed.file)

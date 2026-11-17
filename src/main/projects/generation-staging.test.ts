@@ -25,7 +25,7 @@ import { crc32, deflateSync } from 'node:zlib'
 import type { IllustriousTxt2ImgRequestV1 } from './illustrious-txt2img-job.js'
 import type { PreparedNormalTxt2Img } from './project-generation-preparation.js'
 
-import { openAppDatabase } from '../db/database.js'
+import { initializeAppDatabase, openAppDatabase } from '../db/database.js'
 import { GenerationAcceptanceJournalRepository } from './generation-acceptance-journal.js'
 import { GenerationQueueRepository } from './generation-queue.js'
 import { GENERATION_STAGING_LIMITS } from './generation-staging-limits.js'
@@ -1823,7 +1823,7 @@ test('migration trusts only a legacy cursor with matching completed receipt and 
       await old.close()
     }
 
-    const upgraded = openAppDatabase(root, migrations)
+    const upgraded = await initializeAppDatabase(root, migrations)
     try {
       const cursors = await upgraded.db
         .selectFrom('generation_seed_cursor')

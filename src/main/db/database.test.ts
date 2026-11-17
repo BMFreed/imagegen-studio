@@ -26,7 +26,7 @@ import type {
   DatabaseOwnerResponse,
 } from './fixtures/database-process-owner.js'
 
-import { openAppDatabase } from './database.js'
+import { initializeAppDatabase, openAppDatabase } from './database.js'
 
 const sourceMigrations = path.resolve('src/main/db/migrations')
 
@@ -426,7 +426,10 @@ test('a failed SQL migration rolls back without changing the previous schema', a
       'CREATE TABLE partial_table (value TEXT) STRICT; INVALID SQL;',
     )
 
-    assert.throws(() => openAppDatabase(root, migrations))
+    await assert.rejects(
+      () => initializeAppDatabase(root, migrations),
+      /Application database upgrade failed/,
+    )
     const sqlite = new Database(first.filePath)
     assert.equal(
       countRows(sqlite, "SELECT count(*) AS count FROM sqlite_master WHERE name = 'partial_table'"),
@@ -542,7 +545,7 @@ test('img2img migration preserves all old queue rows and expands only the operat
     }))
     await before.db.insertInto('generation_queue_item').values(rows).execute()
     await before.close()
-    const after = openAppDatabase(root, img2imgMigrations)
+    const after = await initializeAppDatabase(root, img2imgMigrations)
     assert.deepEqual(
       await after.db.selectFrom('generation_queue_item').selectAll().orderBy('id').execute(),
       rows,

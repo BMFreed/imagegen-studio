@@ -93,8 +93,10 @@ mutates reusable binaries, misses a live child or overstates compatibility.
   shared runtime mutation. Host Python is used only as the EWMH desktop-close
   messenger.
 
-Studio's migrator currently has per-migration transactions and name/hash checks,
-**no automatic pre-migration backup**. The retained fixture checkpoint must never
+At this checkpoint Studio's migrator had per-migration transactions and name/hash
+checks, **no automatic pre-migration backup**. The later
+[startup backup slice](./phase-5-database-migration-backup-research.md) adds that
+mechanism; it does not change the execution evidence of this historical run. The retained fixture checkpoint must never
 be described as production backup, automatic restoration or downgrade support.
 Unchanged schema1 `.igs`, one additive migration and one controlled wrong-protocol
 worker cannot establish arbitrary migrations, all historical versions, an actual
@@ -187,9 +189,10 @@ observer failure is not a product semantic RED or another native app run.
 
 Source-only reviews, Root execution/visual inspection and retained-byte audits are
 separate results. PP-004/007 supporting evidence gains this finite cohort; all eight
-public promise statuses remain unchanged. Automatic production pre-migration backup,
-verified app recovery/reinstall/retirement, real runtime/driver/model compatibility,
-shipping publisher configuration and final MVP acceptance remain open.
+public promise statuses remain unchanged. At that checkpoint automatic production pre-migration backup was also open; the
+subsequent startup-backup slice covers that finite boundary. Verified app recovery/
+reinstall/retirement, real runtime/driver/model compatibility, shipping publisher
+configuration and final MVP acceptance remain open.
 
 ### Reproduce
 

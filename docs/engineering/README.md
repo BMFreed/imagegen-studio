@@ -1,6 +1,16 @@
 # Engineering Workflow
 
-## Current historical state upgrade qualification
+## Current pre-migration database backup
+
+[SQLite startup backup](./phase-5-database-migration-backup-research.md) adapts Invoke online backup before existing-state migrations.
+Main awaits initialization before services; synchronous existing pending opens refuse.
+Full name/hash preflight precedes backup and SQL. Successful private backups survive
+success/failure; startup errors name the chosen backup and manual recovery rules.
+Fresh empty bootstrap skips a valueless backup. No automatic restore, latest-backup
+selection, Project/resource rewind or updater retirement is added. PP8 statuses
+remain unchanged; exact verification results and limits are in the linked research.
+
+## Previous historical state upgrade qualification
 
 [Historical29→30](./phase-5-application-state-upgrade-research.md) executes exact historical owners, then the current
 packaged Main on the same owned canonical state with a separately retained checkpoint.
@@ -12,8 +22,8 @@ closed-reader metadata controls and final build/scoped lint support this finite 
 
 This is source-compatible historical fixture execution and a Node wire peer,
 without historical desktop/old Python/ML or shipping acceptance. Earlier observer
-FAILs remain separate and necessary reproduction materials are retained. Production
-pre-migration backup is still absent; recovery/reinstall/retirement, actual release
+FAILs remain separate and necessary reproduction materials are retained. At that checkpoint production
+pre-migration backup was absent; recovery/reinstall/retirement, actual release
 runtime/model matrix and final MVP acceptance remain open. PP8 statuses are unchanged.
 
 ## Previous public startup update recovery information

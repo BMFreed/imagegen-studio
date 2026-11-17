@@ -544,3 +544,38 @@ This is a synthetic empty-layer schema1 Project and source-compatible current
 qualification dependencies. It does not establish arbitrary old-state migration,
 historical desktop/CPython/ML compatibility, automatic production backup, downgrade,
 recovery/retirement or shipping. All public promise statuses remain unchanged.
+
+
+### Pre-migration database backup and manual recovery
+
+[SQLite startup backup](../engineering/phase-5-database-migration-backup-research.md)
+uses Invoke's online-backup mechanism before migrating an existing database,
+including committed WAL data. Main awaits completion before starting services.
+Freshly created empty storage skips a backup; an existing unversioned database
+with data does not. Complete installed-name/hash validation precedes all SQL.
+An up-to-date startup creates no extra backup. Backups are private independent
+files in `<dataRoot>/database/app_backup_<date>-<time>[-N].db`. Collisions preserve
+older files. There is no automatic backup pruning.
+
+If backup fails, startup stops before migrations. Only the newly owned partial
+main backup inode may be removed; unknown companions/replaced paths remain for
+inspection. A successful backup is retained even when migration later fails.
+The existing startup dialog reports that path. Earlier per-migration transactions
+may already have committed; the active database must not be called unchanged.
+
+Recovery follows Invoke's manual restore procedure:
+
+1. Stop every application/tool process using this data root.
+2. Choose a backup made before the relevant update. Do not select the latest
+   automatically: a retry backup may contain an already partial upgrade.
+3. Preserve the current `app.sqlite` **and its matching `-wal`/`-shm` files
+   together** under separate unused names. Never leave the active old WAL/SHM
+   beside a restored main file.
+4. **Copy**, rather than move, the chosen backup to `app.sqlite`, retaining its
+   owner and private `0600` permissions. Keep the original backup untouched.
+5. Open with a version compatible with that database history. A newer version
+   can migrate it again; an older incompatible version must refuse.
+
+Database restore does not rewind `.igs`, models, staging or other app-data files;
+newer files may be incompatible with an older app. This is a manual recovery path,
+not automatic in-place restore/downgrade, app-binary recovery or full acceptance.
