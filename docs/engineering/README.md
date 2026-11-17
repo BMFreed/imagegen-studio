@@ -1,5 +1,13 @@
 # Engineering Workflow
 
+## Current source-anchored Illustrious reference utility
+
+[Illustrious IMG utility](./phase-4-reference-img-utility-research.md) records
+three matched calls through the exact signed installed worker. The opaque source
+preserves the authored head geometry. Both reference outputs retain a gray head
+and fail the red/blue recolor criterion. The blind review, exact inputs, all
+three outputs and hardware measurements are retained.
+
 ## Current packaged trained generation
 
 [Packaged trained generation](./phase-5-packaged-trained-generation-research.md)

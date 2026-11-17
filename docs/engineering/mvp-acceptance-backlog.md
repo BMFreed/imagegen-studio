@@ -1,6 +1,6 @@
 # MVP acceptance backlog
 
-Updated through [packaged trained generation](./phase-5-packaged-trained-generation-research.md).
+Updated through the [Illustrious IMG utility pilot](./phase-4-reference-img-utility-research.md).
 All eight public promise statuses remain **«Пока не обещать»**. Earlier roadmap
 entries record the state at their checkpoint.
 [Product scope](../specs/00-product-scope.md), [promise matrix](../product-promises.md),
@@ -60,15 +60,19 @@ entries record the state at their checkpoint.
 3. **Qualify generation utility and capacity.** Fix the scenes, exact official
    Illustrious XL v0.1 bytes, inputs, seeds and visual rubric before execution. Use
    actual no-region ordinary controls and matched region/reference assignment
-   controls. Both prior ordinary reference baselines failed, the 1024 resolution
+   controls. Both prior ordinary TXT baselines failed, the 1024 resolution
    diagnosis was inconclusive, and the fixed common-runtime CLIP operators matched.
-   Advance a fresh falsifiable hypothesis before another visual run. Record all
-   images and a human acceptance verdict. Check signed Anima regional text for
-   actual spatial effect on the supported installed peer. Consult model-aware
+   The source-anchored IMG pilot preserved geometry in all three jobs. Both
+   reference cards failed the preregistered red/blue recoloring criterion.
+   Keep that case as a diagnostic and record a new hypothesis before changing
+   an input or default. Record all images and a human acceptance verdict.
+   Check signed Anima regional text for actual spatial effect on the supported
+   installed peer. Consult model-aware
    settings and the guards before classifying additional combinations as supported.
    Measure output, host memory and VRAM on the declared profile, including a
    representative maximum admitted regional/reference case and an above-limit
    refusal preserving queue and Project state. [Visual utility](./phase-4-regional-reference-utility-research.md),
+   [source-anchored IMG](./phase-4-reference-img-utility-research.md),
    [resolution](./phase-4-ordinary-resolution-research.md),
    [CLIP comparison](./phase-4-ordinary-invoke-conditioning-research.md),
    [regional contract](../features/project/generate-mode/regional-guidance.md#scope).

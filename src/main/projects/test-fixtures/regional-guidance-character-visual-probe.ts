@@ -44,7 +44,9 @@ import {
 } from '../project-current-canvas-regional-recipe.js'
 import { captureCurrentCanvasRegionalReferences } from '../project-current-canvas-regional-references.js'
 import {
+  type PreparedNormalGeneration,
   type PreparedNormalTxt2Img,
+  prepareNormalGeneration,
   prepareNormalTxt2Img,
 } from '../project-generation-preparation.js'
 import { ProjectIndexRepository } from '../project-index.js'
@@ -375,7 +377,7 @@ function transport(value: unknown, ancestors = new Set<object>()): unknown {
 }
 
 const serialized = (value: unknown): string => `${JSON.stringify(transport(value), null, 2)}\n`
-const clonePrepared = (prepared: PreparedNormalTxt2Img): PreparedNormalTxt2Img => ({
+const clonePrepared = <P extends PreparedNormalGeneration>(prepared: P): P => ({
   ...structuredClone(prepared),
   targetPngBytes: Buffer.from(prepared.targetPngBytes),
 })
@@ -1106,6 +1108,7 @@ export async function produceReferenceUtilityProbe<T>(options: {
 }): Promise<unknown> {
   return produceFixedUtilityProbe({
     ...options,
+    prepare: prepareNormalTxt2Img,
     spec: {
       cases: REFERENCE_UTILITY_CASES,
       contract: REFERENCE_UTILITY_CONTRACT,
@@ -1179,6 +1182,7 @@ export async function produceOrdinaryResolutionProbe<T>(options: {
 }): Promise<unknown> {
   return produceFixedUtilityProbe({
     ...options,
+    prepare: prepareNormalTxt2Img,
     spec: {
       cases: ORDINARY_RESOLUTION_CASES,
       contract: ORDINARY_RESOLUTION_CONTRACT,
@@ -1187,21 +1191,75 @@ export async function produceOrdinaryResolutionProbe<T>(options: {
     },
   })
 }
-async function produceFixedUtilityProbe<C extends FixedUtilityCase, T>(options: {
+
+export const REFERENCE_IMG_UTILITY_ROOT = path.join(
+  os.homedir(),
+  '.codex/artifacts/imagegen-studio/runs/regional-reference-img-utility',
+)
+const REFERENCE_IMG_UTILITY_CASES = [
+  { image: null, label: 'ordinary', outside: false, seed: 123 },
+  { image: 'A', label: 'reference-a', outside: false, seed: 123 },
+  { image: 'B', label: 'reference-b', outside: false, seed: 123 },
+] as const
+export type ReferenceImgUtilityUseCase = Omit<ReferenceUtilityUseCase, 'case' | 'prepared'> & {
+  case: (typeof REFERENCE_IMG_UTILITY_CASES)[number]
+  prepared: PreparedNormalGeneration
+}
+
+/** Use the same captured regional-reference owners with one authored opaque Raster input. */
+export async function produceReferenceImgUtilityProbe<T>(options: {
+  pythonExecutable: string
+  referenceImages: Record<'A' | 'B', CharacterVisualFile>
+  resources: VerifiedRegionalReferenceResources
+  run: string
+  runtimeRoot: string
+  sourceImage: CharacterVisualFile
+  useCase: (input: ReferenceImgUtilityUseCase) => Promise<T>
+}): Promise<unknown> {
+  assert.equal(path.dirname(options.run), REFERENCE_IMG_UTILITY_ROOT)
+  assert.match(path.basename(options.run), /^20261118-r[1-9]\d*$/)
+  return produceFixedUtilityProbe({
+    ...options,
+    prepare: prepareNormalGeneration,
+    spec: {
+      cases: REFERENCE_IMG_UTILITY_CASES,
+      contract: {
+        globalPositive: REFERENCE_UTILITY_CONTRACT.globalPositive,
+        nativeRequestCeiling: REFERENCE_IMG_UTILITY_CASES.length,
+      },
+      prefix: 'reference-img',
+      run: options.run,
+    },
+  })
+}
+
+async function produceFixedUtilityProbe<
+  C extends FixedUtilityCase,
+  P extends PreparedNormalGeneration,
+  T,
+>(options: {
+  prepare: (input: Parameters<typeof prepareNormalGeneration>[0]) => Promise<P>
   pythonExecutable: string
   referenceImages?: Record<'A' | 'B', CharacterVisualFile>
   resources?: VerifiedRegionalReferenceResources
   run: string
   runtimeRoot: string
+  sourceImage?: CharacterVisualFile
   spec: {
     cases: readonly C[]
-    contract: typeof ORDINARY_RESOLUTION_CONTRACT | typeof REFERENCE_UTILITY_CONTRACT
-    prefix: 'reference' | 'resolution'
+    contract: { globalPositive: string; nativeRequestCeiling: number }
+    prefix: 'reference-img' | 'reference' | 'resolution'
     run: string
   }
-  useCase: (input: Omit<ReferenceUtilityUseCase, 'case'> & { case: C }) => Promise<T>
+  useCase: (
+    input: Omit<ReferenceUtilityUseCase, 'case' | 'prepared'> & {
+      case: C
+      prepared: P
+    },
+  ) => Promise<T>
 }): Promise<unknown> {
-  const { spec } = options
+  const { sourceImage, spec } = options
+  const mode = sourceImage ? 'img2img' : 'txt2img'
   assert.equal(options.run, spec.run)
   const run = options.run
   await directory(run)
@@ -1250,6 +1308,15 @@ async function produceFixedUtilityProbe<C extends FixedUtilityCase, T>(options: 
   const models = new ModelService(repository, new CivitaiClient(offline), tokens)
   let worker: ProjectWorkerClient | undefined
   const cases: unknown[] = []
+  const startImageWorker = () =>
+    ProjectWorkerClient.start(
+      {
+        pythonExecutable: options.pythonExecutable,
+        runtimeRoot: options.runtimeRoot,
+        stagingBasePath: scratch,
+      },
+      { environment: { LANG: 'C.UTF-8', PYTHONDONTWRITEBYTECODE: '1', TMPDIR: scratch } },
+    )
   try {
     const installed = await repository.publishVerifiedInstallation({
       primary: {
@@ -1289,15 +1356,28 @@ async function produceFixedUtilityProbe<C extends FixedUtilityCase, T>(options: 
     const tab = await service.create({
       height: 512,
       title:
-        spec.prefix === 'reference'
-          ? 'Fixed cat reference utility'
-          : 'Fixed cat ordinary resolution',
+        spec.prefix === 'resolution'
+          ? 'Fixed cat ordinary resolution'
+          : 'Fixed cat reference utility',
       width: 512,
     })
     const co = () => {
       const value = service.getOpenDocumentForAcceptance(tab.id)
       assert.ok(value)
       return value
+    }
+    if (sourceImage) {
+      assert.equal(sourceImage.path, path.join(run, 'cat-source.png'))
+      assert.equal(await realpath(sourceImage.path), sourceImage.path)
+      const source = await readFile(sourceImage.path)
+      assert.equal(source.length, sourceImage.byteSize)
+      assert.equal(sha(source), sourceImage.sha256)
+      assert.equal(classifyTargetPngAlpha(source, 512, 512), 'img2img')
+      worker = await startImageWorker()
+      await service.importRasterImage(tab.id, sourceImage.path, worker)
+      await worker.close()
+      worker = undefined
+      assert.equal(ProjectWorkerClient.hasUnconfirmedExit(), false)
     }
     const initial = structuredClone(co().document)
     const maskId = randomUUID()
@@ -1307,7 +1387,7 @@ async function produceFixedUtilityProbe<C extends FixedUtilityCase, T>(options: 
     const sources: Record<string, IgsAssetSource> = { [member]: { bytes } }
     for (const testCase of spec.cases) {
       const side = testCase.side ?? 512
-      const bbox = { height: side, width: side, x: -13, y: 5 }
+      const bbox = { height: side, width: side, x: sourceImage ? 0 : -13, y: sourceImage ? 0 : 5 }
       const owner: IgsRegionalGuidanceV1 = {
         enabled: true,
         id: regionId,
@@ -1334,7 +1414,7 @@ async function produceFixedUtilityProbe<C extends FixedUtilityCase, T>(options: 
           positivePrompt: prompt(spec.contract.globalPositive),
           sampling: {
             cfgScale: 5,
-            denoisingStrength: null,
+            denoisingStrength: sourceImage ? 0.5 : null,
             sampler: 'Euler',
             scheduler: 'Normal',
             steps: 30,
@@ -1354,20 +1434,16 @@ async function produceFixedUtilityProbe<C extends FixedUtilityCase, T>(options: 
         assert.ok(options.referenceImages)
         const image = options.referenceImages[testCase.image]
         const pin = REFERENCE_UTILITY_CONTRACT.referenceImages[testCase.image]
-        assert.equal(image.path, path.join(run, `reference-${testCase.image}.png`))
+        assert.equal(
+          image.path,
+          path.join(sourceImage ? REFERENCE_UTILITY_RUN : run, `reference-${testCase.image}.png`),
+        )
         assert.equal(image.byteSize, pin.byteSize)
         assert.equal(image.sha256, pin.sha256)
         const imageBytes = await readFile(image.path)
         assert.equal(imageBytes.length, pin.byteSize)
         assert.equal(sha(imageBytes), pin.sha256)
-        worker = await ProjectWorkerClient.start(
-          {
-            pythonExecutable: options.pythonExecutable,
-            runtimeRoot: options.runtimeRoot,
-            stagingBasePath: scratch,
-          },
-          { environment: { LANG: 'C.UTF-8', PYTHONDONTWRITEBYTECODE: '1', TMPDIR: scratch } },
-        )
+        worker = await startImageWorker()
         await service.importRegionalGuidanceReferenceImage(
           tab.id,
           {
@@ -1399,20 +1475,13 @@ async function produceFixedUtilityProbe<C extends FixedUtilityCase, T>(options: 
       await service.withCapturedCurrentCanvasRegionalGenerationInput(tab.id, async (capture) => {
         capture.assertCurrent()
         assert.deepEqual(capture.document, authored)
-        worker = await ProjectWorkerClient.start(
-          {
-            pythonExecutable: options.pythonExecutable,
-            runtimeRoot: options.runtimeRoot,
-            stagingBasePath: scratch,
-          },
-          { environment: { LANG: 'C.UTF-8', PYTHONDONTWRITEBYTECODE: '1', TMPDIR: scratch } },
-        )
+        worker = await startImageWorker()
         const target = await capture.composeTarget(worker)
         await worker.close()
         worker = undefined
         assert.equal(ProjectWorkerClient.hasUnconfirmedExit(), false)
-        assert.equal(target.mode, 'txt2img')
-        const prepared = await prepareNormalTxt2Img({
+        assert.equal(target.mode, mode)
+        const prepared = await options.prepare({
           lastActualSeed: null,
           modelService: models,
           target,
@@ -1452,7 +1521,7 @@ async function produceFixedUtilityProbe<C extends FixedUtilityCase, T>(options: 
             ? undefined
             : await captureCurrentCanvasRegionalReferences({
                 capture: capture.regional,
-                mode: 'txt2img',
+                mode,
                 recipe,
                 resources: (() => {
                   assert.ok(options.resources)
@@ -1548,16 +1617,18 @@ async function produceFixedUtilityProbe<C extends FixedUtilityCase, T>(options: 
       networkAttempts,
       noSharedDatabaseWrites: true,
       profile:
-        spec.prefix === 'reference' ? 'main-reference-utility-v1' : 'main-ordinary-resolution-v1',
+        spec.prefix === 'resolution'
+          ? 'main-ordinary-resolution-v1'
+          : `main-${spec.prefix}-utility-v1`,
       schemaVersion: 1,
       visualAcceptance: 'pending',
     }
     await writeJson(
       path.join(
         run,
-        spec.prefix === 'reference'
-          ? 'main-reference-utility.json'
-          : 'main-ordinary-resolution.json',
+        spec.prefix === 'resolution'
+          ? 'main-ordinary-resolution.json'
+          : `main-${spec.prefix}-utility.json`,
       ),
       manifest,
     )

@@ -10,6 +10,7 @@
     "src/**/*.ts",
     "src/**/*.vue",
     "scripts/**/*.ts",
+    "scripts/qualify-installed-reference-img-utility.mts",
     "scripts/qualify-regional-character-visual.mts",
     "vite.desktop.config.ts"
   ]
