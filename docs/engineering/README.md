@@ -1,5 +1,13 @@
 # Engineering Workflow
 
+## Current InvokeAI comparison for Anima negative placement
+
+[Current Invoke control](./phase-4-anima-negative-invoke-control-research.md)
+reuses the same fixed regional IMG inputs and original Invoke denoiser. The
+negative permissions and four prompt inputs match Studio. The original
+positive mask and preblend differ. Both treated scarf cores retain their
+baseline red counts on both implementations.
+
 ## Current Anima regional negative placement
 
 [Anima negative placement](./phase-4-anima-negative-spatial-utility-research.md)

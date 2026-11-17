@@ -106,6 +106,10 @@ transport. It establishes an unsuccessful spatial utility case for this
 source and strength. Other subjects, settings, human acceptance and capacity
 remain open. All eight promises stay **«Пока не обещать»**.
 
+The [original current Invoke denoiser comparison](./phase-4-anima-negative-invoke-control-research.md)
+reproduces the same failed visual criterion on the shared normalized source
+latent. CPU checks confirm exact negative permissions for both assignments.
+
 ## Verification
 
 Eight focused files pass 342 tests with zero failures or skips. Typecheck,

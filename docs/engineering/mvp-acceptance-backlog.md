@@ -1,6 +1,6 @@
 # MVP acceptance backlog
 
-Updated through the [Anima negative placement pilot](./phase-4-anima-negative-spatial-utility-research.md).
+Updated through the [current Invoke Anima comparison](./phase-4-anima-negative-invoke-control-research.md).
 All eight public promise statuses remain **«Пока не обещать»**. Earlier roadmap
 entries record the state at their checkpoint.
 [Product scope](../specs/00-product-scope.md), [promise matrix](../product-promises.md),
@@ -66,7 +66,9 @@ entries record the state at their checkpoint.
    reference cards failed the preregistered red/blue recoloring criterion.
    The signed Anima IMG pilot held the source and regional
    positives fixed while swapping the same negative between sides. Both red
-   scarves survived all variants. Selective attenuation remains unqualified.
+   scarves survived all variants. The current original Invoke denoiser on the
+   held source latent repeats that result. Exact negative permissions and
+   prompt inputs match. Selective attenuation remains unqualified.
    Retain both IMG pilots and record a new hypothesis before any further
    visual run. Record all images and a human acceptance verdict. Consult model-aware
    settings and the guards before classifying additional combinations as supported.
@@ -75,6 +77,7 @@ entries record the state at their checkpoint.
    refusal preserving queue and Project state. [Visual utility](./phase-4-regional-reference-utility-research.md),
    [source-anchored IMG](./phase-4-reference-img-utility-research.md),
    [signed Anima IMG placement](./phase-4-anima-negative-spatial-utility-research.md),
+   [current Invoke comparison](./phase-4-anima-negative-invoke-control-research.md),
    [resolution](./phase-4-ordinary-resolution-research.md),
    [CLIP comparison](./phase-4-ordinary-invoke-conditioning-research.md),
    [regional contract](../features/project/generate-mode/regional-guidance.md#scope).
