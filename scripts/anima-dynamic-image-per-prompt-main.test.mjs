@@ -100,10 +100,10 @@ const compiled = new Map([
     blurry,
     {
       version: 'anima-prompt-weighting-v1',
-      cleanedText: 'blurry, low quality',
+      cleanedText: 'blurry , low quality',
       spans: [
         { start: 0, end: 6, weight: 0.7 },
-        { start: 6, end: 19, weight: 1 },
+        { start: 6, end: 20, weight: 1 },
       ],
     },
   ],
@@ -111,10 +111,10 @@ const compiled = new Map([
     noisy,
     {
       version: 'anima-prompt-weighting-v1',
-      cleanedText: 'noisy, low quality',
+      cleanedText: 'noisy , low quality',
       spans: [
         { start: 0, end: 5, weight: 0.7 },
-        { start: 5, end: 18, weight: 1 },
+        { start: 5, end: 19, weight: 1 },
       ],
     },
   ],
@@ -298,6 +298,7 @@ function assertActual(actual, reference, mode, expected, seedBehavior) {
     assert.equal(frozen.kind, `anima-${mode}`)
     assert.equal(frozen.schemaVersion, 1)
     assert.deepEqual(frozen.context, {
+      animaPromptInterpretation: 'invoke-fragments-v1',
       schemaVersion: 1,
       kind: `anima-${mode}-preparation`,
       bbox,

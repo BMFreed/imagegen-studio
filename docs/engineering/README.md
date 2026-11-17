@@ -1,5 +1,14 @@
 # Engineering Workflow
 
+## Current Anima qualification and MVP acceptance
+
+[Anima prompt qualification](./anima-qualification-oracles-research.md) checks
+fresh frozen prompt markers, independently authored signed worker inputs and raw
+portable provenance. All 81 previously reproduced failures pass through the
+current qualification owners. The [MVP acceptance backlog](./mvp-acceptance-backlog.md)
+tracks the remaining packaged runtime, generation utility, recovery and delivery
+gates. All eight public promise statuses remain «Пока не обещать».
+
 ## Current pre-migration database backup
 
 [SQLite startup backup](./phase-5-database-migration-backup-research.md) adapts Invoke online backup before existing-state migrations.

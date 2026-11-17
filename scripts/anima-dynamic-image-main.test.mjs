@@ -47,10 +47,10 @@ const compiled = new Map([
     blurry,
     {
       version: 'anima-prompt-weighting-v1',
-      cleanedText: 'blurry, low quality',
+      cleanedText: 'blurry , low quality',
       spans: [
         { start: 0, end: 6, weight: 0.7 },
-        { start: 6, end: 19, weight: 1 },
+        { start: 6, end: 20, weight: 1 },
       ],
     },
   ],
@@ -58,10 +58,10 @@ const compiled = new Map([
     noisy,
     {
       version: 'anima-prompt-weighting-v1',
-      cleanedText: 'noisy, low quality',
+      cleanedText: 'noisy , low quality',
       spans: [
         { start: 0, end: 5, weight: 0.7 },
-        { start: 5, end: 18, weight: 1 },
+        { start: 5, end: 19, weight: 1 },
       ],
     },
   ],
@@ -252,6 +252,7 @@ function assertActualBatch(actual, reference, mode, expected, truncated) {
       width: 256,
       height: 256,
     })
+    assert.equal(context.animaPromptInterpretation, 'invoke-fragments-v1')
     assert.deepEqual(context.prompts, { positive, negative })
     const compiledSigns = { positive: compiled.get(positive), negative: compiled.get(negative) }
     const wireTarget = {

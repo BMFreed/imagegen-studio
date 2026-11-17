@@ -1,5 +1,14 @@
 # Open Questions
 
+## Current MVP acceptance
+
+[MVP acceptance backlog](./engineering/mvp-acceptance-backlog.md) reconciles
+packaged engine compatibility, visual utility and capacity, Setup/Repair,
+interrupted update and the joint NoobAI/release matrix with the current code.
+Production signed runtime metadata/artifact endpoints and the public publisher
+identity are still unavailable. All eight public promise statuses remain
+«Пока не обещать».
+
 ## Current pre-migration database backup
 
 [SQLite startup backup](./engineering/phase-5-database-migration-backup-research.md) adapts Invoke online backup before existing-state migrations.
@@ -10,14 +19,12 @@ Fresh empty bootstrap skips a valueless backup. No automatic restore, latest-bac
 selection, Project/resource rewind or updater retirement is added. PP8 statuses
 remain unchanged; exact verification results and limits are in the linked research.
 
-## Current verification gap in Anima qualification oracles
+## Resolved Anima qualification regressions
 
-The broad app:test attempt hit its 600-second ceiling and is not a green full suite.
-Its 81 non-upgrade failures reproduce at original ceb16f66 in 22 test files, with
-identical names/error payloads (169 tests: 88 PASS / 81 FAIL). They concern older Anima
-qualification DTO/oracle expectations. The 16 startup-backup consumer failures are
-fixed and included in the final 127 focused PASS. Baseline classification does not
-resolve these oracle gaps or qualify release/MVP; see the startup-backup research.
+The 81 non-upgrade failures reproduced at `ceb16f66` now pass. The updated
+oracles check current frozen prompt interpretation and compiled signs, separate
+plain and legacy controls, exact Retry, and raw accepted provenance. See the
+[verification report](./engineering/anima-qualification-oracles-research.md).
 
 ## Previous historical state upgrade qualification
 

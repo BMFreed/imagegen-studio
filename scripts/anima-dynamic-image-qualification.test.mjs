@@ -215,6 +215,41 @@ for (const mode of ['img2img', 'outpaint'])
             },
           ],
           [
+            'missing interpretation marker on fresh admission',
+            (v) => {
+              delete v.context.animaPromptInterpretation
+            },
+          ],
+          [
+            'unsupported interpretation marker',
+            (v) => {
+              v.context.animaPromptInterpretation = 'invoke-fragments-v2'
+            },
+          ],
+          [
+            'legacy compiled text and offsets on fresh admission',
+            (v) => {
+              v.workerJob.prompts.negative =
+                v.context.prompts.negative === '(blurry:0.7), low quality'
+                  ? {
+                      version: 'anima-prompt-weighting-v1',
+                      cleanedText: 'blurry, low quality',
+                      spans: [
+                        { start: 0, end: 6, weight: 0.7 },
+                        { start: 6, end: 19, weight: 1 },
+                      ],
+                    }
+                  : {
+                      version: 'anima-prompt-weighting-v1',
+                      cleanedText: 'noisy, low quality',
+                      spans: [
+                        { start: 0, end: 5, weight: 0.7 },
+                        { start: 5, end: 18, weight: 1 },
+                      ],
+                    }
+            },
+          ],
+          [
             'wrongcleanednegative',
             (v) => {
               v.workerJob.prompts.negative.cleanedText = 'late negative'
@@ -336,6 +371,9 @@ for (const mode of ['img2img', 'outpaint'])
           },
           (v) => {
             v.compiledPrompts = item.compiledPrompts
+          },
+          (v) => {
+            v.animaPromptInterpretation = 'invoke-fragments-v1'
           },
         ]) {
           const wrong = structuredClone(actual.configs[index])

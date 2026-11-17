@@ -851,12 +851,12 @@ Anima Smart enabled-LoRA refusal описывает исторический che
    в checkpoint выше. sRGB, empty/stale/Cancel/create-only и неизменность Project
    проверяются отдельно от candidate export. Custom rectangle/overwrite и
    произвольная максимальная capacity не заявлены; release worker остаётся открытым.
-6. **Release delivery:** Runtime Install/Repair остаются
-   `RUNTIME_INSTALL_UNAVAILABLE`; нужны trusted artifacts, staged install/
-   self-test/activation/rollback. Затем проверяемый Linux/NVIDIA distributable,
-   clean install/upgrade/rollback и ручные Electron Check for Updates/Install
-   Update с обычными close/cancel guards. Model-version check и developer
-   provisioner не являются app updater или release installer.
+6. **Release delivery:** standalone Linux AppImage, metadata-first Setup,
+   staged runtime Install/Repair и ручные Electron Check/Download/Install с
+   обычными close/cancel guards имеют конечные checkpoints выше. В default
+   build Setup возвращает `RUNTIME_INSTALL_UNAVAILABLE`, пока отсутствует
+   production publisher. Остаются совместные packaged clean install/upgrade,
+   фактическая работа app/worker/model и interrupted-update recovery.
 7. **Итоговая приёмка:** migration/recovery/protocol compatibility, NoobAI
    release matrix и полный MVP acceptance на конкретном поддержанном профиле.
    PP-001/005/007/008 остаются **«Пока не обещать»**; повышение требует supporting
@@ -3664,28 +3664,24 @@ UI всех этих действий проверен в поддерживае
 
 **Зависимости:** функциональные фазы 0–4 и доказанный packaging artifact.
 Release qualification начинается раньше, но итоговый gate закрывается здесь.
-Ручной Check, explicit Download, конечный signed declaration consumer,
-[private staging](../engineering/phase-5-application-update-staging-research.md) и
-[same-owner transaction](../engineering/phase-5-application-update-transaction-research.md)
-уже имеют отдельные checkpoints; их не нужно создавать заново. Private transaction
-не имеет Install IPC/UI или relaunch consumer. Следующие app-update gates
-по [user-flow/acceptance contract](../features/application-updates.md): отложенная установка при dirty `.igs` и активных jobs/staging,
-публичный Install/relaunch flow, явные adoption/discard сохранённого stage и
-interrupted-update/crash recovery. Private same-owner rollback не закрывает эти
-release gates. Принятая signed compatibility declaration
-не закрывает фактические migration/protocol/engine checks после upgrade.
-Проверка при старте не выполняется; shipping publisher остаётся не настроен.
+Текущий конечный список работ ведётся в
+[MVP acceptance backlog](../engineering/mvp-acceptance-backlog.md). Ручной
+Check/Download, [явный Install и relaunch](../engineering/phase-5-application-update-install-research.md)
+через обычное закрытие и [startup recovery status](../engineering/phase-5-application-update-recovery-status-research.md)
+уже подключены. Сохранённый stage блокирует следующую установку до безопасного
+recovery. Восстановление после interrupted update, пригодность к следующему
+обновлению и фактическая работа миграции с установленным engine остаются
+проверками по [контракту обновлений](../features/application-updates.md).
+Startup inspection выполняется офлайн. Shipping publisher пока не настроен.
 
 - Собрать подписанный/проверяемый дистрибутив и runtime artifacts для
   Linux/NVIDIA; проверить чистую установку и установку runtime из интерфейса
   основного окна без системного Python. Зафиксировать поддерживаемые
   driver/CUDA/VRAM и диагностировать неподдерживаемое окружение до генерации.
-- Встроить действие `Проверить обновления` **самого Electron-приложения**, показ
-  найденной версии/изменений и отдельное действие установки. Это отдельный
-  lifecycle от Python runtime, моделей и проектов: пакет проверяется до
-  применения, а обновление не удаляет app data, `.igs`, модели или previous
-  known-good runtime. Выбор Linux package/update channel и подтверждение
-  механизма на clean install входят в release engineering, не в worker.
+- Квалифицировать существующие Check/Download/Install **самого Electron-приложения**
+  на clean install с production update channel. Проверить версию и заметки о
+  выпуске, вход в обычное закрытие Project, проверку пакета до применения и
+  сохранение app data, `.igs`, моделей и previous known-good runtime.
 - Пройти отказ загрузки, проверку повреждённого пакета, interrupted update,
   runtime rollback/repair, SQLite migration, перенос `.igs`, crash recovery,
   закрытие с активной очередью, точные model version refs и восстановление

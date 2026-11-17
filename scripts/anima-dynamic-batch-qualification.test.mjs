@@ -173,15 +173,15 @@ function compiled(prompts) {
     },
     negative: {
       version: 'anima-prompt-weighting-v1',
-      cleanedText: isNoisy ? 'noisy, low quality' : 'blurry, low quality',
+      cleanedText: isNoisy ? 'noisy , low quality' : 'blurry , low quality',
       spans: isNoisy
         ? [
             { start: 0, end: 5, weight: 0.7 },
-            { start: 5, end: 18, weight: 1 },
+            { start: 5, end: 19, weight: 1 },
           ]
         : [
             { start: 0, end: 6, weight: 0.7 },
-            { start: 6, end: 19, weight: 1 },
+            { start: 6, end: 20, weight: 1 },
           ],
     },
   }
@@ -216,6 +216,7 @@ function frozen(expected, fixture = installedFixture()) {
     originRequestId: 'original-dynamic-request',
     kind: 'anima-txt2img',
     context: {
+      animaPromptInterpretation: 'invoke-fragments-v1',
       schemaVersion: 1,
       kind: 'anima-txt2img-preparation',
       documentId: 'document-one',

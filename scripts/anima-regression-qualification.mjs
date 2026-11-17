@@ -602,10 +602,10 @@ function compiledPrompts() {
     },
     negative: {
       version: 'anima-prompt-weighting-v1',
-      cleanedText: 'blurry, low quality',
+      cleanedText: 'blurry , low quality',
       spans: [
         { start: 0, end: 6, weight: 0.7 },
-        { start: 6, end: 19, weight: 1 },
+        { start: 6, end: 20, weight: 1 },
       ],
     },
   }
@@ -622,6 +622,7 @@ export function assertAnimaRegressionFrozen(frozen, fixture, choice) {
   const context = frozen.context,
     job = frozen.workerJob
   exactKeys(context, [
+    'animaPromptInterpretation',
     'schemaVersion',
     'kind',
     'documentId',
@@ -638,6 +639,7 @@ export function assertAnimaRegressionFrozen(frozen, fixture, choice) {
     ...(mode === 'outpaint' ? ['conditioning'] : []),
   ])
   exactKeys(job, ['schemaVersion', 'bbox', 'prompts', 'sampling', 'model', 'loras', 'target'])
+  assert.equal(context.animaPromptInterpretation, 'invoke-fragments-v1')
   assert.equal(context.schemaVersion, 1)
   assert.equal(job.schemaVersion, 1)
   assert.equal(context.kind, `anima-${mode}-preparation`)

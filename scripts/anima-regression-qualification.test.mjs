@@ -515,6 +515,7 @@ function frozen(value, choice) {
     iccSha256: icc,
   }
   const context = {
+    animaPromptInterpretation: 'invoke-fragments-v1',
     schemaVersion: 1,
     kind: `anima-${mode}-preparation`,
     documentId: '00000000-0000-4000-8000-000000000001',
@@ -611,10 +612,10 @@ function frozen(value, choice) {
         },
         negative: {
           version: 'anima-prompt-weighting-v1',
-          cleanedText: 'blurry, low quality',
+          cleanedText: 'blurry , low quality',
           spans: [
             { start: 0, end: 6, weight: 0.7 },
-            { start: 6, end: 19, weight: 1 },
+            { start: 6, end: 20, weight: 1 },
           ],
         },
       },
