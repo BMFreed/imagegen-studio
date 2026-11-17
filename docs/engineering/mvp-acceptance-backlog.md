@@ -1,6 +1,6 @@
 # MVP acceptance backlog
 
-Updated through the [current Invoke Anima comparison](./phase-4-anima-negative-invoke-control-research.md).
+Updated through the [Illustrious reference capacity run](./phase-4-regional-reference-capacity-research.md).
 All eight public promise statuses remain **«Пока не обещать»**. Earlier roadmap
 entries record the state at their checkpoint.
 [Product scope](../specs/00-product-scope.md), [promise matrix](../product-promises.md),
@@ -72,9 +72,13 @@ entries record the state at their checkpoint.
    Retain both IMG pilots and record a new hypothesis before any further
    visual run. Record all images and a human acceptance verdict. Consult model-aware
    settings and the guards before classifying additional combinations as supported.
-   Measure output, host memory and VRAM on the declared profile, including a
-   representative maximum admitted regional/reference case and an above-limit
-   refusal preserving queue and Project state. [Visual utility](./phase-4-regional-reference-utility-research.md),
+   The representative Illustrious 512×512 IMG case with three separately masked
+   references completed on the RTX 4080 with 9.50 GiB peak group RAM and
+   8,852 MiB maximum sampled worker VRAM. A saved Project with four references
+   refused Generate before capture or admission and preserved queue and Project
+   state. The original-image byte and dimension limits and wider hardware
+   capacity remain open. [Reference capacity](./phase-4-regional-reference-capacity-research.md),
+   [visual utility](./phase-4-regional-reference-utility-research.md),
    [source-anchored IMG](./phase-4-reference-img-utility-research.md),
    [signed Anima IMG placement](./phase-4-anima-negative-spatial-utility-research.md),
    [current Invoke comparison](./phase-4-anima-negative-invoke-control-research.md),

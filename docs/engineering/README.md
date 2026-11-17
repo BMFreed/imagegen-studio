@@ -1,5 +1,14 @@
 # Engineering Workflow
 
+## Current Illustrious regional reference capacity
+
+[Reference capacity](./phase-4-regional-reference-capacity-research.md) records
+one 512×512 IMG job with three independently masked references through the
+actual Main queue and signed installed worker on an RTX 4080. A saved Project
+with four references refuses Generate before capture or queue admission and
+preserves the Project, history and database. Visual utility, original-image
+storage limits and the wider support profile remain open.
+
 ## Current InvokeAI comparison for Anima negative placement
 
 [Current Invoke control](./phase-4-anima-negative-invoke-control-research.md)
