@@ -56,8 +56,9 @@ kernel `memory.peak`, `memory.events` and anon/file accounting as distinct data.
 
 ## Execution
 
-The same retained AppImage starts through its normal desktop entry point. Each
-successful final case drives the existing renderer controls for the exact
+The harness launches the retained AppImage executable directly using X11,
+isolated XDG settings and localhost-only DevTools. Each successful final case
+drives the existing renderer controls for the exact
 version, Generate, Add as Layer, Save, Quit and Project reopen. The test matches
 one actual admission and one completion, progress for all three steps, the
 frozen request and exact staged receipt. It changes the draft after admission
@@ -118,8 +119,8 @@ The five disposable payload trees are compacted into
 `trained-retained-payloads.tar.gz` with 538 verified members and SHA-256
 `19a1639f5beb7b5a25cbf80867a2a7c0349a29ffe5594d9798311f401bfa6565`.
 Checking process/scope exit and recorded dependencies preceded disposal.
-Removing those raw trees and six short test scratch directories reclaimed
-46,239,744 allocated bytes after the archive and inventory. The canonical
+Removing those raw trees and six short test scratch directories released
+about 44 MiB of allocated space after the archive and inventory. The canonical
 engine, AppImage and original models remain available for follow-up.
 
 The verified scope is compatible trained TXT generation, explicit acceptance
