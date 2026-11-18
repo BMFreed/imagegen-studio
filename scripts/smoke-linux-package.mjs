@@ -36,8 +36,9 @@ import {
 
 const execute = promisify(execFile)
 const trainedFixture = process.env.IMAGEGEN_LINUX_PACKAGE_TRAINED_FIXTURE
+const runtimeSetupControl = process.env.IMAGEGEN_LINUX_PACKAGE_RUNTIME_SETUP_CONTROL
 const nativeMemoryGiB = trainedFixture ? 12 : 4
-const nativeDeadlineSeconds = trainedFixture ? 420 : 120
+const nativeDeadlineSeconds = trainedFixture ? 420 : runtimeSetupControl ? 360 : 120
 const boundedExecute = (command, args, options) =>
   execute(
     command,
@@ -54,6 +55,14 @@ assert.ok(
   trainedFixture === undefined || (installedEngineReport && historicalFixture === undefined),
 )
 const updateCheckMode = process.env.IMAGEGEN_LINUX_PACKAGE_UPDATE_CHECK
+assert.ok(
+  runtimeSetupControl === undefined ||
+    (['incompatible', 'cancel', 'corrupt', 'disk'].includes(runtimeSetupControl) &&
+      !trainedFixture &&
+      !historicalFixture &&
+      !installedEngineReport &&
+      !updateCheckMode),
+)
 assert.ok(
   updateCheckMode === undefined ||
     updateCheckMode === 'unavailable' ||
@@ -279,6 +288,11 @@ if (history) {
 if (trained)
   sourcePaths.push(path.join(repo, 'scripts/fixtures/packaged-installed-trained-generation.mjs'))
 if (updateCheckMode) sourcePaths.push(path.join(repo, 'scripts/application-update-check-smoke.mjs'))
+if (runtimeSetupControl) {
+  for (const fixture of ['packaged-runtime-setup-controls', 'packaged-runtime-setup-ui']) {
+    sourcePaths.push(path.join(repo, `scripts/fixtures/${fixture}.mjs`))
+  }
+}
 const sourceBefore = await Promise.all(sourcePaths.map(identity))
 const packageBefore = await identity(appImage)
 const projectTitle = 'Package qualification'
@@ -290,6 +304,7 @@ let firstTab
 let failed
 let applicationUpdateSmoke
 let applicationUpdateResult
+let setupControl
 
 async function writeJson(name, value) {
   await writeFile(path.join(root, name), `${JSON.stringify(value, null, 2)}\n`)
@@ -466,6 +481,12 @@ async function launch(name) {
       },
     )
   }
+  const launchEnvironment = { ...environment }
+  if (setupControl) {
+    launchEnvironment.IMAGEGEN_PACKAGED_RUNTIME_SETUP_CONFIG = path.join(root, 'setup-config.json')
+  } else {
+    delete launchEnvironment.IMAGEGEN_PACKAGED_RUNTIME_SETUP_CONFIG
+  }
   state.child = spawn(
     appImage,
     [
@@ -474,7 +495,7 @@ async function launch(name) {
       `--user-data-dir=${profile}`,
       '--ozone-platform=x11',
     ],
-    { cwd, env: environment, stdio: ['ignore', 'pipe', 'pipe'] },
+    { cwd, env: launchEnvironment, stdio: ['ignore', 'pipe', 'pipe'] },
   )
   state.wrapperPid = state.child.pid
   state.closePromise = new Promise((resolve) => {
@@ -592,7 +613,7 @@ async function currentTab(state) {
 async function closeNormally(state) {
   await gpuObservers.get(state)?.()
   gpuObservers.delete(state)
-  if (trained && !state.closed && state.aggregateLimits) {
+  if ((trained || runtimeSetupControl) && !state.closed && state.aggregateLimits) {
     state.memoryBeforeClose = await Promise.all(
       state.aggregateLimits.groups.map(async (group) => {
         const directory = path.join('/sys/fs/cgroup', group)
@@ -793,6 +814,30 @@ async function runFreshProfile() {
 }
 
 try {
+  if (runtimeSetupControl) {
+    assert.equal(
+      path.dirname(path.dirname(root)),
+      path.join(ownedRunRoot, 'packaged-runtime-setup'),
+    )
+    assert.match(
+      path.basename(root),
+      new RegExp(`^${runtimeSetupControl}(?:-r(?:[2-9]|[1-9]\\d+))?$`),
+    )
+    const packageProof = JSON.parse(
+      await readFile(path.join(path.dirname(root), 'package.json'), 'utf8'),
+    )
+    assert.deepEqual(packageBefore, packageProof.package)
+    const { preparePackagedRuntimeSetupControl } =
+      await import('./fixtures/packaged-runtime-setup-controls.mjs')
+    const inputs = JSON.parse(
+      await readFile(path.join(path.dirname(root), 'setup-inputs.json'), 'utf8'),
+    )
+    setupControl = await preparePackagedRuntimeSetupControl({
+      root,
+      mode: runtimeSetupControl,
+      inputs,
+    })
+  }
   if (updateCheckMode) {
     const { createApplicationUpdateCheckSmoke } =
       await import('./application-update-check-smoke.mjs')
@@ -804,32 +849,57 @@ try {
       releaseFixturesPath: updateReleaseFixturesPath,
     })
   }
-  const { saved, restarted, historicalUpgrade, trainedGeneration } = history
-    ? await historical.runHistoricalUpgrade({
-        history,
-        launch,
-        readPorts,
-        closeNormally,
-        retainOwnStore,
-        root,
-        migrationHash: sourceBefore.find(({ path: file }) => file === migrationFile).sha256,
-        iccHash: sourceBefore.find(({ path: file }) => file === srgbProfile).sha256,
-        identity,
-        records,
-      })
-    : trained
-      ? await trainedProfile.runTrainedGeneration({
-          trained,
+  const { saved, restarted, historicalUpgrade, trainedGeneration, runtimeSetup } = setupControl
+    ? await (async () => {
+        const state = await launch(runtimeSetupControl)
+        const result = await setupControl.run(state.page)
+        await closeNormally(state)
+        const leafDiagnostics = state.stderr
+          .split('\n')
+          .filter((line) => line.startsWith('IGS_SETUP_QUALIFICATION_FAILURE '))
+          .map((line) => JSON.parse(line.slice('IGS_SETUP_QUALIFICATION_FAILURE '.length)))
+        if (runtimeSetupControl === 'disk') {
+          assert.ok(leafDiagnostics.some(({ code }) => code === 'RUNTIME_ASSEMBLY_DISK_SPACE'))
+        }
+        if (runtimeSetupControl === 'incompatible') {
+          assert.ok(leafDiagnostics.some(({ code }) => code === 'RUNTIME_HOST_DRIVER_UNSUPPORTED'))
+        }
+        if (runtimeSetupControl === 'corrupt') {
+          assert.ok(leafDiagnostics.some(({ code }) => code === 'DOWNLOAD_HASH_MISMATCH'))
+        }
+        assert.ok(
+          state.memoryBeforeClose.every(
+            ({ events }) => /^oom 0$/m.test(events) && /^oom_kill 0$/m.test(events),
+          ),
+        )
+        return { runtimeSetup: { ...result, leafDiagnostics } }
+      })()
+    : history
+      ? await historical.runHistoricalUpgrade({
+          history,
           launch,
           readPorts,
           closeNormally,
           retainOwnStore,
           root,
+          migrationHash: sourceBefore.find(({ path: file }) => file === migrationFile).sha256,
+          iccHash: sourceBefore.find(({ path: file }) => file === srgbProfile).sha256,
           identity,
           records,
-          observeGpuWorker,
         })
-      : await runFreshProfile()
+      : trained
+        ? await trainedProfile.runTrainedGeneration({
+            trained,
+            launch,
+            readPorts,
+            closeNormally,
+            retainOwnStore,
+            root,
+            identity,
+            records,
+            observeGpuWorker,
+          })
+        : await runFreshProfile()
   assert.deepEqual(await identity(appImage), packageBefore)
   if (trainedGeneration) {
     const jobWorker = trainedGeneration.worker
@@ -874,13 +944,15 @@ try {
   await writeJson('report.json', {
     schemaVersion: 1,
     outcome: 'PASS',
-    scope: trainedGeneration
-      ? 'Actual fused AppImage executes one trained installed-worker generation through public Generate, Add, Save and reopen.'
-      : historicalUpgrade
-        ? 'Actual fused AppImage upgrades an owned historical DB, renders a nonempty Project preview with the installed CPU worker and reopens the saved Project.'
-        : engine
-          ? 'Actual fused Linux AppImage with exact installed runtime, real Main status qualification and Project create/restart/persistence.'
-          : 'Actual fused Linux AppImage outside checkout, real packaged Main/preload/SQLite/migrations/own Project create/restart/persistence. No source worker or service mocks.',
+    scope: runtimeSetupControl
+      ? 'Actual fused qualification AppImage through reviewed Setup with existing runtime owners and isolated loopback transfer.'
+      : trainedGeneration
+        ? 'Actual fused AppImage executes one trained installed-worker generation through public Generate, Add, Save and reopen.'
+        : historicalUpgrade
+          ? 'Actual fused AppImage upgrades an owned historical DB, renders a nonempty Project preview with the installed CPU worker and reopens the saved Project.'
+          : engine
+            ? 'Actual fused Linux AppImage with exact installed runtime, real Main status qualification and Project create/restart/persistence.'
+            : 'Actual fused Linux AppImage outside checkout, real packaged Main/preload/SQLite/migrations/own Project create/restart/persistence. No source worker or service mocks.',
     mode: 'APPIMAGE_EXTRACT_AND_RUN=1; X11; Chromium CDP loopback. FUSE installation and Main Node inspector are not used.',
     packageBefore,
     packageAfter: await identity(appImage),
@@ -893,6 +965,7 @@ try {
     ...(applicationUpdateSmoke ? { applicationUpdateCheck: applicationUpdateResult } : {}),
     ...(historicalUpgrade ? { historicalUpgrade } : {}),
     ...(trainedGeneration ? { trainedGeneration } : {}),
+    ...(runtimeSetupControl ? { runtimeSetupControl, runtimeSetup } : {}),
     stores: { saved, restarted },
     lifetimes: lifetimes.map(
       ({
@@ -912,7 +985,9 @@ try {
             unchangedInputs: engine.inputs,
           },
         }
-      : { defaultProviderUnavailable: true }),
+      : runtimeSetupControl
+        ? {}
+        : { defaultProviderUnavailable: true }),
     nativeInferenceQualified: Boolean(trainedGeneration),
     shippingTrustQualified: false,
     cleanMachineInstallQualified: false,
@@ -934,6 +1009,13 @@ try {
   })
 } finally {
   applicationUpdateSmoke?.releaseHeld()
+  if (setupControl) {
+    try {
+      await setupControl.stop()
+    } catch (error) {
+      failed ??= error
+    }
+  }
   for (const state of lifetimes) {
     if (!state.normalPhysicalExit) {
       try {
@@ -1006,11 +1088,13 @@ try {
 }
 if (failed) throw failed
 console.log(
-  trained
-    ? 'PASS trained generation, explicit Add and Save/reopen, and two normal physical closes'
-    : history
-      ? 'PASS historical database upgrade, exact backup, installed CPU preview, and two normal physical closes'
-      : engine
-        ? 'PASS installed runtime readiness, packaged Project reopen and two normal physical closes'
-        : 'PASS actual fused AppImage Home/IPC/SQLite/Project persistence, unavailable Setup and two normal physical closes',
+  runtimeSetupControl
+    ? `PASS packaged reviewed runtime Setup ${runtimeSetupControl} control and normal physical close`
+    : trained
+      ? 'PASS trained generation, explicit Add and Save/reopen, and two normal physical closes'
+      : history
+        ? 'PASS historical database upgrade, exact backup, installed CPU preview, and two normal physical closes'
+        : engine
+          ? 'PASS installed runtime readiness, packaged Project reopen and two normal physical closes'
+          : 'PASS actual fused AppImage Home/IPC/SQLite/Project persistence, unavailable Setup and two normal physical closes',
 )

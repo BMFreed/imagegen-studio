@@ -1,5 +1,14 @@
 # Engineering Workflow
 
+## Current packaged runtime Setup
+
+[Packaged runtime Setup](./phase-5-packaged-runtime-setup-research.md) records
+the signed review-and-confirm path in a separate qualification AppImage. The
+normal application still reports Setup unavailable without a publisher.
+The private run covers explicit consent, cancellation, a foreign digest,
+host refusal and the signed disk-space boundary. Successful clean install,
+Repair and rollback through the packaged UI remain open.
+
 ## Current Illustrious regional reference capacity
 
 [Reference capacity](./phase-4-regional-reference-capacity-research.md) records

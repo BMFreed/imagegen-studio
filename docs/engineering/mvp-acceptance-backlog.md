@@ -1,6 +1,6 @@
 # MVP acceptance backlog
 
-Updated through the [Illustrious reference capacity run](./phase-4-regional-reference-capacity-research.md).
+Updated through the [packaged runtime Setup controls](./phase-5-packaged-runtime-setup-research.md).
 All eight public promise statuses remain **«Пока не обещать»**. Earlier roadmap
 entries record the state at their checkpoint.
 [Product scope](../specs/00-product-scope.md), [promise matrix](../product-promises.md),
@@ -87,12 +87,15 @@ entries record the state at their checkpoint.
    [regional contract](../features/project/generate-mode/regional-guidance.md#scope).
 4. **Qualify clean Setup and Repair through the packaged UI.** Use the existing
    metadata-first backend and Setup, cache, extraction, assembly, health and
-   rollback owners with an explicitly scoped qualification source. Drive review,
-   consent, transfer, cancellation, successful publication and reopened worker
-   start from a clean data root. Check corrupt source, incompatible host, failed
-   post-activation startup and preservation of the prior known-good slot. Report
-   the actual app artifact, OS/ABI, device, driver/CUDA, disk, RAM and VRAM envelope.
-   Treat one host as the first measured row of the declared support profile.
+   rollback owners with an explicitly scoped qualification source. The private
+   AppImage checks review before transfer, dismissal, cancellation, a mismatched
+   archive digest and incompatible-driver refusal. A valid archive reaches the
+   assembly disk-space guard after transfer, extraction and LaMa publication.
+   On a Linux volume with sufficient headroom, complete successful publication,
+   reopening with the new worker, Repair and post-activation refusal preserving
+   the previous good slot. Report the actual app artifact, OS/ABI, device,
+   driver/CUDA, disk, RAM and VRAM envelope.
+   [Packaged Setup controls](./phase-5-packaged-runtime-setup-research.md),
    [Runtime contract](../specs/07-python-runtime-management.md),
    [native engine](./phase-5-native-engine-qualification-research.md),
    [Setup progress](./phase-5-runtime-setup-progress-research.md).
