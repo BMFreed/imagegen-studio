@@ -1,6 +1,6 @@
 # MVP acceptance backlog
 
-Updated through the [packaged runtime Setup controls](./phase-5-packaged-runtime-setup-research.md).
+Updated through the [application update interruption controls](./phase-5-application-update-interruption-research.md).
 All eight public promise statuses remain **«Пока не обещать»**. Earlier roadmap
 entries record the state at their checkpoint.
 [Product scope](../specs/00-product-scope.md), [promise matrix](../product-promises.md),
@@ -100,16 +100,18 @@ entries record the state at their checkpoint.
    [native engine](./phase-5-native-engine-qualification-research.md),
    [Setup progress](./phase-5-runtime-setup-progress-research.md).
 5. **Qualify interrupted application update and the next update.** Main owns the
-   signed application stage, close and relaunch barriers, and startup inspection.
-   Re-read the Invoke sources before extending these owners. The donor checkpoint
-   identified no signed AppImage stage-retirement mechanism. Explain that gap to
-   the user before adapting an alternative. Establish authority for a recover or
-   explicitly chosen reinstall flow and a subsequent B→C update. Cover interruption
-   before and after activation, stale or foreign replacement, a competing updater
-   and a legacy or unleased process. The retained startup snapshot, signed target
-   match and free participating-writer lock give insufficient authority to use
-   backup A or remove retained bytes. Keep manual SQLite recovery and executable
-   recovery as distinct operations. [Stage owner](../../src/main/application-updates/application-update-staging.ts),
+   signed stage, close and relaunch barriers, and startup inspection. Real Linux
+   process-death controls preserve A before replacement and B after activation,
+   keep the stage, and refuse signed C before close. A separate B path can be
+   updated to C in the controlled transaction. A test unleased writer can
+   replace the target while a competing participating updater receives Busy.
+   An explicit signed reinstall onto a fresh pathname is a candidate recovery
+   path. Qualify the chosen recovery and subsequent update through the actual
+   AppImage. Re-read Invoke before changing owners. Legacy/unleased machines,
+   the publication-before-final-journal window, in-place recovery and retirement
+   still require a supported ownership and qualification boundary. Keep manual
+   SQLite recovery separate. [Update interruption](./phase-5-application-update-interruption-research.md),
+   [stage owner](../../src/main/application-updates/application-update-staging.ts),
    [startup authority](./phase-5-application-update-startup-authority-research.md),
    [application updates](../features/application-updates.md#acceptance-criteria).
 6. **Run the NoobAI and joint release matrix.** Through the packaged UI, exercise

@@ -1,5 +1,14 @@
 # Engineering Workflow
 
+## Current interrupted application update qualification
+
+[Update interruption](./phase-5-application-update-interruption-research.md)
+records physical transaction-owner exit before and after publication, later
+signed C refusal at the retained path, and a B→C control on an independent
+path. A separate process can replace a test AppImage while the cooperating
+update lock remains held. Recovery on the original path and stage retirement
+remain open.
+
 ## Current packaged runtime Setup
 
 [Packaged runtime Setup](./phase-5-packaged-runtime-setup-research.md) records

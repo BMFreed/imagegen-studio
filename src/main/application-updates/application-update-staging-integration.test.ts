@@ -2,14 +2,22 @@ import type { ApplicationUpdateInstallPreview } from '../../shared/application-u
 
 import { DownloadedUpdateHelper } from 'electron-updater/out/DownloadedUpdateHelper.js'
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
 import { createHash, generateKeyPairSync, sign } from 'node:crypto'
+import { once } from 'node:events'
 import { lstatSync, readFileSync } from 'node:fs'
 import * as fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { createInterface } from 'node:readline'
 import { test } from 'node:test'
+import { fileURLToPath } from 'node:url'
 
 import { canonicalRuntimeReleaseJson } from '../runtime/runtime-release.js'
+import {
+  acquireApplicationUpdateAdmission,
+  ApplicationUpdateAdmissionError,
+} from './application-update-admission.js'
 import {
   ApplicationUpdateCurrentSourceError,
   ApplicationUpdateRecoveryRequiredError,
@@ -18,6 +26,7 @@ import {
 import {
   type ApplicationUpdateCurrentSource,
   captureApplicationUpdateCurrentSource,
+  inspectRetainedApplicationUpdate,
 } from './application-update-staging.js'
 import { createElectronUpdateChecker, VerifiedAppImageUpdater } from './electron-update-checker.js'
 
@@ -49,12 +58,15 @@ async function fixture(
     | null = null,
   scheduleApplicationRelaunch: ((currentAppImage: string) => unknown) | null = null,
   sourceAvailable = true,
+  release = { current: '0.1.0', from: image(5), next: '0.2.0', to: image(7) },
 ) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'igs-staging-consumer-'))
-  let currentSource: ApplicationUpdateCurrentSource | null = null
+  const sources: Pick<ApplicationUpdateCurrentSource, 'dispose'>[] = []
   const sourceHandles: fs.FileHandle[] = []
   t.after(async () => {
-    currentSource?.dispose()
+    for (const source of sources) {
+      source.dispose()
+    }
     for (const handle of sourceHandles) {
       await handle.close()
     }
@@ -63,7 +75,7 @@ async function fixture(
   const parent = path.join(root, 'Applications')
   await fs.mkdir(parent, { mode: 0o700 })
   const currentAppImage = path.join(parent, 'Current.AppImage')
-  await fs.writeFile(currentAppImage, image(5), { mode: 0o755 })
+  await fs.writeFile(currentAppImage, release.from, { mode: 0o755 })
   await fs.chmod(currentAppImage, 0o755)
   const archivePath = path.join(root, 'owned-app.asar')
   const executablePath = path.join(root, 'owned-electron')
@@ -73,16 +85,20 @@ async function fixture(
   sourceHandles.push(archive)
   const executable = await fs.open(executablePath, 'r')
   sourceHandles.push(executable)
-  const captured = captureApplicationUpdateCurrentSource({
-    archiveFd: archive.fd,
-    archivePath,
-    currentAppImage,
-    executableFd: executable.fd,
-    executablePath,
-  })
-  assert.ok(captured)
-  currentSource = await captured.complete()
-  const body = image(7)
+  const captureCurrentSource = async () => {
+    const captured = captureApplicationUpdateCurrentSource({
+      archiveFd: archive.fd,
+      archivePath,
+      currentAppImage,
+      executableFd: executable.fd,
+      executablePath,
+    })
+    assert.ok(captured)
+    sources.push(captured)
+    return await captured.complete()
+  }
+  const currentSource = await captureCurrentSource()
+  const body = release.to
   const notes = 'Owned integration declaration.'
   const pair = generateKeyPairSync('ed25519')
   const trust = {
@@ -105,7 +121,7 @@ async function fixture(
     schemaVersion: 1,
     scope: 'application-release',
     target: { arch: 'x64', format: 'AppImage', os: 'linux' },
-    version: '0.2.0',
+    version: release.next,
   }
   const payload = canonicalRuntimeReleaseJson(manifest)
   const envelope = canonicalRuntimeReleaseJson({
@@ -119,7 +135,7 @@ async function fixture(
     imagegenStudioRelease: envelope,
     releaseDate: '2026-11-16T00:00:00Z',
     releaseNotes: notes,
-    version: '0.2.0',
+    version: release.next,
   }
   class Updater extends VerifiedAppImageUpdater {
     readonly helper = new DownloadedUpdateHelper(path.join(root, 'cache'))
@@ -133,7 +149,7 @@ async function fixture(
           isPackaged: true,
           name: 'owned-stage-consumer',
           userDataPath: root,
-          version: '0.1.0',
+          version: release.current,
           whenReady: async () => undefined,
         },
         signed ? trust : null,
@@ -153,7 +169,7 @@ async function fixture(
       const selected = source.provider.resolveFiles(source.info)[0]
       const filename = path.join(this.helper.cacheDirForPendingUpdate, 'next.AppImage')
       await fs.mkdir(this.helper.cacheDirForPendingUpdate, { recursive: true })
-      await fs.writeFile(filename, body)
+      await fs.writeFile(filename, body, { mode: 0o600 })
       await this.helper.setDownloadedFile(
         filename,
         null,
@@ -170,7 +186,7 @@ async function fixture(
   }
   const updater = new Updater()
   const service = new ApplicationUpdateService(
-    '0.1.0',
+    release.current,
     true,
     () => createElectronUpdateChecker(updater),
     target ? currentAppImage : null,
@@ -183,12 +199,14 @@ async function fixture(
   return {
     archivePath,
     body,
+    captureCurrentSource,
     currentAppImage,
     currentSource,
     executablePath,
     parent,
     root,
     service,
+    trust,
     updater,
   }
 }
@@ -859,6 +877,260 @@ test('a stage retained after startup blocks another public Review and preflight 
     retained,
   )
 })
+
+for (const cut of ['before-publication', 'after-publication'] as const) {
+  test(
+    `SIGKILL ${cut} preserves the update and refuses signed C before close`,
+    {
+      skip: process.platform !== 'linux' || process.arch !== 'x64',
+    },
+    async (t) => {
+      const a = await fixture(t)
+      const oldBody = await fs.readFile(a.currentAppImage)
+      await a.service.check()
+      assert.equal((await a.service.download('0.2.0')).status, 'downloaded')
+      const b = await a.service.prepareVerifiedArtifact('0.2.0')
+      const cached = await identity(b.path)
+      const fixturePath = path.join(a.root, 'interruption.json')
+      await fs.writeFile(
+        fixturePath,
+        JSON.stringify({
+          archivePath: a.archivePath,
+          artifactPath: b.path,
+          authority: b.authority,
+          currentAppImage: a.currentAppImage,
+          cut,
+          executablePath: a.executablePath,
+          trust: a.trust,
+        }),
+        { flag: 'wx', mode: 0o600 },
+      )
+      const childEntry = fileURLToPath(
+        new URL('./test-fixtures/application-update-interruption-child.ts', import.meta.url),
+      )
+      const child = spawn(process.execPath, ['--import', 'tsx', childEntry, fixturePath], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      let stderr = ''
+      child.stderr.setEncoding('utf8').on('data', (chunk: string) => {
+        stderr = (stderr + chunk).slice(-32 * 1024)
+      })
+      const closed = once(child, 'close')
+      const lines = createInterface({ input: child.stdout })
+      const stageName = `.igs-app-update-${createHash('sha256').update('Current.AppImage').digest('hex').slice(0, 16)}`
+      const stage = path.join(a.parent, stageName)
+      const lock = `${stage}.lock`
+      const published = cut === 'after-publication'
+      const version = published ? '0.2.0' : '0.1.0'
+      const currentBody = published ? a.body : oldBody
+      const state = published ? 'activated' : 'activating'
+      const files = [
+        'journal.json',
+        'previous.AppImage',
+        'release-envelope.json',
+        'release-notes.json',
+      ]
+      if (!published) {
+        files.push('candidate.AppImage')
+      }
+      files.sort()
+      const snapshot = async () => {
+        assert.deepEqual(
+          (await fs.readdir(a.parent)).sort(),
+          [stageName, `${stageName}.lock`, 'Current.AppImage'].sort(),
+        )
+        assert.deepEqual((await fs.readdir(stage)).sort(), files)
+        return await Promise.all(
+          [a.currentAppImage, lock, ...files.map((file) => path.join(stage, file))].map(identity),
+        )
+      }
+      let receipt: {
+        cut: string
+        lockPath: string
+        pid: number
+        stageDirectory: string
+        startTicks: string
+        type: string
+      }
+      let retained: Awaited<ReturnType<typeof snapshot>>
+      try {
+        const [line] = await Promise.race([
+          once(lines, 'line', { signal: AbortSignal.timeout(10_000) }),
+          closed.then(([code, signal]) => {
+            assert.fail(
+              `Update child exited before its cut (${String(code)}, ${String(signal)}). ${stderr}`,
+            )
+          }),
+        ])
+        receipt = JSON.parse(line as string) as typeof receipt
+        assert.deepEqual(receipt, {
+          cut,
+          lockPath: lock,
+          pid: child.pid,
+          stageDirectory: stage,
+          startTicks: receipt.startTicks,
+          type: 'cut',
+        })
+        assert.match(receipt.startTicks, /^\d+$/)
+        const proc = await fs.readFile(`/proc/${receipt.pid}/stat`, 'utf8')
+        assert.equal(proc.slice(proc.lastIndexOf(')') + 2).split(' ')[19], receipt.startTicks)
+        assert.equal(
+          await fs.readFile(`/proc/${receipt.pid}/cgroup`, 'utf8'),
+          await fs.readFile('/proc/self/cgroup', 'utf8'),
+        )
+        assert.throws(
+          () => acquireApplicationUpdateAdmission(a.currentAppImage).release(),
+          (error) =>
+            error instanceof ApplicationUpdateAdmissionError &&
+            error.code === 'APPLICATION_UPDATE_BUSY',
+        )
+        assert.equal(
+          JSON.parse(await fs.readFile(path.join(stage, 'journal.json'), 'utf8')).state,
+          state,
+        )
+        assert.deepEqual(await fs.readFile(a.currentAppImage), currentBody)
+        assert.deepEqual(await fs.readFile(path.join(stage, 'previous.AppImage')), oldBody)
+        assert.equal((await fs.stat(path.join(stage, 'previous.AppImage'))).mode & 0o7777, 0o600)
+        if (!published) {
+          assert.deepEqual(await fs.readFile(path.join(stage, 'candidate.AppImage')), a.body)
+          assert.equal((await fs.stat(path.join(stage, 'candidate.AppImage'))).mode & 0o7777, 0o755)
+        }
+        retained = await snapshot()
+      } finally {
+        lines.close()
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill('SIGKILL')
+        }
+        const [code, signal] = await closed
+        assert.equal(code, null, stderr)
+        assert.equal(signal, 'SIGKILL', stderr)
+      }
+
+      await fs.readFile(`/proc/${receipt.pid}/stat`, 'utf8').then(
+        (stat) =>
+          assert.notEqual(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19], receipt.startTicks),
+        (error: NodeJS.ErrnoException) => assert.equal(error.code, 'ENOENT'),
+      )
+      const nextAdmission = acquireApplicationUpdateAdmission(a.currentAppImage)
+      try {
+        nextAdmission.assertHeld()
+      } finally {
+        nextAdmission.release()
+      }
+      assert.deepEqual(await snapshot(), retained)
+      const inspected = await inspectRetainedApplicationUpdate({
+        currentAppImage: a.currentAppImage,
+        currentVersion: version,
+        readTrust: async () => a.trust,
+      })
+      const target = published ? 'verified' : 'unverified'
+      assert.deepEqual(inspected, {
+        runtimeAuthentication: 'unverified',
+        status: 'retained',
+        targetAuthentication: target,
+      })
+
+      let impactReads = 0
+      let closeChecks = 0
+      const schedules: string[] = []
+      const close = () => {
+        closeChecks++
+      }
+      const impact = async () => {
+        impactReads++
+        return installImpact()
+      }
+      const schedule = (targetPath: string) => {
+        schedules.push(targetPath)
+        return true
+      }
+      const c = await fixture(t, true, true, close, impact, schedule, true, {
+        current: version,
+        from: currentBody,
+        next: '0.3.0',
+        to: image(9),
+      })
+      const freshSource = await a.captureCurrentSource()
+      for (const startup of [inspected, { status: 'none' } as const]) {
+        const restarted = new ApplicationUpdateService(
+          version,
+          true,
+          () => createElectronUpdateChecker(c.updater),
+          a.currentAppImage,
+          close,
+          impact,
+          schedule,
+          startup,
+          freshSource,
+        )
+        assert.deepEqual(
+          restarted.getRecoveryStatus(),
+          startup.status === 'retained'
+            ? { runtime: 'unverified', status: 'required', target }
+            : { status: 'clear' },
+        )
+        await restarted.check()
+        assert.equal((await restarted.download('0.3.0')).status, 'downloaded')
+        await restarted.prepareVerifiedArtifact('0.3.0')
+        await assert.rejects(
+          restarted.reviewInstallation('0.3.0'),
+          ApplicationUpdateRecoveryRequiredError,
+        )
+        await assert.rejects(
+          restarted.prepareInstallation('0.3.0'),
+          ApplicationUpdateRecoveryRequiredError,
+        )
+      }
+      assert.equal(impactReads, 0)
+      assert.equal(closeChecks, 0)
+      assert.deepEqual(schedules, [])
+
+      if (published) {
+        // An independently initialized pathname holding the exact B bytes has no old claim.
+        // This is a transaction control with an observed scheduler call; the body is never run.
+        assert.equal(await fs.readFile(c.currentAppImage).then(sha), b.manifest.artifact.sha512)
+        await c.service.check()
+        assert.equal((await c.service.download('0.3.0')).status, 'downloaded')
+        assert.equal((await c.service.reviewInstallation('0.3.0')).installationAvailable, true)
+        const artifact = await c.service.prepareInstallation('0.3.0')
+        const admitted = acquireApplicationUpdateAdmission(c.currentAppImage)
+        try {
+          await c.service.installAfterClose('0.3.0', artifact)
+          admitted.assertHeld()
+        } finally {
+          admitted.release()
+        }
+        assert.deepEqual(schedules, [c.currentAppImage])
+        assert.equal(
+          await fs.readFile(c.currentAppImage).then(sha),
+          artifact.manifest.artifact.sha512,
+        )
+        const nextStage = path.join(c.parent, stageName)
+        assert.equal(
+          await fs.readFile(path.join(nextStage, 'previous.AppImage')).then(sha),
+          b.manifest.artifact.sha512,
+        )
+        assert.equal(
+          JSON.parse(await fs.readFile(path.join(nextStage, 'journal.json'), 'utf8')).state,
+          'relaunching',
+        )
+      }
+      assert.deepEqual(await snapshot(), retained)
+      assert.deepEqual(await identity(b.path), cached)
+      t.diagnostic(
+        JSON.stringify({
+          cleanBC: published,
+          cut,
+          exit: 'SIGKILL',
+          next: 'retained-refused',
+          owner: receipt,
+          phase: state,
+          target,
+        }),
+      )
+    },
+  )
+}
 
 for (const lane of [
   'missing-close',
