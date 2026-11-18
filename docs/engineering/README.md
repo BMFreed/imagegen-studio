@@ -1,5 +1,13 @@
 # Engineering Workflow
 
+## Current signed recovery onto a fresh AppImage path
+
+[Fresh-path recovery](./phase-5-application-recovery-fresh-path-research.md)
+records private no-replace publication and a real two-lifetime AppImage test.
+The original path still reports recovery required. The freshly published path
+reports clear and opens the same saved Project. Public recovery, native B→C
+and original stage retirement remain open.
+
 ## Current interrupted application update qualification
 
 [Update interruption](./phase-5-application-update-interruption-research.md)

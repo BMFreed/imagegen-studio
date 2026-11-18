@@ -1,6 +1,6 @@
 # MVP acceptance backlog
 
-Updated through the [application update interruption controls](./phase-5-application-update-interruption-research.md).
+Updated through the [fresh-path AppImage recovery qualification](./phase-5-application-recovery-fresh-path-research.md).
 All eight public promise statuses remain **«Пока не обещать»**. Earlier roadmap
 entries record the state at their checkpoint.
 [Product scope](../specs/00-product-scope.md), [promise matrix](../product-promises.md),
@@ -105,12 +105,16 @@ entries record the state at their checkpoint.
    keep the stage, and refuse signed C before close. A separate B path can be
    updated to C in the controlled transaction. A test unleased writer can
    replace the target while a competing participating updater receives Busy.
-   An explicit signed reinstall onto a fresh pathname is a candidate recovery
-   path. Qualify the chosen recovery and subsequent update through the actual
-   AppImage. Re-read Invoke before changing owners. Legacy/unleased machines,
+   Private signed publication now verifies complete AppImage bytes before
+   occupying a fresh pathname. The native recovery control shows that path
+   reports clear and reopens the same Project while the original stage is
+   preserved. Wire an explicit public recovery action with publisher trust
+   and qualify subsequent B→C through AppImage. Re-read Invoke before changing
+   owners. Legacy/unleased machines,
    the publication-before-final-journal window, in-place recovery and retirement
    still require a supported ownership and qualification boundary. Keep manual
-   SQLite recovery separate. [Update interruption](./phase-5-application-update-interruption-research.md),
+   SQLite recovery separate. [Fresh-path recovery](./phase-5-application-recovery-fresh-path-research.md),
+   [update interruption](./phase-5-application-update-interruption-research.md),
    [stage owner](../../src/main/application-updates/application-update-staging.ts),
    [startup authority](./phase-5-application-update-startup-authority-research.md),
    [application updates](../features/application-updates.md#acceptance-criteria).

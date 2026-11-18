@@ -24,11 +24,15 @@ import {
   closeSync,
   constants,
   fstatSync,
+  linkSync,
   lstatSync,
+  mkdirSync,
   openSync,
   readdirSync,
   realpathSync,
   renameSync,
+  rmdirSync,
+  unlinkSync,
 } from 'node:fs'
 import * as fs from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -38,6 +42,7 @@ import type { VerifiedApplicationArtifact } from './electron-update-checker.js'
 
 import { canonicalRuntimeReleaseJson } from '../runtime/runtime-release.js'
 import {
+  type ApplicationReleaseAuthority,
   type ApplicationReleaseManifest,
   type ApplicationReleaseRuntimeFiles,
   type ApplicationReleaseTrust,
@@ -195,6 +200,26 @@ export class AppUpdateStagingError extends Error {
     }
     super(messages[code])
     this.name = 'AppUpdateStagingError'
+  }
+}
+
+export class AppUpdateRecoveryPublishError extends Error {
+  constructor(
+    readonly code:
+      | 'APPLICATION_UPDATE_RECOVERY_DESTINATION_EXISTS'
+      | 'APPLICATION_UPDATE_RECOVERY_PUBLICATION_UNCERTAIN'
+      | 'APPLICATION_UPDATE_RECOVERY_UNSAFE',
+  ) {
+    const messages = {
+      APPLICATION_UPDATE_RECOVERY_DESTINATION_EXISTS:
+        'The recovery destination already exists. Choose a new AppImage path.',
+      APPLICATION_UPDATE_RECOVERY_PUBLICATION_UNCERTAIN:
+        'AppImage recovery publication could not be confirmed. Preserve all recovery files.',
+      APPLICATION_UPDATE_RECOVERY_UNSAFE:
+        'A verified AppImage could not be published at the chosen recovery path.',
+    }
+    super(messages[code])
+    this.name = 'AppUpdateRecoveryPublishError'
   }
 }
 
@@ -511,6 +536,185 @@ export function captureApplicationUpdateCurrentSource(input: {
     failed = true
     dispose()
     throw new AppUpdateCurrentSourceError()
+  }
+}
+
+/**
+ * Main-private publication at a separately chosen pathname. Invoke4875
+ * no_replace.py:publish_noreplace and install_staging_ledger.py:_publish_claim publish a completed,
+ * synced sibling via an atomic no-replace operation. Invoke's direct-to-destination copy fallback
+ * can expose partial bytes, so only the hardlink branch is used here. The private work directory
+ * and final identity guards bound the cooperative owner, with no claim of exclusion of arbitrary
+ * same-user writers.
+ */
+export async function publishVerifiedApplicationRecovery(input: {
+  authority: ApplicationReleaseAuthority
+  destinationAppImage: string
+  originalAppImage: string
+  sourceAppImage: string
+  trust: ApplicationReleaseTrust
+}): Promise<Readonly<{ destinationAppImage: string; manifest: ApplicationReleaseManifest }>> {
+  let parent: OwnedDirectory | undefined
+  let temporary: OwnedDirectory | undefined
+  let source: Reader | undefined
+  let candidate: Reader | undefined
+  let publicationAttempted = false
+  const assertAbsent = (filename: string, error: AppUpdateRecoveryPublishError) => {
+    try {
+      lstatSync(filename)
+    } catch (missing) {
+      if ((missing as NodeJS.ErrnoException).code === 'ENOENT') {
+        return
+      }
+      throw missing
+    }
+    throw error
+  }
+  try {
+    const { authority, destinationAppImage, originalAppImage, sourceAppImage, trust } = input
+    need(process.platform === 'linux' && process.arch === 'x64', 'UNSAFE')
+    need(
+      [sourceAppImage, originalAppImage, destinationAppImage].every(
+        (filename) => canonicalPath(filename) && path.extname(filename) === '.AppImage',
+      ) &&
+        destinationAppImage !== originalAppImage &&
+        destinationAppImage !== sourceAppImage &&
+        !destinationAppImage.startsWith(originalAppImage + path.sep) &&
+        destinationAppImage
+          .split(path.sep)
+          .every(
+            (part) =>
+              !part.startsWith('.igs-app-update-') && !part.startsWith('.igs-app-recovery-'),
+          ),
+      'UNSAFE',
+    )
+    const manifest = verifyApplicationReleaseAuthority(authority, trust)
+    const originalParent = path.dirname(originalAppImage)
+    const assertOriginalPath = () => {
+      need(realpathSync(originalParent) === originalParent, 'UNSAFE')
+      try {
+        const original = lstatSync(originalAppImage)
+        need(original.isFile() && realpathSync(originalAppImage) === originalAppImage, 'UNSAFE')
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          throw error
+        }
+      }
+    }
+    assertOriginalPath()
+    const parentPath = path.dirname(destinationAppImage)
+    const ownedParent = await openDirectory(parentPath, undefined, false)
+    parent = ownedParent
+    const destinationName = path.basename(destinationAppImage)
+    const destination = path.join(ownedParent.anchor, destinationName)
+    const stageName = `.igs-app-update-${createHash('sha256').update(destinationName).digest('hex').slice(0, 16)}`
+    const occupied = new AppUpdateRecoveryPublishError(
+      'APPLICATION_UPDATE_RECOVERY_DESTINATION_EXISTS',
+    )
+    const stageOrLock = new AppUpdateRecoveryPublishError('APPLICATION_UPDATE_RECOVERY_UNSAFE')
+    const assertUnusedNamespace = () => {
+      assertAbsent(path.join(ownedParent.anchor, stageName), stageOrLock)
+      assertAbsent(path.join(ownedParent.anchor, `${stageName}.lock`), stageOrLock)
+    }
+    const assertAvailable = () => {
+      assertAbsent(destination, occupied)
+      assertUnusedNamespace()
+    }
+    assertAvailable()
+    source = await openReader(sourceAppImage, sourceAppImage)
+    need(source.identity.sizeBytes === manifest.artifact.sizeBytes, 'UNSAFE')
+    await classifyAppImage(source)
+    await requireCopySpace(ownedParent, manifest.artifact.sizeBytes)
+    const temporaryName = `.igs-app-recovery-${randomUUID()}`
+    const temporaryPath = path.join(parentPath, temporaryName)
+    const anchoredTemporary = path.join(ownedParent.anchor, temporaryName)
+    assertDirectoryNow(ownedParent, parentPath, false)
+    mkdirSync(anchoredTemporary, { mode: 0o700 })
+    const created = lstatSync(anchoredTemporary, { bigint: true })
+    need(created.isDirectory() && String(created.dev) === ownedParent.identity.dev, 'UNSAFE')
+    const ownedTemporary = await openDirectory(
+      temporaryPath,
+      { dev: String(created.dev), ino: String(created.ino) },
+      true,
+    )
+    temporary = ownedTemporary
+    await ownedParent.check()
+    await ownedParent.handle.sync()
+    const candidatePath = path.join(temporaryPath, CANDIDATE)
+    const anchoredCandidate = path.join(ownedTemporary.anchor, CANDIDATE)
+    const copied = await copyImage(source, anchoredCandidate, manifest.artifact)
+    candidate = await openReader(candidatePath, anchoredCandidate, 0o600)
+    const executable = await makeExecutable(candidate, copied)
+    await ownedTemporary.handle.sync()
+
+    const assertDirectories = () => {
+      assertDirectoryNow(ownedParent, parentPath, false)
+      assertDirectoryNow(ownedTemporary, temporaryPath, true)
+      const anchored = lstatSync(anchoredTemporary, { bigint: true })
+      need(
+        anchored.isDirectory() &&
+          String(anchored.dev) === ownedTemporary.identity.dev &&
+          String(anchored.ino) === ownedTemporary.identity.ino,
+        'UNSAFE',
+      )
+    }
+    assertDirectories()
+    assertFileNow(sourceAppImage, sourceAppImage, source.identity)
+    assertFileNow(candidatePath, anchoredCandidate, executable.identity)
+    assertAvailable()
+    assertOriginalPath()
+    publicationAttempted = true
+    try {
+      linkSync(anchoredCandidate, destination)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === 'EEXIST') {
+        publicationAttempted = false
+        throw occupied
+      }
+      if (code && ['EMLINK', 'ENOTSUP', 'EOPNOTSUPP', 'EPERM', 'EXDEV'].includes(code)) {
+        publicationAttempted = false
+      }
+      throw error
+    }
+    const linked = fileIdentity(fstatSync(candidate.handle.fd, { bigint: true }))
+    need(
+      sameIdentity({ ...executable.identity, ctimeNs: linked.ctimeNs, nlink: '2' }, linked),
+      'UNSAFE',
+    )
+    assertFileNow(destinationAppImage, destination, linked)
+    // Persist the final link before dropping the private name. A pause or failure
+    // after publication never authorizes deleting the destination.
+    await ownedParent.handle.sync()
+    assertDirectories()
+    assertFileNow(destinationAppImage, destination, linked)
+    assertFileNow(candidatePath, anchoredCandidate, linked)
+    unlinkSync(anchoredCandidate)
+    const published = fileIdentity(fstatSync(candidate.handle.fd, { bigint: true }))
+    need(sameIdentity({ ...linked, ctimeNs: published.ctimeNs, nlink: '1' }, published), 'UNSAFE')
+    await ownedTemporary.handle.sync()
+    assertDirectories()
+    rmdirSync(anchoredTemporary)
+    await ownedParent.handle.sync()
+    candidate.identity = published
+    candidate.path = destination
+    candidate.visible = destinationAppImage
+    await inspectReaderImage(candidate, { ...executable, identity: published })
+    assertDirectoryNow(ownedParent, parentPath, false)
+    assertFileNow(destinationAppImage, destination, published)
+    assertUnusedNamespace()
+    return Object.freeze({ destinationAppImage, manifest })
+  } catch (error) {
+    throw publicationAttempted
+      ? new AppUpdateRecoveryPublishError('APPLICATION_UPDATE_RECOVERY_PUBLICATION_UNCERTAIN')
+      : error instanceof AppUpdateRecoveryPublishError
+        ? error
+        : new AppUpdateRecoveryPublishError('APPLICATION_UPDATE_RECOVERY_UNSAFE')
+  } finally {
+    await closeReadHandle(candidate?.handle)
+    await closeReadHandle(source?.handle)
+    await closeReadHandle(temporary?.handle)
+    await closeReadHandle(parent?.handle)
   }
 }
 

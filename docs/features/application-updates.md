@@ -524,6 +524,18 @@ an independent clean path admits C in the controlled transaction. A process
 outside the cooperating lock can replace the target while that lock is held,
 so previous target authentication remains advisory.
 
+### Private signed publication onto a fresh path
+
+[Fresh-path recovery](../engineering/phase-5-application-recovery-fresh-path-research.md)
+adds a private Linux x64 owner that verifies the separately supplied publisher
+authority and complete image, then publishes to an unused canonical AppImage
+pathname with an atomic no-replace link. A successful image is singly linked
+and executable. The old image, backup and recovery claim remain in place.
+A post-publication error preserves the destination for inspection. The
+qualification starts the two paths sequentially over one app-data root and
+reopens the same saved Project. A public recovery action and packaged B→C
+remain separate acceptance work.
+
 
 Qualification: 636 Main PASS/one existing platform SKIP, 358 full browser PASS before
 its local contrast correction plus 5 focused final PASS, exact semantic mutation

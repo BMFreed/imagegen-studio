@@ -49,6 +49,7 @@ const artifactRoot = path.join(os.homedir(), '.codex/artifacts/imagegen-studio')
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const supplied = process.env.IMAGEGEN_LINUX_PACKAGE_ARTIFACTS
 const suppliedPackage = process.env.IMAGEGEN_LINUX_PACKAGE_APPIMAGE
+const suppliedRecoveryPublication = process.env.IMAGEGEN_LINUX_PACKAGE_RECOVERY_PUBLICATION
 const installedEngineReport = process.env.IMAGEGEN_LINUX_PACKAGE_INSTALLED_ENGINE_REPORT
 const historicalFixture = process.env.IMAGEGEN_LINUX_PACKAGE_HISTORICAL_FIXTURE
 assert.ok(
@@ -98,6 +99,25 @@ const ownedRunRoot = path.join(artifactRoot, 'runs')
 function strictDescendant(parent, child) {
   return canonicalAbsolute(child) && child.startsWith(`${parent}${path.sep}`)
 }
+
+const recoveryRun = path.dirname(root)
+if (suppliedRecoveryPublication !== undefined) {
+  assert.ok(
+    [
+      trainedFixture,
+      historicalFixture,
+      installedEngineReport,
+      runtimeSetupControl,
+      updateCheckMode,
+      updateReleaseFixturesPath,
+      updateFeedPortText,
+    ].every((setting) => setting === undefined),
+    'Use recovery publication with the fresh-profile smoke only.',
+  )
+  assert.equal(path.dirname(recoveryRun), path.join(ownedRunRoot, 'packaged-application-recovery'))
+  assert.equal(suppliedRecoveryPublication, path.join(recoveryRun, 'publication.json'))
+}
+
 async function installedEngineFixture() {
   if (!installedEngineReport) return null
   assert.equal(updateCheckMode, undefined, 'Use a separate application update fixture.')
@@ -239,6 +259,7 @@ const environment = {
 }
 for (const key of [
   'ELECTRON_RUN_AS_NODE',
+  'IMAGEGEN_LINUX_PACKAGE_RECOVERY_PUBLICATION',
   'IMAGEGEN_DEV_SERVER_URL',
   'IMAGEGEN_TEST_IMAGE_WORKER',
   'NODE_OPTIONS',
@@ -249,6 +270,58 @@ async function identity(filename) {
   const hash = createHash('sha256')
   for await (const chunk of createReadStream(filename)) hash.update(chunk)
   return { path: filename, sizeBytes: (await lstat(filename)).size, sha256: hash.digest('hex') }
+}
+
+async function recoveryFile(filename, executable) {
+  assert.ok(strictDescendant(recoveryRun, filename))
+  assert.ok(!strictDescendant(root, filename))
+  assert.equal(await realpath(filename), filename)
+  const snapshot = async () => {
+    const info = await lstat(filename, { bigint: true })
+    assert.ok(info.isFile() && info.nlink === 1n && info.uid === BigInt(process.getuid()))
+    assert.ok(info.size > 0n)
+    if (executable) assert.equal(info.mode & 0o7777n, 0o755n)
+    else assert.ok(info.size <= 1024n ** 2n && (info.mode & 0o22n) === 0n)
+    return {
+      device: String(info.dev),
+      inode: String(info.ino),
+      mode: String(info.mode & 0o7777n),
+      ctimeNs: String(info.ctimeNs),
+      mtimeNs: String(info.mtimeNs),
+      sizeBytes: Number(info.size),
+    }
+  }
+  const before = await snapshot()
+  const bytes = await identity(filename)
+  assert.equal(await realpath(filename), filename)
+  assert.deepEqual(await snapshot(), before)
+  assert.equal(bytes.sizeBytes, before.sizeBytes)
+  return { bytes, identity: before }
+}
+
+async function readRecoveryPublication() {
+  if (suppliedRecoveryPublication === undefined) return null
+  const publication = await recoveryFile(suppliedRecoveryPublication, false)
+  const report = JSON.parse(await readFile(suppliedRecoveryPublication, 'utf8'))
+  assert.deepEqual(await recoveryFile(suppliedRecoveryPublication, false), publication)
+  assert.equal(report.outcome, 'PASS')
+  assert.equal(report.original.path, appImage)
+  assert.notEqual(report.recovered.path, appImage)
+  const verifyImage = async ({ path: filename, sizeBytes, sha256 }) => {
+    assert.ok(filename.endsWith('.AppImage'))
+    assert.ok(Number.isSafeInteger(sizeBytes) && sizeBytes > 0)
+    assert.match(sha256, /^[0-9a-f]{64}$/)
+    const observed = await recoveryFile(filename, true)
+    assert.deepEqual(observed.bytes, { path: filename, sizeBytes, sha256 })
+    return observed
+  }
+  const original = await verifyImage(report.original)
+  const recovered = await verifyImage(report.recovered)
+  assert.notDeepEqual(
+    [recovered.identity.device, recovered.identity.inode],
+    [original.identity.device, original.identity.inode],
+  )
+  return { publication, original, recovered }
 }
 
 async function bounded(promise, milliseconds, label) {
@@ -294,7 +367,8 @@ if (runtimeSetupControl) {
   }
 }
 const sourceBefore = await Promise.all(sourcePaths.map(identity))
-const packageBefore = await identity(appImage)
+const recoveryPublication = await readRecoveryPublication()
+const packageBefore = recoveryPublication?.original.bytes ?? (await identity(appImage))
 const projectTitle = 'Package qualification'
 const records = []
 const lifetimes = []
@@ -461,7 +535,7 @@ async function connect(state) {
   return state.page
 }
 
-async function launch(name) {
+async function launch(name, selectedAppImage = appImage) {
   // Chromium leaves this discovery file after a normal close. The previous
   // process has settled before launch; never connect a new lifetime to its port.
   for (const directory of [appData, profile]) {
@@ -470,6 +544,12 @@ async function launch(name) {
     })
   }
   const state = { name, checks: [], pageErrors: [], stdout: '', stderr: '', forcedCleanup: false }
+  if (recoveryPublication) {
+    const expected =
+      selectedAppImage === appImage ? recoveryPublication.original : recoveryPublication.recovered
+    assert.deepEqual(await recoveryFile(selectedAppImage, true), expected)
+    state.applicationImage = expected
+  }
   lifetimes.push(state)
   if (history || trained) {
     await writeFile(
@@ -488,7 +568,7 @@ async function launch(name) {
     delete launchEnvironment.IMAGEGEN_PACKAGED_RUNTIME_SETUP_CONFIG
   }
   state.child = spawn(
-    appImage,
+    selectedAppImage,
     [
       '--remote-debugging-address=127.0.0.1',
       '--remote-debugging-port=0',
@@ -682,9 +762,29 @@ async function retainOwnStore(name) {
   return { project: await identity(packagePath), retainedProject: `${name}.igs`, databaseFiles }
 }
 
+async function observeApplicationRecovery(state, expected) {
+  const status = await state.page.evaluate(() =>
+    globalThis.api.applicationUpdates.getRecoveryStatus(),
+  )
+  assert.deepEqual(status, { ok: true, value: expected })
+  state.applicationRecoveryStatus = status.value
+  records.push({
+    name: `${state.name}: packaged Main reports exact application update recovery status`,
+    appImage: state.applicationImage.bytes.path,
+    recovery: status.value,
+  })
+}
+
 async function runFreshProfile() {
   const first = await launch('first')
   await applicationUpdateSmoke?.assertStartup(first.page)
+  if (recoveryPublication) {
+    await observeApplicationRecovery(first, {
+      status: 'required',
+      target: 'unverified',
+      runtime: 'unverified',
+    })
+  }
   const initial = await readPorts(first)
   assert.deepEqual(initial.projects.value, [])
   if (engine) {
@@ -764,8 +864,9 @@ async function runFreshProfile() {
   await closeNormally(first)
   const saved = await retainOwnStore('after-first-close')
 
-  const second = await launch('restarted')
+  const second = await launch('restarted', recoveryPublication?.recovered.bytes.path ?? appImage)
   await applicationUpdateSmoke?.assertRestart(second.page)
+  if (recoveryPublication) await observeApplicationRecovery(second, { status: 'clear' })
   const reopenedPorts = await readPorts(second)
   if (engine) {
     records.push({
@@ -798,7 +899,9 @@ async function runFreshProfile() {
   assert.deepEqual(secondTab.primaryBbox, firstTab.primaryBbox)
   await second.page.screenshot({ path: path.join(root, 'restarted-project.png') })
   records.push({
-    name: 'Same packaged artifact reopens persisted SQLite/index/Project and reads the actual saved thumbnail',
+    name: recoveryPublication
+      ? 'Freshly published AppImage reopens the same persisted SQLite/index/Project and reads the saved thumbnail'
+      : 'Same packaged artifact reopens persisted SQLite/index/Project and reads the actual saved thumbnail',
     projectId,
     tab: secondTab,
     thumbnail,
@@ -901,6 +1004,17 @@ try {
           })
         : await runFreshProfile()
   assert.deepEqual(await identity(appImage), packageBefore)
+  if (recoveryPublication) {
+    for (const [expected, executable] of [
+      [recoveryPublication.original, true],
+      [recoveryPublication.recovered, true],
+      [recoveryPublication.publication, false],
+    ]) {
+      assert.deepEqual(await recoveryFile(expected.bytes.path, executable), expected)
+    }
+    assert.equal(lifetimes.length, 2)
+    assert.ok(lifetimes.every((state) => state.normalPhysicalExit && !state.forcedCleanup))
+  }
   if (trainedGeneration) {
     const jobWorker = trainedGeneration.worker
     assert.ok(
@@ -944,15 +1058,17 @@ try {
   await writeJson('report.json', {
     schemaVersion: 1,
     outcome: 'PASS',
-    scope: runtimeSetupControl
-      ? 'Actual fused qualification AppImage through reviewed Setup with existing runtime owners and isolated loopback transfer.'
-      : trainedGeneration
-        ? 'Actual fused AppImage executes one trained installed-worker generation through public Generate, Add, Save and reopen.'
-        : historicalUpgrade
-          ? 'Actual fused AppImage upgrades an owned historical DB, renders a nonempty Project preview with the installed CPU worker and reopens the saved Project.'
-          : engine
-            ? 'Actual fused Linux AppImage with exact installed runtime, real Main status qualification and Project create/restart/persistence.'
-            : 'Actual fused Linux AppImage outside checkout, real packaged Main/preload/SQLite/migrations/own Project create/restart/persistence. No source worker or service mocks.',
+    scope: recoveryPublication
+      ? 'Actual fused AppImages at the original retained path and at the independently published recovery path reopen the same Project after normal physical exit.'
+      : runtimeSetupControl
+        ? 'Actual fused qualification AppImage through reviewed Setup with existing runtime owners and isolated loopback transfer.'
+        : trainedGeneration
+          ? 'Actual fused AppImage executes one trained installed-worker generation through public Generate, Add, Save and reopen.'
+          : historicalUpgrade
+            ? 'Actual fused AppImage upgrades an owned historical DB, renders a nonempty Project preview with the installed CPU worker and reopens the saved Project.'
+            : engine
+              ? 'Actual fused Linux AppImage with exact installed runtime, real Main status qualification and Project create/restart/persistence.'
+              : 'Actual fused Linux AppImage outside checkout, real packaged Main/preload/SQLite/migrations/own Project create/restart/persistence. No source worker or service mocks.',
     mode: 'APPIMAGE_EXTRACT_AND_RUN=1; X11; Chromium CDP loopback. FUSE installation and Main Node inspector are not used.',
     packageBefore,
     packageAfter: await identity(appImage),
@@ -966,6 +1082,7 @@ try {
     ...(historicalUpgrade ? { historicalUpgrade } : {}),
     ...(trainedGeneration ? { trainedGeneration } : {}),
     ...(runtimeSetupControl ? { runtimeSetupControl, runtimeSetup } : {}),
+    ...(recoveryPublication ? { recoveryPublication } : {}),
     stores: { saved, restarted },
     lifetimes: lifetimes.map(
       ({
@@ -1003,6 +1120,7 @@ try {
     records,
     projectId,
     packageBefore,
+    ...(recoveryPublication ? { recoveryPublication } : {}),
     ...(applicationUpdateSmoke
       ? { applicationUpdateCheck: applicationUpdateSmoke.snapshot() }
       : {}),
@@ -1088,13 +1206,15 @@ try {
 }
 if (failed) throw failed
 console.log(
-  runtimeSetupControl
-    ? `PASS packaged reviewed runtime Setup ${runtimeSetupControl} control and normal physical close`
-    : trained
-      ? 'PASS trained generation, explicit Add and Save/reopen, and two normal physical closes'
-      : history
-        ? 'PASS historical database upgrade, exact backup, installed CPU preview, and two normal physical closes'
-        : engine
-          ? 'PASS installed runtime readiness, packaged Project reopen and two normal physical closes'
-          : 'PASS actual fused AppImage Home/IPC/SQLite/Project persistence, unavailable Setup and two normal physical closes',
+  recoveryPublication
+    ? 'PASS retained original and freshly published AppImage share Project persistence and two normal physical closes'
+    : runtimeSetupControl
+      ? `PASS packaged reviewed runtime Setup ${runtimeSetupControl} control and normal physical close`
+      : trained
+        ? 'PASS trained generation, explicit Add and Save/reopen, and two normal physical closes'
+        : history
+          ? 'PASS historical database upgrade, exact backup, installed CPU preview, and two normal physical closes'
+          : engine
+            ? 'PASS installed runtime readiness, packaged Project reopen and two normal physical closes'
+            : 'PASS actual fused AppImage Home/IPC/SQLite/Project persistence, unavailable Setup and two normal physical closes',
 )
