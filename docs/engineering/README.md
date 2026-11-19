@@ -1,5 +1,14 @@
 # Engineering Workflow
 
+## Current NoobAI packaged qualification
+
+[NoobAI Preview](./phase-5-packaged-noobai-preview-research.md) records live
+CivitAI file review and Cancel for exact EPS and V checkpoints in the stock
+AppImage, a controlled file-choice case, and a fresh check of the signed CUDA
+worker. The same stock AppImage saves a manual exact-file V-prediction
+override and completes one Cyberfalafel V Generate, Add, Save and reopen.
+Managed download and the joint release matrix stay open.
+
 ## Current signed recovery and next AppImage update
 
 [Save recovery AppImage](./phase-5-public-appimage-recovery-research.md)

@@ -1,6 +1,6 @@
 # MVP acceptance backlog
 
-Updated through the [Updates recovery and next AppImage qualification](./phase-5-public-appimage-recovery-research.md).
+Updated through the [packaged NoobAI qualification](./phase-5-packaged-noobai-preview-research.md).
 All eight public promise statuses remain **«Пока не обещать»**. Earlier roadmap
 entries record the state at their checkpoint.
 [Product scope](../specs/00-product-scope.md), [promise matrix](../product-promises.md),
@@ -98,8 +98,8 @@ entries record the state at their checkpoint.
    The measured inputs imply a floor of 28,217,106,280 B on one filesystem
    before the new slot and any Repair reserve. It includes the signed 20 GiB
    assembly floor, the exact cached and extracted runtime and LaMa. After
-   disposal of the AppImage test payloads, the observed ext4 volume had
-   25,163,177,984 B available.
+   disposal of the NoobAI test payloads, the observed ext4 volume had
+   24,997,830,656 B available.
    [Packaged Setup controls](./phase-5-packaged-runtime-setup-research.md),
    [Runtime contract](../specs/07-python-runtime-management.md),
    [native engine](./phase-5-native-engine-qualification-research.md),
@@ -138,15 +138,16 @@ entries record the state at their checkpoint.
    [model lifecycle](../features/model-manager.md#acceptance-criteria),
    [review protocol](./review-protocol.md).
 
-   The current CivitAI client, Model Service, noise policy and controlled
-   download and qualification fixtures passed 140 tests. The next packaged
-   check starts with version-specific Preview for NoobAI EPS model 833294,
-   version 1022833, file 928571 and Cyberfalafel V model 1147756, version
-   2679856, file 2566634. The live provider path requires a CivitAI token
-   in the isolated test profile. Current qualification pins exist for both
-   files. A read-only hash verified the exact 6,938,040,794 B V file in the
-   local catalog. The installed worker requires a fresh compatibility check
-   before reuse. The EPS file from the retired catalog needs reacquisition.
+   The stock AppImage passed live CivitAI Preview and Cancel for exact EPS
+   833294/1022833/928571 and V 1147756/2679856/2566634. A separate controlled
+   AppImage selected each exact file over a neighboring primary file, with
+   zero body transfers or installation rows. The current signed worker
+   passed its live CUDA and protocol preflight. A stock AppImage with an
+   exact borrowed Cyberfalafel V file then passed a manual prediction
+   override and one 256×256 Generate, Add, Save and reopen. Continue with
+   managed body download and installation. The EPS bytes from the retired
+   catalog need reacquisition.
+   [Packaged qualification](./phase-5-packaged-noobai-preview-research.md),
    [Model Manager contract](../features/model-manager.md),
    [exact fixture identities](../../scripts/noobai-noise-qualification.mjs).
 

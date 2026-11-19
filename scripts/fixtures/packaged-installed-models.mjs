@@ -47,6 +47,18 @@ const checkpoints = {
     sha256: '0fc7507b222e52ac8cc5e2826786bc4caed05223df32d17aeb05a76cb4de9941',
     origin: { url: 'https://civitai.com/api/download/models/3120487?fileId=3000817' },
   },
+  'noobai-v': {
+    name: 'Cyberfalafel - falafel cyber fix',
+    versionName: 'Cyberfalafel v-pred v1.2',
+    predictionType: 'v_prediction',
+    modelId: 1147756,
+    versionId: 2679856,
+    fileId: 2566634,
+    creator: 'Knightus_Ai',
+    byteSize: 6938040794,
+    sha256: 'edca0d656069468ce208440edda4643b8795b6dc500606bb6d0e57eb9a54c89d',
+    origin: { url: 'https://civitai.com/api/download/models/2679856?fileId=2566634' },
+  },
 }
 const animaCompanions = {
   qwen3Encoder: {
@@ -173,12 +185,24 @@ function companionDependency(source) {
   }
 }
 
-export async function preparePackagedTrainedModels({ repo, run, appData, family, sourcesPath }) {
-  assert.ok(Object.hasOwn(checkpoints, family))
+export async function preparePackagedTrainedModels({
+  repo,
+  run,
+  appData,
+  family,
+  profile,
+  sourcesPath,
+}) {
+  assert.ok(
+    profile === undefined
+      ? ['illustrious', 'anima'].includes(family)
+      : profile === 'noobai-v' && family === 'illustrious',
+  )
+  const checkpointKey = profile ?? family
   assert.equal(repo, checkout)
   const engineRun = path.dirname(run)
   assert.equal(path.dirname(engineRun), engineRuns)
-  assert.match(path.basename(run), new RegExp(`^trained-${family}-r[1-9]\\d*$`))
+  assert.match(path.basename(run), new RegExp(`^trained-${checkpointKey}-r[1-9]\\d*$`))
   const [payloads, slot, data, name, ...extra] = path.relative(engineRun, appData).split(path.sep)
   assert.ok(
     payloads === 'payloads' && data === 'data' && name === 'imagegen-studio' && extra.length === 0,
@@ -186,7 +210,7 @@ export async function preparePackagedTrainedModels({ repo, run, appData, family,
   assert.match(slot, /^native-runtime-offline-[a-zA-Z0-9]+$/)
   for (const directory of [repo, engineRun, run, appData]) await ownedDirectory(directory)
   assert.deepEqual((await readdir(appData)).sort(), ['inference-resources', 'runtime'])
-  assert.equal(sourcesPath, path.join(engineRun, `trained-input-${family}.json`))
+  assert.equal(sourcesPath, path.join(engineRun, `trained-input-${checkpointKey}.json`))
   assert.equal(await realpath(sourcesPath), sourcesPath)
   const input = await open(
     sourcesPath,
@@ -201,15 +225,16 @@ export async function preparePackagedTrainedModels({ repo, run, appData, family,
     await input.close()
   }
   const roles = rolesFor(family)
-  keys(sources, ['schemaVersion', 'family', ...roles])
+  keys(sources, ['schemaVersion', 'family', ...roles, ...(profile ? ['profile'] : [])])
   assert.equal(sources.schemaVersion, 1)
   assert.equal(sources.family, family)
+  assert.equal(sources.profile, profile)
   const files = []
   for (const role of roles) {
     const file = sources[role]
     keys(file, ['path', 'sha256', 'byteSize'])
     assert.ok(typeof file.path === 'string' && !inside(engineRun, file.path), role)
-    assertModelPin(family, role, file)
+    assertModelPin(checkpointKey, role, file)
     files.push(await verifyFile(file, role))
   }
   assert.equal(new Set(files.map(({ stat }) => `${stat.dev}:${stat.ino}`)).size, files.length)
@@ -223,7 +248,7 @@ export async function preparePackagedTrainedModels({ repo, run, appData, family,
     assert.deepEqual(await repository.listInstalled(), [])
     assert.deepEqual(await repository.listInstallJobs(), [])
     const [checkpoint, ...companions] = files
-    const pin = checkpoints[family]
+    const pin = checkpoints[checkpointKey]
     const { resourceId, versionId, dependencyVersionIds } =
       await repository.publishVerifiedInstallation({
         primary: {
@@ -239,7 +264,7 @@ export async function preparePackagedTrainedModels({ repo, run, appData, family,
             baseModelFamily: family,
             format: 'safetensors',
             name: pin.versionName,
-            predictionType: pin.predictionType,
+            predictionType: profile === 'noobai-v' ? null : pin.predictionType,
             source: {
               kind: 'civitai',
               expectedSha256: pin.sha256,

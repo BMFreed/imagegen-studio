@@ -57,6 +57,12 @@ const eulerPlan = {
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const exactHash = /^[0-9a-f]{64}$/
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex')
+const noobaiNoise = {
+  baseSchedule: 'sdxl-scaled-linear-v1',
+  rescaleBetasZeroSnr: false,
+  schemaVersion: 1,
+  timestepSpacing: 'leading',
+}
 
 function inside(parent, filename) {
   return (
@@ -125,16 +131,22 @@ export async function readTrainedGeneration({ filename, engine, outputRoot, appI
   const fixtureBefore = await identity(filename)
   const fixture = JSON.parse(await readOwned(filename, 1024 * 1024))
   assert.deepEqual(await identity(filename), fixtureBefore)
+  const noobai = fixture.profile === 'noobai-v'
   assert.deepEqual(Object.keys(fixture).sort(), [
     'appData',
     'family',
     'files',
     'model',
+    ...(noobai ? ['package', 'profile'] : []),
     'runtimeId',
     'schemaVersion',
   ])
   assert.equal(fixture.schemaVersion, 1)
   assert.ok(['illustrious', 'anima'].includes(fixture.family))
+  if (noobai) {
+    assert.equal(fixture.family, 'illustrious')
+    assert.equal(path.basename(run).match(/^trained-noobai-v-r[1-9]\d*$/)?.[0], path.basename(run))
+  }
   assert.equal(fixture.appData, engine.dataRoot)
   assert.equal(fixture.runtimeId, engine.runtimeId)
 
@@ -145,7 +157,7 @@ export async function readTrainedGeneration({ filename, engine, outputRoot, appI
   assert.equal(previous.outcome, 'PASS')
   assert.equal(previous.packagedInstalledRuntime.runtimeId, engine.runtimeId)
   assert.deepEqual(previous.packageBefore, previous.packageAfter)
-  assert.deepEqual(await identity(appImage), previous.packageBefore)
+  assert.deepEqual(await identity(appImage), noobai ? fixture.package : previous.packageBefore)
   const python = engine.pythonExecutable
   assert.equal(
     python,
@@ -165,6 +177,22 @@ export async function readTrainedGeneration({ filename, engine, outputRoot, appI
     fixture.family === 'anima' ? ['checkpoint', 'qwen3Encoder', 'vae'] : ['checkpoint'],
   )
   assert.equal(model.ref.fileSha256, files[0].sha256)
+  if (noobai) {
+    assert.deepEqual(
+      [
+        model.ref.civitaiModelId,
+        model.ref.civitaiVersionId,
+        model.ref.civitaiFileId,
+        model.ref.predictionType,
+      ],
+      [1147756, 2679856, 2566634, 'v_prediction'],
+    )
+    assert.equal(
+      model.ref.fileSha256,
+      'edca0d656069468ce208440edda4643b8795b6dc500606bb6d0e57eb9a54c89d',
+    )
+    assert.equal(files[0].byteSize, 6938040794)
+  }
   await assertModelFiles(files, identity, engine.run)
   const databasePath = path.join(engine.dataRoot, 'database/app.sqlite')
   assert.equal(await realpath(databasePath), databasePath)
@@ -175,6 +203,7 @@ export async function readTrainedGeneration({ filename, engine, outputRoot, appI
   for (const name of ['project_index', 'generation_queue_item', 'generation_candidate_receipt']) {
     assert.deepEqual(baseline.tables[name].rows, [])
   }
+  if (noobai) assert.deepEqual(baseline.tables.checkpoint_prediction_override.rows, [])
   return {
     fixture,
     databasePath,
@@ -212,8 +241,8 @@ async function selectOption(page, input, option) {
   await page.getByText(option, { exact: true }).last().click()
 }
 
-async function createAndAuthor(page, fixture) {
-  const title = 'Packaged trained ' + fixture.family
+async function createAndAuthor(page, fixture, root) {
+  const title = 'Packaged trained ' + (fixture.profile ?? fixture.family)
   await page.getByRole('button', { name: 'New Project', exact: true }).first().click()
   const dialog = page.getByRole('dialog', { name: 'New Project', exact: true })
   await dialog.locator('input[aria-label="Project name"]').fill(title)
@@ -235,9 +264,27 @@ async function createAndAuthor(page, fixture) {
     timeout: 90_000,
   })
   await selectOption(page, 'Model version', model.versionName)
+  const selected =
+    fixture.profile === 'noobai-v' ? { ...model.ref, predictionType: 'epsilon' } : model.ref
   await expect
     .poll(async () => (await openTab(page, project.id)).generationDraft.model, { timeout: 90_000 })
-    .toEqual(model.ref)
+    .toEqual(selected)
+  if (fixture.profile === 'noobai-v') {
+    await page.getByRole('button', { name: 'Manage Models', exact: true }).click()
+    const manager = page.getByRole('dialog', { name: 'Model Manager', exact: true })
+    const version = manager.locator('.version-row--project')
+    const prediction = version.locator('.version-prediction')
+    await expect(prediction).toContainText('Assumed default; check the model author’s guidance')
+    await expect(prediction).toContainText('Epsilon')
+    await prediction.locator('.n-base-selection').click()
+    await page.getByText('V-prediction', { exact: true }).last().click()
+    // Main rehashes the full 6.9 GB checkpoint before committing the exact-file override.
+    await expect(prediction).toContainText('Chosen for this exact file', { timeout: 90_000 })
+    await expect(prediction).toContainText('V-prediction')
+    await page.screenshot({ path: path.join(root, 'noobai-v-prediction-override.png') })
+    await manager.getByRole('button', { name: 'Close Model Manager', exact: true }).click()
+    await expect(manager).toBeHidden()
+  }
   if (family === 'anima') await selectOption(page, 'Anima method', 'Euler')
   else {
     await selectOption(page, 'Sampler', 'Euler')
@@ -261,7 +308,7 @@ async function createAndAuthor(page, fixture) {
   const tab = await openTab(page, project.id)
   assert.deepEqual(tab.layers, [])
   assert.deepEqual(tab.primaryBbox, bbox)
-  assert.deepEqual(tab.generationDraft.model, model.ref)
+  assert.deepEqual(tab.generationDraft.model, selected)
   assert.deepEqual(tab.generationDraft.seed, { policy: 'fixed', value: 0 })
   assert.deepEqual(tab.generationDraft.loras, [])
   assert.equal(tab.generationDraft.sampling.steps, 3)
@@ -325,13 +372,17 @@ function assertFrozen(row, requested, fixture, projectFile) {
     assert.deepEqual(workerJob.prompts, prompts)
     assert.deepEqual(workerJob.checkpoint, {
       path: files[0].path,
-      predictionType: 'epsilon',
+      predictionType: model.ref.predictionType,
       sha256: files[0].sha256,
     })
     assert.equal(workerJob.sampling.scheduler, 'euler')
     assert.equal(workerJob.sampling.seed, 0)
     assert.equal(workerJob.sampling.steps, 3)
     assert.equal(workerJob.sampling.cfgScale, 4)
+    if (fixture.profile === 'noobai-v') {
+      assert.deepEqual(context.sampling.noiseProfile, noobaiNoise)
+      assert.deepEqual(workerJob.sampling.noiseProfile, noobaiNoise)
+    }
   }
   return frozen
 }
@@ -513,6 +564,10 @@ function assertPortableConfiguration(configuration, requested, fixture) {
   } else {
     assert.equal(configuration.sampling.sampler, 'Euler')
     assert.equal(configuration.sampling.scheduler, 'Normal')
+    if (fixture.profile === 'noobai-v') {
+      assert.equal(configuration.model.predictionType, 'v_prediction')
+      assert.deepEqual(configuration.sampling.noiseProfile, noobaiNoise)
+    }
   }
   const portable = JSON.stringify(configuration)
   assert.equal(Object.hasOwn(configuration, 'animaPromptInterpretation'), false)
@@ -562,7 +617,7 @@ with zipfile.ZipFile(filename) as package:
                           outputSha256=hashlib.sha256(asset).hexdigest(), outputBytes=len(asset))))
 `
 
-function expectCatalog(catalog, fixture) {
+function expectCatalog(catalog, fixture, predictionType = fixture.model.ref.predictionType) {
   const { model } = fixture
   const version = catalog
     .find(({ id }) => id === model.resourceId)
@@ -572,7 +627,10 @@ function expectCatalog(catalog, fixture) {
   assert.equal(version.sha256, model.ref.fileSha256)
   assert.equal(version.fileSizeBytes, fixture.files[0].byteSize)
   assert.equal(version.baseModelFamily, fixture.family)
-  assert.equal(version.predictionType, model.ref.predictionType)
+  assert.equal(version.predictionType, predictionType)
+  if (fixture.profile === 'noobai-v') {
+    assert.equal(version.predictionTypeSource, predictionType === 'epsilon' ? 'default' : 'user')
+  }
 }
 
 export async function runTrainedGeneration({
@@ -590,8 +648,9 @@ export async function runTrainedGeneration({
   const first = await launch('first')
   const ports = await readPorts(first)
   assert.deepEqual(ports.projects.value, [])
-  expectCatalog(ports.catalog.value, fixture)
-  const requested = await createAndAuthor(first.page, fixture)
+  const noobai = fixture.profile === 'noobai-v'
+  expectCatalog(ports.catalog.value, fixture, noobai ? 'epsilon' : undefined)
+  const requested = await createAndAuthor(first.page, fixture, root)
   const { project, tab } = requested
   const snapshot = (closed = false) => snapshotDatabase(databasePath, { closed })
   const [initialRow] = snapshot().tables.project_index.rows
@@ -790,6 +849,16 @@ export async function runTrainedGeneration({
   for (const name of Object.keys(baseline.tables).filter((name) => name.startsWith('model_'))) {
     assert.deepEqual(afterFirst.tables[name], baseline.tables[name], name)
   }
+  if (noobai) {
+    const { rows } = afterFirst.tables.checkpoint_prediction_override
+    assert.equal(rows.length, 1)
+    const [{ prediction_type, sha256, size_bytes }] = rows
+    assert.deepEqual(
+      [prediction_type, sha256, size_bytes],
+      ['v_prediction', fixture.files[0].sha256, fixture.files[0].byteSize],
+    )
+    assert.equal(stored.generationDraft.model.predictionType, 'epsilon')
+  }
   const [acceptedIndex] = afterFirst.tables.project_accepted_result_index.rows
   assert.equal(acceptedIndex.local_project_key, project.id)
   assert.equal(acceptedIndex.layer_id, layer.id)
@@ -850,6 +919,7 @@ export async function runTrainedGeneration({
     restarted,
     trainedGeneration: {
       family: fixture.family,
+      ...(noobai ? { profile: fixture.profile, explicitPredictionOverride: true } : {}),
       actualAdmissions: 1,
       actualCompletions: 1,
       model: fixture.model.ref,

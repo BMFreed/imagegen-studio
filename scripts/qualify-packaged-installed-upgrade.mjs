@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { execFile, execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { createReadStream } from 'node:fs'
+import { constants, createReadStream } from 'node:fs'
 import * as fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -18,20 +18,34 @@ const engineRuns = path.join(
   os.homedir(),
   '.codex/artifacts/imagegen-studio/runs/packaged-installed-engine',
 )
+const productionInputs = [
+  'src',
+  'worker-python',
+  'package.json',
+  'pnpm-lock.yaml',
+  'electron-builder.config.cjs',
+  'vite.desktop.config.ts',
+  'scripts/build-electron.mjs',
+]
 const { values } = parseArgs({
   options: {
     artifacts: { type: 'string' },
     'engine-report': { type: 'string' },
     family: { type: 'string' },
     'model-inputs': { type: 'string' },
+    'package-proof': { type: 'string' },
+    profile: { type: 'string' },
   },
 })
 const run = values.artifacts
 const engineReportPath = values['engine-report']
-const { family } = values
+const { family, profile } = values
 const sourcesPath = values['model-inputs']
+const packageProofPath = values['package-proof']
 assert.ok(family === undefined || family === 'illustrious' || family === 'anima')
 assert.equal(sourcesPath === undefined, family === undefined)
+assert.ok(profile === undefined || (profile === 'noobai-v' && family === 'illustrious'))
+assert.equal(packageProofPath === undefined, profile === undefined)
 const preserved = new Set(['inference-resources', 'runtime'])
 const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim()
 const readJson = async (file) => JSON.parse(await fs.readFile(file, 'utf8'))
@@ -51,6 +65,93 @@ async function sha256(file) {
   const hash = createHash('sha256')
   for await (const bytes of createReadStream(file)) hash.update(bytes)
   return hash.digest('hex')
+}
+
+async function ownedFileIdentity(file, maximumBytes) {
+  const statFields = ['dev', 'ino', 'mode', 'nlink', 'size', 'mtimeNs', 'ctimeNs']
+  const fingerprint = (stat) => statFields.map((name) => stat[name])
+  assert.equal(await fs.realpath(file), file)
+  const before = await fs.lstat(file, { bigint: true })
+  assert.ok(before.isFile() && before.uid === BigInt(process.getuid()) && before.nlink === 1n, file)
+  assert.ok((before.mode & 0o022n) === 0n, file)
+  assert.ok(before.size > 0n && before.size <= BigInt(maximumBytes), file)
+  const handle = await fs.open(
+    file,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  )
+  let digest
+  try {
+    assert.deepEqual(fingerprint(await handle.stat({ bigint: true })), fingerprint(before), file)
+    const hash = createHash('sha256')
+    for await (const bytes of handle.createReadStream({ autoClose: false })) hash.update(bytes)
+    digest = hash.digest('hex')
+    assert.deepEqual(fingerprint(await handle.stat({ bigint: true })), fingerprint(before), file)
+  } finally {
+    await handle.close()
+  }
+  assert.equal(await fs.realpath(file), file)
+  assert.deepEqual(fingerprint(await fs.lstat(file, { bigint: true })), fingerprint(before), file)
+  return { path: file, sizeBytes: Number(before.size), sha256: digest }
+}
+
+async function readNoobaiPackageProof(filename) {
+  assert.ok(path.isAbsolute(filename) && path.normalize(filename) === filename)
+  const previewRun = path.dirname(filename)
+  assert.equal(
+    path.dirname(previewRun),
+    path.join(path.dirname(engineRuns), 'packaged-noobai-preview'),
+  )
+  assert.match(path.basename(previewRun), /^\d{8}(?:-r[1-9]\d*)?$/)
+  assert.equal(path.basename(filename), 'v-package-proof.json')
+  await directory(previewRun)
+  const identity = await ownedFileIdentity(filename, 16384)
+  const proof = await readJson(filename)
+  assert.deepEqual(await ownedFileIdentity(filename, 16384), identity)
+  assert.deepEqual(Object.keys(proof).sort(), ['appImage', 'dist', 'revision'])
+  assert.match(proof.revision, /^[0-9a-f]{40}$/)
+  assert.equal(git('diff', '--name-only', proof.revision, '--', ...productionInputs), '')
+  assert.equal(git('ls-files', '--others', '--exclude-standard', '--', ...productionInputs), '')
+
+  const manifestPath = path.join(previewRun, 'package-live.json')
+  const manifestIdentity = await ownedFileIdentity(manifestPath, 65536)
+  const manifest = await readJson(manifestPath)
+  assert.deepEqual(await ownedFileIdentity(manifestPath, 65536), manifestIdentity)
+  assert.equal(manifest.mode, 'live')
+  assert.equal(manifest.entrypoint, 'dist/main/main.cjs')
+  assert.equal(manifest.variant, null)
+  assert.deepEqual(proof.appImage, manifest.package)
+  assert.deepEqual(proof.dist, manifest.dist)
+  const { appImage, dist, revision } = proof
+  const packageDirectory = path.join(previewRun, 'package-work/live/output')
+  await directory(packageDirectory)
+  assert.equal(path.dirname(appImage.path), packageDirectory)
+  assert.match(path.basename(appImage.path), /^imagegen-studio-[\w.-]+-x86_64\.AppImage$/)
+  assert.deepEqual(await ownedFileIdentity(appImage.path, 512 * 1024 ** 2), appImage)
+  assert.equal((await fs.lstat(appImage.path)).mode & 0o777, 0o755)
+
+  const actualDist = {}
+  async function verifyDist(directoryName) {
+    for (const entry of await fs.readdir(path.join(repo, directoryName), { withFileTypes: true })) {
+      const member = path.join(directoryName, entry.name)
+      if (entry.isDirectory()) {
+        await verifyDist(member)
+      } else if (!entry.name.endsWith('.map')) {
+        assert.ok(entry.isFile(), member)
+        actualDist[member] = await sha256(path.join(repo, member))
+      }
+    }
+  }
+  await verifyDist('dist')
+  assert.equal(Object.keys(dist).length, 42)
+  for (const member of [
+    'dist/main/main.cjs',
+    'dist/preload/preload.cjs',
+    'dist/renderer/index.html',
+  ]) {
+    assert.match(dist[member], /^[0-9a-f]{64}$/)
+  }
+  assert.deepEqual(actualDist, dist)
+  return { appImage, revision, dist, identity, manifestIdentity }
 }
 
 async function writeRecord(file, value) {
@@ -135,7 +236,7 @@ assert.equal(path.basename(engineReportPath), 'installed-engine.json')
 assert.ok(
   path.isAbsolute(run ?? '') && path.normalize(run) === run && path.dirname(run) === engineRun,
 )
-const runType = family ? `trained-${family}` : 'historical-upgrade'
+const runType = family ? `trained-${profile ?? family}` : 'historical-upgrade'
 assert.match(path.basename(run), new RegExp(`^${runType}-r[1-9]\\d*$`))
 await directory(engineRun)
 assert.equal(await fs.realpath(engineReportPath), engineReportPath)
@@ -155,18 +256,18 @@ assert.ok(
   ),
 )
 const pins = await readJson(path.join(engineRun, 'retained-inputs.json'))
-const appImage = prior.packageBefore.path
-assert.equal(path.dirname(appImage), path.join(engineRun, 'package'))
-assert.equal(await fs.realpath(appImage), appImage)
-for (const file of [engineReportPath, priorNativeReport, appImage]) {
+const retainedAppImage = prior.packageBefore.path
+assert.equal(path.dirname(retainedAppImage), path.join(engineRun, 'package'))
+assert.equal(await fs.realpath(retainedAppImage), retainedAppImage)
+for (const file of [engineReportPath, priorNativeReport, retainedAppImage]) {
   assert.equal(await sha256(file), pins[file], file)
 }
-assert.equal(pins[appImage], prior.packageBefore.sha256)
+assert.equal(pins[retainedAppImage], prior.packageBefore.sha256)
 const appData = release.roots.appDataDir
 assert.equal(appData, path.join(release.payloadRoot, 'data/imagegen-studio'))
 assert.equal(path.dirname(release.payloadRoot), path.join(engineRun, 'payloads'))
 assert.match(path.basename(release.payloadRoot), /^native-runtime-offline-[a-zA-Z0-9]+$/)
-assert.ok(lifecycle.payloads.includes(appData) && lifecycle.payloads.includes(appImage))
+assert.ok(lifecycle.payloads.includes(appData) && lifecycle.payloads.includes(retainedAppImage))
 await directory(appData)
 const pointerFile = path.join(appData, 'runtime/current-runtime.json')
 assert.deepEqual(await readJson(pointerFile), release.activatedPointer)
@@ -211,23 +312,17 @@ async function assertEngineInputs() {
 await assertEngineInputs()
 const sourceRevision = release.sourceBefore.head
 assert.match(sourceRevision, /^[0-9a-f]{40}$/)
-assert.equal(
-  git(
-    'diff',
-    '--name-only',
-    sourceRevision,
-    '--',
-    'src',
-    'worker-python',
-    'package.json',
-    'pnpm-lock.yaml',
-    'electron-builder.config.cjs',
-    'vite.desktop.config.ts',
-    'scripts/build-electron.mjs',
-  ),
-  '',
-  'Current production inputs differ from the retained package.',
-)
+const packageProof = packageProofPath ? await readNoobaiPackageProof(packageProofPath) : null
+const appImage = packageProof?.appImage.path ?? retainedAppImage
+if (packageProof) {
+  assert.equal(git('diff', '--name-only', sourceRevision, '--', 'worker-python'), '')
+} else {
+  assert.equal(
+    git('diff', '--name-only', sourceRevision, '--', ...productionInputs),
+    '',
+    'Current production inputs differ from the retained package.',
+  )
+}
 
 const group = (await fs.readFile('/proc/self/cgroup', 'utf8'))
   .trim()
@@ -251,7 +346,10 @@ await writeRecord(path.join(run, 'artifact-lifecycle.json'), {
   dependsOn: [
     engineReportPath,
     priorNativeReport,
-    appImage,
+    retainedAppImage,
+    ...(packageProof
+      ? [appImage, packageProof.identity.path, packageProof.manifestIdentity.path]
+      : []),
     appData,
     ...(sourcesPath ? [sourcesPath] : []),
   ],
@@ -279,9 +377,10 @@ try {
     memoryMax,
     swapMax,
     appImage,
-    appImageSha256: pins[appImage],
+    appImageSha256: packageProof?.appImage.sha256 ?? pins[retainedAppImage],
     sourceRevision,
     inputs: exactInputs,
+    ...(packageProof ? { packageProof } : {}),
   })
   const entries = (await fs.readdir(appData)).sort()
   const names = entries.filter((name) => !preserved.has(name))
@@ -307,13 +406,21 @@ try {
     const { preparePackagedTrainedModels, verifyPackagedTrainedSources } =
       await import('./fixtures/packaged-installed-models.mjs')
     verifyTrainedSources = verifyPackagedTrainedSources
-    trained = await preparePackagedTrainedModels({ repo, run, appData, family, sourcesPath })
+    trained = await preparePackagedTrainedModels({
+      repo,
+      run,
+      appData,
+      family,
+      sourcesPath,
+      profile,
+    })
     await writeRecord(path.join(run, 'trained-fixture.json'), {
       schemaVersion: 1,
       family,
       appData,
       runtimeId,
       ...trained,
+      ...(packageProof ? { profile, package: packageProof.appImage } : {}),
     })
   } else {
     const rasterSourcePath = path.join(run, 'historical-raster.png')
@@ -377,6 +484,7 @@ with Path(sys.argv[1]).open('xb') as out:
     'IMAGEGEN_LINUX_PACKAGE_TRAINED_FIXTURE',
   ])
     delete env[key]
+  if (profile) delete env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_PREVIEW
   if (family) env.IMAGEGEN_LINUX_PACKAGE_TRAINED_FIXTURE = path.join(run, 'trained-fixture.json')
   else env.IMAGEGEN_LINUX_PACKAGE_HISTORICAL_FIXTURE = path.join(run, 'historical-fixture.json')
   smokeExit = await new Promise((resolve, reject) => {
@@ -437,6 +545,11 @@ with Path(sys.argv[1]).open('xb') as out:
     await writeRecord(path.join(run, 'trained-sources-unchanged.json'), { files: trained.files })
   }
   await fs.rename(claim, path.join(run, 'released-claim'))
+  if (packageProof) {
+    const after = await readNoobaiPackageProof(packageProofPath)
+    assert.deepEqual(after, packageProof)
+    await writeRecord(path.join(run, 'package-verified-after.json'), after)
+  }
 }
 console.log(
   JSON.stringify({ outcome: 'PASS', appData, run, family, projectId: fixture?.project.projectId }),
