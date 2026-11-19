@@ -8,20 +8,24 @@ import { type ApiResult, ipcChannels } from '../../shared/api.js'
 import {
   type ApplicationUpdateInstallationRequest,
   type ApplicationUpdateInstallPreview,
+  type ApplicationUpdateRecoverySaveResult,
   type ApplicationUpdateRecoverySnapshot,
   type ApplicationUpdateSnapshot,
   isApplicationUpdateInstallationRequest,
   isApplicationUpdateInstallPreview,
+  isApplicationUpdateRecoverySaveResult,
   isApplicationUpdateRecoverySnapshot,
   isApplicationUpdateSnapshot,
   isApplicationUpdateVersion,
 } from '../../shared/application-updates.js'
 
 import { ApplicationUpdateAdmissionError } from './application-update-admission.js'
+import { ApplicationUpdateRecoveryActionError } from './application-update-recovery-action.js'
 import {
   ApplicationUpdateCurrentSourceError,
   ApplicationUpdateRecoveryRequiredError,
 } from './application-update-service.js'
+import { AppUpdateRecoveryPublishError } from './application-update-staging.js'
 
 type Caller = { mainFrame: unknown }
 type Request = { sender: unknown; senderFrame: unknown }
@@ -79,12 +83,17 @@ export function registerApplicationUpdateIpc(
     availableVersion: string,
     isCurrent: () => boolean,
   ) => Promise<ApplicationUpdateInstallationRequest>,
+  requestRecoverySave?: (
+    availableVersion: string,
+    isCurrent: () => boolean,
+  ) => Promise<ApplicationUpdateRecoverySaveResult>,
 ): { dispose: () => void; invalidateDocument: () => void } {
   let disposed = false
   let epoch = {}
   let selectionEpoch = {}
   let reviewedVersion: string | null = null
   let installationPending = false
+  let recoverySavePending = false
   const channels = [
     ipcChannels.applicationUpdates.getRecoveryStatus,
     ipcChannels.applicationUpdates.getStatus,
@@ -92,6 +101,7 @@ export function registerApplicationUpdateIpc(
     ipcChannels.applicationUpdates.check,
     ipcChannels.applicationUpdates.download,
     ipcChannels.applicationUpdates.reviewInstallation,
+    ipcChannels.applicationUpdates.saveRecovery,
   ]
   const invalidateDocument = () => {
     epoch = {}
@@ -104,7 +114,8 @@ export function registerApplicationUpdateIpc(
         disposed ||
         (channel === ipcChannels.applicationUpdates.download ||
         channel === ipcChannels.applicationUpdates.install ||
-        channel === ipcChannels.applicationUpdates.reviewInstallation
+        channel === ipcChannels.applicationUpdates.reviewInstallation ||
+        channel === ipcChannels.applicationUpdates.saveRecovery
           ? args.length !== 1 || !isApplicationUpdateVersion(args[0])
           : args.length !== 0) ||
         event.sender !== caller ||
@@ -138,6 +149,45 @@ export function registerApplicationUpdateIpc(
             'APPLICATION_UPDATE_RECOVERY_STATUS_FAILED',
             'The application could not read update recovery information. Reopen this dialog to try again.',
           )
+        }
+      }
+      if (recoverySavePending && channel !== ipcChannels.applicationUpdates.getStatus) {
+        return failure(
+          'APPLICATION_UPDATE_RECOVERY_SAVE_BUSY',
+          'A recovery AppImage save is already in progress.',
+        )
+      }
+      if (channel === ipcChannels.applicationUpdates.saveRecovery) {
+        if (installationPending || !requestRecoverySave) {
+          return failure(
+            'APPLICATION_UPDATE_RECOVERY_UNAVAILABLE',
+            'A verified recovery AppImage is unavailable.',
+          )
+        }
+        recoverySavePending = true
+        selectionEpoch = {}
+        reviewedVersion = null
+        try {
+          const result = await requestRecoverySave(args[0] as string, current)
+          if (!current()) {
+            return rejected()
+          }
+          return isApplicationUpdateRecoverySaveResult(result)
+            ? { ok: true, value: structuredClone(result) }
+            : invalid()
+        } catch (error) {
+          if (!current()) {
+            return rejected()
+          }
+          return error instanceof ApplicationUpdateRecoveryActionError ||
+            error instanceof AppUpdateRecoveryPublishError
+            ? failure(error.code, error.message)
+            : failure(
+                'APPLICATION_UPDATE_RECOVERY_SAVE_FAILED',
+                'The recovery AppImage could not be saved. Try again.',
+              )
+        } finally {
+          recoverySavePending = false
         }
       }
       if (channel === ipcChannels.applicationUpdates.install) {

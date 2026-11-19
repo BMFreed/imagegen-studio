@@ -41,6 +41,11 @@ export type ApplicationUpdateRecoverySnapshot =
   | { status: 'clear' }
   | { status: 'not-checked' }
 
+/** No destination, restart capability or change to the current recovery observation. */
+export interface ApplicationUpdateRecoverySaveResult {
+  status: 'canceled' | 'saved'
+}
+
 /** Advisory close impact only; never an install, close or restart capability. */
 export interface ApplicationUpdateInstallPreview {
   activeModelInstallCount: number
@@ -59,6 +64,17 @@ export interface ApplicationUpdateInstallPreview {
 export interface ApplicationUpdateInstallationRequest {
   availableVersion: string
   status: 'close-requested'
+}
+
+export function isApplicationUpdateRecoverySaveResult(
+  value: unknown,
+): value is ApplicationUpdateRecoverySaveResult {
+  try {
+    const result = dataRecord(value, ['status'])
+    return result?.['status'] === 'saved' || result?.['status'] === 'canceled'
+  } catch {
+    return false
+  }
 }
 
 /** Exact public enum data, without native paths or an implication of healthy startup. */

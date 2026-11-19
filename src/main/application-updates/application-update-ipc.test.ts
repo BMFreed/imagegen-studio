@@ -2,6 +2,7 @@ import { type ApiResult, ipcChannels, type StudioApi } from '../../shared/api.js
 import type {
   ApplicationUpdateInstallationRequest,
   ApplicationUpdateInstallPreview,
+  ApplicationUpdateRecoverySaveResult,
   ApplicationUpdateRecoverySnapshot,
   ApplicationUpdateSnapshot,
 } from '../../shared/application-updates.js'
@@ -108,11 +109,19 @@ function fixture(withInstallation = true) {
     },
     reviewInstallation: async (version: string): Promise<ApplicationUpdateInstallPreview> =>
       preview(version),
+    saveRecovery: async (
+      _version: string,
+      isCurrent: () => boolean,
+    ): Promise<ApplicationUpdateRecoverySaveResult> => {
+      assert.equal(isCurrent(), true)
+      return { status: 'canceled' }
+    },
   }
   const calls = { check: 0, download: 0, getStatus: 0 }
   const recoveryCalls = { count: 0 }
   const previewVersions: string[] = []
   const installationVersions: string[] = []
+  const recoveryVersions: string[] = []
   const lifetime = registerApplicationUpdateIpc(
     {
       handle: (channel, handler) => {
@@ -152,6 +161,10 @@ function fixture(withInstallation = true) {
           return await controls.install(version, isCurrent)
         }
       : undefined,
+    async (version, isCurrent) => {
+      recoveryVersions.push(version)
+      return await controls.saveRecovery(version, isCurrent)
+    },
   )
   const invoke = async (channel: Channel, args: unknown[] = [], request?: Request) => {
     const handler = handlers.get(ipcChannels.applicationUpdates[channel])
@@ -168,6 +181,7 @@ function fixture(withInstallation = true) {
     lifetime,
     previewVersions,
     recoveryCalls,
+    recoveryVersions,
   }
 }
 
@@ -187,6 +201,7 @@ test('read-only update getter copies the current service result and never invoke
     'application-updates:get-status',
     'application-updates:install',
     'application-updates:review-installation',
+    'application-updates:save-recovery',
   ])
 })
 
@@ -1078,4 +1093,87 @@ test('actual preload recovery getter fixes known error copy and refuses unknown 
   }
   const unavailable = failure(await f.api.applicationUpdates.getRecoveryStatus(), 'IPC_UNAVAILABLE')
   assert.equal(unavailable.message, 'The application could not reach the update service.')
+})
+
+test('recovery save accepts only a version from the current frame and fences the picker lifetime', async () => {
+  const f = fixture()
+  failure(
+    await f.invoke('saveRecovery', ['0.2.0', '/private/output.AppImage']),
+    'IPC_INVALID_CALLER',
+  )
+  failure(
+    await f.invoke('saveRecovery', ['0.2.0'], {
+      sender: f.caller,
+      senderFrame: {},
+    }),
+    'IPC_INVALID_CALLER',
+  )
+  assert.deepEqual(f.recoveryVersions, [])
+
+  const gate = deferred<void>()
+  f.controls.saveRecovery = async (_version, isCurrent) => {
+    assert.equal(isCurrent(), true)
+    await gate.promise
+    assert.equal(isCurrent(), false)
+    return { status: 'canceled' }
+  }
+  const save = f.invoke('saveRecovery', ['0.2.0'])
+  for (const channel of [
+    'saveRecovery',
+    'install',
+    'check',
+    'download',
+    'reviewInstallation',
+  ] as const) {
+    const args = channel === 'check' ? [] : ['0.2.0']
+    failure(await f.invoke(channel, args), 'APPLICATION_UPDATE_RECOVERY_SAVE_BUSY')
+  }
+  assert.equal(value(await f.invoke('getStatus')).status, 'idle')
+  assert.deepEqual(await f.invoke('getRecoveryStatus'), {
+    ok: true,
+    value: { status: 'not-checked' },
+  })
+  f.lifetime.invalidateDocument()
+  gate.resolve()
+  failure(await save, 'IPC_INVALID_CALLER')
+  assert.deepEqual(f.recoveryVersions, ['0.2.0'])
+  assert.deepEqual(f.installationVersions, [])
+  f.controls.saveRecovery = async () => ({ status: 'saved' })
+  assert.deepEqual(await f.invoke('saveRecovery', ['0.2.0']), {
+    ok: true,
+    value: { status: 'saved' },
+  })
+})
+
+test('recovery save preload forwards only a version and rejects a result with a destination path', async () => {
+  const f = await preloadFixture()
+  f.state.reply = async () => ({
+    ok: true,
+    value: { path: '/private/output.AppImage', status: 'saved' },
+  })
+  failure(await f.api.applicationUpdates.saveRecovery('0.2.0'), 'IPC_INVALID_RESPONSE')
+  f.state.reply = async () => ({
+    error: {
+      code: 'APPLICATION_UPDATE_RECOVERY_DESTINATION_EXISTS',
+      message: '/private/output.AppImage',
+    },
+    ok: false,
+  })
+  assert.equal(
+    failure(
+      await f.api.applicationUpdates.saveRecovery('0.2.0'),
+      'APPLICATION_UPDATE_RECOVERY_DESTINATION_EXISTS',
+    ).message,
+    'The recovery destination already exists. Choose a new AppImage path.',
+  )
+  f.state.reply = async () => ({ ok: true, value: { status: 'canceled' } })
+  const canceled = await f.api.applicationUpdates.saveRecovery('0.2.0')
+  assert.deepEqual(structuredClone(canceled), { ok: true, value: { status: 'canceled' } })
+  assert.deepEqual(
+    f.calls,
+    Array.from({ length: 3 }, () => ({
+      args: ['0.2.0'],
+      channel: ipcChannels.applicationUpdates.saveRecovery,
+    })),
+  )
 })

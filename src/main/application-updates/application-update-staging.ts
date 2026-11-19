@@ -548,6 +548,7 @@ export function captureApplicationUpdateCurrentSource(input: {
  * same-user writers.
  */
 export async function publishVerifiedApplicationRecovery(input: {
+  assertReadyToPublish?: () => void
   authority: ApplicationReleaseAuthority
   destinationAppImage: string
   originalAppImage: string
@@ -571,7 +572,14 @@ export async function publishVerifiedApplicationRecovery(input: {
     throw error
   }
   try {
-    const { authority, destinationAppImage, originalAppImage, sourceAppImage, trust } = input
+    const {
+      assertReadyToPublish,
+      authority,
+      destinationAppImage,
+      originalAppImage,
+      sourceAppImage,
+      trust,
+    } = input
     need(process.platform === 'linux' && process.arch === 'x64', 'UNSAFE')
     need(
       [sourceAppImage, originalAppImage, destinationAppImage].every(
@@ -657,6 +665,9 @@ export async function publishVerifiedApplicationRecovery(input: {
           String(anchored.ino) === ownedTemporary.identity.ino,
         'UNSAFE',
       )
+    }
+    if (assertReadyToPublish) {
+      assertClosedNow(assertReadyToPublish)
     }
     assertDirectories()
     assertFileNow(sourceAppImage, sourceAppImage, source.identity)

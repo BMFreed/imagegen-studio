@@ -137,6 +137,7 @@ import {
 } from './application-updates/application-update-admission.js'
 import { collectApplicationUpdateInstallPreview } from './application-updates/application-update-install-preview.js'
 import { registerApplicationUpdateIpc } from './application-updates/application-update-ipc.js'
+import { saveApplicationRecovery } from './application-updates/application-update-recovery-action.js'
 import { ApplicationUpdateService } from './application-updates/application-update-service.js'
 import {
   type ApplicationUpdateCurrentSource,
@@ -1615,6 +1616,13 @@ if (!gotInstanceLock) {
       })
 
       const runtimeCaller = window.webContents
+      const readApplicationUpdateTrust = async () =>
+        await loadApplicationReleaseTrust(process.resourcesPath, {
+          cpuWorkerProtocolVersion: CPU_WORKER_PROTOCOL_VERSION,
+          databaseMigrations: await readAppliedSqlMigrations(database),
+          inferenceWorkerProtocolVersion: INFERENCE_WORKER_PROTOCOL_VERSION,
+          projectSchemaVersion: IGS_SCHEMA_VERSION,
+        })
       const applicationUpdateService = new ApplicationUpdateService(
         app.getVersion(),
         app.isPackaged &&
@@ -1622,12 +1630,7 @@ if (!gotInstanceLock) {
           Boolean(applicationUpdateAppImage) &&
           existsSync(path.join(process.resourcesPath, 'app-update.yml')),
         async () => {
-          const trust = await loadApplicationReleaseTrust(process.resourcesPath, {
-            cpuWorkerProtocolVersion: CPU_WORKER_PROTOCOL_VERSION,
-            databaseMigrations: await readAppliedSqlMigrations(database),
-            inferenceWorkerProtocolVersion: INFERENCE_WORKER_PROTOCOL_VERSION,
-            projectSchemaVersion: IGS_SCHEMA_VERSION,
-          })
+          const trust = await readApplicationUpdateTrust()
           return createElectronUpdateChecker(
             new VerifiedAppImageUpdater(undefined, undefined, trust),
           )
@@ -1758,6 +1761,34 @@ if (!gotInstanceLock) {
               admission.release()
             }
           }
+        },
+        async (expectedVersion, isCurrent) => {
+          const observedCloseEpoch = windowCloseEpoch
+          return await saveApplicationRecovery({
+            chooseDestination: async (suggestedName) => {
+              const selection = await dialog.showSaveDialog(window, {
+                defaultPath: path.join(app.getPath('downloads'), suggestedName),
+                filters: [{ extensions: ['AppImage'], name: 'AppImage' }],
+                properties: ['createDirectory'],
+                title: 'Save Recovery AppImage',
+              })
+              return selection.canceled ? null : (selection.filePath ?? null)
+            },
+            expectedVersion,
+            getRecoveryStatus: () => applicationUpdateService.getRecoveryStatus(),
+            isCurrent: () =>
+              isCurrent() &&
+              !window.isDestroyed() &&
+              !resolvingClose &&
+              !appDataSealed &&
+              !closingAfterResolution &&
+              !exitReady &&
+              windowCloseEpoch === observedCloseEpoch,
+            originalAppImage: applicationUpdateAppImage,
+            prepareVerifiedArtifact: (version) =>
+              applicationUpdateService.prepareVerifiedArtifact(version),
+            readTrust: readApplicationUpdateTrust,
+          })
         },
       )
       const invalidateApplicationUpdateDocument = (

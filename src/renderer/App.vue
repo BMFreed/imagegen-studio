@@ -38,7 +38,10 @@ import type {
   ApplicationUpdateRecoverySnapshot,
   ApplicationUpdateSnapshot,
 } from '../shared/application-updates.js'
-import { isApplicationUpdateRecoverySnapshot } from '../shared/application-updates.js'
+import {
+  isApplicationUpdateRecoverySaveResult,
+  isApplicationUpdateRecoverySnapshot,
+} from '../shared/application-updates.js'
 import type { PresetApplicationRequest } from '../shared/presets/preset-application.js'
 import type { PresetRecord } from '../shared/presets/preset-schema.js'
 import type {
@@ -581,6 +584,9 @@ const applicationUpdatesError = ref<string | null>(null)
 const applicationUpdatesRecovery = shallowRef<ApplicationUpdateRecoverySnapshot | null>(null)
 const applicationUpdatesRecoveryPending = ref(false)
 const applicationUpdatesRecoveryError = ref<string | null>(null)
+const applicationRecoverySavePending = ref(false)
+const applicationRecoverySaveError = ref<string | null>(null)
+const applicationRecoverySaved = ref(false)
 const applicationUpdateRecoveryAllowsInstallation = computed(
   () =>
     !applicationUpdatesRecoveryPending.value &&
@@ -5524,6 +5530,11 @@ function clearApplicationUpdatePreview() {
   applicationUpdateInstallError.value = null
 }
 
+function clearApplicationRecoverySaveFeedback() {
+  applicationRecoverySaveError.value = null
+  applicationRecoverySaved.value = false
+}
+
 async function reviewApplicationUpdateInstallation(availableVersion: string) {
   if (
     !applicationUpdatesOpen.value ||
@@ -5573,11 +5584,13 @@ async function reviewApplicationUpdateInstallation(availableVersion: string) {
 }
 
 function dismissApplicationUpdates(force = false) {
-  if (applicationUpdateInstallPending.value && !force) {
+  if ((applicationUpdateInstallPending.value || applicationRecoverySavePending.value) && !force) {
     return
   }
   ++applicationUpdateInstallRequest
   applicationUpdateInstallPending.value = false
+  applicationRecoverySavePending.value = false
+  clearApplicationRecoverySaveFeedback()
   ++applicationUpdatesEpoch
   ++applicationUpdatesRecoveryEpoch
   stopApplicationUpdatesPolling()
@@ -5585,6 +5598,49 @@ function dismissApplicationUpdates(force = false) {
   applicationUpdatesPending.value = false
   applicationUpdatesDownloadPending.value = false
   clearApplicationUpdatePreview()
+}
+
+async function saveApplicationRecovery(availableVersion: string) {
+  if (
+    rendererDisposed ||
+    !applicationUpdatesOpen.value ||
+    applicationUpdatesRecovery.value?.status !== 'required' ||
+    applicationUpdatesPending.value ||
+    applicationUpdatesDownloadPending.value ||
+    applicationUpdateInstallPending.value ||
+    applicationRecoverySavePending.value ||
+    applicationRecoverySaved.value ||
+    windowClosePending.value ||
+    applicationUpdatesSnapshot.value?.status !== 'downloaded' ||
+    applicationUpdatesSnapshot.value.verification !== 'signed-release' ||
+    applicationUpdatesSnapshot.value.availableVersion !== availableVersion
+  ) {
+    return
+  }
+  const epoch = ++applicationUpdatesEpoch
+  applicationRecoverySavePending.value = true
+  clearApplicationRecoverySaveFeedback()
+  const failure = 'The recovery AppImage could not be saved. Try again.'
+  try {
+    const updates = globalThis.window.api?.applicationUpdates
+    const result = await updates?.saveRecovery?.(availableVersion)
+    if (!currentApplicationUpdatesRequest(epoch)) {
+      return
+    }
+    if (result?.ok && isApplicationUpdateRecoverySaveResult(result.value)) {
+      applicationRecoverySaved.value = result.value.status === 'saved'
+    } else {
+      applicationRecoverySaveError.value = result && !result.ok ? result.error.message : failure
+    }
+  } catch {
+    if (currentApplicationUpdatesRequest(epoch)) {
+      applicationRecoverySaveError.value = failure
+    }
+  } finally {
+    if (currentApplicationUpdatesRequest(epoch)) {
+      applicationRecoverySavePending.value = false
+    }
+  }
 }
 
 async function installApplicationUpdate(availableVersion: string) {
@@ -5649,6 +5705,7 @@ async function checkApplicationUpdates(readCurrentVersion = false) {
     !applicationUpdatesOpen.value ||
     applicationUpdatesPending.value ||
     applicationUpdateInstallPending.value ||
+    applicationRecoverySavePending.value ||
     applicationUpdatesSnapshot.value?.status === 'downloading' ||
     windowClosePending.value
   ) {
@@ -5658,6 +5715,7 @@ async function checkApplicationUpdates(readCurrentVersion = false) {
   stopApplicationUpdatesPolling()
   applicationUpdatesPending.value = true
   clearApplicationUpdatePreview()
+  clearApplicationRecoverySaveFeedback()
   applicationUpdatesError.value = null
   try {
     const updates = globalThis.window.api?.applicationUpdates
@@ -5708,6 +5766,7 @@ async function downloadApplicationUpdate(availableVersion: string) {
     !applicationUpdatesOpen.value ||
     applicationUpdatesPending.value ||
     applicationUpdateInstallPending.value ||
+    applicationRecoverySavePending.value ||
     windowClosePending.value ||
     !previous ||
     previous.availableVersion !== availableVersion ||
@@ -5720,6 +5779,7 @@ async function downloadApplicationUpdate(availableVersion: string) {
   applicationUpdatesPending.value = true
   applicationUpdatesDownloadPending.value = true
   clearApplicationUpdatePreview()
+  clearApplicationRecoverySaveFeedback()
   applicationUpdatesError.value = null
   applicationUpdatesSnapshot.value = {
     ...previous,
@@ -6477,12 +6537,16 @@ onBeforeUnmount(() => {
           :recovery="applicationUpdatesRecovery"
           :recoveryError="applicationUpdatesRecoveryError"
           :recoveryPending="applicationUpdatesRecoveryPending"
+          :recoverySaveError="applicationRecoverySaveError"
+          :recoverySavePending="applicationRecoverySavePending"
+          :recoverySaved="applicationRecoverySaved"
           :snapshot="applicationUpdatesSnapshot"
           @check="checkApplicationUpdates()"
           @dismiss="dismissApplicationUpdates"
           @download="downloadApplicationUpdate"
           @install="installApplicationUpdate"
           @reviewInstallation="reviewApplicationUpdateInstallation"
+          @saveRecovery="saveApplicationRecovery"
         />
         <RuntimeSetupModal
           v-model:show="runtimeSetupOpen"

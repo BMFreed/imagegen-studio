@@ -22,6 +22,9 @@ const props = defineProps<{
   recovery: ApplicationUpdateRecoverySnapshot | null
   recoveryError: string | null
   recoveryPending: boolean
+  recoverySaved: boolean
+  recoverySaveError: string | null
+  recoverySavePending: boolean
   snapshot: ApplicationUpdateSnapshot | null
 }>()
 const show = defineModel<boolean>('show', { required: true })
@@ -31,9 +34,11 @@ const emit = defineEmits<{
   download: [availableVersion: string]
   install: [availableVersion: string]
   reviewInstallation: [availableVersion: string]
+  saveRecovery: [availableVersion: string]
 }>()
 
 const activeDownload = computed(() => props.downloading || props.snapshot?.status === 'downloading')
+const closeBlocked = computed(() => props.installPending || props.recoverySavePending)
 const recoveryAllowsInstallation = computed(
   () =>
     !props.recoveryPending &&
@@ -63,7 +68,7 @@ const canInstall = computed(
     !props.pending &&
     !activeDownload.value &&
     !props.previewPending &&
-    !props.installPending,
+    !closeBlocked.value,
 )
 const canReview = computed(
   () =>
@@ -71,16 +76,33 @@ const canReview = computed(
     !props.pending &&
     !activeDownload.value &&
     !props.previewPending &&
-    !props.installPending &&
+    !closeBlocked.value &&
     props.snapshot?.status === 'downloaded' &&
     props.snapshot.verification === 'signed-release' &&
     !!props.snapshot.availableVersion,
+)
+const recoverySaveEligible = computed(
+  () =>
+    !props.recoveryPending &&
+    props.recoveryError === null &&
+    props.recovery?.status === 'required' &&
+    props.snapshot?.status === 'downloaded' &&
+    props.snapshot.verification === 'signed-release' &&
+    !!props.snapshot.availableVersion,
+)
+const canSaveRecovery = computed(
+  () =>
+    recoverySaveEligible.value &&
+    !props.recoverySaved &&
+    !props.pending &&
+    !activeDownload.value &&
+    !closeBlocked.value,
 )
 const canDownload = computed(
   () =>
     !props.pending &&
     !activeDownload.value &&
-    !props.installPending &&
+    !closeBlocked.value &&
     props.snapshot?.availableVersion !== null &&
     ['available', 'download-error', 'downloaded'].includes(props.snapshot?.status ?? ''),
 )
@@ -122,6 +144,13 @@ function install() {
   }
 }
 
+function saveRecovery() {
+  const version = props.snapshot?.availableVersion
+  if (canSaveRecovery.value && version) {
+    emit('saveRecovery', version)
+  }
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) {
     return `${bytes} B`
@@ -131,7 +160,7 @@ function formatBytes(bytes: number): string {
 }
 
 function close() {
-  if (props.installPending) {
+  if (closeBlocked.value) {
     return
   }
   show.value = false
@@ -141,7 +170,7 @@ function close() {
 
 <template>
   <NModal
-    :closeOnEsc="!installPending"
+    :closeOnEsc="!closeBlocked"
     :maskClosable="false"
     :show
     :zIndex="AppLayer.dialog"
@@ -337,18 +366,44 @@ function close() {
           snapshot && ['available', 'downloaded', 'download-error'].includes(snapshot.status)
         "
       >
+        <div v-if="recoverySavePending" aria-live="polite" class="updates-pending" role="status">
+          <NSpin size="small" />
+          <span>Saving recovery AppImage…</span>
+        </div>
         <NAlert
-          v-if="snapshot.status === 'downloaded'"
+          v-else-if="recoverySaveError"
+          key="n-alert-12"
+          title="Recovery AppImage could not be saved"
+          type="error"
+        >
+          {{ recoverySaveError }}
+        </NAlert>
+        <NAlert
+          v-else-if="recoverySaved"
+          key="n-alert-13"
+          role="status"
+          title="Recovery AppImage saved"
+          type="success"
+        >
+          Close ImageGen Studio, then open the AppImage you saved.
+        </NAlert>
+        <NAlert
+          v-else-if="snapshot.status === 'downloaded'"
           key="n-alert-4"
           title="Download completed"
           type="success"
         >
-          The saved file matches the update metadata checksum.
-          <template v-if="snapshot.verification === 'signed-release'">
-            Installation has not started.
+          <template v-if="recoverySaveEligible">
+            Save the verified AppImage to a new location and keep the original update files.
           </template>
           <template v-else>
-            Publisher authenticity and installation have not been verified.
+            The saved file matches the update metadata checksum.
+            <template v-if="snapshot.verification === 'signed-release'">
+              Installation has not started.
+            </template>
+            <template v-else>
+              Publisher authenticity and installation have not been verified.
+            </template>
           </template>
         </NAlert>
         <NAlert
@@ -382,7 +437,10 @@ function close() {
             Release notes were shortened for display.
           </p>
         </section>
-        <p v-if="snapshot.verification === 'signed-release'" class="updates-detail">
+        <p
+          v-if="snapshot.verification === 'signed-release' && !recoverySaveEligible"
+          class="updates-detail"
+        >
           <template v-if="snapshot.status === 'downloaded' && recoveryAllowsInstallation">
             Review installation availability and what must close before restarting.
           </template>
@@ -391,7 +449,9 @@ function close() {
           </template>
           <template v-else>Installation review is unavailable.</template>
         </p>
-        <p v-else class="updates-detail">Installation is not available in this build.</p>
+        <p v-else-if="snapshot.verification !== 'signed-release'" class="updates-detail">
+          Installation is not available in this build.
+        </p>
       </template>
       <NAlert
         v-else-if="!snapshot || snapshot.status === 'unavailable'"
@@ -426,8 +486,8 @@ function close() {
             </NButton>
           </template>
           <template v-else>
-            <NButton @click="close">Close</NButton>
-            <NButton :disabled="pending || activeDownload" @click="$emit('check')">
+            <NButton :disabled="closeBlocked" @click="close">Close</NButton>
+            <NButton :disabled="pending || activeDownload || closeBlocked" @click="$emit('check')">
               Check again
             </NButton>
             <NButton
@@ -441,10 +501,21 @@ function close() {
             <NButton
               v-if="canDownload"
               key="n-button-2"
-              :type="canReview ? 'default' : 'primary'"
+              :type="canReview || recoverySaveEligible ? 'default' : 'primary'"
               @click="download"
             >
               {{ downloadLabel }}
+            </NButton>
+            <NButton
+              v-if="recoverySaveEligible && !recoverySaved"
+              key="n-button-4"
+              aria-label="Save recovery AppImage"
+              :disabled="!canSaveRecovery"
+              :loading="recoverySavePending"
+              type="primary"
+              @click="saveRecovery"
+            >
+              Save recovery AppImage
             </NButton>
           </template>
         </div>

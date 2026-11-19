@@ -1,6 +1,6 @@
 # MVP acceptance backlog
 
-Updated through the [fresh-path AppImage recovery qualification](./phase-5-application-recovery-fresh-path-research.md).
+Updated through the [Updates recovery and next AppImage qualification](./phase-5-public-appimage-recovery-research.md).
 All eight public promise statuses remain **«Пока не обещать»**. Earlier roadmap
 entries record the state at their checkpoint.
 [Product scope](../specs/00-product-scope.md), [promise matrix](../product-promises.md),
@@ -95,25 +95,32 @@ entries record the state at their checkpoint.
    reopening with the new worker, Repair and post-activation refusal preserving
    the previous good slot. Report the actual app artifact, OS/ABI, device,
    driver/CUDA, disk, RAM and VRAM envelope.
+   The measured inputs imply a floor of 28,217,106,280 B on one filesystem
+   before the new slot and any Repair reserve. It includes the signed 20 GiB
+   assembly floor, the exact cached and extracted runtime and LaMa. After
+   disposal of the AppImage test payloads, the observed ext4 volume had
+   25,163,177,984 B available.
    [Packaged Setup controls](./phase-5-packaged-runtime-setup-research.md),
    [Runtime contract](../specs/07-python-runtime-management.md),
    [native engine](./phase-5-native-engine-qualification-research.md),
    [Setup progress](./phase-5-runtime-setup-progress-research.md).
-5. **Qualify interrupted application update and the next update.** Main owns the
+5. **Finish interrupted application update recovery.** Main owns the
    signed stage, close and relaunch barriers, and startup inspection. Real Linux
    process-death controls preserve A before replacement and B after activation,
    keep the stage, and refuse signed C before close. A separate B path can be
    updated to C in the controlled transaction. A test unleased writer can
    replace the target while a competing participating updater receives Busy.
-   Private signed publication now verifies complete AppImage bytes before
-   occupying a fresh pathname. The native recovery control shows that path
-   reports clear and reopens the same Project while the original stage is
-   preserved. Wire an explicit public recovery action with publisher trust
-   and qualify subsequent B→C through AppImage. Re-read Invoke before changing
-   owners. Legacy/unleased machines,
+   Updates now verifies and saves signed B to a fresh pathname through the
+   system Save dialog. The three-lifetime AppImage test cancels once, saves B,
+   reopens the same Project, uses ordinary Save on close and installs signed C.
+   C reopens the saved edit and reports the target verified and the runtime
+   unverified. The original stage is preserved. Production publisher trust,
+   post-upgrade runtime validation, legacy/unleased machines,
    the publication-before-final-journal window, in-place recovery and retirement
-   still require a supported ownership and qualification boundary. Keep manual
-   SQLite recovery separate. [Fresh-path recovery](./phase-5-application-recovery-fresh-path-research.md),
+   still require a supported ownership and qualification boundary. Re-read
+   Invoke before changing owners. Keep manual SQLite recovery separate.
+   [Updates recovery](./phase-5-public-appimage-recovery-research.md),
+   [Fresh-path recovery](./phase-5-application-recovery-fresh-path-research.md),
    [update interruption](./phase-5-application-update-interruption-research.md),
    [stage owner](../../src/main/application-updates/application-update-staging.ts),
    [startup authority](./phase-5-application-update-startup-authority-research.md),
@@ -130,6 +137,18 @@ entries record the state at their checkpoint.
    [release criteria](../specs/01-implementation-roadmap.md#фаза-5-первый-linuxnvidia-релиз),
    [model lifecycle](../features/model-manager.md#acceptance-criteria),
    [review protocol](./review-protocol.md).
+
+   The current CivitAI client, Model Service, noise policy and controlled
+   download and qualification fixtures passed 140 tests. The next packaged
+   check starts with version-specific Preview for NoobAI EPS model 833294,
+   version 1022833, file 928571 and Cyberfalafel V model 1147756, version
+   2679856, file 2566634. The live provider path requires a CivitAI token
+   in the isolated test profile. Current qualification pins exist for both
+   files. A read-only hash verified the exact 6,938,040,794 B V file in the
+   local catalog. The installed worker requires a fresh compatibility check
+   before reuse. The EPS file from the retired catalog needs reacquisition.
+   [Model Manager contract](../features/model-manager.md),
+   [exact fixture identities](../../scripts/noobai-noise-qualification.mjs).
 
 ## Scope and delivery gates
 

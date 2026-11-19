@@ -501,7 +501,8 @@ The service freezes the projection at startup and returns detached copies throug
 `getRecoveryStatus`. Reading it does not scan files, hash bytes, check the network,
 acquire admission or change update selection. Existing getStatus polling remains
 unchanged. The dialog requests recovery once on each open and discards late replies
-after dismissal/reopen/unmount. There is no Refresh or recovery mutation action.
+after dismissal/reopen/unmount. The separate recovery save action leaves this
+startup observation intact.
 
 A required warning is independent of unavailable/checking/downloaded feed states.
 It is labelled **At app startup**, describes preserved recovery data and available
@@ -533,8 +534,25 @@ pathname with an atomic no-replace link. A successful image is singly linked
 and executable. The old image, backup and recovery claim remain in place.
 A post-publication error preserves the destination for inspection. The
 qualification starts the two paths sequentially over one app-data root and
-reopens the same saved Project. A public recovery action and packaged B→C
-remain separate acceptance work.
+reopens the same saved Project. The next checkpoint exercises the public
+action and a packaged B→C under the same app-data root.
+
+### Explicit Save recovery AppImage
+
+[Public recovery save](../engineering/phase-5-public-appimage-recovery-research.md)
+uses the same Updates dialog. A retained startup state and a downloaded
+signed release expose **Save recovery AppImage** while in-place Install stays
+blocked. Main checks the exact artifact against bundled publisher trust
+before showing the system Save dialog, then checks it again after selection.
+The renderer supplies only the version and receives a path-free outcome.
+
+The action saves to a new AppImage path and keeps the current application
+open. Cancel returns to Updates. The occupied-path and uncertain-publication
+messages preserve the chosen filesystem state for the user's inspection.
+After success the user closes Studio normally and opens the AppImage they
+saved. An explicit Check or Download clears feedback from the previous
+selection. The original AppImage stage, app data and SQLite recovery remain
+under their existing owners.
 
 
 Qualification: 636 Main PASS/one existing platform SKIP, 358 full browser PASS before

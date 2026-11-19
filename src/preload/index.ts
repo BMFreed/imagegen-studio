@@ -36,6 +36,7 @@ import {
   type ApplicationUpdateInstallPreview,
   isApplicationUpdateInstallationRequest,
   isApplicationUpdateInstallPreview,
+  isApplicationUpdateRecoverySaveResult,
   isApplicationUpdateRecoverySnapshot,
   isApplicationUpdateSnapshot,
 } from '../shared/application-updates.js'
@@ -131,10 +132,22 @@ const applicationUpdateErrors: Readonly<Record<string, string>> = {
     'The application could not start installation. Review the update and try again.',
   APPLICATION_UPDATE_PREVIEW_FAILED:
     'The application could not review installation impact. Try again.',
+  APPLICATION_UPDATE_RECOVERY_DESTINATION_EXISTS:
+    'The recovery destination already exists. Choose a new AppImage path.',
+  APPLICATION_UPDATE_RECOVERY_PUBLICATION_UNCERTAIN:
+    'AppImage recovery publication could not be confirmed. Preserve all recovery files.',
   APPLICATION_UPDATE_RECOVERY_REQUIRED:
     'Application update recovery is required before installation. Your Projects remain open.',
+  APPLICATION_UPDATE_RECOVERY_SAVE_BUSY: 'A recovery AppImage save is already in progress.',
+  APPLICATION_UPDATE_RECOVERY_SAVE_FAILED:
+    'The recovery AppImage could not be saved. Choose a new AppImage path and try again.',
+  APPLICATION_UPDATE_RECOVERY_STALE: 'The recovery request changed. Open Updates and try again.',
   APPLICATION_UPDATE_RECOVERY_STATUS_FAILED:
     'The application could not read update recovery information. Reopen this dialog to try again.',
+  APPLICATION_UPDATE_RECOVERY_UNAVAILABLE:
+    'A verified recovery AppImage is unavailable. Download and verify an update, then try again.',
+  APPLICATION_UPDATE_RECOVERY_UNSAFE:
+    'A verified AppImage could not be published at the chosen recovery path.',
   IPC_INVALID_CALLER: 'Application update request was rejected.',
   IPC_INVALID_RESPONSE: 'The application returned an invalid update status.',
   IPC_UNAVAILABLE: 'The application could not reach the update service.',
@@ -1307,6 +1320,12 @@ const api: StudioApi = {
         [availableVersion],
         (value): value is ApplicationUpdateInstallPreview =>
           isApplicationUpdateInstallPreview(value) && value.availableVersion === availableVersion,
+      ),
+    saveRecovery: (availableVersion) =>
+      invokeApplicationUpdate(
+        ipcChannels.applicationUpdates.saveRecovery,
+        [availableVersion],
+        isApplicationUpdateRecoverySaveResult,
       ),
   },
   models: {

@@ -1,6 +1,7 @@
 import type {
   ApplicationUpdateInstallationRequest,
   ApplicationUpdateInstallPreview,
+  ApplicationUpdateRecoverySaveResult,
   ApplicationUpdateRecoverySnapshot,
   ApplicationUpdateSnapshot,
 } from './application-updates.js'
@@ -156,6 +157,7 @@ export const ipcChannels = {
     getStatus: 'application-updates:get-status',
     install: 'application-updates:install',
     reviewInstallation: 'application-updates:review-installation',
+    saveRecovery: 'application-updates:save-recovery',
   },
   models: {
     cancelInstall: 'models:cancel-install',
@@ -1065,6 +1067,9 @@ export interface ApplicationUpdatesApi {
   reviewInstallation: (
     availableVersion: string,
   ) => Promise<ApiResult<ApplicationUpdateInstallPreview>>
+  saveRecovery: (
+    availableVersion: string,
+  ) => Promise<ApiResult<ApplicationUpdateRecoverySaveResult>>
 }
 
 export interface StudioApi {
