@@ -39,6 +39,8 @@ const trainedFixture = process.env.IMAGEGEN_LINUX_PACKAGE_TRAINED_FIXTURE
 const runtimeSetupControl = process.env.IMAGEGEN_LINUX_PACKAGE_RUNTIME_SETUP_CONTROL
 const noobaiPreviewMode = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_PREVIEW
 const noobaiInstall = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_INSTALL
+const noobaiMatrix = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_MATRIX
+const noobaiCatalog = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_CATALOG
 const noobaiTokenFile = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_TOKEN_FILE
 const nativeMemoryGiB = trainedFixture ? 12 : 4
 const nativeDeadlineSeconds = trainedFixture
@@ -47,9 +49,11 @@ const nativeDeadlineSeconds = trainedFixture
     ? 360
     : noobaiInstall
       ? 900
-      : noobaiPreviewMode
-        ? 180
-        : 120
+      : noobaiMatrix
+        ? 360
+        : noobaiPreviewMode
+          ? 180
+          : 120
 const boundedExecute = (command, args, options) =>
   execute(
     command,
@@ -67,11 +71,17 @@ assert.ok(
   trainedFixture === undefined || (installedEngineReport && historicalFixture === undefined),
 )
 const updateCheckMode = process.env.IMAGEGEN_LINUX_PACKAGE_UPDATE_CHECK
-assert.ok(noobaiInstall === undefined || noobaiInstall === '1')
+assert.ok(noobaiInstall === undefined || ['1', 'v', 'v11'].includes(noobaiInstall))
+assert.ok(noobaiMatrix === undefined || noobaiMatrix === '1')
+assert.equal(
+  noobaiCatalog !== undefined,
+  Boolean(noobaiMatrix || ['v', 'v11'].includes(noobaiInstall)),
+)
 assert.ok(
   (noobaiPreviewMode === undefined || ['live', 'controlled'].includes(noobaiPreviewMode)) &&
     (!noobaiInstall || noobaiPreviewMode === undefined) &&
-    (!(noobaiPreviewMode || noobaiInstall) ||
+    (!noobaiMatrix || (!noobaiInstall && !noobaiPreviewMode)) &&
+    (!(noobaiPreviewMode || noobaiInstall || noobaiMatrix) ||
       (!trainedFixture &&
         !historicalFixture &&
         !installedEngineReport &&
@@ -133,6 +143,7 @@ if (suppliedRecoveryPublication !== undefined) {
       runtimeSetupControl,
       noobaiPreviewMode,
       noobaiInstall,
+      noobaiMatrix,
       updateCheckMode,
       updateReleaseFixturesPath,
       updateFeedPortText,
@@ -260,7 +271,21 @@ assert.equal(await realpath(appImage), appImage)
 assert.ok((await lstat(appImage)).isFile() && !(await lstat(appImage)).isSymbolicLink())
 
 const cwd = path.join(root, 'empty-cwd')
-const appData = engine?.dataRoot ?? path.join(root, 'data/imagegen-studio')
+if (noobaiCatalog) {
+  const directory = path.dirname(noobaiCatalog)
+  assert.equal(path.dirname(directory), path.join(ownedRunRoot, 'packaged-noobai-install'))
+  assert.match(path.basename(directory), /^\d{8}$/)
+  assert.equal(path.basename(noobaiCatalog), 'install')
+  assert.equal(await realpath(noobaiCatalog), noobaiCatalog)
+  assert.equal((await lstat(noobaiCatalog)).uid, process.getuid())
+  const predecessor = JSON.parse(await readFile(path.join(noobaiCatalog, 'report.json'), 'utf8'))
+  assert.equal(predecessor.outcome, 'PASS')
+  assert.equal(predecessor.noobaiInstallation.modelIdentity.fileId, 928571)
+  assert.equal(predecessor.noobaiInstallation.normalPhysicalExits, 2)
+  assert.deepEqual(predecessor.packageBefore, await identity(appImage))
+}
+const appData = engine?.dataRoot ?? path.join(noobaiCatalog ?? root, 'data/imagegen-studio')
+if (noobaiCatalog) assert.equal(await realpath(appData), appData)
 const profile = path.join(root, 'chrome-profile')
 for (const name of [
   cwd,
@@ -286,6 +311,7 @@ for (const key of [
   'ELECTRON_RUN_AS_NODE',
   'IMAGEGEN_LINUX_PACKAGE_RECOVERY_PUBLICATION',
   'IMAGEGEN_LINUX_PACKAGE_NOOBAI_TOKEN_FILE',
+  'IMAGEGEN_LINUX_PACKAGE_NOOBAI_CATALOG',
   'IMAGEGEN_DEV_SERVER_URL',
   'IMAGEGEN_TEST_IMAGE_WORKER',
   'NODE_OPTIONS',
@@ -396,6 +422,12 @@ if (noobaiPreviewMode)
   sourcePaths.push(path.join(repo, 'scripts/fixtures/packaged-noobai-preview-ui.mjs'))
 if (noobaiInstall)
   sourcePaths.push(path.join(repo, 'scripts/fixtures/packaged-noobai-install-ui.mjs'))
+if (noobaiMatrix) {
+  sourcePaths.push(
+    path.join(repo, 'scripts/fixtures/packaged-noobai-default-ui.mjs'),
+    path.join(repo, 'scripts/fixtures/packaged-noobai-portable-relink.mjs'),
+  )
+}
 const sourceBefore = await Promise.all(sourcePaths.map(identity))
 const recoveryPublication = await readRecoveryPublication()
 const packageBefore = recoveryPublication?.original.bytes ?? (await identity(appImage))
@@ -813,11 +845,11 @@ async function readNoobaiCredential() {
   }
 }
 
-async function runNoobaiInstallQualification() {
+async function verifyNoobaiStockPackage(output) {
   const run = path.dirname(root)
   assert.equal(path.dirname(run), path.join(ownedRunRoot, 'packaged-noobai-install'))
   assert.match(path.basename(run), /^\d{8}(?:-r[1-9]\d*)?$/)
-  assert.equal(path.basename(root), 'install')
+  assert.equal(path.basename(root), output)
   const proof = JSON.parse(await readFile(path.join(run, 'package-live.json'), 'utf8'))
   assert.equal(proof.mode, 'live')
   assert.equal(proof.entrypoint, 'dist/main/main.cjs')
@@ -828,9 +860,14 @@ async function runNoobaiInstallQualification() {
     assert.ok(file.startsWith('dist/') && path.normalize(file) === file)
     assert.equal((await identity(path.join(repo, file))).sha256, expected, file)
   }
+}
+
+async function runNoobaiInstallQualification() {
+  await verifyNoobaiStockPackage('install')
   const { runNoobaiInstall } = await import('./fixtures/packaged-noobai-install-ui.mjs')
   const liveToken = await readNoobaiCredential()
-  const state = await launch('noobai-eps-install')
+  const installProfile = noobaiInstall === '1' ? 'eps' : noobaiInstall
+  const state = await launch(`noobai-${installProfile}-install`)
   const result = await runNoobaiInstall({
     root,
     appData,
@@ -838,11 +875,45 @@ async function runNoobaiInstallQualification() {
     closeNormally,
     launch,
     liveToken,
+    profile: installProfile,
     downloadTimeoutMs: 780_000,
   })
   assert.equal(lifetimes.length, 2)
   assert.ok(lifetimes.every((instance) => instance.normalPhysicalExit && !instance.forcedCleanup))
   return result
+}
+
+async function runNoobaiMatrixQualification() {
+  await verifyNoobaiStockPackage('matrix')
+  const { runNoobaiDefault, verifyNoobaiDefaultReopen } =
+    await import('./fixtures/packaged-noobai-default-ui.mjs')
+  const { stageNoobaiPortableInput, runNoobaiPortableRelink, verifyNoobaiPortableReopen } =
+    await import('./fixtures/packaged-noobai-portable-relink.mjs')
+  const portableInput = await stageNoobaiPortableInput({ root, appData })
+  const defaults = await launch('noobai-default')
+  const selection = await runNoobaiDefault({ root, appData, state: defaults })
+  await writeJson('default-checkpoint.json', selection)
+  await closeNormally(defaults)
+  const portable = await launch('noobai-portable-relink')
+  const relink = await runNoobaiPortableRelink({ root, appData, state: portable, portableInput })
+  await writeJson('portable-relink-checkpoint.json', relink)
+  await closeNormally(portable)
+  const defaultsReopen = await launch('noobai-default-reopened')
+  const defaultReopened = await verifyNoobaiDefaultReopen({
+    appData,
+    state: defaultsReopen,
+    selection,
+  })
+  await closeNormally(defaultsReopen)
+  const portableReopen = await launch('noobai-portable-relink-reopened')
+  const relinkReopened = await verifyNoobaiPortableReopen({
+    appData,
+    state: portableReopen,
+    relink,
+  })
+  await closeNormally(portableReopen)
+  assert.ok(lifetimes.every((instance) => instance.normalPhysicalExit && !instance.forcedCleanup))
+  return { selection, relink, defaultReopened, relinkReopened }
 }
 
 async function runNoobaiPreviewQualification() {
@@ -1064,6 +1135,7 @@ try {
       releaseFixturesPath: updateReleaseFixturesPath,
     })
   }
+  const noobaiMatrixResult = noobaiMatrix ? await runNoobaiMatrixQualification() : undefined
   const {
     saved,
     restarted,
@@ -1072,61 +1144,65 @@ try {
     runtimeSetup,
     noobaiPreview,
     noobaiInstallation,
-  } = setupControl
-    ? await (async () => {
-        const state = await launch(runtimeSetupControl)
-        const result = await setupControl.run(state.page)
-        await closeNormally(state)
-        const leafDiagnostics = state.stderr
-          .split('\n')
-          .filter((line) => line.startsWith('IGS_SETUP_QUALIFICATION_FAILURE '))
-          .map((line) => JSON.parse(line.slice('IGS_SETUP_QUALIFICATION_FAILURE '.length)))
-        if (runtimeSetupControl === 'disk') {
-          assert.ok(leafDiagnostics.some(({ code }) => code === 'RUNTIME_ASSEMBLY_DISK_SPACE'))
-        }
-        if (runtimeSetupControl === 'incompatible') {
-          assert.ok(leafDiagnostics.some(({ code }) => code === 'RUNTIME_HOST_DRIVER_UNSUPPORTED'))
-        }
-        if (runtimeSetupControl === 'corrupt') {
-          assert.ok(leafDiagnostics.some(({ code }) => code === 'DOWNLOAD_HASH_MISMATCH'))
-        }
-        assert.ok(
-          state.memoryBeforeClose.every(
-            ({ events }) => /^oom 0$/m.test(events) && /^oom_kill 0$/m.test(events),
-          ),
-        )
-        return { runtimeSetup: { ...result, leafDiagnostics } }
-      })()
-    : history
-      ? await historical.runHistoricalUpgrade({
-          history,
-          launch,
-          readPorts,
-          closeNormally,
-          retainOwnStore,
-          root,
-          migrationHash: sourceBefore.find(({ path: file }) => file === migrationFile).sha256,
-          iccHash: sourceBefore.find(({ path: file }) => file === srgbProfile).sha256,
-          identity,
-          records,
-        })
-      : trained
-        ? await trainedProfile.runTrainedGeneration({
-            trained,
+  } = noobaiMatrix
+    ? {}
+    : setupControl
+      ? await (async () => {
+          const state = await launch(runtimeSetupControl)
+          const result = await setupControl.run(state.page)
+          await closeNormally(state)
+          const leafDiagnostics = state.stderr
+            .split('\n')
+            .filter((line) => line.startsWith('IGS_SETUP_QUALIFICATION_FAILURE '))
+            .map((line) => JSON.parse(line.slice('IGS_SETUP_QUALIFICATION_FAILURE '.length)))
+          if (runtimeSetupControl === 'disk') {
+            assert.ok(leafDiagnostics.some(({ code }) => code === 'RUNTIME_ASSEMBLY_DISK_SPACE'))
+          }
+          if (runtimeSetupControl === 'incompatible') {
+            assert.ok(
+              leafDiagnostics.some(({ code }) => code === 'RUNTIME_HOST_DRIVER_UNSUPPORTED'),
+            )
+          }
+          if (runtimeSetupControl === 'corrupt') {
+            assert.ok(leafDiagnostics.some(({ code }) => code === 'DOWNLOAD_HASH_MISMATCH'))
+          }
+          assert.ok(
+            state.memoryBeforeClose.every(
+              ({ events }) => /^oom 0$/m.test(events) && /^oom_kill 0$/m.test(events),
+            ),
+          )
+          return { runtimeSetup: { ...result, leafDiagnostics } }
+        })()
+      : history
+        ? await historical.runHistoricalUpgrade({
+            history,
             launch,
             readPorts,
             closeNormally,
             retainOwnStore,
             root,
+            migrationHash: sourceBefore.find(({ path: file }) => file === migrationFile).sha256,
+            iccHash: sourceBefore.find(({ path: file }) => file === srgbProfile).sha256,
             identity,
             records,
-            observeGpuWorker,
           })
-        : noobaiPreviewMode
-          ? { noobaiPreview: await runNoobaiPreviewQualification() }
-          : noobaiInstall
-            ? { noobaiInstallation: await runNoobaiInstallQualification() }
-            : await runFreshProfile()
+        : trained
+          ? await trainedProfile.runTrainedGeneration({
+              trained,
+              launch,
+              readPorts,
+              closeNormally,
+              retainOwnStore,
+              root,
+              identity,
+              records,
+              observeGpuWorker,
+            })
+          : noobaiPreviewMode
+            ? { noobaiPreview: await runNoobaiPreviewQualification() }
+            : noobaiInstall
+              ? { noobaiInstallation: await runNoobaiInstallQualification() }
+              : await runFreshProfile()
   assert.deepEqual(await identity(appImage), packageBefore)
   if (recoveryPublication) {
     for (const [expected, executable] of [
@@ -1182,21 +1258,23 @@ try {
   await writeJson('report.json', {
     schemaVersion: 1,
     outcome: 'PASS',
-    scope: noobaiInstallation
-      ? 'Actual stock AppImage downloads, publishes and reopens the exact CivitAI NoobAI EPS checkpoint through Model Manager.'
-      : recoveryPublication
-        ? 'Actual fused AppImages at the original retained path and at the independently published recovery path reopen the same Project after normal physical exit.'
-        : noobaiPreview
-          ? 'Actual fused AppImage through public CivitAI Preview, exact file choice and Cancel with real ModelService and SQLite.'
-          : runtimeSetupControl
-            ? 'Actual fused qualification AppImage through reviewed Setup with existing runtime owners and isolated loopback transfer.'
-            : trainedGeneration
-              ? 'Actual fused AppImage executes one trained installed-worker generation through public Generate, Add, Save and reopen.'
-              : historicalUpgrade
-                ? 'Actual fused AppImage upgrades an owned historical DB, renders a nonempty Project preview with the installed CPU worker and reopens the saved Project.'
-                : engine
-                  ? 'Actual fused Linux AppImage with exact installed runtime, real Main status qualification and Project create/restart/persistence.'
-                  : 'Actual fused Linux AppImage outside checkout, real packaged Main/preload/SQLite/migrations/own Project create/restart/persistence. No source worker or service mocks.',
+    scope: noobaiMatrixResult
+      ? 'Actual stock AppImage switches Default and links the exact portable checkpoint without altering accepted provenance.'
+      : noobaiInstallation
+        ? 'Actual stock AppImage downloads, publishes and reopens the exact CivitAI NoobAI checkpoint through Model Manager.'
+        : recoveryPublication
+          ? 'Actual fused AppImages at the original retained path and at the independently published recovery path reopen the same Project after normal physical exit.'
+          : noobaiPreview
+            ? 'Actual fused AppImage through public CivitAI Preview, exact file choice and Cancel with real ModelService and SQLite.'
+            : runtimeSetupControl
+              ? 'Actual fused qualification AppImage through reviewed Setup with existing runtime owners and isolated loopback transfer.'
+              : trainedGeneration
+                ? 'Actual fused AppImage executes one trained installed-worker generation through public Generate, Add, Save and reopen.'
+                : historicalUpgrade
+                  ? 'Actual fused AppImage upgrades an owned historical DB, renders a nonempty Project preview with the installed CPU worker and reopens the saved Project.'
+                  : engine
+                    ? 'Actual fused Linux AppImage with exact installed runtime, real Main status qualification and Project create/restart/persistence.'
+                    : 'Actual fused Linux AppImage outside checkout, real packaged Main/preload/SQLite/migrations/own Project create/restart/persistence. No source worker or service mocks.',
     mode: 'APPIMAGE_EXTRACT_AND_RUN=1; X11; Chromium CDP loopback. FUSE installation and Main Node inspector are not used.',
     packageBefore,
     packageAfter: await identity(appImage),
@@ -1212,6 +1290,7 @@ try {
     ...(runtimeSetupControl ? { runtimeSetupControl, runtimeSetup } : {}),
     ...(noobaiPreview ? { noobaiPreviewMode, noobaiPreview } : {}),
     ...(noobaiInstallation ? { noobaiInstallation } : {}),
+    ...(noobaiMatrixResult ? { noobaiMatrix: noobaiMatrixResult } : {}),
     ...(recoveryPublication ? { recoveryPublication } : {}),
     stores: { saved, restarted },
     lifetimes: lifetimes.map(
@@ -1232,7 +1311,7 @@ try {
             unchangedInputs: engine.inputs,
           },
         }
-      : runtimeSetupControl || noobaiPreview || noobaiInstallation
+      : runtimeSetupControl || noobaiPreview || noobaiInstallation || noobaiMatrixResult
         ? {}
         : { defaultProviderUnavailable: true }),
     nativeInferenceQualified: Boolean(trainedGeneration),
@@ -1336,19 +1415,21 @@ try {
 }
 if (failed) throw failed
 console.log(
-  noobaiInstall
-    ? 'PASS live NoobAI EPS managed installation, credential-free catalog reopen and two normal physical closes'
-    : recoveryPublication
-      ? 'PASS retained original and freshly published AppImage share Project persistence and two normal physical closes'
-      : noobaiPreviewMode
-        ? `PASS packaged NoobAI ${noobaiPreviewMode} Preview and Cancel with normal physical close`
-        : runtimeSetupControl
-          ? `PASS packaged reviewed runtime Setup ${runtimeSetupControl} control and normal physical close`
-          : trained
-            ? 'PASS trained generation, explicit Add and Save/reopen, and two normal physical closes'
-            : history
-              ? 'PASS historical database upgrade, exact backup, installed CPU preview, and two normal physical closes'
-              : engine
-                ? 'PASS installed runtime readiness, packaged Project reopen and two normal physical closes'
-                : 'PASS actual fused AppImage Home/IPC/SQLite/Project persistence, unavailable Setup and two normal physical closes',
+  noobaiMatrix
+    ? 'PASS packaged NoobAI Default and exact portable relink with four normal physical closes'
+    : noobaiInstall
+      ? 'PASS live NoobAI managed installation, credential-free catalog reopen and two normal physical closes'
+      : recoveryPublication
+        ? 'PASS retained original and freshly published AppImage share Project persistence and two normal physical closes'
+        : noobaiPreviewMode
+          ? `PASS packaged NoobAI ${noobaiPreviewMode} Preview and Cancel with normal physical close`
+          : runtimeSetupControl
+            ? `PASS packaged reviewed runtime Setup ${runtimeSetupControl} control and normal physical close`
+            : trained
+              ? 'PASS trained generation, explicit Add and Save/reopen, and two normal physical closes'
+              : history
+                ? 'PASS historical database upgrade, exact backup, installed CPU preview, and two normal physical closes'
+                : engine
+                  ? 'PASS installed runtime readiness, packaged Project reopen and two normal physical closes'
+                  : 'PASS actual fused AppImage Home/IPC/SQLite/Project persistence, unavailable Setup and two normal physical closes',
 )

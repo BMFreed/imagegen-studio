@@ -1,6 +1,6 @@
 # MVP acceptance backlog
 
-Updated through the [managed NoobAI EPS qualification](./phase-5-packaged-noobai-install-research.md).
+Updated through the [managed NoobAI versions qualification](./phase-5-packaged-noobai-versions-research.md).
 All eight public promise statuses remain **«Пока не обещать»**. Earlier roadmap
 entries record the state at their checkpoint.
 [Product scope](../specs/00-product-scope.md), [promise matrix](../product-promises.md),
@@ -97,9 +97,9 @@ entries record the state at their checkpoint.
    driver/CUDA, disk, RAM and VRAM envelope.
    The measured inputs imply a floor of 28,217,106,280 B on one filesystem
    before the new slot and any Repair reserve. It includes the signed 20 GiB
-   assembly floor, the exact cached and extracted runtime and LaMa. After
-   disposal of the EPS scratch and staged profile, the observed ext4 volume
-   had 18,005,712,896 B available.
+   assembly floor, the exact cached and extracted runtime and LaMa. The
+   current ext4 volume has about 4 GB free with the retained NoobAI catalog
+   and runtime. A Repair run also needs to keep the previous good slot.
    [Packaged Setup controls](./phase-5-packaged-runtime-setup-research.md),
    [Runtime contract](../specs/07-python-runtime-management.md),
    [native engine](./phase-5-native-engine-qualification-research.md),
@@ -126,11 +126,10 @@ entries record the state at their checkpoint.
    [startup authority](./phase-5-application-update-startup-authority-research.md),
    [application updates](../features/application-updates.md#acceptance-criteria).
 6. **Run the NoobAI and joint release matrix.** Through the packaged UI, exercise
-   actual CivitAI URL preview and download for exact EPS and V checkpoints, their
-   Model Manager policies and compatible LoRA, embedding and VAE resources. Cover
-   exact side-by-side versions, explicit Default, portable `.igs` exact-resource
-   relink, legacy queue/provenance and an incompatible worker refusal on clean install
-   and upgrade. Verify Generate, Cancel, frozen Retry, explicit Add/Undo/Redo/Save,
+   compatible NoobAI LoRA, embedding and VAE resources and the remaining Model
+   Manager policies. Cover the portable chooser route, legacy queue and
+   provenance, and an incompatible worker refusal on clean install and upgrade.
+   Verify Generate, Cancel, frozen Retry, explicit Add/Undo/Redo/Save,
    immutable Compare and result-derived presets. Check joint Home/Trash, resource
    removal and export behavior, interrupted recovery, keyboard/focus/contrast and
    performance at supported desktop sizes on the final candidate. [NoobAI matrix](../specs/01-implementation-roadmap.md#noobai-полная-поддержка-в-рамках-mvp),
@@ -148,6 +147,13 @@ entries record the state at their checkpoint.
    AppImage now also completed live download, exact publication and
    credential-free catalog reopen for EPS. Those installed bytes passed
    one 256×256 Generate, Add, Save and reopen at the Epsilon default.
+
+   The stock AppImage installed exact Cyberfalafel V 1.2 and 1.1 beside
+   EPS. Default changed to 1.1 only on explicit selection and persisted
+   across restart. A portable `.igs` discovered by its managed workspace
+   opened from Home and linked exact V 1.2 while 1.1 remained Default.
+   Save and reopen preserved the accepted raster and provenance. [Managed
+   NoobAI versions](./phase-5-packaged-noobai-versions-research.md)
    Continue with managed V installation, side-by-side Default and exact
    portable relink.
    [Managed EPS qualification](./phase-5-packaged-noobai-install-research.md),
