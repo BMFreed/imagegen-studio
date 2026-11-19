@@ -39,6 +39,7 @@ const trainedFixture = process.env.IMAGEGEN_LINUX_PACKAGE_TRAINED_FIXTURE
 const runtimeSetupControl = process.env.IMAGEGEN_LINUX_PACKAGE_RUNTIME_SETUP_CONTROL
 const noobaiPreviewMode = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_PREVIEW
 const noobaiInstall = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_INSTALL
+const noobaiComponentInstall = noobaiInstall === 'lora' || noobaiInstall === 'embedding'
 const noobaiMatrix = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_MATRIX
 const noobaiCatalog = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_CATALOG
 const noobaiTokenFile = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_TOKEN_FILE
@@ -48,7 +49,9 @@ const nativeDeadlineSeconds = trainedFixture
   : runtimeSetupControl
     ? 360
     : noobaiInstall
-      ? 900
+      ? noobaiComponentInstall
+        ? 180
+        : 900
       : noobaiMatrix
         ? 360
         : noobaiPreviewMode
@@ -71,7 +74,9 @@ assert.ok(
   trainedFixture === undefined || (installedEngineReport && historicalFixture === undefined),
 )
 const updateCheckMode = process.env.IMAGEGEN_LINUX_PACKAGE_UPDATE_CHECK
-assert.ok(noobaiInstall === undefined || ['1', 'v', 'v11'].includes(noobaiInstall))
+assert.ok(
+  noobaiInstall === undefined || ['1', 'v', 'v11', 'lora', 'embedding'].includes(noobaiInstall),
+)
 assert.ok(noobaiMatrix === undefined || noobaiMatrix === '1')
 assert.equal(
   noobaiCatalog !== undefined,
@@ -882,7 +887,7 @@ async function runNoobaiInstallQualification() {
     launch,
     liveToken,
     profile: installProfile,
-    downloadTimeoutMs: 780_000,
+    downloadTimeoutMs: noobaiComponentInstall ? 120_000 : 780_000,
   })
   assert.equal(lifetimes.length, 2)
   assert.ok(lifetimes.every((instance) => instance.normalPhysicalExit && !instance.forcedCleanup))
@@ -1279,7 +1284,7 @@ try {
     scope: noobaiMatrixResult
       ? 'Actual stock AppImage switches Default and links the exact portable checkpoint without altering accepted provenance.'
       : noobaiInstallation
-        ? 'Actual stock AppImage downloads, publishes and reopens the exact CivitAI NoobAI checkpoint through Model Manager.'
+        ? 'Actual stock AppImage downloads, publishes and reopens the exact reviewed CivitAI resource through Model Manager.'
         : recoveryPublication
           ? 'Actual fused AppImages at the original retained path and at the independently published recovery path reopen the same Project after normal physical exit.'
           : noobaiPreview

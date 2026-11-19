@@ -1,6 +1,6 @@
 # MVP acceptance backlog
 
-Updated through the [managed NoobAI versions qualification](./phase-5-packaged-noobai-versions-research.md).
+Updated through the [NoobAI-compatible component installs](./phase-5-packaged-noobai-components-research.md).
 All eight public promise statuses remain **«Пока не обещать»**. Earlier roadmap
 entries record the state at their checkpoint.
 [Product scope](../specs/00-product-scope.md), [promise matrix](../product-promises.md),
@@ -131,9 +131,9 @@ entries record the state at their checkpoint.
    [stage owner](../../src/main/application-updates/application-update-staging.ts),
    [startup authority](./phase-5-application-update-startup-authority-research.md),
    [application updates](../features/application-updates.md#acceptance-criteria).
-6. **Run the NoobAI and joint release matrix.** Through the packaged UI, exercise
-   compatible NoobAI LoRA, embedding and VAE resources and the remaining Model
-   Manager policies. Cover the portable chooser route, legacy queue and
+6. **Run the NoobAI and joint release matrix.** Select and qualify a released
+   compatible standalone VAE through the packaged UI. Cover the remaining Model
+   Manager policies, portable chooser routes, legacy queue and
    provenance, and an incompatible worker refusal on clean install and upgrade.
    Verify Generate, Cancel, frozen Retry, explicit Add/Undo/Redo/Save,
    immutable Compare and result-derived presets. Check joint Home/Trash, resource
@@ -160,8 +160,14 @@ entries record the state at their checkpoint.
    opened from Home and linked exact V 1.2 while 1.1 remained Default.
    Save and reopen preserved the accepted raster and provenance. [Managed
    NoobAI versions](./phase-5-packaged-noobai-versions-research.md)
-   Continue with managed V installation, side-by-side Default and exact
-   portable relink.
+
+   The stock AppImage also completed live download of the exact DigitalArt
+   LoRA and IllustriousPhoto embedding in separate fresh profiles. Each file's
+   published hash, source metadata, completed job and ready catalog entry
+   persisted through restart after credential removal. Their prior installed
+   inference cases exercised NoobAI checkpoints. The final packaged release
+   matrix still needs to exercise generation with the managed components.
+   [Live component installation](./phase-5-packaged-noobai-components-research.md),
    [Managed EPS qualification](./phase-5-packaged-noobai-install-research.md),
    [Packaged qualification](./phase-5-packaged-noobai-preview-research.md),
    [Model Manager contract](../features/model-manager.md),

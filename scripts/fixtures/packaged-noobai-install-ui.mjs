@@ -31,13 +31,36 @@ const profiles = {
     sha256: 'e3af301ae8c62073a7d28426c2e748b6953d7d6f0ad9a7b42a88f867e8b17337',
     sizeBytes: 6_938_040_794,
   },
+  lora: {
+    modelId: 1121001,
+    versionId: 1260279,
+    fileId: 1165414,
+    sha256: 'c2bd847fb3859cc8ce16af6ecce291c96b36ca486999e620af9b886367ee6ee9',
+    sizeBytes: 114_437_420,
+    resourceType: 'lora',
+    author: 'obuyb404',
+    sizeLabel: '109.1 MB',
+  },
+  embedding: {
+    modelId: 2360940,
+    versionId: 2655289,
+    fileId: 2542976,
+    sha256: '91a95b244b8ba01d905d32ced7e3cc20eb74b4da8f519de3764505500d386c36',
+    sizeBytes: 49_736,
+    resourceType: 'embedding',
+    author: 'CautionMergeAhead',
+    sizeLabel: '48.6 KB',
+    fileName: 'illustriousphoto.safetensors',
+    activationToken: '<illustriousphoto>',
+  },
 }
 const predecessors = {
   eps: [],
   v: [profiles.eps],
   v11: [profiles.eps, profiles.v],
+  lora: [],
+  embedding: [],
 }
-const expectedSizeLabel = '6.5 GB'
 const active = new Set(['waiting', 'downloading', 'verifying'])
 
 function safeCode(value) {
@@ -214,20 +237,24 @@ async function reviewExactFile(page, manager, providerPage, identity) {
   assert.equal(preview.kind, 'select-file')
   assert.equal(preview.modelId, identity.modelId)
   assert.equal(preview.versionId, identity.versionId)
-  assert.equal(preview.baseModel, 'NoobAI')
+  const sourceBaseModel = identity.resourceType ? 'Illustrious' : 'NoobAI'
+  assert.equal(preview.baseModel, sourceBaseModel)
   assert.equal(preview.baseModelFamily, 'illustrious')
-  assert.equal(preview.resourceType, 'checkpoint')
+  assert.equal(preview.resourceType, identity.resourceType ?? 'checkpoint')
+  if (identity.resourceType) assert.equal(preview.author, identity.author)
   assert.deepEqual(preview.dependencies, [])
   const file = preview.files.find(({ fileId }) => fileId === identity.fileId)
-  assert.ok(file, 'The exact checkpoint file is absent from the live CivitAI version.')
+  assert.ok(file, 'The exact file is absent from the live CivitAI version.')
   assert.equal(file.sha256, identity.sha256)
   assert.equal(file.sizeEstimateBytes, identity.sizeBytes)
   assert.equal(file.alreadyInstalled, false)
   assert.equal(file.reusesInstalledFile, false)
   assert.equal(file.needsRepair, false)
   assert.ok(file.name.toLowerCase().endsWith('.safetensors'))
+  if (identity.fileName) assert.equal(file.name, identity.fileName)
 
-  const label = `${file.name} · ${expectedSizeLabel}`
+  const sizeLabel = identity.sizeLabel ?? '6.5 GB'
+  const label = `${file.name} · ${sizeLabel}`
   const fileChoice = dialog.locator('.file-choice')
   await fileChoice.locator('.n-base-selection').click()
   await page
@@ -236,7 +263,7 @@ async function reviewExactFile(page, manager, providerPage, identity) {
     .click()
   await expect(fileChoice.getByText(label, { exact: true })).toBeVisible()
   await expect(
-    dialog.getByText(`Estimated additional download: ${expectedSizeLabel}`, {
+    dialog.getByText(`Estimated additional download: ${sizeLabel}`, {
       exact: true,
     }),
   ).toBeVisible()
@@ -252,6 +279,7 @@ async function reviewExactFile(page, manager, providerPage, identity) {
     fileName: file.name,
     modelName: preview.modelName,
     versionName: preview.versionName,
+    ...(identity.resourceType && { sourceBaseModel, trainedWords: preview.trainedWords }),
   }
 }
 
@@ -367,7 +395,7 @@ function assertSqliteInstall(sql, appData, identity, jobId, sibling) {
     `${identity.sha256}.safetensors`,
   )
   const row = sql.catalog.find((candidate) => isExactSource(candidate, identity))
-  assert.ok(row, 'The exact checkpoint must have a durable catalog row.')
+  assert.ok(row, 'The exact file must have a durable catalog row.')
   const { resourceId, localVersionId, ...published } = row
   if (sibling) {
     assert.equal(resourceId, sibling.resourceId)
@@ -376,7 +404,7 @@ function assertSqliteInstall(sql, appData, identity, jobId, sibling) {
   assert.deepEqual(published, {
     sourceKind: 'civitai',
     modelId: identity.modelId,
-    type: 'checkpoint',
+    type: identity.resourceType ?? 'checkpoint',
     defaultVersionId: sibling?.defaultVersionId ?? localVersionId,
     versionId: identity.versionId,
     fileId: identity.fileId,
@@ -437,22 +465,64 @@ async function assertCompletedSql(appData, identity, jobId, baseline) {
   )
   const row = assertSqliteInstall(sql, appData, identity, jobId, sibling)
   assert.deepEqual(await readdir(path.join(appData, 'models/.staging')), [])
-  return { sql, row, managedPath: row.managedPath }
+  const component = identity.resourceType ? inspectPublishedComponent(appData, row, identity) : null
+  return { sql, row, component, managedPath: row.managedPath }
+}
+
+function inspectPublishedComponent(appData, row, identity) {
+  const db = new Database(path.join(appData, 'database/app.sqlite'), {
+    fileMustExist: true,
+    readonly: true,
+  })
+  try {
+    const stored = db
+      .prepare(
+        `SELECT r.creator AS author, r.display_name AS modelName, v.version_name AS versionName,
+          v.prediction_type AS predictionType, v.source_metadata_json AS sourceMetadata,
+          f.original_filename AS fileName
+        FROM model_resource r
+        JOIN model_resource_version v ON v.model_resource_id = r.id
+        JOIN local_model_file f ON f.resource_version_id = v.id
+        WHERE r.id = ? AND v.id = ?`,
+      )
+      .get(row.resourceId, row.localVersionId)
+    assert.ok(stored, 'The installed component metadata must have a durable row.')
+    assert.equal(stored.author, identity.author)
+    assert.equal(stored.predictionType, null)
+    const { baseModel, trainedWords } = JSON.parse(stored.sourceMetadata)
+    assert.equal(baseModel, 'Illustrious')
+    assert.ok(Array.isArray(trainedWords) && trainedWords.every((word) => typeof word === 'string'))
+    const { author, fileName, modelName, versionName } = stored
+    const activationToken = identity.activationToken
+      ? `<${path.basename(fileName, '.safetensors')}>`
+      : undefined
+    return {
+      author,
+      baseModel,
+      fileName,
+      modelName,
+      trainedWords,
+      versionName,
+      ...(activationToken && { activationToken }),
+    }
+  } finally {
+    db.close()
+  }
 }
 
 function installedCatalogVersion(catalog, sql, row, identity, reviewed) {
   const resource = catalog.find(({ modelId }) => modelId === identity.modelId)
-  assert.ok(resource, 'The installed checkpoint must be present in the catalog.')
+  assert.ok(resource, 'The installed resource must be present in the catalog.')
   assert.equal(resource.id, row.resourceId)
   assert.equal(resource.modelId, identity.modelId)
-  assert.equal(resource.resourceType, 'checkpoint')
+  assert.equal(resource.resourceType, identity.resourceType ?? 'checkpoint')
   assert.equal(resource.defaultVersionId, row.defaultVersionId)
   assert.equal(
     resource.versions.length,
     sql.catalog.filter(({ resourceId }) => resourceId === row.resourceId).length,
   )
   const version = resource.versions.find(({ id }) => id === row.localVersionId)
-  assert.ok(version, 'The exact checkpoint version must be present in the catalog.')
+  assert.ok(version, 'The exact installed version must be present in the catalog.')
   assert.equal(version.civitaiVersionId, identity.versionId)
   assert.equal(version.civitaiFileId, identity.fileId)
   assert.equal(version.baseModelFamily, 'illustrious')
@@ -460,9 +530,19 @@ function installedCatalogVersion(catalog, sql, row, identity, reviewed) {
   assert.equal(version.fileSizeBytes, identity.sizeBytes)
   assert.equal(version.sha256, identity.sha256)
   assert.equal(version.fileStatus, 'ready')
-  assert.equal(version.predictionType, 'epsilon')
-  assert.equal(version.predictionTypeSource, 'default')
+  assert.equal(version.predictionType, identity.resourceType ? null : 'epsilon')
+  assert.equal(version.predictionTypeSource, identity.resourceType ? 'not-applicable' : 'default')
   assert.deepEqual(version.dependencyIssues, [])
+  if (identity.resourceType) {
+    assert.equal(resource.author, identity.author)
+    assert.equal(resource.sourceUrl, `https://civitai.com/models/${identity.modelId}`)
+    assert.equal(resource.name, reviewed.modelName)
+    assert.equal(version.name, reviewed.versionName)
+    assert.equal(version.noiseProfile, undefined)
+    assert.equal(version.anima, undefined)
+    assert.deepEqual(resource.trainedWords, reviewed.trainedWords)
+    assert.deepEqual(version.trainedWords, reviewed.trainedWords)
+  }
   return {
     resourceId: resource.id,
     localVersionId: version.id,
@@ -485,7 +565,7 @@ function assertCatalogNeighbors(catalog, sql, baseline) {
 }
 
 function assertCompletedJob(job, identity, jobId, reviewed) {
-  assert.ok(job, 'The completed checkpoint job must be visible.')
+  assert.ok(job, 'The completed install job must be visible.')
   if (reviewed) assert.ok(jobMatches(job, reviewed))
   assert.equal(job.id, jobId)
   assert.equal(job.status, 'completed')
@@ -500,7 +580,18 @@ async function assertStorageSummary(page, sql) {
 }
 
 async function assertInstalledCatalog(page, installed, identity, reviewed, jobId, baseline) {
-  const { sql, row } = installed
+  const { sql, row, component } = installed
+  if (identity.resourceType) {
+    assert.deepEqual(component, {
+      author: identity.author,
+      baseModel: reviewed.sourceBaseModel,
+      fileName: reviewed.fileName,
+      modelName: reviewed.modelName,
+      trainedWords: reviewed.trainedWords,
+      versionName: reviewed.versionName,
+      ...(identity.activationToken && { activationToken: identity.activationToken }),
+    })
+  }
   const catalog = await modelApi(page, 'getCatalog')
   assert.equal(catalog.length, sql.resourceCount)
   const version = installedCatalogVersion(catalog, sql, row, identity, reviewed)
@@ -622,8 +713,8 @@ export async function runNoobaiInstall({
   await closeNormally(state)
   assert.equal(state.normalPhysicalExit, true)
   assert.deepEqual(
-    (await assertCompletedSql(appData, identity, installation.id, baseline.sql)).sql,
-    installed.sql,
+    await assertCompletedSql(appData, identity, installation.id, baseline.sql),
+    installed,
   )
 
   const reopened = await launch(`noobai-${profile}-reopened`)
@@ -631,7 +722,7 @@ export async function runNoobaiInstall({
   await assert.rejects(lstat(tokenPath), { code: 'ENOENT' })
   const reopenedCatalog = await assertInstalledCatalog(
     reopened.page,
-    installed,
+    await assertCompletedSql(appData, identity, installation.id, baseline.sql),
     identity,
     reviewed,
     installation.id,
@@ -651,8 +742,8 @@ export async function runNoobaiInstall({
   await closeNormally(reopened)
   assert.equal(reopened.normalPhysicalExit, true)
   assert.deepEqual(
-    (await assertCompletedSql(appData, identity, installation.id, baseline.sql)).sql,
-    installed.sql,
+    await assertCompletedSql(appData, identity, installation.id, baseline.sql),
+    installed,
   )
   await assertUnchangedFile(published)
   for (const checkpoint of baseline.checkpoints) await assertUnchangedFile(checkpoint.published)
@@ -670,6 +761,7 @@ export async function runNoobaiInstall({
     ...(existingEps && { existingEps }),
     ...(existingV && { existingV }),
     catalog,
+    ...(installed.component && { component: installed.component }),
     sqlite: installed.sql,
     tokenRemoved: true,
     credentiallessCatalogReopen: true,

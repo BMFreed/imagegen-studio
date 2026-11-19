@@ -2,6 +2,13 @@
 
 ## Current NoobAI packaged qualification
 
+[NoobAI-compatible component installs](./phase-5-packaged-noobai-components-research.md)
+records live CivitAI downloads of the exact DigitalArt LoRA and
+IllustriousPhoto embedding through the stock AppImage. Each file and
+its metadata survived a credential-free catalog restart. The
+[previous inference matrix](./phase-2c-noobai-component-inference-research.md)
+covers those bytes with NoobAI checkpoints.
+
 [Managed NoobAI versions](./phase-5-packaged-noobai-versions-research.md)
 records stock AppImage installs of exact Cyberfalafel 1.2 and 1.1 beside
 EPS. Explicit Default persists for new selections. A portable Project
