@@ -46,7 +46,7 @@ assert.ok(family === undefined || family === 'illustrious' || family === 'anima'
 assert.equal(sourcesPath === undefined, family === undefined)
 assert.ok(
   profile === undefined ||
-    (family === 'illustrious' && (profile === 'noobai-eps' || profile === 'noobai-v')),
+    (family === 'illustrious' && ['noobai-eps', 'noobai-eps-vae', 'noobai-v'].includes(profile)),
 )
 assert.equal(packageProofPath === undefined, profile === undefined)
 const preserved = new Set(['inference-resources', 'runtime'])

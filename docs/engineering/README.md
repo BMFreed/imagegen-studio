@@ -7,7 +7,10 @@ records live CivitAI downloads of the exact DigitalArt LoRA and
 IllustriousPhoto embedding through the stock AppImage. A
 [standalone VAE follow-up](./phase-5-packaged-noobai-components-research.md#published-standalone-vae)
 installs Euge_'s published VAE and verifies that the selected same-byte
-file ID persists and passes Main preparation. These files and their
+file ID persists and passes Main preparation. A
+[packaged CUDA run](./phase-5-packaged-noobai-components-research.md#cuda-generation-with-the-installed-vae)
+uses that installation with NoobAI EPS and retains the exact VAE in
+accepted provenance through Save and reopen. These files and their
 metadata survived credential-free catalog restarts. The
 [previous inference matrix](./phase-2c-noobai-component-inference-research.md)
 covers the LoRA and embedding bytes with NoobAI checkpoints.

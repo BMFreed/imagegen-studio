@@ -1,6 +1,6 @@
 # MVP acceptance backlog
 
-Updated through the [published standalone VAE](./phase-5-packaged-noobai-components-research.md#published-standalone-vae).
+Updated through [packaged CUDA generation with the installed VAE](./phase-5-packaged-noobai-components-research.md#cuda-generation-with-the-installed-vae).
 All eight public promise statuses remain **«Пока не обещать»**. Earlier roadmap
 entries record the state at their checkpoint.
 [Product scope](../specs/00-product-scope.md), [promise matrix](../product-promises.md),
@@ -131,9 +131,9 @@ entries record the state at their checkpoint.
    [stage owner](../../src/main/application-updates/application-update-staging.ts),
    [startup authority](./phase-5-application-update-startup-authority-research.md),
    [application updates](../features/application-updates.md#acceptance-criteria).
-6. **Run the NoobAI and joint release matrix.** Exercise the installed
-   standalone VAE with the live CUDA worker alongside the other managed
-   components. Cover the remaining Model Manager policies, portable chooser
+6. **Run the NoobAI and joint release matrix.** Exercise the managed
+   standalone VAE, LoRA and embedding together with the packaged CUDA worker.
+   Cover the remaining Model Manager policies, portable chooser
    routes, legacy queue and provenance, and an incompatible worker refusal
    on clean install and upgrade.
    Verify Generate, Cancel, frozen Retry, explicit Add/Undo/Redo/Save,
@@ -169,7 +169,11 @@ entries record the state at their checkpoint.
    inference cases exercised NoobAI checkpoints. The packaged standalone
    VAE follow-up verified live download, credential-free restart and exact
    same-digest file selection for Euge_'s VAE. The installed VAE passed
-   Main's preparation and rejected the neighboring file ID.
+   Main's preparation and rejected the neighboring file ID. A packaged
+   NoobAI EPS TXT case used the managed VAE on CUDA and preserved its
+   exact reference in accepted provenance after draft Reset, Add, Save
+   and reopen.
+   [Packaged VAE generation](./phase-5-packaged-noobai-components-research.md#cuda-generation-with-the-installed-vae),
    [Live component installation](./phase-5-packaged-noobai-components-research.md),
    [Managed EPS qualification](./phase-5-packaged-noobai-install-research.md),
    [Packaged qualification](./phase-5-packaged-noobai-preview-research.md),

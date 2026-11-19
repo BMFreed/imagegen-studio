@@ -115,8 +115,8 @@ of its closed catalog to call
 production Safetensors structure check. Substituting the primary file ID
 in that exact reference, while keeping the same hash and local binding,
 returned `MODEL_VERSION_MISMATCH`. The original reference still passed.
-This check covers Main preparation. CUDA loading and the combined
-generation case are pending. Eight focused suites passed 191 tests
+This check covers Main preparation. The CUDA follow-up is below.
+Eight focused suites passed 191 tests
 with zero failures and zero skips. The first wrapper launch reached no
 tests because the user service lacked the Node path. The bounded rerun
 included the checkout's Node path and completed.
@@ -129,3 +129,73 @@ and compact reports were retained. The temporary primary copy and
 scratch data accounted for 355,311,616 allocated bytes. One managed copy of
 `1494323` and its catalog are retained for CUDA qualification. The
 production app archive is unchanged.
+
+## CUDA generation with the installed VAE
+
+The `noobai-eps-vae` qualification uses the same stock AppImage and the
+private signed installed runtime from the
+[packaged trained checkpoint](./phase-5-packaged-trained-generation-research.md).
+It uses the exact NoobAI EPS checkpoint
+`833294 / 1022833 / 928571` and the managed Euge_ VAE
+`1219546 / 1594319 / 1494323`. The fresh test database imports the five
+original model, file and install-job rows from the closed catalog in
+one transaction. This preserves the VAE's actual local IDs and
+successful install record. The borrowed EPS uses the existing
+ModelRepository publication path.
+
+Fresh InvokeAI source check at `4875d96531ca6712b288f6e660fcbb34143408c1`
+covered `invokeai/frontend/webv2/src/features/generation/core/graph.ts`
+from `getCompatibleVae` to `addDecodeOutput`,
+`invokeai/app/invocations/model.py::VAELoaderInvocation`,
+`invokeai/app/invocations/vae/latents_to_image.py::LatentsToImageInvocation`,
+and `invokeai/backend/model_manager/load/model_loaders/vae.py`. The graph
+resolves the selected registered VAE before decode. For the independent
+model-record boundary, `invokeai/app/services/model_install/model_install_default.py::_register`
+publishes through `invokeai/app/services/model_records/model_records_sql.py::add_model`.
+Studio's existing production owners carry the equivalent exact
+selection into the frozen worker request and decode.
+
+The 256×256 TXT case uses seed 0, Euler/Normal, three steps, CFG 4
+and VAE precision Auto. Its control is the retained Embedded
+NoobAI EPS run with the same stock AppImage and signed runtime.
+The test uses the public VAE picker and Generate, resets the draft VAE
+after admission, then checks the exact frozen VAE in the completed
+candidate, explicit Add, Save and Project reopen.
+
+The final run completed one real admission and one completion, followed by
+two normal physical AppImage exits. The CUDA observer matched 38 samples to
+the actual job's Python PID, start ticks and cgroup. The highest matched
+reading was 7,434 MiB. Native host memory peaked at 7,658,917,888 bytes
+and recorded zero cgroup OOM events. Both owned scopes had swap disabled.
+The wrapper elapsed time was 246.538 seconds on this host with concurrent
+desktop GPU activity.
+
+The Embedded control and final case have byte-equal input PNGs and equal
+worker request fields other than the VAE descriptor. An independent decoded
+PNG comparison found 65,499 of 65,536 pixels changed. This is a fixed-input
+decode comparison. The exact portable reference, without a managed path,
+remains in the accepted layer. The draft and reopened draft stay Embedded.
+The original live install job and file bytes survive. The guarded harness
+restored all 112 original installed-slot entries and reverified the signed
+worker inputs and stock AppImage.
+
+Three earlier attempts stopped before admission. R1 refused the permission
+bits on files inside the retained private run directory. R2 showed that a full
+catalog clone carries the original absolute Workspace path. R3 reached the
+project and timed out while reopening the checkpoint version picker.
+The final fixture validates the source in its owner directory, imports the
+five model and installation rows into a fresh database, and waits for the
+real single-version Default to resolve before selecting the VAE. All three
+earlier attempts restored the original slot. Six focused suites passed
+98 tests with zero failures and zero skips. Scoped lint and syntax checks
+passed.
+
+The final evidence is under
+`runs/packaged-installed-engine/20261118/trained-noobai-eps-vae-r4`.
+An independent readback checked all five original source rows in each
+closed SQLite, both byte-identical Projects, the accepted Raster and
+both normal exits. The four attempts' disposable profiles and scratch
+accounted for 44,216,320 allocated bytes. The retained managed VAE
+remains available for the combined case.
+The combined LoRA, embedding and VAE workload, other inference modes and
+visual acceptance remain in the [MVP backlog](./mvp-acceptance-backlog.md).

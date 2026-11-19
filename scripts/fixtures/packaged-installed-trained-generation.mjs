@@ -63,17 +63,24 @@ const noobaiNoise = {
   schemaVersion: 1,
   timestepSpacing: 'leading',
 }
+const noobaiEps = {
+  source: [833294, 1022833, 928571, 'epsilon'],
+  sha256: 'ff827fc34584853257d6de64b8bc3e34156814f6b0cfd1a5112a5e9164806df1',
+  sizeBytes: 6938040416,
+}
 const noobaiPins = {
-  'noobai-eps': {
-    source: [833294, 1022833, 928571, 'epsilon'],
-    sha256: 'ff827fc34584853257d6de64b8bc3e34156814f6b0cfd1a5112a5e9164806df1',
-    sizeBytes: 6938040416,
-  },
+  'noobai-eps': noobaiEps,
+  'noobai-eps-vae': noobaiEps,
   'noobai-v': {
     source: [1147756, 2679856, 2566634, 'v_prediction'],
     sha256: 'edca0d656069468ce208440edda4643b8795b6dc500606bb6d0e57eb9a54c89d',
     sizeBytes: 6938040794,
   },
+}
+const standaloneVaePin = {
+  source: [1219546, 1594319, 1494323],
+  sha256: 'fc7d6b12b37b12759e30b1109068a4bb2a0a84e79ab01262cc5af6b89a783ec6',
+  sizeBytes: 334640988,
 }
 
 function inside(parent, filename) {
@@ -185,10 +192,38 @@ export async function readTrainedGeneration({ filename, engine, outputRoot, appI
   assert.equal(model.ref.localVersionId, model.versionId)
   assert.equal(model.ref.displayName, model.name)
   assert.equal(model.ref.versionName, model.versionName)
+  const roles = fixture.family === 'anima' ? ['checkpoint', 'qwen3Encoder', 'vae'] : ['checkpoint']
+  if (fixture.profile === 'noobai-eps-vae') roles.push('standaloneVae')
   assert.deepEqual(
     files.map(({ role }) => role),
-    fixture.family === 'anima' ? ['checkpoint', 'qwen3Encoder', 'vae'] : ['checkpoint'],
+    roles,
   )
+  assert.equal(Boolean(model.standaloneVae), fixture.profile === 'noobai-eps-vae')
+  if (model.standaloneVae) {
+    const vae = model.standaloneVae
+    const source = files.find(({ role }) => role === 'standaloneVae')
+    assert.deepEqual(
+      [vae.civitaiModelId, vae.civitaiVersionId, vae.civitaiFileId],
+      standaloneVaePin.source,
+    )
+    assert.equal(vae.fileSha256, standaloneVaePin.sha256)
+    assert.equal(source.sha256, standaloneVaePin.sha256)
+    assert.equal(source.byteSize, standaloneVaePin.sizeBytes)
+    assert.equal(vae.baseModelFamily, 'illustrious')
+    assert.equal(vae.kind, 'vae')
+    assert.equal(vae.predictionType, null)
+    const catalog = model.standaloneVaeCatalog
+    const catalogRun = path.dirname(catalog.path)
+    const installRuns = path.join(path.dirname(path.dirname(engine.run)), 'packaged-noobai-install')
+    assert.equal(path.dirname(catalogRun), installRuns)
+    assert.match(path.basename(catalogRun), /^\d{8}(?:-r[1-9]\d*)?$/)
+    assert.equal(path.basename(catalog.path), 'closed-catalog.sqlite')
+    assert.equal(
+      path.relative(catalogRun, source.path),
+      `install/data/imagegen-studio/models/fc/${standaloneVaePin.sha256}.safetensors`,
+    )
+    assert.deepEqual(await identity(catalog.path), catalog)
+  }
   assert.equal(model.ref.fileSha256, files[0].sha256)
   if (noobai) {
     const pin = noobaiPins[fixture.profile]
@@ -222,7 +257,11 @@ export async function readTrainedGeneration({ filename, engine, outputRoot, appI
     python,
     pythonPath,
     engineRun: engine.run,
-    inputs: [fixtureBefore, previousBefore],
+    inputs: [
+      fixtureBefore,
+      previousBefore,
+      ...(model.standaloneVae ? [model.standaloneVaeCatalog] : []),
+    ],
   }
 }
 
@@ -270,11 +309,17 @@ async function createAndAuthor(page, fixture, root) {
   const { model, family } = fixture
   await setInput(page, 'Images per click', 1)
   await selectOption(page, 'Generation model', model.name)
-  // Wait for real model verification before choosing the exact version in the picker.
-  await expect(page.locator('[aria-label="Model version"]')).not.toHaveClass(/n-select--disabled/, {
-    timeout: 90_000,
-  })
-  await selectOption(page, 'Model version', model.versionName)
+  if (!model.standaloneVae) {
+    // The existing trained modes also exercise the version picker.
+    await expect(page.locator('[aria-label="Model version"]')).not.toHaveClass(
+      /n-select--disabled/,
+      {
+        timeout: 90_000,
+      },
+    )
+    await selectOption(page, 'Model version', model.versionName)
+  }
+  // The single-version EPS fixture uses its exact Default and waits for Main's file verification.
   const selected =
     fixture.profile === 'noobai-v' ? { ...model.ref, predictionType: 'epsilon' } : model.ref
   await expect
@@ -301,6 +346,24 @@ async function createAndAuthor(page, fixture, root) {
     await selectOption(page, 'Sampler', 'Euler')
     await selectOption(page, 'Scheduler', 'Normal')
   }
+  if (model.standaloneVae) {
+    const picker = page.locator('[aria-label="VAE"]')
+    if (!(await picker.isVisible()))
+      await page.getByText('Advanced Options', { exact: true }).click()
+    await expect(picker).toBeVisible()
+    await expect(
+      page.getByText('Uses the VAE included in the checkpoint.', { exact: true }),
+    ).toBeVisible()
+    await picker.click()
+    await page
+      .locator('.model-option')
+      .filter({ hasText: model.standaloneVae.displayName })
+      .filter({ hasText: model.standaloneVae.versionName })
+      .click()
+    await expect
+      .poll(async () => (await openTab(page, project.id)).generationDraft.vae)
+      .toEqual(model.standaloneVae)
+  }
   await setInput(page, 'Steps', 3)
   await setInput(page, 'CFG scale', 4)
   const random = page.getByRole('switch', { name: 'Random seed switch' })
@@ -322,6 +385,7 @@ async function createAndAuthor(page, fixture, root) {
   assert.deepEqual(tab.generationDraft.model, selected)
   assert.deepEqual(tab.generationDraft.seed, { policy: 'fixed', value: 0 })
   assert.deepEqual(tab.generationDraft.loras, [])
+  if (model.standaloneVae) assert.deepEqual(tab.generationDraft.vae, model.standaloneVae)
   assert.equal(tab.generationDraft.sampling.steps, 3)
   assert.equal(tab.generationDraft.sampling.cfgScale, 4)
   return { project, prompts, tab }
@@ -390,6 +454,17 @@ function assertFrozen(row, requested, fixture, projectFile) {
     assert.equal(workerJob.sampling.seed, 0)
     assert.equal(workerJob.sampling.steps, 3)
     assert.equal(workerJob.sampling.cfgScale, 4)
+    if (model.standaloneVae) {
+      const {
+        path: managedPath,
+        sha256,
+        byteSize,
+      } = files.find(({ role }) => role === 'standaloneVae')
+      assert.deepEqual(context.vae, { reference: model.standaloneVae, managedPath, byteSize })
+      assert.deepEqual(workerJob.vae, { path: managedPath, sha256, byteSize })
+      assert.equal(context.vaePrecision, 'Auto')
+      assert.equal(workerJob.vaePrecision, 'Auto')
+    }
     if (fixture.profile) {
       assert.deepEqual(context.sampling.noiseProfile, noobaiNoise)
       assert.deepEqual(workerJob.sampling.noiseProfile, noobaiNoise)
@@ -575,6 +650,10 @@ function assertPortableConfiguration(configuration, requested, fixture) {
   } else {
     assert.equal(configuration.sampling.sampler, 'Euler')
     assert.equal(configuration.sampling.scheduler, 'Normal')
+    if (model.standaloneVae) {
+      assert.deepEqual(configuration.vae, model.standaloneVae)
+      assert.equal(configuration.vaePrecision, 'Auto')
+    }
     if (fixture.profile) {
       assert.equal(configuration.model.predictionType, noobaiPins[fixture.profile].source[3])
       assert.deepEqual(configuration.sampling.noiseProfile, noobaiNoise)
@@ -641,6 +720,17 @@ function expectCatalog(catalog, fixture, predictionType = fixture.model.ref.pred
   assert.equal(version.predictionType, predictionType)
   if (fixture.profile) {
     assert.equal(version.predictionTypeSource, predictionType === 'epsilon' ? 'default' : 'user')
+  }
+  if (model.standaloneVae) {
+    const ref = model.standaloneVae
+    const vae = catalog.find(({ id }) => id === ref.localModelId)
+    assert.equal(vae?.resourceType, 'vae')
+    assert.equal(vae.name, ref.displayName)
+    const selected = vae.versions.find(({ id }) => id === ref.localVersionId)
+    assert.equal(selected?.name, ref.versionName)
+    assert.equal(selected.fileStatus, 'ready')
+    assert.equal(selected.sha256, ref.fileSha256)
+    assert.equal(selected.fileSizeBytes, standaloneVaePin.sizeBytes)
   }
 }
 
@@ -711,6 +801,12 @@ export async function runTrainedGeneration({
   await expect
     .poll(async () => (await openTab(first.page, project.id)).generationDraft.positivePrompt.text)
     .toBe(afterCapturePrompt)
+  if (fixture.model.standaloneVae) {
+    await first.page.getByRole('button', { name: 'Reset VAE', exact: true }).click()
+    await expect
+      .poll(async () => (await openTab(first.page, project.id)).generationDraft.vae)
+      .toBeNull()
+  }
 
   let durable
   await expect
@@ -827,6 +923,7 @@ export async function runTrainedGeneration({
   assert.deepEqual(manifest.preview, { rect: bbox, status: 'rendered' })
   assert.equal(stored.lastActualSeedSnapshot, 0)
   assert.equal(stored.generationDraft.positivePrompt.text, afterCapturePrompt)
+  if (fixture.model.standaloneVae) assert.equal(stored.generationDraft.vae, null)
   const [storedLayer] = stored.layers
   assert.equal(storedLayer.id, layer.id)
   const provenance = storedLayer.generationProvenance
@@ -861,6 +958,9 @@ export async function runTrainedGeneration({
   for (const name of Object.keys(baseline.tables).filter((name) => name.startsWith('model_'))) {
     assert.deepEqual(afterFirst.tables[name], baseline.tables[name], name)
   }
+  if (fixture.model.standaloneVae) {
+    assert.deepEqual(afterFirst.tables.local_model_file, baseline.tables.local_model_file)
+  }
   if (noobaiV) {
     const { rows } = afterFirst.tables.checkpoint_prediction_override
     assert.equal(rows.length, 1)
@@ -871,7 +971,7 @@ export async function runTrainedGeneration({
     )
     assert.equal(stored.generationDraft.model.predictionType, 'epsilon')
   }
-  if (fixture.profile === 'noobai-eps') {
+  if (fixture.profile === 'noobai-eps' || fixture.profile === 'noobai-eps-vae') {
     assert.deepEqual(afterFirst.tables.checkpoint_prediction_override.rows, [])
     assert.equal(stored.generationDraft.model.predictionType, 'epsilon')
   }
@@ -894,6 +994,7 @@ export async function runTrainedGeneration({
   assert.equal(reopened.layers.length, 1)
   assert.equal(reopened.layers[0].id, layer.id)
   assert.equal(reopened.generationDraft.positivePrompt.text, afterCapturePrompt)
+  if (fixture.model.standaloneVae) assert.equal(reopened.generationDraft.vae, null)
   const reopenedData = await projectCall(
     second.page,
     'getRasterGenerationData',
@@ -939,6 +1040,7 @@ export async function runTrainedGeneration({
       actualAdmissions: 1,
       actualCompletions: 1,
       model: fixture.model.ref,
+      ...(fixture.model.standaloneVae && { vae: fixture.model.standaloneVae }),
       queueItemId: row.id,
       candidateId: candidate.candidateId,
       worker,
