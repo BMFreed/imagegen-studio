@@ -18,6 +18,7 @@ const engineRuns = path.join(
   os.homedir(),
   '.codex/artifacts/imagegen-studio/runs/packaged-installed-engine',
 )
+const noobaiInstallRuns = path.join(path.dirname(engineRuns), 'packaged-noobai-install')
 const checkpoints = {
   illustrious: {
     name: 'Illustrious XL v0.1',
@@ -46,6 +47,19 @@ const checkpoints = {
     byteSize: 4182275752,
     sha256: '0fc7507b222e52ac8cc5e2826786bc4caed05223df32d17aeb05a76cb4de9941',
     origin: { url: 'https://civitai.com/api/download/models/3120487?fileId=3000817' },
+  },
+  'noobai-eps': {
+    name: 'NoobAI-XL (NAI-XL)',
+    versionName: 'Epsilon-pred 1.0-Version',
+    predictionType: 'epsilon',
+    modelId: 833294,
+    versionId: 1022833,
+    fileId: 928571,
+    creator: 'L_A_X',
+    originalFilename: 'NoobAI-XL-100_percent_EPS.safetensors',
+    byteSize: 6938040416,
+    sha256: 'ff827fc34584853257d6de64b8bc3e34156814f6b0cfd1a5112a5e9164806df1',
+    origin: { url: 'https://civitai.com/api/download/models/1022833?fileId=928571' },
   },
   'noobai-v': {
     name: 'Cyberfalafel - falafel cyber fix',
@@ -196,7 +210,7 @@ export async function preparePackagedTrainedModels({
   assert.ok(
     profile === undefined
       ? ['illustrious', 'anima'].includes(family)
-      : profile === 'noobai-v' && family === 'illustrious',
+      : ['noobai-eps', 'noobai-v'].includes(profile) && family === 'illustrious',
   )
   const checkpointKey = profile ?? family
   assert.equal(repo, checkout)
@@ -235,6 +249,20 @@ export async function preparePackagedTrainedModels({
     keys(file, ['path', 'sha256', 'byteSize'])
     assert.ok(typeof file.path === 'string' && !inside(engineRun, file.path), role)
     assertModelPin(checkpointKey, role, file)
+    if (profile === 'noobai-eps') {
+      const [installRun, ...managedFile] = path
+        .relative(noobaiInstallRuns, file.path)
+        .split(path.sep)
+      assert.match(installRun, /^\d{8}(?:-r[1-9]\d*)?$/)
+      assert.deepEqual(managedFile, [
+        'install',
+        'data',
+        'imagegen-studio',
+        'models',
+        'ff',
+        `${checkpoints[profile].sha256}.safetensors`,
+      ])
+    }
     files.push(await verifyFile(file, role))
   }
   assert.equal(new Set(files.map(({ stat }) => `${stat.dev}:${stat.ino}`)).size, files.length)
@@ -252,7 +280,7 @@ export async function preparePackagedTrainedModels({
     const { resourceId, versionId, dependencyVersionIds } =
       await repository.publishVerifiedInstallation({
         primary: {
-          file: fileMetadata(checkpoint),
+          file: fileMetadata(checkpoint, pin.originalFilename),
           resource: {
             displayName: pin.name,
             creator: pin.creator,
@@ -264,7 +292,7 @@ export async function preparePackagedTrainedModels({
             baseModelFamily: family,
             format: 'safetensors',
             name: pin.versionName,
-            predictionType: profile === 'noobai-v' ? null : pin.predictionType,
+            predictionType: profile === undefined ? pin.predictionType : null,
             source: {
               kind: 'civitai',
               expectedSha256: pin.sha256,
@@ -281,6 +309,7 @@ export async function preparePackagedTrainedModels({
     assert.ok(catalog.every(({ versions }) => versions.length === 1))
     const version = catalog.find(({ id }) => id === resourceId).versions[0]
     assert.equal(version.id, versionId)
+    assert.equal(version.predictionType, profile === undefined ? pin.predictionType : null)
     assert.deepEqual(version.dependencyVersionIds, dependencyVersionIds)
     assert.equal(version.file.managedPath, checkpoint.path)
     const dependencies = {}

@@ -63,6 +63,18 @@ const noobaiNoise = {
   schemaVersion: 1,
   timestepSpacing: 'leading',
 }
+const noobaiPins = {
+  'noobai-eps': {
+    source: [833294, 1022833, 928571, 'epsilon'],
+    sha256: 'ff827fc34584853257d6de64b8bc3e34156814f6b0cfd1a5112a5e9164806df1',
+    sizeBytes: 6938040416,
+  },
+  'noobai-v': {
+    source: [1147756, 2679856, 2566634, 'v_prediction'],
+    sha256: 'edca0d656069468ce208440edda4643b8795b6dc500606bb6d0e57eb9a54c89d',
+    sizeBytes: 6938040794,
+  },
+}
 
 function inside(parent, filename) {
   return (
@@ -131,7 +143,8 @@ export async function readTrainedGeneration({ filename, engine, outputRoot, appI
   const fixtureBefore = await identity(filename)
   const fixture = JSON.parse(await readOwned(filename, 1024 * 1024))
   assert.deepEqual(await identity(filename), fixtureBefore)
-  const noobai = fixture.profile === 'noobai-v'
+  const noobai = fixture.profile !== undefined
+  assert.ok(!noobai || Object.hasOwn(noobaiPins, fixture.profile))
   assert.deepEqual(Object.keys(fixture).sort(), [
     'appData',
     'family',
@@ -145,7 +158,7 @@ export async function readTrainedGeneration({ filename, engine, outputRoot, appI
   assert.ok(['illustrious', 'anima'].includes(fixture.family))
   if (noobai) {
     assert.equal(fixture.family, 'illustrious')
-    assert.equal(path.basename(run).match(/^trained-noobai-v-r[1-9]\d*$/)?.[0], path.basename(run))
+    assert.match(path.basename(run), new RegExp(`^trained-${fixture.profile}-r[1-9]\\d*$`))
   }
   assert.equal(fixture.appData, engine.dataRoot)
   assert.equal(fixture.runtimeId, engine.runtimeId)
@@ -178,6 +191,7 @@ export async function readTrainedGeneration({ filename, engine, outputRoot, appI
   )
   assert.equal(model.ref.fileSha256, files[0].sha256)
   if (noobai) {
+    const pin = noobaiPins[fixture.profile]
     assert.deepEqual(
       [
         model.ref.civitaiModelId,
@@ -185,13 +199,10 @@ export async function readTrainedGeneration({ filename, engine, outputRoot, appI
         model.ref.civitaiFileId,
         model.ref.predictionType,
       ],
-      [1147756, 2679856, 2566634, 'v_prediction'],
+      pin.source,
     )
-    assert.equal(
-      model.ref.fileSha256,
-      'edca0d656069468ce208440edda4643b8795b6dc500606bb6d0e57eb9a54c89d',
-    )
-    assert.equal(files[0].byteSize, 6938040794)
+    assert.equal(model.ref.fileSha256, pin.sha256)
+    assert.equal(files[0].byteSize, pin.sizeBytes)
   }
   await assertModelFiles(files, identity, engine.run)
   const databasePath = path.join(engine.dataRoot, 'database/app.sqlite')
@@ -379,7 +390,7 @@ function assertFrozen(row, requested, fixture, projectFile) {
     assert.equal(workerJob.sampling.seed, 0)
     assert.equal(workerJob.sampling.steps, 3)
     assert.equal(workerJob.sampling.cfgScale, 4)
-    if (fixture.profile === 'noobai-v') {
+    if (fixture.profile) {
       assert.deepEqual(context.sampling.noiseProfile, noobaiNoise)
       assert.deepEqual(workerJob.sampling.noiseProfile, noobaiNoise)
     }
@@ -564,8 +575,8 @@ function assertPortableConfiguration(configuration, requested, fixture) {
   } else {
     assert.equal(configuration.sampling.sampler, 'Euler')
     assert.equal(configuration.sampling.scheduler, 'Normal')
-    if (fixture.profile === 'noobai-v') {
-      assert.equal(configuration.model.predictionType, 'v_prediction')
+    if (fixture.profile) {
+      assert.equal(configuration.model.predictionType, noobaiPins[fixture.profile].source[3])
       assert.deepEqual(configuration.sampling.noiseProfile, noobaiNoise)
     }
   }
@@ -628,7 +639,7 @@ function expectCatalog(catalog, fixture, predictionType = fixture.model.ref.pred
   assert.equal(version.fileSizeBytes, fixture.files[0].byteSize)
   assert.equal(version.baseModelFamily, fixture.family)
   assert.equal(version.predictionType, predictionType)
-  if (fixture.profile === 'noobai-v') {
+  if (fixture.profile) {
     assert.equal(version.predictionTypeSource, predictionType === 'epsilon' ? 'default' : 'user')
   }
 }
@@ -648,7 +659,8 @@ export async function runTrainedGeneration({
   const first = await launch('first')
   const ports = await readPorts(first)
   assert.deepEqual(ports.projects.value, [])
-  const noobai = fixture.profile === 'noobai-v'
+  const noobai = fixture.profile !== undefined
+  const noobaiV = fixture.profile === 'noobai-v'
   expectCatalog(ports.catalog.value, fixture, noobai ? 'epsilon' : undefined)
   const requested = await createAndAuthor(first.page, fixture, root)
   const { project, tab } = requested
@@ -849,7 +861,7 @@ export async function runTrainedGeneration({
   for (const name of Object.keys(baseline.tables).filter((name) => name.startsWith('model_'))) {
     assert.deepEqual(afterFirst.tables[name], baseline.tables[name], name)
   }
-  if (noobai) {
+  if (noobaiV) {
     const { rows } = afterFirst.tables.checkpoint_prediction_override
     assert.equal(rows.length, 1)
     const [{ prediction_type, sha256, size_bytes }] = rows
@@ -857,6 +869,10 @@ export async function runTrainedGeneration({
       [prediction_type, sha256, size_bytes],
       ['v_prediction', fixture.files[0].sha256, fixture.files[0].byteSize],
     )
+    assert.equal(stored.generationDraft.model.predictionType, 'epsilon')
+  }
+  if (fixture.profile === 'noobai-eps') {
+    assert.deepEqual(afterFirst.tables.checkpoint_prediction_override.rows, [])
     assert.equal(stored.generationDraft.model.predictionType, 'epsilon')
   }
   const [acceptedIndex] = afterFirst.tables.project_accepted_result_index.rows
@@ -919,7 +935,7 @@ export async function runTrainedGeneration({
     restarted,
     trainedGeneration: {
       family: fixture.family,
-      ...(noobai ? { profile: fixture.profile, explicitPredictionOverride: true } : {}),
+      ...(noobai ? { profile: fixture.profile, explicitPredictionOverride: noobaiV } : {}),
       actualAdmissions: 1,
       actualCompletions: 1,
       model: fixture.model.ref,

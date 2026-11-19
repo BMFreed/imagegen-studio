@@ -2,12 +2,18 @@
 
 ## Current NoobAI packaged qualification
 
+[Managed NoobAI EPS](./phase-5-packaged-noobai-install-research.md) uses the
+stock AppImage to download the exact CivitAI body, publish one verified
+file and reopen its catalog entry and completed job after removing the
+test credential. The same installed bytes passed one signed-worker CUDA
+Generate, Add, Save and reopen with the Epsilon default.
+
 [NoobAI Preview](./phase-5-packaged-noobai-preview-research.md) records live
 CivitAI file review and Cancel for exact EPS and V checkpoints in the stock
 AppImage, a controlled file-choice case, and a fresh check of the signed CUDA
 worker. The same stock AppImage saves a manual exact-file V-prediction
 override and completes one Cyberfalafel V Generate, Add, Save and reopen.
-Managed download and the joint release matrix stay open.
+Managed V download and the joint release matrix stay open.
 
 ## Current signed recovery and next AppImage update
 

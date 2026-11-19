@@ -1,6 +1,6 @@
 # MVP acceptance backlog
 
-Updated through the [packaged NoobAI qualification](./phase-5-packaged-noobai-preview-research.md).
+Updated through the [managed NoobAI EPS qualification](./phase-5-packaged-noobai-install-research.md).
 All eight public promise statuses remain **«Пока не обещать»**. Earlier roadmap
 entries record the state at their checkpoint.
 [Product scope](../specs/00-product-scope.md), [promise matrix](../product-promises.md),
@@ -98,8 +98,8 @@ entries record the state at their checkpoint.
    The measured inputs imply a floor of 28,217,106,280 B on one filesystem
    before the new slot and any Repair reserve. It includes the signed 20 GiB
    assembly floor, the exact cached and extracted runtime and LaMa. After
-   disposal of the NoobAI test payloads, the observed ext4 volume had
-   24,997,830,656 B available.
+   disposal of the EPS scratch and staged profile, the observed ext4 volume
+   had 18,005,712,896 B available.
    [Packaged Setup controls](./phase-5-packaged-runtime-setup-research.md),
    [Runtime contract](../specs/07-python-runtime-management.md),
    [native engine](./phase-5-native-engine-qualification-research.md),
@@ -144,9 +144,13 @@ entries record the state at their checkpoint.
    zero body transfers or installation rows. The current signed worker
    passed its live CUDA and protocol preflight. A stock AppImage with an
    exact borrowed Cyberfalafel V file then passed a manual prediction
-   override and one 256×256 Generate, Add, Save and reopen. Continue with
-   managed body download and installation. The EPS bytes from the retired
-   catalog need reacquisition.
+   override and one 256×256 Generate, Add, Save and reopen. The same stock
+   AppImage now also completed live download, exact publication and
+   credential-free catalog reopen for EPS. Those installed bytes passed
+   one 256×256 Generate, Add, Save and reopen at the Epsilon default.
+   Continue with managed V installation, side-by-side Default and exact
+   portable relink.
+   [Managed EPS qualification](./phase-5-packaged-noobai-install-research.md),
    [Packaged qualification](./phase-5-packaged-noobai-preview-research.md),
    [Model Manager contract](../features/model-manager.md),
    [exact fixture identities](../../scripts/noobai-noise-qualification.mjs).

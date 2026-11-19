@@ -44,7 +44,10 @@ const sourcesPath = values['model-inputs']
 const packageProofPath = values['package-proof']
 assert.ok(family === undefined || family === 'illustrious' || family === 'anima')
 assert.equal(sourcesPath === undefined, family === undefined)
-assert.ok(profile === undefined || (profile === 'noobai-v' && family === 'illustrious'))
+assert.ok(
+  profile === undefined ||
+    (family === 'illustrious' && (profile === 'noobai-eps' || profile === 'noobai-v')),
+)
 assert.equal(packageProofPath === undefined, profile === undefined)
 const preserved = new Set(['inference-resources', 'runtime'])
 const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim()
@@ -481,10 +484,12 @@ with Path(sys.argv[1]).open('xb') as out:
     'IMAGEGEN_LINUX_PACKAGE_UPDATE_RELEASE_FIXTURES',
     'IMAGEGEN_LINUX_PACKAGE_UPDATE_FEED_PORT',
     'IMAGEGEN_LINUX_PACKAGE_HISTORICAL_FIXTURE',
+    'IMAGEGEN_LINUX_PACKAGE_NOOBAI_INSTALL',
+    'IMAGEGEN_LINUX_PACKAGE_NOOBAI_PREVIEW',
+    'IMAGEGEN_LINUX_PACKAGE_NOOBAI_TOKEN_FILE',
     'IMAGEGEN_LINUX_PACKAGE_TRAINED_FIXTURE',
   ])
     delete env[key]
-  if (profile) delete env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_PREVIEW
   if (family) env.IMAGEGEN_LINUX_PACKAGE_TRAINED_FIXTURE = path.join(run, 'trained-fixture.json')
   else env.IMAGEGEN_LINUX_PACKAGE_HISTORICAL_FIXTURE = path.join(run, 'historical-fixture.json')
   smokeExit = await new Promise((resolve, reject) => {
