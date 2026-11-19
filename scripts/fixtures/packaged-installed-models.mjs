@@ -128,6 +128,7 @@ const standaloneComponents = {
 const standaloneRolesByProfile = {
   'noobai-eps-vae': ['standaloneVae'],
   'noobai-eps-stack': Object.keys(standaloneComponents),
+  'noobai-eps-stack-retry': Object.keys(standaloneComponents),
 }
 
 function keys(object, exact) {

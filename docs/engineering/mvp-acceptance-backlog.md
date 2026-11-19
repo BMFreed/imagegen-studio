@@ -1,6 +1,7 @@
 # MVP acceptance backlog
 
-Updated through the [packaged CUDA case with all three managed components](./phase-5-packaged-noobai-components-research.md#packaged-noobai-generation-with-all-three-managed-components).
+Updated through [packaged frozen Retry](./phase-5-packaged-noobai-components-research.md#packaged-frozen-retry-with-all-three-components)
+and [historical NoobAI queue qualification](./phase-5-noobai-legacy-queue-research.md).
 All eight public promise statuses remain **«Пока не обещать»**. Earlier roadmap
 entries record the state at their checkpoint.
 [Product scope](../specs/00-product-scope.md), [promise matrix](../product-promises.md),
@@ -133,9 +134,11 @@ entries record the state at their checkpoint.
    [application updates](../features/application-updates.md#acceptance-criteria).
 6. **Run the NoobAI and joint release matrix.** Cover the remaining Model
    Manager policies, portable chooser
-   routes, legacy queue and provenance, and an incompatible worker refusal
+   routes, packaged legacy queue and provenance, and an incompatible worker refusal
    on clean install and upgrade.
-   Verify Generate, Cancel, frozen Retry, explicit Add/Undo/Redo/Save,
+   Verify admission during the Cancel-to-Retry runtime transition and
+   cover the other release cases for Generate, Cancel, frozen Retry,
+   explicit Add/Undo/Redo/Save,
    immutable Compare and result-derived presets. Check joint Home/Trash, resource
    removal and export behavior, interrupted recovery, keyboard/focus/contrast and
    performance at supported desktop sizes on the final candidate. [NoobAI matrix](../specs/01-implementation-roadmap.md#noobai-полная-поддержка-в-рамках-mvp),
@@ -176,6 +179,9 @@ entries record the state at their checkpoint.
    exact managed VAE, DigitalArt LoRA and negative IllustriousPhoto
    embedding together. Their references survived Add, Save and reopen
    after removing the components from the draft.
+   A running Cancel and a same-session Retry after idle gave identical
+   frozen bytes and the same PNG as the prior combined Generate.
+   [Packaged frozen Retry](./phase-5-packaged-noobai-components-research.md#packaged-frozen-retry-with-all-three-components),
    [Combined managed components](./phase-5-packaged-noobai-components-research.md#packaged-noobai-generation-with-all-three-managed-components),
    [Packaged VAE generation](./phase-5-packaged-noobai-components-research.md#cuda-generation-with-the-installed-vae),
    [Live component installation](./phase-5-packaged-noobai-components-research.md),
@@ -183,6 +189,12 @@ entries record the state at their checkpoint.
    [Packaged qualification](./phase-5-packaged-noobai-preview-research.md),
    [Model Manager contract](../features/model-manager.md),
    [exact fixture identities](../../scripts/noobai-noise-qualification.mjs).
+
+   The production database and queue readers passed a historical
+   17→30 upgrade with 1,329 queue rows preserved. Two exact Cyberfalafel
+   V jobs and the accepted Raster retained their pre-noise-profile
+   configuration. A changed target byte reached the real refusal and
+   the restored input passed again. [Historical NoobAI evidence](./phase-5-noobai-legacy-queue-research.md)
 
 ## Scope and delivery gates
 

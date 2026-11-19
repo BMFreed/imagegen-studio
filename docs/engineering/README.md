@@ -2,6 +2,10 @@
 
 ## Current NoobAI packaged qualification
 
+[Historical NoobAI queue and provenance](./phase-5-noobai-legacy-queue-research.md)
+records the 17→30 Main database upgrade, recovery and verified
+pre-noise-profile Cyberfalafel V inputs and accepted Raster.
+
 [NoobAI-compatible component installs](./phase-5-packaged-noobai-components-research.md)
 records live CivitAI downloads of the exact DigitalArt LoRA and
 IllustriousPhoto embedding through the stock AppImage. A
@@ -15,7 +19,9 @@ metadata survived credential-free catalog restarts. The
 [combined CUDA case](./phase-5-packaged-noobai-components-research.md#packaged-noobai-generation-with-all-three-managed-components)
 uses all three live-installed components in one NoobAI EPS job and
 preserves their exact accepted references after editing the draft and
-reopening the Project. The
+reopening the Project. [Frozen Retry](./phase-5-packaged-noobai-components-research.md#packaged-frozen-retry-with-all-three-components)
+replays the exact canceled request after the installed runtime settles.
+The
 [previous inference matrix](./phase-2c-noobai-component-inference-research.md)
 covers the LoRA and embedding bytes with NoobAI checkpoints.
 

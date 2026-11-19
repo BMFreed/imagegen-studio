@@ -72,6 +72,7 @@ const noobaiPins = {
   'noobai-eps': noobaiEps,
   'noobai-eps-vae': noobaiEps,
   'noobai-eps-stack': noobaiEps,
+  'noobai-eps-stack-retry': noobaiEps,
   'noobai-v': {
     source: [1147756, 2679856, 2566634, 'v_prediction'],
     sha256: 'edca0d656069468ce208440edda4643b8795b6dc500606bb6d0e57eb9a54c89d',
@@ -211,12 +212,11 @@ export async function readTrainedGeneration({ filename, engine, outputRoot, appI
   assert.equal(model.ref.displayName, model.name)
   assert.equal(model.ref.versionName, model.versionName)
   const roles = fixture.family === 'anima' ? ['checkpoint', 'qwen3Encoder', 'vae'] : ['checkpoint']
-  const standaloneRoles =
-    fixture.profile === 'noobai-eps-stack'
-      ? Object.keys(componentPins)
-      : fixture.profile === 'noobai-eps-vae'
-        ? ['standaloneVae']
-        : []
+  const standaloneRoles = ['noobai-eps-stack', 'noobai-eps-stack-retry'].includes(fixture.profile)
+    ? Object.keys(componentPins)
+    : fixture.profile === 'noobai-eps-vae'
+      ? ['standaloneVae']
+      : []
   roles.push(...standaloneRoles)
   assert.deepEqual(
     files.map(({ role }) => role),
@@ -650,6 +650,62 @@ async function assertWorkerExited({ pid, startTicks }) {
     .toBe(false)
 }
 
+function queueSourceControl(page, jobId) {
+  const manager = page.getByRole('dialog', { name: 'Queue Manager', exact: true })
+  const row = manager.getByTestId('queue-job-row').and(manager.locator(`[data-job-id="${jobId}"]`))
+  return { manager, row }
+}
+
+async function cancelTrainedSource({ first, trained, snapshot, admitted, root, project }) {
+  const { page } = first
+  const { manager, row } = queueSourceControl(page, admitted.id)
+  await page.getByRole('button', { name: 'Open Queue Manager', exact: true }).click()
+  let worker
+  await expect
+    .poll(
+      async () => {
+        const [current] = snapshot().tables.generation_queue_item.rows
+        assert.equal(current.id, admitted.id)
+        assert.ok(['pending', 'running'].includes(current.status), JSON.stringify(current))
+        if (current.status === 'running') worker ??= await runningWorker(first, trained)
+        return Boolean(worker)
+      },
+      { timeout: 90_000, intervals: [100, 250, 500] },
+    )
+    .toBe(true)
+  await row.getByRole('button', { name: 'Cancel job', exact: true }).click()
+  await expect.poll(() => snapshot().tables.generation_queue_item.rows[0].status).toBe('canceled')
+  await assertWorkerExited(worker)
+  await manager.getByRole('button', { name: 'Close Queue Manager', exact: true }).click()
+  const stored = snapshot().tables
+  const [source] = stored.generation_queue_item.rows
+  assert.equal(source.id, admitted.id)
+  assert.equal(source.frozen_payload_json, admitted.frozen_payload_json)
+  assert.deepEqual(stored.generation_candidate_receipt.rows, [])
+  assert.deepEqual((await projectCall(page, 'listGenerationResults', project.id)).candidates, [])
+  const input = path.join(trained.fixture.appData, 'generation-inputs', source.id)
+  const target = await readOwned(path.join(input, 'target.png'), 8 * 1024 * 1024)
+  const manifest = await readOwned(path.join(input, 'manifest.json'), 64 * 1024)
+  assert.deepEqual(JSON.parse(manifest), {
+    payloadSha256: sha(Buffer.from(source.frozen_payload_json)),
+    queueInputVersion: 1,
+    queueItemId: source.id,
+    targetByteSize: target.length,
+    targetFile: 'target.png',
+    targetSha256: sha(target),
+  })
+  await writeFile(path.join(root, 'canceled-target-manifest.json'), manifest, {
+    flag: 'wx',
+    mode: 0o600,
+  })
+  await writeFile(path.join(root, 'canceled-target.png'), target, { flag: 'wx', mode: 0o600 })
+  await writeFile(path.join(root, 'canceled-frozen-payload.json'), source.frozen_payload_json, {
+    flag: 'wx',
+    mode: 0o600,
+  })
+  return { source, worker, target }
+}
+
 async function retainGeneration({ row, candidate, frozen, receipt, root, dataRoot }) {
   const payload = row.frozen_payload_json
   const payloadSha256 = sha(Buffer.from(payload))
@@ -870,6 +926,7 @@ export async function runTrainedGeneration({
   assert.deepEqual(ports.projects.value, [])
   const noobai = fixture.profile !== undefined
   const noobaiV = fixture.profile === 'noobai-v'
+  const exerciseRetry = fixture.profile === 'noobai-eps-stack-retry'
   expectCatalog(ports.catalog.value, fixture, noobai ? 'epsilon' : undefined)
   const requested = await createAndAuthor(first.page, fixture, root)
   const { project, tab } = requested
@@ -913,6 +970,10 @@ export async function runTrainedGeneration({
     .toBe('admitted')
   const frozen = assertFrozen(admitted, requested, fixture, packagePath)
   records.push({ name: 'Public Generate admits one exact frozen job', queueItemId: admitted.id })
+  const canceled = exerciseRetry
+    ? await cancelTrainedSource({ first, trained, snapshot, admitted, root, project })
+    : null
+  if (canceled) assert.deepEqual(await identity(packagePath), initialPackage)
   const afterCapturePrompt = 'Draft edited after trained capture.'
   await first.page
     .getByRole('textbox', { name: 'Positive prompt', exact: true })
@@ -945,6 +1006,69 @@ export async function runTrainedGeneration({
       .poll(async () => (await openTab(first.page, project.id)).generationDraft.negativePrompt)
       .toEqual({ text: plainPrompts.negative, embeddingRefs: [] })
   }
+  if (canceled) {
+    await setInput(first.page, 'Generation seed', 23)
+    await expect
+      .poll(async () => (await openTab(first.page, project.id)).generationDraft.seed)
+      .toEqual({ policy: 'fixed', value: 23 })
+    // The canceled child can be gone while the processor still owns the draining runtime lease.
+    await expect
+      .poll(
+        async () => {
+          const state = await projectCall(first.page, 'getGenerationState', project.id)
+          return {
+            phase: state.phase,
+            runningJobId: state.runningJobId,
+            externalVaeSupported: state.externalVaeSupported,
+            embeddingsSupported: state.embeddingsSupported,
+          }
+        },
+        { timeout: 90_000 },
+      )
+      .toEqual({
+        phase: 'idle',
+        runningJobId: null,
+        externalVaeSupported: true,
+        embeddingsSupported: true,
+      })
+    const { manager, row } = queueSourceControl(first.page, canceled.source.id)
+    await first.page.getByRole('button', { name: 'Open Queue Manager', exact: true }).click()
+    const retry = row.getByRole('button', { name: 'Retry job', exact: true })
+    await expect(retry).toBeEnabled({ timeout: 90_000 })
+    await retry.click()
+    await expect
+      .poll(
+        async () => {
+          const count = snapshot().tables.generation_queue_item.rows.length
+          if (count === 2) return count
+          const feedback = await manager
+            .locator('.manager-feedback .n-alert--error-type')
+            .allTextContents()
+          const { error } = await projectCall(first.page, 'getGenerationState', project.id)
+          assert.ok(!error && feedback.length === 0, JSON.stringify({ error, feedback }))
+          return count
+        },
+        { timeout: 90_000 },
+      )
+      .toBe(2)
+    const clone = snapshot().tables.generation_queue_item.rows.find(
+      (entry) => entry.id !== canceled.source.id,
+    )
+    assert.equal(clone.frozen_payload_json, canceled.source.frozen_payload_json)
+    assert.notEqual(clone.batch_id, canceled.source.batch_id)
+    assert.notEqual(clone.staging_session_id, canceled.source.staging_session_id)
+    assert.deepEqual(assertFrozen(clone, requested, fixture, packagePath), frozen)
+    assert.deepEqual(
+      await readOwned(
+        path.join(fixture.appData, 'generation-inputs', clone.id, 'target.png'),
+        8 * 1024 * 1024,
+      ),
+      canceled.target,
+    )
+    admitted = clone
+    worker = null
+    await manager.getByRole('button', { name: 'Close Queue Manager', exact: true }).click()
+  }
 
   let durable
   await expect
@@ -952,10 +1076,11 @@ export async function runTrainedGeneration({
       async () => {
         durable = snapshot()
         const rows = durable.tables.generation_queue_item.rows
-        assert.equal(rows.length, 1)
-        assert.equal(rows[0].id, admitted.id)
-        if (rows[0].status === 'pending' || rows[0].status === 'running') {
-          if (rows[0].status === 'running') worker ??= await runningWorker(first, trained)
+        assert.equal(rows.length, exerciseRetry ? 2 : 1)
+        const current = rows.find((entry) => entry.id === admitted.id)
+        assert.ok(current)
+        if (current.status === 'pending' || current.status === 'running') {
+          if (current.status === 'running') worker ??= await runningWorker(first, trained)
           return 'busy'
         }
         return 'terminal'
@@ -963,7 +1088,20 @@ export async function runTrainedGeneration({
       { timeout: 330_000, intervals: [250, 500, 1000] },
     )
     .toBe('terminal')
-  const [row] = durable.tables.generation_queue_item.rows
+  const allRows = durable.tables.generation_queue_item.rows
+  const row = allRows.find((entry) => entry.id === admitted.id)
+  if (canceled) {
+    const source = allRows.find((entry) => entry.id === canceled.source.id)
+    assert.deepEqual(source, {
+      ...canceled.source,
+      status_sequence: canceled.source.status_sequence + 1,
+      updated_at: source.updated_at,
+    })
+    assert.notDeepEqual(
+      [worker?.pid, worker?.startTicks],
+      [canceled.worker.pid, canceled.worker.startTicks],
+    )
+  }
   assert.equal(row.status, 'completed', JSON.stringify(row))
   assert.equal(row.frozen_payload_json, admitted.frozen_payload_json)
   assert.ok(worker, 'Observe the actual installed CUDA worker while the job is active.')
@@ -1061,6 +1199,7 @@ export async function runTrainedGeneration({
   assert.deepEqual(manifest.preview, { rect: bbox, status: 'rendered' })
   assert.equal(stored.lastActualSeedSnapshot, 0)
   assert.equal(stored.generationDraft.positivePrompt.text, afterCapturePrompt)
+  if (canceled) assert.deepEqual(stored.generationDraft.seed, { policy: 'fixed', value: 23 })
   if (fixture.model.standaloneVae) assert.equal(stored.generationDraft.vae, null)
   if (fixture.model.standaloneLora) assert.deepEqual(stored.generationDraft.loras, [])
   if (fixture.model.standaloneEmbedding) {
@@ -1097,7 +1236,7 @@ export async function runTrainedGeneration({
   assert.equal(storedLayer.asset.bytes, inspection.outputBytes)
   assert.equal(inspection.outputSha256, receipt.image_sha256)
   const afterFirst = snapshot(true)
-  assert.deepEqual(afterFirst.tables.generation_queue_item.rows, [row])
+  assert.deepEqual(afterFirst.tables.generation_queue_item.rows, allRows)
   assert.deepEqual(afterFirst.tables.generation_candidate_receipt.rows, [receipt])
   assert.deepEqual(afterFirst.schemaMigrations, baseline.schemaMigrations)
   for (const name of Object.keys(baseline.tables).filter((name) => name.startsWith('model_'))) {
@@ -1139,6 +1278,7 @@ export async function runTrainedGeneration({
   assert.equal(reopened.layers.length, 1)
   assert.equal(reopened.layers[0].id, layer.id)
   assert.equal(reopened.generationDraft.positivePrompt.text, afterCapturePrompt)
+  if (canceled) assert.deepEqual(reopened.generationDraft.seed, { policy: 'fixed', value: 23 })
   if (fixture.model.standaloneVae) assert.equal(reopened.generationDraft.vae, null)
   if (fixture.model.standaloneLora) assert.deepEqual(reopened.generationDraft.loras, [])
   if (fixture.model.standaloneEmbedding) {
@@ -1189,7 +1329,13 @@ export async function runTrainedGeneration({
     trainedGeneration: {
       family: fixture.family,
       ...(noobai ? { profile: fixture.profile, explicitPredictionOverride: noobaiV } : {}),
-      actualAdmissions: 1,
+      actualAdmissions: exerciseRetry ? 2 : 1,
+      ...(canceled && {
+        actualCancellations: 1,
+        canceledQueueItemId: canceled.source.id,
+        canceledWorker: canceled.worker,
+        frozenRetry: true,
+      }),
       actualCompletions: 1,
       model: fixture.model.ref,
       ...(fixture.model.standaloneVae && { vae: fixture.model.standaloneVae }),

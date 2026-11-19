@@ -47,7 +47,13 @@ assert.equal(sourcesPath === undefined, family === undefined)
 assert.ok(
   profile === undefined ||
     (family === 'illustrious' &&
-      ['noobai-eps', 'noobai-eps-vae', 'noobai-eps-stack', 'noobai-v'].includes(profile)),
+      [
+        'noobai-eps',
+        'noobai-eps-vae',
+        'noobai-eps-stack',
+        'noobai-eps-stack-retry',
+        'noobai-v',
+      ].includes(profile)),
 )
 assert.equal(packageProofPath === undefined, profile === undefined)
 const preserved = new Set(['inference-resources', 'runtime'])

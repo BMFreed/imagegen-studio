@@ -262,5 +262,60 @@ combined case. Exact source identities, closed catalogs and native
 result evidence remain available.
 
 The scope is one packaged TXT workload at the tested settings. The
-combined frozen Retry, legacy queue and incompatible worker cases,
-additional inference modes and visual acceptance remain open.
+frozen Retry follow-up is below. The
+[historical queue check](./phase-5-noobai-legacy-queue-research.md)
+covers the production storage owners. Packaged historical upgrade,
+incompatible worker refusal and visual acceptance remain open.
+
+## Packaged frozen Retry with all three components
+
+The `noobai-eps-stack-retry` profile reuses the same exact checkpoint,
+VAE, LoRA and embedding selections with fresh managed installs for the
+three components. Re-read clean InvokeAI
+`4875d96531ca6712b288f6e660fcbb34143408c1`.
+`invokeai/frontend/webv2/src/features/queue/data/httpRealtimeQueueBackend.ts`
+calls `retryItemsById` in `serverApi.ts`.
+`invokeai/app/api/routers/session_queue.py::retry_items_by_id` verifies
+queue membership and ownership before
+`invokeai/app/services/session_queue/session_queue_default.py::retry_items_by_id`
+validates the saved graph and clones failed or canceled executions.
+Studio's existing Queue Manager, action controller and repository are
+the exercised owners.
+
+The test waits for a real running worker, cancels its row through
+Queue Manager and waits for its physical exit. The canceled input
+manifest, target and frozen payload survive. The draft then uses seed
+23, two plain edited prompts, Embedded VAE and no active LoRA or
+embedding. An explicit Retry creates separate job, batch and staging
+IDs. Its frozen JSON and target PNG must match the original byte for
+byte. The canceled row retains its original payload and consumes
+one review sequence. The candidate must come from the new worker
+and retain seed 0 and all three original resource bindings.
+
+The final stock AppImage run passed one running cancellation and one
+successful Retry. The canceled and cloned JSON and target PNG match
+byte-for-byte. The Retry candidate also matches all 65,536 RGBA pixels
+and the encoded PNG from the prior combined Generate. An exact worker
+PID/start/cgroup match produced 41 CUDA samples, peaking at 7,984 MiB.
+Explicit Add and Save persisted the accepted references, while the fresh
+draft kept seed 23 and the cleared components after reopen. Both app
+lifetimes closed normally, and all 112 original slot entries were restored.
+The wrapper completed in 192.938 seconds with zero owned swap.
+
+Two earlier attempts confirmed real cancellation but reached only one
+row after Retry. The diagnostic attempt captured
+`GENERATION_RUNTIME_UNAVAILABLE` and Main's message that it kept the
+original job and temporary results. The passing run waited for the
+real Project state to become idle and report VAE and embedding
+capabilities before clicking Retry. The enabled control during the
+transition remains a behavior to qualify. The failing attempts and
+successful receipts are retained separately.
+
+The final evidence is under
+`runs/packaged-installed-engine/20261118/trained-noobai-eps-stack-retry-r3`.
+Independent readback matched the two queue rows and the single Retry
+receipt in both closed stores and verified the archived Raster,
+portable references and physical exits. Five focused suites passed
+301 tests with zero failures and zero skips. Temporary profiles,
+scratch and the three republished model bodies accounted for
+526,110,720 allocated bytes released after the audit.
