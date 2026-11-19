@@ -1,6 +1,6 @@
 # MVP acceptance backlog
 
-Updated through [packaged CUDA generation with the installed VAE](./phase-5-packaged-noobai-components-research.md#cuda-generation-with-the-installed-vae).
+Updated through the [packaged CUDA case with all three managed components](./phase-5-packaged-noobai-components-research.md#packaged-noobai-generation-with-all-three-managed-components).
 All eight public promise statuses remain **«Пока не обещать»**. Earlier roadmap
 entries record the state at their checkpoint.
 [Product scope](../specs/00-product-scope.md), [promise matrix](../product-promises.md),
@@ -131,9 +131,8 @@ entries record the state at their checkpoint.
    [stage owner](../../src/main/application-updates/application-update-staging.ts),
    [startup authority](./phase-5-application-update-startup-authority-research.md),
    [application updates](../features/application-updates.md#acceptance-criteria).
-6. **Run the NoobAI and joint release matrix.** Exercise the managed
-   standalone VAE, LoRA and embedding together with the packaged CUDA worker.
-   Cover the remaining Model Manager policies, portable chooser
+6. **Run the NoobAI and joint release matrix.** Cover the remaining Model
+   Manager policies, portable chooser
    routes, legacy queue and provenance, and an incompatible worker refusal
    on clean install and upgrade.
    Verify Generate, Cancel, frozen Retry, explicit Add/Undo/Redo/Save,
@@ -173,6 +172,11 @@ entries record the state at their checkpoint.
    NoobAI EPS TXT case used the managed VAE on CUDA and preserved its
    exact reference in accepted provenance after draft Reset, Add, Save
    and reopen.
+   A follow-up executed one packaged NoobAI EPS TXT case with the
+   exact managed VAE, DigitalArt LoRA and negative IllustriousPhoto
+   embedding together. Their references survived Add, Save and reopen
+   after removing the components from the draft.
+   [Combined managed components](./phase-5-packaged-noobai-components-research.md#packaged-noobai-generation-with-all-three-managed-components),
    [Packaged VAE generation](./phase-5-packaged-noobai-components-research.md#cuda-generation-with-the-installed-vae),
    [Live component installation](./phase-5-packaged-noobai-components-research.md),
    [Managed EPS qualification](./phase-5-packaged-noobai-install-research.md),

@@ -5,6 +5,7 @@ import { constants } from 'node:fs'
 import { lstat, open, readdir, realpath } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 
 import { openAppDatabase } from '../../src/main/db/database.ts'
 import {
@@ -83,16 +84,50 @@ const animaCompanions = {
   },
   vae: { role: 'vae', name: 'Anima Qwen Image VAE', pin: ANIMA_QWEN_IMAGE_VAE },
 }
-const standaloneVae = {
-  modelId: 1219546,
-  versionId: 1594319,
-  fileId: 1494323,
-  name: 'sdxl-vae-anime-test',
-  versionName: 'beta-120000',
-  creator: 'Euge_',
-  originalFilename: 'sdxlVaeAnimeTest_beta120000_1494323.safetensors',
-  byteSize: 334640988,
-  sha256: 'fc7d6b12b37b12759e30b1109068a4bb2a0a84e79ab01262cc5af6b89a783ec6',
+const standaloneComponents = {
+  standaloneVae: {
+    kind: 'vae',
+    sourceBaseModel: 'NoobAI',
+    modelId: 1219546,
+    versionId: 1594319,
+    fileId: 1494323,
+    name: 'sdxl-vae-anime-test',
+    versionName: 'beta-120000',
+    creator: 'Euge_',
+    originalFilename: 'sdxlVaeAnimeTest_beta120000_1494323.safetensors',
+    byteSize: 334640988,
+    sha256: 'fc7d6b12b37b12759e30b1109068a4bb2a0a84e79ab01262cc5af6b89a783ec6',
+  },
+  standaloneLora: {
+    kind: 'lora',
+    sourceBaseModel: 'Illustrious',
+    modelId: 1121001,
+    versionId: 1260279,
+    fileId: 1165414,
+    name: 'Not Artists Styles for Illustrious-XL v0.1',
+    versionName: 'Digital Art',
+    creator: 'obuyb404',
+    originalFilename: 'Digital Art [LoRA] - Illustrious-XL v0.1.safetensors',
+    byteSize: 114437420,
+    sha256: 'c2bd847fb3859cc8ce16af6ecce291c96b36ca486999e620af9b886367ee6ee9',
+  },
+  standaloneEmbedding: {
+    kind: 'embedding',
+    sourceBaseModel: 'Illustrious',
+    modelId: 2360940,
+    versionId: 2655289,
+    fileId: 2542976,
+    name: 'IllustriousPhoto Embedding',
+    versionName: 'WAI v15 1152steps',
+    creator: 'CautionMergeAhead',
+    originalFilename: 'illustriousphoto.safetensors',
+    byteSize: 49736,
+    sha256: '91a95b244b8ba01d905d32ced7e3cc20eb74b4da8f519de3764505500d386c36',
+  },
+}
+const standaloneRolesByProfile = {
+  'noobai-eps-vae': ['standaloneVae'],
+  'noobai-eps-stack': Object.keys(standaloneComponents),
 }
 
 function keys(object, exact) {
@@ -144,18 +179,17 @@ async function verifyFile({ path: filename, sha256, byteSize }, role) {
   }
 }
 
-function rolesFor(family, includeStandaloneVae) {
-  if (includeStandaloneVae) return ['checkpoint', 'standaloneVae']
-  return family === 'anima' ? ['checkpoint', 'qwen3Encoder', 'vae'] : ['checkpoint']
+function rolesFor(family, profile) {
+  const secondary =
+    family === 'anima' ? Object.keys(animaCompanions) : (standaloneRolesByProfile[profile] ?? [])
+  return ['checkpoint', ...secondary]
 }
 
 function assertModelPin(family, role, file) {
   const pin =
     role === 'checkpoint'
       ? checkpoints[family]
-      : role === 'standaloneVae'
-        ? standaloneVae
-        : animaCompanions[role].pin
+      : (standaloneComponents[role] ?? animaCompanions[role].pin)
   assert.equal(file.sha256, pin.sha256, role)
   assert.equal(file.byteSize, pin.byteSize ?? pin.sizeBytes, role)
 }
@@ -167,10 +201,15 @@ export async function verifyPackagedTrainedSources(files) {
     (family) => checkpoints[family].sha256 === files[0]?.sha256,
   )
   assert.ok(family, 'Expected a pinned trained checkpoint.')
-  const includesStandaloneVae = family === 'noobai-eps' && files.length === 2
-  assert.deepEqual(
-    files.map(({ role }) => role),
-    rolesFor(family, includesStandaloneVae),
+  const roles = files.map(({ role }) => role)
+  const allowed = [rolesFor(family)]
+  if (family === 'noobai-eps') {
+    for (const profile of Object.keys(standaloneRolesByProfile))
+      allowed.push(rolesFor(family, profile))
+  }
+  assert.ok(
+    allowed.some((expected) => isDeepStrictEqual(expected, roles)),
+    roles.join(','),
   )
   for (const file of files) {
     keys(file, ['role', 'path', 'sha256', 'byteSize', 'stat'])
@@ -221,7 +260,7 @@ async function readSmallOwnedFile(filename, maximumBytes) {
   }
 }
 
-async function copyStandaloneVaeCatalog(database, file) {
+async function readManagedComponentCatalog(file, pin) {
   const run = managedSourceRun(file)
   await ownedDirectory(run)
   assert.equal((await lstat(run)).mode & 0o077, 0, 'The retained install run must stay private.')
@@ -233,7 +272,7 @@ async function copyStandaloneVaeCatalog(database, file) {
   const proof = JSON.parse(await readSmallOwnedFile(path.join(run, 'retention.json'), 64 * 1024))
   assert.equal(proof.rawCatalogAndBodyRetainedForCuda, true)
   assert.equal(proof.physicalExits, 2)
-  assert.equal(proof.publishedFileSha256Verified, standaloneVae.sha256)
+  assert.equal(proof.publishedFileSha256Verified, pin.sha256)
   const bytes = await readSmallOwnedFile(catalog, 2 * 1024 * 1024)
   const sha256 = createHash('sha256').update(bytes).digest('hex')
   assert.equal(sha256, proof.closedCatalogSha256)
@@ -242,6 +281,18 @@ async function copyStandaloneVaeCatalog(database, file) {
   assert.deepEqual(snapshot.foreignKeyCheck, [])
   assert.deepEqual(await readSmallOwnedFile(catalog, 2 * 1024 * 1024), bytes)
   assert.deepEqual(snapshot.tables.model_version_dependency.rows, [])
+  return { snapshot, catalog: { path: catalog, sizeBytes: bytes.length, sha256 } }
+}
+
+async function copyStandaloneCatalogs(database, sources, roles) {
+  const inputs = []
+  for (const role of roles) {
+    const file = sources[role]
+    const pin = standaloneComponents[role]
+    const { snapshot, catalog } = await readManagedComponentCatalog(file, pin)
+    inputs.push({ role, file, pin, snapshot, catalog })
+  }
+  assert.equal(new Set(inputs.map(({ catalog }) => catalog.path)).size, inputs.length)
   // Keep the exact installed IDs and job in a fresh app database. Workspace rows own
   // the original install profile's absolute paths and have no role in this case.
   const tables = [
@@ -251,23 +302,35 @@ async function copyStandaloneVaeCatalog(database, file) {
     'model_install_job',
     'model_install_artifact',
   ]
-  const reference = await database.db.transaction().execute(async (transaction) => {
+  return database.db.transaction().execute(async (transaction) => {
     for (const table of tables) {
-      const rows = snapshot.tables[table].rows
-      assert.equal(rows.length, 1, table)
+      const rows = inputs.map(({ snapshot }) => {
+        const entries = snapshot.tables[table].rows
+        assert.equal(entries.length, 1, table)
+        return entries[0]
+      })
       await transaction.insertInto(table).values(rows).execute()
     }
-    return readStandaloneVaeReference(new ModelRepository(transaction), file)
+    const repository = new ModelRepository(transaction)
+    const installed = await repository.listInstalled()
+    const jobs = await repository.listInstallJobs()
+    assert.equal(installed.length, inputs.length)
+    assert.equal(jobs.length, inputs.length)
+    return Object.fromEntries(
+      inputs.flatMap(({ role, file, pin, catalog }) => [
+        [role, readStandaloneReference(installed, jobs, file, pin)],
+        [`${role}Catalog`, catalog],
+      ]),
+    )
   })
-  return { reference, catalog: { path: catalog, sizeBytes: bytes.length, sha256 } }
 }
 
-async function readStandaloneVaeReference(repository, file) {
-  const pin = standaloneVae
-  const installed = await repository.listInstalled()
-  assert.equal(installed.length, 1)
-  const [resource] = installed
-  assert.equal(resource.type, 'vae')
+function readStandaloneReference(installed, jobs, file, pin) {
+  const resource = installed.find(
+    ({ source }) => source.kind === 'civitai' && source.modelId === pin.modelId,
+  )
+  assert.ok(resource, pin.name)
+  assert.equal(resource.type, pin.kind)
   assert.equal(resource.displayName, pin.name)
   assert.equal(resource.creator, pin.creator)
   assert.deepEqual(resource.source, { kind: 'civitai', modelId: pin.modelId })
@@ -276,7 +339,7 @@ async function readStandaloneVaeReference(repository, file) {
   assert.equal(resource.defaultVersionId, version.id)
   assert.equal(version.name, pin.versionName)
   assert.equal(version.baseModelFamily, 'illustrious')
-  assert.equal(version.sourceMetadata.baseModel, 'NoobAI')
+  assert.equal(version.sourceMetadata.baseModel, pin.sourceBaseModel)
   assert.equal(version.predictionType, null)
   assert.equal(version.civitaiVersionId, pin.versionId)
   assert.equal(version.civitaiFileId, pin.fileId)
@@ -288,10 +351,9 @@ async function readStandaloneVaeReference(repository, file) {
   assert.equal(version.file.sha256, pin.sha256)
   assert.equal(version.file.sizeBytes, pin.byteSize)
 
-  const jobs = await repository.listInstallJobs()
-  assert.equal(jobs.length, 1)
-  const [job] = jobs
-  assert.equal(job.resourceType, 'vae')
+  const job = jobs.find(({ civitaiModelId }) => civitaiModelId === pin.modelId)
+  assert.ok(job, pin.name)
+  assert.equal(job.resourceType, pin.kind)
   assert.equal(job.status, 'completed')
   assert.equal(job.civitaiModelId, pin.modelId)
   assert.equal(job.civitaiVersionId, pin.versionId)
@@ -308,7 +370,7 @@ async function readStandaloneVaeReference(repository, file) {
   assert.equal(artifact.downloadedBytes, pin.byteSize)
 
   return {
-    kind: 'vae',
+    kind: pin.kind,
     baseModelFamily: 'illustrious',
     localModelId: resource.id,
     localVersionId: version.id,
@@ -372,10 +434,12 @@ export async function preparePackagedTrainedModels({
   assert.ok(
     profile === undefined
       ? ['illustrious', 'anima'].includes(family)
-      : ['noobai-eps', 'noobai-eps-vae', 'noobai-v'].includes(profile) && family === 'illustrious',
+      : (Object.hasOwn(checkpoints, profile) || Object.hasOwn(standaloneRolesByProfile, profile)) &&
+          profile.startsWith('noobai-') &&
+          family === 'illustrious',
   )
-  const includeStandaloneVae = profile === 'noobai-eps-vae'
-  const checkpointKey = includeStandaloneVae ? 'noobai-eps' : (profile ?? family)
+  const standaloneRoles = standaloneRolesByProfile[profile] ?? []
+  const checkpointKey = standaloneRoles.length ? 'noobai-eps' : (profile ?? family)
   assert.equal(repo, checkout)
   const engineRun = path.dirname(run)
   assert.equal(path.dirname(engineRun), engineRuns)
@@ -401,7 +465,7 @@ export async function preparePackagedTrainedModels({
   } finally {
     await input.close()
   }
-  const roles = rolesFor(family, includeStandaloneVae)
+  const roles = rolesFor(family, profile)
   keys(sources, ['schemaVersion', 'family', ...roles, ...(profile ? ['profile'] : [])])
   assert.equal(sources.schemaVersion, 1)
   assert.equal(sources.family, family)
@@ -409,7 +473,12 @@ export async function preparePackagedTrainedModels({
   const files = []
   for (const role of roles) {
     const file = sources[role]
-    keys(file, ['path', 'sha256', 'byteSize', ...(role === 'standaloneVae' ? ['catalogPath'] : [])])
+    keys(file, [
+      'path',
+      'sha256',
+      'byteSize',
+      ...(standaloneRoles.includes(role) ? ['catalogPath'] : []),
+    ])
     assert.ok(typeof file.path === 'string' && !inside(engineRun, file.path), role)
     assertModelPin(checkpointKey, role, file)
     if (checkpointKey === 'noobai-eps') managedSourceRun(file)
@@ -419,17 +488,17 @@ export async function preparePackagedTrainedModels({
 
   // InvokeAI model_install_default.py register_path -> _register supports borrowed original paths.
   // Studio's existing original-file qualification uses the same real ModelRepository publication.
-  // A live-installed standalone VAE keeps its original registry rows and completed job.
+  // Live-installed components keep their original registry rows and completed jobs.
   const database = openAppDatabase(appData, path.join(repo, 'src/main/db/migrations'))
   try {
     const repository = new ModelRepository(database.db)
     assert.deepEqual(await repository.listInstalled(), [])
     assert.deepEqual(await repository.listInstallJobs(), [])
-    const vae = includeStandaloneVae
-      ? await copyStandaloneVaeCatalog(database, sources.standaloneVae)
-      : undefined
+    const standalone = standaloneRoles.length
+      ? await copyStandaloneCatalogs(database, sources, standaloneRoles)
+      : {}
     const [checkpoint, ...components] = files
-    const companions = includeStandaloneVae ? [] : components
+    const companions = family === 'anima' ? components : []
     const pin = checkpoints[checkpointKey]
     const { resourceId, versionId, dependencyVersionIds } =
       await repository.publishVerifiedInstallation({
@@ -488,10 +557,7 @@ export async function preparePackagedTrainedModels({
         resourceId,
         versionId,
         dependencies,
-        ...(vae && {
-          standaloneVae: vae.reference,
-          standaloneVaeCatalog: vae.catalog,
-        }),
+        ...standalone,
         ref: {
           kind: 'checkpoint',
           baseModelFamily: family,

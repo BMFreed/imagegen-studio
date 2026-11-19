@@ -71,17 +71,35 @@ const noobaiEps = {
 const noobaiPins = {
   'noobai-eps': noobaiEps,
   'noobai-eps-vae': noobaiEps,
+  'noobai-eps-stack': noobaiEps,
   'noobai-v': {
     source: [1147756, 2679856, 2566634, 'v_prediction'],
     sha256: 'edca0d656069468ce208440edda4643b8795b6dc500606bb6d0e57eb9a54c89d',
     sizeBytes: 6938040794,
   },
 }
-const standaloneVaePin = {
-  source: [1219546, 1594319, 1494323],
-  sha256: 'fc7d6b12b37b12759e30b1109068a4bb2a0a84e79ab01262cc5af6b89a783ec6',
-  sizeBytes: 334640988,
+const componentPins = {
+  standaloneVae: {
+    kind: 'vae',
+    source: [1219546, 1594319, 1494323],
+    sha256: 'fc7d6b12b37b12759e30b1109068a4bb2a0a84e79ab01262cc5af6b89a783ec6',
+    sizeBytes: 334640988,
+  },
+  standaloneLora: {
+    kind: 'lora',
+    source: [1121001, 1260279, 1165414],
+    sha256: 'c2bd847fb3859cc8ce16af6ecce291c96b36ca486999e620af9b886367ee6ee9',
+    sizeBytes: 114437420,
+  },
+  standaloneEmbedding: {
+    kind: 'embedding',
+    source: [2360940, 2655289, 2542976],
+    sha256: '91a95b244b8ba01d905d32ced7e3cc20eb74b4da8f519de3764505500d386c36',
+    sizeBytes: 49736,
+  },
 }
+const stackLoraWeight = -0.5
+const stackEmbeddingToken = '<illustriousphoto>'
 
 function inside(parent, filename) {
   return (
@@ -193,26 +211,35 @@ export async function readTrainedGeneration({ filename, engine, outputRoot, appI
   assert.equal(model.ref.displayName, model.name)
   assert.equal(model.ref.versionName, model.versionName)
   const roles = fixture.family === 'anima' ? ['checkpoint', 'qwen3Encoder', 'vae'] : ['checkpoint']
-  if (fixture.profile === 'noobai-eps-vae') roles.push('standaloneVae')
+  const standaloneRoles =
+    fixture.profile === 'noobai-eps-stack'
+      ? Object.keys(componentPins)
+      : fixture.profile === 'noobai-eps-vae'
+        ? ['standaloneVae']
+        : []
+  roles.push(...standaloneRoles)
   assert.deepEqual(
     files.map(({ role }) => role),
     roles,
   )
-  assert.equal(Boolean(model.standaloneVae), fixture.profile === 'noobai-eps-vae')
-  if (model.standaloneVae) {
-    const vae = model.standaloneVae
-    const source = files.find(({ role }) => role === 'standaloneVae')
+  const catalogInputs = []
+  for (const [role, pin] of Object.entries(componentPins)) {
+    const reference = model[role]
+    const catalog = model[role + 'Catalog']
+    assert.equal(Boolean(reference), standaloneRoles.includes(role))
+    assert.equal(Boolean(catalog), Boolean(reference))
+    if (!reference) continue
+    const source = files.find((entry) => entry.role === role)
     assert.deepEqual(
-      [vae.civitaiModelId, vae.civitaiVersionId, vae.civitaiFileId],
-      standaloneVaePin.source,
+      [reference.civitaiModelId, reference.civitaiVersionId, reference.civitaiFileId],
+      pin.source,
     )
-    assert.equal(vae.fileSha256, standaloneVaePin.sha256)
-    assert.equal(source.sha256, standaloneVaePin.sha256)
-    assert.equal(source.byteSize, standaloneVaePin.sizeBytes)
-    assert.equal(vae.baseModelFamily, 'illustrious')
-    assert.equal(vae.kind, 'vae')
-    assert.equal(vae.predictionType, null)
-    const catalog = model.standaloneVaeCatalog
+    assert.equal(reference.fileSha256, pin.sha256)
+    assert.equal(source.sha256, pin.sha256)
+    assert.equal(source.byteSize, pin.sizeBytes)
+    assert.equal(reference.baseModelFamily, 'illustrious')
+    assert.equal(reference.kind, pin.kind)
+    assert.equal(reference.predictionType, null)
     const catalogRun = path.dirname(catalog.path)
     const installRuns = path.join(path.dirname(path.dirname(engine.run)), 'packaged-noobai-install')
     assert.equal(path.dirname(catalogRun), installRuns)
@@ -220,9 +247,10 @@ export async function readTrainedGeneration({ filename, engine, outputRoot, appI
     assert.equal(path.basename(catalog.path), 'closed-catalog.sqlite')
     assert.equal(
       path.relative(catalogRun, source.path),
-      `install/data/imagegen-studio/models/fc/${standaloneVaePin.sha256}.safetensors`,
+      `install/data/imagegen-studio/models/${pin.sha256.slice(0, 2)}/${pin.sha256}.safetensors`,
     )
     assert.deepEqual(await identity(catalog.path), catalog)
+    catalogInputs.push(catalog)
   }
   assert.equal(model.ref.fileSha256, files[0].sha256)
   if (noobai) {
@@ -257,11 +285,7 @@ export async function readTrainedGeneration({ filename, engine, outputRoot, appI
     python,
     pythonPath,
     engineRun: engine.run,
-    inputs: [
-      fixtureBefore,
-      previousBefore,
-      ...(model.standaloneVae ? [model.standaloneVaeCatalog] : []),
-    ],
+    inputs: [fixtureBefore, previousBefore, ...catalogInputs],
   }
 }
 
@@ -369,12 +393,44 @@ async function createAndAuthor(page, fixture, root) {
   const random = page.getByRole('switch', { name: 'Random seed switch' })
   if ((await random.getAttribute('aria-checked')) === 'true') await random.click()
   await setInput(page, 'Generation seed', 0)
-  const prompts = family === 'anima' ? weightedPrompts : plainPrompts
+  const prompts = model.standaloneEmbedding
+    ? { ...plainPrompts, negative: `${plainPrompts.negative}, ${stackEmbeddingToken}` }
+    : family === 'anima'
+      ? weightedPrompts
+      : plainPrompts
+  const loras = model.standaloneLora
+    ? [{ enabled: true, resource: model.standaloneLora, weight: stackLoraWeight }]
+    : []
+  const embeddingRefs = {
+    positive: [],
+    negative: model.standaloneEmbedding
+      ? [{ resource: model.standaloneEmbedding, token: stackEmbeddingToken }]
+      : [],
+  }
+  if (model.standaloneLora) {
+    await page.locator('[aria-label="Add LoRA"]').click()
+    await page
+      .locator('.model-option')
+      .filter({ hasText: model.standaloneLora.displayName })
+      .filter({ hasText: model.standaloneLora.versionName })
+      .click()
+    const weightLabel = model.standaloneLora.displayName + ' weight'
+    await setInput(page, weightLabel, stackLoraWeight)
+    await expect
+      .poll(async () => (await openTab(page, project.id)).generationDraft.loras)
+      .toEqual(loras)
+  }
   for (const [sign, title] of [
     ['positive', 'Positive prompt'],
     ['negative', 'Negative prompt'],
   ]) {
-    await page.getByRole('textbox', { name: title, exact: true }).fill(prompts[sign])
+    const editor = page.getByRole('textbox', { name: title, exact: true })
+    if (sign === 'negative' && model.standaloneEmbedding) {
+      await editor.fill(`${plainPrompts.negative}, illustriousphoto`)
+      await page.getByRole('option', { name: /<illustriousphoto>/ }).click()
+    } else {
+      await editor.fill(prompts[sign])
+    }
     await expect
       .poll(async () => (await openTab(page, project.id)).generationDraft[sign + 'Prompt'].text)
       .toBe(prompts[sign])
@@ -384,15 +440,20 @@ async function createAndAuthor(page, fixture, root) {
   assert.deepEqual(tab.primaryBbox, bbox)
   assert.deepEqual(tab.generationDraft.model, selected)
   assert.deepEqual(tab.generationDraft.seed, { policy: 'fixed', value: 0 })
-  assert.deepEqual(tab.generationDraft.loras, [])
+  assert.deepEqual(tab.generationDraft.loras, loras)
+  if (model.standaloneEmbedding) {
+    await expect
+      .poll(async () => (await openTab(page, project.id)).generationDraft.negativePrompt)
+      .toEqual({ text: prompts.negative, embeddingRefs: embeddingRefs.negative })
+  }
   if (model.standaloneVae) assert.deepEqual(tab.generationDraft.vae, model.standaloneVae)
   assert.equal(tab.generationDraft.sampling.steps, 3)
   assert.equal(tab.generationDraft.sampling.cfgScale, 4)
-  return { project, prompts, tab }
+  return { project, prompts, tab, loras, embeddingRefs }
 }
 
 function assertFrozen(row, requested, fixture, projectFile) {
-  const { project, tab, prompts } = requested
+  const { project, tab, prompts, loras, embeddingRefs } = requested
   const { model, family, files } = fixture
   const frozen = JSON.parse(row.frozen_payload_json)
   const { context, workerJob } = frozen
@@ -408,9 +469,60 @@ function assertFrozen(row, requested, fixture, projectFile) {
   assert.deepEqual(context.bbox, bbox)
   assert.deepEqual(workerJob.bbox, bbox)
   assert.deepEqual(context.prompts, prompts)
-  assert.deepEqual(context.loras ?? [], [])
-  assert.deepEqual(context.loraStack ?? [], [])
-  assert.deepEqual(workerJob.loras ?? [], [])
+  assert.deepEqual(context.loraStack ?? [], loras)
+  const lora = files.find(({ role }) => role === 'standaloneLora')
+  assert.deepEqual(
+    context.loras ?? [],
+    lora
+      ? [
+          {
+            reference: model.standaloneLora,
+            managedPath: lora.path,
+            byteSize: lora.byteSize,
+            weight: stackLoraWeight,
+          },
+        ]
+      : [],
+  )
+  assert.deepEqual(
+    workerJob.loras ?? [],
+    lora
+      ? [
+          {
+            path: lora.path,
+            sha256: lora.sha256,
+            byteSize: lora.byteSize,
+            weight: stackLoraWeight,
+          },
+        ]
+      : [],
+  )
+  const embedding = files.find(({ role }) => role === 'standaloneEmbedding')
+  if (embedding) {
+    assert.deepEqual(context.embeddingRefs, embeddingRefs)
+    assert.deepEqual(context.embeddings, {
+      positive: [],
+      negative: [
+        {
+          reference: model.standaloneEmbedding,
+          managedPath: embedding.path,
+          byteSize: embedding.byteSize,
+          token: stackEmbeddingToken,
+        },
+      ],
+    })
+    assert.deepEqual(workerJob.embeddings, {
+      positive: [],
+      negative: [
+        {
+          path: embedding.path,
+          sha256: embedding.sha256,
+          byteSize: embedding.byteSize,
+          token: stackEmbeddingToken,
+        },
+      ],
+    })
+  }
   assert.equal(context.sampling.seed, 0)
   assert.equal(context.sampling.requestedSeedPolicy, 'fixed')
   assert.equal(context.sampling.steps, 3)
@@ -628,13 +740,19 @@ async function retainGeneration({ row, candidate, frozen, receipt, root, dataRoo
 }
 
 function assertPortableConfiguration(configuration, requested, fixture) {
-  const { prompts } = requested
+  const { prompts, loras, embeddingRefs } = requested
   const { model, family, files } = fixture
   assert.equal(configuration.mode, 'txt2img')
   assert.deepEqual(configuration.model, model.ref)
-  assert.deepEqual(configuration.positivePrompt, { text: prompts.positive, embeddingRefs: [] })
-  assert.deepEqual(configuration.negativePrompt, { text: prompts.negative, embeddingRefs: [] })
-  assert.deepEqual(configuration.loras ?? [], [])
+  assert.deepEqual(configuration.positivePrompt, {
+    text: prompts.positive,
+    embeddingRefs: embeddingRefs.positive,
+  })
+  assert.deepEqual(configuration.negativePrompt, {
+    text: prompts.negative,
+    embeddingRefs: embeddingRefs.negative,
+  })
+  assert.deepEqual(configuration.loras ?? [], loras)
   assert.deepEqual(configuration.size, { width: 256, height: 256 })
   assert.equal(configuration.sampling.actualSeed, 0)
   assert.equal(configuration.sampling.requestedSeedPolicy, 'fixed')
@@ -721,16 +839,17 @@ function expectCatalog(catalog, fixture, predictionType = fixture.model.ref.pred
   if (fixture.profile) {
     assert.equal(version.predictionTypeSource, predictionType === 'epsilon' ? 'default' : 'user')
   }
-  if (model.standaloneVae) {
-    const ref = model.standaloneVae
-    const vae = catalog.find(({ id }) => id === ref.localModelId)
-    assert.equal(vae?.resourceType, 'vae')
-    assert.equal(vae.name, ref.displayName)
-    const selected = vae.versions.find(({ id }) => id === ref.localVersionId)
+  for (const [role, pin] of Object.entries(componentPins)) {
+    const ref = model[role]
+    if (!ref) continue
+    const resource = catalog.find(({ id }) => id === ref.localModelId)
+    assert.equal(resource?.resourceType, pin.kind)
+    assert.equal(resource.name, ref.displayName)
+    const selected = resource.versions.find(({ id }) => id === ref.localVersionId)
     assert.equal(selected?.name, ref.versionName)
     assert.equal(selected.fileStatus, 'ready')
     assert.equal(selected.sha256, ref.fileSha256)
-    assert.equal(selected.fileSizeBytes, standaloneVaePin.sizeBytes)
+    assert.equal(selected.fileSizeBytes, pin.sizeBytes)
   }
 }
 
@@ -806,6 +925,25 @@ export async function runTrainedGeneration({
     await expect
       .poll(async () => (await openTab(first.page, project.id)).generationDraft.vae)
       .toBeNull()
+  }
+  if (fixture.model.standaloneLora) {
+    await first.page
+      .getByRole('button', {
+        name: 'Remove ' + fixture.model.standaloneLora.displayName,
+        exact: true,
+      })
+      .click()
+    await expect
+      .poll(async () => (await openTab(first.page, project.id)).generationDraft.loras)
+      .toEqual([])
+  }
+  if (fixture.model.standaloneEmbedding) {
+    await first.page
+      .getByRole('textbox', { name: 'Negative prompt', exact: true })
+      .fill(plainPrompts.negative)
+    await expect
+      .poll(async () => (await openTab(first.page, project.id)).generationDraft.negativePrompt)
+      .toEqual({ text: plainPrompts.negative, embeddingRefs: [] })
   }
 
   let durable
@@ -924,6 +1062,13 @@ export async function runTrainedGeneration({
   assert.equal(stored.lastActualSeedSnapshot, 0)
   assert.equal(stored.generationDraft.positivePrompt.text, afterCapturePrompt)
   if (fixture.model.standaloneVae) assert.equal(stored.generationDraft.vae, null)
+  if (fixture.model.standaloneLora) assert.deepEqual(stored.generationDraft.loras, [])
+  if (fixture.model.standaloneEmbedding) {
+    assert.deepEqual(stored.generationDraft.negativePrompt, {
+      text: plainPrompts.negative,
+      embeddingRefs: [],
+    })
+  }
   const [storedLayer] = stored.layers
   assert.equal(storedLayer.id, layer.id)
   const provenance = storedLayer.generationProvenance
@@ -971,7 +1116,7 @@ export async function runTrainedGeneration({
     )
     assert.equal(stored.generationDraft.model.predictionType, 'epsilon')
   }
-  if (fixture.profile === 'noobai-eps' || fixture.profile === 'noobai-eps-vae') {
+  if (noobai && !noobaiV) {
     assert.deepEqual(afterFirst.tables.checkpoint_prediction_override.rows, [])
     assert.equal(stored.generationDraft.model.predictionType, 'epsilon')
   }
@@ -995,6 +1140,13 @@ export async function runTrainedGeneration({
   assert.equal(reopened.layers[0].id, layer.id)
   assert.equal(reopened.generationDraft.positivePrompt.text, afterCapturePrompt)
   if (fixture.model.standaloneVae) assert.equal(reopened.generationDraft.vae, null)
+  if (fixture.model.standaloneLora) assert.deepEqual(reopened.generationDraft.loras, [])
+  if (fixture.model.standaloneEmbedding) {
+    assert.deepEqual(reopened.generationDraft.negativePrompt, {
+      text: plainPrompts.negative,
+      embeddingRefs: [],
+    })
+  }
   const reopenedData = await projectCall(
     second.page,
     'getRasterGenerationData',
@@ -1041,6 +1193,8 @@ export async function runTrainedGeneration({
       actualCompletions: 1,
       model: fixture.model.ref,
       ...(fixture.model.standaloneVae && { vae: fixture.model.standaloneVae }),
+      ...(fixture.model.standaloneLora && { loras: requested.loras }),
+      ...(fixture.model.standaloneEmbedding && { embeddingRefs: requested.embeddingRefs }),
       queueItemId: row.id,
       candidateId: candidate.candidateId,
       worker,

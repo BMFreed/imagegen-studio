@@ -12,6 +12,10 @@ file ID persists and passes Main preparation. A
 uses that installation with NoobAI EPS and retains the exact VAE in
 accepted provenance through Save and reopen. These files and their
 metadata survived credential-free catalog restarts. The
+[combined CUDA case](./phase-5-packaged-noobai-components-research.md#packaged-noobai-generation-with-all-three-managed-components)
+uses all three live-installed components in one NoobAI EPS job and
+preserves their exact accepted references after editing the draft and
+reopening the Project. The
 [previous inference matrix](./phase-2c-noobai-component-inference-research.md)
 covers the LoRA and embedding bytes with NoobAI checkpoints.
 

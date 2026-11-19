@@ -195,7 +195,72 @@ The final evidence is under
 An independent readback checked all five original source rows in each
 closed SQLite, both byte-identical Projects, the accepted Raster and
 both normal exits. The four attempts' disposable profiles and scratch
-accounted for 44,216,320 allocated bytes. The retained managed VAE
-remains available for the combined case.
-The combined LoRA, embedding and VAE workload, other inference modes and
-visual acceptance remain in the [MVP backlog](./mvp-acceptance-backlog.md).
+accounted for 44,216,320 allocated bytes. One managed VAE copy was
+retained for the combined case below.
+The combined LoRA, embedding and VAE follow-up is below.
+Other inference modes and visual acceptance remain in the
+[MVP backlog](./mvp-acceptance-backlog.md).
+
+## Packaged NoobAI generation with all three managed components
+
+The `noobai-eps-stack` fixture uses NoobAI EPS `833294 / 1022833 / 928571`,
+DigitalArt LoRA `1121001 / 1260279 / 1165414` at weight −0.5,
+IllustriousPhoto `2360940 / 2655289 / 2542976` in the negative prompt
+and Euge_'s VAE `1219546 / 1594319 / 1494323` at Auto precision.
+Only the exact original files are admitted. The LoRA and embedding
+are fresh stock AppImage installs into separate profiles. Together
+with the retained VAE install, their three closed catalogs contribute
+15 original records in one transaction. Only model and install tables
+are imported. The managed file rows, local IDs and completed install
+jobs keep their actual source values. The EPS checkpoint is a borrowed
+verified precondition.
+
+Re-read clean InvokeAI `4875d96531ca6712b288f6e660fcbb34143408c1`.
+`invokeai/frontend/webv2/src/features/generation/core/graph.ts`
+routes the SDXL LoRA collection to UNet and both CLIP owners and the
+chosen VAE into decode. `invokeai/app/invocations/model.py` resolves
+registered LoRA and VAE keys.
+`invokeai/app/invocations/text_encoder/compel.py` applies LoRA and
+textual inversion in the same conditioning pass.
+`invokeai/app/util/ti_utils.py` and
+`invokeai/backend/model_manager/load/model_loaders/textual_inversion.py`
+resolve and load the selected embedding record. The test uses the
+existing Studio exact-resource preparation and installed worker.
+
+One 256×256 TXT request uses Euler/Normal, fixed seed 0, CFG 4 and
+three steps. It authors the LoRA, embedding completion and VAE through
+the Project controls. After admission it resets VAE, removes LoRA and
+clears the embedding token from the draft. The expected accepted
+configuration retains the signed weight, negative prompt sidecar and
+portable VAE reference. The package, runtime and resource files are
+checked again after normal close and reopen.
+
+The run passed on the first attempt. It produced one actual admission,
+one completed result, one explicitly accepted Raster and two normal
+physical AppImage exits. The accepted Project reopened byte-identically
+and kept the exact VAE, LoRA weight −0.5 and negative embedding sidecar.
+The reopened draft used Embedded, an empty LoRA stack and a plain negative
+prompt. The three original installation jobs remained completed.
+
+The matching CUDA PID and cgroup had 42 samples, with a maximum observed
+7,984 MiB on the RTX 4080. The first native scope peaked at 9,401,856,000
+host bytes and recorded zero OOM events with swap disabled. The wrapper
+ran for 154.237 seconds and verified exact restoration of 112 original
+runtime-slot entries. Eight focused suites passed 162 tests with zero
+failures and zero skips. Scoped formatting, lint and syntax checks passed.
+
+The final evidence is under
+`runs/packaged-installed-engine/20261118/trained-noobai-eps-stack-r1`.
+An independent readback matched all 15 source records against both
+closed catalogs, checked both byte-identical Projects and verified
+the accepted Raster and physical exits. The original evidence for
+the three component installs remains in
+`runs/packaged-noobai-install/20261119-r12`, `20261119-r13` and
+`20261119-r14`. Disposing of the three temporary installed bodies,
+profiles and scratch released 491,671,552 allocated bytes after the
+combined case. Exact source identities, closed catalogs and native
+result evidence remain available.
+
+The scope is one packaged TXT workload at the tested settings. The
+combined frozen Retry, legacy queue and incompatible worker cases,
+additional inference modes and visual acceptance remain open.
