@@ -38,6 +38,7 @@ const profiles = {
     sha256: 'c2bd847fb3859cc8ce16af6ecce291c96b36ca486999e620af9b886367ee6ee9',
     sizeBytes: 114_437_420,
     resourceType: 'lora',
+    sourceBaseModel: 'Illustrious',
     author: 'obuyb404',
     sizeLabel: '109.1 MB',
   },
@@ -48,10 +49,27 @@ const profiles = {
     sha256: '91a95b244b8ba01d905d32ced7e3cc20eb74b4da8f519de3764505500d386c36',
     sizeBytes: 49_736,
     resourceType: 'embedding',
+    sourceBaseModel: 'Illustrious',
     author: 'CautionMergeAhead',
     sizeLabel: '48.6 KB',
     fileName: 'illustriousphoto.safetensors',
     activationToken: '<illustriousphoto>',
+  },
+  vae: {
+    modelId: 1219546,
+    versionId: 1594319,
+    fileId: 1494323,
+    sha256: 'fc7d6b12b37b12759e30b1109068a4bb2a0a84e79ab01262cc5af6b89a783ec6',
+    sizeBytes: 334_640_988,
+    resourceType: 'vae',
+    sourceBaseModel: 'NoobAI',
+    author: 'Euge_',
+    sizeLabel: '319.1 MB',
+    fileName: 'sdxlVaeAnimeTest_beta120000_1494323.safetensors',
+    sameBytesPrimary: {
+      fileId: 1494307,
+      fileName: 'sdxlVaeAnimeTest_beta120000_1494307.safetensors',
+    },
   },
 }
 const predecessors = {
@@ -60,6 +78,7 @@ const predecessors = {
   v11: [profiles.eps, profiles.v],
   lora: [],
   embedding: [],
+  vae: [],
 }
 const active = new Set(['waiting', 'downloading', 'verifying'])
 
@@ -237,7 +256,7 @@ async function reviewExactFile(page, manager, providerPage, identity) {
   assert.equal(preview.kind, 'select-file')
   assert.equal(preview.modelId, identity.modelId)
   assert.equal(preview.versionId, identity.versionId)
-  const sourceBaseModel = identity.resourceType ? 'Illustrious' : 'NoobAI'
+  const sourceBaseModel = identity.sourceBaseModel ?? 'NoobAI'
   assert.equal(preview.baseModel, sourceBaseModel)
   assert.equal(preview.baseModelFamily, 'illustrious')
   assert.equal(preview.resourceType, identity.resourceType ?? 'checkpoint')
@@ -256,7 +275,19 @@ async function reviewExactFile(page, manager, providerPage, identity) {
   const sizeLabel = identity.sizeLabel ?? '6.5 GB'
   const label = `${file.name} · ${sizeLabel}`
   const fileChoice = dialog.locator('.file-choice')
-  await fileChoice.locator('.n-base-selection').click()
+  const selection = fileChoice.locator('.n-base-selection')
+  if (identity.sameBytesPrimary) {
+    const primary = preview.files.find(({ fileId }) => fileId === identity.sameBytesPrimary.fileId)
+    assert.ok(primary, 'The same-digest primary file must also be offered.')
+    assert.equal(file.primary, false)
+    assert.equal(primary.primary, true)
+    assert.equal(primary.name, identity.sameBytesPrimary.fileName)
+    assert.equal(primary.sha256, identity.sha256)
+    assert.equal(primary.sizeEstimateBytes, identity.sizeBytes)
+    const primaryLabel = `${primary.name} · ${sizeLabel}`
+    await expect(fileChoice.getByText(primaryLabel, { exact: true })).toBeVisible()
+  }
+  await selection.click()
   await page
     .locator('.n-base-select-option')
     .filter({ has: page.getByText(label, { exact: true }) })
@@ -490,7 +521,7 @@ function inspectPublishedComponent(appData, row, identity) {
     assert.equal(stored.author, identity.author)
     assert.equal(stored.predictionType, null)
     const { baseModel, trainedWords } = JSON.parse(stored.sourceMetadata)
-    assert.equal(baseModel, 'Illustrious')
+    assert.equal(baseModel, identity.sourceBaseModel)
     assert.ok(Array.isArray(trainedWords) && trainedWords.every((word) => typeof word === 'string'))
     const { author, fileName, modelName, versionName } = stored
     const activationToken = identity.activationToken

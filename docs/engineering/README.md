@@ -4,10 +4,13 @@
 
 [NoobAI-compatible component installs](./phase-5-packaged-noobai-components-research.md)
 records live CivitAI downloads of the exact DigitalArt LoRA and
-IllustriousPhoto embedding through the stock AppImage. Each file and
-its metadata survived a credential-free catalog restart. The
+IllustriousPhoto embedding through the stock AppImage. A
+[standalone VAE follow-up](./phase-5-packaged-noobai-components-research.md#published-standalone-vae)
+installs Euge_'s published VAE and verifies that the selected same-byte
+file ID persists and passes Main preparation. These files and their
+metadata survived credential-free catalog restarts. The
 [previous inference matrix](./phase-2c-noobai-component-inference-research.md)
-covers those bytes with NoobAI checkpoints.
+covers the LoRA and embedding bytes with NoobAI checkpoints.
 
 [Managed NoobAI versions](./phase-5-packaged-noobai-versions-research.md)
 records stock AppImage installs of exact Cyberfalafel 1.2 and 1.1 beside

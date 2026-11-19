@@ -39,7 +39,8 @@ const trainedFixture = process.env.IMAGEGEN_LINUX_PACKAGE_TRAINED_FIXTURE
 const runtimeSetupControl = process.env.IMAGEGEN_LINUX_PACKAGE_RUNTIME_SETUP_CONTROL
 const noobaiPreviewMode = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_PREVIEW
 const noobaiInstall = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_INSTALL
-const noobaiComponentInstall = noobaiInstall === 'lora' || noobaiInstall === 'embedding'
+const noobaiComponentModes = ['lora', 'embedding', 'vae']
+const noobaiComponentInstall = noobaiComponentModes.includes(noobaiInstall)
 const noobaiMatrix = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_MATRIX
 const noobaiCatalog = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_CATALOG
 const noobaiTokenFile = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_TOKEN_FILE
@@ -75,7 +76,7 @@ assert.ok(
 )
 const updateCheckMode = process.env.IMAGEGEN_LINUX_PACKAGE_UPDATE_CHECK
 assert.ok(
-  noobaiInstall === undefined || ['1', 'v', 'v11', 'lora', 'embedding'].includes(noobaiInstall),
+  noobaiInstall === undefined || ['1', 'v', 'v11', ...noobaiComponentModes].includes(noobaiInstall),
 )
 assert.ok(noobaiMatrix === undefined || noobaiMatrix === '1')
 assert.equal(

@@ -60,8 +60,8 @@ and zero skips. Scoped lint, formatting and syntax checks passed.
 
 The current observations cover Preview, Install, the persisted catalog
 and restart. Prompt token use and CUDA inference are covered separately
-by the installed inference work. A released standalone VAE and the
-combined final-release setup, upgrade and generation matrix remain open.
+by the installed inference work. The combined final-release setup,
+upgrade and generation matrix remains open.
 All eight [product promises](../product-promises.md) retain their
 current status.
 
@@ -76,3 +76,56 @@ catalog. The SQLite WAL was empty in both profiles. The profiles and short
 scratch directories were released once their processes and readers had
 exited. The disposed paths accounted for 136,454,144 allocated bytes.
 The stock AppImage used for these runs remains in its existing location.
+
+## Published standalone VAE
+
+The CivitAI release `1219546 / 1594319` is `sdxl-vae-anime-test`
+`beta-120000` from Euge_. Laxhar's NoobAI release credits the author
+and links to the same account. The CivitAI API reports resource type
+`VAE` and raw base label `NoobAI`. It offers two SafeTensor files
+with 334,640,988 bytes and SHA-256
+`fc7d6b12b37b12759e30b1109068a4bb2a0a84e79ab01262cc5af6b89a783ec6`.
+[NoobAI credits](https://huggingface.co/Laxhar/noobai-XL-1.0#participants-and-contributors),
+[CivitAI model](https://civitai.com/api/v1/models/1219546),
+[published version and file IDs](https://civitai.com/api/v1/model-versions/1594319).
+
+Re-read clean InvokeAI `4875d96531ca6712b288f6e660fcbb34143408c1`
+on the URL installation path described above.
+`invokeai/frontend/webv2/src/features/generation/core/graph.ts`
+selects the compatible VAE before construction of the graph,
+`invokeai/app/invocations/model.py::VAELoaderInvocation` resolves the
+selected registered key, and
+`invokeai/backend/model_manager/load/model_loaders/vae.py` loads the
+single-file AutoencoderKL. Studio's current installer and exact VAE
+preparation already cover these boundaries.
+
+The same stock AppImage passed two live runs in separate fresh profiles.
+The primary `1494307` completed in 17.610 seconds from the observed install
+start. The second run confirmed `1494323` after explicitly changing the
+default selection in Preview and completed in 22.601 seconds. Each run
+preserved its own exact file ID, filename, SHA-256 and byte count, and
+the catalog retained raw `NoobAI` metadata under the Illustrious family.
+Both runs reopened after credential removal and had two normal physical
+exits. The equal hash verifies the bytes. Preview, the completed job
+and durable catalog establish the selected file ID and name.
+
+A separate process used the actual installed `1494323` bytes and a copy
+of its closed catalog to call
+`ModelService.resolveVerifiedGenerationVaeForPlan`. It passed the
+production Safetensors structure check. Substituting the primary file ID
+in that exact reference, while keeping the same hash and local binding,
+returned `MODEL_VERSION_MISMATCH`. The original reference still passed.
+This check covers Main preparation. CUDA loading and the combined
+generation case are pending. Eight focused suites passed 191 tests
+with zero failures and zero skips. The first wrapper launch reached no
+tests because the user service lacked the Node path. The bounded rerun
+included the checkout's Node path and completed.
+
+The two evidence roots are `runs/packaged-noobai-install/20261119-r11`
+and `runs/packaged-noobai-install/20261119-r12` under the local artifact
+root. An independent audit rehashed both bodies and verified the exact
+SQLite rows and four normal physical exits. The closed database snapshots
+and compact reports were retained. The temporary primary copy and
+scratch data accounted for 355,311,616 allocated bytes. One managed copy of
+`1494323` and its catalog are retained for CUDA qualification. The
+production app archive is unchanged.
