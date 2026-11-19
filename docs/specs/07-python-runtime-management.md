@@ -289,6 +289,14 @@ The unavailable partial-outpaint Repair remains separate from connection errors.
 Metadata-first review is recorded above. This UI checkpoint itself supplies no
 shipping provider, public operation progress/cancel or release readiness.
 
+[Packaged clean Setup and Repair](../engineering/phase-5-packaged-runtime-setup-repair-research.md)
+exercises the same review and explicit confirmation in the private
+qualification AppImage. The signed release installs on ext4 and reopens
+ready. Repair reuses the verified transport, installs the missing LaMa
+resource and activates a distinct slot. The previous worker still starts
+while the new pointer remains active. Packaged failure after activation,
+shipping delivery and the supported host matrix remain open.
+
 [Public setup review/token IPC](../engineering/phase-5-runtime-setup-ipc-research.md)
 adds engine-only `previewInstallation(mode)`, explicit review dismissal and
 optional token arguments to install/repair. Only the current trusted main frame

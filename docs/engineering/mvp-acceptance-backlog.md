@@ -85,22 +85,26 @@ entries record the state at their checkpoint.
    [resolution](./phase-4-ordinary-resolution-research.md),
    [CLIP comparison](./phase-4-ordinary-invoke-conditioning-research.md),
    [regional contract](../features/project/generate-mode/regional-guidance.md#scope).
-4. **Qualify clean Setup and Repair through the packaged UI.** Use the existing
+4. **Finish packaged runtime failure and shipping qualification.** Use the existing
    metadata-first backend and Setup, cache, extraction, assembly, health and
    rollback owners with an explicitly scoped qualification source. The private
    AppImage checks review before transfer, dismissal, cancellation, a mismatched
    archive digest and incompatible-driver refusal. A valid archive reaches the
    assembly disk-space guard after transfer, extraction and LaMa publication.
-   On a Linux volume with sufficient headroom, complete successful publication,
-   reopening with the new worker, Repair and post-activation refusal preserving
-   the previous good slot. Report the actual app artifact, OS/ABI, device,
-   driver/CUDA, disk, RAM and VRAM envelope.
+   The fresh private AppImage then installed successfully and reopened ready
+   on Ubuntu 26.04.1 with RTX 4080 and driver 615.71.09. Repair reused the
+   signed runtime cache, published a distinct slot and reopened ready. A
+   separate native startup confirmed the previous worker remained runnable.
+   Qualify post-activation failure and restoration of the previous pointer
+   through the packaged path, then repeat on the shipping artifact and
+   supported host matrix when the publisher is available.
    The measured inputs imply a floor of 28,217,106,280 B on one filesystem
    before the new slot and any Repair reserve. It includes the signed 20 GiB
-   assembly floor, the exact cached and extracted runtime and LaMa. The
-   current ext4 volume has about 4 GB free with the retained NoobAI catalog
-   and runtime. A Repair run also needs to keep the previous good slot.
+   assembly floor, the exact cached and extracted runtime and LaMa. Repair
+   also keeps the previous good slot. The passing run recorded 65.04 GB free
+   at Setup consent and 43.72 GB at Repair consent on ext4.
    [Packaged Setup controls](./phase-5-packaged-runtime-setup-research.md),
+   [Clean Setup and Repair](./phase-5-packaged-runtime-setup-repair-research.md),
    [Runtime contract](../specs/07-python-runtime-management.md),
    [native engine](./phase-5-native-engine-qualification-research.md),
    [Setup progress](./phase-5-runtime-setup-progress-research.md).

@@ -8,6 +8,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
+import { runPackagedRuntimeSetupSuccess } from './packaged-runtime-setup-success.mjs'
 import {
   cancelRuntimeSetupTransfer,
   confirmRuntimeSetupReview,
@@ -144,7 +145,7 @@ async function verifyExpanded(root, manifest) {
 
 /** This transport exists only in the isolated harness. No public endpoint or redirected URL. */
 export async function preparePackagedRuntimeSetupControl({ root, mode, inputs }) {
-  assert.ok(['incompatible', 'cancel', 'corrupt', 'disk'].includes(mode), mode)
+  assert.ok(['incompatible', 'cancel', 'corrupt', 'disk', 'success'].includes(mode), mode)
   const runs = path.join(
     os.homedir(),
     '.codex/artifacts/imagegen-studio/runs/packaged-runtime-setup',
@@ -172,12 +173,13 @@ export async function preparePackagedRuntimeSetupControl({ root, mode, inputs })
   assert.equal(transport.entryCount, manifest.files.length)
   assert.equal(manifest.requiredFreeBytes, runtimeFloor)
 
-  const expectedRoutes =
-    mode === 'incompatible'
-      ? []
-      : mode === 'disk'
-        ? ['/runtime.zip', '/big-lama.pt']
-        : ['/runtime.zip']
+  const expectedRoutes = {
+    incompatible: [],
+    cancel: ['/runtime.zip'],
+    corrupt: ['/runtime.zip'],
+    disk: ['/runtime.zip', '/big-lama.pt'],
+    success: ['/runtime.zip', '/big-lama.pt', '/big-lama.pt'],
+  }[mode]
   const sources = new Map([
     ['/runtime.zip', inputs.archive],
     ['/big-lama.pt', inputs.lama],
@@ -298,6 +300,21 @@ export async function preparePackagedRuntimeSetupControl({ root, mode, inputs })
   return {
     config,
     stop,
+    async runSuccess({ launch, closeNormally }) {
+      assert.equal(mode, 'success')
+      return await runPackagedRuntimeSetupSuccess({
+        root,
+        dataRoot,
+        inputs,
+        manifest,
+        transport,
+        requests,
+        waitForTransfers: () => waitClosed([...tasks, ...closes]),
+        verifyExpanded,
+        launch,
+        closeNormally,
+      })
+    },
     async run(page) {
       const setup = 'install'
       const initialStatus = await getRuntimeSetupStatus(page)

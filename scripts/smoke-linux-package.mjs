@@ -91,7 +91,7 @@ assert.ok(
 assert.equal(noobaiTokenFile !== undefined, noobaiPreviewMode === 'live' || Boolean(noobaiInstall))
 assert.ok(
   runtimeSetupControl === undefined ||
-    (['incompatible', 'cancel', 'corrupt', 'disk'].includes(runtimeSetupControl) &&
+    (['incompatible', 'cancel', 'corrupt', 'disk', 'success'].includes(runtimeSetupControl) &&
       !trainedFixture &&
       !historicalFixture &&
       !installedEngineReport &&
@@ -414,7 +414,11 @@ if (trained)
   sourcePaths.push(path.join(repo, 'scripts/fixtures/packaged-installed-trained-generation.mjs'))
 if (updateCheckMode) sourcePaths.push(path.join(repo, 'scripts/application-update-check-smoke.mjs'))
 if (runtimeSetupControl) {
-  for (const fixture of ['packaged-runtime-setup-controls', 'packaged-runtime-setup-ui']) {
+  for (const fixture of [
+    'packaged-runtime-setup-controls',
+    'packaged-runtime-setup-success',
+    'packaged-runtime-setup-ui',
+  ]) {
     sourcePaths.push(path.join(repo, `scripts/fixtures/${fixture}.mjs`))
   }
 }
@@ -1148,13 +1152,21 @@ try {
     ? {}
     : setupControl
       ? await (async () => {
-          const state = await launch(runtimeSetupControl)
-          const result = await setupControl.run(state.page)
-          await closeNormally(state)
-          const leafDiagnostics = state.stderr
-            .split('\n')
+          let result
+          if (runtimeSetupControl === 'success') {
+            result = await setupControl.runSuccess({ launch, closeNormally })
+            assert.equal(lifetimes.length, 4)
+            assert.ok(lifetimes.every((state) => state.normalPhysicalExit && !state.forcedCleanup))
+          } else {
+            const state = await launch(runtimeSetupControl)
+            result = await setupControl.run(state.page)
+            await closeNormally(state)
+          }
+          const leafDiagnostics = lifetimes
+            .flatMap((state) => state.stderr.split('\n'))
             .filter((line) => line.startsWith('IGS_SETUP_QUALIFICATION_FAILURE '))
             .map((line) => JSON.parse(line.slice('IGS_SETUP_QUALIFICATION_FAILURE '.length)))
+          if (runtimeSetupControl === 'success') assert.deepEqual(leafDiagnostics, [])
           if (runtimeSetupControl === 'disk') {
             assert.ok(leafDiagnostics.some(({ code }) => code === 'RUNTIME_ASSEMBLY_DISK_SPACE'))
           }
@@ -1167,8 +1179,10 @@ try {
             assert.ok(leafDiagnostics.some(({ code }) => code === 'DOWNLOAD_HASH_MISMATCH'))
           }
           assert.ok(
-            state.memoryBeforeClose.every(
-              ({ events }) => /^oom 0$/m.test(events) && /^oom_kill 0$/m.test(events),
+            lifetimes.every((state) =>
+              state.memoryBeforeClose.every(
+                ({ events }) => /^oom 0$/m.test(events) && /^oom_kill 0$/m.test(events),
+              ),
             ),
           )
           return { runtimeSetup: { ...result, leafDiagnostics } }

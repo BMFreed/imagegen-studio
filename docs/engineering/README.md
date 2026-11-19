@@ -46,8 +46,13 @@ remain open.
 the signed review-and-confirm path in a separate qualification AppImage. The
 normal application still reports Setup unavailable without a publisher.
 The private run covers explicit consent, cancellation, a foreign digest,
-host refusal and the signed disk-space boundary. Successful clean install,
-Repair and rollback through the packaged UI remain open.
+host refusal and the signed disk-space boundary.
+
+[Clean Setup and Repair](./phase-5-packaged-runtime-setup-repair-research.md)
+records clean activation, cached-transport Repair into a fresh slot and
+normal reopen after each operation. An additional native worker startup
+confirmed the previous slot while the new pointer stayed active. Packaged
+post-activation rollback and shipping qualification remain open.
 
 ## Current Illustrious regional reference capacity
 
