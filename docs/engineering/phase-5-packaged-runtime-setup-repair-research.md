@@ -89,7 +89,8 @@ Cleanup freed 40,904,527,872 allocated bytes. The signed inputs and the
 previously retained reusable engine remain available.
 
 This covers clean activation, replacement, preserved previous-worker
-startup and reopen on one host. Packaged post-activation failure and
-rollback, shipping trust, post-upgrade compatibility and the supported
-hardware matrix remain open. The product-promise statuses remain
-**«Пока не обещать»**.
+startup and reopen on one host. The later
+[packaged rollback control](./phase-5-packaged-runtime-rollback-research.md)
+covers post-activation worker refusal. Shipping trust, post-upgrade
+compatibility and the supported hardware matrix remain open. The
+product-promise statuses remain **«Пока не обещать»**.

@@ -51,8 +51,12 @@ host refusal and the signed disk-space boundary.
 [Clean Setup and Repair](./phase-5-packaged-runtime-setup-repair-research.md)
 records clean activation, cached-transport Repair into a fresh slot and
 normal reopen after each operation. An additional native worker startup
-confirmed the previous slot while the new pointer stayed active. Packaged
-post-activation rollback and shipping qualification remain open.
+confirmed the previous slot while the new pointer stayed active.
+
+[Packaged rollback](./phase-5-packaged-runtime-rollback-research.md)
+records a real worker refusal after candidate activation, exact restoration
+of the previous pointer and restart into the original ready runtime.
+Shipping qualification remains open.
 
 ## Current Illustrious regional reference capacity
 

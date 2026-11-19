@@ -95,9 +95,10 @@ entries record the state at their checkpoint.
    on Ubuntu 26.04.1 with RTX 4080 and driver 615.71.09. Repair reused the
    signed runtime cache, published a distinct slot and reopened ready. A
    separate native startup confirmed the previous worker remained runnable.
-   Qualify post-activation failure and restoration of the previous pointer
-   through the packaged path, then repeat on the shipping artifact and
-   supported host matrix when the publisher is available.
+   A separate packaged control reached candidate activation, observed
+   actual worker refusal, restored the previous pointer byte for byte
+   and reopened the original ready runtime. Repeat on the shipping
+   artifact and supported host matrix when the publisher is available.
    The measured inputs imply a floor of 28,217,106,280 B on one filesystem
    before the new slot and any Repair reserve. It includes the signed 20 GiB
    assembly floor, the exact cached and extracted runtime and LaMa. Repair
@@ -105,6 +106,7 @@ entries record the state at their checkpoint.
    at Setup consent and 43.72 GB at Repair consent on ext4.
    [Packaged Setup controls](./phase-5-packaged-runtime-setup-research.md),
    [Clean Setup and Repair](./phase-5-packaged-runtime-setup-repair-research.md),
+   [Packaged rollback](./phase-5-packaged-runtime-rollback-research.md),
    [Runtime contract](../specs/07-python-runtime-management.md),
    [native engine](./phase-5-native-engine-qualification-research.md),
    [Setup progress](./phase-5-runtime-setup-progress-research.md).

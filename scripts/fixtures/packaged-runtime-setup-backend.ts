@@ -5,9 +5,16 @@ import { lstat, open, realpath, statfs } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import type { RuntimeInstallationBackend, RuntimeRoots } from '../../src/main/runtime/index.js'
-
 import { ModelDownloader } from '../../src/main/models/model-downloader.js'
+import {
+  GenerationWorkerClient,
+  GenerationWorkerError,
+} from '../../src/main/projects/generation-worker-client.js'
+import {
+  type RuntimeInstallationBackend,
+  RuntimeManager,
+  type RuntimeRoots,
+} from '../../src/main/runtime/index.js'
 import { createLamaAuxiliaryInstaller } from '../../src/main/runtime/inference-auxiliary-installer.js'
 import { InferenceAuxiliaryResources } from '../../src/main/runtime/inference-auxiliary-resources.js'
 import { LAMA_OUTPAINT_ARTIFACT } from '../../src/main/runtime/lama-manifest.js'
@@ -25,6 +32,9 @@ const routes = new Map([
 ])
 const allowedHosts = new Set(Array.from(routes.keys(), (url) => new URL(url).hostname))
 const sha256 = /^[a-f\d]{64}$/
+const uuid = /^[a-f\d]{8}-(?:[a-f\d]{4}-){3}[a-f\d]{12}$/
+type StartClient = NonNullable<ConstructorParameters<typeof RuntimeManager>[2]>
+type RuntimeAdvisory = ConstructorParameters<typeof RuntimeManager>[4]
 
 interface BytePin {
   path: string
@@ -34,6 +44,7 @@ interface BytePin {
 interface SetupConfig {
   appVersion: typeof appVersion
   port: number
+  postActivationCudaFault: boolean
   runtimeEnvelope: BytePin
   schemaVersion: 1
   transportEnvelope: BytePin
@@ -41,11 +52,20 @@ interface SetupConfig {
   unsupportedDriverProbe?: boolean
 }
 
+interface RepairCandidate {
+  attemptId: string
+  preActivationReady: boolean
+  previousPointer: Buffer
+  pythonExecutable: string
+  runtimeId: string
+}
+
 /** Only the separate qualification package imports this Main collaborator. */
-export async function createPackagedRuntimeSetupBackend(
+export async function createPackagedRuntimeSetupManager(
   roots: RuntimeRoots,
   dataRoot: string,
-): Promise<RuntimeInstallationBackend> {
+  advisory: RuntimeAdvisory,
+): Promise<RuntimeManager> {
   const artifacts = path.join(os.homedir(), '.codex/artifacts/imagegen-studio')
   const qualificationRuns = path.join(artifacts, 'runs/packaged-runtime-setup')
   const configPath = process.env.IMAGEGEN_PACKAGED_RUNTIME_SETUP_CONFIG
@@ -62,6 +82,9 @@ export async function createPackagedRuntimeSetupBackend(
     assert.ok(info.isDirectory() && info.uid === uid)
   }
   const config = readConfig(await pinnedBytes(configPath, uid, 16 * 1024))
+  const repairFault = config.postActivationCudaFault
+    ? createPostActivationCudaFault(roots, uid)
+    : undefined
 
   const readPin = async (pin: BytePin, maxBytes: number) => {
     assertChild(artifacts, pin.path)
@@ -104,7 +127,9 @@ export async function createPackagedRuntimeSetupBackend(
     assemble: async (input) => {
       const availableBytesBefore = await availableBytes(roots.runtimeDir)
       try {
-        return await assembleOfflineRuntime(input)
+        const prepared = await assembleOfflineRuntime(input)
+        await repairFault?.captureCandidate(prepared)
+        return prepared
       } catch (error) {
         recordFailure('assembly', error, {
           availableBytesAfter: await availableBytes(roots.runtimeDir),
@@ -151,7 +176,119 @@ export async function createPackagedRuntimeSetupBackend(
       }
     }
   }
-  return backend
+  return new RuntimeManager(roots, undefined, repairFault?.start, backend, advisory)
+}
+
+/** Reuse the actual client; mask CUDA solely for the published candidate on its second check. */
+function createPostActivationCudaFault(roots: RuntimeRoots, uid: number) {
+  const journalPath = path.join(roots.runtimeDir, 'runtime-installation.json')
+  let candidate: RepairCandidate | undefined
+  let injected = false
+
+  const readJournal = async () => {
+    const value: unknown = JSON.parse((await pinnedBytes(journalPath, uid, 16 * 1024)).toString())
+    assertRecord(value)
+    assert.equal(value.schemaVersion, 1)
+    return value
+  }
+  const start: StartClient = async (location, environment) => {
+    const current = candidate
+    if (!current || location.pythonExecutable !== current.pythonExecutable) {
+      return await GenerationWorkerClient.start(location, { environment })
+    }
+    assert.equal(location.runtimeRoot, roots.runtimeDir)
+    assert.equal(location.scratchBasePath, path.join(roots.appDataDir, 'scratch'))
+    const journal = await readJournal()
+    assert.equal(journal.mode, 'repair')
+    assert.equal(journal.attemptId, current.attemptId)
+    assert.equal(journal.previousPointer, current.previousPointer.toString('base64'))
+    assertRecord(journal.prepared)
+    assert.equal(journal.prepared.runtimeId, current.runtimeId)
+    assert.equal(journal.prepared.pythonExecutable, current.pythonExecutable)
+    const target = readPointerBytes(journal.candidatePointer)
+    assert.deepEqual(JSON.parse(target.toString()), {
+      pythonExecutable: current.pythonExecutable,
+      runtimeId: current.runtimeId,
+      schemaVersion: 1,
+    })
+    assert.ok(!target.equals(current.previousPointer))
+    const active = await pinnedBytes(roots.pointerFile, uid, 16 * 1024)
+
+    if (journal.phase === 'qualifying') {
+      assert.deepEqual(active, current.previousPointer)
+      const client = await GenerationWorkerClient.start(location, { environment })
+      return {
+        close: async () => {
+          await client.close()
+          current.preActivationReady = true
+        },
+        ready: client.ready,
+      }
+    }
+
+    assert.equal(journal.phase, 'post-qualifying')
+    assert.deepEqual(active, target)
+    assert.ok(current.preActivationReady && !injected)
+    assert.notEqual(environment.CUDA_VISIBLE_DEVICES, '')
+    injected = true
+    let unexpectedlyReady
+    try {
+      unexpectedlyReady = await GenerationWorkerClient.start(location, {
+        environment: { ...environment, CUDA_VISIBLE_DEVICES: '' },
+      })
+    } catch (error) {
+      if (
+        error instanceof GenerationWorkerError &&
+        error.code === 'WORKER_EXITED' &&
+        !GenerationWorkerClient.hasUnconfirmedStartExit()
+      ) {
+        console.error(
+          `IGS_SETUP_QUALIFICATION_REPAIR_FAULT ${JSON.stringify({
+            activePointerSha256: createHash('sha256').update(active).digest('hex'),
+            attemptId: current.attemptId,
+            errorCode: error.code,
+            exitConfirmed: true,
+            preActivationReady: true,
+            previousPointerSha256: createHash('sha256')
+              .update(current.previousPointer)
+              .digest('hex'),
+            runtimeId: current.runtimeId,
+          })}`,
+        )
+      }
+      throw error
+    }
+    await unexpectedlyReady.close()
+    throw new Error('The CUDA-hidden candidate unexpectedly started.')
+  }
+
+  return {
+    async captureCandidate(prepared: Awaited<ReturnType<typeof assembleOfflineRuntime>>) {
+      const journal = await readJournal()
+      if (journal.mode !== 'repair') {
+        return
+      }
+      assert.equal(journal.phase, 'preparing')
+      assert.equal(journal.prepared, null)
+      assert.equal(journal.candidatePointer, null)
+      assert.ok(typeof journal.attemptId === 'string' && uuid.test(journal.attemptId))
+      candidate = {
+        attemptId: journal.attemptId,
+        preActivationReady: false,
+        previousPointer: readPointerBytes(journal.previousPointer),
+        pythonExecutable: prepared.pythonExecutable,
+        runtimeId: prepared.runtimeId,
+      }
+    },
+    start,
+  }
+}
+
+function readPointerBytes(value: unknown): Buffer {
+  assert.ok(typeof value === 'string' && value.length > 0)
+  const bytes = Buffer.from(value, 'base64')
+  assert.ok(bytes.length > 0 && bytes.toString('base64') === value)
+  return bytes
 }
 
 async function availableBytes(directory: string): Promise<string | null> {
@@ -227,6 +364,7 @@ function readConfig(bytes: Buffer): SetupConfig {
       [
         'appVersion',
         'port',
+        'postActivationCudaFault',
         'runtimeEnvelope',
         'schemaVersion',
         'transportEnvelope',
@@ -242,9 +380,15 @@ function readConfig(bytes: Buffer): SetupConfig {
   assert.ok(
     value.unsupportedDriverProbe === undefined || typeof value.unsupportedDriverProbe === 'boolean',
   )
+  assert.ok(
+    value.postActivationCudaFault === undefined ||
+      typeof value.postActivationCudaFault === 'boolean',
+  )
+  assert.ok(!(value.unsupportedDriverProbe === true && value.postActivationCudaFault === true))
   return {
     appVersion,
     port,
+    postActivationCudaFault: value.postActivationCudaFault === true,
     runtimeEnvelope: readPin(value.runtimeEnvelope),
     schemaVersion: 1,
     transportEnvelope: readPin(value.transportEnvelope),

@@ -75,7 +75,10 @@ const main = path.join(repo, 'src/main/index.ts')
 const backend = path.join(repo, 'scripts/fixtures/packaged-runtime-setup-backend.ts')
 const needle = 'new RuntimeManager(runtimeRoots, undefined, undefined, undefined, {'
 const standardMain = path.join(repo, 'dist/main/main.cjs')
-assert.doesNotMatch(await readFile(standardMain, 'utf8'), /IMAGEGEN_PACKAGED_RUNTIME_SETUP_CONFIG/)
+assert.doesNotMatch(
+  await readFile(standardMain, 'utf8'),
+  /IMAGEGEN_PACKAGED_RUNTIME_SETUP_CONFIG|IGS_SETUP_QUALIFICATION_REPAIR_FAULT/,
+)
 const name = 'setup-qualification.cjs'
 const variant = path.join(payloads, name)
 await bundle({
@@ -99,10 +102,10 @@ await bundle({
             loader: 'ts',
             resolveDir: path.dirname(file),
             contents:
-              `import { createPackagedRuntimeSetupBackend } from ${JSON.stringify(backend)}\n` +
+              `import { createPackagedRuntimeSetupManager } from ${JSON.stringify(backend)}\n` +
               contents.replace(
                 needle,
-                'new RuntimeManager(runtimeRoots, undefined, undefined, await createPackagedRuntimeSetupBackend(runtimeRoots, paths.dataRoot), {',
+                'await createPackagedRuntimeSetupManager(runtimeRoots, paths.dataRoot, {',
               ),
           }
         })
@@ -111,7 +114,9 @@ await bundle({
   ],
 })
 const outputPin = await pin(variant)
-assert.match(await readFile(variant, 'utf8'), /IMAGEGEN_PACKAGED_RUNTIME_SETUP_CONFIG/)
+const qualifier = await readFile(variant, 'utf8')
+assert.match(qualifier, /IMAGEGEN_PACKAGED_RUNTIME_SETUP_CONFIG/)
+assert.match(qualifier, /IGS_SETUP_QUALIFICATION_REPAIR_FAULT/)
 
 const dist = {}
 async function readDist(directory) {

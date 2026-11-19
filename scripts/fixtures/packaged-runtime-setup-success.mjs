@@ -1,4 +1,4 @@
-/** Full Setup and fresh-slot Repair through the private qualification AppImage. */
+/** Full Setup, fresh-slot Repair, and rollback through the private qualification AppImage. */
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { constants, createReadStream } from 'node:fs'
@@ -13,11 +13,15 @@ import {
   getRuntimeSetupProgress,
   getRuntimeSetupStatus,
   openRuntimeSetupReview,
+  waitForRuntimeSetupError,
 } from './packaged-runtime-setup-ui.mjs'
 
 const operationTimeout = 280_000
 const archiveName = 'runtime-payload.zip'
 const flag = constants.O_RDONLY | constants.O_NOFOLLOW
+const failureMessage =
+  'Image setup could not be completed. Check runtime status before trying again.'
+const repairFaultPrefix = 'IGS_SETUP_QUALIFICATION_REPAIR_FAULT '
 
 async function shaFile(file) {
   assert.equal(await realpath(file), file)
@@ -56,6 +60,7 @@ async function snapshotSlot(runtime, pointer) {
     assert.equal(await realpath(directory), directory)
     const info = await lstat(directory)
     assert.ok(info.isDirectory())
+    await absent(path.join(directory, '.igs-runtime-incomplete.json'))
     roots.push({ path: directory, device: info.dev, inode: info.ino })
   }
   assert.equal(pointer.pythonExecutable, path.join(environment, 'bin/python'))
@@ -92,7 +97,7 @@ function assertTransfer(request, route, input) {
   })
 }
 
-async function observeSetup(page, mode) {
+async function observeSetup(page, mode, rollback = false) {
   await page.evaluate(() => {
     const stages = []
     const stop = globalThis.api.runtime.onInstallationProgressChanged(({ operation }) => {
@@ -119,13 +124,17 @@ async function observeSetup(page, mode) {
       { timeout: operationTimeout },
     )
     .toBe(true)
-  assert.equal(terminal.state, 'succeeded', JSON.stringify(terminal))
-  await expect(
-    page.getByRole('dialog', {
-      exact: true,
-      name: mode === 'install' ? 'Set up image generation' : 'Repair image generation',
-    }),
-  ).toBeHidden({ timeout: 10_000 })
+  assert.equal(terminal.state, rollback ? 'failed' : 'succeeded', JSON.stringify(terminal))
+  if (rollback) {
+    assert.equal(await waitForRuntimeSetupError(page, mode, failureMessage), failureMessage)
+  } else {
+    await expect(
+      page.getByRole('dialog', {
+        exact: true,
+        name: mode === 'install' ? 'Set up image generation' : 'Repair image generation',
+      }),
+    ).toBeHidden({ timeout: 10_000 })
+  }
   const stages = await page.evaluate(() => globalThis.readPackagedSetupSuccessStages())
   const required = [
     'preparing-runtime',
@@ -195,6 +204,7 @@ export async function runPackagedRuntimeSetupSuccess({
   verifyExpanded,
   launch,
   closeNormally,
+  rollback = false,
 }) {
   assert.equal(dataRoot, path.join(root, 'data/imagegen-studio'))
   const runtime = path.join(dataRoot, 'runtime')
@@ -244,16 +254,20 @@ export async function runPackagedRuntimeSetupSuccess({
     runtimeCached: false,
     outpaintInfillReused: false,
   }
-  const verifyPublication = async (mode, terminal, previousPointer) => {
+  const verifyPublication = async (mode, terminal, previousPointer, rolledBack = false) => {
     const pointerBytes = await readFile(pointerFile)
     const pointer = JSON.parse(pointerBytes.toString('utf8'))
     const journal = JSON.parse(await readFile(journalFile, 'utf8'))
-    assert.equal(journal.phase, 'complete')
+    assert.equal(journal.phase, rolledBack ? 'rolled-back' : 'complete')
     assert.equal(journal.mode, mode)
     assert.equal(journal.previousPointer, previousPointer?.toString('base64') ?? null)
-    assert.equal(journal.candidatePointer, pointerBytes.toString('base64'))
-    assert.equal(journal.prepared.runtimeId, pointer.runtimeId)
-    assert.equal(journal.prepared.pythonExecutable, pointer.pythonExecutable)
+    assert.equal(typeof journal.candidatePointer, 'string')
+    const candidateBytes = Buffer.from(journal.candidatePointer, 'base64')
+    assert.equal(candidateBytes.toString('base64'), journal.candidatePointer)
+    const candidate = JSON.parse(candidateBytes.toString('utf8'))
+    assert.equal(journal.prepared.runtimeId, candidate.runtimeId)
+    assert.equal(journal.prepared.pythonExecutable, candidate.pythonExecutable)
+    assert.deepEqual(pointerBytes, rolledBack ? previousPointer : candidateBytes)
     await verifyFence()
     const expanded = path.join(downloads, `engine-${terminal.operationId}`)
     await fileReceipt(path.join(expanded, 'runtime-release.json'), inputs.runtimeEnvelope)
@@ -261,7 +275,10 @@ export async function runPackagedRuntimeSetupSuccess({
     assert.equal(extracted.entries, transport.entryCount)
     assert.equal(extracted.regularBytes, transport.expandedRegularBytes)
     const slot = await snapshotSlot(runtime, pointer)
-    return { pointerBytes, pointer, journal, extracted, slot }
+    const publication = { pointerBytes, pointer, journal, extracted, slot }
+    if (!rolledBack) return publication
+    const candidateSlot = await snapshotSlot(runtime, candidate)
+    return { ...publication, candidatePointer: candidate, candidateSlot }
   }
 
   await reviewWithNoConsent(installed.page, 'install', installReview, baseline)
@@ -294,6 +311,7 @@ export async function runPackagedRuntimeSetupSuccess({
   let repairing
   let repairOperation
   let second
+  let fault
   let repairedStatus
   let freeAtRepair
   let freeAfterRepair
@@ -316,16 +334,41 @@ export async function runPackagedRuntimeSetupSuccess({
     await reviewWithNoConsent(repairing.page, 'repair', repairReview, noRepairConsent)
     freeAtRepair = await bytesAvailable(runtime)
     assert.ok(freeAtRepair >= manifest.requiredFreeBytes)
-    repairOperation = await observeSetup(repairing.page, 'repair')
+    repairOperation = await observeSetup(repairing.page, 'repair', rollback)
     await waitForTransfers()
     assert.equal(requests.length, 3)
     assertTransfer(requests[2], '/big-lama.pt', inputs.lama)
-    second = await verifyPublication('repair', repairOperation.terminal, first.pointerBytes)
-    assert.notEqual(second.pointer.runtimeId, first.pointer.runtimeId)
+    second = await verifyPublication(
+      'repair',
+      repairOperation.terminal,
+      first.pointerBytes,
+      rollback,
+    )
+    const candidate = second.candidatePointer ?? second.pointer
+    assert.notEqual(candidate.runtimeId, first.pointer.runtimeId)
     assert.deepEqual(await snapshotSlot(runtime, first.pointer), first.slot)
     repairedStatus = await assertReady(repairing.page, second.pointer.runtimeId)
     freeAfterRepair = await bytesAvailable(runtime)
     await closeNormally(repairing)
+    if (rollback) {
+      const faults = repairing.stderr
+        .split('\n')
+        .filter((line) => line.startsWith(repairFaultPrefix))
+        .map((line) => JSON.parse(line.slice(repairFaultPrefix.length)))
+      const expected = {
+        attemptId: second.journal.attemptId,
+        runtimeId: candidate.runtimeId,
+        activePointerSha256: createHash('sha256')
+          .update(Buffer.from(second.journal.candidatePointer, 'base64'))
+          .digest('hex'),
+        previousPointerSha256: createHash('sha256').update(first.pointerBytes).digest('hex'),
+        errorCode: 'WORKER_EXITED',
+        exitConfirmed: true,
+        preActivationReady: true,
+      }
+      assert.deepEqual(faults, [expected])
+      fault = faults[0]
+    }
   } catch (error) {
     if (repairing && !repairing.normalPhysicalExit) {
       await closeNormally(repairing).catch(() => {})
@@ -355,6 +398,12 @@ export async function runPackagedRuntimeSetupSuccess({
   assert.deepEqual(await readFile(pointerFile), second.pointerBytes)
   assert.deepEqual(await snapshotSlot(runtime, second.pointer), second.slot)
   assert.deepEqual(await snapshotSlot(runtime, first.pointer), first.slot)
+  if (rollback) {
+    assert.deepEqual(await snapshotSlot(runtime, second.candidatePointer), second.candidateSlot)
+    assert.deepEqual(JSON.parse(await readFile(journalFile, 'utf8')), second.journal)
+    await verifyFence()
+    await expect(repairReopened.page.getByText(failureMessage, { exact: true })).toHaveCount(0)
+  }
   const installedOutpaint = await fileReceipt(outpaint, inputs.lama)
   assert.deepEqual(await fileReceipt(parked, inputs.lama), parkedOutpaint)
   assert.equal(requests.length, 3)
@@ -374,6 +423,7 @@ export async function runPackagedRuntimeSetupSuccess({
     repair: {
       ...repairOperation,
       ...serializable(second),
+      ...(fault ? { fault, failureMessage } : {}),
       review: repairReview,
       status: repairedStatus,
       reopenedStatus: reopenedRepairStatus,

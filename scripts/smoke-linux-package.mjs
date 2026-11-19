@@ -91,7 +91,9 @@ assert.ok(
 assert.equal(noobaiTokenFile !== undefined, noobaiPreviewMode === 'live' || Boolean(noobaiInstall))
 assert.ok(
   runtimeSetupControl === undefined ||
-    (['incompatible', 'cancel', 'corrupt', 'disk', 'success'].includes(runtimeSetupControl) &&
+    (['incompatible', 'cancel', 'corrupt', 'disk', 'success', 'rollback'].includes(
+      runtimeSetupControl,
+    ) &&
       !trainedFixture &&
       !historicalFixture &&
       !installedEngineReport &&
@@ -1153,7 +1155,9 @@ try {
     : setupControl
       ? await (async () => {
           let result
-          if (runtimeSetupControl === 'success') {
+          const fullLifecycle =
+            runtimeSetupControl === 'success' || runtimeSetupControl === 'rollback'
+          if (fullLifecycle) {
             result = await setupControl.runSuccess({ launch, closeNormally })
             assert.equal(lifetimes.length, 4)
             assert.ok(lifetimes.every((state) => state.normalPhysicalExit && !state.forcedCleanup))
@@ -1166,7 +1170,7 @@ try {
             .flatMap((state) => state.stderr.split('\n'))
             .filter((line) => line.startsWith('IGS_SETUP_QUALIFICATION_FAILURE '))
             .map((line) => JSON.parse(line.slice('IGS_SETUP_QUALIFICATION_FAILURE '.length)))
-          if (runtimeSetupControl === 'success') assert.deepEqual(leafDiagnostics, [])
+          if (fullLifecycle) assert.deepEqual(leafDiagnostics, [])
           if (runtimeSetupControl === 'disk') {
             assert.ok(leafDiagnostics.some(({ code }) => code === 'RUNTIME_ASSEMBLY_DISK_SPACE'))
           }

@@ -145,7 +145,10 @@ async function verifyExpanded(root, manifest) {
 
 /** This transport exists only in the isolated harness. No public endpoint or redirected URL. */
 export async function preparePackagedRuntimeSetupControl({ root, mode, inputs }) {
-  assert.ok(['incompatible', 'cancel', 'corrupt', 'disk', 'success'].includes(mode), mode)
+  assert.ok(
+    ['incompatible', 'cancel', 'corrupt', 'disk', 'success', 'rollback'].includes(mode),
+    mode,
+  )
   const runs = path.join(
     os.homedir(),
     '.codex/artifacts/imagegen-studio/runs/packaged-runtime-setup',
@@ -179,6 +182,7 @@ export async function preparePackagedRuntimeSetupControl({ root, mode, inputs })
     corrupt: ['/runtime.zip'],
     disk: ['/runtime.zip', '/big-lama.pt'],
     success: ['/runtime.zip', '/big-lama.pt', '/big-lama.pt'],
+    rollback: ['/runtime.zip', '/big-lama.pt', '/big-lama.pt'],
   }[mode]
   const sources = new Map([
     ['/runtime.zip', inputs.archive],
@@ -286,6 +290,7 @@ export async function preparePackagedRuntimeSetupControl({ root, mode, inputs })
           transportEnvelope: metadataPin(inputs.transportEnvelope),
           trustedKeys: metadataPin(inputs.trustedKeys),
           unsupportedDriverProbe: mode === 'incompatible',
+          ...(mode === 'rollback' ? { postActivationCudaFault: true } : {}),
         },
         null,
         2,
@@ -301,7 +306,7 @@ export async function preparePackagedRuntimeSetupControl({ root, mode, inputs })
     config,
     stop,
     async runSuccess({ launch, closeNormally }) {
-      assert.equal(mode, 'success')
+      assert.ok(mode === 'success' || mode === 'rollback')
       return await runPackagedRuntimeSetupSuccess({
         root,
         dataRoot,
@@ -313,6 +318,7 @@ export async function preparePackagedRuntimeSetupControl({ root, mode, inputs })
         verifyExpanded,
         launch,
         closeNormally,
+        rollback: mode === 'rollback',
       })
     },
     async run(page) {

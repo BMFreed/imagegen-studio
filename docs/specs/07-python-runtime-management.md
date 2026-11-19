@@ -294,8 +294,11 @@ exercises the same review and explicit confirmation in the private
 qualification AppImage. The signed release installs on ext4 and reopens
 ready. Repair reuses the verified transport, installs the missing LaMa
 resource and activates a distinct slot. The previous worker still starts
-while the new pointer remains active. Packaged failure after activation,
-shipping delivery and the supported host matrix remain open.
+while the new pointer remains active. The separate
+[packaged rollback control](../engineering/phase-5-packaged-runtime-rollback-research.md)
+then confirms a candidate worker refusal after activation, restoration of
+the exact previous pointer and normal reopen with the previous runtime.
+Shipping delivery and the supported host matrix remain open.
 
 [Public setup review/token IPC](../engineering/phase-5-runtime-setup-ipc-research.md)
 adds engine-only `previewInstallation(mode)`, explicit review dismissal and
