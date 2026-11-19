@@ -685,8 +685,11 @@ dispatch, after the previous worker's confirmed exit. Successful publication
 wakes the serial drain even when it just observed an empty queue.
 
 Retry preserves existing candidate sessions, actual seed, accepted Project,
-dirty/Undo and `.igs`. The UI keeps Retry available during processing and shows
-an actionable refusal if admission cannot qualify. Subsequent
+dirty/Undo and `.igs`. It stays available during healthy inference, including
+while another open Project owns the active worker. Queue Manager shows a
+waiting reason while an image worker starts or closes, or while the runtime
+owns a preparation worker. Main reports this transition separately from
+advisory runtime status and rechecks admission on click. Subsequent
 [busy Generate](../engineering/phase-2b-busy-generate-research.md) adds separate
 CPU target preparation while preserving the same serial inference dispatch.
 Native evidence uses controlled inference, not production CUDA/release readiness.

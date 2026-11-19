@@ -1224,7 +1224,9 @@ test('metadata admission refuses a qualifying lease immediately and later admits
       return child
     },
   )
+  assert.equal(manager.isGenerationAdmissionTransitioning(), false)
   const generation = manager.withGenerationWorker(scratch, async () => {
+    assert.equal(manager.isGenerationAdmissionTransitioning(), false)
     assert.equal(
       await manager.withGenerationAdmission(scratch, async (ready) => ready.workerVersion),
       '0.2.0',
@@ -1233,6 +1235,7 @@ test('metadata admission refuses a qualifying lease immediately and later admits
   })
   try {
     await entered
+    assert.equal(manager.isGenerationAdmissionTransitioning(), true)
     let timeout
     try {
       assert.equal(
@@ -1264,6 +1267,7 @@ test('metadata admission refuses a qualifying lease immediately and later admits
     resumeQualification()
   }
   assert.equal(await generation, 'completed')
+  assert.equal(manager.isGenerationAdmissionTransitioning(), false)
   assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
   assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 2)
 })
@@ -1278,8 +1282,13 @@ test('metadata admission refuses a closed running child and shutdown without rep
       assert.equal(
         await manager.withGenerationWorker(scratch, async (worker) => {
           assert.equal(await manager.withGenerationAdmission(scratch, async () => 'ready'), 'ready')
-          if (refusal === 'closed') await worker.close()
-          else manager.preventNewGenerationWork()
+          if (refusal === 'closed') {
+            await worker.close()
+            assert.equal((await manager.getStatus()).value.kind, 'ready')
+            assert.equal(manager.isGenerationAdmissionTransitioning(), true)
+          } else {
+            manager.preventNewGenerationWork()
+          }
           assert.equal(
             await manager.withGenerationAdmission(scratch, async () =>
               assert.fail('unavailable running child cannot admit metadata'),
@@ -1301,6 +1310,7 @@ test('metadata admission refuses a closed running child and shutdown without rep
         }),
         'owner-completed',
       )
+      if (refusal === 'closed') assert.equal(manager.isGenerationAdmissionTransitioning(), false)
       assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 2)
       assert.deepEqual(await lines(path.join(roots.runtimeDir, 'requests')), [])
     })
@@ -1512,6 +1522,7 @@ test('qualified Smart preparation owns one installed CUDA-hidden CPU child throu
   const scratch = path.join(roots.appDataDir, 'scratch')
   await fs.mkdir(scratch, { recursive: true, mode: 0o700 })
   const completed = await manager.withGenerationWorker(scratch, async (gpu) => {
+    assert.equal(manager.isGenerationAdmissionTransitioning(), false)
     const snapshot = structuredClone(gpu.ready)
     const entered = deferred()
     const finish = deferred()
@@ -1533,6 +1544,7 @@ test('qualified Smart preparation owns one installed CUDA-hidden CPU child throu
         entered.promise,
         preparation.then(() => assert.fail('Qualified Smart preparation must enter its callback.')),
       ])
+      assert.equal(manager.isGenerationAdmissionTransitioning(), true)
       assert.equal((await lines(path.join(roots.runtimeDir, 'cpu-launches'))).length, 1)
       assert.deepEqual(await lines(path.join(roots.runtimeDir, 'cpu-exits')), [])
       assert.equal((await lines(path.join(roots.runtimeDir, 'launches'))).length, 2)
@@ -1550,6 +1562,7 @@ test('qualified Smart preparation owns one installed CUDA-hidden CPU child throu
       assert.deepEqual(gpu.ready, snapshot)
       finish.resolve()
       assert.equal(await preparation, 'smart-prepared')
+      assert.equal(manager.isGenerationAdmissionTransitioning(), false)
       assert.equal((await lines(path.join(roots.runtimeDir, 'cpu-exits'))).length, 1)
       assert.equal((await lines(path.join(roots.runtimeDir, 'exits'))).length, 1)
       const failure = new Error('Smart callback failed.')

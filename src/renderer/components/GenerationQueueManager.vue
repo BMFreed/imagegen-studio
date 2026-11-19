@@ -417,6 +417,9 @@ function retryReason(item: GenerationQueueEntry): string | null {
   if (state.phase !== 'idle' && state.phase !== 'processing') {
     return 'Wait for the current queue request to finish.'
   }
+  if (state.retryRuntimeTransitioning) {
+    return 'Wait for the image engine to finish its current worker transition.'
+  }
   const operationReason = generationQueueRetryReason(
     item.operation,
     state,

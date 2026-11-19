@@ -1,6 +1,7 @@
 # MVP acceptance backlog
 
-Updated through [packaged frozen Retry](./phase-5-packaged-noobai-components-research.md#packaged-frozen-retry-with-all-three-components)
+Updated through the [Retry runtime transition fix](./phase-5-retry-runtime-transition-research.md),
+[packaged frozen Retry](./phase-5-packaged-noobai-components-research.md#packaged-frozen-retry-with-all-three-components)
 and [historical NoobAI queue qualification](./phase-5-noobai-legacy-queue-research.md).
 All eight public promise statuses remain **«Пока не обещать»**. Earlier roadmap
 entries record the state at their checkpoint.
@@ -136,7 +137,7 @@ entries record the state at their checkpoint.
    Manager policies, portable chooser
    routes, packaged legacy queue and provenance, and an incompatible worker refusal
    on clean install and upgrade.
-   Verify admission during the Cancel-to-Retry runtime transition and
+   Verify the Cancel-to-Retry control on the final packaged candidate and
    cover the other release cases for Generate, Cancel, frozen Retry,
    explicit Add/Undo/Redo/Save,
    immutable Compare and result-derived presets. Check joint Home/Trash, resource
@@ -181,6 +182,10 @@ entries record the state at their checkpoint.
    after removing the components from the draft.
    A running Cancel and a same-session Retry after idle gave identical
    frozen bytes and the same PNG as the prior combined Generate.
+   Queue Manager now waits during runtime worker transitions and retains
+   Retry while another healthy worker owns the engine. The controlled
+   runtime and browser checks cover the observed admission gap.
+   [Retry transition fix](./phase-5-retry-runtime-transition-research.md),
    [Packaged frozen Retry](./phase-5-packaged-noobai-components-research.md#packaged-frozen-retry-with-all-three-components),
    [Combined managed components](./phase-5-packaged-noobai-components-research.md#packaged-noobai-generation-with-all-three-managed-components),
    [Packaged VAE generation](./phase-5-packaged-noobai-components-research.md#cuda-generation-with-the-installed-vae),

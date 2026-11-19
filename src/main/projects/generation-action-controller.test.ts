@@ -1,6 +1,9 @@
 import { IGS_SRGB_ICC_SHA256 } from '../../shared/projects/color-profile.js'
 import { GenerationBatchPlanError } from '../../shared/projects/generation-batch-plan.js'
-import type { ProjectGenerationActionState } from '../../shared/projects/project-generation-actions.js'
+import {
+  isProjectGenerationActionState,
+  type ProjectGenerationActionState,
+} from '../../shared/projects/project-generation-actions.js'
 
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
@@ -573,6 +576,31 @@ async function holdCurrentGeneration(fixture: Fixture) {
   await entered.promise
   return { release, result }
 }
+
+test('generation state reports the app-wide Retry runtime transition for another Project', async () => {
+  await withFixture(async (fixture) => {
+    const { controller, runtime } = fixture
+    const sibling = await createSiblingProject(fixture)
+    assert.equal((await controller.getState(sibling.tabId)).retryRuntimeTransitioning, undefined)
+
+    let transitioning = true
+    Object.assign(runtime, { isGenerationAdmissionTransitioning: () => transitioning })
+    const during = await controller.getState(sibling.tabId)
+    assert.equal(during.retryRuntimeTransitioning, true)
+    assert.equal(during.runningJobId, null)
+    assert.equal(isProjectGenerationActionState(during), true)
+    assert.equal(
+      isProjectGenerationActionState({ ...during, retryRuntimeTransitioning: 'true' }),
+      false,
+    )
+
+    transitioning = false
+    const after = await controller.getState(sibling.tabId)
+    assert.equal(after.retryRuntimeTransitioning, false)
+    assert.equal(isProjectGenerationActionState(after), true)
+    assert.equal(runtime.leaseCount, 0)
+  })
+})
 
 test('unbound embedding tokens refuse Generate in either polarity before worker, composition or queue publication', async () => {
   await withFixture(async (fixture) => {

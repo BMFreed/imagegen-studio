@@ -506,6 +506,11 @@ export class RuntimeManager {
     return await this.installReviewedRuntime('install', reviewToken)
   }
 
+  /** Queue Manager refreshes this advisory state when the runtime or generation state changes. */
+  isGenerationAdmissionTransitioning(): boolean {
+    return this.readActiveGenerationAdmissionReady() === null
+  }
+
   onInstallationProgressChanged(
     listener: (snapshot: RuntimeSetupProgressSnapshot) => void,
   ): () => void {
@@ -940,32 +945,17 @@ export class RuntimeManager {
       this.generationWorkPrevented ||
       this.host.platform !== 'linux' ||
       this.host.arch !== 'x64' ||
-      this.preparationLease ||
       ProjectWorkerClient.hasUnconfirmedExit()
     ) {
       return null
     }
-    const lease = this.generationLease
-    if (!lease) {
+    const ready = this.readActiveGenerationAdmissionReady()
+    if (ready === undefined) {
       return await this.withGenerationWorker(scratchBasePath, async (worker) =>
         use(copyInferenceReady(worker.ready)),
       )
     }
-    if (lease.phase !== 'running' || !lease.client) {
-      return null
-    }
-    let ready: InferenceWorkerReady
-    try {
-      const current = lease.client.ready
-      if (!isQualifiedInferenceWorkerReady(current)) {
-        return null
-      }
-      ready = copyInferenceReady(current)
-    } catch {
-      // A closed child cannot lend readiness, even while its original callback still owns a lease.
-      return null
-    }
-    return await use(ready)
+    return ready === null ? null : await use(ready)
   }
 
   /**
@@ -2034,6 +2024,27 @@ export class RuntimeManager {
       return qualified
     } catch {
       return false
+    }
+  }
+
+  /** Undefined reserves the ordinary idle admission path; null means current ownership blocks it. */
+  private readActiveGenerationAdmissionReady(): InferenceWorkerReady | null | undefined {
+    if (this.preparationLease) {
+      return null
+    }
+    const lease = this.generationLease
+    if (!lease) {
+      return undefined
+    }
+    if (lease.phase !== 'running' || !lease.client) {
+      return null
+    }
+    try {
+      const current = lease.client.ready
+      return isQualifiedInferenceWorkerReady(current) ? copyInferenceReady(current) : null
+    } catch {
+      // A closed child cannot lend readiness, even while its original callback still owns a lease.
+      return null
     }
   }
 

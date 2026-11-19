@@ -1,5 +1,12 @@
 # Engineering Workflow
 
+## Current Queue Manager Retry admission
+
+[Retry during image worker transitions](./phase-5-retry-runtime-transition-research.md)
+uses the existing runtime admission check to disable Retry during
+worker startup, shutdown and preparation. Healthy busy Retry remains
+available across Projects.
+
 ## Current NoobAI packaged qualification
 
 [Historical NoobAI queue and provenance](./phase-5-noobai-legacy-queue-research.md)

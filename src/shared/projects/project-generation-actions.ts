@@ -102,6 +102,8 @@ export interface ProjectGenerationActionState {
   regionalVPredictionSamplingSupported?: boolean
   /** Explicit objective-aware TXT Euler support; epsilon peers do not imply it. */
   regionalVPredictionSupported?: boolean
+  /** The current runtime owner cannot yet admit metadata preparation for a Retry. */
+  retryRuntimeTransitioning?: boolean
   runningJobId: string | null
   smartPatchSupported?: boolean
   vaePrecisionSupported: boolean
@@ -232,6 +234,7 @@ export function isProjectGenerationActionState(
         'regionalVPredictionImageSupported',
         'regionalVPredictionSamplingSupported',
         'regionalVPredictionSupported',
+        'retryRuntimeTransitioning',
         'smartPatchSupported',
       ],
     ) ||
@@ -335,6 +338,8 @@ export function isProjectGenerationActionState(
       typeof value['regionalInvokeInitializationSupported'] !== 'boolean') ||
     (value['regionalLoraSupported'] !== undefined &&
       typeof value['regionalLoraSupported'] !== 'boolean') ||
+    (value['retryRuntimeTransitioning'] !== undefined &&
+      typeof value['retryRuntimeTransitioning'] !== 'boolean') ||
     (value['smartPatchSupported'] !== undefined &&
       typeof value['smartPatchSupported'] !== 'boolean') ||
     typeof value['cfgRescaleSupported'] !== 'boolean' ||

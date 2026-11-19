@@ -150,6 +150,7 @@ interface CapturedProjectService {
 
 interface GenerationActionRuntime {
   getStatus: () => Promise<unknown>
+  isGenerationAdmissionTransitioning?: () => boolean
   readQualifiedInferenceReady: () => Promise<InferenceWorkerReady | null>
   withGenerationAdmission: <T>(
     scratchBasePath: string,
@@ -426,6 +427,7 @@ export class ProjectGenerationActionController {
       }
     }
     this.assertDocument(tabId, documentId)
+    const retryRuntimeTransitioning = this.options.runtime.isGenerationAdmissionTransitioning?.()
     return {
       animaOutpaintSupported:
         !this.blocked && !this.closed && supportsInferenceAnimaOutpaint(ready),
@@ -653,6 +655,7 @@ export class ProjectGenerationActionController {
         !this.closed &&
         !!this.options.regional &&
         supportsInferenceRegionalVPrediction(ready),
+      ...(retryRuntimeTransitioning !== undefined && { retryRuntimeTransitioning }),
       runningJobId: jobs.find((job) => job.status === 'running')?.id ?? null,
       smartPatchSupported:
         !this.blocked &&

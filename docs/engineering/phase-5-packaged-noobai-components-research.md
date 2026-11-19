@@ -307,8 +307,9 @@ row after Retry. The diagnostic attempt captured
 `GENERATION_RUNTIME_UNAVAILABLE` and Main's message that it kept the
 original job and temporary results. The passing run waited for the
 real Project state to become idle and report VAE and embedding
-capabilities before clicking Retry. The enabled control during the
-transition remains a behavior to qualify. The failing attempts and
+capabilities before clicking Retry. The subsequent
+[transition fix](./phase-5-retry-runtime-transition-research.md) covers
+the enabled control through the runtime and renderer checks. The failing attempts and
 successful receipts are retained separately.
 
 The final evidence is under

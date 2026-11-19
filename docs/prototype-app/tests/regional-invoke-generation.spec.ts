@@ -109,6 +109,48 @@ test('renderer frozen regional outpaint Retry uses frozen mode despite current a
   expect(errors).toEqual([])
 })
 
+test('queue Retry waits for a runtime worker transition and preserves busy Retry across Projects', async ({
+  page,
+}) => {
+  await mountWiring(page, 'queue')
+  const review = await page.evaluate(() => {
+    const { queueItem, state } = globalThis.window.regionalWiringFixture
+    queueItem.operation = 'illustrious-txt2img'
+    queueItem.status = 'canceled'
+    state.phase = 'processing'
+    state.retryRuntimeTransitioning = true
+    return { id: queueItem.id, statusSequence: queueItem.statusSequence }
+  })
+  const retry = page.getByRole('button', { exact: true, name: 'Retry job' })
+  await expect(retry).toBeDisabled()
+  await expect(
+    page
+      .getByTestId('queue-job-row')
+      .getByText('Wait for the image engine to finish its current worker transition.', {
+        exact: true,
+      }),
+  ).toBeVisible()
+  await retry.dispatchEvent('click', { bubbles: true })
+  expect(await page.evaluate(() => globalThis.window.regionalWiringFixture.retryCalls)).toEqual([])
+
+  // A healthy worker in another Project has no running job ID in this Project's state.
+  await page.evaluate(() => {
+    globalThis.window.regionalWiringFixture.state.retryRuntimeTransitioning = false
+  })
+  await expect(retry).toBeEnabled()
+  await retry.click()
+  await expect
+    .poll(() => page.evaluate(() => globalThis.window.regionalWiringFixture.retryCalls))
+    .toEqual([review])
+
+  await page.evaluate(() => {
+    const { state } = globalThis.window.regionalWiringFixture
+    delete state.retryRuntimeTransitioning
+    state.phase = 'idle'
+  })
+  await expect(retry).toBeEnabled()
+})
+
 test('renderer opaque IMG rescale requires the combination capability and preserves zero', async ({
   page,
 }, testInfo) => {
@@ -744,7 +786,13 @@ async function mountWiring(page: Page, kind: 'project' | 'queue') {
             getGenerationQueue: async () => ({
               ok: true,
               value: {
-                counts: { canceled: 0, completed: 0, failed: 1, pending: 0, running: 0 },
+                counts: {
+                  canceled: Number(state.queueItem.status === 'canceled'),
+                  completed: 0,
+                  failed: Number(state.queueItem.status === 'failed'),
+                  pending: 0,
+                  running: 0,
+                },
                 items: [state.queueItem],
                 nextCursor: null,
               },
