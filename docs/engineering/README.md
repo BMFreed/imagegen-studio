@@ -10,6 +10,11 @@ and the same frozen replay after Cancel with its installed CUDA worker.
 
 ## Current NoobAI packaged qualification
 
+[Portable Project import](./phase-5-packaged-project-import-research.md)
+records chooser Cancel, transfer Cancel, Copy, Move and managed reopen
+on the stock AppImage through the Linux GTK desktop portal. The exact
+NoobAI Project revision, accepted Raster and checkpoint provenance survive.
+
 [Historical NoobAI queue and provenance](./phase-5-noobai-legacy-queue-research.md)
 records the 17→30 Main database upgrade, recovery and verified
 pre-noise-profile Cyberfalafel V inputs and accepted Raster.

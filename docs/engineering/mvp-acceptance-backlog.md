@@ -134,7 +134,12 @@ entries record the state at their checkpoint.
    [startup authority](./phase-5-application-update-startup-authority-research.md),
    [application updates](../features/application-updates.md#acceptance-criteria).
 6. **Run the NoobAI and joint release matrix.** Cover the remaining Model
-   Manager policies and portable chooser routes.
+   Manager policies and the missing-file Locate route.
+   Stock AppImage import passed system picker Cancel, transfer Cancel,
+   external Copy and Move, and managed reopen through the GTK portal.
+   The managed package kept the original bytes, revision and NoobAI
+   provenance. Repeat chooser coverage on the supported desktop backends.
+   [Packaged Project import](./phase-5-packaged-project-import-research.md)
    The stock AppImage upgraded the legacy NoobAI DB17 profile and preserved
    its full queue and accepted index. Queue Manager and Compare read the exact
    historical V-prediction settings, and packaged Retry refused a changed
