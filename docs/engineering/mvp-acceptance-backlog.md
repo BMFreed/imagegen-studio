@@ -137,6 +137,9 @@ entries record the state at their checkpoint.
    Manager policies, portable chooser
    routes, packaged legacy queue and provenance, and an incompatible worker refusal
    on clean install and upgrade.
+   Both production worker clients refused protocol 2 from the actual installed
+   runtime in an isolated preflight. Exercise the same refusal in the packaged
+   Project and queue flows. [Installed worker protocol preflight](./phase-5-packaged-installed-engine-research.md#isolated-installed-worker-protocol-refusal)
    The current AppImage covered the Cancel-to-Retry transition and frozen replay
    with the installed CUDA worker. Repeat on the shipping candidate and cover
    the remaining release cases for Generate, Cancel, frozen Retry, explicit Add/Undo/Redo/Save,

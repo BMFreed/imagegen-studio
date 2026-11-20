@@ -88,3 +88,36 @@ temporary budget exception. The local AppImage has qualification
 scope. The eventual shipped app and runtime need production trust, delivery and
 the supported hardware matrix. All eight promise statuses remain **«Пока не
 обещать»**.
+
+## Isolated installed worker protocol refusal
+
+The protocol preflight re-read clean InvokeAI
+`4875d96531ca6712b288f6e660fcbb34143408c1`.
+`invokeai/app/run_app.py` calls the CUDA checks in
+`invokeai/app/util/startup_utils.py`. The lifespan in `invokeai/app/api_app.py`
+initializes services through `invokeai/app/api/dependencies.py`, and
+`invokeai/app/services/invoker.py` starts and stops the session processor
+around the other services. Launcher `c267bdb439519216b277a7a8c6ad408b9d79efce`
+recognizes service readiness in `src/main/invoke-manager.ts` and handles
+Repair in `src/main/install-manager.ts`. These mechanisms do not provide
+a fixture for Studio's separate CPU and CUDA JSONL handshakes.
+
+This preflight calls the production
+[`ProjectWorkerClient`](../../src/main/projects/worker-client.ts) and
+[`GenerationWorkerClient`](../../src/main/projects/generation-worker-client.ts)
+against the actual signed slot's installed Python and worker at their
+original paths. A private Linux mount namespace makes the installed runtime
+read-only. For the middle case, the namespace binds a copy of
+`imagegen_worker/__init__.py` with protocol `2` over the original path.
+The first and last cases use the exact protocol `1` body. The isolated
+worker uses a private writable `/tmp`. The initial attempt with read-only
+`/tmp` stopped at CUDA startup before any protocol mismatch.
+
+Both clients accepted protocol `1` and closed, refused protocol `2`
+with the exact `WORKER_VERSION_MISMATCH` error, then accepted protocol
+`1` again. All six checks left no unconfirmed worker exit. The original
+installed module hash matched before and after. The systemd unit exited
+0 in 18.688 seconds with zero swap. The evidence is under
+`protocol-namespace-preflight-20261120` in the installed-engine run.
+The AppImage's clean-start and upgrade behavior with an incompatible
+worker, including Project Save and reopen, still needs a packaged run.
