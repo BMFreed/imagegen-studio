@@ -10,6 +10,11 @@ and the same frozen replay after Cancel with its installed CUDA worker.
 
 ## Current NoobAI packaged qualification
 
+[Remove a managed embedding](./phase-5-packaged-noobai-component-remove-research.md)
+records the actual stock Model Manager review, Cancel and permanent
+removal. The accepted NoobAI Raster and exact saved reference survive
+while Compare reports the missing resource after restart.
+
 [Portable Project Locate](./phase-5-packaged-project-locate-research.md)
 records native picker cancellation, two refusal cases and reconnection
 of an externally renamed `.igs`. The original local key and accepted

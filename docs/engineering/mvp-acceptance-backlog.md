@@ -144,6 +144,11 @@ entries record the state at their checkpoint.
    wrong-revision refusal, exact rebind, and explicit Open after restart.
    The local key, saved package and accepted Raster survived the rebind.
    [Packaged Project Locate](./phase-5-packaged-project-locate-research.md)
+   The stock Model Manager removed one unshared IllustriousPhoto embedding
+   after explicit review. Compare reported the missing resource after
+   restart and kept the exact accepted reference and image. Exercise the
+   pending and running queue policies on the release candidate.
+   [Packaged managed embedding removal](./phase-5-packaged-noobai-component-remove-research.md)
    The stock AppImage upgraded the legacy NoobAI DB17 profile and preserved
    its full queue and accepted index. Queue Manager and Compare read the exact
    historical V-prediction settings, and packaged Retry refused a changed

@@ -47,6 +47,8 @@ const noobaiTokenFile = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_TOKEN_FILE
 const portableImport = process.env.IMAGEGEN_LINUX_PACKAGE_PORTABLE_IMPORT
 const portableLocate = process.env.IMAGEGEN_LINUX_PACKAGE_PORTABLE_LOCATE
 const portableChooser = portableImport ?? portableLocate
+const componentRemove = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_COMPONENT_REMOVE
+const privateDesktop = portableChooser ?? componentRemove
 const nativeMemoryGiB = trainedFixture ? 12 : 4
 const nativeDeadlineSeconds = trainedFixture
   ? 420
@@ -65,7 +67,7 @@ const boundedExecute = (command, args, options) =>
   execute(
     command,
     args.map((value) => (value === 'MemoryMax=12G' ? `MemoryMax=${nativeMemoryGiB}G` : value)),
-    portableChooser
+    privateDesktop
       ? {
           ...options,
           env: {
@@ -88,7 +90,7 @@ assert.ok(
   trainedFixture === undefined || (installedEngineReport && historicalFixture === undefined),
 )
 const updateCheckMode = process.env.IMAGEGEN_LINUX_PACKAGE_UPDATE_CHECK
-if (legacyNoobaiFixture !== undefined || portableChooser !== undefined) {
+if (legacyNoobaiFixture !== undefined || privateDesktop !== undefined) {
   assert.ok(
     [
       installedEngineReport,
@@ -104,7 +106,10 @@ if (legacyNoobaiFixture !== undefined || portableChooser !== undefined) {
     ].every((profile) => profile === undefined),
     'Use a separate owned NoobAI profile.',
   )
-  assert.ok(legacyNoobaiFixture === undefined || portableChooser === undefined)
+  assert.ok(legacyNoobaiFixture === undefined || privateDesktop === undefined)
+  assert.ok(
+    componentRemove === undefined || (componentRemove === '1' && portableChooser === undefined),
+  )
   assert.ok(
     portableLocate === undefined || (portableLocate === '1' && portableImport === undefined),
   )
@@ -353,6 +358,9 @@ const portableImportHarness = portableImport
 const portableLocateHarness = portableLocate
   ? await import('./fixtures/packaged-noobai-project-locate.mjs')
   : null
+const componentRemoveHarness = componentRemove
+  ? await import('./fixtures/packaged-noobai-component-remove.mjs')
+  : null
 const relative = path.relative(artifactRoot, root)
 assert.ok(relative && !relative.startsWith('..') && !path.isAbsolute(relative))
 assert.equal(await realpath(artifactRoot), artifactRoot)
@@ -535,6 +543,11 @@ if (portableChooser)
   )
 if (portableLocateHarness)
   sourcePaths.push(path.join(repo, 'scripts/fixtures/packaged-noobai-project-locate.mjs'))
+if (componentRemoveHarness)
+  sourcePaths.push(
+    path.join(repo, 'scripts/fixtures/packaged-noobai-component-remove.mjs'),
+    path.join(repo, 'scripts/fixtures/packaged-project-chooser-x11.py'),
+  )
 if (updateCheckMode) sourcePaths.push(path.join(repo, 'scripts/application-update-check-smoke.mjs'))
 if (runtimeSetupControl) {
   for (const fixture of [
@@ -744,7 +757,7 @@ async function launch(name, selectedAppImage = appImage) {
     state.applicationImage = expected
   }
   lifetimes.push(state)
-  if (history || trained || protocolHarness || legacyHarness || portableChooser) {
+  if (history || trained || protocolHarness || legacyHarness || privateDesktop) {
     await writeFile(
       path.join(root, `${name}.launch-intent.json`),
       JSON.stringify({ name }) + '\n',
@@ -892,7 +905,7 @@ async function closeNormally(state) {
   await gpuObservers.get(state)?.()
   gpuObservers.delete(state)
   if (
-    (trained || runtimeSetupControl || protocolHarness || legacyHarness || portableChooser) &&
+    (trained || runtimeSetupControl || protocolHarness || legacyHarness || privateDesktop) &&
     !state.closed &&
     state.aggregateLimits
   ) {
@@ -1100,6 +1113,18 @@ async function runNoobaiPreviewQualification() {
 }
 
 async function runOwnedProjectProfile() {
+  if (componentRemoveHarness) {
+    return await componentRemoveHarness.runNoobaiComponentRemove({
+      root,
+      appData,
+      ownedRunRoot,
+      packageBefore,
+      launch,
+      closeNormally,
+      retainOwnStore,
+      identity,
+    })
+  }
   if (portableLocateHarness) {
     return await portableLocateHarness.runPortableLocate({
       root,
@@ -1346,6 +1371,7 @@ try {
     legacyNoobai,
     portableNoobaiImport,
     portableNoobaiLocate,
+    noobaiComponentRemove,
   } = noobaiMatrix
     ? {}
     : setupControl
@@ -1465,7 +1491,7 @@ try {
       )
     }
   }
-  if (protocolHarness || legacyHarness || portableChooser) {
+  if (protocolHarness || legacyHarness || privateDesktop) {
     assert.equal(lifetimes.length, portableLocate ? 3 : 2)
     for (const state of lifetimes) {
       assert.ok(state.normalPhysicalExit && !state.forcedCleanup)
@@ -1490,10 +1516,12 @@ try {
   await writeJson('report.json', {
     schemaVersion: 1,
     outcome: 'PASS',
-    scope: portableChooser
-      ? portableNoobaiLocate
-        ? 'Actual stock AppImage locates the exact saved Project through the system picker and reopens the same local identity after restart.'
-        : 'Actual stock AppImage imports a portable NoobAI Project through a native file chooser and reopens it from its managed workspace.'
+    scope: privateDesktop
+      ? noobaiComponentRemove
+        ? 'Actual stock AppImage removes the managed embedding and retains immutable accepted settings through restart.'
+        : portableNoobaiLocate
+          ? 'Actual stock AppImage locates the exact saved Project through the system picker and reopens the same local identity after restart.'
+          : 'Actual stock AppImage imports a portable NoobAI Project through a native file chooser and reopens it from its managed workspace.'
       : legacyNoobai
         ? 'Actual stock AppImage migrates a DB17 legacy NoobAI profile, reads its queue and reopens the accepted Raster.'
         : incompatibleWorker
@@ -1536,6 +1564,7 @@ try {
     ...(legacyNoobai ? { legacyNoobai } : {}),
     ...(portableNoobaiImport ? { portableNoobaiImport } : {}),
     ...(portableNoobaiLocate ? { portableNoobaiLocate } : {}),
+    ...(noobaiComponentRemove ? { noobaiComponentRemove } : {}),
     stores: { saved, restarted },
     lifetimes: lifetimes.map(
       ({
@@ -1560,7 +1589,7 @@ try {
           noobaiInstallation ||
           noobaiMatrixResult ||
           legacyNoobai ||
-          portableChooser
+          privateDesktop
         ? {}
         : { defaultProviderUnavailable: true }),
     nativeInferenceQualified: Boolean(trainedGeneration),
@@ -1664,10 +1693,12 @@ try {
 }
 if (failed) throw failed
 console.log(
-  portableChooser
-    ? portableLocate
-      ? 'PASS native NoobAI Locate Project and three normal physical closes'
-      : `PASS native NoobAI Project import (${portableImport}) and two normal physical closes`
+  privateDesktop
+    ? componentRemove
+      ? 'PASS packaged NoobAI component removal, accepted provenance and two normal physical closes'
+      : portableLocate
+        ? 'PASS native NoobAI Locate Project and three normal physical closes'
+        : `PASS native NoobAI Project import (${portableImport}) and two normal physical closes`
     : legacyNoobaiProfile
       ? 'PASS legacy NoobAI queue, accepted provenance, DB17 backup and two normal physical closes'
       : incompatibleWorker
