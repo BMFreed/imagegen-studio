@@ -10,6 +10,10 @@ and the same frozen replay after Cancel with its installed CUDA worker.
 
 ## Current NoobAI packaged qualification
 
+[Remove during live CUDA generation](./phase-5-packaged-live-remove-research.md)
+records a blocked Model Manager review on the same executing worker
+through completed generation, explicit Add, Save and reopen.
+
 [Remove with affected queue work](./phase-5-packaged-noobai-queue-remove-research.md)
 records fresh and stale review refusal, dual acknowledgement, exact
 pending cancellation and retained Retry input on the stock AppImage.

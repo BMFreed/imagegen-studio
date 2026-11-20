@@ -523,6 +523,14 @@ if (history) {
 }
 if (trained)
   sourcePaths.push(path.join(repo, 'scripts/fixtures/packaged-installed-trained-generation.mjs'))
+if (trained?.ownedEmbedding)
+  sourcePaths.push(
+    ...[
+      'scripts/qualify-packaged-installed-upgrade.mjs',
+      'scripts/fixtures/packaged-installed-models.mjs',
+      'scripts/fixtures/packaged-live-remove-ui.mjs',
+    ].map((name) => path.join(repo, name)),
+  )
 if (protocolHarness)
   sourcePaths.push(
     path.join(repo, 'scripts/fixtures/packaged-worker-protocol.mjs'),
@@ -1639,6 +1647,17 @@ try {
   }
   for (const state of lifetimes) {
     if (!state.normalPhysicalExit) {
+      if (failed && state.discardOwnedProjectId && !state.closed && !state.page?.isClosed()) {
+        try {
+          const result = await state.page.evaluate(
+            (id) => window.api.projects.discardAndClose(id, true),
+            state.discardOwnedProjectId,
+          )
+          state.failedTrainedProjectSettlement = result.ok ? 'discarded' : result.error.code
+        } catch (error) {
+          state.failedTrainedProjectSettlement = error.message
+        }
+      }
       try {
         await closeNormally(state)
       } catch (error) {
@@ -1695,6 +1714,7 @@ try {
       memoryBeforeClose: state.memoryBeforeClose,
       gpuSamples: state.gpuSamples,
       gpuObserverError: state.gpuObserverError,
+      failedTrainedProjectSettlement: state.failedTrainedProjectSettlement,
       scopeExit: state.scopeExit,
     })
   }

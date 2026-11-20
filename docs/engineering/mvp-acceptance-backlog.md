@@ -151,8 +151,13 @@ entries record the state at their checkpoint.
    The stock AppImage also blocked an affected running queue claim and
    canceled exactly the two explicitly reviewed pending jobs. Unrelated
    running and pending rows and all frozen inputs survived the operation.
-   Repeat with an executing worker on the release candidate.
    [Packaged queue-aware Remove](./phase-5-packaged-noobai-queue-remove-research.md)
+   With the installed CUDA worker running a NoobAI EPS job, the stock
+   AppImage showed one affected running job and kept Remove disabled
+   after acknowledgement. The same job completed, and explicit Add,
+   Save and reopen kept the accepted embedding. Repeat on the release
+   candidate and across the supported matrix.
+   [Packaged live Remove review](./phase-5-packaged-live-remove-research.md)
    The stock AppImage upgraded the legacy NoobAI DB17 profile and preserved
    its full queue and accepted index. Queue Manager and Compare read the exact
    historical V-prediction settings, and packaged Retry refused a changed

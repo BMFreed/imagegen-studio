@@ -52,6 +52,7 @@ assert.ok(
         'noobai-eps-vae',
         'noobai-eps-stack',
         'noobai-eps-stack-retry',
+        'noobai-eps-running-remove',
         'noobai-v',
       ].includes(profile)),
 )
@@ -553,8 +554,12 @@ with Path(sys.argv[1]).open('xb') as out:
     })
   }
   if (trained) {
-    await verifyTrainedSources(trained.files)
-    await writeRecord(path.join(run, 'trained-sources-unchanged.json'), { files: trained.files })
+    const borrowed = trained.model.standaloneEmbeddingSource
+    const sources = trained.files.map((file) =>
+      borrowed && file.role === 'standaloneEmbedding' ? borrowed : file,
+    )
+    await verifyTrainedSources(sources)
+    await writeRecord(path.join(run, 'trained-sources-unchanged.json'), { files: sources })
   }
   await fs.rename(claim, path.join(run, 'released-claim'))
   if (packageProof) {

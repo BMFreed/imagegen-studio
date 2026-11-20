@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
-import { lstat, open, readdir, realpath } from 'node:fs/promises'
+import { copyFile, lstat, mkdir, open, readdir, realpath } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
@@ -21,6 +21,13 @@ const engineRuns = path.join(
   '.codex/artifacts/imagegen-studio/runs/packaged-installed-engine',
 )
 const noobaiInstallRuns = path.join(path.dirname(engineRuns), 'packaged-noobai-install')
+const removalEmbeddingSource = path.join(
+  path.dirname(path.dirname(engineRuns)),
+  'shared/illustrious-vpred-worker-012-20261007/component-sources/illustriousphoto.safetensors',
+)
+const removalEmbeddingInstall = path.join(noobaiInstallRuns, '20261120-r2')
+const removalEmbeddingCatalogSha =
+  'c6aa2c07f015851a8975c55ad5013051b99d243d05abf2dfb4a63c291999081b'
 const checkpoints = {
   illustrious: {
     name: 'Illustrious XL v0.1',
@@ -129,6 +136,7 @@ const standaloneRolesByProfile = {
   'noobai-eps-vae': ['standaloneVae'],
   'noobai-eps-stack': Object.keys(standaloneComponents),
   'noobai-eps-stack-retry': Object.keys(standaloneComponents),
+  'noobai-eps-running-remove': ['standaloneEmbedding'],
 }
 
 function keys(object, exact) {
@@ -233,6 +241,29 @@ function managedSourceRun(file) {
   return path.join(noobaiInstallRuns, run)
 }
 
+async function copyRemovalEmbedding(source, appData) {
+  assert.equal(source.path, removalEmbeddingSource)
+  const original = await lstat(source.path, { bigint: true })
+  assert.ok(original.uid === BigInt(process.getuid()) && original.nlink === 1n)
+  assert.deepEqual(fileStat(original), source.stat)
+  const modelRoot = path.join(appData, 'models')
+  const shard = path.join(modelRoot, source.sha256.slice(0, 2))
+  for (const directory of [modelRoot, shard]) {
+    await mkdir(directory, { mode: 0o700 })
+    await ownedDirectory(directory)
+    assert.equal((await lstat(directory)).mode & 0o777, 0o700)
+  }
+  const copied = { ...source, path: path.join(shard, `${source.sha256}.safetensors`) }
+  await copyFile(source.path, copied.path, constants.COPYFILE_EXCL)
+  const verified = await verifyFile(copied, source.role)
+  const local = await lstat(copied.path, { bigint: true })
+  assert.ok(local.uid === BigInt(process.getuid()) && local.nlink === 1n)
+  assert.deepEqual(fileStat(local), verified.stat)
+  assert.notDeepEqual([local.dev, local.ino], [original.dev, original.ino])
+  assert.deepEqual(await verifyFile(source, source.role), source)
+  return verified
+}
+
 async function readSmallOwnedFile(filename, maximumBytes) {
   assert.equal(await realpath(filename), filename)
   const handle = await open(
@@ -261,8 +292,7 @@ async function readSmallOwnedFile(filename, maximumBytes) {
   }
 }
 
-async function readManagedComponentCatalog(file, pin) {
-  const run = managedSourceRun(file)
+async function readManagedComponentCatalog(file, pin, run = managedSourceRun(file)) {
   await ownedDirectory(run)
   assert.equal((await lstat(run)).mode & 0o077, 0, 'The retained install run must stay private.')
   const catalog = path.join(run, 'closed-catalog.sqlite')
@@ -285,13 +315,31 @@ async function readManagedComponentCatalog(file, pin) {
   return { snapshot, catalog: { path: catalog, sizeBytes: bytes.length, sha256 } }
 }
 
-async function copyStandaloneCatalogs(database, sources, roles) {
+async function copyStandaloneCatalogs(database, sources, roles, removalCopy) {
   const inputs = []
   for (const role of roles) {
     const file = sources[role]
     const pin = standaloneComponents[role]
-    const { snapshot, catalog } = await readManagedComponentCatalog(file, pin)
-    inputs.push({ role, file, pin, snapshot, catalog })
+    const copied = role === 'standaloneEmbedding' ? removalCopy : undefined
+    const { snapshot, catalog } = await readManagedComponentCatalog(
+      file,
+      pin,
+      copied ? removalEmbeddingInstall : undefined,
+    )
+    if (copied) {
+      assert.equal(catalog.sha256, removalEmbeddingCatalogSha)
+      const rows = snapshot.tables.local_model_file.rows
+      assert.equal(rows.length, 1)
+      assert.equal(
+        rows[0].managed_path,
+        path.join(
+          removalEmbeddingInstall,
+          'install/data/imagegen-studio/models/91',
+          `${pin.sha256}.safetensors`,
+        ),
+      )
+    }
+    inputs.push({ role, file: copied ?? file, pin, snapshot, catalog, copied })
   }
   assert.equal(new Set(inputs.map(({ catalog }) => catalog.path)).size, inputs.length)
   // Keep the exact installed IDs and job in a fresh app database. Workspace rows own
@@ -305,9 +353,12 @@ async function copyStandaloneCatalogs(database, sources, roles) {
   ]
   return database.db.transaction().execute(async (transaction) => {
     for (const table of tables) {
-      const rows = inputs.map(({ snapshot }) => {
+      const rows = inputs.map(({ snapshot, copied }) => {
         const entries = snapshot.tables[table].rows
         assert.equal(entries.length, 1, table)
+        if (table === 'local_model_file' && copied) {
+          return { ...entries[0], managed_path: copied.path }
+        }
         return entries[0]
       })
       await transaction.insertInto(table).values(rows).execute()
@@ -441,6 +492,7 @@ export async function preparePackagedTrainedModels({
   )
   const standaloneRoles = standaloneRolesByProfile[profile] ?? []
   const checkpointKey = standaloneRoles.length ? 'noobai-eps' : (profile ?? family)
+  const runningRemove = profile === 'noobai-eps-running-remove'
   assert.equal(repo, checkout)
   const engineRun = path.dirname(run)
   assert.equal(path.dirname(engineRun), engineRuns)
@@ -453,11 +505,15 @@ export async function preparePackagedTrainedModels({
   for (const directory of [repo, engineRun, run, appData]) await ownedDirectory(directory)
   assert.deepEqual((await readdir(appData)).sort(), ['inference-resources', 'runtime'])
   const profileSourcesPath = path.join(engineRun, `trained-input-${profile ?? family}.json`)
-  assert.ok(
-    sourcesPath === profileSourcesPath ||
-      (profile === 'noobai-eps-stack-retry' && sourcesPath === `${run}.inputs.json`),
-    'A refreshed Retry fixture can pin its own install receipts beside its evidence directory.',
-  )
+  if (runningRemove) {
+    assert.equal(sourcesPath, `${run}.inputs.json`)
+  } else {
+    assert.ok(
+      sourcesPath === profileSourcesPath ||
+        (profile === 'noobai-eps-stack-retry' && sourcesPath === `${run}.inputs.json`),
+      'A refreshed Retry fixture can pin its own install receipts beside its evidence directory.',
+    )
+  }
   assert.equal(await realpath(sourcesPath), sourcesPath)
   const input = await open(
     sourcesPath,
@@ -487,10 +543,27 @@ export async function preparePackagedTrainedModels({
     ])
     assert.ok(typeof file.path === 'string' && !inside(engineRun, file.path), role)
     assertModelPin(checkpointKey, role, file)
-    if (checkpointKey === 'noobai-eps') managedSourceRun(file)
+    if (runningRemove && role === 'standaloneEmbedding') {
+      assert.equal(file.path, removalEmbeddingSource)
+      assert.equal(file.catalogPath, path.join(removalEmbeddingInstall, 'closed-catalog.sqlite'))
+    } else if (checkpointKey === 'noobai-eps') {
+      managedSourceRun(file)
+    }
     files.push(await verifyFile(file, role))
   }
   assert.equal(new Set(files.map(({ stat }) => `${stat.dev}:${stat.ino}`)).size, files.length)
+  let originalEmbedding
+  let removalCopy
+  if (runningRemove) {
+    const originalInput = await readSmallOwnedFile(
+      path.join(engineRun, 'trained-input-noobai-eps.json'),
+      16384,
+    )
+    assert.deepEqual(sources.checkpoint, JSON.parse(originalInput.toString('utf8')).checkpoint)
+    originalEmbedding = files[1]
+    removalCopy = await copyRemovalEmbedding(originalEmbedding, appData)
+    files[1] = removalCopy
+  }
 
   // InvokeAI model_install_default.py register_path -> _register supports borrowed original paths.
   // Studio's existing original-file qualification uses the same real ModelRepository publication.
@@ -501,7 +574,7 @@ export async function preparePackagedTrainedModels({
     assert.deepEqual(await repository.listInstalled(), [])
     assert.deepEqual(await repository.listInstallJobs(), [])
     const standalone = standaloneRoles.length
-      ? await copyStandaloneCatalogs(database, sources, standaloneRoles)
+      ? await copyStandaloneCatalogs(database, sources, standaloneRoles, removalCopy)
       : {}
     const [checkpoint, ...components] = files
     const companions = family === 'anima' ? components : []
@@ -564,6 +637,7 @@ export async function preparePackagedTrainedModels({
         versionId,
         dependencies,
         ...standalone,
+        ...(originalEmbedding ? { standaloneEmbeddingSource: originalEmbedding } : {}),
         ref: {
           kind: 'checkpoint',
           baseModelFamily: family,

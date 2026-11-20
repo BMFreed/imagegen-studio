@@ -73,6 +73,7 @@ const noobaiPins = {
   'noobai-eps-vae': noobaiEps,
   'noobai-eps-stack': noobaiEps,
   'noobai-eps-stack-retry': noobaiEps,
+  'noobai-eps-running-remove': noobaiEps,
   'noobai-v': {
     source: [1147756, 2679856, 2566634, 'v_prediction'],
     sha256: 'edca0d656069468ce208440edda4643b8795b6dc500606bb6d0e57eb9a54c89d',
@@ -142,15 +143,19 @@ async function readOwned(filename, maximum) {
   }
 }
 
-async function assertModelFiles(files, identity, engineRun) {
+async function assertModelFiles(files, identity, engineRun, ownedEmbedding) {
   for (const file of files) {
     assert.ok(path.isAbsolute(file.path) && path.normalize(file.path) === file.path)
-    assert.equal(inside(engineRun, file.path), false)
+    if (file.path === ownedEmbedding) assert.equal(file.role, 'standaloneEmbedding')
+    else assert.equal(inside(engineRun, file.path), false)
     assert.equal(path.extname(file.path), '.safetensors')
     assert.equal(await realpath(file.path), file.path)
     assert.match(file.sha256, exactHash)
     const before = await lstat(file.path, { bigint: true })
     assert.ok(before.isFile() && before.size === BigInt(file.byteSize))
+    if (file.path === ownedEmbedding) {
+      assert.ok(before.uid === BigInt(process.getuid()) && before.nlink === 1n)
+    }
     assert.deepEqual(statFields(before), file.stat)
     assert.deepEqual(await identity(file.path), {
       path: file.path,
@@ -206,6 +211,26 @@ export async function readTrainedGeneration({ filename, engine, outputRoot, appI
   assert.ok(inside(path.join(engine.dataRoot, 'runtime'), pythonPath))
 
   const { model, files } = fixture
+  const exerciseLiveRemove = fixture.profile === 'noobai-eps-running-remove'
+  const embeddingSource = model.standaloneEmbeddingSource
+  assert.equal(Boolean(embeddingSource), exerciseLiveRemove)
+  const { sha256: embeddingSha, sizeBytes: embeddingSize } = componentPins.standaloneEmbedding
+  const ownedEmbedding = exerciseLiveRemove
+    ? path.join(engine.dataRoot, 'models', embeddingSha.slice(0, 2), `${embeddingSha}.safetensors`)
+    : undefined
+  if (embeddingSource) {
+    assert.equal(embeddingSource.role, 'standaloneEmbedding')
+    assert.equal(embeddingSource.sha256, embeddingSha)
+    assert.equal(embeddingSource.byteSize, embeddingSize)
+    assert.equal(
+      embeddingSource.path,
+      path.join(
+        path.dirname(path.dirname(path.dirname(engine.run))),
+        'shared/illustrious-vpred-worker-012-20261007/component-sources/illustriousphoto.safetensors',
+      ),
+    )
+    assert.notEqual(embeddingSource.path, ownedEmbedding)
+  }
   assert.equal(model.ref.baseModelFamily, fixture.family)
   assert.equal(model.ref.localModelId, model.resourceId)
   assert.equal(model.ref.localVersionId, model.versionId)
@@ -216,7 +241,9 @@ export async function readTrainedGeneration({ filename, engine, outputRoot, appI
     ? Object.keys(componentPins)
     : fixture.profile === 'noobai-eps-vae'
       ? ['standaloneVae']
-      : []
+      : exerciseLiveRemove
+        ? ['standaloneEmbedding']
+        : []
   roles.push(...standaloneRoles)
   assert.deepEqual(
     files.map(({ role }) => role),
@@ -245,10 +272,14 @@ export async function readTrainedGeneration({ filename, engine, outputRoot, appI
     assert.equal(path.dirname(catalogRun), installRuns)
     assert.match(path.basename(catalogRun), /^\d{8}(?:-r[1-9]\d*)?$/)
     assert.equal(path.basename(catalog.path), 'closed-catalog.sqlite')
-    assert.equal(
-      path.relative(catalogRun, source.path),
-      `install/data/imagegen-studio/models/${pin.sha256.slice(0, 2)}/${pin.sha256}.safetensors`,
-    )
+    if (exerciseLiveRemove && role === 'standaloneEmbedding')
+      assert.equal(source.path, ownedEmbedding)
+    else {
+      assert.equal(
+        path.relative(catalogRun, source.path),
+        `install/data/imagegen-studio/models/${pin.sha256.slice(0, 2)}/${pin.sha256}.safetensors`,
+      )
+    }
     assert.deepEqual(await identity(catalog.path), catalog)
     catalogInputs.push(catalog)
   }
@@ -267,7 +298,8 @@ export async function readTrainedGeneration({ filename, engine, outputRoot, appI
     assert.equal(model.ref.fileSha256, pin.sha256)
     assert.equal(files[0].byteSize, pin.sizeBytes)
   }
-  await assertModelFiles(files, identity, engine.run)
+  const protectedModels = embeddingSource ? [...files, embeddingSource] : files
+  await assertModelFiles(protectedModels, identity, engine.run, ownedEmbedding)
   const databasePath = path.join(engine.dataRoot, 'database/app.sqlite')
   assert.equal(await realpath(databasePath), databasePath)
   const baseline = snapshotDatabase(databasePath, { closed: true })
@@ -285,6 +317,8 @@ export async function readTrainedGeneration({ filename, engine, outputRoot, appI
     python,
     pythonPath,
     engineRun: engine.run,
+    ownedEmbedding,
+    protectedModels,
     inputs: [fixtureBefore, previousBefore, ...catalogInputs],
   }
 }
@@ -987,6 +1021,7 @@ export async function runTrainedGeneration({
   expectCatalog(ports.catalog.value, fixture, noobai ? 'epsilon' : undefined)
   const requested = await createAndAuthor(first.page, fixture, root)
   const { project, tab } = requested
+  if (trained.ownedEmbedding) first.discardOwnedProjectId = project.id
   const snapshot = (closed = false) => snapshotDatabase(databasePath, { closed })
   const [initialRow] = snapshot().tables.project_index.rows
   const packagePath = initialRow.canonical_path
@@ -1035,6 +1070,67 @@ export async function runTrainedGeneration({
     .toBe('admitted')
   const frozen = assertFrozen(admitted, requested, fixture, packagePath)
   records.push({ name: 'Public Generate admits one exact frozen job', queueItemId: admitted.id })
+  let liveRemove
+  if (trained.ownedEmbedding) {
+    const { observeLiveRemove } = await import('./packaged-live-remove-ui.mjs')
+    const embedding = fixture.files.find(({ path: file }) => file === trained.ownedEmbedding)
+    assert.ok(embedding)
+    const readRunning = async () => {
+      let active
+      await expect
+        .poll(
+          async () => {
+            const rows = snapshot().tables.generation_queue_item.rows
+            assert.equal(rows.length, 1)
+            const [row] = rows
+            assert.equal(row.id, admitted.id)
+            assert.equal(row.frozen_payload_json, admitted.frozen_payload_json)
+            assert.ok(['pending', 'running'].includes(row.status), 'The job must still be active.')
+            if (row.status !== 'running') return false
+            const current = await runningWorker(first, trained)
+            if (!current) return false
+            const gpu = first.gpuSamples.findLast(
+              (sample) =>
+                sample.pid === current.pid &&
+                sample.startTicks === current.startTicks &&
+                sample.group === current.group &&
+                sample.gpuMiB > 0,
+            )
+            if (!gpu) return false
+            active = { row, worker: current, gpu }
+            return true
+          },
+          { timeout: 120_000, intervals: [100, 250, 500] },
+        )
+        .toBe(true)
+      worker = active.worker
+      return active
+    }
+    const assertPrivateEmbedding = async () => {
+      await assertModelFiles([embedding], identity, trained.engineRun, trained.ownedEmbedding)
+      return embedding
+    }
+    liveRemove = await observeLiveRemove({
+      state: first,
+      reference: fixture.model.standaloneEmbedding,
+      admitted,
+      readRunning,
+      assertPrivateEmbedding,
+    })
+    await writeFile(
+      path.join(root, 'live-remove.json'),
+      `${JSON.stringify(liveRemove, null, 2)}\n`,
+      {
+        flag: 'wx',
+        mode: 0o600,
+      },
+    )
+    records.push({
+      name: 'Packaged Model Manager blocks Remove while the same affected CUDA worker runs',
+      queueItemId: admitted.id,
+      workerPid: worker.pid,
+    })
+  }
   const canceled = exerciseRetry
     ? await cancelTrainedSource({ first, trained, snapshot, admitted, root, project })
     : null
@@ -1337,6 +1433,7 @@ export async function runTrainedGeneration({
   await second.page.getByRole('button', { name: 'Open ' + project.title, exact: true }).click()
   await expect(second.page.getByRole('tab', { name: project.title, exact: true })).toBeVisible()
   const reopened = await openTab(second.page, project.id)
+  if (trained.ownedEmbedding) second.discardOwnedProjectId = project.id
   assert.equal(reopened.documentRevision, stored.documentRevision)
   assert.equal(reopened.documentId, stored.documentId)
   assert.equal(reopened.dirty, false)
@@ -1374,7 +1471,12 @@ export async function runTrainedGeneration({
     if (key !== 'project_index') assert.deepEqual(afterReopen.tables[key], value, key)
   }
   for (const input of trained.inputs) assert.deepEqual(await identity(input.path), input)
-  await assertModelFiles(fixture.files, identity, trained.engineRun)
+  await assertModelFiles(
+    trained.protectedModels,
+    identity,
+    trained.engineRun,
+    trained.ownedEmbedding,
+  )
 
   records.push({
     name: 'One actual trained packaged generation was explicitly accepted, saved and reopened',
@@ -1403,6 +1505,7 @@ export async function runTrainedGeneration({
         frozenRetry: true,
       }),
       actualCompletions: 1,
+      ...(liveRemove && { liveRemove }),
       model: fixture.model.ref,
       ...(fixture.model.standaloneVae && { vae: fixture.model.standaloneVae }),
       ...(fixture.model.standaloneLora && { loras: requested.loras }),
