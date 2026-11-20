@@ -108,7 +108,8 @@ if (legacyNoobaiFixture !== undefined || privateDesktop !== undefined) {
   )
   assert.ok(legacyNoobaiFixture === undefined || privateDesktop === undefined)
   assert.ok(
-    componentRemove === undefined || (componentRemove === '1' && portableChooser === undefined),
+    componentRemove === undefined ||
+      (['1', 'queue'].includes(componentRemove) && portableChooser === undefined),
   )
   assert.ok(
     portableLocate === undefined || (portableLocate === '1' && portableImport === undefined),
@@ -547,6 +548,18 @@ if (componentRemoveHarness)
   sourcePaths.push(
     path.join(repo, 'scripts/fixtures/packaged-noobai-component-remove.mjs'),
     path.join(repo, 'scripts/fixtures/packaged-project-chooser-x11.py'),
+  )
+if (componentRemove === 'queue')
+  sourcePaths.push(
+    ...[
+      'scripts/fixtures/packaged-noobai-remove-queue-inputs.mjs',
+      'scripts/fixtures/packaged-noobai-remove-queue-ui.mjs',
+      'src/main/db/database.ts',
+      'src/main/projects/generation-queue.ts',
+      'src/main/projects/igs-package.ts',
+      'src/main/projects/project-identity.ts',
+      'src/main/projects/queue-resource-usage.ts',
+    ].map((name) => path.join(repo, name)),
   )
 if (updateCheckMode) sourcePaths.push(path.join(repo, 'scripts/application-update-check-smoke.mjs'))
 if (runtimeSetupControl) {
@@ -1115,6 +1128,7 @@ async function runNoobaiPreviewQualification() {
 async function runOwnedProjectProfile() {
   if (componentRemoveHarness) {
     return await componentRemoveHarness.runNoobaiComponentRemove({
+      mode: componentRemove,
       root,
       appData,
       ownedRunRoot,
@@ -1518,7 +1532,9 @@ try {
     outcome: 'PASS',
     scope: privateDesktop
       ? noobaiComponentRemove
-        ? 'Actual stock AppImage removes the managed embedding and retains immutable accepted settings through restart.'
+        ? noobaiComponentRemove.queue
+          ? 'Actual stock AppImage blocks affected running work and removes a managed embedding only after exact pending cancellation consent.'
+          : 'Actual stock AppImage removes the managed embedding and retains immutable accepted settings through restart.'
         : portableNoobaiLocate
           ? 'Actual stock AppImage locates the exact saved Project through the system picker and reopens the same local identity after restart.'
           : 'Actual stock AppImage imports a portable NoobAI Project through a native file chooser and reopens it from its managed workspace.'
@@ -1695,7 +1711,9 @@ if (failed) throw failed
 console.log(
   privateDesktop
     ? componentRemove
-      ? 'PASS packaged NoobAI component removal, accepted provenance and two normal physical closes'
+      ? componentRemove === 'queue'
+        ? 'PASS packaged Remove with queue, exact cancellation and two normal physical closes'
+        : 'PASS packaged NoobAI component removal, accepted provenance and two normal physical closes'
       : portableLocate
         ? 'PASS native NoobAI Locate Project and three normal physical closes'
         : `PASS native NoobAI Project import (${portableImport}) and two normal physical closes`

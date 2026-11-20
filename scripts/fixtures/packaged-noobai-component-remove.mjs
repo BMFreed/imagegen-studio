@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
-import { copyFile, lstat, mkdir, realpath } from 'node:fs/promises'
+import { copyFile, lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
@@ -78,7 +78,7 @@ function assertSqliteIntegrity(db) {
   assert.deepEqual(db.pragma('foreign_key_check'), [])
 }
 
-function snapshot(filename) {
+function snapshot(filename, includeQueue) {
   const db = new Database(filename, { fileMustExist: true, readonly: true })
   try {
     assertSqliteIntegrity(db)
@@ -94,6 +94,9 @@ function snapshot(filename) {
         )
         .all(),
       accepted: db.prepare('SELECT * FROM project_accepted_result_index').all(),
+      ...(includeQueue && {
+        queue: db.prepare('SELECT * FROM generation_queue_item ORDER BY id').all(),
+      }),
       unusedCounts: Object.fromEntries(
         unusedTables.map((table) => [
           table,
@@ -234,7 +237,89 @@ async function openModels(page) {
   return { manager, row }
 }
 
+async function assertQueueReadback(page, rows) {
+  const { counts, items, nextCursor } = await call(page, 'projects', 'getGenerationQueue', null)
+  const readback = items
+    .map(({ id, status, statusSequence, error }) => ({
+      id,
+      status,
+      statusSequence,
+      errorCode: error?.code ?? null,
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id))
+  assert.equal(nextCursor, null)
+  assert.equal(
+    Object.values(counts).reduce((sum, count) => sum + count, 0),
+    rows.length,
+  )
+  assert.deepEqual(
+    readback,
+    rows.map((row) => ({
+      id: row.id,
+      status: row.status,
+      statusSequence: row.status_sequence,
+      errorCode: row.error_code,
+    })),
+  )
+  return { counts, readback }
+}
+
+async function assertRetainedRetry(page, appData, rows, affectedIds) {
+  const item = rows.find(({ id }) => id === affectedIds[0])
+  assert.ok(item && item.status === 'canceled')
+  assert.match(item.id, /^[0-9a-f-]{36}$/)
+  const review = { id: item.id, statusSequence: item.status_sequence }
+  const retry = () =>
+    page.evaluate((input) => window.api.projects.retryGenerationJob(input), review)
+  async function refusal(code) {
+    const response = await retry()
+    assert.equal(response.ok, false)
+    assert.equal(response.error.code, code, response.error.message)
+    return response.error
+  }
+  const before = await refusal('GENERATION_RUNTIME_UNAVAILABLE')
+  const target = path.join(appData, 'generation-inputs', item.id, 'target.png')
+  assert.equal(await realpath(target), target)
+  const file = await lstat(target)
+  assert.ok(file.isFile() && file.uid === process.getuid() && file.nlink === 1)
+  const original = await readFile(target)
+  assert.ok(original.length > 0)
+  const changed = Buffer.from(original)
+  changed[0] ^= 1
+  let red
+  try {
+    await writeFile(target, changed)
+    red = await refusal('QUEUE_INPUT_INVALID')
+  } finally {
+    await writeFile(target, original)
+  }
+  assert.equal((await lstat(target)).ino, file.ino)
+  assert.deepEqual(await readFile(target), original)
+  const restored = await refusal('GENERATION_RUNTIME_UNAVAILABLE')
+  assert.deepEqual(restored, before)
+  await assertQueueReadback(page, rows)
+  return {
+    review,
+    before,
+    red,
+    restored,
+    targetSha256: createHash('sha256').update(original).digest('hex'),
+  }
+}
+
+async function verifyRetainedQueueFiles(appData, exact, identity) {
+  for (const [id, members] of Object.entries(exact)) {
+    assert.match(id, /^[0-9a-f-]{36}$/)
+    assert.deepEqual(Object.keys(members).sort(), ['manifest.json', 'target.png'])
+    for (const [name, pin] of Object.entries(members)) {
+      const file = path.join(appData, 'generation-inputs', id, name)
+      await pinnedFile({ path: file, ...pin }, identity)
+    }
+  }
+}
+
 export async function runNoobaiComponentRemove({
+  mode,
   root,
   appData,
   ownedRunRoot,
@@ -244,8 +329,10 @@ export async function runNoobaiComponentRemove({
   retainOwnStore,
   identity,
 }) {
+  const queued = mode === 'queue'
   const datedRun = path.dirname(root)
-  assert.equal(path.dirname(datedRun), path.join(ownedRunRoot, 'packaged-noobai-component-remove'))
+  const suite = queued ? 'packaged-noobai-queue-remove' : 'packaged-noobai-component-remove'
+  assert.equal(path.dirname(datedRun), path.join(ownedRunRoot, suite))
   assert.match(path.basename(datedRun), /^\d{8}(?:-r[1-9]\d*)?$/)
   assert.equal(path.basename(root), 'remove')
   assert.equal(await realpath(root), root)
@@ -319,6 +406,7 @@ export async function runNoobaiComponentRemove({
     path: path.join(appData, 'models/91', `${reference.fileSha256}.safetensors`),
   }
   const database = path.join(appData, 'database/app.sqlite')
+  const readSnapshot = (filename = database) => snapshot(filename, queued)
   await assert.rejects(lstat(database), { code: 'ENOENT' })
   await mkdir(workspace, { recursive: true, mode: 0o700 })
   assert.equal(await realpath(workspace), workspace)
@@ -328,7 +416,7 @@ export async function runNoobaiComponentRemove({
   const { page } = first
   assert.equal((await call(page, 'runtime', 'getStatus')).kind, 'not-installed')
   assert.deepEqual(await call(page, 'models', 'getCatalog'), [])
-  const emptyRegistry = snapshot(database)
+  const emptyRegistry = readSnapshot()
   assert.ok(Object.values(emptyRegistry.registry).every((rows) => rows.length === 0))
   assert.deepEqual(emptyRegistry.ledger, [])
   assert.ok(Object.values(emptyRegistry.unusedCounts).every((count) => count === 0))
@@ -350,7 +438,7 @@ export async function runNoobaiComponentRemove({
   assert.equal(version.id, reference.localVersionId)
   assert.equal(version.fileStatus, 'ready')
   assert.equal(version.sha256, reference.fileSha256)
-  const before = snapshot(database)
+  const before = readSnapshot()
   assert.equal(before.projects.length, 1)
   const [index] = before.projects
   const key = `project-v1-${createHash('sha256').update(project.path).digest('hex')}`
@@ -368,9 +456,6 @@ export async function runNoobaiComponentRemove({
   await assertAccepted(page, key)
   await assertComparison(page, 'Removed')
   const beforeDb = path.join(root, 'before-remove.sqlite')
-  await backupLiveDatabase(database, beforeDb)
-  assert.deepEqual(snapshot(beforeDb), before)
-  const baselineDatabase = await identity(beforeDb)
 
   const { manager, row } = await openModels(page)
   const removeButton = manager.getByRole('button', { name: 'Remove Local Resource', exact: true })
@@ -384,27 +469,108 @@ export async function runNoobaiComponentRemove({
   await expect(removePermanently).toBeDisabled()
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(dialog).toBeHidden()
-  assert.deepEqual(snapshot(database), before)
+  assert.deepEqual(readSnapshot(), before)
   await pinnedFile(model, identity)
   await pinnedFile(project, identity)
   await expect(row).toBeVisible()
 
-  await removeButton.click()
-  await expect(removePermanently).toBeDisabled()
-  const acknowledge = dialog.getByRole('checkbox', {
-    name: 'I understand that referenced settings will become unavailable',
-    exact: true,
-  })
-  await expect(acknowledge).not.toBeChecked()
-  await acknowledge.check()
-  await expect(removePermanently).toBeEnabled()
-  await removePermanently.click()
-  await expect(dialog).toBeHidden()
-  await expect(row).toHaveCount(0)
-  assert.deepEqual(await call(page, 'models', 'getCatalog'), [])
-  await assert.rejects(lstat(model.path), { code: 'ENOENT' })
-  const removed = snapshot(database)
-  assert.deepEqual(removed, { ...before, registry: emptyRegistry.registry, ledger: [ledger] })
+  let controls
+  let queue
+  let reviewed
+  let retainedAtRemoval
+  async function assertUnchanged() {
+    const pending = await controls.rows()
+    assert.deepEqual(readSnapshot(), {
+      ...before,
+      queue: pending,
+      unusedCounts: { ...before.unusedCounts, generation_queue_item: pending.length },
+    })
+    await pinnedFile(model, identity)
+    await pinnedFile(project, identity)
+    await expect(row).toBeVisible()
+  }
+  async function retainBefore() {
+    if (controls) await assertUnchanged()
+    reviewed = readSnapshot()
+    await backupLiveDatabase(database, beforeDb)
+    assert.deepEqual(readSnapshot(beforeDb), reviewed)
+  }
+  try {
+    if (queued) {
+      const { prepareRemoveQueueInputs } = await import('./packaged-noobai-remove-queue-inputs.mjs')
+      const { exerciseQueuedRemoval } = await import('./packaged-noobai-remove-queue-ui.mjs')
+      controls = await prepareRemoveQueueInputs({
+        root,
+        appData,
+        ownedRunRoot,
+        project,
+        model,
+        identity,
+        key,
+        reference,
+      })
+      queue = await exerciseQueuedRemoval({
+        page,
+        controls,
+        removeButton,
+        dialog,
+        reference,
+        assertUnchanged,
+        retainBefore,
+      })
+    } else {
+      await removeButton.click()
+      await expect(removePermanently).toBeDisabled()
+      const acknowledge = dialog.getByRole('checkbox', {
+        name: 'I understand that referenced settings will become unavailable',
+        exact: true,
+      })
+      await expect(acknowledge).not.toBeChecked()
+      await acknowledge.check()
+      await expect(removePermanently).toBeEnabled()
+      await retainBefore()
+      await removePermanently.click()
+    }
+    await expect(dialog).toBeHidden()
+    await expect(row).toHaveCount(0)
+    assert.deepEqual(await call(page, 'models', 'getCatalog'), [])
+    await assert.rejects(lstat(model.path), { code: 'ENOENT' })
+    const actual = readSnapshot()
+    assert.deepEqual(actual, {
+      ...reviewed,
+      registry: emptyRegistry.registry,
+      ledger: [ledger],
+      ...(queue && { queue: queue.afterRows }),
+    })
+    if (queue) {
+      const afterDb = path.join(root, 'after-remove-before-fixture-cleanup.sqlite')
+      await backupLiveDatabase(database, afterDb)
+      assert.deepEqual(readSnapshot(afterDb), actual)
+      retainedAtRemoval = {
+        database: await identity(afterDb),
+        files: await controls.retain(path.join(root, 'frozen-inputs')),
+        sourcePins: controls.sourcePins,
+        nativeReadback: await assertQueueReadback(page, actual.queue),
+      }
+    }
+  } finally {
+    await controls?.close()
+  }
+  const baselineDatabase = await identity(beforeDb)
+  const removed = readSnapshot()
+  if (queue) {
+    assert.deepEqual(
+      removed.queue.map(({ id }) => id),
+      queue.afterRows.map(({ id }) => id),
+    )
+    assert.ok(removed.queue.every(({ status }) => status === 'canceled'))
+    for (const id of queue.affectedIds) {
+      assert.deepEqual(
+        removed.queue.find((item) => item.id === id),
+        queue.afterRows.find((item) => item.id === id),
+      )
+    }
+  }
   await manager.getByRole('button', { name: 'Close Model Manager', exact: true }).click()
   await expect(manager).toBeHidden()
   await assertAccepted(page, key)
@@ -416,13 +582,21 @@ export async function runNoobaiComponentRemove({
   const second = await launch('reopen-after-component-remove')
   assert.equal((await call(second.page, 'runtime', 'getStatus')).kind, 'not-installed')
   assert.deepEqual(await call(second.page, 'models', 'getCatalog'), [])
-  assert.deepEqual(snapshot(database), removed)
+  assert.deepEqual(readSnapshot(), removed)
   await openProject(second.page)
   await assertAccepted(second.page, key)
   await assertComparison(second.page, 'Missing resource')
+  if (queue) await verifyRetainedQueueFiles(appData, queue.witness, identity)
+  const retry = queue
+    ? {
+        queue: await assertQueueReadback(second.page, removed.queue),
+        control: await assertRetainedRetry(second.page, appData, removed.queue, queue.affectedIds),
+      }
+    : null
   await closeNormally(second)
   const restarted = await retainOwnStore('restarted-after-component-remove')
-  const reopened = snapshot(database)
+  if (queue) await verifyRetainedQueueFiles(appData, queue.witness, identity)
+  const reopened = readSnapshot()
   assert.deepEqual(reopened, {
     ...removed,
     projects: [{ ...removed.projects[0], last_opened_at: reopened.projects[0].last_opened_at }],
@@ -446,6 +620,7 @@ export async function runNoobaiComponentRemove({
       before,
       removed,
       reopened,
+      ...(queue && { queue: { ...queue, retainedAtRemoval, retry } }),
       comparison: { before: 'Removed', after: 'Missing resource', restarted: 'Missing resource' },
     },
   }

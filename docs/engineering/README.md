@@ -10,6 +10,10 @@ and the same frozen replay after Cancel with its installed CUDA worker.
 
 ## Current NoobAI packaged qualification
 
+[Remove with affected queue work](./phase-5-packaged-noobai-queue-remove-research.md)
+records fresh and stale review refusal, dual acknowledgement, exact
+pending cancellation and retained Retry input on the stock AppImage.
+
 [Remove a managed embedding](./phase-5-packaged-noobai-component-remove-research.md)
 records the actual stock Model Manager review, Cancel and permanent
 removal. The accepted NoobAI Raster and exact saved reference survive
