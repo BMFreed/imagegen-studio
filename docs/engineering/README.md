@@ -5,7 +5,8 @@
 [Retry during image worker transitions](./phase-5-retry-runtime-transition-research.md)
 uses the existing runtime admission check to disable Retry during
 worker startup, shutdown and preparation. Healthy busy Retry remains
-available across Projects.
+available across Projects. The stock AppImage confirmed the transition
+and the same frozen replay after Cancel with its installed CUDA worker.
 
 ## Current NoobAI packaged qualification
 

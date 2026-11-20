@@ -137,9 +137,9 @@ entries record the state at their checkpoint.
    Manager policies, portable chooser
    routes, packaged legacy queue and provenance, and an incompatible worker refusal
    on clean install and upgrade.
-   Verify the Cancel-to-Retry control on the final packaged candidate and
-   cover the other release cases for Generate, Cancel, frozen Retry,
-   explicit Add/Undo/Redo/Save,
+   The current AppImage covered the Cancel-to-Retry transition and frozen replay
+   with the installed CUDA worker. Repeat on the shipping candidate and cover
+   the remaining release cases for Generate, Cancel, frozen Retry, explicit Add/Undo/Redo/Save,
    immutable Compare and result-derived presets. Check joint Home/Trash, resource
    removal and export behavior, interrupted recovery, keyboard/focus/contrast and
    performance at supported desktop sizes on the final candidate. [NoobAI matrix](../specs/01-implementation-roadmap.md#noobai-полная-поддержка-в-рамках-mvp),
@@ -183,8 +183,10 @@ entries record the state at their checkpoint.
    A running Cancel and a same-session Retry after idle gave identical
    frozen bytes and the same PNG as the prior combined Generate.
    Queue Manager now waits during runtime worker transitions and retains
-   Retry while another healthy worker owns the engine. The controlled
-   runtime and browser checks cover the observed admission gap.
+   Retry while another healthy worker owns the engine. The current stock
+   AppImage observed disabled Retry with the worker transition reason, followed
+   by enabled Retry and an identical frozen replay in the same session.
+   The controlled runtime and browser checks cover admission across Projects.
    [Retry transition fix](./phase-5-retry-runtime-transition-research.md),
    [Packaged frozen Retry](./phase-5-packaged-noobai-components-research.md#packaged-frozen-retry-with-all-three-components),
    [Combined managed components](./phase-5-packaged-noobai-components-research.md#packaged-noobai-generation-with-all-three-managed-components),

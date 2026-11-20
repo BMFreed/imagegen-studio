@@ -452,7 +452,12 @@ export async function preparePackagedTrainedModels({
   assert.match(slot, /^native-runtime-offline-[a-zA-Z0-9]+$/)
   for (const directory of [repo, engineRun, run, appData]) await ownedDirectory(directory)
   assert.deepEqual((await readdir(appData)).sort(), ['inference-resources', 'runtime'])
-  assert.equal(sourcesPath, path.join(engineRun, `trained-input-${profile ?? family}.json`))
+  const profileSourcesPath = path.join(engineRun, `trained-input-${profile ?? family}.json`)
+  assert.ok(
+    sourcesPath === profileSourcesPath ||
+      (profile === 'noobai-eps-stack-retry' && sourcesPath === `${run}.inputs.json`),
+    'A refreshed Retry fixture can pin its own install receipts beside its evidence directory.',
+  )
   assert.equal(await realpath(sourcesPath), sourcesPath)
   const input = await open(
     sourcesPath,

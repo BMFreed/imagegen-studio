@@ -692,7 +692,10 @@ owns a preparation worker. Main reports this transition separately from
 advisory runtime status and rechecks admission on click. Subsequent
 [busy Generate](../engineering/phase-2b-busy-generate-research.md) adds separate
 CPU target preparation while preserving the same serial inference dispatch.
-Native evidence uses controlled inference, not production CUDA/release readiness.
+Controlled inference covers busy admission across Projects. The current
+[stock AppImage check](../engineering/phase-5-retry-runtime-transition-research.md#current-stock-appimage)
+observed the waiting reason and subsequent Retry on the same canceled row with
+the installed CUDA worker.
 
 ## Acceptance Criteria
 

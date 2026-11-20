@@ -309,8 +309,11 @@ original job and temporary results. The passing run waited for the
 real Project state to become idle and report VAE and embedding
 capabilities before clicking Retry. The subsequent
 [transition fix](./phase-5-retry-runtime-transition-research.md) covers
-the enabled control through the runtime and renderer checks. The failing attempts and
-successful receipts are retained separately.
+the enabled control through the runtime and renderer checks. Its
+[current AppImage follow-up](./phase-5-retry-runtime-transition-research.md#current-stock-appimage)
+observed the waiting reason, re-enabled Retry and matched this run's
+frozen replay. The failing attempts and successful receipts are retained
+separately.
 
 The final evidence is under
 `runs/packaged-installed-engine/20261118/trained-noobai-eps-stack-retry-r3`.

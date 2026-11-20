@@ -673,9 +673,66 @@ async function cancelTrainedSource({ first, trained, snapshot, admitted, root, p
       { timeout: 90_000, intervals: [100, 250, 500] },
     )
     .toBe(true)
+  const transitionWatch = await page.evaluateHandle((jobId) => {
+    const selector = `[data-testid="queue-job-row"][data-job-id="${CSS.escape(jobId)}"]`
+    const start = performance.now()
+    const samples = []
+    const capture = () => {
+      const source = document.querySelector(selector)
+      if (source?.getAttribute('data-status') !== 'canceled') return
+      const retry = source.querySelector('button[aria-label="Retry job"]')
+      if (!retry) return
+      const disabled = retry.disabled || retry.getAttribute('aria-disabled') === 'true'
+      const reason = source.querySelector('.job-action-reason')?.textContent.trim() ?? null
+      const previous = samples.at(-1)
+      if (!previous || previous.disabled !== disabled || previous.reason !== reason) {
+        samples.push({ elapsedMs: performance.now() - start, disabled, reason })
+      }
+    }
+    const observer = new MutationObserver(capture)
+    observer.observe(document.body, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ['data-status', 'disabled', 'aria-disabled'],
+    })
+    return () => {
+      capture()
+      observer.disconnect()
+      return samples
+    }
+  }, admitted.id)
   await row.getByRole('button', { name: 'Cancel job', exact: true }).click()
   await expect.poll(() => snapshot().tables.generation_queue_item.rows[0].status).toBe('canceled')
   await assertWorkerExited(worker)
+  await expect(row.getByRole('button', { name: 'Retry job', exact: true })).toBeEnabled({
+    timeout: 90_000,
+  })
+  const samples = await transitionWatch.evaluate((finish) => finish())
+  await transitionWatch.dispose()
+  const transitionReason = 'Wait for the image engine to finish its current worker transition.'
+  const blocked = samples.findIndex((sample) => sample.reason === transitionReason)
+  const transition = {
+    queueItemId: admitted.id,
+    status: 'canceled',
+    blockedThenEnabled:
+      blocked !== -1 && samples.slice(blocked + 1).some((sample) => !sample.disabled),
+    samples,
+  }
+  await writeFile(
+    path.join(root, 'canceled-retry-runtime-transition.json'),
+    JSON.stringify(transition, null, 2),
+    { flag: 'wx', mode: 0o600 },
+  )
+  assert.ok(
+    samples.some((sample) => !sample.disabled),
+    JSON.stringify(transition),
+  )
+  assert.ok(
+    samples.every((sample) => sample.reason !== transitionReason || sample.disabled),
+    JSON.stringify(transition),
+  )
   await manager.getByRole('button', { name: 'Close Queue Manager', exact: true }).click()
   const stored = snapshot().tables
   const [source] = stored.generation_queue_item.rows
@@ -703,7 +760,7 @@ async function cancelTrainedSource({ first, trained, snapshot, admitted, root, p
     flag: 'wx',
     mode: 0o600,
   })
-  return { source, worker, target }
+  return { source, worker, target, transition }
 }
 
 async function retainGeneration({ row, candidate, frozen, receipt, root, dataRoot }) {
@@ -949,6 +1006,9 @@ export async function runTrainedGeneration({
   await expect(generate).toBeEnabled({ timeout: 90_000 })
   await observeGpuWorker(first)
   await generate.click()
+  const actionError = first.page
+    .locator('.project-notices .n-alert')
+    .filter({ hasText: 'Project action failed' })
   let admitted
   let worker
   await expect
@@ -960,6 +1020,11 @@ export async function runTrainedGeneration({
           admitted = rows[0]
           if (admitted.status === 'running') worker ??= await runningWorker(first, trained)
           return 'admitted'
+        }
+        if (await actionError.isVisible()) {
+          throw new Error(
+            'Actual packaged Generate failed in the Project: ' + (await actionError.innerText()),
+          )
         }
         const { error } = await projectCall(first.page, 'getGenerationState', project.id)
         if (error) throw new Error('Actual packaged Generate refused: ' + JSON.stringify(error))
@@ -1334,6 +1399,7 @@ export async function runTrainedGeneration({
         actualCancellations: 1,
         canceledQueueItemId: canceled.source.id,
         canceledWorker: canceled.worker,
+        retryRuntimeTransition: canceled.transition,
         frozenRetry: true,
       }),
       actualCompletions: 1,

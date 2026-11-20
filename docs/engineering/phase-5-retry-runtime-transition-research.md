@@ -55,5 +55,60 @@ the 88 wiring cases, in 398.082 seconds with zero swap. The exact
 coverage, RED and GREEN receipts and 42 desktop build hashes are in
 `runs/retry-runtime-transition/20261120`. After process and reader
 checks, temporary scratch and browser outputs accounted for 27,852,800
-allocated bytes released. The updated packaged AppImage check remains
-in the [MVP backlog](./mvp-acceptance-backlog.md).
+allocated bytes released.
+
+## Current stock AppImage
+
+The packaged follow-up used production build `4f08d1cd` and AppImage SHA-256
+`555c6a7985ef1cad3b0427d97862aa3db94da3cbf0d4ffdc7a67da5201bfc5d8`.
+Independent readback matched all 42 packaged dist files against the build
+manifest. Three fresh public Model Manager runs installed the exact DigitalArt
+LoRA, IllustriousPhoto embedding and Euge_'s VAE and reopened their catalogs
+without credentials. The trained fixture copies the 15 exact component
+catalog rows and borrows the verified checkpoint and component files.
+
+The first repeat (`trained-noobai-eps-stack-retry-r4`) published no queue row
+within the fixture's 90-second initial Generate deadline. The closed database
+has the authored Project and zero queue rows, receipts and accepted results.
+The AppImage closed normally and independent readback matched all 112 original
+slot entries by identity and content. The launcher receipt was interrupted.
+The systemd journal records the qualification child exiting with status 1.
+The next attempt also records any Project action error shown by the renderer.
+
+In `trained-noobai-eps-stack-retry-r5`, an observer attached before Cancel
+recorded four UI states on the same canceled row. Retry initially waited
+for the queue and generation refresh. At 0.725 seconds after observation
+began, the disabled button showed the worker transition reason. The refresh
+reason returned at 10.999 seconds and Retry became available at 17.870 seconds.
+The fixture uses the public controls and exact installed worker throughout.
+The transition samples are retained in
+`native/canceled-retry-runtime-transition.json`.
+
+The same lifetime then edited the draft to seed 23 and cleared the
+three components. Once Project state was idle, Retry created a fresh job
+and candidate with the original seed 0 and all three frozen bindings.
+The canceled and retried job payloads and target bytes match exactly.
+The candidate matches the 65,536 RGBA pixels and the encoded PNG from
+the earlier combined Generate. The retried worker was identified by
+PID, start time and cgroup, with 55 CUDA samples and a peak of 7,536 MiB.
+Explicit Add and Save persisted the accepted Raster and its resource
+references. The edited draft remained separate after reopening.
+
+Both Electron lifetimes exited normally with 20 tracked process identities
+confirmed gone. The original installed slot returned with all 112 entries.
+The wrapper exited 0 in 258.159 seconds with zero swap. The scoped
+queue, processor, action, renderer Retry and resource-limit suites passed
+302 tests with zero failures and zero skips. The existing controlled
+browser evidence covers Retry during healthy inference in a different
+Project. The native case covers this installed engine on one Linux host.
+Shipping-package compatibility and the joint release matrix remain in
+the [MVP backlog](./mvp-acceptance-backlog.md).
+
+The retained native records are in
+`runs/packaged-installed-engine/20261118/trained-noobai-eps-stack-retry-r5`.
+Independent readback matched the copied catalog rows in both closed stores,
+the two queue rows, the single completed Retry receipt and the accepted
+Raster in the byte-identical saved Project. After all readers and processes
+exited, temporary profiles, republished bodies and build intermediates
+accounted for 896,827,392 allocated bytes released. The exact AppImage
+and its proof remain in `runs/packaged-noobai-preview/20261120`.
