@@ -10,6 +10,11 @@ and the same frozen replay after Cancel with its installed CUDA worker.
 
 ## Current NoobAI packaged qualification
 
+[Portable Project Locate](./phase-5-packaged-project-locate-research.md)
+records native picker cancellation, two refusal cases and reconnection
+of an externally renamed `.igs`. The original local key and accepted
+Raster survive a cold restart and later explicit Open.
+
 [Portable Project import](./phase-5-packaged-project-import-research.md)
 records chooser Cancel, transfer Cancel, Copy, Move and managed reopen
 on the stock AppImage through the Linux GTK desktop portal. The exact

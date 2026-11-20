@@ -97,31 +97,38 @@ async function portalPid() {
   return pid
 }
 
-async function chooserWindows() {
+async function chooserWindows(windowTitle) {
   try {
-    return (await xdotool('search', '--onlyvisible', '--name', '^Import Project$')).split('\n')
+    return (await xdotool('search', '--onlyvisible', '--name', `^${windowTitle}$`)).split('\n')
   } catch (error) {
     if (error.code === 1 && !error.stdout && !error.stderr) return []
     throw error
   }
 }
 
-async function chooseProject({ state, source, observations }) {
-  const button = state.page
+export async function chooseProject({
+  state,
+  source,
+  observations,
+  windowTitle = 'Import Project',
+  trigger = state.page
     .getByRole('region', { name: 'Home', exact: true })
-    .getByRole('button', { name: 'Import Project', exact: true })
+    .getByRole('button', { name: 'Import Project', exact: true }),
+}) {
+  assert.ok(windowTitle === 'Import Project' || windowTitle === 'Locate Project')
+  const visibleWindows = () => chooserWindows(windowTitle)
   await assertPrivateDisplay()
-  assert.deepEqual(await chooserWindows(), [])
-  await button.click()
+  assert.deepEqual(await visibleWindows(), [])
+  await trigger.click()
   let windows
   await expect
     .poll(
       async () => {
-        windows = await chooserWindows()
+        windows = await visibleWindows()
         return windows.length
       },
       {
-        message: 'Observe a single real Import Project window on the private X11 display.',
+        message: `Observe a single real ${windowTitle} window on the private X11 display.`,
         timeout: 12_000,
       },
     )
@@ -147,35 +154,37 @@ async function chooseProject({ state, source, observations }) {
     assert.equal(await xdotool('getwindowfocus'), window)
     await xdotool('key', '--clearmodifiers', 'Return')
     await delay(300)
-    if ((await chooserWindows()).includes(window) && (await xdotool('getwindowfocus')) === window) {
+    if ((await visibleWindows()).includes(window) && (await xdotool('getwindowfocus')) === window) {
       await xdotool('key', '--clearmodifiers', 'Return')
     }
   } else {
     await xdotool('key', '--clearmodifiers', 'Escape')
   }
-  await expect.poll(chooserWindows).toEqual([])
+  await expect.poll(visibleWindows).toEqual([])
   observations.push({
     lifetime: state.name,
     window,
     parent,
     pid: Number(pid),
     action: source ? 'select' : 'dismiss',
+    windowTitle,
+    selectedPath: source ?? null,
   })
 }
 
-async function regularFile(filename) {
+export async function regularFile(filename) {
   assert.equal(await realpath(filename), filename)
   const status = await lstat(filename)
   assert.ok(status.isFile() && status.uid === process.getuid() && status.nlink === 1)
   return status
 }
 
-async function assertOriginalBytes(filename, identity) {
+export async function assertOriginalBytes(filename, identity) {
   await regularFile(filename)
   assert.deepEqual(await identity(filename), { path: filename, ...originalBytes })
 }
 
-function indexSnapshot(filename) {
+export function indexSnapshot(filename) {
   const database = new Database(filename, { readonly: true, fileMustExist: true })
   try {
     const projects = database
@@ -184,7 +193,7 @@ function indexSnapshot(filename) {
                 document_revision AS revision, display_name AS title, file_health AS health,
                 workspace_id AS workspace, preview_status AS preview,
                 file_size_bytes AS bytes, diagnostic_code AS diagnostic, trashed_at AS trashedAt
-         FROM project_index`,
+         FROM project_index ORDER BY local_project_key`,
       )
       .all()
     const accepted = database
@@ -193,7 +202,7 @@ function indexSnapshot(filename) {
                 document_revision AS revision, model_file_sha256 AS checkpoint,
                 asset_sha256 AS image, actual_seed AS seed, output_height AS height,
                 output_width AS width, asset_bytes AS assetBytes
-         FROM project_accepted_result_index`,
+         FROM project_accepted_result_index ORDER BY local_project_key, layer_id`,
       )
       .all()
     return {
@@ -215,7 +224,7 @@ function assertCheckpoint(model, predictionType) {
   }
 }
 
-async function assertOpened(state, id) {
+export async function assertOpened(state, id) {
   await expect(state.page.getByRole('tab', { name: title, exact: true })).toHaveAttribute(
     'aria-selected',
     'true',
@@ -251,22 +260,18 @@ async function assertOpened(state, id) {
   assertCheckpoint(accepted.value.generationConfiguration.model, 'v_prediction')
 }
 
-export async function runPortableImport({
-  choice,
+export async function verifyChooserFixture({
+  scenario,
   root,
-  appData,
   ownedRunRoot,
   packageBefore,
-  launch,
-  readPorts,
-  closeNormally,
-  retainOwnStore,
   identity,
 }) {
   const run = path.dirname(root)
-  assert.equal(path.dirname(run), path.join(ownedRunRoot, 'packaged-noobai-chooser'))
+  const suite = scenario === 'locate' ? 'packaged-noobai-locate' : 'packaged-noobai-chooser'
+  assert.equal(path.dirname(run), path.join(ownedRunRoot, suite))
   assert.match(path.basename(run), /^\d{8}(?:-r[1-9]\d*)?$/)
-  assert.equal(path.basename(root), choice)
+  assert.equal(path.basename(root), scenario)
   assert.deepEqual(packageBefore, {
     path: path.join(
       ownedRunRoot,
@@ -282,10 +287,32 @@ export async function runPortableImport({
     'packaged-installed-engine/20261118/trained-noobai-v-r2/native/after-restarted-close.igs',
   )
   await assertOriginalBytes(original, identity)
+  return { path: original, ...originalBytes }
+}
+
+export async function runPortableImport({
+  choice,
+  root,
+  appData,
+  ownedRunRoot,
+  packageBefore,
+  launch,
+  readPorts,
+  closeNormally,
+  retainOwnStore,
+  identity,
+}) {
+  const original = await verifyChooserFixture({
+    scenario: choice,
+    root,
+    ownedRunRoot,
+    packageBefore,
+    identity,
+  })
   const external = path.join(root, 'external')
   await mkdir(external, { mode: 0o700 })
   const source = path.join(external, 'Portable NoobAI.igs')
-  await copyFile(original, source, constants.COPYFILE_EXCL)
+  await copyFile(original.path, source, constants.COPYFILE_EXCL)
   const sourceBefore = await regularFile(source)
   const workspace = path.join(appData, 'workspaces/Uncategorized')
   const destination = path.join(workspace, path.basename(source))
@@ -357,7 +384,7 @@ export async function runPortableImport({
     ],
   })
   const assertTransferred = async () => {
-    await assertOriginalBytes(original, identity)
+    await assertOriginalBytes(original.path, identity)
     await assertOriginalBytes(destination, identity)
     if (choice === 'copy') {
       await assertOriginalBytes(source, identity)
@@ -393,7 +420,7 @@ export async function runPortableImport({
     portableNoobaiImport: {
       choice,
       chooser,
-      original: { path: original, ...originalBytes },
+      original,
       transfer: snapshot,
       externalSourceRetained: choice === 'copy',
       draftPredictionType: 'epsilon',

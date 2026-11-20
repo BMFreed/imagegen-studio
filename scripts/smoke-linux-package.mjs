@@ -45,6 +45,8 @@ const noobaiMatrix = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_MATRIX
 const noobaiCatalog = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_CATALOG
 const noobaiTokenFile = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_TOKEN_FILE
 const portableImport = process.env.IMAGEGEN_LINUX_PACKAGE_PORTABLE_IMPORT
+const portableLocate = process.env.IMAGEGEN_LINUX_PACKAGE_PORTABLE_LOCATE
+const portableChooser = portableImport ?? portableLocate
 const nativeMemoryGiB = trainedFixture ? 12 : 4
 const nativeDeadlineSeconds = trainedFixture
   ? 420
@@ -63,7 +65,7 @@ const boundedExecute = (command, args, options) =>
   execute(
     command,
     args.map((value) => (value === 'MemoryMax=12G' ? `MemoryMax=${nativeMemoryGiB}G` : value)),
-    portableImport
+    portableChooser
       ? {
           ...options,
           env: {
@@ -86,7 +88,7 @@ assert.ok(
   trainedFixture === undefined || (installedEngineReport && historicalFixture === undefined),
 )
 const updateCheckMode = process.env.IMAGEGEN_LINUX_PACKAGE_UPDATE_CHECK
-if (legacyNoobaiFixture !== undefined || portableImport !== undefined) {
+if (legacyNoobaiFixture !== undefined || portableChooser !== undefined) {
   assert.ok(
     [
       installedEngineReport,
@@ -102,7 +104,10 @@ if (legacyNoobaiFixture !== undefined || portableImport !== undefined) {
     ].every((profile) => profile === undefined),
     'Use a separate owned NoobAI profile.',
   )
-  assert.ok(legacyNoobaiFixture === undefined || portableImport === undefined)
+  assert.ok(legacyNoobaiFixture === undefined || portableChooser === undefined)
+  assert.ok(
+    portableLocate === undefined || (portableLocate === '1' && portableImport === undefined),
+  )
   assert.ok(portableImport === undefined || ['copy', 'move'].includes(portableImport))
 }
 assert.ok(
@@ -345,6 +350,9 @@ const legacyNoobaiProfile = await legacyHarness?.readLegacyNoobaiProfile({
 const portableImportHarness = portableImport
   ? await import('./fixtures/packaged-noobai-import-chooser.mjs')
   : null
+const portableLocateHarness = portableLocate
+  ? await import('./fixtures/packaged-noobai-project-locate.mjs')
+  : null
 const relative = path.relative(artifactRoot, root)
 assert.ok(relative && !relative.startsWith('..') && !path.isAbsolute(relative))
 assert.equal(await realpath(artifactRoot), artifactRoot)
@@ -520,11 +528,13 @@ if (legacyHarness)
       'packaged-worker-protocol.mjs',
     ].map((file) => path.join(repo, 'scripts/fixtures', file)),
   )
-if (portableImportHarness)
+if (portableChooser)
   sourcePaths.push(
     path.join(repo, 'scripts/fixtures/packaged-noobai-import-chooser.mjs'),
     path.join(repo, 'scripts/fixtures/packaged-project-chooser-x11.py'),
   )
+if (portableLocateHarness)
+  sourcePaths.push(path.join(repo, 'scripts/fixtures/packaged-noobai-project-locate.mjs'))
 if (updateCheckMode) sourcePaths.push(path.join(repo, 'scripts/application-update-check-smoke.mjs'))
 if (runtimeSetupControl) {
   for (const fixture of [
@@ -734,7 +744,7 @@ async function launch(name, selectedAppImage = appImage) {
     state.applicationImage = expected
   }
   lifetimes.push(state)
-  if (history || trained || protocolHarness || legacyHarness || portableImport) {
+  if (history || trained || protocolHarness || legacyHarness || portableChooser) {
     await writeFile(
       path.join(root, `${name}.launch-intent.json`),
       JSON.stringify({ name }) + '\n',
@@ -882,7 +892,7 @@ async function closeNormally(state) {
   await gpuObservers.get(state)?.()
   gpuObservers.delete(state)
   if (
-    (trained || runtimeSetupControl || protocolHarness || legacyHarness || portableImport) &&
+    (trained || runtimeSetupControl || protocolHarness || legacyHarness || portableChooser) &&
     !state.closed &&
     state.aggregateLimits
   ) {
@@ -927,11 +937,12 @@ async function closeNormally(state) {
   })
 }
 
-async function retainOwnStore(name) {
+async function retainOwnStore(name, filename) {
   const workspace = path.join(appData, 'workspaces/Uncategorized')
   const packages = (await readdir(workspace)).filter((entry) => entry.endsWith('.igs'))
-  assert.equal(packages.length, 1)
-  const packagePath = path.join(workspace, packages[0])
+  if (filename === undefined) assert.equal(packages.length, 1)
+  else assert.ok(packages.includes(filename))
+  const packagePath = path.join(workspace, filename ?? packages[0])
   assert.equal(await realpath(packagePath), packagePath)
   assert.ok((await lstat(packagePath)).isFile() && !(await lstat(packagePath)).isSymbolicLink())
   assert.equal((await readFile(packagePath)).subarray(0, 2).toString(), 'PK')
@@ -1089,6 +1100,19 @@ async function runNoobaiPreviewQualification() {
 }
 
 async function runOwnedProjectProfile() {
+  if (portableLocateHarness) {
+    return await portableLocateHarness.runPortableLocate({
+      root,
+      appData,
+      ownedRunRoot,
+      packageBefore,
+      launch,
+      readPorts,
+      closeNormally,
+      retainOwnStore,
+      identity,
+    })
+  }
   if (portableImportHarness) {
     return await portableImportHarness.runPortableImport({
       choice: portableImport,
@@ -1321,6 +1345,7 @@ try {
     noobaiInstallation,
     legacyNoobai,
     portableNoobaiImport,
+    portableNoobaiLocate,
   } = noobaiMatrix
     ? {}
     : setupControl
@@ -1440,8 +1465,8 @@ try {
       )
     }
   }
-  if (protocolHarness || legacyHarness || portableImport) {
-    assert.equal(lifetimes.length, 2)
+  if (protocolHarness || legacyHarness || portableChooser) {
+    assert.equal(lifetimes.length, portableLocate ? 3 : 2)
     for (const state of lifetimes) {
       assert.ok(state.normalPhysicalExit && !state.forcedCleanup)
       assert.ok(
@@ -1465,8 +1490,10 @@ try {
   await writeJson('report.json', {
     schemaVersion: 1,
     outcome: 'PASS',
-    scope: portableNoobaiImport
-      ? 'Actual stock AppImage imports a portable NoobAI Project through a native file chooser and reopens it from its managed workspace.'
+    scope: portableChooser
+      ? portableNoobaiLocate
+        ? 'Actual stock AppImage locates the exact saved Project through the system picker and reopens the same local identity after restart.'
+        : 'Actual stock AppImage imports a portable NoobAI Project through a native file chooser and reopens it from its managed workspace.'
       : legacyNoobai
         ? 'Actual stock AppImage migrates a DB17 legacy NoobAI profile, reads its queue and reopens the accepted Raster.'
         : incompatibleWorker
@@ -1508,6 +1535,7 @@ try {
     ...(protocolHarness ? { installedWorkerProtocol: engine.protocol.protocol } : {}),
     ...(legacyNoobai ? { legacyNoobai } : {}),
     ...(portableNoobaiImport ? { portableNoobaiImport } : {}),
+    ...(portableNoobaiLocate ? { portableNoobaiLocate } : {}),
     stores: { saved, restarted },
     lifetimes: lifetimes.map(
       ({
@@ -1532,7 +1560,7 @@ try {
           noobaiInstallation ||
           noobaiMatrixResult ||
           legacyNoobai ||
-          portableNoobaiImport
+          portableChooser
         ? {}
         : { defaultProviderUnavailable: true }),
     nativeInferenceQualified: Boolean(trainedGeneration),
@@ -1636,8 +1664,10 @@ try {
 }
 if (failed) throw failed
 console.log(
-  portableImport
-    ? `PASS native NoobAI Project import (${portableImport}) and two normal physical closes`
+  portableChooser
+    ? portableLocate
+      ? 'PASS native NoobAI Locate Project and three normal physical closes'
+      : `PASS native NoobAI Project import (${portableImport}) and two normal physical closes`
     : legacyNoobaiProfile
       ? 'PASS legacy NoobAI queue, accepted provenance, DB17 backup and two normal physical closes'
       : incompatibleWorker
