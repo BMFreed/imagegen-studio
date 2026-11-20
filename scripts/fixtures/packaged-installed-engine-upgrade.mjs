@@ -39,7 +39,14 @@ async function backups(databasePath) {
   return names.map((name) => path.join(directory, name)).sort()
 }
 
-export async function readHistoricalUpgrade({ filename, engine, outputRoot, appImage, identity }) {
+export async function readHistoricalUpgrade({
+  filename,
+  engine,
+  outputRoot,
+  appImage,
+  identity,
+  protocolRefusal,
+}) {
   const run = path.dirname(filename)
   assert.ok(inside(engine.run, run))
   assert.equal(filename, path.join(run, 'historical-fixture.json'))
@@ -73,7 +80,13 @@ export async function readHistoricalUpgrade({ filename, engine, outputRoot, appI
   assert.equal(previous.fullMvpAccepted, false)
   assert.equal(previous.packagedInstalledRuntime.runtimeId, engine.runtimeId)
   assert.deepEqual(previous.packageBefore, previous.packageAfter)
-  assert.deepEqual(await identity(appImage), previous.packageBefore)
+  const packageIdentity = await identity(appImage)
+  if (protocolRefusal) {
+    assert.deepEqual(packageIdentity, protocolRefusal.packageIdentity)
+    assert.ok(inside(engine.run, previous.packageBefore.path))
+    await regular(previous.packageBefore.path, 512 * 1024 ** 2)
+    assert.deepEqual(await identity(previous.packageBefore.path), previous.packageBefore)
+  } else assert.deepEqual(packageIdentity, previous.packageBefore)
 
   const { database, project } = fixture
   assert.equal(database.file, path.join(engine.dataRoot, 'database/app.sqlite'))
@@ -121,13 +134,72 @@ export async function readHistoricalUpgrade({ filename, engine, outputRoot, appI
   const sourceBefore = await identity(source.path)
   assert.equal(sourceBefore.sha256, source.sha256)
   assert.equal(sourceBefore.sizeBytes, source.sizeBytes)
+  const inputs = [
+    fixtureBefore,
+    previousReport,
+    await identity(database.checkpointFile),
+    sourceBefore,
+  ]
+  let previewPlaceholders
+  if (protocolRefusal) {
+    inputs.push(packageIdentity, previous.packageBefore)
+    const { queue, model, checkpoint29 } = fixture
+    assert.equal(queue.status, 'canceled')
+    assert.equal(queue.localProjectKey, project.projectId)
+    assert.equal(queue.projectPath, project.projectFile)
+    assert.match(queue.id, /^[0-9a-f-]{36}$/)
+    const inputDir = path.join(engine.dataRoot, 'generation-inputs', queue.id)
+    const retainedFiles = [
+      path.join(inputDir, 'manifest.json'),
+      path.join(inputDir, 'target.png'),
+      path.join(engine.dataRoot, 'models/compatibility-fixture.safetensors'),
+    ]
+    assert.equal(retainedFiles[2], model.file.path)
+    const dataHome = path.dirname(engine.dataRoot)
+    const checkpointPin = (file) =>
+      checkpoint29.files.find(
+        (entry) => entry.path === path.join('data', path.relative(dataHome, file)),
+      )
+    assert.deepEqual(
+      checkpoint29.files.map(({ path: file }) => file).sort(),
+      [database.file, project.projectFile, ...retainedFiles]
+        .map((file) => path.join('data', path.relative(dataHome, file)))
+        .sort(),
+    )
+    for (const file of [database.file, database.checkpointFile, ...retainedFiles]) {
+      const pin = checkpointPin(file === database.checkpointFile ? database.file : file)
+      assert.equal(pin?.kind, 'file')
+      await regular(file, 16 * 1024 * 1024)
+      const actual = await identity(file)
+      assert.equal(actual.sizeBytes, pin.sizeBytes)
+      assert.equal(actual.sha256, pin.sha256)
+      if (retainedFiles.includes(file)) inputs.push(actual)
+    }
+    const projectPin = checkpointPin(project.projectFile)
+    assert.equal(projectPin?.kind, 'file')
+    assert.equal(initialProject.sizeBytes, projectPin.sizeBytes)
+    assert.equal(initialProject.sha256, projectPin.sha256)
+    const placeholderDir = path.resolve(import.meta.dirname, '../../src/main/projects/placeholders')
+    previewPlaceholders = {}
+    for (const [member, name] of [
+      ['preview/merged.png', 'unavailable.png'],
+      ['preview/thumbnail.webp', 'unavailable.webp'],
+    ]) {
+      const file = path.join(placeholderDir, name)
+      await regular(file, 1024 * 1024)
+      const actual = await identity(file)
+      inputs.push(actual)
+      previewPlaceholders[member] = actual.sha256
+    }
+  }
 
   return {
     fixture,
     initialProject,
     raster,
     python,
-    inputs: [fixtureBefore, previousReport, await identity(database.checkpointFile), sourceBefore],
+    inputs,
+    previewPlaceholders,
   }
 }
 
@@ -185,13 +257,37 @@ function compareAfterProjectAction(before, after, allowedColumns) {
   return { changes, row: newRow }
 }
 
+async function compareRestoredStartup(baseline, startup, project, startupArgs) {
+  const stat = await lstat(project.projectFile, { bigint: true })
+  const expected = {
+    file_fingerprint: `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`,
+    file_mtime_ns: String(stat.mtimeNs),
+  }
+  const [row] = startup.tables.project_index.rows
+  assert.equal(row.local_project_key, project.projectId)
+  assert.equal(row.file_size_bytes, Number(stat.size))
+  const before = structuredClone(baseline)
+  const [beforeRow] = before.tables.project_index.rows
+  const restoredProjectFile = {}
+  for (const [column, value] of Object.entries(expected)) {
+    assert.equal(row[column], value)
+    if (beforeRow[column] !== value)
+      restoredProjectFile[column] = { before: beforeRow[column], after: value }
+    beforeRow[column] = value
+  }
+  return {
+    ...compareStartup(before, startup, { ...startupArgs, first: true }),
+    restoredProjectFile,
+  }
+}
+
 // Pillow decodes the finished ordinary zipfile independently of the worker's compositor/protocol.
-// All pixels in this finite opaque fixture have a single expected RGBA value.
+// Only the raster and rendered previews have the fixture's expected 48×32 RGBA pixels.
 const readPreview = String.raw`
 import hashlib, io, json, sys, zipfile
 from PIL import Image
 
-filename, raster, icc_hash = sys.argv[1:]
+filename, raster, icc_hash, preview_status = sys.argv[1:]
 profile = 'assets/profiles/' + icc_hash + '.icc'
 with zipfile.ZipFile(filename) as package:
     members = package.infolist()
@@ -204,15 +300,19 @@ with zipfile.ZipFile(filename) as package:
     project = json.loads(package.read('project.json'))
     assert hashlib.sha256(package.read(profile)).hexdigest() == icc_hash
     hashes = {}
+    checked_pixels = 0
     for name, format in [(raster, 'PNG'), ('preview/merged.png', 'PNG'), ('preview/thumbnail.webp', 'WEBP')]:
         data = package.read(name)
         with Image.open(io.BytesIO(data)) as image:
-            assert image.size == (48, 32) and image.format == format
-            assert hashlib.sha256(image.info['icc_profile']).hexdigest() == icc_hash
-            assert image.convert('RGBA').tobytes() == bytes([31, 101, 197, 255]) * (48 * 32)
+            assert image.format == format
+            if name == raster or preview_status == 'rendered':
+                assert image.size == (48, 32)
+                assert hashlib.sha256(image.info['icc_profile']).hexdigest() == icc_hash
+                assert image.convert('RGBA').tobytes() == bytes([31, 101, 197, 255]) * (48 * 32)
+                checked_pixels += 48 * 32
         hashes[name] = hashlib.sha256(data).hexdigest()
     print(json.dumps(dict(manifest=manifest, project=project, hashes=hashes,
-                          sourceProfileSha256=icc_hash, checkedPixels=48 * 32 * 3)))
+                          sourceProfileSha256=icc_hash, checkedPixels=checked_pixels)))
 `
 
 export async function runHistoricalUpgrade({
@@ -226,9 +326,12 @@ export async function runHistoricalUpgrade({
   iccHash,
   identity,
   records,
+  protocolRefusal,
 }) {
-  const { fixture, raster, python, initialProject } = history
+  const { fixture, raster, python, initialProject, previewPlaceholders } = history
+  assert.equal(Boolean(protocolRefusal), Boolean(previewPlaceholders))
   const { database, project } = fixture
+  const previewStatus = protocolRefusal ? 'unavailable' : 'rendered'
   const startupArgs = { projectId: project.projectId, migrationHash }
   const first = await launch('first')
   const initialPorts = await readPorts(first)
@@ -236,7 +339,9 @@ export async function runHistoricalUpgrade({
   assert.equal(initialPorts.projects.value[0].id, project.projectId)
   assert.equal(initialPorts.projects.value[0].previewStatus, 'unavailable')
   const startup = snapshotDatabase(database.file)
-  const firstStartup = compareStartup(database.baseline, startup, { ...startupArgs, first: true })
+  const firstStartup = protocolRefusal
+    ? await compareRestoredStartup(database.baseline, startup, project, startupArgs)
+    : compareStartup(database.baseline, startup, { ...startupArgs, first: true })
   const paths = await backups(database.file)
   assert.equal(paths.length, 1)
   const [backupPath] = paths
@@ -260,7 +365,10 @@ export async function runHistoricalUpgrade({
 
   const firstTab = await openProject(first.page, project)
   assertTab(firstTab, project, raster, project.initialPrompt, project.documentRevision)
-  const prompt = `${project.initialPrompt}\nSaved after verified installed-engine startup.`
+  if (protocolRefusal) await protocolRefusal.assertUnavailable(first, firstTab, fixture.queue)
+  const prompt = protocolRefusal
+    ? `${project.initialPrompt}\nSaved with the incompatible installed engine.`
+    : `${project.initialPrompt}\nSaved after verified installed-engine startup.`
   await first.page.getByRole('textbox', { name: 'Positive prompt', exact: true }).fill(prompt)
   await expect
     .poll(async () => (await projectCall(first.page, 'open', project.projectId)).tab.dirty)
@@ -276,8 +384,10 @@ export async function runHistoricalUpgrade({
   assert.equal(summary.id, project.projectId)
   assert.equal(
     summary.previewStatus,
-    'rendered',
-    'Save must produce the actual worker preview, without placeholders.',
+    previewStatus,
+    protocolRefusal
+      ? 'A nonempty Project must Save with the unavailable preview.'
+      : 'Save must produce the actual worker preview, without placeholders.',
   )
   await closeNormally(first)
   const saved = await retainOwnStore('after-first-close')
@@ -293,18 +403,22 @@ export async function runHistoricalUpgrade({
       path.join(root, saved.retainedProject),
       raster.asset.path,
       iccHash,
+      previewStatus,
     ],
     { timeout: 10_000, maxBuffer: 256 * 1024 },
   )
   const preview = JSON.parse(stdout)
   assert.equal(preview.manifest.documentId, project.documentId)
   assert.equal(preview.manifest.documentRevision, savedTab.documentRevision)
-  assert.deepEqual(preview.manifest.preview, { rect: expectedRaster, status: 'rendered' })
+  assert.deepEqual(preview.manifest.preview, { rect: expectedRaster, status: previewStatus })
   assert.equal(preview.project.documentId, project.documentId)
   assert.equal(preview.project.documentRevision, savedTab.documentRevision)
   assert.equal(preview.project.generationDraft.positivePrompt.text, prompt)
   assert.deepEqual(preview.project.layers, [raster])
   assert.equal(preview.hashes[raster.asset.path], raster.asset.sha256)
+  for (const [member, placeholderHash] of Object.entries(previewPlaceholders ?? {})) {
+    assert.equal(preview.hashes[member], placeholderHash, member)
+  }
   const savedDatabase = snapshotDatabase(database.file, { closed: true })
   const saveComparison = compareAfterProjectAction(startup, savedDatabase, [
     'document_revision',
@@ -317,14 +431,16 @@ export async function runHistoricalUpgrade({
     'preview_thumbnail_sha256',
   ])
   assert.equal(saveComparison.row.document_revision, savedTab.documentRevision)
-  assert.equal(saveComparison.row.preview_status, 'rendered')
+  assert.equal(saveComparison.row.preview_status, previewStatus)
   assert.equal(
     saveComparison.row.preview_thumbnail_sha256,
     preview.hashes['preview/thumbnail.webp'],
   )
   assert.equal(saveComparison.row.file_size_bytes, saved.project.sizeBytes)
   records.push({
-    name: 'Explicit packaged Save uses the installed CPU image worker and preserves exact source pixels',
+    name: protocolRefusal
+      ? 'Explicit packaged Save writes the unavailable preview and preserves exact source pixels'
+      : 'Explicit packaged Save uses the installed CPU image worker and preserves exact source pixels',
     preview,
   })
 
@@ -332,13 +448,14 @@ export async function runHistoricalUpgrade({
   const reopenedPorts = await readPorts(second)
   assert.equal(reopenedPorts.projects.value.length, 1)
   assert.equal(reopenedPorts.projects.value[0].id, project.projectId)
-  assert.equal(reopenedPorts.projects.value[0].previewStatus, 'rendered')
+  assert.equal(reopenedPorts.projects.value[0].previewStatus, previewStatus)
   const secondStartup = compareStartup(savedDatabase, snapshotDatabase(database.file), {
     ...startupArgs,
     first: false,
   })
   const reopened = await openProject(second.page, project)
   assertTab(reopened, project, raster, prompt, savedTab.documentRevision)
+  if (protocolRefusal) await protocolRefusal.assertUnavailable(second, reopened, fixture.queue)
   await closeNormally(second)
   const restarted = await retainOwnStore('after-restarted-close')
   assert.deepEqual(restarted.project, saved.project)
@@ -366,7 +483,7 @@ export async function runHistoricalUpgrade({
         retained: savedBackupPath,
         migrations: backupState.schemaMigrations.length,
       },
-      installedCpuPreview: {
+      [protocolRefusal ? 'unavailablePreview' : 'installedCpuPreview']: {
         checkedPixels: preview.checkedPixels,
         hashes: preview.hashes,
         sourceProfileSha256: preview.sourceProfileSha256,

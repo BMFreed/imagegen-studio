@@ -120,4 +120,71 @@ installed module hash matched before and after. The systemd unit exited
 0 in 18.688 seconds with zero swap. The evidence is under
 `protocol-namespace-preflight-20261120` in the installed-engine run.
 The AppImage's clean-start and upgrade behavior with an incompatible
-worker, including Project Save and reopen, still needs a packaged run.
+worker is covered by the next checkpoint.
+
+## Stock AppImage with an incompatible installed worker
+
+Re-read clean InvokeAI `4875d96531ca6712b288f6e660fcbb34143408c1`.
+In addition to the startup and service callers above, rechecked
+`invokeai/app/services/shared/database/startup.py::init_database`,
+`sqlite_migrator/sqlite_migrator_impl.py::run_migrations` and
+`database/database.py::backup` for the pre-migration copy. The Retry route in
+`invokeai/app/api/routers/session_queue.py` calls
+`invokeai/app/services/session_queue/session_queue_default.py::retry_items_by_id`
+after checking ownership, then validates and clones the saved graph. The
+fixture uses Studio's existing runtime starts, queued input checks, SQLite
+migration and Project Save. No production owner was added.
+
+The stock AppImage used the production build `4f08d1cd` and SHA-256
+`555c6a7985ef1cad3b0427d97862aa3db94da3cbf0d4ffdc7a67da5201bfc5d8`.
+The private mount namespace attaches fresh owned profiles at the installed
+path and binds the exact Python, environment and inference resources there
+read-only. Only the incompatible case mounts the same one-file protocol `2`
+copy checked in the direct-client preflight. The launcher drops ambient and
+inheritable capabilities before starting the package. Both the nested
+user-namespace test and the actual packaged Main argv confirm that the
+AppImage's sandbox fallback was unnecessary.
+
+The historical profile restores five exact regular files from the prior
+DB29 checkpoint, including the nonempty Project and the canceled job's
+manifest and target PNG. It retains the original absolute paths inside the
+namespace. SQLite creates one mode-`0600` backup with the DB29 schema and
+rows, then adds migration `0030`. The restored Project's new inode and
+mtime are checked against its actual file metadata. Other historical rows
+stay intact, apart from ordinary Project index updates from opening and saving.
+
+The incompatible runtime reports Repair. Main refuses Generate on the fresh
+and historical Projects, and refuses the historical canceled job's Retry
+with `GENERATION_RUNTIME_UNAVAILABLE`. The visible Queue Manager keeps the
+canceled row and disables Retry. The two operations preserve the queue,
+receipts and exact generation-input and staging inventory. Explicit Save
+persists the edited prompt. The historical Project retains the exact Raster
+and ICC, and its unavailable PNG/WebP match the bundled placeholders.
+Both saved Projects reopen with byte-identical packages.
+
+The initial isolation probe failed in the AppImage launcher under
+`bwrap`. The passing mount namespace uses `unshare` and keeps the ordinary
+fused package launch. One historical setup copy had permissive queue-input
+directory modes. The application rejected that storage and no Retry was
+tested in that attempt. The passing copy creates private directories.
+An intermediate fresh-profile run recorded native exit 0 before a runner
+edit interrupted its outer receipt. The final fresh-profile run retained
+both successful exit receipts.
+
+The healthy, fresh incompatible and historical incompatible profiles passed
+at the same qualification source revision, with six normal physical exits
+and 60 tracked process identities. The aggregate memory limit was 8 GiB
+with zero swap. Independent readback verified all six closed SQLite stores,
+the pre-migration backup, exact frozen input and saved Raster/ICC/preview.
+The original slot still matched all 112 tracked app-data entries and 73
+worker files. The focused runtime, worker-client, queue action, database
+backup and package checks passed 338 tests with zero failures and zero skips.
+
+Reports, checksums and the namespace commands are retained under
+`protocol-appimage-20261120` in the installed-engine run. After process
+and reader exit, cleanup released 472,600,576 allocated bytes from the
+temporary package extraction and disposable profiles. The retained project
+packages, databases, frozen input and diagnostics occupy about 10 MiB.
+This covers the installed-worker refusal in the stock AppImage on one host.
+Clean-machine installation, the app installer handoff and the shipping host
+matrix have their own acceptance cases.

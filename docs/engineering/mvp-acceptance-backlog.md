@@ -135,11 +135,12 @@ entries record the state at their checkpoint.
    [application updates](../features/application-updates.md#acceptance-criteria).
 6. **Run the NoobAI and joint release matrix.** Cover the remaining Model
    Manager policies, portable chooser
-   routes, packaged legacy queue and provenance, and an incompatible worker refusal
-   on clean install and upgrade.
-   Both production worker clients refused protocol 2 from the actual installed
-   runtime in an isolated preflight. Exercise the same refusal in the packaged
-   Project and queue flows. [Installed worker protocol preflight](./phase-5-packaged-installed-engine-research.md#isolated-installed-worker-protocol-refusal)
+   routes, and packaged legacy NoobAI queue and provenance.
+   The stock AppImage refused the incompatible installed worker on a fresh
+   profile and on a copied DB29 upgrade. Generate and historical Retry
+   were refused, and both Projects saved and reopened. Repeat the refusal
+   on the shipping candidate across the supported clean-install and upgrade
+   matrix. [Packaged installed worker refusal](./phase-5-packaged-installed-engine-research.md#stock-appimage-with-an-incompatible-installed-worker)
    The current AppImage covered the Cancel-to-Retry transition and frozen replay
    with the installed CUDA worker. Repeat on the shipping candidate and cover
    the remaining release cases for Generate, Cancel, frozen Retry, explicit Add/Undo/Redo/Save,

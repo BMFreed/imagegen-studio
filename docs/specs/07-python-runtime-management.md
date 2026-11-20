@@ -715,6 +715,13 @@ refusal evidence, not an installed historical CPython/worker or ML runtime test.
 The retained data-only checkpoint is not an activatable relocated runtime, and no
 Repair/Install provider or readiness status is promoted.
 
+The stock AppImage follow-up used the signed slot's actual installed Python and
+worker with a single isolated protocol `2` file. On a fresh profile and a DB29
+upgrade, the app offered Repair and refused Generate. The historical Retry
+preserved the canceled row and frozen files. Explicit Save retained the
+edited prompt and the historical Raster under an unavailable preview, then
+reopened the same package. [Installed worker evidence](../engineering/phase-5-packaged-installed-engine-research.md#stock-appimage-with-an-incompatible-installed-worker)
+
 ### Application database backup
 
 [Startup SQLite backup](../engineering/phase-5-database-migration-backup-research.md)

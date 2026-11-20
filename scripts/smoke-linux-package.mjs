@@ -71,10 +71,24 @@ const suppliedPackage = process.env.IMAGEGEN_LINUX_PACKAGE_APPIMAGE
 const suppliedRecoveryPublication = process.env.IMAGEGEN_LINUX_PACKAGE_RECOVERY_PUBLICATION
 const installedEngineReport = process.env.IMAGEGEN_LINUX_PACKAGE_INSTALLED_ENGINE_REPORT
 const historicalFixture = process.env.IMAGEGEN_LINUX_PACKAGE_HISTORICAL_FIXTURE
+const protocolFixture = process.env.IMAGEGEN_LINUX_PACKAGE_PROTOCOL_FIXTURE
 assert.ok(
   trainedFixture === undefined || (installedEngineReport && historicalFixture === undefined),
 )
 const updateCheckMode = process.env.IMAGEGEN_LINUX_PACKAGE_UPDATE_CHECK
+assert.ok(
+  protocolFixture === undefined ||
+    (installedEngineReport &&
+      [
+        trainedFixture,
+        runtimeSetupControl,
+        noobaiPreviewMode,
+        noobaiInstall,
+        noobaiMatrix,
+        updateCheckMode,
+      ].every((mode) => mode === undefined)),
+  'Use the installed engine and an owned clean or historical profile for protocol qualification.',
+)
 assert.ok(
   noobaiInstall === undefined || ['1', 'v', 'v11', ...noobaiComponentModes].includes(noobaiInstall),
 )
@@ -148,6 +162,7 @@ if (suppliedRecoveryPublication !== undefined) {
       trainedFixture,
       historicalFixture,
       installedEngineReport,
+      protocolFixture,
       runtimeSetupControl,
       noobaiPreviewMode,
       noobaiInstall,
@@ -214,6 +229,15 @@ async function installedEngineFixture() {
   assert.ok(strictDescendant(path.dirname(provenance), workerRoot))
   assert.equal(await realpath(workerRoot), workerRoot)
   assert.deepEqual(installation.workerFiles, report.installedInspection.workerFiles)
+  const protocol = await protocolHarness?.readPackagedWorkerProtocol({
+    filename: protocolFixture,
+    root,
+    appImage,
+    engineRun: run,
+    appData: dataRoot,
+    workerRoot,
+    identity,
+  })
   const workerMembers = Object.entries(installation.workerFiles)
   assert.ok(workerMembers.length > 0 && workerMembers.length <= 256)
   const workerInputs = await Promise.all(
@@ -224,8 +248,10 @@ async function installedEngineFixture() {
       assert.equal(await realpath(file), file)
       assert.ok((await lstat(file)).isFile())
       const actual = await identity(file)
-      assert.equal(actual.sizeBytes, witness.bytes)
-      assert.equal(actual.sha256, witness.sha256)
+      const original =
+        protocol?.protocol === '2' && name === '__init__.py' ? protocol.original : actual
+      assert.equal(original.sizeBytes, witness.bytes)
+      assert.equal(original.sha256, witness.sha256)
       return actual
     }),
   )
@@ -237,10 +263,21 @@ async function installedEngineFixture() {
     run,
     runtimeId,
     pythonExecutable: report.activatedPointer.pythonExecutable,
-    inputs: [reportBefore, await identity(pointer), provenanceBefore, ...workerInputs],
+    inputs: [
+      reportBefore,
+      await identity(pointer),
+      provenanceBefore,
+      ...workerInputs,
+      ...(protocol?.inputs ?? []),
+    ],
+    protocol,
   }
 }
+const protocolHarness = protocolFixture
+  ? await import('./fixtures/packaged-worker-protocol.mjs')
+  : null
 const engine = await installedEngineFixture()
+const incompatibleWorker = engine?.protocol?.protocol === '2'
 const historical =
   historicalFixture === undefined
     ? null
@@ -251,6 +288,9 @@ const history = await historical?.readHistoricalUpgrade({
   outputRoot: root,
   appImage,
   identity,
+  ...(incompatibleWorker && {
+    protocolRefusal: { packageIdentity: engine.protocol.packageIdentity },
+  }),
 })
 const trainedProfile =
   trainedFixture === undefined
@@ -420,6 +460,11 @@ if (history) {
 }
 if (trained)
   sourcePaths.push(path.join(repo, 'scripts/fixtures/packaged-installed-trained-generation.mjs'))
+if (protocolHarness)
+  sourcePaths.push(
+    path.join(repo, 'scripts/fixtures/packaged-worker-protocol.mjs'),
+    path.join(repo, 'scripts/fixtures/application-state-upgrade-fixture.mjs'),
+  )
 if (updateCheckMode) sourcePaths.push(path.join(repo, 'scripts/application-update-check-smoke.mjs'))
 if (runtimeSetupControl) {
   for (const fixture of [
@@ -591,6 +636,8 @@ async function connect(state) {
       }),
     )
     state.aggregateLimits = assertAggregate(state.checks)
+    if (protocolHarness)
+      state.protocolMain = await protocolHarness.inspectProtocolMain(state.mainPid)
   }
   const deadline = Date.now() + 15_000
   while (!state.page && Date.now() < deadline) {
@@ -625,7 +672,7 @@ async function launch(name, selectedAppImage = appImage) {
     state.applicationImage = expected
   }
   lifetimes.push(state)
-  if (history || trained) {
+  if (history || trained || protocolHarness) {
     await writeFile(
       path.join(root, `${name}.launch-intent.json`),
       JSON.stringify({ name }) + '\n',
@@ -705,10 +752,15 @@ async function readPorts(state) {
     assert.deepEqual(result.presets.value, [])
   }
   if (engine) {
-    assert.equal(result.runtime.value.kind, 'ready', JSON.stringify(result.runtime.value))
     assert.equal(result.runtime.value.profile, 'linux-nvidia')
     assert.equal(result.runtime.value.runtimeId, engine.runtimeId)
-    assert.equal(result.runtime.value.outpaintInfill, 'ready')
+    if (incompatibleWorker) {
+      assert.equal(result.runtime.value.kind, 'needs-repair', JSON.stringify(result.runtime.value))
+      assert.equal(result.runtime.value.detail, protocolHarness.runtimeDetail)
+    } else {
+      assert.equal(result.runtime.value.kind, 'ready', JSON.stringify(result.runtime.value))
+      assert.equal(result.runtime.value.outpaintInfill, 'ready')
+    }
   } else assert.equal(result.runtime.value.kind, 'not-installed')
   assert.ok(result.workspaces.value.length >= 1)
   return result
@@ -767,7 +819,11 @@ async function currentTab(state) {
 async function closeNormally(state) {
   await gpuObservers.get(state)?.()
   gpuObservers.delete(state)
-  if ((trained || runtimeSetupControl) && !state.closed && state.aggregateLimits) {
+  if (
+    (trained || runtimeSetupControl || protocolHarness) &&
+    !state.closed &&
+    state.aggregateLimits
+  ) {
     state.memoryBeforeClose = await Promise.all(
       state.aggregateLimits.groups.map(async (group) => {
         const directory = path.join('/sys/fs/cgroup', group)
@@ -984,7 +1040,9 @@ async function runFreshProfile() {
   assert.deepEqual(initial.projects.value, [])
   if (engine) {
     records.push({
-      name: 'Packaged Main qualifies the exact installed native runtime',
+      name: incompatibleWorker
+        ? 'Packaged Main requests Repair for the installed runtime'
+        : 'Packaged Main qualifies the exact installed native runtime',
       status: initial.runtime.value,
     })
   } else await checkUnavailable(first)
@@ -1056,6 +1114,12 @@ async function runFreshProfile() {
     summary,
   })
   await applicationUpdateSmoke?.run(first.page)
+  if (incompatibleWorker) {
+    const refusal = await protocolHarness.assertProtocolUnavailable(first, firstTab, null, appData)
+    assert.equal(refusal.queueRows, 0)
+    firstTab = await protocolHarness.saveProtocolProject(first.page, firstTab)
+    records.push({ name: 'Packaged Main refuses Generate and persists an edited Project', refusal })
+  }
   await closeNormally(first)
   const saved = await retainOwnStore('after-first-close')
 
@@ -1065,7 +1129,9 @@ async function runFreshProfile() {
   const reopenedPorts = await readPorts(second)
   if (engine) {
     records.push({
-      name: 'Restart qualifies the same installed native runtime',
+      name: incompatibleWorker
+        ? 'Restart requests Repair for the same installed runtime'
+        : 'Restart qualifies the same installed native runtime',
       status: reopenedPorts.runtime.value,
     })
   }
@@ -1087,6 +1153,16 @@ async function runFreshProfile() {
   await second.page.getByRole('button', { name: `Open ${projectTitle}`, exact: true }).click()
   await expect(second.page.getByRole('tab', { name: projectTitle, exact: true })).toBeVisible()
   const secondTab = await currentTab(second)
+  if (incompatibleWorker) {
+    const refusal = await protocolHarness.assertProtocolUnavailable(
+      second,
+      secondTab,
+      null,
+      appData,
+    )
+    assert.equal(refusal.queueRows, 0)
+    assert.equal(reopenedPorts.projects.value[0].previewStatus, 'empty')
+  }
   assert.equal(secondTab.id, firstTab.id)
   assert.equal(secondTab.documentId, firstTab.documentId)
   assert.equal(secondTab.documentRevision, firstTab.documentRevision)
@@ -1209,6 +1285,13 @@ try {
             iccHash: sourceBefore.find(({ path: file }) => file === srgbProfile).sha256,
             identity,
             records,
+            ...(incompatibleWorker && {
+              protocolRefusal: {
+                assertUnavailable(state, tab, queue) {
+                  return protocolHarness.assertProtocolUnavailable(state, tab, queue, appData)
+                },
+              },
+            }),
           })
         : trained
           ? await trainedProfile.runTrainedGeneration({
@@ -1268,6 +1351,17 @@ try {
       )
     }
   }
+  if (protocolHarness) {
+    assert.equal(lifetimes.length, 2)
+    for (const state of lifetimes) {
+      assert.ok(state.normalPhysicalExit && !state.forcedCleanup)
+      assert.ok(
+        state.memoryBeforeClose.every(
+          ({ events }) => /^oom 0$/m.test(events) && /^oom_kill 0$/m.test(events),
+        ),
+      )
+    }
+  }
   const sourceAfter = await Promise.all(sourcePaths.map(identity))
   assert.deepEqual(sourceAfter, sourceBefore)
   if (engine) {
@@ -1282,23 +1376,25 @@ try {
   await writeJson('report.json', {
     schemaVersion: 1,
     outcome: 'PASS',
-    scope: noobaiMatrixResult
-      ? 'Actual stock AppImage switches Default and links the exact portable checkpoint without altering accepted provenance.'
-      : noobaiInstallation
-        ? 'Actual stock AppImage downloads, publishes and reopens the exact reviewed CivitAI resource through Model Manager.'
-        : recoveryPublication
-          ? 'Actual fused AppImages at the original retained path and at the independently published recovery path reopen the same Project after normal physical exit.'
-          : noobaiPreview
-            ? 'Actual fused AppImage through public CivitAI Preview, exact file choice and Cancel with real ModelService and SQLite.'
-            : runtimeSetupControl
-              ? 'Actual fused qualification AppImage through reviewed Setup with existing runtime owners and isolated loopback transfer.'
-              : trainedGeneration
-                ? 'Actual fused AppImage executes one trained installed-worker generation through public Generate, Add, Save and reopen.'
-                : historicalUpgrade
-                  ? 'Actual fused AppImage upgrades an owned historical DB, renders a nonempty Project preview with the installed CPU worker and reopens the saved Project.'
-                  : engine
-                    ? 'Actual fused Linux AppImage with exact installed runtime, real Main status qualification and Project create/restart/persistence.'
-                    : 'Actual fused Linux AppImage outside checkout, real packaged Main/preload/SQLite/migrations/own Project create/restart/persistence. No source worker or service mocks.',
+    scope: incompatibleWorker
+      ? 'Actual stock AppImage refuses the incompatible installed worker and preserves explicit Project Save and reopen.'
+      : noobaiMatrixResult
+        ? 'Actual stock AppImage switches Default and links the exact portable checkpoint without altering accepted provenance.'
+        : noobaiInstallation
+          ? 'Actual stock AppImage downloads, publishes and reopens the exact reviewed CivitAI resource through Model Manager.'
+          : recoveryPublication
+            ? 'Actual fused AppImages at the original retained path and at the independently published recovery path reopen the same Project after normal physical exit.'
+            : noobaiPreview
+              ? 'Actual fused AppImage through public CivitAI Preview, exact file choice and Cancel with real ModelService and SQLite.'
+              : runtimeSetupControl
+                ? 'Actual fused qualification AppImage through reviewed Setup with existing runtime owners and isolated loopback transfer.'
+                : trainedGeneration
+                  ? 'Actual fused AppImage executes one trained installed-worker generation through public Generate, Add, Save and reopen.'
+                  : historicalUpgrade
+                    ? 'Actual fused AppImage upgrades an owned historical DB, renders a nonempty Project preview with the installed CPU worker and reopens the saved Project.'
+                    : engine
+                      ? 'Actual fused Linux AppImage with exact installed runtime, real Main status qualification and Project create/restart/persistence.'
+                      : 'Actual fused Linux AppImage outside checkout, real packaged Main/preload/SQLite/migrations/own Project create/restart/persistence. No source worker or service mocks.',
     mode: 'APPIMAGE_EXTRACT_AND_RUN=1; X11; Chromium CDP loopback. FUSE installation and Main Node inspector are not used.',
     packageBefore,
     packageAfter: await identity(appImage),
@@ -1316,6 +1412,7 @@ try {
     ...(noobaiInstallation ? { noobaiInstallation } : {}),
     ...(noobaiMatrixResult ? { noobaiMatrix: noobaiMatrixResult } : {}),
     ...(recoveryPublication ? { recoveryPublication } : {}),
+    ...(protocolHarness ? { installedWorkerProtocol: engine.protocol.protocol } : {}),
     stores: { saved, restarted },
     lifetimes: lifetimes.map(
       ({
@@ -1439,21 +1536,23 @@ try {
 }
 if (failed) throw failed
 console.log(
-  noobaiMatrix
-    ? 'PASS packaged NoobAI Default and exact portable relink with four normal physical closes'
-    : noobaiInstall
-      ? 'PASS live NoobAI managed installation, credential-free catalog reopen and two normal physical closes'
-      : recoveryPublication
-        ? 'PASS retained original and freshly published AppImage share Project persistence and two normal physical closes'
-        : noobaiPreviewMode
-          ? `PASS packaged NoobAI ${noobaiPreviewMode} Preview and Cancel with normal physical close`
-          : runtimeSetupControl
-            ? `PASS packaged reviewed runtime Setup ${runtimeSetupControl} control and normal physical close`
-            : trained
-              ? 'PASS trained generation, explicit Add and Save/reopen, and two normal physical closes'
-              : history
-                ? 'PASS historical database upgrade, exact backup, installed CPU preview, and two normal physical closes'
-                : engine
-                  ? 'PASS installed runtime readiness, packaged Project reopen and two normal physical closes'
-                  : 'PASS actual fused AppImage Home/IPC/SQLite/Project persistence, unavailable Setup and two normal physical closes',
+  incompatibleWorker
+    ? 'PASS installed worker refusal, packaged Project Save and reopen, and two normal physical closes'
+    : noobaiMatrix
+      ? 'PASS packaged NoobAI Default and exact portable relink with four normal physical closes'
+      : noobaiInstall
+        ? 'PASS live NoobAI managed installation, credential-free catalog reopen and two normal physical closes'
+        : recoveryPublication
+          ? 'PASS retained original and freshly published AppImage share Project persistence and two normal physical closes'
+          : noobaiPreviewMode
+            ? `PASS packaged NoobAI ${noobaiPreviewMode} Preview and Cancel with normal physical close`
+            : runtimeSetupControl
+              ? `PASS packaged reviewed runtime Setup ${runtimeSetupControl} control and normal physical close`
+              : trained
+                ? 'PASS trained generation, explicit Add and Save/reopen, and two normal physical closes'
+                : history
+                  ? 'PASS historical database upgrade, exact backup, installed CPU preview, and two normal physical closes'
+                  : engine
+                    ? 'PASS installed runtime readiness, packaged Project reopen and two normal physical closes'
+                    : 'PASS actual fused AppImage Home/IPC/SQLite/Project persistence, unavailable Setup and two normal physical closes',
 )
