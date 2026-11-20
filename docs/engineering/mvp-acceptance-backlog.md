@@ -134,8 +134,12 @@ entries record the state at their checkpoint.
    [startup authority](./phase-5-application-update-startup-authority-research.md),
    [application updates](../features/application-updates.md#acceptance-criteria).
 6. **Run the NoobAI and joint release matrix.** Cover the remaining Model
-   Manager policies, portable chooser
-   routes, and packaged legacy NoobAI queue and provenance.
+   Manager policies and portable chooser routes.
+   The stock AppImage upgraded the legacy NoobAI DB17 profile and preserved
+   its full queue and accepted index. Queue Manager and Compare read the exact
+   historical V-prediction settings, and packaged Retry refused a changed
+   frozen input. The selected accepted Raster reopened unchanged.
+   [Packaged legacy NoobAI readback](./phase-5-noobai-legacy-queue-research.md#stock-appimage-upgrade-and-readback)
    The stock AppImage refused the incompatible installed worker on a fresh
    profile and on a copied DB29 upgrade. Generate and historical Retry
    were refused, and both Projects saved and reopened. Repeat the refusal

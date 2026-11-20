@@ -20,6 +20,11 @@ Unavailable in read-only comparison; the current library never fills their gap.
 Resource refs stay exact and portable; profile policy is not a Project/preset
 editable setting. Add/shadow/Save/readback preserve the recorded snapshot.
 
+The [legacy NoobAI AppImage check](../../../engineering/phase-5-noobai-legacy-queue-research.md#stock-appimage-upgrade-and-readback)
+opened a pre-noise-profile Cyberfalafel V Raster from Saved generations
+after DB17→30. Compare showed the exact saved model and sampling and
+reported the three unrecorded noise-profile values as unavailable.
+
 ## Reference
 
 Reference: InvokeAI generation metadata, adapted to ImageGen Studio `.igs`, presets and layer-owned Smart Patch workflows.
