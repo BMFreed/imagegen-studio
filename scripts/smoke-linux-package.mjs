@@ -47,8 +47,10 @@ const noobaiTokenFile = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_TOKEN_FILE
 const portableImport = process.env.IMAGEGEN_LINUX_PACKAGE_PORTABLE_IMPORT
 const portableLocate = process.env.IMAGEGEN_LINUX_PACKAGE_PORTABLE_LOCATE
 const portableChooser = portableImport ?? portableLocate
+const kdeChooser = process.env.IMAGEGEN_CHOOSER_KWIN_PID !== undefined
 const componentRemove = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_COMPONENT_REMOVE
 const privateDesktop = portableChooser ?? componentRemove
+assert.ok(!kdeChooser || portableChooser, 'The private Wayland launcher requires a chooser case.')
 const nativeMemoryGiB = trainedFixture ? 12 : 4
 const nativeDeadlineSeconds = trainedFixture
   ? 420
@@ -77,7 +79,10 @@ const boundedExecute = (command, args, options) =>
         }
       : options,
   )
-const artifactRoot = path.join(os.homedir(), '.codex/artifacts/imagegen-studio')
+const artifactRoot = path.join(
+  kdeChooser ? os.userInfo().homedir : os.homedir(),
+  '.codex/artifacts/imagegen-studio',
+)
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const supplied = process.env.IMAGEGEN_LINUX_PACKAGE_ARTIFACTS
 const suppliedPackage = process.env.IMAGEGEN_LINUX_PACKAGE_APPIMAGE
@@ -548,7 +553,13 @@ if (legacyHarness)
 if (portableChooser)
   sourcePaths.push(
     path.join(repo, 'scripts/fixtures/packaged-noobai-import-chooser.mjs'),
-    path.join(repo, 'scripts/fixtures/packaged-project-chooser-x11.py'),
+    ...(kdeChooser
+      ? [
+          'packaged-project-chooser-wayland.py',
+          'packaged-kde-chooser.mjs',
+          'packaged-kde-chooser-atspi.py',
+        ].map((file) => path.join(repo, 'scripts/fixtures', file))
+      : [path.join(repo, 'scripts/fixtures/packaged-project-chooser-x11.py')]),
   )
 if (portableLocateHarness)
   sourcePaths.push(path.join(repo, 'scripts/fixtures/packaged-noobai-project-locate.mjs'))
@@ -800,7 +811,7 @@ async function launch(name, selectedAppImage = appImage) {
       '--remote-debugging-address=127.0.0.1',
       '--remote-debugging-port=0',
       `--user-data-dir=${profile}`,
-      '--ozone-platform=x11',
+      kdeChooser ? '--ozone-platform=wayland' : '--ozone-platform=x11',
     ],
     { cwd, env: launchEnvironment, stdio: ['ignore', 'pipe', 'pipe'] },
   )
@@ -1567,7 +1578,9 @@ try {
                         : engine
                           ? 'Actual fused Linux AppImage with exact installed runtime, real Main status qualification and Project create/restart/persistence.'
                           : 'Actual fused Linux AppImage outside checkout, real packaged Main/preload/SQLite/migrations/own Project create/restart/persistence. No source worker or service mocks.',
-    mode: 'APPIMAGE_EXTRACT_AND_RUN=1; X11; Chromium CDP loopback. FUSE installation and Main Node inspector are not used.',
+    mode: kdeChooser
+      ? 'APPIMAGE_EXTRACT_AND_RUN=1; native Wayland on private virtual KWin; Chromium CDP loopback.'
+      : 'APPIMAGE_EXTRACT_AND_RUN=1; X11; Chromium CDP loopback. FUSE installation and Main Node inspector are not used.',
     packageBefore,
     packageAfter: await identity(appImage),
     sourceBefore,

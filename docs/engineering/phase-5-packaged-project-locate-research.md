@@ -70,10 +70,10 @@ and a 140-second outer deadline. Production sources and the publisher
 inputs were outside the fixture mutation.
 
 The gate establishes the packaged native path within one workspace
-on the GTK portal. Retained dirty recovery and nonempty queue
-repointing have separate source-built coverage. Cross-workspace
-native selection, KDE/Wayland and the shipping desktop matrix
-remain release checks.
+on the GTK portal. The [KDE Wayland follow-up](./phase-5-packaged-kde-chooser-research.md)
+replays the same chooser controls. Retained dirty recovery and nonempty
+queue repointing have separate source-built coverage. Cross-workspace
+native selection and the shipping desktop matrix remain release checks.
 
 ## Execution and retained evidence
 

@@ -12,6 +12,7 @@ import { expect } from '@playwright/test'
 import Database from 'better-sqlite3'
 
 const execute = promisify(execFile)
+const kdeChooser = process.env.IMAGEGEN_CHOOSER_KWIN_PID !== undefined
 const title = 'Packaged trained noobai-v'
 const documentId = 'caa062a2-8d3b-457a-b9c1-a10afb3c2b6b'
 const revision = 'faf3961f-c55e-4f96-9d0d-3003742f4825'
@@ -116,6 +117,11 @@ export async function chooseProject({
     .getByRole('button', { name: 'Import Project', exact: true }),
 }) {
   assert.ok(windowTitle === 'Import Project' || windowTitle === 'Locate Project')
+  if (kdeChooser) {
+    const { driveKdeChooser } = await import('./packaged-kde-chooser.mjs')
+    observations.push(await driveKdeChooser({ state, source, windowTitle, trigger }))
+    return
+  }
   const visibleWindows = () => chooserWindows(windowTitle)
   await assertPrivateDisplay()
   assert.deepEqual(await visibleWindows(), [])
@@ -281,7 +287,12 @@ export async function verifyChooserFixture({
     sizeBytes: 147139886,
     sha256: '555c6a7985ef1cad3b0427d97862aa3db94da3cbf0d4ffdc7a67da5201bfc5d8',
   })
-  await assertPrivateDisplay()
+  if (kdeChooser) {
+    const { assertPrivateWayland } = await import('./packaged-kde-chooser.mjs')
+    await assertPrivateWayland()
+  } else {
+    await assertPrivateDisplay()
+  }
   const original = path.join(
     ownedRunRoot,
     'packaged-installed-engine/20261118/trained-noobai-v-r2/native/after-restarted-close.igs',

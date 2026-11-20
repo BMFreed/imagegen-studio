@@ -100,9 +100,10 @@ package index and extracted into the artifact root.
 ## Remaining acceptance
 
 This checkpoint covers the stock AppImage using the Linux GTK portal on
-isolated X11. The KDE/Wayland chooser, missing-file Locate, arbitrary
-workspace destinations, shipping install and the joint NoobAI release
-matrix still require qualification. Exact checkpoint relinking with an
+isolated X11. The [KDE Wayland follow-up](./phase-5-packaged-kde-chooser-research.md)
+covers the same Import controls and the missing-file Locate flow.
+Arbitrary workspace destinations, shipping install and the joint
+NoobAI release matrix remain open. Exact checkpoint relinking with an
 installed catalog has its own existing
 [managed-workspace test](./phase-5-packaged-noobai-versions-research.md).
 The inference and public promise statuses are unchanged.

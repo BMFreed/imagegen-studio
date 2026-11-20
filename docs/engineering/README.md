@@ -10,6 +10,10 @@ and the same frozen replay after Cancel with its installed CUDA worker.
 
 ## Current NoobAI packaged qualification
 
+[Project chooser on KDE Wayland](./phase-5-packaged-kde-chooser-research.md)
+records actual XDG FileChooser responses for Copy, Move and Locate,
+with private KWin socket and process provenance.
+
 [Remove during live CUDA generation](./phase-5-packaged-live-remove-research.md)
 records a blocked Model Manager review on the same executing worker
 through completed generation, explicit Add, Save and reopen.

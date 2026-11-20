@@ -144,6 +144,11 @@ entries record the state at their checkpoint.
    wrong-revision refusal, exact rebind, and explicit Open after restart.
    The local key, saved package and accepted Raster survived the rebind.
    [Packaged Project Locate](./phase-5-packaged-project-locate-research.md)
+   The stock AppImage repeated these Import and Locate controls through
+   the KDE portal on a private native Wayland session. Twelve matched
+   chooser responses and seven normal app closes preserved the exact
+   Project and accepted Raster. Repeat on the shipping desktop matrix.
+   [Packaged KDE Wayland chooser](./phase-5-packaged-kde-chooser-research.md)
    The stock Model Manager removed one unshared IllustriousPhoto embedding
    after explicit review. Compare reported the missing resource after
    restart and kept the exact accepted reference and image.
