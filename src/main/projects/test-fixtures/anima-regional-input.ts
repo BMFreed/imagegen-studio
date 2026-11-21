@@ -188,7 +188,11 @@ export async function produceAnimaRegionalInputFixture(
     assert.ok(trainedBundle)
     assert.ok(variant === 'ordinary' || variant === 'base' || variant === 'swapped')
     assert.deepEqual([width, height, seed, steps, guidanceScale], [512, 512, 123, 20, 4])
-    assert.deepEqual(regionalTexts, REGIONAL_TEXTS)
+    assert.equal(regionalTexts[0], REGIONAL_TEXTS[0])
+    if (regionalTexts[1] !== REGIONAL_TEXTS[1]) {
+      assert.ok(uncoveredBackground, 'The matched weight comparison uses the fixed inset masks')
+      assert.equal(regionalTexts[1], '(blue scarf)1.5, one white cat')
+    }
   } else {
     assert.ok(variant !== 'ordinary' && !uncoveredBackground)
   }

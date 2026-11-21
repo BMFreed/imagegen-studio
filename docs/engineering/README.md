@@ -1,5 +1,12 @@
 # Engineering Workflow
 
+## Anima scarf weights with fixed inset masks
+
+[Equal-weight scarf comparison](./phase-4-anima-equal-scarf-weight-research.md)
+passed both signed TXT requests. Blue became visible in both images at
+weight 1.5 and the bench remained. The assigned left cat was orange,
+and the swapped right figure's anatomy remained unclear.
+
 ## Anima positive regions with dedicated global scene area
 
 [Four-case Anima scene comparison](./phase-4-anima-global-background-visual-research.md)

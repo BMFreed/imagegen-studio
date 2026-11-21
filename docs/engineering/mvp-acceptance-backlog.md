@@ -134,8 +134,13 @@ entries record the state at their checkpoint.
    with shorter masks at seed 123. Both inset outputs gained a visible
    bench. One had two red scarves and the swapped case had a single
    red-scarf cat. Full masks placed both scarves correctly and omitted
-   the bench. Joint scene and placement utility remains open.
-   [Anima global scene area](./phase-4-anima-global-background-visual-research.md)
+   the bench.
+   Raising just the blue scarf weight from 0.75 to 1.5 gave both
+   inset outputs a blue scarf and a bench on the same seed. The
+   assigned left cat was orange and the swapped right figure's
+   anatomy remained unclear. Joint scene and placement utility remains open.
+   [Anima global scene area](./phase-4-anima-global-background-visual-research.md),
+   [matched scarf weight comparison](./phase-4-anima-equal-scarf-weight-research.md).
    Retain the IMG pilots and record a new hypothesis before any further
    visual run. Record all images and a human acceptance verdict. Consult model-aware
    settings and the guards before classifying additional combinations as supported.

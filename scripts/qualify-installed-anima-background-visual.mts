@@ -1,4 +1,5 @@
 import { ANIMA_PROMPT_INTERPRETATION } from '../src/shared/projects/anima-prompt-weighting.js'
+import type { AnimaWorkerRequest } from '../src/shared/projects/anima-worker-request.js'
 import { IGS_SRGB_ICC_SHA256 } from '../src/shared/projects/color-profile.js'
 import type { GenerationDenoisingProgress } from '../src/shared/projects/generation-progress.js'
 import { ANIMA_REGIONAL_COMPOSITION_PROFILE } from '../src/shared/projects/regional-invoke-generation.js'
@@ -48,6 +49,7 @@ const regionalPositives = {
   blue: '(blue scarf)0.75, one white cat',
   red: '(red scarf)1.5, one white cat',
 }
+const equalBluePositive = '(blue scarf)1.5, one white cat'
 const cases = [
   { label: 'ordinary', uncoveredBackground: false, variant: 'ordinary' },
   { label: 'full-assigned', uncoveredBackground: false, variant: 'base' },
@@ -102,7 +104,11 @@ interface SourceFile extends FilePin {
   }
 }
 
-function regionalInputs(testCase: (typeof cases)[number], recipe: CurrentCanvasRegionalRecipe) {
+function regionalInputs(
+  testCase: (typeof cases)[number],
+  recipe: CurrentCanvasRegionalRecipe,
+  blueWeight: 0.75 | 1.5,
+) {
   const colors =
     testCase.variant === 'ordinary'
       ? []
@@ -116,10 +122,12 @@ function regionalInputs(testCase: (typeof cases)[number], recipe: CurrentCanvasR
   assert.equal(recipe.regions.length, colors.length)
   return recipe.regions.map((region, index) => {
     const color = colors[index]
+    const text =
+      color === 'blue' && blueWeight === 1.5 ? equalBluePositive : regionalPositives[color]
     assert.equal(region.regionId, regionId(index))
     assert.equal(region.maskId, maskId(index))
     assert.equal(region.maskRevision, 1)
-    assert.equal(region.positive?.text, regionalPositives[color])
+    assert.equal(region.positive?.text, text)
     assert.equal(region.negative.source, 'regional')
     assert.equal(region.negative.prompt.text, '')
     assert.equal(region.coverage.kind, 'covered')
@@ -153,9 +161,9 @@ function regionalInputs(testCase: (typeof cases)[number], recipe: CurrentCanvasR
         prompt:
           color === 'red'
             ? literalPrompt('red scarf , one white cat', 9, 1.5)
-            : literalPrompt('blue scarf , one white cat', 10, 0.75),
+            : literalPrompt('blue scarf , one white cat', 10, blueWeight),
         sourceId: regionId(index),
-        text: regionalPositives[color],
+        text,
       },
       coverage: { ...coverage, alphaSha256: sha(Buffer.from(alpha)) },
     }
@@ -203,6 +211,32 @@ const priorHashes = {
   'trained-sources-unchanged.json':
     'a0f2081ca3730e1a253cee3bb1af12cdaf468e76451796255a23f97c679effdf',
 }
+const weightControl = {
+  pins: {
+    'experiment-contract.json': 'be5389d936a6f6550f51c4adaaade4e1585cd0287394315196f8edd4556d1be8',
+    'independent-audit.json': '34254ebc8231223d98c20bede915204e93759214c85f7246155b70ea800bb37f',
+    'inset-assigned.request.json':
+      '74effc4eccc61c7aee9d3f2050aabaab0cc450fefd5622161fa20818c98fa9fe',
+    'inset-swapped.request.json':
+      'ec5fc60537fb5e7ae4708c124f486deb9162515929ce2a15b6409f09de8fdb52',
+    'native-start.json': '004045ed8779a28bc739443444a92a76dadfa26cb3155d4f803b95898800ce89',
+  },
+  run: 'anima-background-visual/20261121-r2',
+}
+
+function comparableRequest(request: AnimaWorkerRequest) {
+  const { job, requestId: _requestId, ...envelope } = request
+  const { path: _targetPath, ...target } = job.target
+  const { output: _output, ...baseJob } = job
+  return { ...envelope, job: { ...baseJob, target } }
+}
+
+async function readWeightControl<T>(name: keyof typeof weightControl.pins): Promise<T> {
+  const bytes = await bytesAt(path.join(artifactRoot, 'runs', weightControl.run, name))
+  assert.equal(sha(bytes), weightControl.pins[name])
+  return JSON.parse(bytes.toString()) as T
+}
+
 async function readPrior<T>(name: keyof typeof priorHashes): Promise<T> {
   const bytes = await bytesAt(path.join(priorRun, name))
   assert.equal(sha(bytes), priorHashes[name])
@@ -291,9 +325,15 @@ async function main() {
   const [flag, run, ...extra] = process.argv.slice(2)
   assert.equal(flag, '--run')
   assert.ok(run && extra.length === 0)
-  assert.equal(path.dirname(run), path.join(artifactRoot, 'runs/anima-background-visual'))
+  const equalWeight = path.dirname(run) === path.join(artifactRoot, 'runs/anima-equal-scarf-weight')
+  const profile = equalWeight ? 'anima-equal-scarf-weight' : 'anima-background-visual'
+  assert.equal(path.dirname(run), path.join(artifactRoot, 'runs', profile))
   assert.match(path.basename(run), /^\d{8}-r[1-9]\d*$/)
   assert.equal(await realpath(run), run)
+  const selectedCases = equalWeight ? cases.slice(2) : cases
+  const selectedPositives = equalWeight
+    ? { ...regionalPositives, blue: equalBluePositive }
+    : regionalPositives
   const write = (name: string, value: unknown) => writeJson(name, value, run)
 
   const start = Date.now()
@@ -315,7 +355,7 @@ async function main() {
       contract.invokeRevision,
       contract.nativeRequestCeiling,
     ],
-    ['anima-background-visual-v1', applicationRevision, invokeRevision, cases.length],
+    [`${profile}-v1`, applicationRevision, invokeRevision, selectedCases.length],
   )
   assert.deepEqual(
     [
@@ -327,8 +367,21 @@ async function main() {
       contract.sampling,
       contract.cases,
     ],
-    [bbox, globalPositive, globalNegative, regionalPositives, seed, sampling, cases],
+    [bbox, globalPositive, globalNegative, selectedPositives, seed, sampling, selectedCases],
   )
+  if (equalWeight) {
+    assert.deepEqual(contract.comparison, weightControl)
+    const old = await readWeightControl<{
+      cases: typeof cases
+      regionalPositives: typeof regionalPositives
+    }>('experiment-contract.json')
+    assert.deepEqual(old.regionalPositives, regionalPositives)
+    assert.deepEqual(old.cases, cases)
+    assert.equal(
+      (await readWeightControl<{ result: string }>('independent-audit.json')).result,
+      'CLEAN',
+    )
+  }
   assert.equal(
     execFileSync('git', ['status', '--porcelain'], {
       cwd: invoke,
@@ -390,11 +443,32 @@ async function main() {
   const source = await sourceWitness(repository, ownerFiles)
   const invokeSource = await sourceWitness(invoke, invokeFiles)
   assert.equal(ANIMA_REGIONAL_COMPOSITION_PROFILE, 'invoke-krea2-global-support-v1')
+  if (equalWeight) {
+    const control = await readWeightControl<{
+      compositionProfile: string
+      installation: typeof install
+      invokeSource: typeof invokeSource
+      source: typeof source
+      trainedBundle: AnimaRegionalTrainedBundle
+    }>('native-start.json')
+    assert.deepEqual(control.trainedBundle, trainedBundle)
+    assert.deepEqual(control.installation, install)
+    assert.deepEqual(control.invokeSource, invokeSource)
+    assert.equal(control.compositionProfile, ANIMA_REGIONAL_COMPOSITION_PROFILE)
+    for (const name of ownerFiles.filter(
+      (name) =>
+        name !== ownerFiles[0] &&
+        name !== 'src/main/projects/test-fixtures/anima-regional-input.ts',
+    )) {
+      assert.equal(control.source[name], source[name])
+    }
+  }
   await write('native-start.json', {
     applicationRevision,
     bootstrapStorage,
     bounds,
-    cases,
+    cases: selectedCases,
+    ...(equalWeight ? { comparison: weightControl } : {}),
     compositionProfile: ANIMA_REGIONAL_COMPOSITION_PROFILE,
     fixture,
     installation: install,
@@ -414,7 +488,7 @@ async function main() {
   const observations: unknown[] = []
   let failure: unknown
   try {
-    for (const testCase of cases) {
+    for (const testCase of selectedCases) {
       const root = path.join(payloadRoot, testCase.label)
       const retained = await produceAnimaRegionalInputFixture(root, {
         height: bbox.height,
@@ -426,7 +500,9 @@ async function main() {
             assert.deepEqual(prepared.context.bbox, bbox)
             assert.equal(prepared.context.target.iccSha256, IGS_SRGB_ICC_SHA256)
             if (!targetSha) {
-              assert.equal(testCase.variant, 'ordinary')
+              if (!equalWeight) {
+                assert.equal(testCase.variant, 'ordinary')
+              }
               targetSha = sha(prepared.targetPngBytes)
               await writeFile(path.join(run, 'target.png'), prepared.targetPngBytes, {
                 flag: 'wx',
@@ -435,7 +511,7 @@ async function main() {
             }
             assert.equal(sha(prepared.targetPngBytes), targetSha)
             assert.equal(prepared.context.target.sha256, targetSha)
-            const regional = regionalInputs(testCase, recipe)
+            const regional = regionalInputs(testCase, recipe, equalWeight ? 1.5 : 0.75)
             const support = sampledSupport(testCase, recipe)
             assert.deepEqual(compiledPrompts, [
               ...globalCompiled,
@@ -501,7 +577,7 @@ async function main() {
                   assert.equal(requests.length, 1)
                   const [request] = requests
                   assert.equal(request.type, 'generate-anima-txt2img')
-                  const { job, requestId, type } = request
+                  const { job, requestId } = request
                   const {
                     beginIndex,
                     guidanceScale,
@@ -538,21 +614,65 @@ async function main() {
                   assert.deepEqual(job.model, { architecture: 'anima-base-1.0', ...trainedBundle })
                   assert.deepEqual(job.loras, [])
                   assert.equal(job.target.sha256, targetSha)
-                  const { path: _targetPath, ...target } = job.target
-                  const { output: _output, ...baseJob } = job
-                  const stableJob = { job: { ...baseJob, target }, type }
+                  const stableJob = comparableRequest(request)
                   commonJob ??= stableJob
                   assert.deepEqual(stableJob, commonJob)
+                  const regions = recipe.regions.map(
+                    ({ coverage: _coverage, ...region }, index) => ({
+                      ...region,
+                      coverage: regional[index].coverage,
+                    }),
+                  )
+                  if (equalWeight) {
+                    assert.ok(
+                      testCase.label === 'inset-assigned' || testCase.label === 'inset-swapped',
+                    )
+                    const control = await readWeightControl<{
+                      case: typeof testCase
+                      compiledPrompts: unknown
+                      compositionProfile: string
+                      regions: unknown
+                      request: AnimaWorkerRequest
+                      sampledSupport: unknown
+                    }>(`${testCase.label}.request.json`)
+                    assert.deepEqual(control.case, testCase)
+                    assert.deepEqual(comparableRequest(control.request), stableJob)
+                    assert.equal(control.compositionProfile, ANIMA_REGIONAL_COMPOSITION_PROFILE)
+                    assert.deepEqual(control.sampledSupport, support)
+                    assert.deepEqual(
+                      control.regions,
+                      regions.map((region) => {
+                        if (region.positive?.text !== equalBluePositive) {
+                          return region
+                        }
+                        const positive = { ...region.positive, text: regionalPositives.blue }
+                        return {
+                          ...region,
+                          authoredPrompts: { ...region.authoredPrompts, positive },
+                          positive,
+                        }
+                      }),
+                    )
+                    assert.deepEqual(
+                      control.compiledPrompts,
+                      compiledPrompts.map((entry) =>
+                        entry.text === equalBluePositive
+                          ? {
+                              ...entry,
+                              prompt: literalPrompt('blue scarf , one white cat', 10, 0.75),
+                              text: regionalPositives.blue,
+                            }
+                          : entry,
+                      ),
+                    )
+                  }
                   await write(`${testCase.label}.request.json`, {
                     case: testCase,
                     compiledPrompts,
                     compositionProfile:
                       testCase.variant === 'ordinary' ? null : ANIMA_REGIONAL_COMPOSITION_PROFILE,
                     owner,
-                    regions: recipe.regions.map(({ coverage: _coverage, ...region }, index) => ({
-                      ...region,
-                      coverage: regional[index].coverage,
-                    })),
+                    regions,
                     request,
                     sampledSupport: support,
                   })
@@ -637,6 +757,7 @@ async function main() {
             }
           },
         },
+        regionalTexts: [selectedPositives.red, selectedPositives.blue],
         seed,
         steps: sampling.nominalSteps,
         trainedBundle,
@@ -647,7 +768,7 @@ async function main() {
       assert.equal(retained.durablePreservation.durableUnchanged, true)
       assert.equal(retained.durablePreservation.savedAndReopened, true)
     }
-    assert.equal(submitted, cases.length)
+    assert.equal(submitted, selectedCases.length)
   } catch (error) {
     failure = error
   }
