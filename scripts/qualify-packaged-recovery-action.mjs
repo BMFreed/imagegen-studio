@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { execFile, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { once } from 'node:events'
-import { createReadStream } from 'node:fs'
+import { constants, createReadStream } from 'node:fs'
 import * as fs from 'node:fs/promises'
 import http from 'node:http'
 import os from 'node:os'
@@ -20,6 +20,7 @@ import {
   captureApplicationUpdateCurrentSource,
   stageVerifiedApplicationArtifact,
 } from '../src/main/application-updates/application-update-staging.ts'
+import { readIgsPackage } from '../src/main/projects/igs-package.ts'
 import {
   boundQualificationProcess,
   confirmQualificationProcessExit,
@@ -85,6 +86,109 @@ async function fileWitness(filename) {
   return { ...before, sha256 }
 }
 
+async function readOwnedRecord(filename, maximumBytes = 16 * 1024) {
+  const info = await fs.lstat(filename)
+  assert.ok(info.isFile() && info.uid === process.geteuid() && info.nlink === 1)
+  assert.equal(info.mode & 0o077, 0)
+  assert.ok(info.size > 0 && info.size <= maximumBytes, filename)
+  assert.equal(await fs.realpath(filename), filename)
+  return JSON.parse(await fs.readFile(filename, 'utf8'))
+}
+
+async function readScopeIdentity(group) {
+  const scope = path.join('/sys/fs/cgroup', group)
+  const entry = await fs.lstat(scope, { bigint: true })
+  assert.ok(entry.isDirectory() && !entry.isSymbolicLink())
+  return { device: String(entry.dev), inode: String(entry.ino) }
+}
+
+async function readInstalledRuntime() {
+  const filename = path.join(root, 'installed-runtime-fixture.json')
+  try {
+    await fs.lstat(filename)
+  } catch (error) {
+    if (error.code === 'ENOENT') return null
+    throw error
+  }
+  assert.ok(installNext)
+  const fixture = await readOwnedRecord(filename)
+  const engineRun = path.dirname(fixture.engineReport)
+  assert.deepEqual(Object.keys(fixture).sort(), [
+    'appData',
+    'baselineProject',
+    'engineReport',
+    'ownerPid',
+    'run',
+    'runtimeId',
+    'schemaVersion',
+  ])
+  assert.equal(fixture.schemaVersion, 1)
+  assert.equal(path.basename(fixture.engineReport), 'installed-engine.json')
+  assert.equal(
+    path.dirname(engineRun),
+    path.join(path.dirname(outputRoot), 'packaged-installed-engine'),
+  )
+  assert.equal(path.dirname(fixture.run), engineRun)
+  assert.equal(await fs.realpath(fixture.run), fixture.run)
+  assert.equal(await fs.realpath(fixture.appData), fixture.appData)
+  assert.match(
+    path.relative(path.join(engineRun, 'payloads'), fixture.appData),
+    /^native-runtime-offline-[a-zA-Z0-9]+\/data\/imagegen-studio$/,
+  )
+  assert.match(fixture.runtimeId, /^release-[0-9a-f-]{36}$/)
+  const engine = await readOwnedRecord(fixture.engineReport, 8 * 1024 ** 2)
+  assert.equal(engine.outcome, 'PASS')
+  assert.equal(engine.qualification, 'actual-signed-full-engine-install-native-qualification')
+  assert.equal(engine.roots.appDataDir, fixture.appData)
+  assert.equal(engine.activatedPointer.runtimeId, fixture.runtimeId)
+  assert.equal(fixture.ownerPid, process.ppid)
+  const claim = await readOwnedRecord(
+    path.join(path.dirname(fixture.appData), '.packaged-upgrade-qualification/owner.json'),
+  )
+  assert.deepEqual(claim, { appData: fixture.appData, pid: fixture.ownerPid, run: fixture.run })
+  const owner = await proc(fixture.ownerPid)
+  const self = await proc(process.pid)
+  assert.match(self.group, /^\/[^\n]+\/igs-[\w-]+\.service$/)
+  assert.equal(path.posix.normalize(self.group), self.group)
+  assert.equal(owner.group, self.group)
+  const scope = path.join('/sys/fs/cgroup', self.group)
+  assert.equal(BigInt(await fs.readFile(path.join(scope, 'memory.max'), 'utf8')), 4n * 1024n ** 3n)
+  assert.equal((await fs.readFile(path.join(scope, 'memory.swap.max'), 'utf8')).trim(), '0')
+  const x11Pid = Number(process.env.IMAGEGEN_CHOOSER_X11_PID)
+  assert.ok(Number.isSafeInteger(x11Pid) && x11Pid > 1)
+  assert.match(process.env.DISPLAY, /^:\d+$/)
+  assert.equal(process.env.WAYLAND_DISPLAY, undefined)
+  assert.equal(process.env.XDG_SESSION_TYPE, 'x11')
+  assert.equal((await proc(x11Pid)).group, self.group)
+  assert.equal(path.basename(await fs.readlink(`/proc/${x11Pid}/exe`)), 'Xvfb')
+  const xauthority = process.env.XAUTHORITY
+  assert.ok(xauthority && (await fs.realpath(xauthority)) === xauthority)
+  const authorization = await fs.lstat(xauthority)
+  assert.ok(
+    authorization.isFile() &&
+      authorization.uid === process.geteuid() &&
+      (authorization.mode & 0o077) === 0,
+  )
+
+  const baseline = fixture.baselineProject
+  assert.equal(
+    baseline.path,
+    path.join(engineRun, 'historical-upgrade-r2/native/after-first-close.igs'),
+  )
+  const baselineWitness = await fileWitness(baseline.path)
+  assert.equal(baselineWitness.sizeBytes, baseline.sizeBytes)
+  assert.equal(baselineWitness.sha256, baseline.sha256)
+  return { ...fixture, owner, scopeIdentity: await readScopeIdentity(self.group), baselineWitness }
+}
+
+const installedRuntime = await readInstalledRuntime()
+
+async function assertInheritedScope(observed) {
+  assert.equal(observed.group, installedRuntime.owner.group)
+  assert.deepEqual(await readScopeIdentity(observed.group), installedRuntime.scopeIdentity)
+  assert.deepEqual(await proc(installedRuntime.owner.pid), installedRuntime.owner)
+}
+
 const packaged = []
 for (const release of [a, b, c]) {
   const observation = await fileWitness(release.filename)
@@ -106,7 +210,7 @@ assert.equal(
 const applicationDir = path.join(root, 'Applications')
 const profile = path.join(root, 'profile')
 const cwd = path.join(root, 'cwd')
-const data = path.join(root, 'data')
+const data = installedRuntime ? path.dirname(installedRuntime.appData) : path.join(root, 'data')
 const workspace = path.join(data, 'imagegen-studio/workspaces/Uncategorized')
 const original = path.join(applicationDir, 'Original.AppImage')
 const newPath = path.join(applicationDir, 'Recovered.AppImage')
@@ -125,11 +229,40 @@ for (const folder of [
   applicationDir,
   profile,
   cwd,
-  data,
+  ...(installedRuntime ? [] : [data]),
   path.join(root, 'config'),
   path.join(root, 'cache'),
 ]) {
   await fs.mkdir(folder, { mode: 0o700 })
+}
+
+async function inspectInstalledProject(filename) {
+  const { manifest, project } = await readIgsPackage(filename)
+  assert.deepEqual(manifest.preview, {
+    rect: { height: 32, width: 48, x: 0, y: 0 },
+    status: 'rendered',
+  })
+  assert.equal(project.layers.length, 1)
+  const [layer] = project.layers
+  assert.equal(layer.kind, 'raster')
+  assert.equal(layer.asset.width, 48)
+  assert.equal(layer.asset.height, 32)
+  const rasterAndPreview = manifest.members.filter(({ path: member }) => member !== 'project.json')
+  assert.equal(rasterAndPreview.length, 4)
+  return { project, preview: manifest.preview, rasterAndPreview }
+}
+
+let installedProject
+if (installedRuntime) {
+  await fs.mkdir(path.dirname(workspace), { mode: 0o700 })
+  await fs.mkdir(workspace, { mode: 0o700 })
+  assert.equal(await fs.realpath(workspace), workspace)
+  const filename = path.join(workspace, 'Installed runtime signed update.igs')
+  const source = installedRuntime.baselineProject.path
+  const baseline = await inspectInstalledProject(source)
+  await fs.copyFile(source, filename, constants.COPYFILE_EXCL)
+  assert.equal(await hash(filename), installedRuntime.baselineWitness.sha256)
+  installedProject = { filename, baseline }
 }
 
 // Seed the retained publication through real staging. This tiny source is only
@@ -276,11 +409,17 @@ for (const key of [
   'ELECTRON_RUN_AS_NODE',
   'IMAGEGEN_DEV_SERVER_URL',
   'IMAGEGEN_TEST_IMAGE_WORKER',
+  'IGS_RECOVERY_QUALIFICATION_INSTALLED_RUNTIME',
+  'IGS_RECOVERY_QUALIFICATION_OWNER_START',
   'NODE_OPTIONS',
   'NO_CLEANUP',
   'WAYLAND_DISPLAY',
 ])
   delete env[key]
+if (installedRuntime) {
+  env.IGS_RECOVERY_QUALIFICATION_INSTALLED_RUNTIME = '1'
+  env.IGS_RECOVERY_QUALIFICATION_OWNER_START = installedRuntime.owner.start
+}
 
 async function bounded(promise, limit, message) {
   let timer
@@ -344,7 +483,7 @@ async function ownKdeScope(pid, start) {
   )
 }
 async function bindNative(state, refreshMainDeathProof = false) {
-  const surviveMainDeath = installNext && state.version === '0.2.0'
+  const surviveMainDeath = installNext && !installedRuntime && state.version === '0.2.0'
   const check = await boundQualificationProcess(state.pid, {
     deadlineSeconds: 360,
     execute,
@@ -352,6 +491,10 @@ async function bindNative(state, refreshMainDeathProof = false) {
     surviveMainDeath,
   })
   assert.deepEqual(check.nativeIdentity, { pid: state.pid, start: state.start })
+  if (installedRuntime) {
+    await assertInheritedScope(await proc(state.pid))
+    assert.ok(check.groups.every(({ group }) => group === installedRuntime.owner.group))
+  }
   state.checks.push(check)
   return check
 }
@@ -499,7 +642,10 @@ async function observeStartup(state) {
   state.pid = startup.pid
   state.start = startup.start
   assert.equal((await proc(state.pid)).start, state.start)
-  if (installNext && state.version === '0.2.0') {
+  if (installedRuntime) {
+    assert.equal(startup.appData, installedRuntime.appData)
+    await assertInheritedScope(await proc(state.pid))
+  } else if (installNext && state.version === '0.2.0') {
     await ownKdeScope(state.pid, state.start)
   }
 }
@@ -580,7 +726,7 @@ async function closeNormally(state) {
   await confirmNormalExit(state)
 }
 
-const title = 'Fresh path recovery qualification'
+const title = installedProject?.baseline.project.title ?? 'Fresh path recovery qualification'
 const projectTab = (page) => page.getByRole('tab', { name: title, exact: true })
 async function call(page, area, method, ...args) {
   const response = await page.evaluate(
@@ -589,6 +735,47 @@ async function call(page, area, method, ...args) {
   )
   assert.equal(response.ok, true, JSON.stringify(response))
   return response.value
+}
+async function readInstalledReady(page) {
+  const status = await call(page, 'runtime', 'getStatus')
+  assert.equal(status.kind, 'ready')
+  assert.equal(status.profile, 'linux-nvidia')
+  assert.equal(status.runtimeId, installedRuntime.runtimeId)
+  assert.equal(status.outpaintInfill, 'ready')
+  return status
+}
+
+async function retainInstalledPreview(name, current, before, prompt) {
+  const after = await inspectInstalledProject(current)
+  const document = before.project
+  assert.notEqual(after.project.documentRevision, document.documentRevision)
+  assert.deepEqual(after.project, {
+    ...document,
+    documentRevision: after.project.documentRevision,
+    generationDraft: {
+      ...document.generationDraft,
+      positivePrompt: { ...document.generationDraft.positivePrompt, text: prompt },
+    },
+  })
+  assert.deepEqual(after.rasterAndPreview, before.rasterAndPreview)
+  const destination = path.join(run, name)
+  const witness = await fileWitness(current)
+  await fs.copyFile(current, destination, constants.COPYFILE_EXCL)
+  assert.equal(await hash(destination), witness.sha256)
+  assert.deepEqual(await fileWitness(current), witness)
+  return { ...after, witness, destination }
+}
+
+async function editPositivePrompt(page, projectId, text) {
+  const positive = page.getByRole('textbox', { name: 'Positive prompt', exact: true })
+  await positive.fill(text)
+  await positive.blur()
+  await expect
+    .poll(async () => {
+      const { tab } = await call(page, 'projects', 'open', projectId)
+      return tab.dirty && tab.generationDraft.positivePrompt.text === text
+    })
+    .toBe(true)
 }
 async function openUpdates(page) {
   await page.getByRole('button', { name: 'Help menu', exact: true }).click()
@@ -629,12 +816,18 @@ async function installFromRecoveredPath(recovered, modal, project) {
   assert.equal(held.group, prior.group)
   assert.equal(held.pid, prior.pid)
   assert.equal(held.start, prior.start)
-  const refreshed = await bindNative(recovered, true)
+  const refreshed = await bindNative(recovered, !installedRuntime)
   const heldScope = refreshed.groups.find((entry) => entry.group === prior.group)
-  assert.ok(heldScope?.ownedScope && heldScope.scopeProof)
-  const scopeBefore = await fs.lstat(`/sys/fs/cgroup${prior.group}`, { bigint: true })
-  const scopeIdentityBefore = { device: String(scopeBefore.dev), inode: String(scopeBefore.ino) }
-  assert.deepEqual(scopeIdentityBefore, heldScope.scopeProof.scopeIdentity)
+  assert.ok(heldScope)
+  const scopeIdentityBefore = await readScopeIdentity(prior.group)
+  if (installedRuntime) {
+    await assertInheritedScope(prior)
+    assert.equal(heldScope.ownedScope, false)
+    assert.deepEqual(scopeIdentityBefore, installedRuntime.scopeIdentity)
+  } else {
+    assert.ok(heldScope.ownedScope && heldScope.scopeProof)
+    assert.deepEqual(scopeIdentityBefore, heldScope.scopeProof.scopeIdentity)
+  }
   const helpers = []
   const members = (await fs.readFile(`/sys/fs/cgroup${prior.group}/cgroup.procs`, 'utf8'))
     .trim()
@@ -673,9 +866,13 @@ async function installFromRecoveredPath(recovered, modal, project) {
   assert.equal(startup.start, heldC.start)
   assert.equal(startup.appImage, newPath)
   assert.equal(startup.userData, profile)
+  if (installedRuntime) {
+    assert.equal(startup.appData, installedRuntime.appData)
+    await assertInheritedScope(heldC)
+  }
   const successorOwnScope = `app-imagegen\\x2dstudio-${successor.pid}.scope`
   const scopeAllowed = (group) =>
-    group === prior.group || path.basename(group) === successorOwnScope
+    group === prior.group || (!installedRuntime && path.basename(group) === successorOwnScope)
   assert.ok(scopeAllowed(heldC.group))
   // Chromium may promote an AppImage started manually but leave an actual
   // relaunch in the parent's already capped scope. Let either settle while
@@ -686,7 +883,8 @@ async function installFromRecoveredPath(recovered, modal, project) {
       const observed = await proc(successor.pid)
       assert.equal(observed.start, successor.start)
       assert.ok(scopeAllowed(observed.group))
-      if (observed.group === prior.group && Date.now() < settlementDeadline) return null
+      if (!installedRuntime && observed.group === prior.group && Date.now() < settlementDeadline)
+        return null
       return observed
     },
     'Successor did not settle in an owned or inherited qualification scope.',
@@ -698,8 +896,7 @@ async function installFromRecoveredPath(recovered, modal, project) {
   assert.ok(admittedGroup)
   assert.ok(BigInt(admittedGroup.memoryMax) <= 4n * 1024n ** 3n)
   assert.equal(admittedGroup.swapMax, '0')
-  const scope = await fs.lstat(`/sys/fs/cgroup${successorIdentity.group}`, { bigint: true })
-  const scopeIdentity = { device: String(scope.dev), inode: String(scope.ino) }
+  const scopeIdentity = await readScopeIdentity(successorIdentity.group)
   if (successorIdentity.group === prior.group) assert.deepEqual(scopeIdentity, scopeIdentityBefore)
   else assert.ok(admittedGroup.ownedScope)
   await writeFlag('admit-c-startup', { ...successorIdentity, scopeIdentity })
@@ -754,9 +951,33 @@ async function installFromRecoveredPath(recovered, modal, project) {
   assert.equal(opened.tab.dirty, false)
   assert.equal(opened.tab.generationDraft.positivePrompt.text, project.prompt)
   await successor.page.screenshot({ path: path.join(run, 'successor-reopened-project.png') })
+  let cpuSave
+  if (installedRuntime) {
+    const status = await readInstalledReady(successor.page)
+    const fromB = await retainInstalledPreview(
+      'installed-after-b-close.igs',
+      project.filename,
+      installedProject.baseline,
+      project.prompt,
+    )
+    assert.equal(opened.tab.documentRevision, fromB.project.documentRevision)
+    const successorPrompt = 'Owned draft saved in C with the retained installed runtime'
+    await editPositivePrompt(successor.page, project.id, successorPrompt)
+    await successor.page.getByRole('button', { name: 'Save Project', exact: true }).click()
+    await expect
+      .poll(async () => (await call(successor.page, 'projects', 'open', project.id)).tab.dirty)
+      .toBe(false)
+    const fromC = await retainInstalledPreview(
+      'installed-after-c-save.igs',
+      project.filename,
+      fromB,
+      successorPrompt,
+    )
+    cpuSave = { successorRuntimeStatus: status, fromB, fromC }
+  }
   await closeNormally(successor)
   await confirmNormalExit(recovered)
-  assert.equal(await hash(project.filename), savedSha)
+  assert.equal(await hash(project.filename), cpuSave?.fromC.witness.sha256 ?? savedSha)
   return {
     backup,
     current: changed,
@@ -766,9 +987,16 @@ async function installFromRecoveredPath(recovered, modal, project) {
     stage,
     startup: state,
     startupScope: { ...successorIdentity, scopeIdentity },
+    ...(cpuSave ? { cpuSave } : {}),
   }
 }
-const report = { installNext, outcome: 'FAIL', retainedBefore: retained, requests }
+const report = {
+  installNext,
+  outcome: 'FAIL',
+  retainedBefore: retained,
+  requests,
+  ...(installedRuntime ? { installedRuntime } : {}),
+}
 try {
   const old = await launch(original, '0.1.0')
   const first = old.page
@@ -778,13 +1006,17 @@ try {
   assert.notEqual(retained.image.ino, packaged[0].ino)
   assert.equal(retained.image.sha256, a.sha256)
   const home = first.getByRole('region', { name: 'Home', exact: true })
-  await home
-    .getByRole('complementary', { name: 'Workspace navigation', exact: true })
-    .getByRole('button', { name: 'New Project', exact: true })
-    .click()
-  const creation = first.getByRole('dialog', { name: 'New Project', exact: true })
-  await creation.locator('input[aria-label="Project name"]').fill(title)
-  await creation.getByRole('button', { name: 'Create Project', exact: true }).click()
+  if (installedProject) {
+    await home.getByRole('button', { name: `Open ${title}`, exact: true }).click()
+  } else {
+    await home
+      .getByRole('complementary', { name: 'Workspace navigation', exact: true })
+      .getByRole('button', { name: 'New Project', exact: true })
+      .click()
+    const creation = first.getByRole('dialog', { name: 'New Project', exact: true })
+    await creation.locator('input[aria-label="Project name"]').fill(title)
+    await creation.getByRole('button', { name: 'Create Project', exact: true }).click()
+  }
   await expect(projectTab(first)).toBeVisible()
   const summaries = await call(first, 'projects', 'list')
   assert.equal(summaries.length, 1)
@@ -794,6 +1026,12 @@ try {
   assert.equal(packages.length, 1)
   const project = path.join(workspace, packages[0])
   const projectSha = await hash(project)
+  if (installedProject) {
+    assert.equal(project, installedProject.filename)
+    assert.equal(projectSha, installedRuntime.baselineWitness.sha256)
+    assert.equal(summaries[0].previewStatus, 'rendered')
+    assert.equal((await call(first, 'projects', 'open', projectId)).tab.dirty, false)
+  }
   offered = b
   const updates = await openUpdates(first)
   const save = updates.getByRole('button', { name: 'Save recovery AppImage', exact: true })
@@ -851,17 +1089,8 @@ try {
   await expect(projectTab(second)).toBeVisible()
   assert.equal((await call(second, 'projects', 'open', projectId)).tab.dirty, false)
   const prompt = 'Owned draft saved during the B to C application close'
-  if (installNext) {
-    const positive = second.getByRole('textbox', { name: 'Positive prompt', exact: true })
-    await positive.fill(prompt)
-    await positive.blur()
-    await expect
-      .poll(async () => {
-        const { tab } = await call(second, 'projects', 'open', projectId)
-        return tab.dirty && tab.generationDraft.positivePrompt.text === prompt
-      })
-      .toBe(true)
-  }
+  const recoveredRuntime = installedRuntime ? await readInstalledReady(second) : undefined
+  if (installNext) await editPositivePrompt(second, projectId, prompt)
   offered = c
   const next = await openUpdates(second)
   const review = next.getByRole('button', { name: 'Review installation', exact: true })
@@ -908,6 +1137,24 @@ try {
       (entry) => entry.route === '/' + path.basename(c.filename) && entry.status === 200,
     ),
   )
+  let database
+  if (installedRuntime) {
+    assert.deepEqual(
+      await fileWitness(installedRuntime.baselineProject.path),
+      installedRuntime.baselineWitness,
+    )
+    const source = path.join(installedRuntime.appData, 'database/app.sqlite')
+    for (const suffix of ['-wal', '-shm']) {
+      await assert.rejects(fs.lstat(source + suffix), { code: 'ENOENT' })
+    }
+    const witness = await fileWitness(source)
+    const destination = path.join(run, 'installed-after-c-close.sqlite')
+    await fs.copyFile(source, destination, constants.COPYFILE_EXCL)
+    assert.equal(await hash(destination), witness.sha256)
+    assert.deepEqual(await fileWitness(source), witness)
+    await assertInheritedScope(await proc(process.pid))
+    database = { source, destination, witness }
+  }
   Object.assign(report, {
     downloadedB,
     downloadedC,
@@ -917,6 +1164,7 @@ try {
     projectId,
     projectSha,
     recovery,
+    ...(installedRuntime ? { installedRuntimeEvidence: { recoveredRuntime, database } } : {}),
   })
 } catch (error) {
   report.error = error.stack

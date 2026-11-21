@@ -1,5 +1,11 @@
 # Engineering Workflow
 
+## Current signed AppImage relaunch with the installed worker
+
+[Signed recovery and native relaunch with the installed runtime](./phase-5-signed-appimage-installed-runtime-research.md)
+verified fresh-path B, native C and two Project Saves with rendered CPU
+previews. Both releases reported the same installed worker slot ready.
+
 ## Current Queue Manager Retry admission
 
 [Retry during image worker transitions](./phase-5-retry-runtime-transition-research.md)

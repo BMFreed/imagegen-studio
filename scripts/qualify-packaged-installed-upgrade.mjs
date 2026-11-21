@@ -34,6 +34,7 @@ const { values } = parseArgs({
     'project-export': { type: 'boolean' },
     'raster-crash-recovery': { type: 'boolean' },
     'raster-history': { type: 'boolean' },
+    'recovery-run': { type: 'string' },
     'runtime-continuity': { type: 'boolean' },
   },
 })
@@ -46,6 +47,7 @@ const projectExport = values['project-export']
 const rasterCrashRecovery = values['raster-crash-recovery']
 const rasterHistory = values['raster-history'] || rasterCrashRecovery
 const runtimeContinuity = values['runtime-continuity']
+const recoveryRun = values['recovery-run']
 const engineRuns = path.join(
   projectExport && process.env.IMAGEGEN_CHOOSER_KWIN_PID ? os.userInfo().homedir : os.homedir(),
   '.codex/artifacts/imagegen-studio/runs/packaged-installed-engine',
@@ -70,6 +72,9 @@ assert.ok(
 )
 assert.ok(!rasterCrashRecovery || profile === 'noobai-eps')
 assert.ok(!runtimeContinuity || (!family && !projectExport))
+assert.ok(
+  recoveryRun === undefined || (recoveryRun && !family && !projectExport && !runtimeContinuity),
+)
 assert.equal(
   packageProofPath === undefined,
   profile === undefined && !projectExport && !runtimeContinuity,
@@ -322,13 +327,15 @@ assert.equal(path.basename(engineReportPath), 'installed-engine.json')
 assert.ok(
   path.isAbsolute(run ?? '') && path.normalize(run) === run && path.dirname(run) === engineRun,
 )
-const runType = projectExport
-  ? 'project-export'
-  : runtimeContinuity
-    ? 'runtime-continuity'
-    : family
-      ? `trained-${profile ?? family}`
-      : 'historical-upgrade'
+const runType = recoveryRun
+  ? 'signed-update'
+  : projectExport
+    ? 'project-export'
+    : runtimeContinuity
+      ? 'runtime-continuity'
+      : family
+        ? `trained-${profile ?? family}`
+        : 'historical-upgrade'
 assert.match(path.basename(run), new RegExp(`^${runType}-r[1-9]\\d*$`))
 await directory(engineRun)
 assert.equal(await fs.realpath(engineReportPath), engineReportPath)
@@ -429,7 +436,7 @@ if (successor) {
   assert.notEqual(successor.revision, sourceRevision)
   git('merge-base', '--is-ancestor', sourceRevision, successor.revision)
 }
-if (packageProof || successor) {
+if (packageProof || successor || recoveryRun) {
   assert.equal(git('diff', '--name-only', sourceRevision, '--', 'worker-python'), '')
 } else {
   assert.equal(
@@ -437,6 +444,39 @@ if (packageProof || successor) {
     '',
     'Current production inputs differ from the retained package.',
   )
+}
+
+let recoveryManifest
+let baselineProject
+if (recoveryRun) {
+  assert.equal(
+    path.dirname(recoveryRun),
+    path.join(path.dirname(engineRuns), 'packaged-recovery-action'),
+  )
+  assert.match(path.basename(recoveryRun), /^\d{8}-runtime-r[1-9]\d*$/)
+  await directory(recoveryRun)
+  await directory(path.join(recoveryRun, 'payloads'))
+  assert.equal((await readJson(path.join(recoveryRun, 'artifact-lifecycle.json'))).state, 'running')
+  assert.ok(
+    process.env.IMAGEGEN_CHOOSER_X11_PID && process.env.IMAGEGEN_CHOOSER_SYSTEMD_RUNTIME_DIR,
+  )
+  assert.equal(git('ls-files', '--others', '--exclude-standard', '--', 'worker-python'), '')
+  recoveryManifest = await ownedFileIdentity(
+    path.join(recoveryRun, 'package-manifest.json'),
+    256 * 1024,
+  )
+  const baselineRoot = path.join(engineRun, 'historical-upgrade-r2/native')
+  const historicalReport = path.join(baselineRoot, 'report.json')
+  assert.equal(
+    await sha256(historicalReport),
+    '7f6bfbf04134a862e4fa1364a0f175eff8bac32eb5cd45612a3e47484a8fe976',
+  )
+  const historical = await readJson(historicalReport)
+  assert.equal(historical.outcome, 'PASS')
+  assert.equal(historical.stores.saved.retainedProject, 'after-first-close.igs')
+  const baseline = path.join(baselineRoot, 'after-first-close.igs')
+  baselineProject = await ownedFileIdentity(baseline, 1024 * 1024)
+  assert.deepEqual(baselineProject, { ...historical.stores.saved.project, path: baseline })
 }
 
 const group = (await fs.readFile('/proc/self/cgroup', 'utf8'))
@@ -474,6 +514,7 @@ await writeRecord(path.join(run, 'artifact-lifecycle.json'), {
         ]
       : []),
     appData,
+    ...(recoveryManifest ? [recoveryManifest.path, baselineProject.path] : []),
     ...(sourcesPath ? [sourcesPath] : []),
   ],
   usedBy: [],
@@ -505,6 +546,7 @@ try {
     inputs: exactInputs,
     ...(packageProof ? { packageProof } : {}),
     ...(successor ? { successor } : {}),
+    ...(recoveryManifest ? { recoveryManifest, baselineProject } : {}),
   })
   const entries = (await fs.readdir(appData)).sort()
   const names = entries.filter((name) => !preserved.has(name))
@@ -526,7 +568,17 @@ try {
   assert.deepEqual(await inventory(held, names), before)
   stagedOwned = true
 
-  if (projectExport) {
+  if (recoveryRun) {
+    await writeRecord(path.join(recoveryRun, 'payloads/installed-runtime-fixture.json'), {
+      schemaVersion: 1,
+      appData,
+      baselineProject,
+      engineReport: engineReportPath,
+      ownerPid: process.pid,
+      run,
+      runtimeId,
+    })
+  } else if (projectExport) {
     const scratch = path.join(appData, 'scratch')
     await fs.mkdir(scratch, { mode: 0o700 })
     const manager = new RuntimeManager(await createRuntimeRoots(appData))
@@ -655,9 +707,19 @@ with Path(sys.argv[1]).open('xb') as out:
     env.IMAGEGEN_LINUX_PACKAGE_RUNTIME_CONTINUITY = path.join(run, 'runtime-continuity.json')
   else if (family)
     env.IMAGEGEN_LINUX_PACKAGE_TRAINED_FIXTURE = path.join(run, 'trained-fixture.json')
-  else env.IMAGEGEN_LINUX_PACKAGE_HISTORICAL_FIXTURE = path.join(run, 'historical-fixture.json')
+  else if (!recoveryRun)
+    env.IMAGEGEN_LINUX_PACKAGE_HISTORICAL_FIXTURE = path.join(run, 'historical-fixture.json')
   smokeExit = await new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [path.join(repo, 'scripts/smoke-linux-package.mjs')], {
+    const args = recoveryRun
+      ? [
+          '--import',
+          'tsx',
+          path.join(repo, 'scripts/qualify-packaged-recovery-action.mjs'),
+          recoveryRun,
+          '--install-next',
+        ]
+      : [path.join(repo, 'scripts/smoke-linux-package.mjs')]
+    const child = spawn(process.execPath, args, {
       cwd: repo,
       env,
       stdio: 'inherit',
@@ -667,13 +729,57 @@ with Path(sys.argv[1]).open('xb') as out:
   })
   assert.deepEqual(smokeExit, { code: 0, signal: null })
 } finally {
+  let recoveryEvidenceFailure
   // On a deadline/crash the on-disk claim and prior inventory survive for explicit inspection.
   // Never restore over a retained or still-live application, and never unlink either state.
   if (moved.length > 0 || stagedOwned) {
     assert.equal(ProjectWorkerClient.hasUnconfirmedExit(), false)
     await assertIdle(appData)
   }
-  if (smokeExit) {
+  if (recoveryRun && smokeExit) {
+    assert.equal(smokeExit.signal, null)
+    const report = await readJson(path.join(recoveryRun, 'native-report.json')).catch((error) => {
+      if (error.code === 'ENOENT' && smokeExit.code !== 0) return null
+      throw error
+    })
+    if (report) assert.ok(report.lifetimes.every(({ scopeExit }) => scopeExit?.confirmed))
+    if (smokeExit.code === 0) {
+      assert.equal(report.outcome, 'PASS')
+      assert.deepEqual(
+        report.lifetimes.map(({ version, normalCode }) => [version, normalCode]),
+        [
+          ['0.1.0', 0],
+          ['0.2.0', 0],
+          ['0.3.0', 0],
+        ],
+      )
+      try {
+        const workspace = path.join(appData, 'workspaces/Uncategorized')
+        const [filename, ...others] = (await fs.readdir(workspace)).filter((file) =>
+          file.endsWith('.igs'),
+        )
+        assert.ok(filename && others.length === 0)
+        const sqlite = path.join(appData, 'database/app.sqlite')
+        await absent(`${sqlite}-wal`)
+        await absent(`${sqlite}-shm`)
+        const snapshots = []
+        for (const [source, name, maximumBytes] of [
+          [path.join(workspace, filename), 'installed-after-c-save.igs', 1024 * 1024],
+          [sqlite, 'installed-after-c-close.sqlite', 16 * 1024 * 1024],
+        ]) {
+          const original = await ownedFileIdentity(source, maximumBytes)
+          const target = path.join(recoveryRun, name)
+          const retained = await ownedFileIdentity(target, maximumBytes)
+          assert.deepEqual(retained, { ...original, path: target })
+          snapshots.push(retained)
+        }
+        await writeRecord(path.join(recoveryRun, 'native-closed-stores.json'), snapshots)
+      } catch (error) {
+        // Restoration still runs when the applications settled and only the evidence check failed.
+        recoveryEvidenceFailure = error
+      }
+    }
+  } else if (smokeExit) {
     assert.equal(smokeExit.signal, null)
     const observations = await fs.readdir(nativeRoot).catch((error) => {
       if (error.code === 'ENOENT' && smokeExit.code !== 0) return []
@@ -727,6 +833,11 @@ with Path(sys.argv[1]).open('xb') as out:
     assert.deepEqual(await readSuccessorPackageProof(packageProofPath), successor)
     await writeRecord(path.join(run, 'successor-package-verified-after.json'), successor)
   }
+  if (recoveryManifest) {
+    assert.deepEqual(await ownedFileIdentity(recoveryManifest.path, 256 * 1024), recoveryManifest)
+    assert.deepEqual(await ownedFileIdentity(baselineProject.path, 1024 * 1024), baselineProject)
+  }
+  if (recoveryEvidenceFailure) throw recoveryEvidenceFailure
 }
 console.log(
   JSON.stringify({ outcome: 'PASS', appData, run, family, projectId: fixture?.project.projectId }),

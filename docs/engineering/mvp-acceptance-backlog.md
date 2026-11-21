@@ -2,7 +2,8 @@
 
 Updated through the [Retry runtime transition fix](./phase-5-retry-runtime-transition-research.md),
 [packaged frozen Retry](./phase-5-packaged-noobai-components-research.md#packaged-frozen-retry-with-all-three-components)
-and [historical NoobAI queue qualification](./phase-5-noobai-legacy-queue-research.md).
+[historical NoobAI queue qualification](./phase-5-noobai-legacy-queue-research.md), and
+[signed relaunch with an installed runtime](./phase-5-signed-appimage-installed-runtime-research.md).
 All eight public promise statuses remain **«Пока не обещать»**. Earlier roadmap
 entries record the state at their checkpoint.
 [Product scope](../specs/00-product-scope.md), [promise matrix](../product-promises.md),
@@ -55,8 +56,9 @@ entries record the state at their checkpoint.
    worker refusal for the release candidate remains in step 6.
    Both stock builds from `3c1d42ec` and `353fe8f1` also opened the same
    profile in sequence, recognized the existing slot and saved the same
-   Raster Project with rendered CPU previews. Signed updater and CUDA
-   inference across the shipping upgrade remain in steps 5 and 6.
+   Raster Project with rendered CPU previews. The signed relaunch with the
+   installed runtime is covered in step 5. CUDA inference across the shipping
+   upgrade remains in step 6.
    [Packaged runtime continuity](./phase-5-packaged-runtime-continuity-research.md)
    [Packaged installed engine](./phase-5-packaged-installed-engine-research.md),
    [packaged trained jobs](./phase-5-packaged-trained-generation-research.md),
@@ -130,12 +132,16 @@ entries record the state at their checkpoint.
    system Save dialog. The three-lifetime AppImage test cancels once, saves B,
    reopens the same Project, uses ordinary Save on close and installs signed C.
    C reopens the saved edit and reports the target verified and the runtime
-   unverified. The original stage is preserved. Production publisher trust,
-   post-upgrade runtime validation, legacy/unleased machines,
-   in-place recovery and retirement
-   still require a supported ownership and qualification boundary. Re-read
-   Invoke before changing owners. Keep manual SQLite recovery separate.
+   unverified. The original stage is preserved. The local signed route
+   also passed with the installed runtime. B and the native successor C
+   both reported the original slot ready and published distinct revisions
+   with rendered CPU previews. Trained inference after update and the
+   shipping host matrix remain open. Production publisher trust,
+   legacy/unleased machines, in-place recovery and retirement still require
+   a supported ownership and qualification boundary. Re-read Invoke before
+   changing owners. Keep manual SQLite recovery separate.
    [Updates recovery](./phase-5-public-appimage-recovery-research.md),
+   [Signed relaunch with installed runtime](./phase-5-signed-appimage-installed-runtime-research.md),
    [Fresh-path recovery](./phase-5-application-recovery-fresh-path-research.md),
    [update interruption](./phase-5-application-update-interruption-research.md),
    [stage owner](../../src/main/application-updates/application-update-staging.ts),
