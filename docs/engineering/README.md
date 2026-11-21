@@ -8,6 +8,12 @@ worker startup, shutdown and preparation. Healthy busy Retry remains
 available across Projects. The stock AppImage confirmed the transition
 and the same frozen replay after Cancel with its installed CUDA worker.
 
+## Current packaged Raster acceptance history
+
+[Packaged Add, Undo and Redo](./phase-5-packaged-raster-acceptance-history-research.md)
+records a real NoobAI EPS and V-prediction result through toolbar Undo/Redo,
+explicit Save, restart and exact PNG, provenance and SQLite verification.
+
 ## Current packaged image export
 
 [Project image export on KDE Wayland](./phase-5-packaged-project-image-export-research.md)

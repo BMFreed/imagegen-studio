@@ -182,9 +182,11 @@ entries record the state at their checkpoint.
    on the shipping candidate across the supported clean-install and upgrade
    matrix. [Packaged installed worker refusal](./phase-5-packaged-installed-engine-research.md#stock-appimage-with-an-incompatible-installed-worker)
    The current AppImage covered the Cancel-to-Retry transition and frozen replay
-   with the installed CUDA worker. Repeat on the shipping candidate and cover
-   the remaining release cases for Generate, Cancel, frozen Retry and
-   explicit Add/Undo/Redo/Save. The stock AppImage compares the accepted NoobAI EPS
+   with the installed CUDA worker. Both NoobAI EPS and V-prediction also passed
+   Add, Undo, Redo, explicit Save and reopen after one real packaged generation
+   each. Verify these flows on the shipping candidate across the supported matrix.
+   [Packaged Raster history](./phase-5-packaged-raster-acceptance-history-research.md)
+   The stock AppImage compares the accepted NoobAI EPS
    result with its edited draft and saves an exact detached preset without Seed.
    The preset and Project reopen in a profile without an installed worker or
    models. [Packaged result preset](./phase-5-packaged-project-and-preset-research.md#compare-and-save-preset-from-result)

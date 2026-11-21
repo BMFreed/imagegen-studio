@@ -32,6 +32,7 @@ const { values } = parseArgs({
     'package-proof': { type: 'string' },
     profile: { type: 'string' },
     'project-export': { type: 'boolean' },
+    'raster-history': { type: 'boolean' },
   },
 })
 const run = values.artifacts
@@ -40,6 +41,7 @@ const { family, profile } = values
 const sourcesPath = values['model-inputs']
 const packageProofPath = values['package-proof']
 const projectExport = values['project-export']
+const rasterHistory = values['raster-history']
 const engineRuns = path.join(
   projectExport && process.env.IMAGEGEN_CHOOSER_KWIN_PID ? os.userInfo().homedir : os.homedir(),
   '.codex/artifacts/imagegen-studio/runs/packaged-installed-engine',
@@ -59,6 +61,9 @@ assert.ok(
       ].includes(profile)),
 )
 assert.ok(!projectExport || family === undefined)
+assert.ok(
+  !rasterHistory || (family === 'illustrious' && ['noobai-eps', 'noobai-v'].includes(profile)),
+)
 assert.equal(packageProofPath === undefined, profile === undefined && !projectExport)
 const preserved = new Set(['inference-resources', 'runtime'])
 const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim()
@@ -484,6 +489,7 @@ try {
       runtimeId,
       ...trained,
       ...(packageProof ? { profile, package: packageProof.appImage } : {}),
+      ...(rasterHistory ? { rasterHistory: true } : {}),
     })
   } else {
     const rasterSourcePath = path.join(run, 'historical-raster.png')

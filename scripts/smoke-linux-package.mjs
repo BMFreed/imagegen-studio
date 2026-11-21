@@ -593,6 +593,15 @@ if (trained?.ownedEmbedding)
       'scripts/fixtures/packaged-live-remove-ui.mjs',
     ].map((name) => path.join(repo, name)),
   )
+if (trained?.rasterHistory)
+  sourcePaths.push(
+    ...[
+      'scripts/qualify-packaged-installed-upgrade.mjs',
+      'scripts/fixtures/packaged-installed-models.mjs',
+      'scripts/fixtures/packaged-raster-acceptance-history.mjs',
+      'scripts/fixtures/application-state-upgrade-fixture.mjs',
+    ].map((name) => path.join(repo, name)),
+  )
 if (protocolHarness)
   sourcePaths.push(
     path.join(repo, 'scripts/fixtures/packaged-worker-protocol.mjs'),

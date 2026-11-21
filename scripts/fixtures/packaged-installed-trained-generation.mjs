@@ -176,12 +176,18 @@ export async function readTrainedGeneration({ filename, engine, outputRoot, appI
   assert.deepEqual(await identity(filename), fixtureBefore)
   const noobai = fixture.profile !== undefined
   assert.ok(!noobai || Object.hasOwn(noobaiPins, fixture.profile))
+  const { rasterHistory } = fixture
+  assert.ok(
+    rasterHistory === undefined ||
+      (rasterHistory === true && ['noobai-eps', 'noobai-v'].includes(fixture.profile)),
+  )
   assert.deepEqual(Object.keys(fixture).sort(), [
     'appData',
     'family',
     'files',
     'model',
     ...(noobai ? ['package', 'profile'] : []),
+    ...(rasterHistory ? ['rasterHistory'] : []),
     'runtimeId',
     'schemaVersion',
   ])
@@ -318,6 +324,7 @@ export async function readTrainedGeneration({ filename, engine, outputRoot, appI
     pythonPath,
     engineRun: engine.run,
     ownedEmbedding,
+    rasterHistory,
     protectedModels,
     inputs: [fixtureBefore, previousBefore, ...catalogInputs],
   }
@@ -1021,7 +1028,7 @@ export async function runTrainedGeneration({
   expectCatalog(ports.catalog.value, fixture, noobai ? 'epsilon' : undefined)
   const requested = await createAndAuthor(first.page, fixture, root)
   const { project, tab } = requested
-  if (trained.ownedEmbedding) first.discardOwnedProjectId = project.id
+  if (trained.ownedEmbedding || trained.rasterHistory) first.discardOwnedProjectId = project.id
   const snapshot = (closed = false) => snapshotDatabase(databasePath, { closed })
   const [initialRow] = snapshot().tables.project_index.rows
   const packagePath = initialRow.canonical_path
@@ -1302,12 +1309,13 @@ export async function runTrainedGeneration({
     assert.equal(current.totalSteps, 3)
   }
   assert.equal(progress.at(-1).current.step, 3)
-  assert.deepEqual((await openTab(first.page, project.id)).layers, [])
+  const beforeAdd = await openTab(first.page, project.id)
+  assert.deepEqual(beforeAdd.layers, [])
   assert.deepEqual(await identity(packagePath), initialPackage)
 
   await first.page.getByRole('button', { name: 'Add 1 as Layer', exact: true }).click()
   await expect.poll(async () => (await openTab(first.page, project.id)).layers.length).toBe(1)
-  const accepted = await openTab(first.page, project.id)
+  let accepted = await openTab(first.page, project.id)
   assert.equal(accepted.dirty, true)
   assert.equal(accepted.generationDraft.positivePrompt.text, afterCapturePrompt)
   const [layer] = accepted.layers
@@ -1326,6 +1334,30 @@ export async function runTrainedGeneration({
         (await projectCall(first.page, 'listGenerationResults', project.id)).candidates.length,
     )
     .toBe(0)
+  let rasterHistory
+  if (trained.rasterHistory) {
+    const { qualifyPackagedRasterAcceptanceHistory } =
+      await import('./packaged-raster-acceptance-history.mjs')
+    const { redone, report } = await qualifyPackagedRasterAcceptanceHistory({
+      state: first,
+      projectId: project.id,
+      beforeAdd,
+      accepted,
+      acceptedData,
+      packagePath,
+      initialPackage,
+      candidate,
+      receipt,
+      root,
+      appData: fixture.appData,
+      snapshot,
+      identity,
+      openTab,
+      projectCall,
+    })
+    accepted = redone
+    rasterHistory = report
+  }
   await first.page.getByRole('button', { name: 'Save Project', exact: true }).click()
   await expect.poll(async () => (await openTab(first.page, project.id)).dirty).toBe(false)
   assert.equal((await openTab(first.page, project.id)).documentRevision, accepted.documentRevision)
@@ -1433,10 +1465,11 @@ export async function runTrainedGeneration({
   await second.page.getByRole('button', { name: 'Open ' + project.title, exact: true }).click()
   await expect(second.page.getByRole('tab', { name: project.title, exact: true })).toBeVisible()
   const reopened = await openTab(second.page, project.id)
-  if (trained.ownedEmbedding) second.discardOwnedProjectId = project.id
+  if (trained.ownedEmbedding || trained.rasterHistory) second.discardOwnedProjectId = project.id
   assert.equal(reopened.documentRevision, stored.documentRevision)
   assert.equal(reopened.documentId, stored.documentId)
   assert.equal(reopened.dirty, false)
+  if (rasterHistory) assert.deepEqual([reopened.canUndo, reopened.canRedo], [false, false])
   assert.equal(reopened.layers.length, 1)
   assert.equal(reopened.layers[0].id, layer.id)
   assert.equal(reopened.generationDraft.positivePrompt.text, afterCapturePrompt)
@@ -1520,6 +1553,7 @@ export async function runTrainedGeneration({
       acceptedRasterId: layer.id,
       modelInputs: fixture.files,
       explicitAdd: true,
+      ...(rasterHistory && { rasterHistory }),
       explicitSave: true,
       sameSavedProjectAfterReopen: true,
     },
