@@ -8,6 +8,12 @@ worker startup, shutdown and preparation. Healthy busy Retry remains
 available across Projects. The stock AppImage confirmed the transition
 and the same frozen replay after Cancel with its installed CUDA worker.
 
+## Current packaged installed-runtime continuity
+
+[Installed CPU preview across AppImage builds](./phase-5-packaged-runtime-continuity-research.md)
+verifies the same retained slot across two stock builds and two explicit
+Project Saves with exact Raster, preview and ICC bytes.
+
 ## Current packaged Home and Recovery keyboard focus
 
 [Home and Recovery keyboard verification](./phase-5-packaged-home-recovery-keyboard-research.md)

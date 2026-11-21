@@ -1,4 +1,4 @@
-/** Run a historical, trained or export fixture in one idle installed slot. */
+/** Qualify packaged consumers in one idle installed slot. */
 import assert from 'node:assert/strict'
 import { execFile, execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -34,6 +34,7 @@ const { values } = parseArgs({
     'project-export': { type: 'boolean' },
     'raster-crash-recovery': { type: 'boolean' },
     'raster-history': { type: 'boolean' },
+    'runtime-continuity': { type: 'boolean' },
   },
 })
 const run = values.artifacts
@@ -44,6 +45,7 @@ const packageProofPath = values['package-proof']
 const projectExport = values['project-export']
 const rasterCrashRecovery = values['raster-crash-recovery']
 const rasterHistory = values['raster-history'] || rasterCrashRecovery
+const runtimeContinuity = values['runtime-continuity']
 const engineRuns = path.join(
   projectExport && process.env.IMAGEGEN_CHOOSER_KWIN_PID ? os.userInfo().homedir : os.homedir(),
   '.codex/artifacts/imagegen-studio/runs/packaged-installed-engine',
@@ -67,7 +69,11 @@ assert.ok(
   !rasterHistory || (family === 'illustrious' && ['noobai-eps', 'noobai-v'].includes(profile)),
 )
 assert.ok(!rasterCrashRecovery || profile === 'noobai-eps')
-assert.equal(packageProofPath === undefined, profile === undefined && !projectExport)
+assert.ok(!runtimeContinuity || (!family && !projectExport))
+assert.equal(
+  packageProofPath === undefined,
+  profile === undefined && !projectExport && !runtimeContinuity,
+)
 const preserved = new Set(['inference-resources', 'runtime'])
 const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim()
 const readJson = async (file) => JSON.parse(await fs.readFile(file, 'utf8'))
@@ -176,6 +182,64 @@ async function readNoobaiPackageProof(filename) {
   return { appImage, revision, dist, identity, manifestIdentity }
 }
 
+async function readSuccessorPackageProof(filename) {
+  assert.ok(path.isAbsolute(filename) && path.normalize(filename) === filename)
+  const buildRun = path.dirname(filename)
+  const relative = path.relative(path.dirname(engineRuns), buildRun)
+  assert.ok(relative && !relative.startsWith('..') && !path.isAbsolute(relative))
+  assert.equal(path.basename(filename), 'package-proof.json')
+  const proofFile = await ownedFileIdentity(filename, 16384)
+  const proof = await readJson(filename)
+  assert.deepEqual(await ownedFileIdentity(filename, 16384), proofFile)
+  assert.equal(proof.schemaVersion, 1)
+
+  const receiptPath = path.join(buildRun, 'commit-proof.json')
+  const receiptFile = await ownedFileIdentity(receiptPath, 16384)
+  const receipt = await readJson(receiptPath)
+  assert.deepEqual(await ownedFileIdentity(receiptPath, 16384), receiptFile)
+  const revision = receipt.head
+  assert.match(revision, /^[0-9a-f]{40}$/)
+  assert.equal(receipt.tracking, revision)
+  assert.equal(receipt.remote, revision)
+  assert.equal(receipt.trackedTreeClean, true)
+  assert.equal(receipt.sha256['package-proof.json'], proofFile.sha256)
+  assert.equal(git('diff', '--name-only', revision, '--', ...productionInputs), '')
+  assert.equal(git('ls-files', '--others', '--exclude-standard', '--', ...productionInputs), '')
+  assert.match(proof.baseRevision, /^[0-9a-f]{40}$/)
+  git('merge-base', '--is-ancestor', proof.baseRevision, revision)
+  const changed = git(
+    'diff',
+    '--name-only',
+    proof.baseRevision,
+    revision,
+    '--',
+    ...productionInputs,
+  )
+    .split('\n')
+    .filter(Boolean)
+    .sort()
+  assert.deepEqual(Object.keys(proof.source).sort(), changed)
+  for (const member of changed) {
+    assert.equal(await sha256(path.join(repo, member)), proof.source[member], member)
+  }
+
+  const appImage = proof.package
+  assert.equal(path.dirname(appImage.path), path.join(buildRun, 'package'))
+  assert.match(path.basename(appImage.path), /^imagegen-studio-[\w.-]+-x86_64\.AppImage$/)
+  assert.deepEqual(await ownedFileIdentity(appImage.path, 512 * 1024 ** 2), appImage)
+  assert.equal((await fs.lstat(appImage.path)).mode & 0o777, 0o755)
+  const auditPath = path.join(buildRun, 'independent-audit.json')
+  const auditFile = await ownedFileIdentity(auditPath, 1024 * 1024)
+  assert.equal(receipt.sha256['independent-audit.json'], auditFile.sha256)
+  const audit = await readJson(auditPath)
+  assert.deepEqual(await ownedFileIdentity(auditPath, 1024 * 1024), auditFile)
+  assert.equal(audit.result, 'CLEAN')
+  assert.deepEqual(audit.package, appImage)
+  assert.equal(audit.asarSha256, proof.asarSha256)
+  assert.equal(audit.verifiedEmbeddedDistFiles, Object.keys(proof.dist).length)
+  return { appImage, revision, proofFile, receiptFile, auditFile }
+}
+
 async function writeRecord(file, value) {
   const handle = await fs.open(file, 'wx', 0o600)
   try {
@@ -260,9 +324,11 @@ assert.ok(
 )
 const runType = projectExport
   ? 'project-export'
-  : family
-    ? `trained-${profile ?? family}`
-    : 'historical-upgrade'
+  : runtimeContinuity
+    ? 'runtime-continuity'
+    : family
+      ? `trained-${profile ?? family}`
+      : 'historical-upgrade'
 assert.match(path.basename(run), new RegExp(`^${runType}-r[1-9]\\d*$`))
 await directory(engineRun)
 assert.equal(await fs.realpath(engineReportPath), engineReportPath)
@@ -354,9 +420,16 @@ async function assertEngineInputs() {
 await assertEngineInputs()
 const sourceRevision = release.sourceBefore.head
 assert.match(sourceRevision, /^[0-9a-f]{40}$/)
-const packageProof = packageProofPath ? await readNoobaiPackageProof(packageProofPath) : null
+const packageProof =
+  packageProofPath && !runtimeContinuity ? await readNoobaiPackageProof(packageProofPath) : null
+const successor = runtimeContinuity ? await readSuccessorPackageProof(packageProofPath) : null
 const appImage = packageProof?.appImage.path ?? retainedAppImage
-if (packageProof) {
+if (successor) {
+  assert.notEqual(successor.appImage.sha256, prior.packageBefore.sha256)
+  assert.notEqual(successor.revision, sourceRevision)
+  git('merge-base', '--is-ancestor', sourceRevision, successor.revision)
+}
+if (packageProof || successor) {
   assert.equal(git('diff', '--name-only', sourceRevision, '--', 'worker-python'), '')
 } else {
   assert.equal(
@@ -392,6 +465,14 @@ await writeRecord(path.join(run, 'artifact-lifecycle.json'), {
     ...(packageProof
       ? [appImage, packageProof.identity.path, packageProof.manifestIdentity.path]
       : []),
+    ...(successor
+      ? [
+          successor.appImage.path,
+          successor.proofFile.path,
+          successor.receiptFile.path,
+          successor.auditFile.path,
+        ]
+      : []),
     appData,
     ...(sourcesPath ? [sourcesPath] : []),
   ],
@@ -423,6 +504,7 @@ try {
     sourceRevision,
     inputs: exactInputs,
     ...(packageProof ? { packageProof } : {}),
+    ...(successor ? { successor } : {}),
   })
   const entries = (await fs.readdir(appData)).sort()
   const names = entries.filter((name) => !preserved.has(name))
@@ -472,6 +554,12 @@ try {
       selfTest,
       cudaVisibleDevices: source.environment.CUDA_VISIBLE_DEVICES,
       exitConfirmed: true,
+    })
+  } else if (successor) {
+    await writeRecord(path.join(run, 'runtime-continuity.json'), {
+      schemaVersion: 1,
+      previous: prior.packageBefore,
+      successor: successor.appImage,
     })
   } else if (family) {
     const { preparePackagedTrainedModels, verifyPackagedTrainedSources } =
@@ -558,10 +646,13 @@ with Path(sys.argv[1]).open('xb') as out:
     'IMAGEGEN_LINUX_PACKAGE_NOOBAI_PREVIEW',
     'IMAGEGEN_LINUX_PACKAGE_NOOBAI_TOKEN_FILE',
     'IMAGEGEN_LINUX_PACKAGE_PROJECT_EXPORT',
+    'IMAGEGEN_LINUX_PACKAGE_RUNTIME_CONTINUITY',
     'IMAGEGEN_LINUX_PACKAGE_TRAINED_FIXTURE',
   ])
     delete env[key]
   if (projectExport) env.IMAGEGEN_LINUX_PACKAGE_PROJECT_EXPORT = '1'
+  else if (successor)
+    env.IMAGEGEN_LINUX_PACKAGE_RUNTIME_CONTINUITY = path.join(run, 'runtime-continuity.json')
   else if (family)
     env.IMAGEGEN_LINUX_PACKAGE_TRAINED_FIXTURE = path.join(run, 'trained-fixture.json')
   else env.IMAGEGEN_LINUX_PACKAGE_HISTORICAL_FIXTURE = path.join(run, 'historical-fixture.json')
@@ -631,6 +722,10 @@ with Path(sys.argv[1]).open('xb') as out:
     const after = await readNoobaiPackageProof(packageProofPath)
     assert.deepEqual(after, packageProof)
     await writeRecord(path.join(run, 'package-verified-after.json'), after)
+  }
+  if (successor) {
+    assert.deepEqual(await readSuccessorPackageProof(packageProofPath), successor)
+    await writeRecord(path.join(run, 'successor-package-verified-after.json'), successor)
   }
 }
 console.log(

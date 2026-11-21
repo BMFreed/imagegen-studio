@@ -53,6 +53,11 @@ entries record the state at their checkpoint.
    compatible installed engine and original AppData are restored after both
    runs. Missing-engine Setup has a fresh packaged control. The incompatible
    worker refusal for the release candidate remains in step 6.
+   Both stock builds from `3c1d42ec` and `353fe8f1` also opened the same
+   profile in sequence, recognized the existing slot and saved the same
+   Raster Project with rendered CPU previews. Signed updater and CUDA
+   inference across the shipping upgrade remain in steps 5 and 6.
+   [Packaged runtime continuity](./phase-5-packaged-runtime-continuity-research.md)
    [Packaged installed engine](./phase-5-packaged-installed-engine-research.md),
    [packaged trained jobs](./phase-5-packaged-trained-generation-research.md),
    [packaged installed harness](../../scripts/qualify-packaged-installed-upgrade.mjs),

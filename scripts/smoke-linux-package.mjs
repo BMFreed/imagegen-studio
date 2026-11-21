@@ -53,6 +53,7 @@ const kdeChooser = process.env.IMAGEGEN_CHOOSER_KWIN_PID !== undefined
 const componentRemove = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_COMPONENT_REMOVE
 const offlineProject = process.env.IMAGEGEN_LINUX_PACKAGE_OFFLINE_PROJECT
 const projectExport = process.env.IMAGEGEN_LINUX_PACKAGE_PROJECT_EXPORT
+const continuityFixture = process.env.IMAGEGEN_LINUX_PACKAGE_RUNTIME_CONTINUITY
 const privateDesktop = portableChooser ?? componentRemove ?? offlineProject
 assert.ok(
   !kdeChooser || portableChooser || projectExport,
@@ -76,7 +77,7 @@ const boundedExecute = (command, args, options) =>
   execute(
     command,
     args.map((value) => (value === 'MemoryMax=12G' ? `MemoryMax=${nativeMemoryGiB}G` : value)),
-    privateDesktop || projectExport
+    privateDesktop || projectExport || continuityFixture
       ? {
           ...options,
           env: {
@@ -102,6 +103,26 @@ assert.ok(
   trainedFixture === undefined || (installedEngineReport && historicalFixture === undefined),
 )
 const updateCheckMode = process.env.IMAGEGEN_LINUX_PACKAGE_UPDATE_CHECK
+if (continuityFixture) {
+  assert.ok(installedEngineReport && process.env.IMAGEGEN_CHOOSER_SYSTEMD_RUNTIME_DIR)
+  assert.ok(
+    [
+      projectExport,
+      privateDesktop,
+      legacyNoobaiFixture,
+      historicalFixture,
+      protocolFixture,
+      trainedFixture,
+      runtimeSetupControl,
+      noobaiPreviewMode,
+      noobaiInstall,
+      noobaiMatrix,
+      updateCheckMode,
+      suppliedRecoveryPublication,
+    ].every((mode) => mode === undefined),
+    'Use a separate installed engine profile for continuity between AppImages.',
+  )
+}
 if (projectExport !== undefined) {
   assert.ok(projectExport === '1' && kdeChooser && installedEngineReport)
   assert.ok(
@@ -354,10 +375,13 @@ const protocolHarness = protocolFixture
   ? await import('./fixtures/packaged-worker-protocol.mjs')
   : null
 const engine = await installedEngineFixture()
-if (projectExport) {
+if (projectExport || continuityFixture) {
   const run = path.dirname(root)
   assert.equal(path.dirname(run), engine.run)
-  assert.match(path.basename(run), /^project-export-r[1-9]\d*$/)
+  const pattern = continuityFixture
+    ? /^runtime-continuity-r[1-9]\d*$/
+    : /^project-export-r[1-9]\d*$/
+  assert.match(path.basename(run), pattern)
   assert.equal(path.basename(root), 'native')
   const claim = path.join(
     path.dirname(engine.dataRoot),
@@ -369,6 +393,21 @@ if (projectExport) {
     appData: engine.dataRoot,
     pid: process.ppid,
   })
+}
+let continuity
+if (continuityFixture) {
+  assert.equal(continuityFixture, path.join(path.dirname(root), 'runtime-continuity.json'))
+  assert.equal(await realpath(continuityFixture), continuityFixture)
+  const before = await identity(continuityFixture)
+  assert.ok(before.sizeBytes > 0 && before.sizeBytes <= 4096)
+  continuity = JSON.parse(await readFile(continuityFixture, 'utf8'))
+  assert.deepEqual(await identity(continuityFixture), before)
+  assert.equal(continuity.schemaVersion, 1)
+  assert.ok(strictDescendant(ownedRunRoot, continuity.successor.path))
+  assert.equal(await realpath(continuity.successor.path), continuity.successor.path)
+  assert.deepEqual(await identity(continuity.successor.path), continuity.successor)
+  assert.deepEqual(await identity(appImage), continuity.previous)
+  assert.notEqual(continuity.successor.sha256, continuity.previous.sha256)
 }
 const incompatibleWorker = engine?.protocol?.protocol === '2'
 const historical =
@@ -641,6 +680,12 @@ if (projectExport)
     path.join(repo, 'scripts/fixtures/packaged-project-image-export.mjs'),
     path.join(repo, 'scripts/fixtures/packaged-project-image-export-oracle.py'),
   )
+if (continuity)
+  sourcePaths.push(
+    path.join(repo, 'scripts/qualify-packaged-installed-upgrade.mjs'),
+    path.join(repo, 'scripts/fixtures/packaged-project-chooser-x11.py'),
+    path.join(repo, 'scripts/fixtures/packaged-runtime-continuity.mjs'),
+  )
 if (portableLocateHarness)
   sourcePaths.push(path.join(repo, 'scripts/fixtures/packaged-noobai-project-locate.mjs'))
 if (componentRemoveHarness)
@@ -886,8 +931,22 @@ async function launch(name, selectedAppImage = appImage) {
     assert.deepEqual(await recoveryFile(selectedAppImage, true), expected)
     state.applicationImage = expected
   }
+  if (continuity) {
+    const expected = name === 'first' ? continuity.previous : continuity.successor
+    assert.equal(selectedAppImage, expected.path)
+    assert.deepEqual(await identity(selectedAppImage), expected)
+    state.applicationImage = expected
+  }
   lifetimes.push(state)
-  if (history || trained || protocolHarness || legacyHarness || privateDesktop || projectExport) {
+  if (
+    history ||
+    trained ||
+    protocolHarness ||
+    legacyHarness ||
+    privateDesktop ||
+    projectExport ||
+    continuity
+  ) {
     await writeFile(
       path.join(root, `${name}.launch-intent.json`),
       JSON.stringify({ name }) + '\n',
@@ -1040,7 +1099,8 @@ async function retainLifetimeResources(state) {
       protocolHarness ||
       legacyHarness ||
       privateDesktop ||
-      projectExport) &&
+      projectExport ||
+      continuity) &&
     !state.closed &&
     state.aggregateLimits
   ) {
@@ -1319,6 +1379,20 @@ async function runNoobaiPreviewQualification() {
 }
 
 async function runOwnedProjectProfile() {
+  if (continuity) {
+    const { runPackagedRuntimeContinuity } =
+      await import('./fixtures/packaged-runtime-continuity.mjs')
+    return await runPackagedRuntimeContinuity({
+      continuity,
+      engine,
+      root,
+      launch,
+      readPorts,
+      closeNormally,
+      retainOwnStore,
+      identity,
+    })
+  }
   if (projectExport) {
     const { runPackagedProjectImageExport } =
       await import('./fixtures/packaged-project-image-export.mjs')
@@ -1630,6 +1704,7 @@ try {
     noobaiComponentRemove,
     offlineProjectResult,
     packagedProjectImageExport,
+    packagedRuntimeContinuity,
   } = noobaiMatrix
     ? {}
     : setupControl
@@ -1710,6 +1785,7 @@ try {
               ? { noobaiInstallation: await runNoobaiInstallQualification() }
               : await runOwnedProjectProfile()
   assert.deepEqual(await identity(appImage), packageBefore)
+  if (continuity) assert.deepEqual(await identity(continuity.successor.path), continuity.successor)
   if (recoveryPublication) {
     for (const [expected, executable] of [
       [recoveryPublication.original, true],
@@ -1763,7 +1839,7 @@ try {
       )
     }
   }
-  if (protocolHarness || legacyHarness || privateDesktop || projectExport) {
+  if (protocolHarness || legacyHarness || privateDesktop || projectExport || continuity) {
     assert.equal(lifetimes.length, portableLocate || offlineProject === 'trash' ? 3 : 2)
     for (const state of lifetimes) {
       assert.ok(state.normalPhysicalExit && !state.forcedCleanup)
@@ -1817,9 +1893,11 @@ try {
                         ? 'Actual fused AppImage upgrades an owned historical DB, renders a nonempty Project preview with the installed CPU worker and reopens the saved Project.'
                         : packagedProjectImageExport
                           ? 'Actual stock AppImage exports full-resolution Project PNGs with the installed CPU worker and the real KDE SaveFile portal.'
-                          : engine
-                            ? 'Actual fused Linux AppImage with exact installed runtime, real Main status qualification and Project create/restart/persistence.'
-                            : 'Actual fused Linux AppImage outside checkout, real packaged Main/preload/SQLite/migrations/own Project create/restart/persistence. No source worker or service mocks.',
+                          : packagedRuntimeContinuity
+                            ? 'Successive stock AppImages Save the same Project through an unchanged installed CPU worker.'
+                            : engine
+                              ? 'Actual fused Linux AppImage with exact installed runtime, real Main status qualification and Project create/restart/persistence.'
+                              : 'Actual fused Linux AppImage outside checkout, real packaged Main/preload/SQLite/migrations/own Project create/restart/persistence. No source worker or service mocks.',
     mode: kdeChooser
       ? 'APPIMAGE_EXTRACT_AND_RUN=1; native Wayland on private virtual KWin; Chromium CDP loopback.'
       : 'APPIMAGE_EXTRACT_AND_RUN=1; X11; Chromium CDP loopback. FUSE installation and Main Node inspector are not used.',
@@ -1846,6 +1924,7 @@ try {
     ...(noobaiComponentRemove ? { noobaiComponentRemove } : {}),
     ...(offlineProjectResult ? { offlineProject, offlineProjectResult } : {}),
     ...(packagedProjectImageExport ? { packagedProjectImageExport } : {}),
+    ...(packagedRuntimeContinuity ? { packagedRuntimeContinuity } : {}),
     stores: { saved, restarted },
     lifetimes: lifetimes.map(
       ({
