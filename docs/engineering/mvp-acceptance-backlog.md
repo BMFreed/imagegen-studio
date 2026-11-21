@@ -141,6 +141,11 @@ entries record the state at their checkpoint.
    anatomy remained unclear. Joint scene and placement utility remains open.
    [Anima global scene area](./phase-4-anima-global-background-visual-research.md),
    [matched scarf weight comparison](./phase-4-anima-equal-scarf-weight-research.md).
+   The next Anima case used a paper lantern and fox mask on a festival
+   stall at seeds 123 and 124. Both ordinary scenes passed. One of the
+   four regional images preserved the readable stall and both assigned
+   subjects. The two-seed assignment and swap criterion remains open.
+   [Anima festival stall](./phase-4-anima-festival-stall-research.md)
    Retain the IMG pilots and record a new hypothesis before any further
    visual run. Record all images and a human acceptance verdict. Consult model-aware
    settings and the guards before classifying additional combinations as supported.
@@ -258,6 +263,10 @@ entries record the state at their checkpoint.
    missing. Confirmed Repair restored the exact digest and local IDs, and
    the accepted Project reopened byte-identical without a provider token.
    [Packaged managed embedding Repair](./phase-5-packaged-noobai-component-repair-research.md)
+   Cold startup with an interrupted Model Manager install still needs a
+   stock AppImage check. Instrumented Electron covers the interruption
+   result through the existing install repository and shutdown owners.
+   [Model install shutdown](./phase-5-model-install-shutdown-research.md)
    The stock AppImage also blocked an affected running queue claim and
    canceled exactly the two explicitly reviewed pending jobs. Unrelated
    running and pending rows and all frozen inputs survived the operation.
@@ -307,6 +316,10 @@ entries record the state at their checkpoint.
    900×620 the Recovery dialog cycled focus through all actions and returned
    it to the same Home card after Escape and Cancel, with a visible ring.
    [Packaged Home and Recovery keyboard](./phase-5-packaged-home-recovery-keyboard-research.md)
+   The same saved Project and prepared shadow passed on native KDE Wayland.
+   Two KWin runs and an X11 regression preserved the Project bytes and
+   recovery on both keyboard dismissals.
+   [KDE Wayland Home and Recovery keyboard](./phase-5-packaged-home-recovery-wayland-keyboard-research.md)
    Check joint Home/Trash, resource removal and export behavior, interrupted
    recovery, remaining keyboard/focus/contrast and performance at supported
    desktop sizes on the final candidate. [NoobAI matrix](../specs/01-implementation-roadmap.md#noobai-полная-поддержка-в-рамках-mvp),

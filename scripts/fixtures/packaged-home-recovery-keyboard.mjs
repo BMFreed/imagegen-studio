@@ -14,6 +14,12 @@ import { rawPathDerivedProjectRecoveryKey } from '../../src/main/projects/projec
 import { ProjectShadowStore } from '../../src/main/projects/project-shadow.ts'
 import { parseProjectDocumentV1 } from '../../src/shared/projects/project-schema.ts'
 import {
+  assertPrivateWayland,
+  assertWaylandPeer,
+  connectionPid,
+  sessionMethod,
+} from './packaged-kde-chooser.mjs'
+import {
   assertOpened,
   assertOriginalBytes,
   indexSnapshot,
@@ -46,15 +52,96 @@ async function activeFocus(page) {
   })
 }
 
-async function connectNativeInput(state, record) {
-  const pid = String(state.mainPid)
-  assert.match(pid, /^[1-9]\d*$/)
+async function connectX11(pid) {
   const matches = (await xdo('search', '--onlyvisible', '--pid', pid)).split('\n')
   assert.equal(matches.length, 1, 'Find the unique visible window of the enrolled Main.')
   const [windowId] = matches
   assert.match(windowId, /^[1-9]\d*$/)
   assert.equal(await xdo('getwindowpid', windowId), pid)
   await xdo('windowfocus', '--sync', windowId)
+  return {
+    backend: 'x11',
+    async resize(width, height) {
+      await xdo('windowmove', '--sync', windowId, '0', '0')
+      await xdo('windowsize', '--sync', windowId, String(width), String(height))
+      const geometry = await xdo('getwindowgeometry', '--shell', windowId)
+      assert.match(geometry, new RegExp(`^WIDTH=${width}$`, 'm'))
+      assert.match(geometry, new RegExp(`^HEIGHT=${height}$`, 'm'))
+      return { windowId, geometry }
+    },
+    async key(key) {
+      assert.equal(await xdo('getwindowfocus'), windowId)
+      await xdo('key', '--clearmodifiers', key)
+    },
+  }
+}
+
+async function connectWayland(pid, root) {
+  const session = await assertPrivateWayland()
+  await assertWaylandPeer(Number(pid), session)
+  const kwin = 'org.kde.KWin'
+  const scripting = 'org.kde.kwin.Scripting'
+  const helper = process.env.IMAGEGEN_WAYLAND_KEYBOARD_HELPER
+  const { stdout } = await execute(helper, ['--probe'], { timeout: 5_000 })
+  return {
+    backend: 'wayland',
+    async resize(width, height) {
+      assert.equal(await connectionPid(kwin), session.compositorPid)
+      assert.ok(Number.isSafeInteger(width) && Number.isSafeInteger(height))
+      const name = `igs-keyboard-${pid}-${width}x${height}`
+      const filename = path.join(root, `${name}.js`)
+      // KWin applies the requested frame size to the existing native client.
+      // The test then waits for Chromium to receive that Wayland configure.
+      await writeFile(
+        filename,
+        `const window = workspace.activeWindow;
+if (!window || window.pid !== ${pid} || !window.normalWindow || !window.resizeable) {
+  throw new Error('Expected the owned AppImage window.');
+}
+function reportFrame() {
+  console.warn('${name} frame ' + window.width + 'x' + window.height);
+}
+window.frameGeometryChanged.connect(reportFrame);
+window.frameGeometry = { x: 0, y: 0, width: ${width}, height: ${height} };
+reportFrame();
+`,
+        { flag: 'wx', mode: 0o600 },
+      )
+      const loaded = await sessionMethod(
+        kwin,
+        '/Scripting',
+        `${scripting}.loadScript`,
+        filename,
+        name,
+      )
+      const id = /^\((\d+),\)$/.exec(loaded)?.[1]
+      assert.ok(id, `Expected a private KWin script ID, got ${loaded}`)
+      async function release() {
+        assert.equal(
+          await sessionMethod(kwin, '/Scripting', `${scripting}.unloadScript`, name),
+          '(true,)',
+        )
+      }
+      try {
+        await sessionMethod(kwin, `/Scripting/Script${id}`, 'org.kde.kwin.Script.run')
+      } catch (error) {
+        await release()
+        throw error
+      }
+      return { ...session, geometryCommand: name, keyboardProtocol: stdout.trim(), release }
+    },
+    async key(key) {
+      await execute(helper, [key], { timeout: 5_000 })
+    },
+  }
+}
+
+async function connectNativeInput(state, record, root) {
+  const pid = String(state.mainPid)
+  assert.match(pid, /^[1-9]\d*$/)
+  const input = process.env.IMAGEGEN_CHOOSER_KWIN_PID
+    ? await connectWayland(pid, root)
+    : await connectX11(pid)
   const page = state.page
   await page.evaluate(() => {
     globalThis.__igsKeyboardQualificationEvents = []
@@ -73,55 +160,71 @@ async function connectNativeInput(state, record) {
   let keyEventsSeen = 0
   return {
     async resize(width, height) {
-      await xdo('windowmove', '--sync', windowId, '0', '0')
-      await xdo('windowsize', '--sync', windowId, String(width), String(height))
-      const geometry = await xdo('getwindowgeometry', '--shell', windowId)
-      assert.match(geometry, new RegExp(`^WIDTH=${width}$`, 'm'))
-      assert.match(geometry, new RegExp(`^HEIGHT=${height}$`, 'm'))
+      const { release, ...native } = await input.resize(width, height)
       let renderer
-      await expect
-        .poll(
-          async () => {
-            renderer = await page.evaluate(() => ({
-              inner: [innerWidth, innerHeight],
-              outer: [outerWidth, outerHeight],
-              dpr: devicePixelRatio,
-            }))
-            return [width, height].every((native, axis) => {
-              const difference = native - renderer.inner[axis] * renderer.dpr
-              return difference >= -1 && difference <= Math.ceil(native * 0.01)
-            })
-          },
-          {
-            message: 'Renderer content must agree with the native size within the X11 frame inset.',
-          },
+      try {
+        await expect
+          .poll(
+            async () => {
+              renderer = await page.evaluate(() => ({
+                inner: [innerWidth, innerHeight],
+                outer: [outerWidth, outerHeight],
+                dpr: devicePixelRatio,
+              }))
+              return [width, height].every((dimension, axis) => {
+                const difference = dimension - renderer.inner[axis] * renderer.dpr
+                return difference >= -1 && difference <= Math.ceil(dimension * 0.01)
+              })
+            },
+            { message: 'Renderer content must agree with the requested native size.' },
+          )
+          .toBe(true)
+        await page.evaluate(
+          () =>
+            new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
         )
-        .toBe(true)
-      await record({ phase: 'native-resize', windowId, pid, width, height, geometry, renderer })
+      } finally {
+        await record({
+          phase: 'native-resize',
+          backend: input.backend,
+          pid,
+          width,
+          height,
+          ...native,
+          renderer,
+        })
+        await release?.()
+      }
     },
     async press(key, phase) {
-      assert.equal(await xdo('getwindowfocus'), windowId)
+      assert.equal(await page.evaluate(() => document.hasFocus()), true)
       const before = await activeFocus(page)
-      await xdo('key', '--clearmodifiers', key)
+      await input.key(key)
       const expected = {
         key: key === 'Return' ? 'Enter' : key.split('+').at(-1),
         shiftKey: key.startsWith('shift+'),
         trusted: true,
       }
       let observed
-      await expect
-        .poll(
-          async () => {
-            const events = await page.evaluate(
-              (offset) => globalThis.__igsKeyboardQualificationEvents.slice(offset),
-              keyEventsSeen,
-            )
-            observed = events.find((entry) => entry.key === expected.key)
-            return observed
-          },
-          { message: `Native key ${key} must reach the renderer during ${phase}` },
-        )
-        .toEqual(expected)
+      let events
+      try {
+        await expect
+          .poll(
+            async () => {
+              events = await page.evaluate(
+                (offset) => globalThis.__igsKeyboardQualificationEvents.slice(offset),
+                keyEventsSeen,
+              )
+              observed = events.find((entry) => entry.key === expected.key)
+              return observed
+            },
+            { message: `Native key ${key} must reach the renderer during ${phase}` },
+          )
+          .toEqual(expected)
+      } catch (error) {
+        await record({ phase, key, expected, events, before, after: await activeFocus(page) })
+        throw error
+      }
       keyEventsSeen = await page.evaluate(() => globalThis.__igsKeyboardQualificationEvents.length)
       await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve())))
       const after = await activeFocus(page)
@@ -240,7 +343,7 @@ export async function runPackagedHomeRecoveryKeyboard({
   assert.equal(initialPorts.projects.ok, true)
   assert.equal(initialPorts.projects.value.length, 1)
   const [{ id }] = initialPorts.projects.value
-  const firstInput = await connectNativeInput(first, record)
+  const firstInput = await connectNativeInput(first, record, root)
   await firstInput.resize(1440, 900)
   await tabToSelection(first, firstInput, record)
   await first.page.screenshot({
@@ -280,7 +383,7 @@ export async function runPackagedHomeRecoveryKeyboard({
 
   const second = await launch('recoverable-home-keyboard')
   const page = second.page
-  const input = await connectNativeInput(second, record)
+  const input = await connectNativeInput(second, record, root)
   await input.resize(900, 620)
   const baseline = indexSnapshot(database)
   const modal = recoveryDialog(page)

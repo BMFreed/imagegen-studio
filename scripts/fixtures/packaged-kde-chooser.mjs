@@ -35,7 +35,7 @@ async function output(command, args) {
   return stdout.trim()
 }
 
-async function sessionMethod(destination, objectPath, method, ...args) {
+export async function sessionMethod(destination, objectPath, method, ...args) {
   return await output('/usr/bin/gdbus', [
     'call',
     '--address',
@@ -50,7 +50,7 @@ async function sessionMethod(destination, objectPath, method, ...args) {
   ])
 }
 
-async function connectionPid(name) {
+export async function connectionPid(name) {
   const result = await sessionMethod(
     'org.freedesktop.DBus',
     '/org/freedesktop/DBus',
@@ -156,7 +156,7 @@ export async function assertPrivateWayland() {
   return { socket, compositorPid, busPid }
 }
 
-async function assertWaylandPeer(pid, session) {
+export async function assertWaylandPeer(pid, session) {
   // The packaged launcher can normalize client environment variables.
   // The established socket pair is the connection authority.
   await assertOwnedProcess(pid, null, [])

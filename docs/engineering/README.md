@@ -1,5 +1,18 @@
 # Engineering Workflow
 
+## Keyboard Recovery on native KDE Wayland
+
+[Packaged Home and Recovery keyboard check](./phase-5-packaged-home-recovery-wayland-keyboard-research.md)
+passed with native KWin input. At 900×620 all three dialog actions remained
+visible, and Escape and Cancel restored visible focus to the Home card.
+
+## Anima Festival stall subject placement
+
+[Festival stall comparison](./phase-4-anima-festival-stall-research.md)
+passed six signed TXT jobs. Both ordinary scenes had coherent stalls.
+One of four regional images met the joint subject and stall criterion.
+The two-seed placement gate remains open.
+
 ## Repair the exact CivitAI embedding from Compare
 
 [Packaged embedding Repair](./phase-5-packaged-noobai-component-repair-research.md)

@@ -1,9 +1,12 @@
 #!/usr/bin/python3
 """Run one packaged chooser test with a private virtual KWin and a private session bus."""
 import ast
+import json
 import os
 from pathlib import Path
 import pwd
+import re
+import select
 import shutil
 import signal
 import stat
@@ -56,6 +59,34 @@ def wait_socket(server, filename):
     raise RuntimeError('Virtual KWin did not publish its private socket.')
 
 
+def run_with_keyboard(command, binary):
+    # The seat must advertise a keyboard before Chromium starts and keep it
+    # available across the individual short-lived input clients.
+    with subprocess.Popen(
+        [binary, '--hold'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+    ) as hold:
+        try:
+            if not select.select([hold.stdout], [], [], 6)[0]:
+                raise RuntimeError('The private keyboard did not become ready.')
+            ready = json.loads(hold.stdout.readline())
+            if (hold.poll() is not None or ready['action'] != '--hold'
+                    or ready['interface'] != 'org_kde_kwin_fake_input'
+                    or ready['boundVersion'] != 4):
+                raise RuntimeError('The private compositor keyboard is unavailable.')
+            print(f'Private Wayland keyboard ready: {json.dumps(ready)}',
+                  file=sys.stderr, flush=True)
+            return run(command)
+        finally:
+            hold.stdin.close()
+            try:
+                if hold.wait(timeout=6) != 0:
+                    raise RuntimeError('The private keyboard did not exit normally.')
+            except subprocess.TimeoutExpired:
+                hold.kill()
+                hold.wait()
+                raise
+
+
 def start_private_session(command):
     runtime = Path(os.environ['XDG_RUNTIME_DIR'])
     artifacts = Path(pwd.getpwuid(os.getuid()).pw_dir) / '.codex/artifacts/imagegen-studio'
@@ -66,6 +97,25 @@ def start_private_session(command):
             or artifacts not in profile.parents
             or 'DISPLAY' in os.environ or 'WAYLAND_SOCKET' in os.environ):
         raise RuntimeError('The private Wayland launcher requires its isolated session.')
+    keyboard = os.environ.get('IMAGEGEN_WAYLAND_KEYBOARD_HELPER')
+    if keyboard is not None:
+        if os.environ.get('IMAGEGEN_LINUX_PACKAGE_OFFLINE_PROJECT') != 'home-recovery-keyboard':
+            raise RuntimeError('The private keyboard belongs to the Home Recovery test.')
+        binary = Path(keyboard)
+        if (not re.fullmatch(r'/[A-Za-z0-9/_.-]+', keyboard)
+                or binary.resolve(strict=True) != binary or artifacts not in binary.parents
+                or not binary.is_file() or binary.stat().st_uid != os.getuid()
+                or not os.access(binary, os.X_OK)):
+            raise RuntimeError('Use the exact owned keyboard helper.')
+        applications = Path(os.environ['XDG_DATA_HOME']) / 'applications'
+        assert profile in applications.parents and applications.parent.resolve() == applications.parent
+        applications.mkdir(mode=0o700)
+        entry = applications / 'org.imagegen.StudioQualificationKeyboard.desktop'
+        with entry.open('x') as desktop:
+            desktop.write('[Desktop Entry]\nType=Application\n'
+                          'Name=ImageGen Studio Qualification Keyboard\n'
+                          f'Exec={binary}\n'
+                          'X-KDE-Wayland-Interfaces=org_kde_kwin_fake_input\n')
     address = subprocess.check_output(
         [
             '/usr/bin/gdbus', 'call', '--session', '--dest', 'org.a11y.Bus',
@@ -108,6 +158,8 @@ def start_private_session(command):
         os.environ['IMAGEGEN_CHOOSER_KWIN_PID'] = str(server.pid)
         print(f'Private Wayland socket {runtime / SOCKET}, KWin PID={server.pid}',
               file=sys.stderr, flush=True)
+        if keyboard is not None:
+            return run_with_keyboard(command, keyboard)
         return run(command)
     finally:
         if server.poll() is None:

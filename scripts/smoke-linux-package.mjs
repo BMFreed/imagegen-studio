@@ -58,8 +58,12 @@ const projectExport = process.env.IMAGEGEN_LINUX_PACKAGE_PROJECT_EXPORT
 const continuityFixture = process.env.IMAGEGEN_LINUX_PACKAGE_RUNTIME_CONTINUITY
 const privateDesktop = portableChooser ?? componentAction ?? offlineProject
 assert.ok(
-  !kdeChooser || portableChooser || projectExport,
-  'The private Wayland launcher requires a chooser case.',
+  !kdeChooser || portableChooser || projectExport || offlineProject === 'home-recovery-keyboard',
+  'The private Wayland launcher requires a supported packaged case.',
+)
+assert.equal(
+  process.env.IMAGEGEN_WAYLAND_KEYBOARD_HELPER !== undefined,
+  kdeChooser && offlineProject === 'home-recovery-keyboard',
 )
 const nativeMemoryGiB = trainedFixture ? 12 : 4
 const nativeDeadlineSeconds = trainedFixture
@@ -738,6 +742,8 @@ if (offlineProject === 'home-recovery-keyboard')
       'src/shared/projects/project-schema.ts',
     ].map((file) => path.join(repo, file)),
   )
+if (kdeChooser && offlineProject === 'home-recovery-keyboard')
+  sourcePaths.push(path.join(repo, 'scripts/fixtures/packaged-wayland-keyboard.c'))
 if (offlineProject === 'queue-startup-recovery')
   sourcePaths.push(
     ...[
