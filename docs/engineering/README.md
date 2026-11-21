@@ -1,5 +1,14 @@
 # Engineering Workflow
 
+## Current ordinary mug IMG operator comparison
+
+[Held mug IMG replay](./phase-4-ordinary-img-mug-held-replay-research.md)
+uses the original Invoke and Studio IMG operators on the same CUDA
+runtime with one shared UNet and the exact retained input tensors.
+Initial noise addition and all 95 per-step comparisons match.
+The earlier installed Invoke trajectory matches through the first
+UNet input and first differs at the UNet output.
+
 ## Current ordinary mug trajectory diagnostic
 
 [Mug trajectory checkpoints](./phase-4-ordinary-img-mug-trajectory-research.md)

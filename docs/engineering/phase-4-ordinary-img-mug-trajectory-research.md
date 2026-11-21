@@ -94,9 +94,9 @@ a mosaic-like transition by step 8, and the clear terminal pattern by
 step 19. The exact onset of the finished pattern within the intervening
 steps remains unresolved. The snapshots do not establish a faulty
 scheduler operation or isolate the effect of prompt conditioning.
-The retained raw source, noise, and conditioning can be used as common
-inputs to compare the first scaled UNet input, CFG output, and Euler
-transition in both implementations. Human visual acceptance remains open.
+The [held-input follow-up](./phase-4-ordinary-img-mug-held-replay-research.md)
+compares those retained inputs through all 19 steps and finds byte-exact
+operator outputs on one shared runtime. Human visual acceptance remains open.
 
 ## Checks and retention
 
