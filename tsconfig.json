@@ -14,6 +14,7 @@
     "vite.desktop.config.ts",
     "src/**/*.ts",
     "scripts/**/*.ts",
+    "scripts/qualify-installed-anima-background-visual.mts",
     "scripts/qualify-installed-anima-negative-visual.mts",
     "scripts/qualify-installed-reference-capacity.mts",
     "scripts/qualify-installed-reference-img-utility.mts",

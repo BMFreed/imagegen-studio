@@ -1,5 +1,20 @@
 # Engineering Workflow
 
+## Anima positive regions with dedicated global scene area
+
+[Four-case Anima scene comparison](./phase-4-anima-global-background-visual-research.md)
+passed signed TXT execution. The two inset masks retained a visible bench
+and lost the paired scarf placement. The full-mask result retained the
+red/blue assignment and omitted the bench.
+
+## Subsequent update from KDE's recovery path
+
+[KDE recovery and next update](./phase-5-packaged-recovery-kde-next-update-research.md)
+saved signed B through the native SaveFile dialog and installed signed C at
+the exact same lowercase path. The three application lifetimes closed normally.
+The saved Project edit reopened under C and the two stages retained their
+own exact backups.
+
 ## Native KDE dialog for recovery AppImage
 
 [KDE Wayland SaveFile recovery](./phase-5-packaged-recovery-kde-chooser-research.md)

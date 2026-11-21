@@ -22,7 +22,7 @@ const installNext = process.env.IGS_RECOVERY_QUALIFICATION_INSTALL_NEXT === '1'
 const installedMode = process.env.IGS_RECOVERY_QUALIFICATION_INSTALLED_RUNTIME
 assert.ok(installedMode === undefined || installedMode === '1')
 if (kdeSave) {
-  assert.ok(!installNext && installedMode === undefined && version !== '0.3.0')
+  assert.ok(installedMode === undefined && (installNext || version !== '0.3.0'))
   assert.equal(process.env.XDG_SESSION_TYPE, 'wayland')
   assert.ok(process.env.WAYLAND_DISPLAY && process.env.DBUS_SESSION_BUS_ADDRESS)
   assert.equal(process.env.DISPLAY, undefined)

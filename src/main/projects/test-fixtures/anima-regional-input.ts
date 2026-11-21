@@ -38,6 +38,7 @@ import { fileURLToPath } from 'node:url'
 
 import type { CivitaiClient } from '../../models/civitai-client.js'
 import type { CivitaiTokenStore } from '../../models/civitai-token-store.js'
+import type { CapturedRegionalGuidanceInput } from '../project-regional-guidance-input.js'
 
 import { openAppDatabase } from '../../db/database.js'
 import { ANIMA_QWEN3_0_6B_ENCODER, ANIMA_QWEN_IMAGE_VAE } from '../../models/anima-manifest.js'
@@ -70,6 +71,7 @@ const VARIANTS = [
   'base',
   'swapped',
   'zero',
+  'ordinary',
   'empty',
   'inherited',
   'negative',
@@ -111,6 +113,7 @@ export type SerializedAnimaRegionalRecipe = Omit<CurrentCanvasRegionalRecipe, 'r
     coverage: Omit<Region['coverage'], 'alpha'> & { alpha: number[] }
   })[]
 }
+
 export interface AnimaRegionalInputFixture {
   authoredDocument: IgsProjectDocumentV1
   compiledPrompts: readonly CompiledCurrentCanvasAnimaRegionalPrompt[]
@@ -137,6 +140,12 @@ export interface AnimaRegionalInputFixture {
   variant: AnimaRegionalFixtureVariant
   verifiedBundle?: VerifiedAnimaGenerationBundle
 }
+interface InstalledVisualInput {
+  compiledPrompts: readonly CompiledCurrentCanvasAnimaRegionalPrompt[]
+  models: ModelService
+  prepared: PreparedAnimaGeneration
+  recipe: CurrentCanvasRegionalRecipe
+}
 
 type Region = CurrentCanvasRegionalRecipe['regions'][number]
 
@@ -147,11 +156,17 @@ export async function produceAnimaRegionalInputFixture(
     guidanceScale?: number
     height?: number
     inheritGlobalNegative?: readonly [boolean, boolean]
+    installedVisual?: {
+      pythonExecutable: string
+      runtimeRoot: string
+      useCase: (input: InstalledVisualInput) => Promise<unknown>
+    }
     regionalNegativeTexts?: readonly [string, string]
     regionalTexts?: readonly [string, string]
     seed?: number
     steps?: number
     trainedBundle?: AnimaRegionalTrainedBundle
+    uncoveredBackground?: boolean
     variant?: AnimaRegionalFixtureVariant
     width?: number
   } = {},
@@ -168,6 +183,16 @@ export async function produceAnimaRegionalInputFixture(
   const trainedBundle =
     options.trainedBundle === undefined ? undefined : captureTrainedBundle(options.trainedBundle)
   assert.ok(VARIANTS.includes(variant), 'The fixture variant must be explicitly supported')
+  const { installedVisual, uncoveredBackground = false } = options
+  if (installedVisual) {
+    assert.ok(trainedBundle)
+    assert.ok(variant === 'ordinary' || variant === 'base' || variant === 'swapped')
+    assert.deepEqual([width, height, seed, steps, guidanceScale], [512, 512, 123, 20, 4])
+    assert.deepEqual(regionalTexts, REGIONAL_TEXTS)
+  } else {
+    assert.ok(variant !== 'ordinary' && !uncoveredBackground)
+  }
+  assert.ok(!uncoveredBackground || variant === 'base' || variant === 'swapped')
   const signed =
     variant === 'negative' || variant === 'negative-neighbor' || variant === 'negative-only'
   assert.ok(
@@ -242,18 +267,21 @@ export async function produceAnimaRegionalInputFixture(
     const maskPaths: string[] = []
     const middle = Math.floor(width / 2)
     const regions: IgsRegionalGuidanceV1[] = []
-    for (const index of [0, 1] as const) {
+    const maskY = uncoveredBackground ? 64 : 0
+    const maskHeight = uncoveredBackground ? 288 : height
+    const activeOwners = variant === 'ordinary' ? [] : ([0, 1] as const)
+    for (const index of activeOwners) {
       const firstX = index === 0 ? 0 : middle - 2
       const lastX = index === 0 ? middle + 2 : width
       const maskWidth = lastX - firstX
-      const alpha = Uint8Array.from({ length: maskWidth * height }, (_, sample) => {
+      const alpha = Uint8Array.from({ length: maskWidth * maskHeight }, (_, sample) => {
         const x = firstX + (sample % maskWidth)
         if (index === 0) {
           return x < middle ? 255 : x === middle ? 128 : 127
         }
         return x >= middle ? 255 : x === middle - 1 ? 128 : 127
       })
-      const bytes = encodeProjectMaskPng(alpha, maskWidth, height)
+      const bytes = encodeProjectMaskPng(alpha, maskWidth, maskHeight)
       const sha256 = digest(bytes)
       const member = `assets/masks/${MASK_IDS[index]}/${sha256}.png`
       sources[member] = { bytes }
@@ -268,8 +296,14 @@ export async function produceAnimaRegionalInputFixture(
         id: REGION_IDS[index],
         locked: index === 0,
         mask: {
-          asset: { bytes: bytes.length, height, path: member, sha256, width: maskWidth },
-          bounds: { height, width: maskWidth, x: bbox.x + firstX, y: bbox.y },
+          asset: {
+            bytes: bytes.length,
+            height: maskHeight,
+            path: member,
+            sha256,
+            width: maskWidth,
+          },
+          bounds: { height: maskHeight, width: maskWidth, x: bbox.x + firstX, y: bbox.y + maskY },
           id: MASK_IDS[index],
           revision: 1,
         },
@@ -359,7 +393,7 @@ export async function produceAnimaRegionalInputFixture(
       dirty: tabBefore.dirty,
       epoch: coordinator().documentEpoch,
     }
-    const prepared = await service.withCapturedRegionalGuidanceInput(tab.id, async (capture) => {
+    const prepareRegional = async (capture: CapturedRegionalGuidanceInput) => {
       let verifiedBundle: VerifiedAnimaGenerationBundle | undefined
       if (trained) {
         const saved = capture.snapshot.generationDraft.model
@@ -398,7 +432,44 @@ export async function produceAnimaRegionalInputFixture(
         recipe,
         verifiedBundle,
       }
-    })
+    }
+    const prepared = installedVisual
+      ? await service.withCapturedCurrentCanvasRegionalGenerationInput(tab.id, async (capture) => {
+          assert.ok(trained)
+          const resolved = await prepareRegional(capture.regional)
+          capture.assertCurrent()
+          const scratch = path.join(root, 'scratch')
+          const worker = await ProjectWorkerClient.start(
+            {
+              pythonExecutable: installedVisual.pythonExecutable,
+              runtimeRoot: installedVisual.runtimeRoot,
+              stagingBasePath: scratch,
+            },
+            {
+              environment: {
+                CUDA_VISIBLE_DEVICES: '',
+                LANG: 'C.UTF-8',
+                LC_ALL: 'C.UTF-8',
+                TMPDIR: scratch,
+              },
+            },
+          )
+          const target = await capture.composeTarget(worker).finally(() => worker.close())
+          assert.equal(ProjectWorkerClient.hasUnconfirmedExit(), false)
+          assert.equal(target.mode, 'txt2img')
+          const prepared = await prepareAnimaGeneration({ modelService: trained.models, target })
+          assert.equal(prepared.context.mode, 'txt2img')
+          assert.deepEqual(prepared.context.bbox, bbox)
+          await installedVisual.useCase({
+            compiledPrompts: resolved.compiledPrompts,
+            models: trained.models,
+            prepared,
+            recipe: resolved.recipe,
+          })
+          capture.assertCurrent()
+          return resolved
+        })
+      : await service.withCapturedRegionalGuidanceInput(tab.id, prepareRegional)
     assert.deepEqual(coordinator().document, documentBefore)
     assert.ok(
       (await readFile(savedPath)).equals(packageBefore),

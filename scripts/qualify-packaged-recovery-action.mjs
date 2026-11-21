@@ -33,10 +33,13 @@ assert.ok(
   run &&
     (rest.length === 0 ||
       (rest.length === 1 &&
-        ['--install-next', '--kde-save', '--kde-save-default'].includes(rest[0]))),
+        ['--install-next', '--kde-install-next', '--kde-save', '--kde-save-default'].includes(
+          rest[0],
+        ))),
 )
-const installNext = rest[0] === '--install-next'
-const kdeSaveDefault = rest[0] === '--kde-save-default'
+const kdeInstallNext = rest[0] === '--kde-install-next'
+const installNext = rest[0] === '--install-next' || kdeInstallNext
+const kdeSaveDefault = rest[0] === '--kde-save-default' || kdeInstallNext
 const kdeSave = rest[0] === '--kde-save' || kdeSaveDefault
 const outputRoot = path.join(
   kdeSave ? os.userInfo().homedir : os.homedir(),
@@ -51,6 +54,7 @@ const manifest = await readJson('package-manifest.json')
 const root = path.join(run, 'payloads')
 assert.equal(await fs.realpath(root), root)
 assert.equal(manifest.kdeSave === true, kdeSave)
+assert.equal(manifest.kdeInstallNext === true, kdeInstallNext)
 if (kdeSave) {
   await assertPrivateWayland()
   process.env.IMAGEGEN_LINUX_PACKAGE_ARTIFACTS = run
@@ -69,7 +73,8 @@ const execute = (command, args, options) =>
         }
       : options,
   )
-const releaseVersions = kdeSave ? ['0.1.0', '0.2.0'] : ['0.1.0', '0.2.0', '0.3.0']
+const releaseVersions =
+  kdeSave && !kdeInstallNext ? ['0.1.0', '0.2.0'] : ['0.1.0', '0.2.0', '0.3.0']
 assert.deepEqual(Object.keys(manifest.releases).sort(), releaseVersions)
 const releases = releaseVersions.map((version) => {
   const release = manifest.releases[version]
@@ -246,6 +251,7 @@ async function readInstalledRuntime() {
 
 const installedRuntime = await readInstalledRuntime()
 assert.ok(!kdeSave || !installedRuntime)
+const kdeUpdateScope = kdeInstallNext ? (await proc(process.pid)).group : null
 const trained = installedRuntime?.trained
 const signedTrained = trained
   ? await import('./fixtures/packaged-signed-trained-generation.mjs')
@@ -564,7 +570,8 @@ async function ownKdeScope(pid, start) {
   )
 }
 async function bindNative(state, refreshMainDeathProof = false) {
-  const surviveMainDeath = installNext && !installedRuntime && state.version === '0.2.0'
+  const surviveMainDeath =
+    installNext && !kdeInstallNext && !installedRuntime && state.version === '0.2.0'
   if (trained) await assertInheritedScope(await proc(state.pid))
   const check = await boundQualificationProcess(state.pid, {
     deadlineSeconds: 360,
@@ -576,6 +583,14 @@ async function bindNative(state, refreshMainDeathProof = false) {
   if (installedRuntime) {
     await assertInheritedScope(await proc(state.pid))
     assert.ok(check.groups.every(({ group }) => group === installedRuntime.owner.group))
+  }
+  if (kdeInstallNext) {
+    assert.ok(
+      check.groups.every(
+        ({ group, memoryMax, swapMax }) =>
+          group === kdeUpdateScope && BigInt(memoryMax) <= 4n * 1024n ** 3n && swapMax === '0',
+      ),
+    )
   }
   state.checks.push(check)
   return check
@@ -749,6 +764,8 @@ async function observeStartup(state) {
   if (installedRuntime) {
     assert.equal(startup.appData, installedRuntime.appData)
     await assertInheritedScope(await proc(state.pid))
+  } else if (kdeInstallNext) {
+    assert.equal((await proc(state.pid)).group, kdeUpdateScope)
   } else if (installNext && state.version === '0.2.0') {
     await ownKdeScope(state.pid, state.start)
   }
@@ -939,7 +956,7 @@ async function installFromRecoveredPath(recovered, modal, project, trainedBefore
   assert.equal(held.group, prior.group)
   assert.equal(held.pid, prior.pid)
   assert.equal(held.start, prior.start)
-  const refreshed = await bindNative(recovered, !installedRuntime)
+  const refreshed = await bindNative(recovered, !installedRuntime && !kdeInstallNext)
   const heldScope = refreshed.groups.find((entry) => entry.group === prior.group)
   assert.ok(heldScope)
   const scopeIdentityBefore = await readScopeIdentity(prior.group)
@@ -947,6 +964,9 @@ async function installFromRecoveredPath(recovered, modal, project, trainedBefore
     await assertInheritedScope(prior)
     assert.equal(heldScope.ownedScope, false)
     assert.deepEqual(scopeIdentityBefore, installedRuntime.scopeIdentity)
+  } else if (kdeInstallNext) {
+    assert.equal(prior.group, kdeUpdateScope)
+    assert.equal(heldScope.ownedScope, false)
   } else {
     assert.ok(heldScope.ownedScope && heldScope.scopeProof)
     assert.deepEqual(scopeIdentityBefore, heldScope.scopeProof.scopeIdentity)
@@ -995,7 +1015,8 @@ async function installFromRecoveredPath(recovered, modal, project, trainedBefore
   }
   const successorOwnScope = `app-imagegen\\x2dstudio-${successor.pid}.scope`
   const scopeAllowed = (group) =>
-    group === prior.group || (!installedRuntime && path.basename(group) === successorOwnScope)
+    group === prior.group ||
+    (!installedRuntime && !kdeInstallNext && path.basename(group) === successorOwnScope)
   assert.ok(scopeAllowed(heldC.group))
   // Chromium may promote an AppImage started manually but leave an actual
   // relaunch in the parent's already capped scope. Let either settle while
@@ -1006,7 +1027,12 @@ async function installFromRecoveredPath(recovered, modal, project, trainedBefore
       const observed = await proc(successor.pid)
       assert.equal(observed.start, successor.start)
       assert.ok(scopeAllowed(observed.group))
-      if (!installedRuntime && observed.group === prior.group && Date.now() < settlementDeadline)
+      if (
+        !installedRuntime &&
+        !kdeInstallNext &&
+        observed.group === prior.group &&
+        Date.now() < settlementDeadline
+      )
         return null
       return observed
     },
@@ -1024,7 +1050,9 @@ async function installFromRecoveredPath(recovered, modal, project, trainedBefore
   else assert.ok(admittedGroup.ownedScope)
   const beforeDatabase = trainedBefore
     ? await retainClosedDatabase('trained-after-b-close.sqlite')
-    : null
+    : kdeInstallNext
+      ? await retainClosedDatabase('recovered-closed.sqlite')
+      : null
   await writeFlag('admit-c-startup', { ...successorIdentity, scopeIdentity })
   const released = await nativeEvent('successor-ready-released', successor.version)
   assert.deepEqual(released.scopeIdentity, scopeIdentity)
@@ -1068,6 +1096,26 @@ async function installFromRecoveredPath(recovered, modal, project, trainedBefore
 
   const savedSha = await hash(project.filename)
   assert.notEqual(savedSha, project.before)
+  if (kdeInstallNext) {
+    const originalPackage = await readIgsPackage(path.join(run, 'original-closed.igs'))
+    const updatedPackage = await readIgsPackage(project.filename)
+    const previousProject = originalPackage.project
+    assert.notEqual(updatedPackage.project.documentRevision, previousProject.documentRevision)
+    assert.deepEqual(updatedPackage.project, {
+      ...previousProject,
+      documentRevision: updatedPackage.project.documentRevision,
+      generationDraft: {
+        ...previousProject.generationDraft,
+        positivePrompt: { ...previousProject.generationDraft.positivePrompt, text: project.prompt },
+      },
+    })
+    const attachments = ({ manifest }) =>
+      manifest.members.filter(({ path }) => path !== 'project.json')
+    assert.deepEqual(attachments(updatedPackage), attachments(originalPackage))
+    const snapshot = path.join(run, 'recovered-closed.igs')
+    await fs.copyFile(project.filename, snapshot, constants.COPYFILE_EXCL)
+    assert.equal(await hash(snapshot), savedSha)
+  }
   const list = await call(successor.page, 'projects', 'list')
   assert.deepEqual(
     list.map(({ id }) => id).sort(),
@@ -1123,6 +1171,14 @@ async function installFromRecoveredPath(recovered, modal, project, trainedBefore
   await closeNormally(successor)
   await confirmNormalExit(recovered)
   assert.equal(await hash(project.filename), cpuSave?.fromC.witness.sha256 ?? savedSha)
+  let kdeProof
+  if (kdeInstallNext) {
+    const afterDatabase = await retainClosedDatabase('successor-closed.sqlite')
+    const snapshot = path.join(run, 'successor-closed.igs')
+    await fs.copyFile(project.filename, snapshot, constants.COPYFILE_EXCL)
+    assert.equal(await hash(snapshot), savedSha)
+    kdeProof = { beforeDatabase, afterDatabase }
+  }
   return {
     backup,
     current: changed,
@@ -1134,6 +1190,7 @@ async function installFromRecoveredPath(recovered, modal, project, trainedBefore
     startupScope: { ...successorIdentity, scopeIdentity },
     ...(cpuSave ? { cpuSave } : {}),
     ...(trainedEvidence ? { signedTrained: trainedEvidence } : {}),
+    ...(kdeProof ? { kdeProof } : {}),
   }
 }
 const report = {
@@ -1277,7 +1334,11 @@ try {
   let downloadedC
   let installed
   if (kdeSave) {
+    assert.deepEqual(await fileWitness(newPath), materialized)
+    assert.equal(await hash(project), projectSha)
     await second.screenshot({ path: path.join(run, 'reopened-recovery-project.png') })
+  }
+  if (kdeSave && !installNext) {
     await closeNormally(recovered)
     assert.deepEqual(await fileWitness(newPath), materialized)
     assert.equal(await hash(project), projectSha)

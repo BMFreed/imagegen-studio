@@ -130,6 +130,12 @@ entries record the state at their checkpoint.
    scarves survived all variants. The current original Invoke denoiser on the
    held source latent repeats that result. Exact negative permissions and
    prompt inputs match. Selective attenuation remains unqualified.
+   A separate positive TXT trial reserved 448 sampled background cells
+   with shorter masks at seed 123. Both inset outputs gained a visible
+   bench. One had two red scarves and the swapped case had a single
+   red-scarf cat. Full masks placed both scarves correctly and omitted
+   the bench. Joint scene and placement utility remains open.
+   [Anima global scene area](./phase-4-anima-global-background-visual-research.md)
    Retain the IMG pilots and record a new hypothesis before any further
    visual run. Record all images and a human acceptance verdict. Consult model-aware
    settings and the guards before classifying additional combinations as supported.
@@ -198,6 +204,11 @@ entries record the state at their checkpoint.
    exact signed bytes at the selected spelling. Launching that copy reopens
    the same Project and clears recovery for the new path. Both lifetimes
    close normally. [Native KDE recovery](./phase-5-packaged-recovery-kde-chooser-research.md)
+   A subsequent native test installed signed C from the same KDE-selected
+   lowercase B path. The ordinary Project-close flow saved the edit and C
+   reopened it after relaunch. C verified the target and kept its B backup
+   in a separate stage, while A and its original stage stayed intact.
+   [Next update from KDE's recovered path](./phase-5-packaged-recovery-kde-next-update-research.md)
    Production publisher trust, legacy/unleased machines, in-place recovery and retirement still require
    a supported ownership and qualification boundary. Re-read Invoke before
    changing owners. Keep manual SQLite recovery separate.
