@@ -50,8 +50,12 @@ const portableChooser = portableImport ?? portableLocate
 const kdeChooser = process.env.IMAGEGEN_CHOOSER_KWIN_PID !== undefined
 const componentRemove = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_COMPONENT_REMOVE
 const offlineProject = process.env.IMAGEGEN_LINUX_PACKAGE_OFFLINE_PROJECT
+const projectExport = process.env.IMAGEGEN_LINUX_PACKAGE_PROJECT_EXPORT
 const privateDesktop = portableChooser ?? componentRemove ?? offlineProject
-assert.ok(!kdeChooser || portableChooser, 'The private Wayland launcher requires a chooser case.')
+assert.ok(
+  !kdeChooser || portableChooser || projectExport,
+  'The private Wayland launcher requires a chooser case.',
+)
 const nativeMemoryGiB = trainedFixture ? 12 : 4
 const nativeDeadlineSeconds = trainedFixture
   ? 420
@@ -70,7 +74,7 @@ const boundedExecute = (command, args, options) =>
   execute(
     command,
     args.map((value) => (value === 'MemoryMax=12G' ? `MemoryMax=${nativeMemoryGiB}G` : value)),
-    privateDesktop
+    privateDesktop || projectExport
       ? {
           ...options,
           env: {
@@ -96,6 +100,25 @@ assert.ok(
   trainedFixture === undefined || (installedEngineReport && historicalFixture === undefined),
 )
 const updateCheckMode = process.env.IMAGEGEN_LINUX_PACKAGE_UPDATE_CHECK
+if (projectExport !== undefined) {
+  assert.ok(projectExport === '1' && kdeChooser && installedEngineReport)
+  assert.ok(
+    [
+      privateDesktop,
+      legacyNoobaiFixture,
+      historicalFixture,
+      protocolFixture,
+      trainedFixture,
+      runtimeSetupControl,
+      noobaiPreviewMode,
+      noobaiInstall,
+      noobaiMatrix,
+      updateCheckMode,
+      suppliedRecoveryPublication,
+    ].every((profile) => profile === undefined),
+    'Use a separate installed engine profile for Project image export.',
+  )
+}
 if (legacyNoobaiFixture !== undefined || privateDesktop !== undefined) {
   assert.ok(
     [
@@ -329,6 +352,22 @@ const protocolHarness = protocolFixture
   ? await import('./fixtures/packaged-worker-protocol.mjs')
   : null
 const engine = await installedEngineFixture()
+if (projectExport) {
+  const run = path.dirname(root)
+  assert.equal(path.dirname(run), engine.run)
+  assert.match(path.basename(run), /^project-export-r[1-9]\d*$/)
+  assert.equal(path.basename(root), 'native')
+  const claim = path.join(
+    path.dirname(engine.dataRoot),
+    '.packaged-upgrade-qualification/owner.json',
+  )
+  assert.equal(await realpath(claim), claim)
+  assert.deepEqual(JSON.parse(await readFile(claim, 'utf8')), {
+    run,
+    appData: engine.dataRoot,
+    pid: process.ppid,
+  })
+}
 const incompatibleWorker = engine?.protocol?.protocol === '2'
 const historical =
   historicalFixture === undefined
@@ -569,15 +608,22 @@ if (legacyHarness)
     ].map((file) => path.join(repo, 'scripts/fixtures', file)),
   )
 if (portableChooser)
+  sourcePaths.push(path.join(repo, 'scripts/fixtures/packaged-noobai-import-chooser.mjs'))
+if (portableChooser && !kdeChooser)
+  sourcePaths.push(path.join(repo, 'scripts/fixtures/packaged-project-chooser-x11.py'))
+if (kdeChooser)
   sourcePaths.push(
-    path.join(repo, 'scripts/fixtures/packaged-noobai-import-chooser.mjs'),
-    ...(kdeChooser
-      ? [
-          'packaged-project-chooser-wayland.py',
-          'packaged-kde-chooser.mjs',
-          'packaged-kde-chooser-atspi.py',
-        ].map((file) => path.join(repo, 'scripts/fixtures', file))
-      : [path.join(repo, 'scripts/fixtures/packaged-project-chooser-x11.py')]),
+    ...[
+      'packaged-project-chooser-wayland.py',
+      'packaged-kde-chooser.mjs',
+      'packaged-kde-chooser-atspi.py',
+    ].map((file) => path.join(repo, 'scripts/fixtures', file)),
+  )
+if (projectExport)
+  sourcePaths.push(
+    path.join(repo, 'scripts/qualify-packaged-installed-upgrade.mjs'),
+    path.join(repo, 'scripts/fixtures/packaged-project-image-export.mjs'),
+    path.join(repo, 'scripts/fixtures/packaged-project-image-export-oracle.py'),
   )
 if (portableLocateHarness)
   sourcePaths.push(path.join(repo, 'scripts/fixtures/packaged-noobai-project-locate.mjs'))
@@ -813,7 +859,7 @@ async function launch(name, selectedAppImage = appImage) {
     state.applicationImage = expected
   }
   lifetimes.push(state)
-  if (history || trained || protocolHarness || legacyHarness || privateDesktop) {
+  if (history || trained || protocolHarness || legacyHarness || privateDesktop || projectExport) {
     await writeFile(
       path.join(root, `${name}.launch-intent.json`),
       JSON.stringify({ name }) + '\n',
@@ -961,7 +1007,12 @@ async function closeNormally(state) {
   await gpuObservers.get(state)?.()
   gpuObservers.delete(state)
   if (
-    (trained || runtimeSetupControl || protocolHarness || legacyHarness || privateDesktop) &&
+    (trained ||
+      runtimeSetupControl ||
+      protocolHarness ||
+      legacyHarness ||
+      privateDesktop ||
+      projectExport) &&
     !state.closed &&
     state.aggregateLimits
   ) {
@@ -1169,6 +1220,22 @@ async function runNoobaiPreviewQualification() {
 }
 
 async function runOwnedProjectProfile() {
+  if (projectExport) {
+    const { runPackagedProjectImageExport } =
+      await import('./fixtures/packaged-project-image-export.mjs')
+    return await runPackagedProjectImageExport({
+      root,
+      appData,
+      ownedRunRoot,
+      packageBefore,
+      pythonExecutable: engine.pythonExecutable,
+      launch,
+      readPorts,
+      closeNormally,
+      retainOwnStore,
+      identity,
+    })
+  }
   if (offlineProjectFixture) {
     const fixture = await import(`./fixtures/${offlineProjectFixture}.mjs`)
     const args = {
@@ -1460,6 +1527,7 @@ try {
     portableNoobaiLocate,
     noobaiComponentRemove,
     offlineProjectResult,
+    packagedProjectImageExport,
   } = noobaiMatrix
     ? {}
     : setupControl
@@ -1579,7 +1647,7 @@ try {
       )
     }
   }
-  if (protocolHarness || legacyHarness || privateDesktop) {
+  if (protocolHarness || legacyHarness || privateDesktop || projectExport) {
     assert.equal(lifetimes.length, portableLocate || offlineProject === 'trash' ? 3 : 2)
     for (const state of lifetimes) {
       assert.ok(state.normalPhysicalExit && !state.forcedCleanup)
@@ -1631,9 +1699,11 @@ try {
                       ? 'Actual fused AppImage executes one trained installed-worker generation through public Generate, Add, Save and reopen.'
                       : historicalUpgrade
                         ? 'Actual fused AppImage upgrades an owned historical DB, renders a nonempty Project preview with the installed CPU worker and reopens the saved Project.'
-                        : engine
-                          ? 'Actual fused Linux AppImage with exact installed runtime, real Main status qualification and Project create/restart/persistence.'
-                          : 'Actual fused Linux AppImage outside checkout, real packaged Main/preload/SQLite/migrations/own Project create/restart/persistence. No source worker or service mocks.',
+                        : packagedProjectImageExport
+                          ? 'Actual stock AppImage exports full-resolution Project PNGs with the installed CPU worker and the real KDE SaveFile portal.'
+                          : engine
+                            ? 'Actual fused Linux AppImage with exact installed runtime, real Main status qualification and Project create/restart/persistence.'
+                            : 'Actual fused Linux AppImage outside checkout, real packaged Main/preload/SQLite/migrations/own Project create/restart/persistence. No source worker or service mocks.',
     mode: kdeChooser
       ? 'APPIMAGE_EXTRACT_AND_RUN=1; native Wayland on private virtual KWin; Chromium CDP loopback.'
       : 'APPIMAGE_EXTRACT_AND_RUN=1; X11; Chromium CDP loopback. FUSE installation and Main Node inspector are not used.',
@@ -1659,6 +1729,7 @@ try {
     ...(portableNoobaiLocate ? { portableNoobaiLocate } : {}),
     ...(noobaiComponentRemove ? { noobaiComponentRemove } : {}),
     ...(offlineProjectResult ? { offlineProject, offlineProjectResult } : {}),
+    ...(packagedProjectImageExport ? { packagedProjectImageExport } : {}),
     stores: { saved, restarted },
     lifetimes: lifetimes.map(
       ({
@@ -1826,7 +1897,9 @@ console.log(
                     ? 'PASS trained generation, explicit Add and Save/reopen, and two normal physical closes'
                     : history
                       ? 'PASS historical database upgrade, exact backup, installed CPU preview, and two normal physical closes'
-                      : engine
-                        ? 'PASS installed runtime readiness, packaged Project reopen and two normal physical closes'
-                        : 'PASS actual fused AppImage Home/IPC/SQLite/Project persistence, unavailable Setup and two normal physical closes',
+                      : projectExport
+                        ? 'PASS installed CPU Project export through real KDE SaveFile and two normal physical closes'
+                        : engine
+                          ? 'PASS installed runtime readiness, packaged Project reopen and two normal physical closes'
+                          : 'PASS actual fused AppImage Home/IPC/SQLite/Project persistence, unavailable Setup and two normal physical closes',
 )

@@ -153,6 +153,10 @@ entries record the state at their checkpoint.
    preserves the exact saved Project across Trash, restart and Restore. Confirmed
    permanent deletion retires only the target and preserves a neighboring Project
    and file. [Packaged Trash](./phase-5-packaged-project-and-preset-research.md#home-trash)
+   The stock AppImage exported visible content and the primary Generation BBox
+   through the installed CPU worker and KDE SaveFile. Cancel left no file, and
+   the repeated content PNG matched byte-for-byte after restart.
+   [Packaged image export](./phase-5-packaged-project-image-export-research.md)
    The stock Model Manager removed one unshared IllustriousPhoto embedding
    after explicit review. Compare reported the missing resource after
    restart and kept the exact accepted reference and image.

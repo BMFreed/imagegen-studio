@@ -1,4 +1,4 @@
-/** Compose a historical or trained fixture with the packaged smoke in one idle installed slot. */
+/** Run a historical, trained or export fixture in one idle installed slot. */
 import assert from 'node:assert/strict'
 import { execFile, execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -14,10 +14,6 @@ import { prepareHistoricalState } from './fixtures/application-state-upgrade-fix
 
 const exec = promisify(execFile)
 const repo = path.dirname(import.meta.dirname)
-const engineRuns = path.join(
-  os.homedir(),
-  '.codex/artifacts/imagegen-studio/runs/packaged-installed-engine',
-)
 const productionInputs = [
   'src',
   'worker-python',
@@ -35,6 +31,7 @@ const { values } = parseArgs({
     'model-inputs': { type: 'string' },
     'package-proof': { type: 'string' },
     profile: { type: 'string' },
+    'project-export': { type: 'boolean' },
   },
 })
 const run = values.artifacts
@@ -42,6 +39,11 @@ const engineReportPath = values['engine-report']
 const { family, profile } = values
 const sourcesPath = values['model-inputs']
 const packageProofPath = values['package-proof']
+const projectExport = values['project-export']
+const engineRuns = path.join(
+  projectExport && process.env.IMAGEGEN_CHOOSER_KWIN_PID ? os.userInfo().homedir : os.homedir(),
+  '.codex/artifacts/imagegen-studio/runs/packaged-installed-engine',
+)
 assert.ok(family === undefined || family === 'illustrious' || family === 'anima')
 assert.equal(sourcesPath === undefined, family === undefined)
 assert.ok(
@@ -56,7 +58,8 @@ assert.ok(
         'noobai-v',
       ].includes(profile)),
 )
-assert.equal(packageProofPath === undefined, profile === undefined)
+assert.ok(!projectExport || family === undefined)
+assert.equal(packageProofPath === undefined, profile === undefined && !projectExport)
 const preserved = new Set(['inference-resources', 'runtime'])
 const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim()
 const readJson = async (file) => JSON.parse(await fs.readFile(file, 'utf8'))
@@ -247,7 +250,11 @@ assert.equal(path.basename(engineReportPath), 'installed-engine.json')
 assert.ok(
   path.isAbsolute(run ?? '') && path.normalize(run) === run && path.dirname(run) === engineRun,
 )
-const runType = family ? `trained-${profile ?? family}` : 'historical-upgrade'
+const runType = projectExport
+  ? 'project-export'
+  : family
+    ? `trained-${profile ?? family}`
+    : 'historical-upgrade'
 assert.match(path.basename(run), new RegExp(`^${runType}-r[1-9]\\d*$`))
 await directory(engineRun)
 assert.equal(await fs.realpath(engineReportPath), engineReportPath)
@@ -274,6 +281,22 @@ for (const file of [engineReportPath, priorNativeReport, retainedAppImage]) {
   assert.equal(await sha256(file), pins[file], file)
 }
 assert.equal(pins[retainedAppImage], prior.packageBefore.sha256)
+const retainedExportCpu = projectExport
+  ? release.cpuClients.find(
+      ({ ready, selfTest, exitConfirmed }) =>
+        exitConfirmed &&
+        selfTest &&
+        ready.protocolVersion === '1' &&
+        ready.runtimeProfile === 'derivatives-only' &&
+        ready.capabilities.includes('export-composition'),
+    )
+  : null
+if (projectExport) {
+  assert.ok(
+    retainedExportCpu,
+    'The retained installed engine must have qualified its CPU export capability.',
+  )
+}
 const appData = release.roots.appDataDir
 assert.equal(appData, path.join(release.payloadRoot, 'data/imagegen-studio'))
 assert.equal(path.dirname(release.payloadRoot), path.join(engineRun, 'payloads'))
@@ -413,7 +436,36 @@ try {
   assert.deepEqual(await inventory(held, names), before)
   stagedOwned = true
 
-  if (family) {
+  if (projectExport) {
+    const scratch = path.join(appData, 'scratch')
+    await fs.mkdir(scratch, { mode: 0o700 })
+    const manager = new RuntimeManager(await createRuntimeRoots(appData))
+    const source = await manager.resolveInstalledProjectWorker(scratch)
+    assert.ok(source, 'The retained installed CPU image worker could not be resolved.')
+    assert.equal(source.location.pythonExecutable, pythonExecutable)
+    assert.equal(source.environment.CUDA_VISIBLE_DEVICES, '')
+    const client = await ProjectWorkerClient.start(source.location, {
+      environment: source.environment,
+      startupTimeoutMs: 15_000,
+      requestTimeoutMs: 15_000,
+    })
+    let selfTest
+    try {
+      assert.deepEqual(client.ready, retainedExportCpu.ready)
+      selfTest = await client.selfTest()
+      assert.deepEqual(selfTest, retainedExportCpu.selfTest)
+    } finally {
+      await client.close()
+    }
+    assert.equal(ProjectWorkerClient.hasUnconfirmedExit(), false)
+    await writeRecord(path.join(run, 'export-cpu-preflight.json'), {
+      location: source.location,
+      ready: client.ready,
+      selfTest,
+      cudaVisibleDevices: source.environment.CUDA_VISIBLE_DEVICES,
+      exitConfirmed: true,
+    })
+  } else if (family) {
     const { preparePackagedTrainedModels, verifyPackagedTrainedSources } =
       await import('./fixtures/packaged-installed-models.mjs')
     verifyTrainedSources = verifyPackagedTrainedSources
@@ -495,10 +547,13 @@ with Path(sys.argv[1]).open('xb') as out:
     'IMAGEGEN_LINUX_PACKAGE_NOOBAI_INSTALL',
     'IMAGEGEN_LINUX_PACKAGE_NOOBAI_PREVIEW',
     'IMAGEGEN_LINUX_PACKAGE_NOOBAI_TOKEN_FILE',
+    'IMAGEGEN_LINUX_PACKAGE_PROJECT_EXPORT',
     'IMAGEGEN_LINUX_PACKAGE_TRAINED_FIXTURE',
   ])
     delete env[key]
-  if (family) env.IMAGEGEN_LINUX_PACKAGE_TRAINED_FIXTURE = path.join(run, 'trained-fixture.json')
+  if (projectExport) env.IMAGEGEN_LINUX_PACKAGE_PROJECT_EXPORT = '1'
+  else if (family)
+    env.IMAGEGEN_LINUX_PACKAGE_TRAINED_FIXTURE = path.join(run, 'trained-fixture.json')
   else env.IMAGEGEN_LINUX_PACKAGE_HISTORICAL_FIXTURE = path.join(run, 'historical-fixture.json')
   smokeExit = await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [path.join(repo, 'scripts/smoke-linux-package.mjs')], {

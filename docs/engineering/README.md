@@ -8,6 +8,12 @@ worker startup, shutdown and preparation. Healthy busy Retry remains
 available across Projects. The stock AppImage confirmed the transition
 and the same frozen replay after Cancel with its installed CUDA worker.
 
+## Current packaged image export
+
+[Project image export on KDE Wayland](./phase-5-packaged-project-image-export-research.md)
+records full-resolution content and primary bbox PNGs from the installed
+CPU worker, real SaveFile responses and an identical export after restart.
+
 ## Current NoobAI packaged qualification
 
 [Home Trash and accepted-result presets](./phase-5-packaged-project-and-preset-research.md)

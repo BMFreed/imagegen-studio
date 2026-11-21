@@ -14,6 +14,11 @@ const backendName = 'org.freedesktop.impl.portal.desktop.kde'
 const desktopPath = '/org/freedesktop/portal/desktop'
 const requestRoot = `${desktopPath}/request/`
 const projectFilter = /^\s*string "\*\.(?:igs|\[iI\]\[gG\]\[sS\])"$/m
+const pngFilter = /^\s*string "\*\.(?:png|\[pP\]\[nN\]\[gG\])"$/m
+const saveNames = new Map([
+  ['Export As', 'canvas.png'],
+  ['Export Generation BBox', 'generation-bbox.png'],
+])
 const processes = {
   bus: '/usr/bin/dbus-daemon',
   compositor: '/usr/bin/kwin_wayland',
@@ -171,11 +176,11 @@ async function assertWaylandPeer(pid, session) {
   )
 }
 
-function startMonitor() {
+function startMonitor(method) {
   const address = process.env.DBUS_SESSION_BUS_ADDRESS
   const rules = [
-    `type='method_call',path='${desktopPath}',interface='org.freedesktop.portal.FileChooser',member='OpenFile'`,
-    `type='method_call',path='${desktopPath}',interface='org.freedesktop.impl.portal.FileChooser',member='OpenFile'`,
+    `type='method_call',path='${desktopPath}',interface='org.freedesktop.portal.FileChooser',member='${method}'`,
+    `type='method_call',path='${desktopPath}',interface='org.freedesktop.impl.portal.FileChooser',member='${method}'`,
     "type='signal',interface='org.freedesktop.portal.Request',member='Response'",
   ]
   const child = spawn('/usr/bin/dbus-monitor', ['--address', address, ...rules], {
@@ -228,14 +233,25 @@ function monitorMessages(monitor) {
   })
 }
 
-async function observeOpen(monitor, state, windowTitle, kdePid) {
+function readStringOption(body, key) {
+  const pattern = new RegExp(`string "${key}"\\s*\\n\\s*variant\\s+string "([^"]*)"`)
+  return pattern.exec(body)?.[1]
+}
+
+async function observeRequest(
+  monitor,
+  state,
+  windowTitle,
+  kdePid,
+  { method, filter, suggestedName },
+) {
   let calls
   await expect
     .poll(() => {
-      calls = monitorMessages(monitor).filter(({ member }) => member === 'OpenFile')
+      calls = monitorMessages(monitor).filter(({ member }) => member === method)
       return (
         calls.some(({ strings }) => strings.length === 2) &&
-        calls.some(({ strings, body }) => strings.length === 3 && projectFilter.test(body))
+        calls.some(({ strings, body }) => strings.length === 3 && filter.test(body))
       )
     })
     .toBe(true)
@@ -259,44 +275,53 @@ async function observeOpen(monitor, state, windowTitle, kdePid) {
     'DBUS_SESSION_BUS_ADDRESS',
     'XDG_RUNTIME_DIR',
   ])
-  assert.match(front.body, projectFilter)
-  assert.match(backend.body, projectFilter)
-  const token = /string "handle_token"\s*\n\s*variant\s+string "([A-Za-z0-9_]+)"/.exec(
-    front.body,
-  )?.[1]
-  assert.ok(token)
+  assert.match(front.body, filter)
+  assert.match(backend.body, filter)
+  const token = readStringOption(front.body, 'handle_token')
+  assert.match(token ?? '', /^[A-Za-z0-9_]+$/)
   const senderKey = front.sender.slice(1).replaceAll('.', '_')
   assert.match(senderKey, /^\d+_\d+$/)
   const requestPath = `${requestRoot}${senderKey}/${token}`
   assert.ok(backend.body.includes(`object path "${requestPath}"`))
-  return { parent, requestPath, frontSender: front.sender, frontPid }
+  const request = { parent, requestPath, frontSender: front.sender, frontPid }
+  if (method === 'SaveFile') {
+    for (const { body } of [front, backend]) {
+      assert.match(body, /^\s*string "PNG image"$/m)
+      assert.equal(readStringOption(body, 'current_name'), suggestedName)
+    }
+    const frontAcceptLabel = readStringOption(front.body, 'accept_label')
+    assert.ok(frontAcceptLabel === undefined || frontAcceptLabel === 'Export PNG')
+    assert.equal(readStringOption(backend.body, 'accept_label'), frontAcceptLabel)
+    return { ...request, acceptLabel: frontAcceptLabel ?? 'Save' }
+  }
+  return request
 }
 
-async function observeResponse(monitor, open, source) {
+async function observeResponse(monitor, request, selectedPath) {
   let matches
   await expect
     .poll(() => {
       matches = monitorMessages(monitor).filter(
         ({ objectPath, member, body }) =>
-          objectPath === open.requestPath &&
+          objectPath === request.requestPath &&
           member === 'Response' &&
           /^ {3}uint32 [0-9]+$/m.test(body) &&
-          (!source || /string "uris"\s*\n\s*variant\s+array \[[^\]]*\]/.test(body)),
+          (!selectedPath || /string "uris"\s*\n\s*variant\s+array \[[^\]]*\]/.test(body)),
       )
       return matches.length
     })
     .toBe(1)
   const [response] = matches
   assert.equal(response.iface, 'org.freedesktop.portal.Request')
-  assert.equal(response.destination, open.frontSender)
-  assert.equal(await connectionPid(response.sender), open.frontPid)
+  assert.equal(response.destination, request.frontSender)
+  assert.equal(await connectionPid(response.sender), request.frontPid)
   const code = Number(/^ {3}uint32 ([0-9]+)$/m.exec(response.body)?.[1])
-  assert.equal(code, source ? 0 : 1)
+  assert.equal(code, selectedPath ? 0 : 1)
   const uriList = /string "uris"\s*\n\s*variant\s+array \[([^\]]*)\]/.exec(response.body)?.[1]
   const uris = uriList ? [...uriList.matchAll(/string "(file:\/\/[^"]+)"/g)] : []
-  if (source) {
+  if (selectedPath) {
     assert.equal(uris.length, 1)
-    assert.equal(fileURLToPath(uris[0][1]), source)
+    assert.equal(fileURLToPath(uris[0][1]), selectedPath)
   } else {
     assert.deepEqual(uris, [])
   }
@@ -309,12 +334,66 @@ export async function driveKdeChooser({ state, source, windowTitle, trigger }) {
     assert.equal(await realpath(source), source)
     assert.ok((await lstat(source)).isFile())
   }
+  return await drive({
+    state,
+    selectedPath: source,
+    windowTitle,
+    trigger,
+    method: 'OpenFile',
+    filter: projectFilter,
+  })
+}
+
+export async function driveKdeSaveChooser({
+  state,
+  destination,
+  windowTitle,
+  trigger,
+  onPresented,
+}) {
+  const suggestedName = saveNames.get(windowTitle)
+  assert.ok(suggestedName, 'Use one of the two Project image export dialogs.')
+  if (destination !== undefined && destination !== null) {
+    const root = process.env.IMAGEGEN_LINUX_PACKAGE_ARTIFACTS
+    assert.equal(await realpath(root), root)
+    assert.ok(path.isAbsolute(destination) && path.resolve(destination) === destination)
+    assert.equal(path.extname(destination), '.png')
+    const parent = path.dirname(destination)
+    const relative = path.relative(root, parent)
+    assert.ok(!path.isAbsolute(relative) && !relative.startsWith('..'))
+    assert.equal(await realpath(parent), parent)
+    const directory = await lstat(parent)
+    assert.ok(directory.isDirectory() && directory.uid === process.getuid())
+    await assert.rejects(lstat(destination), { code: 'ENOENT' })
+  }
+  return await drive({
+    state,
+    selectedPath: destination,
+    windowTitle,
+    trigger,
+    method: 'SaveFile',
+    filter: pngFilter,
+    suggestedName,
+    onPresented,
+  })
+}
+
+async function drive({
+  state,
+  selectedPath,
+  windowTitle,
+  trigger,
+  method,
+  filter,
+  suggestedName,
+  onPresented,
+}) {
   const session = await assertPrivateWayland()
   await assertWaylandPeer(state.mainPid, session)
   state.kdeChooserAttempts = (state.kdeChooserAttempts ?? 0) + 1
   assert.match(state.name, /^[a-z-]+$/)
   const trace = `${state.name}.chooser-${state.kdeChooserAttempts}.dbus.log`
-  const monitor = startMonitor()
+  const monitor = startMonitor(method)
   try {
     await expect.poll(() => monitor.read()).toContain('member=NameAcquired')
     await trigger.click()
@@ -336,7 +415,11 @@ export async function driveKdeChooser({ state, source, windowTitle, trigger }) {
       'XDG_RUNTIME_DIR',
       'AT_SPI_BUS_ADDRESS',
     ])
-    const open = await observeOpen(monitor, state, windowTitle, kdePid)
+    const request = await observeRequest(monitor, state, windowTitle, kdePid, {
+      method,
+      filter,
+      suggestedName,
+    })
     await expect
       .poll(async () => {
         try {
@@ -350,27 +433,49 @@ export async function driveKdeChooser({ state, source, windowTitle, trigger }) {
         }
       })
       .toBe(true)
-    const { stdout } = await execute(
-      '/usr/bin/python3',
-      [
-        helper,
-        '--pid',
-        String(kdePid),
-        '--title',
-        windowTitle,
-        ...(source ? ['--select', source] : []),
-      ],
-      { timeout: 15000 },
-    )
-    const accessibility = JSON.parse(stdout)
+    const actOnDialog = async (filename) => {
+      const { stdout } = await execute(
+        '/usr/bin/python3',
+        [
+          helper,
+          '--pid',
+          String(kdePid),
+          '--title',
+          windowTitle,
+          ...(request.acceptLabel ? ['--accept-label', request.acceptLabel] : []),
+          ...(filename ? ['--select', filename] : []),
+        ],
+        { timeout: 15000 },
+      )
+      return JSON.parse(stdout)
+    }
+    let accessibility
+    try {
+      await onPresented?.()
+      accessibility = await actOnDialog(selectedPath)
+    } catch (error) {
+      if (method !== 'SaveFile') throw error
+      // The export lease stays active while Main is awaiting this verified
+      // SaveFile request. Release the chooser before normal-close verification.
+      try {
+        await actOnDialog(null)
+        await observeResponse(monitor, request, null)
+      } catch (cancelError) {
+        throw new AggregateError(
+          [error, cancelError],
+          'Export observation and chooser cleanup failed.',
+        )
+      }
+      throw error
+    }
     assert.deepEqual(accessibility, {
       pid: kdePid,
       title: windowTitle,
-      action: source ? 'select' : 'dismiss',
-      selectedPath: source ?? null,
+      action: selectedPath ? 'select' : 'dismiss',
+      selectedPath: selectedPath ?? null,
       closed: true,
     })
-    const responseCode = await observeResponse(monitor, open, source)
+    const responseCode = await observeResponse(monitor, request, selectedPath)
     return {
       lifetime: state.name,
       windowTitle,
@@ -378,13 +483,14 @@ export async function driveKdeChooser({ state, source, windowTitle, trigger }) {
       compositorPid: session.compositorPid,
       mainPid: state.mainPid,
       backend: backendName,
-      parent: open.parent || null,
-      requestPath: open.requestPath,
+      parent: request.parent || null,
+      requestPath: request.requestPath,
       trace,
       responseCode,
-      action: source ? 'select' : 'dismiss',
-      selectedPath: source ?? null,
+      action: selectedPath ? 'select' : 'dismiss',
+      selectedPath: selectedPath ?? null,
       accessibility,
+      ...(suggestedName && { method, suggestedName, acceptLabel: request.acceptLabel }),
     }
   } finally {
     await monitor.close()
