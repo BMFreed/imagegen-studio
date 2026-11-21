@@ -8,6 +8,13 @@ worker startup, shutdown and preparation. Healthy busy Retry remains
 available across Projects. The stock AppImage confirmed the transition
 and the same frozen replay after Cancel with its installed CUDA worker.
 
+## Current packaged queue startup recovery
+
+[Interrupted queue records in the stock AppImage](./phase-5-packaged-queue-startup-recovery-research.md)
+verified one cancellation per unfinished record, exact frozen input retention
+and stable readback on the next startup. Queue Manager reports Retry as
+unavailable in the profile without an installed engine.
+
 ## Current packaged installed-runtime continuity
 
 [Installed CPU preview across AppImage builds](./phase-5-packaged-runtime-continuity-research.md)

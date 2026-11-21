@@ -165,7 +165,9 @@ if (legacyNoobaiFixture !== undefined || privateDesktop !== undefined) {
   )
   assert.ok(
     offlineProject === undefined ||
-      (['trash', 'result-preset', 'home-recovery-keyboard'].includes(offlineProject) &&
+      (['trash', 'result-preset', 'home-recovery-keyboard', 'queue-startup-recovery'].includes(
+        offlineProject,
+      ) &&
         portableChooser === undefined &&
         componentRemove === undefined),
   )
@@ -458,6 +460,7 @@ const offlineProjectFixture = {
   trash: 'packaged-project-trash',
   'result-preset': 'packaged-noobai-result-preset',
   'home-recovery-keyboard': 'packaged-home-recovery-keyboard',
+  'queue-startup-recovery': 'packaged-queue-startup-recovery',
 }[offlineProject]
 const offlineProjectScope = {
   trash:
@@ -466,6 +469,8 @@ const offlineProjectScope = {
     'Actual stock AppImage compares an immutable accepted result and saves its portable settings as a preset across restart.',
   'home-recovery-keyboard':
     'Packaged Home opens by keyboard and Recovery contains and returns focus at the native minimum window size.',
+  'queue-startup-recovery':
+    'Stock AppImage reconciles persisted unfinished jobs once and preserves frozen inputs and the saved Project.',
 }[offlineProject]
 const offlineProjectMessage = offlineProjectScope ? `PASS ${offlineProjectScope}` : undefined
 const relative = path.relative(artifactRoot, root)
@@ -708,6 +713,18 @@ if (offlineProject === 'home-recovery-keyboard')
       'src/renderer/App.vue',
       'src/renderer/components/HomeView.vue',
       'src/shared/projects/project-schema.ts',
+    ].map((file) => path.join(repo, file)),
+  )
+if (offlineProject === 'queue-startup-recovery')
+  sourcePaths.push(
+    ...[
+      'scripts/fixtures/application-state-upgrade-fixture.mjs',
+      'src/main/db/database.ts',
+      'src/main/projects/generation-bootstrap.ts',
+      'src/main/projects/generation-queue.ts',
+      'src/main/projects/igs-package.ts',
+      'src/main/projects/project-identity.ts',
+      'src/renderer/components/GenerationQueueManager.vue',
     ].map((file) => path.join(repo, file)),
   )
 if (componentRemove === 'queue')
@@ -1428,6 +1445,9 @@ async function runOwnedProjectProfile() {
     }
     if (offlineProject === 'home-recovery-keyboard') {
       return await fixture.runPackagedHomeRecoveryKeyboard(args)
+    }
+    if (offlineProject === 'queue-startup-recovery') {
+      return await fixture.runPackagedQueueStartupRecovery(args)
     }
     const { assertOfflineProjectDesktop } =
       await import('./fixtures/packaged-noobai-import-chooser.mjs')

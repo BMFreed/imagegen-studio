@@ -199,6 +199,12 @@ entries record the state at their checkpoint.
    shadow and saved Project. Recover restored the exact Raster as dirty,
    and explicit Save and restart read it back with the original queue result.
    [Packaged Raster crash recovery](./phase-5-packaged-raster-crash-recovery-research.md)
+   The stock AppImage canceled one prepared running and one pending job with
+   `APP_RESTART`, preserved the prior cancellation and exact frozen inputs,
+   and repeated the same Queue Manager readback on a second startup. Retry
+   remained unavailable without an installed engine. Interruption of a live
+   packaged CUDA job and its successful frozen Retry remain open.
+   [Packaged queue restart](./phase-5-packaged-queue-startup-recovery-research.md)
    The stock AppImage compares the accepted NoobAI EPS
    result with its edited draft and saves an exact detached preset without Seed.
    The preset and Project reopen in a profile without an installed worker or

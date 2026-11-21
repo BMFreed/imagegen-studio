@@ -309,6 +309,7 @@ export async function verifyChooserFixture({
       locate: 'packaged-noobai-locate',
       trash: 'packaged-project-trash',
       'home-recovery-keyboard': 'packaged-home-recovery-keyboard',
+      'queue-startup-recovery': 'packaged-queue-startup-recovery',
     }[scenario] ?? 'packaged-noobai-chooser'
   await assertOfflineProjectDesktop({
     scenario,
