@@ -149,6 +149,10 @@ entries record the state at their checkpoint.
    chooser responses and seven normal app closes preserved the exact
    Project and accepted Raster. Repeat on the shipping desktop matrix.
    [Packaged KDE Wayland chooser](./phase-5-packaged-kde-chooser-research.md)
+   Stock AppImage Home blocks Trash while the Project is open. After close it
+   preserves the exact saved Project across Trash, restart and Restore. Confirmed
+   permanent deletion retires only the target and preserves a neighboring Project
+   and file. [Packaged Trash](./phase-5-packaged-project-and-preset-research.md#home-trash)
    The stock Model Manager removed one unshared IllustriousPhoto embedding
    after explicit review. Compare reported the missing resource after
    restart and kept the exact accepted reference and image.
@@ -175,8 +179,12 @@ entries record the state at their checkpoint.
    matrix. [Packaged installed worker refusal](./phase-5-packaged-installed-engine-research.md#stock-appimage-with-an-incompatible-installed-worker)
    The current AppImage covered the Cancel-to-Retry transition and frozen replay
    with the installed CUDA worker. Repeat on the shipping candidate and cover
-   the remaining release cases for Generate, Cancel, frozen Retry, explicit Add/Undo/Redo/Save,
-   immutable Compare and result-derived presets. Check joint Home/Trash, resource
+   the remaining release cases for Generate, Cancel, frozen Retry and
+   explicit Add/Undo/Redo/Save. The stock AppImage compares the accepted NoobAI EPS
+   result with its edited draft and saves an exact detached preset without Seed.
+   The preset and Project reopen in a profile without an installed worker or
+   models. [Packaged result preset](./phase-5-packaged-project-and-preset-research.md#compare-and-save-preset-from-result)
+   Check joint Home/Trash, resource
    removal and export behavior, interrupted recovery, keyboard/focus/contrast and
    performance at supported desktop sizes on the final candidate. [NoobAI matrix](../specs/01-implementation-roadmap.md#noobai-полная-поддержка-в-рамках-mvp),
    [release criteria](../specs/01-implementation-roadmap.md#фаза-5-первый-linuxnvidia-релиз),

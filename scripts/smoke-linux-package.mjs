@@ -49,7 +49,8 @@ const portableLocate = process.env.IMAGEGEN_LINUX_PACKAGE_PORTABLE_LOCATE
 const portableChooser = portableImport ?? portableLocate
 const kdeChooser = process.env.IMAGEGEN_CHOOSER_KWIN_PID !== undefined
 const componentRemove = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_COMPONENT_REMOVE
-const privateDesktop = portableChooser ?? componentRemove
+const offlineProject = process.env.IMAGEGEN_LINUX_PACKAGE_OFFLINE_PROJECT
+const privateDesktop = portableChooser ?? componentRemove ?? offlineProject
 assert.ok(!kdeChooser || portableChooser, 'The private Wayland launcher requires a chooser case.')
 const nativeMemoryGiB = trainedFixture ? 12 : 4
 const nativeDeadlineSeconds = trainedFixture
@@ -115,6 +116,12 @@ if (legacyNoobaiFixture !== undefined || privateDesktop !== undefined) {
   assert.ok(
     componentRemove === undefined ||
       (['1', 'queue'].includes(componentRemove) && portableChooser === undefined),
+  )
+  assert.ok(
+    offlineProject === undefined ||
+      (['trash', 'result-preset'].includes(offlineProject) &&
+        portableChooser === undefined &&
+        componentRemove === undefined),
   )
   assert.ok(
     portableLocate === undefined || (portableLocate === '1' && portableImport === undefined),
@@ -367,6 +374,17 @@ const portableLocateHarness = portableLocate
 const componentRemoveHarness = componentRemove
   ? await import('./fixtures/packaged-noobai-component-remove.mjs')
   : null
+const offlineProjectFixture = {
+  trash: 'packaged-project-trash',
+  'result-preset': 'packaged-noobai-result-preset',
+}[offlineProject]
+const offlineProjectScope = {
+  trash:
+    'Actual stock AppImage preserves closed Project Trash across restart and restores or permanently deletes the exact owned file.',
+  'result-preset':
+    'Actual stock AppImage compares an immutable accepted result and saves its portable settings as a preset across restart.',
+}[offlineProject]
+const offlineProjectMessage = offlineProjectScope ? `PASS ${offlineProjectScope}` : undefined
 const relative = path.relative(artifactRoot, root)
 assert.ok(relative && !relative.startsWith('..') && !path.isAbsolute(relative))
 assert.equal(await realpath(artifactRoot), artifactRoot)
@@ -566,6 +584,12 @@ if (portableLocateHarness)
 if (componentRemoveHarness)
   sourcePaths.push(
     path.join(repo, 'scripts/fixtures/packaged-noobai-component-remove.mjs'),
+    path.join(repo, 'scripts/fixtures/packaged-project-chooser-x11.py'),
+  )
+if (offlineProjectFixture)
+  sourcePaths.push(
+    path.join(repo, 'scripts/fixtures', `${offlineProjectFixture}.mjs`),
+    path.join(repo, 'scripts/fixtures/packaged-noobai-import-chooser.mjs'),
     path.join(repo, 'scripts/fixtures/packaged-project-chooser-x11.py'),
   )
 if (componentRemove === 'queue')
@@ -1145,6 +1169,36 @@ async function runNoobaiPreviewQualification() {
 }
 
 async function runOwnedProjectProfile() {
+  if (offlineProjectFixture) {
+    const fixture = await import(`./fixtures/${offlineProjectFixture}.mjs`)
+    const args = {
+      root,
+      appData,
+      ownedRunRoot,
+      packageBefore,
+      launch,
+      readPorts,
+      closeNormally,
+      retainOwnStore,
+      identity,
+    }
+    if (offlineProject === 'trash') {
+      const { saved, restarted, packagedProjectTrash } = await fixture.runPackagedProjectTrash(args)
+      return { saved, restarted, offlineProjectResult: packagedProjectTrash }
+    }
+    const { assertOfflineProjectDesktop } =
+      await import('./fixtures/packaged-noobai-import-chooser.mjs')
+    await assertOfflineProjectDesktop({
+      root,
+      ownedRunRoot,
+      packageBefore,
+      scenario: offlineProject,
+      suite: offlineProjectFixture,
+    })
+    const { saved, restarted, packagedNoobaiResultPreset } =
+      await fixture.runPackagedNoobaiResultPreset(args)
+    return { saved, restarted, offlineProjectResult: packagedNoobaiResultPreset }
+  }
   if (componentRemoveHarness) {
     return await componentRemoveHarness.runNoobaiComponentRemove({
       mode: componentRemove,
@@ -1405,6 +1459,7 @@ try {
     portableNoobaiImport,
     portableNoobaiLocate,
     noobaiComponentRemove,
+    offlineProjectResult,
   } = noobaiMatrix
     ? {}
     : setupControl
@@ -1525,7 +1580,7 @@ try {
     }
   }
   if (protocolHarness || legacyHarness || privateDesktop) {
-    assert.equal(lifetimes.length, portableLocate ? 3 : 2)
+    assert.equal(lifetimes.length, portableLocate || offlineProject === 'trash' ? 3 : 2)
     for (const state of lifetimes) {
       assert.ok(state.normalPhysicalExit && !state.forcedCleanup)
       assert.ok(
@@ -1556,7 +1611,8 @@ try {
           : 'Actual stock AppImage removes the managed embedding and retains immutable accepted settings through restart.'
         : portableNoobaiLocate
           ? 'Actual stock AppImage locates the exact saved Project through the system picker and reopens the same local identity after restart.'
-          : 'Actual stock AppImage imports a portable NoobAI Project through a native file chooser and reopens it from its managed workspace.'
+          : (offlineProjectScope ??
+            'Actual stock AppImage imports a portable NoobAI Project through a native file chooser and reopens it from its managed workspace.')
       : legacyNoobai
         ? 'Actual stock AppImage migrates a DB17 legacy NoobAI profile, reads its queue and reopens the accepted Raster.'
         : incompatibleWorker
@@ -1602,6 +1658,7 @@ try {
     ...(portableNoobaiImport ? { portableNoobaiImport } : {}),
     ...(portableNoobaiLocate ? { portableNoobaiLocate } : {}),
     ...(noobaiComponentRemove ? { noobaiComponentRemove } : {}),
+    ...(offlineProjectResult ? { offlineProject, offlineProjectResult } : {}),
     stores: { saved, restarted },
     lifetimes: lifetimes.map(
       ({
@@ -1749,7 +1806,8 @@ console.log(
         : 'PASS packaged NoobAI component removal, accepted provenance and two normal physical closes'
       : portableLocate
         ? 'PASS native NoobAI Locate Project and three normal physical closes'
-        : `PASS native NoobAI Project import (${portableImport}) and two normal physical closes`
+        : (offlineProjectMessage ??
+          `PASS native NoobAI Project import (${portableImport}) and two normal physical closes`)
     : legacyNoobaiProfile
       ? 'PASS legacy NoobAI queue, accepted provenance, DB17 backup and two normal physical closes'
       : incompatibleWorker

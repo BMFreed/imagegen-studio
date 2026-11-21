@@ -10,6 +10,10 @@ and the same frozen replay after Cancel with its installed CUDA worker.
 
 ## Current NoobAI packaged qualification
 
+[Home Trash and accepted-result presets](./phase-5-packaged-project-and-preset-research.md)
+records confirmed single-file deletion and restart-safe Restore, plus the
+detached preset flow from exact accepted CUDA output with an empty catalog.
+
 [Project chooser on KDE Wayland](./phase-5-packaged-kde-chooser-research.md)
 records actual XDG FileChooser responses for Copy, Move and Locate,
 with private KWin socket and process provenance.

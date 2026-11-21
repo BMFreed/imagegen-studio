@@ -266,15 +266,14 @@ export async function assertOpened(state, id) {
   assertCheckpoint(accepted.value.generationConfiguration.model, 'v_prediction')
 }
 
-export async function verifyChooserFixture({
+export async function assertOfflineProjectDesktop({
   scenario,
+  suite,
   root,
   ownedRunRoot,
   packageBefore,
-  identity,
 }) {
   const run = path.dirname(root)
-  const suite = scenario === 'locate' ? 'packaged-noobai-locate' : 'packaged-noobai-chooser'
   assert.equal(path.dirname(run), path.join(ownedRunRoot, suite))
   assert.match(path.basename(run), /^\d{8}(?:-r[1-9]\d*)?$/)
   assert.equal(path.basename(root), scenario)
@@ -293,6 +292,21 @@ export async function verifyChooserFixture({
   } else {
     await assertPrivateDisplay()
   }
+}
+
+export async function verifyChooserFixture({
+  scenario,
+  root,
+  ownedRunRoot,
+  packageBefore,
+  identity,
+}) {
+  const suite =
+    {
+      locate: 'packaged-noobai-locate',
+      trash: 'packaged-project-trash',
+    }[scenario] ?? 'packaged-noobai-chooser'
+  await assertOfflineProjectDesktop({ scenario, suite, root, ownedRunRoot, packageBefore })
   const original = path.join(
     ownedRunRoot,
     'packaged-installed-engine/20261118/trained-noobai-v-r2/native/after-restarted-close.igs',
