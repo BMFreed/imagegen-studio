@@ -519,8 +519,10 @@ image-engine readiness. Recovery/reinstall, global runtime ownership, stage
 finalization/retirement and shipping acceptance remain open.
 
 [Transaction-owner interruption](../engineering/phase-5-application-update-interruption-research.md)
-exercises process death before and after publication and the subsequent signed
-release. The retained path refuses another Review and preflight. The same B on
+exercises process death before replacement, after replacement with an
+`activating` journal, and after `activated`. In the middle case B is present
+and the startup target stays unverified. The retained path refuses Review
+and preflight for the subsequent signed release. The same B on
 an independent clean path admits C in the controlled transaction. A process
 outside the cooperating lock can replace the target while that lock is held,
 so previous target authentication remains advisory.

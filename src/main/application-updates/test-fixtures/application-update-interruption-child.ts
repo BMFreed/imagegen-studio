@@ -1,8 +1,10 @@
 /** Drive the actual staging transaction to a selected boundary using owned, nonexecuted images. */
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import nodeFs from 'node:fs'
 import { constants, writeSync } from 'node:fs'
 import { type FileHandle, lstat, open, readFile, realpath } from 'node:fs/promises'
+import { syncBuiltinESMExports } from 'node:module'
 import path from 'node:path'
 
 import type {
@@ -17,7 +19,7 @@ import {
   stageVerifiedApplicationArtifact,
 } from '../application-update-staging.js'
 
-type Cut = 'after-publication' | 'before-publication'
+type Cut = 'after-publication' | 'after-replace-before-journal' | 'before-publication'
 
 type Input = {
   archivePath: string
@@ -77,7 +79,11 @@ async function run() {
   const descriptorInfo = await ownedFile(root, filename)
   assert.ok(descriptorInfo.size <= 3n * 1024n ** 2n)
   const input = JSON.parse(await readFile(filename, 'utf8')) as Input
-  assert.ok(input.cut === 'before-publication' || input.cut === 'after-publication')
+  assert.ok(
+    input.cut === 'before-publication' ||
+      input.cut === 'after-replace-before-journal' ||
+      input.cut === 'after-publication',
+  )
   const { archivePath, artifactPath, authority, currentAppImage, cut, executablePath, trust } =
     input
   // These borrowed descriptors are controlled file observations. The fixture never runs
@@ -133,17 +139,48 @@ async function run() {
     })
     const backedUp = await staged.prepareBackup()
     let closeAssertions = 0
-    const activated = await backedUp.activate(() => {
-      admission.assertHeld()
-      closeAssertions++
-      if (cut === 'before-publication' && closeAssertions === 2) {
+    const rename = nodeFs.renameSync
+    if (cut === 'after-replace-before-journal') {
+      // Park only after the real activation syscall, before the owner can sync or advance its journal.
+      nodeFs.renameSync = (from, to) => {
+        assert.ok(typeof from === 'string' && typeof to === 'string')
+        assert.match(path.dirname(from), /^\/proc\/self\/fd\/\d+$/)
+        assert.match(path.dirname(to), /^\/proc\/self\/fd\/\d+$/)
+        assert.equal(nodeFs.realpathSync(from), backedUp.candidatePath)
+        assert.equal(nodeFs.realpathSync(to), currentAppImage)
+        assert.equal(closeAssertions, 2)
+        admission.assertHeld()
+        const candidate = nodeFs.lstatSync(from, { bigint: true })
+        rename(from, to)
+        const published = nodeFs.lstatSync(to, { bigint: true })
+        assert.equal(published.dev, candidate.dev)
+        assert.equal(published.ino, candidate.ino)
         park(cut, backedUp.stagingDirectory, startTicks)
       }
-    })
-    assert.equal(closeAssertions, 2)
-    assert.equal(cut, 'after-publication', 'Publication completed after the requested earlier cut.')
-    admission.assertHeld()
-    park(cut, activated.stagingDirectory, startTicks)
+      syncBuiltinESMExports()
+    }
+    try {
+      const activated = await backedUp.activate(() => {
+        admission.assertHeld()
+        closeAssertions++
+        if (cut === 'before-publication' && closeAssertions === 2) {
+          park(cut, backedUp.stagingDirectory, startTicks)
+        }
+      })
+      assert.equal(closeAssertions, 2)
+      assert.equal(
+        cut,
+        'after-publication',
+        'Publication completed after the requested earlier cut.',
+      )
+      admission.assertHeld()
+      park(cut, activated.stagingDirectory, startTicks)
+    } finally {
+      if (cut === 'after-replace-before-journal') {
+        nodeFs.renameSync = rename
+        syncBuiltinESMExports()
+      }
+    }
   } finally {
     capture?.dispose()
     admission.release()

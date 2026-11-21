@@ -123,13 +123,16 @@ entries record the state at their checkpoint.
    keep the stage, and refuse signed C before close. A separate B path can be
    updated to C in the controlled transaction. A test unleased writer can
    replace the target while a competing participating updater receives Busy.
+   A SIGKILL immediately after replacement leaves exact B with an `activating`
+   journal and the private A backup. Startup keeps recovery required and refuses
+   signed C before Project close.
    Updates now verifies and saves signed B to a fresh pathname through the
    system Save dialog. The three-lifetime AppImage test cancels once, saves B,
    reopens the same Project, uses ordinary Save on close and installs signed C.
    C reopens the saved edit and reports the target verified and the runtime
    unverified. The original stage is preserved. Production publisher trust,
    post-upgrade runtime validation, legacy/unleased machines,
-   the publication-before-final-journal window, in-place recovery and retirement
+   in-place recovery and retirement
    still require a supported ownership and qualification boundary. Re-read
    Invoke before changing owners. Keep manual SQLite recovery separate.
    [Updates recovery](./phase-5-public-appimage-recovery-research.md),

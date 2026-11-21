@@ -878,7 +878,11 @@ test('a stage retained after startup blocks another public Review and preflight 
   )
 })
 
-for (const cut of ['before-publication', 'after-publication'] as const) {
+for (const cut of [
+  'before-publication',
+  'after-replace-before-journal',
+  'after-publication',
+] as const) {
   test(
     `SIGKILL ${cut} preserves the update and refuses signed C before close`,
     {
@@ -887,6 +891,7 @@ for (const cut of ['before-publication', 'after-publication'] as const) {
     async (t) => {
       const a = await fixture(t)
       const oldBody = await fs.readFile(a.currentAppImage)
+      const oldTarget = await fs.lstat(a.currentAppImage, { bigint: true })
       await a.service.check()
       assert.equal((await a.service.download('0.2.0')).status, 'downloaded')
       const b = await a.service.prepareVerifiedArtifact('0.2.0')
@@ -920,10 +925,11 @@ for (const cut of ['before-publication', 'after-publication'] as const) {
       const stageName = `.igs-app-update-${createHash('sha256').update('Current.AppImage').digest('hex').slice(0, 16)}`
       const stage = path.join(a.parent, stageName)
       const lock = `${stage}.lock`
-      const published = cut === 'after-publication'
+      const published = cut !== 'before-publication'
+      const finalized = cut === 'after-publication'
       const version = published ? '0.2.0' : '0.1.0'
       const currentBody = published ? a.body : oldBody
-      const state = published ? 'activated' : 'activating'
+      const state = finalized ? 'activated' : 'activating'
       const files = [
         'journal.json',
         'previous.AppImage',
@@ -984,10 +990,29 @@ for (const cut of ['before-publication', 'after-publication'] as const) {
             error instanceof ApplicationUpdateAdmissionError &&
             error.code === 'APPLICATION_UPDATE_BUSY',
         )
-        assert.equal(
-          JSON.parse(await fs.readFile(path.join(stage, 'journal.json'), 'utf8')).state,
-          state,
-        )
+        const journal = JSON.parse(await fs.readFile(path.join(stage, 'journal.json'), 'utf8')) as {
+          candidate: { sha512: string; snapshot: { dev: string; ino: string } } | null
+          current: { identity: { dev: string; ino: string }; sha512: string }
+          state: string
+        }
+        const current = await identity(a.currentAppImage)
+        const recordedCurrent = finalized ? current : oldTarget
+        assert.equal(journal.state, state)
+        assert.equal(journal.current.sha512, finalized ? b.manifest.artifact.sha512 : sha(oldBody))
+        assert.equal(journal.current.identity.ino, String(recordedCurrent.ino))
+        assert.equal(journal.current.identity.dev, String(recordedCurrent.dev))
+        assert.equal(current.sha512, published ? b.manifest.artifact.sha512 : sha(oldBody))
+        assert.equal(current.mode & 0o7777n, 0o755n)
+        if (finalized) {
+          assert.equal(journal.candidate, null)
+        } else {
+          assert.equal(journal.candidate?.sha512, b.manifest.artifact.sha512)
+        }
+        if (published && !finalized) {
+          assert.equal(journal.candidate?.snapshot.ino, String(current.ino))
+          assert.equal(journal.candidate?.snapshot.dev, String(current.dev))
+          assert.notEqual(current.ino, oldTarget.ino)
+        }
         assert.deepEqual(await fs.readFile(a.currentAppImage), currentBody)
         assert.deepEqual(await fs.readFile(path.join(stage, 'previous.AppImage')), oldBody)
         assert.equal((await fs.stat(path.join(stage, 'previous.AppImage'))).mode & 0o7777, 0o600)
@@ -1023,7 +1048,7 @@ for (const cut of ['before-publication', 'after-publication'] as const) {
         currentVersion: version,
         readTrust: async () => a.trust,
       })
-      const target = published ? 'verified' : 'unverified'
+      const target = finalized ? 'verified' : 'unverified'
       assert.deepEqual(inspected, {
         runtimeAuthentication: 'unverified',
         status: 'retained',

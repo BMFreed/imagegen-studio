@@ -112,3 +112,43 @@ and readback of eight process identities are retained. The isolated source
 copy and compilation scratch were removed after restoration and physical
 exit, releasing 26,685,440 allocated bytes. No previous retained package,
 runtime or model was reused or removed.
+
+## Process death after rename and before the activation journal
+
+The follow-up on `75ce489b` re-read InvokeAI `4875d96531ca6712b288f6e660fcbb34143408c1`.
+`invokeai/app/services/model_install/install_staging_ledger.py` publishes an
+exclusive claim, writes a durable marker and preserves incomplete markers at
+startup. Its `model_install_default.py` start and transfer callers and
+`invokeai/app/util/no_replace.py` expose the separate publication and marker
+steps. Launcher `c267bdb439519216b277a7a8c6ad408b9d79efce`
+`src/main/updater.ts` delegates restart and install to `quitAndInstall`.
+The follow-up exercises Studio's existing staging owner at that boundary.
+
+The test child intercepts only the exact FD-anchored candidate-to-target
+rename during activation. It completes the actual rename and checks the
+published inode before waiting for SIGKILL. The owner holds the real
+admission lock. The replacement has happened, and the production owner
+has yet to sync the directories or write `activated`.
+
+The target is exact signed B and executable. The journal still says
+`activating` and records A as current and B as candidate. The candidate
+pathname is consumed and the private A backup remains byte-exact. After
+the child exits and the kernel lock is available again, startup reports
+`retained` with target and runtime unverified. Signed C is available to
+download. Review and preflight refuse it before impact, Project close or
+scheduling. The independently initialized exact B pathname passes C through
+the same transaction with a controlled scheduler. Both adjacent fault cuts
+still pass.
+
+The focused receipts contain three passes. The application-update, package
+and publisher suite passed 672 cases with zero failures and one platform
+skip. Reordering TypeScript type fields for lint left emitted JavaScript
+identical, and all three cuts passed again on the final source. Typecheck,
+app build and changed-file checks passed. Independent review
+checked the test, its transcript and physical exit of the three reported PID
+identities. Its evidence covers SIGKILL before directory sync. Power-loss
+durability, native relaunch and stage retirement are separate checks.
+
+The transcripts are retained under
+`runs/application-update-publication-cut/20261121` in the artifact root.
+The normal test teardown removes the owned stage fixtures.
