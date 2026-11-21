@@ -95,7 +95,7 @@ async function modelApi(page, method, ...args) {
   return result.value
 }
 
-function inspectSqlite(appData) {
+export function inspectSqlite(appData) {
   const db = new Database(path.join(appData, 'database/app.sqlite'), {
     fileMustExist: true,
     readonly: true,
@@ -221,7 +221,7 @@ async function openManager(page) {
   return manager
 }
 
-async function connectToken(page, liveToken) {
+export async function connectToken(page, liveToken) {
   assert.ok(typeof liveToken === 'string' && liveToken.length > 0, 'Missing live CivitAI token.')
   let status
   try {
@@ -390,7 +390,7 @@ function fileIdentity(stat) {
   }
 }
 
-async function hashInstalledFile(filename, identity) {
+export async function hashInstalledFile(filename, identity) {
   assert.equal(await realpath(filename), filename)
   const handle = await open(
     filename,

@@ -51,10 +51,12 @@ const portableLocate = process.env.IMAGEGEN_LINUX_PACKAGE_PORTABLE_LOCATE
 const portableChooser = portableImport ?? portableLocate
 const kdeChooser = process.env.IMAGEGEN_CHOOSER_KWIN_PID !== undefined
 const componentRemove = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_COMPONENT_REMOVE
+const componentRepair = process.env.IMAGEGEN_LINUX_PACKAGE_NOOBAI_COMPONENT_REPAIR
+const componentAction = componentRepair !== undefined ? 'repair' : componentRemove
 const offlineProject = process.env.IMAGEGEN_LINUX_PACKAGE_OFFLINE_PROJECT
 const projectExport = process.env.IMAGEGEN_LINUX_PACKAGE_PROJECT_EXPORT
 const continuityFixture = process.env.IMAGEGEN_LINUX_PACKAGE_RUNTIME_CONTINUITY
-const privateDesktop = portableChooser ?? componentRemove ?? offlineProject
+const privateDesktop = portableChooser ?? componentAction ?? offlineProject
 assert.ok(
   !kdeChooser || portableChooser || projectExport,
   'The private Wayland launcher requires a chooser case.',
@@ -164,12 +166,16 @@ if (legacyNoobaiFixture !== undefined || privateDesktop !== undefined) {
       (['1', 'queue'].includes(componentRemove) && portableChooser === undefined),
   )
   assert.ok(
+    componentRepair === undefined ||
+      (componentRepair === '1' && componentRemove === undefined && portableChooser === undefined),
+  )
+  assert.ok(
     offlineProject === undefined ||
       (['trash', 'result-preset', 'home-recovery-keyboard', 'queue-startup-recovery'].includes(
         offlineProject,
       ) &&
         portableChooser === undefined &&
-        componentRemove === undefined),
+        componentAction === undefined),
   )
   assert.ok(
     portableLocate === undefined || (portableLocate === '1' && portableImport === undefined),
@@ -208,7 +214,10 @@ assert.ok(
         !updateCheckMode &&
         !runtimeSetupControl)),
 )
-assert.equal(noobaiTokenFile !== undefined, noobaiPreviewMode === 'live' || Boolean(noobaiInstall))
+assert.equal(
+  noobaiTokenFile !== undefined,
+  noobaiPreviewMode === 'live' || Boolean(noobaiInstall || componentRepair),
+)
 assert.ok(
   runtimeSetupControl === undefined ||
     (['incompatible', 'cancel', 'corrupt', 'disk', 'success', 'rollback'].includes(
@@ -453,7 +462,7 @@ const portableImportHarness = portableImport
 const portableLocateHarness = portableLocate
   ? await import('./fixtures/packaged-noobai-project-locate.mjs')
   : null
-const componentRemoveHarness = componentRemove
+const componentHarness = componentAction
   ? await import('./fixtures/packaged-noobai-component-remove.mjs')
   : null
 const offlineProjectFixture = {
@@ -694,10 +703,23 @@ if (continuity)
   )
 if (portableLocateHarness)
   sourcePaths.push(path.join(repo, 'scripts/fixtures/packaged-noobai-project-locate.mjs'))
-if (componentRemoveHarness)
+if (componentHarness)
   sourcePaths.push(
     path.join(repo, 'scripts/fixtures/packaged-noobai-component-remove.mjs'),
     path.join(repo, 'scripts/fixtures/packaged-project-chooser-x11.py'),
+  )
+if (componentRepair)
+  sourcePaths.push(
+    ...[
+      'scripts/fixtures/packaged-noobai-component-repair.mjs',
+      'scripts/fixtures/packaged-noobai-install-ui.mjs',
+      'src/main/models/civitai-client.ts',
+      'src/main/models/model-install-coordinator.ts',
+      'src/main/models/model-repository.ts',
+      'src/main/models/model-service.ts',
+      'src/renderer/components/GenerationSettingsComparison.vue',
+      'src/renderer/components/ModelManager.vue',
+    ].map((file) => path.join(repo, file)),
   )
 if (offlineProjectFixture)
   sourcePaths.push(
@@ -1464,9 +1486,10 @@ async function runOwnedProjectProfile() {
       await fixture.runPackagedNoobaiResultPreset(args)
     return { saved, restarted, offlineProjectResult: packagedNoobaiResultPreset }
   }
-  if (componentRemoveHarness) {
-    return await componentRemoveHarness.runNoobaiComponentRemove({
-      mode: componentRemove,
+  if (componentHarness) {
+    return await componentHarness.runNoobaiComponentLifecycle({
+      mode: componentAction,
+      liveToken: componentRepair ? await readNoobaiCredential() : undefined,
       root,
       appData,
       ownedRunRoot,
@@ -1724,6 +1747,7 @@ try {
     portableNoobaiImport,
     portableNoobaiLocate,
     noobaiComponentRemove,
+    noobaiComponentRepair,
     offlineProjectResult,
     packagedProjectImageExport,
     packagedRuntimeContinuity,
@@ -1893,14 +1917,16 @@ try {
     schemaVersion: 1,
     outcome: 'PASS',
     scope: privateDesktop
-      ? noobaiComponentRemove
-        ? noobaiComponentRemove.queue
-          ? 'Actual stock AppImage blocks affected running work and removes a managed embedding only after exact pending cancellation consent.'
-          : 'Actual stock AppImage removes the managed embedding and retains immutable accepted settings through restart.'
-        : portableNoobaiLocate
-          ? 'Actual stock AppImage locates the exact saved Project through the system picker and reopens the same local identity after restart.'
-          : (offlineProjectScope ??
-            'Actual stock AppImage imports a portable NoobAI Project through a native file chooser and reopens it from its managed workspace.')
+      ? noobaiComponentRepair
+        ? 'Actual stock AppImage repairs the exact managed embedding from an accepted Raster through CivitAI and reopens it after normal close.'
+        : noobaiComponentRemove
+          ? noobaiComponentRemove.queue
+            ? 'Actual stock AppImage blocks affected running work and removes a managed embedding only after exact pending cancellation consent.'
+            : 'Actual stock AppImage removes the managed embedding and retains immutable accepted settings through restart.'
+          : portableNoobaiLocate
+            ? 'Actual stock AppImage locates the exact saved Project through the system picker and reopens the same local identity after restart.'
+            : (offlineProjectScope ??
+              'Actual stock AppImage imports a portable NoobAI Project through a native file chooser and reopens it from its managed workspace.')
       : legacyNoobai
         ? 'Actual stock AppImage migrates a DB17 legacy NoobAI profile, reads its queue and reopens the accepted Raster.'
         : incompatibleWorker
@@ -1950,6 +1976,7 @@ try {
     ...(portableNoobaiImport ? { portableNoobaiImport } : {}),
     ...(portableNoobaiLocate ? { portableNoobaiLocate } : {}),
     ...(noobaiComponentRemove ? { noobaiComponentRemove } : {}),
+    ...(noobaiComponentRepair ? { noobaiComponentRepair } : {}),
     ...(offlineProjectResult ? { offlineProject, offlineProjectResult } : {}),
     ...(packagedProjectImageExport ? { packagedProjectImageExport } : {}),
     ...(packagedRuntimeContinuity ? { packagedRuntimeContinuity } : {}),
@@ -2117,14 +2144,16 @@ try {
 if (failed) throw failed
 console.log(
   privateDesktop
-    ? componentRemove
-      ? componentRemove === 'queue'
-        ? 'PASS packaged Remove with queue, exact cancellation and two normal physical closes'
-        : 'PASS packaged NoobAI component removal, accepted provenance and two normal physical closes'
-      : portableLocate
-        ? 'PASS native NoobAI Locate Project and three normal physical closes'
-        : (offlineProjectMessage ??
-          `PASS native NoobAI Project import (${portableImport}) and two normal physical closes`)
+    ? componentRepair
+      ? 'PASS packaged exact NoobAI embedding Repair, accepted provenance and two normal physical closes'
+      : componentRemove
+        ? componentRemove === 'queue'
+          ? 'PASS packaged Remove with queue, exact cancellation and two normal physical closes'
+          : 'PASS packaged NoobAI component removal, accepted provenance and two normal physical closes'
+        : portableLocate
+          ? 'PASS native NoobAI Locate Project and three normal physical closes'
+          : (offlineProjectMessage ??
+            `PASS native NoobAI Project import (${portableImport}) and two normal physical closes`)
     : legacyNoobaiProfile
       ? 'PASS legacy NoobAI queue, accepted provenance, DB17 backup and two normal physical closes'
       : incompatibleWorker

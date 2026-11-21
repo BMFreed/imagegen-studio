@@ -253,6 +253,11 @@ entries record the state at their checkpoint.
    after explicit review. Compare reported the missing resource after
    restart and kept the exact accepted reference and image.
    [Packaged managed embedding removal](./phase-5-packaged-noobai-component-remove-research.md)
+   With the catalog rows still present and the managed IllustriousPhoto file
+   absent, Compare led to the exact CivitAI version. Cancel kept the file
+   missing. Confirmed Repair restored the exact digest and local IDs, and
+   the accepted Project reopened byte-identical without a provider token.
+   [Packaged managed embedding Repair](./phase-5-packaged-noobai-component-repair-research.md)
    The stock AppImage also blocked an affected running queue claim and
    canceled exactly the two explicitly reviewed pending jobs. Unrelated
    running and pending rows and all frozen inputs survived the operation.

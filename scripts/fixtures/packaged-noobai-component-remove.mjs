@@ -1,9 +1,9 @@
-/** Stock AppImage hard Remove of the embedding referenced by an accepted NoobAI Raster. */
+/** Stock AppImage managed embedding lifecycle for an accepted NoobAI Raster. */
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
-import { copyFile, lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import { copyFile, lstat, mkdir, readFile, realpath, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
@@ -206,7 +206,7 @@ async function assertAccepted(page, key) {
   assert.deepEqual(data.generationConfiguration.negativePrompt.embeddingRefs, [acceptedRef])
 }
 
-async function assertComparison(page, status) {
+async function openComparison(page, status) {
   const project = page.getByLabel(`Project ${title}`, { exact: true })
   await project.getByRole('button', { name: 'Layer actions for Generated 1', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Compare generation settings', exact: true }).click()
@@ -214,6 +214,11 @@ async function assertComparison(page, status) {
   const embedding = comparison.locator('[data-setting="negativePrompt.embeddings"]')
   await expect(embedding).toHaveAttribute('data-status', status)
   await expect(embedding).toContainText(reference.fileSha256)
+  return { comparison, embedding }
+}
+
+async function assertComparison(page, status) {
+  const { comparison } = await openComparison(page, status)
   await comparison
     .getByRole('button', { name: 'Close generation settings comparison', exact: true })
     .click()
@@ -318,8 +323,9 @@ async function verifyRetainedQueueFiles(appData, exact, identity) {
   }
 }
 
-export async function runNoobaiComponentRemove({
+export async function runNoobaiComponentLifecycle({
   mode,
+  liveToken,
   root,
   appData,
   ownedRunRoot,
@@ -330,11 +336,16 @@ export async function runNoobaiComponentRemove({
   identity,
 }) {
   const queued = mode === 'queue'
+  const repairing = mode === 'repair'
   const datedRun = path.dirname(root)
-  const suite = queued ? 'packaged-noobai-queue-remove' : 'packaged-noobai-component-remove'
+  const suite = repairing
+    ? 'packaged-noobai-component-repair'
+    : queued
+      ? 'packaged-noobai-queue-remove'
+      : 'packaged-noobai-component-remove'
   assert.equal(path.dirname(datedRun), path.join(ownedRunRoot, suite))
   assert.match(path.basename(datedRun), /^\d{8}(?:-r[1-9]\d*)?$/)
-  assert.equal(path.basename(root), 'remove')
+  assert.equal(path.basename(root), repairing ? 'repair' : 'remove')
   assert.equal(await realpath(root), root)
   assert.equal(appData, path.join(root, 'data/imagegen-studio'))
   assert.deepEqual(packageBefore, {
@@ -400,7 +411,10 @@ export async function runNoobaiComponentRemove({
   assert.equal(createHash('sha256').update(raster).digest('hex'), rasterSha)
 
   const workspace = path.join(appData, 'workspaces/Uncategorized')
-  const project = { ...original, path: path.join(workspace, 'Remove Resource.igs') }
+  const project = {
+    ...original,
+    path: path.join(workspace, repairing ? 'Repair Resource.igs' : 'Remove Resource.igs'),
+  }
   const model = {
     ...originalModel,
     path: path.join(appData, 'models/91', `${reference.fileSha256}.safetensors`),
@@ -412,7 +426,9 @@ export async function runNoobaiComponentRemove({
   assert.equal(await realpath(workspace), workspace)
   await copyFile(original.path, project.path, constants.COPYFILE_EXCL)
 
-  const first = await launch('review-and-remove-component')
+  const first = await launch(
+    repairing ? 'review-and-repair-component' : 'review-and-remove-component',
+  )
   const { page } = first
   assert.equal((await call(page, 'runtime', 'getStatus')).kind, 'not-installed')
   assert.deepEqual(await call(page, 'models', 'getCatalog'), [])
@@ -427,6 +443,7 @@ export async function runNoobaiComponentRemove({
   const originalStat = await pinnedFile(originalModel, identity)
   assert.notDeepEqual([managedStat.dev, managedStat.ino], [originalStat.dev, originalStat.ino])
   seedEmptyCatalog(database, ownedCatalog.path, model.path)
+  if (repairing) await unlink(model.path)
   await openProject(page)
   const catalog = await call(page, 'models', 'getCatalog')
   assert.equal(catalog.length, 1)
@@ -436,7 +453,7 @@ export async function runNoobaiComponentRemove({
   assert.equal(resource.versions.length, 1)
   const [version] = resource.versions
   assert.equal(version.id, reference.localVersionId)
-  assert.equal(version.fileStatus, 'ready')
+  assert.equal(version.fileStatus, repairing ? 'missing' : 'ready')
   assert.equal(version.sha256, reference.fileSha256)
   const before = readSnapshot()
   assert.equal(before.projects.length, 1)
@@ -454,6 +471,39 @@ export async function runNoobaiComponentRemove({
   assert.deepEqual(before.ledger, [])
   assert.deepEqual(before.unusedCounts, emptyRegistry.unusedCounts)
   await assertAccepted(page, key)
+  if (repairing) {
+    const { runNoobaiComponentRepair } = await import('./packaged-noobai-component-repair.mjs')
+    return await runNoobaiComponentRepair({
+      root,
+      appData,
+      first,
+      launch,
+      closeNormally,
+      retainOwnStore,
+      liveToken,
+      model,
+      reference,
+      before,
+      catalog,
+      readSnapshot,
+      async preserveMissingDatabase() {
+        const filename = path.join(root, 'before-repair.sqlite')
+        await backupLiveDatabase(database, filename)
+        assert.deepEqual(readSnapshot(filename), before)
+        return await identity(filename)
+      },
+      async assertBorrowedAndProject() {
+        for (const artifact of [original, originalModel, originalCatalog, project]) {
+          await pinnedFile(artifact, identity)
+        }
+      },
+      assertAccepted: (target) => assertAccepted(target, key),
+      openComparison,
+      assertComparison,
+      openProject,
+      call,
+    })
+  }
   await assertComparison(page, 'Removed')
   const beforeDb = path.join(root, 'before-remove.sqlite')
 

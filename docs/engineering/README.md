@@ -1,5 +1,12 @@
 # Engineering Workflow
 
+## Repair the exact CivitAI embedding from Compare
+
+[Packaged embedding Repair](./phase-5-packaged-noobai-component-repair-research.md)
+restored the missing IllustriousPhoto file in the same local version.
+Cancel preserved the missing state. After Repair, the accepted result
+reopened with the exact restored resource and the original Project bytes.
+
 ## Anima scarf weights with fixed inset masks
 
 [Equal-weight scarf comparison](./phase-4-anima-equal-scarf-weight-research.md)
