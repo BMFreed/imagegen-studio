@@ -21,6 +21,7 @@ const installNext = process.env.IGS_RECOVERY_QUALIFICATION_INSTALL_NEXT === '1'
 const installedMode = process.env.IGS_RECOVERY_QUALIFICATION_INSTALLED_RUNTIME
 assert.ok(installedMode === undefined || installedMode === '1')
 const group = () => fs.readFileSync('/proc/self/cgroup', 'utf8').trim().slice(3)
+let memoryLimitGiB = 4n
 
 function readPrivateRecord(file) {
   assert.equal(fs.realpathSync(file), file)
@@ -49,6 +50,14 @@ function installedAppData() {
     /^native-runtime-offline-[a-zA-Z0-9]+\/data\/imagegen-studio$/,
   )
   assert.match(fixture.runtimeId, /^release-[0-9a-f-]{36}$/)
+  if (fixture.trained !== undefined) {
+    assert.equal(fixture.trained.schemaVersion, 1)
+    assert.equal(fixture.trained.profile, 'noobai-eps')
+    assert.equal(fixture.trained.family, 'illustrious')
+    assert.equal(fixture.trained.appData, fixture.appData)
+    assert.equal(fixture.trained.runtimeId, fixture.runtimeId)
+    memoryLimitGiB = 12n
+  }
   const claimed = readPrivateRecord(
     path.join(path.dirname(fixture.appData), '.packaged-upgrade-qualification/owner.json'),
   )
@@ -73,7 +82,10 @@ function installedAppData() {
   assert.equal(path.posix.normalize(inherited), inherited)
   assert.equal(ownerGroup, `0::${inherited}`)
   const scope = path.join('/sys/fs/cgroup', inherited)
-  assert.equal(BigInt(fs.readFileSync(path.join(scope, 'memory.max'), 'utf8')), 4n * 1024n ** 3n)
+  assert.equal(
+    BigInt(fs.readFileSync(path.join(scope, 'memory.max'), 'utf8')),
+    memoryLimitGiB * 1024n ** 3n,
+  )
   assert.equal(fs.readFileSync(path.join(scope, 'memory.swap.max'), 'utf8').trim(), '0')
   return fixture.appData
 }
@@ -198,7 +210,8 @@ if (installNext && version === '0.3.0') {
         scopeIdentity,
       })
       assert.ok(
-        BigInt(fs.readFileSync(path.join(directory, 'memory.max'), 'utf8')) <= 4n * 1024n ** 3n,
+        BigInt(fs.readFileSync(path.join(directory, 'memory.max'), 'utf8')) <=
+          memoryLimitGiB * 1024n ** 3n,
       )
       assert.equal(fs.readFileSync(path.join(directory, 'memory.swap.max'), 'utf8').trim(), '0')
       event('successor-ready-released', { ...observed, scopeIdentity })

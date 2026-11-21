@@ -1,10 +1,10 @@
 # MVP acceptance backlog
 
 Updated through the [Retry runtime transition fix](./phase-5-retry-runtime-transition-research.md),
-[packaged frozen Retry](./phase-5-packaged-noobai-components-research.md#packaged-frozen-retry-with-all-three-components)
+[packaged frozen Retry](./phase-5-packaged-noobai-components-research.md#packaged-frozen-retry-with-all-three-components),
 [historical NoobAI queue qualification](./phase-5-noobai-legacy-queue-research.md),
-[signed relaunch with an installed runtime](./phase-5-signed-appimage-installed-runtime-research.md), and
-[recovery of a live CUDA job](./phase-5-packaged-live-queue-recovery-research.md).
+[recovery of a live CUDA job](./phase-5-packaged-live-queue-recovery-research.md), and
+[CUDA generation across signed relaunch](./phase-5-signed-appimage-cuda-research.md).
 All eight public promise statuses remain **«Пока не обещать»**. Earlier roadmap
 entries record the state at their checkpoint.
 [Product scope](../specs/00-product-scope.md), [promise matrix](../product-promises.md),
@@ -136,13 +136,17 @@ entries record the state at their checkpoint.
    unverified. The original stage is preserved. The local signed route
    also passed with the installed runtime. B and the native successor C
    both reported the original slot ready and published distinct revisions
-   with rendered CPU previews. Trained inference after update and the
-   shipping host matrix remain open. Production publisher trust,
-   legacy/unleased machines, in-place recovery and retirement still require
+   with rendered CPU previews. The CUDA follow-up generated the same NoobAI
+   EPS job before and after native relaunch on the retained slot. The frozen
+   execution inputs and PNG bytes matched. C passed explicit Add, Save and
+   reopen with the same accepted Raster and provenance. The shipping host
+   matrix and inference across distinct release sources remain open.
+   Production publisher trust, legacy/unleased machines, in-place recovery and retirement still require
    a supported ownership and qualification boundary. Re-read Invoke before
    changing owners. Keep manual SQLite recovery separate.
    [Updates recovery](./phase-5-public-appimage-recovery-research.md),
    [Signed relaunch with installed runtime](./phase-5-signed-appimage-installed-runtime-research.md),
+   [CUDA across signed relaunch](./phase-5-signed-appimage-cuda-research.md),
    [Fresh-path recovery](./phase-5-application-recovery-fresh-path-research.md),
    [update interruption](./phase-5-application-update-interruption-research.md),
    [stage owner](../../src/main/application-updates/application-update-staging.ts),

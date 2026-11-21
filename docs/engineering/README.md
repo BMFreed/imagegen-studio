@@ -1,5 +1,11 @@
 # Engineering Workflow
 
+## Current CUDA generation across a signed AppImage update
+
+[Installed NoobAI EPS before and after native relaunch](./phase-5-signed-appimage-cuda-research.md)
+verified identical frozen execution inputs and PNG bytes on the retained
+runtime, with explicit Add, Save and reopen in the successor.
+
 ## Current packaged live queue recovery
 
 [Live CUDA interruption and frozen Retry](./phase-5-packaged-live-queue-recovery-research.md)

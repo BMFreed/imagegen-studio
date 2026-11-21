@@ -357,7 +357,7 @@ async function openTab(page, projectId) {
   return opened.tab
 }
 
-async function setInput(page, label, value) {
+export async function setInput(page, label, value) {
   const input = page.locator('input[aria-label="' + label + '"]')
   await input.fill(String(value))
   await input.press('Tab')
@@ -368,7 +368,7 @@ async function selectOption(page, input, option) {
   await page.getByText(option, { exact: true }).last().click()
 }
 
-async function createAndAuthor(page, fixture, root) {
+export async function createAndAuthor(page, fixture, root, existingProjectCount = 0) {
   const title = 'Packaged trained ' + (fixture.profile ?? fixture.family)
   await page.getByRole('button', { name: 'New Project', exact: true }).first().click()
   const dialog = page.getByRole('dialog', { name: 'New Project', exact: true })
@@ -378,9 +378,10 @@ async function createAndAuthor(page, fixture, root) {
   await dialog.getByRole('button', { name: 'Create Project', exact: true }).click()
   await expect(page.getByRole('tab', { name: title, exact: true })).toBeVisible()
   const summaries = await projectCall(page, 'list')
-  assert.equal(summaries.length, 1)
-  const [project] = summaries
-  assert.equal(project.title, title)
+  assert.equal(summaries.length, existingProjectCount + 1)
+  const matching = summaries.filter((summary) => summary.title === title)
+  assert.equal(matching.length, 1)
+  const [project] = matching
   assert.equal(project.previewStatus, 'empty')
 
   const { model, family } = fixture
@@ -505,7 +506,7 @@ async function createAndAuthor(page, fixture, root) {
   return { project, prompts, tab, loras, embeddingRefs }
 }
 
-function assertFrozen(row, requested, fixture, projectFile) {
+export function assertFrozen(row, requested, fixture, projectFile) {
   const { project, tab, prompts, loras, embeddingRefs } = requested
   const { model, family, files } = fixture
   const frozen = JSON.parse(row.frozen_payload_json)
@@ -638,7 +639,7 @@ function assertFrozen(row, requested, fixture, projectFile) {
   return frozen
 }
 
-async function runningWorker(state, trained) {
+export async function runningWorker(state, trained) {
   const parent = state.mainPid
   const pids = (await readFile('/proc/' + parent + '/task/' + parent + '/children', 'utf8'))
     .trim()
@@ -686,7 +687,7 @@ async function runningWorker(state, trained) {
   return null
 }
 
-async function assertWorkerExited({ pid, startTicks }) {
+export async function assertWorkerExited({ pid, startTicks }) {
   await expect
     .poll(
       async () => {
@@ -931,7 +932,7 @@ async function recoverLiveQueueJob({
   return { recovered, canceled: { source, worker, target: input.target, restart } }
 }
 
-async function retainGeneration({ row, candidate, frozen, receipt, root, dataRoot }) {
+export async function retainGeneration({ row, candidate, frozen, receipt, root, dataRoot }) {
   const payload = row.frozen_payload_json
   const payloadSha256 = sha(Buffer.from(payload))
   assert.match(row.id, uuid)
@@ -1020,7 +1021,7 @@ async function retainGeneration({ row, candidate, frozen, receipt, root, dataRoo
   }
 }
 
-function assertPortableConfiguration(configuration, requested, fixture) {
+export function assertPortableConfiguration(configuration, requested, fixture) {
   const { prompts, loras, embeddingRefs } = requested
   const { model, family, files } = fixture
   assert.equal(configuration.mode, 'txt2img')
@@ -1063,7 +1064,7 @@ function assertPortableConfiguration(configuration, requested, fixture) {
   for (const file of files) assert.equal(portable.includes(file.path), false)
 }
 
-const inspectArchive = String.raw`
+export const inspectArchive = String.raw`
 import hashlib, io, json, sys, zipfile
 from pathlib import Path
 from PIL import Image
@@ -1106,7 +1107,7 @@ with zipfile.ZipFile(filename) as package:
                           outputSha256=hashlib.sha256(asset).hexdigest(), outputBytes=len(asset))))
 `
 
-function expectCatalog(catalog, fixture, predictionType = fixture.model.ref.predictionType) {
+export function expectCatalog(catalog, fixture, predictionType = fixture.model.ref.predictionType) {
   const { model } = fixture
   const version = catalog
     .find(({ id }) => id === model.resourceId)

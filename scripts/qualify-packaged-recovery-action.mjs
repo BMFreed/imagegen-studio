@@ -121,6 +121,7 @@ async function readInstalledRuntime() {
     'run',
     'runtimeId',
     'schemaVersion',
+    ...(Object.hasOwn(fixture, 'trained') ? ['trained'] : []),
   ])
   assert.equal(fixture.schemaVersion, 1)
   assert.equal(path.basename(fixture.engineReport), 'installed-engine.json')
@@ -141,6 +142,37 @@ async function readInstalledRuntime() {
   assert.equal(engine.qualification, 'actual-signed-full-engine-install-native-qualification')
   assert.equal(engine.roots.appDataDir, fixture.appData)
   assert.equal(engine.activatedPointer.runtimeId, fixture.runtimeId)
+  let trained
+  if (fixture.trained !== undefined) {
+    const modelFixture = fixture.trained
+    assert.deepEqual(Object.keys(modelFixture).sort(), [
+      'appData',
+      'family',
+      'files',
+      'model',
+      'profile',
+      'runtimeId',
+      'schemaVersion',
+    ])
+    assert.equal(modelFixture.schemaVersion, 1)
+    assert.equal(modelFixture.profile, 'noobai-eps')
+    assert.equal(modelFixture.family, 'illustrious')
+    assert.equal(modelFixture.appData, fixture.appData)
+    assert.equal(modelFixture.runtimeId, fixture.runtimeId)
+    const python = engine.activatedPointer.pythonExecutable
+    assert.equal(
+      python,
+      path.join(fixture.appData, 'runtime/environments', fixture.runtimeId, 'bin/python'),
+    )
+    const pythonPath = await fs.realpath(python)
+    assert.ok(pythonPath.startsWith(path.join(fixture.appData, 'runtime') + path.sep))
+    trained = {
+      fixture: modelFixture,
+      databasePath: path.join(fixture.appData, 'database/app.sqlite'),
+      python,
+      pythonPath,
+    }
+  }
   assert.equal(fixture.ownerPid, process.ppid)
   const claim = await readOwnedRecord(
     path.join(path.dirname(fixture.appData), '.packaged-upgrade-qualification/owner.json'),
@@ -152,7 +184,8 @@ async function readInstalledRuntime() {
   assert.equal(path.posix.normalize(self.group), self.group)
   assert.equal(owner.group, self.group)
   const scope = path.join('/sys/fs/cgroup', self.group)
-  assert.equal(BigInt(await fs.readFile(path.join(scope, 'memory.max'), 'utf8')), 4n * 1024n ** 3n)
+  const memoryLimit = (trained ? 12n : 4n) * 1024n ** 3n
+  assert.equal(BigInt(await fs.readFile(path.join(scope, 'memory.max'), 'utf8')), memoryLimit)
   assert.equal((await fs.readFile(path.join(scope, 'memory.swap.max'), 'utf8')).trim(), '0')
   const x11Pid = Number(process.env.IMAGEGEN_CHOOSER_X11_PID)
   assert.ok(Number.isSafeInteger(x11Pid) && x11Pid > 1)
@@ -178,10 +211,21 @@ async function readInstalledRuntime() {
   const baselineWitness = await fileWitness(baseline.path)
   assert.equal(baselineWitness.sizeBytes, baseline.sizeBytes)
   assert.equal(baselineWitness.sha256, baseline.sha256)
-  return { ...fixture, owner, scopeIdentity: await readScopeIdentity(self.group), baselineWitness }
+  return {
+    ...fixture,
+    trained,
+    owner,
+    scopeIdentity: await readScopeIdentity(self.group),
+    baselineWitness,
+  }
 }
 
 const installedRuntime = await readInstalledRuntime()
+const trained = installedRuntime?.trained
+const signedTrained = trained
+  ? await import('./fixtures/packaged-signed-trained-generation.mjs')
+  : null
+const installedMemoryLimit = (trained ? 12n : 4n) * 1024n ** 3n
 
 async function assertInheritedScope(observed) {
   assert.equal(observed.group, installedRuntime.owner.group)
@@ -484,6 +528,7 @@ async function ownKdeScope(pid, start) {
 }
 async function bindNative(state, refreshMainDeathProof = false) {
   const surviveMainDeath = installNext && !installedRuntime && state.version === '0.2.0'
+  if (trained) await assertInheritedScope(await proc(state.pid))
   const check = await boundQualificationProcess(state.pid, {
     deadlineSeconds: 360,
     execute,
@@ -503,9 +548,30 @@ function recordAggregate(state) {
     state.checks.flatMap((check) => check.groups.map((entry) => [entry.group, entry])),
   )
   const aggregate = Object.values(groups).reduce((sum, entry) => sum + BigInt(entry.memoryMax), 0n)
-  assert.ok(aggregate <= 8n * 1024n ** 3n)
+  assert.ok(aggregate <= (installedRuntime ? installedMemoryLimit : 8n * 1024n ** 3n))
   assert.ok(Object.values(groups).every((entry) => entry.swapMax === '0'))
   state.aggregateMemoryLimit = aggregate.toString()
+}
+async function bindTrainedWorker(state) {
+  const check = await bindNative(state)
+  recordAggregate(state)
+  return check
+}
+
+async function readTrainedMemory(state) {
+  const observed = await proc(state.pid)
+  await assertInheritedScope(observed)
+  const scope = path.join('/sys/fs/cgroup', observed.group)
+  const files = ['memory.max', 'memory.swap.max', 'memory.peak', 'memory.events', 'memory.stat']
+  const contents = await Promise.all(
+    files.map((name) => fs.readFile(path.join(scope, name), 'utf8')),
+  )
+  const memory = Object.fromEntries(files.map((name, index) => [name, contents[index].trim()]))
+  assert.equal(BigInt(memory['memory.max']), installedMemoryLimit)
+  assert.equal(memory['memory.swap.max'], '0')
+  assert.match(memory['memory.events'], /^oom 0$/m)
+  assert.match(memory['memory.events'], /^oom_kill 0$/m)
+  return memory
 }
 async function successorEndpoint(state) {
   const identity = await proc(state.pid)
@@ -766,6 +832,19 @@ async function retainInstalledPreview(name, current, before, prompt) {
   return { ...after, witness, destination }
 }
 
+async function retainInstalledDatabase(name) {
+  const source = path.join(installedRuntime.appData, 'database/app.sqlite')
+  for (const suffix of ['-wal', '-shm']) {
+    await assert.rejects(fs.lstat(source + suffix), { code: 'ENOENT' })
+  }
+  const witness = await fileWitness(source)
+  const destination = path.join(run, name)
+  await fs.copyFile(source, destination, constants.COPYFILE_EXCL)
+  assert.equal(await hash(destination), witness.sha256)
+  assert.deepEqual(await fileWitness(source), witness)
+  return { source, destination, witness }
+}
+
 async function editPositivePrompt(page, projectId, text) {
   const positive = page.getByRole('textbox', { name: 'Positive prompt', exact: true })
   await positive.fill(text)
@@ -795,7 +874,7 @@ const stageFor = (filename) =>
     path.dirname(filename),
     `.igs-app-update-${createHash('sha256').update(path.basename(filename)).digest('hex').slice(0, 16)}`,
   )
-async function installFromRecoveredPath(recovered, modal, project) {
+async function installFromRecoveredPath(recovered, modal, project, trainedBefore) {
   const prior = await proc(recovered.pid)
   assert.equal(prior.start, recovered.start)
   await removePortFile()
@@ -894,11 +973,14 @@ async function installFromRecoveredPath(recovered, modal, project) {
   const admitted = await bindNative(successor)
   const admittedGroup = admitted.groups.find((entry) => entry.group === successorIdentity.group)
   assert.ok(admittedGroup)
-  assert.ok(BigInt(admittedGroup.memoryMax) <= 4n * 1024n ** 3n)
+  assert.ok(BigInt(admittedGroup.memoryMax) <= installedMemoryLimit)
   assert.equal(admittedGroup.swapMax, '0')
   const scopeIdentity = await readScopeIdentity(successorIdentity.group)
   if (successorIdentity.group === prior.group) assert.deepEqual(scopeIdentity, scopeIdentityBefore)
   else assert.ok(admittedGroup.ownedScope)
+  const beforeDatabase = trainedBefore
+    ? await retainInstalledDatabase('trained-after-b-close.sqlite')
+    : null
   await writeFlag('admit-c-startup', { ...successorIdentity, scopeIdentity })
   const released = await nativeEvent('successor-ready-released', successor.version)
   assert.deepEqual(released.scopeIdentity, scopeIdentity)
@@ -943,8 +1025,10 @@ async function installFromRecoveredPath(recovered, modal, project) {
   const savedSha = await hash(project.filename)
   assert.notEqual(savedSha, project.before)
   const list = await call(successor.page, 'projects', 'list')
-  assert.equal(list.length, 1)
-  assert.equal(list[0].id, project.id)
+  assert.deepEqual(
+    list.map(({ id }) => id).sort(),
+    [project.id, ...(trainedBefore ? [trainedBefore.requested.project.id] : [])].sort(),
+  )
   await successor.page.getByRole('button', { name: `Open ${title}`, exact: true }).click()
   await expect(projectTab(successor.page)).toBeVisible()
   const opened = await call(successor.page, 'projects', 'open', project.id)
@@ -975,6 +1059,23 @@ async function installFromRecoveredPath(recovered, modal, project) {
     )
     cpuSave = { successorRuntimeStatus: status, fromB, fromC }
   }
+  let trainedEvidence
+  if (trainedBefore) {
+    const after = await signedTrained.runSignedTrainedAfter({
+      state: successor,
+      trained,
+      root: run,
+      before: trainedBefore,
+      bindWorker: bindTrainedWorker,
+      otherProjectTitle: title,
+    })
+    trainedEvidence = {
+      before: trainedBefore,
+      beforeDatabase,
+      after,
+      memoryAfter: await readTrainedMemory(successor),
+    }
+  }
   await closeNormally(successor)
   await confirmNormalExit(recovered)
   assert.equal(await hash(project.filename), cpuSave?.fromC.witness.sha256 ?? savedSha)
@@ -988,6 +1089,7 @@ async function installFromRecoveredPath(recovered, modal, project) {
     startup: state,
     startupScope: { ...successorIdentity, scopeIdentity },
     ...(cpuSave ? { cpuSave } : {}),
+    ...(trainedEvidence ? { signedTrained: trainedEvidence } : {}),
   }
 }
 const report = {
@@ -1090,6 +1192,20 @@ try {
   assert.equal((await call(second, 'projects', 'open', projectId)).tab.dirty, false)
   const prompt = 'Owned draft saved during the B to C application close'
   const recoveredRuntime = installedRuntime ? await readInstalledReady(second) : undefined
+  let trainedBefore
+  if (trained) {
+    trainedBefore = await signedTrained.runSignedTrainedBefore({
+      state: recovered,
+      trained,
+      root: run,
+      bindWorker: bindTrainedWorker,
+    })
+    trainedBefore.memoryAfter = await readTrainedMemory(recovered)
+    await expect(
+      projectTab(second).getByRole('button', { name: `Close ${title}`, exact: true }),
+    ).toBeEnabled({ timeout: 60_000 })
+    await projectTab(second).click()
+  }
   if (installNext) await editPositivePrompt(second, projectId, prompt)
   offered = c
   const next = await openUpdates(second)
@@ -1099,16 +1215,18 @@ try {
   assert.equal(downloadedC.availableVersion, '0.3.0')
   assert.equal(downloadedC.verification, 'signed-release')
   await review.click()
-  await expect(next.getByRole('button', { name: 'Install and restart', exact: true })).toBeEnabled()
+  await expect(next.getByRole('button', { name: 'Install and restart', exact: true })).toBeEnabled({
+    timeout: trained ? 90_000 : 5_000,
+  })
   await second.screenshot({ path: path.join(run, 'next-signed-release-review.png') })
   let installed
   if (installNext) {
-    installed = await installFromRecoveredPath(recovered, next, {
-      before: projectSha,
-      filename: project,
-      id: projectId,
-      prompt,
-    })
+    installed = await installFromRecoveredPath(
+      recovered,
+      next,
+      { before: projectSha, filename: project, id: projectId, prompt },
+      trainedBefore,
+    )
     assert.notEqual(installed.current.ino, materialized.ino)
     assert.deepEqual(await fileWitness(newPath), installed.current)
   } else {
@@ -1143,17 +1261,8 @@ try {
       await fileWitness(installedRuntime.baselineProject.path),
       installedRuntime.baselineWitness,
     )
-    const source = path.join(installedRuntime.appData, 'database/app.sqlite')
-    for (const suffix of ['-wal', '-shm']) {
-      await assert.rejects(fs.lstat(source + suffix), { code: 'ENOENT' })
-    }
-    const witness = await fileWitness(source)
-    const destination = path.join(run, 'installed-after-c-close.sqlite')
-    await fs.copyFile(source, destination, constants.COPYFILE_EXCL)
-    assert.equal(await hash(destination), witness.sha256)
-    assert.deepEqual(await fileWitness(source), witness)
+    database = await retainInstalledDatabase('installed-after-c-close.sqlite')
     await assertInheritedScope(await proc(process.pid))
-    database = { source, destination, witness }
   }
   Object.assign(report, {
     downloadedB,

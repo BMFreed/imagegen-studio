@@ -50,6 +50,7 @@ const rasterCrashRecovery = values['raster-crash-recovery']
 const rasterHistory = values['raster-history'] || rasterCrashRecovery
 const runtimeContinuity = values['runtime-continuity']
 const recoveryRun = values['recovery-run']
+const trainedRecovery = Boolean(recoveryRun && profile === 'noobai-eps')
 const engineRuns = path.join(
   projectExport && process.env.IMAGEGEN_CHOOSER_KWIN_PID ? os.userInfo().homedir : os.homedir(),
   '.codex/artifacts/imagegen-studio/runs/packaged-installed-engine',
@@ -76,11 +77,17 @@ assert.ok(!rasterCrashRecovery || profile === 'noobai-eps')
 assert.ok(!queueCrashRecovery || (profile === 'noobai-eps' && !rasterHistory))
 assert.ok(!runtimeContinuity || (!family && !projectExport))
 assert.ok(
-  recoveryRun === undefined || (recoveryRun && !family && !projectExport && !runtimeContinuity),
+  recoveryRun === undefined ||
+    (recoveryRun &&
+      (!family || trainedRecovery) &&
+      !projectExport &&
+      !runtimeContinuity &&
+      !queueCrashRecovery &&
+      !rasterHistory),
 )
 assert.equal(
   packageProofPath === undefined,
-  profile === undefined && !projectExport && !runtimeContinuity,
+  (profile === undefined || trainedRecovery) && !projectExport && !runtimeContinuity,
 )
 const preserved = new Set(['inference-resources', 'runtime'])
 const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim()
@@ -341,15 +348,16 @@ assert.equal(path.basename(engineReportPath), 'installed-engine.json')
 assert.ok(
   path.isAbsolute(run ?? '') && path.normalize(run) === run && path.dirname(run) === engineRun,
 )
-const runType = recoveryRun
-  ? 'signed-update'
-  : projectExport
-    ? 'project-export'
-    : runtimeContinuity
-      ? 'runtime-continuity'
-      : family
-        ? `trained-${profile ?? family}`
-        : 'historical-upgrade'
+const runType =
+  recoveryRun && !trainedRecovery
+    ? 'signed-update'
+    : projectExport
+      ? 'project-export'
+      : runtimeContinuity
+        ? 'runtime-continuity'
+        : family
+          ? `trained-${profile ?? family}`
+          : 'historical-upgrade'
 assert.match(path.basename(run), new RegExp(`^${runType}-r[1-9]\\d*$`))
 await directory(engineRun)
 assert.equal(await fs.realpath(engineReportPath), engineReportPath)
@@ -505,7 +513,8 @@ assert.ok(group && path.posix.normalize(group) === group, 'Use a bounded qualifi
 const memoryLimit = path.join('/sys/fs/cgroup', group)
 const memoryMax = (await fs.readFile(path.join(memoryLimit, 'memory.max'), 'utf8')).trim()
 const swapMax = (await fs.readFile(path.join(memoryLimit, 'memory.swap.max'), 'utf8')).trim()
-assert.ok(/^\d+$/.test(memoryMax) && Number(memoryMax) <= (family ? 2 : 4) * 1024 ** 3)
+if (trainedRecovery) assert.equal(memoryMax, String(12 * 1024 ** 3))
+else assert.ok(/^\d+$/.test(memoryMax) && Number(memoryMax) <= (family ? 2 : 4) * 1024 ** 3)
 assert.equal(swapMax, '0')
 
 await fs.mkdir(run, { mode: 0o700 })
@@ -588,6 +597,19 @@ try {
   assert.deepEqual(await inventory(held, names), before)
   stagedOwned = true
 
+  if (family) {
+    const { preparePackagedTrainedModels, verifyPackagedTrainedSources } =
+      await import('./fixtures/packaged-installed-models.mjs')
+    verifyTrainedSources = verifyPackagedTrainedSources
+    trained = await preparePackagedTrainedModels({
+      repo,
+      run,
+      appData,
+      family,
+      sourcesPath,
+      profile,
+    })
+  }
   if (recoveryRun) {
     await writeRecord(path.join(recoveryRun, 'payloads/installed-runtime-fixture.json'), {
       schemaVersion: 1,
@@ -597,6 +619,17 @@ try {
       ownerPid: process.pid,
       run,
       runtimeId,
+      ...(trainedRecovery && {
+        trained: {
+          schemaVersion: 1,
+          appData,
+          family,
+          files: trained.files,
+          model: trained.model,
+          profile,
+          runtimeId,
+        },
+      }),
     })
   } else if (projectExport) {
     const scratch = path.join(appData, 'scratch')
@@ -634,17 +667,6 @@ try {
       successor: successor.appImage,
     })
   } else if (family) {
-    const { preparePackagedTrainedModels, verifyPackagedTrainedSources } =
-      await import('./fixtures/packaged-installed-models.mjs')
-    verifyTrainedSources = verifyPackagedTrainedSources
-    trained = await preparePackagedTrainedModels({
-      repo,
-      run,
-      appData,
-      family,
-      sourcesPath,
-      profile,
-    })
     await writeRecord(path.join(run, 'trained-fixture.json'), {
       schemaVersion: 1,
       family,
@@ -776,16 +798,23 @@ with Path(sys.argv[1]).open('xb') as out:
       )
       try {
         const workspace = path.join(appData, 'workspaces/Uncategorized')
-        const [filename, ...others] = (await fs.readdir(workspace)).filter((file) =>
-          file.endsWith('.igs'),
-        )
-        assert.ok(filename && others.length === 0)
+        const files = (await fs.readdir(workspace)).filter((file) => file.endsWith('.igs')).sort()
+        const cpuProject = 'Installed runtime signed update.igs'
+        const trainedProject = report.installed.signedTrained?.after.projectFile
+        let trainedSnapshot = []
+        if (trainedRecovery) {
+          assert.equal(path.dirname(trainedProject), workspace)
+          assert.notEqual(path.basename(trainedProject), cpuProject)
+          assert.deepEqual(files, [cpuProject, path.basename(trainedProject)].sort())
+          trainedSnapshot = [[trainedProject, 'trained-after-c-save.igs', 8 * 1024 * 1024]]
+        } else assert.deepEqual(files, [cpuProject])
         const sqlite = path.join(appData, 'database/app.sqlite')
         await absent(`${sqlite}-wal`)
         await absent(`${sqlite}-shm`)
         const snapshots = []
         for (const [source, name, maximumBytes] of [
-          [path.join(workspace, filename), 'installed-after-c-save.igs', 1024 * 1024],
+          [path.join(workspace, cpuProject), 'installed-after-c-save.igs', 1024 * 1024],
+          ...trainedSnapshot,
           [sqlite, 'installed-after-c-close.sqlite', 16 * 1024 * 1024],
         ]) {
           const original = await ownedFileIdentity(source, maximumBytes)
