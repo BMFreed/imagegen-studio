@@ -1254,10 +1254,7 @@ export async function produceOrdinaryCatTagsProbe<T>(options: {
   })
 }
 
-const ORDINARY_IMG_RECOLOR_ROOT = path.join(
-  os.homedir(),
-  '.codex/artifacts/imagegen-studio/runs/ordinary-img-recolor',
-)
+const QUALIFICATION_RUNS_ROOT = path.join(os.homedir(), '.codex/artifacts/imagegen-studio/runs')
 const ordinaryImg = { image: null, outside: false, seed: 123, side: 512 } as const
 export const ORDINARY_IMG_RECOLOR_CASES = [
   { ...ordinaryImg, label: 'neutral', positive: CAT_PROSE },
@@ -1308,9 +1305,45 @@ export const ORDINARY_IMG_RECOLOR_CONTRACT = {
     'Blind review must identify a coherent frontal head with two ears and two eyes, neutral in the control and broadly colored correctly in both edits with a plain light background. Ambiguity is inconclusive. Measure RGB dominance at a margin of 30 in both pinned masks for corroboration.',
 } as const
 
+export const ORDINARY_IMG_RECOLOR_STRENGTH_CONTRACT = {
+  ...ORDINARY_IMG_RECOLOR_CONTRACT,
+  base: 'dc2cfc68557f8c375bc47da5e1aa1ba162756f05',
+  baseline: {
+    denoisingStrength: 0.5,
+    requests: {
+      blue: {
+        sha256: 'f24cab9732fd4ca74e0c6b0abe30fe767fda73216a7771ff86252373f6e5861b',
+        sizeBytes: 3410,
+      },
+      neutral: {
+        sha256: 'cb3ad76ef771abd9e2cfb257f421b1bace7971d1085c335d69622c35235efb20',
+        sizeBytes: 3398,
+      },
+      red: {
+        sha256: '6ef439c380a49050cefa04c0cad80650e54abc2757394385bee4dd9c7cdd9dbe',
+        sizeBytes: 3406,
+      },
+    },
+    run: 'ordinary-img-recolor/20261121-r1',
+  },
+  executedSteps: 23,
+  sampling: { ...ORDINARY_IMG_RECOLOR_CONTRACT.sampling, denoisingStrength: 0.75 },
+  schema: 'ordinary-img-recolor-strength-experiment-v1',
+} as const
+
 type OrdinaryImgRecolorUseCase = Omit<ReferenceUtilityUseCase, 'case' | 'prepared'> & {
   case: (typeof ORDINARY_IMG_RECOLOR_CASES)[number]
   prepared: PreparedNormalGeneration
+}
+
+export function ordinaryImgRecolorContract(run: string) {
+  const root = path.dirname(run)
+  if (root === path.join(QUALIFICATION_RUNS_ROOT, 'ordinary-img-recolor')) {
+    return ORDINARY_IMG_RECOLOR_CONTRACT
+  }
+  if (root === path.join(QUALIFICATION_RUNS_ROOT, 'ordinary-img-recolor-strength')) {
+    return ORDINARY_IMG_RECOLOR_STRENGTH_CONTRACT
+  }
 }
 
 /** Keep the source Raster in the saved ordinary Canvas for each literal prompt. */
@@ -1320,18 +1353,19 @@ export async function produceOrdinaryImgRecolorProbe<T>(options: {
   runtimeRoot: string
   useCase: (input: OrdinaryImgRecolorUseCase) => Promise<T>
 }): Promise<unknown> {
-  assert.equal(path.dirname(options.run), ORDINARY_IMG_RECOLOR_ROOT)
+  const contract = ordinaryImgRecolorContract(options.run)
+  assert.ok(contract)
   assert.match(path.basename(options.run), /^\d{8}-r[1-9]\d*$/)
   return produceFixedUtilityProbe({
     ...options,
     prepare: prepareNormalGeneration,
     sourceImage: {
-      ...ORDINARY_IMG_RECOLOR_CONTRACT.source,
+      ...contract.source,
       path: path.join(options.run, 'cat-source.png'),
     },
     spec: {
       cases: ORDINARY_IMG_RECOLOR_CASES,
-      contract: ORDINARY_IMG_RECOLOR_CONTRACT,
+      contract,
       prefix: 'ordinary-img-recolor',
       run: options.run,
     },
@@ -1393,7 +1427,11 @@ async function produceFixedUtilityProbe<
   sourceImage?: CharacterVisualFile
   spec: {
     cases: readonly C[]
-    contract: { globalPositive: string; nativeRequestCeiling: number }
+    contract: {
+      globalPositive: string
+      nativeRequestCeiling: number
+      sampling?: { denoisingStrength?: number; steps: number }
+    }
     prefix:
       'ordinary-cat-tags' | 'ordinary-img-recolor' | 'reference-img' | 'reference' | 'resolution'
     run: string
@@ -1564,7 +1602,9 @@ async function produceFixedUtilityProbe<
           positivePrompt: prompt(testCase.positive ?? spec.contract.globalPositive),
           sampling: {
             cfgScale: 5,
-            denoisingStrength: sourceImage ? 0.5 : null,
+            denoisingStrength: sourceImage
+              ? (spec.contract.sampling?.denoisingStrength ?? 0.5)
+              : null,
             sampler: 'Euler',
             scheduler: 'Normal',
             steps: 30,

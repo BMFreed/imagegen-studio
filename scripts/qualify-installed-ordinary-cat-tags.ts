@@ -19,8 +19,7 @@ import { captureInferenceWorkerOwner } from '../src/main/projects/inference-work
 import {
   ORDINARY_CAT_TAGS_CASES,
   ORDINARY_CAT_TAGS_CONTRACT,
-  ORDINARY_IMG_RECOLOR_CASES,
-  ORDINARY_IMG_RECOLOR_CONTRACT,
+  ordinaryImgRecolorContract,
   produceOrdinaryCatTagsProbe,
   produceOrdinaryImgRecolorProbe,
 } from '../src/main/projects/test-fixtures/regional-guidance-character-visual-probe.js'
@@ -116,12 +115,12 @@ async function verifyCheckpoint() {
 }
 
 function pairedInputs(request: IllustriousGenerationRequestV1) {
+  const { job: _job, requestId: _requestId, ...envelope } = request
   const { output: _output, prompts, target, ...job } = request.job
   const { path: _path, ...targetContent } = target
   return {
+    ...envelope,
     job: { ...job, prompts: { negative: prompts.negative }, target: targetContent },
-    protocolVersion: request.protocolVersion,
-    type: request.type,
   }
 }
 
@@ -198,12 +197,12 @@ async function runtimeIdle(engine: Awaited<ReturnType<typeof readEngine>>) {
 async function main() {
   const run = process.argv[3] ?? ''
   assert.deepEqual(process.argv.slice(2), ['--run', run])
-  const img = path.dirname(run) === path.join(artifactRoot, 'runs/ordinary-img-recolor')
+  const img = ordinaryImgRecolorContract(run)
   assert.ok(img || path.dirname(run) === runRoot)
-  const contract = img ? ORDINARY_IMG_RECOLOR_CONTRACT : ORDINARY_CAT_TAGS_CONTRACT
-  const cases = img ? ORDINARY_IMG_RECOLOR_CASES : ORDINARY_CAT_TAGS_CASES
-  const bbox = img ? ORDINARY_IMG_RECOLOR_CONTRACT.bbox : box
-  const executedSteps = img ? ORDINARY_IMG_RECOLOR_CONTRACT.executedSteps : steps
+  const contract = img ?? ORDINARY_CAT_TAGS_CONTRACT
+  const cases = img?.cases ?? ORDINARY_CAT_TAGS_CASES
+  const bbox = img?.bbox ?? box
+  const executedSteps = img?.executedSteps ?? steps
   const produce = img ? produceOrdinaryImgRecolorProbe : produceOrdinaryCatTagsProbe
   const operation = img ? 'illustrious-img2img' : 'illustrious-txt2img'
   assert.match(path.basename(run), /^\d{8}-r[1-9]\d*$/)
@@ -220,6 +219,22 @@ async function main() {
   const invokeRevision = await revision(invoke)
   assert.equal(applicationRevision, contract.base)
   assert.equal(invokeRevision, contract.invokeRevision)
+  const baseline = img && 'baseline' in img ? img.baseline : undefined
+  const previous = new Map<string, IllustriousGenerationRequestV1>()
+  const baselinePins = baseline
+    ? Object.entries(baseline.requests).map(([label, pin]) => ({
+        ...pin,
+        label,
+        path: path.join(artifactRoot, 'runs', baseline.run, `${label}.request.json`),
+      }))
+    : []
+  for (const pin of baselinePins) {
+    const bytes = await bytesAt(pin.path)
+    assert.equal(bytes.length, pin.sizeBytes)
+    assert.equal(sha(bytes), pin.sha256)
+    const { request } = JSON.parse(bytes.toString()) as { request: IllustriousGenerationRequestV1 }
+    previous.set(pin.label, request)
+  }
   const checkedInvokeFiles = img
     ? [...invokeFiles, 'invokeai/app/invocations/vae/image_to_latents.py']
     : invokeFiles
@@ -251,6 +266,7 @@ async function main() {
   const retain = (name: string, value: unknown) => writeJson(name, value, run)
   const checkpointPin = { byteSize: checkpointBytes, path: checkpoint, sha256: checkpointSha }
   await retain('native-start.json', {
+    ...(baseline ? { baselinePins } : {}),
     bootstrapStorage,
     bounds,
     cases,
@@ -283,11 +299,8 @@ async function main() {
         const actualTarget = sha(prepared.targetPngBytes)
         assert.equal(prepared.context.target.sha256, actualTarget)
         if (img) {
-          assert.equal(actualTarget, ORDINARY_IMG_RECOLOR_CONTRACT.source.sha256)
-          assert.equal(
-            prepared.targetPngBytes.length,
-            ORDINARY_IMG_RECOLOR_CONTRACT.source.byteSize,
-          )
+          assert.equal(actualTarget, img.source.sha256)
+          assert.equal(prepared.targetPngBytes.length, img.source.byteSize)
         }
         targetSha ??= actualTarget
         assert.equal(actualTarget, targetSha)
@@ -352,10 +365,24 @@ async function main() {
               assert.deepEqual(job.bbox, bbox)
               if (img) {
                 assert.ok('denoisingStrength' in job.sampling)
-                assert.equal(
-                  job.sampling.denoisingStrength,
-                  ORDINARY_IMG_RECOLOR_CONTRACT.sampling.denoisingStrength,
-                )
+                assert.equal(job.sampling.denoisingStrength, img.sampling.denoisingStrength)
+                if (baseline) {
+                  const original = previous.get(testCase.label)
+                  assert.ok(original?.type === 'generate-illustrious-img2img')
+                  assert.equal(original.job.sampling.denoisingStrength, baseline.denoisingStrength)
+                  assert.deepEqual(job.prompts, original.job.prompts)
+                  const expected = pairedInputs(original)
+                  assert.deepEqual(pairedInputs(request), {
+                    ...expected,
+                    job: {
+                      ...expected.job,
+                      sampling: {
+                        ...expected.job.sampling,
+                        denoisingStrength: img.sampling.denoisingStrength,
+                      },
+                    },
+                  })
+                }
               }
               assert.deepEqual(job.checkpoint, {
                 path: checkpoint,
@@ -474,6 +501,9 @@ async function main() {
     assert.deepEqual(await regular(checkpoint), checkpointBefore)
     assert.deepEqual(await bytesAt(contractPath), contractBytes)
     for (const pin of enginePins) {
+      await verify(pin)
+    }
+    for (const pin of baselinePins) {
       await verify(pin)
     }
     assert.equal(await revision(repository), applicationRevision)

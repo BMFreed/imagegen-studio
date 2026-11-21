@@ -1,5 +1,12 @@
 # Engineering Workflow
 
+## Current ordinary Illustrious IMG strength comparison
+
+[Ordinary IMG at strength 0.75](./phase-4-ordinary-img-strength-research.md)
+executed 23 native steps on each of three matched requests. Higher strength
+changed the facial details and added shapes around the head. Both color edits
+failed the fixed visual criterion. The six original PNGs are retained.
+
 ## Current ordinary Illustrious IMG color control
 
 [Ordinary IMG recoloring](./phase-4-ordinary-img-recolor-research.md)
