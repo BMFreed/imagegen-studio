@@ -1,5 +1,11 @@
 # Engineering Workflow
 
+## Current packaged live queue recovery
+
+[Live CUDA interruption and frozen Retry](./phase-5-packaged-live-queue-recovery-research.md)
+verified `APP_RESTART` after Main death, manual Retry on the installed
+worker, and explicit Add, Save and reopen of the exact NoobAI EPS result.
+
 ## Current signed AppImage relaunch with the installed worker
 
 [Signed recovery and native relaunch with the installed runtime](./phase-5-signed-appimage-installed-runtime-research.md)

@@ -32,6 +32,7 @@ const { values } = parseArgs({
     'package-proof': { type: 'string' },
     profile: { type: 'string' },
     'project-export': { type: 'boolean' },
+    'queue-crash-recovery': { type: 'boolean' },
     'raster-crash-recovery': { type: 'boolean' },
     'raster-history': { type: 'boolean' },
     'recovery-run': { type: 'string' },
@@ -44,6 +45,7 @@ const { family, profile } = values
 const sourcesPath = values['model-inputs']
 const packageProofPath = values['package-proof']
 const projectExport = values['project-export']
+const queueCrashRecovery = values['queue-crash-recovery']
 const rasterCrashRecovery = values['raster-crash-recovery']
 const rasterHistory = values['raster-history'] || rasterCrashRecovery
 const runtimeContinuity = values['runtime-continuity']
@@ -71,6 +73,7 @@ assert.ok(
   !rasterHistory || (family === 'illustrious' && ['noobai-eps', 'noobai-v'].includes(profile)),
 )
 assert.ok(!rasterCrashRecovery || profile === 'noobai-eps')
+assert.ok(!queueCrashRecovery || (profile === 'noobai-eps' && !rasterHistory))
 assert.ok(!runtimeContinuity || (!family && !projectExport))
 assert.ok(
   recoveryRun === undefined || (recoveryRun && !family && !projectExport && !runtimeContinuity),
@@ -208,7 +211,18 @@ async function readSuccessorPackageProof(filename) {
   assert.equal(receipt.remote, revision)
   assert.equal(receipt.trackedTreeClean, true)
   assert.equal(receipt.sha256['package-proof.json'], proofFile.sha256)
-  assert.equal(git('diff', '--name-only', revision, '--', ...productionInputs), '')
+  const sourceDiff = git('diff', '--name-only', revision, '--', ...productionInputs)
+  if (queueCrashRecovery && sourceDiff) {
+    assert.deepEqual(sourceDiff.split('\n'), [
+      'src/main/application-updates/application-update-staging-integration.test.ts',
+      'src/main/application-updates/test-fixtures/application-update-interruption-child.ts',
+    ])
+    assert.equal(Object.keys(proof.dist).length, 42)
+    for (const [file, expected] of Object.entries(proof.dist)) {
+      assert.match(file, /^dist\/(main|preload|renderer)\/[\w.-]+(?:\/[\w.-]+)*$/)
+      assert.equal(await sha256(path.join(repo, file)), expected, file)
+    }
+  } else assert.equal(sourceDiff, '')
   assert.equal(git('ls-files', '--others', '--exclude-standard', '--', ...productionInputs), '')
   assert.match(proof.baseRevision, /^[0-9a-f]{40}$/)
   git('merge-base', '--is-ancestor', proof.baseRevision, revision)
@@ -428,15 +442,20 @@ await assertEngineInputs()
 const sourceRevision = release.sourceBefore.head
 assert.match(sourceRevision, /^[0-9a-f]{40}$/)
 const packageProof =
-  packageProofPath && !runtimeContinuity ? await readNoobaiPackageProof(packageProofPath) : null
-const successor = runtimeContinuity ? await readSuccessorPackageProof(packageProofPath) : null
-const appImage = packageProof?.appImage.path ?? retainedAppImage
+  packageProofPath && !runtimeContinuity && !queueCrashRecovery
+    ? await readNoobaiPackageProof(packageProofPath)
+    : null
+const stockProof =
+  runtimeContinuity || queueCrashRecovery ? await readSuccessorPackageProof(packageProofPath) : null
+const successor = runtimeContinuity ? stockProof : null
+const appImage =
+  packageProof?.appImage.path ?? (queueCrashRecovery ? stockProof.appImage.path : retainedAppImage)
 if (successor) {
   assert.notEqual(successor.appImage.sha256, prior.packageBefore.sha256)
   assert.notEqual(successor.revision, sourceRevision)
   git('merge-base', '--is-ancestor', sourceRevision, successor.revision)
 }
-if (packageProof || successor || recoveryRun) {
+if (packageProof || stockProof || recoveryRun) {
   assert.equal(git('diff', '--name-only', sourceRevision, '--', 'worker-python'), '')
 } else {
   assert.equal(
@@ -505,12 +524,12 @@ await writeRecord(path.join(run, 'artifact-lifecycle.json'), {
     ...(packageProof
       ? [appImage, packageProof.identity.path, packageProof.manifestIdentity.path]
       : []),
-    ...(successor
+    ...(stockProof
       ? [
-          successor.appImage.path,
-          successor.proofFile.path,
-          successor.receiptFile.path,
-          successor.auditFile.path,
+          stockProof.appImage.path,
+          stockProof.proofFile.path,
+          stockProof.receiptFile.path,
+          stockProof.auditFile.path,
         ]
       : []),
     appData,
@@ -546,6 +565,7 @@ try {
     inputs: exactInputs,
     ...(packageProof ? { packageProof } : {}),
     ...(successor ? { successor } : {}),
+    ...(queueCrashRecovery ? { stockProof } : {}),
     ...(recoveryManifest ? { recoveryManifest, baselineProject } : {}),
   })
   const entries = (await fs.readdir(appData)).sort()
@@ -631,7 +651,8 @@ try {
       appData,
       runtimeId,
       ...trained,
-      ...(packageProof ? { profile, package: packageProof.appImage } : {}),
+      ...(profile ? { profile, package: (packageProof ?? stockProof).appImage } : {}),
+      ...(queueCrashRecovery ? { queueCrashRecovery: true } : {}),
       ...(rasterHistory ? { rasterHistory: true } : {}),
       ...(rasterCrashRecovery ? { rasterCrashRecovery: true } : {}),
     })
@@ -785,7 +806,8 @@ with Path(sys.argv[1]).open('xb') as out:
       if (error.code === 'ENOENT' && smokeExit.code !== 0) return []
       throw error
     })
-    for (const phase of ['first', ...(rasterCrashRecovery ? ['recovered'] : []), 'restarted']) {
+    const crash = rasterCrashRecovery || queueCrashRecovery
+    for (const phase of ['first', ...(crash ? ['recovered'] : []), 'restarted']) {
       const receipt = `${phase}.physical-exit.json`
       if (smokeExit.code === 0 || observations.some((name) => name.startsWith(`${phase}.`))) {
         assert.equal((await readJson(path.join(nativeRoot, receipt))).scopeExit.confirmed, true)
@@ -829,9 +851,9 @@ with Path(sys.argv[1]).open('xb') as out:
     assert.deepEqual(after, packageProof)
     await writeRecord(path.join(run, 'package-verified-after.json'), after)
   }
-  if (successor) {
-    assert.deepEqual(await readSuccessorPackageProof(packageProofPath), successor)
-    await writeRecord(path.join(run, 'successor-package-verified-after.json'), successor)
+  if (stockProof) {
+    assert.deepEqual(await readSuccessorPackageProof(packageProofPath), stockProof)
+    await writeRecord(path.join(run, 'successor-package-verified-after.json'), stockProof)
   }
   if (recoveryManifest) {
     assert.deepEqual(await ownedFileIdentity(recoveryManifest.path, 256 * 1024), recoveryManifest)

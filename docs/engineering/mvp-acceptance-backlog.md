@@ -2,8 +2,9 @@
 
 Updated through the [Retry runtime transition fix](./phase-5-retry-runtime-transition-research.md),
 [packaged frozen Retry](./phase-5-packaged-noobai-components-research.md#packaged-frozen-retry-with-all-three-components)
-[historical NoobAI queue qualification](./phase-5-noobai-legacy-queue-research.md), and
-[signed relaunch with an installed runtime](./phase-5-signed-appimage-installed-runtime-research.md).
+[historical NoobAI queue qualification](./phase-5-noobai-legacy-queue-research.md),
+[signed relaunch with an installed runtime](./phase-5-signed-appimage-installed-runtime-research.md), and
+[recovery of a live CUDA job](./phase-5-packaged-live-queue-recovery-research.md).
 All eight public promise statuses remain **«Пока не обещать»**. Earlier roadmap
 entries record the state at their checkpoint.
 [Product scope](../specs/00-product-scope.md), [promise matrix](../product-promises.md),
@@ -208,9 +209,14 @@ entries record the state at their checkpoint.
    The stock AppImage canceled one prepared running and one pending job with
    `APP_RESTART`, preserved the prior cancellation and exact frozen inputs,
    and repeated the same Queue Manager readback on a second startup. Retry
-   remained unavailable without an installed engine. Interruption of a live
-   packaged CUDA job and its successful frozen Retry remain open.
+   remained unavailable without an installed engine.
    [Packaged queue restart](./phase-5-packaged-queue-startup-recovery-research.md)
+   After Main death during an owned NoobAI EPS CUDA job, the stock AppImage
+   reopened the same saved Project and canceled the live job with `APP_RESTART`
+   exactly once. Public Retry used the frozen inputs despite draft edits,
+   produced the exact reference PNG, and preserved it through explicit Add,
+   Save and reopen. Repeat on the shipping host matrix.
+   [Packaged live queue recovery](./phase-5-packaged-live-queue-recovery-research.md)
    The stock AppImage compares the accepted NoobAI EPS
    result with its edited draft and saves an exact detached preset without Seed.
    The preset and Project reopen in a profile without an installed worker or

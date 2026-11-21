@@ -176,7 +176,11 @@ export async function readTrainedGeneration({ filename, engine, outputRoot, appI
   assert.deepEqual(await identity(filename), fixtureBefore)
   const noobai = fixture.profile !== undefined
   assert.ok(!noobai || Object.hasOwn(noobaiPins, fixture.profile))
-  const { rasterCrashRecovery, rasterHistory } = fixture
+  const { queueCrashRecovery, rasterCrashRecovery, rasterHistory } = fixture
+  assert.ok(
+    queueCrashRecovery === undefined ||
+      (queueCrashRecovery === true && !rasterHistory && fixture.profile === 'noobai-eps'),
+  )
   assert.ok(
     rasterHistory === undefined ||
       (rasterHistory === true && ['noobai-eps', 'noobai-v'].includes(fixture.profile)),
@@ -191,6 +195,7 @@ export async function readTrainedGeneration({ filename, engine, outputRoot, appI
     'files',
     'model',
     ...(noobai ? ['package', 'profile'] : []),
+    ...(queueCrashRecovery ? ['queueCrashRecovery'] : []),
     ...(rasterCrashRecovery ? ['rasterCrashRecovery'] : []),
     ...(rasterHistory ? ['rasterHistory'] : []),
     'runtimeId',
@@ -329,6 +334,7 @@ export async function readTrainedGeneration({ filename, engine, outputRoot, appI
     pythonPath,
     engineRun: engine.run,
     ownedEmbedding,
+    queueCrashRecovery,
     rasterCrashRecovery,
     rasterHistory,
     protectedModels,
@@ -787,17 +793,7 @@ async function cancelTrainedSource({ first, trained, snapshot, admitted, root, p
   assert.equal(source.frozen_payload_json, admitted.frozen_payload_json)
   assert.deepEqual(stored.generation_candidate_receipt.rows, [])
   assert.deepEqual((await projectCall(page, 'listGenerationResults', project.id)).candidates, [])
-  const input = path.join(trained.fixture.appData, 'generation-inputs', source.id)
-  const target = await readOwned(path.join(input, 'target.png'), 8 * 1024 * 1024)
-  const manifest = await readOwned(path.join(input, 'manifest.json'), 64 * 1024)
-  assert.deepEqual(JSON.parse(manifest), {
-    payloadSha256: sha(Buffer.from(source.frozen_payload_json)),
-    queueInputVersion: 1,
-    queueItemId: source.id,
-    targetByteSize: target.length,
-    targetFile: 'target.png',
-    targetSha256: sha(target),
-  })
+  const { target, manifest } = await readRetryInput(trained.fixture.appData, source)
   await writeFile(path.join(root, 'canceled-target-manifest.json'), manifest, {
     flag: 'wx',
     mode: 0o600,
@@ -808,6 +804,131 @@ async function cancelTrainedSource({ first, trained, snapshot, admitted, root, p
     mode: 0o600,
   })
   return { source, worker, target, transition }
+}
+
+async function readRetryInput(appData, source) {
+  const input = path.join(appData, 'generation-inputs', source.id)
+  const target = await readOwned(path.join(input, 'target.png'), 8 * 1024 * 1024)
+  const manifest = await readOwned(path.join(input, 'manifest.json'), 64 * 1024)
+  assert.deepEqual(JSON.parse(manifest), {
+    payloadSha256: sha(Buffer.from(source.frozen_payload_json)),
+    queueInputVersion: 1,
+    queueItemId: source.id,
+    targetByteSize: target.length,
+    targetFile: 'target.png',
+    targetSha256: sha(target),
+  })
+  return { target, manifest }
+}
+
+async function recoverLiveQueueJob({
+  first,
+  trained,
+  snapshot,
+  admitted,
+  root,
+  project,
+  tab,
+  initialPackage,
+  identity,
+  crashForRecovery,
+  retainOwnStore,
+  launch,
+  readPorts,
+}) {
+  const emptyTables = [
+    'generation_candidate_receipt',
+    'generation_seed_cursor',
+    'generation_acceptance_journal',
+    'project_accepted_result_index',
+  ]
+  function readSource() {
+    const { tables } = snapshot()
+    for (const name of emptyTables) assert.deepEqual(tables[name].rows, [], name)
+    const [source] = tables.generation_queue_item.rows
+    assert.equal(tables.generation_queue_item.rows.length, 1)
+    assert.equal(source.id, admitted.id)
+    assert.equal(source.frozen_payload_json, admitted.frozen_payload_json)
+    return source
+  }
+  let running
+  let worker
+  let cuda
+  await expect
+    .poll(
+      async () => {
+        running = readSource()
+        if (running.status === 'pending') return false
+        assert.equal(running.status, 'running')
+        assert.equal(running.status_sequence, 1)
+        worker = await runningWorker(first, trained)
+        cuda = first.gpuSamples.findLast(
+          (sample) =>
+            sample.gpuMiB > 0 &&
+            sample.pid === worker?.pid &&
+            sample.startTicks === worker.startTicks &&
+            sample.group === worker.group,
+        )
+        return Boolean(cuda)
+      },
+      { timeout: 120_000, intervals: [100, 250, 500] },
+    )
+    .toBe(true)
+  assert.equal(running.error_code, null)
+  assert.equal(running.finished_at, null)
+  const input = await readRetryInput(trained.fixture.appData, running)
+  const crash = await crashForRecovery(first, async () => {
+    assert.deepEqual(await runningWorker(first, trained), worker)
+    assert.deepEqual(readSource(), running)
+  })
+  assert.equal(crash.scopeExit.confirmed, true)
+  await assertWorkerExited(worker)
+  const retained = await retainOwnStore('after-running-crash')
+  assert.deepEqual(retained.project, initialPackage)
+  assert.deepEqual(readSource(), running)
+
+  const recovered = await launch('recovered')
+  const ports = await readPorts(recovered)
+  assert.equal(ports.runtime.value.runtimeId, trained.fixture.runtimeId)
+  assert.equal(ports.runtime.value.kind, 'ready')
+  expectCatalog(ports.catalog.value, trained.fixture)
+  const source = readSource()
+  assert.deepEqual(source, {
+    ...running,
+    status: 'canceled',
+    status_sequence: 2,
+    error_code: 'APP_RESTART',
+    error_message: 'The application closed before this job completed.',
+    updated_at: source.updated_at,
+    finished_at: source.updated_at,
+  })
+  assert.ok(source.updated_at > running.updated_at)
+  assert.deepEqual(await readRetryInput(trained.fixture.appData, source), input)
+  assert.equal(await runningWorker(recovered, trained), null)
+  await recovered.page.getByRole('button', { name: 'Open ' + project.title, exact: true }).click()
+  await expect(recovered.page.getByRole('tab', { name: project.title, exact: true })).toBeVisible()
+  const reopened = await openTab(recovered.page, project.id)
+  assert.deepEqual(
+    [reopened.documentId, reopened.documentRevision, reopened.dirty, reopened.layers],
+    [tab.documentId, tab.documentRevision, false, []],
+  )
+  assert.deepEqual(await identity(initialPackage.path), initialPackage)
+  const { manager, row } = queueSourceControl(recovered.page, source.id)
+  await recovered.page.getByRole('button', { name: 'Open Queue Manager', exact: true }).click()
+  await expect(row).toHaveAttribute('data-status', 'canceled')
+  await row.getByRole('button', { name: 'Show job details', exact: true }).click()
+  await expect(manager.getByText('APP_RESTART', { exact: true })).toBeVisible()
+  await expect(manager.getByText(source.error_message, { exact: true })).toBeVisible()
+  await manager.getByRole('button', { name: 'Close Queue Manager', exact: true }).click()
+  const restart = { running, source, cuda, crash, retained }
+  for (const [name, bytes] of [
+    ['interrupted-frozen-payload.json', running.frozen_payload_json],
+    ['interrupted-target-manifest.json', input.manifest],
+    ['interrupted-target.png', input.target],
+    ['queue-restart.json', JSON.stringify(restart, null, 2) + '\n'],
+  ])
+    await writeFile(path.join(root, name), bytes, { flag: 'wx', mode: 0o600 })
+  return { recovered, canceled: { source, worker, target: input.target, restart } }
 }
 
 async function retainGeneration({ row, candidate, frozen, receipt, root, dataRoot }) {
@@ -1026,14 +1147,22 @@ export async function runTrainedGeneration({
   crashForRecovery,
 }) {
   const { fixture, databasePath, baseline, python } = trained
-  const first = await launch('first')
+  let first = await launch('first')
   const ports = await readPorts(first)
   assert.deepEqual(ports.projects.value, [])
   const noobai = fixture.profile !== undefined
   const noobaiV = fixture.profile === 'noobai-v'
-  const exerciseRetry = fixture.profile === 'noobai-eps-stack-retry'
+  const exerciseRetry = fixture.profile === 'noobai-eps-stack-retry' || trained.queueCrashRecovery
   expectCatalog(ports.catalog.value, fixture, noobai ? 'epsilon' : undefined)
   const requested = await createAndAuthor(first.page, fixture, root)
+  if (trained.queueCrashRecovery) {
+    first.discardOwnedProjectId = requested.project.id
+    await first.page.getByRole('button', { name: 'Save Project', exact: true }).click()
+    await expect
+      .poll(async () => (await openTab(first.page, requested.project.id)).dirty)
+      .toBe(false)
+    requested.tab = await openTab(first.page, requested.project.id)
+  }
   const { project, tab } = requested
   if (trained.ownedEmbedding || trained.rasterHistory) first.discardOwnedProjectId = project.id
   const snapshot = (closed = false) => snapshotDatabase(databasePath, { closed })
@@ -1045,12 +1174,15 @@ export async function runTrainedGeneration({
   assert.equal(await realpath(packagePath), packagePath)
   const initialPackage = await identity(packagePath)
 
-  await first.page.evaluate(() => {
-    window.packagedQualificationProgress = []
-    window.api.projects.onGenerationProgress((event) =>
-      window.packagedQualificationProgress.push(event),
-    )
-  })
+  async function observeProgress(state) {
+    await state.page.evaluate(() => {
+      window.packagedQualificationProgress = []
+      window.api.projects.onGenerationProgress((event) =>
+        window.packagedQualificationProgress.push(event),
+      )
+    })
+  }
+  await observeProgress(first)
   const generate = first.page.getByRole('button', { name: 'Generate', exact: true })
   await expect(generate).toBeEnabled({ timeout: 90_000 })
   await observeGpuWorker(first)
@@ -1145,9 +1277,31 @@ export async function runTrainedGeneration({
       workerPid: worker.pid,
     })
   }
-  const canceled = exerciseRetry
-    ? await cancelTrainedSource({ first, trained, snapshot, admitted, root, project })
-    : null
+  let canceled
+  if (trained.queueCrashRecovery) {
+    const resumed = await recoverLiveQueueJob({
+      first,
+      trained,
+      snapshot,
+      admitted,
+      root,
+      project,
+      tab,
+      initialPackage,
+      identity,
+      crashForRecovery,
+      retainOwnStore,
+      launch,
+      readPorts,
+    })
+    first = resumed.recovered
+    first.discardOwnedProjectId = project.id
+    canceled = resumed.canceled
+    await observeProgress(first)
+    await observeGpuWorker(first)
+  } else if (exerciseRetry) {
+    canceled = await cancelTrainedSource({ first, trained, snapshot, admitted, root, project })
+  }
   if (canceled) assert.deepEqual(await identity(packagePath), initialPackage)
   const afterCapturePrompt = 'Draft edited after trained capture.'
   await first.page
@@ -1233,13 +1387,7 @@ export async function runTrainedGeneration({
     assert.notEqual(clone.batch_id, canceled.source.batch_id)
     assert.notEqual(clone.staging_session_id, canceled.source.staging_session_id)
     assert.deepEqual(assertFrozen(clone, requested, fixture, packagePath), frozen)
-    assert.deepEqual(
-      await readOwned(
-        path.join(fixture.appData, 'generation-inputs', clone.id, 'target.png'),
-        8 * 1024 * 1024,
-      ),
-      canceled.target,
-    )
+    assert.deepEqual((await readRetryInput(fixture.appData, clone)).target, canceled.target)
     admitted = clone
     worker = null
     await manager.getByRole('button', { name: 'Close Queue Manager', exact: true }).click()
@@ -1400,7 +1548,9 @@ export async function runTrainedGeneration({
   assert.equal(summary.previewStatus, 'rendered')
   await closeNormally(saving)
   const saved = await retainOwnStore(
-    rasterCrashRecovery ? 'after-recovered-save-close' : 'after-first-close',
+    rasterCrashRecovery || trained.queueCrashRecovery
+      ? 'after-recovered-save-close'
+      : 'after-first-close',
   )
   assert.equal(saved.project.path, packagePath)
   assert.notEqual(saved.project.sha256, initialPackage.sha256)
@@ -1571,7 +1721,8 @@ export async function runTrainedGeneration({
         actualCancellations: 1,
         canceledQueueItemId: canceled.source.id,
         canceledWorker: canceled.worker,
-        retryRuntimeTransition: canceled.transition,
+        ...(canceled.transition && { retryRuntimeTransition: canceled.transition }),
+        ...(canceled.restart && { queueCrashRecovery: canceled.restart }),
         frozenRetry: true,
       }),
       actualCompletions: 1,

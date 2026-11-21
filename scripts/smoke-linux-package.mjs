@@ -634,6 +634,7 @@ if (history) {
 }
 if (trained)
   sourcePaths.push(path.join(repo, 'scripts/fixtures/packaged-installed-trained-generation.mjs'))
+const trainedCrash = trained?.rasterCrashRecovery || trained?.queueCrashRecovery
 if (trained?.ownedEmbedding)
   sourcePaths.push(
     ...[
@@ -642,12 +643,12 @@ if (trained?.ownedEmbedding)
       'scripts/fixtures/packaged-live-remove-ui.mjs',
     ].map((name) => path.join(repo, name)),
   )
-if (trained?.rasterHistory)
+if (trained?.rasterHistory || trained?.queueCrashRecovery)
   sourcePaths.push(
     ...[
       'scripts/qualify-packaged-installed-upgrade.mjs',
       'scripts/fixtures/packaged-installed-models.mjs',
-      'scripts/fixtures/packaged-raster-acceptance-history.mjs',
+      ...(trained.rasterHistory ? ['scripts/fixtures/packaged-raster-acceptance-history.mjs'] : []),
       'scripts/fixtures/application-state-upgrade-fixture.mjs',
     ].map((name) => path.join(repo, name)),
   )
@@ -907,7 +908,7 @@ async function connect(state) {
       await boundQualificationProcess(state.mainPid, {
         deadlineSeconds: nativeDeadlineSeconds,
         execute: boundedExecute,
-        surviveMainDeath: Boolean(trained?.rasterCrashRecovery && state.name === 'first'),
+        surviveMainDeath: Boolean(trainedCrash && state.name === 'first'),
       }),
     )
     state.aggregateLimits = assertAggregate(state.checks)
@@ -1140,8 +1141,8 @@ async function retainLifetimeResources(state) {
   }
 }
 
-async function crashForRecovery(state) {
-  assert.ok(trained?.rasterCrashRecovery)
+async function crashForRecovery(state, beforeSignal) {
+  assert.ok(trainedCrash)
   assert.equal(lifetimes.length, 1)
   assert.equal(lifetimes[0], state)
   assert.equal(state.name, 'first')
@@ -1173,6 +1174,7 @@ async function crashForRecovery(state) {
     `${JSON.stringify(intent, null, 2)}\n`,
     { flag: 'wx', mode: 0o600 },
   )
+  await beforeSignal?.()
   state.crashIntent = intent
   state.crashSignal = await signalQualificationMain(
     { ...current.nativeIdentity, group: scope.group },
@@ -1797,7 +1799,7 @@ try {
               identity,
               records,
               observeGpuWorker,
-              ...(trained.rasterCrashRecovery ? { crashForRecovery } : {}),
+              ...(trainedCrash ? { crashForRecovery } : {}),
             })
           : noobaiPreviewMode
             ? { noobaiPreview: await runNoobaiPreviewQualification() }
@@ -1818,7 +1820,7 @@ try {
     assert.ok(lifetimes.every((state) => state.normalPhysicalExit && !state.forcedCleanup))
   }
   if (trainedGeneration) {
-    if (trained?.rasterCrashRecovery) {
+    if (trainedCrash) {
       assert.deepEqual(
         lifetimes.map(({ name }) => name),
         ['first', 'recovered', 'restarted'],
@@ -1831,18 +1833,24 @@ try {
         ),
       )
     }
-    const jobWorker = trainedGeneration.worker
-    assert.ok(
-      lifetimes[0].gpuSamples.some(
-        ({ gpuMiB, pid, startTicks, group }) =>
-          gpuMiB > 0 &&
-          pid === jobWorker.pid &&
-          startTicks === jobWorker.startTicks &&
-          group === jobWorker.group,
-      ),
-      'Observe the claimed generation worker on CUDA, with exact PID/start/cgroup.',
-    )
-    const workers = new Map(lifetimes[0].gpuSamples.map(({ pid, startTicks }) => [pid, startTicks]))
+    const jobWorkers = trained.queueCrashRecovery
+      ? [trainedGeneration.canceledWorker, trainedGeneration.worker]
+      : [trainedGeneration.worker]
+    const gpuSamples = jobWorkers.flatMap((jobWorker, index) => {
+      const samples = lifetimes[index].gpuSamples
+      assert.ok(
+        samples.some(
+          ({ gpuMiB, pid, startTicks, group }) =>
+            gpuMiB > 0 &&
+            pid === jobWorker.pid &&
+            startTicks === jobWorker.startTicks &&
+            group === jobWorker.group,
+        ),
+        'Observe the claimed generation worker on CUDA, with exact PID/start/cgroup.',
+      )
+      return samples
+    })
+    const workers = new Map(gpuSamples.map(({ pid, startTicks }) => [pid, startTicks]))
     for (const [pid, startTicks] of workers) {
       try {
         const stat = await readFile(`/proc/${pid}/stat`, 'utf8')
